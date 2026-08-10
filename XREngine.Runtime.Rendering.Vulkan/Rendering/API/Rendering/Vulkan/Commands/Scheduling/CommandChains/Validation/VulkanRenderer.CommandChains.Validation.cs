@@ -232,8 +232,9 @@ internal sealed unsafe partial class VulkanCommandRuntime
                 }
             }
         }
-        CommandRecordingDependencyMismatch dependencyMismatch = chain.DependencySignature.Compare(
-            BuildCommandChainDependencySignature(packet, chain.Key));
+        CommandRecordingDependencyMismatch dependencyMismatch =
+            chain.DependencySignature.CompareCommandChainSecondary(
+                BuildCommandChainDependencySignature(packet, chain.Key));
         if (dependencyMismatch.Field != CommandRecordingDependencyField.None)
         {
             AppendDetail(details, "dependency-field", dependencyMismatch.Field.ToString());

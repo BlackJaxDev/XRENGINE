@@ -1006,7 +1006,7 @@ internal sealed unsafe partial class VulkanFrameLoop
                 if (!chains.TryGetValue(keys[keyIndex], out CommandChain? chain) ||
                     chain.SecondaryCommandBuffer.Handle == 0 ||
                     !chain.SecondaryCommandBufferExecutable ||
-                    !chain.RecordedArtifact.TryValidateSharedDependency(
+                    !chain.RecordedArtifact.TryValidateCommandChainSecondaryDependency(
                         chain.DependencySignature,
                         out _) ||
                     chain.State is not (CommandChainState.Reused or CommandChainState.FrameDataRefreshed) ||

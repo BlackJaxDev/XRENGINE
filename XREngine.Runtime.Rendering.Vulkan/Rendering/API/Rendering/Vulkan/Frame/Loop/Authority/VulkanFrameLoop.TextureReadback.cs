@@ -166,23 +166,50 @@ internal sealed unsafe partial class VulkanFrameLoop
         sample = 0.0f;
         diagnostic = string.Empty;
         Vk api = _deviceContext.Api;
-        Buffer stagingBuffer = default;
-        VulkanMemoryAllocation allocation = default;
         CommandBuffer commandBuffer = default;
         Fence fence = default;
-        bool mapped = false;
         bool nativeResourcesMayBeReleased = true;
         try
         {
             ulong byteCount = sourceFormat == Format.R16Sfloat ? sizeof(ushort) : AutoExposureByteCount;
-            if (!TryCreateExposureStagingBuffer(api, byteCount, out stagingBuffer, out allocation, out diagnostic) ||
-                !TryRecordExposureCopy(api, sourceImage, sourceLayout, stagingBuffer, out commandBuffer, out diagnostic) ||
-                !TrySubmitExposureCopyAndWait(api, commandBuffer, sourceImage, stagingBuffer, out fence, out nativeResourcesMayBeReleased, out diagnostic))
+            if (!_resourceRuntime.TryAcquireSynchronousFrameDataArenaLease(out VulkanSynchronousFrameDataArenaLease arenaLease))
+            {
+                diagnostic = "Desktop AutoExposureTex could not acquire the synchronous frame-data arena.";
                 return false;
-            if (!TryMapExposureReadback(api, allocation, byteCount, out void* mappedPointer, out diagnostic))
+            }
+            using VulkanSynchronousFrameDataArenaLease ownedArenaLease = arenaLease;
+            VulkanFrameDataArena arena = ownedArenaLease.Arena;
+            if (!arena.TryAllocate(
+                    0,
+                    EVulkanFrameDataLane.Readback,
+                    byteCount,
+                    alignment: 4,
+                    out VulkanFrameDataSlice stagingSlice))
+            {
+                diagnostic = "Desktop AutoExposureTex could not reserve a frame-data readback slice.";
                 return false;
-            mapped = true;
-            sample = sourceFormat == Format.R16Sfloat ? (float)*(Half*)mappedPointer : *(float*)mappedPointer;
+            }
+            if (!TryRecordExposureCopy(api, sourceImage, sourceLayout, stagingSlice.Buffer, stagingSlice.Offset, out commandBuffer, out diagnostic) ||
+                !TrySubmitExposureCopyAndWait(
+                    api,
+                    commandBuffer,
+                    sourceImage,
+                    stagingSlice,
+                    in ownedArenaLease,
+                    out fence,
+                    out nativeResourcesMayBeReleased,
+                    out diagnostic))
+                return false;
+            if (!arena.TryBeginRead(stagingSlice, out VulkanFrameDataReadScope readScope))
+            {
+                diagnostic = "Desktop AutoExposureTex could not invalidate its frame-data readback slice.";
+                return false;
+            }
+            using (readScope)
+            fixed (byte* mappedPointer = readScope.Bytes)
+                sample = sourceFormat == Format.R16Sfloat ? (float)*(Half*)mappedPointer : *(float*)mappedPointer;
+            RuntimeEngine.Rendering.Stats.GpuReadback.RecordGpuBufferMapped();
+            RuntimeEngine.Rendering.Stats.GpuReadback.RecordGpuReadbackBytes((long)byteCount);
             return true;
         }
         catch (Exception ex)
@@ -192,54 +219,14 @@ internal sealed unsafe partial class VulkanFrameLoop
         }
         finally
         {
-            if (mapped)
-                _resourceRuntime.Allocations.Buffers.MemoryAllocator?.Unmap(api, _deviceContext.Device, allocation);
             if (nativeResourcesMayBeReleased && fence.Handle != 0)
                 api.DestroyFence(_deviceContext.Device, fence, null);
             if (nativeResourcesMayBeReleased && commandBuffer.Handle != 0)
                 DestroyTrackedExposureCommandBuffer(api, ref commandBuffer);
-            if (nativeResourcesMayBeReleased && stagingBuffer.Handle != 0)
-                DestroyTrackedExposureStagingBuffer(api, stagingBuffer, allocation);
         }
-    }
-    private bool TryCreateExposureStagingBuffer(Vk api, ulong byteCount, out Buffer buffer, out VulkanMemoryAllocation allocation, out string diagnostic)
-    {
-        buffer = default;
-        allocation = default;
-        diagnostic = string.Empty;
-        BufferCreateInfo createInfo = new()
-        {
-            SType = StructureType.BufferCreateInfo,
-            Size = byteCount,
-            Usage = BufferUsageFlags.TransferDstBit,
-            SharingMode = SharingMode.Exclusive,
-        };
-        Result result = api.CreateBuffer(_deviceContext.Device, ref createInfo, null, out buffer);
-        _deviceContext.ObserveNativeResult("vkCreateBuffer.DesktopAutoExposureReadback", result);
-        if (result != Result.Success || buffer.Handle == 0)
-        {
-            diagnostic = $"vkCreateBuffer failed ({result}).";
-            return false;
-        }
-        _resourceRuntime.Allocations.Buffers.LiveHandles[buffer.Handle] = 0;
-        _resourceRuntime.Lifetime.Tracker.RegisterResource(new VulkanResourceLifetimeKey(ObjectType.Buffer, buffer.Handle), "DesktopAutoExposureReadback.Staging", externallyOwned: false);
-        IVulkanMemoryAllocator? allocator = _resourceRuntime.Allocations.Buffers.MemoryAllocator;
-        if (allocator is null)
-        {
-            diagnostic = "Readback staging allocation requires an initialized Vulkan memory allocator.";
-            return false;
-        }
-        if (!allocator.TryAllocateForBuffer(api, _deviceContext.Device, buffer, MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCachedBit, out allocation, out result))
-        {
-            _deviceContext.ObserveNativeResult("vkAllocateMemory.DesktopAutoExposureReadback", result);
-            diagnostic = $"Readback staging allocation failed ({result}).";
-            return false;
-        }
-        _resourceRuntime.Allocations.Buffers.Allocations[buffer.Handle] = allocation;
-        return true;
     }
 
-    private bool TryRecordExposureCopy(Vk api, Image sourceImage, ImageLayout sourceLayout, Buffer stagingBuffer, out CommandBuffer commandBuffer, out string diagnostic)
+    private bool TryRecordExposureCopy(Vk api, Image sourceImage, ImageLayout sourceLayout, Buffer stagingBuffer, ulong stagingBufferOffset, out CommandBuffer commandBuffer, out string diagnostic)
     {
         commandBuffer = default;
         diagnostic = string.Empty;
@@ -279,6 +266,7 @@ internal sealed unsafe partial class VulkanFrameLoop
         api.CmdPipelineBarrier(commandBuffer, PipelineStageFlags.AllCommandsBit, PipelineStageFlags.TransferBit, 0, 0, null, 0, null, 1, &toTransfer);
         BufferImageCopy copy = new()
         {
+            BufferOffset = stagingBufferOffset,
             ImageSubresource = new ImageSubresourceLayers { AspectMask = ImageAspectFlags.ColorBit, MipLevel = 0, BaseArrayLayer = 0, LayerCount = 1 },
             ImageExtent = new Extent3D(1, 1, 1),
         };
@@ -297,7 +285,15 @@ internal sealed unsafe partial class VulkanFrameLoop
         return false;
     }
 
-    private bool TrySubmitExposureCopyAndWait(Vk api, CommandBuffer commandBuffer, Image sourceImage, Buffer stagingBuffer, out Fence fence, out bool nativeResourcesMayBeReleased, out string diagnostic)
+    private bool TrySubmitExposureCopyAndWait(
+        Vk api,
+        CommandBuffer commandBuffer,
+        Image sourceImage,
+        in VulkanFrameDataSlice stagingSlice,
+        in VulkanSynchronousFrameDataArenaLease arenaLease,
+        out Fence fence,
+        out bool nativeResourcesMayBeReleased,
+        out string diagnostic)
     {
         fence = default;
         nativeResourcesMayBeReleased = true;
@@ -312,17 +308,31 @@ internal sealed unsafe partial class VulkanFrameLoop
             diagnostic = $"vkCreateFence failed ({result}).";
             return false;
         }
-        SubmitInfo submit = new() { SType = StructureType.SubmitInfo, CommandBufferCount = 1, PCommandBuffers = &commandBuffer };
-        lock (_commandRuntime.CommandBuffers.OneTimeSubmitGate)
-            result = api.QueueSubmit(_deviceContext.GraphicsQueue, 1, ref submit, fence);
-        _deviceContext.ObserveNativeResult("vkQueueSubmit.DesktopAutoExposureReadback", result);
-        if (result != Result.Success)
+        if (!arenaLease.TryPrepare(stagingSlice))
         {
+            diagnostic = "Desktop AutoExposureTex could not prepare its frame-data readback slice.";
+            return false;
+        }
+        SubmitInfo submit = new() { SType = StructureType.SubmitInfo, CommandBufferCount = 1, PCommandBuffers = &commandBuffer };
+        VulkanSubmissionDiagnosticContext diagnosticContext = default;
+        VulkanSubmissionReceipt receipt = _commandRuntime.SubmitToQueueTrackedWithDisposition(
+            _deviceContext.GraphicsQueue,
+            ref submit,
+            fence,
+            in diagnosticContext,
+            out _,
+            out _,
+            "DesktopAutoExposureReadback");
+        result = receipt.Result;
+        if (!receipt.SubmissionAccepted)
+        {
+            _ = arenaLease.Arena.TryCancelFrameSlotSubmission(0, stagingSlice.Generation);
             diagnostic = $"vkQueueSubmit failed ({result}).";
             return false;
         }
+        arenaLease.MarkSubmitted(stagingSlice);
         nativeResourcesMayBeReleased = false;
-        try { _resourceRuntime.RecordSynchronousGraphicsSubmission(commandBuffer, fence, _deviceContext.GraphicsQueue, sourceImage, stagingBuffer); }
+        try { _resourceRuntime.RecordSynchronousGraphicsSubmission(commandBuffer, fence, _deviceContext.GraphicsQueue, sourceImage, stagingSlice.Buffer); }
         catch (Exception ex)
         {
             Result recoveryWait;
@@ -330,6 +340,35 @@ internal sealed unsafe partial class VulkanFrameLoop
                 recoveryWait = api.WaitForFences(_deviceContext.Device, 1, fencePtr, true, ulong.MaxValue);
             _deviceContext.ObserveNativeResult("vkWaitForFences.DesktopAutoExposureReadbackReceiptRecovery", recoveryWait);
             nativeResourcesMayBeReleased = recoveryWait == Result.Success;
+            if (nativeResourcesMayBeReleased)
+            {
+                _resourceRuntime.CompleteSynchronousFence(fence);
+                if (!arenaLease.TryComplete(stagingSlice))
+                {
+                    _commandRuntime.RetireIncompleteSynchronousSubmission(
+                        commandBuffer,
+                        _commandRuntime.Pools.PrimaryGraphics,
+                        fence,
+                        arenaLease.Arena,
+                        in stagingSlice,
+                        removeOneTimeOwner: false,
+                        "DesktopAutoExposureReadback",
+                        completeSynchronousLifetime: true);
+                    nativeResourcesMayBeReleased = false;
+                }
+            }
+            else
+            {
+                _commandRuntime.RetireIncompleteSynchronousSubmission(
+                    commandBuffer,
+                    _commandRuntime.Pools.PrimaryGraphics,
+                    fence,
+                    arenaLease.Arena,
+                    in stagingSlice,
+                    removeOneTimeOwner: false,
+                    "DesktopAutoExposureReadback",
+                    completeSynchronousLifetime: true);
+            }
             diagnostic = $"Desktop AutoExposureTex submission receipt failed after native acceptance: {ex.Message}";
             return false;
         }
@@ -340,49 +379,34 @@ internal sealed unsafe partial class VulkanFrameLoop
         if (result == Result.Success)
         {
             _resourceRuntime.CompleteSynchronousFence(fence);
+            if (!arenaLease.TryComplete(stagingSlice))
+            {
+                _commandRuntime.RetireIncompleteSynchronousSubmission(
+                    commandBuffer,
+                    _commandRuntime.Pools.PrimaryGraphics,
+                    fence,
+                    arenaLease.Arena,
+                    in stagingSlice,
+                    removeOneTimeOwner: false,
+                    "DesktopAutoExposureReadback",
+                    completeSynchronousLifetime: true);
+                diagnostic = "Desktop AutoExposureTex could not reopen its completed frame-data slot.";
+                return false;
+            }
             nativeResourcesMayBeReleased = true;
             return true;
         }
+        _commandRuntime.RetireIncompleteSynchronousSubmission(
+            commandBuffer,
+            _commandRuntime.Pools.PrimaryGraphics,
+            fence,
+            arenaLease.Arena,
+            in stagingSlice,
+            removeOneTimeOwner: false,
+            "DesktopAutoExposureReadback",
+            completeSynchronousLifetime: true);
         diagnostic = $"vkWaitForFences failed ({result}).";
         return false;
-    }
-
-    private bool TryMapExposureReadback(Vk api, in VulkanMemoryAllocation allocation, ulong byteCount, out void* mapped, out string diagnostic)
-    {
-        mapped = null;
-        diagnostic = string.Empty;
-        IVulkanMemoryAllocator? allocator = _resourceRuntime.Allocations.Buffers.MemoryAllocator;
-        if (allocator is null)
-        {
-            diagnostic = "Readback mapping requires an initialized Vulkan memory allocator.";
-            return false;
-        }
-        if (!allocator.TryMap(api, _deviceContext.Device, allocation, 0, byteCount, out mapped, out Result result))
-        {
-            _deviceContext.ObserveNativeResult("vkMapMemory.DesktopAutoExposureReadback", result);
-            diagnostic = $"vkMapMemory failed ({result}).";
-            return false;
-        }
-        if (!allocation.IsCoherent)
-        {
-            ulong atom = Math.Max(_deviceContext.NonCoherentAtomSize, 1UL);
-            ulong offset = (allocation.Offset / atom) * atom;
-            ulong end = Math.Min(allocation.Offset + byteCount, allocation.Offset + allocation.Size);
-            ulong size = Math.Max(((end + atom - 1UL) / atom) * atom - offset, atom);
-            MappedMemoryRange range = new() { SType = StructureType.MappedMemoryRange, Memory = allocation.Memory, Offset = offset, Size = size };
-            Result invalidateResult = api.InvalidateMappedMemoryRanges(_deviceContext.Device, 1, ref range);
-            _deviceContext.ObserveNativeResult("vkInvalidateMappedMemoryRanges.DesktopAutoExposureReadback", invalidateResult);
-            if (invalidateResult != Result.Success)
-            {
-                allocator.Unmap(api, _deviceContext.Device, allocation);
-                mapped = null;
-                diagnostic = $"vkInvalidateMappedMemoryRanges failed ({invalidateResult}).";
-                return false;
-            }
-        }
-        RuntimeEngine.Rendering.Stats.GpuReadback.RecordGpuBufferMapped();
-        RuntimeEngine.Rendering.Stats.GpuReadback.RecordGpuReadbackBytes((long)byteCount);
-        return true;
     }
 
     private void DestroyTrackedExposureCommandBuffer(Vk api, ref CommandBuffer commandBuffer)
@@ -398,13 +422,4 @@ internal sealed unsafe partial class VulkanFrameLoop
         commandBuffer = default;
     }
 
-    private void DestroyTrackedExposureStagingBuffer(Vk api, Buffer buffer, in VulkanMemoryAllocation allocation)
-    {
-        ulong handle = buffer.Handle;
-        _resourceRuntime.Allocations.Buffers.LiveHandles.TryRemove(handle, out _);
-        _resourceRuntime.Allocations.Buffers.Allocations.TryRemove(handle, out _);
-        api.DestroyBuffer(_deviceContext.Device, buffer, null);
-        _resourceRuntime.Allocations.Buffers.MemoryAllocator?.Free(api, _deviceContext.Device, allocation);
-        _resourceRuntime.CompleteDetachedExternalResourceDestruction(ObjectType.Buffer, handle, _resourceRuntime.GetPublishedGeneration(ObjectType.Buffer, handle), forced: false);
-    }
 }

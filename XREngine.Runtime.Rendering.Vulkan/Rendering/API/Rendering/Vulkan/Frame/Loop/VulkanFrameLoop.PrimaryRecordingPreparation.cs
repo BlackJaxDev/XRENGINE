@@ -8,9 +8,13 @@ namespace XREngine.Rendering.Vulkan;
 internal sealed unsafe partial class VulkanFrameLoop
 {
     private VulkanPrimaryCommandRecordingResult RecordPreparedDesktopPrimary(
+        ref VulkanFrameAttempt attempt,
         uint imageIndex,
         bool preserveSwapchainForImGuiOverlay)
     {
+        _ = attempt.CompletePhase(
+            EVulkanFrameStage.PlanBuild,
+            EDesktopFrameFlow.Continue);
         CommandBuffer[] primaryBuffers = _commandRuntime.CommandBuffers.Buffers
             ?? throw new InvalidOperationException(
                 "Desktop primary command buffers are not initialized.");
@@ -28,27 +32,39 @@ internal sealed unsafe partial class VulkanFrameLoop
                 $"Desktop image index {imageIndex} has no command artifact slot.");
         }
 
-        DrainQueuedMeshRenderRequests();
-        FrameOp[] drainedOperations = _framePlanner.Operations.DrainForPrimary(
-            out FrameOp[] textureUploadOperations);
-        VulkanFramePlanningSnapshot planningSnapshot = _framePlanner.CaptureSnapshot();
-        FrameOp[] sortedOperations = drainedOperations.Length == 0
-            ? drainedOperations
-            : _framePlanner.FrameScheduler.SortFrameOpsCore(
-                drainedOperations,
-                planningSnapshot.RenderGraphPlan.CompiledGraph);
-        VulkanSwapchainContextCoalescer.Coalesce(sortedOperations);
-        SplitPreparedDynamicUiOperations(
-            sortedOperations,
-            out FrameOp[] staticOperations,
-            out FrameOp[] dynamicUiOperations);
+        FrameOp[] textureUploadOperations;
+        FrameOp[] staticOperations;
+        FrameOp[] dynamicUiOperations;
+        VulkanFramePlanningSnapshot planningSnapshot;
+        using (VulkanCpuStageScope preparationStage = new(
+                   _telemetry,
+                   EVulkanCpuStage.FrameOpPreparation))
+        {
+            DrainQueuedMeshRenderRequests();
+            FrameOp[] drainedOperations = _framePlanner.Operations.DrainForPrimary(
+                out textureUploadOperations);
+            planningSnapshot = _framePlanner.CaptureSnapshot();
+            FrameOp[] sortedOperations = drainedOperations.Length == 0
+                ? drainedOperations
+                : _framePlanner.FrameScheduler.SortFrameOpsCore(
+                    drainedOperations,
+                    planningSnapshot.RenderGraphPlan.CompiledGraph);
+            VulkanSwapchainContextCoalescer.Coalesce(sortedOperations);
+            SplitPreparedDynamicUiOperations(
+                sortedOperations,
+                out staticOperations,
+                out dynamicUiOperations);
+            _commandRuntime.NormalizePrimaryPlanPassIndicesForPublication(
+                staticOperations);
+            _commandRuntime.NormalizePrimaryPlanPassIndicesForPublication(
+                dynamicUiOperations);
+        }
         bool preserveSwapchainForOverlay =
             preserveSwapchainForImGuiOverlay || dynamicUiOperations.Length > 0;
-        _commandRuntime.NormalizePrimaryPlanPassIndicesForPublication(
-            staticOperations);
-        _commandRuntime.NormalizePrimaryPlanPassIndicesForPublication(
-            dynamicUiOperations);
 
+        _ = attempt.CompletePhase(
+            EVulkanFrameStage.ResourcePrepare,
+            EDesktopFrameFlow.Continue);
         VulkanComputePreparationResult computePreparation =
             _commandRuntime.PrepareComputeProgramsForFramePlan(
                 staticOperations);
@@ -68,7 +84,7 @@ internal sealed unsafe partial class VulkanFrameLoop
             _resourceRuntime.AllowSynchronousResourceUploads;
         VulkanPrimaryCommandPlan primaryPlan = primaryPlans[imageIndex];
         string replanReason = string.Empty;
-        for (int attempt = 0; attempt < 2; attempt++)
+        for (int replanAttempt = 0; replanAttempt < 2; replanAttempt++)
         {
             ResourcePlannerRuntimeState plannerState =
                 PublishedResourcePlannerRuntimeState;
@@ -100,20 +116,26 @@ internal sealed unsafe partial class VulkanFrameLoop
                 replanReason = resourcePreparationFailure;
                 continue;
             }
-            ulong preparationSignature =
-                VulkanFrameOperationSignature.Compute(staticOperations);
-            ulong dynamicSignature =
-                VulkanFrameOperationSignature.Compute(dynamicUiOperations);
-            FramePlan framePlan = _framePlanner.FramePlanBuilder.BuildAndSeal(
-                CurrentFrameSlot,
-                plannerState.ResourcePlannerRevision,
-                preparationSignature,
-                dynamicSignature,
-                staticOperations,
-                dynamicUiOperations,
-                new VulkanFramePlanRenderGraphAuthority(
-                    frozenPlanningSnapshot.RenderGraphPlan,
-                    plannerState.FrameOpResourcePlannerSwitchingState));
+            FramePlan framePlan;
+            using (VulkanCpuStageScope packetConstructionStage = new(
+                       _telemetry,
+                       EVulkanCpuStage.PacketConstruction))
+            {
+                ulong preparationSignature =
+                    VulkanFrameOperationSignature.Compute(staticOperations);
+                ulong dynamicSignature =
+                    VulkanFrameOperationSignature.Compute(dynamicUiOperations);
+                framePlan = _framePlanner.FramePlanBuilder.BuildAndSeal(
+                    CurrentFrameSlot,
+                    plannerState.ResourcePlannerRevision,
+                    preparationSignature,
+                    dynamicSignature,
+                    staticOperations,
+                    dynamicUiOperations,
+                    new VulkanFramePlanRenderGraphAuthority(
+                        frozenPlanningSnapshot.RenderGraphPlan,
+                        plannerState.FrameOpResourcePlannerSwitchingState));
+            }
             FrameOperationSequence preparedOperations =
                 framePlan.GetNativeStaticOperationsForRecording();
             computePreparation = _commandRuntime.PrepareComputeFrameOpsForRecording(
@@ -129,6 +151,9 @@ internal sealed unsafe partial class VulkanFrameLoop
                 return VulkanPrimaryCommandRecordingResult.Deferred(
                     computePreparation.FormatFailure());
 
+            _ = attempt.CompletePhase(
+                EVulkanFrameStage.WorkSchedule,
+                EDesktopFrameFlow.Continue);
             primaryPlan.Build(
                 preparedOperations,
                 framePlan.StaticOperationSignature,
@@ -167,8 +192,16 @@ internal sealed unsafe partial class VulkanFrameLoop
                 DynamicUiOperations = dynamicUiOperations,
                 TextureUploadOperations = textureUploadOperations,
             };
-            VulkanPrimaryCommandRecordingResult result =
-                _commandRuntime.RecordPrimary(in input);
+            _ = attempt.CompletePhase(
+                EVulkanFrameStage.CommandRecord,
+                EDesktopFrameFlow.Continue);
+            VulkanPrimaryCommandRecordingResult result;
+            using (VulkanCpuStageScope primaryRecordingStage = new(
+                       _telemetry,
+                       EVulkanCpuStage.PrimaryRecording))
+            {
+                result = _commandRuntime.RecordPrimary(in input);
+            }
             if (!result.RequiresReplan)
                 return result;
             replanReason = result.Reason ??
@@ -210,7 +243,8 @@ internal sealed unsafe partial class VulkanFrameLoop
                     _deviceContext,
                     RuntimeRenderingHostServices.Presentation,
                     RuntimeRenderingHostServices.FrameTiming,
-                    out _));
+                    out _),
+                _telemetry);
             using IDisposable? pipelineScope =
                 RuntimeRenderingHostServices.Diagnostics.PushRenderingPipeline(pipeline);
             using IDisposable? cameraScope = pipeline.RenderState.PushRenderingCamera(

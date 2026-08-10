@@ -248,6 +248,15 @@ namespace XREngine.Rendering.Vulkan
 
         internal int CountContiguousMeshCommandChainRun(scoped ref PrimaryCommandBufferRecordingState recordingState, int startIndex, MeshDrawOp firstDraw, int passIndex)
         {
+            bool partitionByScheduledMembership =
+                recordingState.ScheduledCommandChainKeysByOpIndex is not null &&
+                recordingState.ScheduledCommandChainCache is not null;
+            bool firstDrawIsScheduled = partitionByScheduledMembership &&
+                TryGetScheduledCommandChainForOp(
+                    ref recordingState,
+                    startIndex,
+                    out _,
+                    out _);
             int count = 0;
             for (int i = startIndex; i < recordingState.Ops.Length; i++)
             {
@@ -269,6 +278,19 @@ namespace XREngine.Rendering.Vulkan
                     break;
                 if (ResolveRunCandidatePassIndex(ref recordingState, candidate) != passIndex)
                     break;
+                if (partitionByScheduledMembership &&
+                    TryGetScheduledCommandChainForOp(
+                        ref recordingState,
+                        i,
+                        out _,
+                        out _) != firstDrawIsScheduled)
+                {
+                    // The primary recorder supports mixed scheduled-secondary and
+                    // inline islands. Keep each attempt inside one membership
+                    // class: preflighting a whole pass made one mutable draw reject
+                    // every reusable secondary later in that pass.
+                    break;
+                }
 
                 count++;
             }

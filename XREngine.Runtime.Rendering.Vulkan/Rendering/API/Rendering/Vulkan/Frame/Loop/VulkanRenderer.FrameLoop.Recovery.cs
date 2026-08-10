@@ -79,11 +79,6 @@ namespace XREngine.Rendering.Vulkan
             }
             catch (Exception recoveryFailure)
             {
-                Debug.VulkanWarning(
-                    "[Vulkan] Desktop frame recovery also failed after {0}: {1}",
-                    primaryFailure.GetType().Name,
-                    recoveryFailure.Message);
-
                 if (!_deviceLost &&
                     attempt.AcquireOwnership is
                         EVulkanDesktopAcquireOwnership
@@ -91,21 +86,13 @@ namespace XREngine.Rendering.Vulkan
                         EVulkanDesktopAcquireOwnership
                             .ConsumedByRecoveryImagePendingPresent)
                 {
-                    try
-                    {
-                        ResolveDesktopAcquireBySwapchainRecreation(
-                            ref attempt,
-                            "Desktop post-submit failure fallback");
-                        CompleteDesktopFrameSlot(ref attempt);
-                    }
-                    catch (Exception invalidationFailure)
-                    {
-                        Debug.VulkanWarning(
-                            "[Vulkan] Desktop swapchain invalidation also failed after {0}: {1}",
-                            primaryFailure.GetType().Name,
-                            invalidationFailure.Message);
-                    }
+                    ResolveDesktopAcquireBySwapchainRecreation(
+                        ref attempt,
+                        "Desktop post-submit failure fallback");
+                    CompleteDesktopFrameSlot(ref attempt);
                 }
+
+                ExceptionDispatchInfo.Capture(recoveryFailure).Throw();
             }
         }
 
@@ -162,18 +149,9 @@ namespace XREngine.Rendering.Vulkan
             if (attempt.CollectReleased)
                 return;
 
-            try
-            {
-                RuntimeRenderingHostServices.Scheduling
-                    .MarkRenderFrameReadyForCollect(DesktopWsiOutput.Window);
-                attempt.CollectReleased = true;
-            }
-            catch (Exception collectFailure)
-            {
-                Debug.VulkanWarning(
-                    "[Vulkan] Failed to release frame collect before failure settlement: {0}",
-                    collectFailure.Message);
-            }
+            RuntimeRenderingHostServices.Scheduling
+                .MarkRenderFrameReadyForCollect(DesktopWsiOutput.Window);
+            attempt.CollectReleased = true;
         }
 
         private void PresentRecoveredDesktopFrameAfterUnexpectedFailure(
@@ -195,11 +173,6 @@ namespace XREngine.Rendering.Vulkan
 
             bool accepted =
                 result is Result.Success or Result.SuboptimalKhr;
-            RecordDesktopPresentBookkeeping(
-                ref attempt,
-                result,
-                accepted,
-                hasValidFrameContent: false);
             if (result == Result.ErrorDeviceLost)
             {
                 attempt.TransitionAcquireOwnership(
@@ -212,6 +185,11 @@ namespace XREngine.Rendering.Vulkan
 
             attempt.TransitionAcquireOwnership(
                 EVulkanDesktopAcquireOwnership.ResolvedByPresentation);
+            RecordDesktopPresentBookkeeping(
+                ref attempt,
+                result,
+                accepted,
+                hasValidFrameContent: false);
             Exception? policyFailure = ApplyDesktopPresentPolicy(
                 ref attempt,
                 result,
@@ -286,18 +264,19 @@ namespace XREngine.Rendering.Vulkan
                 _commandRuntime.Synchronization._graphicsTimelineValue + 1,
                 attempt.AcquireTimelineValue + 1);
             long stageStartTimestamp = Stopwatch.GetTimestamp();
-            Result result;
+            VulkanSubmissionReceipt submitReceipt;
             using (RuntimeRenderingHostServices.Profiling.StartProfileScope(
                        "Vulkan.FrameLifecycle.AcquireAbortBridgeSubmit"))
             {
-                result = SubmitAcquireSemaphoreBridge(
+                submitReceipt = SubmitAcquireSemaphoreBridge(
                     attempt.AcquireSemaphore,
                     signalValue);
             }
 
             attempt.Timing.AcquireBridgeSubmit +=
                 Stopwatch.GetElapsedTime(stageStartTimestamp);
-            if (result == Result.Success)
+            Result result = submitReceipt.Result;
+            if (submitReceipt.SubmissionAccepted)
             {
                 _commandRuntime.Synchronization._graphicsTimelineValue = Math.Max(
                     _commandRuntime.Synchronization._graphicsTimelineValue,

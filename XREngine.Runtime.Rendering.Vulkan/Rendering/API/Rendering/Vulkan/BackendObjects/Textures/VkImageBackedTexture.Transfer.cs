@@ -28,23 +28,34 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
     /// <param name="stagingBufferSize">Size in bytes of the staging buffer. When non-zero,
     /// the method validates that the buffer is large enough for the target image format
     /// and logs an error (skipping the copy) if there is a mismatch.</param>
-    protected void CopyBufferToImage(Buffer buffer, uint mipLevel, uint baseArrayLayer, uint layerCount, Extent3D extent, ulong stagingBufferSize = 0)
+    protected void CopyBufferToImage(
+        in VulkanFrameDataSlice stagingSlice,
+        in VulkanSynchronousFrameDataArenaLease arenaLease,
+        uint mipLevel,
+        uint baseArrayLayer,
+        uint layerCount,
+        Extent3D extent)
     {
+        if (!stagingSlice.IsValid)
+            throw new ArgumentException("Texture uploads require a valid frame-data staging slice.", nameof(stagingSlice));
+        if (!(BackendContext.Resources.SynchronousFrameDataArena?.TryFlushHostWrites(stagingSlice) ?? false))
+            throw new InvalidOperationException("Vulkan frame-data arena could not publish texture staging writes before copy.");
+
         if (!ValidateCopyBufferToImageRegion(mipLevel, baseArrayLayer, layerCount, extent))
             return;
 
         // Validate staging buffer size against what the GPU will actually read.
-        if (stagingBufferSize > 0)
+        if (stagingSlice.Length > 0)
         {
             uint bpt = VkFormatConversions.GetBytesPerTexel(ResolvedFormat);
             if (bpt > 0)
             {
                 ulong requiredBytes = (ulong)extent.Width * extent.Height * extent.Depth * layerCount * bpt;
-                if (stagingBufferSize < requiredBytes)
+                if (stagingSlice.Length < requiredBytes)
                 {
                     Debug.LogError(
                         $"[Vulkan] Staging buffer size mismatch for '{Data.Name ?? GetDescribingName()}': " +
-                        $"buffer={stagingBufferSize} bytes but image format {ResolvedFormat} requires " +
+                        $"buffer={stagingSlice.Length} bytes but image format {ResolvedFormat} requires " +
                         $"{requiredBytes} bytes ({extent.Width}x{extent.Height}x{extent.Depth} * {layerCount} layers * {bpt} bpp). " +
                         $"Skipping CopyBufferToImage to avoid GPU out-of-bounds read. " +
                         $"Check that the texture's SizedInternalFormat matches its pixel data.");
@@ -59,7 +70,7 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
 
         BufferImageCopy region = new()
         {
-            BufferOffset = 0,
+            BufferOffset = stagingSlice.Offset,
             BufferRowLength = 0,
             BufferImageHeight = 0,
             ImageSubresource = new ImageSubresourceLayers
@@ -77,10 +88,11 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
         // uses on the graphics queue.  The resource command authority owns the
         // tracked submission and fence receipt; no renderer facade participates.
         ResourceCommandPort.CopyBufferToImage(
-            buffer,
+            stagingSlice,
             _image,
             ImageLayout.TransferDstOptimal,
             ref region,
+            in arenaLease,
             "VkImageBackedTexture.CopyBufferToImage");
     }
 

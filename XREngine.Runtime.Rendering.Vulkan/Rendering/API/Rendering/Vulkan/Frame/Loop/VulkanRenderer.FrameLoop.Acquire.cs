@@ -39,6 +39,12 @@ namespace XREngine.Rendering.Vulkan
                             out attempt.AcquireResult,
                             out string failureReason))
                     {
+                        if (attempt.AcquireResult is Result.Success or Result.SuboptimalKhr)
+                        {
+                            VulkanDesktopAcquireOutcome acceptedOutcome =
+                                DesktopWsiOutput.ClassifyAcquire(attempt.AcquireResult);
+                            attempt.TransitionAcquireOwnership(acceptedOutcome.Ownership);
+                        }
                         if (attempt.AcquireResult == Result.ErrorDeviceLost)
                         {
                             attempt.TransitionAcquireOwnership(
@@ -70,10 +76,13 @@ namespace XREngine.Rendering.Vulkan
                 }
             }
 
-            attempt.Timing.AcquireImage +=
-                Stopwatch.GetElapsedTime(stageStartTimestamp);
             VulkanDesktopAcquireOutcome acquireOutcome =
                 DesktopWsiOutput.ClassifyAcquire(attempt.AcquireResult);
+            if (attempt.AcquireResult is Result.Success or Result.SuboptimalKhr)
+                attempt.TransitionAcquireOwnership(acquireOutcome.Ownership);
+
+            attempt.Timing.AcquireImage +=
+                Stopwatch.GetElapsedTime(stageStartTimestamp);
 
             if (VulkanFrameDiagnosticsTraceEnabled)
             {
@@ -145,7 +154,6 @@ namespace XREngine.Rendering.Vulkan
             _commandRuntime.Synchronization._acquireTimelineValue = attempt.AcquireTimelineValue;
             attempt.PresentSemaphore =
                 OutputRuntime.Desktop.PresentBridgeSemaphores![attempt.ImageIndex];
-            attempt.TransitionAcquireOwnership(acquireOutcome.Ownership);
             attempt.AdvanceTo(EDesktopFramePhase.ImageAcquired);
             return EDesktopFrameFlow.Continue;
         }

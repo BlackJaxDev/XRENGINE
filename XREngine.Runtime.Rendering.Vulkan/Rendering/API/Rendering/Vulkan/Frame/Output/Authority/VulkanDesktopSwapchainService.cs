@@ -200,6 +200,14 @@ internal sealed unsafe partial class VulkanDesktopSwapchainService
             bool oldStreamlineProxy = _output.Desktop.StreamlineFrameGenerationActive;
             uint oldWidth = _output.Desktop.Extent.Width;
             uint oldHeight = _output.Desktop.Extent.Height;
+            ulong oldGraphicsCompletionValue = 0;
+            if (_output.Desktop.ImageTimelineValues is { } oldImageTimelineValues)
+            {
+                for (int i = 0; i < oldImageTimelineValues.Length; i++)
+                    oldGraphicsCompletionValue = Math.Max(
+                        oldGraphicsCompletionValue,
+                        oldImageTimelineValues[i]);
+            }
             ulong[] oldImageGenerations = _resources.DetachExternalImageLifetimesForHandleReuse(oldImages);
 
             RetireDesktopCommandArtifacts();
@@ -242,7 +250,17 @@ internal sealed unsafe partial class VulkanDesktopSwapchainService
                     _services.CreateDesktopOutputArtifacts(
                         _output.Desktop.Images.Length);
                 _services.ReserveOpenXrFrameDataSlots(_output.Desktop.Images.Length);
-                _output.Desktop.ImageTimelineValues = new ulong[_output.Desktop.Images.Length];
+                ulong[] imageTimelineValues = new ulong[_output.Desktop.Images.Length];
+                if (oldGraphicsCompletionValue != 0)
+                {
+                    // Mapped frame-data slots are indexed by swapchain image. A
+                    // replacement generation may reuse an index before the old
+                    // image's accepted graphics work completes, so every new image
+                    // inherits the strongest old completion proof. Clearing this
+                    // ledger wedged the arena in Submitted after a resize/recreate.
+                    Array.Fill(imageTimelineValues, oldGraphicsCompletionValue);
+                }
+                _output.Desktop.ImageTimelineValues = imageTimelineValues;
                 PublishPlannerExtent(_output.Desktop.Extent);
                 return true;
             }

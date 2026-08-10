@@ -115,24 +115,9 @@ internal sealed unsafe partial class VulkanCommandRuntime
                 PCommandBuffers = &commandBuffer,
             };
 
-            Result submitResult;
-            lock (_oneTimeSubmitLock)
-                submitResult = SubmitToQueueTracked(
-                    Api,
-                    DeviceContext,
-                    FrameTelemetry,
-                    DeviceContext.TransferQueue,
-                    ref submitInfo,
-                    fence,
-                    "TextureUpload.Transfer");
-
-            if (submitResult != Result.Success)
-            {
-                failureReason = $"transfer queue submit failed ({submitResult})";
-                return false;
-            }
-
-            submitted = new VulkanSubmittedImportedTextureUpload(
+            // Build the managed owner before the native acceptance boundary. After queue
+            // acceptance, transferring these handles into the record is non-allocating.
+            VulkanSubmittedImportedTextureUpload acceptedOwner = new(
                 upload,
                 commandBuffer,
                 pool,
@@ -142,6 +127,34 @@ internal sealed unsafe partial class VulkanCommandRuntime
                 graphicsFamily,
                 TextureRuntimeDiagnostics.StartTiming(),
                 CalculateUploadStagingBytes(upload));
+
+            VulkanSubmissionReceipt submitReceipt;
+            lock (_oneTimeSubmitLock)
+                submitReceipt = SubmitToQueueTrackedWithDisposition(
+                    DeviceContext.TransferQueue,
+                    ref submitInfo,
+                    fence,
+                    new VulkanSubmissionDiagnosticContext
+                    {
+                        SubmissionKind = "TextureUpload.Transfer",
+                        QueueKind = "Transfer",
+                        CommandBufferCount = 1,
+                        FirstCommandBufferHandle = (ulong)commandBuffer.Handle,
+                        FenceHandle = fence.Handle,
+                    },
+                    out _,
+                    out _,
+                    "TextureUpload.Transfer");
+
+            if (!submitReceipt.SubmissionAccepted)
+            {
+                failureReason = $"transfer queue submit failed ({submitReceipt.Result})";
+                return false;
+            }
+
+            // Native submission has accepted the command buffer and staging sources. Transfer
+            // those handles to the submitted-work record before any later managed publication.
+            submitted = acceptedOwner;
             commandBuffer = default;
             fence = default;
             return true;

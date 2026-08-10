@@ -6,7 +6,8 @@ namespace XREngine.Rendering.Vulkan;
 internal readonly record struct VulkanMeshMaterializationSnapshot(
     FrameOpContext? ActiveFrameOpContext,
     int DescriptorViewFamilyIdentity,
-    bool AvoidSynchronousImageAllocationForOpenXr)
+    bool AvoidSynchronousImageAllocationForOpenXr,
+    VulkanFrameTelemetry Telemetry)
 {
     internal static ImageLayout ResolveDescriptorImageLayout(
         IVkImageDescriptorSource source,

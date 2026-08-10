@@ -22,6 +22,13 @@ namespace XREngine.Rendering.Vulkan
                 "Vulkan.FrameLifecycle.QueuePresent",
                 disableFrameGenerationReason: null);
             Result result = dispatch.Result;
+            if (dispatch.Dispatched)
+            {
+                attempt.TransitionAcquireOwnership(
+                    result == Result.ErrorDeviceLost
+                        ? EVulkanDesktopAcquireOwnership.IndeterminateAfterDeviceLoss
+                        : EVulkanDesktopAcquireOwnership.ResolvedByPresentation);
+            }
 
             if (!dispatch.Dispatched &&
                 result != Result.ErrorDeviceLost)
@@ -64,17 +71,12 @@ namespace XREngine.Rendering.Vulkan
 
             if (result == Result.ErrorDeviceLost)
             {
-                attempt.TransitionAcquireOwnership(
-                    EVulkanDesktopAcquireOwnership
-                        .IndeterminateAfterDeviceLoss);
                 attempt.Stop(
                     EDesktopFrameReason.PresentDeviceLost,
                     EDesktopFrameRecoveryAction.DeviceLost);
                 throw CreateDeviceLostException("QueuePresent", result);
             }
 
-            attempt.TransitionAcquireOwnership(
-                EVulkanDesktopAcquireOwnership.ResolvedByPresentation);
             Exception? policyFailure = ApplyDesktopPresentPolicy(
                 ref attempt,
                 result,
@@ -158,7 +160,9 @@ namespace XREngine.Rendering.Vulkan
                         ref presentInfo,
                         out result,
                         out string failureReason,
+                        out Exception? postDispatchFailure,
                         caller: "RenderFrameCallback");
+                auxiliaryFailure ??= postDispatchFailure;
                 if (!dispatched)
                 {
                     if (result == Result.ErrorDeviceLost)

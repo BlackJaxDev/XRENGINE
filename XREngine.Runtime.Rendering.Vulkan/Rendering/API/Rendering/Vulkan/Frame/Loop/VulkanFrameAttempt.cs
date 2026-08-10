@@ -137,6 +137,16 @@ internal ref struct VulkanFrameAttempt
     /// which is used for synchronization and ensuring that the rendering operations are completed in the correct order.
     /// </summary>
     public ulong GraphicsSignalValue;
+    /// <summary>Whether the accepted graphics signal was published to both reuse ledgers.</summary>
+    public bool SubmissionReuseLedgersPublished;
+    /// <summary>Whether a rejected-frame recovery submission was accepted by the graphics queue.</summary>
+    public bool RecoverySubmissionAccepted;
+    /// <summary>Recovery command pool retained until its accepted submission is retired.</summary>
+    public CommandPool RecoveryCommandPool;
+    /// <summary>Recovery command buffer retained until its accepted submission is retired.</summary>
+    public CommandBuffer RecoveryCommandBuffer;
+    /// <summary>Whether deferred reclamation has claimed the accepted recovery command buffer.</summary>
+    public bool RecoveryCommandRetirementQueued;
 
     /// <summary>
     /// The command buffer used for uploading textures during the current frame attempt,
@@ -148,6 +158,10 @@ internal ref struct VulkanFrameAttempt
     /// which is important for ensuring that the necessary resources are available for rendering.
     /// </summary>
     public CommandPool TextureUploadCommandPool;
+    /// <summary>Whether the accepted upload batch was published to its completion timeline.</summary>
+    public bool TextureUploadTimelinePublished;
+    /// <summary>Whether command-buffer reclamation was queued for the accepted upload batch.</summary>
+    public bool TextureUploadRetirementQueued;
     /// <summary>
     /// The command buffer used for rendering the scene during the current frame attempt,
     /// which is important for ensuring that the rendered content is displayed correctly.
@@ -233,6 +247,18 @@ internal ref struct VulkanFrameAttempt
     /// </summary>
     public bool SlotCompleted;
     /// <summary>
+    /// Indicates that the orchestration spine has claimed terminal ownership
+    /// settlement. The claim is intentionally one-way: accepted native work
+    /// must not be reopened by a later unwind path.
+    /// </summary>
+    public bool TerminalSettlementClaimed;
+    /// <summary>The last typed orchestration result reached by this attempt.</summary>
+    public VulkanDesktopFramePhaseResult LastPhaseResult;
+    /// <summary>The one typed result published by terminal settlement.</summary>
+    public VulkanDesktopFrameTerminalResult TerminalResult;
+    /// <summary>Whether terminal settlement published <see cref="TerminalResult"/>.</summary>
+    public bool TerminalResultPublished;
+    /// <summary>
     /// Indicates whether the current frame attempt has completed its entire lifecycle,
     /// which is important for ensuring that the rendering operations are completed and that the rendered content is displayed correctly.
     /// </summary>
@@ -246,13 +272,11 @@ internal ref struct VulkanFrameAttempt
     /// <summary>
     /// Initializes a new instance of the <see cref="VulkanFrameAttempt"/> struct with the specified telemetry and identity.
     /// </summary>
-    /// <param name="telemetry">The Vulkan frame telemetry used for tracking frame timing and performance.</param>
     /// <param name="identity">The identity of the desktop frame, containing information such as frame number, slot, and start timestamp.</param>
-    public VulkanFrameAttempt(VulkanFrameTelemetry telemetry, in DesktopFrameIdentity identity)
+    public VulkanFrameAttempt(in DesktopFrameIdentity identity)
     {
         this = default;
         Identity = identity;
-        Timing = telemetry.BeginFrame(identity);
         Phase = EDesktopFramePhase.Entered;
         Flow = EDesktopFrameFlow.Continue;
     }
@@ -326,5 +350,45 @@ internal ref struct VulkanFrameAttempt
             throw new InvalidOperationException($"Illegal desktop upload ownership transition {UploadOwnership} -> {next}.");
 
         UploadOwnership = next;
+    }
+
+    /// <summary>
+    /// Claims the one terminal settlement pass for this attempt.
+    /// </summary>
+    public bool TryClaimTerminalSettlement()
+    {
+        if (TerminalSettlementClaimed)
+            return false;
+
+        TerminalSettlementClaimed = true;
+        return true;
+    }
+
+    /// <summary>Records one typed orchestration-stage result before settlement.</summary>
+    public VulkanDesktopFramePhaseResult CompletePhase(
+        EVulkanFrameStage stage,
+        EDesktopFrameFlow flow)
+    {
+        if (TerminalResultPublished)
+            throw new InvalidOperationException(
+                $"Desktop frame stage {stage} cannot run after terminal settlement.");
+
+        LastPhaseResult = new VulkanDesktopFramePhaseResult(stage, flow);
+        return LastPhaseResult;
+    }
+
+    /// <summary>Publishes the attempt's exactly-once terminal typed result.</summary>
+    public void PublishTerminalResult(
+        VulkanDesktopFrameTerminalResult result)
+    {
+        if (TerminalResultPublished)
+            throw new InvalidOperationException(
+                "Desktop frame attempt already published a terminal result.");
+        if (!TerminalSettlementClaimed || !result.IsValid)
+            throw new InvalidOperationException(
+                "Desktop frame terminal result requires a claimed settlement and a terminal outcome.");
+
+        TerminalResult = result;
+        TerminalResultPublished = true;
     }
 }

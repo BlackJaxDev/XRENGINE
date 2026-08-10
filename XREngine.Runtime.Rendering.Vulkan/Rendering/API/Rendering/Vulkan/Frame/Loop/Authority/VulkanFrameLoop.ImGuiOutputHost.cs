@@ -10,6 +10,8 @@ namespace XREngine.Rendering.Vulkan;
 
 internal sealed unsafe partial class VulkanFrameLoop : IVulkanImGuiOutputHost
 {
+    private readonly VulkanImGuiPlatformViewportRecorder _imguiPlatformViewportRecorder = new();
+
     IWindow IVulkanImGuiOutputHost.MainWindow => _imguiWindowHost!.Window;
     IInputContext? IVulkanImGuiOutputHost.Input => _imguiWindowHost!.Input;
     bool IVulkanImGuiOutputHost.MainWindowFocused => _imguiWindowHost!.IsFocused;
@@ -178,7 +180,7 @@ internal sealed unsafe partial class VulkanFrameLoop : IVulkanImGuiOutputHost
             _outputRuntime._imguiTextureRegistry.DescriptorSets,
             true,
             snapshot);
-        if (!new VulkanImGuiPlatformViewportRecorder().TryRecord(
+        if (!_imguiPlatformViewportRecorder.TryRecord(
                 encoder, _telemetry, ImGuiDrawBufferResources, in input, out _))
         {
             throw new InvalidOperationException("Failed to record detached ImGui viewport command buffer.");

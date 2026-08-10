@@ -5,10 +5,10 @@ namespace XREngine.Rendering.Vulkan
 {
     internal sealed unsafe partial class VulkanFrameLoop
     {
-        private Result SubmitAcquireSemaphoreBridge(Semaphore acquireSemaphore, ulong signalTimelineValue)
+        private VulkanSubmissionReceipt SubmitAcquireSemaphoreBridge(Semaphore acquireSemaphore, ulong signalTimelineValue)
             => SubmitAcquireSemaphoreBridge(acquireSemaphore, signalTimelineValue, default, null, 0);
 
-        private Result SubmitAcquireSemaphoreBridge(
+        private VulkanSubmissionReceipt SubmitAcquireSemaphoreBridge(
             Semaphore acquireSemaphore,
             ulong signalTimelineValue,
             Semaphore signalPresentSemaphore,
@@ -44,13 +44,20 @@ namespace XREngine.Rendering.Vulkan
                 PSignalSemaphores = signalSemaphores,
             };
 
-            return _commandRuntime.SubmitToQueueTracked(
-                Api,
-                _deviceContext,
-                _frameTelemetry,
+            VulkanSubmissionDiagnosticContext diagnosticContext = new()
+            {
+                SubmissionKind = "DesktopAcquireRecovery",
+                FrameOpKind = "Recovery",
+                OutputTargetName = "Swapchain",
+                SignalTimelineValue = signalTimelineValue,
+            };
+            return _commandRuntime.SubmitToQueueTrackedWithDisposition(
                 _deviceContext.GraphicsQueue,
                 ref submit,
                 default,
+                in diagnosticContext,
+                out _,
+                out _,
                 nameof(SubmitAcquireSemaphoreBridge));
         }
 

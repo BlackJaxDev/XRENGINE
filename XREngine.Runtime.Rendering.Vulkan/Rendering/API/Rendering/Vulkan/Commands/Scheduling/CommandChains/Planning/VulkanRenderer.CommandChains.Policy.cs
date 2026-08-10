@@ -51,11 +51,12 @@ internal sealed unsafe partial class VulkanCommandRuntime
     private const int CommandChainZeroReuseBackoffThreshold = 1;
     private const int CommandChainZeroReuseProbeInterval = 120;
     // Correct program-scoped descriptor identity can split a large imported scene into
-    // hundreds of compatible packets. Rejecting the complete schedule at the old 128
-    // ceiling forced every draw back into the primary exactly when camera motion also
-    // refreshed directional shadows. Keep the bound finite, but above the traced
-    // desktop + grouped-cascade workload.
-    private const int MaxCommandChainsPerSchedule = 1024;
+    // thousands of compatible packets. The Sponza desktop view reaches roughly 2.2K
+    // packets while camera motion refreshes directional shadows. A 1K ceiling left
+    // more than half of those draws inline in the primary, then the 2K cache ceiling
+    // evicted the working set on every frame. Keep the bound finite, but large enough
+    // for the traced desktop + grouped-cascade workload.
+    private const int MaxCommandChainsPerSchedule = 4096;
     // Camera and occlusion changes can alternate between two valid schedules. Retain
     // both working sets so the bounded LRU does not destroy one while recording the
     // other, then immediately rebuild the evicted secondary command buffers.

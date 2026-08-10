@@ -8,10 +8,11 @@ namespace XREngine.Rendering.Vulkan
         internal EDesktopFrameFlow PrepareDesktopFrameSlot(ref VulkanFrameAttempt attempt)
         {
             long stageStartTimestamp = Stopwatch.GetTimestamp();
+            ulong slotWaitValue;
             using (RuntimeRenderingHostServices.Profiling.StartProfileScope(
                        "Vulkan.FrameLifecycle.WaitFrameSlot"))
             {
-                ulong slotWaitValue =
+                slotWaitValue =
                     _commandRuntime.Synchronization._frameSlotTimelineValues![attempt.FrameSlot];
                 if (attempt.InteractiveResize &&
                     !HasTimelineValueCompleted(
@@ -45,12 +46,23 @@ namespace XREngine.Rendering.Vulkan
             attempt.Timing.WaitFrameSlot +=
                 Stopwatch.GetElapsedTime(stageStartTimestamp);
 
+            if (FrameDataArena is { } frameDataArena &&
+                !frameDataArena.TryResetFrameSlot(
+                    checked((uint)attempt.FrameSlot),
+                    frameDataArena.Generation,
+                    submissionCompletionProven: slotWaitValue != 0))
+            {
+                throw new InvalidOperationException(
+                    $"Vulkan frame-data arena slot {attempt.FrameSlot} could not be reopened after timeline completion {slotWaitValue}.");
+            }
+
             stageStartTimestamp = Stopwatch.GetTimestamp();
             using (RuntimeRenderingHostServices.Profiling.StartProfileScope(
                        "Vulkan.FrameLifecycle.DrainRetiredResources"))
             {
                 _commandRuntime.DrainInvalidatedCommandBufferRecordings(
                     Api, ResourceRuntime);
+                _commandRuntime.DrainRetiredSynchronousSubmissions();
                 DrainRetiredDesktopSwapchainGenerations();
                 _commandRuntime.DrainRetiredCommandBuffers(
                     Api,

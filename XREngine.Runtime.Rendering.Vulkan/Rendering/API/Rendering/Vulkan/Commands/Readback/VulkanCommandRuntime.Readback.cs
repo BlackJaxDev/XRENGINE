@@ -125,7 +125,15 @@ internal sealed unsafe partial class VulkanCommandRuntime
         }
 
         ulong bufferSize = pixelSize;
-        var (stagingBuffer, stagingMemory) = CreateReadbackBuffer(bufferSize);
+        if (!outputResources.TryAcquireDepthStagingSlice(
+                frameSlot,
+                bufferSize,
+                out VulkanFrameDataSlice stagingSlice,
+                out _))
+        {
+            callback?.Invoke(1.0f);
+            return;
+        }
         CommandBuffer commandBuffer = default;
         Fence fence = default;
 
@@ -150,8 +158,7 @@ internal sealed unsafe partial class VulkanCommandRuntime
                     commandPool,
                     ref commandBuffer,
                     ref fence,
-                    stagingBuffer,
-                    stagingMemory,
+                    stagingSlice,
                     "Readback.AllocateFailure");
                 return;
             }
@@ -168,8 +175,7 @@ internal sealed unsafe partial class VulkanCommandRuntime
                     commandPool,
                     ref commandBuffer,
                     ref fence,
-                    stagingBuffer,
-                    stagingMemory,
+                    stagingSlice,
                     "Readback.FenceFailure");
                 return;
             }
@@ -187,7 +193,8 @@ internal sealed unsafe partial class VulkanCommandRuntime
                 source,
                 x,
                 y,
-                stagingBuffer);
+                stagingSlice.Buffer,
+                stagingSlice.Offset);
 
             Result endResult = EndCommandBufferTracked(commandBuffer);
             DeviceContext.ObserveNativeResult("vkEndCommandBuffer.Readback.Depth", endResult);
@@ -200,8 +207,7 @@ internal sealed unsafe partial class VulkanCommandRuntime
                     commandPool,
                     ref commandBuffer,
                     ref fence,
-                    stagingBuffer,
-                    stagingMemory,
+                    stagingSlice,
                     "Readback.EndFailure");
                 return;
             }
@@ -212,15 +218,29 @@ internal sealed unsafe partial class VulkanCommandRuntime
                 CommandBufferCount = 1,
                 PCommandBuffers = &commandBuffer,
             };
-            Result submitResult = SubmitToQueueTracked(
-                Api,
-                DeviceContext,
-                FrameTelemetry,
+            if (!outputResources.TryPrepareStagingSlice(stagingSlice))
+            {
+                CompleteFailedDepthReadback(callback, outputResources, frameSlot, commandPool, ref commandBuffer, ref fence, stagingSlice, "Readback.PrepareFailure");
+                return;
+            }
+            VulkanSubmissionDiagnosticContext diagnosticContext = new()
+            {
+                SubmissionKind = "DepthReadback",
+                FrameSlot = frameSlot,
+                CommandBufferCount = 1,
+                FirstCommandBufferHandle = unchecked((ulong)commandBuffer.Handle),
+                FenceHandle = unchecked((ulong)fence.Handle),
+                QueueKind = "Graphics",
+            };
+            VulkanSubmissionReceipt submitReceipt = SubmitToQueueTrackedWithDisposition(
                 DeviceContext.GraphicsQueue,
                 ref submitInfo,
                 fence,
-                "vkQueueSubmit.Readback.Depth");
-            if (submitResult != Result.Success)
+                in diagnosticContext,
+                out _,
+                out _,
+                "DepthReadback");
+            if (!submitReceipt.SubmissionAccepted)
             {
                 CompleteFailedDepthReadback(
                     callback,
@@ -229,11 +249,11 @@ internal sealed unsafe partial class VulkanCommandRuntime
                     commandPool,
                     ref commandBuffer,
                     ref fence,
-                    stagingBuffer,
-                    stagingMemory,
+                    stagingSlice,
                     "Readback.SubmitFailure");
                 return;
             }
+            outputResources.MarkStagingSliceSubmitted(stagingSlice);
         }
         catch (Exception exception)
         {
@@ -248,8 +268,7 @@ internal sealed unsafe partial class VulkanCommandRuntime
                 commandPool,
                 ref commandBuffer,
                 ref fence,
-                stagingBuffer,
-                stagingMemory,
+                stagingSlice,
                 "Readback.RecordFailure");
             return;
         }
@@ -257,18 +276,42 @@ internal sealed unsafe partial class VulkanCommandRuntime
         Format submittedFormat = source.Format;
         CommandBuffer submittedCommandBuffer = commandBuffer;
         Fence submittedFence = fence;
-        Task settlementTask = Task.Run(() => SettleDepthReadback(
-            submittedFormat,
-            callback,
-            outputResources,
-            frameSlot,
-            commandPool,
-            submittedCommandBuffer,
-            submittedFence,
-            stagingBuffer,
-            stagingMemory,
-            bufferSize));
-        CommandBuffers.ReadbackTasks.Register(settlementTask);
+        Task settlementTask;
+        try
+        {
+            settlementTask = Task.Run(() => SettleDepthReadback(
+                submittedFormat,
+                callback,
+                outputResources,
+                frameSlot,
+                commandPool,
+                submittedCommandBuffer,
+                submittedFence,
+                stagingSlice));
+        }
+        catch (Exception exception)
+        {
+            // Native acceptance already transferred ownership. Settle synchronously rather than
+            // orphaning the fence, command buffer, or submitted arena slice on scheduling failure.
+            Debug.VulkanWarning("[Vulkan.Readback] Async depth settlement scheduling failed; settling inline: {0}: {1}", exception.GetType().Name, exception.Message);
+            SettleDepthReadback(submittedFormat, callback, outputResources, frameSlot, commandPool, submittedCommandBuffer, submittedFence, stagingSlice);
+            return;
+        }
+
+        try
+        {
+            CommandBuffers.ReadbackTasks.Register(settlementTask);
+        }
+        catch (Exception exception)
+        {
+            // The task already owns settlement. Registration is observability only and must not
+            // start a second consumer. Join it here so teardown cannot overtake untracked work.
+            Debug.VulkanWarning(
+                "[Vulkan.Readback] Async depth settlement task registration failed: {0}: {1}",
+                exception.GetType().Name,
+                exception.Message);
+            settlementTask.GetAwaiter().GetResult();
+        }
     }
 
     private void RecordDepthPixelCopy(
@@ -276,7 +319,8 @@ internal sealed unsafe partial class VulkanCommandRuntime
         in BlitImageInfo source,
         int x,
         int y,
-        Buffer stagingBuffer)
+        Buffer stagingBuffer,
+        ulong stagingBufferOffset)
     {
         ImageMemoryBarrier toTransferBarrier = new()
         {
@@ -311,7 +355,7 @@ internal sealed unsafe partial class VulkanCommandRuntime
 
         BufferImageCopy copy = new()
         {
-            BufferOffset = 0,
+            BufferOffset = stagingBufferOffset,
             BufferRowLength = 0,
             BufferImageHeight = 0,
             ImageSubresource = new ImageSubresourceLayers
@@ -360,11 +404,9 @@ internal sealed unsafe partial class VulkanCommandRuntime
         CommandPool commandPool,
         CommandBuffer commandBuffer,
         Fence fence,
-        Buffer stagingBuffer,
-        DeviceMemory stagingMemory,
-        ulong bufferSize)
+        VulkanFrameDataSlice stagingSlice)
     {
-        bool submissionCompleted = false;
+        bool ownershipSettled = false;
         try
         {
             if (!DeviceContext.IsOperational)
@@ -373,14 +415,22 @@ internal sealed unsafe partial class VulkanCommandRuntime
                 return;
             }
 
-            const ulong timeoutNanoseconds = 5_000_000_000;
-            Result waitResult = Api.WaitForFences(
-                DeviceContext.Device,
-                1,
-                ref fence,
-                true,
-                timeoutNanoseconds);
-            DeviceContext.ObserveNativeResult("vkWaitForFences.Readback.Depth", waitResult);
+            Result waitResult;
+            do
+            {
+                const ulong timeoutNanoseconds = 5_000_000_000;
+                waitResult = Api.WaitForFences(
+                    DeviceContext.Device,
+                    1,
+                    ref fence,
+                    true,
+                    timeoutNanoseconds);
+                DeviceContext.ObserveNativeResult("vkWaitForFences.Readback.Depth", waitResult);
+                if (waitResult == Result.Timeout)
+                    Debug.VulkanWarning("[Vulkan.ResourceLifetime] Depth readback fence timed out; retaining its arena slice and retrying settlement.");
+            }
+            while (waitResult == Result.Timeout && DeviceContext.IsOperational);
+
             if (waitResult != Result.Success)
             {
                 callback?.Invoke(1.0f);
@@ -388,13 +438,13 @@ internal sealed unsafe partial class VulkanCommandRuntime
             }
 
             CompleteTrackedFence(fence);
-            submissionCompleted = true;
-            if (!TryMapReadbackMemory(
-                    stagingBuffer,
-                    stagingMemory,
-                    0,
-                    bufferSize,
-                    out void* mappedPointer))
+            if (!outputResources.TryCompleteStagingSlice(stagingSlice))
+            {
+                callback?.Invoke(1.0f);
+                return;
+            }
+            ownershipSettled = true;
+            if (!outputResources.TryBeginRead(stagingSlice, out VulkanFrameDataReadScope readScope))
             {
                 callback?.Invoke(1.0f);
                 return;
@@ -402,19 +452,16 @@ internal sealed unsafe partial class VulkanCommandRuntime
 
             try
             {
-                callback?.Invoke(ReadDepthValue(mappedPointer, format));
+                callback?.Invoke(ReadDepthValue(readScope.Pointer, format));
             }
             finally
             {
-                UnmapReadbackMemory(stagingBuffer, stagingMemory);
+                readScope.Dispose();
             }
         }
         finally
         {
-            if (!submissionCompleted)
-                Debug.VulkanWarning(
-                    "[Vulkan.ResourceLifetime] Preserving timed-out depth-readback fence, command buffer, and staging buffer because GPU completion was not proven.");
-            else
+            if (ownershipSettled)
             {
                 outputResources.DestroyFence(fence);
                 FreeCommandBufferWithLifetime(
@@ -422,7 +469,18 @@ internal sealed unsafe partial class VulkanCommandRuntime
                     commandPool,
                     ref commandBuffer,
                     "Readback.AsyncComplete");
-                DestroyReadbackBuffer(stagingBuffer, stagingMemory);
+            }
+            else
+            {
+                RetireIncompleteSynchronousSubmission(
+                    commandBuffer,
+                    commandPool,
+                    fence,
+                    ResourceRuntime.ReadbackFrameDataArena,
+                    in stagingSlice,
+                    removeOneTimeOwner: false,
+                    "Readback.Depth",
+                    frameSlotLifetime: frameSlot);
             }
         }
     }
@@ -434,8 +492,7 @@ internal sealed unsafe partial class VulkanCommandRuntime
         CommandPool commandPool,
         ref CommandBuffer commandBuffer,
         ref Fence fence,
-        Buffer stagingBuffer,
-        DeviceMemory stagingMemory,
+        VulkanFrameDataSlice stagingSlice,
         string owner)
     {
         outputResources.DestroyFence(ref fence);
@@ -444,7 +501,7 @@ internal sealed unsafe partial class VulkanCommandRuntime
             commandPool,
             ref commandBuffer,
             owner);
-        DestroyReadbackBuffer(stagingBuffer, stagingMemory);
+        outputResources.CancelStagingSliceSubmission(stagingSlice);
         callback?.Invoke(1.0f);
     }
 }

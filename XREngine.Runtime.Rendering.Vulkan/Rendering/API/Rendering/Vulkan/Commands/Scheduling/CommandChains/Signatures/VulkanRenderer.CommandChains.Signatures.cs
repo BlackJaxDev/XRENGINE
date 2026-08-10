@@ -65,6 +65,9 @@ internal sealed unsafe partial class VulkanCommandRuntime
         CommandChainSchedule schedule,
         ReadOnlySpan<FrameOp> ops)
     {
+        if (schedule.BudgetLimitedInlineFrameOpCount != 0)
+            return false;
+
         ReadOnlySpan<RenderPassChainGroup> groups = schedule.Groups.Span;
         if (groups.Length == 0)
             return false;
@@ -297,7 +300,7 @@ internal sealed unsafe partial class VulkanCommandRuntime
 
                 ref readonly CommandRecordingDependencySignature expectedDependency =
                     ref chain.DependencySignatureReference;
-                if (!chain.RecordedArtifact.TryValidateSharedDependency(
+                if (!chain.RecordedArtifact.TryValidateCommandChainSecondaryDependency(
                         in expectedDependency,
                         out mismatch))
                 {
@@ -346,7 +349,7 @@ internal sealed unsafe partial class VulkanCommandRuntime
 
             ref readonly CommandRecordingDependencySignature expectedDependency =
                 ref chain.DependencySignatureReference;
-            if (chain.RecordedArtifact.TryValidateSharedDependency(
+            if (chain.RecordedArtifact.TryValidateCommandChainSecondaryDependency(
                     in expectedDependency,
                     out mismatch))
             {
@@ -398,7 +401,7 @@ internal sealed unsafe partial class VulkanCommandRuntime
 
                 ref readonly CommandRecordingDependencySignature expectedDependency =
                     ref chain.DependencySignatureReference;
-                if (chain.RecordedArtifact.TryValidateSharedDependency(
+                if (chain.RecordedArtifact.TryValidateCommandChainSecondaryDependency(
                         in expectedDependency,
                         out CommandRecordingDependencyMismatch mismatch))
                     continue;
@@ -435,7 +438,7 @@ internal sealed unsafe partial class VulkanCommandRuntime
 
             ref readonly CommandRecordingDependencySignature expectedDependency =
                 ref chain.DependencySignatureReference;
-            if (chain.RecordedArtifact.TryValidateSharedDependency(
+            if (chain.RecordedArtifact.TryValidateCommandChainSecondaryDependency(
                     in expectedDependency,
                     out CommandRecordingDependencyMismatch mismatch))
                 continue;

@@ -17,25 +17,48 @@ namespace XREngine.Rendering.Vulkan
         {
             private readonly VulkanCommandRuntime _runtime;
             private readonly bool _useTransferQueue;
+            private readonly VulkanFrameDataArena? _synchronousArena;
+            private readonly VulkanFrameDataSlice _synchronousSlice;
 
             public CommandScope(VulkanCommandRuntime runtime, CommandBuffer cmd, bool useTransferQueue)
+                : this(runtime, cmd, useTransferQueue, null, default)
+            {
+            }
+
+            internal CommandScope(
+                VulkanCommandRuntime runtime,
+                CommandBuffer cmd,
+                bool useTransferQueue,
+                VulkanFrameDataArena? synchronousArena,
+                in VulkanFrameDataSlice synchronousSlice)
             {
                 _runtime = runtime;
                 CommandBuffer = cmd;
                 _useTransferQueue = useTransferQueue;
+                _synchronousArena = synchronousArena;
+                _synchronousSlice = synchronousSlice;
             }
 
             public CommandBuffer CommandBuffer { get; }
 
             public void Dispose()
             {
-                _runtime.CommandsStop(CommandBuffer, _useTransferQueue);
+                _runtime.CommandsStop(CommandBuffer, _useTransferQueue, _synchronousArena, _synchronousSlice);
                 GC.SuppressFinalize(this);
             }
         }
 
         internal CommandScope NewCommandScope()
             => new(this, CommandsStart(useTransferQueue: false), useTransferQueue: false);
+
+        internal CommandScope NewSynchronousFrameDataCommandScope(in VulkanFrameDataSlice slice)
+            => new(
+                this,
+                CommandsStart(useTransferQueue: false),
+                useTransferQueue: false,
+                ResourceRuntime.SynchronousFrameDataArena ??
+                    throw new InvalidOperationException("The synchronous frame-data arena is unavailable."),
+                slice);
 
         private CommandScope NewTransferCommandScope()
             => new(this, CommandsStart(useTransferQueue: true), useTransferQueue: true);
@@ -86,11 +109,18 @@ namespace XREngine.Rendering.Vulkan
             return commandBuffer;
         }
 
-        private void CommandsStop(CommandBuffer commandBuffer, bool useTransferQueue)
+        private void CommandsStop(
+            CommandBuffer commandBuffer,
+            bool useTransferQueue,
+            VulkanFrameDataArena? synchronousArena,
+            in VulkanFrameDataSlice synchronousSlice)
         {
             if (!DeviceContext.IsOperational)
             {
                 RemoveCommandBufferBindState(commandBuffer);
+                if (synchronousArena is not null)
+                    throw new InvalidOperationException(
+                        $"Cannot submit synchronous frame-data while device state is {DeviceContext.State}.");
                 return;
             }
 
@@ -102,7 +132,19 @@ namespace XREngine.Rendering.Vulkan
                     commandBuffer.Handle,
                     endResult);
                 RemoveCommandBufferBindState(commandBuffer);
+                if (synchronousArena is not null)
+                    throw new InvalidOperationException(
+                        $"Failed to end synchronous frame-data command buffer ({endResult}).");
                 return;
+            }
+
+            bool frameDataPrepared = synchronousArena is not null;
+            if (frameDataPrepared && !synchronousArena!.TryPrepareFrameSlotForSubmission(0, synchronousSlice.Generation))
+            {
+                Debug.VulkanWarning("[Vulkan] Failed to prepare synchronous frame-data before one-shot submission.");
+                RemoveCommandBufferBindState(commandBuffer);
+                throw new InvalidOperationException(
+                    "Failed to prepare synchronous frame-data before one-shot submission.");
             }
 
             // Use a per-submission fence instead of QueueWaitIdle so we wait only
@@ -119,6 +161,12 @@ namespace XREngine.Rendering.Vulkan
             DeviceContext.ObserveNativeResult("vkCreateFence.OneTimeSubmit", fenceResult);
             if (fenceResult != Result.Success)
             {
+                if (synchronousArena is not null)
+                {
+                    _ = synchronousArena.TryCancelFrameSlotSubmission(0, synchronousSlice.Generation);
+                    throw new InvalidOperationException(
+                        $"Failed to create a fence for synchronous frame-data submission ({fenceResult}).");
+                }
                 Debug.VulkanWarning($"[Vulkan] Failed to create one-shot submit fence (result={fenceResult}). Falling back to QueueWaitIdle.");
                 submitFence = default;
             }
@@ -134,6 +182,17 @@ namespace XREngine.Rendering.Vulkan
                 PCommandBuffers = &commandBuffer,
             };
 
+            CommandPool owningPool = useTransferQueue
+                ? GetThreadTransferCommandPool()
+                : GetThreadCommandPool();
+            lock (_oneTimeCommandPoolsLock)
+            {
+                if (_oneTimeCommandPools.TryGetValue(commandBuffer.Handle, out OneTimeCommandOwner owner) &&
+                    owner.Pool.Handle != 0)
+                {
+                    owningPool = owner.Pool;
+                }
+            }
 
             bool waitSucceeded;
             lock (_oneTimeSubmitLock)
@@ -148,13 +207,21 @@ namespace XREngine.Rendering.Vulkan
                     out _,
                     "OneTimeSubmit");
                 Result submitResult = receipt.Result;
-                if (submitResult != Result.Success)
+                bool submissionAccepted = receipt.SubmissionAccepted;
+                if (submissionAccepted)
+                    synchronousArena?.MarkFrameSlotSubmitted(0, synchronousSlice.Generation);
+                if (!submissionAccepted)
                 {
+                    if (frameDataPrepared)
+                        _ = synchronousArena!.TryCancelFrameSlotSubmission(0, synchronousSlice.Generation);
                     if (submitResult == Result.ErrorDeviceLost)
-                    Debug.VulkanWarning($"[Vulkan] One-shot QueueSubmit failed (result={submitResult}). Skipping command buffer free.");
+                        Debug.VulkanWarning($"[Vulkan] One-shot QueueSubmit failed (result={submitResult}). Skipping command buffer free.");
                     if (submitFence.Handle != 0 && submitResult != Result.ErrorDeviceLost)
                         Api.DestroyFence(DeviceContext.Device, submitFence, null);
                     RemoveCommandBufferBindState(commandBuffer);
+                    if (synchronousArena is not null)
+                        throw new InvalidOperationException(
+                            $"Synchronous frame-data QueueSubmit was rejected ({submitResult}).");
                     return;
                 }
 
@@ -162,7 +229,21 @@ namespace XREngine.Rendering.Vulkan
                 {
                     if (!DeviceContext.IsOperational)
                     {
+                        if (synchronousArena is not null)
+                        {
+                            RetireIncompleteSynchronousSubmission(
+                                commandBuffer,
+                                owningPool,
+                                submitFence,
+                                synchronousArena,
+                                in synchronousSlice,
+                                removeOneTimeOwner: true,
+                                "OneTimeSubmit");
+                        }
                         RemoveCommandBufferBindState(commandBuffer);
+                        if (synchronousArena is not null)
+                            throw new InvalidOperationException(
+                                $"Synchronous frame-data completion became unavailable in device state {DeviceContext.State}.");
                         return;
                     }
 
@@ -197,15 +278,47 @@ namespace XREngine.Rendering.Vulkan
                 }
             }
 
-            if (submitFence.Handle != 0 && waitSucceeded)
-                Api.DestroyFence(DeviceContext.Device, submitFence, null);
-
             if (!waitSucceeded)
             {
+                if (synchronousArena is not null)
+                {
+                    RetireIncompleteSynchronousSubmission(
+                        commandBuffer,
+                        owningPool,
+                        submitFence,
+                        synchronousArena,
+                        in synchronousSlice,
+                        removeOneTimeOwner: true,
+                        "OneTimeSubmit");
+                }
                 // Do not free the command buffer â€” it may still be in flight.
                 RemoveCommandBufferBindState(commandBuffer);
+                if (synchronousArena is not null)
+                    throw new InvalidOperationException(
+                        "Synchronous frame-data submission completion could not be proven.");
                 return;
             }
+
+
+            if (synchronousArena is not null &&
+                !synchronousArena.TryResetFrameSlot(0, synchronousSlice.Generation, submissionCompletionProven: true))
+            {
+                Debug.VulkanWarning("[Vulkan] Synchronous frame-data remained unavailable after one-shot completion.");
+                RetireIncompleteSynchronousSubmission(
+                    commandBuffer,
+                    owningPool,
+                    submitFence,
+                    synchronousArena,
+                    in synchronousSlice,
+                    removeOneTimeOwner: true,
+                    "OneTimeSubmit");
+                RemoveCommandBufferBindState(commandBuffer);
+                throw new InvalidOperationException(
+                    "Synchronous frame-data remained unavailable after one-shot completion.");
+            }
+
+            if (submitFence.Handle != 0)
+                Api.DestroyFence(DeviceContext.Device, submitFence, null);
 
             CommandPool pool = useTransferQueue ? GetThreadTransferCommandPool() : GetThreadCommandPool();
             lock (_oneTimeCommandPoolsLock)

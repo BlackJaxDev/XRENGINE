@@ -26,14 +26,14 @@ namespace XREngine.Rendering.Vulkan
             if (!dispatch.Dispatched &&
                 presentResult != Result.ErrorDeviceLost)
             {
+                ResolveDesktopAcquireBySwapchainRecreation(
+                    ref attempt,
+                    "Rejected-frame presentation dispatch failed before vkQueuePresent");
                 RecordDesktopPresentBookkeeping(
                     ref attempt,
                     presentResult,
                     presentAccepted: false,
                     hasValidFrameContent: false);
-                ResolveDesktopAcquireBySwapchainRecreation(
-                    ref attempt,
-                    "Rejected-frame presentation dispatch failed before vkQueuePresent");
                 CompleteDesktopFrameSlot(ref attempt);
                 attempt.AdvanceTo(EDesktopFramePhase.Recovered);
                 attempt.Flow = EDesktopFrameFlow.Completed;
@@ -44,13 +44,6 @@ namespace XREngine.Rendering.Vulkan
 
             bool accepted =
                 presentResult is Result.Success or Result.SuboptimalKhr;
-            RecordDesktopPresentBookkeeping(
-                ref attempt,
-                presentResult,
-                accepted,
-                hasValidFrameContent:
-                    imageHasValidPresentedContent ||
-                    recoveryFrameWritten);
             if (presentResult == Result.ErrorDeviceLost)
             {
                 attempt.TransitionAcquireOwnership(
@@ -63,6 +56,13 @@ namespace XREngine.Rendering.Vulkan
 
             attempt.TransitionAcquireOwnership(
                 EVulkanDesktopAcquireOwnership.ResolvedByPresentation);
+            RecordDesktopPresentBookkeeping(
+                ref attempt,
+                presentResult,
+                accepted,
+                hasValidFrameContent:
+                    imageHasValidPresentedContent ||
+                    recoveryFrameWritten);
             Exception? policyFailure = ApplyDesktopPresentPolicy(
                 ref attempt,
                 presentResult,

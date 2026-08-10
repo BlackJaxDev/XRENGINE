@@ -7,7 +7,11 @@ namespace XREngine.Rendering.Vulkan;
 /// </summary>
 internal sealed record RetiredOpenXrSubmissionFence(
     Fence Fence,
+    bool CompletionProven,
     VulkanMappedFrameArena? Arena,
     ulong Generation,
     uint[] FrameSlots,
-    int FrameSlotCount);
+    int FrameSlotCount,
+    VulkanFrameDataArena? FrameDataArena,
+    ulong FrameDataGeneration,
+    uint FrameDataSlot);

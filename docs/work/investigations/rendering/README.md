@@ -7,6 +7,9 @@ sections describe the historical point-in-time state, not the current backlog.
 
 ## Current focus
 
+- [Vulkan Camera-Motion Black Flicker And CPU Regression](vulkan-camera-motion-black-flicker-2026-08-10.md)
+  records the active camera-motion stability fix and the route to sub-1-ms
+  warmed Vulkan render-loop CPU.
 - [Directional Light Vulkan Stability](directional-light-inspector-shadow-2026-08-03.md)
   is the canonical active investigation.
 

@@ -14,27 +14,174 @@ internal sealed unsafe class VulkanReadbackOutputResourceService(
     VulkanCommandRuntime commands)
 {
     private const ulong MaximumScreenshotResolveImageBytes = 256UL * 1024UL * 1024UL;
+    private const int ScreenshotReadbackSlotCount = 8;
+    private const int DepthReadbackSlotCount = 8;
 
-    internal (Buffer Buffer, DeviceMemory Memory) CreateStagingBuffer(
-        VulkanBackendObjectContext context,
+    internal bool TryAcquireDepthStagingSlice(
+        int frameSlot,
         ulong byteCount,
-        string owner)
-        => resources.Buffers.CreateRaw(
-            context,
+        out VulkanFrameDataSlice slice,
+        out string? failure)
+        => TryAcquireStagingSlice(
+            ScreenshotReadbackSlotCount + Math.Abs(frameSlot % DepthReadbackSlotCount),
             byteCount,
-            BufferUsageFlags.TransferDstBit,
-            MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCachedBit,
-            owner: owner);
+            submissionCompletionProven: false,
+            out slice,
+            out failure);
 
-    internal void RetireStagingBuffer(
-        VulkanBackendObjectContext context,
-        Buffer buffer,
-        DeviceMemory memory,
-        string owner)
+    internal bool TryAcquireStagingSlice(
+        int slotIndex,
+        ulong byteCount,
+        bool submissionCompletionProven,
+        out VulkanFrameDataSlice slice,
+        out string? failure)
     {
-        if (buffer.Handle == 0 && memory.Handle == 0)
-            return;
-        resources.Buffers.Destroy(context, buffer, memory, owner);
+        slice = default;
+        failure = null;
+        VulkanFrameDataArena? arena = resources.ReadbackFrameDataArena;
+        if (arena is null || !arena.IsActive)
+        {
+            failure = "The Vulkan readback frame-data arena is unavailable.";
+            return false;
+        }
+        if (!arena.TryResetFrameSlot(
+                checked((uint)slotIndex),
+                arena.Generation,
+                submissionCompletionProven))
+        {
+            failure = $"Readback arena slot {slotIndex} is not reusable.";
+            return false;
+        }
+        if (!arena.TryAllocate(
+                slotIndex,
+                EVulkanFrameDataLane.Readback,
+                byteCount,
+                alignment: 16,
+                out slice))
+        {
+            failure = $"Readback arena rejected {byteCount:N0} bytes for slot {slotIndex}.";
+            return false;
+        }
+
+        return true;
+    }
+
+    internal bool TryPrepareStagingSlice(in VulkanFrameDataSlice slice)
+        => resources.ReadbackFrameDataArena is { } arena &&
+           slice.ArenaIdentity == arena.Identity &&
+           arena.TryPrepareFrameSlotForSubmission(
+               checked((uint)slice.FrameSlot),
+               slice.Generation);
+
+    internal void MarkStagingSliceSubmitted(in VulkanFrameDataSlice slice)
+    {
+        if (resources.ReadbackFrameDataArena is { } arena &&
+            slice.ArenaIdentity == arena.Identity)
+        {
+            arena.MarkFrameSlotSubmitted(
+                checked((uint)slice.FrameSlot),
+                slice.Generation);
+        }
+    }
+
+    internal void CancelStagingSliceSubmission(in VulkanFrameDataSlice slice)
+    {
+        if (resources.ReadbackFrameDataArena is { } arena &&
+            slice.ArenaIdentity == arena.Identity)
+        {
+            _ = arena.TryCancelFrameSlotSubmission(
+                checked((uint)slice.FrameSlot),
+                slice.Generation);
+        }
+    }
+
+    internal bool TryCompleteStagingSlice(in VulkanFrameDataSlice slice)
+        => resources.ReadbackFrameDataArena is { } arena &&
+           slice.ArenaIdentity == arena.Identity &&
+           arena.TryResetFrameSlot(
+               checked((uint)slice.FrameSlot),
+               slice.Generation,
+               submissionCompletionProven: true);
+
+    internal bool TryBeginRead(
+        in VulkanFrameDataSlice slice,
+        out VulkanFrameDataReadScope scope)
+    {
+        scope = default;
+        return resources.ReadbackFrameDataArena is { } arena &&
+               slice.ArenaIdentity == arena.Identity &&
+               arena.TryBeginRead(slice, out scope);
+    }
+
+    internal bool TryAcquireGpuStatsSlice(
+        int slotIndex,
+        ulong byteCount,
+        out VulkanFrameDataSlice slice)
+    {
+        slice = default;
+        VulkanFrameDataArena? arena = resources.GpuStatsFrameDataArena;
+        if (arena is null || !arena.IsActive ||
+            !arena.TryResetFrameSlot(
+                checked((uint)slotIndex),
+                arena.Generation,
+                submissionCompletionProven: true))
+        {
+            return false;
+        }
+
+        return arena.TryAllocate(
+            slotIndex,
+            EVulkanFrameDataLane.Readback,
+            byteCount,
+            alignment: 16,
+            out slice);
+    }
+
+    internal bool TryPrepareGpuStatsSlice(in VulkanFrameDataSlice slice)
+        => resources.GpuStatsFrameDataArena is { } arena &&
+           slice.ArenaIdentity == arena.Identity &&
+           arena.TryPrepareFrameSlotForSubmission(
+               checked((uint)slice.FrameSlot),
+               slice.Generation);
+
+    internal void MarkGpuStatsSliceSubmitted(in VulkanFrameDataSlice slice)
+    {
+        if (resources.GpuStatsFrameDataArena is { } arena &&
+            slice.ArenaIdentity == arena.Identity)
+        {
+            arena.MarkFrameSlotSubmitted(
+                checked((uint)slice.FrameSlot),
+                slice.Generation);
+        }
+    }
+
+    internal void CancelGpuStatsSliceSubmission(in VulkanFrameDataSlice slice)
+    {
+        if (resources.GpuStatsFrameDataArena is { } arena &&
+            slice.ArenaIdentity == arena.Identity)
+        {
+            _ = arena.TryCancelFrameSlotSubmission(
+                checked((uint)slice.FrameSlot),
+                slice.Generation);
+        }
+    }
+
+    internal bool TryCompleteGpuStatsSlice(in VulkanFrameDataSlice slice)
+        => resources.GpuStatsFrameDataArena is { } arena &&
+           slice.ArenaIdentity == arena.Identity &&
+           arena.TryResetFrameSlot(
+               checked((uint)slice.FrameSlot),
+               slice.Generation,
+               submissionCompletionProven: true);
+
+    internal bool TryBeginGpuStatsRead(
+        in VulkanFrameDataSlice slice,
+        out VulkanFrameDataReadScope scope)
+    {
+        scope = default;
+        return resources.GpuStatsFrameDataArena is { } arena &&
+               slice.ArenaIdentity == arena.Identity &&
+               arena.TryBeginRead(slice, out scope);
     }
 
     internal Result EnsureFence(ref Fence fence, string owner)

@@ -153,8 +153,10 @@ internal sealed unsafe partial class VulkanFrameLoop
         ref PresentInfoKHR presentInfo,
         out Result result,
         out string failureReason,
+        out Exception? postDispatchFailure,
         [CallerMemberName] string? caller = null)
     {
+        postDispatchFailure = null;
         if (!TryAdmitVulkanDeviceOperation(
                 "vkQueuePresentKHR",
                 out failureReason))
@@ -198,13 +200,20 @@ internal sealed unsafe partial class VulkanFrameLoop
             dispatched = true;
         }
 
-        RecordQueueOperation("present", queue, result, caller);
-        if (result == Result.ErrorDeviceLost)
+        try
         {
-            MarkDeviceLost(
-                $"vkQueuePresentKHR:{caller ?? "<unknown>"}:{result}; QueuePresent returned ErrorDeviceLost in {caller ?? "<unknown>"}",
-                "vkQueuePresentKHR",
-                result);
+            RecordQueueOperation("present", queue, result, caller);
+            if (result == Result.ErrorDeviceLost)
+            {
+                MarkDeviceLost(
+                    $"vkQueuePresentKHR:{caller ?? "<unknown>"}:{result}; QueuePresent returned ErrorDeviceLost in {caller ?? "<unknown>"}",
+                    "vkQueuePresentKHR",
+                    result);
+            }
+        }
+        catch (Exception exception)
+        {
+            postDispatchFailure = exception;
         }
 
         return dispatched;

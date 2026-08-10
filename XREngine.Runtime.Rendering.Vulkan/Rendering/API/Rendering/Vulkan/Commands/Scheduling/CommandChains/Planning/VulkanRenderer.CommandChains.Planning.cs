@@ -160,19 +160,34 @@ internal sealed unsafe partial class VulkanCommandRuntime
         using VulkanCpuStageScope scheduleEvaluationStage =
             new(_frameTelemetry, EVulkanCpuStage.CommandChainScheduleEvaluation);
 
-        if (packets.Count > MaxCommandChainsPerSchedule)
+        int loweredPacketCount = packets.Count;
+        int budgetLimitedInlineFrameOpCount = 0;
+        if (loweredPacketCount > MaxCommandChainsPerSchedule)
         {
-            // The current cache owns one command pool and secondary command buffer
-            // per chain. Large per-draw schedules therefore multiply resource and
-            // retirement pressure across outputs and swapchain images. Keep those
-            // frames inline until command chains are grouped into bounded arenas.
+            // The cache owns one command pool and secondary command buffer per
+            // scheduled chain, so keep the native-resource bound finite. Do not
+            // reject the complete schedule when it exceeds that bound: the primary
+            // recorder already supports mixed secondary and inline islands. A
+            // cliff from 1,024 reusable chains to a completely inline frame made
+            // ordinary camera motion spend hundreds of milliseconds on the CPU.
+            for (int packetIndex = MaxCommandChainsPerSchedule;
+                 packetIndex < loweredPacketCount;
+                 packetIndex++)
+            {
+                budgetLimitedInlineFrameOpCount += packets[packetIndex].SourceCount;
+            }
+
+            packets.RemoveRange(
+                MaxCommandChainsPerSchedule,
+                loweredPacketCount - MaxCommandChainsPerSchedule);
+            requiresFreshPrimary = true;
             Debug.VulkanEvery(
                 $"Vulkan.CommandChains.ScheduleBudget.{GetHashCode()}",
                 TimeSpan.FromSeconds(2),
-                "[Vulkan.CommandChains] Recording {0} frame ops inline because the per-schedule command-chain budget is {1}.",
-                packets.Count,
-                MaxCommandChainsPerSchedule);
-            return null;
+                "[Vulkan.CommandChains] Lowered {0} packets; scheduling the bounded first {1} and retaining {2} source frame ops inline.",
+                loweredPacketCount,
+                MaxCommandChainsPerSchedule,
+                budgetLimitedInlineFrameOpCount);
         }
 
         if (packets.Count == 0)
@@ -430,7 +445,8 @@ internal sealed unsafe partial class VulkanCommandRuntime
             resourcePlanRevision,
             groupSpan,
             requiresFreshPrimary,
-            inlineFrameOpCount);
+            inlineFrameOpCount,
+            budgetLimitedInlineFrameOpCount);
         int visibilityPacketCount = CountDistinctViewKeys(packets);
         RenderPacket lastPacket = packets[^1];
         CommandRecordingDependencySignature scheduleDependencySignature =
@@ -487,7 +503,7 @@ internal sealed unsafe partial class VulkanCommandRuntime
 
         stats = new CommandChainLoweringStats(
             visibilityPacketCount,
-            packets.Count,
+            loweredPacketCount,
             packets.Count,
             chainsRecorded,
             chainsReused,

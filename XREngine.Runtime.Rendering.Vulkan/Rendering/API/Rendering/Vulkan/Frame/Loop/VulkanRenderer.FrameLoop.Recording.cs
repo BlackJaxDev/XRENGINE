@@ -7,7 +7,13 @@ namespace XREngine.Rendering.Vulkan
 {
     internal sealed unsafe partial class VulkanFrameLoop
     {
-        internal EDesktopFrameFlow RecordDesktopFrame(
+        internal VulkanDesktopFramePhaseResult RecordDesktopFrame(
+            ref VulkanFrameAttempt attempt)
+            => attempt.CompletePhase(
+                EVulkanFrameStage.CommandRecord,
+                RecordDesktopFrameCore(ref attempt));
+
+        private EDesktopFrameFlow RecordDesktopFrameCore(
             ref VulkanFrameAttempt attempt)
         {
             VulkanImGuiFrameSnapshot? imguiOverlaySnapshot = null;
@@ -48,6 +54,7 @@ namespace XREngine.Rendering.Vulkan
                     {
                         VulkanPrimaryCommandRecordingResult recordingResult =
                             RecordPreparedDesktopPrimary(
+                                ref attempt,
                                 attempt.ImageIndex,
                                 attempt.PreserveSwapchainForImGuiOverlay);
                         string recordingDeferredReason =

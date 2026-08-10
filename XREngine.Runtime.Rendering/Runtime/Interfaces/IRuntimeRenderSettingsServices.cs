@@ -344,7 +344,7 @@ public interface IRuntimeRenderSettingsServices
     float MaxShadowRenderMilliseconds { get; }
 
     /// <summary>
-    /// Gets the maximum rendered-frame age for directional cascade atlas stale reprojection.
+    /// Gets the maximum consecutive camera/content-change frames for directional cascade atlas stale reprojection.
     /// </summary>
     int MaxDirectionalCascadeAtlasStaleFrames { get; }
 

@@ -14,6 +14,7 @@ internal sealed class VulkanScreenshotReadbackSlot
     public int WatchdogWarningLogged;
     public Buffer StagingBuffer;
     public DeviceMemory StagingMemory;
+    public VulkanFrameDataSlice StagingSlice;
     public ulong RawByteCount;
     public CommandPool CommandPool;
     public CommandBuffer CommandBuffer;
