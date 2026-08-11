@@ -70,6 +70,9 @@ internal sealed class VulkanCommandBufferState
     internal object ForwardLightingGate { get; } = new();
     internal Dictionary<ForwardLightingBindingSnapshotCacheKey, ComputeDispatchSnapshot> ForwardLightingSnapshots { get; } = [];
     internal ulong ForwardLightingSnapshotFrame;
+    internal ForwardLightingBindingSnapshotCacheKey ForwardLightingLastSnapshotKey;
+    internal ComputeDispatchSnapshot? ForwardLightingLastSnapshot;
+    internal bool HasForwardLightingLastSnapshot;
     internal ConcurrentDictionary<ulong, byte> InvalidatedBuffersPendingReset { get; } = new();
     internal ConcurrentDictionary<ulong, VulkanCommandBufferTrackingBatch> TrackingBatches { get; } = new();
     internal long DirtyGeneration;

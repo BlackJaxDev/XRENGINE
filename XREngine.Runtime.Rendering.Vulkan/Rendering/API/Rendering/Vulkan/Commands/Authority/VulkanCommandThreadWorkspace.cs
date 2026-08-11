@@ -70,6 +70,10 @@ internal sealed class VulkanCommandThreadContext
     public EReadBufferMode ReadBufferMode;
     public bool PreparedCommandChainEncodingActive;
     public VulkanFrameOpWorkspace? FrameOpWorkspace;
+    public ulong ForwardLightingSnapshotFrame;
+    public ForwardLightingBindingSnapshotCacheKey ForwardLightingSnapshotKey;
+    public ComputeDispatchSnapshot? ForwardLightingSnapshot;
+    public bool HasForwardLightingSnapshot;
 
     public void Reset()
     {
@@ -85,6 +89,9 @@ internal sealed class VulkanCommandThreadContext
         BoundReadFrameBuffer = null;
         ReadBufferMode = default;
         PreparedCommandChainEncodingActive = false;
+        ForwardLightingSnapshotFrame = 0;
+        ForwardLightingSnapshot = null;
+        HasForwardLightingSnapshot = false;
         FrameOpWorkspace?.Reset();
         FrameOpWorkspace = null;
     }

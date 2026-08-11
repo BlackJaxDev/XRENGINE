@@ -174,7 +174,9 @@ internal sealed record MeshDrawOp(int PassIndex, XRFrameBuffer? Target, PendingM
                 Draw,
                 inlineDrawUniformSlot,
                 recordingState.CommandBufferImageSlot,
-                Target);
+                Target,
+                recordingInfo.PassIndex,
+                Context.PassMetadata);
             commandRuntime.BeginRenderPassForTarget(
                 ref recordingState,
                 Target,

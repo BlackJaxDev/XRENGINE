@@ -1,6 +1,7 @@
 using Silk.NET.Vulkan;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Models.Materials;
+using XREngine.Rendering.RenderGraph;
 using XREngine.Scene;
 
 namespace XREngine.Rendering.Vulkan;
@@ -58,7 +59,18 @@ internal sealed class VulkanProgramCommandOperations(VulkanCommandRuntime comman
         return false;
     }
     internal int ResolveCommandBufferImageIndex(CommandBuffer commandBuffer) => commands.ResolveCommandBufferImageIndex(commandBuffer);
-    internal bool TransitionPublishedDescriptorSetImagesForSampling(CommandBuffer commandBuffer, DescriptorSet descriptorSet, XRFrameBuffer? target) => commands.TransitionPublishedDescriptorSetImagesForSampling(commandBuffer, descriptorSet, target);
+    internal bool TransitionPublishedDescriptorSetImagesForSampling(
+        CommandBuffer commandBuffer,
+        DescriptorSet descriptorSet,
+        XRFrameBuffer? target,
+        int passIndex,
+        IReadOnlyCollection<RenderPassMetadata>? passMetadata)
+        => commands.TransitionPublishedDescriptorSetImagesForSampling(
+            commandBuffer,
+            descriptorSet,
+            target,
+            passIndex,
+            passMetadata);
     internal bool TryAcquireMappedFrameArenaRecordingLease(CommandBuffer commandBuffer, VkMeshRenderer owner, int drawSlot, ulong sealedGeneration, out string reason) => commands.TryAcquireMappedFrameArenaRecordingLease(commandBuffer, owner, drawSlot, sealedGeneration, out reason);
     internal bool CommandBufferReferencesAllDescriptorSets(CommandBuffer commandBuffer, ReadOnlySpan<DescriptorSet> sets, out ulong missing) => commands.CommandBufferReferencesAllDescriptorSets(commandBuffer, sets, out missing);
     internal void SetBoundFrameBufferState(EFramebufferTarget target, XRFrameBuffer? frameBuffer) => commands.SetBoundFrameBufferState(target, frameBuffer);

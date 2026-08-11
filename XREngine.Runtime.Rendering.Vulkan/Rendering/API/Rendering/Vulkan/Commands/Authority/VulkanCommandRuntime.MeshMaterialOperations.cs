@@ -65,19 +65,46 @@ internal sealed unsafe partial class VulkanCommandRuntime
             RuntimeEngine.Rendering.State.IsStereoPass,
             renderingState?.UseUnjitteredProjection ?? false);
 
+        VulkanCommandThreadContext threadContext = ThreadWorkspace.Current;
+        if (threadContext.HasForwardLightingSnapshot &&
+            threadContext.ForwardLightingSnapshotFrame == frameId &&
+            threadContext.ForwardLightingSnapshotKey.Equals(key))
+        {
+            return threadContext.ForwardLightingSnapshot;
+        }
+
         lock (CommandBuffers.ForwardLightingGate)
         {
             if (CommandBuffers.ForwardLightingSnapshotFrame != frameId)
             {
                 CommandBuffers.ForwardLightingSnapshots.Clear();
                 CommandBuffers.ForwardLightingSnapshotFrame = frameId;
+                CommandBuffers.ForwardLightingLastSnapshot = null;
+                CommandBuffers.HasForwardLightingLastSnapshot = false;
+            }
+
+            if (CommandBuffers.HasForwardLightingLastSnapshot &&
+                CommandBuffers.ForwardLightingLastSnapshotKey.Equals(key))
+            {
+                return PublishThreadForwardLightingSnapshot(
+                    threadContext,
+                    frameId,
+                    key,
+                    CommandBuffers.ForwardLightingLastSnapshot);
             }
 
             if (CommandBuffers.ForwardLightingSnapshots.TryGetValue(
                     key,
                     out ComputeDispatchSnapshot? snapshot))
             {
-                return snapshot;
+                CommandBuffers.ForwardLightingLastSnapshotKey = key;
+                CommandBuffers.ForwardLightingLastSnapshot = snapshot;
+                CommandBuffers.HasForwardLightingLastSnapshot = true;
+                return PublishThreadForwardLightingSnapshot(
+                    threadContext,
+                    frameId,
+                    key,
+                    snapshot);
             }
 
             snapshot = CaptureForwardLightingBindingSnapshot(
@@ -85,8 +112,28 @@ internal sealed unsafe partial class VulkanCommandRuntime
                 programData,
                 backendProgram);
             CommandBuffers.ForwardLightingSnapshots.Add(key, snapshot);
-            return snapshot;
+            CommandBuffers.ForwardLightingLastSnapshotKey = key;
+            CommandBuffers.ForwardLightingLastSnapshot = snapshot;
+            CommandBuffers.HasForwardLightingLastSnapshot = true;
+            return PublishThreadForwardLightingSnapshot(
+                threadContext,
+                frameId,
+                key,
+                snapshot);
         }
+    }
+
+    private static ComputeDispatchSnapshot? PublishThreadForwardLightingSnapshot(
+        VulkanCommandThreadContext threadContext,
+        ulong frameId,
+        in ForwardLightingBindingSnapshotCacheKey key,
+        ComputeDispatchSnapshot? snapshot)
+    {
+        threadContext.ForwardLightingSnapshotFrame = frameId;
+        threadContext.ForwardLightingSnapshotKey = key;
+        threadContext.ForwardLightingSnapshot = snapshot;
+        threadContext.HasForwardLightingSnapshot = true;
+        return snapshot;
     }
 
     /// <summary>

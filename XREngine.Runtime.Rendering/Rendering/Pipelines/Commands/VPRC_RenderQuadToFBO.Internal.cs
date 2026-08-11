@@ -57,7 +57,7 @@ namespace XREngine.Rendering.Pipelines.Commands
         /// <param name="destination">The name of the destination FBO.</param>
         /// <param name="variant">An optional variant name.</param>
         /// <returns>The constructed render graph pass name.</returns>
-        protected static string BuildQuadBlitPassName(string sourceFboName, string destination, string? variant = null)
+        internal static string BuildQuadBlitPassName(string sourceFboName, string destination, string? variant = null)
             => QuadBlitPassNames.GetOrAdd(
                 (sourceFboName, destination, variant),
                 static key => string.IsNullOrWhiteSpace(key.Variant)

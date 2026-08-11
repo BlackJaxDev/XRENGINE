@@ -339,6 +339,67 @@ internal unsafe class VkFrameBuffer(
         return false;
     }
 
+    /// <summary>
+    /// Resolves the layout used by one attachment in a specific render-graph
+    /// pass without materializing a planned attachment-signature array.
+    /// </summary>
+    internal ImageLayout ResolveAttachmentReferenceLayoutForPass(
+        int attachmentIndex,
+        int passIndex,
+        IReadOnlyCollection<RenderPassMetadata>? passMetadata)
+    {
+        if (_attachmentSignature is not { Length: > 0 } signatures ||
+            (uint)attachmentIndex >= (uint)signatures.Length)
+        {
+            return ImageLayout.Undefined;
+        }
+
+        ImageLayout fallback = signatures[attachmentIndex].ReferenceLayout;
+        if (passMetadata is null || passMetadata.Count == 0 ||
+            string.IsNullOrWhiteSpace(Data.Name) ||
+            FindPassMetadata(passMetadata, passIndex) is not { } pass)
+        {
+            return fallback;
+        }
+
+        Span<bool> writeCapableDepthStencilAttachments = stackalloc bool[signatures.Length];
+        CollectWriteCapableDepthStencilAttachments(
+            signatures,
+            pass,
+            Data.Name!,
+            writeCapableDepthStencilAttachments);
+
+        Span<int> matchingIndices = stackalloc int[signatures.Length];
+        for (int usageIndex = 0; usageIndex < pass.ResourceUsages.Count; usageIndex++)
+        {
+            RenderPassResourceUsage usage = pass.ResourceUsages[usageIndex];
+            if (!usage.IsAttachment ||
+                !TryGetFrameBufferSlot(usage.ResourceName, Data.Name!, out ReadOnlySpan<char> slot))
+            {
+                continue;
+            }
+
+            int matchingCount = ResolveMatchingAttachmentIndices(
+                signatures,
+                slot,
+                usage,
+                pass,
+                matchingIndices);
+            for (int matchIndex = 0; matchIndex < matchingCount; matchIndex++)
+            {
+                if (matchingIndices[matchIndex] != attachmentIndex)
+                    continue;
+
+                return ResolveAttachmentReferenceLayout(
+                    signatures[attachmentIndex],
+                    usage,
+                    writeCapableDepthStencilAttachments[attachmentIndex]);
+            }
+        }
+
+        return fallback;
+    }
+
     internal bool TryGetAttachmentTarget(
         int attachmentIndex,
         [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out IFrameBufferAttachement? target,

@@ -31,18 +31,12 @@ internal sealed unsafe class VulkanDynamicUiBatchTextOverlayRecorder
         bool trackingStarted = true;
         try
         {
-            CommandBufferBeginInfo beginInfo = new()
-            {
-                SType = StructureType.CommandBufferBeginInfo,
-                Flags = CommandBufferUsageFlags.OneTimeSubmitBit,
-            };
             encoder.Runtime.BeginRecording(
                 encoder.Runtime.Api,
                 encoder.Runtime.DeviceContext.StateMachine,
                 input.OverlayCommandBuffer,
-                "vkBeginCommandBuffer.DynamicUiTextOverlay");
-            if (encoder.Runtime.Api.BeginCommandBuffer(input.OverlayCommandBuffer, ref beginInfo) != Result.Success)
-                throw new InvalidOperationException("Failed to begin dynamic UI text overlay command buffer.");
+                "vkBeginCommandBuffer.DynamicUiTextOverlay",
+                CommandBufferUsageFlags.OneTimeSubmitBit);
 
             encoder.Runtime.SeedRecordedImageLayoutState(
                 input.OverlayCommandBuffer,

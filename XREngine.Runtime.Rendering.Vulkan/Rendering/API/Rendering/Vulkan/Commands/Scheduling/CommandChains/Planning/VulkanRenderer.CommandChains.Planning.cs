@@ -275,6 +275,8 @@ internal sealed unsafe partial class VulkanCommandRuntime
                 new(_frameTelemetry, EVulkanCpuStage.CommandDependencyComparison))
             {
                 dirtyReason = EvaluateCommandChainDirtyReason(chain, packet);
+                if (chain.ResourceVersionSignature != resourceVersionSignature)
+                    dirtyReason |= CommandChainDirtyReason.ResourcePlan;
             }
             if (dirtyReason != CommandChainDirtyReason.None &&
                 FrameDataReuseDiagnosticsEnabled)
@@ -406,6 +408,7 @@ internal sealed unsafe partial class VulkanCommandRuntime
             chain.StructuralSignature = packet.StructuralSignature;
             chain.FrameDataSignature = packet.FrameDataSignature;
             chain.ResourcePlanRevision = packet.ResourcePlanSnapshot.Revision;
+            chain.ResourceVersionSignature = resourceVersionSignature;
             chain.PhysicalImageSignature = packet.ResourcePlanSnapshot.PhysicalImageSignature;
             chain.FramebufferSignature = packet.ResourcePlanSnapshot.FramebufferSignature;
             chain.DescriptorGeneration = packet.DescriptorSnapshot.DescriptorGeneration;

@@ -360,7 +360,9 @@ namespace XREngine.Rendering.Vulkan
                         indirectOp.Draw,
                         uniformSlots[i],
                         recordingState.CommandBufferImageSlot,
-                        indirectOp.Target);
+                        indirectOp.Target,
+                        indirectOp.PassIndex,
+                        indirectOp.Context.PassMetadata);
                 }
 
                 Dictionary<CommandChainKey, CommandChain> commandChainCache = GetCommandChainCache(recordingState.FrameDataImageIndex);
@@ -1883,7 +1885,9 @@ namespace XREngine.Rendering.Vulkan
                     drawOp.Draw.Renderer.TryTransitionPreparedDescriptorImagesForSampling(
                         recordingState.CommandBuffer,
                         preparedState,
-                        drawOp.Target);
+                        drawOp.Target,
+                        drawOp.PassIndex,
+                        drawOp.Context.PassMetadata);
 
                     if (preparedIndex != relativeIndex)
                     {
@@ -1986,7 +1990,9 @@ namespace XREngine.Rendering.Vulkan
                         drawOp.Draw,
                         drawUniformSlot,
                         recordingState.CommandBufferImageSlot,
-                        drawOp.Target);
+                        drawOp.Target,
+                        drawOp.PassIndex,
+                        drawOp.Context.PassMetadata);
 
                     drawOp.Draw.Renderer.EnsureUniformDrawSlotCapacity(drawUniformSlot + 1);
                 }

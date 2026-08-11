@@ -206,3 +206,98 @@ the following work addresses total active render-loop CPU.
 RenderDoc remains useful for proving that cached plans still bind and write the
 correct targets, but the next performance pass should be driven by CPU stage
 timing and allocation traces rather than GPU capture alone.
+
+## 2026-08-10 maximize/skybox follow-up
+
+The skybox component, fullscreen triangle, material, and Background command all
+remain active after maximizing. The failure is below skybox shading: the resize
+commits a new render-resource generation, recompiles extent-dependent pipeline
+variants, and the first new-generation frame can submit consumers whose source
+color/depth images have not reached their declared attachment or sampled layout.
+`HDRSceneTex` and `LightingAccumTexture` then remain identically zero, so the
+final viewport is black even though the skybox draw is still present.
+
+Validation exposed three independent correctness holes:
+
+- ImGui and dynamic-text overlay recorders called `vkBeginCommandBuffer` twice
+  for the same command buffer. They now begin once through the command runtime.
+- The tracked barrier encoder published image lifetime dependencies but did not
+  publish each image barrier's resulting access/layout state. It now journals
+  every image barrier after emission.
+- Async graphics warmup skipped draw operations before their pass transition and
+  render-graph barriers, then submitted downstream consumers as a partial frame.
+  Primary recording now defers before `vkBeginCommandBuffer` until every pipeline
+  required by the sealed graph is executable.
+
+Those changes eliminate the repeated already-recording and stale shader-read /
+attachment-layout errors. A remaining first-use resize hole is still under
+investigation: a newly allocated depth/stencil image is sometimes first observed
+by a sampled descriptor as `DepthStencilReadOnlyOptimal` while Vulkan still has
+the physical subresources in `Undefined`. Unconditionally transitioning sampled
+depth while it is also a destination attachment was tested and rejected because
+it made `HDRSceneTex` black at startup even without validation errors. The final
+fix must distinguish a legitimate read-only depth attachment from a write-capable
+attachment (or repair the frozen descriptor/resource-plan ownership) rather than
+removing the attachment guard globally.
+
+Evidence is under
+`Build/_AgentValidation/20260805-2158-phase40-vulkan-perf/20260810-cpu-below-1ms/`.
+The relevant validation session log is
+`Build/_AgentValidation/mcp-sessions/vulkan-cpu-20260810/logs/XREngine.Editor_debug/windows_x64/xrengine_2026-08-10_19-36-34_pid28848/log_vulkan.log`.
+The Vulkan leaf build passes with zero warnings and errors. No tests were added or
+run while live resize correctness remains unresolved.
+
+### Resolution: startup and maximize skybox failure
+
+The remaining black viewport was not a skybox shader, viewport, depth-test, or
+resource-resize failure. Frame-operation scheduling combined pass ranks from two
+different graphs:
+
+- the currently published resource graph had only seven passes from another
+  render context and ranked `Background` near the front;
+- the main scene's complete pipeline metadata contained synthetic passes such as
+  `QuadBlit_LightCombineFBO_to_ForwardPassFBO`, but those missing passes received
+  ranks from a different topological order.
+
+That mixed rank space recorded the skybox first, followed by the ForwardPass
+color clear and deferred-lighting blit. The skybox draw was valid but was erased
+later in the same frame. Maximizing made the symptom deterministic because the
+new `HDRSceneTex` generation no longer retained any prior color.
+
+The fix has two parts:
+
+- Frame-operation sorting now uses each operation context's complete pipeline
+  pass metadata as its ordering authority and uses the published compiled graph
+  only as a fallback. The metadata-order lookup is cached once per contiguous
+  context while constructing sort keys, avoiding a per-operation cache lookup.
+- `DefaultRenderPipeline` explicitly declares that `Background` depends on the
+  light-combine-to-ForwardPass blit. This is necessary because inactive capture
+  branches can describe the reusable `Background` bucket before its active
+  ForwardPass occurrence, so first-declaration order is not a semantic ordering
+  guarantee.
+
+The earlier experiment that disabled skybox depth testing was reverted; the
+original `LessOrEqual`, depth-read-only behavior is correct once the draw is in
+the intended pass order. Temporary shader and viewport diagnostics were also
+removed.
+
+Live validation used the exact VS Code Unit Testing World environment
+(`XRE_WORLD_MODE=UnitTesting`, `--unit-testing`) with Vulkan validation and sync
+validation enabled:
+
+- startup at 1920x1080 visibly rendered the procedural sky:
+  `Build/_AgentValidation/20260805-2158-phase40-vulkan-perf/20260810-cpu-below-1ms/mcp-captures/Screenshot_20260810_214429_123_4badd9001e344600988e8276ebf7c79c.png`;
+- after maximizing to 2560x1369, the procedural sky remained visible:
+  `Build/_AgentValidation/20260805-2158-phase40-vulkan-perf/20260810-cpu-below-1ms/mcp-captures/Screenshot_20260810_214449_358_72b2c5d541394848a16d3aaaa4450a90.png`;
+- trace validation before removing diagnostics showed the ForwardPass clear and
+  light-combine draw before `Background` on every warmed frame;
+- no resize image-layout VUID or push-constant VUID remained. Sync validation
+  still reports one separate startup `WRITE_AFTER_READ` hazard in the ImGui
+  platform-window submission's acquire/layout-transition dependency; it is not
+  in the main scene or skybox submission and did not recur on maximize.
+
+`rdc doctor` passed, but the attempted RenderDoc child-process injection did not
+produce a capture before timeout. MCP intermediate-texture captures and Vulkan
+operation/barrier logs were sufficient to identify and verify the ordering bug.
+The startup/maximize skybox regression is now resolved locally; user acceptance
+is still pending.

@@ -182,6 +182,27 @@ internal readonly unsafe struct VulkanTrackedCommandEncoder(VulkanCommandRuntime
             bufferMemoryBarriers,
             imageMemoryBarrierCount,
             imageMemoryBarriers);
+
+        for (uint index = 0; index < imageMemoryBarrierCount; index++)
+        {
+            ref ImageMemoryBarrier barrier = ref imageMemoryBarriers[index];
+            VulkanImageAccessState next = VulkanCommandSynchronizationState.ResolveVulkanImageAccessState(
+                barrier.NewLayout,
+                barrier.SubresourceRange.AspectMask) with
+            {
+                StageMask = (PipelineStageFlags2)(ulong)dstStageMask,
+                AccessMask = (AccessFlags2)(ulong)barrier.DstAccessMask,
+                QueueFamilyIndex = barrier.DstQueueFamilyIndex,
+                ResourceGeneration = Runtime.ResourceRuntime.GetPublishedGeneration(
+                    ObjectType.Image,
+                    barrier.Image.Handle),
+            };
+            RecordImageAccess(
+                commandBuffer,
+                barrier.Image,
+                in barrier.SubresourceRange,
+                in next);
+        }
     }
 
     /// <summary>Clears an image and records its lifetime dependency.</summary>
