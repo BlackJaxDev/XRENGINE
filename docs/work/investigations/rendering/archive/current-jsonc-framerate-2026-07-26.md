@@ -1,5 +1,8 @@
 # Current JSONC Framerate Investigation
 
+> Historical incident record. For current causes, invariants, and triage, use
+> [Vulkan Desktop Camera Motion, Stale Frames, And CPU Scaling](../vulkan-camera-motion-black-flicker-2026-08-10.md).
+
 ## Problem
 
 Determine why the current `Assets/UnitTestingWorldSettings.jsonc` Vulkan desktop

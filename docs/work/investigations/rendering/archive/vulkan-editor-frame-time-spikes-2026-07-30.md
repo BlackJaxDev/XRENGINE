@@ -1,5 +1,8 @@
 # Vulkan Editor Steady-Frame CPU Cost Investigation (2026-07-30)
 
+> Historical incident record. For current causes, invariants, and triage, use
+> [Vulkan Desktop Camera Motion, Stale Frames, And CPU Scaling](../vulkan-camera-motion-black-flicker-2026-08-10.md).
+
 Last Updated: 2026-08-04
 Owner: Rendering / Vulkan
 Status: Closed as a root-cause and implementation record on 2026-08-04. Broad
@@ -196,12 +199,12 @@ Primary source anchors:
 - [`VkMeshRenderer` reflected uniform writer](../../../../../XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Uniforms.cs)
   and
   [`ComputeDispatchSnapshot`](../../../../../XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/FrameOps/ComputeDispatchSnapshot.cs);
-- [`VulkanRenderer` reusable command processing](../../../../../XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/Recording/VulkanRenderer.CommandBufferRecording.cs);
+- [`VulkanCommandRuntime` reusable primary processing](../../../../../XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/Recording/VulkanCommandRuntime.PrimaryRecording.cs);
 - [`VulkanShaderAutoUniforms`](../../../../../XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Shaders/VulkanShaderAutoUniforms.cs),
   its
   [`declaration/block rewrite`](../../../../../XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Shaders/VulkanShaderAutoUniforms.DeclarationParsing.cs),
   and the
-  [`descriptor tier constants`](../../../../../XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Descriptors/VulkanDescriptorLayoutCache.cs).
+  [`descriptor tier constants`](../../../../../XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Resources/Authority/VulkanDescriptorLayoutCache.cs).
 
 ### 1. Workstream 04 publishes identity and live references
 

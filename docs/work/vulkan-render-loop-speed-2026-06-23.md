@@ -1,5 +1,9 @@
 # Vulkan Render Loop Speed Investigation - 2026-06-23
 
+> Historical optimization record. For current desktop cadence symptoms,
+> measurement rules, and ownership, use
+> [Vulkan Desktop Camera Motion, Stale Frames, And CPU Scaling](investigations/rendering/vulkan-camera-motion-black-flicker-2026-08-10.md).
+
 ## Problem
 
 Improve Vulkan render-loop CPU time in the editor and restore GPU timing samples for Vulkan commands when render stats and GPU pipeline profiling are enabled.

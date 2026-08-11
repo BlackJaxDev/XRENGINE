@@ -4,6 +4,10 @@ Date: 2026-08-06
 Status: Phase 4.0 through Phase 4.3 complete; Phase 4.4+ active
 Owner: Rendering
 
+Desktop camera/input cadence symptoms and their reusable triage rules are
+consolidated in
+[Vulkan Desktop Camera Motion, Stale Frames, And CPU Scaling](vulkan-camera-motion-black-flicker-2026-08-10.md).
+
 ## Objective
 
 Close the remaining Phase 1-3 validation gates in the consolidated Vulkan core

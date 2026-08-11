@@ -1,5 +1,9 @@
 # CPU async-query occlusion during camera motion
 
+> Historical visibility/query incident. For current desktop cadence symptoms,
+> measurement rules, and ownership, use
+> [Vulkan Desktop Camera Motion, Stale Frames, And CPU Scaling](../vulkan-camera-motion-black-flicker-2026-08-10.md).
+
 Status: the upside-down Vulkan presentation regression and the camera-motion all-visible recovery loop are fixed and validated. Camera-cut, viewport-edge, hierarchy, and stereo stress cases remain as follow-up matrix work.
 
 ## Problems
