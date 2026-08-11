@@ -559,10 +559,3 @@ internal sealed partial class VulkanDeviceFaultFacility
         return length == 0 ? string.Empty : Encoding.UTF8.GetString(bytes, length);
     }
 }
-
-internal readonly record struct VulkanKhrDeviceFaultCapabilityQuery(
-    bool DeviceFault,
-    bool VendorBinary,
-    bool ReportMasked,
-    bool DeviceLostOnMasked,
-    uint MaxReportCount);

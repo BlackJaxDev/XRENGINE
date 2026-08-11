@@ -73,9 +73,3 @@ internal struct VulkanRecordedProgramIdentityBuffer : IEquatable<VulkanRecordedP
         return hash.ToHashCode();
     }
 }
-
-[InlineArray(VulkanRecordedProgramIdentityBuffer.Capacity)]
-internal struct VulkanRecordedProgramIdentityInlineArray
-{
-    private VulkanRecordedProgramIdentity _element0;
-}

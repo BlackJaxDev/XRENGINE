@@ -262,7 +262,7 @@ delegate implementation and state ownership to focused components:
 VulkanRenderer
   |-- VulkanDeviceContext
   |-- VulkanDesktopFrameCoordinator
-  |-- VulkanCommandScheduler
+  |-- VulkanFrameOperationScheduler
   |-- VulkanCommandRecorder
   |-- VulkanRenderGraphRuntime
   |-- VulkanResourceLifetimeTracker
@@ -538,7 +538,7 @@ Acceptance criteria:
 ## Phase 6 - Extract Command Scheduling And Recording
 
 - [x] Separate primary command-buffer cache/allocation from recording policy.
-- [x] Introduce `VulkanCommandScheduler` for command-chain ordering,
+- [x] Introduce `VulkanFrameOperationScheduler` for deterministic frame-operation ordering,
   parallel-recording buckets, and cache reuse decisions.
 - [x] Introduce `VulkanCommandRecorder` for Vulkan command emission.
 - [x] Add `VulkanCommandRecordingContext` and capture all frame/view/settings

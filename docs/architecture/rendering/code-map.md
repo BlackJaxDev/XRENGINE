@@ -85,7 +85,7 @@ adjustments required by the split.
 | `Vulkan/Drawing.Core.cs` | `Vulkan/Frame/VulkanRenderer.FrameLoop.cs`, `Vulkan/Commands/VulkanRenderer.FrameOpApi.cs`, `Vulkan/Commands/VulkanRenderer.RenderStateApi.cs`, `Vulkan/BackendObjects/VulkanRenderer.RenderObjectFactory.cs` |
 | `Vulkan/SwapChain.cs` | `Vulkan/Frame/VulkanRenderer.Swapchain.cs` |
 | `Vulkan/VulkanSynchronization.cs` | `Vulkan/Frame/VulkanRenderer.Synchronization.cs` |
-| `Vulkan/Objects/CommandBuffers.cs` | `Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBuffer*.cs` and focused `VulkanCommandScheduler` / `VulkanCommandRecorder` owners |
+| `Vulkan/Objects/CommandBuffers.cs` | `Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBuffer*.cs` and focused `VulkanFrameOperationScheduler` / `VulkanCommandRecorder` owners |
 | `Vulkan/VulkanCommandChain*.cs` | `Vulkan/Commands/Scheduling/CommandChain*.cs` |
 | `Vulkan/VulkanRenderer.State.cs` | `Vulkan/Commands/VulkanRenderer.RenderStateMutation.cs`, `Vulkan/RenderGraph/VulkanRenderer.RenderGraphState.cs` plus focused planner partials, and `Vulkan/Resources/VulkanRenderer.ResourceRegistration.cs` |
 | `Vulkan/VulkanRenderGraphCompiler.cs` | `Vulkan/RenderGraph/VulkanRenderGraphCompiler.cs` |

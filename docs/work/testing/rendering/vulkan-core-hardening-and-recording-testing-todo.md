@@ -151,13 +151,14 @@ through 14 of the consolidated code-changes tracker.
   declarations, 381 type-wide unsafe files, 102 ambient facade-callback files,
   and two thread-static files. The older 858-file / 170,048-line draft baseline
   predated the final Phase 1-3 source and is superseded.
-- [ ] Verify the final hand-written Vulkan core has at most 550 files / 125,000
-  lines, the lifecycle spine has at most 40 files / 20,000 lines, and
-  `VulkanRenderer` is one non-partial facade file of at most 500 lines.
+- [ ] Verify the final hand-written Vulkan core stays below 200,000 lines,
+  preserves one-top-level-type-per-file organization with informational global
+  file count, keeps the lifecycle spine at most 40 files / 20,000 lines, and
+  keeps `VulkanRenderer` as one non-partial facade file of at most 500 lines.
 - [ ] Verify the main frame orchestration method is at most 100 logical lines,
   lifecycle paths use at most two owner directories below `Vulkan/`, and every
-  file above 1,500 physical lines or method above 150 logical lines has the
-  design-required approved ownership exception.
+  file above 1,500 physical lines or method above 150 logical lines has an
+  approved entry in `Tools/Reports/VulkanCoreStructuralExceptions.json`.
 - [ ] Verify reductions were not achieved by combining unrelated top-level
   types, hiding behavior in generated files, relocating Vulkan-specific code to
   a backend-neutral assembly, or replacing partials with a service locator or

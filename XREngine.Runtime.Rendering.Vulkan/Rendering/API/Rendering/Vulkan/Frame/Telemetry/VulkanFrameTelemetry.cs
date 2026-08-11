@@ -13,6 +13,18 @@ namespace XREngine.Rendering.Vulkan;
 /// </summary>
 internal sealed class VulkanFrameTelemetry
 {
+    internal const uint GpuProfilerMaxScopesPerFrame = 512;
+    internal const uint GpuProfilerQueryCount = GpuProfilerMaxScopesPerFrame * 2;
+    internal const string GpuProfilerBackendName = "Vulkan";
+    internal const string GpuProfilerQuarantinedMessage =
+        "Vulkan GPU pipeline command timing is disabled; set XRE_GPU_TIMESTAMP_DENSE=1 for dense diagnostic command timestamps. Coarse Vulkan command-buffer GPU timing remains available.";
+    internal static bool IsGpuProfilerCommandBufferInstrumentationEnabled
+        => XREnvironment.IsEnabled(XREngineEnvironmentVariables.GpuTimestampDense);
+    internal static string GpuProfilerCommandTimingStatusMessage
+        => IsGpuProfilerCommandBufferInstrumentationEnabled
+            ? "Vulkan GPU timings are collected from recorded command buffers."
+            : GpuProfilerQuarantinedMessage;
+
     internal ConcurrentDictionary<string, string> ComputeDispatchOperationNames { get; } =
         new(StringComparer.Ordinal);
     private const int PublicationCapacity = 64;
@@ -39,8 +51,6 @@ internal sealed class VulkanFrameTelemetry
     internal bool _vulkanGpuProfilerBudgetWarningIssued;
     internal int _vulkanGpuProfilerRecordingFrameSlot = -1;
     internal uint _vulkanGpuProfilerNextQuery;
-    internal bool[]? _vulkanGpuProfilerCommandBufferInstrumented;
-    internal int[]? _vulkanGpuProfilerCommandBufferFrameSlots;
     internal readonly Dictionary<string, ulong> _gpuRenderStatsTraceHashes = [];
     internal readonly VulkanFinalPresentationLedgerState _finalPresentationLedger =
         new(XREnvironment.IsEnabled(XREngineEnvironmentVariables.VulkanFinalPresentationLedger));

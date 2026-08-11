@@ -2,14 +2,6 @@ using Silk.NET.Vulkan;
 
 namespace XREngine.Rendering.Vulkan;
 
-internal enum EVulkanPrimaryCommandRecordingDisposition : byte
-{
-    Recorded,
-    Reused,
-    ReplanRequired,
-    Deferred,
-}
-
 /// <summary>Allocation-free result returned by a frozen primary recording attempt.</summary>
 internal readonly record struct VulkanPrimaryCommandRecordingResult(
     EVulkanPrimaryCommandRecordingDisposition Disposition,

@@ -197,6 +197,10 @@ internal sealed unsafe partial class VulkanCommandRuntime
             return VulkanPrimaryCommandRecordingResult.ReplanRequired(reason);
 
         Interlocked.Increment(ref _recordedPrimaryFrameCounter);
+        bool gpuPipelineProfilingActive =
+            VulkanFrameTelemetry.IsGpuProfilerCommandBufferInstrumentationEnabled &&
+            FrameTelemetry._vulkanGpuProfilerEnabled &&
+            RenderPipelineGpuProfiler.Instance.IsProfilingActive;
 
         CommandBuffer uploadCommandBuffer = default;
         CommandPool uploadCommandPool = default;
@@ -263,7 +267,7 @@ internal sealed unsafe partial class VulkanCommandRuntime
                     input.FramePlan.DynamicOverlayOperationCount,
                     input.ResourcePlanStamp.ResourcePlannerRevision,
                     imageLayoutStartSignature,
-                    gpuPipelineProfilingActive: false,
+                    gpuPipelineProfilingActive,
                     commandBufferImageSlot: checked((int)input.ImageIndex),
                     reuseStaticOperations,
                     dynamicUiOperations,
@@ -532,8 +536,11 @@ internal sealed unsafe partial class VulkanCommandRuntime
         owner.CommandChainScheduleSignature =
             input.CommandChainSchedule?.StructuralSignature ?? ulong.MaxValue;
         owner.PlannerRevision = input.ResourcePlanStamp.ResourcePlannerRevision;
-        owner.GpuProfilerActive = false;
-        owner.GpuProfilerFrameSlot = -1;
+        owner.GpuProfilerActive = FrameTelemetry._vulkanGpuProfilerRecordingActive;
+        owner.GpuProfilerFrameSlot = owner.GpuProfilerActive
+            ? FrameTelemetry._vulkanGpuProfilerRecordingFrameSlot
+            : -1;
+        CaptureVulkanGpuProfilerVariantScopes(owner.GpuProfilerFrameSlot, owner);
         owner.LastUsedFrameId = input.FramePlan.RenderFrameId;
         if (input.LogicalViewId == 0UL)
             owner.CaptureRecordedOperationOrder(input.FramePlan);
@@ -548,8 +555,8 @@ internal sealed unsafe partial class VulkanCommandRuntime
             input.FramePlan.DynamicOverlaySignature,
             in fallbackContext,
             owner.RecordedFrameOpContextFingerprint,
-            profilerActive: false,
-            profilerFrameSlot: checked((int)input.ImageIndex));
+            profilerActive: owner.GpuProfilerActive,
+            profilerFrameSlot: owner.GpuProfilerFrameSlot);
         owner.RecordedGenerations = generations;
         owner.RecordedResourceGeneration = generations.ResourceAllocation;
         owner.RecordedDescriptorGeneration = generations.Descriptor;

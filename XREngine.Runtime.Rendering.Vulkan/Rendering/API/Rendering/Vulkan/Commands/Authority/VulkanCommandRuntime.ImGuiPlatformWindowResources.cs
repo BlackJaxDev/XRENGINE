@@ -123,11 +123,3 @@ internal sealed unsafe partial class VulkanCommandRuntime
             throw new InvalidOperationException($"Failed to {operation}: {result}.");
     }
 }
-
-internal readonly record struct VulkanImGuiPlatformWindowCommandResources(
-    CommandPool CommandPool,
-    CommandBuffer[] CommandBuffers,
-    Fence[] Fences,
-    bool[] FrameFenceSubmitted,
-    Semaphore[] ImageAvailableSemaphores,
-    Semaphore[] RenderFinishedSemaphores);
