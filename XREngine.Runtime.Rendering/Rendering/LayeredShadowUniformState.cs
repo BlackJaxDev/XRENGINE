@@ -168,6 +168,13 @@ public struct LayeredShadowUniformState : IEquatable<LayeredShadowUniformState>
     /// </summary>
     public override readonly int GetHashCode()
     {
+        // A non-shadow pass semantically consumes none of the fourteen matrix
+        // fields. They are normally all zero, but hashing them for every visible
+        // mesh made ordinary Vulkan frame-data publication scale like a shadow
+        // pass even when every light was disabled.
+        if (!IsShadowPass)
+            return 0;
+
         HashCode hash = new();
         hash.Add(IsShadowPass);
         hash.Add(DirectionalCascadeInstancedLayeredShadowPass);

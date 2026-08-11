@@ -555,8 +555,8 @@ internal unsafe partial class VkMeshRenderer(
             ? VulkanMeshRenderingConventions.ToVulkanColorWriteMask(matOpts)
             : producerState.ColorWriteMask;
 
-        // Snapshot camera matrices/vectors now. A pushed null camera is intentional
-        // for fullscreen quads; do not fall back to the scene camera in that scope.
+        // A pushed null camera is intentional for fullscreen quads; do not fall
+        // back to the scene camera in that scope.
         XRRenderPipelineInstance? currentPipeline = RuntimeEngine.Rendering.State.CurrentRenderingPipeline;
         bool explicitCameraScope = RuntimeEngine.Rendering.State.RenderingPipelineState?.HasRenderingCameraScope == true;
         XRCamera? snapshotCamera = explicitCameraScope
@@ -571,87 +571,20 @@ internal unsafe partial class VkMeshRenderer(
             : RuntimeEngine.Rendering.State.RenderingStereoRightEyeCamera
                 ?? currentPipeline?.RenderState.StereoRightEyeCamera;
         bool useUnjitteredProjectionSnapshot = RuntimeEngine.Rendering.State.RenderingPipelineState?.UseUnjitteredProjection ?? false;
-        Matrix4x4 viewMatrixSnapshot = snapshotCamera?.Transform.InverseRenderMatrix ?? Matrix4x4.Identity;
-        Matrix4x4 inverseViewMatrixSnapshot = snapshotCamera?.Transform.RenderMatrix ?? Matrix4x4.Identity;
-        Matrix4x4 projectionMatrixSnapshot = useUnjitteredProjectionSnapshot && snapshotCamera is not null
-            ? snapshotCamera.ProjectionMatrixUnjittered
-            : snapshotCamera?.ProjectionMatrix ?? Matrix4x4.Identity;
-        Matrix4x4 inverseProjectionMatrixSnapshot = useUnjitteredProjectionSnapshot && snapshotCamera is not null
-            ? snapshotCamera.InverseProjectionMatrixUnjittered
-            : snapshotCamera?.InverseProjectionMatrix ?? Matrix4x4.Identity;
-        Matrix4x4 viewProjectionMatrixSnapshot = useUnjitteredProjectionSnapshot && snapshotCamera is not null
-            ? snapshotCamera.ViewProjectionMatrixUnjittered
-            : snapshotCamera?.ViewProjectionMatrix ?? Matrix4x4.Identity;
-        Matrix4x4 viewProjectionMatrixUnjitteredSnapshot =
-            snapshotCamera?.ViewProjectionMatrixUnjittered ?? viewProjectionMatrixSnapshot;
-        Matrix4x4 rightEyeViewMatrixSnapshot = snapshotRightEyeCamera?.Transform.InverseRenderMatrix ?? viewMatrixSnapshot;
-        Matrix4x4 rightEyeInverseViewMatrixSnapshot = snapshotRightEyeCamera?.Transform.RenderMatrix ?? inverseViewMatrixSnapshot;
-        Matrix4x4 rightEyeProjectionMatrixSnapshot = useUnjitteredProjectionSnapshot && snapshotRightEyeCamera is not null
-            ? snapshotRightEyeCamera.ProjectionMatrixUnjittered
-            : snapshotRightEyeCamera?.ProjectionMatrix ?? projectionMatrixSnapshot;
-        Matrix4x4 rightEyeInverseProjectionMatrixSnapshot = useUnjitteredProjectionSnapshot && snapshotRightEyeCamera is not null
-            ? snapshotRightEyeCamera.InverseProjectionMatrixUnjittered
-            : snapshotRightEyeCamera?.InverseProjectionMatrix ?? inverseProjectionMatrixSnapshot;
-        Matrix4x4 rightEyeViewProjectionMatrixSnapshot = useUnjitteredProjectionSnapshot && snapshotRightEyeCamera is not null
-            ? snapshotRightEyeCamera.ViewProjectionMatrixUnjittered
-            : snapshotRightEyeCamera?.ViewProjectionMatrix ?? viewProjectionMatrixSnapshot;
-        Matrix4x4 rightEyeViewProjectionMatrixUnjitteredSnapshot =
-            snapshotRightEyeCamera?.ViewProjectionMatrixUnjittered ?? viewProjectionMatrixUnjitteredSnapshot;
-        Matrix4x4 previousViewMatrixSnapshot = viewMatrixSnapshot;
-        Matrix4x4 previousProjectionMatrixSnapshot = projectionMatrixSnapshot;
-        Matrix4x4 previousViewProjectionMatrixSnapshot = viewProjectionMatrixSnapshot;
-        Matrix4x4 previousViewProjectionMatrixUnjitteredSnapshot = snapshotCamera?.ViewProjectionMatrixUnjittered ?? viewProjectionMatrixSnapshot;
-        Matrix4x4 previousRightEyeViewMatrixSnapshot = rightEyeViewMatrixSnapshot;
-        Matrix4x4 previousRightEyeProjectionMatrixSnapshot = rightEyeProjectionMatrixSnapshot;
-        Matrix4x4 previousRightEyeViewProjectionMatrixSnapshot = rightEyeViewProjectionMatrixSnapshot;
-        Matrix4x4 previousRightEyeViewProjectionMatrixUnjitteredSnapshot =
-            snapshotRightEyeCamera?.ViewProjectionMatrixUnjittered ?? rightEyeViewProjectionMatrixSnapshot;
-        if (currentPipeline is not null &&
-            VPRC_TemporalAccumulationPass.TryGetTemporalUniformData(currentPipeline, out var temporalData))
-        {
-            viewProjectionMatrixUnjitteredSnapshot = temporalData.CurrViewProjectionUnjittered;
-            rightEyeViewProjectionMatrixUnjitteredSnapshot = temporalData.RightEyeCurrViewProjectionUnjittered;
-            if (temporalData.HistoryReady)
-            {
-                previousViewMatrixSnapshot = temporalData.PrevViewMatrix;
-                previousProjectionMatrixSnapshot = temporalData.PrevProjection;
-                previousViewProjectionMatrixSnapshot = temporalData.PrevViewProjection;
-                previousViewProjectionMatrixUnjitteredSnapshot = temporalData.PrevViewProjectionUnjittered;
-                previousRightEyeViewMatrixSnapshot = temporalData.RightEyePrevViewMatrix;
-                previousRightEyeProjectionMatrixSnapshot = temporalData.RightEyePrevProjection;
-                previousRightEyeViewProjectionMatrixSnapshot = temporalData.RightEyePrevViewProjection;
-                previousRightEyeViewProjectionMatrixUnjitteredSnapshot = temporalData.RightEyePrevViewProjectionUnjittered;
-            }
-        }
-        Vector3 cameraPositionSnapshot = snapshotCamera?.Transform.RenderTranslation ?? Vector3.Zero;
-        Vector3 cameraForwardSnapshot = snapshotCamera?.Transform.RenderForward ?? Vector3.UnitZ;
-        Vector3 cameraUpSnapshot = snapshotCamera?.Transform.RenderUp ?? Vector3.UnitY;
-        Vector3 cameraRightSnapshot = snapshotCamera?.Transform.RenderRight ?? Vector3.UnitX;
         uint transformIdSnapshot = RuntimeEngine.Rendering.State.CurrentTransformId;
         bool stereoPassSnapshot = !forceNoStereo && RuntimeEngine.Rendering.State.IsStereoPass;
-        // Snapshot the render-area dimensions now (the live RenderArea is reset to Empty by
-        // deferred record time). For debug-primitive draws the pipeline render-region can
-        // already be Empty even at enqueue time, so fall back to the bound draw framebuffer's
-        // dimensions, which reflect the actual target the geometry shaders rasterize into.
-        var renderAreaSnapshot = RuntimeEngine.Rendering.State.RenderArea;
-        int renderAreaWidthSnapshot = renderAreaSnapshot.Width;
-        int renderAreaHeightSnapshot = renderAreaSnapshot.Height;
-        if (renderAreaWidthSnapshot <= 0 || renderAreaHeightSnapshot <= 0)
-        {
-            if (target is not null)
-            {
-                renderAreaWidthSnapshot = (int)target.Width;
-                renderAreaHeightSnapshot = (int)target.Height;
-            }
-            else
-            {
-                Extent2D targetExtent = producer.TargetExtent;
-                renderAreaWidthSnapshot = (int)targetExtent.Width;
-                renderAreaHeightSnapshot = (int)targetExtent.Height;
-            }
-        }
-
         LayeredShadowUniformState shadowUniformState = LayeredShadowUniformState.CaptureFromCurrentRenderingState();
+        VulkanMeshDrawViewSnapshot viewSnapshot =
+            VulkanMeshDrawViewSnapshot.Capture(
+                currentPipeline,
+                snapshotCamera,
+                snapshotRightEyeCamera,
+                stereoPassSnapshot,
+                useUnjitteredProjectionSnapshot,
+                passIndex,
+                target,
+                producer,
+                shadowUniformState);
         // The pipeline frame-resource scope already captured and installed the immutable
         // context that owns this command list. Recomputing it for every visible mesh repeats
         // registry/pass hashing and allocates a new diagnostic context id per draw, putting
@@ -758,38 +691,8 @@ internal unsafe partial class VkMeshRenderer(
             effectiveMaterial,
             drawInstances,
             billboardMode,
-            snapshotCamera,
-            snapshotRightEyeCamera,
-            stereoPassSnapshot,
-            useUnjitteredProjectionSnapshot,
             transformIdSnapshot,
-            viewMatrixSnapshot,
-            inverseViewMatrixSnapshot,
-            projectionMatrixSnapshot,
-            inverseProjectionMatrixSnapshot,
-            viewProjectionMatrixSnapshot,
-            viewProjectionMatrixUnjitteredSnapshot,
-            previousViewMatrixSnapshot,
-            previousProjectionMatrixSnapshot,
-            previousViewProjectionMatrixSnapshot,
-            previousViewProjectionMatrixUnjitteredSnapshot,
-            rightEyeViewMatrixSnapshot,
-            rightEyeInverseViewMatrixSnapshot,
-            rightEyeProjectionMatrixSnapshot,
-            rightEyeInverseProjectionMatrixSnapshot,
-            rightEyeViewProjectionMatrixSnapshot,
-            rightEyeViewProjectionMatrixUnjitteredSnapshot,
-            previousRightEyeViewMatrixSnapshot,
-            previousRightEyeProjectionMatrixSnapshot,
-            previousRightEyeViewProjectionMatrixSnapshot,
-            previousRightEyeViewProjectionMatrixUnjitteredSnapshot,
-            cameraPositionSnapshot,
-            cameraForwardSnapshot,
-            cameraUpSnapshot,
-            cameraRightSnapshot,
-            renderAreaWidthSnapshot,
-            renderAreaHeightSnapshot,
-            shadowUniformState,
+            viewSnapshot,
             preparedProgramSnapshot,
             preparedProgramIdentitySnapshot,
             preparedProgramLinkGenerationSnapshot,
@@ -797,7 +700,9 @@ internal unsafe partial class VkMeshRenderer(
         draw = draw with
         {
             AutoUniformPublication =
-                VulkanAutoUniformPublicationSnapshot.Capture(draw),
+                VulkanAutoUniformPublicationSnapshot.Capture(
+                    draw,
+                    currentPipeline),
         };
 
         if (s_screenSpaceUiDrawDiagCount < 32 &&
@@ -806,7 +711,7 @@ internal unsafe partial class VkMeshRenderer(
             MathF.Abs(modelMatrix.M42) > 10.0f)
         {
             s_screenSpaceUiDrawDiagCount++;
-            Matrix4x4 worldViewProjection = modelMatrix * viewProjectionMatrixSnapshot;
+            Matrix4x4 worldViewProjection = modelMatrix * viewSnapshot.ViewProjectionMatrix;
             Vector4 p0 = ProjectUiDiagCorner(0.0f, 0.0f, in worldViewProjection);
             Vector4 p1 = ProjectUiDiagCorner(1.0f, 0.0f, in worldViewProjection);
             Vector4 p2 = ProjectUiDiagCorner(0.0f, 1.0f, in worldViewProjection);
@@ -931,83 +836,20 @@ internal unsafe partial class VkMeshRenderer(
             : RuntimeEngine.Rendering.State.RenderingStereoRightEyeCamera
                 ?? currentPipeline?.RenderState.StereoRightEyeCamera;
         bool useUnjitteredProjectionSnapshot = RuntimeEngine.Rendering.State.RenderingPipelineState?.UseUnjitteredProjection ?? false;
-        Matrix4x4 viewMatrixSnapshot = snapshotCamera?.Transform.InverseRenderMatrix ?? Matrix4x4.Identity;
-        Matrix4x4 inverseViewMatrixSnapshot = snapshotCamera?.Transform.RenderMatrix ?? Matrix4x4.Identity;
-        Matrix4x4 projectionMatrixSnapshot = useUnjitteredProjectionSnapshot && snapshotCamera is not null
-            ? snapshotCamera.ProjectionMatrixUnjittered
-            : snapshotCamera?.ProjectionMatrix ?? Matrix4x4.Identity;
-        Matrix4x4 inverseProjectionMatrixSnapshot = useUnjitteredProjectionSnapshot && snapshotCamera is not null
-            ? snapshotCamera.InverseProjectionMatrixUnjittered
-            : snapshotCamera?.InverseProjectionMatrix ?? Matrix4x4.Identity;
-        Matrix4x4 viewProjectionMatrixSnapshot = useUnjitteredProjectionSnapshot && snapshotCamera is not null
-            ? snapshotCamera.ViewProjectionMatrixUnjittered
-            : snapshotCamera?.ViewProjectionMatrix ?? Matrix4x4.Identity;
-        Matrix4x4 viewProjectionMatrixUnjitteredSnapshot =
-            snapshotCamera?.ViewProjectionMatrixUnjittered ?? viewProjectionMatrixSnapshot;
-        Matrix4x4 rightEyeViewMatrixSnapshot = snapshotRightEyeCamera?.Transform.InverseRenderMatrix ?? viewMatrixSnapshot;
-        Matrix4x4 rightEyeInverseViewMatrixSnapshot = snapshotRightEyeCamera?.Transform.RenderMatrix ?? inverseViewMatrixSnapshot;
-        Matrix4x4 rightEyeProjectionMatrixSnapshot = useUnjitteredProjectionSnapshot && snapshotRightEyeCamera is not null
-            ? snapshotRightEyeCamera.ProjectionMatrixUnjittered
-            : snapshotRightEyeCamera?.ProjectionMatrix ?? projectionMatrixSnapshot;
-        Matrix4x4 rightEyeInverseProjectionMatrixSnapshot = useUnjitteredProjectionSnapshot && snapshotRightEyeCamera is not null
-            ? snapshotRightEyeCamera.InverseProjectionMatrixUnjittered
-            : snapshotRightEyeCamera?.InverseProjectionMatrix ?? inverseProjectionMatrixSnapshot;
-        Matrix4x4 rightEyeViewProjectionMatrixSnapshot = useUnjitteredProjectionSnapshot && snapshotRightEyeCamera is not null
-            ? snapshotRightEyeCamera.ViewProjectionMatrixUnjittered
-            : snapshotRightEyeCamera?.ViewProjectionMatrix ?? viewProjectionMatrixSnapshot;
-        Matrix4x4 rightEyeViewProjectionMatrixUnjitteredSnapshot =
-            snapshotRightEyeCamera?.ViewProjectionMatrixUnjittered ?? viewProjectionMatrixUnjitteredSnapshot;
-        Matrix4x4 previousViewMatrixSnapshot = viewMatrixSnapshot;
-        Matrix4x4 previousProjectionMatrixSnapshot = projectionMatrixSnapshot;
-        Matrix4x4 previousViewProjectionMatrixSnapshot = viewProjectionMatrixSnapshot;
-        Matrix4x4 previousViewProjectionMatrixUnjitteredSnapshot = snapshotCamera?.ViewProjectionMatrixUnjittered ?? viewProjectionMatrixSnapshot;
-        Matrix4x4 previousRightEyeViewMatrixSnapshot = rightEyeViewMatrixSnapshot;
-        Matrix4x4 previousRightEyeProjectionMatrixSnapshot = rightEyeProjectionMatrixSnapshot;
-        Matrix4x4 previousRightEyeViewProjectionMatrixSnapshot = rightEyeViewProjectionMatrixSnapshot;
-        Matrix4x4 previousRightEyeViewProjectionMatrixUnjitteredSnapshot =
-            snapshotRightEyeCamera?.ViewProjectionMatrixUnjittered ?? rightEyeViewProjectionMatrixSnapshot;
-        if (currentPipeline is not null &&
-            VPRC_TemporalAccumulationPass.TryGetTemporalUniformData(currentPipeline, out var temporalData))
-        {
-            viewProjectionMatrixUnjitteredSnapshot = temporalData.CurrViewProjectionUnjittered;
-            rightEyeViewProjectionMatrixUnjitteredSnapshot = temporalData.RightEyeCurrViewProjectionUnjittered;
-            if (temporalData.HistoryReady)
-            {
-                previousViewMatrixSnapshot = temporalData.PrevViewMatrix;
-                previousProjectionMatrixSnapshot = temporalData.PrevProjection;
-                previousViewProjectionMatrixSnapshot = temporalData.PrevViewProjection;
-                previousViewProjectionMatrixUnjitteredSnapshot = temporalData.PrevViewProjectionUnjittered;
-                previousRightEyeViewMatrixSnapshot = temporalData.RightEyePrevViewMatrix;
-                previousRightEyeProjectionMatrixSnapshot = temporalData.RightEyePrevProjection;
-                previousRightEyeViewProjectionMatrixSnapshot = temporalData.RightEyePrevViewProjection;
-                previousRightEyeViewProjectionMatrixUnjitteredSnapshot = temporalData.RightEyePrevViewProjectionUnjittered;
-            }
-        }
-        Vector3 cameraPositionSnapshot = snapshotCamera?.Transform.RenderTranslation ?? Vector3.Zero;
-        Vector3 cameraForwardSnapshot = snapshotCamera?.Transform.RenderForward ?? Vector3.UnitZ;
-        Vector3 cameraUpSnapshot = snapshotCamera?.Transform.RenderUp ?? Vector3.UnitY;
-        Vector3 cameraRightSnapshot = snapshotCamera?.Transform.RenderRight ?? Vector3.UnitX;
         uint transformIdSnapshot = RuntimeEngine.Rendering.State.CurrentTransformId;
-
-        var renderAreaSnapshot = RuntimeEngine.Rendering.State.RenderArea;
-        int renderAreaWidthSnapshot = renderAreaSnapshot.Width;
-        int renderAreaHeightSnapshot = renderAreaSnapshot.Height;
-        if (renderAreaWidthSnapshot <= 0 || renderAreaHeightSnapshot <= 0)
-        {
-            if (effectiveTarget is not null)
-            {
-                renderAreaWidthSnapshot = (int)effectiveTarget.Width;
-                renderAreaHeightSnapshot = (int)effectiveTarget.Height;
-            }
-            else
-            {
-                Extent2D targetExtent = producer.TargetExtent;
-                renderAreaWidthSnapshot = (int)targetExtent.Width;
-                renderAreaHeightSnapshot = (int)targetExtent.Height;
-            }
-        }
-
         LayeredShadowUniformState shadowUniformState = LayeredShadowUniformState.CaptureFromCurrentRenderingState();
+        bool stereoPassSnapshot = RuntimeEngine.Rendering.State.IsStereoPass;
+        VulkanMeshDrawViewSnapshot viewSnapshot =
+            VulkanMeshDrawViewSnapshot.Capture(
+                currentPipeline,
+                snapshotCamera,
+                snapshotRightEyeCamera,
+                stereoPassSnapshot,
+                useUnjitteredProjectionSnapshot,
+                RuntimeEngine.Rendering.State.CurrentRenderGraphPassIndex,
+                effectiveTarget,
+                producer,
+                shadowUniformState);
         IndexedViewportScissorSnapshot indexedViewportScissors = producer.IndexedViewportScissors;
         uint viewportScissorCount = indexedViewportScissors.Count > 1 ? indexedViewportScissors.Count : 1u;
         Viewport viewportSnapshot = producer.Viewport;
@@ -1045,38 +887,8 @@ internal unsafe partial class VkMeshRenderer(
             effectiveMaterial,
             1u,
             effectiveMaterial.BillboardMode,
-            snapshotCamera,
-            snapshotRightEyeCamera,
-            RuntimeEngine.Rendering.State.IsStereoPass,
-            useUnjitteredProjectionSnapshot,
             transformIdSnapshot,
-            viewMatrixSnapshot,
-            inverseViewMatrixSnapshot,
-            projectionMatrixSnapshot,
-            inverseProjectionMatrixSnapshot,
-            viewProjectionMatrixSnapshot,
-            viewProjectionMatrixUnjitteredSnapshot,
-            previousViewMatrixSnapshot,
-            previousProjectionMatrixSnapshot,
-            previousViewProjectionMatrixSnapshot,
-            previousViewProjectionMatrixUnjitteredSnapshot,
-            rightEyeViewMatrixSnapshot,
-            rightEyeInverseViewMatrixSnapshot,
-            rightEyeProjectionMatrixSnapshot,
-            rightEyeInverseProjectionMatrixSnapshot,
-            rightEyeViewProjectionMatrixSnapshot,
-            rightEyeViewProjectionMatrixUnjitteredSnapshot,
-            previousRightEyeViewMatrixSnapshot,
-            previousRightEyeProjectionMatrixSnapshot,
-            previousRightEyeViewProjectionMatrixSnapshot,
-            previousRightEyeViewProjectionMatrixUnjitteredSnapshot,
-            cameraPositionSnapshot,
-            cameraForwardSnapshot,
-            cameraUpSnapshot,
-            cameraRightSnapshot,
-            renderAreaWidthSnapshot,
-            renderAreaHeightSnapshot,
-            shadowUniformState,
+            viewSnapshot,
             preparedProgram,
             preparedProgramIdentity,
             preparedProgramLinkGeneration,
@@ -1084,7 +896,9 @@ internal unsafe partial class VkMeshRenderer(
         draw = draw with
         {
             AutoUniformPublication =
-                VulkanAutoUniformPublicationSnapshot.Capture(draw),
+                VulkanAutoUniformPublicationSnapshot.Capture(
+                    draw,
+                    currentPipeline),
         };
 
         return true;
@@ -1128,6 +942,23 @@ internal unsafe partial class VkMeshRenderer(
             !hasTypedBindingPublishers &&
             !mayNeedDescriptorResourceSnapshot)
             return null;
+
+        // A successful persistent publication already proved artifact
+        // eligibility and populated a renderer-local slot. Stable draws only
+        // need to validate the mutable owner generations; repeating the full
+        // publisher classification and program-wide cache lookup for every
+        // Sponza mesh made immutable binding reuse scale with draw count.
+        if (TryReuseFastPersistentProgramBindingArtifact(
+                material,
+                programData,
+                program,
+                shadowUniformState,
+                out ComputeDispatchSnapshot? fastPersistentArtifact))
+        {
+            RuntimeEngine.Rendering.Stats.Vulkan
+                .RecordVulkanProgramBindingArtifactReuse();
+            return fastPersistentArtifact;
+        }
 
         IRenderBindingPublisher[] materialBindingPublishers;
         IRenderBindingPublisher[] meshBindingPublishers;

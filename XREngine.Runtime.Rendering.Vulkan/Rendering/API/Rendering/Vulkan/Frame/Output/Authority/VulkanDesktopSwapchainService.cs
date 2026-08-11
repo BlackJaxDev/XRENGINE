@@ -261,6 +261,7 @@ internal sealed unsafe partial class VulkanDesktopSwapchainService
                     Array.Fill(imageTimelineValues, oldGraphicsCompletionValue);
                 }
                 _output.Desktop.ImageTimelineValues = imageTimelineValues;
+                _services.PublishDesktopImageTimelineValues(imageTimelineValues);
                 PublishPlannerExtent(_output.Desktop.Extent);
                 return true;
             }
@@ -295,6 +296,7 @@ internal sealed unsafe partial class VulkanDesktopSwapchainService
                 _output.Desktop.ImageHasValidPresentedContent = null;
                 _output.Desktop.PresentBridgeSemaphores = null;
                 _output.Desktop.ImageTimelineValues = null;
+                _services.PublishDesktopImageTimelineValues(null);
                 _output.Desktop.StreamlineFrameGenerationActive = false;
                 _output.Desktop.StreamlineFrameGenerationIncludesDlss = false;
                 QueueRetiredGeneration(new(

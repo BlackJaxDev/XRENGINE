@@ -46,6 +46,22 @@ internal sealed class FrameOperationStream
     }
 
     /// <summary>
+    /// Copies the authoring-array indices that produced this canonical sealed
+    /// order. A clean primary retains this permutation so the next frame's live
+    /// payloads can be projected into the exact recorded slot order.
+    /// </summary>
+    internal void CopySourceOrderTo(Span<int> destination)
+    {
+        if (destination.Length < _count)
+            throw new ArgumentException(
+                "The destination is smaller than the operation stream.",
+                nameof(destination));
+
+        for (int index = 0; index < _count; index++)
+            destination[index] = _headers[index].OriginalIndex;
+    }
+
+    /// <summary>
     /// Lowers the producer-owned authoring array exactly once after its numeric
     /// order has been compiled. Payload snapshots become frame-plan-owned here.
     /// </summary>

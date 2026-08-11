@@ -33,6 +33,8 @@ internal sealed unsafe partial class VulkanFrameLoop : IVulkanTargetOutputHost
         _commandRuntime.EnsureFrameDataSlotCapacity(totalSlots);
         return totalSlots;
     }
+    public void PublishDesktopImageTimelineValues(ulong[]? timelineValues)
+        => _commandRuntime.Synchronization._desktopImageTimelineValues = timelineValues;
     public void PublishDesktopSwapchainExtent(Extent2D extent)
     {
         _commandRuntime.StateTracker.SetSwapchainExtent(extent);

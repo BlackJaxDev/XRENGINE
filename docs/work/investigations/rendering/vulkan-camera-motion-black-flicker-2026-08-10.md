@@ -385,3 +385,87 @@ The Vulkan leaf build and editor build pass with warnings treated as errors.
 The live post-fix session reported zero Vulkan validation messages. No tests were
 added or run while this runtime regression remains in live validation, per the
 repository testing policy.
+
+### Full-Sponza, no-directional-light scaling pass
+
+The dense-scene follow-up used the requested isolation: the deferred Sponza
+import was enabled, both directional lights were disabled, and editor-camera
+render-on-demand remained disabled. It exposed one completion-authority bug and
+one avoidable steady-state planning cost.
+
+Desktop mesh frame-data slots are swapchain image slots, but
+`CanUpdateCompletedDescriptorFrameSlot` had retained only the frame-in-flight
+timeline test after `ec0efb261`. A descriptor slot could therefore be treated as
+available according to the wrong completion domain. The command synchronization
+state now carries a non-owning view of the desktop image timeline values. Frame
+slots continue to use the frame-slot timeline, while desktop descriptor slots
+use their acquired-image timeline; OpenXR keeps its existing external authority.
+
+Stable primary reuse also still paid for sealing the complete frame plan before
+discovering that the exact prior schedule and primary artifact were reusable.
+The fast path now:
+
+- captures presentation, target, resource, layout, clear, and policy authority
+  before plan construction;
+- computes semantic and resource/descriptor version signatures from the current
+  raw operation streams;
+- resolves an exact cached command-chain schedule identity;
+- projects current live operations through the producer-to-sealed permutations
+  captured by the last fresh primary;
+- builds a current-frame, current-image frame-data refresh cohort; and
+- reuses the primary before `FramePlan.BuildAndSeal` only when every exact check
+  succeeds. Any mismatch falls back to the unchanged full planning/record path.
+
+Dynamic UI initially prevented this path from succeeding because its secondary
+recorder rejected an unsealed operation before checking whether the immutable
+secondary already matched exactly. Exact secondary reuse is now checked first;
+only actual encoding requires a sealed operation. A shared immutable per-view,
+per-pass snapshot and persistent program-binding artifact reuse also remove
+hundreds of repeated camera-matrix copies and binding-schema walks from the
+Sponza draw loop.
+
+Final live evidence from `vk-sponza-no-dir-final-20260811`:
+
+- the focused exterior view contained 398 tracked renderables; all 725 scheduled
+  chains were reused, zero chains were recorded, the primary was reused, and all
+  835 mesh draws reused their program-binding artifact with zero builds;
+- ten warmed samples had medians of 22.136 ms whole-frame, 13.224 ms frame-op
+  preparation, 0.529 ms packet construction, 3.200 ms primary handling,
+  2.307 ms frame-data manifest work, and 0.896 ms submission;
+- after moving inside, a no-input interval advanced 176 actual render frames in
+  3.134 seconds (56.1 Hz), while the output profiler reported 56.5 Hz. The scene
+  output was `FreshRender`, `scene_rendered=true`, and `skipped=false`;
+- Vulkan validation errors, descriptor binding failures, primary-reuse
+  rejections, and dynamic-UI unsealed-operation rejections were all zero in the
+  final profiler snapshot and session log.
+
+The inspected exterior and interior images are:
+
+- `Build/_AgentValidation/vulkan-phase42-43-final-20260810/20260811-descriptor-reuse-scaling/mcp-captures/Screenshot_20260811_151055_077_201e73d5c9a94a188b61963500b2492d.png`;
+- `Build/_AgentValidation/vulkan-phase42-43-final-20260810/20260811-descriptor-reuse-scaling/mcp-captures/Screenshot_20260811_151138_810_fa8d573ea3a94fb6a4b1cc07f9e3fb17.png`.
+
+They show radically different rendered viewpoints while the cached primary and
+secondaries remain active, ruling out the prior sample-and-hold behavior. The
+full-resolution screenshot readback is synchronous and briefly disturbs frame
+cadence, so it was excluded from steady-state rate measurements. The final log
+is under
+`Build/_AgentValidation/mcp-sessions/vk-sponza-no-dir-final-20260811/logs/`.
+
+Several narrower experiments were measured and reverted because they were
+neutral or slower: batch pipeline/camera scopes, an all-direct-owner prepass,
+reusing unpinned `MeshDrawOp` plan objects, and bulk draining the producer queue.
+A global buffer-readiness epoch was also rejected before implementation because
+dynamic buffers change every frame and would continuously invalidate it; missing
+one asynchronous upload or delete transition would additionally make the cache
+incorrect.
+
+Packet sealing is no longer the dense-scene bottleneck. The remaining 10--13 ms
+is genuine per-draw producer/materialization work needed to recreate the current
+raw draw stream and its refresh cohort. Removing that cost requires the broader
+persistent cached-producer-plan design already described in the Vulkan core
+hardening work: producer-owned immutable draw artifacts with explicit dirty
+records and frame-slot dynamic data, rather than another local reuse shortcut.
+It is now isolated as follow-on scaling work, not an input-demand or stale-frame
+correctness blocker. The Vulkan leaf build passes with warnings treated as
+errors. No tests were added or run before user acceptance of this live fix, per
+the repository testing policy.

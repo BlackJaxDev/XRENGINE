@@ -110,9 +110,9 @@ internal sealed class FramePlanBuilder
             staticPlannerContextKeyCount,
             in renderGraphAuthority);
 
-        ComputeVersionSignatures(
-            staticIngress,
-            dynamicIngress,
+        VulkanFrameOperationSignature.ComputeVersionSignatures(
+            operations,
+            dynamicOverlayOperations,
             out ulong resourceVersionSignature,
             out ulong descriptorVersionSignature);
         ulong generation = unchecked((ulong)Interlocked.Increment(ref _nextGeneration));
@@ -778,39 +778,6 @@ internal sealed class FramePlanBuilder
             return;
 
         Array.Resize(ref storage, Math.Max(required, storage.Length * 2));
-    }
-
-    private static void ComputeVersionSignatures(
-        FrameOperationIngress operations,
-        FrameOperationIngress dynamicOverlayOperations,
-        out ulong resourceVersionSignature,
-        out ulong descriptorVersionSignature)
-    {
-        resourceVersionSignature = 1469598103934665603UL;
-        descriptorVersionSignature = 1099511628211UL;
-        AddVersionComponents(operations, ref resourceVersionSignature, ref descriptorVersionSignature);
-        AddVersionComponents(dynamicOverlayOperations, ref resourceVersionSignature, ref descriptorVersionSignature);
-    }
-
-    private static void AddVersionComponents(
-        FrameOperationIngress operations,
-        ref ulong resourceVersionSignature,
-        ref ulong descriptorVersionSignature)
-    {
-        for (int index = 0; index < operations.Count; index++)
-        {
-            FrameOpContext context = operations.GetContext(index);
-            Add(ref resourceVersionSignature, context.ResourceGeneration);
-            Add(ref resourceVersionSignature, context.RecordingFingerprint);
-            Add(ref descriptorVersionSignature, context.DescriptorGeneration);
-            Add(ref descriptorVersionSignature, context.RecordingFingerprint);
-        }
-    }
-
-    private static void Add(ref ulong hash, ulong value)
-    {
-        hash ^= value;
-        hash *= 1099511628211UL;
     }
 
 }

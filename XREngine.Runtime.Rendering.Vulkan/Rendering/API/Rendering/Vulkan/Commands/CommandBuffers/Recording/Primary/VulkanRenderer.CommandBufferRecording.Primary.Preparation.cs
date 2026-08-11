@@ -118,6 +118,8 @@ namespace XREngine.Rendering.Vulkan
                         meshDrawSlotsByRenderer,
                         recordingState.RecordingScratch,
                         recordingState.RecordingScratch.PrimaryMeshFrameDataFamilyBases,
+                        0UL,
+                        0UL,
                         out _,
                         out string frameWideReason))
                 {

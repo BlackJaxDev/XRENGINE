@@ -154,7 +154,7 @@ internal sealed unsafe partial class VulkanCommandRuntime
             schedule);
     }
 
-    private bool TryReuseCachedCommandChainSchedule(
+    internal bool TryReuseCachedCommandChainSchedule(
         uint imageIndex,
         in CommandChainScheduleCacheIdentity identity,
         out CommandChainSchedule? schedule,

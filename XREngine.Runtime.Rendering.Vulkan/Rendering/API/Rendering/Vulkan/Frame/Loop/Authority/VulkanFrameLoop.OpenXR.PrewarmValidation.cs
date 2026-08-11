@@ -732,6 +732,8 @@ internal sealed unsafe partial class VulkanFrameLoop
                 meshDrawSlotsByRenderer,
                 recordingScratch,
                 recordingScratch.OpenXrMeshFrameDataFamilyBases,
+                0UL,
+                0UL,
                 out _,
                 out string frameWideReason))
         {

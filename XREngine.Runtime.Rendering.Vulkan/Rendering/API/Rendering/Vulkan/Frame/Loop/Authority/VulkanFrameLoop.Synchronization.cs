@@ -161,6 +161,7 @@ internal sealed unsafe partial class VulkanFrameLoop
         sync._presentTimelineSemaphore = default;
         sync._transferTimelineSemaphore = default;
         sync._frameSlotTimelineValues = null;
+        sync._desktopImageTimelineValues = null;
         _outputRuntime.Desktop.ImageTimelineValues = null;
         sync._acquireTimelineValue = 0;
         sync._graphicsTimelineValue = 0;
@@ -171,10 +172,13 @@ internal sealed unsafe partial class VulkanFrameLoop
         if (_outputRuntime.Desktop.Images is null)
         {
             _outputRuntime.Desktop.ImageTimelineValues = null;
+            _commandRuntime.Synchronization._desktopImageTimelineValues = null;
             return;
         }
         if (_outputRuntime.Desktop.ImageTimelineValues is null || _outputRuntime.Desktop.ImageTimelineValues.Length != _outputRuntime.Desktop.Images.Length)
             _outputRuntime.Desktop.ImageTimelineValues = new ulong[_outputRuntime.Desktop.Images.Length];
         else Array.Clear(_outputRuntime.Desktop.ImageTimelineValues);
+        _commandRuntime.Synchronization._desktopImageTimelineValues =
+            _outputRuntime.Desktop.ImageTimelineValues;
     }
 }
