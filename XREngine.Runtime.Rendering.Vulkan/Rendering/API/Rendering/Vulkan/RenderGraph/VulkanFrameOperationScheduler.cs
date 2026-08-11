@@ -204,16 +204,17 @@ internal sealed class VulkanFrameOperationScheduler
 
     /// <summary>
     /// Sorts frame operations deterministically by:
-    /// 1) compiled pass topological order,
+    /// 1) the operation pipeline's topological pass order, with the compiled graph as fallback,
     /// 2) render-view cohort, then canonical opaque mesh draw order when both operations are safe to reorder,
     /// 3) original index for all dependency-carrying operations,
     /// 4) same-pass target clear-before-use normalization.
     /// </summary>
     /// <remarks>
     /// Pass order must dominate scheduling groups so consumers cannot be recorded before
-    /// producers when different pipeline/viewport contexts enqueue related work. The pass
-    /// rank is resolved from the compiled frame graph first; per-context metadata is only
-    /// a fallback for nested work that is absent from the active graph.
+    /// producers when different pipeline/viewport contexts enqueue related work. Each
+    /// operation's pipeline metadata is authoritative because the published resource graph
+    /// can belong to another context; its compiled rank is used only when that metadata does
+    /// not describe the operation.
     /// Same-pass operations preserve original enqueue order unless both are canonicalizable
     /// opaque mesh draws. After sorting, target clears are lifted just far enough to precede
     /// earlier uses of the same scheduling context and exact target; this keeps clears from
@@ -244,6 +245,8 @@ internal sealed class VulkanFrameOperationScheduler
             if (preserveContextBlocks)
                 BuildContextBlockOrders(ops);
             int queryOrderBlock = 0;
+            IReadOnlyCollection<RenderPassMetadata>? cachedContextMetadata = null;
+            IReadOnlyDictionary<int, int>? cachedContextPassOrder = null;
 
             for (int i = 0; i < opCount; i++)
             {
@@ -253,7 +256,11 @@ internal sealed class VulkanFrameOperationScheduler
                     preserveContextBlocks
                         ? _contextBlockOrderScratch[op.Context.SchedulingIdentity]
                         : 0,
-                    ResolvePassOrder(op, graph),
+                    ResolvePassOrder(
+                        op,
+                        graph,
+                        ref cachedContextMetadata,
+                        ref cachedContextPassOrder),
                     i,
                     queryOrderBlock);
 
@@ -410,7 +417,11 @@ internal sealed class VulkanFrameOperationScheduler
     private static bool IsTargetUseThatClearMustPrecede(FrameOp op)
         => op is MeshDrawOp or QueryOp or BlitOp or IndirectDrawOp or MeshTaskDispatchIndirectCountOp or TransformFeedbackOp;
 
-    private int ResolvePassOrder(FrameOp op, VulkanCompiledRenderGraph graph)
+    private int ResolvePassOrder(
+        FrameOp op,
+        VulkanCompiledRenderGraph graph,
+        ref IReadOnlyCollection<RenderPassMetadata>? cachedContextMetadata,
+        ref IReadOnlyDictionary<int, int>? cachedContextPassOrder)
     {
         if (op is TextureUploadFrameOp)
             return int.MinValue;
@@ -418,19 +429,30 @@ internal sealed class VulkanFrameOperationScheduler
         if (TryResolveNestedScreenSpaceUiPassOrder(op, graph, out int screenSpaceUiOrder))
             return screenSpaceUiOrder;
 
-        if (graph.PassOrder.TryGetValue(op.PassIndex, out int graphOrder))
-            return graphOrder;
-
         if (op.Context.PassMetadata is { Count: > 0 } metadata)
         {
-            TrimMetadataCachesIfRequired();
-            IReadOnlyDictionary<int, int> contextPassOrder = _passOrderCache.GetOrAdd(
-                metadata,
-                static key => new PassOrderCacheEntry(key)).PassOrder;
+            if (!ReferenceEquals(metadata, cachedContextMetadata))
+            {
+                TrimMetadataCachesIfRequired();
+                cachedContextMetadata = metadata;
+                cachedContextPassOrder = _passOrderCache.GetOrAdd(
+                    metadata,
+                    static key => new PassOrderCacheEntry(key)).PassOrder;
+            }
 
-            if (contextPassOrder.TryGetValue(op.PassIndex, out int contextOrder))
+            if (cachedContextPassOrder is not null &&
+                cachedContextPassOrder.TryGetValue(op.PassIndex, out int contextOrder))
+            {
                 return contextOrder;
+            }
         }
+
+        // A published graph can belong to another planner context (for example a
+        // directional-shadow update). Never mix ranks from that partial graph with
+        // ranks from this operation's complete pipeline metadata: doing so moved
+        // Background ahead of the ForwardPass clear that it explicitly depends on.
+        if (graph.PassOrder.TryGetValue(op.PassIndex, out int graphOrder))
+            return graphOrder;
 
         return int.MaxValue;
     }

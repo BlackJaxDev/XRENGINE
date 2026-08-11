@@ -35,6 +35,11 @@ internal sealed class CommandChain(
     public ulong StructuralSignature { get; set; }
     public ulong FrameDataSignature { get; set; }
     public ulong ResourcePlanRevision { get; set; }
+    /// <summary>
+    /// Combined frame-op/native-allocation identity used by the schedule that
+    /// last authorized this secondary artifact.
+    /// </summary>
+    public ulong ResourceVersionSignature { get; set; }
     public ulong PhysicalImageSignature { get; set; }
     public ulong FramebufferSignature { get; set; }
     public ulong DescriptorGeneration { get; set; }

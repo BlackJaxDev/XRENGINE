@@ -37,18 +37,12 @@ internal sealed unsafe class VulkanImGuiOverlayCommandRecorder
         bool trackingStarted = true;
         try
         {
-            CommandBufferBeginInfo begin = new()
-            {
-                SType = StructureType.CommandBufferBeginInfo,
-                Flags = CommandBufferUsageFlags.OneTimeSubmitBit,
-            };
             encoder.Runtime.BeginRecording(
                 encoder.Runtime.Api,
                 encoder.Runtime.DeviceContext.StateMachine,
                 input.OverlayCommandBuffer,
-                "vkBeginCommandBuffer.ImGuiOverlay");
-            if (encoder.Runtime.Api.BeginCommandBuffer(input.OverlayCommandBuffer, ref begin) != Result.Success)
-                throw new InvalidOperationException("Failed to begin ImGui overlay command buffer.");
+                "vkBeginCommandBuffer.ImGuiOverlay",
+                CommandBufferUsageFlags.OneTimeSubmitBit);
 
             encoder.Runtime.SeedRecordedImageLayoutState(
                 input.OverlayCommandBuffer,

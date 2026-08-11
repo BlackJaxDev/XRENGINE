@@ -385,11 +385,6 @@ namespace XREngine.Rendering.Vulkan
                 }
                 else
                 {
-                    // A primary recorded while required draw pipelines are pending is
-                    // intentionally incomplete. It may submit for startup progress,
-                    // but publishing it as reusable would freeze those omitted draws
-                    // after an async compile completes (or a saturated queue frees).
-                    recordingState.FrameOpsRequireRerecordLocal = true;
                     if (IsVulkanPipelineAsyncCompilationEnabled)
                     {
                         recordingState.RecordingScratch.PipelineDeferredManifestIdentity =
@@ -399,12 +394,25 @@ namespace XREngine.Rendering.Vulkan
                         recordingState.RecordingScratch.PipelineDeferredSharedPipelineGeneration =
                             sharedPipelineGeneration;
                     }
-                    Debug.VulkanEvery(
-                        $"Vulkan.PipelineDrawDeferralSummary.{GetHashCode()}",
+
+                    // Skipping a producer draw also skips its pass transition and
+                    // render-graph barriers. Submitting the remaining consumers can
+                    // therefore sample newly-created resize resources while they are
+                    // still UNDEFINED, then publish that speculative layout state as
+                    // if the incomplete frame had executed successfully. Keep the
+                    // previously presented image until every pipeline needed by this
+                    // sealed graph is executable.
+                    frameDataManifest.End();
+                    recordingState.RecordingDeferredReason =
+                        "Graphics pipeline warmup deferred before vkBeginCommandBuffer: " +
+                        firstDeferredPipelineReason;
+                    Debug.VulkanWarningEvery(
+                        $"Vulkan.Primary.PipelineWarmupDeferred.{GetHashCode()}",
                         TimeSpan.FromSeconds(1),
-                        "[Vulkan] Recording a partial frame with {0} draw operation(s) deferred for pipeline compilation; the rest of the frame will still submit. First={1}",
+                        "[Vulkan] Primary command recording deferred before vkBeginCommandBuffer while {0} draw pipeline(s) compile. First={1}",
                         deferredPipelineDrawCount,
                         firstDeferredPipelineReason);
+                    return false;
                 }
             }
 

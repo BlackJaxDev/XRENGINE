@@ -1236,6 +1236,13 @@ internal unsafe partial class VkMeshRenderer(
                 : 0;
             if (artifactFound)
             {
+                PublishFastPersistentProgramBindingArtifact(
+                    material,
+                    program,
+                    persistentArtifactGeneration,
+                    materialBindingPublishers,
+                    meshBindingPublishers,
+                    reusedPersistentArtifact);
                 RuntimeEngine.Rendering.Stats.Vulkan
                     .RecordVulkanProgramBindingArtifactReuse();
                 long reusePublicationEnd = measureAllocationBreakdown
@@ -1467,6 +1474,13 @@ internal unsafe partial class VkMeshRenderer(
                         materialBindingPublishers,
                         meshBindingPublishers,
                         artifact: null);
+                    PublishFastPersistentProgramBindingArtifact(
+                        material,
+                        program,
+                        persistentArtifactGeneration,
+                        materialBindingPublishers,
+                        meshBindingPublishers,
+                        artifact: null);
                     RuntimeEngine.Rendering.Stats.Vulkan
                         .RecordVulkanProgramBindingArtifactBuild();
                 }
@@ -1513,6 +1527,13 @@ internal unsafe partial class VkMeshRenderer(
                 {
                     program.CachePersistentProgramBindingArtifact(
                         persistentArtifactSlot,
+                        persistentArtifactGeneration,
+                        materialBindingPublishers,
+                        meshBindingPublishers,
+                        persistentArtifact);
+                    PublishFastPersistentProgramBindingArtifact(
+                        material,
+                        program,
                         persistentArtifactGeneration,
                         materialBindingPublishers,
                         meshBindingPublishers,

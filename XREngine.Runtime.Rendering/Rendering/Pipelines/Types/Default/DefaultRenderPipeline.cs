@@ -1964,15 +1964,30 @@ public partial class DefaultRenderPipeline : RenderPipeline, ISceneRenderPipelin
     {
         base.DescribeRenderPasses(metadata);
 
-        static void Chain(RenderPassMetadataCollection collection, EDefaultRenderPass pass, params EDefaultRenderPass[] dependencies)
+        static RenderPassBuilder Chain(RenderPassMetadataCollection collection, EDefaultRenderPass pass, params EDefaultRenderPass[] dependencies)
         {
             var builder = collection.ForPass((int)pass, pass.ToString(), ERenderGraphPassStage.Graphics);
             foreach (var dep in dependencies)
                 builder.DependsOn((int)dep);
+            return builder;
         }
 
         Chain(metadata, EDefaultRenderPass.PreRender);
-        Chain(metadata, EDefaultRenderPass.Background, EDefaultRenderPass.PreRender, EDefaultRenderPass.DeferredDecals);
+        RenderPassBuilder background = Chain(
+            metadata,
+            EDefaultRenderPass.Background,
+            EDefaultRenderPass.PreRender,
+            EDefaultRenderPass.DeferredDecals);
+        string lightCombineBlitPassName = VPRC_RenderQuadToFBO.BuildQuadBlitPassName(
+            LightCombineFBOName,
+            ForwardPassFBOName);
+        if (metadata.TryGetPassIndex(lightCombineBlitPassName, out int lightCombineBlitPassIndex))
+        {
+            // Background is a reusable mesh bucket and can be encountered first in
+            // inactive diagnostic branches. Its active ForwardPass occurrence must
+            // remain after the deferred-lighting blit that clears the same target.
+            background.DependsOn(lightCombineBlitPassIndex);
+        }
         Chain(metadata, EDefaultRenderPass.OpaqueDeferred, EDefaultRenderPass.PreRender);
         Chain(metadata, EDefaultRenderPass.DeferredDecals, EDefaultRenderPass.OpaqueDeferred);
         Chain(metadata, EDefaultRenderPass.OpaqueForward, EDefaultRenderPass.Background);

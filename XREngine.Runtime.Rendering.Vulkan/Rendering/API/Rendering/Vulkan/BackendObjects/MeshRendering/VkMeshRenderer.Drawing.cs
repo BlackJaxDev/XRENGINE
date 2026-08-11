@@ -857,7 +857,7 @@ internal unsafe partial class VkMeshRenderer
 			encoder.PushConstants(
 				commandBuffer,
 				recordingState.PipelineLayout,
-				ShaderStageFlags.VertexBit | ShaderStageFlags.FragmentBit,
+				VulkanPipelineManager.CommonPushConstantStages,
 				recordingState.PushConstants);
 
 			if (recordingState.UsesDescriptorHeap)
@@ -1894,7 +1894,9 @@ internal unsafe partial class VkMeshRenderer
 	internal bool TryTransitionPreparedDescriptorImagesForSampling(
 		CommandBuffer commandBuffer,
 		in VulkanPreparedMeshDrawState recordingState,
-		XRFrameBuffer? target)
+		XRFrameBuffer? target,
+		int passIndex,
+		IReadOnlyCollection<RenderPassMetadata>? passMetadata)
 	{
 		if (recordingState.UsesDescriptorHeap ||
 			recordingState.DescriptorBindingCount <= 0 ||
@@ -1915,7 +1917,9 @@ internal unsafe partial class VkMeshRenderer
 					CommandOperations.TransitionPublishedDescriptorSetImagesForSampling(
 						commandBuffer,
 						set,
-						target);
+						target,
+						passIndex,
+						passMetadata);
 		}
 
 		return transitionedPublishedSet;
@@ -1927,6 +1931,8 @@ internal unsafe partial class VkMeshRenderer
 		int drawUniformSlot,
 		int frameIndex,
 		XRFrameBuffer? target,
+		int passIndex,
+		IReadOnlyCollection<RenderPassMetadata>? passMetadata,
 		bool frameDataAlreadyPrewarmed = false)
 	{
 		lock (_recordDrawSync)
@@ -1953,7 +1959,9 @@ internal unsafe partial class VkMeshRenderer
 					resolvedPublishedSet |= CommandOperations.TransitionPublishedDescriptorSetImagesForSampling(
 						commandBuffer,
 						set,
-						target);
+						target,
+						passIndex,
+						passMetadata);
 			}
 
 			return resolvedPublishedSet;

@@ -174,6 +174,8 @@ internal sealed partial class VulkanCommandRuntime
                         secondary,
                         descriptorSet,
                         preparedDraw.Target,
+                        chain.Key.PassIndex,
+                        preparedDraw.Context.PassMetadata,
                         out string descriptorRequirementFailure))
                 {
                     throw new VulkanPlanPreconditionException(

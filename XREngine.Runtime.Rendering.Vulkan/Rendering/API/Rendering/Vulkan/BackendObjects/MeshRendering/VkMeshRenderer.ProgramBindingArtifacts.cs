@@ -19,6 +19,109 @@ internal unsafe partial class VkMeshRenderer
         EUniformRequirements.Lights |
         EUniformRequirements.AmbientOcclusion;
 
+    private XRMaterial? _fastPersistentArtifactMaterial;
+    private VkRenderProgram? _fastPersistentArtifactProgram;
+    private PersistentProgramBindingArtifactGeneration
+        _fastPersistentArtifactGeneration;
+    private RenderBindingPublisherGenerationSnapshot?
+        _fastPersistentArtifactPublisherGenerations;
+    private ComputeDispatchSnapshot? _fastPersistentArtifact;
+    private bool _hasFastPersistentArtifact;
+
+    /// <summary>
+    /// Reuses the renderer-local artifact after validating only the mutable owner
+    /// generations. Eligibility and the program-wide cache lookup were already
+    /// proven by the publication that populated this slot.
+    /// </summary>
+    private bool TryReuseFastPersistentProgramBindingArtifact(
+        XRMaterial material,
+        XRRenderProgram programData,
+        VkRenderProgram program,
+        in LayeredShadowUniformState shadowUniformState,
+        out ComputeDispatchSnapshot? artifact)
+    {
+        artifact = null;
+        if (!_hasFastPersistentArtifact ||
+            !ReferenceEquals(_fastPersistentArtifactMaterial, material) ||
+            !ReferenceEquals(_fastPersistentArtifactProgram, program) ||
+            shadowUniformState.IsShadowPass ||
+            MeshRenderer.HasSettingUniformsHandlers ||
+            material.HasSettingUniformsHandlers ||
+            RuntimeEngine.Rendering.State.RenderingPipelineState
+                ?.HasActiveScopedBindings == true)
+        {
+            return false;
+        }
+
+        IRenderBindingPublisher[] materialPublishers =
+            material.BindingPublishers.CaptureSnapshot();
+        IRenderBindingPublisher[] meshPublishers =
+            MeshRenderer.BindingPublishers.CaptureSnapshot();
+        if (_fastPersistentArtifactPublisherGenerations is not { } generations ||
+            !generations.Matches(materialPublishers, meshPublishers))
+        {
+            return false;
+        }
+
+        EUniformRequirements engineRequirements =
+            _fastPersistentArtifactGeneration.EngineRequirements;
+        ComputeDispatchSnapshot? engineBindingSnapshot = null;
+        if ((engineRequirements & EUniformRequirements.Lights) != 0)
+        {
+            Lights3DCollection? lights =
+                RuntimeEngine.Rendering.State.RenderingWorld?.Lights;
+            if (lights is null)
+                return false;
+
+            engineBindingSnapshot =
+                CommandOperations.GetForwardLightingBindingSnapshotForArtifact(
+                    lights,
+                    programData,
+                    program);
+            if (engineBindingSnapshot is null)
+                return false;
+        }
+
+        PersistentProgramBindingArtifactGeneration currentGeneration = new(
+            material.BindingLayoutVersion,
+            material.BindingValueVersion,
+            material.BindingResourceVersion,
+            material.ShaderStateRevision,
+            material.UberStateRevision,
+            program.LinkGeneration,
+            _fastPersistentArtifactGeneration.TypedPublisherSignature,
+            engineBindingSnapshot?.PersistentEngineUniformSignature ?? 0UL,
+            engineBindingSnapshot?.PersistentEngineResourceSignature ?? 0UL,
+            RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.Variables
+                .UniformContentGeneration ?? 0UL,
+            engineRequirements,
+            MeshRenderer.CaptureUniformsOnRender);
+        if (currentGeneration != _fastPersistentArtifactGeneration)
+            return false;
+
+        artifact = _fastPersistentArtifact;
+        return true;
+    }
+
+    private void PublishFastPersistentProgramBindingArtifact(
+        XRMaterial material,
+        VkRenderProgram program,
+        in PersistentProgramBindingArtifactGeneration generation,
+        IRenderBindingPublisher[] materialPublishers,
+        IRenderBindingPublisher[] meshPublishers,
+        ComputeDispatchSnapshot? artifact)
+    {
+        _fastPersistentArtifactMaterial = material;
+        _fastPersistentArtifactProgram = program;
+        _fastPersistentArtifactGeneration = generation;
+        _fastPersistentArtifactPublisherGenerations =
+            RenderBindingPublisherGenerationSnapshot.Capture(
+                materialPublishers,
+                meshPublishers);
+        _fastPersistentArtifact = artifact;
+        _hasFastPersistentArtifact = true;
+    }
+
     /// <summary>
     /// Cross-frame artifacts are restricted to inputs with an explicit owner
     /// generation. Lighting/AO use one immutable scope publication and its

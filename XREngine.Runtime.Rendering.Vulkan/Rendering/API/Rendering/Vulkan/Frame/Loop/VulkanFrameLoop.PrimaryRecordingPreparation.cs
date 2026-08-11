@@ -250,10 +250,10 @@ internal sealed unsafe partial class VulkanFrameLoop
             using IDisposable? cameraScope = pipeline.RenderState.PushRenderingCamera(
                 pipeline.LastRenderingCamera ?? pipeline.LastSceneCamera);
             if (!request.Renderer.TryMaterializeQueuedRenderRequest(
-                in request,
-                in producer,
-                in materializationSnapshot,
-                out VulkanMeshOperationRequest operationRequest))
+                    in request,
+                    in producer,
+                    in materializationSnapshot,
+                    out VulkanMeshOperationRequest operationRequest))
             {
                 continue;
             }
@@ -480,6 +480,9 @@ internal sealed unsafe partial class VulkanFrameLoop
             _windowPresentSource.CaptureForDescriptorSlot(checked((int)imageIndex));
         VulkanRecordedRenderTargetSnapshot targetSnapshot =
             CapturePreparedRenderTargetSnapshot(in target);
+        FrameOpSignatureHasher resourceVersionHasher = new();
+        resourceVersionHasher.Add(framePlan.ResourceVersionSignature);
+        resourceVersionHasher.Add(plannerState.ResourceAllocationSignature);
         CommandChainSchedule? commandChainSchedule =
             _commandRuntime.TryBuildCommandChainSchedule(
                 imageIndex,
@@ -495,7 +498,11 @@ internal sealed unsafe partial class VulkanFrameLoop
                 allowExternalSwapchainTarget: false,
                 out _,
                 preparedRecordingTarget: targetSnapshot,
-                resourceVersionSignature: framePlan.ResourceVersionSignature,
+                // Frame-op resource generations do not cover replacement of the
+                // planner's native images during a resize. Include the published
+                // allocation signature so cached secondaries and primaries cannot
+                // retain retired image/framebuffer handles after that replacement.
+                resourceVersionSignature: resourceVersionHasher.ToHash(),
                 descriptorVersionSignature: framePlan.DescriptorVersionSignature);
         VulkanCommandRecordingPolicySnapshot policy = new(
             UseDynamicRenderingRenderTargets,

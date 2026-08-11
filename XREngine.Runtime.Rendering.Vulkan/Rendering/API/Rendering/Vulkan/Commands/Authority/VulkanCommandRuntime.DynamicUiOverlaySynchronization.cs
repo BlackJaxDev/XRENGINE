@@ -289,7 +289,9 @@ internal sealed partial class VulkanCommandRuntime
         CommandBuffer commandBuffer,
         Image image,
         in ImageSubresourceRange range,
-        out VulkanImageAccessState state)
+        out VulkanImageAccessState state,
+        bool includeEntryState = true,
+        bool includeUndefinedState = false)
     {
         state = VulkanImageAccessState.Undefined;
         ulong handle = unchecked((ulong)commandBuffer.Handle);
@@ -306,7 +308,13 @@ internal sealed partial class VulkanCommandRuntime
         lock (Synchronization._vulkanImageLayoutLock)
         {
             Synchronization._recordedImageLayoutsByCommandBuffer.TryGetValue(handle, out VulkanRecordedImageLayoutState? recorded);
-            return TryGetRecordedImageAccessStateNoLock(recorded, image, in range, out state);
+            return TryGetRecordedImageAccessStateNoLock(
+                recorded,
+                image,
+                in range,
+                out state,
+                includeEntryState,
+                includeUndefinedState);
         }
     }
 
@@ -314,7 +322,9 @@ internal sealed partial class VulkanCommandRuntime
         VulkanRecordedImageLayoutState? recorded,
         Image image,
         in ImageSubresourceRange range,
-        out VulkanImageAccessState state)
+        out VulkanImageAccessState state,
+        bool includeEntryState = true,
+        bool includeUndefinedState = false)
     {
         state = VulkanImageAccessState.Undefined;
         VulkanImageAccessState? combined = null;
@@ -341,7 +351,8 @@ internal sealed partial class VulkanCommandRuntime
                 VulkanImageAccessState candidate;
                 if (recorded is not null &&
                     (recorded.Subresources.TryGetValue(key, out candidate) ||
-                     recorded.EntrySubresources.TryGetValue(key, out candidate)))
+                     (includeEntryState &&
+                      recorded.EntrySubresources.TryGetValue(key, out candidate))))
                 {
                     // The command buffer has already established this state.
                 }
@@ -370,7 +381,7 @@ internal sealed partial class VulkanCommandRuntime
         if (!combined.HasValue)
             return false;
         state = combined.Value;
-        return state.Layout != ImageLayout.Undefined;
+        return includeUndefinedState || state.Layout != ImageLayout.Undefined;
     }
 
     private static VulkanImageAccessState ResolveOverlayImageAccessState(
