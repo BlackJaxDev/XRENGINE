@@ -109,6 +109,10 @@ internal sealed partial class CommandBufferRecordingScratch
             private int _dynamicUiReusableFrameDataOwnerWorkRequestCount;
             private int _scheduledCommandChainFrameDataRefreshRequestCount;
             private int _scheduledCommandChainFrameDataOwnerWorkRequestCount;
+            private ulong _reusableFrameDataCohortFramePlanGeneration;
+            private ulong _reusableFrameDataCohortRenderFrameId;
+            private uint _reusableFrameDataCohortImageIndex;
+            private bool _reusableFrameDataCohortPublished;
             private readonly HashSet<VulkanReusableFrameOwnerKey>
                 _primaryReusableFrameOwners = [];
             private readonly HashSet<VulkanReusableFrameOwnerKey>
@@ -194,6 +198,7 @@ internal sealed partial class CommandBufferRecordingScratch
 
             public void BeginReusableFrameDataRefreshRequests()
             {
+                InvalidateReusableFrameDataRefreshCohort();
                 Array.Clear(
                     _primaryReusableFrameDataRefreshRequests,
                     0,
@@ -218,6 +223,45 @@ internal sealed partial class CommandBufferRecordingScratch
                 _dynamicUiReusableFrameOwners.Clear();
                 PrimaryReusableFrameDataRefreshBatchInfo = default;
                 DynamicUiReusableFrameDataRefreshBatchInfo = default;
+            }
+
+            /// <summary>
+            /// Publishes the sealed frame-plan and image-slot identity that produced
+            /// the reusable refresh requests currently stored in this thread-local
+            /// scratch object.
+            /// </summary>
+            public void PublishReusableFrameDataRefreshCohort(
+                ulong framePlanGeneration,
+                ulong renderFrameId,
+                uint imageIndex)
+            {
+                _reusableFrameDataCohortFramePlanGeneration =
+                    framePlanGeneration;
+                _reusableFrameDataCohortRenderFrameId = renderFrameId;
+                _reusableFrameDataCohortImageIndex = imageIndex;
+                _reusableFrameDataCohortPublished = true;
+            }
+
+            /// <summary>
+            /// Verifies that primary reuse will consume requests built from the
+            /// current sealed frame plan for the acquired image slot.
+            /// </summary>
+            public bool IsReusableFrameDataRefreshCohortCurrent(
+                ulong framePlanGeneration,
+                ulong renderFrameId,
+                uint imageIndex)
+                => _reusableFrameDataCohortPublished &&
+                   _reusableFrameDataCohortFramePlanGeneration ==
+                       framePlanGeneration &&
+                   _reusableFrameDataCohortRenderFrameId == renderFrameId &&
+                   _reusableFrameDataCohortImageIndex == imageIndex;
+
+            private void InvalidateReusableFrameDataRefreshCohort()
+            {
+                _reusableFrameDataCohortFramePlanGeneration = 0;
+                _reusableFrameDataCohortRenderFrameId = 0;
+                _reusableFrameDataCohortImageIndex = 0;
+                _reusableFrameDataCohortPublished = false;
             }
 
             public void BeginScheduledCommandChainFrameDataRefreshRequests()

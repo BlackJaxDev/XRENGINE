@@ -301,3 +301,87 @@ produce a capture before timeout. MCP intermediate-texture captures and Vulkan
 operation/barrier logs were sufficient to identify and verify the ordering bug.
 The startup/maximize skybox regression is now resolved locally; user acceptance
 is still pending.
+
+## 2026-08-11 input-refresh and reported-FPS follow-up
+
+The report that the debug FPS remained high while the scene appeared to update
+only after mouse or keyboard input was not caused by a desktop Vulkan
+render-on-demand gate. Live inspection showed both
+`EditorFlyingCameraPawnComponent.RenderOnDemand == false` and
+`XRViewport.Suppress3DSceneRendering == false`. The desktop callback continued
+through acquire, record/reuse, submit, and present on every frame.
+
+Two regressions made the behavior look demand-driven:
+
+1. Commit `16047d7e4` applied the whole-frame resource-version signature to every
+   command chain. That signature includes the visible operation stream, so
+   ordinary camera visibility changes marked every otherwise stable secondary as
+   `ResourcePlan` dirty. Command-chain schedule identity still needs the complete
+   signature, but per-chain shared-resource invalidation now uses only the
+   resource-allocation generation. Exact packet, descriptor, and prepared-key
+   checks continue to reject a chain whose own native dependencies changed.
+2. Commit `ec0efb261` moved clean-primary reuse ahead of current-frame mesh
+   frame-data registration. `TryReuseCleanCommandChainPrimaryVariant` therefore
+   consumed refresh requests left in thread-local recording scratch by the last
+   fresh primary, potentially for a different acquired image slot. Those stale
+   `PendingMeshDraw` snapshots contain the old camera matrices and auto-uniform
+   view generation. Heavy fresh recordings published a current camera once, then
+   many cheap UI/present frames reused the old scene data, producing the observed
+   sample-and-hold behavior.
+
+The primary fast path now rebuilds/registers the current static and dynamic
+refresh cohort before attempting reuse. The cohort is stamped with frame-plan
+generation, render-frame ID, and frame-data image index; the reuse function
+rejects it unless all three match. Refresh writes use that frame-data image
+index even when it differs from the acquired command-buffer image, while
+artifact ownership remains keyed by the acquired image. The previously disconnected
+`XRE_VULKAN_PRIMARY_COMMAND_BUFFER_REUSE=0` override once again gates the fast
+path.
+
+The debug overlay also averaged instantaneous `1 / delta` samples. That
+arithmetic mean is biased high when a workload alternates long recording stalls
+with short UI/present frames. It now reports `sample count / summed elapsed time`
+over a fixed 60-frame duration ring, with no per-frame allocation.
+
+Isolation followed the requested order:
+
+- Sponza off and the directional light off: a post-fix three-second camera sweep
+  advanced 237 render frames in 1.063 seconds (223.1 FPS), with a 4.324 ms worst
+  sampled frame, no sample over 33.3 ms, and clean primary reuse.
+- For visual acceptance without restoring the dense scene, the Sponza hierarchy
+  remained disabled except for one leaf submesh used as a camera-motion marker;
+  the directional light remained disabled. A four-second focus interpolation
+  advanced 1,223 frames in 7.417 seconds of externally sampled wall time
+  (164.9 FPS), with an 8.651 ms worst unique sampled frame, no frame over
+  16.7 ms, clean primary reuse in all 100 unique samples, and visibly different
+  intermediate images without mouse or keyboard input. The inspected images are
+  the `121817`, `121818`, `121819`, and `121820` captures in the evidence folder.
+- Directional light alone was previously about 116.8 FPS and amplified dirty
+  work, but was not the base cause.
+- Sponza alone reproduced the expensive path. Before the signature split,
+  visibility changes produced up to roughly 850 operations and 500--650 ms
+  frames while re-recording hundreds of stable secondaries. After the split,
+  warmed sweeps reused up to 725 secondaries with zero secondary recordings.
+- Sponza-only still has a separate CPU scaling problem. Current diagnostics show
+  primary reuse rejecting a `leaf` draw because a mutable frame-source descriptor
+  allocation reports a pool miss. That forces primary encoding/operation
+  preparation back into roughly 50--370 ms frames even though the secondary
+  command buffers themselves remain reusable. This does not reproduce in the
+  requested stripped scene and should be addressed as the next dense-scene
+  optimization rather than folded into the input-refresh correctness fix.
+- A cleared final-presentation ledger can still report a missing descriptor
+  observation on a valid reuse frame. The plan-owned frame-source fast path
+  intentionally skips the redundant descriptor refresh/fingerprint walk, but
+  that also skips the ledger observation. This is a diagnostic false positive,
+  not evidence that the refreshed draw cohort is stale.
+
+Four Sponza-only screenshots captured during one interpolated camera move show
+the rendered viewpoint progressing without additional mouse input. They are in
+`Build/_AgentValidation/vulkan-phase42-43-final-20260810/20260811-input-refresh/mcp-captures/`
+with timestamps `120919`, `120920`, `120921`, and `120923`. Full-resolution
+readback itself costs roughly 0.5 seconds and is not a cadence measurement.
+
+The Vulkan leaf build and editor build pass with warnings treated as errors.
+The live post-fix session reported zero Vulkan validation messages. No tests were
+added or run while this runtime regression remains in live validation, per the
+repository testing policy.

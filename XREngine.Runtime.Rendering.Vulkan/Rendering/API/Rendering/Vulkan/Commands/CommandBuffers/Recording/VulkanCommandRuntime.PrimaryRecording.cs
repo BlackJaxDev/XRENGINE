@@ -43,10 +43,16 @@ internal sealed unsafe partial class VulkanCommandRuntime
             input.FramePlan.GetNativeDynamicOverlayOperationsForRecording();
         ReadOnlySpan<FrameOp> reuseStaticOperations = operations.AsSpan();
         if (owner is not null &&
+            VulkanPrimaryCommandBufferReuseEnabled &&
+            CommandChainsEnabledForCurrentRecording &&
             input.LogicalViewId == 0 &&
             input.CommandChainSchedule is not null &&
             !input.CommandChainSchedule.RequiresFreshPrimary &&
-            !input.Policy.FreshSerialRecording)
+            !input.Policy.FreshSerialRecording &&
+            TryPreparePrimaryReuseFrameDataCohort(
+                in input,
+                operations,
+                sealedDynamicUiOperations))
         {
             FrameOpContext fallbackContext = reuseStaticOperations.Length > 0
                 ? reuseStaticOperations[0].Context
@@ -65,6 +71,9 @@ internal sealed unsafe partial class VulkanCommandRuntime
             ulong imageLayoutStartSignature = ComputePreparedImageLayoutStartSignature(in input);
             if (TryReuseCleanCommandChainPrimaryVariant(
                     input.ImageIndex,
+                    input.FramePlan.Generation,
+                    input.FramePlan.RenderFrameId,
+                    input.FrameDataImageIndexOverride ?? input.ImageIndex,
                     input.FramePlan.StaticOperationSignature,
                     frameOpContextFingerprint,
                     frameOpContextId,
@@ -181,6 +190,57 @@ internal sealed unsafe partial class VulkanCommandRuntime
             context.RecordedSwapchainWriteCount,
             Volatile.Read(ref CommandBuffers.DirtyGeneration),
             Reason: null);
+    }
+
+    /// <summary>
+    /// Builds the current frame's immutable mesh refresh cohort before primary
+    /// reuse examines it. The scratch object is recorder-thread-local rather than
+    /// swapchain-image-owned, so a cohort left by the last fresh recording cannot
+    /// be treated as current merely because the primary artifact itself is clean.
+    /// </summary>
+    private bool TryPreparePrimaryReuseFrameDataCohort(
+        in VulkanPreparedPrimaryCommandInput input,
+        FrameOperationSequence operations,
+        FrameOperationSequence dynamicUiOperations)
+    {
+        CommandBufferRecordingScratch scratch =
+            _commandBufferRecordingScratch.Value!;
+        uint frameDataImageIndex =
+            input.FrameDataImageIndexOverride ?? input.ImageIndex;
+        int commandBufferImageSlot = unchecked((int)Math.Min(
+            frameDataImageIndex,
+            int.MaxValue));
+        bool registered;
+        string failureReason;
+        using (VulkanCpuStageScope cpuStage =
+               new(_frameTelemetry, EVulkanCpuStage.FrameDataManifest))
+        {
+            registered = TryRegisterFrameWideMeshFrameDataRequirements(
+                operations,
+                dynamicUiOperations,
+                commandBufferImageSlot,
+                sealAfterRegister: true,
+                scratch.MeshDrawSlotsByRenderer,
+                scratch,
+                scratch.ReusableMeshFrameDataFamilyBases,
+                out _,
+                out failureReason);
+        }
+
+        if (!registered)
+        {
+            TraceCommandChainPrimaryReuseRejection(
+                input.ImageIndex,
+                "FrameDataCohort",
+                failureReason);
+            return false;
+        }
+
+        scratch.PublishReusableFrameDataRefreshCohort(
+            input.FramePlan.Generation,
+            input.FramePlan.RenderFrameId,
+            frameDataImageIndex);
+        return true;
     }
 
     private void PublishRecordedPrimaryOwner(

@@ -35,7 +35,11 @@ public static partial class EditorUnitTests
         private const float FpsOverlayWidth = 1180.0f;
         private const float FpsOverlayHeight = 210.0f;
         private const float FpsOverlayBottomMargin = 26.0f;
-        private static readonly Queue<float> _fpsAvg = new();
+        private const int FpsSampleCapacity = 60;
+        private static readonly double[] _fpsFrameDurations = new double[FpsSampleCapacity];
+        private static int _fpsSampleCount;
+        private static int _fpsSampleWriteIndex;
+        private static double _fpsSampleDurationSeconds;
         private static readonly StringBuilder _fpsTextBuilder = new(768);
         private static long _lastSampledRenderTimestampTicks = -1L;
 
@@ -89,9 +93,7 @@ public static partial class EditorUnitTests
             if (renderTimestampTicks != _lastSampledRenderTimestampTicks)
             {
                 _lastSampledRenderTimestampTicks = renderTimestampTicks;
-                _fpsAvg.Enqueue(1.0f / Engine.Time.Timer.Render.Delta);
-                if (_fpsAvg.Count > 60)
-                    _fpsAvg.Dequeue();
+                AddFpsFrameDuration(Engine.Time.Timer.Render.Delta);
             }
 
             // The sample window remains frame-accurate, while formatting and rebuilding
@@ -104,7 +106,9 @@ public static partial class EditorUnitTests
             }
             _lastFpsOverlayRefreshTicks = renderTimestampTicks;
 
-            float averageHz = _fpsAvg.Count > 0 ? MathF.Round(_fpsAvg.Sum() / _fpsAvg.Count) : 0.0f;
+            float averageHz = _fpsSampleDurationSeconds > 0.0
+                ? MathF.Round((float)(_fpsSampleCount / _fpsSampleDurationSeconds))
+                : 0.0f;
             double renderMs = Engine.Time.Timer.Render.Delta * 1000.0;
             double updateMs = Engine.Time.Timer.Update.Delta * 1000.0;
             double fixedMs = Engine.Time.Timer.FixedUpdateDelta * 1000.0;
@@ -206,6 +210,21 @@ public static partial class EditorUnitTests
             string fpsText = builder.ToString();
             t.Text = fpsText;
             t.Color = ResolveFpsOverlayColor(renderMs, cpuFrameMs, gpuCmdMs, vrPassMs, networkingRttMs, fallbackEvents);
+        }
+
+        private static void AddFpsFrameDuration(double durationSeconds)
+        {
+            if (!double.IsFinite(durationSeconds) || durationSeconds <= 0.0)
+                return;
+
+            if (_fpsSampleCount == FpsSampleCapacity)
+                _fpsSampleDurationSeconds -= _fpsFrameDurations[_fpsSampleWriteIndex];
+            else
+                _fpsSampleCount++;
+
+            _fpsFrameDurations[_fpsSampleWriteIndex] = durationSeconds;
+            _fpsSampleDurationSeconds += durationSeconds;
+            _fpsSampleWriteIndex = (_fpsSampleWriteIndex + 1) % FpsSampleCapacity;
         }
 
         private static void AppendVrRenderStats(StringBuilder builder, double vrHz, double vrPassMs)

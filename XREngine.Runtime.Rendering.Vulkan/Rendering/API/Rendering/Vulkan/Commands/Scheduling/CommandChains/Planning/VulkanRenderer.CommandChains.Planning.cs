@@ -29,6 +29,7 @@ internal sealed unsafe partial class VulkanCommandRuntime
         ulong? preparedFastScheduleSignature = null,
         VulkanRecordedRenderTargetSnapshot preparedRecordingTarget = default,
         ulong resourceVersionSignature = 0UL,
+        ulong sharedResourceVersionSignature = 0UL,
         ulong descriptorVersionSignature = 0UL)
         => TryBuildCommandChainSchedule(
             imageIndex,
@@ -42,6 +43,7 @@ internal sealed unsafe partial class VulkanCommandRuntime
             preparedFastScheduleSignature,
             preparedRecordingTarget,
             resourceVersionSignature,
+            sharedResourceVersionSignature,
             descriptorVersionSignature);
 
     internal CommandChainSchedule? TryBuildCommandChainSchedule(
@@ -56,6 +58,7 @@ internal sealed unsafe partial class VulkanCommandRuntime
         ulong? preparedFastScheduleSignature = null,
         VulkanRecordedRenderTargetSnapshot preparedRecordingTarget = default,
         ulong resourceVersionSignature = 0UL,
+        ulong sharedResourceVersionSignature = 0UL,
         ulong descriptorVersionSignature = 0UL)
     {
         stats = default;
@@ -275,7 +278,12 @@ internal sealed unsafe partial class VulkanCommandRuntime
                 new(_frameTelemetry, EVulkanCpuStage.CommandDependencyComparison))
             {
                 dirtyReason = EvaluateCommandChainDirtyReason(chain, packet);
-                if (chain.ResourceVersionSignature != resourceVersionSignature)
+                // The schedule-wide resource signature includes the current visible
+                // operation set. Comparing it per chain would invalidate every cached
+                // secondary whenever an unrelated mesh enters or leaves the frustum.
+                // Exact packet resources are checked above; this shared signature only
+                // covers allocator-wide replacements such as a swapchain resize.
+                if (chain.ResourceVersionSignature != sharedResourceVersionSignature)
                     dirtyReason |= CommandChainDirtyReason.ResourcePlan;
             }
             if (dirtyReason != CommandChainDirtyReason.None &&
@@ -408,7 +416,7 @@ internal sealed unsafe partial class VulkanCommandRuntime
             chain.StructuralSignature = packet.StructuralSignature;
             chain.FrameDataSignature = packet.FrameDataSignature;
             chain.ResourcePlanRevision = packet.ResourcePlanSnapshot.Revision;
-            chain.ResourceVersionSignature = resourceVersionSignature;
+            chain.ResourceVersionSignature = sharedResourceVersionSignature;
             chain.PhysicalImageSignature = packet.ResourcePlanSnapshot.PhysicalImageSignature;
             chain.FramebufferSignature = packet.ResourcePlanSnapshot.FramebufferSignature;
             chain.DescriptorGeneration = packet.DescriptorSnapshot.DescriptorGeneration;

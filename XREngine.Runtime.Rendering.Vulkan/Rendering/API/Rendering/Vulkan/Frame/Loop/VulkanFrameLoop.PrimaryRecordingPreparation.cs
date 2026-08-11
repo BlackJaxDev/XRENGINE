@@ -503,6 +503,7 @@ internal sealed unsafe partial class VulkanFrameLoop
                 // allocation signature so cached secondaries and primaries cannot
                 // retain retired image/framebuffer handles after that replacement.
                 resourceVersionSignature: resourceVersionHasher.ToHash(),
+                sharedResourceVersionSignature: plannerState.ResourceAllocationSignature,
                 descriptorVersionSignature: framePlan.DescriptorVersionSignature);
         VulkanCommandRecordingPolicySnapshot policy = new(
             UseDynamicRenderingRenderTargets,
