@@ -19,6 +19,9 @@ namespace XREngine.Rendering.Vulkan
     {
         private bool TryReuseCleanCommandChainPrimaryVariant(
             uint imageIndex,
+            ulong framePlanGeneration,
+            ulong renderFrameId,
+            uint frameDataImageIndex,
             ulong frameOpsSignature,
             ulong frameOpContextFingerprint,
             ulong frameOpContextId,
@@ -52,6 +55,17 @@ namespace XREngine.Rendering.Vulkan
             CommandBufferRecordingScratch frameDataScratch =
                 _commandBufferRecordingScratch.Value!;
             using VulkanCpuStageScope commandBufferReuseStage = new(_frameTelemetry, EVulkanCpuStage.CommandBufferReuse);
+
+            if (!frameDataScratch.IsReusableFrameDataRefreshCohortCurrent(
+                    framePlanGeneration,
+                    renderFrameId,
+                    frameDataImageIndex))
+            {
+                TraceCommandChainPrimaryReuseRejection(
+                    imageIndex,
+                    "StaleFrameDataCohort");
+                return false;
+            }
 
             if (!CommandChainsEnabledForCurrentRecording ||
                 _primaryCommandArtifactOwners is null ||
@@ -252,7 +266,7 @@ namespace XREngine.Rendering.Vulkan
                 {
                     refreshedReusableFrameData = ops.Length == 0 ||
                         TryRefreshReusableCommandBufferFrameData(
-                            imageIndex,
+                            frameDataImageIndex,
                             frameDataScratch
                                 .PrimaryReusableFrameDataRefreshRequests,
                             frameDataScratch
@@ -270,7 +284,7 @@ namespace XREngine.Rendering.Vulkan
                     {
                         dynamicUiFrameDataNeedsRerecord =
                             !TryRefreshReusableCommandBufferFrameData(
-                                imageIndex,
+                                frameDataImageIndex,
                                 frameDataScratch
                                     .DynamicUiReusableFrameDataRefreshRequests,
                                 frameDataScratch
