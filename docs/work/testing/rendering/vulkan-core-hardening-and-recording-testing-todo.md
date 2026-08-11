@@ -1,6 +1,6 @@
 # Vulkan Core Hardening And Recording Testing TODO
 
-Last Updated: 2026-08-06
+Last Updated: 2026-08-11
 Owner: Rendering
 Status: Active
 
@@ -101,6 +101,20 @@ through 14 of the consolidated code-changes tracker.
   ownership, and invalidation keys.
 - [ ] Add deterministic fault injection at submit, timeline/fence wait,
   descriptor update, allocation, and OpenXR frame boundaries.
+- [ ] Add deterministic primary-reuse coverage that cycles desktop swapchain
+  images while camera/view data changes. Require the refresh cohort's plan
+  generation, render-frame ID, frame-data image index, and recorded-order
+  projection to match; prove that prior thread-local recording scratch cannot be
+  accepted as current authority.
+- [ ] Cover completion-domain selection explicitly: frame-in-flight resources
+  use the frame-slot timeline, desktop descriptor/frame-data image slots use the
+  desktop image timeline, OpenXR uses external completion, and swapchain
+  recreation inherits the strongest retired-image graphics-timeline
+  requirement.
+- [ ] Cover speculative pre-seal primary reuse with stable and structurally
+  changed dynamic UI. Exact secondary reuse must accept an unsealed current
+  operation, while a changed operation must fall back to full sealing without
+  stale data, duplicate metrics, or a spurious validation warning.
 - [ ] Add CI-safe Vulkan/OpenXR smoke coverage that does not require a physical
   headset, including capture work queued beside eye rendering.
 - [ ] Cover all mesh strategies and ensure zero-readback lanes make no forbidden
@@ -291,6 +305,10 @@ is accepted.
 - [ ] Verify resize, minimize/restore, swapchain recreation, topology changes,
   streaming publication, camera and light motion, camera cuts, masked geometry,
   TSR history, AO, shadows, probes, bloom, and post-processing.
+- [ ] For desktop camera-motion acceptance, compare an independent wall-clock
+  `frame_outputs.frame_id` delta with the reported render rate while no input is
+  supplied. Require `scene_rendered=true`, `work_disposition=FreshRender`, and
+  `skipped=false`; exclude screenshot/readback intervals from cadence results.
 - [ ] Inspect screenshots and exported depth, normal, velocity, lighting,
   temporal, and final targets from at least two camera positions; compare
   serial/parallel/reuse output for equivalence.
@@ -360,6 +378,11 @@ is accepted.
 - [ ] Verify stable desktop command reuse after warmup, no static command-range
   rerecord from ordinary data changes, no required-pipeline deferral, and no
   steady-state recording allocation.
+- [ ] Run the same deterministic full-Sponza camera path with directional lights
+  off and on. Record visible draws, binding-artifact builds/reuses, scheduled/
+  recorded/reused chains, primary decisions, frame-op preparation, packet
+  construction, frame-data manifest/refresh, native encoding, submission, and
+  actual no-input frame advance. Do not accept overlay FPS alone.
 - [ ] Attribute every desktop frame above 5.00 ms and every RVC zero-readback
   frame above 8.33 ms; retain an explicit `Unattributed` failure bucket.
 - [ ] Run matched instrumentation-disabled, aggregate, targeted-single-subtree,

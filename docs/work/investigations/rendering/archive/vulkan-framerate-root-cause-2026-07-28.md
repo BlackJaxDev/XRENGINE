@@ -1,5 +1,8 @@
 # Vulkan Framerate Root-Cause Investigation
 
+> Historical incident record. For current causes, invariants, and triage, use
+> [Vulkan Desktop Camera Motion, Stale Frames, And CPU Scaling](../vulkan-camera-motion-black-flicker-2026-08-10.md).
+
 Date: 2026-07-28
 
 ## Problem statement

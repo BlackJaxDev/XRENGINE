@@ -1,5 +1,9 @@
 # Vulkan CPU Framerate Regression Investigation
 
+> Historical performance baseline. For current desktop cadence symptoms,
+> measurement rules, and ownership, use
+> [Vulkan Desktop Camera Motion, Stale Frames, And CPU Scaling](../vulkan-camera-motion-black-flicker-2026-08-10.md).
+
 Date: 2026-07-09  
 Status: Diagnosis complete; no performance fix implemented in this investigation  
 Scope: Current Phase 5.1 working tree, desktop Vulkan CPU render-loop behavior, and correlated OpenXR/capture stalls  

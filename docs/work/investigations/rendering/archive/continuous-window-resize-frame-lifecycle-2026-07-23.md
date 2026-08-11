@@ -1,5 +1,9 @@
 # Continuous Window Resize Frame Lifecycle
 
+> Historical window-lifecycle incident. For current desktop cadence symptoms,
+> resize triage, and ownership, use
+> [Vulkan Desktop Camera Motion, Stale Frames, And CPU Scaling](../vulkan-camera-motion-black-flicker-2026-08-10.md).
+
 Status: implemented and locally validated; user retest pending
 Last updated: 2026-07-23
 
