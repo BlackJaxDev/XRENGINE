@@ -28,9 +28,3 @@ internal sealed class VulkanDeviceFaultCapture
         builder.AppendLine().AppendLine(Summary);
     }
 }
-
-/// <summary>One named text or binary artifact ready for persistence.</summary>
-internal readonly record struct VulkanDeviceFaultArtifact(
-    string FileName,
-    byte[] Content,
-    bool IsBinary);

@@ -1,0 +1,229 @@
+{
+  "schema_version": 1,
+  "approval": "Owner-directed Vulkan core hardening pass, 2026-08-11: preserve supported functionality and prefer cohesive, maintainable ownership over mechanical file or line reduction.",
+  "file_exceptions": [
+    {
+      "path": "BackendObjects/MeshRendering/VkMeshRenderer.Uniforms.cs",
+      "reason": "Cohesive hot-path uniform resolution and write policy; further physical splitting would scatter one schema across files without reducing state or branching."
+    },
+    {
+      "path": "BackendObjects/MeshRendering/VkMeshRenderer.Drawing.cs",
+      "reason": "Cohesive allocation-free draw preparation and emission path whose state must remain locally reviewable."
+    },
+    {
+      "path": "Bootstrap/Device/VulkanDeviceContext.LogicalDeviceBootstrap.cs",
+      "reason": "Cold logical-device bootstrap keeps one auditable native feature-chain lifetime scope; phase helpers are reviewed through method exceptions."
+    },
+    {
+      "path": "Resources/Authority/VulkanResourceRuntime.cs",
+      "reason": "Canonical resource-root state and publication seam; behavior is already split into responsibility partials and this file keeps the authoritative state map together."
+    },
+    {
+      "path": "BackendObjects/Materials/VkMaterial.cs",
+      "reason": "Cohesive material descriptor state machine; splitting storage from transitions would obscure lifetime ownership."
+    },
+    {
+      "path": "Descriptors/VulkanDescriptorLifetimeAuthority.cs",
+      "reason": "Single descriptor lifetime/retirement authority; keeping creation, publication, and retirement invariants together is safer than a size-only split."
+    },
+    {
+      "path": "Commands/CommandBuffers/Recording/Primary/VulkanRenderer.CommandBufferRecording.Primary.Secondaries.cs",
+      "reason": "Cohesive secondary-command integration policy with shared allocation-free scratch and fallback invariants."
+    },
+    {
+      "path": "BackendObjects/Framebuffers/VkFrameBuffer.cs",
+      "reason": "Single framebuffer wrapper state machine; attachment identity, generation, and native lifetime transitions remain co-located."
+    },
+    {
+      "path": "Features/Upscaling/VulkanUpscaleBridgeSidecar.cs",
+      "reason": "Optional vendor bridge interop owner; native handle, feature, and shared-resource lifetime is intentionally audited in one type."
+    },
+    {
+      "path": "Commands/Synchronization/VulkanRenderer.BarrierEmission.cs",
+      "reason": "Canonical barrier translation and emission policy; shared scope/layout rules remain together to prevent a second synchronization model."
+    },
+    {
+      "path": "BackendObjects/MeshRendering/VkMeshRenderer.Descriptors.cs",
+      "reason": "Cohesive mesh descriptor allocation/publication/reuse state machine on an allocation-sensitive path."
+    },
+    {
+      "path": "Commands/Scheduling/CommandChains/Planning/VulkanRenderer.CommandChains.Packetization.cs",
+      "reason": "Canonical packet lowering path; numeric layout, dependency capture, and compatibility checks remain locally auditable."
+    },
+    {
+      "path": "BackendObjects/MeshRendering/VkMeshRenderer.cs",
+      "reason": "Primary mesh-wrapper state map and construction boundary; responsibility behavior is already split into focused partials."
+    },
+    {
+      "path": "Commands/CommandBuffers/State/VulkanRenderer.CommandBufferState.cs",
+      "reason": "Canonical command-buffer lifecycle state map; co-location prevents divergent ownership and reset policy."
+    }
+  ],
+  "method_exception_profiles": [
+    {
+      "path": "Bootstrap/Device/VulkanDeviceContext.LogicalDeviceBootstrap.cs",
+      "methods": ["CreateConfiguredLogicalDevice", "LoadOptionalDeviceExtensions"],
+      "reason": "Cold native bootstrap and extension-table publication require one visible pointer-lifetime and success-commit scope."
+    },
+    {
+      "path": "Bootstrap/Device/VulkanDeviceCapabilityReporter.cs",
+      "methods": ["LogStartupCapabilitySnapshot"],
+      "reason": "Declarative startup capability ledger; each row is intentionally explicit and has no runtime control-flow ownership."
+    },
+    {
+      "path": "Commands/CommandBuffers/Recording/Primary/VulkanRenderer.CommandBufferRecording.Primary.RenderScopes.cs",
+      "methods": ["BeginRenderingForTarget"],
+      "reason": "One dynamic/legacy render-scope transition matrix with shared attachment invariants."
+    },
+    {
+      "path": "Commands/CommandBuffers/Recording/Primary/VulkanRenderer.CommandBufferRecording.Primary.Secondaries.cs",
+      "methods": ["TryExecuteScheduledMeshCommandChainSecondaryRun", "TryExecuteIndirectCommandChainSecondaryRun", "TryExecuteMeshCommandChainSecondaryRun"],
+      "reason": "Allocation-free secondary integration paths keep fallback, inheritance, and lifetime decisions in one auditable branch tree."
+    },
+    {
+      "path": "BackendObjects/MeshRendering/VkMeshRenderer.cs",
+      "methods": ["CaptureProgramBindingSnapshot", "TryMaterializeQueuedRenderRequest"],
+      "reason": "Atomic mesh request/binding snapshots must read one coherent state under the existing synchronization boundary."
+    },
+    {
+      "path": "Commands/Scheduling/CommandChains/Planning/VulkanRenderer.CommandChains.Planning.cs",
+      "methods": ["TryBuildCommandChainSchedule"],
+      "reason": "Canonical allocation-free schedule construction with one stable ordering and rejection path."
+    },
+    {
+      "path": "Commands/CommandBuffers/FrameData/VulkanRenderer.CommandBufferReuse.FrameData.cs",
+      "methods": ["TryReuseCleanCommandChainPrimaryVariant", "TryRefreshReusableCommandBufferFrameData"],
+      "reason": "Command-buffer reuse validation and refresh remain atomic against one artifact generation."
+    },
+    {
+      "path": "Commands/CommandBuffers/Recording/Secondary/VulkanRenderer.SecondaryCommandBuffers.cs",
+      "methods": ["RecordDynamicUiBatchTextSecondaryCommandBuffer"],
+      "reason": "One UI secondary recording transaction with tightly coupled inheritance and cleanup."
+    },
+    {
+      "path": "Frame/Loop/VulkanRenderer.FrameLoop.Submission.cs",
+      "methods": ["SubmitDesktopFrameCore"],
+      "reason": "Single queue-acceptance transaction; splitting would separate receipt publication from accepted-work lifetime transfer."
+    },
+    {
+      "path": "BackendObjects/MeshRendering/VkMeshRenderer.Descriptors.cs",
+      "methods": ["CanReuseRecordedDescriptorSets", "EnsureDescriptorSets"],
+      "reason": "Descriptor reuse and allocation decisions must observe one coherent generation and binding snapshot."
+    },
+    {
+      "path": "BackendObjects/MeshRendering/VkMeshRenderer.Pipeline.cs",
+      "methods": ["EnsurePipeline"],
+      "reason": "Single pipeline readiness state machine; creation permission, cache identity, and deferred outcomes remain together."
+    },
+    {
+      "path": "BackendObjects/MeshRendering/VkMeshRenderer.Drawing.cs",
+      "methods": ["TryPrepareMeshDrawRecordingStateNoLock", "RecordDrawNoLock"],
+      "reason": "Allocation-free draw preparation/emission under one caller-owned lock and one prepared-state contract."
+    },
+    {
+      "path": "Frame/Loop/VulkanFrameLoop.PrimaryRecordingPreparation.cs",
+      "methods": ["RecordPreparedDesktopPrimary"],
+      "reason": "One primary preparation/record/reuse transaction with explicit terminal outcomes."
+    },
+    {
+      "path": "Commands/CommandBuffers/Recording/Primary/VulkanRenderer.CommandBufferRecording.Primary.Preparation.cs",
+      "methods": ["TryPreparePrimaryFrameData"],
+      "reason": "Primary frame-data publication must remain atomic across all prepared draw consumers."
+    },
+    {
+      "path": "BackendObjects/MeshRendering/VkMeshRenderer.Uniforms.cs",
+      "methods": ["TryResolveEngineUniformValue", "TryGetAutoUniformMaterialWritePlan", "TryWriteAutoUniformBlock", "TryWriteEngineUniform"],
+      "reason": "Explicit uniform schema dispatch; the long switch surfaces are the authoritative mapping and avoid runtime reflection or allocation."
+    },
+    {
+      "path": "OpenXR/VulkanCommandRuntime.OpenXrSubmission.cs",
+      "methods": ["SubmitAndWaitOpenXr"],
+      "reason": "Single OpenXR queue-acceptance, wait, and retirement transaction."
+    },
+    {
+      "path": "Commands/CommandBuffers/Recording/Primary/VulkanRenderer.CommandBufferRecording.Primary.Finalization.cs",
+      "methods": ["FinalizePrimaryCommandRecording"],
+      "reason": "Primary finalization commits one command-buffer result and its complete cleanup/diagnostic outcome."
+    },
+    {
+      "path": "Commands/FrameOps/VulkanFrameOperationSemantics.cs",
+      "methods": ["ComputeFrameOpsSignature"],
+      "reason": "Explicit canonical signature schema; field-by-field hashing remains visible and allocation-free."
+    },
+    {
+      "path": "BackendObjects/MeshRendering/VkMeshRenderer.DescriptorWrites.cs",
+      "methods": ["WriteDescriptorSets"],
+      "reason": "One descriptor write transaction over caller-owned native scratch."
+    },
+    {
+      "path": "Frame/Loop/Authority/VulkanFrameLoop.OpenXR.MirrorPreview.cs",
+      "methods": ["TryRecordOpenXrEyeMirrorFrameBufferCommandBuffer"],
+      "reason": "Mirror preview records one optional output transaction with explicit cleanup."
+    },
+    {
+      "path": "BackendObjects/MeshRendering/VkMeshRenderer.DescriptorImages.cs",
+      "methods": ["TryResolveImage"],
+      "reason": "Canonical image descriptor resolution matrix with explicit fallback and liveness policy."
+    },
+    {
+      "path": "BackendObjects/Programs/VkRenderProgram.Compute.cs",
+      "methods": ["TryBuildAndBindComputeDescriptorSets"],
+      "reason": "Single compute descriptor preparation/bind transaction with native scratch lifetime."
+    },
+    {
+      "path": "Shaders/VulkanShaderAutoUniforms.cs",
+      "methods": ["Rewrite"],
+      "reason": "Ordered shader rewrite pipeline; phase ordering is the contract and remains explicit."
+    },
+    {
+      "path": "Frame/Loop/Authority/VulkanFrameLoop.OpenXR.EyeRendering.cs",
+      "methods": ["TryPrepareOpenXrEyeSwapchainCommandBuffer"],
+      "reason": "One eye-image acquire/prepare/record transaction."
+    },
+    {
+      "path": "BackendObjects/MeshRendering/VulkanMeshDrawViewSnapshot.cs",
+      "methods": ["Capture"],
+      "reason": "Atomic immutable draw/view snapshot capture."
+    },
+    {
+      "path": "Frame/Loop/Authority/VulkanFrameLoop.ScreenshotReadback.cs",
+      "methods": ["TryQueueScreenshotReadback"],
+      "reason": "One readback ownership and fence-transfer transaction."
+    },
+    {
+      "path": "Commands/Readback/VulkanCommandRuntime.Readback.cs",
+      "methods": ["BeginDepthReadbackAsync"],
+      "reason": "One asynchronous depth readback ownership transaction."
+    },
+    {
+      "path": "Commands/Synchronization/VulkanRenderer.BarrierEmission.cs",
+      "methods": ["ResolveBarrierScopes", "TransitionFboAttachmentsForDynamicRendering"],
+      "reason": "Canonical synchronization scope/layout translation tables remain explicit and allocation-free."
+    },
+    {
+      "path": "Commands/CommandBuffers/Recording/Primary/VulkanRenderer.CommandBufferRecording.Primary.OverlayAndBarriers.cs",
+      "methods": ["ExecuteDynamicUiBatchTextOverlay"],
+      "reason": "One overlay admission, barrier, and secondary execution transaction."
+    },
+    {
+      "path": "Commands/CommandBuffers/Recording/VulkanCommandRuntime.PrimaryRecording.cs",
+      "methods": ["RecordPrimary"],
+      "reason": "Canonical primary record transaction with one prepared artifact result."
+    },
+    {
+      "path": "Commands/VulkanRenderer.OneTimeSubmit.cs",
+      "methods": ["CommandsStop"],
+      "reason": "One-time command submission closes one native command/fence lifetime scope."
+    },
+    {
+      "path": "Features/Upscaling/VulkanUpscaleBridgeSidecar.cs",
+      "methods": ["CreateSharedImage"],
+      "reason": "Native shared-image creation keeps Win32/Vulkan handle unwind in one scope."
+    },
+    {
+      "path": "Commands/Transfers/VulkanRenderer.BlitRecording.cs",
+      "methods": ["RecordBlitOp"],
+      "reason": "Canonical blit validation and command emission matrix."
+    }
+  ]
+}

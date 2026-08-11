@@ -81,9 +81,3 @@ internal struct VulkanRecordedBufferIdentityBuffer : IEquatable<VulkanRecordedBu
         in VulkanRecordedBufferIdentityBuffer right)
         => !left.Equals(right);
 }
-
-[InlineArray(VulkanRecordedBufferIdentityBuffer.Capacity)]
-internal struct VulkanRecordedBufferIdentityInlineArray
-{
-    private VulkanRecordedBufferIdentity _element0;
-}

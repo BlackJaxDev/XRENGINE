@@ -214,7 +214,7 @@ internal sealed unsafe partial class VulkanCommandRuntime
 
         Dictionary<CommandChainKey, CommandChain> cache = GetCommandChainCache(imageIndex);
         CommandChainSchedule schedule = RentCommandChainSchedule(imageIndex);
-        ulong scheduleGeneration = _commandRuntime.Scheduler.NextScheduleGeneration();
+        ulong scheduleGeneration = _commandRuntime.CommandChains.NextScheduleGeneration();
         List<string>? commandChainTraceRows = traceCommandChains ? [] : null;
         List<RenderPassChainGroup> groups = _commandChainGroupScratch;
         groups.Clear();

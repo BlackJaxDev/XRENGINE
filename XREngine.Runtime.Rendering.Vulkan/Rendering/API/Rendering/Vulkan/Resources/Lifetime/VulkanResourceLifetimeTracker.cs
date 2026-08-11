@@ -277,6 +277,28 @@ internal sealed class VulkanResourceLifetimeTracker
         }
     }
 
+    /// <summary>
+    /// Publishes the completion boundary established by a successful
+    /// <c>vkDeviceWaitIdle</c>. Native idleness covers every queue submission,
+    /// so retaining older software completion counters would reject resources
+    /// whose pins are already safe to destroy during teardown.
+    /// </summary>
+    internal void MarkDeviceIdleCompleted()
+    {
+        lock (SyncRoot)
+        {
+            CompletedGraphicsSequence = Math.Max(
+                CompletedGraphicsSequence,
+                LastGraphicsSequence);
+            CompletedTransferSequence = Math.Max(
+                CompletedTransferSequence,
+                LastTransferSequence);
+            CompletedOtherSequence = Math.Max(
+                CompletedOtherSequence,
+                LastOtherSequence);
+        }
+    }
+
     internal bool IsRetirementReady(in VulkanRetirementTicket ticket)
     {
         lock (SyncRoot)

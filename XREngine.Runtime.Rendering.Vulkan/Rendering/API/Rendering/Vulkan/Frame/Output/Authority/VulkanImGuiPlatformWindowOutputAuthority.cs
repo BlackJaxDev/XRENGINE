@@ -265,11 +265,3 @@ internal sealed unsafe class VulkanImGuiPlatformWindowOutputAuthority
             throw new InvalidOperationException($"Failed to {operation}: {result}.");
     }
 }
-
-internal readonly record struct VulkanImGuiPlatformSwapchainGeneration(
-    SwapchainKHR Swapchain,
-    Format Format,
-    ColorSpaceKHR ColorSpace,
-    Extent2D Extent,
-    Image[] Images,
-    ImageView[] ImageViews);

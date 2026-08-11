@@ -8,9 +8,10 @@ using XREngine.Rendering.Resources;
 namespace XREngine.Rendering.Vulkan;
 
 /// <summary>
-/// Renderer-independent owner for command scheduling, recording admission, and
-/// persistent schedule artifacts. Native command execution remains supplied by
-/// the facade at the call boundary.
+/// Renderer-independent owner for command recording admission and persistent
+/// schedule artifacts. Frame-operation ordering is delegated to the canonical
+/// <see cref="VulkanFrameOperationScheduler"/>. Native command execution remains
+/// supplied by the facade at the call boundary.
 /// </summary>
 internal sealed unsafe partial class VulkanCommandRuntime
 {
@@ -25,7 +26,6 @@ internal sealed unsafe partial class VulkanCommandRuntime
     internal VulkanProducerCompleteIndirectStream? PendingProducerCompleteIndirectStream { get; set; }
     internal bool ThreadLocalScratchDisposed { get; set; }
 
-    public VulkanCommandScheduler Scheduler { get; } = new();
     public VulkanCommandRecorder Recorder { get; } = new();
     public VulkanCommandWorkerSynchronization Workers { get; } = new();
     public VulkanCommandPoolAuthority Pools { get; } = new();
@@ -830,33 +830,4 @@ internal sealed unsafe partial class VulkanCommandRuntime
 
         _scheduleCache = new CommandChainSchedule?[count];
     }
-}
-
-internal readonly record struct VulkanProducerCompleteIndirectStream(
-    XRDataBuffer IndirectBuffer,
-    XRDataBuffer? ParameterBuffer,
-    ulong IndirectBufferIdentity,
-    ulong ParameterBufferIdentity);
-
-/// <summary>Owns primary and per-thread native command-pool identities.</summary>
-internal sealed class VulkanCommandPoolAuthority
-{
-    internal object Gate { get; } = new();
-    internal Dictionary<int, CommandPool> GraphicsByThread { get; } = new();
-    internal Dictionary<int, CommandPool> TransferByThread { get; } = new();
-    internal CommandPool PrimaryGraphics { get; set; }
-    internal CommandPool PrimaryTransfer { get; set; }
-}
-
-/// <summary>Persistent worker synchronization state, isolated from renderer-owned recording logic.</summary>
-internal sealed class VulkanCommandWorkerSynchronization
-{
-    internal object Gate { get; } = new();
-    internal ManualResetEventSlim Idle { get; } = new(initialState: true);
-    internal CountdownEvent Countdown { get; } = new(initialCount: 1);
-    internal int Generation;
-    internal int ActiveWorkerCount;
-    internal int Faulted;
-    internal VulkanCommandChainRecordingBatch Batch { get; set; } = new();
-    internal CommandChainRecordingWorkerState[]? WorkerStates { get; set; }
 }

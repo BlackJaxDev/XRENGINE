@@ -153,11 +153,20 @@ internal sealed unsafe partial class VulkanFrameLoop
             if (!_deviceContext.IsOperational)
                 return;
             Result result = _deviceContext.Api.DeviceWaitIdle(_deviceContext.Device);
+            if (result == Result.Success)
+            {
+                _resourceRuntime.Lifetime.Tracker.MarkDeviceIdleCompleted();
+                return;
+            }
             if (result == Result.ErrorDeviceLost)
             {
                 MarkDeviceLost("DeviceWaitIdle returned ErrorDeviceLost", "vkDeviceWaitIdle", result);
                 Debug.VulkanWarning("[Vulkan] DeviceWaitIdle returned ErrorDeviceLost. Device state is irrecoverable.");
+                return;
             }
+
+            throw new InvalidOperationException(
+                $"vkDeviceWaitIdle failed with {result}.");
         }
     }
 

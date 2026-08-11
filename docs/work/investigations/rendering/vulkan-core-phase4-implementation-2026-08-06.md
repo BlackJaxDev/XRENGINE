@@ -1,7 +1,7 @@
 # Vulkan Core Phase 4 Implementation
 
 Date: 2026-08-06  
-Status: Phase 4.0 through Phase 4.3 complete; Phase 4.4+ active
+Status: Phase 4.0 through Phase 4.4 complete; Phase 4.5+ active
 Owner: Rendering
 
 Desktop camera/input cadence symptoms and their reusable triage rules are
@@ -52,9 +52,11 @@ snapshot contains:
 - no detected generated C# files under the audited root.
 
 This reproducible snapshot supersedes the stale 858-file / 170,048-line number
-in the original design draft. The structural target remains at most 550 files /
-125,000 lines, a single safe non-partial facade of at most 500 lines, and an
-acquire-to-settlement lifecycle spine of at most 40 files / 20,000 lines.
+in the original design draft. The 2026-08-11 structural revision retains a
+200,000-line ceiling, one top-level type per file, a small non-partial facade,
+and an acquire-to-settlement lifecycle spine of at most 40 files / 20,000 lines.
+File count is informational so the metric cannot reward combining unrelated
+types or deleting supported behavior.
 
 ## Migration Decisions
 
@@ -673,3 +675,57 @@ render exception, frame failure, fatal error, or device loss. Warning-as-error
 builds passed for both the Vulkan project and full editor. RenderDoc desktop
 prerequisites also passed `rdc doctor`; a GPU capture was unnecessary after the
 CPU exception and lifetime logs identified both defects precisely.
+
+### Phase 4.4 Structural Consolidation
+
+The final structural pass keeps behavior intact while making ownership and
+review gates executable. `VulkanFrameLoop.Render` is now a nine-logical-line
+transaction entry that delegates phase execution and settlement without
+changing stage order, early terminal outcomes, primary-exception preservation,
+or telemetry publication. Secondary top-level declarations were moved into
+their own named files, leaving zero files with multiple top-level types; no
+unrelated types were combined to manipulate file count.
+
+The architecture inventory now blanks comments and literals before estimating
+method spans, records an explicit acquire-to-settlement lifecycle manifest,
+enforces the one-type organization rule, and checks a canonical-role ledger for
+device, output, frame-loop, planner, operation scheduler, resource, descriptor,
+lifetime, command, and telemetry ownership. It also reports retained
+multi-authority composition and fails any unreviewed direct service-location
+holder. Large cohesive hot/native paths are retained only through the reviewed
+`Tools/Reports/VulkanCoreStructuralExceptions.json` manifest.
+
+The ambiguous `VulkanCommandScheduler` was removed. It contained unused policy
+methods and only supplied cache recency; that clock now lives with the cached
+artifacts in `VulkanCommandChainState`, while
+`VulkanFrameOperationScheduler` remains the single operation-ordering owner.
+The duplicate GPU profiler was also resolved: a no-op command-runtime scope had
+shadowed the functional scope while an unused implementation remained on the
+frame loop. Recording, query reservation, cache reuse, and scope capture now
+live once in `VulkanCommandRuntime`; query-pool lifecycle and readback remain
+with `VulkanFrameTelemetry`/`VulkanFrameLoop`. Dense timestamps selected by
+`XRE_GPU_TIMESTAMP_DENSE=1` are therefore preserved rather than deleted.
+Unconsumed legacy/producer forwarding methods were removed after a zero-consumer
+scan. Supported legacy render-pass, OBS, OpenXR, imported-texture, and sparse
+compatibility paths remain in place.
+
+The first shutdown validation found that successful `vkDeviceWaitIdle` did not
+advance the software queue-completion watermark. Teardown consequently rejected
+a pipeline whose native work was already idle. The successful idle boundary now
+publishes all last queue sequences as completed before forced retirement. A
+second named run shut down without that failure.
+
+Final evidence:
+
+- architecture report:
+  `Build/_AgentValidation/20260811-vulkan-core-44/reports/architecture-inventory-final.json`;
+- warnings-as-errors Vulkan and full-editor builds: zero warnings, zero errors;
+- `rdc doctor`: RenderDoc replay, command tool, and Vulkan layer all healthy;
+- named session `vulkan-core-44-final`: three successful 16,588,800-byte Vulkan
+  viewport readbacks, including two visually inspected camera-dependent views;
+- final steady-state and shutdown logs: zero VUIDs, validation errors, device
+  loss, premature-retirement failures, fatal errors, or unhandled exceptions.
+
+Automated tests were not added or run during this feature-validation pass, per
+the repository sequencing policy. The runtime was validated through the Vulkan
+project build, full editor build, MCP rendering path, readbacks, and shutdown.

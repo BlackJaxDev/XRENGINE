@@ -193,6 +193,7 @@ function Get-MethodSpanEstimates(
                 path = Get-RelativePath $File.FullName
                 method = $methodName
                 start_line = $lineIndex + 1
+                physical_line_span = $signatureEnd - $lineIndex + 1
                 logical_line_estimate = $signatureEnd - $lineIndex + 1
             })
             $lineIndex = $signatureEnd
@@ -215,11 +216,20 @@ function Get-MethodSpanEstimates(
             }
         }
 
+        $logicalLineCount = 0
+        for ($logicalLine = $lineIndex; $logicalLine -le $methodEnd; $logicalLine++) {
+            $trimmed = $lines[$logicalLine].Trim()
+            if ($trimmed.Length -gt 0 -and $trimmed -notmatch '^[{}]+[;,]?$') {
+                $logicalLineCount++
+            }
+        }
+
         $methods.Add([ordered]@{
             path = Get-RelativePath $File.FullName
             method = $methodName
             start_line = $lineIndex + 1
-            logical_line_estimate = $methodEnd - $lineIndex + 1
+            physical_line_span = $methodEnd - $lineIndex + 1
+            logical_line_estimate = $logicalLineCount
         })
         $lineIndex = $methodEnd
     }
@@ -325,7 +335,12 @@ foreach ($file in $sourceFiles) {
         generated = $generated
         renderer_partial_declarations = $partialCount
     })
-    foreach ($methodRecord in @(Get-MethodSpanEstimates $file $source)) {
+    # Method sizing must ignore braces and apparent declarations inside comments
+    # and literals. Get-CSharpStructuralSource preserves line positions while
+    # blanking those tokens, so the report remains reproducible without turning
+    # shader strings or diagnostic examples into false oversized methods.
+    foreach ($methodRecord in @(
+        Get-MethodSpanEstimates $file (Get-CSharpStructuralSource $source))) {
         $methodRecords.Add($methodRecord)
     }
 }
@@ -336,7 +351,7 @@ $authorityPatterns = [ordered]@{
     frame_loop = 'VulkanFrameLoop|VulkanDesktopFrameCoordinator'
     planner = 'VulkanFramePlanner|VulkanResourcePlanCoordinator|VulkanRenderGraphRuntime'
     resources = 'VulkanResourceRuntime|VulkanResourceLifetimeTracker|VulkanDescriptorManager|VulkanPipelineManager'
-    commands = 'VulkanCommandRuntime|VulkanCommandScheduler|VulkanCommandRecorder|VulkanQueueGateway'
+    commands = 'VulkanCommandRuntime|VulkanCommandRecorder|VulkanQueueGateway'
     telemetry = 'VulkanFrameTelemetry|VulkanFrameTrace|VulkanFrameTiming'
 }
 
@@ -414,6 +429,44 @@ $authorityRootTypes = @(
     'VulkanResourceRuntime',
     'VulkanCommandRuntime',
     'VulkanFrameTelemetry')
+
+# Cross-authority composition is not duplicate ownership. These generation-local
+# adapters coordinate canonical roots at an explicit operation boundary and own
+# no competing device, output, planner, resource, command, or telemetry state.
+# Keeping the allowlist here makes every exception reviewable and causes any new
+# multi-root holder to fail the hard gate by default.
+$approvedCrossAuthorityCompositions = [ordered]@{
+    VulkanBackendObjectContext = 'Generation-local backend-wrapper capability boundary.'
+    VulkanDescriptorLifetimeAuthority = 'Descriptor lifetime subowner coordinated by the resource root.'
+    VulkanDescriptorManager = 'Descriptor publication subowner coordinated by the resource root.'
+    VulkanDesktopSwapchainService = 'Desktop output adapter between device, output, and resource roots.'
+    VulkanFallbackTextureAuthority = 'Resource-owned fallback upload adapter.'
+    VulkanFinalPresentationDescriptorPort = 'Final-output descriptor publication operation port.'
+    VulkanImageResourceService = 'Resource-owned image creation and transfer service.'
+    VulkanImGuiDrawBufferResources = 'ImGui leaf resource adapter.'
+    VulkanImGuiFontAtlasResources = 'ImGui font-upload operation adapter.'
+    VulkanImGuiOutputPipelineService = 'ImGui output pipeline adapter.'
+    VulkanImGuiOverlayAdmission = 'ImGui overlay admission adapter.'
+    VulkanImGuiTextureOutputResources = 'ImGui texture-output leaf adapter.'
+    VulkanImGuiTextureRegistryService = 'ImGui texture registration adapter.'
+    VulkanMappedFrameArenaBackend = 'Mapped-arena native allocation backend.'
+    VulkanOpenXrCommandRecordingService = 'OpenXR leaf command-recording adapter.'
+    VulkanOpenXrEyeWorkerCommandService = 'OpenXR eye worker recording adapter.'
+    VulkanOpenXrOutputResourceService = 'OpenXR output resource adapter.'
+    VulkanReadbackOutputResourceService = 'Readback output operation adapter.'
+    VulkanResourceCommandWrapperPort = 'Backend-wrapper resource command port.'
+    VulkanResourceGenerationTransactionService = 'Frame-loop resource-generation transaction coordinator.'
+    VulkanResourcePlannerSessionService = 'Frame-loop planner session coordinator.'
+    VulkanSamplerResourceService = 'Resource-owned sampler registration service.'
+    VulkanSynchronousResourceCommandSession = 'Bounded synchronous resource command transaction.'
+    VulkanSynchronousUploadSession = 'Bounded synchronous upload transaction.'
+    VulkanTargetSurfaceAuthority = 'Target-scoped surface lifetime adapter.'
+    VulkanTextureUploadSchedulingContext = 'Immutable texture-upload operation context.'
+    VulkanTimelineGpuFence = 'Fence adapter over canonical timeline and retirement owners.'
+}
+$approvedCallableCompositionMembers = @(
+    'VkObjectBase|BackendContext',
+    'VulkanGraphicsPipelineBuildRequest|ProgramServices')
 $knownTypes = [System.Collections.Generic.HashSet[string]]::new(
     [System.StringComparer]::Ordinal)
 $fileTypeSpans = @{}
@@ -511,6 +564,7 @@ foreach ($authorityType in $authorityRootTypes) { if ($retainedTypeEdges.Contain
 # reach through immutable payloads remains advisory: it can be useful context,
 # but does not by itself demonstrate service location at the current type.
 $hardGateDirectAuthorityViolations = [System.Collections.Generic.List[object]]::new()
+$approvedDirectAuthorityCompositions = [System.Collections.Generic.List[object]]::new()
 $effectiveDirectAuthorityMembers = [System.Collections.Generic.List[object]]::new()
 $directAuthorityMembersByStorage = @{}
 foreach ($member in $directAuthorityMembers) {
@@ -536,6 +590,16 @@ foreach ($ownerType in @($directAuthorityMembersByOwner.Keys | Sort-Object)) {
     if ($ownerType -eq 'VulkanRenderer' -or
         $authorityRootTypes -contains $ownerType -or
         $authorities.Count -lt 2) { continue }
+    if ($approvedCrossAuthorityCompositions.Contains($ownerType)) {
+        $approvedDirectAuthorityCompositions.Add([ordered]@{
+            type = $ownerType
+            reason = $approvedCrossAuthorityCompositions[$ownerType]
+            direct_authority_count = $authorities.Count
+            authorities = $authorities
+            members = $members
+        })
+        continue
+    }
     $hardGateDirectAuthorityViolations.Add([ordered]@{
         type = $ownerType
         classification = 'direct_multi_authority'
@@ -564,11 +628,24 @@ foreach ($violation in $hardGateDirectAuthorityViolations) {
     })
 }
 $hardGateCallableServiceLocationViolations = [System.Collections.Generic.List[object]]::new()
+$approvedCallableServiceLocationCompositions = [System.Collections.Generic.List[object]]::new()
 foreach ($ownerType in @($retainedTypeEdges.Keys | Sort-Object)) {
     if ($authorityRootTypes -contains $ownerType) { continue }
     foreach ($edge in @($retainedTypeEdges[$ownerType] | Where-Object { $_.callable -and $authorityRootTypes -notcontains $_.target_type })) {
         if (-not $retainedAuthorityReach.ContainsKey($edge.target_type) -or $retainedAuthorityReach[$edge.target_type].Count -lt 2) { continue }
         if ($edge.target_type -notmatch '(?:Context|Port|Service|Dispatcher|Encoder)$') { continue }
+        $memberKey = '{0}|{1}' -f $ownerType, $edge.member_name
+        if ($approvedCallableCompositionMembers -contains $memberKey) {
+            $approvedCallableServiceLocationCompositions.Add([ordered]@{
+                owner_type = $ownerType
+                retained_type = $edge.target_type
+                member = $edge.member_name
+                authorities = @($retainedAuthorityReach[$edge.target_type] | Sort-Object)
+                path = $edge.path
+                line = $edge.line
+            })
+            continue
+        }
         $hardGateCallableServiceLocationViolations.Add([ordered]@{
             owner_type = $ownerType
             retained_type = $edge.target_type
@@ -597,8 +674,217 @@ $outputTargetImGuiRawAuthorityProperties = @(
                 $_.owner_type -match 'OpenXrOutput'
         })
 
+$sourceRootRelative = (Get-RelativePath $resolvedSourceRoot).TrimEnd('/')
+$lifecycleSpineRelativePaths = @(
+    'Bootstrap/VulkanRenderer.cs',
+    'Frame/Loop/Authority/VulkanFrameLoop.cs',
+    'Frame/Loop/Authority/VulkanFrameLoop.Lifecycle.cs',
+    'Frame/Loop/Authority/VulkanFrameLoop.ResourcePlannerContext.cs',
+    'Frame/Loop/VulkanFrameLoop.PrimaryRecordingPreparation.cs',
+    'Frame/Loop/VulkanRenderer.FrameLoop.Acquire.cs',
+    'Frame/Loop/VulkanRenderer.FrameLoop.FrameSlots.cs',
+    'Frame/Loop/VulkanRenderer.FrameLoop.FrameSlots.Retirement.cs',
+    'Frame/Loop/VulkanRenderer.FrameLoop.Preflight.cs',
+    'Frame/Loop/VulkanRenderer.FrameLoop.Preflight.Policy.cs',
+    'Frame/Loop/VulkanRenderer.FrameLoop.Presentation.cs',
+    'Frame/Loop/VulkanRenderer.FrameLoop.Recording.cs',
+    'Frame/Loop/VulkanRenderer.FrameLoop.Recording.Failures.cs',
+    'Frame/Loop/VulkanRenderer.FrameLoop.Recovery.cs',
+    'Frame/Loop/VulkanRenderer.FrameLoop.Recovery.Policy.cs',
+    'Frame/Loop/VulkanRenderer.FrameLoop.Recovery.Presentation.cs',
+    'Frame/Loop/VulkanRenderer.FrameLoop.Recovery.Recording.cs',
+    'Frame/Loop/VulkanRenderer.FrameLoop.Recovery.Submission.cs',
+    'Frame/Loop/VulkanRenderer.FrameLoop.Recovery.SubmissionBridge.cs',
+    'Frame/Loop/VulkanRenderer.FrameLoop.Submission.cs',
+    'Frame/Loop/VulkanFrameAttempt.cs',
+    'Frame/Loop/VulkanDesktopFramePhaseResult.cs',
+    'Frame/Loop/VulkanDesktopFrameTerminalResult.cs',
+    'Frame/Desktop/Contracts/DesktopFrameIdentity.cs',
+    'Frame/Output/Authority/VulkanOutputRuntime.cs',
+    'RenderGraph/Authority/VulkanFramePlanner.cs',
+    'RenderGraph/Authority/VulkanFramePlanner.ContextSignatures.cs',
+    'RenderGraph/VulkanFrameOperationScheduler.cs',
+    'Commands/Authority/VulkanCommandRuntime.cs',
+    'Commands/Authority/VulkanCommandRuntime.DesktopOutputArtifacts.cs',
+    'Commands/Authority/VulkanCommandRuntime.FrameOperationApi.cs',
+    'Commands/Authority/VulkanCommandRuntime.FrameOperationQueue.cs',
+    'Commands/Authority/VulkanCommandRuntime.FramePlanningState.cs',
+    'Commands/Authority/VulkanCommandRuntime.TrackedSubmission.cs',
+    'Commands/CommandBuffers/Recording/VulkanCommandRuntime.PrimaryRecording.cs',
+    'Commands/Scheduling/Primary/VulkanPrimaryCommandPlan.cs',
+    'Frame/Synchronization/VulkanSubmissionReceipt.cs',
+    'Frame/Telemetry/VulkanFrameTelemetry.cs',
+    'Frame/Telemetry/VulkanFrameTrace.cs')
+$lifecycleSpinePaths = @(
+    $lifecycleSpineRelativePaths | ForEach-Object { "$sourceRootRelative/$_" })
+$allFilePaths = @($fileRecords | ForEach-Object { $_['path'] })
+$lifecycleSpineFiles = @(
+    $fileRecords | Where-Object { $lifecycleSpinePaths -contains $_['path'] })
+$lifecycleSpineMissingFiles = @(
+    $lifecycleSpinePaths | Where-Object { $allFilePaths -notcontains $_ })
+$lifecycleSpineLineCount = 0
+foreach ($file in $lifecycleSpineFiles) {
+    $lifecycleSpineLineCount += [int]$file['lines']
+}
+
+$partialDeclarationsByType = @{}
+foreach ($file in $sourceFiles) {
+    $structuralSource = $fileStructuralSources[$file.FullName]
+    foreach ($match in [regex]::Matches(
+        $structuralSource,
+        '\bpartial\s+(?:(?:sealed|abstract|unsafe|readonly|ref)\s+)*(?:class|struct|record(?:\s+(?:class|struct))?)\s+(?<name>[A-Za-z_]\w*)')) {
+        $name = $match.Groups['name'].Value
+        if (-not $partialDeclarationsByType.ContainsKey($name)) {
+            $partialDeclarationsByType[$name] = [System.Collections.Generic.List[string]]::new()
+        }
+        $partialDeclarationsByType[$name].Add((Get-RelativePath $file.FullName))
+    }
+}
+
+# The role ledger prevents a cleanup from merely renaming two competing owners.
+# Each responsibility has one canonical declaration family; retired ambiguous
+# owner names must remain absent. Focused leaf algorithms (for example barrier
+# and resource planners beneath VulkanFramePlanner) are intentionally not roots.
+$canonicalRoleSpecifications = @(
+    [ordered]@{ role = 'device_authority'; canonical_type = 'VulkanDeviceContext'; retired_competitors = @('VulkanDeviceAuthority') },
+    [ordered]@{ role = 'output_authority'; canonical_type = 'VulkanOutputRuntime'; retired_competitors = @('VulkanOutputAuthority') },
+    [ordered]@{ role = 'frame_lifecycle_authority'; canonical_type = 'VulkanFrameLoop'; retired_competitors = @('VulkanDesktopFrameLoop') },
+    [ordered]@{ role = 'frame_planning_authority'; canonical_type = 'VulkanFramePlanner'; retired_competitors = @('VulkanPlanningRuntime') },
+    [ordered]@{ role = 'frame_operation_scheduler'; canonical_type = 'VulkanFrameOperationScheduler'; retired_competitors = @('VulkanCommandScheduler', 'VulkanPrimaryRecordingPolicy') },
+    [ordered]@{ role = 'resource_authority'; canonical_type = 'VulkanResourceRuntime'; retired_competitors = @('VulkanResourceAuthority') },
+    [ordered]@{ role = 'descriptor_publication'; canonical_type = 'VulkanDescriptorManager'; retired_competitors = @('VulkanDescriptorPublisher') },
+    [ordered]@{ role = 'resource_lifetime'; canonical_type = 'VulkanResourceLifetimeTracker'; retired_competitors = @('VulkanLifetimeManager') },
+    [ordered]@{ role = 'command_authority'; canonical_type = 'VulkanCommandRuntime'; retired_competitors = @('VulkanQueueGateway') },
+    [ordered]@{ role = 'frame_telemetry'; canonical_type = 'VulkanFrameTelemetry'; retired_competitors = @('VulkanFrameProfiler') })
+$canonicalRoleRecords = [System.Collections.Generic.List[object]]::new()
+$canonicalRoleViolationCount = 0
+foreach ($specification in $canonicalRoleSpecifications) {
+    $canonicalType = [string]$specification.canonical_type
+    $canonicalFiles = [System.Collections.Generic.List[string]]::new()
+    $retiredDeclarations = [System.Collections.Generic.List[object]]::new()
+    foreach ($file in $sourceFiles) {
+        foreach ($typeSpan in @($fileTypeSpans[$file.FullName])) {
+            if ($typeSpan.name -eq $canonicalType) {
+                $canonicalFiles.Add((Get-RelativePath $file.FullName))
+            }
+            elseif (@($specification.retired_competitors) -contains $typeSpan.name) {
+                $retiredDeclarations.Add([ordered]@{
+                    type = $typeSpan.name
+                    path = Get-RelativePath $file.FullName
+                })
+            }
+        }
+    }
+    $passes = $canonicalFiles.Count -gt 0 -and $retiredDeclarations.Count -eq 0
+    if (-not $passes) { $canonicalRoleViolationCount++ }
+    $canonicalRoleRecords.Add([ordered]@{
+        role = $specification.role
+        canonical_type = $canonicalType
+        canonical_declaration_count = $canonicalFiles.Count
+        canonical_files = @($canonicalFiles | Sort-Object -Unique)
+        retired_competitors = @($specification.retired_competitors)
+        retired_declarations = @($retiredDeclarations)
+        passes = $passes
+    })
+}
+$partialTypeRecords = @(
+    foreach ($name in @($partialDeclarationsByType.Keys | Sort-Object)) {
+        [ordered]@{
+            type = $name
+            declaration_count = $partialDeclarationsByType[$name].Count
+            files = @($partialDeclarationsByType[$name] | Sort-Object -Unique)
+        }
+    })
+
+$multipleTopLevelTypeFiles = [System.Collections.Generic.List[object]]::new()
+foreach ($file in $sourceFiles) {
+    $structuralSource = $fileStructuralSources[$file.FullName]
+    $declarations = @(
+        [regex]::Matches(
+            $structuralSource,
+            '(?m)^\s*(?:(?:public|internal|private|protected|file|sealed|abstract|static|unsafe|partial|readonly|ref|new)\s+)*(?:class|struct|interface|enum|record(?:\s+(?:class|struct))?)\s+(?<name>[A-Za-z_]\w*)') |
+            ForEach-Object {
+                [ordered]@{
+                    name = $_.Groups['name'].Value
+                    depth =
+                        ([regex]::Matches($structuralSource.Substring(0, $_.Index), '\{')).Count -
+                        ([regex]::Matches($structuralSource.Substring(0, $_.Index), '\}')).Count
+                }
+            })
+    if ($declarations.Count -eq 0) { continue }
+    $topLevelDepth = [int]::MaxValue
+    foreach ($declaration in $declarations) {
+        $topLevelDepth = [Math]::Min($topLevelDepth, [int]$declaration['depth'])
+    }
+    $topLevelTypes = @($declarations | Where-Object { [int]$_['depth'] -eq $topLevelDepth })
+    if ($topLevelTypes.Count -gt 1) {
+        $multipleTopLevelTypeFiles.Add([ordered]@{
+            path = Get-RelativePath $file.FullName
+            top_level_type_count = $topLevelTypes.Count
+            types = @($topLevelTypes | ForEach-Object { $_['name'] })
+        })
+    }
+}
+
+$structuralExceptionManifestPath = Join-Path $repoRoot 'Tools\Reports\VulkanCoreStructuralExceptions.json'
+if (-not [System.IO.File]::Exists($structuralExceptionManifestPath)) {
+    throw "Vulkan structural exception manifest does not exist: $structuralExceptionManifestPath"
+}
+$structuralExceptionManifest =
+    [System.IO.File]::ReadAllText($structuralExceptionManifestPath) | ConvertFrom-Json
+if ($structuralExceptionManifest.schema_version -ne 1) {
+    throw "Unsupported Vulkan structural exception manifest schema: $($structuralExceptionManifest.schema_version)"
+}
+$approvedFileExceptions = @{}
+foreach ($exception in @($structuralExceptionManifest.file_exceptions)) {
+    $approvedFileExceptions[[string]$exception.path] = [string]$exception.reason
+}
+$approvedMethodExceptions = @{}
+foreach ($profile in @($structuralExceptionManifest.method_exception_profiles)) {
+    foreach ($method in @($profile.methods)) {
+        $approvedMethodExceptions[('{0}|{1}' -f $profile.path, $method)] = [string]$profile.reason
+    }
+}
+
+$oversizedFiles = @(
+    $fileRecords |
+        Where-Object { -not $_['generated'] -and [int]$_['lines'] -gt 1500 } |
+        Sort-Object { [int]$_['lines'] } -Descending)
+$oversizedMethods = @(
+    $methodRecords |
+        Where-Object { [int]$_.logical_line_estimate -gt 150 } |
+        Sort-Object { [int]$_.logical_line_estimate } -Descending)
+$unapprovedOversizedFiles = [System.Collections.Generic.List[object]]::new()
+foreach ($file in $oversizedFiles) {
+    $relativePath = ([string]$file['path']).Substring($sourceRootRelative.Length + 1)
+    if ($approvedFileExceptions.ContainsKey($relativePath)) {
+        $file['exception_reason'] = $approvedFileExceptions[$relativePath]
+    }
+    else {
+        $unapprovedOversizedFiles.Add($file)
+    }
+}
+$unapprovedOversizedMethods = [System.Collections.Generic.List[object]]::new()
+foreach ($method in $oversizedMethods) {
+    $relativePath = ([string]$method['path']).Substring($sourceRootRelative.Length + 1)
+    $key = '{0}|{1}' -f $relativePath, $method['method']
+    if ($approvedMethodExceptions.ContainsKey($key)) {
+        $method['exception_reason'] = $approvedMethodExceptions[$key]
+    }
+    else {
+        $unapprovedOversizedMethods.Add($method)
+    }
+}
+$mainFrameMethod = @(
+    $methodRecords |
+        Where-Object {
+            $_.path -eq "$sourceRootRelative/Frame/Loop/Authority/VulkanFrameLoop.cs" -and
+                $_.method -eq 'Render'
+        } |
+        Select-Object -First 1)
+
 $result = [ordered]@{
-    schema_version = 2
+    schema_version = 4
     generated_utc = [DateTime]::UtcNow.ToString('O')
     repository_root = $repoRoot
     source_root = Get-RelativePath $resolvedSourceRoot
@@ -627,6 +913,60 @@ $result = [ordered]@{
         thread_static_files = $threadStaticFiles.Count
         ambient_thread_state_files = $ambientThreadStateFiles.Count
     }
+    structural_gates = [ordered]@{
+        source_budget = [ordered]@{
+            hand_written_line_ceiling = 200000
+            hand_written_physical_lines = $handWrittenLineCount
+            passes = $handWrittenLineCount -le 200000
+            file_count = $sourceFiles.Count
+            file_count_is_informational = $true
+            organization_rule = 'Prefer one top-level type per file; do not merge unrelated types to reduce file count.'
+        }
+        lifecycle_spine = [ordered]@{
+            file_budget = 40
+            line_budget = 20000
+            file_count = $lifecycleSpineFiles.Count
+            physical_lines = $lifecycleSpineLineCount
+            passes = $lifecycleSpineMissingFiles.Count -eq 0 -and
+                $lifecycleSpineFiles.Count -le 40 -and
+                $lifecycleSpineLineCount -le 20000
+            files = @($lifecycleSpineFiles)
+            missing_files = $lifecycleSpineMissingFiles
+        }
+        main_frame_orchestration = [ordered]@{
+            logical_line_budget = 100
+            method = @($mainFrameMethod)
+            passes = $mainFrameMethod.Count -eq 1 -and
+                [int]$mainFrameMethod[0].logical_line_estimate -le 100
+        }
+        size_review = [ordered]@{
+            approval = $structuralExceptionManifest.approval
+            file_line_threshold = 1500
+            method_logical_line_threshold = 150
+            oversized_files = $oversizedFiles
+            oversized_file_count = $oversizedFiles.Count
+            oversized_methods = $oversizedMethods
+            oversized_method_count = $oversizedMethods.Count
+            unapproved_oversized_files = @($unapprovedOversizedFiles)
+            unapproved_oversized_file_count = $unapprovedOversizedFiles.Count
+            unapproved_oversized_methods = @($unapprovedOversizedMethods)
+            unapproved_oversized_method_count = $unapprovedOversizedMethods.Count
+            passes = $unapprovedOversizedFiles.Count -eq 0 -and
+                $unapprovedOversizedMethods.Count -eq 0
+        }
+        type_organization = [ordered]@{
+            multiple_top_level_type_files = @($multipleTopLevelTypeFiles)
+            multiple_top_level_type_file_count = $multipleTopLevelTypeFiles.Count
+            partial_types = $partialTypeRecords
+            partial_type_count = $partialTypeRecords.Count
+        }
+        canonical_roles = [ordered]@{
+            roles = @($canonicalRoleRecords)
+            role_count = $canonicalRoleRecords.Count
+            violation_count = $canonicalRoleViolationCount
+            passes = $canonicalRoleViolationCount -eq 0
+        }
+    }
     authority_matches = $authorityMatches
     authority_dependency_edges = @($authorityDependencyEdges)
     approved_authority_edges = $approvedAuthorityEdges
@@ -634,8 +974,12 @@ $result = [ordered]@{
     authority_renderer_backlink_files = @($authorityRendererBacklinkFiles | Sort-Object -Unique)
     retained_type_graph = [ordered]@{
         hard_gate = [ordered]@{
+            approved_direct_authority_compositions = @($approvedDirectAuthorityCompositions)
+            approved_direct_authority_composition_count = $approvedDirectAuthorityCompositions.Count
             direct_authority_violations = @($hardGateDirectAuthorityViolations)
             direct_authority_violation_count = $hardGateDirectAuthorityViolations.Count
+            approved_callable_service_location_compositions = @($approvedCallableServiceLocationCompositions)
+            approved_callable_service_location_composition_count = $approvedCallableServiceLocationCompositions.Count
             callable_retained_service_location_violations = @($hardGateCallableServiceLocationViolations)
             callable_retained_service_location_violation_count = $hardGateCallableServiceLocationViolations.Count
             all_authorities_context_violations = @($allAuthoritiesContextViolations)
@@ -679,7 +1023,10 @@ $result = [ordered]@{
         generated_source = 'Filename suffix or auto-generated/GeneratedCode marker.'
         renderer_fields = 'Lexical declaration estimate across VulkanRenderer and VulkanRendererRuntime partial implementations; review before using as an ownership gate.'
         facade_gate = 'Counts non-partial VulkanRenderer declarations, direct AbstractRenderer<Vk> bases, physical lines in their declaring files, and the seven exact readonly authority-root field types.'
-        method_spans = 'Lexical brace-span estimates; braces in strings/comments can over-count and require review.'
+        method_spans = 'Structural lexical spans with comments and literals blanked at stable offsets; logical estimates exclude blank and brace-only lines. Findings remain review prompts rather than a substitute for control-flow review.'
+        lifecycle_spine = 'An explicit checked-in manifest of the facade entry, desktop acquire-to-settlement orchestration, planner/scheduler/record/submit roots, transaction contracts, and telemetry roots. Leaf feature encoders and backend-object implementations are excluded by design.'
+        source_budget = 'Global file count is informational because the repository requires one top-level type per file. The hard source ceiling is paired with per-file/per-method review lists so consolidation cannot be achieved by combining unrelated types or deleting supported behavior.'
+        canonical_roles = 'Explicit role ledger requiring one named declaration family for each root scheduling, planning, descriptor, lifetime, command, and telemetry responsibility while rejecting retired competing owner names. Focused leaf algorithms are not classified as root authorities.'
         dependency_edges = 'Observed authority-name references in files which declare the source authority; approved-edge violations and renderer backlinks are reported separately.'
         retained_type_graph = 'Conservative retained graph of declared instance fields, one-line auto-properties, and primary-constructor parameters. Edges preserve declaring file, line, and member name; generic arguments are not edges. Authority roots terminate traversal. The hard gate reports two or more direct authority members or callable retained service-location members; transitive immutable-payload reach is advisory only.'
         facade_callbacks = 'A receiver declared with the concrete VulkanRenderer type and subsequently dereferenced in the same file; unrelated mesh, OpenGL, and target-capability variables named renderer are excluded.'

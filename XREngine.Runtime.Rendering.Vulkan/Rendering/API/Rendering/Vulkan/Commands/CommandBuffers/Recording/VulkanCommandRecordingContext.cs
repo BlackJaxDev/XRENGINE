@@ -2,13 +2,6 @@ using Silk.NET.Vulkan;
 
 namespace XREngine.Rendering.Vulkan;
 
-internal enum EVulkanCommandRecordingFailureKind : byte
-{
-    None,
-    Deferred,
-    ReplanRequired,
-}
-
 /// <summary>
 /// Stack-only capture of all frame-local inputs and outputs for one primary
 /// command-buffer recording attempt.

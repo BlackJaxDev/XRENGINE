@@ -10,24 +10,6 @@ namespace XREngine.Rendering.Vulkan;
 internal sealed unsafe partial class VulkanFrameLoop
 {
     private const uint FrameTimingQueryCount = 2;
-    private const uint VulkanGpuProfilerMaxScopesPerFrame = 512;
-    private const uint VulkanGpuProfilerQueryCount = VulkanGpuProfilerMaxScopesPerFrame * 2;
-    private const string VulkanGpuProfilerBackendName = "Vulkan";
-    private const bool EnableVulkanGpuProfilerCommandBufferInstrumentation = false;
-    private const string VulkanGpuProfilerQuarantinedMessage =
-        "Vulkan GPU pipeline command timing is disabled; set XRE_GPU_TIMESTAMP_DENSE=1 for dense diagnostic command timestamps. Coarse Vulkan command-buffer GPU timing remains available.";
-    private static bool VulkanGpuTimestampDenseModeEnabled
-        => XREnvironment.IsEnabled(XREngineEnvironmentVariables.GpuTimestampDense);
-
-
-    private static bool IsVulkanGpuProfilerCommandBufferInstrumentationEnabled
-        => EnableVulkanGpuProfilerCommandBufferInstrumentation ||
-           VulkanGpuTimestampDenseModeEnabled;
-
-    internal static string VulkanGpuProfilerCommandTimingStatusMessage
-        => IsVulkanGpuProfilerCommandBufferInstrumentationEnabled
-            ? "Vulkan GPU timings are collected from recorded command buffers."
-            : VulkanGpuProfilerQuarantinedMessage;
 
     internal void CreateFrameTimingResources()
     {
@@ -133,8 +115,6 @@ internal sealed unsafe partial class VulkanFrameLoop
         _telemetry._frameTimingQueryPools = null;
         _telemetry._frameTimingQueryReady = null;
         _telemetry._frameTimingGpuEnabled = false;
-        _telemetry._vulkanGpuProfilerCommandBufferInstrumented = null;
-        _telemetry._vulkanGpuProfilerCommandBufferFrameSlots = null;
     }
 
     private void BeginFrameTimingQueries(CommandBuffer commandBuffer, int frameSlot)
@@ -243,7 +223,7 @@ internal sealed unsafe partial class VulkanFrameLoop
         {
             SType = StructureType.QueryPoolCreateInfo,
             QueryType = QueryType.Timestamp,
-            QueryCount = VulkanGpuProfilerQueryCount,
+            QueryCount = VulkanFrameTelemetry.GpuProfilerQueryCount,
         };
 
         for (int i = 0; i < _telemetry._vulkanGpuProfilerQueryPools.Length; i++)
@@ -288,7 +268,7 @@ internal sealed unsafe partial class VulkanFrameLoop
         {
             SType = StructureType.QueryPoolCreateInfo,
             QueryType = QueryType.Timestamp,
-            QueryCount = VulkanGpuProfilerQueryCount,
+            QueryCount = VulkanFrameTelemetry.GpuProfilerQueryCount,
         };
 
         for (int i = oldLength; i < slotCount; i++)
@@ -329,8 +309,6 @@ internal sealed unsafe partial class VulkanFrameLoop
         _telemetry._vulkanGpuProfilerPendingQueryCounts = null;
         _telemetry._vulkanGpuProfilerSubmittedFrameIds = null;
         _telemetry._vulkanGpuProfilerEnabled = false;
-        _telemetry._vulkanGpuProfilerCommandBufferInstrumented = null;
-        _telemetry._vulkanGpuProfilerCommandBufferFrameSlots = null;
     }
 
     private void ClearVulkanGpuProfilerPendingQueries()
@@ -356,197 +334,6 @@ internal sealed unsafe partial class VulkanFrameLoop
             Array.Fill(_telemetry._vulkanGpuProfilerQueryReady, false);
     }
 
-    private bool IsVulkanGpuProfilerCommandBufferStateDirty(uint imageIndex, bool profilingActive, int frameSlot)
-    {
-        if (!IsVulkanGpuProfilerCommandBufferInstrumentationEnabled)
-            return false;
-
-        EnsureVulkanGpuProfilerCommandBufferStateCapacity();
-
-        if (_telemetry._vulkanGpuProfilerCommandBufferInstrumented is null ||
-            _telemetry._vulkanGpuProfilerCommandBufferFrameSlots is null ||
-            imageIndex >= _telemetry._vulkanGpuProfilerCommandBufferInstrumented.Length)
-        {
-            return false;
-        }
-
-        bool recordedInstrumented = _telemetry._vulkanGpuProfilerCommandBufferInstrumented[imageIndex];
-        if (recordedInstrumented != profilingActive)
-            return true;
-
-        return profilingActive && _telemetry._vulkanGpuProfilerCommandBufferFrameSlots[imageIndex] != frameSlot;
-    }
-
-    private void UpdateVulkanGpuProfilerCommandBufferState(uint imageIndex, bool profilingActive, int frameSlot)
-    {
-        EnsureVulkanGpuProfilerCommandBufferStateCapacity();
-
-        if (_telemetry._vulkanGpuProfilerCommandBufferInstrumented is null ||
-            _telemetry._vulkanGpuProfilerCommandBufferFrameSlots is null ||
-            imageIndex >= _telemetry._vulkanGpuProfilerCommandBufferInstrumented.Length)
-        {
-            return;
-        }
-
-        _telemetry._vulkanGpuProfilerCommandBufferInstrumented[imageIndex] = profilingActive;
-        _telemetry._vulkanGpuProfilerCommandBufferFrameSlots[imageIndex] = profilingActive ? frameSlot : -1;
-    }
-
-    private void EnsureVulkanGpuProfilerCommandBufferStateCapacity()
-    {
-        int length = _commandRuntime.CommandBuffers.Buffers?.Length ?? 0;
-        if (length <= 0)
-        {
-            _telemetry._vulkanGpuProfilerCommandBufferInstrumented = null;
-            _telemetry._vulkanGpuProfilerCommandBufferFrameSlots = null;
-            return;
-        }
-
-        if (_telemetry._vulkanGpuProfilerCommandBufferInstrumented is { Length: var instrumentedLength } &&
-            _telemetry._vulkanGpuProfilerCommandBufferFrameSlots is { Length: var slotsLength } &&
-            instrumentedLength == length &&
-            slotsLength == length)
-        {
-            return;
-        }
-
-        _telemetry._vulkanGpuProfilerCommandBufferInstrumented = new bool[length];
-        _telemetry._vulkanGpuProfilerCommandBufferFrameSlots = new int[length];
-        Array.Fill(_telemetry._vulkanGpuProfilerCommandBufferFrameSlots, -1);
-    }
-
-    private void BeginVulkanGpuProfilerQueries(CommandBuffer commandBuffer, int frameSlot)
-    {
-        _telemetry._vulkanGpuProfilerRecordingActive = false;
-        _telemetry._vulkanGpuProfilerRecordingFrameSlot = -1;
-        _telemetry._vulkanGpuProfilerNextQuery = 0;
-        _telemetry._vulkanGpuProfilerBudgetWarningIssued = false;
-
-        if (_telemetry._vulkanGpuProfilerPendingScopes is not null &&
-            frameSlot >= 0 &&
-            frameSlot < _telemetry._vulkanGpuProfilerPendingScopes.Length)
-        {
-            _telemetry._vulkanGpuProfilerPendingScopes[frameSlot].Clear();
-        }
-
-        if (_telemetry._vulkanGpuProfilerPendingQueryCounts is not null &&
-            frameSlot >= 0 &&
-            frameSlot < _telemetry._vulkanGpuProfilerPendingQueryCounts.Length)
-        {
-            _telemetry._vulkanGpuProfilerPendingQueryCounts[frameSlot] = 0;
-        }
-
-        if (_telemetry._vulkanGpuProfilerSubmittedFrameIds is not null &&
-            frameSlot >= 0 &&
-            frameSlot < _telemetry._vulkanGpuProfilerSubmittedFrameIds.Length)
-        {
-            _telemetry._vulkanGpuProfilerSubmittedFrameIds[frameSlot] = 0UL;
-        }
-
-        if (_telemetry._vulkanGpuProfilerQueryReady is not null &&
-            frameSlot >= 0 &&
-            frameSlot < _telemetry._vulkanGpuProfilerQueryReady.Length)
-        {
-            _telemetry._vulkanGpuProfilerQueryReady[frameSlot] = false;
-        }
-
-        if (!IsVulkanGpuProfilerCommandBufferInstrumentationEnabled)
-        {
-            if (RenderPipelineGpuProfiler.Instance.IsProfilingActive)
-            {
-                RenderPipelineGpuProfiler.Instance.RecordBackendGpuTimingStatus(
-                    RuntimeEngine.Rendering.State.RenderFrameId,
-                    VulkanGpuProfilerBackendName,
-                    VulkanGpuProfilerCommandTimingStatusMessage);
-            }
-
-            return;
-        }
-
-        if (!_telemetry._vulkanGpuProfilerEnabled ||
-            !RenderPipelineGpuProfiler.Instance.IsProfilingActive ||
-            _telemetry._vulkanGpuProfilerQueryPools is null ||
-            frameSlot < 0 ||
-            frameSlot >= _telemetry._vulkanGpuProfilerQueryPools.Length)
-        {
-            return;
-        }
-
-        QueryPool queryPool = _telemetry._vulkanGpuProfilerQueryPools[frameSlot];
-        if (queryPool.Handle == 0)
-            return;
-
-        _commandRuntime.TrackVulkanCommandBufferResource(
-            commandBuffer,
-            ObjectType.QueryPool,
-            queryPool.Handle,
-            "GpuProfiler.QueryPool");
-        _deviceContext.Api.CmdResetQueryPool(commandBuffer, queryPool, 0, VulkanGpuProfilerQueryCount);
-        _telemetry._vulkanGpuProfilerRecordingActive = true;
-        _telemetry._vulkanGpuProfilerRecordingFrameSlot = frameSlot;
-    }
-
-    private VulkanGpuProfilerScope TryBeginVulkanGpuProfilerScope(CommandBuffer commandBuffer, FrameOp op, int passIndex)
-    {
-        if (!TryReserveVulkanGpuProfilerQueries(commandBuffer, out QueryPool queryPool, out uint startQuery, out uint endQuery))
-            return default;
-
-        string[] path = BuildVulkanGpuProfilerPath(op, passIndex);
-        _deviceContext.Api.CmdWriteTimestamp(commandBuffer, PipelineStageFlags.TopOfPipeBit, queryPool, startQuery);
-        RuntimeEngine.Rendering.Stats.RecordRendererStateCounter(ERendererProfilerCounter.TimestampQueryCount);
-        return new VulkanGpuProfilerScope(Api!, _telemetry, commandBuffer, queryPool, _telemetry._vulkanGpuProfilerRecordingFrameSlot, endQuery, path);
-    }
-
-    private VulkanGpuProfilerScope TryBeginVulkanGpuProfilerScope(CommandBuffer commandBuffer, in FrameOpContext context, int passIndex, string scopeName)
-    {
-        if (!TryReserveVulkanGpuProfilerQueries(commandBuffer, out QueryPool queryPool, out uint startQuery, out uint endQuery))
-            return default;
-
-        string[] path = BuildVulkanGpuProfilerPath(context, passIndex, scopeName);
-        _deviceContext.Api.CmdWriteTimestamp(commandBuffer, PipelineStageFlags.TopOfPipeBit, queryPool, startQuery);
-        RuntimeEngine.Rendering.Stats.RecordRendererStateCounter(ERendererProfilerCounter.TimestampQueryCount);
-        return new VulkanGpuProfilerScope(Api!, _telemetry, commandBuffer, queryPool, _telemetry._vulkanGpuProfilerRecordingFrameSlot, endQuery, path);
-    }
-
-    private bool TryReserveVulkanGpuProfilerQueries(CommandBuffer commandBuffer, out QueryPool queryPool, out uint startQuery, out uint endQuery)
-    {
-        queryPool = default;
-        startQuery = 0;
-        endQuery = 0;
-
-        if (!_telemetry._vulkanGpuProfilerRecordingActive ||
-            _telemetry._vulkanGpuProfilerQueryPools is null ||
-            _telemetry._vulkanGpuProfilerRecordingFrameSlot < 0 ||
-            _telemetry._vulkanGpuProfilerRecordingFrameSlot >= _telemetry._vulkanGpuProfilerQueryPools.Length ||
-            commandBuffer.Handle == 0)
-        {
-            return false;
-        }
-
-        if (_telemetry._vulkanGpuProfilerNextQuery + 1 >= VulkanGpuProfilerQueryCount)
-        {
-            if (!_telemetry._vulkanGpuProfilerBudgetWarningIssued)
-            {
-                _telemetry._vulkanGpuProfilerBudgetWarningIssued = true;
-                RenderPipelineGpuProfiler.Instance.RecordBackendGpuTimingStatus(
-                    RuntimeEngine.Rendering.State.RenderFrameId,
-                    VulkanGpuProfilerBackendName,
-                    $"Vulkan GPU pipeline timing reached the per-frame timestamp scope budget ({VulkanGpuProfilerMaxScopesPerFrame}); later scopes were skipped.",
-                    skippedSamples: 1);
-            }
-
-            return false;
-        }
-
-        queryPool = _telemetry._vulkanGpuProfilerQueryPools[_telemetry._vulkanGpuProfilerRecordingFrameSlot];
-        if (queryPool.Handle == 0)
-            return false;
-
-        startQuery = _telemetry._vulkanGpuProfilerNextQuery++;
-        endQuery = _telemetry._vulkanGpuProfilerNextQuery++;
-        return true;
-    }
-
     internal void MarkVulkanGpuProfilerSubmitted(int frameSlot)
     {
         if (_telemetry._vulkanGpuProfilerQueryReady is null ||
@@ -561,89 +348,6 @@ internal sealed unsafe partial class VulkanFrameLoop
 
         _telemetry._vulkanGpuProfilerSubmittedFrameIds[frameSlot] = RuntimeEngine.Rendering.State.RenderFrameId;
         _telemetry._vulkanGpuProfilerQueryReady[frameSlot] = _telemetry._vulkanGpuProfilerPendingScopes[frameSlot].Count > 0;
-    }
-
-    private void CaptureVulkanGpuProfilerVariantScopes(int frameSlot, PrimaryCommandArtifactOwner variant)
-    {
-        if (!IsVulkanGpuProfilerCommandBufferInstrumentationEnabled ||
-            !_telemetry._vulkanGpuProfilerEnabled ||
-            !RenderPipelineGpuProfiler.Instance.IsProfilingActive ||
-            _telemetry._vulkanGpuProfilerPendingScopes is null ||
-            _telemetry._vulkanGpuProfilerPendingQueryCounts is null ||
-            frameSlot < 0 ||
-            frameSlot >= _telemetry._vulkanGpuProfilerPendingScopes.Length ||
-            frameSlot >= _telemetry._vulkanGpuProfilerPendingQueryCounts.Length)
-        {
-            variant.GpuProfilerScopes = null;
-            variant.GpuProfilerQueryCount = 0;
-            return;
-        }
-
-        List<VulkanGpuProfilerPendingScope> scopes = _telemetry._vulkanGpuProfilerPendingScopes[frameSlot];
-        int queryCount = _telemetry._vulkanGpuProfilerPendingQueryCounts[frameSlot];
-        if (scopes.Count == 0 || queryCount <= 0)
-        {
-            variant.GpuProfilerScopes = [];
-            variant.GpuProfilerQueryCount = 0;
-            return;
-        }
-
-        variant.GpuProfilerScopes = scopes.ToArray();
-        variant.GpuProfilerQueryCount = queryCount;
-    }
-
-    private void PrepareVulkanGpuProfilerReusableSubmission(
-        int frameSlot,
-        PrimaryCommandArtifactOwner variant,
-        bool profilingActive)
-    {
-        if (_telemetry._vulkanGpuProfilerPendingScopes is not null &&
-            frameSlot >= 0 &&
-            frameSlot < _telemetry._vulkanGpuProfilerPendingScopes.Length)
-        {
-            _telemetry._vulkanGpuProfilerPendingScopes[frameSlot].Clear();
-        }
-
-        if (_telemetry._vulkanGpuProfilerPendingQueryCounts is not null &&
-            frameSlot >= 0 &&
-            frameSlot < _telemetry._vulkanGpuProfilerPendingQueryCounts.Length)
-        {
-            _telemetry._vulkanGpuProfilerPendingQueryCounts[frameSlot] = 0;
-        }
-
-        if (_telemetry._vulkanGpuProfilerSubmittedFrameIds is not null &&
-            frameSlot >= 0 &&
-            frameSlot < _telemetry._vulkanGpuProfilerSubmittedFrameIds.Length)
-        {
-            _telemetry._vulkanGpuProfilerSubmittedFrameIds[frameSlot] = 0UL;
-        }
-
-        if (_telemetry._vulkanGpuProfilerQueryReady is not null &&
-            frameSlot >= 0 &&
-            frameSlot < _telemetry._vulkanGpuProfilerQueryReady.Length)
-        {
-            _telemetry._vulkanGpuProfilerQueryReady[frameSlot] = false;
-        }
-
-        if (!IsVulkanGpuProfilerCommandBufferInstrumentationEnabled ||
-            !_telemetry._vulkanGpuProfilerEnabled ||
-            !profilingActive ||
-            !variant.GpuProfilerActive ||
-            variant.GpuProfilerFrameSlot != frameSlot ||
-            variant.GpuProfilerScopes is not { Length: > 0 } scopes ||
-            variant.GpuProfilerQueryCount <= 0 ||
-            _telemetry._vulkanGpuProfilerPendingScopes is null ||
-            _telemetry._vulkanGpuProfilerPendingQueryCounts is null ||
-            frameSlot < 0 ||
-            frameSlot >= _telemetry._vulkanGpuProfilerPendingScopes.Length ||
-            frameSlot >= _telemetry._vulkanGpuProfilerPendingQueryCounts.Length)
-        {
-            return;
-        }
-
-        List<VulkanGpuProfilerPendingScope> pendingScopes = _telemetry._vulkanGpuProfilerPendingScopes[frameSlot];
-        pendingScopes.AddRange(scopes);
-        _telemetry._vulkanGpuProfilerPendingQueryCounts[frameSlot] = variant.GpuProfilerQueryCount;
     }
 
     internal void SampleVulkanGpuProfilerQueries(int frameSlot)
@@ -708,7 +412,7 @@ internal sealed unsafe partial class VulkanFrameLoop
                     ulong nanoseconds = (ulong)Math.Round((end - start) * _telemetry._frameTimingTimestampPeriodNanoseconds);
                     RenderPipelineGpuProfiler.Instance.RecordBackendGpuTimingSample(
                         frameId,
-                        VulkanGpuProfilerBackendName,
+                        VulkanFrameTelemetry.GpuProfilerBackendName,
                         sample.Path,
                         nanoseconds);
                 }
@@ -726,70 +430,4 @@ internal sealed unsafe partial class VulkanFrameLoop
         }
     }
 
-    private static string[] BuildVulkanGpuProfilerPath(FrameOp op, int passIndex)
-        => BuildVulkanGpuProfilerPath(op.Context, passIndex, BuildVulkanGpuProfilerOpLabel(op));
-
-    private static string[] BuildVulkanGpuProfilerPath(in FrameOpContext context, int passIndex, string scopeName)
-    {
-        string pipelineName = context.PipelineInstance?.ProfilerKey ??
-            context.PipelineInstance?.DebugName ??
-            (context.PipelineIdentity != 0 ? $"Pipeline#{context.PipelineIdentity}" : "Vulkan");
-
-        string passName = ResolveVulkanGpuProfilerPassName(passIndex, context.PassMetadata);
-        return [pipelineName, passName, scopeName];
-    }
-
-    private static string ResolveVulkanGpuProfilerPassName(int passIndex, IReadOnlyCollection<RenderPassMetadata>? passMetadata)
-    {
-        if (passIndex == VulkanBarrierPlanner.SwapchainPassIndex)
-            return $"Pass[{VulkanBarrierPlanner.SwapchainPassIndex}:Swapchain]";
-
-        if (passMetadata is not null)
-        {
-            foreach (RenderPassMetadata metadata in passMetadata)
-            {
-                if (metadata.PassIndex == passIndex)
-                    return $"Pass[{passIndex}:{metadata.Name}]";
-            }
-        }
-
-        return passIndex == int.MinValue ? "Pass[Unknown]" : $"Pass[{passIndex}]";
-    }
-
-    private static string BuildVulkanGpuProfilerOpLabel(FrameOp op)
-    {
-        return op switch
-        {
-            ClearOp clear => $"Clear[target={GetTargetName(clear.Target)}; color={clear.ClearColor}; depth={clear.ClearDepth}; stencil={clear.ClearStencil}]",
-            BlitOp blit => $"Blit[src={GetTargetName(blit.InFbo)}; dst={GetTargetName(blit.OutFbo)}; color={blit.ColorBit}; depth={blit.DepthBit}; stencil={blit.StencilBit}]",
-            MeshDrawOp draw => BuildVulkanGpuProfilerMeshDrawLabel(draw),
-            QueryOp query => $"Query[{query.Operation}; descriptor={query.Descriptor}; fbo={GetTargetName(query.Target)}]",
-            IndirectDrawOp indirect => $"IndirectDraw[count={indirect.DrawCount}; stride={indirect.Stride}; useCount={indirect.UseCount}]",
-            MeshTaskDispatchIndirectCountOp meshTask => $"MeshTaskDispatchIndirectCount[max={meshTask.MaxDrawCount}; stride={meshTask.Stride}]",
-            TransformFeedbackOp transformFeedback => $"TransformFeedback[{transformFeedback.Operation}; target={GetTargetName(transformFeedback.Target)}]",
-            ComputeDispatchOp compute => $"ComputeDispatch[program={GetDisplayName(compute.Program.Data.Name, "UnnamedProgram")}; groups={compute.GroupsX}x{compute.GroupsY}x{compute.GroupsZ}]",
-            ComputeDispatchIndirectOp computeIndirect => $"ComputeDispatchIndirect[program={GetDisplayName(computeIndirect.Program.Data.Name, "UnnamedProgram")}; offset={computeIndirect.ArgumentOffset}]",
-            BufferCopyOp copy => $"BufferCopy[bytes={copy.ByteCount}; srcOffset={copy.SourceOffset}; dstOffset={copy.DestinationOffset}]",
-            SubmissionMarkerOp marker => $"SubmissionMarker[label={marker.Label}]",
-            DlssFrameGenerationOp frameGeneration => $"DLSS.FrameGenerationInputs[{frameGeneration.Parameters.InputWidth}x{frameGeneration.Parameters.InputHeight}->{frameGeneration.Parameters.OutputWidth}x{frameGeneration.Parameters.OutputHeight}]",
-            MemoryBarrierOp barrier => $"MemoryBarrier[mask={barrier.Mask}]",
-            PublishFramebufferForSamplingOp publish => $"PublishFramebufferForSampling[fbo={GetTargetName(publish.FrameBuffer)}]",
-            _ => op.GetType().Name,
-        };
-    }
-
-    private static string BuildVulkanGpuProfilerMeshDrawLabel(MeshDrawOp draw)
-    {
-        var meshRenderer = draw.Draw.Renderer.MeshRenderer;
-        string meshName = GetDisplayName(meshRenderer.Mesh?.Name, "UnnamedMesh");
-        string materialName = GetDisplayName((draw.Draw.MaterialOverride ?? meshRenderer.Material)?.Name, "UnnamedMaterial");
-        string targetName = GetTargetName(draw.Target);
-        return $"MeshDraw[mesh={meshName}; material={materialName}; target={targetName}; instances={draw.Draw.Instances}]";
-    }
-
-    private static string GetTargetName(XRFrameBuffer? target)
-        => target is null ? "Swapchain" : GetDisplayName(target.Name, "UnnamedFbo");
-
-    private static string GetDisplayName(string? value, string fallback)
-        => string.IsNullOrWhiteSpace(value) ? fallback : value;
 }

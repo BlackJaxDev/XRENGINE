@@ -395,11 +395,6 @@ namespace XREngine.Rendering.Vulkan
                     commandBufferImageSlot,
                     variant,
                     gpuPipelineProfilingActive);
-                UpdateVulkanGpuProfilerCommandBufferState(
-                    imageIndex,
-                    gpuPipelineProfilingActive,
-                    commandBufferImageSlot);
-
                 RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanCommandBufferCacheOutcome(
                     reusedClean: true,
                     recorded: false,

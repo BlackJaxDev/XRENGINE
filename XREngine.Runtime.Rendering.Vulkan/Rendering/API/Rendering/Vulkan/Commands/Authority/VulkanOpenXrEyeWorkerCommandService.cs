@@ -102,9 +102,3 @@ internal sealed class VulkanOpenXrEyeWorkerCommandService : IDisposable
         _scheduler = null;
     }
 }
-
-/// <summary>Outcome of the renderer-free OpenXR stereo command transaction.</summary>
-internal readonly record struct VulkanOpenXrEyeWorkerCommandResult(
-    OpenXrEyeRecordWorkerBatchResult Batch,
-    bool Submitted,
-    bool CommandBuffersCompleted);

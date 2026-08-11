@@ -4,10 +4,6 @@ namespace XREngine.Rendering.Vulkan;
 /// Explicit command-thread render-state contract for OpenXR command work. It
 /// installs no global current-renderer value and is safe to use on worker threads.
 /// </summary>
-internal readonly record struct VulkanOpenXrThreadRenderStateData(
-    VulkanCommandThreadContext ThreadContext,
-    VulkanCommandRuntime Owner);
-
 /// <summary>Restores command-thread render and framebuffer state after OpenXR recording.</summary>
 internal readonly struct VulkanOpenXrThreadRenderStateScope : IDisposable
 {

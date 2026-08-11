@@ -38,7 +38,7 @@ Those changes were preserved and are not all claimed by this effort.
 |---|---|---|
 | Backend object identity | `VulkanBackendObjectRegistry`, `VulkanBackendObjectBucket<T>`, `VulkanBackendObjectContext` | Wrapper identity, binding slots, and publication are scoped to one renderer/device. |
 | Device creation and capabilities | `VulkanDeviceContext`, immutable `VulkanDeviceCapabilities`, query/builder/reporter contracts | `CreateLogicalDevice` is a short query/create/publish/report coordinator. |
-| Command scheduling | `VulkanCommandScheduler`, `VulkanCommandSchedulingContext` | Command-chain ordering, parallel buckets, cache selection, and retry policy have an explicit owner. |
+| Command scheduling | `VulkanFrameOperationScheduler`, `VulkanCommandChainState` | Frame-operation ordering has one scheduler; cache recency generation remains with the command-chain artifacts it orders. |
 | Command recording | `VulkanCommandRecorder`, `VulkanCommandRecordingContext`, render-scope owner, per-domain recording methods | Recording inputs are captured explicitly; begin/end, scopes, barriers, transfers, uploads, and readback are separated from scheduling policy. |
 | Render graph | `VulkanRenderGraphRuntime`, immutable `VulkanRenderGraphPlan`, immutable `VulkanBarrierPlan` | Compiler/planner/allocator state has one authority and recording consumes versioned plan data. |
 | Binding grammar | `VulkanResourceBindingKey`, `EVulkanResourceBindingKind` | `tex::`, `fbo::`, and `buf::` parsing is centralized; malformed and duplicate prefixes are guarded by tests. |

@@ -118,9 +118,3 @@ internal sealed partial class VulkanFramePlanner
         FrameScheduler.ReleaseCaches();
     }
 }
-
-/// <summary>Immutable planning values safe to pass from planning into command scheduling.</summary>
-internal readonly record struct VulkanFramePlanningSnapshot(
-    VulkanRenderGraphPlan RenderGraphPlan,
-    ulong FrozenResourcePlanRevision,
-    bool IsResourcePlanFrozen);

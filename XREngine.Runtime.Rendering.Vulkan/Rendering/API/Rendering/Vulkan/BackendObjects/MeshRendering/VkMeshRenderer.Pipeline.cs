@@ -1248,12 +1248,6 @@ internal unsafe partial class VkMeshRenderer
 			ex.Message);
 	}
 
-}
-
-
-internal unsafe partial class VkMeshRenderer
-{
-
 	private static PendingMeshDraw ResolveAttachmentCompatibleDrawState(
 		in PendingMeshDraw draw,
 		int passIndex,

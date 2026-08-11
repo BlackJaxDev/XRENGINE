@@ -108,7 +108,7 @@ depend on the focused owner rather than ambient facade state.
 | --- | --- |
 | `VulkanDeviceContext` | Physical/logical device identity, queues, enabled capabilities, extension commands, and the per-device backend-object context. |
 | `VulkanDesktopFrameCoordinator` | Exactly-once desktop attempt lifecycle and phase ordering. |
-| `VulkanCommandScheduler` / `VulkanCommandRecorder` | Schedule/cache decisions and native command emission from explicit recording contexts. |
+| `VulkanFrameOperationScheduler` / `VulkanCommandRecorder` | Frame-operation ordering and native command emission from explicit recording contexts; command-chain cache generations remain with `VulkanCommandChainState`. |
 | `VulkanRenderGraphRuntime` | Versioned immutable render-graph and barrier plans. |
 | `VulkanResourceLifetimeTracker` / `VulkanResourceRetirementQueue` | Resource-use publication and deferred destruction. |
 | `VulkanDescriptorManager` / `VulkanPipelineManager` | Device-lifetime descriptor and graphics/compute pipeline caches. |

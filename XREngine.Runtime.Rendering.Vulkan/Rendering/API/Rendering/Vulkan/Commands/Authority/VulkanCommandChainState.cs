@@ -4,6 +4,7 @@ namespace XREngine.Rendering.Vulkan;
 internal sealed class VulkanCommandChainState
 {
     private long _artifactMutationGeneration;
+    private ulong _scheduleGeneration;
 
     internal Dictionary<CommandChainKey, CommandChain>[]? Caches;
     internal Dictionary<uint, Dictionary<CommandChainKey, CommandChain>>? ExternalCaches;
@@ -32,4 +33,11 @@ internal sealed class VulkanCommandChainState
 
     internal void NotifyArtifactMutation()
         => System.Threading.Interlocked.Increment(ref _artifactMutationGeneration);
+
+    /// <summary>
+    /// Advances the command-chain cache recency clock. The clock lives beside
+    /// the cache artifacts it orders instead of behind a second scheduler.
+    /// </summary>
+    internal ulong NextScheduleGeneration()
+        => _scheduleGeneration = VulkanGeneration.NextNonZero(_scheduleGeneration);
 }
