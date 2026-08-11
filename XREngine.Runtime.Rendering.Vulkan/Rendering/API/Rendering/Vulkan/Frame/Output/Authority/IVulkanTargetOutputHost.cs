@@ -21,6 +21,7 @@ internal unsafe interface IVulkanTargetOutputHost
     VulkanStreamlineDeviceBinding CaptureStreamlineDeviceBinding();
     CommandBuffer[] CreateDesktopOutputArtifacts(int imageCount);
     int ReserveOpenXrFrameDataSlots(int desktopImageCount);
+    void PublishDesktopImageTimelineValues(ulong[]? timelineValues);
     void PublishDesktopSwapchainExtent(Extent2D extent);
     void RetireDesktopOutputArtifacts(CommandBuffer[]? commandBuffers);
     void DrainRetiredDesktopCommandBuffers(int frameSlot);

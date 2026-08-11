@@ -18,6 +18,7 @@ internal sealed unsafe partial class VulkanCommandRuntime
 
     private const uint FrameTimingQueryCount = 2;
     private long _recordedPrimaryFrameCounter;
+    private long _primaryReuseCohortGeneration;
 
     private VulkanMappedFrameArena? MappedFrameArena => ResourceRuntime.MappedFrameArena;
     private ulong VulkanFrameCounter => unchecked((ulong)Volatile.Read(ref _recordedPrimaryFrameCounter));

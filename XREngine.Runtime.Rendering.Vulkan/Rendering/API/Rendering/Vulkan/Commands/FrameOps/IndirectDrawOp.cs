@@ -20,7 +20,13 @@ internal sealed record IndirectDrawOp(
     public VkDataBuffer IndirectBuffer { get; private set; } = IndirectBuffer;
     public VkDataBuffer? ParameterBuffer { get; private set; } = ParameterBuffer;
     public VkMeshRenderer MeshRenderer { get; private set; } = MeshRenderer;
-    public PendingMeshDraw Draw { get; private set; } = Draw;
+    private PendingMeshDraw _draw = Draw;
+    public PendingMeshDraw Draw
+    {
+        get => _draw;
+        private set => _draw = value;
+    }
+    internal ref readonly PendingMeshDraw DrawRef => ref _draw;
     public uint DrawCount { get; private set; } = DrawCount;
     public uint Stride { get; private set; } = Stride;
     public nuint ByteOffset { get; private set; } = ByteOffset;

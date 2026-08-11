@@ -2336,12 +2336,10 @@ internal unsafe partial class VkMeshRenderer
 		if (Mesh?.HasBlendshapes == true)
 			return "blendshape frame-source descriptors are active";
 
-		foreach (AutoUniformBlockInfo block in
-				 publicationProgram.AutoUniformBlockMap.Values)
-		{
-			if (block.Frequency == EVulkanBindingFrequency.Unknown)
-				return $"auto-uniform block '{block.InstanceName}' has unknown frequency";
-		}
+		if (publicationProgram.BindingSchema is not { } bindingSchema)
+			return "prepared binding schema unavailable";
+		if (bindingSchema.HasUnknownAutoUniformFrequency)
+			return "an auto-uniform block has unknown frequency";
 
 		return null;
 	}

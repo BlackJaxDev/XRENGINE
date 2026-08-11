@@ -16,12 +16,33 @@ internal sealed class VulkanProgramBindingSchema
     {
         ProgramLinkGeneration = programLinkGeneration;
         _autoUniformBlocks = autoUniformBlocks;
+        EVulkanBindingFrequencyMask autoUniformFrequencyMask =
+            EVulkanBindingFrequencyMask.None;
+        bool hasUnknownAutoUniformFrequency = false;
+        foreach (VulkanAutoUniformBindingSchema schema in
+                 autoUniformBlocks.Values)
+        {
+            int bitIndex = (int)schema.Block.Frequency - 1;
+            if ((uint)bitIndex < 7u)
+            {
+                autoUniformFrequencyMask |=
+                    (EVulkanBindingFrequencyMask)(1 << bitIndex);
+            }
+            else
+            {
+                hasUnknownAutoUniformFrequency = true;
+            }
+        }
+        AutoUniformFrequencyMask = autoUniformFrequencyMask;
+        HasUnknownAutoUniformFrequency = hasUnknownAutoUniformFrequency;
         _frequencyPublicationLayoutSignatures =
             BuildFrequencyPublicationLayoutSignatures(autoUniformBlocks);
         DescriptorBindings = descriptorBindings;
     }
 
     internal ulong ProgramLinkGeneration { get; }
+    internal EVulkanBindingFrequencyMask AutoUniformFrequencyMask { get; }
+    internal bool HasUnknownAutoUniformFrequency { get; }
     internal IReadOnlyDictionary<string, VulkanAutoUniformBindingSchema> AutoUniformBlocks
         => _autoUniformBlocks;
     internal VulkanDescriptorBindingSchemaEntry[] DescriptorBindings { get; }

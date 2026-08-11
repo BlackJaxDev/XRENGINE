@@ -87,22 +87,6 @@ namespace XREngine.Rendering.Vulkan
                 return true;
             }
 
-            for (int operationIndex = 0;
-                 operationIndex < dynamicUiBatchTextOps.Length;
-                 operationIndex++)
-            {
-                if (dynamicUiBatchTextOps[operationIndex].IsSealedForFramePlan)
-                    continue;
-
-                variant.DynamicUiSecondaryRecorded = false;
-                Debug.VulkanWarningEvery(
-                    $"Vulkan.DynamicUi.UnsealedSecondaryInput.{GetHashCode()}",
-                    TimeSpan.FromSeconds(1),
-                    "[Vulkan] Dynamic-UI secondary recording rejected an unsealed frame-plan operation at index {0}.",
-                    operationIndex);
-                return false;
-            }
-
             if (!forceRecord &&
                 variant.DynamicUiSignature == dynamicUiBatchTextSignature &&
                 variant.DynamicUiSecondaryRecorded &&
@@ -120,6 +104,26 @@ namespace XREngine.Rendering.Vulkan
                         dynamicUiBatchTextSignature);
                 }
                 return true;
+            }
+
+            // An exact immutable-secondary hit consumes only the signature and
+            // existing command-buffer artifact, so it is safe to admit before a
+            // new FramePlan has been lowered. Any path that will encode commands
+            // still requires plan-owned sealed payloads below.
+            for (int operationIndex = 0;
+                 operationIndex < dynamicUiBatchTextOps.Length;
+                 operationIndex++)
+            {
+                if (dynamicUiBatchTextOps[operationIndex].IsSealedForFramePlan)
+                    continue;
+
+                variant.DynamicUiSecondaryRecorded = false;
+                Debug.VulkanWarningEvery(
+                    $"Vulkan.DynamicUi.UnsealedSecondaryInput.{GetHashCode()}",
+                    TimeSpan.FromSeconds(1),
+                    "[Vulkan] Dynamic-UI secondary recording rejected an unsealed frame-plan operation at index {0}.",
+                    operationIndex);
+                return false;
             }
 
             if (!TryEnsureMutableDynamicUiSecondaryCommandBuffer(
@@ -235,6 +239,8 @@ namespace XREngine.Rendering.Vulkan
                     meshDrawSlotsByRenderer,
                     recordingScratch,
                     recordingScratch.DynamicUiMeshFrameDataFamilyBases,
+                    0UL,
+                    0UL,
                     out _,
                     out string frameWideReason))
             {

@@ -161,7 +161,16 @@ namespace XREngine.Rendering.Vulkan
             }
 
             ulong completionValue;
-            if (_commandRuntime.Synchronization._frameSlotTimelineValues is { } frameSlotValues &&
+            if (_commandRuntime.Synchronization._desktopImageTimelineValues is { } imageTimelineValues &&
+                (uint)frameDataSlot < (uint)imageTimelineValues.Length)
+            {
+                // Desktop mapped frame data and descriptor sets are keyed by the
+                // acquired swapchain image, not the frame-in-flight slot that
+                // happened to acquire it. The image ledger is published on every
+                // accepted submission and waited before this image is prepared.
+                completionValue = imageTimelineValues[frameDataSlot];
+            }
+            else if (_commandRuntime.Synchronization._frameSlotTimelineValues is { } frameSlotValues &&
                 (uint)frameDataSlot < (uint)frameSlotValues.Length)
             {
                 completionValue = frameSlotValues[frameDataSlot];

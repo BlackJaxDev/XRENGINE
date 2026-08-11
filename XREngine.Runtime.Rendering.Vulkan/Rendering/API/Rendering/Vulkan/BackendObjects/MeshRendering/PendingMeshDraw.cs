@@ -37,52 +37,73 @@ internal readonly record struct PendingMeshDraw(
     XRMaterial? MaterialOverride,
     uint Instances,
     EMeshBillboardMode BillboardMode,
-    XRCamera? Camera,
-    XRCamera? StereoRightEyeCamera,
-    bool IsStereoPass,
-    bool UseUnjitteredProjection,
     uint TransformId,
-    // Camera matrices/vectors are snapshotted at enqueue time
-    // while the camera is still the active rendering camera. The command buffer is
-    // recorded later, after the pipeline camera stack has been popped, so reading
-    // Camera.* at record time can yield stale values.
-    Matrix4x4 ViewMatrix,
-    Matrix4x4 InverseViewMatrix,
-    Matrix4x4 ProjectionMatrix,
-    Matrix4x4 InverseProjectionMatrix,
-    Matrix4x4 ViewProjectionMatrix,
-    Matrix4x4 ViewProjectionMatrixUnjittered,
-    Matrix4x4 PreviousViewMatrix,
-    Matrix4x4 PreviousProjectionMatrix,
-    Matrix4x4 PreviousViewProjectionMatrix,
-    Matrix4x4 PreviousViewProjectionMatrixUnjittered,
-    Matrix4x4 RightEyeViewMatrix,
-    Matrix4x4 RightEyeInverseViewMatrix,
-    Matrix4x4 RightEyeProjectionMatrix,
-    Matrix4x4 RightEyeInverseProjectionMatrix,
-    Matrix4x4 RightEyeViewProjectionMatrix,
-    Matrix4x4 RightEyeViewProjectionMatrixUnjittered,
-    Matrix4x4 PreviousRightEyeViewMatrix,
-    Matrix4x4 PreviousRightEyeProjectionMatrix,
-    Matrix4x4 PreviousRightEyeViewProjectionMatrix,
-    Matrix4x4 PreviousRightEyeViewProjectionMatrixUnjittered,
-    Vector3 CameraPosition,
-    Vector3 CameraForward,
-    Vector3 CameraUp,
-    Vector3 CameraRight,
-    // Render-area dimensions snapshotted at enqueue time. The live
-    // RuntimeEngine.Rendering.State.RenderArea is derived from the pipeline's
-    // CurrentRenderRegion, which is reset to Empty by the time the command buffer
-    // is recorded, so ScreenWidth/ScreenHeight engine uniforms (used by the debug
-    // line/point geometry shaders) must read these snapshots instead.
-    int RenderAreaWidth,
-    int RenderAreaHeight,
-    LayeredShadowUniformState ShadowUniformState,
+    VulkanMeshDrawViewSnapshot? ViewSnapshot,
     VkRenderProgram? PreparedProgram,
     string? PreparedProgramIdentity,
     ulong PreparedProgramLinkGeneration,
     ComputeDispatchSnapshot? ProgramBindingSnapshot)
 {
+    internal XRCamera? Camera => ViewSnapshot?.Camera;
+    internal XRCamera? StereoRightEyeCamera => ViewSnapshot?.RightEyeCamera;
+    internal bool IsStereoPass => ViewSnapshot?.IsStereoPass == true;
+    internal bool UseUnjitteredProjection
+        => ViewSnapshot?.UseUnjitteredProjection == true;
+    internal Matrix4x4 ViewMatrix
+        => ViewSnapshot?.ViewMatrix ?? Matrix4x4.Identity;
+    internal Matrix4x4 InverseViewMatrix
+        => ViewSnapshot?.InverseViewMatrix ?? Matrix4x4.Identity;
+    internal Matrix4x4 ProjectionMatrix
+        => ViewSnapshot?.ProjectionMatrix ?? Matrix4x4.Identity;
+    internal Matrix4x4 InverseProjectionMatrix
+        => ViewSnapshot?.InverseProjectionMatrix ?? Matrix4x4.Identity;
+    internal Matrix4x4 ViewProjectionMatrix
+        => ViewSnapshot?.ViewProjectionMatrix ?? Matrix4x4.Identity;
+    internal Matrix4x4 ViewProjectionMatrixUnjittered
+        => ViewSnapshot?.ViewProjectionMatrixUnjittered ?? Matrix4x4.Identity;
+    internal Matrix4x4 PreviousViewMatrix
+        => ViewSnapshot?.PreviousViewMatrix ?? Matrix4x4.Identity;
+    internal Matrix4x4 PreviousProjectionMatrix
+        => ViewSnapshot?.PreviousProjectionMatrix ?? Matrix4x4.Identity;
+    internal Matrix4x4 PreviousViewProjectionMatrix
+        => ViewSnapshot?.PreviousViewProjectionMatrix ?? Matrix4x4.Identity;
+    internal Matrix4x4 PreviousViewProjectionMatrixUnjittered
+        => ViewSnapshot?.PreviousViewProjectionMatrixUnjittered ??
+           Matrix4x4.Identity;
+    internal Matrix4x4 RightEyeViewMatrix
+        => ViewSnapshot?.RightEyeViewMatrix ?? Matrix4x4.Identity;
+    internal Matrix4x4 RightEyeInverseViewMatrix
+        => ViewSnapshot?.RightEyeInverseViewMatrix ?? Matrix4x4.Identity;
+    internal Matrix4x4 RightEyeProjectionMatrix
+        => ViewSnapshot?.RightEyeProjectionMatrix ?? Matrix4x4.Identity;
+    internal Matrix4x4 RightEyeInverseProjectionMatrix
+        => ViewSnapshot?.RightEyeInverseProjectionMatrix ?? Matrix4x4.Identity;
+    internal Matrix4x4 RightEyeViewProjectionMatrix
+        => ViewSnapshot?.RightEyeViewProjectionMatrix ?? Matrix4x4.Identity;
+    internal Matrix4x4 RightEyeViewProjectionMatrixUnjittered
+        => ViewSnapshot?.RightEyeViewProjectionMatrixUnjittered ??
+           Matrix4x4.Identity;
+    internal Matrix4x4 PreviousRightEyeViewMatrix
+        => ViewSnapshot?.PreviousRightEyeViewMatrix ?? Matrix4x4.Identity;
+    internal Matrix4x4 PreviousRightEyeProjectionMatrix
+        => ViewSnapshot?.PreviousRightEyeProjectionMatrix ?? Matrix4x4.Identity;
+    internal Matrix4x4 PreviousRightEyeViewProjectionMatrix
+        => ViewSnapshot?.PreviousRightEyeViewProjectionMatrix ??
+           Matrix4x4.Identity;
+    internal Matrix4x4 PreviousRightEyeViewProjectionMatrixUnjittered
+        => ViewSnapshot?.PreviousRightEyeViewProjectionMatrixUnjittered ??
+           Matrix4x4.Identity;
+    internal Vector3 CameraPosition
+        => ViewSnapshot?.CameraPosition ?? Vector3.Zero;
+    internal Vector3 CameraForward
+        => ViewSnapshot?.CameraForward ?? Vector3.UnitZ;
+    internal Vector3 CameraUp => ViewSnapshot?.CameraUp ?? Vector3.UnitY;
+    internal Vector3 CameraRight => ViewSnapshot?.CameraRight ?? Vector3.UnitX;
+    internal int RenderAreaWidth => ViewSnapshot?.RenderAreaWidth ?? 0;
+    internal int RenderAreaHeight => ViewSnapshot?.RenderAreaHeight ?? 0;
+    internal LayeredShadowUniformState ShadowUniformState
+        => ViewSnapshot?.ShadowUniformState ?? default;
+
     /// <summary>
     /// Detaches every producer-owned mutable collection before a frame plan is
     /// sealed. Renderer, material, and camera references are logical owners;
