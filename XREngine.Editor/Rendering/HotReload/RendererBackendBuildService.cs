@@ -38,12 +38,17 @@ public sealed partial class RendererBackendBuildService : IDisposable
     public RendererBackendBuildService(string repositoryRoot)
     {
         _repositoryRoot = Path.GetFullPath(repositoryRoot);
-        _generationRoot = Path.Combine(_repositoryRoot, "Build", "RendererHotReload");
+        _generationRoot = Path.Combine(
+            _repositoryRoot,
+            "Build",
+            "_AgentValidation",
+            "00000000-000000-shared",
+            "renderer-hot-reload");
         Directory.CreateDirectory(_generationRoot);
         _nextGeneration = DiscoverHighestGeneration(_generationRoot);
     }
 
-    public int RetainedGenerationCount { get; set; } = 3;
+    public int RetainedGenerationCount { get; set; } = 2;
 
     public async Task<RendererBackendBuildResult> BuildAsync(
         RendererBackendId backendId,

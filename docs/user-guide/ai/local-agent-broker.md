@@ -38,7 +38,7 @@ not make an OpenAI API request. Starting a worker requires every item below.
 | Requirement | How to satisfy or verify it |
 |---|---|
 | Supported checkout | Use Windows 10/11 with this XRENGINE checkout and the .NET 10 SDK. |
-| Published broker | Run `Tools/Setup-LocalAgentBroker.ps1`; verify `Build/AgentTools/LocalAgentBroker.current` names a versioned deployment containing `XREngine.LocalAgentBroker.dll`. |
+| Published broker | Run `Tools/Setup-LocalAgentBroker.ps1`; verify `Build/_AgentValidation/00000000-000000-shared/agent-tools/LocalAgentBroker.current` names a versioned deployment containing `XREngine.LocalAgentBroker.dll`. |
 | Trusted project configuration | Trust the repository in Codex. Project-scoped `.codex/config.toml` MCP configuration is loaded only for trusted projects. Restart Codex after setup or configuration changes. |
 | API project | Use an OpenAI API project with billing/quota and access to the exact selected model. API service is managed and billed separately from ChatGPT subscriptions. |
 | API key | Put the project key in the process environment or, on Windows, the user environment, normally as `OPENAI_API_KEY`. Never put the value in the repository, MCP arguments, a prompt, logs, or command-line arguments. |
@@ -125,8 +125,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File Tools/Setup-LocalAgentBroker
 ```
 
 This publishes the BCL-only app to an immutable directory under
-`Build/AgentTools/LocalAgentBroker-<timestamp>`, atomically updates
-`Build/AgentTools/LocalAgentBroker.current`, and performs an MCP
+`Build/_AgentValidation/00000000-000000-shared/agent-tools/LocalAgentBroker-<timestamp>`, atomically updates
+`Build/_AgentValidation/00000000-000000-shared/agent-tools/LocalAgentBroker.current`, and performs an MCP
 initialize/list-tools test. Versioned deployment avoids overwriting DLLs held
 by a broker process that is already running. It does not contact the OpenAI API.
 An already-running Codex task remains attached to its existing stdio process;
@@ -206,7 +206,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File Tools/Manage-McpEditorSessio
 ```
 
 The broker resolves only
-`Build/_AgentValidation/mcp-sessions/<name>/session.json`, accepts only a
+`Build/_AgentValidation/00000000-000000-shared/mcp-sessions/<timestamp>-<name>/session.json`, accepts only a
 loopback HTTP(S) endpoint, calls `ping`, and verifies the exact reported
 session name. Do not edit `session.json` by hand.
 
@@ -458,7 +458,7 @@ named by `XRE_LOCAL_AGENT_BROKER_EDITOR_AUTH_ENV`.
   restart the Codex task/app. Stdio MCP transports are process-bound; an
   already-running task cannot attach the replacement deployment in place.
 - **Published DLL is missing:** verify
-  `Build/AgentTools/LocalAgentBroker.current` contains a valid versioned
+-  `Build/_AgentValidation/00000000-000000-shared/agent-tools/LocalAgentBroker.current` contains a valid versioned
   deployment name and that deployment contains `XREngine.LocalAgentBroker.dll`,
   then rerun setup.
 - **Protocol smoke test fails:** run

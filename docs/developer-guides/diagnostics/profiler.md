@@ -401,17 +401,17 @@ pwsh Tools/Benchmarks/Invoke-VulkanPerf.ps1 `
 # Three warm desktop repetitions per selected Deferred/Uber cohort.
 pwsh Tools/Benchmarks/Invoke-VulkanPerf.ps1 `
   -Preset Compare `
-  -BaselinePath Build/_AgentValidation/vulkan-perf-baselines/desktop.json
+  -BaselinePath Build/_AgentValidation/00000000-000000-shared/baselines/vulkan-perf/desktop.json
 
 # Full desktop and available Vulkan RVC matrix.
 pwsh Tools/Benchmarks/Invoke-VulkanPerf.ps1 `
   -Preset Gate `
-  -BaselinePath Build/_AgentValidation/vulkan-perf-baselines/gate.json
+  -BaselinePath Build/_AgentValidation/00000000-000000-shared/baselines/vulkan-perf/gate.json
 
 # Baselines are replaced only by this explicit action.
 pwsh Tools/Benchmarks/Invoke-VulkanPerf.ps1 `
   -Preset Gate `
-  -BaselinePath Build/_AgentValidation/vulkan-perf-baselines/gate.json `
+  -BaselinePath Build/_AgentValidation/00000000-000000-shared/baselines/vulkan-perf/gate.json `
   -AcceptBaseline
 ```
 

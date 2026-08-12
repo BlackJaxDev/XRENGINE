@@ -32,6 +32,7 @@ if (-not (Test-Path -LiteralPath $runner -PathType Leaf)) {
 }
 
 if ([string]::IsNullOrWhiteSpace($RunRoot)) {
+    & (Join-Path $repoRoot 'Tools\Limit-AgentValidation.ps1') -ReserveTaskRun | Out-Null
     $RunRoot = Join-Path $repoRoot "Build\_AgentValidation\$(Get-Date -Format yyyyMMdd-HHmmss)-strict-sps-failures"
 }
 elseif (-not [System.IO.Path]::IsPathRooted($RunRoot)) {

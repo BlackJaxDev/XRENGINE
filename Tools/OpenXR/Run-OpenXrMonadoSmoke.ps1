@@ -329,9 +329,11 @@ function New-AgentRunRoot {
         -not (Test-Path -LiteralPath (Join-Path $agentRootFull $firstRunSegment) -PathType Container)
 
     if ($createsImmediateRun) {
+        & (Join-Path $repoRoot 'Tools\Limit-AgentValidation.ps1') -ReserveTaskRun | Out-Null
         $existingRuns = Get-ChildItem -LiteralPath $agentRootFull -Directory -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -ne '00000000-000000-shared' } |
             Sort-Object LastWriteTimeUtc
-        $removeCount = [Math]::Max(0, ($existingRuns.Count + 1) - 10)
+        $removeCount = [Math]::Max(0, ($existingRuns.Count + 1) - 4)
         foreach ($oldRun in ($existingRuns | Select-Object -First $removeCount)) {
             $oldRunFull = [System.IO.Path]::GetFullPath($oldRun.FullName)
             if (-not $oldRunFull.StartsWith($agentRootFull, [StringComparison]::OrdinalIgnoreCase)) {

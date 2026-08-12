@@ -26,6 +26,7 @@ $measureScript = Join-Path $PSScriptRoot 'Measure-GameLoopRenderPipeline.ps1'
 $captureScript = Join-Path $PSScriptRoot 'Capture-EditorWindow.ps1'
 
 if ([string]::IsNullOrWhiteSpace($OutputRoot)) {
+    & (Join-Path $repoRoot 'Tools\Limit-AgentValidation.ps1') -ReserveTaskRun | Out-Null
     $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
     $OutputRoot = Join-Path $repoRoot "Build\_AgentValidation\$stamp-deploy-gpu-validation"
 }

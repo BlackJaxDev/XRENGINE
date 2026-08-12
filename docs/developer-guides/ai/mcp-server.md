@@ -51,13 +51,14 @@ The child process receives these isolation variables:
 | `XRE_GAME_METADATA_PATH` | Per-session asset metadata, initially seeded from the repository metadata |
 | `XRE_TEXTURE_STREAMING_CACHE_WARMUP_ENABLED` | Defaults to `false` for isolated sessions so short automation runs do not cook multi-gigabyte texture caches; override explicitly when cache behavior is under test |
 
-The manifest at `Build/_AgentValidation/mcp-sessions/<name>/session.json` records the endpoint, artifact path, PID, and process start time. Port selection and same-name startup are serialized through a file lock. Stop operations validate the recorded executable, PID, and start time to prevent PID reuse or cross-session termination.
+The manifest at `Build/_AgentValidation/00000000-000000-shared/mcp-sessions/<timestamp>-<name>/session.json` records the logical name, endpoint, artifact path, PID, and process start time. Port selection and same-name startup are serialized through a file lock. Stop operations resolve the logical name and validate the recorded executable, PID, and start time to prevent PID reuse or cross-session termination.
 
-Before starting a session, the manager removes imported-asset caches from inactive
-sessions, retains isolated build artifacts for only the two most recently active
-stopped sessions, and requires at least 10 GiB of free space on the session drive.
-Referenced logs, captures, metadata, and manifests are preserved. This bounds the
-rebuildable portion of agent validation without discarding investigation evidence.
+Before starting a session, the manager removes imported-asset caches, seeded metadata,
+and isolated build artifacts from inactive sessions, removes the oldest stopped session
+when five session roots already exist, and requires at least 10 GiB of free space on the
+session drive. `-NoBuild` is therefore a short-lived restart optimization, not a durable
+artifact guarantee. Ignored logs, captures, metadata, and manifests are disposable;
+durable conclusions belong in tracked documentation.
 
 MCP status distinguishes the editor process session from protocol client sessions:
 

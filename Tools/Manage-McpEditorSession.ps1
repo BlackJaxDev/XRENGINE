@@ -79,13 +79,15 @@ if (-not [string]::IsNullOrWhiteSpace($SessionEnvironmentFile)) {
 }
 
 $repoRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
-$sessionsRoot = Join-Path $repoRoot 'Build\_AgentValidation\mcp-sessions'
+$sessionsRoot = Join-Path $repoRoot 'Build\_AgentValidation\00000000-000000-shared\mcp-sessions'
 $registryLockPath = Join-Path $sessionsRoot '.registry.lock'
 $manifestFileName = 'session.json'
 $defaultMcpPort = 5467
 $maximumPortProbeCount = 200
-$retainedStoppedSessionBuildCount = 2
+$retainedStoppedSessionBuildCount = 0
+$maximumRetainedSessionCount = 5
 $minimumFreeSpaceBytes = 10GB
+$sessionRootCache = @{}
 
 function Assert-SessionNameRequired {
     if ([string]::IsNullOrWhiteSpace($Name)) {
@@ -94,7 +96,32 @@ function Assert-SessionNameRequired {
 }
 
 function Get-SessionRoot([string]$SessionName) {
-    return Join-Path $sessionsRoot $SessionName
+    if ($sessionRootCache.ContainsKey($SessionName)) {
+        return [string]$sessionRootCache[$SessionName]
+    }
+
+    if (Test-Path -LiteralPath $sessionsRoot -PathType Container) {
+        foreach ($directory in Get-ChildItem -LiteralPath $sessionsRoot -Directory | Sort-Object Name -Descending) {
+            $manifestPath = Join-Path $directory.FullName $manifestFileName
+            if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
+                continue
+            }
+            try {
+                $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
+                if ([string]$manifest.name -ceq $SessionName) {
+                    $sessionRootCache[$SessionName] = $directory.FullName
+                    return $directory.FullName
+                }
+            }
+            catch {
+                continue
+            }
+        }
+    }
+
+    $newRoot = Join-Path $sessionsRoot "$(Get-Date -Format 'yyyyMMdd-HHmmss')-$SessionName"
+    $sessionRootCache[$SessionName] = $newRoot
+    return $newRoot
 }
 
 function Get-ManifestPath([string]$SessionName) {
@@ -540,11 +567,16 @@ function Invoke-SessionRetentionCleanup([string]$ProtectedSessionName) {
     Invoke-WithRegistryLock {
         $stoppedSessions = @()
         foreach ($directory in Get-ChildItem -LiteralPath $sessionsRoot -Directory) {
-            if ($directory.Name -eq $ProtectedSessionName) {
+            $manifestPath = Join-Path $directory.FullName $manifestFileName
+            $manifest = if (Test-Path -LiteralPath $manifestPath -PathType Leaf) {
+                try { Read-JsonFileShared $manifestPath } catch { $null }
+            }
+            else {
+                $null
+            }
+            if ($null -ne $manifest -and [string]$manifest.name -ceq $ProtectedSessionName) {
                 continue
             }
-
-            $manifest = Read-SessionManifest $directory.Name
             if ($null -eq $manifest -or $null -ne (Get-OwnedEditorProcess $manifest)) {
                 continue
             }
@@ -572,16 +604,44 @@ function Invoke-SessionRetentionCleanup([string]$ProtectedSessionName) {
         }
 
         $orderedSessions = @($stoppedSessions | Sort-Object ActivityUtc -Descending)
+        $sessionDirectoryCount = @(Get-ChildItem -LiteralPath $sessionsRoot -Directory).Count
+        $protectedSessionExists = Test-Path -LiteralPath (Get-SessionRoot $ProtectedSessionName) -PathType Container
+        $targetCount = if ($protectedSessionExists) {
+            $maximumRetainedSessionCount
+        }
+        else {
+            $maximumRetainedSessionCount - 1
+        }
+        $removeCount = [Math]::Min(
+            $orderedSessions.Count,
+            [Math]::Max(0, $sessionDirectoryCount - $targetCount))
+        $sessionsToRemove = if ($removeCount -gt 0) {
+            @($orderedSessions | Select-Object -Last $removeCount)
+        }
+        else {
+            @()
+        }
+        foreach ($session in $sessionsToRemove) {
+            Remove-RebuildableSessionDirectory $session.Root
+        }
+        $orderedSessions = if ($removeCount -lt $orderedSessions.Count) {
+            @($orderedSessions | Select-Object -First ($orderedSessions.Count - $removeCount))
+        }
+        else {
+            @()
+        }
+
         for ($index = 0; $index -lt $orderedSessions.Count; $index++) {
             $session = $orderedSessions[$index]
 
             # Imported-asset caches can be much larger than the build and are
             # always reproducible, so never retain them for inactive sessions.
             Remove-RebuildableSessionDirectory (Join-Path $session.Root 'cache')
+            Remove-RebuildableSessionDirectory (Join-Path $session.Root 'metadata')
 
-            # Keep a small number of recent builds for the documented -NoBuild
-            # restart workflow. Older builds are reproducible and needlessly
-            # duplicate several gigabytes of runtime dependencies.
+            # Stopped-session builds are reproducible and can duplicate several
+            # gigabytes of runtime dependencies. -NoBuild is valid only while a
+            # session's artifacts have not yet been reclaimed.
             if ($index -ge $retainedStoppedSessionBuildCount) {
                 Remove-RebuildableSessionDirectory (Join-Path $session.Root 'artifacts')
             }
@@ -873,7 +933,13 @@ function Get-SessionList {
 
     $views = @()
     foreach ($directory in Get-ChildItem -LiteralPath $sessionsRoot -Directory | Sort-Object Name) {
-        $manifest = Read-SessionManifest $directory.Name
+        $manifestPath = Join-Path $directory.FullName $manifestFileName
+        $manifest = if (Test-Path -LiteralPath $manifestPath -PathType Leaf) {
+            try { Read-JsonFileShared $manifestPath } catch { $null }
+        }
+        else {
+            $null
+        }
         if ($null -ne $manifest) {
             $views += New-SessionView $manifest -ProbeMcp
         }

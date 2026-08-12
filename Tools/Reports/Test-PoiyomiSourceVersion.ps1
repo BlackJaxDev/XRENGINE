@@ -5,7 +5,7 @@ param(
 
     [string] $CatalogPath = "XREngine.Editor/Importers/Poiyomi/Catalogs/poiyomi-toon-9.3.64.json",
 
-    [string] $ReportPath = "Build/_AgentValidation/poiyomi-source-version-audit.json",
+    [string] $ReportPath = "Build/_AgentValidation/00000000-000000-shared/reports/poiyomi-source-version-audit.json",
 
     [switch] $FailOnChanges
 )
