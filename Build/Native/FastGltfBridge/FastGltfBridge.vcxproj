@@ -45,7 +45,7 @@
     <RepoRoot>$(MSBuildThisFileDirectory)..\..\..\</RepoRoot>
     <ManagedRuntimeDir>$(RepoRoot)XREngine.Gltf\runtimes\win-x64\native\</ManagedRuntimeDir>
     <OutDir>$(ManagedRuntimeDir)</OutDir>
-    <IntDir>$(RepoRoot)Build\Tools\obj\FastGltfBridge\$(Configuration)\</IntDir>
+    <IntDir>$(RepoRoot)Build\_AgentValidation\00000000-000000-shared\tools\obj\FastGltfBridge\$(Configuration)\</IntDir>
     <TargetName>FastGltfBridge.Native</TargetName>
     <FastGltfIncludeDir>$(MSBuildThisFileDirectory)vendor\fastgltf\include</FastGltfIncludeDir>
     <FastGltfSourceDir>$(MSBuildThisFileDirectory)vendor\fastgltf\src</FastGltfSourceDir>

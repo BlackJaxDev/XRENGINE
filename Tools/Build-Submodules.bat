@@ -234,13 +234,13 @@ for /f "delims=" %%I in ('where premake5 2^>nul') do (
     set "PREMAKE_EXE=%%I"
     goto premake_found
 )
-if exist "%REPO_ROOT%\Build\Tools\premake5.exe" (
-    set "PREMAKE_EXE=%REPO_ROOT%\Build\Tools\premake5.exe"
+if exist "%REPO_ROOT%\Build\_AgentValidation\00000000-000000-shared\tools\premake5.exe" (
+    set "PREMAKE_EXE=%REPO_ROOT%\Build\_AgentValidation\00000000-000000-shared\tools\premake5.exe"
     goto premake_found
 )
 
 echo Premake not found. Installing local copy...
-set "PREMAKE_DIR=%REPO_ROOT%\Build\Tools"
+set "PREMAKE_DIR=%REPO_ROOT%\Build\_AgentValidation\00000000-000000-shared\tools"
 if not exist "%PREMAKE_DIR%" mkdir "%PREMAKE_DIR%"
 
 set "PREMAKE_ZIP=%PREMAKE_DIR%\premake.zip"

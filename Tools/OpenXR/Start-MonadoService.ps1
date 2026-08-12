@@ -7,10 +7,10 @@ param(
     [string]$ServiceExe,
 
     [Parameter()]
-    [string]$MarkerPath = "Build\_AgentValidation\monado-service-marker.json",
+    [string]$MarkerPath = "Build\_AgentValidation\00000000-000000-shared\openxr-monado\service-marker.json",
 
     [Parameter()]
-    [string]$LogDirectory = "Build\_AgentValidation\monado-service-logs",
+    [string]$LogDirectory = "Build\_AgentValidation\00000000-000000-shared\openxr-monado\logs",
 
     [Parameter()]
     [ValidateSet("wobble", "rotate", "stationary", "user_input")]

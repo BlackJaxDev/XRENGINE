@@ -156,7 +156,7 @@ catalog, so the Responses request is a bounded reasoning-only call over the
 coordinator-supplied evidence packet.
 
 `EditorSessionResolver` validates the session-name grammar, combines it only
-under `Build/_AgentValidation/mcp-sessions`, checks full-path containment,
+under `Build/_AgentValidation/00000000-000000-shared/mcp-sessions`, checks full-path containment,
 reads `session.json`, requires a loopback HTTP(S) URI, and verifies the
 manifest name. `HttpMcpToolProvider.PreflightAsync` then calls MCP `ping` and
 requires the exact editor session name.
@@ -203,7 +203,7 @@ when truncated.
 The checked-in `.codex/config.toml` resolves
 `Tools/Invoke-LocalAgentBroker.ps1` by walking upward from the current
 directory. The launcher resolves the repository root from its own location,
-reads `Build/AgentTools/LocalAgentBroker.current`, and executes that immutable
+reads `Build/_AgentValidation/00000000-000000-shared/agent-tools/LocalAgentBroker.current`, and executes that immutable
 versioned deployment without writing a build banner to the stdio protocol.
 `Setup-LocalAgentBroker.ps1` publishes a fresh version before atomically moving
 the pointer, so a loaded MCP process never blocks the update. A legacy fixed

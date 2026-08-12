@@ -16,6 +16,7 @@ if ($SessionSuffix -notmatch '^[A-Za-z0-9_-]+$') {
 
 $repoRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 if ([string]::IsNullOrWhiteSpace($OutputRoot)) {
+    & (Join-Path $repoRoot 'Tools\Limit-AgentValidation.ps1') -ReserveTaskRun | Out-Null
     $OutputRoot = Join-Path $repoRoot (
         'Build\_AgentValidation\{0}-poiyomi-parity' -f (Get-Date -Format 'yyyyMMdd-HHmmss'))
 }
@@ -260,8 +261,20 @@ try {
                     Stop -Name $session -ErrorAction SilentlyContinue
             }
 
-            $sessionLogs = Join-Path $repoRoot "Build\_AgentValidation\mcp-sessions\$session\logs"
-            if (Test-Path -LiteralPath $sessionLogs) {
+            $sessionsRoot = Join-Path $repoRoot 'Build\_AgentValidation\00000000-000000-shared\mcp-sessions'
+            $sessionManifest = Get-ChildItem -LiteralPath $sessionsRoot -Filter session.json -File -Recurse |
+                Where-Object {
+                    try { [string](Get-Content -LiteralPath $_.FullName -Raw | ConvertFrom-Json).name -ceq $session }
+                    catch { $false }
+                } |
+                Select-Object -First 1
+            $sessionLogs = if ($null -ne $sessionManifest) {
+                Join-Path $sessionManifest.DirectoryName 'logs'
+            }
+            else {
+                $null
+            }
+            if ($null -ne $sessionLogs -and (Test-Path -LiteralPath $sessionLogs)) {
                 Copy-Item -LiteralPath $sessionLogs -Destination (Join-Path $logOutput $backend) -Recurse -Force
                 $backendReport.validationErrors = @(
                     Get-ChildItem -LiteralPath $sessionLogs -File -Recurse |

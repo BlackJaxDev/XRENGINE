@@ -7,7 +7,7 @@ param(
 $ErrorActionPreference = "Stop"
 
 $repoRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
-$agentToolsRoot = Join-Path $repoRoot "Build\AgentTools"
+$agentToolsRoot = Join-Path $repoRoot "Build\_AgentValidation\00000000-000000-shared\agent-tools"
 $deploymentPointerPath = Join-Path $agentToolsRoot "LocalAgentBroker.current"
 $brokerDll = Join-Path $agentToolsRoot "LocalAgentBroker\XREngine.LocalAgentBroker.dll"
 if (Test-Path -LiteralPath $deploymentPointerPath -PathType Leaf) {

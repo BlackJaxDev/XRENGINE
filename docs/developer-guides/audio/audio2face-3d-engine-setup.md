@@ -270,7 +270,7 @@ When the upstream SDK outputs exist, the bridge project automatically:
 Expected output:
 
 ```text
-Build\Tools\Debug\Audio2XBridge\Audio2XBridge.Native.dll
+Build\_AgentValidation\00000000-000000-shared\tools\Debug\Audio2XBridge\Audio2XBridge.Native.dll
 ```
 
 ## Step 9: Make The Bridge Available To The Editor

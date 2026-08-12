@@ -43,8 +43,8 @@
   <PropertyGroup Label="UserMacros" />
   <PropertyGroup>
     <RepoRoot>$(MSBuildThisFileDirectory)..\..\..\</RepoRoot>
-    <OutDir>$(RepoRoot)Build\Tools\$(Configuration)\Audio2XBridge\</OutDir>
-    <IntDir>$(RepoRoot)Build\Tools\obj\Audio2XBridge\$(Configuration)\</IntDir>
+    <OutDir>$(RepoRoot)Build\_AgentValidation\00000000-000000-shared\tools\$(Configuration)\Audio2XBridge\</OutDir>
+    <IntDir>$(RepoRoot)Build\_AgentValidation\00000000-000000-shared\tools\obj\Audio2XBridge\$(Configuration)\</IntDir>
     <TargetName>Audio2XBridge.Native</TargetName>
     <Audio2XSdkSourceRoot>$(RepoRoot)Build\Dependencies\Audio2Face-3D-SDK\</Audio2XSdkSourceRoot>
     <Audio2XSdkRoot>$(Audio2XSdkSourceRoot)_build\release\audio2x-sdk\</Audio2XSdkRoot>

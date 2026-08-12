@@ -116,6 +116,7 @@ $repoRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
 $runner = Join-Path $repoRoot "Tools\OpenXR\Run-OpenXrMonadoSmoke.ps1"
 
 if ([string]::IsNullOrWhiteSpace($RunRoot)) {
+    & (Join-Path $repoRoot 'Tools\Limit-AgentValidation.ps1') -ReserveTaskRun | Out-Null
     $stamp = Get-Date -Format "yyyyMMdd-HHmmss"
     $RunRoot = Join-Path $repoRoot "Build\_AgentValidation\$stamp-vulkan-phase524b"
 }

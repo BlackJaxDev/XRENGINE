@@ -51,6 +51,7 @@ $LASTEXITCODE = 0
 $repoRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot "..\.."))
 $runner = Join-Path $PSScriptRoot "Run-OpenXrMonadoSmoke.ps1"
 if ([string]::IsNullOrWhiteSpace($RunRoot)) {
+    & (Join-Path $repoRoot 'Tools\Limit-AgentValidation.ps1') -ReserveTaskRun | Out-Null
     $RunRoot = Join-Path $repoRoot "Build\_AgentValidation\$(Get-Date -Format yyyyMMdd-HHmmss)-phase524b-occlusion-off"
 }
 elseif (-not [System.IO.Path]::IsPathRooted($RunRoot)) {

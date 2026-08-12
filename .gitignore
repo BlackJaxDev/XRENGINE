@@ -375,8 +375,6 @@ FodyWeavers.xsd
 Build/CommonAssets/Fonts/*/*.png
 Build/Editor/*
 Build/Engine/*
-Build/Tools/
-Build/AgentTools/
 Build/Dependencies/CoACD/
 Build/Dependencies/FFmpeg/**
 !Build/Dependencies/FFmpeg/README.md
@@ -453,7 +451,6 @@ Build/Reports/
 Build/RenderDoc/
 Build/Diagnostics/
 Build/McpRuns/
-Build/RendererHotReload/
 Build/Deps/Monado/
 Build/Submodules/Build/_AgentValidation/
 Assets/

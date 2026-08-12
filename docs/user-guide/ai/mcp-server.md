@@ -57,7 +57,7 @@ pwsh Tools/Manage-McpEditorSession.ps1 Remove -Name agent-rendering
 
 The manager verifies the executable path, PID, and process start time before stopping anything. It first requests a graceful window close, then terminates only that verified session PID if the editor apphost does not expose a closable main-window handle. It never searches for and kills all editor processes. Pass `Stop -Force` to skip the graceful close attempt.
 
-Session data lives under `Build/_AgentValidation/mcp-sessions/<name>/`. Repository source assets and `Assets/UnitTestingWorldSettings.jsonc` remain shared intentionally, so source edits are still visible across sessions. The default session permission policy is `AllowAll` for unattended local automation; use `-PermissionPolicy AllowReadOnly` when mutation is not required.
+Session data lives under `Build/_AgentValidation/00000000-000000-shared/mcp-sessions/<timestamp>-<name>/`; commands address the logical `<name>`. The session manager retains at most five sessions and removes the oldest stopped session before creating another. Repository source assets and `Assets/UnitTestingWorldSettings.jsonc` remain shared intentionally, so source edits are still visible across sessions. The default session permission policy is `AllowAll` for unattended local automation; use `-PermissionPolicy AllowReadOnly` when mutation is not required.
 
 ## Command Line
 

@@ -48,7 +48,7 @@ The opt-in step:
 5. builds `.code-review-graph/graph.db` on a fresh checkout, or updates an
    existing graph
 6. publishes the BCL-only local agent broker under
-   `Build/AgentTools/LocalAgentBroker`
+   `Build/_AgentValidation/00000000-000000-shared/agent-tools/LocalAgentBroker`
 7. performs an MCP initialize/list-tools smoke test with no API request
 
 The environments and generated outputs are checkout-local and ignored by Git.

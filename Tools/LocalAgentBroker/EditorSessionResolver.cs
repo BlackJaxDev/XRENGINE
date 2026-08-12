@@ -8,7 +8,12 @@ namespace XREngine.LocalAgentBroker;
 internal sealed class EditorSessionResolver(string repositoryRoot)
 {
     private readonly string _sessionsRoot = Path.GetFullPath(
-        Path.Combine(repositoryRoot, "Build", "_AgentValidation", "mcp-sessions"));
+        Path.Combine(
+            repositoryRoot,
+            "Build",
+            "_AgentValidation",
+            "00000000-000000-shared",
+            "mcp-sessions"));
 
     public ResolvedEditorSession Resolve(string sessionName)
     {
@@ -21,23 +26,22 @@ internal sealed class EditorSessionResolver(string repositoryRoot)
             throw new ArgumentException("Invalid editor session name.");
         }
 
-        string sessionRoot = Path.GetFullPath(Path.Combine(_sessionsRoot, sessionName));
         string requiredPrefix = _sessionsRoot.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
             + Path.DirectorySeparatorChar;
-        if (!sessionRoot.StartsWith(requiredPrefix, StringComparison.OrdinalIgnoreCase))
-            throw new ArgumentException("Editor session path escaped the repository session root.");
+        string? manifestPath = Directory.Exists(_sessionsRoot)
+            ? Directory.EnumerateFiles(_sessionsRoot, "session.json", SearchOption.AllDirectories)
+                .Where(path => Path.GetFullPath(path).StartsWith(requiredPrefix, StringComparison.OrdinalIgnoreCase))
+                .OrderByDescending(static path => path, StringComparer.OrdinalIgnoreCase)
+                .FirstOrDefault(path => ManifestNamesSession(path, sessionName))
+            : null;
+        if (manifestPath is null)
+            throw new FileNotFoundException($"Editor MCP session '{sessionName}' does not exist.");
 
-        string manifestPath = Path.Combine(sessionRoot, "session.json");
-        if (!File.Exists(manifestPath))
-            throw new FileNotFoundException($"Editor MCP session '{sessionName}' does not exist.", manifestPath);
-
-        using JsonDocument document = JsonDocument.Parse(
-            File.ReadAllText(manifestPath),
-            new JsonDocumentOptions { AllowTrailingCommas = false, CommentHandling = JsonCommentHandling.Disallow });
+        using JsonDocument document = ParseManifest(manifestPath);
         JsonElement root = document.RootElement;
         string manifestName = GetRequiredString(root, "name");
         if (!string.Equals(manifestName, sessionName, StringComparison.Ordinal))
-            throw new InvalidDataException("Editor session manifest name does not match its directory.");
+            throw new InvalidDataException("Editor session manifest name does not match the requested session.");
 
         string endpointText = GetRequiredString(root, "endpoint");
         if (!Uri.TryCreate(endpointText, UriKind.Absolute, out Uri? endpoint)
@@ -55,6 +59,35 @@ internal sealed class EditorSessionResolver(string repositoryRoot)
             ManifestPath = manifestPath,
         };
     }
+
+    private static bool ManifestNamesSession(string manifestPath, string sessionName)
+    {
+        try
+        {
+            using JsonDocument document = ParseManifest(manifestPath);
+            return string.Equals(
+                GetRequiredString(document.RootElement, "name"),
+                sessionName,
+                StringComparison.Ordinal);
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+        catch (InvalidDataException)
+        {
+            return false;
+        }
+    }
+
+    private static JsonDocument ParseManifest(string manifestPath)
+        => JsonDocument.Parse(
+            File.ReadAllText(manifestPath),
+            new JsonDocumentOptions
+            {
+                AllowTrailingCommas = false,
+                CommentHandling = JsonCommentHandling.Disallow,
+            });
 
     private static string GetRequiredString(JsonElement root, string propertyName)
     {
