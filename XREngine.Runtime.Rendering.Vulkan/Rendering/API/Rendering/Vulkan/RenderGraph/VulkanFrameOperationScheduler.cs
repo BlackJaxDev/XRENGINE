@@ -12,17 +12,25 @@ internal sealed class VulkanFrameOperationScheduler
     private const string RenderUiBatchedPassNamePrefix = "RenderUIBatched_";
     private const int MaxMetadataCacheEntries = 64;
     private readonly struct FrameOpSortKey(
-        FrameOp operation,
+        int operationIndex,
         int contextBlockOrder,
         int passOrder,
         int originalIndex,
-        int queryOrderBlock)
+        int queryOrderBlock,
+        VulkanMeshDrawSortKey meshDrawKey,
+        EVulkanPrimaryPlanNodeKind opCode,
+        int schedulingIdentity,
+        XRFrameBuffer? target)
     {
-        public FrameOp Operation { get; } = operation;
+        public int OperationIndex { get; } = operationIndex;
         public int ContextBlockOrder { get; } = contextBlockOrder;
         public int PassOrder { get; } = passOrder;
         public int OriginalIndex { get; } = originalIndex;
         public int QueryOrderBlock { get; } = queryOrderBlock;
+        public VulkanMeshDrawSortKey MeshDrawKey { get; } = meshDrawKey;
+        public EVulkanPrimaryPlanNodeKind OpCode { get; } = opCode;
+        public int SchedulingIdentity { get; } = schedulingIdentity;
+        public XRFrameBuffer? Target { get; } = target;
     }
 
     private readonly struct SchedulingTargetKey(
@@ -71,21 +79,13 @@ internal sealed class VulkanFrameOperationScheduler
             if (queryBlockCompare != 0)
                 return queryBlockCompare;
 
-            if (x.Operation is MeshDrawOp xDraw &&
-                y.Operation is MeshDrawOp yDraw)
+            VulkanMeshDrawSortKey xKey = x.MeshDrawKey;
+            VulkanMeshDrawSortKey yKey = y.MeshDrawKey;
+            if (xKey.CanCanonicalize && yKey.CanCanonicalize)
             {
-                ref readonly VulkanMeshDrawSortKey xKey =
-                    ref xDraw.CanonicalSortKey;
-                ref readonly VulkanMeshDrawSortKey yKey =
-                    ref yDraw.CanonicalSortKey;
-                if (xKey.CanCanonicalize && yKey.CanCanonicalize)
-                {
-                    int drawCompare = CompareCanonicalMeshDrawOrder(
-                        in xKey,
-                        in yKey);
-                    if (drawCompare != 0)
-                        return drawCompare;
-                }
+                int drawCompare = CompareCanonicalMeshDrawOrder(in xKey, in yKey);
+                if (drawCompare != 0)
+                    return drawCompare;
             }
 
             return x.OriginalIndex.CompareTo(y.OriginalIndex);
@@ -186,6 +186,7 @@ internal sealed class VulkanFrameOperationScheduler
         _passOrderCache = new(ReferenceEqualityComparer.Instance);
     private FrameOpSortKey[] _sortKeyScratch = new FrameOpSortKey[256];
     private FrameOpSortKey[] _clearReorderScratch = new FrameOpSortKey[256];
+    private int[] _operationOrderScratch = new int[256];
     private int[] _nextClearIndexScratch = new int[256];
     private readonly Dictionary<int, int> _contextBlockOrderScratch = new();
     private readonly Dictionary<SchedulingTargetKey, int> _earliestTargetUseScratch = new();
@@ -203,7 +204,7 @@ internal sealed class VulkanFrameOperationScheduler
     }
 
     /// <summary>
-    /// Sorts frame operations deterministically by:
+    /// Sorts lowered frame-operation headers deterministically by:
     /// 1) the operation pipeline's topological pass order, with the compiled graph as fallback,
     /// 2) render-view cohort, then canonical opaque mesh draw order when both operations are safe to reorder,
     /// 3) original index for all dependency-carrying operations,
@@ -220,54 +221,66 @@ internal sealed class VulkanFrameOperationScheduler
     /// earlier uses of the same scheduling context and exact target; this keeps clears from
     /// landing after desktop/HMD work when simultaneous render contexts interleave.
     /// </remarks>
-    /// <param name="ops">Operations to sort.</param>
+    /// <param name="operations">Lowered operation stream to reorder.</param>
     /// <param name="graph">Compiled pass-order metadata.</param>
-    /// <returns>The input array, sorted in place (or unchanged for length 0/1).</returns>
-    public static FrameOp[] SortFrameOps(FrameOp[] ops, VulkanCompiledRenderGraph graph)
-        => new VulkanFrameOperationScheduler().SortFrameOpsCore(ops, graph);
-
-    /// <summary>
-    /// Sorts frame operations using caches owned by the active renderer generation.
-    /// </summary>
-    public FrameOp[] SortFrameOpsCore(FrameOp[] ops, VulkanCompiledRenderGraph graph)
+    internal void SortLoweredOperations(
+        FrameOperationStream operations,
+        VulkanCompiledRenderGraph graph)
     {
-        // Fast path: trivial arrays are already sorted and preserving reference identity helps tests.
-        if (ops.Length <= 1)
-            return ops;
+        if (operations.Count <= 1)
+            return;
 
-        int opCount = ops.Length;
+        int opCount = operations.Count;
         EnsureSortScratchCapacity(opCount);
         FrameOpSortKey[] sortKeys = _sortKeyScratch;
 
         try
         {
-            bool preserveContextBlocks = HasSubmissionOrderBlock(ops);
+            bool preserveContextBlocks = HasSubmissionOrderBlock(operations);
             if (preserveContextBlocks)
-                BuildContextBlockOrders(ops);
+                BuildContextBlockOrders(operations);
             int queryOrderBlock = 0;
             IReadOnlyCollection<RenderPassMetadata>? cachedContextMetadata = null;
             IReadOnlyDictionary<int, int>? cachedContextPassOrder = null;
 
             for (int i = 0; i < opCount; i++)
             {
-                FrameOp op = ops[i];
+                ref readonly FrameOperationHeader header = ref operations.GetHeader(i);
+                ref readonly FrameOpContext context = ref operations.GetContext(i);
+                XRFrameBuffer? target = operations.GetTarget(i);
+                VulkanMeshDrawSortKey meshDrawKey = default;
+                if (header.OpCode == EVulkanPrimaryPlanNodeKind.MeshDraw)
+                {
+                    MeshDrawPayload payload = operations.GetMeshDraw(i);
+                    meshDrawKey = VulkanMeshDrawSortKey.Capture(
+                        payload.Draw,
+                        in context,
+                        target,
+                        header.PreserveSubmissionOrder);
+                }
                 sortKeys[i] = new FrameOpSortKey(
-                    op,
+                    i,
                     preserveContextBlocks
-                        ? _contextBlockOrderScratch[op.Context.SchedulingIdentity]
+                        ? _contextBlockOrderScratch[context.SchedulingIdentity]
                         : 0,
                     ResolvePassOrder(
-                        op,
+                        in header,
+                        in context,
+                        target,
                         graph,
                         ref cachedContextMetadata,
                         ref cachedContextPassOrder),
-                    i,
-                    queryOrderBlock);
+                    header.OriginalIndex,
+                    queryOrderBlock,
+                    meshDrawKey,
+                    header.OpCode,
+                    context.SchedulingIdentity,
+                    target);
 
                 // The current query op terminates its preceding order block. A
                 // single forward ordinal makes this O(N) and fences equal-ranked
                 // passes as well as operations with the same PassIndex.
-                if (op is QueryOp)
+                if (header.OpCode == EVulkanPrimaryPlanNodeKind.Query)
                     queryOrderBlock++;
             }
 
@@ -286,12 +299,11 @@ internal sealed class VulkanFrameOperationScheduler
 
             bool movedTargetClear = MoveTargetClearsBeforeFirstSameTargetUse(sortKeys, opCount);
             if (alreadySorted && !movedTargetClear)
-                return ops;
+                return;
 
             for (int i = 0; i < opCount; i++)
-                ops[i] = sortKeys[i].Operation;
-
-            return ops;
+                _operationOrderScratch[i] = sortKeys[i].OperationIndex;
+            operations.Reorder(_operationOrderScratch.AsSpan(0, opCount));
         }
         finally
         {
@@ -312,6 +324,7 @@ internal sealed class VulkanFrameOperationScheduler
         int capacity = Math.Max(required, _sortKeyScratch.Length * 2);
         Array.Resize(ref _sortKeyScratch, capacity);
         Array.Resize(ref _clearReorderScratch, capacity);
+        Array.Resize(ref _operationOrderScratch, capacity);
         Array.Resize(ref _nextClearIndexScratch, capacity);
     }
 
@@ -325,23 +338,23 @@ internal sealed class VulkanFrameOperationScheduler
     private static void SortFrameOpKeysInPlace(FrameOpSortKey[] sortKeys, int opCount)
         => sortKeys.AsSpan(0, opCount).Sort(FrameOpSortComparison);
 
-    private static bool HasSubmissionOrderBlock(FrameOp[] ops)
+    private static bool HasSubmissionOrderBlock(FrameOperationStream operations)
     {
-        for (int i = 0; i < ops.Length; i++)
+        for (int i = 0; i < operations.Count; i++)
         {
-            if (ops[i].Context.PreserveSubmissionOrderBlock)
+            if (operations.GetContext(i).PreserveSubmissionOrderBlock)
                 return true;
         }
 
         return false;
     }
 
-    private void BuildContextBlockOrders(FrameOp[] ops)
+    private void BuildContextBlockOrders(FrameOperationStream operations)
     {
         _contextBlockOrderScratch.Clear();
-        for (int index = 0; index < ops.Length; index++)
+        for (int index = 0; index < operations.Count; index++)
             _contextBlockOrderScratch.TryAdd(
-                ops[index].Context.SchedulingIdentity,
+                operations.GetContext(index).SchedulingIdentity,
                 index);
     }
 
@@ -354,15 +367,14 @@ internal sealed class VulkanFrameOperationScheduler
         for (int index = 0; index < opCount; index++)
         {
             FrameOpSortKey sortKey = sortKeys[index];
-            FrameOp operation = sortKey.Operation;
             SchedulingTargetKey targetKey = CreateSchedulingTargetKey(sortKey);
-            if (IsTargetUseThatClearMustPrecede(operation))
+            if (IsTargetUseThatClearMustPrecede(sortKey))
             {
                 _earliestTargetUseScratch.TryAdd(targetKey, index);
                 continue;
             }
 
-            if (operation is not ClearOp)
+            if (!IsClear(sortKey))
                 continue;
 
             _nextClearIndexScratch[index] = -1;
@@ -379,7 +391,7 @@ internal sealed class VulkanFrameOperationScheduler
         {
             FrameOpSortKey sortKey = sortKeys[index];
             SchedulingTargetKey targetKey = CreateSchedulingTargetKey(sortKey);
-            if (sortKey.Operation is ClearOp &&
+            if (IsClear(sortKey) &&
                 _earliestTargetUseScratch.TryGetValue(targetKey, out int earliestUseIndex) &&
                 index > earliestUseIndex)
             {
@@ -387,7 +399,7 @@ internal sealed class VulkanFrameOperationScheduler
                 continue;
             }
 
-            if (IsTargetUseThatClearMustPrecede(sortKey.Operation) &&
+            if (IsTargetUseThatClearMustPrecede(sortKey) &&
                 _earliestTargetUseScratch[targetKey] == index &&
                 _firstTargetClearScratch.TryGetValue(targetKey, out int clearIndex))
             {
@@ -411,25 +423,35 @@ internal sealed class VulkanFrameOperationScheduler
     private static SchedulingTargetKey CreateSchedulingTargetKey(in FrameOpSortKey sortKey)
         => new(
             sortKey.PassOrder,
-            sortKey.Operation.Context.SchedulingIdentity,
-            sortKey.Operation.Target);
+            sortKey.SchedulingIdentity,
+            sortKey.Target);
 
-    private static bool IsTargetUseThatClearMustPrecede(FrameOp op)
-        => op is MeshDrawOp or QueryOp or BlitOp or IndirectDrawOp or MeshTaskDispatchIndirectCountOp or TransformFeedbackOp;
+    private static bool IsClear(in FrameOpSortKey sortKey)
+        => sortKey.OpCode == EVulkanPrimaryPlanNodeKind.Clear;
+
+    private static bool IsTargetUseThatClearMustPrecede(in FrameOpSortKey sortKey)
+        => sortKey.OpCode is EVulkanPrimaryPlanNodeKind.MeshDraw or
+            EVulkanPrimaryPlanNodeKind.Query or
+            EVulkanPrimaryPlanNodeKind.Blit or
+            EVulkanPrimaryPlanNodeKind.IndirectDraw or
+            EVulkanPrimaryPlanNodeKind.MeshTaskDispatchIndirectCount or
+            EVulkanPrimaryPlanNodeKind.TransformFeedback;
 
     private int ResolvePassOrder(
-        FrameOp op,
+        in FrameOperationHeader header,
+        in FrameOpContext context,
+        XRFrameBuffer? target,
         VulkanCompiledRenderGraph graph,
         ref IReadOnlyCollection<RenderPassMetadata>? cachedContextMetadata,
         ref IReadOnlyDictionary<int, int>? cachedContextPassOrder)
     {
-        if (op is TextureUploadFrameOp)
+        if (header.OpCode == EVulkanPrimaryPlanNodeKind.TextureUpload)
             return int.MinValue;
 
-        if (TryResolveNestedScreenSpaceUiPassOrder(op, graph, out int screenSpaceUiOrder))
+        if (TryResolveNestedScreenSpaceUiPassOrder(in header, in context, target, graph, out int screenSpaceUiOrder))
             return screenSpaceUiOrder;
 
-        if (op.Context.PassMetadata is { Count: > 0 } metadata)
+        if (context.PassMetadata is { Count: > 0 } metadata)
         {
             if (!ReferenceEquals(metadata, cachedContextMetadata))
             {
@@ -441,7 +463,7 @@ internal sealed class VulkanFrameOperationScheduler
             }
 
             if (cachedContextPassOrder is not null &&
-                cachedContextPassOrder.TryGetValue(op.PassIndex, out int contextOrder))
+                cachedContextPassOrder.TryGetValue(header.PassIndex, out int contextOrder))
             {
                 return contextOrder;
             }
@@ -451,20 +473,22 @@ internal sealed class VulkanFrameOperationScheduler
         // directional-shadow update). Never mix ranks from that partial graph with
         // ranks from this operation's complete pipeline metadata: doing so moved
         // Background ahead of the ForwardPass clear that it explicitly depends on.
-        if (graph.PassOrder.TryGetValue(op.PassIndex, out int graphOrder))
+        if (graph.Plan.Execution.TryGetPassOrder(header.PassIndex, out int graphOrder))
             return graphOrder;
 
         return int.MaxValue;
     }
 
     private static bool TryResolveNestedScreenSpaceUiPassOrder(
-        FrameOp op,
+        in FrameOperationHeader header,
+        in FrameOpContext context,
+        XRFrameBuffer? target,
         VulkanCompiledRenderGraph graph,
         out int passOrder)
     {
         passOrder = 0;
 
-        if (!VulkanSwapchainContextCoalescer.TargetsSwapchain(op) || !IsNestedUiPipelineOp(op))
+        if (!TargetsSwapchain(in header, target) || !IsNestedUiPipelineOp(in context))
             return false;
 
         if (graph.ScreenSpaceUiPassOrder == int.MaxValue)
@@ -474,12 +498,22 @@ internal sealed class VulkanFrameOperationScheduler
         return true;
     }
 
-    private static bool IsNestedUiPipelineOp(FrameOp op)
+    private static bool TargetsSwapchain(in FrameOperationHeader header, XRFrameBuffer? target)
+        => target is null && header.OpCode is
+            EVulkanPrimaryPlanNodeKind.Clear or
+            EVulkanPrimaryPlanNodeKind.MeshDraw or
+            EVulkanPrimaryPlanNodeKind.Query or
+            EVulkanPrimaryPlanNodeKind.Blit or
+            EVulkanPrimaryPlanNodeKind.IndirectDraw or
+            EVulkanPrimaryPlanNodeKind.MeshTaskDispatchIndirectCount or
+            EVulkanPrimaryPlanNodeKind.TransformFeedback;
+
+    private static bool IsNestedUiPipelineOp(in FrameOpContext context)
     {
-        if (op.Context.PipelineInstance?.Pipeline is UserInterfaceRenderPipeline)
+        if (context.PipelineInstance?.Pipeline is UserInterfaceRenderPipeline)
             return true;
 
-        if (op.Context.PassMetadata is not { } metadata)
+        if (context.PassMetadata is not { } metadata)
             return false;
 
         if (metadata is IReadOnlyList<RenderPassMetadata> list)
@@ -520,23 +554,23 @@ internal sealed class VulkanFrameOperationScheduler
         int runTargetIdentity = int.MinValue;
         int runSchedulingIdentity = int.MinValue;
         EVulkanSecondaryCommandFamily runFamily = default;
-        Type? runType = null;
+        EVulkanPrimaryPlanNodeKind? runKind = null;
         FrameOpContext runContext = default;
 
         for (int i = 0; i < ops.Length; i++)
         {
-            FrameOp op = ops[i];
-            if (!TryResolveSecondaryCommandFamily(op, out EVulkanSecondaryCommandFamily family))
+            ref readonly FrameOperationHeader header = ref ops.GetHeader(i);
+            ref readonly FrameOpContext context = ref ops.GetContext(i);
+            if (!TryResolveSecondaryCommandFamily(header.OpCode, out EVulkanSecondaryCommandFamily family))
             {
                 // Ineligible ops break the current run.
                 FinalizeRun(i);
                 continue;
             }
 
-            int passIndex = op.PassIndex;
-            int targetIdentity = ResolveFrameOpTargetIdentity(op);
-            int schedulingIdentity = op.Context.SchedulingIdentity;
-            Type opType = op.GetType();
+            int passIndex = header.PassIndex;
+            int targetIdentity = ops.GetTarget(i)?.GetHashCode() ?? 0;
+            int schedulingIdentity = context.SchedulingIdentity;
 
             if (runStart < 0)
             {
@@ -545,19 +579,19 @@ internal sealed class VulkanFrameOperationScheduler
                 runTargetIdentity = targetIdentity;
                 runSchedulingIdentity = schedulingIdentity;
                 runFamily = family;
-                runType = opType;
-                runContext = op.Context;
+                runKind = header.OpCode;
+                runContext = context;
                 continue;
             }
 
             // Runs must remain homogeneous to be safely co-recorded.
             bool sameBucket =
-                runType == opType &&
+                runKind == header.OpCode &&
                 runPassIndex == passIndex &&
                 runTargetIdentity == targetIdentity &&
                 runSchedulingIdentity == schedulingIdentity &&
                 runFamily == family &&
-                FrameOpContextCompatibility.AreRecordingCompatible(runContext, op.Context);
+                FrameOpContextCompatibility.AreRecordingCompatible(runContext, context);
 
             if (!sameBucket)
             {
@@ -568,15 +602,15 @@ internal sealed class VulkanFrameOperationScheduler
                 runTargetIdentity = targetIdentity;
                 runSchedulingIdentity = schedulingIdentity;
                 runFamily = family;
-                runType = opType;
-                runContext = op.Context;
+                runKind = header.OpCode;
+                runContext = context;
             }
         }
 
         FinalizeRun(ops.Length);
         void FinalizeRun(int runEndExclusive)
         {
-            if (runStart < 0 || runType is null)
+            if (runStart < 0 || runKind is null)
                 return;
 
             int runCount = runEndExclusive - runStart;
@@ -590,7 +624,7 @@ internal sealed class VulkanFrameOperationScheduler
                     runTargetIdentity,
                     runSchedulingIdentity,
                     runFamily,
-                    runType,
+                    GetOperationType(runKind.Value),
                     runContext));
             }
 
@@ -599,7 +633,7 @@ internal sealed class VulkanFrameOperationScheduler
             runTargetIdentity = int.MinValue;
             runSchedulingIdentity = int.MinValue;
             runFamily = default;
-            runType = null;
+            runKind = null;
             runContext = default;
         }
     }
@@ -608,22 +642,22 @@ internal sealed class VulkanFrameOperationScheduler
     /// Determines whether an op type participates in secondary command recording buckets.
     /// </summary>
     private static bool TryResolveSecondaryCommandFamily(
-        FrameOp op,
+        EVulkanPrimaryPlanNodeKind opCode,
         out EVulkanSecondaryCommandFamily family)
     {
-        switch (op)
+        switch (opCode)
         {
-            case ComputeDispatchOp:
-            case ComputeDispatchIndirectOp:
+            case EVulkanPrimaryPlanNodeKind.ComputeDispatch:
+            case EVulkanPrimaryPlanNodeKind.ComputeDispatchIndirect:
                 family = EVulkanSecondaryCommandFamily.Compute;
                 return true;
-            case MemoryBarrierOp:
+            case EVulkanPrimaryPlanNodeKind.MemoryBarrier:
                 family = EVulkanSecondaryCommandFamily.Synchronization;
                 return true;
-            case BufferCopyOp:
+            case EVulkanPrimaryPlanNodeKind.BufferCopy:
                 family = EVulkanSecondaryCommandFamily.Transfer;
                 return true;
-            case QueryOp:
+            case EVulkanPrimaryPlanNodeKind.Query:
                 family = EVulkanSecondaryCommandFamily.Query;
                 return true;
             default:
@@ -632,7 +666,15 @@ internal sealed class VulkanFrameOperationScheduler
         }
     }
 
-    private static int ResolveFrameOpTargetIdentity(FrameOp op)
-        => op.Target?.GetHashCode() ?? 0;
+    private static Type GetOperationType(EVulkanPrimaryPlanNodeKind opCode)
+        => opCode switch
+        {
+            EVulkanPrimaryPlanNodeKind.ComputeDispatch => typeof(ComputeDispatchOp),
+            EVulkanPrimaryPlanNodeKind.ComputeDispatchIndirect => typeof(ComputeDispatchIndirectOp),
+            EVulkanPrimaryPlanNodeKind.MemoryBarrier => typeof(MemoryBarrierOp),
+            EVulkanPrimaryPlanNodeKind.BufferCopy => typeof(BufferCopyOp),
+            EVulkanPrimaryPlanNodeKind.Query => typeof(QueryOp),
+            _ => throw new ArgumentOutOfRangeException(nameof(opCode)),
+        };
 
 }

@@ -2,13 +2,6 @@
 
 layout(local_size_x = 256) in;
 
-const uint COMMAND_FLOATS = 20u;
-const uint COMMAND_MESH_ID = 4u;
-const uint COMMAND_SUBMESH_ID = 5u;
-const uint COMMAND_LOD_LEVEL = 12u;
-const uint COMMAND_FLAGS = 13u;
-const uint COMMAND_LOGICAL_MESH_ID = 14u;
-const uint COMMAND_DRAW_ID = 19u;
 const uint LOD_TABLE_FLOATS = 12u;
 const uint FLAG_LOD_ENABLED = 1u << 15u;
 const uint LOD_TRANSITION_UINTS = 4u;
@@ -44,10 +37,7 @@ struct GPUViewConstants
     vec4 CameraForwardAndFar;
 };
 
-layout(std430, binding = 0) buffer CulledCommandsBuffer
-{
-    float culled[];
-};
+layout(std430, binding = 0) readonly buffer CulledCommandsBuffer { uint culled[]; };
 
 layout(std430, binding = 1) readonly buffer CulledCountBuffer
 {
@@ -70,6 +60,16 @@ layout(std430, binding = 4) buffer LODTransitionBuffer
 {
     uint lodTransitions[];
 };
+
+struct DrawMetadata
+{
+    uint DrawID; uint MeshID; uint SubmeshID; uint MaterialID;
+    uint TransformID; uint SkinID; uint RenderPassMask; uint LayerMask;
+    uint Flags; uint LodPolicy; uint StateClassID; uint InstanceCount;
+    uint RenderPass; uint RenderIdentityID; uint LogicalMeshID; uint BoundsID;
+};
+layout(std430, binding = 5) readonly buffer DrawMetadataBuffer { DrawMetadata Draws[]; };
+layout(std430, binding = 6) readonly buffer BoundsBuffer { vec4 boundsData[]; };
 
 layout(std430, binding = 11) readonly buffer ViewDescriptorBuffer
 {
@@ -218,15 +218,18 @@ void main()
     if (idx >= total)
         return;
 
-    uint base = idx * COMMAND_FLOATS;
-    if (base + COMMAND_FLOATS > uint(culled.length()))
+    if (idx >= uint(culled.length()))
         return;
+    uint drawID = culled[idx];
+    if (drawID >= uint(Draws.length()))
+        return;
+    DrawMetadata draw = Draws[drawID];
 
-    uint flags = floatBitsToUint(culled[base + COMMAND_FLAGS]);
+    uint flags = draw.Flags;
     if ((flags & FLAG_LOD_ENABLED) == 0u)
         return;
 
-    uint logicalMeshID = floatBitsToUint(culled[base + COMMAND_LOGICAL_MESH_ID]);
+    uint logicalMeshID = draw.LogicalMeshID;
     if (logicalMeshID == 0u)
         return;
 
@@ -238,8 +241,11 @@ void main()
     if (lodCount <= 1u)
         return;
 
-    vec3 center = vec3(culled[base + 0u], culled[base + 1u], culled[base + 2u]);
-    float radius = culled[base + 3u];
+    uint boundsBase = draw.BoundsID * 4u;
+    if (boundsBase >= uint(boundsData.length()))
+        return;
+    vec3 center = boundsData[boundsBase].xyz;
+    float radius = boundsData[boundsBase].w;
     float projectedScreenRadius =
         ActiveViewCount > 1u && MultiviewLodPolicy == LOD_POLICY_CONSERVATIVE_HIGHEST_DETAIL
             ? ComputeConservativeMultiviewRadius(idx, center, radius)
@@ -262,43 +268,17 @@ void main()
     if (resolvedLevel != selectedLevel && logicalMeshID < uint(lodRequestMask.length()))
         atomicOr(lodRequestMask[logicalMeshID], 1u << min(selectedLevel, 31u));
 
-    uint currentMeshID = floatBitsToUint(culled[base + COMMAND_MESH_ID]);
-    uint currentLodLevel = floatBitsToUint(culled[base + COMMAND_LOD_LEVEL]);
-    uint drawID = floatBitsToUint(culled[base + COMMAND_DRAW_ID]);
+    uint currentMeshID = draw.MeshID;
+    uint currentLodLevel = draw.LodPolicy;
     uint transitionBase = drawID * LOD_TRANSITION_UINTS;
     if (transitionBase + 3u >= uint(lodTransitions.length()))
         return;
 
-    uint previousMeshID = lodTransitions[transitionBase + 0u];
-    uint previousLodLevel = lodTransitions[transitionBase + 1u];
-    uint transitionFlags = lodTransitions[transitionBase + 2u];
-    float transitionProgress = clamp(uintBitsToFloat(lodTransitions[transitionBase + 3u]), 0.0, 1.0);
-    bool transitionActive = (transitionFlags & LOD_TRANSITION_ACTIVE) != 0u && previousMeshID != 0u;
-
-    if (selectedMeshID != currentMeshID || resolvedLevel != currentLodLevel)
-    {
-        previousMeshID = currentMeshID;
-        previousLodLevel = currentLodLevel;
-        transitionFlags = previousMeshID != 0u ? LOD_TRANSITION_ACTIVE : 0u;
-        transitionProgress = previousMeshID != 0u ? 0.0 : 1.0;
-    }
-    else if (transitionActive)
-    {
-        transitionProgress = min(transitionProgress + max(TransitionFrameStep, 0.0), 1.0);
-        if (transitionProgress >= 1.0)
-        {
-            previousMeshID = 0u;
-            previousLodLevel = resolvedLevel;
-            transitionFlags = 0u;
-        }
-    }
-
-    culled[base + COMMAND_MESH_ID] = uintBitsToFloat(selectedMeshID);
-    culled[base + COMMAND_SUBMESH_ID] = uintBitsToFloat((selectedMeshID << 16u) | (floatBitsToUint(culled[base + COMMAND_SUBMESH_ID]) & 0xFFFFu));
-    culled[base + COMMAND_LOD_LEVEL] = uintBitsToFloat(resolvedLevel);
-
-    lodTransitions[transitionBase + 0u] = previousMeshID;
-    lodTransitions[transitionBase + 1u] = previousLodLevel;
-    lodTransitions[transitionBase + 2u] = transitionFlags;
-    lodTransitions[transitionBase + 3u] = floatBitsToUint(transitionProgress);
+    // LodTransitionBuffer is the mutable per-draw selection state. Metadata stays
+    // immutable for the publication generation: {selectedMesh, selectedLod, flags, _}.
+    lodTransitions[transitionBase + 0u] = selectedMeshID;
+    lodTransitions[transitionBase + 1u] = resolvedLevel;
+    lodTransitions[transitionBase + 2u] = selectedMeshID != currentMeshID || resolvedLevel != currentLodLevel
+        ? LOD_TRANSITION_ACTIVE : 0u;
+    lodTransitions[transitionBase + 3u] = 0u;
 }

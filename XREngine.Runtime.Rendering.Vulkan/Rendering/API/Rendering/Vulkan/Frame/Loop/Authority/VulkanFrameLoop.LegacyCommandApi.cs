@@ -3,7 +3,7 @@ using XREngine.Data.Rendering;
 namespace XREngine.Rendering.Vulkan;
 
 /// <summary>Owns frame-local admission and context capture for legacy renderer command translations.</summary>
-internal sealed unsafe partial class VulkanFrameLoop
+internal sealed partial class VulkanFrameLoop
 {
     internal void EnqueueIndirectDraw(string operationName, uint drawCount, uint stride, nuint byteOffset)
         => _commandRuntime.EnqueueIndirectDraw(_frameOperationQueue, operationName, drawCount, stride, byteOffset, 0, false, RuntimeEngine.Rendering.State.CurrentRenderGraphPassIndex, CaptureFrameOpContext());

@@ -358,13 +358,12 @@ public sealed class BvhRaycastDispatcher : IDisposable
         uint byteLength = Math.Min(expectedBytes, request.HitBuffer?.Length ?? 0u);
         byte[] data = new byte[byteLength];
 
-        VoidPtr mapped = request.HitBuffer?.GetMappedAddresses().FirstOrDefault() ?? VoidPtr.Zero;
-        IntPtr mappedPtr = mapped.IsValid ? (IntPtr)mapped.Pointer : IntPtr.Zero;
-        if (mappedPtr != IntPtr.Zero)
+        if (request.HitBuffer?.TryReadMapped(bytes =>
         {
-            Marshal.Copy(mappedPtr, data, 0, (int)byteLength);
+            bytes[..checked((int)byteLength)].CopyTo(data);
+            return true;
+        }) == true)
             return data;
-        }
 
         var clientSource = request.HitBuffer?.ClientSideSource;
         if (clientSource is not null)

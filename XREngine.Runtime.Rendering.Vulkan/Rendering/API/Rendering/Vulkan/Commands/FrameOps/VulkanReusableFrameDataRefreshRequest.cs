@@ -13,7 +13,7 @@ internal readonly record struct VulkanReusableFrameDataRefreshRequest(
     FrameOpContext Context,
     VulkanFrameOpPlannerStateKey PlannerKey,
     VkMeshRenderer? MeshRenderer,
-    FrameOp? SourceOperation,
+    PendingMeshDraw Draw,
     int DrawUniformSlot,
     EVulkanBindingFrequencyMask FrequencyMask,
     VkRenderProgram? ComputeProgram,
@@ -24,26 +24,6 @@ internal readonly record struct VulkanReusableFrameDataRefreshRequest(
     uint ComputeGroupsZ,
     VulkanReusableFrameOwnerKey OwnerKey)
 {
-    /// <summary>
-    /// Reads the immutable draw payload from the current sealed frame-plan
-    /// operation. Refresh requests are consumed synchronously while that plan
-    /// is active, so embedding another multi-kilobyte value copy provides no
-    /// additional lifetime or mutation isolation.
-    /// </summary>
-    internal ref readonly PendingMeshDraw Draw
-    {
-        get
-        {
-            if (SourceOperation is MeshDrawOp meshDraw)
-                return ref meshDraw.DrawRef;
-            if (SourceOperation is IndirectDrawOp indirectDraw)
-                return ref indirectDraw.DrawRef;
-
-            throw new InvalidOperationException(
-                "A mesh frame-data refresh request must reference a mesh draw operation.");
-        }
-    }
-
     internal static VulkanReusableFrameDataRefreshRequest CreateMesh(
         EVulkanReusableFrameDataRefreshKind kind,
         int sourceOpIndex,
@@ -51,7 +31,7 @@ internal readonly record struct VulkanReusableFrameDataRefreshRequest(
         in FrameOpContext context,
         in VulkanFrameOpPlannerStateKey plannerKey,
         VkMeshRenderer meshRenderer,
-        FrameOp sourceOperation,
+        in PendingMeshDraw draw,
         int drawUniformSlot,
         EVulkanBindingFrequencyMask frequencyMask =
             EVulkanBindingFrequencyMask.All,
@@ -63,10 +43,10 @@ internal readonly record struct VulkanReusableFrameDataRefreshRequest(
             context,
             plannerKey,
             meshRenderer,
-            sourceOperation,
+            draw,
             drawUniformSlot,
             frequencyMask,
-            null,
+            default,
             null,
             0,
             0,
@@ -92,7 +72,7 @@ internal readonly record struct VulkanReusableFrameDataRefreshRequest(
             context,
             plannerKey,
             null,
-            null,
+            default,
             -1,
             EVulkanBindingFrequencyMask.None,
             program,

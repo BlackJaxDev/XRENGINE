@@ -1,4 +1,5 @@
 using Silk.NET.Vulkan;
+using System.Buffers;
 
 namespace XREngine.Rendering.Vulkan;
 
@@ -464,16 +465,22 @@ internal unsafe sealed class VkRenderQuery(
             return ERenderQueryReadStatus.InvalidState;
         }
 
-        Span<ulong> values = stackalloc ulong[checked((int)Math.Max(_plan.ResultLayout.NativeValueCount, 2u))];
-        RenderQueryReadResult read = TryReadRaw(values, expectedTicket);
-        if (!read.IsReady)
-            return read.Status;
+        int valueCount = checked((int)Math.Max(_plan.ResultLayout.NativeValueCount, 2u));
+        ulong[] rented = ArrayPool<ulong>.Shared.Rent(valueCount);
+        try
+        {
+            Span<ulong> values = rented.AsSpan(0, valueCount);
+            RenderQueryReadResult read = TryReadRaw(values, expectedTicket);
+            if (!read.IsReady)
+                return read.Status;
 
-        bool any = false;
-        for (int index = 0; index < read.ValuesWritten; index++)
-            any |= values[index] != 0ul;
-        result = new(any, any ? 1ul : 0ul, read.Layout.ViewSlotCount);
-        return ERenderQueryReadStatus.Ready;
+            bool any = false;
+            for (int index = 0; index < read.ValuesWritten; index++)
+                any |= values[index] != 0ul;
+            result = new(any, any ? 1ul : 0ul, read.Layout.ViewSlotCount);
+            return ERenderQueryReadStatus.Ready;
+        }
+        finally { ArrayPool<ulong>.Shared.Return(rented); }
     }
 
     public ERenderQueryReadStatus TryGetExactSamplesPassed(
@@ -487,16 +494,22 @@ internal unsafe sealed class VkRenderQuery(
             return ERenderQueryReadStatus.InvalidState;
         }
 
-        Span<ulong> values = stackalloc ulong[checked((int)Math.Max(_plan.ResultLayout.NativeValueCount, 2u))];
-        RenderQueryReadResult read = TryReadRaw(values, expectedTicket);
-        if (!read.IsReady)
-            return read.Status;
+        int valueCount = checked((int)Math.Max(_plan.ResultLayout.NativeValueCount, 2u));
+        ulong[] rented = ArrayPool<ulong>.Shared.Rent(valueCount);
+        try
+        {
+            Span<ulong> values = rented.AsSpan(0, valueCount);
+            RenderQueryReadResult read = TryReadRaw(values, expectedTicket);
+            if (!read.IsReady)
+                return read.Status;
 
-        ulong samples = 0ul;
-        for (int index = 0; index < read.ValuesWritten; index++)
-            samples = ulong.MaxValue - samples < values[index] ? ulong.MaxValue : samples + values[index];
-        result = new(samples != 0ul, samples, read.Layout.ViewSlotCount);
-        return ERenderQueryReadStatus.Ready;
+            ulong samples = 0ul;
+            for (int index = 0; index < read.ValuesWritten; index++)
+                samples = ulong.MaxValue - samples < values[index] ? ulong.MaxValue : samples + values[index];
+            result = new(samples != 0ul, samples, read.Layout.ViewSlotCount);
+            return ERenderQueryReadStatus.Ready;
+        }
+        finally { ArrayPool<ulong>.Shared.Return(rented); }
     }
 
     public ERenderQueryReadStatus TryGetTimestamp(

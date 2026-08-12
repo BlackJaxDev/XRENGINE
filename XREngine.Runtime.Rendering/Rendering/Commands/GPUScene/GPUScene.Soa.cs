@@ -143,16 +143,20 @@ namespace XREngine.Rendering.Commands
             };
 
             _materialStateByClass[stateClassId] = state;
-            MaterialStateBuffer.SetDataRawAtIndex(stateClassId, state);
+            UpdatingMaterialStateBuffer.SetDataRawAtIndex(stateClassId, state);
             _materialStateDirtyRange.Mark(stateClassId);
             return stateClassId;
         }
 
-        private void WriteDrawMetadata(uint drawId, in GPUIndirectRenderCommand command)
+        private void WriteDrawMetadata(uint drawId, in DrawMetadata metadata)
         {
             EnsureDrawIndexedSoACapacity(drawId + 1u);
-            UpdatingDrawMetadataBuffer.SetDataRawAtIndex(drawId, command.ToDrawMetadata(drawId));
+            DrawMetadata published = metadata;
+            published.DrawID = drawId;
+            UpdatingDrawMetadataBuffer.SetDataRawAtIndex(drawId, published);
             _drawMetadataDirtyRange.Mark(drawId);
+            WriteClassification(drawId, published);
+            WriteVisibility(drawId, published.InstanceCount == 0u ? 0u : 1u);
         }
 
         private void WriteBounds(uint boundsId, in BoundsGpu bounds)
@@ -160,6 +164,33 @@ namespace XREngine.Rendering.Commands
             EnsureDrawIndexedSoACapacity(boundsId + 1u);
             UpdatingBoundsBuffer.SetDataRawAtIndex(boundsId, bounds);
             _boundsDirtyRange.Mark(boundsId);
+        }
+
+        private void WriteClassification(uint drawId, in DrawMetadata metadata)
+        {
+            EnsureDrawIndexedSoACapacity(drawId + 1u);
+            GPUViewBatchClassification classification = new()
+            {
+                // The view-specific mask is intentionally empty at scene publication;
+                // it is filled by the view-set stage from the canonical draw ID.
+                ExactViewMaskLo = 0u,
+                ExactViewMaskHi = 0u,
+                PackedPassPipelineState = metadata.StateClassID,
+                MaterialID = metadata.MaterialID,
+                MeshID = metadata.MeshID,
+                LodLevel = metadata.LodPolicy,
+                DrawID = metadata.DrawID,
+                Flags = metadata.Flags,
+            };
+            UpdatingClassificationBuffer.SetDataRawAtIndex(drawId, classification);
+            _classificationDirtyRange.Mark(drawId);
+        }
+
+        private void WriteVisibility(uint drawId, uint visibilitySeed)
+        {
+            EnsureDrawIndexedSoACapacity(drawId + 1u);
+            UpdatingVisibilityBuffer.SetDataRawAtIndex(drawId, visibilitySeed);
+            _visibilityDirtyRange.Mark(drawId);
         }
 
         private bool UpdateTransform(uint transformId, in Matrix4x4 worldMatrix)
@@ -189,6 +220,18 @@ namespace XREngine.Rendering.Commands
             {
                 UpdatingBoundsBuffer.SetDataRawAtIndex(drawId, default(BoundsGpu));
                 _boundsDirtyRange.Mark(drawId);
+            }
+
+            if (drawId < UpdatingClassificationBuffer.ElementCount)
+            {
+                UpdatingClassificationBuffer.SetDataRawAtIndex(drawId, default(GPUViewBatchClassification));
+                _classificationDirtyRange.Mark(drawId);
+            }
+
+            if (drawId < UpdatingVisibilityBuffer.ElementCount)
+            {
+                UpdatingVisibilityBuffer.SetDataRawAtIndex(drawId, 0u);
+                _visibilityDirtyRange.Mark(drawId);
             }
         }
 

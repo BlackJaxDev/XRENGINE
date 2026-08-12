@@ -762,9 +762,7 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
         uint mipCount = Math.Max(ResolvedMipLevels, 1u);
         uint layerCount = Math.Max(ResolvedArrayLayers, 1u);
         int maxBarrierCount = checked((int)(mipCount * layerCount));
-        Span<ImageMemoryBarrier> barriers = maxBarrierCount <= 64
-            ? stackalloc ImageMemoryBarrier[maxBarrierCount]
-            : new ImageMemoryBarrier[maxBarrierCount];
+        ImageMemoryBarrier[] barriers = new ImageMemoryBarrier[maxBarrierCount];
         int barrierCount = 0;
         PipelineStageFlags sourceStages = 0;
         PipelineStageFlags destinationStages = 0;

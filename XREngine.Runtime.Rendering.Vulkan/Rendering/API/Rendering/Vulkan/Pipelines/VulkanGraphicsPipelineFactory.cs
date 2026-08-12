@@ -92,21 +92,22 @@ internal static unsafe class VulkanGraphicsPipelineFactory
 
 			if (request.Key.UseDynamicRendering)
 			{
-				Format* colorFormats = stackalloc Format[(int)request.ColorAttachmentCount];
-				request.DynamicRenderingFormats.CopyColorAttachmentFormats(colorFormats, request.ColorAttachmentCount);
-
-				PipelineRenderingCreateInfo renderingInfo = new()
+				Format[] colorFormats = new Format[checked((int)request.ColorAttachmentCount)];
+				fixed (Format* colorFormatsPtr = colorFormats)
 				{
-					SType = StructureType.PipelineRenderingCreateInfo,
-					ViewMask = request.DynamicRenderingFormats.ViewMask,
-					ColorAttachmentCount = request.ColorAttachmentCount,
-					PColorAttachmentFormats = request.ColorAttachmentCount > 0 ? colorFormats : null,
-					DepthAttachmentFormat = request.DynamicRenderingFormats.DepthAttachmentFormat,
-					StencilAttachmentFormat = request.DynamicRenderingFormats.StencilAttachmentFormat,
-				};
-
-				pipelineInfo.PNext = &renderingInfo;
-				return CreateGraphicsPipeline(manager, request, ref pipelineInfo, pipelineCache, backgroundCompile);
+					request.DynamicRenderingFormats.CopyColorAttachmentFormats(colorFormatsPtr, request.ColorAttachmentCount);
+					PipelineRenderingCreateInfo renderingInfo = new()
+					{
+						SType = StructureType.PipelineRenderingCreateInfo,
+						ViewMask = request.DynamicRenderingFormats.ViewMask,
+						ColorAttachmentCount = request.ColorAttachmentCount,
+						PColorAttachmentFormats = request.ColorAttachmentCount > 0 ? colorFormatsPtr : null,
+						DepthAttachmentFormat = request.DynamicRenderingFormats.DepthAttachmentFormat,
+						StencilAttachmentFormat = request.DynamicRenderingFormats.StencilAttachmentFormat,
+					};
+					pipelineInfo.PNext = &renderingInfo;
+					return CreateGraphicsPipeline(manager, request, ref pipelineInfo, pipelineCache, backgroundCompile);
+				}
 			}
 
 			return CreateGraphicsPipeline(manager, request, ref pipelineInfo, pipelineCache, backgroundCompile);
@@ -414,9 +415,11 @@ internal static unsafe class VulkanGraphicsPipelineFactory
 				uint libraryColorAttachmentCount = includeDynamicRenderingInfo
 					? key.DynamicRenderingFormats.ColorAttachmentCount
 					: 0u;
-				Format* libraryColorFormats = stackalloc Format[(int)Math.Max(libraryColorAttachmentCount, 1u)];
+				Format[] libraryColorFormats = new Format[checked((int)Math.Max(libraryColorAttachmentCount, 1u))];
+				fixed (Format* libraryColorFormatsPtr = libraryColorFormats)
+				{
 				if (libraryColorAttachmentCount > 0u)
-					key.DynamicRenderingFormats.CopyColorAttachmentFormats(libraryColorFormats, libraryColorAttachmentCount);
+					key.DynamicRenderingFormats.CopyColorAttachmentFormats(libraryColorFormatsPtr, libraryColorAttachmentCount);
 
 				if (includeDynamicRenderingInfo)
 				{
@@ -425,7 +428,7 @@ internal static unsafe class VulkanGraphicsPipelineFactory
 						SType = StructureType.PipelineRenderingCreateInfo,
 						ViewMask = key.DynamicRenderingFormats.ViewMask,
 						ColorAttachmentCount = libraryColorAttachmentCount,
-						PColorAttachmentFormats = libraryColorAttachmentCount > 0u ? libraryColorFormats : null,
+						PColorAttachmentFormats = libraryColorAttachmentCount > 0u ? libraryColorFormatsPtr : null,
 						DepthAttachmentFormat = key.DynamicRenderingFormats.DepthAttachmentFormat,
 						StencilAttachmentFormat = key.DynamicRenderingFormats.StencilAttachmentFormat,
 					};
@@ -483,6 +486,7 @@ internal static unsafe class VulkanGraphicsPipelineFactory
 
 				request.ProgramServices.NotifyPipelineCreated($"graphics-library:{key.Subset}");
 				return library;
+				}
 			}
 		}
 		catch

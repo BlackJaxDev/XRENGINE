@@ -7,12 +7,12 @@ namespace XREngine.Rendering.Vulkan;
 /// Provides allocation-free synchronization scratch storage scoped to the
 /// calling thread.
 /// </summary>
-internal sealed class VulkanSynchronizationThreadWorkspace
+internal sealed class VulkanSynchronizationThreadWorkspace : IDisposable
 {
     private readonly ThreadLocal<VulkanSynchronizationThreadState> _current =
         new(
             static () => new VulkanSynchronizationThreadState(),
-            trackAllValues: false);
+            trackAllValues: true);
 
     /// <summary>
     /// Gets the synchronization scratch state owned by the current thread.
@@ -31,4 +31,12 @@ internal sealed class VulkanSynchronizationThreadWorkspace
     /// </summary>
     public void ReleaseCurrentThread()
         => Current.Reset();
+
+    /// <summary>Disposes every per-thread native scratch owner created by this workspace.</summary>
+    public void Dispose()
+    {
+        foreach (VulkanSynchronizationThreadState state in _current.Values)
+            state.Dispose();
+        _current.Dispose();
+    }
 }

@@ -470,49 +470,18 @@ internal unsafe sealed class VulkanMappedFrameArena
         if (offset > chunk.Capacity || length > chunk.Capacity - offset)
             return false;
 
-        ExpandVisibilityRange(offset, length, chunk.AllocationLength, out flushOffset, out flushLength);
         if (!chunk.IsHostCoherent)
+        {
+            ExpandVisibilityRange(offset, length, chunk.AllocationLength, out flushOffset, out flushLength);
             _backend.Flush(chunk.Memory, flushOffset, flushLength);
+        }
+        else
+        {
+            flushOffset = offset;
+            flushLength = length;
+        }
         chunk.DirtyRange.Clear();
         return true;
-    }
-
-    /// <summary>
-    /// Invalidates the atom-expanded device-write range before host reads it. The arena does
-    /// not expose a pointer here; callers must still enter a bounded write/read boundary.
-    /// </summary>
-    internal bool TryGetInvalidateRange(
-        in VulkanMappedFrameSlice slice,
-        out ulong invalidateOffset,
-        out ulong invalidateLength)
-    {
-        invalidateOffset = 0;
-        invalidateLength = 0;
-        if (Interlocked.CompareExchange(ref _writerDepth, 1, 0) != 0)
-            return false;
-
-        Volatile.Write(
-            ref _writerThreadId,
-            Environment.CurrentManagedThreadId);
-        try
-        {
-            if (!TryValidateWritableSlice(slice, out Chunk? chunk) || chunk is null)
-                return false;
-
-            ExpandVisibilityRange(
-                slice.Offset,
-                slice.Length,
-                chunk.AllocationLength,
-                out invalidateOffset,
-                out invalidateLength);
-            if (!chunk.IsHostCoherent)
-                _backend.Invalidate(chunk.Memory, invalidateOffset, invalidateLength);
-            return true;
-        }
-        finally
-        {
-            ReleaseHostAccessGate();
-        }
     }
 
     internal void ReleaseReservations(VkMeshRenderer owner)
@@ -696,14 +665,17 @@ internal unsafe sealed class VulkanMappedFrameArena
             : _generation + 1UL;
     }
 
-    private void PublishTelemetry()
+    internal void PublishTelemetry()
     {
         RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanMeshFrameDataGauges(
             _chunks.Length,
             checked((long)((ulong)_chunks.Length * _capacity)),
             checked((long)Math.Min(ReservedBytes, (ulong)long.MaxValue)),
             ReservationCount,
-            Generation);
+            Generation,
+            reservationHighWater: ReservationHighWater,
+            mappedBytesHighWater: MappedBytesHighWater,
+            flushExpansionBytes: FlushExpansionBytes);
     }
 
     private static ulong AlignUp(ulong value, ulong alignment)

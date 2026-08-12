@@ -1,7 +1,7 @@
 #version 460
 
-// Copy render commands from input SSBO to output SSBO (passthrough culling path)
-// One thread copies one compact command.
+// Passthrough culling emits scene draw IDs. Consumers dereference native scene
+// streams instead of copying a broad command record.
 
 layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
 
@@ -14,17 +14,15 @@ uniform uint OutputCapacity;
 uniform int BoundsCheckEnabled;
 uniform int ActiveViewCount;
 
-// Input command buffer: tightly packed float[20] per command (GPUIndirectRenderCommand)
-layout(std430, binding = 0) readonly buffer InCommands
+struct DrawMetadata
 {
-    float InData[];
+    uint DrawID; uint MeshID; uint SubmeshID; uint MaterialID;
+    uint TransformID; uint SkinID; uint RenderPassMask; uint LayerMask;
+    uint Flags; uint LodPolicy; uint StateClassID; uint InstanceCount;
+    uint RenderPass; uint RenderIdentityID; uint LogicalMeshID; uint BoundsID;
 };
-
-// Output command buffer: tightly packed float[20] per command
-layout(std430, binding = 1) writeonly buffer OutCommands
-{
-    float OutData[];
-};
+layout(std430, binding = 0) readonly buffer DrawMetadataBuffer { DrawMetadata Draws[]; };
+layout(std430, binding = 1) writeonly buffer VisibleDrawIds { uint OutDrawIds[]; };
 
 // Optional count buffer to mirror visible draw + instance counts on GPU
 layout(std430, binding = 2) buffer VisibleCount
@@ -80,9 +78,6 @@ layout(std430, binding = 15) buffer PerViewDrawCountBuffer { uint PerViewDrawCou
 
 #define FLAG_TRANSPARENT    (1u<<0)
 
-const uint CommandStride = 20u;
-const uint RenderPassIndex = 8u;
-const uint InstanceCountIndex = 7u;
 
 bool ViewMaskContains(uvec2 mask, uint viewId)
 {
@@ -150,8 +145,10 @@ void main()
     if (cmdIndex >= CopyCount)
         return;
 
-    uint inBase  = cmdIndex * CommandStride;
-    uint commandPass = floatBitsToUint(InData[inBase + RenderPassIndex]);
+    if (cmdIndex >= uint(Draws.length()))
+        return;
+    DrawMetadata draw = Draws[cmdIndex];
+    uint commandPass = draw.RenderPass;
     uint expectedPass = TargetPass >= 0 ? uint(TargetPass) : 0xFFFFFFFFu;
 
     bool passMatches = true;
@@ -167,7 +164,7 @@ void main()
         uint maxSamples = uint(DebugMaxSamples);
         if (maxSamples > 0u)
         {
-            uint stride = DebugInstanceStride > 0 ? uint(DebugInstanceStride) : CommandStride;
+            uint stride = DebugInstanceStride > 0 ? uint(DebugInstanceStride) : 4u;
             uint debugIndex = cmdIndex;
             if (debugIndex < maxSamples)
             {
@@ -183,7 +180,7 @@ void main()
     if (!passMatches)
         return;
 
-    uint instanceCount = floatBitsToUint(InData[inBase + InstanceCountIndex]);
+    uint instanceCount = draw.InstanceCount;
     uint outIndex = atomicAdd(VisibleDrawCount, 1u);
 
     if (BoundsCheckEnabled == 1)
@@ -198,14 +195,8 @@ void main()
     }
 
     atomicAdd(VisibleInstanceCount, instanceCount);
-    uint outBase = outIndex * CommandStride;
-
-    // Unrolled copy for better performance on some drivers
-    // But keep a simple loop for clarity and flexibility
-    for (uint i = 0u; i < CommandStride; ++i)
-        OutData[outBase + i] = InData[inBase + i];
-
-    uint flags = floatBitsToUint(InData[inBase + 13u]);
-    vec3 center = vec3(InData[inBase + 0u], InData[inBase + 1u], InData[inBase + 2u]);
-    AppendPerView(cmdIndex, outIndex, center, flags);
+    OutDrawIds[outIndex] = draw.DrawID;
+    // The passthrough path has no bounds binding; retain the view-index contract
+    // while using a neutral center. Frustum/BVH paths publish real bounds.
+    AppendPerView(cmdIndex, outIndex, vec3(0.0), draw.Flags);
 }

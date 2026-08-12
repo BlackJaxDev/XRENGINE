@@ -5,7 +5,7 @@ using Buffer = Silk.NET.Vulkan.Buffer;
 namespace XREngine.Rendering.Vulkan;
 
 /// <summary>Behavior-only native output port implemented by the frame-loop authority.</summary>
-internal unsafe interface IVulkanTargetOutputHost
+internal interface IVulkanTargetOutputHost
 {
     Vk VulkanApi { get; }
     Instance Instance { get; }
@@ -45,8 +45,8 @@ internal unsafe interface IVulkanTargetOutputHost
     bool TryBeginDestroyImageView(ImageView imageView, string owner);
     void TrackLiveImageView(ImageView imageView, in ImageViewCreateInfo createInfo, string owner);
     Result SubmitToQueueTracked(Queue queue, ref SubmitInfo submitInfo, Fence fence, string caller);
-    bool TryMapMemoryAllocation(VulkanMemoryAllocation allocation, ulong offset, ulong length, out void* mapped);
-    void UnmapMemoryAllocation(VulkanMemoryAllocation allocation);
+    bool TryReadMappedMemory<TState>(VulkanMemoryAllocation allocation, ulong offset, ulong length, TState state, VulkanMappedMemoryReadCallback<TState> callback);
+    bool TryWriteMappedMemory<TState>(VulkanMemoryAllocation allocation, ulong offset, ulong length, TState state, VulkanMappedMemoryWriteCallback<TState> callback);
     void MarkDeviceLost(string reason, string operation, Result result);
     void ObserveNativeResult(string operation, Result result);
 }

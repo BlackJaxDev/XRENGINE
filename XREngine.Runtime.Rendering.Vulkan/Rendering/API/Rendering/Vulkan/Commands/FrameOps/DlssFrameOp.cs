@@ -7,37 +7,16 @@ namespace XREngine.Rendering.Vulkan;
 /// <summary>
 /// Base operation for Streamline-backed DLSS command recording.
 /// </summary>
-internal abstract unsafe record DlssFrameOp(
+internal abstract record DlssFrameOp(
     int PassIndex,
     FrameOpContext Context)
     : FrameOp(PassIndex, null, Context)
 {
-    protected abstract string CommandLabel { get; }
-
-    internal sealed override int RecordPrimary(
-        VulkanCommandRuntime commandRuntime,
-        scoped ref PrimaryCommandBufferRecordingState recordingState,
-        in VulkanPrimaryOperationRecordingInfo recordingInfo)
-    {
-        commandRuntime.CmdBeginLabel(recordingState.CommandBuffer, CommandLabel);
-        RecordStreamlineCommand(
-            commandRuntime,
-            recordingState.CommandBuffer,
-            recordingState.ImageIndex);
-        commandRuntime.CmdEndLabel(recordingState.CommandBuffer);
-        return recordingInfo.OperationIndex;
-    }
-
-    protected abstract void RecordStreamlineCommand(
-        VulkanCommandRuntime commandRuntime,
-        CommandBuffer commandBuffer,
-        uint imageIndex);
-
     /// <summary>
     /// Transitions a Streamline input or output image to the general layout
     /// required by the native DLSS Vulkan bridge.
     /// </summary>
-    protected static VulkanStreamlineImage TransitionImageToGeneral(
+    internal static unsafe VulkanStreamlineImage TransitionImageToGeneral(
         VulkanCommandRuntime commandRuntime,
         CommandBuffer commandBuffer,
         in VulkanStreamlineImage image)
@@ -101,7 +80,7 @@ internal abstract unsafe record DlssFrameOp(
     /// <summary>
     /// Makes a Streamline output visible to subsequent shader sampling.
     /// </summary>
-    protected static void MakeOutputVisibleForSampling(
+    internal static unsafe void MakeOutputVisibleForSampling(
         VulkanCommandRuntime commandRuntime,
         CommandBuffer commandBuffer,
         in VulkanStreamlineImage image)
@@ -163,7 +142,7 @@ internal abstract unsafe record DlssFrameOp(
     /// <param name="operation">The DLSS operation that failed.</param>
     /// <param name="failureReason">The reason for the failure, if available.</param>
     /// <exception cref="InvalidOperationException">Thrown if the DLSS operation fails during Vulkan command recording.</exception>
-    protected static void ThrowRecordingFailure(
+    internal static void ThrowRecordingFailure(
         string operation,
         string failureReason)
     {

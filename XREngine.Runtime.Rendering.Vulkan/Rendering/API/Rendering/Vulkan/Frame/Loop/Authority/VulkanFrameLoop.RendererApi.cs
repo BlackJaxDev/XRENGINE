@@ -7,7 +7,7 @@ using XREngine.Rendering.Resources;
 namespace XREngine.Rendering.Vulkan;
 
 /// <summary>Renderer API operations whose frame-local inputs are owned by the frame loop.</summary>
-internal sealed unsafe partial class VulkanFrameLoop
+internal sealed partial class VulkanFrameLoop
 {
     internal void SetReadBuffer(EReadBufferMode mode)
         => _commandRuntime.ActiveReadBufferMode = mode;

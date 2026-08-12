@@ -18,22 +18,4 @@ internal sealed record BufferCopyOp(
 {
     public override EVulkanPrimaryPlanNodeKind Kind => EVulkanPrimaryPlanNodeKind.BufferCopy;
 
-    internal override int RecordPrimary(
-        VulkanCommandRuntime commandRuntime,
-        scoped ref PrimaryCommandBufferRecordingState recordingState,
-        in VulkanPrimaryOperationRecordingInfo recordingInfo)
-    {
-        if (TryRecordSecondaryBucket(
-                commandRuntime,
-                ref recordingState,
-                in recordingInfo,
-                Label,
-                out int lastOperationIndex))
-            return lastOperationIndex;
-
-        commandRuntime.CmdBeginLabel(recordingState.CommandBuffer, Label);
-        commandRuntime.RecordBufferCopyOp(recordingState.CommandBuffer, this);
-        commandRuntime.CmdEndLabel(recordingState.CommandBuffer);
-        return recordingInfo.OperationIndex;
-    }
 }

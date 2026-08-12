@@ -30,21 +30,6 @@ internal sealed class VulkanPipelineVariantManifest
 
     internal static VulkanPipelineVariantManifest Build(
         VulkanCompiledRenderGraphPlan plan,
-        FrameOp[] ops,
-        EMeshSubmissionStrategy submissionStrategy,
-        bool dynamicRendering,
-        ulong recordingStructuralSignature)
-        => Build(
-            plan,
-            new FrameOperationSequence(ops),
-            submissionStrategy,
-            dynamicRendering,
-            recordingStructuralSignature,
-            plan.CompatibilityIdentity,
-            framePlan: null);
-
-    internal static VulkanPipelineVariantManifest Build(
-        VulkanCompiledRenderGraphPlan plan,
         FrameOperationSequence ops,
         EMeshSubmissionStrategy submissionStrategy,
         bool dynamicRendering,
@@ -55,7 +40,7 @@ internal sealed class VulkanPipelineVariantManifest
         int requirementCount = 0;
         for (int opIndex = 0; opIndex < ops.Length; opIndex++)
         {
-            if (ops[opIndex] is MeshDrawOp or IndirectDrawOp)
+            if (ops.GetHeader(opIndex).OpCode is EVulkanPrimaryPlanNodeKind.MeshDraw or EVulkanPrimaryPlanNodeKind.IndirectDraw)
                 requirementCount++;
         }
 
@@ -69,17 +54,18 @@ internal sealed class VulkanPipelineVariantManifest
         int requirementIndex = 0;
         for (int opIndex = 0; opIndex < ops.Length; opIndex++)
         {
-            if (ops[opIndex] is not MeshDrawOp && ops[opIndex] is not IndirectDrawOp)
+            ref readonly FrameOperationHeader header = ref ops.GetHeader(opIndex);
+            if (header.OpCode is not (EVulkanPrimaryPlanNodeKind.MeshDraw or EVulkanPrimaryPlanNodeKind.IndirectDraw))
                 continue;
 
-            PendingMeshDraw draw = ops[opIndex] switch
+            PendingMeshDraw draw = header.OpCode switch
             {
-                MeshDrawOp direct => direct.Draw,
-                IndirectDrawOp indirect => indirect.Draw,
+                EVulkanPrimaryPlanNodeKind.MeshDraw => ops.GetMeshDraw(opIndex).Draw,
+                EVulkanPrimaryPlanNodeKind.IndirectDraw => ops.GetIndirectDraw(opIndex).Draw,
                 _ => default,
             };
-            int passIndex = ops[opIndex].PassIndex;
-            FrameOpContext operationContext = ops[opIndex].Context;
+            int passIndex = header.PassIndex;
+            FrameOpContext operationContext = ops.GetContext(opIndex);
             VulkanCompiledRenderGraphPlan operationPlan = plan;
             if (framePlan is not null &&
                 framePlan.TryResolveRenderGraphPlan(

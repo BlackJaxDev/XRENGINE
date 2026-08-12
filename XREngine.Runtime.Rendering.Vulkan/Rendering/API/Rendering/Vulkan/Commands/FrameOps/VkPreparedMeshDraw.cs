@@ -3,31 +3,21 @@ using Silk.NET.Vulkan;
 
 namespace XREngine.Rendering.Vulkan;
 
-/// <summary>
-/// Immutable mesh-draw input copied out of the mutable frame-operation graph
-/// before command-chain workers are released.
-/// </summary>
+/// <summary>Compact hot draw header. Reference-heavy audit data lives in the frame recording sidecar.</summary>
 internal readonly record struct VkPreparedMeshDraw(
     int SourceOpIndex,
     Viewport Viewport,
     Rect2D Scissor,
-    Viewport[]? IndexedViewports,
-    Rect2D[]? IndexedScissors,
+    VulkanPreparedStreamRange IndexedViewports,
+    VulkanPreparedStreamRange IndexedScissors,
     uint ViewportScissorCount,
-    FrameOpContext Context,
     int UniformSlot,
-    string DiagnosticMeshName = "<unnamed mesh>")
+    VulkanPreparedMeshDrawState RecordingState)
 {
-    internal VulkanPreparedMeshDrawState RecordingState { get; init; }
-    internal XRFrameBuffer? Target { get; init; }
-    internal bool OwnsIndexedViewportArrays { get; init; }
-    internal VkMeshRenderer OwnerIdentity => RecordingState.OwnerIdentity;
-
-    internal static bool TryCreateOwned(
+    internal static bool TryCreate(
+        VulkanPreparedFrameRecording recording,
         int sourceOpIndex,
         in PendingMeshDraw source,
-        in FrameOpContext context,
-        XRFrameBuffer? target,
         int uniformSlot,
         in VulkanPreparedMeshDrawState recordingState,
         out VkPreparedMeshDraw prepared,
@@ -35,71 +25,21 @@ internal readonly record struct VkPreparedMeshDraw(
     {
         prepared = default;
         reason = "Ready";
-        uint viewportScissorCount = Math.Max(source.ViewportScissorCount, 1u);
-        Viewport[]? indexedViewports = null;
-        Rect2D[]? indexedScissors = null;
-        bool ownsIndexedArrays = false;
-
-        if (viewportScissorCount > 1)
+        uint count = Math.Max(source.ViewportScissorCount, 1u);
+        VulkanPreparedStreamRange viewports = default;
+        VulkanPreparedStreamRange scissors = default;
+        if (count > 1)
         {
-            if (viewportScissorCount > int.MaxValue)
+            if (count > int.MaxValue || source.IndexedViewports is not { } sourceViewports || source.IndexedScissors is not { } sourceScissors || sourceViewports.Length < (int)count || sourceScissors.Length < (int)count)
             {
-                reason = $"viewport/scissor count {viewportScissorCount} exceeds the supported managed range";
+                reason = $"viewport/scissor count {count} has no complete indexed snapshot";
                 return false;
             }
-
-            int count = (int)viewportScissorCount;
-            if (source.IndexedViewports is not { } sourceViewports ||
-                source.IndexedScissors is not { } sourceScissors ||
-                sourceViewports.Length < count ||
-                sourceScissors.Length < count)
-            {
-                reason = $"viewport/scissor count {viewportScissorCount} has no complete indexed snapshot";
-                return false;
-            }
-
-            indexedViewports = recordingState.OwnerIdentity.RentPreparedViewportArray(count);
-            try
-            {
-                indexedScissors = recordingState.OwnerIdentity.RentPreparedScissorArray(count);
-            }
-            catch
-            {
-                recordingState.OwnerIdentity.ReturnPreparedViewportArray(indexedViewports);
-                throw;
-            }
-            sourceViewports.AsSpan(0, count).CopyTo(indexedViewports);
-            sourceScissors.AsSpan(0, count).CopyTo(indexedScissors);
-            ownsIndexedArrays = true;
+            viewports = recording.AppendViewports(sourceViewports.AsSpan(0, (int)count));
+            scissors = recording.AppendScissors(sourceScissors.AsSpan(0, (int)count));
         }
 
-        prepared = new VkPreparedMeshDraw(
-            sourceOpIndex,
-            source.Viewport,
-            source.Scissor,
-            indexedViewports,
-            indexedScissors,
-            viewportScissorCount,
-            context,
-            uniformSlot,
-            source.Renderer.MeshRenderer.Mesh?.Name ?? "<unnamed mesh>")
-        {
-            RecordingState = recordingState,
-            Target = target,
-            OwnsIndexedViewportArrays = ownsIndexedArrays,
-        };
+        prepared = new(sourceOpIndex, source.Viewport, source.Scissor, viewports, scissors, count, uniformSlot, recordingState);
         return true;
-    }
-
-    internal void Release()
-    {
-        VkMeshRenderer.ReturnPreparedMeshDrawStateBuffers(RecordingState);
-        if (!OwnsIndexedViewportArrays)
-            return;
-
-        if (IndexedViewports is not null)
-            OwnerIdentity.ReturnPreparedViewportArray(IndexedViewports);
-        if (IndexedScissors is not null)
-            OwnerIdentity.ReturnPreparedScissorArray(IndexedScissors);
     }
 }

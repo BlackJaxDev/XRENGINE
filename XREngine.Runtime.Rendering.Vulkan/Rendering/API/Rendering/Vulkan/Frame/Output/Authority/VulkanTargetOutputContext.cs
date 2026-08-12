@@ -8,7 +8,7 @@ namespace XREngine.Rendering.Vulkan;
 /// Output-owned native access required by explicit render targets. The target
 /// drivers receive this focused capability instead of a renderer backlink.
 /// </summary>
-internal sealed unsafe class VulkanTargetOutputContext
+internal sealed class VulkanTargetOutputContext
 {
     private readonly IVulkanTargetOutputHost _host;
 
@@ -87,11 +87,11 @@ internal sealed unsafe class VulkanTargetOutputContext
     internal Result SubmitToQueueTracked(Queue queue, ref SubmitInfo submitInfo, Fence fence, string caller)
         => _host.SubmitToQueueTracked(queue, ref submitInfo, fence, caller);
 
-    internal bool TryMapMemoryAllocation(VulkanMemoryAllocation allocation, ulong offset, ulong length, out void* mapped)
-        => _host.TryMapMemoryAllocation(allocation, offset, length, out mapped);
+    internal bool TryReadMappedMemory<TState>(VulkanMemoryAllocation allocation, ulong offset, ulong length, TState state, VulkanMappedMemoryReadCallback<TState> callback)
+        => _host.TryReadMappedMemory(allocation, offset, length, state, callback);
 
-    internal void UnmapMemoryAllocation(VulkanMemoryAllocation allocation)
-        => _host.UnmapMemoryAllocation(allocation);
+    internal bool TryWriteMappedMemory<TState>(VulkanMemoryAllocation allocation, ulong offset, ulong length, TState state, VulkanMappedMemoryWriteCallback<TState> callback)
+        => _host.TryWriteMappedMemory(allocation, offset, length, state, callback);
 
     internal void MarkDeviceLost(string reason, string operation, Result result)
         => _host.MarkDeviceLost(reason, operation, result);

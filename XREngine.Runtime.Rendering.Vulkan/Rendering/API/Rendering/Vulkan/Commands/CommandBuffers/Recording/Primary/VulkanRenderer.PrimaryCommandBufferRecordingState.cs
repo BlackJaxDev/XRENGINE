@@ -53,7 +53,8 @@ namespace XREngine.Rendering.Vulkan
         public VulkanPrimarySecondaryArtifactSequence ExecutedCommandChainSecondaryArtifactSequence;
         public Dictionary<VulkanMeshFrameDataRendererFamilyKey, int> MeshDrawSlotsByRendererFamily;
         public Dictionary<VulkanMeshFrameDataRendererFamilyKey, int> MeshFrameDataFamilyBases;
-        public HashSet<FrameOp> PipelineDeferredOps;
+        // Deferred pipeline readiness is keyed by sealed stream ordinal.
+        public HashSet<int> PipelineDeferredOperationIndices;
         public FrameOpContext InitialContext;
         public CommandChainKey[]? ScheduledCommandChainKeysByOpIndex;
         public Dictionary<CommandChainKey, CommandChain>? ScheduledCommandChainCache;
@@ -74,7 +75,6 @@ namespace XREngine.Rendering.Vulkan
         public Dictionary<int, int> SwapchainWritesByPipeline;
         public Dictionary<int, string> SwapchainWriterLabelByPipeline;
         public Dictionary<int, string> SwapchainWriterDetailByPipeline;
-        public Dictionary<int, FrameOp> SwapchainWriterOpByPipeline;
         public Dictionary<int, int> SwapchainWriterDynamicUiDrawCountByPipeline;
         public Dictionary<int, int> SwapchainWriterPassByPipeline;
         public Dictionary<int, int> SwapchainWriterOpIndexByPipeline;

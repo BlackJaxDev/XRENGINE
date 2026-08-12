@@ -2,9 +2,9 @@ using Silk.NET.Vulkan;
 
 namespace XREngine.Rendering.Vulkan;
 
-internal sealed unsafe partial class VulkanCommandRuntime
+internal sealed partial class VulkanCommandRuntime
 {
-    internal Result AllocateCommandBuffersWithLifetime(
+    internal unsafe Result AllocateCommandBuffersWithLifetime(
         ref CommandBufferAllocateInfo allocateInfo,
         CommandBuffer* commandBuffers,
         string owner)
@@ -33,7 +33,7 @@ internal sealed unsafe partial class VulkanCommandRuntime
         return result;
     }
 
-    internal Result AllocateCommandBufferWithLifetime(
+    internal unsafe Result AllocateCommandBufferWithLifetime(
         ref CommandBufferAllocateInfo allocateInfo,
         out CommandBuffer commandBuffer,
         string owner)
@@ -46,7 +46,7 @@ internal sealed unsafe partial class VulkanCommandRuntime
                 owner);
     }
 
-    internal void FreeCommandBuffersWithLifetime(
+    internal unsafe void FreeCommandBuffersWithLifetime(
         int frameSlot,
         CommandPool commandPool,
         uint commandBufferCount,
@@ -78,7 +78,7 @@ internal sealed unsafe partial class VulkanCommandRuntime
             owner,
             expectedGeneration);
 
-    internal void CopyImageToBufferTracked(
+    internal unsafe void CopyImageToBufferTracked(
         CommandBuffer commandBuffer,
         Image source,
         ImageLayout sourceLayout,
@@ -97,7 +97,26 @@ internal sealed unsafe partial class VulkanCommandRuntime
             regions);
     }
 
-    internal void CopyBufferToImageTracked(
+    internal void CopyImageToBufferTracked(
+        CommandBuffer commandBuffer,
+        Image source,
+        ImageLayout sourceLayout,
+        Silk.NET.Vulkan.Buffer destination,
+        uint regionCount,
+        ref BufferImageCopy region)
+    {
+        PrimaryCommandEncoder.Track(commandBuffer, ObjectType.Image, source.Handle);
+        PrimaryCommandEncoder.Track(commandBuffer, ObjectType.Buffer, destination.Handle);
+        Api.CmdCopyImageToBuffer(
+            commandBuffer,
+            source,
+            sourceLayout,
+            destination,
+            regionCount,
+            ref region);
+    }
+
+    internal unsafe void CopyBufferToImageTracked(
         CommandBuffer commandBuffer,
         Silk.NET.Vulkan.Buffer source,
         Image destination,
@@ -135,7 +154,7 @@ internal sealed unsafe partial class VulkanCommandRuntime
             ref region);
     }
 
-    internal void ResolveImageTracked(
+    internal unsafe void ResolveImageTracked(
         CommandBuffer commandBuffer,
         Image source,
         ImageLayout sourceLayout,
@@ -156,7 +175,7 @@ internal sealed unsafe partial class VulkanCommandRuntime
             regions);
     }
 
-    internal void BlitImageTracked(
+    internal unsafe void BlitImageTracked(
         CommandBuffer commandBuffer,
         Image source,
         ImageLayout sourceLayout,

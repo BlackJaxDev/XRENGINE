@@ -3,7 +3,7 @@ using Silk.NET.Vulkan;
 
 namespace XREngine.Rendering.Vulkan
 {
-    internal sealed unsafe partial class VulkanFrameLoop
+    internal sealed partial class VulkanFrameLoop
     {
         private VulkanTrackedCommandEncoder CreateRecoveryCommandEncoder()
             => new(_commandRuntime);
@@ -130,7 +130,7 @@ namespace XREngine.Rendering.Vulkan
             return true;
         }
 
-        private static bool RecordRejectedDesktopPresentationBlit(
+        private static unsafe bool RecordRejectedDesktopPresentationBlit(
             CommandBuffer commandBuffer,
             in VulkanPresentationSourceTuple source,
             in SwapchainRecordingTarget target,
@@ -281,7 +281,7 @@ namespace XREngine.Rendering.Vulkan
             return true;
         }
 
-        private void TransitionRejectedDesktopReplayTargetToPresent(
+        private unsafe void TransitionRejectedDesktopReplayTargetToPresent(
             CommandBuffer commandBuffer,
             in SwapchainRecordingTarget target)
         {
@@ -317,7 +317,7 @@ namespace XREngine.Rendering.Vulkan
                 &toPresent);
         }
 
-        private void RecordRejectedDesktopInitializationClear(
+        private unsafe void RecordRejectedDesktopInitializationClear(
             uint imageIndex,
             CommandBuffer commandBuffer,
             bool imageWasEverPresented)

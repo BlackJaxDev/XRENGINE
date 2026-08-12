@@ -13,7 +13,7 @@ public partial class XRMesh
     /// same on-disk layout as the cooked-mesh writer. Intended for runtime disk
     /// caches that mirror the cooking format.
     /// </summary>
-    internal static unsafe byte[] SerializeMeshletPayloadToBytes(MeshletPayload payload)
+    internal static byte[] SerializeMeshletPayloadToBytes(MeshletPayload payload)
     {
         ArgumentNullException.ThrowIfNull(payload);
 
@@ -22,11 +22,8 @@ public partial class XRMesh
             throw new InvalidOperationException($"MeshletPayload size out of range: {size}.");
 
         byte[] buffer = new byte[size];
-        fixed (byte* ptr = buffer)
-        {
-            var writer = new RuntimeCookedBinaryWriter(ptr, buffer.Length);
-            WriteMeshletPayload(writer, payload);
-        }
+        RuntimeCookedBinaryWriter writer = new(buffer);
+        WriteMeshletPayload(writer, payload);
         return buffer;
     }
 
@@ -35,18 +32,15 @@ public partial class XRMesh
     /// <see cref="SerializeMeshletPayloadToBytes"/>. Returns <c>null</c> when
     /// the input represents an absent payload.
     /// </summary>
-    internal static unsafe MeshletPayload? DeserializeMeshletPayloadFromBytes(byte[] buffer)
+    internal static MeshletPayload? DeserializeMeshletPayloadFromBytes(byte[] buffer)
     {
         ArgumentNullException.ThrowIfNull(buffer);
 
         if (buffer.Length == 0)
             return null;
 
-        fixed (byte* ptr = buffer)
-        {
-            var reader = new RuntimeCookedBinaryReader(ptr, buffer.Length);
-            return ReadMeshletPayload(reader);
-        }
+        RuntimeCookedBinaryReader reader = new(buffer);
+        return ReadMeshletPayload(reader);
     }
 
     internal static long CalculateMeshletPayloadSize(MeshletPayload? payload)

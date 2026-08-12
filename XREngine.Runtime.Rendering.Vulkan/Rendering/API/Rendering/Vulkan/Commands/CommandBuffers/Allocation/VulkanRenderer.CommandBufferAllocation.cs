@@ -13,7 +13,7 @@ using XREngine.Data.Rendering;
 
 namespace XREngine.Rendering.Vulkan
 {
-    internal sealed unsafe partial class VulkanCommandRuntime
+    internal sealed partial class VulkanCommandRuntime
     {
         private ConcurrentDictionary<ulong, byte> _invalidatedCommandBuffersPendingReset
             => _commandRuntime.CommandBuffers.InvalidatedBuffersPendingReset;

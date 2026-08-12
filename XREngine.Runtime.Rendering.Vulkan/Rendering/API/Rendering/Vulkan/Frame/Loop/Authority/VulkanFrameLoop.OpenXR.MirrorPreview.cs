@@ -13,7 +13,7 @@ using XREngine.Rendering.Vulkan.RenderGraph;
 
 namespace XREngine.Rendering.Vulkan;
 
-internal sealed unsafe partial class VulkanFrameLoop
+internal sealed partial class VulkanFrameLoop
 {
     internal bool TryRenderOpenXrEyeMirrorFrameBuffer(
         XRFrameBuffer targetFrameBuffer,
@@ -153,7 +153,7 @@ internal sealed unsafe partial class VulkanFrameLoop
         }
     }
 
-    internal bool TryRenderAndPublishOpenXrEyeMirrorFrameBuffers(
+    internal unsafe bool TryRenderAndPublishOpenXrEyeMirrorFrameBuffers(
         in OpenXrEyeMirrorRenderRequest firstEye,
         in OpenXrEyeMirrorRenderRequest secondEye,
         in OpenXrEyeMirrorPublishRequest firstPublish,
@@ -258,7 +258,7 @@ internal sealed unsafe partial class VulkanFrameLoop
         }
     }
 
-    internal bool TryRenderAndBlitTextureArrayLayersToOpenXrSwapchainImages(
+    internal unsafe bool TryRenderAndBlitTextureArrayLayersToOpenXrSwapchainImages(
         in OpenXrEyeMirrorRenderRequest renderRequest,
         XRRenderPipelineInstance? renderPipelineInstance,
         XRTexture2DArray? sourceTexture,
@@ -492,8 +492,6 @@ internal sealed unsafe partial class VulkanFrameLoop
 
                 FrameOpContext plannerContext = PrepareResourcePlannerForFrameOps(ops);
                 ResourcePlannerRuntimeState plannerState = CaptureResourcePlannerRuntimeState();
-                using (RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.Vulkan.RecordMirror.PlanAndSchedule.Sort"))
-                    ops = _framePlanner.FrameScheduler.SortFrameOpsCore(ops, plannerState.CompiledRenderGraph);
                 if (TryDescribeRecentResourceAllocationFailure(out string postPlanFailureReason))
                 {
                     Debug.VulkanWarningEvery(
@@ -531,21 +529,8 @@ internal sealed unsafe partial class VulkanFrameLoop
                     return false;
                 }
                 ulong plannerRevision = plannerState.ResourcePlannerRevision;
-                ulong frameOpsSignature;
-                using (RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.Vulkan.RecordMirror.PlanAndSchedule.Signature"))
-                {
-                    frameOpsSignature = VulkanFrameOperationSemantics.ComputeFrameOpsSignature(ops);
-                }
+                ulong frameOpsSignature = 0UL;
                 uint mirrorCommandChainImageIndex = recordImageIndex;
-
-                CommandChainSchedule? commandChainSchedule = TryBuildOpenXrEyeCommandChainSchedule(
-                    mirrorCommandChainImageIndex,
-                    request.OpenXrViewIndex,
-                    request.OpenXrImageIndex,
-                    default,
-                    ops,
-                    frameOpsSignature,
-                    plannerRevision);
 
                 FrameOpContext fallbackContext = ops.Length > 0
                     ? ops[0].Context
@@ -566,8 +551,17 @@ internal sealed unsafe partial class VulkanFrameLoop
                         planningSnapshot.RenderGraphPlan,
                         plannerState.FrameOpResourcePlannerSwitchingState),
                     openXrViewIndex: request.OpenXrViewIndex);
+                frameOpsSignature = framePlan.StaticOperationSignature;
                 FrameOperationSequence recordingOperations =
                     framePlan.GetNativeStaticOperationsForRecording();
+                CommandChainSchedule? commandChainSchedule = TryBuildOpenXrEyeCommandChainSchedule(
+                    mirrorCommandChainImageIndex,
+                    request.OpenXrViewIndex,
+                    request.OpenXrImageIndex,
+                    default,
+                    framePlan.StaticOperations,
+                    frameOpsSignature,
+                    plannerRevision);
                 ulong cacheKey = BuildOpenXrMirrorPrimaryCommandBufferCacheKey(
                     mirrorCommandChainImageIndex,
                     request);
@@ -578,13 +572,13 @@ internal sealed unsafe partial class VulkanFrameLoop
                         _commandRuntime.Pools.PrimaryGraphics,
                         $"OpenXR mirror primary eye={request.OpenXrViewIndex}");
                 owner.PrimaryCommandPlan.Build(
-                    recordingOperations,
+                    recordingOperations.Stream,
                     framePlan.StaticOperationSignature,
                     new VulkanPrimaryPlanTerminalContext(
                         PreserveSwapchainForOverlay: false,
                         TransitionSwapchainToPresent: false,
                         ReleaseExternalImageOwnership: false),
-                    framePlan);
+                    framePlan: framePlan);
                 VulkanStateTracker clearState =
                     CreateOpenXrPrewarmRenderStateTracker(request.Extent);
                 VulkanPreparedPrimaryCommandInput commandInput = new(
@@ -619,8 +613,7 @@ internal sealed unsafe partial class VulkanFrameLoop
                     FrameDataImageIndexOverride: recordImageIndex,
                     OpenXrTargetContext: null,
                     CommandChainSchedule: commandChainSchedule,
-                    ExcludeDesktopSwapchainBarriers: true,
-                    NativeOperationsOverride: ops);
+                    ExcludeDesktopSwapchainBarriers: true);
                 if (!_commandRuntime.TryRecordPreparedOpenXrMirror(
                         in commandInput,
                         CreateOpenXrMirrorFrameContext(in request),
@@ -685,14 +678,14 @@ internal sealed unsafe partial class VulkanFrameLoop
         uint openXrViewIndex,
         uint openXrImageIndex,
         Image openXrImage,
-        FrameOp[] ops,
+        FrameOperationStream staticOperations,
         ulong frameOpsSignature,
         ulong resourcePlanRevision)
     {
         CommandChainSchedule? schedule = _commandRuntime.TryBuildCommandChainSchedule(
             imageIndex: commandChainImageIndex,
-            staticOps: ops,
-            volatileOps: Array.Empty<FrameOp>(),
+            staticOps: staticOperations,
+            volatileOps: FrameOperationStream.Empty,
             frameOpsSignature: frameOpsSignature,
             volatileSignature: 0,
             resourcePlanRevision: resourcePlanRevision,

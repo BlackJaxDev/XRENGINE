@@ -10,9 +10,9 @@ namespace XREngine.Rendering.Vulkan;
 /// Owns native recording, submission, synchronization, and settlement for
 /// renderer-facing readback operations whose source handles are already frozen.
 /// </summary>
-internal sealed unsafe partial class VulkanCommandRuntime
+internal sealed partial class VulkanCommandRuntime
 {
-    internal bool TryReadBufferBytes(
+    internal unsafe bool TryReadBufferBytes(
         Buffer source,
         ulong sourceByteOffset,
         Span<byte> destination,
@@ -67,24 +67,22 @@ internal sealed unsafe partial class VulkanCommandRuntime
                     DstOffset = 0,
                     Size = byteCount,
                 };
-                CmdCopyBufferTracked(scope.CommandBuffer, source, stagingBuffer, 1, &copy);
+                CmdCopyBufferTracked(scope.CommandBuffer, source, stagingBuffer, 1, ref copy);
             }
 
-            if (!TryMapReadbackMemory(stagingBuffer, stagingMemory, 0, byteCount, out void* mappedPointer))
+            if (!ResourceRuntime.Buffers.TryCreateMappedSlice(
+                    ReadbackContext, stagingBuffer, stagingMemory, 0, byteCount, out VulkanMappedMemorySlice mappedSlice) ||
+                !ResourceRuntime.Buffers.TryAcquireRead(ReadbackContext, in mappedSlice, out VulkanMappedMemoryReadLease readLease))
             {
                 reason = "<map-failed>";
                 return false;
             }
 
-            try
+            using (readLease)
             {
-                new Span<byte>(mappedPointer, destination.Length).CopyTo(destination);
+                readLease.Bytes[..destination.Length].CopyTo(destination);
                 reason = "gpu";
                 return true;
-            }
-            finally
-            {
-                UnmapReadbackMemory(stagingBuffer, stagingMemory);
             }
         }
         finally
@@ -93,7 +91,7 @@ internal sealed unsafe partial class VulkanCommandRuntime
         }
     }
 
-    internal void BeginDepthReadbackAsync(
+    internal unsafe void BeginDepthReadbackAsync(
         in BlitImageInfo source,
         int x,
         int y,
@@ -314,7 +312,7 @@ internal sealed unsafe partial class VulkanCommandRuntime
         }
     }
 
-    private void RecordDepthPixelCopy(
+    private unsafe void RecordDepthPixelCopy(
         CommandBuffer commandBuffer,
         in BlitImageInfo source,
         int x,
@@ -374,7 +372,7 @@ internal sealed unsafe partial class VulkanCommandRuntime
             ImageLayout.TransferSrcOptimal,
             stagingBuffer,
             1,
-            &copy);
+            ref copy);
 
         ImageMemoryBarrier restoreBarrier = toTransferBarrier with
         {
@@ -452,7 +450,7 @@ internal sealed unsafe partial class VulkanCommandRuntime
 
             try
             {
-                callback?.Invoke(ReadDepthValue(readScope.Pointer, format));
+                callback?.Invoke(ReadDepthValue(readScope.Bytes, format));
             }
             finally
             {

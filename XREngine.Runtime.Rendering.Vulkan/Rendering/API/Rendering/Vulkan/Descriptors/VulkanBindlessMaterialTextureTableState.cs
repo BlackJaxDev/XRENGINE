@@ -11,7 +11,7 @@ internal sealed class VulkanBindlessMaterialTextureTableState
     internal readonly Dictionary<XRTexture, uint> SlotsByTexture =
         new(ReferenceTextureComparer.Instance);
     internal readonly Queue<uint> FreeSlots = new();
-    internal readonly List<uint> DirtySlots = [];
+    internal readonly VulkanBindlessDescriptorPublicationStream PublicationStream = new();
     internal MaterialTextureDescriptorSlot[] Slots = [];
     internal DescriptorSetLayout SetLayout;
     internal DescriptorPool Pool;

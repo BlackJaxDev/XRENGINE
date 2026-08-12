@@ -179,9 +179,6 @@ internal sealed class VulkanResourceGenerationTransactionService
             ActiveContext = source.ActiveContext,
             PreparationState = source.PreparationState,
             HasPreparationState = source.HasPreparationState,
-            PreparedFrameOpsSignature = source.PreparedFrameOpsSignature,
-            PreparedPlanRevision = source.PreparedPlanRevision,
-            HasPreparedPlan = source.HasPreparedPlan,
         };
         foreach ((VulkanFrameOpPlannerStateKey key, ResourcePlannerRuntimeState state) in source.States)
             clone.States[key] = state;

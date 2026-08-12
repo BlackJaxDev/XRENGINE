@@ -13,7 +13,7 @@ using XREngine.Rendering.Shadows;
 
 namespace XREngine.Rendering.Vulkan;
 
-internal sealed unsafe partial class VulkanCommandRuntime
+internal sealed partial class VulkanCommandRuntime
 {
     internal static bool TryGetCommandChainScheduleFrameSlot(
         CommandChainSchedule schedule,
@@ -36,17 +36,6 @@ internal sealed unsafe partial class VulkanCommandRuntime
 
     internal static void ValidatePrimaryCommandChainSchedule(
         CommandChainSchedule schedule,
-        FrameOp[] staticOps,
-        int dynamicOverlayOpCount,
-        IReadOnlyDictionary<CommandChainKey, CommandChain>? chains = null)
-        => ValidatePrimaryCommandChainSchedule(
-            schedule,
-            new FrameOperationSequence(staticOps),
-            dynamicOverlayOpCount,
-            chains);
-
-    internal static void ValidatePrimaryCommandChainSchedule(
-        CommandChainSchedule schedule,
         FrameOperationSequence staticOps,
         int dynamicOverlayOpCount,
         IReadOnlyDictionary<CommandChainKey, CommandChain>? chains = null)
@@ -59,12 +48,13 @@ internal sealed unsafe partial class VulkanCommandRuntime
         int currentGroupOpCount = 0;
         for (int opIndex = 0; opIndex < staticOps.Length; opIndex++)
         {
-            FrameOp op = staticOps[opIndex];
-            if (op is QueryOp queryOp)
+            ref readonly FrameOperationHeader header = ref staticOps.GetHeader(opIndex);
+            if (header.OpCode == EVulkanPrimaryPlanNodeKind.Query)
             {
-                if (queryOp.Operation == ERenderQueryOperation.Begin)
+                ERenderQueryOperation queryOperation = staticOps.Stream.GetQuery(opIndex).Operation;
+                if (queryOperation == ERenderQueryOperation.Begin)
                     queryBracketDepth++;
-                else if (queryOp.Operation == ERenderQueryOperation.End && queryBracketDepth > 0)
+                else if (queryOperation == ERenderQueryOperation.End && queryBracketDepth > 0)
                     queryBracketDepth--;
                 continue;
             }
@@ -72,11 +62,11 @@ internal sealed unsafe partial class VulkanCommandRuntime
             if (queryBracketDepth != 0)
                 continue;
 
-            if (!IsSchedulableCommandChainFrameOp(op, dynamicOverlay: false))
+            if (!IsSchedulableCommandChainFrameOp(staticOps.Stream, opIndex, dynamicOverlay: false))
                 continue;
 
-            int passIndex = op.PassIndex;
-            int targetIdentity = ResolveCommandChainTargetIdentity(op);
+            int passIndex = header.PassIndex;
+            int targetIdentity = header.TargetIdentity;
             if (currentGroupOpCount == 0)
             {
                 currentPassIndex = passIndex;

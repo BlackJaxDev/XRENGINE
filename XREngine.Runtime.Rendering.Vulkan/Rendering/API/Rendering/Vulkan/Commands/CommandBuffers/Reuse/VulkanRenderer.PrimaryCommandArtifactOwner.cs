@@ -12,8 +12,6 @@ internal sealed class PrimaryCommandArtifactOwner(
 {
             private int[] _recordedStaticSourceOrder = [];
             private int[] _recordedDynamicUiSourceOrder = [];
-            private FrameOp[] _orderedStaticReuseOperations = [];
-            private FrameOp[] _orderedDynamicUiReuseOperations = [];
 
             public CommandBuffer PrimaryCommandBuffer { get; } = primaryCommandBuffer;
             public CommandBuffer DynamicUiSecondaryCommandBuffer { get; set; } = dynamicUiSecondaryCommandBuffer;
@@ -74,80 +72,39 @@ internal sealed class PrimaryCommandArtifactOwner(
             {
                 CaptureRecordedOperationOrder(
                     framePlan.StaticOperations,
-                    ref _recordedStaticSourceOrder,
-                    ref _orderedStaticReuseOperations);
+                    ref _recordedStaticSourceOrder);
                 CaptureRecordedOperationOrder(
                     framePlan.DynamicOverlayOperations,
-                    ref _recordedDynamicUiSourceOrder,
-                    ref _orderedDynamicUiReuseOperations);
+                    ref _recordedDynamicUiSourceOrder);
             }
 
             public void ClearRecordedOperationOrder()
             {
                 _recordedStaticSourceOrder = [];
                 _recordedDynamicUiSourceOrder = [];
-                _orderedStaticReuseOperations = [];
-                _orderedDynamicUiReuseOperations = [];
             }
 
-            public bool TryProjectRecordedOperationOrder(
-                FrameOp[] staticOperations,
-                FrameOp[] dynamicUiOperations,
-                out FrameOp[] orderedStaticOperations,
-                out FrameOp[] orderedDynamicUiOperations)
+            public bool TryApplyRecordedOperationOrder(
+                FrameOperationSequence staticOperations,
+                FrameOperationSequence dynamicUiOperations)
             {
-                if (!TryProjectRecordedOperationOrder(
-                        staticOperations,
-                        _recordedStaticSourceOrder,
-                        _orderedStaticReuseOperations) ||
-                    !TryProjectRecordedOperationOrder(
-                        dynamicUiOperations,
-                        _recordedDynamicUiSourceOrder,
-                        _orderedDynamicUiReuseOperations))
-                {
-                    orderedStaticOperations = [];
-                    orderedDynamicUiOperations = [];
+                if (staticOperations.Length != _recordedStaticSourceOrder.Length ||
+                    dynamicUiOperations.Length != _recordedDynamicUiSourceOrder.Length)
                     return false;
-                }
 
-                orderedStaticOperations = _orderedStaticReuseOperations;
-                orderedDynamicUiOperations = _orderedDynamicUiReuseOperations;
+                staticOperations.Stream.Reorder(_recordedStaticSourceOrder);
+                dynamicUiOperations.Stream.Reorder(_recordedDynamicUiSourceOrder);
                 return true;
             }
 
             private static void CaptureRecordedOperationOrder(
                 FrameOperationStream stream,
-                ref int[] sourceOrder,
-                ref FrameOp[] orderedOperations)
+                ref int[] sourceOrder)
             {
                 if (sourceOrder.Length != stream.Count)
                     sourceOrder = new int[stream.Count];
-                if (orderedOperations.Length != stream.Count)
-                    orderedOperations = new FrameOp[stream.Count];
 
                 stream.CopySourceOrderTo(sourceOrder);
-            }
-
-            private static bool TryProjectRecordedOperationOrder(
-                FrameOp[] source,
-                int[] sourceOrder,
-                FrameOp[] destination)
-            {
-                if (source.Length != sourceOrder.Length ||
-                    destination.Length != sourceOrder.Length)
-                {
-                    return false;
-                }
-
-                for (int index = 0; index < sourceOrder.Length; index++)
-                {
-                    int sourceIndex = sourceOrder[index];
-                    if ((uint)sourceIndex >= (uint)source.Length)
-                        return false;
-                    destination[index] = source[sourceIndex];
-                }
-
-                return true;
             }
 }
 

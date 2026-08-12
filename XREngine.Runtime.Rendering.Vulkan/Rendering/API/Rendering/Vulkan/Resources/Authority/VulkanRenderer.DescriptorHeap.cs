@@ -288,7 +288,7 @@ internal sealed unsafe partial class VulkanDescriptorManager
         DeviceMemory memory = default;
         Buffer stagingBuffer = default;
         DeviceMemory stagingMemory = default;
-        void* mapped = null;
+        VulkanMappedMemorySlice mappedSlice = default;
         bool requiresCopy = false;
 
         try
@@ -299,21 +299,19 @@ internal sealed unsafe partial class VulkanDescriptorManager
                 MemoryPropertyFlags.DeviceLocalBit,
                 enableDeviceAddress: true);
 
-            if (!TryMapBufferMemory(buffer, memory, 0, size, out mapped))
+            if (!BackendContext.Resources.Buffers.TryCreateMappedSlice(BackendContext, buffer, memory, 0, size, out mappedSlice))
             {
                 requiresCopy = true;
                 (stagingBuffer, stagingMemory) = CreateDedicatedBufferRaw(
                     size,
                     BufferUsageFlags.TransferSrcBit,
                     MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit);
-                if (!TryMapBufferMemory(stagingBuffer, stagingMemory, 0, size, out mapped))
+                if (!BackendContext.Resources.Buffers.TryCreateMappedSlice(BackendContext, stagingBuffer, stagingMemory, 0, size, out mappedSlice))
                     throw new InvalidOperationException($"Failed to map {name} descriptor heap staging storage.");
             }
         }
         catch
         {
-            if (mapped is not null)
-                UnmapBufferMemory(requiresCopy ? stagingBuffer : buffer, requiresCopy ? stagingMemory : memory);
             if (stagingBuffer.Handle != 0)
                 DestroyBuffer(stagingBuffer, stagingMemory);
             if (buffer.Handle != 0)
@@ -324,7 +322,6 @@ internal sealed unsafe partial class VulkanDescriptorManager
         ulong address = GetBufferDeviceAddress(buffer);
         if (address == 0)
         {
-            UnmapBufferMemory(requiresCopy ? stagingBuffer : buffer, requiresCopy ? stagingMemory : memory);
             if (stagingBuffer.Handle != 0)
                 DestroyBuffer(stagingBuffer, stagingMemory);
             DestroyBuffer(buffer, memory);
@@ -341,7 +338,7 @@ internal sealed unsafe partial class VulkanDescriptorManager
         return new VulkanDescriptorHeapStorage(
             buffer,
             memory,
-            mapped,
+            mappedSlice,
             size,
             address,
             stagingBuffer,
@@ -379,43 +376,10 @@ internal sealed unsafe partial class VulkanDescriptorManager
             return;
         }
 
-        Buffer mappedBuffer = storage.RequiresCopy ? storage.StagingBuffer : storage.Buffer;
-        DeviceMemory mappedMemory = storage.RequiresCopy ? storage.StagingMemory : storage.Memory;
-        UnmapBufferMemory(mappedBuffer, mappedMemory);
         if (storage.StagingBuffer.Handle != 0)
             DestroyBuffer(storage.StagingBuffer, storage.StagingMemory);
         DestroyBuffer(storage.Buffer, storage.Memory);
         storage = default;
-    }
-
-    private static bool TryResolveDescriptorHeapWriteDestination(
-        VulkanDescriptorHeapStorage storage,
-        ulong offsetBytes,
-        ulong sizeBytes,
-        out HostAddressRangeEXTNative destination,
-        out string reason)
-    {
-        destination = default;
-        reason = string.Empty;
-
-        if (!storage.IsReady)
-        {
-            reason = "descriptor heap storage is not ready.";
-            return false;
-        }
-
-        if (sizeBytes == 0 || offsetBytes > storage.Size || sizeBytes > storage.Size - offsetBytes)
-        {
-            reason = $"descriptor heap write range is out of bounds (offset={offsetBytes}, size={sizeBytes}, capacity={storage.Size}).";
-            return false;
-        }
-
-        destination = new HostAddressRangeEXTNative
-        {
-            Address = (byte*)storage.Mapped + offsetBytes,
-            Size = checked((nuint)sizeBytes),
-        };
-        return true;
     }
 
     private static ulong ResolveDescriptorHeapAllocationSize(

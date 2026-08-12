@@ -5,7 +5,7 @@ using Silk.NET.Vulkan;
 
 namespace XREngine.Rendering.Vulkan;
 
-internal sealed unsafe partial class VulkanCommandRuntime
+internal sealed partial class VulkanCommandRuntime
 {
     // One chain cannot overlap. Two independent chains are the smallest batch
     // that can prove useful concurrency; the closeout cohorts own any
@@ -67,7 +67,7 @@ internal sealed unsafe partial class VulkanCommandRuntime
     }
 
     private static EVulkanCommandChainWorkerEligibility EvaluateCommandChainWorkerEncodability(
-        FrameOp[] ops,
+        FrameOperationSequence ops,
         CommandChain chain)
     {
         if (chain.SourceStartIndex < 0 ||
@@ -79,14 +79,15 @@ internal sealed unsafe partial class VulkanCommandRuntime
 
         for (int drawIndex = 0; drawIndex < chain.SourceCount; drawIndex++)
         {
-            FrameOp op = ops[chain.SourceStartIndex + drawIndex];
-            if (op is IndirectDrawOp or MeshTaskDispatchIndirectCountOp)
+            int operationIndex = chain.SourceStartIndex + drawIndex;
+            EVulkanPrimaryPlanNodeKind kind = ops.GetHeader(operationIndex).OpCode;
+            if (kind is EVulkanPrimaryPlanNodeKind.IndirectDraw or EVulkanPrimaryPlanNodeKind.MeshTaskDispatchIndirectCount)
                 return EVulkanCommandChainWorkerEligibility.PrimaryOwnedIndirectStream;
 
-            if (op is not MeshDrawOp meshDraw)
+            if (kind != EVulkanPrimaryPlanNodeKind.MeshDraw)
                 return EVulkanCommandChainWorkerEligibility.UnsupportedOperation;
 
-            if (meshDraw.Draw.Renderer is null)
+            if (ops.GetMeshDraw(operationIndex).Draw.Renderer is null)
                 return EVulkanCommandChainWorkerEligibility.ResourcePreparationFailed;
         }
 
@@ -134,7 +135,7 @@ internal sealed unsafe partial class VulkanCommandRuntime
             ref readonly VkPreparedMeshDraw draw =
                 ref batch.PreparedFrame.GetMeshDrawForOwnerValidation(
                     preparedStartIndex + drawIndex);
-            if (draw.OwnerIdentity is null)
+            if (batch.PreparedFrame.GetMeshDrawColdData(draw.RecordingState.ColdDataIndex).Owner is null)
                 return EVulkanCommandChainWorkerEligibility.ResourcePreparationFailed;
         }
 
@@ -224,13 +225,16 @@ internal sealed unsafe partial class VulkanCommandRuntime
         if (activeWorkerCount == 0)
             return default;
 
-        batch.ResetTiming();
+        batch.ResetWorkerState(workerCount);
         batch.DispatchTimestamp = dispatchStart;
-        for (int jobIndex = 0; jobIndex < batch.JobCount; jobIndex++)
+        int queuedEntryCount = 0;
+        for (int entryIndex = 0; entryIndex < batch.EntryCount; entryIndex++)
         {
-            if (batch.RecordJobWorkerIndices[jobIndex] >= 0)
-                batch.QueuedChains++;
+            ref VulkanCommandChainRecordingEntry entry = ref batch.Entries[entryIndex];
+            if (entry.NeedsRecording && entry.WorkerIndex >= 0)
+                queuedEntryCount++;
         }
+        batch.PublishQueueTelemetry(queuedEntryCount);
 
         _commandChainRecordingWorkersIdle.Reset();
         _commandChainRecordingWorkerCountdown.Reset(activeWorkerCount);
@@ -284,10 +288,7 @@ internal sealed unsafe partial class VulkanCommandRuntime
         if (timedOut)
         {
             RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanCommandChainWorkerMetrics(
-                queuedChains: batch.QueuedChains,
-                workersStarted: Volatile.Read(ref batch.WorkersStarted),
-                workersCompleted: Volatile.Read(ref batch.WorkersCompleted),
-                peakConcurrentWorkers: Volatile.Read(ref batch.PeakConcurrentWorkers),
+                queuedChains: batch.QueueDepth,
                 waitTimeouts: 1,
                 workerFailures: 1,
                 waitForWorkersTime: Stopwatch.GetElapsedTime(waitStart));
@@ -308,33 +309,21 @@ internal sealed unsafe partial class VulkanCommandRuntime
             throw new InvalidOperationException("A Vulkan command-chain worker failed to record a secondary command buffer.", batch.Error);
         }
 
-        long firstStart = Volatile.Read(ref batch.FirstWorkerStartTimestamp);
-        long lastCompletion = Volatile.Read(ref batch.LastWorkerCompletionTimestamp);
-        long workerRecordTicks = Volatile.Read(ref batch.WorkerRecordTimestampTotal);
-        TimeSpan activeSpan = firstStart == long.MaxValue || lastCompletion <= firstStart
-            ? TimeSpan.Zero
-            : Stopwatch.GetElapsedTime(firstStart, lastCompletion);
-        TimeSpan workerRecordTime = StopwatchTicksToTimeSpan(workerRecordTicks);
-        TimeSpan overlap = workerRecordTime > activeSpan
-            ? workerRecordTime - activeSpan
-            : TimeSpan.Zero;
-
-        return new CommandChainWorkerTiming(
-            batch.QueuedChains,
-            Volatile.Read(ref batch.WorkersStarted),
-            Volatile.Read(ref batch.WorkersCompleted),
-            Volatile.Read(ref batch.PeakConcurrentWorkers),
-            StopwatchTicksToTimeSpan(Volatile.Read(ref batch.MaximumQueueDelayTimestamp)),
-            workerRecordTime,
-            activeSpan,
-            overlap,
-            Stopwatch.GetElapsedTime(waitStart));
+        long mergeStart = Stopwatch.GetTimestamp();
+        batch.WorkerLocalStates.Merge(workerCount, out CommandChainWorkerTiming timing);
+        batch.LocalMergeElapsedTicks = Stopwatch.GetTimestamp() - mergeStart;
+        batch.LocalMergeBytes = workerCount * batch.WorkerLocalStateBlockStride;
+        RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanCommandChainWorkerLayoutTelemetry(
+            batch.QueueDepth,
+            batch.QueueBytes,
+            batch.QueueHighWaterDepth,
+            batch.QueueHighWaterBytes,
+            batch.LocalMergeBytes,
+            batch.LocalMergeElapsedTicks,
+            0,
+            0);
+        return timing with { QueuedChains = batch.QueueDepth, WaitForWorkersTime = Stopwatch.GetElapsedTime(waitStart) };
     }
-
-    private static TimeSpan StopwatchTicksToTimeSpan(long ticks)
-        => ticks <= 0
-            ? TimeSpan.Zero
-            : TimeSpan.FromSeconds((double)ticks / Stopwatch.Frequency);
 
     private CommandChainRecordingWorkerState[] EnsureCommandChainRecordingWorkers(int workerCount)
     {

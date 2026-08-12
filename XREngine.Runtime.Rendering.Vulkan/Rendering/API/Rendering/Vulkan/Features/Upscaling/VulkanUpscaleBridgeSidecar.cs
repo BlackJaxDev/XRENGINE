@@ -6,6 +6,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Threading;
 using XREngine.Data.Rendering;
@@ -1092,7 +1093,8 @@ internal sealed unsafe partial class VulkanUpscaleBridgeSidecar : IDisposable
             out streamlineComputeQueueIndex,
             out streamlineOpticalFlowQueueIndex);
 
-        float* queuePriorities = stackalloc float[(int)queueCount];
+        using var priorityMemory = GlobalMemory.Allocate(checked((int)queueCount * sizeof(float)));
+        float* queuePriorities = (float*)Unsafe.AsPointer(ref priorityMemory.GetPinnableReference());
         for (int queueIndex = 0; queueIndex < queueCount; queueIndex++)
             queuePriorities[queueIndex] = 1.0f;
 

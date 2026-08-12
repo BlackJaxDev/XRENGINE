@@ -63,6 +63,7 @@ namespace XREngine.Rendering.Commands
         public const int BuildBatchesStats = 13;
         public const int BuildBatchesSortScratch = 14;
         public const int BuildBatchesLodTransitions = 15;
+        public const int BuildBatchesDrawMetadata = 16;
 
         // Compute GPURenderMaterialScatter.comp bindings
         public const int MaterialScatterInputCommands = 0;

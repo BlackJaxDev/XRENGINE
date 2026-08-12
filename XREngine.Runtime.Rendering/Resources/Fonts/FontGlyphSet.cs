@@ -51,6 +51,7 @@ namespace XREngine.Rendering
         private const float DefaultUiMtsdfFontSize = 96.0f;
         private const float DefaultUiMtsdfPixelRange = 12.0f;
         private const int BitmapAtlasPadding = 8;
+        private const int FontCacheSchemaVersion = 2;
         private const float DefaultMsdfDistanceRangeMiddle = 0.5f;
         private const string FontDiagnosticsLogName = "font-diagnostics.log";
         private static readonly ConcurrentDictionary<string, byte> ForcedReloadAttemptedPaths = new(StringComparer.OrdinalIgnoreCase);
@@ -1971,6 +1972,7 @@ namespace XREngine.Rendering
             => string.Join(
                 "_",
                 $"mode-{importOptions.AtlasMode.ToString().ToLowerInvariant()}",
+                $"schema-{FontCacheSchemaVersion}",
                 $"bmp-{FormatProfileFloat(importOptions.BitmapFontDrawSize)}",
                 $"size-{FormatProfileFloat(importOptions.MsdfFontSize)}",
                 $"range-{FormatProfileFloat(importOptions.MsdfPixelRange)}",

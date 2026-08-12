@@ -12,7 +12,7 @@ using XREngine.Rendering.Resources;
 
 namespace XREngine.Rendering.Vulkan;
 
-internal sealed unsafe partial class VulkanFrameLoop
+internal sealed partial class VulkanFrameLoop
 {
     internal void PrewarmOpenXrEyeSwapchainResources(
         Format format,
@@ -79,8 +79,6 @@ internal sealed unsafe partial class VulkanFrameLoop
                     (uint)Math.Max(resourcePlannerStateIndex, 0),
                     "eye swapchain prewarm");
 
-                using (RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.Vulkan.PrewarmEye.Sort"))
-                    ops = _framePlanner.FrameScheduler.SortFrameOpsCore(ops, CompiledRenderGraph);
                 if (TryDescribeRecentResourceAllocationFailure(out string prePlanFailureReason))
                 {
                     Debug.VulkanWarningEvery(
@@ -198,8 +196,6 @@ internal sealed unsafe partial class VulkanFrameLoop
                     (uint)Math.Max(resourcePlannerStateIndex, 0),
                     "eye mirror prewarm");
 
-                using (RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.Vulkan.PrewarmEyeMirror.Sort"))
-                    ops = _framePlanner.FrameScheduler.SortFrameOpsCore(ops, CompiledRenderGraph);
                 if (TryDescribeRecentResourceAllocationFailure(out string prePlanFailureReason))
                 {
                     Debug.VulkanWarningEvery(
@@ -724,16 +720,13 @@ internal sealed unsafe partial class VulkanFrameLoop
         // draw-slot capacity destroys its old descriptors and uniform buffers; doing that midway
         // through this loop can retire resources captured by an earlier draw in the same command
         // buffer. Use the same count-then-reserve contract as normal Vulkan recording.
-        if (!_commandRuntime.TryRegisterFrameWideMeshFrameDataRequirements(
+        if (!_commandRuntime.TryRegisterAuthoringFrameWideMeshFrameDataRequirements(
                 ops,
-                Array.Empty<FrameOp>(),
                 unchecked((int)Math.Min(frameDataImageIndex, int.MaxValue)),
                 sealFrameManifest,
                 meshDrawSlotsByRenderer,
                 recordingScratch,
                 recordingScratch.OpenXrMeshFrameDataFamilyBases,
-                0UL,
-                0UL,
                 out _,
                 out string frameWideReason))
         {

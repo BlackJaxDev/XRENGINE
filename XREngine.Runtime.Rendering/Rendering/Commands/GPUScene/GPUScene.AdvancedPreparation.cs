@@ -9,18 +9,18 @@ public partial class GPUScene
     /// </summary>
     public bool TryGetAdvancedPreparationCommand(
         uint commandIndex,
-        out GPUIndirectRenderCommand command)
+        out DrawMetadata command)
     {
         if (commandIndex >= TotalCommandCount ||
-            _allLoadedCommandsBuffer is null ||
-            commandIndex >= _allLoadedCommandsBuffer.ElementCount)
+            _allLoadedDrawMetadataBuffer is null ||
+            commandIndex >= _allLoadedDrawMetadataBuffer.ElementCount)
         {
             command = default;
             return false;
         }
 
-        command = _allLoadedCommandsBuffer
-            .GetDataRawAtIndex<GPUIndirectRenderCommand>(commandIndex);
+        command = _allLoadedDrawMetadataBuffer
+            .GetDataRawAtIndex<DrawMetadata>(commandIndex);
         return true;
     }
 }

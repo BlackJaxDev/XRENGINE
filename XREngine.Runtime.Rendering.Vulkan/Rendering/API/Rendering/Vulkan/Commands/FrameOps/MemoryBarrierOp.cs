@@ -9,25 +9,6 @@ internal sealed record MemoryBarrierOp(
     public EMemoryBarrierMask Mask { get; private set; } = Mask;
     public override EVulkanPrimaryPlanNodeKind Kind => EVulkanPrimaryPlanNodeKind.MemoryBarrier;
 
-    internal override int RecordPrimary(
-        VulkanCommandRuntime commandRuntime,
-        scoped ref PrimaryCommandBufferRecordingState recordingState,
-        in VulkanPrimaryOperationRecordingInfo recordingInfo)
-    {
-        if (TryRecordSecondaryBucket(
-                commandRuntime,
-                ref recordingState,
-                in recordingInfo,
-                "MemoryBarrier",
-                out int lastOperationIndex))
-            return lastOperationIndex;
-
-        commandRuntime.CmdBeginLabel(recordingState.CommandBuffer, "MemoryBarrier");
-        commandRuntime.EmitMemoryBarrierMask(recordingState.CommandBuffer, Mask);
-        commandRuntime.CmdEndLabel(recordingState.CommandBuffer);
-        return recordingInfo.OperationIndex;
-    }
-
     internal static MemoryBarrierOp Rent(
         int passIndex,
         EMemoryBarrierMask mask,

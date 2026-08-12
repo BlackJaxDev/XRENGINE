@@ -11,9 +11,10 @@ internal sealed partial class VulkanCommandRuntime
         VulkanCommandChainRecordingBatch batch,
         int chainIndex)
     {
-        CommandChain chain = batch.Chains[chainIndex];
+        ref VulkanCommandChainRecordingEntry entry = ref batch.Entries[chainIndex];
+        CommandChain chain = batch.GetCommandChainColdData(entry.ColdDataIndex);
         ref readonly VulkanPreparedCommandChain preparedChain =
-            ref batch.PreparedFrame.GetCommandChain(chainIndex);
+            ref batch.PreparedFrame.GetCommandChain(entry.PreparedChainIndex);
         RenderPacket packet = batch.PreparedFrame.GetPacketForEncoding(preparedChain);
         if (!preparedChain.Matches(chain, packet))
         {
@@ -30,7 +31,7 @@ internal sealed partial class VulkanCommandRuntime
         VulkanRecordedCommandInheritance inheritance = preparedChain.Inheritance;
         using VulkanWorkerSecondaryCommandArena.RecordingLease arenaLease =
             VulkanWorkerSecondaryCommandArena.EnterRecording(chain.RecordedArtifact.WorkerArenaOwner);
-        CommandBuffer secondary = batch.SecondaryBuffers[chainIndex];
+        CommandBuffer secondary = entry.SecondaryBuffer;
         chain.RecordedArtifact.Invalidate(EVulkanRecordedCommandArtifactInvalidationReason.RecordingStarted);
         Result resetResult = encoder.Reset(secondary);
         RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanWorkerSecondaryCommandBufferReset();
@@ -49,7 +50,24 @@ internal sealed partial class VulkanCommandRuntime
         };
 
         uint colorAttachmentCount = inheritance.DynamicRenderingFormats.ColorAttachmentCount;
-        Format* colorAttachmentFormats = stackalloc Format[(int)Math.Max(colorAttachmentCount, 1u)];
+        int attachmentScratchCount = checked((int)Math.Max(colorAttachmentCount, 1u));
+        VulkanSynchronizationThreadState nativeScratch =
+            Synchronization._synchronizationThreadWorkspace.Current;
+        using VulkanNativeScratchReservation<Format> formatReservation =
+            nativeScratch.FormatScratch.Reserve(attachmentScratchCount);
+        using VulkanNativeScratchReservation<uint> locationReservation =
+            nativeScratch.AttachmentLocationScratch.Reserve(attachmentScratchCount);
+        using VulkanNativeScratchReservation<uint> inputIndexReservation =
+            nativeScratch.InputAttachmentIndexScratch.Reserve(attachmentScratchCount);
+        Span<Format> colorAttachmentFormatSpan = formatReservation.Span;
+        Span<uint> colorAttachmentLocationSpan = locationReservation.Span;
+        Span<uint> colorInputAttachmentIndexSpan = inputIndexReservation.Span;
+        fixed (Format* colorAttachmentFormats = colorAttachmentFormatSpan)
+        fixed (uint* colorAttachmentLocations = colorAttachmentLocationSpan)
+        fixed (uint* colorInputAttachmentIndices = colorInputAttachmentIndexSpan)
+        {
+        uint* depthInputAttachmentIndex = stackalloc uint[1];
+        uint* stencilInputAttachmentIndex = stackalloc uint[1];
         CommandBufferInheritanceRenderingInfo renderingInheritanceInfo = default;
         if (inheritance.DynamicRendering)
         {
@@ -68,10 +86,6 @@ internal sealed partial class VulkanCommandRuntime
 
             RenderingAttachmentLocationInfo localReadAttachmentLocations = default;
             RenderingInputAttachmentIndexInfo localReadInputIndices = default;
-            uint* colorAttachmentLocations = stackalloc uint[(int)Math.Max(colorAttachmentCount, 1u)];
-            uint* colorInputAttachmentIndices = stackalloc uint[(int)Math.Max(colorAttachmentCount, 1u)];
-            uint* depthInputAttachmentIndex = stackalloc uint[1];
-            uint* stencilInputAttachmentIndex = stackalloc uint[1];
             void* localReadPNext = renderingInheritanceInfo.PNext;
             DynamicRenderingLocalReadSignature localReadSignature = inheritance.LocalReadSignature;
             encoder.TryAppendDynamicRenderingLocalReadInheritance(
@@ -109,36 +123,37 @@ internal sealed partial class VulkanCommandRuntime
             throw new InvalidOperationException("Vulkan device is not operational for prepared worker recording.");
         if (Api.BeginCommandBuffer(secondary, ref beginInfo) != Result.Success)
             throw new InvalidOperationException("Failed to begin Vulkan worker mesh command-chain secondary command buffer.");
+        }
 
         ResetBindState(encoder, secondary);
         chain.RecordedArtifact.BeginRecording(CommandBuffers.ResolveRecordingGeneration(secondary));
         for (int drawIndex = 0; drawIndex < chain.SourceCount; drawIndex++)
         {
-            ref readonly VkPreparedMeshDraw preparedDraw = ref GetPreparedCommandChainDraw(batch, chainIndex, drawIndex);
+            ref readonly VkPreparedMeshDraw preparedDraw = ref GetPreparedCommandChainDraw(batch, entry.PreparedChainIndex, drawIndex);
             Viewport viewport = preparedDraw.Viewport;
             Rect2D scissor = preparedDraw.Scissor;
             uint viewportScissorCount = preparedDraw.ViewportScissorCount;
             if (viewportScissorCount > 1 &&
-                preparedDraw.IndexedViewports is { } indexedViewports &&
-                preparedDraw.IndexedScissors is { } indexedScissors &&
-                indexedViewports.Length >= (int)viewportScissorCount &&
-                indexedScissors.Length >= (int)viewportScissorCount)
+                preparedDraw.IndexedViewports.Count >= (int)viewportScissorCount &&
+                preparedDraw.IndexedScissors.Count >= (int)viewportScissorCount)
             {
-                encoder.SetViewportScissor(secondary, indexedViewports, indexedScissors, viewportScissorCount);
+                encoder.SetViewportScissor(secondary,
+                    batch.PreparedFrame.GetViewports(preparedDraw.IndexedViewports),
+                    batch.PreparedFrame.GetScissors(preparedDraw.IndexedScissors), viewportScissorCount);
             }
             else
             {
                 encoder.SetViewportScissor(secondary, viewport, scissor);
             }
 
-            if (!VkMeshRenderer.RecordPreparedMeshDrawState(secondary, preparedDraw.RecordingState, encoder))
+            if (!VkMeshRenderer.RecordPreparedMeshDrawState(secondary, preparedDraw.RecordingState, batch.PreparedFrame, encoder))
             {
                 chain.State = CommandChainState.NotReady;
                 chain.DirtyReason |= CommandChainDirtyReason.PipelineGeneration;
                 throw new InvalidOperationException(
                     $"A prewarmed Vulkan command-chain draw became unavailable during secondary recording. " +
-                    $"sourceIndex={preparedDraw.SourceOpIndex} mesh='{preparedDraw.DiagnosticMeshName}' " +
-                    $"uniformSlot={preparedDraw.UniformSlot} preparedStateGeneration={preparedDraw.RecordingState.FrameDataGeneration}.");
+                    $"sourceIndex={preparedDraw.SourceOpIndex} mesh='{batch.PreparedFrame.GetMeshDrawColdData(preparedDraw.RecordingState.ColdDataIndex).DiagnosticMeshName}' " +
+                    $"uniformSlot={preparedDraw.UniformSlot} preparedStateGeneration={batch.PreparedFrame.GetMeshDrawColdData(preparedDraw.RecordingState.ColdDataIndex).FrameDataGeneration}.");
             }
         }
 
@@ -149,43 +164,27 @@ internal sealed partial class VulkanCommandRuntime
         {
             ref readonly VkPreparedMeshDraw preparedDraw = ref GetPreparedCommandChainDraw(
                 batch,
-                chainIndex,
+                entry.PreparedChainIndex,
                 drawIndex);
             VulkanPreparedMeshDrawState recordingState = preparedDraw.RecordingState;
-            if (recordingState.UsesDescriptorHeap ||
-                recordingState.DescriptorBindingCount == 0)
+            if (recordingState.UsesDescriptorHeap || recordingState.DescriptorBindings.IsEmpty)
             {
                 continue;
             }
-            if (recordingState.DescriptorBindings is not { } descriptorBindings ||
-                descriptorBindings.Length < recordingState.DescriptorBindingCount)
+            if (!CaptureSecondaryDescriptorSetImageRequirements(
+                    secondary,
+                    batch.PreparedFrame,
+                    recordingState.DescriptorImagePayloads,
+                    recordingState.DescriptorImageRequirements,
+                    out string descriptorRequirementFailure))
             {
                 throw new VulkanPlanPreconditionException(
-                    "A prepared mesh secondary has an incomplete descriptor-binding snapshot.");
-            }
-
-            for (int bindingIndex = 0;
-                 bindingIndex < recordingState.DescriptorBindingCount;
-                 bindingIndex++)
-            {
-                DescriptorSet descriptorSet =
-                    descriptorBindings[bindingIndex].DescriptorSet;
-                if (!CaptureSecondaryDescriptorSetImageRequirements(
-                        secondary,
-                        descriptorSet,
-                        preparedDraw.Target,
-                        chain.Key.PassIndex,
-                        preparedDraw.Context.PassMetadata,
-                        out string descriptorRequirementFailure))
-                {
-                    throw new VulkanPlanPreconditionException(
-                        $"Prepared mesh secondary 0x{secondary.Handle:X} could not capture descriptor set 0x{descriptorSet.Handle:X} publication requirements: {descriptorRequirementFailure}.");
-                }
+                    $"Prepared mesh secondary 0x{secondary.Handle:X} could not publish prepared descriptor image requirements: {descriptorRequirementFailure}.");
             }
         }
 
         chain.RecordedUniformSlotSignature = ComputeUniformSlotSignature(
-            batch.UniformSlots, chain.SourceStartIndex - batch.StartIndex, chain.SourceCount);
+            batch.Draws, chain.SourceStartIndex - batch.StartIndex, chain.SourceCount);
         chain.State = CommandChainState.Recorded;
         chain.FrameDataRefreshTouchedDescriptors = false;
         chain.RecordedArtifact.StoreInheritance(inheritance);
@@ -200,22 +199,25 @@ internal sealed partial class VulkanCommandRuntime
 
     private static ref readonly VkPreparedMeshDraw GetPreparedCommandChainDraw(
         VulkanCommandChainRecordingBatch batch,
-        int chainIndex,
+        int preparedChainIndex,
         int drawIndex)
     {
-        ref readonly VulkanPreparedCommandChain preparedChain = ref batch.PreparedFrame.GetCommandChain(chainIndex);
+        ref readonly VulkanPreparedCommandChain preparedChain = ref batch.PreparedFrame.GetCommandChain(preparedChainIndex);
         if ((uint)drawIndex >= (uint)preparedChain.SourceCount)
             throw new ArgumentOutOfRangeException(nameof(drawIndex));
 
         return ref batch.PreparedFrame.GetMeshDraw(preparedChain.PreparedDrawStartIndex + drawIndex);
     }
 
-    private static ulong ComputeUniformSlotSignature(int[] uniformSlots, int startIndex, int count)
+    private static ulong ComputeUniformSlotSignature(
+        VulkanCommandChainRecordingDraw[] draws,
+        int startIndex,
+        int count)
     {
         FrameOpSignatureHasher hash = new();
         hash.Add(count);
         for (int index = 0; index < count; index++)
-            hash.Add(uniformSlots[startIndex + index]);
+            hash.Add(draws[startIndex + index].UniformSlot);
         return hash.ToHash();
     }
 

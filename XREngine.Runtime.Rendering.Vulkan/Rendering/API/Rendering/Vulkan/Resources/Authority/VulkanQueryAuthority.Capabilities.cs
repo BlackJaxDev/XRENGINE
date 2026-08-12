@@ -22,10 +22,13 @@ internal unsafe sealed partial class VulkanQueryAuthority
         QueueFlags graphicsQueueFlags = 0;
         if (graphicsFamily < familyCount)
         {
-            QueueFamilyProperties* families = stackalloc QueueFamilyProperties[checked((int)familyCount)];
-            context.Api.GetPhysicalDeviceQueueFamilyProperties(device.PhysicalDevice, ref familyCount, families);
-            timestampValidBits = families[graphicsFamily].TimestampValidBits;
-            graphicsQueueFlags = families[graphicsFamily].QueueFlags;
+            QueueFamilyProperties[] families = new QueueFamilyProperties[checked((int)familyCount)];
+            fixed (QueueFamilyProperties* familiesPtr = families)
+            {
+                context.Api.GetPhysicalDeviceQueueFamilyProperties(device.PhysicalDevice, ref familyCount, familiesPtr);
+                timestampValidBits = families[graphicsFamily].TimestampValidBits;
+                graphicsQueueFlags = families[graphicsFamily].QueueFlags;
+            }
         }
 
         bool transformFeedbackExtensionEnabled = device.EnabledDeviceExtensions.Contains("VK_EXT_transform_feedback");

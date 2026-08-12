@@ -13,7 +13,7 @@ layout(binding = 4) uniform sampler2D gHDRScene;
 layout(binding = 0, rgba8) writeonly uniform image2D gOutput;
 
 // Phase C: matrices live in TransformBuffer, indexed by TransformId.
-layout(std430, binding = 5) buffer CulledCommandsBuffer { float culled[]; };
+layout(std430, binding = 5) readonly buffer CulledDrawIdsBuffer { uint culledDrawIds[]; };
 
 // Transform buffer: mat4 (16 floats) per transform, indexed by TransformId.
 layout(std430, binding = 6) buffer TransformAtlasBuffer { float transforms[]; };

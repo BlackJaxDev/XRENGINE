@@ -1,4 +1,3 @@
-using Silk.NET.Vulkan;
 using XREngine.Rendering.DLSS;
 
 namespace XREngine.Rendering.Vulkan;
@@ -26,40 +25,4 @@ internal sealed record DlssFrameGenerationOp(
     : DlssFrameOp(PassIndex, Context)
 {
     public override EVulkanPrimaryPlanNodeKind Kind => EVulkanPrimaryPlanNodeKind.DlssFrameGeneration;
-    protected override string CommandLabel => "DLSS.FrameGenerationInputs";
-
-    protected override void RecordStreamlineCommand(
-        VulkanCommandRuntime commandRuntime,
-        CommandBuffer commandBuffer,
-        uint imageIndex)
-    {
-        VulkanStreamlineImage depth =
-            TransitionImageToGeneral(commandRuntime, commandBuffer, Depth);
-        VulkanStreamlineImage motion =
-            TransitionImageToGeneral(commandRuntime, commandBuffer, Motion);
-        VulkanStreamlineImage hudlessColor =
-            TransitionImageToGeneral(commandRuntime, commandBuffer, HudlessColor);
-        if (!commandRuntime.TryPrepareStreamlineUiImage(
-                commandBuffer,
-                UiColorAndAlpha,
-                out VulkanStreamlineImage uiColorAndAlpha))
-        {
-            throw new InvalidOperationException(
-                $"DLSS frame generation requires a frozen UI color/alpha image for swapchain image {imageIndex}.");
-        }
-
-        VulkanUpscaleBridgeDispatchParameters parameters = Parameters;
-        if (!NvidiaDlssManager.Native.TryRecordNativeVulkanFrameGeneration(
-                Session,
-                commandBuffer,
-                depth,
-                motion,
-                hudlessColor,
-                uiColorAndAlpha,
-                in parameters,
-                out string failureReason))
-        {
-            ThrowRecordingFailure("frame generation", failureReason);
-        }
-    }
 }

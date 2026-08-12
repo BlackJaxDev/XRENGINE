@@ -17,7 +17,7 @@ using Buffer = Silk.NET.Vulkan.Buffer;
 namespace XREngine.Rendering.Vulkan;
 
 /// <summary>Owns mutable Vulkan fixed-function state used while recording commands.</summary>
-internal unsafe sealed class VulkanStateTracker
+internal sealed class VulkanStateTracker
 {
         private Extent2D _swapchainExtent;
         private Extent2D _currentTargetExtent;
@@ -598,7 +598,7 @@ internal unsafe sealed class VulkanStateTracker
                left.WriteMask == right.WriteMask &&
                left.Reference == right.Reference;
 
-        public void WriteClearValues(ClearValue* destination, uint attachmentCount)
+        public unsafe void WriteClearValues(ClearValue* destination, uint attachmentCount)
         {
             if (attachmentCount == 0)
                 return;

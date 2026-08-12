@@ -5,7 +5,7 @@ using Buffer = Silk.NET.Vulkan.Buffer;
 namespace XREngine.Rendering.Vulkan;
 
 /// <summary>Frame-operation translations that capture immutable context at their authority boundary.</summary>
-internal sealed unsafe partial class VulkanFrameLoop
+internal sealed partial class VulkanFrameLoop
 {
     internal string GetMeshletDispatchUnsupportedReason()
         => !_deviceContext.Capabilities.Supports(EVulkanDeviceCapability.MeshShader)

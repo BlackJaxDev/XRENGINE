@@ -8,7 +8,7 @@ namespace XREngine.Rendering.Vulkan;
 /// Resolves legacy renderer-facing framebuffer and texture inputs into frozen
 /// native blit descriptions without retaining renderer or output authority.
 /// </summary>
-internal sealed unsafe partial class VulkanCommandRuntime
+internal sealed partial class VulkanCommandRuntime
 {
     internal bool TryResolveLegacyBlitImage(
         XRFrameBuffer? frameBuffer,

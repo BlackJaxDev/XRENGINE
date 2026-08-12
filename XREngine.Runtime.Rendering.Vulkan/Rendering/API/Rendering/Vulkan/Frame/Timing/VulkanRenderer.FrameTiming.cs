@@ -7,11 +7,11 @@ using XREngine.Rendering.RenderGraph;
 
 namespace XREngine.Rendering.Vulkan;
 
-internal sealed unsafe partial class VulkanFrameLoop
+internal sealed partial class VulkanFrameLoop
 {
     private const uint FrameTimingQueryCount = 2;
 
-    internal void CreateFrameTimingResources()
+    internal unsafe void CreateFrameTimingResources()
     {
         DestroyFrameTimingResources();
 
@@ -60,7 +60,7 @@ internal sealed unsafe partial class VulkanFrameLoop
         EnsureVulkanGpuProfilerSlotCapacity(slotCount);
     }
 
-    private void EnsureFrameTimingQueryPoolCapacity(int slotCount)
+    private unsafe void EnsureFrameTimingQueryPoolCapacity(int slotCount)
     {
         if (!_telemetry._frameTimingGpuEnabled ||
             _telemetry._frameTimingQueryPools is null ||
@@ -153,7 +153,7 @@ internal sealed unsafe partial class VulkanFrameLoop
         _deviceContext.Api.CmdWriteTimestamp(commandBuffer, PipelineStageFlags.BottomOfPipeBit, queryPool, 1);
     }
 
-    private void SampleFrameTimingQueries(int frameSlot)
+    private unsafe void SampleFrameTimingQueries(int frameSlot)
     {
         SampleVulkanGpuProfilerQueries(frameSlot);
 
@@ -205,7 +205,7 @@ internal sealed unsafe partial class VulkanFrameLoop
         MarkVulkanGpuProfilerSubmitted(frameSlot);
     }
 
-    private void CreateVulkanGpuProfilerResources()
+    private unsafe void CreateVulkanGpuProfilerResources()
     {
         DestroyVulkanGpuProfilerResources();
 
@@ -244,7 +244,7 @@ internal sealed unsafe partial class VulkanFrameLoop
         _telemetry._vulkanGpuProfilerEnabled = true;
     }
 
-    private void EnsureVulkanGpuProfilerSlotCapacity(int slotCount)
+    private unsafe void EnsureVulkanGpuProfilerSlotCapacity(int slotCount)
     {
         if (!_telemetry._vulkanGpuProfilerEnabled ||
             _telemetry._vulkanGpuProfilerQueryPools is null ||
@@ -350,7 +350,7 @@ internal sealed unsafe partial class VulkanFrameLoop
         _telemetry._vulkanGpuProfilerQueryReady[frameSlot] = _telemetry._vulkanGpuProfilerPendingScopes[frameSlot].Count > 0;
     }
 
-    internal void SampleVulkanGpuProfilerQueries(int frameSlot)
+    internal unsafe void SampleVulkanGpuProfilerQueries(int frameSlot)
     {
         if (!_telemetry._vulkanGpuProfilerEnabled ||
             _telemetry._vulkanGpuProfilerQueryPools is null ||

@@ -41,7 +41,6 @@ namespace XREngine.Rendering
         private const string SceneDatabaseDrawMetadataCountUniform = "XRE_DrawMetadataCount";
         private const string SceneDatabaseTransformAddressUniform = "XRE_TransformBufferAddress";
         private const string SceneDatabaseTransformFloatCountUniform = "XRE_TransformFloatCount";
-        private const int IndirectCommandFloatCount = GPUScene.CommandFloatCount;
         private const uint IndirectTextGlyphOffsetSsboBinding = 3;
         private const uint MeshletMeshDataSsboBinding = 3;
         private const uint MeshletDescriptorSsboBinding = 5;
@@ -1143,26 +1142,14 @@ namespace XREngine.Rendering
                     mappedHere = true;
                 }
 
-                VoidPtr mappedPtr = indirectDrawBuffer
-                    .GetMappedAddresses()
-                    .FirstOrDefault(ptr => ptr.IsValid);
-
-                if (!mappedPtr.IsValid)
-                {
-                    sb.Append(" MAPPING_FAILED");
-                    Debug.Meshes(sb.ToString());
-                    return;
-                }
-
                 uint stride = indirectDrawBuffer.ElementSize;
                 if (stride == 0)
                     stride = (uint)Marshal.SizeOf<DrawElementsIndirectCommand>();
 
                 int sampled = 0;
                 int nonZeroCount = 0;
-                unsafe
+                if (!indirectDrawBuffer.TryReadMapped(bytes =>
                 {
-                    byte* basePtr = (byte*)mappedPtr.Pointer;
                     foreach (var batch in activeBatches)
                     {
                         if (sampled >= 12 || batch.Count == 0)
@@ -1174,12 +1161,18 @@ namespace XREngine.Rendering
                             if (idx >= indirectDrawBuffer.ElementCount)
                                 break;
 
-                            var cmd = Unsafe.ReadUnaligned<DrawElementsIndirectCommand>(basePtr + (int)(idx * stride));
+                            var cmd = MemoryMarshal.Read<DrawElementsIndirectCommand>(bytes[checked((int)(idx * stride))..]);
                             sb.Append($" |[{idx}] cnt={cmd.Count} inst={cmd.InstanceCount} 1st={cmd.FirstIndex} bVtx={cmd.BaseVertex} bInst={cmd.BaseInstance} mat={batch.MaterialID}");
                             if (cmd.Count > 0 && cmd.InstanceCount > 0)
                                 nonZeroCount++;
                         }
                     }
+                    return true;
+                }))
+                {
+                    sb.Append(" MAPPING_FAILED");
+                    Debug.Meshes(sb.ToString());
+                    return;
                 }
                 sb.Append($" nonZero={nonZeroCount}/{sampled}");
             }
@@ -1237,11 +1230,7 @@ namespace XREngine.Rendering
                     mappedCulledCountHere = true;
                 }
 
-                VoidPtr indirectPtr = indirectDrawBuffer
-                    .GetMappedAddresses()
-                    .FirstOrDefault(ptr => ptr.IsValid);
-
-                if (!indirectPtr.IsValid)
+                if (!indirectDrawBuffer.IsMapped)
                 {
                     Debug.MeshesWarning("Failed to map indirect draw buffer for argument dump.");
                     return;
@@ -1250,33 +1239,21 @@ namespace XREngine.Rendering
                 uint gpuDrawCount = 0;
                 if (drawCountBuffer is not null)
                 {
-                    VoidPtr countPtr = drawCountBuffer
-                        .GetMappedAddresses()
-                        .FirstOrDefault(ptr => ptr.IsValid);
-
-                    if (countPtr.IsValid)
+                    drawCountBuffer.TryReadMapped(ref gpuDrawCount, static (ReadOnlySpan<byte> bytes, ref uint value) =>
                     {
-                        unsafe
-                        {
-                            gpuDrawCount = Unsafe.ReadUnaligned<uint>(countPtr.Pointer);
-                        }
-                    }
+                        value = MemoryMarshal.Read<uint>(bytes);
+                        return true;
+                    });
                 }
 
                 uint culledDrawCount = 0;
                 if (culledCountBuffer is not null)
                 {
-                    VoidPtr culledPtr = culledCountBuffer
-                        .GetMappedAddresses()
-                        .FirstOrDefault(ptr => ptr.IsValid);
-
-                    if (culledPtr.IsValid)
+                    culledCountBuffer.TryReadMapped(ref culledDrawCount, static (ReadOnlySpan<byte> bytes, ref uint value) =>
                     {
-                        unsafe
-                        {
-                            culledDrawCount = Unsafe.ReadUnaligned<uint>(culledPtr.Pointer);
-                        }
-                    }
+                        value = MemoryMarshal.Read<uint>(bytes);
+                        return true;
+                    });
                 }
 
                 uint fallbackCount = Math.Min(visibleCount, indirectDrawBuffer.ElementCount);
@@ -1297,15 +1274,15 @@ namespace XREngine.Rendering
                     if (stride == 0)
                         stride = (uint)Marshal.SizeOf<DrawElementsIndirectCommand>();
 
-                    unsafe
+                    indirectDrawBuffer.TryReadMapped(bytes =>
                     {
-                        byte* basePtr = (byte*)indirectPtr.Pointer;
                         for (uint i = 0; i < sampleCount; ++i)
                         {
-                            var cmd = Unsafe.ReadUnaligned<DrawElementsIndirectCommand>(basePtr + (int)(i * stride));
+                            var cmd = MemoryMarshal.Read<DrawElementsIndirectCommand>(bytes[checked((int)(i * stride))..]);
                             sb.Append($" |[{i}] count={cmd.Count} firstIndex={cmd.FirstIndex} baseVertex={cmd.BaseVertex} instances={cmd.InstanceCount}");
                         }
-                    }
+                        return true;
+                    });
                 }
 
                 GpuDebug(sb.ToString());
@@ -1324,32 +1301,17 @@ namespace XREngine.Rendering
                             mappedCulledCommandsHere = true;
                         }
 
-                        VoidPtr culledPtr = culledCommandBuffer
-                            .GetMappedAddresses()
-                            .FirstOrDefault(ptr => ptr.IsValid);
-
-                        if (culledPtr.IsValid)
+                        if (culledCommandBuffer.TryReadMapped(bytes =>
                         {
-                            uint culledStride = culledCommandBuffer.ElementSize;
-                            if (culledStride == 0)
-                                culledStride = (uint)Marshal.SizeOf<GPUIndirectRenderCommand>();
-
-                            uint inspectCount = Math.Min(visibleCount, 3u);
-                            unsafe
-                            {
-                                byte* culledBase = (byte*)culledPtr.Pointer;
+                                uint inspectCount = Math.Min(visibleCount, 3u);
                                 for (uint i = 0; i < inspectCount; ++i)
                                 {
-                                    var culledCmd = Unsafe.ReadUnaligned<GPUIndirectRenderCommand>(culledBase + (int)(i * culledStride));
-                                    GpuDebug("[GPUIndirect] culled[{0}] mesh={1} submesh={2} material={3} instances={4} pass={5}",
-                                        i,
-                                        culledCmd.MeshID,
-                                        culledCmd.SubmeshID,
-                                        culledCmd.MaterialID,
-                                        culledCmd.InstanceCount,
-                                        culledCmd.RenderPass);
-                                }
+                                    uint drawId = MemoryMarshal.Read<uint>(bytes[checked((int)(i * sizeof(uint)))..]);
+                                    GpuDebug("[GPUIndirect] culled[{0}] draw={1}", i, drawId);
                             }
+                            return true;
+                        }))
+                        {
                         }
                     }
                     catch (Exception ex)
@@ -1405,29 +1367,23 @@ namespace XREngine.Rendering
                     mappedHere = true;
                 }
 
-                VoidPtr ptr = culledBuffer
-                    .GetMappedAddresses()
-                    .FirstOrDefault(p => p.IsValid);
-
-                if (!ptr.IsValid)
+                if (!culledBuffer.IsMapped)
                 {
                     Warn(LogCategory.Culling, "Failed to map culled buffer for inspection.");
                     return;
                 }
 
-                uint stride = culledBuffer.ElementSize;
-                if (stride == 0)
-                    stride = GPUScene.CommandFloatCount * sizeof(float);
-
                 uint samples = Math.Min(visibleCount, 3u);
-                unsafe
+                culledBuffer.TryReadMapped(bytes =>
                 {
-                    byte* basePtr = (byte*)ptr.Pointer;
                     for (uint i = 0; i < samples; ++i)
                     {
-                        var cmd = Unsafe.ReadUnaligned<GPUIndirectRenderCommand>(basePtr + (int)(i * stride));
+                        uint drawId = MemoryMarshal.Read<uint>(bytes[checked((int)(i * sizeof(uint)))..]);
+                        if (drawId >= scene.DrawMetadataBuffer.ElementCount)
+                            continue;
+                        DrawMetadata cmd = scene.DrawMetadataBuffer.GetDataRawAtIndex<DrawMetadata>(drawId);
                         var sb = new StringBuilder();
-                        sb.Append($"visible[{i}] mesh={cmd.MeshID} submesh={cmd.SubmeshID & 0xFFFF} material={cmd.MaterialID} instances={cmd.InstanceCount} pass={cmd.RenderPass}");
+                        sb.Append($"visible[{i}] draw={drawId} mesh={cmd.MeshID} submesh={cmd.SubmeshID & 0xFFFF} material={cmd.MaterialID} instances={cmd.InstanceCount} pass={cmd.RenderPass}");
                         if (scene.TryGetTransform(cmd.TransformID, out Matrix4x4 transform))
                         {
                             Vector3 translation = transform.Translation;
@@ -1448,7 +1404,8 @@ namespace XREngine.Rendering
 
                         Log(LogCategory.Culling, LogLevel.Debug, sb.ToString());
                     }
-                }
+                    return true;
+                });
             }
             catch (Exception ex)
             {
@@ -1481,24 +1438,12 @@ namespace XREngine.Rendering
                     mappedHere = true;
                 }
 
-                VoidPtr ptr = culledBuffer
-                    .GetMappedAddresses()
-                    .FirstOrDefault(p => p.IsValid);
-
-                if (!ptr.IsValid)
-                    return false;
-
-                uint stride = culledBuffer.ElementSize;
-                if (stride == 0)
-                    stride = GPUScene.CommandFloatCount * sizeof(float);
-
-                unsafe
+                return culledBuffer.TryReadMapped(ref worldMatrix, (ReadOnlySpan<byte> bytes, ref Matrix4x4 destination) =>
                 {
-                    byte* basePtr = (byte*)ptr.Pointer;
-                    byte* commandPtr = basePtr + (commandIndex * stride);
-                    var command = Unsafe.ReadUnaligned<GPUIndirectRenderCommand>(commandPtr);
-                    return scene.TryGetTransform(command.TransformID, out worldMatrix);
-                }
+                    uint drawId = MemoryMarshal.Read<uint>(bytes[checked((int)(commandIndex * sizeof(uint)))..]);
+                    return drawId < scene.DrawMetadataBuffer.ElementCount &&
+                        scene.TryGetTransform(scene.DrawMetadataBuffer.GetDataRawAtIndex<DrawMetadata>(drawId).TransformID, out destination);
+                });
             }
             catch (Exception ex)
             {
@@ -2065,7 +2010,10 @@ namespace XREngine.Rendering
 
             for (uint i = 0; i < totalCommands && written < maxWritable; ++i)
             {
-                var gpuCommand = commandsBuffer.GetDataRawAtIndex<GPUIndirectRenderCommand>(i);
+                uint drawId = commandsBuffer.GetDataRawAtIndex<uint>(i);
+                if (drawId >= scene.DrawMetadataBuffer.ElementCount)
+                    continue;
+                DrawMetadata gpuCommand = scene.DrawMetadataBuffer.GetDataRawAtIndex<DrawMetadata>(drawId);
                 string? skipReason = null;
 
                 if (gpuCommand.MeshID == 0)
@@ -2112,7 +2060,7 @@ namespace XREngine.Rendering
                     FirstIndex = meshEntry.FirstIndex,
                     BaseVertex = (int)meshEntry.FirstVertex,
                     // Match GPURenderIndirect.comp: baseInstance encodes DrawID, not the compacted visible index.
-                    BaseInstance = gpuCommand.Reserved1 & IndirectBaseInstanceCommandIndexMask
+                    BaseInstance = drawId & IndirectBaseInstanceCommandIndexMask
                 };
 
                 indirectDrawBuffer.SetDataRawAtIndex(written, drawCmd);
@@ -3660,8 +3608,6 @@ namespace XREngine.Rendering
             sb.AppendLine();
             if (stereoMultiview)
                 sb.AppendLine("layout(num_views = 2) in;");
-            sb.AppendLine($"// GPU indirect: per-draw command data (float[{IndirectCommandFloatCount}])");
-            sb.AppendLine($"layout(std430, binding = {indirectCommandBinding}) readonly buffer CulledCommandsBuffer {{ float culled[]; }};");
             if (useDeviceAddressSceneDatabase)
             {
                 sb.AppendLine("uint64_t XRE_PackDeviceAddress(uvec2 address) { return uint64_t(address.x) | (uint64_t(address.y) << 32); }");
@@ -3678,11 +3624,9 @@ namespace XREngine.Rendering
                 AppendDrawMetadataBufferReferenceGlsl(sb);
             else
                 AppendDrawMetadataGlsl(sb);
-            sb.AppendLine($"const int COMMAND_FLOATS = {IndirectCommandFloatCount};");
             sb.AppendLine("const int INSTANCE_MATRIX_FLOATS = 16;");
             if (motionVectorPass)
                 sb.AppendLine("const int XRE_TRANSFORM_FLOATS = 16;");
-            sb.AppendLine($"const uint XRE_LEGACY_BASEINSTANCE_FLAG = 0x{IndirectLegacyBaseInstanceFlag:X8}u;");
             sb.AppendLine($"const uint XRE_PREVIOUS_LOD_BASEINSTANCE_FLAG = 0x{IndirectPreviousLodBaseInstanceFlag:X8}u;");
             sb.AppendLine($"const uint XRE_BASEINSTANCE_COMMAND_INDEX_MASK = 0x{IndirectBaseInstanceCommandIndexMask:X8}u;");
             sb.AppendLine();
@@ -3771,14 +3715,6 @@ namespace XREngine.Rendering
             sb.AppendLine("uniform int UseInstanceTransformBuffer;");
             sb.AppendLine();
 
-            sb.AppendLine("uint LoadDrawIdFromCommand(uint commandIndex)");
-            sb.AppendLine("{");
-            sb.AppendLine("    int base = int(commandIndex) * COMMAND_FLOATS;");
-            sb.AppendLine("    if (base + 19 < culled.length())");
-            sb.AppendLine("        return floatBitsToUint(culled[base + 19]);");
-            sb.AppendLine("    return commandIndex;");
-            sb.AppendLine("}");
-            sb.AppendLine();
             sb.AppendLine("uint LoadTransformId(uint drawID)");
             sb.AppendLine("{");
             sb.AppendLine("    return XRE_LoadDrawMetadata(drawID).TransformID;");
@@ -3819,9 +3755,6 @@ namespace XREngine.Rendering
             sb.AppendLine("uint ResolveCommandIndex(uint rawBaseInstance, uint instanceLinearIndex)");
             sb.AppendLine("{");
             sb.AppendLine("    uint baseIndex = rawBaseInstance & XRE_BASEINSTANCE_COMMAND_INDEX_MASK;");
-            sb.AppendLine("    bool useLegacyBaseInstance = (rawBaseInstance & XRE_LEGACY_BASEINSTANCE_FLAG) != 0u;");
-            sb.AppendLine("    if (useLegacyBaseInstance)");
-            sb.AppendLine("        return LoadDrawIdFromCommand(baseIndex);");
             sb.AppendLine("    return baseIndex;");
             sb.AppendLine("}");
             sb.AppendLine();
@@ -3960,12 +3893,9 @@ namespace XREngine.Rendering
             if (includeRotations)
                 sb.AppendLine("layout(std430, binding = 2) buffer GlyphRotationsBuffer { float GlyphRotations[]; };");
             sb.AppendLine($"layout(std430, binding = {IndirectTextGlyphOffsetSsboBinding}) readonly buffer GlyphOffsetsBuffer {{ uint GlyphOffsets[]; }};");
-            sb.AppendLine($"layout(std430, binding = {IndirectCommandSsboBinding}) readonly buffer CulledCommandsBuffer {{ float culled[]; }};");
             sb.AppendLine($"layout(std430, binding = {InstanceTransformSsboBinding}) readonly buffer TransformBuffer {{ float instanceWorld[]; }};");
             AppendDrawMetadataGlsl(sb);
-            sb.AppendLine($"const int COMMAND_FLOATS = {IndirectCommandFloatCount};");
             sb.AppendLine("const int INSTANCE_MATRIX_FLOATS = 16;");
-            sb.AppendLine($"const uint XRE_LEGACY_BASEINSTANCE_FLAG = 0x{IndirectLegacyBaseInstanceFlag:X8}u;");
             sb.AppendLine($"const uint XRE_BASEINSTANCE_COMMAND_INDEX_MASK = 0x{IndirectBaseInstanceCommandIndexMask:X8}u;");
             sb.AppendLine();
 
@@ -3987,14 +3917,6 @@ namespace XREngine.Rendering
             sb.AppendLine($"uniform bool {EEngineUniform.VRMode};");
             sb.AppendLine();
 
-            sb.AppendLine("uint LoadDrawIdFromCommand(uint commandIndex)");
-            sb.AppendLine("{");
-            sb.AppendLine("    int base = int(commandIndex) * COMMAND_FLOATS;");
-            sb.AppendLine("    if (base + 19 < culled.length())");
-            sb.AppendLine("        return floatBitsToUint(culled[base + 19]);");
-            sb.AppendLine("    return commandIndex;");
-            sb.AppendLine("}");
-            sb.AppendLine();
             sb.AppendLine("uint LoadTransformId(uint drawID)");
             sb.AppendLine("{");
             sb.AppendLine("    if (drawID < uint(Draws.length()))");
@@ -4017,8 +3939,6 @@ namespace XREngine.Rendering
             sb.AppendLine("uint ResolveDrawID(uint rawBaseInstance)");
             sb.AppendLine("{");
             sb.AppendLine("    uint baseIndex = rawBaseInstance & XRE_BASEINSTANCE_COMMAND_INDEX_MASK;");
-            sb.AppendLine("    if ((rawBaseInstance & XRE_LEGACY_BASEINSTANCE_FLAG) != 0u)");
-            sb.AppendLine("        return LoadDrawIdFromCommand(baseIndex);");
             sb.AppendLine("    return baseIndex;");
             sb.AppendLine("}");
             sb.AppendLine();
@@ -4584,37 +4504,12 @@ namespace XREngine.Rendering
                     continue;
 
                 uint drawID = drawCommand.BaseInstance & IndirectBaseInstanceCommandIndexMask;
-                if ((drawCommand.BaseInstance & IndirectLegacyBaseInstanceFlag) != 0u)
-                {
-                    if (drawID >= renderPasses.CulledSceneToRenderBuffer.ElementCount)
-                    {
-                        GpuWarn(LogCategory.Draw,
-                            "Indirect text batch preparation failed: legacy culled index {0} out of range for drawIndex={1}.",
-                            drawID,
-                            drawIndex);
-                        return false;
-                    }
-
-                    GPUIndirectRenderCommand legacyCulledCommand = renderPasses.CulledSceneToRenderBuffer.GetDataRawAtIndex<GPUIndirectRenderCommand>(drawID);
-                    drawID = legacyCulledCommand.Reserved1;
-                }
-
                 if (!scene.TryGetSourceCommand(drawID, out IRenderCommandMesh? sourceCommand) || sourceCommand?.Mesh is null)
                 {
-                    if (drawIndex < renderPasses.CulledSceneToRenderBuffer.ElementCount)
-                    {
-                        GPUIndirectRenderCommand culledCommand = renderPasses.CulledSceneToRenderBuffer.GetDataRawAtIndex<GPUIndirectRenderCommand>(drawIndex);
-                        uint sourceCommandIndex = culledCommand.Reserved1;
-                        scene.TryGetSourceCommand(sourceCommandIndex, out sourceCommand);
-                    }
-
-                    if (sourceCommand?.Mesh is null)
-                    {
-                        GpuWarn(LogCategory.Draw,
-                            "Indirect text batch preparation failed: unable to resolve source command for drawID={0}.",
-                            drawID);
-                        return false;
-                    }
+                    GpuWarn(LogCategory.Draw,
+                        "Indirect text batch preparation failed: unable to resolve source command for drawID={0}.",
+                        drawID);
+                    return false;
                 }
 
                 XRMeshRenderer sourceRenderer = sourceCommand.Mesh;

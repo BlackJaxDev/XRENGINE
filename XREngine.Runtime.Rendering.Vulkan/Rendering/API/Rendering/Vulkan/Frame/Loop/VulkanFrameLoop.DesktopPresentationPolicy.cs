@@ -1,6 +1,6 @@
 namespace XREngine.Rendering.Vulkan;
 
-internal sealed unsafe partial class VulkanFrameLoop
+internal sealed partial class VulkanFrameLoop
 {
     /// <summary>
     /// Arms and injects the controlled 5.2.4b desktop rejection only after two

@@ -11,7 +11,7 @@ namespace XREngine.Rendering.Vulkan;
 /// Owns desktop frame admission, attempt identity, frame-slot progression, and
 /// the ordered composition of each desktop frame attempt.
 /// </summary>
-internal sealed unsafe partial class VulkanFrameLoop
+internal sealed partial class VulkanFrameLoop
 {
     private const int FrameSlotCount = 2;
     private readonly Vk _api;
@@ -277,6 +277,7 @@ internal sealed unsafe partial class VulkanFrameLoop
         attempt.Timing.SetOutputIdentity(
             unchecked((int)attempt.ImageIndex),
             _outputRuntime.Desktop.Generation);
+        _resourceRuntime.PublishMappedMemoryTelemetry();
         attempt.Timing.PublishAfterFrame(
             totalFrameTime,
             attempt.TerminalResultPublished

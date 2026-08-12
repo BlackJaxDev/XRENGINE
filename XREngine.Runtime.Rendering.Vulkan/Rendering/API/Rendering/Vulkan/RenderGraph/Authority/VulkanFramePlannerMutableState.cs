@@ -11,16 +11,9 @@ internal sealed class VulkanFramePlannerMutableState<TKey, TSwitchingState, TQue
     where TKey : notnull
     where TSwitchingState : class, new()
 {
-    internal VulkanFramePlannerMutableState(IEqualityComparer<TKey> keyComparer, int partitionCapacity)
-    {
-        PartitionCache = new Dictionary<TKey, FrameOp[]>(keyComparer);
-        PartitionKeyBuffer = new TKey[partitionCapacity];
-    }
-
     public TSwitchingState DefaultSwitchingState { get; } = new();
     public List<TQueueCacheEntry> QueueOwnershipCache { get; } = [];
     public List<TMergedRegistryEntry> MergedRegistryCache { get; } = [];
-    public List<TKey> PlannerStateKeyScratch { get; } = [];
     public List<TKey> PlannerStateEvictionScratch { get; } = [];
     public List<RenderResourceRegistry> RegistryScratch { get; } = [];
     public List<TRegistryCacheSource> RegistryCacheSourceScratch { get; } = [];
@@ -34,7 +27,4 @@ internal sealed class VulkanFramePlannerMutableState<TKey, TSwitchingState, TQue
     public int LastActiveFilterPassSetSignature = int.MinValue;
     public int LastActiveFilterResourceSetSignature = int.MinValue;
     public bool LastActiveFilterConstrainToActivePassSet;
-    public Dictionary<TKey, FrameOp[]> PartitionCache { get; }
-    public TKey[] PartitionKeyBuffer { get; }
-    public ulong PartitionSignature;
 }

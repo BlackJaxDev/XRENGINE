@@ -2,7 +2,7 @@ using XREngine.Rendering.Vulkan.DeviceBootstrap;
 
 namespace XREngine.Rendering.Vulkan;
 
-internal sealed unsafe partial class VulkanCommandRuntime
+internal sealed partial class VulkanCommandRuntime
 {
     private int _logicalDevicePublicationApplied;
 

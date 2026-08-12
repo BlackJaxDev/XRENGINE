@@ -13,7 +13,7 @@ using XREngine.Rendering.Shadows;
 
 namespace XREngine.Rendering.Vulkan;
 
-internal sealed unsafe partial class VulkanCommandRuntime
+internal sealed partial class VulkanCommandRuntime
 {
     private static ulong ComputeScheduleStructuralSignature(
         ReadOnlySpan<RenderPassChainGroup> groups,
@@ -63,7 +63,7 @@ internal sealed unsafe partial class VulkanCommandRuntime
     /// </summary>
     internal static bool AreAllPreparedDrawBindingsSecondaryOwned(
         CommandChainSchedule schedule,
-        ReadOnlySpan<FrameOp> ops)
+        FrameOperationStream operations)
     {
         if (schedule.BudgetLimitedInlineFrameOpCount != 0)
             return false;
@@ -78,30 +78,29 @@ internal sealed unsafe partial class VulkanCommandRuntime
 
         bool foundPreparedDraw = false;
         int queryBracketDepth = 0;
-        for (int i = 0; i < ops.Length; i++)
+        for (int i = 0; i < operations.Count; i++)
         {
-            FrameOp op = ops[i];
-            if (op is QueryOp queryOp)
+            ref readonly FrameOperationHeader header = ref operations.GetHeader(i);
+            if (header.OpCode == EVulkanPrimaryPlanNodeKind.Query)
             {
-                if (queryOp.Operation == ERenderQueryOperation.Begin)
+                ERenderQueryOperation queryOperation = operations.GetQuery(i).Operation;
+                if (queryOperation == ERenderQueryOperation.Begin)
                     queryBracketDepth++;
-                else if (queryOp.Operation == ERenderQueryOperation.End && queryBracketDepth > 0)
+                else if (queryOperation == ERenderQueryOperation.End && queryBracketDepth > 0)
                     queryBracketDepth--;
                 continue;
             }
 
-            PendingMeshDraw draw = op switch
-            {
-                MeshDrawOp direct => direct.Draw,
-                IndirectDrawOp indirect => indirect.Draw,
-                _ => default,
-            };
+            PendingMeshDraw draw = header.OpCode == EVulkanPrimaryPlanNodeKind.MeshDraw
+                ? operations.GetMeshDraw(i).Draw
+                : header.OpCode == EVulkanPrimaryPlanNodeKind.IndirectDraw
+                    ? operations.GetIndirectDraw(i).Draw : default;
             if (draw.Renderer is null)
                 continue;
 
             foundPreparedDraw = true;
             if (queryBracketDepth != 0 ||
-                !IsSchedulableCommandChainFrameOp(op, dynamicOverlay: false))
+                !IsSchedulableCommandChainFrameOp(operations, i, dynamicOverlay: false))
             {
                 return false;
             }
@@ -111,7 +110,7 @@ internal sealed unsafe partial class VulkanCommandRuntime
     }
 
     internal static ulong ComputeCommandChainPrimarySkeletonSignature(
-        ReadOnlySpan<FrameOp> ops)
+        FrameOperationStream operations)
     {
         FrameOpSignatureHasher hash = new();
         hash.Add(0x5052494D534B454CUL);
@@ -124,20 +123,23 @@ internal sealed unsafe partial class VulkanCommandRuntime
         int currentTargetIdentity = 0;
         RenderViewKey currentViewKey = default;
 
-        for (int opIndex = 0; opIndex < ops.Length; opIndex++)
+        for (int opIndex = 0; opIndex < operations.Count; opIndex++)
         {
-            FrameOp op = ops[opIndex];
-            bool isQuery = op is QueryOp;
+            ref readonly FrameOperationHeader header = ref operations.GetHeader(opIndex);
+            ref readonly FrameOpContext context = ref operations.GetContext(opIndex);
+            bool isQuery = header.OpCode == EVulkanPrimaryPlanNodeKind.Query;
             bool schedulable =
                 !isQuery &&
                 queryBracketDepth == 0 &&
-                IsSchedulableCommandChainFrameOp(op, dynamicOverlay: false);
+                IsSchedulableCommandChainFrameOp(operations, opIndex, dynamicOverlay: false);
 
             if (schedulable)
             {
-                int passIndex = op.PassIndex;
-                int targetIdentity = ResolveCommandChainTargetIdentity(op);
-                RenderViewKey viewKey = BuildRenderViewKey(op, dynamicOverlay: false);
+                int passIndex = header.PassIndex;
+                int targetIdentity = header.TargetIdentity;
+                RenderViewKey viewKey = header.OpCode == EVulkanPrimaryPlanNodeKind.MeshDraw
+                    ? BuildRenderViewKey(operations.GetMeshDraw(opIndex).Draw, passIndex, in context, false)
+                    : BuildRenderViewKey(in context, passIndex, false);
                 if (!inSecondaryRun ||
                     passIndex != currentPassIndex ||
                     targetIdentity != currentTargetIdentity ||
@@ -163,18 +165,19 @@ internal sealed unsafe partial class VulkanCommandRuntime
             else
             {
                 inSecondaryRun = false;
-                RenderPacketVolatility volatility = ClassifyRenderPacketVolatility(op, dynamicOverlay: false);
+                RenderPacketVolatility volatility = ClassifyRenderPacketVolatility(header.OpCode, dynamicOverlay: false);
                 hash.Add(0x494E4C494E454F50UL);
-                hash.Add(ComputeFrameOpStructuralSignature(op, inlineOpIndex, volatility));
-                hash.Add(ResolvePipelineGeneration(op));
+                hash.Add(ComputeFrameOpStructuralSignature(header, in context, inlineOpIndex, volatility));
+                hash.Add(ResolvePipelineGeneration(in context));
                 inlineOpIndex++;
             }
 
-            if (op is QueryOp queryOp)
+            if (isQuery)
             {
-                if (queryOp.Operation == ERenderQueryOperation.Begin)
+                ERenderQueryOperation queryOperation = operations.GetQuery(opIndex).Operation;
+                if (queryOperation == ERenderQueryOperation.Begin)
                     queryBracketDepth++;
-                else if (queryOp.Operation == ERenderQueryOperation.End && queryBracketDepth > 0)
+                else if (queryOperation == ERenderQueryOperation.End && queryBracketDepth > 0)
                     queryBracketDepth--;
             }
         }
@@ -545,110 +548,6 @@ internal sealed unsafe partial class VulkanCommandRuntime
 
         if (fallbackMode == ShadowFallbackMode.None)
             throw new InvalidOperationException("Command-chain shadow validation rejected non-resident shadow tile without an explicit fallback mode.");
-    }
-
-    private static ulong ComputeFrameOpFrameDataSignature(FrameOp op, int opIndex)
-    {
-        FrameOpSignatureHasher hash = new();
-        hash.Add(opIndex);
-        switch (op)
-        {
-            case MeshDrawOp draw:
-                AddMatrixSignature(ref hash, draw.Draw.ModelMatrix);
-                AddMatrixSignature(ref hash, draw.Draw.PreviousModelMatrix);
-                AddMatrixSignature(ref hash, draw.Draw.ViewProjectionMatrix);
-                AddMatrixSignature(ref hash, draw.Draw.PreviousViewProjectionMatrix);
-                if (draw.Draw.IsStereoPass)
-                {
-                    AddMatrixSignature(ref hash, draw.Draw.RightEyeViewProjectionMatrix);
-                    AddMatrixSignature(ref hash, draw.Draw.PreviousRightEyeViewProjectionMatrix);
-                }
-                AddVector3Signature(ref hash, draw.Draw.CameraPosition);
-                AddVector3Signature(ref hash, draw.Draw.CameraForward);
-                AddVector3Signature(ref hash, draw.Draw.CameraUp);
-                AddVector3Signature(ref hash, draw.Draw.CameraRight);
-                hash.Add(draw.Draw.TransformId);
-                hash.Add(draw.Draw.RenderAreaWidth);
-                hash.Add(draw.Draw.RenderAreaHeight);
-                break;
-            case ComputeDispatchOp compute:
-                hash.Add(compute.Snapshot.HasPublishedBindingLayoutSignatures
-                    ? compute.Snapshot.RuntimeUniformValueSignature
-                    : VulkanFrameOpSnapshotSignatures.HashUniformBindings(
-                        compute.Snapshot.Uniforms));
-                break;
-            case ClearOp clear:
-                hash.Add(clear.Color.R);
-                hash.Add(clear.Color.G);
-                hash.Add(clear.Color.B);
-                hash.Add(clear.Color.A);
-                hash.Add(clear.Depth);
-                hash.Add(clear.Stencil);
-                break;
-        }
-
-        return hash.ToHash();
-    }
-
-    private static void AddViewportScissorSignature(ref FrameOpSignatureHasher hash, in PendingMeshDraw draw)
-    {
-        AddViewportSignature(ref hash, draw.Viewport);
-        AddRectSignature(ref hash, draw.Scissor);
-        hash.Add(draw.ViewportScissorCount);
-        if (draw.ViewportScissorCount <= 1 ||
-            draw.IndexedViewports is not { } indexedViewports ||
-            draw.IndexedScissors is not { } indexedScissors)
-        {
-            return;
-        }
-
-        int indexedCount = (int)Math.Min(
-            draw.ViewportScissorCount,
-            (uint)Math.Min(indexedViewports.Length, indexedScissors.Length));
-        hash.Add(indexedCount);
-        for (int i = 0; i < indexedCount; i++)
-        {
-            AddViewportSignature(ref hash, indexedViewports[i]);
-            AddRectSignature(ref hash, indexedScissors[i]);
-        }
-    }
-
-    private static void AddViewportSignature(ref FrameOpSignatureHasher hash, in Viewport viewport)
-    {
-        hash.Add(viewport.X);
-        hash.Add(viewport.Y);
-        hash.Add(viewport.Width);
-        hash.Add(viewport.Height);
-        hash.Add(viewport.MinDepth);
-        hash.Add(viewport.MaxDepth);
-    }
-
-    private static void AddRectSignature(ref FrameOpSignatureHasher hash, in Rect2D rect)
-    {
-        hash.Add(rect.Offset.X);
-        hash.Add(rect.Offset.Y);
-        hash.Add(rect.Extent.Width);
-        hash.Add(rect.Extent.Height);
-    }
-
-    private static void AddMatrixSignature(ref FrameOpSignatureHasher hash, in Matrix4x4 matrix)
-    {
-        hash.Add(matrix.M11);
-        hash.Add(matrix.M12);
-        hash.Add(matrix.M13);
-        hash.Add(matrix.M14);
-        hash.Add(matrix.M21);
-        hash.Add(matrix.M22);
-        hash.Add(matrix.M23);
-        hash.Add(matrix.M24);
-        hash.Add(matrix.M31);
-        hash.Add(matrix.M32);
-        hash.Add(matrix.M33);
-        hash.Add(matrix.M34);
-        hash.Add(matrix.M41);
-        hash.Add(matrix.M42);
-        hash.Add(matrix.M43);
-        hash.Add(matrix.M44);
     }
 
     private static void AddVector3Signature(ref FrameOpSignatureHasher hash, in Vector3 vector)

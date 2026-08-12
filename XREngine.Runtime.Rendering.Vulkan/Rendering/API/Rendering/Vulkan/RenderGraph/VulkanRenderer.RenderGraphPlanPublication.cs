@@ -101,11 +101,12 @@ internal sealed partial class VulkanFramePlanner
         for (int index = 0; index < swapchainBarriers.Count; index++)
             frozenSwapchainBarriers[index] = swapchainBarriers[index];
 
-        VulkanBarrierPlan frozenBarriers = new(
+        VulkanBarrierPlan frozenBarriers = VulkanBarrierPlan.Capture(
             NextBarrierPlanGeneration(),
             frozenImageBarriers,
             frozenBufferBarriers,
-            frozenSwapchainBarriers);
+            frozenSwapchainBarriers,
+            state.CompiledRenderGraph.Plan.ResourceIds);
         state.RenderGraphPlan = new VulkanRenderGraphPlan(
             state.ResourcePlannerRevision,
             state.CompiledRenderGraph,

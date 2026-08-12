@@ -3,7 +3,7 @@ using System.Diagnostics;
 
 namespace XREngine.Rendering.Vulkan;
 
-internal sealed unsafe partial class VulkanFrameLoop
+internal sealed partial class VulkanFrameLoop
 {
     private bool TryRenderOpenXrEyeSwapchainsWithParallelEyeWorkers(
         in OpenXrEyeSwapchainRenderRequest firstEye,

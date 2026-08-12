@@ -16,8 +16,6 @@ namespace XREngine.Rendering.Models.Materials
         public double Value { get => defaultValue; set { defaultValue = value; OnValueChanged(); } }
         protected override void SetProgramUniform(XRRenderProgram program, string location)
             => program.Uniform(location, defaultValue);
-        [Browsable(false)]
-        public unsafe double* Data { get { fixed (double* ptr = &defaultValue) return ptr; } }
         internal override string GetShaderValueString() => defaultValue.ToString("0.0######");
         [Browsable(false)]
         public override object GenericValue => Value;

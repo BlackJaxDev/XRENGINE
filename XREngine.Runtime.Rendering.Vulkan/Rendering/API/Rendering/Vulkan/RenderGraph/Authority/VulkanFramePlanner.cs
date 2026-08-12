@@ -39,17 +39,16 @@ internal sealed partial class VulkanFramePlanner
         new(StringComparer.OrdinalIgnoreCase);
     public object PlannerReadbackGate { get; } = new();
     public VulkanRenderGraphCompiler Compiler { get; } = new();
-    public VulkanFrameOperationScheduler FrameScheduler { get; } = new();
     public VulkanFrameOperationQueue Operations { get; } = new();
     public FramePlanBuilder FramePlanBuilder { get; } = new();
+    public VulkanFrameOperationScheduler FrameScheduler => FramePlanBuilder.FrameScheduler;
     public VulkanFramePlannerMutableState<
         VulkanFrameOpPlannerStateKey,
         FrameOpResourcePlannerSwitchingState,
         VulkanQueueOwnershipConfigCacheEntry,
         MergedFrameOpRegistryCacheEntry,
         FrameOpRegistryCacheSource,
-        ActivePassMetadataFilterCacheEntry> MutableState { get; } =
-        new(VulkanFrameOpPlannerStateKeyComparer.Instance, partitionCapacity: 12);
+        ActivePassMetadataFilterCacheEntry> MutableState { get; } = new();
     public VulkanRenderGraphPlan CurrentPlan { get; private set; } = VulkanRenderGraphPlan.Empty;
     public EVulkanQueueOverlapMode AutoQueueOverlapMode = EVulkanQueueOverlapMode.GraphicsOnly;
     public EVulkanQueueOverlapMode LastResolvedQueueOverlapMode = EVulkanQueueOverlapMode.GraphicsOnly;

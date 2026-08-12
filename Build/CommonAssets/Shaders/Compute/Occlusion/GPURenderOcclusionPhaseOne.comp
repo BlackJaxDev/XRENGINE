@@ -7,11 +7,8 @@
 
 layout(local_size_x = 256) in;
 
-const int COMMAND_FLOATS = 20;
-const int HOT_UINTS = 20;
-
-layout(std430, binding = 0) readonly buffer InputCommandsBuffer { float inCommands[]; };
-layout(std430, binding = 1) writeonly buffer OutputCommandsBuffer { float outCommands[]; };
+layout(std430, binding = 0) readonly buffer InputCommandsBuffer { uint inCommands[]; };
+layout(std430, binding = 1) writeonly buffer OutputCommandsBuffer { uint outCommands[]; };
 
 layout(std430, binding = 2) readonly buffer InCountBuffer
 {
@@ -31,8 +28,16 @@ layout(std430, binding = 4) buffer OverflowFlagBuffer { uint OcclusionOverflowFl
 
 // Two uints per DrawID: { RenderIdentityID + 1, visible }.
 layout(std430, binding = 6) readonly buffer VisibilityHistoryBuffer { uint VisibilityHistory[]; };
-layout(std430, binding = 9) readonly buffer InputHotCommandsBuffer { uint inHotCommands[]; };
-layout(std430, binding = 10) writeonly buffer OutputHotCommandsBuffer { uint outHotCommands[]; };
+
+struct DrawMetadata
+{
+    uint DrawID; uint MeshID; uint SubmeshID; uint MaterialID;
+    uint TransformID; uint SkinID; uint RenderPassMask; uint LayerMask;
+    uint Flags; uint LodPolicy; uint StateClassID; uint InstanceCount;
+    uint RenderPass; uint RenderIdentityID; uint LogicalMeshID; uint BoundsID;
+};
+layout(std430, binding = 5) readonly buffer DrawMetadataBuffer { DrawMetadata Draws[]; };
+layout(std430, binding = 7) readonly buffer BoundsBuffer { vec4 boundsData[]; };
 
 struct GPUViewDescriptor
 {
@@ -69,18 +74,10 @@ layout(std430, binding = 14) buffer PerViewVisibleIndicesBuffer { uint PerViewVi
 layout(std430, binding = 15) buffer PerViewDrawCountBuffer { uint PerViewDrawCounts[]; };
 
 uniform int MaxOutputCommands;
-uniform int UseHotCommands;
 uniform int ActiveViewCount;
 uniform int CurrentRenderPass;
 
 #define FLAG_TRANSPARENT (1u << 0u)
-
-uint LoadLane(int base, int hotBase, int commandLane, int hotLane)
-{
-    return UseHotCommands != 0
-        ? inHotCommands[hotBase + hotLane]
-        : floatBitsToUint(inCommands[base + commandLane]);
-}
 
 bool WasPreviouslyVisible(uint drawId, uint renderIdentityId)
 {
@@ -162,20 +159,18 @@ void main()
     if (candidateIndex >= InCount)
         return;
 
-    int base = int(candidateIndex) * COMMAND_FLOATS;
-    int hotBase = int(candidateIndex) * HOT_UINTS;
-    if (base + COMMAND_FLOATS > inCommands.length())
-        return;
-    if (UseHotCommands != 0 && hotBase + HOT_UINTS > inHotCommands.length())
+    if (candidateIndex >= uint(inCommands.length()))
         return;
 
-    uint instanceCount = LoadLane(base, hotBase, 7, 7);
+    uint drawId = inCommands[candidateIndex];
+    if (drawId >= uint(Draws.length()))
+        return;
+    DrawMetadata draw = Draws[drawId];
+    uint instanceCount = draw.InstanceCount;
     if (instanceCount == 0u)
         return;
 
-    uint drawId = LoadLane(base, hotBase, 19, 14);
-    uint renderIdentityId = LoadLane(base, hotBase, 9, 12);
-    if (!WasPreviouslyVisible(drawId, renderIdentityId))
+    if (!WasPreviouslyVisible(drawId, draw.RenderIdentityID))
         return;
 
     uint outputIndex = atomicAdd(OutCount, 1u);
@@ -186,24 +181,10 @@ void main()
         return;
     }
 
-    int outputBase = int(outputIndex) * COMMAND_FLOATS;
-    for (int lane = 0; lane < COMMAND_FLOATS; ++lane)
-        outCommands[outputBase + lane] = inCommands[base + lane];
+    outCommands[outputIndex] = drawId;
 
-    if (UseHotCommands != 0)
-    {
-        int outputHotBase = int(outputIndex) * HOT_UINTS;
-        for (int lane = 0; lane < HOT_UINTS; ++lane)
-            outHotCommands[outputHotBase + lane] = inHotCommands[hotBase + lane];
-    }
-
-    vec3 center = UseHotCommands != 0
-        ? vec3(
-            uintBitsToFloat(inHotCommands[hotBase + 0]),
-            uintBitsToFloat(inHotCommands[hotBase + 1]),
-            uintBitsToFloat(inHotCommands[hotBase + 2]))
-        : vec3(inCommands[base + 0], inCommands[base + 1], inCommands[base + 2]);
-    uint flags = LoadLane(base, hotBase, 13, 10);
-    AppendPerView(drawId, outputIndex, center, flags);
+    uint boundsBase = draw.BoundsID * 4u;
+    vec3 center = boundsBase < uint(boundsData.length()) ? boundsData[boundsBase].xyz : vec3(0.0);
+    AppendPerView(drawId, outputIndex, center, draw.Flags);
     atomicAdd(OutInstanceCount, instanceCount);
 }

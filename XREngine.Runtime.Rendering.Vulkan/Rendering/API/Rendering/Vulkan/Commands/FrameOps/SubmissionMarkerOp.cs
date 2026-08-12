@@ -9,12 +9,4 @@ internal sealed record SubmissionMarkerOp(
 {
     public override EVulkanPrimaryPlanNodeKind Kind => EVulkanPrimaryPlanNodeKind.SubmissionMarker;
 
-    internal override int RecordPrimary(
-        VulkanCommandRuntime commandRuntime,
-        scoped ref PrimaryCommandBufferRecordingState recordingState,
-        in VulkanPrimaryOperationRecordingInfo recordingInfo)
-    {
-        commandRuntime.RegisterSubmissionMarker(recordingState.CommandBuffer, Fence);
-        return recordingInfo.OperationIndex;
-    }
 }

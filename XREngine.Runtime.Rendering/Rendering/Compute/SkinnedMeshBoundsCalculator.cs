@@ -799,36 +799,22 @@ internal sealed class SkinnedMeshBoundsCalculator : IDisposable
             if (_outputPositions is null)
                 return false;
 
-            if (!TryGetMappedAddress(_outputPositions, out VoidPtr mappedAddress))
-                return false;
-
-            unsafe
+            Vector3[] mappedPositions = positions;
+            if (!_outputPositions.TryReadMapped(bytes =>
             {
-                Vector4* ptr = (Vector4*)mappedAddress.Pointer;
+                ReadOnlySpan<Vector4> values = MemoryMarshal.Cast<byte, Vector4>(bytes);
                 for (int i = 0; i < vertexCount; i++)
                 {
-                    Vector4 v = ptr[i];
-                    positions[i] = new Vector3(v.X, v.Y, v.Z);
+                    Vector4 v = values[i];
+                    mappedPositions[i] = new Vector3(v.X, v.Y, v.Z);
                 }
-            }
+                return true;
+            }))
+                return false;
 
             return true;
         }
 
-        private static bool TryGetMappedAddress(XRDataBuffer buffer, out VoidPtr mappedAddress)
-        {
-            foreach (VoidPtr address in buffer.GetMappedAddresses())
-            {
-                if (address != VoidPtr.Zero)
-                {
-                    mappedAddress = address;
-                    return true;
-                }
-            }
-
-            mappedAddress = VoidPtr.Zero;
-            return false;
-        }
 
         public void ResetBoundsBuffer()
         {
@@ -853,17 +839,16 @@ internal sealed class SkinnedMeshBoundsCalculator : IDisposable
             if (_bounds is null)
                 return false;
 
-            if (!TryGetMappedAddress(_bounds, out VoidPtr mappedAddress))
-                return false;
-
-            UInt4 minBits;
-            UInt4 maxBits;
-            unsafe
+            UInt4 minBits = default;
+            UInt4 maxBits = default;
+            if (!_bounds.TryReadMapped(bytes =>
             {
-                UInt4* ptr = (UInt4*)mappedAddress.Pointer;
-                minBits = ptr[0];
-                maxBits = ptr[1];
-            }
+                ReadOnlySpan<UInt4> values = MemoryMarshal.Cast<byte, UInt4>(bytes);
+                minBits = values[0];
+                maxBits = values[1];
+                return true;
+            }))
+                return false;
 
             Vector3 min = minBits.ToVector3();
             if (float.IsInfinity(min.X) || float.IsInfinity(min.Y) || float.IsInfinity(min.Z))

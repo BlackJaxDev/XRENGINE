@@ -2,7 +2,7 @@ using Silk.NET.Vulkan;
 
 namespace XREngine.Rendering.Vulkan;
 
-internal sealed unsafe partial class VulkanCommandRuntime
+internal sealed partial class VulkanCommandRuntime
 {
     internal bool HasDedicatedTextureUploadTransferQueue
     {
@@ -16,7 +16,7 @@ internal sealed unsafe partial class VulkanCommandRuntime
         }
     }
 
-    internal bool TrySubmitImportedTextureUploadToTransferQueue(
+    internal unsafe bool TrySubmitImportedTextureUploadToTransferQueue(
         VulkanImportedTexturePendingUpload upload,
         out VulkanSubmittedImportedTextureUpload? submitted,
         out string? failureReason)
@@ -205,7 +205,7 @@ internal sealed unsafe partial class VulkanCommandRuntime
         return false;
     }
 
-    internal bool CompleteSubmittedImportedTextureUpload(
+    internal unsafe bool CompleteSubmittedImportedTextureUpload(
         VulkanSubmittedImportedTextureUpload submitted,
         out string? failureReason)
     {
@@ -231,7 +231,7 @@ internal sealed unsafe partial class VulkanCommandRuntime
         return true;
     }
 
-    private void RecordImportedTextureTransferUpload(
+    private unsafe void RecordImportedTextureTransferUpload(
         CommandBuffer commandBuffer,
         VulkanImportedTexturePendingUpload upload)
     {
@@ -307,7 +307,7 @@ internal sealed unsafe partial class VulkanCommandRuntime
             &releaseBarrier);
     }
 
-    private void RecordImportedTextureGraphicsAcquire(VulkanSubmittedImportedTextureUpload submitted)
+    private unsafe void RecordImportedTextureGraphicsAcquire(VulkanSubmittedImportedTextureUpload submitted)
     {
         VulkanImportedTexturePendingUpload upload = submitted.Upload;
         using VulkanCommandRuntime.CommandScope graphicsScope = _commandRuntime.NewCommandScope();

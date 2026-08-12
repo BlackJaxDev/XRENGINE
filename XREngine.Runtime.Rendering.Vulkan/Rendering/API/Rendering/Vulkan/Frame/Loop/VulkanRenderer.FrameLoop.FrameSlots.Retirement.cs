@@ -2,7 +2,7 @@ using System;
 
 namespace XREngine.Rendering.Vulkan
 {
-    internal sealed unsafe partial class VulkanFrameLoop
+    internal sealed partial class VulkanFrameLoop
     {
         private bool TryWaitCurrentFrameSlotAndDrainRetiredResources(
             int frameSlot,

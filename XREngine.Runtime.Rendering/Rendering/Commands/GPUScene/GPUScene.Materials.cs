@@ -234,33 +234,26 @@ namespace XREngine.Rendering.Commands
                         }
                     }
 
-                    IntPtr mappedAddress = IntPtr.Zero;
                     if (buffer.IsMapped)
-                    {
                         AbstractRenderer.Current?.MemoryBarrier(EMemoryBarrierMask.ClientMappedBuffer);
-                        mappedAddress = buffer.GetMappedAddresses().FirstOrDefault();
-                    }
-
-                    if (mappedAddress != IntPtr.Zero)
+                    bool mappedRead = buffer.IsMapped && buffer.TryWriteMapped(bytes =>
                     {
                         usedMappedAccess = true;
-                        unsafe
+                        Span<uint> values = MemoryMarshal.Cast<byte, uint>(bytes);
+                        for (uint logicalMeshId = 1; logicalMeshId < entryCount; logicalMeshId++)
                         {
-                            uint* ptr = (uint*)(void*)mappedAddress;
-                            for (uint logicalMeshId = 1; logicalMeshId < entryCount; logicalMeshId++)
-                            {
-                                uint lodMask = ptr[logicalMeshId];
-                                if (lodMask == 0)
-                                    continue;
-
-                                RuntimeEngine.Rendering.Stats.GpuReadback.RecordGpuReadbackBytes(sizeof(uint));
-                                requests.Add((logicalMeshId, lodMask));
-                                ptr[logicalMeshId] = 0u;
-                                modified = true;
-                            }
+                            uint lodMask = values[checked((int)logicalMeshId)];
+                            if (lodMask == 0)
+                                continue;
+                            RuntimeEngine.Rendering.Stats.GpuReadback.RecordGpuReadbackBytes(sizeof(uint));
+                            requests.Add((logicalMeshId, lodMask));
+                            values[checked((int)logicalMeshId)] = 0u;
+                            modified = true;
                         }
-                    }
-                    else
+                        return true;
+                    });
+
+                    if (!mappedRead)
                     {
                         for (uint logicalMeshId = 1; logicalMeshId < entryCount; logicalMeshId++)
                         {

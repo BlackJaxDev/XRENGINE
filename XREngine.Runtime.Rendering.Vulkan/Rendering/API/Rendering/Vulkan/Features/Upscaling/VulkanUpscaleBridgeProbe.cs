@@ -419,12 +419,12 @@ internal static unsafe partial class VulkanUpscaleBridgeProbe
     /// <returns>The normalized GPU name.</returns>
     private static string NormalizeGpuName(string value)
     {
-        Span<char> buffer = stackalloc char[value.Length];
+        char[] buffer = new char[value.Length];
         int index = 0;
         foreach (char c in value)
             if (char.IsLetterOrDigit(c))
                 buffer[index++] = char.ToLowerInvariant(c);
 
-        return index == 0 ? string.Empty : new string(buffer[..index]);
+        return index == 0 ? string.Empty : new string(buffer, 0, index);
     }
 }

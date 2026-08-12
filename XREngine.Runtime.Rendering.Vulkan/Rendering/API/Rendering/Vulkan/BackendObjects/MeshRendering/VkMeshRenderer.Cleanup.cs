@@ -70,7 +70,7 @@ internal unsafe partial class VkMeshRenderer
 		foreach (EngineUniformBuffer buf in buffers)
 		{
 			if (buf.OwnsBuffer)
-				DestroyMappedUniformBuffer(buf.Buffer, buf.Memory, buf.MappedPtr);
+				DestroyMappedUniformBuffer(buf.Buffer, buf.Memory);
 		}
 	}
 
@@ -79,15 +79,12 @@ internal unsafe partial class VkMeshRenderer
 		foreach (AutoUniformBuffer buf in buffers)
 		{
 			if (buf.OwnsBuffer)
-				DestroyMappedUniformBuffer(buf.Buffer, buf.Memory, buf.MappedPtr);
+				DestroyMappedUniformBuffer(buf.Buffer, buf.Memory);
 		}
 	}
 
-	private void DestroyMappedUniformBuffer(Silk.NET.Vulkan.Buffer buffer, DeviceMemory memory, void* mappedPtr)
+	private void DestroyMappedUniformBuffer(Silk.NET.Vulkan.Buffer buffer, DeviceMemory memory)
 	{
-		if (mappedPtr != null)
-			BackendContext.Resources.Buffers.Unmap(BackendContext, buffer, memory);
-
 		BackendContext.Resources.Buffers.Destroy(BackendContext, buffer, memory, "VkMeshRenderer.UniformBuffer");
 	}
 

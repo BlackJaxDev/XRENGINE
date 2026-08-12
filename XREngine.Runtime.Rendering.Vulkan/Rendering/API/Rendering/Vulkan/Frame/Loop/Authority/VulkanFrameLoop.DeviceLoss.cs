@@ -9,7 +9,7 @@ namespace XREngine.Rendering.Vulkan;
 /// Native authorities publish typed loss observations through the device context;
 /// this authority performs the cross-runtime transition exactly once.
 /// </summary>
-internal sealed unsafe partial class VulkanFrameLoop
+internal sealed partial class VulkanFrameLoop
 {
     internal void MarkDeviceLost(string? reason, string? operation, Result result)
     {

@@ -99,31 +99,37 @@ internal sealed unsafe class VulkanValidationDiagnostics
     }
 
     private void RecordDeviceAddressBindings(DebugUtilsMessengerCallbackDataEXT* callbackData)
+        => RecordDeviceAddressBindings(
+            (BaseInStructure*)callbackData->PNext,
+            remainingNodes: 64);
+
+    private void RecordDeviceAddressBindings(
+        BaseInStructure* current,
+        int remainingNodes)
     {
-        BaseInStructure* current = (BaseInStructure*)callbackData->PNext;
-        while (current is not null)
+        if (current is null || remainingNodes <= 0)
+            return;
+
+        if (current->SType == StructureType.DeviceAddressBindingCallbackDataExt)
         {
-            if (current->SType == StructureType.DeviceAddressBindingCallbackDataExt)
+            DeviceAddressBindingCallbackDataEXT* binding =
+                (DeviceAddressBindingCallbackDataEXT*)current;
+            if (binding->BaseAddress != 0 && binding->Size != 0)
             {
-                DeviceAddressBindingCallbackDataEXT* binding =
-                    (DeviceAddressBindingCallbackDataEXT*)current;
-                if (binding->BaseAddress != 0 && binding->Size != 0)
+                lock (_deviceAddressBindingLock)
                 {
-                    lock (_deviceAddressBindingLock)
-                    {
-                        long serial = ++_deviceAddressBindingSerial;
-                        int index = unchecked((int)((serial - 1) % MaximumDeviceAddressBindings));
-                        _deviceAddressBindings[index] = new(
-                            binding->BaseAddress,
-                            binding->Size,
-                            binding->BindingType,
-                            binding->Flags);
-                    }
+                    long serial = ++_deviceAddressBindingSerial;
+                    int index = unchecked((int)((serial - 1) % MaximumDeviceAddressBindings));
+                    _deviceAddressBindings[index] = new(
+                        binding->BaseAddress,
+                        binding->Size,
+                        binding->BindingType,
+                        binding->Flags);
                 }
             }
-
-            current = current->PNext;
         }
+
+        RecordDeviceAddressBindings(current->PNext, remainingNodes - 1);
     }
 
     public string Describe(int maxEntries = 6)
@@ -246,9 +252,12 @@ internal sealed unsafe class VulkanValidationDiagnostics
             return string.Empty;
 
         StringBuilder builder = new();
-        for (uint i = 0; i < callbackData->ObjectCount; i++)
+        ReadOnlySpan<DebugUtilsObjectNameInfoEXT> objects = new(
+            callbackData->PObjects,
+            checked((int)callbackData->ObjectCount));
+        for (int i = 0; i < objects.Length; i++)
         {
-            DebugUtilsObjectNameInfoEXT info = callbackData->PObjects[i];
+            DebugUtilsObjectNameInfoEXT info = objects[i];
             if (builder.Length > 0)
                 builder.Append("; ");
             string? objectName = info.PObjectName is null

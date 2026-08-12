@@ -11,12 +11,10 @@ internal sealed partial class CommandBufferRecordingScratch
             public Dictionary<int, int> SwapchainWritesByPipeline { get; } = new();
             public Dictionary<int, string> SwapchainWriterLabelByPipeline { get; } = new();
             public Dictionary<int, string> SwapchainWriterDetailByPipeline { get; } = new();
-            public Dictionary<int, FrameOp> SwapchainWriterOpByPipeline { get; } = new();
             public Dictionary<int, int> SwapchainWriterDynamicUiDrawCountByPipeline { get; } = new();
             public HashSet<nint> ExecutedCommandChainSecondaryHandles { get; } = new();
             public VulkanPrimarySecondaryArtifactSequence ExecutedCommandChainSecondaryArtifactSequence { get; } = new();
-            public HashSet<FrameOp> PipelineDeferredOps { get; } =
-                new(ReferenceEqualityComparer.Instance);
+            public HashSet<int> PipelineDeferredOperationIndices { get; } = [];
             public HashSet<int> PipelineDeferredRequirementIndices { get; } = [];
             public ulong PipelineDeferredManifestIdentity { get; set; }
             public ulong PipelineDeferredActivityGeneration { get; set; }

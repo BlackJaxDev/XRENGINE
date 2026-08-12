@@ -2,18 +2,16 @@
 
 layout(local_size_x = 1) in;
 
-const uint COMMAND_FLOATS = 20u;
 const uint KEY_UINTS = 4u;
 const uint DRAW_UINTS = 5u;
 const uint BATCH_UINTS = 4u;
 const uint INSTANCE_MATRIX_FLOATS = 16u;
-const uint LEGACY_BASEINSTANCE_FLAG = 0x80000000u;
 const uint PREVIOUS_LOD_DRAW_FLAG = 0x40000000u;
 const uint COMMAND_INDEX_MASK = 0x3FFFFFFFu;
 const uint LOD_TRANSITION_UINTS = 4u;
 const uint LOD_TRANSITION_ACTIVE = 1u;
 
-layout(std430, binding = 0) readonly buffer CulledCommandsBuffer { float culled[]; };
+layout(std430, binding = 0) readonly buffer CulledCommandsBuffer { uint culled[]; };
 layout(std430, binding = 1) readonly buffer MeshDataBuffer { uint meshData[]; };
 layout(std430, binding = 2) readonly buffer CulledCountBuffer
 {
@@ -54,6 +52,14 @@ layout(std430, binding = 13) buffer StatsBuffer
 };
 layout(std430, binding = 14) buffer SortScratchBuffer { uint sortScratch[]; };
 layout(std430, binding = 15) readonly buffer LODTransitionBuffer { uint lodTransitions[]; };
+struct DrawMetadata
+{
+    uint DrawID; uint MeshID; uint SubmeshID; uint MaterialID;
+    uint TransformID; uint SkinID; uint RenderPassMask; uint LayerMask;
+    uint Flags; uint LodPolicy; uint StateClassID; uint InstanceCount;
+    uint RenderPass; uint RenderIdentityID; uint LogicalMeshID; uint BoundsID;
+};
+layout(std430, binding = 16) readonly buffer DrawMetadataBuffer { DrawMetadata Draws[]; };
 
 uniform int MaxIndirectDraws;
 uniform int MaxBatchRanges;
@@ -211,7 +217,7 @@ void SortKeysRadix(uint total)
     }
 }
 
-void CopyInstanceWorldMatrix(uint instanceIndex, uint commandBase)
+void CopyInstanceWorldMatrix(uint instanceIndex)
 {
     uint outBase = instanceIndex * INSTANCE_MATRIX_FLOATS;
     for (uint i = 0u; i < INSTANCE_MATRIX_FLOATS; ++i)
@@ -296,17 +302,18 @@ void main()
     {
         uvec4 key = LoadKey(sortedIdx);
         uint culledCommandIndex = key.w;
-        uint commandBase = culledCommandIndex * COMMAND_FLOATS;
-        if (commandBase + COMMAND_FLOATS > uint(culled.length()))
+        if (culledCommandIndex >= uint(culled.length()))
             continue;
-
-        uint meshID = floatBitsToUint(culled[commandBase + 4u]);
-        uint materialID = floatBitsToUint(culled[commandBase + 6u]);
-        uint instanceCount = floatBitsToUint(culled[commandBase + 7u]);
-        uint renderPass = floatBitsToUint(culled[commandBase + 8u]);
-        uint shaderProgramID = floatBitsToUint(culled[commandBase + 9u]);
-        uint flags = floatBitsToUint(culled[commandBase + 13u]);
-        uint drawID = floatBitsToUint(culled[commandBase + 19u]);
+        uint drawID = culled[culledCommandIndex];
+        if (drawID >= uint(Draws.length()))
+            continue;
+        DrawMetadata draw = Draws[drawID];
+        uint meshID = draw.MeshID;
+        uint materialID = draw.MaterialID;
+        uint instanceCount = draw.InstanceCount;
+        uint renderPass = draw.RenderPass;
+        uint shaderProgramID = draw.StateClassID;
+        uint flags = draw.Flags;
 
         if (CurrentRenderPass >= 0 &&
             renderPass != uint(CurrentRenderPass) &&
@@ -322,21 +329,19 @@ void main()
                            ((shaderProgramID & 0x0FFFu) << 12u) |
                            (flags & 0x0FFFu);
         uint transitionBase = drawID * LOD_TRANSITION_UINTS;
-        bool transitionActive = false;
-        uint previousMeshID = 0u;
+        uint selectedMeshID = meshID;
         if (transitionBase + 3u < uint(lodTransitions.length()))
         {
-            previousMeshID = lodTransitions[transitionBase + 0u];
+            selectedMeshID = lodTransitions[transitionBase + 0u];
             uint transitionFlags = lodTransitions[transitionBase + 2u];
-            float transitionProgress = clamp(uintBitsToFloat(lodTransitions[transitionBase + 3u]), 0.0, 1.0);
-            transitionActive = (transitionFlags & LOD_TRANSITION_ACTIVE) != 0u && previousMeshID != 0u && transitionProgress < 1.0;
+            if ((transitionFlags & LOD_TRANSITION_ACTIVE) == 0u || selectedMeshID == 0u)
+                selectedMeshID = meshID;
         }
 
-        uint variantCount = transitionActive ? 2u : 1u;
-        for (uint variantIndex = 0u; variantIndex < variantCount; ++variantIndex)
+        for (uint variantIndex = 0u; variantIndex < 1u; ++variantIndex)
         {
-            bool previousVariant = transitionActive && variantIndex == 0u;
-            uint drawMeshID = previousVariant ? previousMeshID : meshID;
+            bool previousVariant = false;
+            uint drawMeshID = selectedMeshID;
 
             uint meshBase = drawMeshID * 4u;
             if (meshBase + 3u >= uint(meshData.length()))
@@ -372,7 +377,7 @@ void main()
                     break;
                 }
 
-                CopyInstanceWorldMatrix(instanceWrite, commandBase);
+                CopyInstanceWorldMatrix(instanceWrite);
                 instanceSourceIndices[instanceWrite] = drawID;
 
                 uint drawBase = currentDrawIndex * DRAW_UINTS;
@@ -401,7 +406,7 @@ void main()
                     break;
                 }
 
-                CopyInstanceWorldMatrix(instanceWrite, commandBase);
+                CopyInstanceWorldMatrix(instanceWrite);
                 instanceSourceIndices[instanceWrite] = drawID;
                 drawBaseInstance = instanceWrite;
                 drawInstanceCount = 1u;

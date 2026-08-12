@@ -13,7 +13,7 @@ namespace XREngine.Rendering.Vulkan;
 /// <see cref="VulkanFrameOperationScheduler"/>. Native command execution remains
 /// supplied by the facade at the call boundary.
 /// </summary>
-internal sealed unsafe partial class VulkanCommandRuntime
+internal sealed partial class VulkanCommandRuntime
 {
     private VulkanDeviceContext? _configuredDeviceContext;
     private VulkanResourceRuntime? _configuredResourceRuntime;
@@ -53,18 +53,6 @@ internal sealed unsafe partial class VulkanCommandRuntime
 
     internal void ReleaseCurrentThreadSynchronizationScratch()
         => Synchronization._synchronizationThreadWorkspace.ReleaseCurrentThread();
-
-    internal static unsafe TimelineSemaphoreSubmitInfo* FindTimelineSemaphoreSubmitInfo(void* pNext)
-    {
-        BaseInStructure* current = (BaseInStructure*)pNext;
-        while (current is not null)
-        {
-            if (current->SType == StructureType.TimelineSemaphoreSubmitInfo)
-                return (TimelineSemaphoreSubmitInfo*)current;
-            current = current->PNext;
-        }
-        return null;
-    }
 
     internal string DescribeVulkanQueueOperationTail(int maxEntries = 8)
     {
@@ -660,27 +648,24 @@ internal sealed unsafe partial class VulkanCommandRuntime
 
         using VulkanCpuStageScope cpuStage = new(FrameTelemetry, EVulkanCpuStage.SecondaryRecording);
         long workerStart = Stopwatch.GetTimestamp();
-        Interlocked.Increment(ref batch.WorkersStarted);
-        UpdateMinimum(ref batch.FirstWorkerStartTimestamp, workerStart);
-        UpdateMaximum(ref batch.MaximumQueueDelayTimestamp, workerStart - batch.DispatchTimestamp);
-        int concurrentWorkers = Interlocked.Increment(ref batch.ConcurrentWorkers);
-        UpdateMaximum(ref batch.PeakConcurrentWorkers, concurrentWorkers);
+        batch.WorkerLocalStates.Begin(worker.WorkerIndex, workerStart, batch.DispatchTimestamp);
         try
         {
             worker.LastFrameId = context.FrameId;
-            for (int jobIndex = 0; jobIndex < batch.JobCount; jobIndex++)
+            for (int entryIndex = 0; entryIndex < batch.EntryCount; entryIndex++)
             {
                 if (Volatile.Read(ref batch.Error) is not null ||
                     Volatile.Read(ref batch.CancelRequested) != 0)
                     break;
-                if (batch.RecordJobWorkerIndices[jobIndex] != worker.WorkerIndex)
+                ref VulkanCommandChainRecordingEntry entry = ref batch.Entries[entryIndex];
+                if (!entry.NeedsRecording || entry.WorkerIndex != worker.WorkerIndex)
                     continue;
 
                 try
                 {
                     RecordPreparedMeshCommandChain(
                         batch,
-                        batch.RecordJobChainIndices[jobIndex]);
+                        entryIndex);
                 }
                 catch (Exception ex)
                 {
@@ -692,10 +677,7 @@ internal sealed unsafe partial class VulkanCommandRuntime
         finally
         {
             long workerCompletion = Stopwatch.GetTimestamp();
-            Interlocked.Add(ref batch.WorkerRecordTimestampTotal, workerCompletion - workerStart);
-            UpdateMaximum(ref batch.LastWorkerCompletionTimestamp, workerCompletion);
-            Interlocked.Decrement(ref batch.ConcurrentWorkers);
-            Interlocked.Increment(ref batch.WorkersCompleted);
+            batch.WorkerLocalStates.Complete(worker.WorkerIndex, workerCompletion);
             worker.Batch = null;
             bool lastWorker = Workers.Countdown.Signal();
             if (lastWorker)

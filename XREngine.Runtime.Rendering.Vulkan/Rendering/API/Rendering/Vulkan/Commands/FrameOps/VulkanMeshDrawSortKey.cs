@@ -59,19 +59,28 @@ internal readonly struct VulkanMeshDrawSortKey
     internal int BillboardMode { get; }
 
     internal static VulkanMeshDrawSortKey Capture(MeshDrawOp operation)
+        => Capture(
+            operation.DrawRef,
+            in operation.ContextReference,
+            operation.Target,
+            operation.PreserveSubmissionOrder);
+
+    internal static VulkanMeshDrawSortKey Capture(
+        PendingMeshDraw draw,
+        in FrameOpContext context,
+        XRFrameBuffer? target,
+        bool preserveSubmissionOrder)
     {
-        ref readonly PendingMeshDraw draw = ref operation.DrawRef;
         VkMeshRenderer? renderer = draw.Renderer;
         bool canCanonicalize =
             renderer is not null &&
             !draw.BlendEnabled &&
-            !operation.PreserveSubmissionOrder &&
-            operation.Context.PipelineInstance?.Pipeline is not
+            !preserveSubmissionOrder &&
+            context.PipelineInstance?.Pipeline is not
                 UserInterfaceRenderPipeline;
         if (!canCanonicalize)
             return default;
 
-        FrameOpContext context = operation.Context;
         bool shadowPass = draw.ShadowUniformState.IsShadowPass;
         int rendererIdentity = renderer!.GetHashCode();
         int materialIdentity = draw.MaterialOverride?.GetHashCode() ?? 0;
@@ -84,7 +93,7 @@ internal readonly struct VulkanMeshDrawSortKey
             (int)context.ContextKind,
             context.StereoEnabled,
             context.MultiviewEnabled,
-            operation.Target?.GetHashCode() ?? 0,
+            target?.GetHashCode() ?? 0,
             shadowPass,
             shadowPass
                 ? VulkanCommandRuntime.ResolveShadowCommandChainBucket(

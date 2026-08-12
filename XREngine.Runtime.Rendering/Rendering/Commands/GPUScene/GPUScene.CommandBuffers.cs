@@ -32,10 +32,8 @@ namespace XREngine.Rendering.Commands
     {
 
         // -------------------------------------------------------------------------
-        // Double-Buffered Command Buffer:
-        // - _updatingCommandsBuffer: Written by Add/Remove on update/collect threads
-        // - _allLoadedCommandsBuffer: Read by render thread
-        // - SwapCommandBuffers() copies updating -> render during the swap phase
+        // Double-buffered stage-native streams: update/collect writes the updating
+        // streams, then SwapCommandBuffers publishes one coherent render snapshot.
         // -------------------------------------------------------------------------
         
         /// <summary>
@@ -67,36 +65,16 @@ namespace XREngine.Rendering.Commands
                 // Copy the updating buffer data to the render buffer
                 // This ensures the render buffer has the latest commands while keeping
                 // the updating buffer's indices consistent with _commandIndexLookup
-                if (commandSnapshotDirty && _updatingCommandsBuffer is not null && _allLoadedCommandsBuffer is not null)
-                {
-                    // Ensure render buffer has sufficient capacity
-                    if (_allLoadedCommandsBuffer.ElementCount < _updatingCommandsBuffer.ElementCount)
-                        _allLoadedCommandsBuffer.Resize(_updatingCommandsBuffer.ElementCount);
-                    
-                    // Copy command data from updating to render buffer
-                    if (_updatingCommandCount > 0)
-                    {
-                        uint elementCount = _updatingCommandCount.ClampMax(_updatingCommandsBuffer.ElementCount);
-                        uint elementSize = _updatingCommandsBuffer.ElementSize;
-                        if (elementSize == 0)
-                            elementSize = (uint)(CommandFloatCount * sizeof(float));
-
-                        uint byteCount = elementCount * elementSize;
-
-                        if (_updatingCommandsBuffer.TryGetAddress(out var src) &&
-                            _allLoadedCommandsBuffer.TryGetAddress(out var dst))
-                        {
-                            Memory.Move(dst, src, byteCount);
-                            _allLoadedCommandsBuffer.CommitDirtyBytes(0u, byteCount);
-                        }
-                        else
-                        {
-                            // Both buffers should always have client-side sources; if not, the copy cannot proceed.
-                            Debug.MeshesWarning("GPUScene: Command buffer TryGetAddress failed during swap â€” client-side source missing.");
-                        }
-                    }
-                }
-
+                bool stageStreamsDirty = _drawMetadataDirtyRange.HasValue ||
+                    _boundsDirtyRange.HasValue ||
+                    _classificationDirtyRange.HasValue ||
+                    _visibilityDirtyRange.HasValue ||
+                    _transformDirtyRange.HasValue ||
+                    _materialStateDirtyRange.HasValue ||
+                    _skinningPaletteDirtyRange.HasValue ||
+                    _commandAabbDirtyRange.HasValue;
+                if (commandSnapshotDirty || stageStreamsDirty)
+                    RecordStreamPublication();
                 CopyDrawIndexedSoABuffersToRenderSnapshot();
                 CopyDirtyStableSoABuffersToRenderSnapshot();
 
@@ -167,8 +145,11 @@ namespace XREngine.Rendering.Commands
 
         private void CopyDrawIndexedSoABuffersToRenderSnapshot()
         {
+            // Cull-control and cull-bounds are published as one storage generation.
             CopyDirtyRange(_updatingDrawMetadataBuffer, _allLoadedDrawMetadataBuffer, ref _drawMetadataDirtyRange);
             CopyDirtyRange(_updatingBoundsBuffer, _allLoadedBoundsBuffer, ref _boundsDirtyRange);
+            CopyDirtyRange(_updatingClassificationBuffer, _allLoadedClassificationBuffer, ref _classificationDirtyRange);
+            CopyDirtyRange(_updatingVisibilityBuffer, _allLoadedVisibilityBuffer, ref _visibilityDirtyRange);
         }
 
         private static void CopyDirtyRange(
@@ -189,10 +170,7 @@ namespace XREngine.Rendering.Commands
             CopyDirtyRange(_skinningPaletteBuffer, _skinningPaletteBuffer, ref _skinningPaletteDirtyRange);
             if (_materialStateDirtyRange.HasValue && _materialStateBuffer is not null)
             {
-                uint byteOffset = _materialStateDirtyRange.Min * _materialStateBuffer.ElementSize;
-                uint byteCount = (_materialStateDirtyRange.MaxExclusive - _materialStateDirtyRange.Min) * _materialStateBuffer.ElementSize;
-                _materialStateBuffer.CommitDirtyBytes(byteOffset, byteCount);
-                _materialStateDirtyRange.Clear();
+                CopyDirtyRange(_updatingMaterialStateBuffer, _materialStateBuffer, ref _materialStateDirtyRange);
             }
         }
 
@@ -262,27 +240,6 @@ namespace XREngine.Rendering.Commands
             _newTransformIdsAwaitingPublication.Clear();
         }
 
-        /// <summary>
-        /// Creates a new command buffer for storing GPU indirect render commands.
-        /// </summary>
-        private static XRDataBuffer MakeCommandsInputBuffer()
-        {
-            var buffer = new XRDataBuffer(
-                $"RenderCommandsBuffer",
-                EBufferTarget.ShaderStorageBuffer,
-                InitialCommandCapacity,
-                EComponentType.Float,
-                CommandFloatCount,
-                false,
-                false)
-            {
-                Usage = EBufferUsage.DynamicCopy,
-                DisposeOnPush = false,
-                Resizable = true
-            };
-            return buffer;
-        }
-
         private static XRDataBuffer MakeDrawMetadataBuffer(string name)
         {
             var buffer = new XRDataBuffer(
@@ -333,6 +290,42 @@ namespace XREngine.Rendering.Commands
                 Usage = EBufferUsage.DynamicCopy,
                 DisposeOnPush = false,
                 Resizable = true
+            };
+            return buffer;
+        }
+
+        private static XRDataBuffer MakeClassificationBuffer(string name)
+        {
+            var buffer = new XRDataBuffer(
+                name,
+                EBufferTarget.ShaderStorageBuffer,
+                InitialCommandCapacity,
+                EComponentType.UInt,
+                GPUViewBatchClassificationLayout.UIntCount,
+                false,
+                true)
+            {
+                Usage = EBufferUsage.DynamicCopy,
+                DisposeOnPush = false,
+                Resizable = true,
+            };
+            return buffer;
+        }
+
+        private static XRDataBuffer MakeVisibilityBuffer(string name)
+        {
+            var buffer = new XRDataBuffer(
+                name,
+                EBufferTarget.ShaderStorageBuffer,
+                InitialCommandCapacity,
+                EComponentType.UInt,
+                1u,
+                false,
+                true)
+            {
+                Usage = EBufferUsage.DynamicCopy,
+                DisposeOnPush = false,
+                Resizable = true,
             };
             return buffer;
         }
@@ -446,8 +439,7 @@ namespace XREngine.Rendering.Commands
             if (_lodTransitionBuffer.ActivelyMapping.Count == 0)
                 _lodTransitionBuffer.MapBufferData();
 
-            VoidPtr mapped = _lodTransitionBuffer.GetMappedAddresses().FirstOrDefault(ptr => ptr.IsValid);
-            if (!mapped.IsValid || !_lodTransitionBuffer.TryGetAddress(out VoidPtr cpuAddress) || !cpuAddress.IsValid)
+            if (!_lodTransitionBuffer.TryGetAddress(out VoidPtr cpuAddress) || !cpuAddress.IsValid)
                 return;
 
             // Collect-visible mutates the CPU-side command buffers too, but only the render thread
@@ -455,8 +447,16 @@ namespace XREngine.Rendering.Commands
             if (RuntimeEngine.IsRenderThread)
                 AbstractRenderer.Current?.MemoryBarrier(EMemoryBarrierMask.ClientMappedBuffer | EMemoryBarrierMask.ShaderStorage);
 
-            Memory.Move(cpuAddress, mapped, _lodTransitionBuffer.Length);
-            Interlocked.Exchange(ref _lodTransitionGpuWritePending, 0);
+            if (_lodTransitionBuffer.TryReadMapped(bytes =>
+            {
+                unsafe
+                {
+                    fixed (byte* source = bytes)
+                        Memory.Move(cpuAddress, source, _lodTransitionBuffer.Length);
+                }
+                return true;
+            }))
+                Interlocked.Exchange(ref _lodTransitionGpuWritePending, 0);
         }
 
         /// <summary>
@@ -583,12 +583,6 @@ namespace XREngine.Rendering.Commands
         public const uint MinCommandCount = 8;
 
         private static uint InitialCommandCapacity => GpuDrivenValidationCapacity.Apply(MinCommandCount);
-
-        /// <summary>Number of 32-bit lanes per compact GPU command (80 bytes).</summary>
-        public const int CommandFloatCount = 20;
-
-        /// <summary>Number of uint components per hot GPU command (80 bytes).</summary>
-        public const int CommandHotUIntCount = 20;
 
         public const uint DrawMetadataUIntCount = 16;
         public const uint TransformFloatCount = 16;
@@ -726,29 +720,74 @@ namespace XREngine.Rendering.Commands
         private XRDataBuffer? _allLoadedPrevTransformBuffer;
         private XRDataBuffer? _allLoadedBoundsBuffer;
         private XRDataBuffer? _updatingBoundsBuffer;
+        private XRDataBuffer? _allLoadedClassificationBuffer;
+        private XRDataBuffer? _updatingClassificationBuffer;
+        private XRDataBuffer? _allLoadedVisibilityBuffer;
+        private XRDataBuffer? _updatingVisibilityBuffer;
         private XRDataBuffer? _materialStateBuffer;
+        private XRDataBuffer? _updatingMaterialStateBuffer;
         private XRDataBuffer? _skinningPaletteBuffer;
 
         private DirtyRange _drawMetadataDirtyRange;
         private DirtyRange _transformDirtyRange;
         private DirtyRange _previousPublishedTransformDirtyRange;
         private DirtyRange _boundsDirtyRange;
+        private DirtyRange _classificationDirtyRange;
+        private DirtyRange _visibilityDirtyRange;
         private DirtyRange _materialStateDirtyRange;
         private DirtyRange _skinningPaletteDirtyRange;
         private readonly List<uint> _newTransformIdsAwaitingPublication = [];
 
         public XRDataBuffer DrawMetadataBuffer => _allLoadedDrawMetadataBuffer ??= MakeDrawMetadataBuffer("DrawMetadataBuffer");
+        /// <summary>Stage-native cull-control stream.</summary>
+        public XRDataBuffer CullControlBuffer => DrawMetadataBuffer;
         private XRDataBuffer UpdatingDrawMetadataBuffer => _updatingDrawMetadataBuffer ??= MakeDrawMetadataBuffer("UpdatingDrawMetadataBuffer");
         public XRDataBuffer TransformBuffer => _allLoadedTransformBuffer ??= MakeTransformBuffer("TransformBuffer");
         private XRDataBuffer UpdatingTransformBuffer => _updatingTransformBuffer ??= MakeTransformBuffer("UpdatingTransformBuffer");
         public XRDataBuffer PrevTransformBuffer => _allLoadedPrevTransformBuffer ??= MakeTransformBuffer("PrevTransformBuffer");
         public XRDataBuffer BoundsBuffer => _allLoadedBoundsBuffer ??= MakeBoundsBuffer("BoundsBuffer");
+        /// <summary>Stage-native cull-bounds stream.</summary>
+        public XRDataBuffer CullBoundsBuffer => BoundsBuffer;
         private XRDataBuffer UpdatingBoundsBuffer => _updatingBoundsBuffer ??= MakeBoundsBuffer("UpdatingBoundsBuffer");
+        /// <summary>Per-draw sort/classification records published with the scene snapshot.</summary>
+        public XRDataBuffer ClassificationBuffer => _allLoadedClassificationBuffer ??= MakeClassificationBuffer("GPUSceneClassificationBuffer");
+        private XRDataBuffer UpdatingClassificationBuffer => _updatingClassificationBuffer ??= MakeClassificationBuffer("UpdatingGPUSceneClassificationBuffer");
+        /// <summary>Per-draw visibility seed records. Culling overwrites its pass-local visible stream without mutating this scene publication.</summary>
+        public XRDataBuffer VisibilityBuffer => _allLoadedVisibilityBuffer ??= MakeVisibilityBuffer("GPUSceneVisibilityBuffer");
+        private XRDataBuffer UpdatingVisibilityBuffer => _updatingVisibilityBuffer ??= MakeVisibilityBuffer("UpdatingGPUSceneVisibilityBuffer");
+        /// <summary>Optional tight-AABB stream; instantiated only when BVH/AABB consumers request it.</summary>
+        public XRDataBuffer? OptionalAabbBuffer => _commandAabbBuffer;
         public XRDataBuffer MaterialStateBuffer => _materialStateBuffer ??= MakeMaterialStateBuffer();
+        private XRDataBuffer UpdatingMaterialStateBuffer => _updatingMaterialStateBuffer ??= MakeMaterialStateBuffer();
         public XRDataBuffer SkinningPaletteBuffer => _skinningPaletteBuffer ??= MakeSkinningPaletteBuffer();
 
-        /// <summary>Render buffer - read by the render thread. Contains stable command data.</summary>
-        private XRDataBuffer? _allLoadedCommandsBuffer;
+        /// <summary>Monotonic storage generation published after a coherent scene snapshot.</summary>
+        public ulong PublishedStorageGeneration => _streamTelemetry.Generation;
+        public GPUSceneStreamTelemetry StreamTelemetry => _streamTelemetry;
+        private GPUSceneStreamTelemetry _streamTelemetry;
+
+        private void RecordStreamPublication()
+        {
+            _streamTelemetry.Generation++;
+            RecordDirtyTraffic(ref _streamTelemetry.CullControl, _drawMetadataDirtyRange, _updatingDrawMetadataBuffer);
+            RecordDirtyTraffic(ref _streamTelemetry.CullBounds, _boundsDirtyRange, _updatingBoundsBuffer);
+            RecordDirtyTraffic(ref _streamTelemetry.Classification, _classificationDirtyRange, _updatingClassificationBuffer);
+            RecordDirtyTraffic(ref _streamTelemetry.MaterialState, _materialStateDirtyRange, _updatingMaterialStateBuffer);
+            RecordDirtyTraffic(ref _streamTelemetry.Transform, _transformDirtyRange, _updatingTransformBuffer);
+            RecordDirtyTraffic(ref _streamTelemetry.PreviousTransform, _previousPublishedTransformDirtyRange, _allLoadedPrevTransformBuffer);
+            RecordDirtyTraffic(ref _streamTelemetry.Visibility, _visibilityDirtyRange, _updatingVisibilityBuffer);
+            RecordDirtyTraffic(ref _streamTelemetry.OptionalAabb, _commandAabbDirtyRange, _commandAabbBuffer);
+        }
+
+        private static void RecordDirtyTraffic(ref GPUSceneStreamTraffic traffic, in DirtyRange range, XRDataBuffer? buffer)
+        {
+            if (!range.HasValue || buffer is null)
+                return;
+
+            uint elements = range.MaxExclusive - range.Min;
+            uint bytes = checked(elements * buffer.ElementSize);
+            traffic.Record(elements, elements, bytes, bytes);
+        }
 
         /// <summary>Render buffer - read by the render thread. Contains stable per-command transparency metadata.</summary>
         private XRDataBuffer? _allLoadedTransparencyMetadataBuffer;
@@ -758,24 +797,11 @@ namespace XREngine.Rendering.Commands
     private readonly List<uint> _lodTransitionCpuDirtyIndices = [];
 
         /// <summary>Updating buffer - written by Add/Remove operations. Swapped to render buffer.</summary>
-        private XRDataBuffer? _updatingCommandsBuffer;
-
-        /// <summary>Updating buffer - written by Add/Remove operations. Swapped to render buffer.</summary>
         private XRDataBuffer? _updatingTransparencyMetadataBuffer;
 
-        /// <summary>
-        /// Gets the render command buffer containing all commands for this scene.
-        /// This buffer is read by the render thread and updated via <see cref="SwapCommandBuffers"/>.
-        /// </summary>
-        public XRDataBuffer AllLoadedCommandsBuffer => _allLoadedCommandsBuffer ??= MakeCommandsInputBuffer();
         public XRDataBuffer AllLoadedTransparencyMetadataBuffer => _allLoadedTransparencyMetadataBuffer ??= MakeTransparencyMetadataBuffer();
             public XRDataBuffer LodTransitionBuffer => _lodTransitionBuffer ??= MakeLodTransitionBuffer();
         
-        /// <summary>
-        /// Gets the updating command buffer being written to by Add/Remove operations.
-        /// Swapped with AllLoadedCommandsBuffer via <see cref="SwapCommandBuffers"/>.
-        /// </summary>
-        private XRDataBuffer UpdatingCommandsBuffer => _updatingCommandsBuffer ??= MakeCommandsInputBuffer();
         private XRDataBuffer UpdatingTransparencyMetadataBuffer => _updatingTransparencyMetadataBuffer ??= MakeTransparencyMetadataBuffer();
 
         /// <summary>Debug/compatibility meshlet collection for the legacy direct task-dispatch path.</summary>
@@ -922,7 +948,7 @@ namespace XREngine.Rendering.Commands
         }
 
         /// <summary>Gets the current allocated capacity of the command buffer.</summary>
-        public uint AllocatedMaxCommandCount => AllLoadedCommandsBuffer.ElementCount;
+        public uint AllocatedMaxCommandCount => DrawMetadataBuffer.ElementCount;
 
         /// <summary>
         /// Ensures command buffers can hold at least <paramref name="requiredCapacity"/> entries.
@@ -936,7 +962,7 @@ namespace XREngine.Rendering.Commands
                 VerifyUpdatingBufferSize(safeRequired);
                 VerifyCommandBufferSize(safeRequired);
                 EnsureDrawIndexedSoACapacity(safeRequired);
-                return AllLoadedCommandsBuffer.ElementCount;
+                return DrawMetadataBuffer.ElementCount;
             }
         }
 
@@ -952,6 +978,10 @@ namespace XREngine.Rendering.Commands
             EnsureBufferCapacity(DrawMetadataBuffer, requiredCapacity);
             EnsureBufferCapacity(UpdatingBoundsBuffer, requiredCapacity);
             EnsureBufferCapacity(BoundsBuffer, requiredCapacity);
+            EnsureBufferCapacity(UpdatingClassificationBuffer, requiredCapacity);
+            EnsureBufferCapacity(ClassificationBuffer, requiredCapacity);
+            EnsureBufferCapacity(UpdatingVisibilityBuffer, requiredCapacity);
+            EnsureBufferCapacity(VisibilityBuffer, requiredCapacity);
         }
 
         private void EnsureTransformCapacity(uint requiredCapacity)
@@ -963,8 +993,11 @@ namespace XREngine.Rendering.Commands
 
         private void EnsureMaterialStateCapacity(uint requiredCapacity)
         {
+            uint capacity = XRMath.NextPowerOfTwo(requiredCapacity).ClampMin(MinMaterialStateCount);
             if (requiredCapacity > MaterialStateBuffer.ElementCount)
-                MaterialStateBuffer.Resize(XRMath.NextPowerOfTwo(requiredCapacity).ClampMin(MinMaterialStateCount));
+                MaterialStateBuffer.Resize(capacity);
+            if (requiredCapacity > UpdatingMaterialStateBuffer.ElementCount)
+                UpdatingMaterialStateBuffer.Resize(capacity);
         }
 
         private void EnsureSkinningPaletteCapacity(uint requiredCapacity)

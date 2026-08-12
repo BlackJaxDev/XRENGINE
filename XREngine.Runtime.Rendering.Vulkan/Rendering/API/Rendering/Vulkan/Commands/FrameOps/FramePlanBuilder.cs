@@ -12,6 +12,7 @@ namespace XREngine.Rendering.Vulkan;
 internal sealed class FramePlanBuilder
 {
     private readonly record struct ResourceVersionKey(ulong ResourceId, ulong Version);
+    private readonly VulkanFrameOperationScheduler _frameScheduler = new();
 
     private sealed class Slot
     {
@@ -19,8 +20,10 @@ internal sealed class FramePlanBuilder
         internal readonly FramePlan Plan;
         internal readonly FrameOperationStream Operations = new();
         internal readonly FrameOperationStream DynamicOverlayOperations = new();
+        internal readonly FrameOperationStream TextureUploadOperations = new();
         internal readonly FrameOperationIngress StaticIngress = new();
         internal readonly FrameOperationIngress DynamicIngress = new();
+        internal readonly FrameOperationIngress TextureUploadIngress = new();
         // Authoring arrays are never published. The slot's operation streams
         // are the plan-owned representation after numeric ordering.
         internal int[] OperationOrderScratch = new int[64];
@@ -52,6 +55,7 @@ internal sealed class FramePlanBuilder
     private int _retiredSlotCount;
     private readonly RenderOutputGraphPlanner _outputGraphPlanner = new();
     private long _nextGeneration;
+    internal VulkanFrameOperationScheduler FrameScheduler => _frameScheduler;
 
     internal FramePlan BuildAndSeal(
         int frameSlot,
@@ -61,11 +65,13 @@ internal sealed class FramePlanBuilder
         FrameOp[] operations,
         FrameOp[] dynamicOverlayOperations,
         in VulkanFramePlanRenderGraphAuthority renderGraphAuthority,
-        uint? openXrViewIndex = null)
+        uint? openXrViewIndex = null,
+        FrameOp[]? textureUploadOperations = null)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(frameSlot);
         ArgumentNullException.ThrowIfNull(operations);
         ArgumentNullException.ThrowIfNull(dynamicOverlayOperations);
+        textureUploadOperations ??= [];
 
         Slot slot = AcquireWritableSlot(frameSlot);
         slot.Plan.Reset();
@@ -76,13 +82,30 @@ internal sealed class FramePlanBuilder
             openXrViewIndex);
         slot.StaticIngress.Populate(operations);
         slot.DynamicIngress.Populate(dynamicOverlayOperations);
-        FrameOperationIngress staticIngress = slot.StaticIngress;
-        FrameOperationIngress dynamicIngress = slot.DynamicIngress;
+        slot.TextureUploadIngress.Populate(textureUploadOperations);
+        // This is the sole object-to-stream boundary. Everything below,
+        // including output ordering and resource-DAG compilation, consumes
+        // numeric headers and dense typed payload streams only.
+        slot.Operations.Lower(slot.StaticIngress);
+        slot.DynamicOverlayOperations.Lower(slot.DynamicIngress);
+        slot.TextureUploadOperations.Lower(slot.TextureUploadIngress);
+        // Ordering is deliberately inside the sealed numeric boundary. No DAG,
+        // metadata, worker, or recording stage can observe an authoring FrameOp.
+        VulkanCompiledRenderGraph graph = renderGraphAuthority.FallbackPlan.CompiledGraph;
+        _frameScheduler.SortLoweredOperations(slot.Operations, graph);
+        _frameScheduler.SortLoweredOperations(slot.DynamicOverlayOperations, graph);
+        // The published signature is derived from the same sealed numeric
+        // streams that recording and worker scheduling consume. The ingress
+        // values remain call-site cache hints only until those paths migrate.
+        staticOperationSignature = VulkanFrameOperationSemantics.ComputeFrameOpsSignature(
+            new FrameOperationSequence(slot.Operations));
+        dynamicOverlaySignature = VulkanFrameOperationSemantics.ComputeFrameOpsSignature(
+            new FrameOperationSequence(slot.DynamicOverlayOperations));
 
         int outputCount = 0;
         int operationKeyCount = 0;
-        AddPlanMetadata(slot, staticIngress, dynamicOverlay: false, openXrViewKind, ref outputCount, ref operationKeyCount);
-        AddPlanMetadata(slot, dynamicIngress, dynamicOverlay: true, openXrViewKind, ref outputCount, ref operationKeyCount);
+        AddPlanMetadata(slot, slot.Operations, dynamicOverlay: false, openXrViewKind, ref outputCount, ref operationKeyCount);
+        AddPlanMetadata(slot, slot.DynamicOverlayOperations, dynamicOverlay: true, openXrViewKind, ref outputCount, ref operationKeyCount);
         SortOutputs(slot.Outputs, outputCount);
         int outputExecutionNodeCount = CompileOutputGraph(
             slot,
@@ -90,13 +113,13 @@ internal sealed class FramePlanBuilder
             renderFrameId);
         int operationCount = CopyOperationsInDagOrder(
             slot,
-            staticIngress,
+            slot.Operations,
             outputCount,
             openXrViewKind,
             dynamicOverlay: false);
         int dynamicOperationCount = CopyOperationsInDagOrder(
             slot,
-            dynamicIngress,
+            slot.DynamicOverlayOperations,
             outputCount,
             openXrViewKind,
             dynamicOverlay: true);
@@ -111,8 +134,8 @@ internal sealed class FramePlanBuilder
             in renderGraphAuthority);
 
         VulkanFrameOperationSignature.ComputeVersionSignatures(
-            operations,
-            dynamicOverlayOperations,
+            slot.Operations,
+            slot.DynamicOverlayOperations,
             out ulong resourceVersionSignature,
             out ulong descriptorVersionSignature);
         ulong generation = unchecked((ulong)Interlocked.Increment(ref _nextGeneration));
@@ -129,6 +152,7 @@ internal sealed class FramePlanBuilder
             dynamicOverlaySignature,
             slot.Operations,
             slot.DynamicOverlayOperations,
+            slot.TextureUploadOperations,
             slot.Outputs,
             outputCount,
             slot.OutputExecutionNodes,
@@ -266,7 +290,7 @@ internal sealed class FramePlanBuilder
 
     private static int CopyOperationsInDagOrder(
         Slot slot,
-        FrameOperationIngress source,
+        FrameOperationStream source,
         int outputCount,
         EVrOutputViewKind? openXrViewKind,
         bool dynamicOverlay)
@@ -292,19 +316,14 @@ internal sealed class FramePlanBuilder
         else
             slot.OperationOrderScratch = orderScratch;
 
-        FrameOperationStream destination = dynamicOverlay
-            ? slot.DynamicOverlayOperations
-            : slot.Operations;
-        // This is the sole producer-to-plan lowering boundary. The resulting
-        // stream owns opcode/payload-index headers and dense kind payloads.
-        destination.Lower(source, orderScratch.AsSpan(0, source.Count));
+        source.Reorder(orderScratch.AsSpan(0, source.Count));
 
         return source.Count;
     }
 
     private static void SortOperationOrder(
         Slot slot,
-        FrameOperationIngress operations,
+        FrameOperationStream operations,
         int[] order,
         int operationCount,
         int outputCount,
@@ -343,7 +362,7 @@ internal sealed class FramePlanBuilder
 
     private static void CompileResourceDependencyOrder(
         Slot slot,
-        FrameOperationIngress operations,
+        FrameOperationStream operations,
         int[] preferredOrder,
         int operationCount)
     {
@@ -531,16 +550,16 @@ internal sealed class FramePlanBuilder
         EnsureCapacity(ref slot.OperationKeys, operationCount + dynamicOperationCount);
         for (int index = 0; index < operationCount; index++)
         {
-            slot.OperationKeys[keyCount++] = FramePlanOperationKey.FromOperation(
-                slot.Operations.GetPayloadForPrimaryDispatch(index),
-                index,
+            slot.OperationKeys[keyCount++] = FramePlanOperationKey.FromHeader(
+                slot.Operations.GetHeader(index),
+                slot.Operations.GetContext(index),
                 isDynamicOverlay: false);
         }
         for (int index = 0; index < dynamicOperationCount; index++)
         {
-            slot.OperationKeys[keyCount++] = FramePlanOperationKey.FromOperation(
-                slot.DynamicOverlayOperations.GetPayloadForPrimaryDispatch(index),
-                index,
+            slot.OperationKeys[keyCount++] = FramePlanOperationKey.FromHeader(
+                slot.DynamicOverlayOperations.GetHeader(index),
+                slot.DynamicOverlayOperations.GetContext(index),
                 isDynamicOverlay: true);
         }
 
@@ -549,7 +568,7 @@ internal sealed class FramePlanBuilder
 
     private static void AddPlanMetadata(
         Slot slot,
-        FrameOperationIngress operations,
+        FrameOperationStream operations,
         bool dynamicOverlay,
         EVrOutputViewKind? openXrViewKind,
         ref int outputCount,

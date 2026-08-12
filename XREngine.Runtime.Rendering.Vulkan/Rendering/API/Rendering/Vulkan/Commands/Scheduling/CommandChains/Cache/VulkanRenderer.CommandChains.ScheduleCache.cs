@@ -13,7 +13,7 @@ using XREngine.Rendering.Shadows;
 
 namespace XREngine.Rendering.Vulkan;
 
-internal sealed unsafe partial class VulkanCommandRuntime
+internal sealed partial class VulkanCommandRuntime
 {
     private CommandChainSchedule RentCommandChainSchedule(uint imageIndex)
     {
@@ -242,17 +242,6 @@ internal sealed unsafe partial class VulkanCommandRuntime
         return hash.ToHash();
     }
 
-    private static ulong ComputeCommandChainFastScheduleSignature(
-        uint imageIndex,
-        FrameOp[] staticOps,
-        FrameOp[] volatileOps,
-        ulong resourcePlanRevision)
-        => ComputeCommandChainFastScheduleSignature(
-            imageIndex,
-            FrameOperationStream.CreateCompatibility(staticOps),
-            FrameOperationStream.CreateCompatibility(volatileOps),
-            resourcePlanRevision);
-
     private static void AddCommandChainFastScheduleSignatureParts(
         ref FrameOpSignatureHasher hash,
         FrameOperationStream ops,
@@ -262,10 +251,11 @@ internal sealed unsafe partial class VulkanCommandRuntime
         for (int i = 0; i < ops.Count; i++)
         {
             ref readonly FrameOperationHeader header = ref ops.GetHeader(i);
-            FrameOp op = ops.GetPayloadForPrimaryDispatch(i);
-            RenderViewKey viewKey = BuildRenderViewKey(op, dynamicOverlay);
-            RenderPacketVolatility volatility =
-                ClassifyRenderPacketVolatility(op, dynamicOverlay);
+            ref readonly FrameOpContext context = ref ops.GetContext(i);
+            RenderViewKey viewKey = header.OpCode == EVulkanPrimaryPlanNodeKind.MeshDraw
+                ? BuildRenderViewKey(ops.GetMeshDraw(i).Draw, header.PassIndex, in context, dynamicOverlay)
+                : BuildRenderViewKey(in context, header.PassIndex, dynamicOverlay);
+            RenderPacketVolatility volatility = ClassifyRenderPacketVolatility(header.OpCode, dynamicOverlay);
             hash.Add(header.PassIndex);
             hash.Add(header.TargetIdentity);
             hash.Add(dynamicOverlay);
@@ -276,10 +266,19 @@ internal sealed unsafe partial class VulkanCommandRuntime
             hash.Add((int)viewKey.Kind);
             hash.Add(viewKey.LightIdentity);
             hash.Add(viewKey.CascadeIndex);
-            hash.Add(ComputeFrameOpStructuralSignature(op, i, volatility));
-            hash.Add(ResolvePipelineGeneration(op));
-            DescriptorBindingSnapshot descriptorSnapshot =
-                CreateDescriptorSnapshot(op);
+            hash.Add(header.OpCode == EVulkanPrimaryPlanNodeKind.MeshDraw
+                ? ComputeFrameOpStructuralSignature(ops.GetMeshDraw(i).Draw, header, in context, i, volatility)
+                : ComputeFrameOpStructuralSignature(header, in context, i, volatility));
+            DescriptorBindingSnapshot descriptorSnapshot = default;
+            if (header.OpCode == EVulkanPrimaryPlanNodeKind.MeshDraw)
+            {
+                ref readonly MeshDrawPayload mesh = ref ops.GetMeshDraw(i);
+                PendingMeshDraw draw = mesh.Draw;
+                hash.Add(ResolvePipelineGeneration(draw, in context));
+                descriptorSnapshot = CreateMeshDrawDescriptorSnapshot(draw);
+            }
+            else
+                hash.Add(ResolvePipelineGeneration(in context));
             hash.Add(descriptorSnapshot.DescriptorGeneration);
             hash.Add(descriptorSnapshot.DescriptorSetSignature);
             hash.Add(descriptorSnapshot.DescriptorSetCount);

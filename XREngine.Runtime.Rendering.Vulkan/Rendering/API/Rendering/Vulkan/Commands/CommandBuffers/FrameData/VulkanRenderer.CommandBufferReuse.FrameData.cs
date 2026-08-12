@@ -15,7 +15,7 @@ using XREngine.Rendering.Resources;
 
 namespace XREngine.Rendering.Vulkan
 {
-    internal sealed unsafe partial class VulkanCommandRuntime
+    internal sealed partial class VulkanCommandRuntime
     {
         private bool TryReuseCleanCommandChainPrimaryVariant(
             uint imageIndex,
@@ -31,8 +31,8 @@ namespace XREngine.Rendering.Vulkan
             ulong imageLayoutStartSignature,
             bool gpuPipelineProfilingActive,
             int commandBufferImageSlot,
-            ReadOnlySpan<FrameOp> ops,
-            FrameOp[] dynamicUiBatchTextOps,
+            FrameOperationSequence ops,
+            FrameOperationSequence dynamicUiBatchTextOps,
             FrameOperationSequence sealedDynamicUiBatchTextOps,
             bool delayDynamicUiSecondaryRecording,
             bool preserveSwapchainForOverlay,

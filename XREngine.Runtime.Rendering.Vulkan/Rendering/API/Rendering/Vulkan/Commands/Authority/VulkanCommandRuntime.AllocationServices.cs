@@ -7,7 +7,7 @@ namespace XREngine.Rendering.Vulkan;
 /// storage. The command authority never reaches back through the renderer or
 /// output facade; lifetime decisions stay in <see cref="VulkanResourceRuntime"/>.
 /// </summary>
-internal sealed unsafe partial class VulkanCommandRuntime
+internal sealed partial class VulkanCommandRuntime
 {
     private bool _deviceLost => !DeviceContext.IsOperational;
     private object _computeDescriptorCacheLock => CommandBuffers.BindStateGate;
@@ -51,7 +51,7 @@ internal sealed unsafe partial class VulkanCommandRuntime
             owner);
     }
 
-    private void FreeVulkanCommandBuffersTracked(
+    private unsafe void FreeVulkanCommandBuffersTracked(
         CommandPool commandPool,
         uint commandBufferCount,
         CommandBuffer* commandBuffers,

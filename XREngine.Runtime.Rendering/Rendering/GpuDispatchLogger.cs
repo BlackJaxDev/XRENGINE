@@ -530,8 +530,7 @@ namespace XREngine.Rendering
                     mappedHere = true;
                 }
 
-                var ptr = buffer.GetMappedAddresses().FirstOrDefault(p => p.IsValid);
-                if (!ptr.IsValid)
+                if (!buffer.IsMapped)
                 {
                     Log(LogCategory.Buffers, LogLevel.Warning, "DumpIndirectDrawBuffer({0}): failed to get mapped pointer", label);
                     return;
@@ -544,13 +543,16 @@ namespace XREngine.Rendering
                 if (stride == 0)
                     stride = (uint)Marshal.SizeOf<DrawElementsIndirectCommand>();
 
-                byte* basePtr = (byte*)ptr.Pointer;
-                for (uint i = 0; i < sampleCount; i++)
+                if (!buffer.TryReadMapped(bytes =>
                 {
-                    var cmd = Unsafe.ReadUnaligned<DrawElementsIndirectCommand>(basePtr + i * stride);
-                    sb.AppendFormat("\n  [{0}] count={1}, instances={2}, firstIndex={3}, baseVertex={4}, baseInstance={5}",
-                        i, cmd.Count, cmd.InstanceCount, cmd.FirstIndex, cmd.BaseVertex, cmd.BaseInstance);
-                }
+                    for (uint i = 0; i < sampleCount; i++)
+                    {
+                        var cmd = MemoryMarshal.Read<DrawElementsIndirectCommand>(bytes[checked((int)(i * stride))..]);
+                        sb.AppendFormat("\n  [{0}] count={1}, instances={2}, firstIndex={3}, baseVertex={4}, baseInstance={5}", i, cmd.Count, cmd.InstanceCount, cmd.FirstIndex, cmd.BaseVertex, cmd.BaseInstance);
+                    }
+                    return true;
+                }))
+                    return;
 
                 Log(LogCategory.Buffers, LogLevel.Debug, sb.ToString());
             }
@@ -591,8 +593,7 @@ namespace XREngine.Rendering
                     mappedHere = true;
                 }
 
-                var ptr = buffer.GetMappedAddresses().FirstOrDefault(p => p.IsValid);
-                if (!ptr.IsValid)
+                if (!buffer.IsMapped)
                 {
                     Log(LogCategory.Culling, LogLevel.Warning, "DumpCulledCommandBuffer({0}): failed to get mapped pointer", label);
                     return;
@@ -601,17 +602,16 @@ namespace XREngine.Rendering
                 var sb = new StringBuilder(512);
                 sb.AppendFormat("DumpCulledCommandBuffer({0}): sampleCount={1}", label, sampleCount);
 
-                uint stride = buffer.ElementSize;
-                if (stride == 0)
-                    stride = (uint)Marshal.SizeOf<GPUIndirectRenderCommand>();
-
-                byte* basePtr = (byte*)ptr.Pointer;
-                for (uint i = 0; i < sampleCount; i++)
+                if (!buffer.TryReadMapped(bytes =>
                 {
-                    var cmd = Unsafe.ReadUnaligned<GPUIndirectRenderCommand>(basePtr + i * stride);
-                    sb.AppendFormat("\n  [{0}] mesh={1}, submesh={2}, mat={3}, instances={4}, pass={5}, flags={6}",
-                        i, cmd.MeshID, cmd.SubmeshID, cmd.MaterialID, cmd.InstanceCount, cmd.RenderPass, cmd.Flags);
-                }
+                    for (uint i = 0; i < sampleCount; i++)
+                    {
+                        uint drawId = MemoryMarshal.Read<uint>(bytes[checked((int)(i * sizeof(uint)))..]);
+                        sb.AppendFormat("\n  [{0}] drawId={1}", i, drawId);
+                    }
+                    return true;
+                }))
+                    return;
 
                 Log(LogCategory.Culling, LogLevel.Debug, sb.ToString());
             }

@@ -238,23 +238,15 @@ internal sealed partial class VulkanCommandRuntime
             return false;
 
         VulkanBackendObjectContext backendContext = RequireBackendObjectContext();
-        if (!ResourceRuntime.Buffers.TryMapReadback(
-                backendContext,
-                handle,
-                memory,
-                0,
-                (ulong)destination.Length,
-                out void* mapped))
+        if (!ResourceRuntime.Buffers.TryCreateMappedSlice(
+                backendContext, handle, memory, 0, (ulong)destination.Length, out VulkanMappedMemorySlice slice) ||
+            !ResourceRuntime.Buffers.TryAcquireRead(backendContext, in slice, out VulkanMappedMemoryReadLease lease))
             return false;
 
-        try
+        using (lease)
         {
-            new ReadOnlySpan<byte>(mapped, destination.Length).CopyTo(destination);
+            lease.Bytes.CopyTo(destination);
             return true;
-        }
-        finally
-        {
-            ResourceRuntime.Buffers.Unmap(backendContext, handle, memory);
         }
     }
 

@@ -2,7 +2,7 @@ using System;
 
 namespace XREngine.Rendering.Vulkan;
 
-internal sealed unsafe partial class VulkanFrameLoop
+internal sealed partial class VulkanFrameLoop
 {
     /// <summary>
     /// Arms a deterministic one-shot desktop frame failure at a phase boundary.

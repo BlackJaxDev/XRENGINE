@@ -297,9 +297,6 @@ internal unsafe partial class VkRenderProgram
 
     private void ReleaseComputeUniformBuffer(in ComputeUniformBuffer resource)
     {
-        if (resource.Mapped != null)
-            BackendContext.Resources.Buffers.Unmap(BackendContext,resource.Buffer, resource.Memory);
-
         if (resource.Buffer.Handle != 0 || resource.Memory.Handle != 0)
             BackendContext.Resources.Buffers.Retire(resource.Buffer, resource.Memory, "VkRenderProgram.ComputeUniformBuffer");
     }

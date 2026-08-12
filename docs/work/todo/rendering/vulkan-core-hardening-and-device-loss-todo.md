@@ -553,11 +553,13 @@ passed 25/25, the solution warning-as-error build passed, and three clean
 validation-enabled Vulkan runs reported zero validation messages/errors and no
 shutdown fault signature.
 
-Phase 4.4 structural consolidation is complete. Later Phase 4 work still owns
-dense typed per-kind operation payloads, prepared-draw flattening, OpenXR runtime
-validation, and the unsafe/native-memory boundary gates in section 4.5. The
-2026-08-11 inventory and live evidence are recorded in the Phase 4 investigation
-and under `Build/_AgentValidation/20260811-vulkan-core-44/`.
+Phase 4 is complete. Phase 4.5 now owns one measured canonical layout for each
+hot stream, one numeric frame-operation planning path, flattened prepared-draw
+and descriptor publications, flat numeric graph execution, and focused native
+and mapped-memory owners. The 2026-08-12 inventory, exact layout audit, strict
+unsafe-boundary audit, live Vulkan evidence, and final log classification are
+recorded in the Phase 4 investigation and under
+`Build/_AgentValidation/p45-capabilities/`.
 
 #### 4.5 Make Hot Data Layout And Unsafe Boundaries Explicit
 
@@ -574,96 +576,97 @@ descriptor, barrier, or native command code.
   stream, current element size/alignment, managed-reference fields, arrays or
   pooled buffers per element, producer/consumer stages, fields touched by each
   consumer, bytes copied/converted, mutation frequency, and owning generation.
-- [ ] Establish a layout decision record for every changed stream. Compare the
+- [x] Establish a layout decision record for every changed stream. Compare the
   existing AoS with candidate SoA, compact AoS/hot-cold, and—only when useful—
   AoSoA layouts at representative counts before selecting the canonical form.
-- [x] Preserve exact ABI/layout checks for `DrawMetadata`, `BoundsGpu`,
-  `GPUIndirectRenderCommandHot`, shader structs, and native Vulkan records. Treat
-  the current 64-byte metadata, 64-byte bounds, and 80-byte hot command as a
-  measured baseline, not an immutable contract.
-- [ ] Make GPUScene publish stage-native cull-control, cull-bounds,
+- [x] Preserve exact ABI/layout checks for `DrawMetadata`, `BoundsGpu`, the
+  stage-native GPUScene records, final indirect commands, shader structs, and
+  native Vulkan records. Treat
+  the current 64-byte metadata and 64-byte bounds, plus the historical 80-byte
+  broad command, as measured baselines rather than immutable contracts.
+- [x] Make GPUScene publish stage-native cull-control, cull-bounds,
   classification/sort-key, material/state, transform, previous-transform,
   visibility, and optional AABB streams directly. Keep compact vector AoS inside
   a stream when one shader invocation consumes the complete vector group.
-- [ ] Define those logical streams in one scene-layout schema and publish them
+- [x] Define those logical streams in one scene-layout schema and publish them
   through one storage owner and generation transaction. Use typed aligned ranges
   in shared backing allocations where appropriate; do not add a wrapper, source
   file, Vulkan allocation, or descriptor binding for every individual column.
 - [x] Remove `GPURenderExtractSoA.comp`, its scratch buffers, and the uncalled
   `SoACull` compatibility path unless a real consumer and a whole-stage win are
   demonstrated first. Do not pay a conversion merely to label a path SoA.
-- [ ] Replace unconditional broad hot-command conversion with direct
+- [x] Replace unconditional broad hot-command conversion with direct
   stage-native GPUScene consumption. Retain a compatibility envelope only for a
   named temporary consumer, meter its bytes/time, and give it a deletion gate.
-- [ ] Generate the final contiguous `VkDrawIndirectCommand` or
+- [x] Generate the final contiguous `VkDrawIndirectCommand` or
   `VkDrawIndexedIndirectCommand` AoS stream after culling; do not split the
   driver-required indirect command structure into submission-time SoA buffers.
-- [ ] Lower polymorphic `FrameOp` objects exactly once into an opcode/payload
+- [x] Lower polymorphic `FrameOp` objects exactly once into an opcode/payload
   index stream plus dense per-kind draw, dispatch, copy, clear, barrier, and
   output payload arrays before sorting, planning, or worker scheduling.
   - [x] Convert desktop operation ingress, ordering, planning keys, and
     packetization to numeric operation headers and stable numeric identities.
-  - [ ] Replace the remaining per-kind `FrameOp` reference sidecars with dense
+  - [x] Replace the remaining per-kind `FrameOp` reference sidecars with dense
     typed payload arrays and remove the compatibility object path.
 - [x] Replace `RenderPacket`-owned draw/dispatch arrays and hot diagnostic target
   strings with compact numeric headers and `start/count` ranges into frame-owned
   arenas. Resolve names only in diagnostics/exporters.
-- [ ] Replace `VulkanPreparedMeshDrawState` and `VkPreparedMeshDraw` per-draw
+- [x] Replace `VulkanPreparedMeshDrawState` and `VkPreparedMeshDraw` per-draw
   descriptor, dynamic-offset, vertex, frame-payload, viewport, scissor, and
   other pooled arrays with flattened frame-slot streams and typed ranges.
   Separate the compact encoder hot header from managed owners, generation audit
   data, and diagnostic names in cold indexed sidecars.
-- [ ] Keep prepared-draw headers compact AoS by default because encoding consumes
+- [x] Keep prepared-draw headers compact AoS by default because encoding consumes
   most hot fields together. Introduce AoSoA tiles only if CPU counter and
   full-frame measurements beat compact AoS after including transpose, tail, and
   publication cost.
-- [ ] Replace render-graph and barrier execution data based on strings,
+- [x] Replace render-graph and barrier execution data based on strings,
   dictionaries, and lists-of-lists with typed numeric resource IDs and flat
   offset/count adjacency and barrier ranges. Materialize contiguous
   `VkMemoryBarrier2`, `VkBufferMemoryBarrier2`, and `VkImageMemoryBarrier2` AoS
   arrays only at the native call boundary.
-- [ ] Store descriptor dirty state, resource/allocation generations, layouts,
+- [x] Store descriptor dirty state, resource/allocation generations, layouts,
   samplers, slots, and update frequency in scan-friendly publication streams.
   Build native descriptor-info/write arrays or aligned descriptor-buffer bytes
   only for dirty ranges in preallocated frame-slot scratch storage.
-- [ ] Keep worker queue entries as compact AoS records. Move mutable worker
+- [x] Keep worker queue entries as compact AoS records. Move mutable worker
   counters and trace rings into independently write-owned blocks whose allocation
   base and stride are both aligned; merge them after completion instead of using
   contended per-item global atomics.
-- [ ] Keep frame-attempt/lifecycle state, typed outcomes, queue receipts, and
+- [x] Keep frame-attempt/lifecycle state, typed outcomes, queue receipts, and
   whole-record dependency keys as safe AoS. Split dependency identity into
   structural, binding, and data keys only if comparison profiles show a benefit;
   never replace resource ownership with naked pointers.
-- [ ] Introduce small focused `VulkanNativeScratchArena` and
+- [x] Introduce small focused `VulkanNativeScratchArena` and
   `VulkanMappedFrameArena`-style owners for Vulkan ABI arrays, `pNext` chains,
   mapped upload/uniform/staging/readback memory, descriptor bytes, and validated
   binary decoding. Expose typed offset/length/alignment/generation slices and
   acquire raw pointers only at the final boundary.
   - [x] Replace native barrier pooled arrays with reusable typed
     `VulkanNativeScratchArena` reservations.
-  - [ ] Add equivalent focused owners for every remaining ABI array, `pNext`
+  - [x] Add equivalent focused owners for every remaining ABI array, `pNext`
     chain, mapped upload/staging/readback path, descriptor byte stream, and
     validated binary decoder.
-- [ ] Remove type-wide `unsafe` from the renderer facade and ordinary planning,
+- [x] Remove type-wide `unsafe` from the renderer facade and ordinary planning,
   graph, scheduling, and lifecycle owners. Prefer safe `Span<T>`/
   `ReadOnlySpan<T>` and measured vector APIs; every retained pointer loop must
   name the benchmarked gap that safe code could not close.
-- [ ] Forbid raw managed pointers escaping `fixed`, pooled buffers escaping
+- [x] Forbid raw managed pointers escaping `fixed`, pooled buffers escaping
   return ownership, per-frame `GCHandle` pinning that survives a native call,
   unchecked bitwise copies of padded/non-blittable structs, and `stackalloc`
   inside loops or with unbounded lengths.
-- [ ] Validate mapped-memory slices against host/device ownership,
+- [x] Validate mapped-memory slices against host/device ownership,
   `minMemoryMapAlignment`, and `nonCoherentAtomSize`; record flush/invalidate
   expansion rather than confusing CPU cache-line alignment with Vulkan memory
   visibility.
   The completed mapped mesh-frame slice is credited once in section 4.3.
-  - [ ] Apply the same ownership, minimum-alignment, atom-size, flush, and
+  - [x] Apply the same ownership, minimum-alignment, atom-size, flush, and
     invalidate contract to every remaining mapped-memory owner.
-- [ ] Add allocation-free telemetry for elements and bytes read/written per hot
+- [x] Add allocation-free telemetry for elements and bytes read/written per hot
   stream, compatibility/conversion bytes, native scratch reservations/high-water
   marks, dirty descriptor ranges, graph edges, prepared-draw side-stream bytes,
   worker queue depth, and worker-local merge cost.
-- [ ] Delete superseded object pools, per-packet arrays, conversion shaders,
+- [x] Delete superseded object pools, per-packet arrays, conversion shaders,
   scratch buffers, descriptor builders, and unsafe helpers immediately after
   their final consumer moves to the canonical layout.
 

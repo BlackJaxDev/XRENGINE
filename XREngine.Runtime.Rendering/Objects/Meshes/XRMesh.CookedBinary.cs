@@ -1441,7 +1441,7 @@ public partial class XRMesh : ICookedBinarySerializable
     {
         if (buffer.ClientSideSource is null || buffer.ClientSideSource.Length < byteLength)
             buffer.ClientSideSource = DataSource.Allocate(byteLength);
-        reader.ReadBytes((void*)buffer.ClientSideSource!.Address, (int)byteLength);
+        reader.ReadBytes(new Span<byte>((void*)buffer.ClientSideSource!.Address, checked((int)byteLength)));
     }
 
     private unsafe byte[] EncodeSnorm16(XRDataBuffer buffer, out uint encodedLength)

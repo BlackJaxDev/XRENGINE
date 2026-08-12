@@ -5,7 +5,7 @@ using Buffer = Silk.NET.Vulkan.Buffer;
 namespace XREngine.Rendering.Vulkan;
 
 /// <summary>Resolves readback sources from the currently published frame generation.</summary>
-internal sealed unsafe partial class VulkanFrameLoop
+internal sealed partial class VulkanFrameLoop
 {
     internal bool TryResolveBlitImage(
         XRFrameBuffer? frameBuffer,
@@ -93,10 +93,6 @@ internal sealed unsafe partial class VulkanFrameLoop
         => _deviceContext.DeviceFaultFacility.DeviceLostReason;
     private CommandPool GetThreadCommandPool()
         => _commandRuntime.GetThreadCommandPool();
-    private bool TryMapReadbackMemory(Buffer buffer, DeviceMemory memory, ulong offset, ulong length, out void* mapped)
-        => _resourceRuntime.Buffers.TryMapReadback(BackendObjectContext, buffer, memory, offset, length, out mapped);
-    private void UnmapBufferMemory(Buffer buffer, DeviceMemory memory)
-        => _resourceRuntime.UnmapBufferMemory(buffer, memory);
     private void TransitionForBlit(CommandBuffer commandBuffer, BlitImageInfo info, ImageLayout oldLayout, ImageLayout newLayout, AccessFlags srcAccess, AccessFlags dstAccess, PipelineStageFlags srcStage, PipelineStageFlags dstStage)
         => _commandRuntime.TransitionPreparedImageForBlit(commandBuffer, info, oldLayout, newLayout, srcAccess, dstAccess, srcStage, dstStage);
     private static bool IsDepthOrStencilFormat(Format format)

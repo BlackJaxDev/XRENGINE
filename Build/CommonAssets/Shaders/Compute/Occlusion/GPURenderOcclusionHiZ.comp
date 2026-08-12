@@ -5,9 +5,10 @@
 
 layout(local_size_x = 256) in;
 
-// Command layout: 20 32-bit lanes per compact command.
-layout(std430, binding = 0) buffer InputCommandsBuffer { float inCommands[]; };
-layout(std430, binding = 1) buffer OutputCommandsBuffer { float outCommands[]; };
+// Compact visible draw-ID ping-pong. Scene-native metadata/bounds remain the
+// source of truth; no 80-byte command copies cross this stage.
+layout(std430, binding = 0) buffer InputDrawIdsBuffer { uint inDrawIds[]; };
+layout(std430, binding = 1) buffer OutputDrawIdsBuffer { uint outDrawIds[]; };
 
 // Input counters (from frustum/BVH cull stage)
 layout(std430, binding = 2) buffer InCountBuffer
@@ -39,10 +40,16 @@ struct BoundsGpu
 };
 
 layout(std430, binding = 5) readonly buffer BoundsBuffer { BoundsGpu Bounds[]; };
+struct DrawMetadata
+{
+    uint DrawID; uint MeshID; uint SubmeshID; uint MaterialID;
+    uint TransformID; uint SkinID; uint RenderPassMask; uint LayerMask;
+    uint Flags; uint LodPolicy; uint StateClassID; uint InstanceCount;
+    uint RenderPass; uint RenderIdentityID; uint LogicalMeshID; uint BoundsID;
+};
+layout(std430, binding = 10) readonly buffer DrawMetadataBuffer { DrawMetadata Draws[]; };
 // Two uints per DrawID: { RenderIdentityID + 1, visible }.
 layout(std430, binding = 6) buffer VisibilityHistoryBuffer { uint VisibilityHistory[]; };
-layout(std430, binding = 9) readonly buffer InputHotCommandsBuffer { uint inHotCommands[]; };
-layout(std430, binding = 10) writeonly buffer OutputHotCommandsBuffer { uint outHotCommands[]; };
 
 struct GPUViewDescriptor
 {
@@ -106,24 +113,14 @@ uniform mat4 ViewProj;
 uniform int HiZMaxMip;
 uniform uint IsReversedDepth; // 1 if camera uses reversed Z
 uniform int MaxOutputCommands;
-uniform int UseHotCommands;
 uniform int TwoPassPhase; // 0 = legacy refine, 2 = late two-pass visibility update
 uniform int ActiveViewCount;
 uniform int CurrentRenderPass;
 
-const int COMMAND_FLOATS = 20;
-const int HOT_UINTS = 20;
 const int HIZ_TARGET_TEXEL_SPAN = 6;
 const int HIZ_MAX_SAMPLE_TEXELS = 8;
 
 #define FLAG_TRANSPARENT (1u << 0u)
-
-uint LoadCommandUInt(int base, int hotBase, int commandLane, int hotLane)
-{
-    return UseHotCommands != 0
-        ? inHotCommands[hotBase + hotLane]
-        : floatBitsToUint(inCommands[base + commandLane]);
-}
 
 bool LoadPreviousVisibility(uint drawId, uint renderIdentityId, out uint recordBase)
 {
@@ -212,28 +209,6 @@ void AppendPerView(uint sourceCommandIndex, uint outputCommandIndex, vec3 comman
     }
 }
 
-uint LoadBoundsId(int base, int hotBase)
-{
-    if (UseHotCommands != 0)
-        return inHotCommands[hotBase + 19];
-
-    return floatBitsToUint(inCommands[base + 18]);
-}
-
-bool IsValidCommand(int base)
-{
-    // Minimal validity: InstanceCount > 0
-    uint instanceCount;
-    if (UseHotCommands != 0)
-    {
-        int hotBase = (base / COMMAND_FLOATS) * HOT_UINTS;
-        instanceCount = inHotCommands[hotBase + 7];
-    }
-    else
-        instanceCount = floatBitsToUint(inCommands[base + 7]);
-
-    return instanceCount != 0u;
-}
 
 float CombineHiZDepth(float a, float b)
 {
@@ -354,9 +329,8 @@ bool HiZOccludedAabb(vec3 aabbMin, vec3 aabbMax)
     return nearestDepth > hiz;
 }
 
-bool TryLoadAabb(int base, int hotBase, out vec3 aabbMin, out vec3 aabbMax)
+bool TryLoadAabb(uint boundsId, out vec3 aabbMin, out vec3 aabbMax)
 {
-    uint boundsId = LoadBoundsId(base, hotBase);
     if (boundsId >= uint(Bounds.length()))
     {
         aabbMin = vec3(0.0);
@@ -439,40 +413,28 @@ void main()
     if (idx >= inputCount)
         return;
 
-    int base = int(idx) * COMMAND_FLOATS;
-    if (base + COMMAND_FLOATS > inCommands.length())
+    if (idx >= uint(inDrawIds.length()))
         return;
 
-    int hotBase = int(idx) * HOT_UINTS;
-    if (UseHotCommands != 0 && hotBase + HOT_UINTS > inHotCommands.length())
+    uint drawId = inDrawIds[idx];
+    if (drawId >= uint(Draws.length()))
         return;
-
-    if (!IsValidCommand(base))
+    DrawMetadata draw = Draws[drawId];
+    if (draw.InstanceCount == 0u)
         return;
-
-    uint drawId = LoadCommandUInt(base, hotBase, 19, 14);
-    uint renderIdentityId = LoadCommandUInt(base, hotBase, 9, 12);
+    uint renderIdentityId = draw.RenderIdentityID;
     uint visibilityRecordBase = 0u;
     bool previouslyVisible = true;
     if (TwoPassPhase == 2)
         previouslyVisible = LoadPreviousVisibility(drawId, renderIdentityId, visibilityRecordBase);
 
-    vec3 center;
-    float radius;
-    if (UseHotCommands != 0)
-    {
-        center = vec3(uintBitsToFloat(inHotCommands[hotBase + 0]), uintBitsToFloat(inHotCommands[hotBase + 1]), uintBitsToFloat(inHotCommands[hotBase + 2]));
-        radius = uintBitsToFloat(inHotCommands[hotBase + 3]);
-    }
-    else
-    {
-        center = vec3(inCommands[base + 0], inCommands[base + 1], inCommands[base + 2]);
-        radius = inCommands[base + 3];
-    }
+    BoundsGpu bounds = draw.BoundsID < uint(Bounds.length()) ? Bounds[draw.BoundsID] : BoundsGpu(vec4(0.0), vec4(0.0), vec4(0.0), 0u, 0u, 0u, 0u);
+    vec3 center = bounds.BoundingSphere.xyz;
+    float radius = bounds.BoundingSphere.w;
 
     vec3 aabbMin;
     vec3 aabbMax;
-    bool occluded = TryLoadAabb(base, hotBase, aabbMin, aabbMax)
+    bool occluded = TryLoadAabb(draw.BoundsID, aabbMin, aabbMax)
         ? HiZOccludedAabb(aabbMin, aabbMax)
         : HiZOccluded(center, radius);
 
@@ -495,21 +457,7 @@ void main()
         return;
     }
 
-    int outBase = int(outIndex) * COMMAND_FLOATS;
-    for (int i = 0; i < COMMAND_FLOATS; ++i)
-        outCommands[outBase + i] = inCommands[base + i];
-
-    if (UseHotCommands != 0)
-    {
-        int outHotBase = int(outIndex) * HOT_UINTS;
-        for (int i = 0; i < HOT_UINTS; ++i)
-            outHotCommands[outHotBase + i] = inHotCommands[hotBase + i];
-    }
-
-    uint instanceCount = UseHotCommands != 0
-        ? inHotCommands[hotBase + 7]
-        : floatBitsToUint(inCommands[base + 7]);
-    uint flags = LoadCommandUInt(base, hotBase, 13, 10);
-    AppendPerView(drawId, outIndex, center, flags);
-    atomicAdd(OutInstanceCount, instanceCount);
+    outDrawIds[outIndex] = drawId;
+    AppendPerView(drawId, outIndex, center, draw.Flags);
+    atomicAdd(OutInstanceCount, draw.InstanceCount);
 }

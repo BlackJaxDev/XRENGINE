@@ -4,7 +4,7 @@ using Semaphore = Silk.NET.Vulkan.Semaphore;
 
 namespace XREngine.Rendering.Vulkan;
 
-internal sealed unsafe partial class VulkanFrameLoop
+internal sealed partial class VulkanFrameLoop
 {
     private const ulong TimelineWaitPollTimeoutNanoseconds = 50_000_000UL;
 
@@ -119,7 +119,7 @@ internal sealed unsafe partial class VulkanFrameLoop
         }
     }
 
-    internal void CreateSyncObjects()
+    internal unsafe void CreateSyncObjects()
     {
         if (!_deviceContext.Capabilities.Supports(EVulkanDeviceCapability.TimelineSemaphores))
             throw new InvalidOperationException("Vulkan timeline semaphores are required but were not enabled on the logical device.");
@@ -144,7 +144,7 @@ internal sealed unsafe partial class VulkanFrameLoop
             CreateDesktopPresentBridgeSemaphores(_outputRuntime.Desktop.Images?.Length ?? FrameSlotCount);
     }
 
-    internal void DestroySyncObjects()
+    internal unsafe void DestroySyncObjects()
     {
         VulkanCommandSynchronizationState sync = _commandRuntime.Synchronization;
         sync.FailAllSubmissionMarkers();

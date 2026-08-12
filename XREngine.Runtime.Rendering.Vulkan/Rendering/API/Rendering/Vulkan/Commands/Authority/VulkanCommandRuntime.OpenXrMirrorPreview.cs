@@ -9,7 +9,7 @@ namespace XREngine.Rendering.Vulkan;
 /// artifacts. Callers must freeze every image, format, extent, and layout before
 /// crossing this boundary; this authority never samples output or planner state.
 /// </summary>
-internal sealed unsafe partial class VulkanCommandRuntime
+internal sealed partial class VulkanCommandRuntime
 {
     internal VulkanQueueOperationLease EnterSerializedOpenXrCommandSection(
         string operation)
@@ -755,7 +755,7 @@ internal sealed unsafe partial class VulkanCommandRuntime
                 0);
     }
 
-    private void TransitionOpenXrMirrorImage(
+    private unsafe void TransitionOpenXrMirrorImage(
         VulkanTrackedCommandEncoder encoder,
         CommandBuffer commandBuffer,
         Image image,

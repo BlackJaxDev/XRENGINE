@@ -17,37 +17,6 @@ internal sealed record ComputeDispatchOp(
     public ComputeDispatchSnapshot Snapshot { get; private set; } = Snapshot;
     public override EVulkanPrimaryPlanNodeKind Kind => EVulkanPrimaryPlanNodeKind.ComputeDispatch;
 
-    internal override FrameOp CreateSealedPlanSnapshot()
-    {
-        ThrowIfSealedForFramePlan();
-        return SealPlanSnapshot(this with { Snapshot = Snapshot.CreateSealedCopy() });
-    }
-
-    internal override int RecordPrimary(
-        VulkanCommandRuntime commandRuntime,
-        scoped ref PrimaryCommandBufferRecordingState recordingState,
-        in VulkanPrimaryOperationRecordingInfo recordingInfo)
-    {
-        if (TryRecordSecondaryBucket(
-                commandRuntime,
-                ref recordingState,
-                in recordingInfo,
-                "ComputeDispatch",
-                out int lastOperationIndex))
-            return lastOperationIndex;
-
-        commandRuntime.CmdBeginLabel(recordingState.CommandBuffer, "ComputeDispatch");
-        commandRuntime.RecordComputeDispatchOp(
-            recordingState.CommandBuffer,
-            recordingState.FrameDataImageIndex,
-            this,
-            VulkanCommandRuntime.ResolveCommandChainInlineOperationIndex(
-                recordingState.Ops,
-                recordingInfo.OperationIndex));
-        commandRuntime.CmdEndLabel(recordingState.CommandBuffer);
-        return recordingInfo.OperationIndex;
-    }
-
     internal static ComputeDispatchOp Rent(
         int passIndex,
         VkRenderProgram program,

@@ -7,7 +7,7 @@ using Semaphore = Silk.NET.Vulkan.Semaphore;
 
 namespace XREngine.Rendering.Vulkan
 {
-    internal sealed unsafe partial class VulkanFrameLoop
+    internal sealed partial class VulkanFrameLoop
     {
         internal EDesktopFrameFlow PresentSubmittedDesktopFrame(
             ref VulkanFrameAttempt attempt)
@@ -111,7 +111,7 @@ namespace XREngine.Rendering.Vulkan
             return EDesktopFrameFlow.Completed;
         }
 
-        internal VulkanDesktopPresentDispatchOutcome QueueDesktopPresentCore(
+        internal unsafe VulkanDesktopPresentDispatchOutcome QueueDesktopPresentCore(
             ref VulkanFrameAttempt attempt,
             string profileScope,
             string? disableFrameGenerationReason)

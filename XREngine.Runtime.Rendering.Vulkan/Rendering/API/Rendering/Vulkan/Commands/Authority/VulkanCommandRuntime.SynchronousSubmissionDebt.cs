@@ -2,7 +2,7 @@ using Silk.NET.Vulkan;
 
 namespace XREngine.Rendering.Vulkan;
 
-internal sealed unsafe partial class VulkanCommandRuntime
+internal sealed partial class VulkanCommandRuntime
 {
     private readonly object _retiredSynchronousSubmissionsLock = new();
     // The bounded producers are one exclusive synchronous arena operation plus the finite
@@ -58,7 +58,7 @@ internal sealed unsafe partial class VulkanCommandRuntime
     }
 
     /// <summary>Retries accepted synchronous work whose initiating wait could not settle ownership.</summary>
-    internal void DrainRetiredSynchronousSubmissions()
+    internal unsafe void DrainRetiredSynchronousSubmissions()
     {
         lock (_retiredSynchronousSubmissionsLock)
         {

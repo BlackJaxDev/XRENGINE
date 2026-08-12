@@ -5,7 +5,7 @@ using Buffer = Silk.NET.Vulkan.Buffer;
 namespace XREngine.Rendering.Vulkan;
 
 /// <summary>Owns allocator setup and allocation-pressure decisions for one Vulkan resource generation.</summary>
-internal sealed unsafe partial class VulkanResourceRuntime
+internal sealed partial class VulkanResourceRuntime
 {
     private const double ResourceRuntimeImageAllocationPressurePreflightRatio = 0.84;
     private const long ResourceRuntimeImageAllocationPressureReserveBytes = 768L * 1024L * 1024L;
@@ -42,24 +42,6 @@ internal sealed unsafe partial class VulkanResourceRuntime
         };
         Debug.Vulkan($"[Vulkan] Memory allocator initialized: {backend} (lazyAlloc={deviceContext.MutableCapabilities.SupportsLazyAllocation})");
     }
-
-    internal bool TryMapMemoryAllocation(Vk api, VulkanDeviceContext deviceContext, VulkanMemoryAllocation allocation, ulong offset, ulong length, out void* mapped)
-    {
-        bool mappedSuccessfully = RequireMemoryAllocator().TryMap(
-            api,
-            deviceContext.Device,
-            allocation,
-            offset,
-            length,
-            out mapped,
-            out Result result);
-        if (!mappedSuccessfully)
-            deviceContext.ObserveNativeResult("vkMapMemory.Allocator", result);
-        return mappedSuccessfully;
-    }
-
-    internal void UnmapMemoryAllocation(Vk api, Device device, VulkanMemoryAllocation allocation)
-        => RequireMemoryAllocator().Unmap(api, device, allocation);
 
     internal VulkanMemoryAllocation AllocateBufferMemoryWithFallback(
         Vk api, VulkanDeviceContext deviceContext, Buffer buffer, MemoryPropertyFlags requiredProperties)
@@ -238,15 +220,15 @@ internal sealed unsafe partial class VulkanResourceRuntime
     }
     private IVulkanMemoryAllocator RequireMemoryAllocator() => Allocations.Buffers.MemoryAllocator ?? throw new InvalidOperationException("The Vulkan memory allocator is not initialized.");
 
-    internal static void* Allocated(void* userData, nuint size, nuint alignment, SystemAllocationScope allocationScope)
+    internal static unsafe void* Allocated(void* userData, nuint size, nuint alignment, SystemAllocationScope allocationScope)
         => null;
 
-    internal static void* Reallocated(void* userData, void* original, nuint size, nuint alignment, SystemAllocationScope allocationScope)
+    internal static unsafe void* Reallocated(void* userData, void* original, nuint size, nuint alignment, SystemAllocationScope allocationScope)
         => null;
 
-    internal static void Freed(void* userData, void* memory) { }
+    internal static unsafe void Freed(void* userData, void* memory) { }
 
-    internal static void InternalAllocated(void* userData, nuint size, InternalAllocationType allocationType, SystemAllocationScope allocationScope) { }
+    internal static unsafe void InternalAllocated(void* userData, nuint size, InternalAllocationType allocationType, SystemAllocationScope allocationScope) { }
 
-    internal static void InternalFreed(void* userData, nuint size, InternalAllocationType allocationType, SystemAllocationScope allocationScope) { }
+    internal static unsafe void InternalFreed(void* userData, nuint size, InternalAllocationType allocationType, SystemAllocationScope allocationScope) { }
 }

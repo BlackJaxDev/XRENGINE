@@ -1,13 +1,12 @@
 using System;
 using System.Collections.Generic;
-using System.Runtime.CompilerServices;
 using Silk.NET.Vulkan;
 using XREngine.Data;
 using Buffer = Silk.NET.Vulkan.Buffer;
 
 namespace XREngine.Rendering.Vulkan;
 
-internal unsafe sealed class VulkanStagingManager
+internal sealed class VulkanStagingManager
 {
     private readonly object _sync = new();
     private readonly List<StagingBufferEntry> _entries = [];
@@ -65,7 +64,7 @@ internal unsafe sealed class VulkanStagingManager
         return false;
     }
 
-    public (Buffer buffer, DeviceMemory memory) Acquire(
+    public unsafe (Buffer buffer, DeviceMemory memory) Acquire(
         VulkanBackendObjectContext context,
         ulong requestedSize,
         BufferUsageFlags usage,
@@ -105,17 +104,8 @@ internal unsafe sealed class VulkanStagingManager
 
             if (data != null)
             {
-                if (!context.Resources.Buffers.TryMap(context, entry.Buffer, entry.Memory, 0, requestedSize, out void* mapped))
-                    throw new InvalidOperationException("Failed to map Vulkan staging buffer memory.");
-                try
-                {
-                    Unsafe.CopyBlock(mapped, data.Pointer, checked((uint)requestedSize));
-                    context.Resources.Buffers.Flush(context, entry.Buffer, entry.Memory, 0, requestedSize);
-                }
-                finally
-                {
-                    context.Resources.Buffers.Unmap(context, entry.Buffer, entry.Memory);
-                }
+                context.Resources.Buffers.UpdateFromVoidPtr(
+                    context, entry.Buffer, entry.Memory, 0, requestedSize, data);
             }
 
             return (entry.Buffer, entry.Memory);

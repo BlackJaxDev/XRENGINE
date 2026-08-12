@@ -23,7 +23,5 @@ internal readonly record struct VulkanPreparedPrimaryCommandInput(
     OpenXrEyeRenderTargetContext? OpenXrTargetContext = null,
     CommandChainSchedule? CommandChainSchedule = null,
     bool ExcludeDesktopSwapchainBarriers = false,
-    FrameOp[]? NativeOperationsOverride = null,
-    ulong LogicalViewId = 0,
-    FrameOp[]? DynamicUiOperations = null,
-    FrameOp[]? TextureUploadOperations = null);
+    FrameOperationStream? LogicalViewOperationsOverride = null,
+    ulong LogicalViewId = 0);

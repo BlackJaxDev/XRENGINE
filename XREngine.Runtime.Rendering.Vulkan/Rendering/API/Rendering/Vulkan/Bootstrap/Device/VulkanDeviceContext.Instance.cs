@@ -302,14 +302,18 @@ internal sealed partial class VulkanDeviceContext
 
         for (int i = 0; i < extensionCount; i++)
         {
-            string? availableName;
-            fixed (byte* extensionNamePointer = properties[i].ExtensionName)
-                availableName = SilkMarshal.PtrToString((nint)extensionNamePointer);
+            string? availableName = ReadExtensionName(properties[i]);
             if (string.Equals(availableName, extensionName, StringComparison.Ordinal))
                 return true;
         }
 
         return false;
+    }
+
+    private static unsafe string? ReadExtensionName(ExtensionProperties property)
+    {
+        byte* extensionNamePointer = property.ExtensionName;
+        return SilkMarshal.PtrToString((nint)extensionNamePointer);
     }
 
     private static uint ResolveRequestedApiVersion(VulkanDeviceBootstrapRequest request)
@@ -449,14 +453,18 @@ internal sealed partial class VulkanDeviceContext
 
         for (int i = 0; i < layerCount; i++)
         {
-            string? availableName;
-            fixed (byte* layerNamePointer = availableLayers[i].LayerName)
-                availableName = Marshal.PtrToStringAnsi((nint)layerNamePointer);
+            string? availableName = ReadLayerName(availableLayers[i]);
             if (string.Equals(availableName, "VK_LAYER_KHRONOS_validation", StringComparison.Ordinal))
                 return true;
         }
 
         return false;
+    }
+
+    private static unsafe string? ReadLayerName(LayerProperties property)
+    {
+        byte* layerNamePointer = property.LayerName;
+        return Marshal.PtrToStringAnsi((nint)layerNamePointer);
     }
 
     public unsafe void SetupDebugMessenger(

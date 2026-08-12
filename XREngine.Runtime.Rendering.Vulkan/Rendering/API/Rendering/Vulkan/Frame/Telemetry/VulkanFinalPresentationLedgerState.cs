@@ -17,19 +17,14 @@ internal sealed class VulkanFinalPresentationLedgerState
     private bool _frozen;
     private string? _freezeReason;
     private ulong _descriptorSequence;
-    private VulkanFinalPresentationDescriptorObservation _latestDescriptor;
+    private readonly VulkanFinalPresentationDescriptorObservation[] _latestDescriptors =
+        new VulkanFinalPresentationDescriptorObservation[Capacity];
 
     internal VulkanFinalPresentationLedgerState(bool enabled)
         => _enabled = enabled;
 
     internal bool Enabled
-    {
-        get
-        {
-            lock (_sync)
-                return _enabled;
-        }
-    }
+        => Volatile.Read(ref _enabled);
 
     internal void Configure(bool enabled, bool frozen, bool clear)
     {
@@ -41,10 +36,10 @@ internal sealed class VulkanFinalPresentationLedgerState
                 _count = 0;
                 _next = 0;
                 _freezeReason = null;
-                _latestDescriptor = default;
+                Array.Clear(_latestDescriptors);
             }
 
-            _enabled = enabled;
+            Volatile.Write(ref _enabled, enabled);
             _frozen = frozen;
             if (!frozen)
                 _freezeReason = null;
@@ -64,23 +59,30 @@ internal sealed class VulkanFinalPresentationLedgerState
         bool writeMatched,
         bool writeSucceeded)
     {
+        if (!Volatile.Read(ref _enabled))
+            return;
+
         lock (_sync)
         {
             if (!_enabled || _frozen)
                 return;
+            if ((uint)descriptorSlot >= (uint)_latestDescriptors.Length)
+                return;
+
+            ref VulkanFinalPresentationDescriptorObservation latest =
+                ref _latestDescriptors[descriptorSlot];
 
             if (commandBuffer == 0 &&
-                _latestDescriptor.FrameNumber == frameNumber &&
-                _latestDescriptor.DescriptorSlot == descriptorSlot &&
-                _latestDescriptor.CommandBuffer != 0 &&
-                _latestDescriptor.DescriptorSet == descriptorSet &&
-                _latestDescriptor.ImageView == imageInfo.ImageView.Handle &&
-                _latestDescriptor.ResourceSignature == resourceSignature)
+                latest.FrameNumber == frameNumber &&
+                latest.CommandBuffer != 0 &&
+                latest.DescriptorSet == descriptorSet &&
+                latest.ImageView == imageInfo.ImageView.Handle &&
+                latest.ResourceSignature == resourceSignature)
             {
                 return;
             }
 
-            _latestDescriptor = new VulkanFinalPresentationDescriptorObservation(
+            latest = new VulkanFinalPresentationDescriptorObservation(
                 ++_descriptorSequence,
                 frameNumber,
                 descriptorSlot,
@@ -98,14 +100,20 @@ internal sealed class VulkanFinalPresentationLedgerState
         }
     }
 
-    internal VulkanFinalPresentationDescriptorObservation CaptureLatestDescriptor()
+    internal VulkanFinalPresentationDescriptorObservation CaptureLatestDescriptor(
+        int descriptorSlot)
     {
         lock (_sync)
-            return _latestDescriptor;
+            return (uint)descriptorSlot < (uint)_latestDescriptors.Length
+                ? _latestDescriptors[descriptorSlot]
+                : default;
     }
 
     internal void Append(in VulkanFinalPresentationLedgerEntry entry)
     {
+        if (!Volatile.Read(ref _enabled))
+            return;
+
         lock (_sync)
         {
             if (!_enabled || _frozen)

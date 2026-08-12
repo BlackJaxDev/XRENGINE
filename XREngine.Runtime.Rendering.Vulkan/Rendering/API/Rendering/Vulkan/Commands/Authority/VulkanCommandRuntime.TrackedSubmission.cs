@@ -4,7 +4,7 @@ using Semaphore = Silk.NET.Vulkan.Semaphore;
 
 namespace XREngine.Rendering.Vulkan;
 
-internal sealed unsafe partial class VulkanCommandRuntime
+internal sealed partial class VulkanCommandRuntime
 {
     /// <summary>Publishes a completed fence to both lifetime and image ledgers.</summary>
     internal void CompleteTrackedFence(Fence fence)
@@ -177,7 +177,7 @@ internal sealed unsafe partial class VulkanCommandRuntime
             publicationSucceeded);
     }
 
-    private bool ValidateOrderedCommandBufferImageStateContracts(
+    private unsafe bool ValidateOrderedCommandBufferImageStateContracts(
         Queue queue,
         ref SubmitInfo submitInfo,
         out string failureReason)
@@ -464,7 +464,7 @@ internal sealed unsafe partial class VulkanCommandRuntime
         return false;
     }
 
-    private static bool SubmissionSatisfiesQueueSemaphoreRequirement(
+    private static unsafe bool SubmissionSatisfiesQueueSemaphoreRequirement(
         ref SubmitInfo submitInfo,
         in VulkanQueueSemaphoreRequirement requirement)
     {
@@ -476,13 +476,22 @@ internal sealed unsafe partial class VulkanCommandRuntime
             return false;
 
         uint waitCount = Math.Min(timeline->WaitSemaphoreValueCount, submitInfo.WaitSemaphoreCount);
+        ReadOnlySpan<Semaphore> waitSemaphores = new(
+            submitInfo.PWaitSemaphores,
+            checked((int)waitCount));
+        ReadOnlySpan<ulong> waitValues = new(
+            timeline->PWaitSemaphoreValues,
+            checked((int)waitCount));
+        ReadOnlySpan<PipelineStageFlags> waitStages = new(
+            submitInfo.PWaitDstStageMask,
+            checked((int)waitCount));
         for (uint waitIndex = 0; waitIndex < waitCount; waitIndex++)
             if (requirement.IsSatisfiedBy(
-                    submitInfo.PWaitSemaphores[waitIndex].Handle,
-                    timeline->PWaitSemaphoreValues[waitIndex],
-                    (PipelineStageFlags2)(ulong)(submitInfo.PWaitDstStageMask[waitIndex] == 0
+                    waitSemaphores[(int)waitIndex].Handle,
+                    waitValues[(int)waitIndex],
+                    (PipelineStageFlags2)(ulong)(waitStages[(int)waitIndex] == 0
                         ? PipelineStageFlags.AllCommandsBit
-                        : submitInfo.PWaitDstStageMask[waitIndex])))
+                        : waitStages[(int)waitIndex])))
                 return true;
         return false;
     }
@@ -502,7 +511,7 @@ internal sealed unsafe partial class VulkanCommandRuntime
         return Vk.QueueFamilyIgnored;
     }
 
-    private bool TryAcquireSubmissionLifetimePins(
+    private unsafe bool TryAcquireSubmissionLifetimePins(
         ref SubmitInfo submitInfo,
         in VulkanSubmissionDiagnosticContext diagnosticContext,
         out string failureReason,
@@ -776,7 +785,7 @@ internal sealed unsafe partial class VulkanCommandRuntime
         return true;
     }
 
-    private VulkanLifetimeSubmission PublishSuccessfulSubmissionLifetime(
+    private unsafe VulkanLifetimeSubmission PublishSuccessfulSubmissionLifetime(
         Queue queue,
         ref SubmitInfo submitInfo,
         Fence fence,
@@ -853,7 +862,7 @@ internal sealed unsafe partial class VulkanCommandRuntime
         resource.Pins.MarkSubmitted(domain, sequence);
     }
 
-    private void PublishRecordedImageLayouts(
+    private unsafe void PublishRecordedImageLayouts(
         Queue queue,
         ref SubmitInfo submitInfo,
         in VulkanLifetimeSubmission submission)
@@ -956,7 +965,7 @@ internal sealed unsafe partial class VulkanCommandRuntime
         return false;
     }
 
-    private void ReleaseSubmissionLifetimePins(ref SubmitInfo submitInfo)
+    private unsafe void ReleaseSubmissionLifetimePins(ref SubmitInfo submitInfo)
     {
         VulkanResourceLifetimeTracker tracker = ResourceRuntime.Lifetime.Tracker;
         lock (tracker.SyncRoot)
@@ -991,7 +1000,7 @@ internal sealed unsafe partial class VulkanCommandRuntime
             resource.State &= ~EVulkanResourceLifetimeState.Queued;
     }
 
-    private void ReleaseSubmissionGatewayPins(ref SubmitInfo submitInfo)
+    private unsafe void ReleaseSubmissionGatewayPins(ref SubmitInfo submitInfo)
     {
         VulkanResourceLifetimeTracker tracker = ResourceRuntime.Lifetime.Tracker;
         lock (tracker.SyncRoot)
@@ -1019,7 +1028,7 @@ internal sealed unsafe partial class VulkanCommandRuntime
         }
     }
 
-    internal void ResolveSubmissionMarkers(ref SubmitInfo submitInfo, bool submissionSucceeded)
+    internal unsafe void ResolveSubmissionMarkers(ref SubmitInfo submitInfo, bool submissionSucceeded)
     {
         ResolveSubmissionTimelineSignal(ref submitInfo, out ulong semaphoreHandle, out ulong timelineValue);
         lock (Synchronization._submissionMarkerLock)
@@ -1044,19 +1053,21 @@ internal sealed unsafe partial class VulkanCommandRuntime
         }
     }
 
-    private static TimelineSemaphoreSubmitInfo* FindTrackedTimelineInfo(void* pNext)
+    private static unsafe TimelineSemaphoreSubmitInfo* FindTrackedTimelineInfo(void* pNext)
+        => FindTrackedTimelineInfo((BaseInStructure*)pNext, remainingNodes: 64);
+
+    private static unsafe TimelineSemaphoreSubmitInfo* FindTrackedTimelineInfo(
+        BaseInStructure* current,
+        int remainingNodes)
     {
-        BaseInStructure* current = (BaseInStructure*)pNext;
-        while (current is not null)
-        {
-            if (current->SType == StructureType.TimelineSemaphoreSubmitInfo)
-                return (TimelineSemaphoreSubmitInfo*)current;
-            current = current->PNext;
-        }
-        return null;
+        if (current is null || remainingNodes <= 0)
+            return null;
+        if (current->SType == StructureType.TimelineSemaphoreSubmitInfo)
+            return (TimelineSemaphoreSubmitInfo*)current;
+        return FindTrackedTimelineInfo(current->PNext, remainingNodes - 1);
     }
 
-    private void ResolveSubmissionTimelineSignal(
+    private unsafe void ResolveSubmissionTimelineSignal(
         ref SubmitInfo submitInfo,
         out ulong semaphoreHandle,
         out ulong timelineValue)
@@ -1067,10 +1078,16 @@ internal sealed unsafe partial class VulkanCommandRuntime
         if (timeline is null || timeline->PSignalSemaphoreValues is null || submitInfo.PSignalSemaphores is null)
             return;
         uint count = Math.Min(timeline->SignalSemaphoreValueCount, submitInfo.SignalSemaphoreCount);
+        ReadOnlySpan<ulong> signalValues = new(
+            timeline->PSignalSemaphoreValues,
+            checked((int)count));
+        ReadOnlySpan<Semaphore> signalSemaphores = new(
+            submitInfo.PSignalSemaphores,
+            checked((int)count));
         for (uint index = 0; index < count; index++)
         {
-            ulong value = timeline->PSignalSemaphoreValues[index];
-            Semaphore semaphore = submitInfo.PSignalSemaphores[index];
+            ulong value = signalValues[(int)index];
+            Semaphore semaphore = signalSemaphores[(int)index];
             if (value == 0 || semaphore.Handle == 0)
                 continue;
             semaphoreHandle = semaphore.Handle;
@@ -1094,7 +1111,7 @@ internal sealed unsafe partial class VulkanCommandRuntime
         return EVulkanLifetimeQueueDomain.Other;
     }
 
-    private Result SubmitNative(Queue queue, ref SubmitInfo submitInfo, Fence fence)
+    private unsafe Result SubmitNative(Queue queue, ref SubmitInfo submitInfo, Fence fence)
     {
         if (Synchronization._activeSynchronizationBackend != EVulkanSynchronizationBackend.Sync2)
             return Api.QueueSubmit(queue, 1, ref submitInfo, fence);
@@ -1104,35 +1121,59 @@ internal sealed unsafe partial class VulkanCommandRuntime
         int commandCount = checked((int)submitInfo.CommandBufferCount);
         VulkanSynchronizationThreadState scratch =
             Synchronization._synchronizationThreadWorkspace.Current;
-        SemaphoreSubmitInfo[] waits = EnsureSubmitScratch(
-            ref scratch.SubmitWaitInfoScratch,
-            waitCount);
-        SemaphoreSubmitInfo[] signals = EnsureSubmitScratch(
-            ref scratch.SubmitSignalInfoScratch,
-            signalCount);
-        CommandBufferSubmitInfo[] commands = EnsureSubmitScratch(
-            ref scratch.SubmitCommandBufferInfoScratch,
-            commandCount);
+        using VulkanNativeScratchReservation<SemaphoreSubmitInfo> waitReservation =
+            scratch.SubmitWaitInfoScratch.Reserve(waitCount);
+        using VulkanNativeScratchReservation<SemaphoreSubmitInfo> signalReservation =
+            scratch.SubmitSignalInfoScratch.Reserve(signalCount);
+        using VulkanNativeScratchReservation<CommandBufferSubmitInfo> commandReservation =
+            scratch.SubmitCommandBufferInfoScratch.Reserve(commandCount);
+        Span<SemaphoreSubmitInfo> waits = waitReservation.Span;
+        Span<SemaphoreSubmitInfo> signals = signalReservation.Span;
+        Span<CommandBufferSubmitInfo> commands = commandReservation.Span;
         TimelineSemaphoreSubmitInfo* timeline = FindTrackedTimelineInfo(submitInfo.PNext);
+        ReadOnlySpan<Semaphore> nativeWaitSemaphores = new(
+            submitInfo.PWaitSemaphores,
+            waitCount);
+        ReadOnlySpan<PipelineStageFlags> nativeWaitStages = new(
+            submitInfo.PWaitDstStageMask,
+            waitCount);
+        ReadOnlySpan<ulong> nativeWaitValues = timeline is not null &&
+            timeline->PWaitSemaphoreValues is not null
+                ? new ReadOnlySpan<ulong>(
+                    timeline->PWaitSemaphoreValues,
+                    Math.Min(waitCount, checked((int)timeline->WaitSemaphoreValueCount)))
+                : default;
+        ReadOnlySpan<Semaphore> nativeSignalSemaphores = new(
+            submitInfo.PSignalSemaphores,
+            signalCount);
+        ReadOnlySpan<ulong> nativeSignalValues = timeline is not null &&
+            timeline->PSignalSemaphoreValues is not null
+                ? new ReadOnlySpan<ulong>(
+                    timeline->PSignalSemaphoreValues,
+                    Math.Min(signalCount, checked((int)timeline->SignalSemaphoreValueCount)))
+                : default;
+        ReadOnlySpan<CommandBuffer> nativeCommands = new(
+            submitInfo.PCommandBuffers,
+            commandCount);
         for (int index = 0; index < waitCount; index++)
             waits[index] = new SemaphoreSubmitInfo
             {
                 SType = StructureType.SemaphoreSubmitInfo,
-                Semaphore = submitInfo.PWaitSemaphores[index],
-                Value = timeline is not null && timeline->PWaitSemaphoreValues is not null
-                    ? timeline->PWaitSemaphoreValues[index]
+                Semaphore = nativeWaitSemaphores[index],
+                Value = index < nativeWaitValues.Length
+                    ? nativeWaitValues[index]
                     : 0,
-                StageMask = (PipelineStageFlags2)(ulong)(submitInfo.PWaitDstStageMask[index] == 0
+                StageMask = (PipelineStageFlags2)(ulong)(nativeWaitStages[index] == 0
                     ? PipelineStageFlags.AllCommandsBit
-                    : submitInfo.PWaitDstStageMask[index]),
+                    : nativeWaitStages[index]),
             };
         for (int index = 0; index < signalCount; index++)
             signals[index] = new SemaphoreSubmitInfo
             {
                 SType = StructureType.SemaphoreSubmitInfo,
-                Semaphore = submitInfo.PSignalSemaphores[index],
-                Value = timeline is not null && timeline->PSignalSemaphoreValues is not null
-                    ? timeline->PSignalSemaphoreValues[index]
+                Semaphore = nativeSignalSemaphores[index],
+                Value = index < nativeSignalValues.Length
+                    ? nativeSignalValues[index]
                     : 0,
                 StageMask = commandCount == 0 ? PipelineStageFlags2.TopOfPipeBit : PipelineStageFlags2.AllCommandsBit,
             };
@@ -1140,7 +1181,7 @@ internal sealed unsafe partial class VulkanCommandRuntime
             commands[index] = new CommandBufferSubmitInfo
             {
                 SType = StructureType.CommandBufferSubmitInfo,
-                CommandBuffer = submitInfo.PCommandBuffers[index],
+                CommandBuffer = nativeCommands[index],
             };
 
         fixed (SemaphoreSubmitInfo* waitPtr = waits)
@@ -1165,13 +1206,4 @@ internal sealed unsafe partial class VulkanCommandRuntime
         }
     }
 
-    private static T[] EnsureSubmitScratch<T>(ref T[]? scratch, int requiredCount)
-        where T : struct
-    {
-        if (requiredCount == 0)
-            return [];
-        if (scratch is null || scratch.Length < requiredCount)
-            scratch = new T[Math.Max(requiredCount, 4)];
-        return scratch;
-    }
 }

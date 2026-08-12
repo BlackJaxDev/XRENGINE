@@ -4,7 +4,7 @@
 //
 // PURPOSE:
 // GPUScene manages all GPU-resident scene data for indirect rendering, including:
-//   - Render commands converted to a GPU-friendly format (GPUIndirectRenderCommand)
+//   - Render commands converted to paired draw metadata and bounds records
 //   - A unified mesh atlas containing all vertex/index data for bindless rendering
 //   - Material and mesh ID mappings for GPU lookups
 //   - Optional internal BVH for GPU-based culling
@@ -13,11 +13,11 @@
 // GPUScene uses double-buffering to safely coordinate between two threads:
 //
 //   1. UPDATE/COLLECT THREAD: writes to "Updating" buffers
-//      - Add() and Remove() mutate _updatingCommandsBuffer and _updatingCommandCount
+//      - Add() and Remove() mutate draw-indexed updating streams and _updatingCommandCount
 //      - These operations occur during the Update or PreCollectVisible phases
 //
 //   2. RENDER THREAD: reads from "AllLoaded" buffers
-//      - Rendering reads from _allLoadedCommandsBuffer and _totalCommandCount
+//      - Rendering reads from published draw-indexed streams and _totalCommandCount
 //      - These are stable snapshots that don't change during rendering
 //
 // BUFFER SWAP SEQUENCE:
@@ -42,7 +42,7 @@
 //   GPUScene.CommandBuffers.cs    - double-buffered command SSBO management
 //   GPUScene.AddRemove.cs         - Add / Remove / Update of draw commands
 //   GPUScene.Soa.cs               - structure-of-arrays scene database
-//   GPUScene.CommandConversion.cs - CPU -> GPU command conversion + Phase 1 updates
+//   GPUScene.CommandConversion.cs - stage-native record creation + Phase 1 updates
 //
 // Public top-level types live in their own files:
 //   EAtlasTier.cs
@@ -90,7 +90,7 @@ namespace XREngine.Rendering.Commands
     /// </para>
     /// <para><b>Memory Layout:</b></para>
     /// <list type="bullet">
-    /// <item><description>Command Buffer: compact <see cref="GPUIndirectRenderCommand"/> compatibility records (20 lanes each)</description></item>
+    /// <item><description>Draw streams: <see cref="DrawMetadata"/> plus <see cref="BoundsGpu"/> records</description></item>
     /// <item><description>Mesh Atlas: Unified vertex attributes (positions, normals, tangents, UVs) and index data</description></item>
     /// <item><description>MeshData Buffer: Per-mesh metadata mapping mesh IDs to atlas offsets</description></item>
     /// </list>

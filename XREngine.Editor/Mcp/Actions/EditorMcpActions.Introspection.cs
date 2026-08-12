@@ -392,6 +392,9 @@ namespace XREngine.Editor.Mcp
                 pipelineDebugName = pipeline?.Pipeline?.DebugName,
                 pipelineType = pipeline?.Pipeline?.GetType().FullName,
                 pipelineDescriptor = pipeline?.DebugDescriptor,
+                activeResourceGeneration = pipeline?.ActiveGeneration?.Key.ToString(),
+                pendingResourceGeneration = pipeline?.PendingGeneration?.Key.ToString(),
+                lastResourceGenerationFailure = pipeline?.LastResourceGenerationFailure,
                 renderGraphPassIndex = RuntimeEngine.Rendering.State.CurrentRenderGraphPassIndex,
                 renderStateCameraType = renderState?.SceneCamera?.GetType().FullName,
                 renderStateViewportIndex = stateViewport?.Index,
@@ -449,7 +452,10 @@ namespace XREngine.Editor.Mcp
                 pipelineInstanceId = viewport.RenderPipelineInstance.InstanceId,
                 pipelineDebugName = viewport.RenderPipelineInstance.DebugName,
                 pipelineType = viewport.RenderPipeline?.GetType().FullName,
-                resourceGeneration = viewport.RenderPipelineInstance.ResourceGeneration
+                resourceGeneration = viewport.RenderPipelineInstance.ResourceGeneration,
+                activeResourceGeneration = viewport.RenderPipelineInstance.ActiveGeneration?.Key.ToString(),
+                pendingResourceGeneration = viewport.RenderPipelineInstance.PendingGeneration?.Key.ToString(),
+                lastResourceGenerationFailure = viewport.RenderPipelineInstance.LastResourceGenerationFailure
             };
         }
 

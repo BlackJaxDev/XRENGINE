@@ -10,7 +10,6 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
-using System.Runtime.InteropServices;
 using System.Text;
 
 using Silk.NET.Vulkan;
@@ -30,7 +29,7 @@ internal unsafe partial class VkMeshRenderer
 		int frameIndex,
 		int drawUniformSlot,
 		uint descriptorCount,
-		List<DescriptorBufferInfo> bufferInfos,
+		VulkanDescriptorScratchBuffer<DescriptorBufferInfo> bufferInfos,
 		out int bufferStart,
 		ComputeDispatchSnapshot? bindingSnapshot = null)
 	{
@@ -54,7 +53,7 @@ internal unsafe partial class VkMeshRenderer
 		DescriptorBindingInfo binding,
 		XRMaterial material,
 		uint descriptorCount,
-		List<DescriptorImageInfo> imageInfos,
+		VulkanDescriptorScratchBuffer<DescriptorImageInfo> imageInfos,
 		out int imageStart,
 		ComputeDispatchSnapshot? bindingSnapshot = null)
 	{
@@ -86,7 +85,7 @@ internal unsafe partial class VkMeshRenderer
 			static key => $"{key.Name}[{key.Index}]");
 
 	/// <summary>Resolves one or more texel buffer view descriptors for a binding.</summary>
-	private bool TryResolveTexelBuffers(DescriptorBindingInfo binding, XRMaterial material, uint descriptorCount, List<BufferView> texelBufferViews, out int texelStart)
+	private bool TryResolveTexelBuffers(DescriptorBindingInfo binding, XRMaterial material, uint descriptorCount, VulkanDescriptorScratchBuffer<BufferView> texelBufferViews, out int texelStart)
 	{
 		texelStart = texelBufferViews.Count;
 		for (int i = 0; i < descriptorCount; i++)
@@ -247,17 +246,20 @@ internal unsafe partial class VkMeshRenderer
 	{
 		DescriptorWriteScratch scratch = _descriptorWriteScratch;
 		scratch.Clear();
-		List<WriteDescriptorSet> writes = scratch.Writes;
-		List<DescriptorBufferInfo> bufferInfos = scratch.BufferInfos;
-		List<DescriptorImageInfo> imageInfos = scratch.ImageInfos;
-		List<BufferView> texelBufferViews = scratch.TexelBufferViews;
-		List<(int writeIndex, int bufferIndex, DescriptorBindingInfo binding, uint descriptorCount)> bufferMap = scratch.BufferMap;
-		List<(int writeIndex, int imageIndex, DescriptorBindingInfo binding, uint descriptorCount)> imageMap = scratch.ImageMap;
-		List<(int writeIndex, int texelIndex, DescriptorBindingInfo binding, uint descriptorCount)> texelMap = scratch.TexelMap;
-		List<(DescriptorWriteKey key, ulong signature)> signatures = scratch.Signatures;
+		VulkanDescriptorScratchBuffer<WriteDescriptorSet> writes = scratch.Writes;
+		VulkanDescriptorScratchBuffer<DescriptorBufferInfo> bufferInfos = scratch.BufferInfos;
+		VulkanDescriptorScratchBuffer<DescriptorImageInfo> imageInfos = scratch.ImageInfos;
+		VulkanDescriptorScratchBuffer<BufferView> texelBufferViews = scratch.TexelBufferViews;
+		VulkanDescriptorScratchBuffer<(int writeIndex, int bufferIndex, DescriptorBindingInfo binding, uint descriptorCount)> bufferMap = scratch.BufferMap;
+		VulkanDescriptorScratchBuffer<(int writeIndex, int imageIndex, DescriptorBindingInfo binding, uint descriptorCount)> imageMap = scratch.ImageMap;
+		VulkanDescriptorScratchBuffer<(int writeIndex, int texelIndex, DescriptorBindingInfo binding, uint descriptorCount)> texelMap = scratch.TexelMap;
+		VulkanDescriptorScratchBuffer<(DescriptorWriteKey key, ulong signature)> signatures = scratch.Signatures;
+		long publicationStart = System.Diagnostics.Stopwatch.GetTimestamp();
+		int descriptorsScanned = 0;
 
 		for (int bindingIndex = 0; bindingIndex < bindings.Count; bindingIndex++)
 		{
+			descriptorsScanned++;
 			DescriptorBindingInfo binding = bindings[bindingIndex];
 			if (allocation is not null &&
 				(binding.Set >= 32 || (allocation.ActiveSetMask & (1u << (int)binding.Set)) == 0))
@@ -346,7 +348,7 @@ internal unsafe partial class VkMeshRenderer
 						descriptorCount);
 					ulong imageSignature = ComputeDescriptorImageInfoSignature(
 						binding.DescriptorType,
-						CollectionsMarshal.AsSpan(imageInfos).Slice(imageStart, checked((int)descriptorCount)));
+					imageInfos.ReadOnlySpan.Slice(imageStart, checked((int)descriptorCount)));
 					if (DescriptorWriteMatches(allocation, imageKey, imageSignature))
 						continue;
 					TraceDescriptorWriteChange(allocation, imageKey, imageSignature, binding, material);
@@ -404,13 +406,13 @@ internal unsafe partial class VkMeshRenderer
 		}
 
 		Span<DescriptorBufferInfo> bufferSpan =
-			CollectionsMarshal.AsSpan(bufferInfos);
+			bufferInfos.Span;
 		Span<DescriptorImageInfo> imageSpan =
-			CollectionsMarshal.AsSpan(imageInfos);
+			imageInfos.Span;
 		Span<BufferView> texelSpan =
-			CollectionsMarshal.AsSpan(texelBufferViews);
+			texelBufferViews.Span;
 		Span<WriteDescriptorSet> writeSpan =
-			CollectionsMarshal.AsSpan(writes);
+			writes.Span;
 
 		fixed (DescriptorBufferInfo* bufferPtr = bufferSpan)
 		fixed (DescriptorImageInfo* imagePtr = imageSpan)
@@ -520,6 +522,24 @@ internal unsafe partial class VkMeshRenderer
 			}
 		}
 
+		ulong compatibilityTicks = unchecked((ulong)(System.Diagnostics.Stopwatch.GetTimestamp() - publicationStart));
+		_descriptorPublicationTelemetry.Record(
+			descriptorsScanned,
+			writes.Count,
+			writes.Count,
+			bufferInfos.Count + imageInfos.Count + texelBufferViews.Count,
+			writes.Count,
+			compatibilityTicks);
+		RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanDescriptorPublicationStream(
+			descriptorsScanned,
+			writes.Count,
+			writes.Count,
+			checked((long)writes.Count * System.Runtime.CompilerServices.Unsafe.SizeOf<WriteDescriptorSet>() +
+				(long)bufferInfos.Count * System.Runtime.CompilerServices.Unsafe.SizeOf<DescriptorBufferInfo>() +
+				(long)imageInfos.Count * System.Runtime.CompilerServices.Unsafe.SizeOf<DescriptorImageInfo>() +
+				(long)texelBufferViews.Count * System.Runtime.CompilerServices.Unsafe.SizeOf<BufferView>()),
+			compatibilityTicks,
+			writes.Count);
 		return true;
 	}
 
@@ -593,7 +613,7 @@ internal unsafe partial class VkMeshRenderer
 
 	private ulong ComputeDescriptorBufferInfoSignature(
 		DescriptorType descriptorType,
-		List<DescriptorBufferInfo> bufferInfos,
+		VulkanDescriptorScratchBuffer<DescriptorBufferInfo> bufferInfos,
 		int start,
 		uint count)
 	{
@@ -616,7 +636,7 @@ internal unsafe partial class VkMeshRenderer
 
 	private ulong ComputeDescriptorTexelBufferSignature(
 		DescriptorType descriptorType,
-		List<BufferView> bufferViews,
+		VulkanDescriptorScratchBuffer<BufferView> bufferViews,
 		int start,
 		uint count)
 	{
@@ -757,7 +777,7 @@ internal unsafe partial class VkMeshRenderer
 	private bool TryUpdateDescriptorSetsWithTemplates(
 		DescriptorSet[] frameSets,
 		ReadOnlySpan<WriteDescriptorSet> writes,
-		List<WriteDescriptorSet> setWrites)
+		VulkanDescriptorScratchBuffer<WriteDescriptorSet> setWrites)
 	{
 		if (RuntimeEngine.Rendering.Settings.VulkanRobustnessSettings.DescriptorUpdateBackend != EVulkanDescriptorUpdateBackend.Template)
 			return false;
@@ -783,7 +803,7 @@ internal unsafe partial class VkMeshRenderer
 				PipelineBindPoint.Graphics,
 				_program.PipelineLayout,
 				(uint)setIndex,
-				CollectionsMarshal.AsSpan(setWrites)))
+				setWrites.Span))
 			{
 				return false;
 			}

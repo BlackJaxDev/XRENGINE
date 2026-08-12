@@ -6,9 +6,9 @@ namespace XREngine.Rendering.Vulkan;
 /// Coordinates native resources whose creation or use must be published to
 /// both the command and resource lifetime authorities.
 /// </summary>
-internal sealed unsafe partial class VulkanCommandRuntime
+internal sealed partial class VulkanCommandRuntime
 {
-    internal Result CreateImageWithLifetime(
+    internal unsafe Result CreateImageWithLifetime(
         ref ImageCreateInfo createInfo,
         out Image image,
         string owner)
@@ -45,7 +45,7 @@ internal sealed unsafe partial class VulkanCommandRuntime
             owner);
     }
 
-    internal void BlitImageTracked(
+    internal unsafe void BlitImageTracked(
         CommandBuffer commandBuffer,
         Image source,
         ImageLayout sourceLayout,

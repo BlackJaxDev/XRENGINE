@@ -15,7 +15,7 @@ using XREngine.Rendering.Resources;
 
 namespace XREngine.Rendering.Vulkan
 {
-    internal sealed unsafe partial class VulkanCommandRuntime
+    internal sealed partial class VulkanCommandRuntime
     {
         /// <summary>
         /// Normalizes producer-owned pass indices before a frame plan is sealed.
@@ -49,15 +49,18 @@ namespace XREngine.Rendering.Vulkan
         {
             for (int index = 0; index < operations.Length; index++)
             {
-                FrameOp operation = operations[index];
+                ref readonly FrameOperationHeader header =
+                    ref operations.GetHeader(index);
+                ref readonly FrameOpContext context =
+                    ref operations.GetContext(index);
                 int resolvedPassIndex = VulkanCommandRuntime.EnsureValidPassIndex(
-                    operation.PassIndex,
-                    GetFrameOpDiagnosticName(operation),
-                    operation.Context.PassMetadata);
-                if (resolvedPassIndex != operation.PassIndex)
+                    header.PassIndex,
+                    header.OpCode.ToString(),
+                    context.PassMetadata);
+                if (resolvedPassIndex != header.PassIndex)
                 {
                     throw new VulkanPlanPreconditionException(
-                        $"Sealed frame-plan operation {index} has pass index {operation.PassIndex}, but recording requires {resolvedPassIndex}.");
+                        $"Sealed frame-plan operation {index} has pass index {header.PassIndex}, but recording requires {resolvedPassIndex}.");
                 }
             }
         }
@@ -141,20 +144,21 @@ namespace XREngine.Rendering.Vulkan
             // Iterate through each frame operation to collect mesh frame data requirements.
             for (int i = 0; i < ops.Length; i++)
             {
-                FrameOp op = ops[i];
+                ref readonly FrameOperationHeader header = ref ops.GetHeader(i);
 
-                // Only process MeshDrawOp and IndirectDrawOp types, as they are relevant for mesh frame data requirements.
+                // Only process mesh payloads, as they are relevant for mesh frame data requirements.
                 VkMeshRenderer? renderer;
                 PendingMeshDraw draw;
-                switch (op)
+                switch (header.OpCode)
                 {
-                    case MeshDrawOp drawOp:
-                        renderer = drawOp.Draw.Renderer;
-                        draw = drawOp.Draw;
+                    case EVulkanPrimaryPlanNodeKind.MeshDraw:
+                        draw = ops.GetMeshDraw(i).Draw;
+                        renderer = draw.Renderer;
                         break;
-                    case IndirectDrawOp indirectDrawOp:
-                        renderer = indirectDrawOp.MeshRenderer;
-                        draw = indirectDrawOp.Draw;
+                    case EVulkanPrimaryPlanNodeKind.IndirectDraw:
+                        ref readonly IndirectDrawPayload indirectDraw = ref ops.GetIndirectDraw(i);
+                        renderer = indirectDraw.MeshRenderer;
+                        draw = indirectDraw.Draw;
                         break;
                     default:
                         continue;
@@ -162,7 +166,11 @@ namespace XREngine.Rendering.Vulkan
 
                 // Create a family key based on the frame data slot, stream kind, operation context, and draw information.
                 VulkanMeshFrameDataFamilyKey family =
-                    VulkanMeshFrameDataFamilyKey.From(frameDataSlot, streamKind, op.Context, draw);
+                    VulkanMeshFrameDataFamilyKey.From(
+                        frameDataSlot,
+                        streamKind,
+                        ops.GetContext(i),
+                        draw);
 
                 // Create a renderer family key based on the renderer and the family key.
                 VulkanMeshFrameDataRendererFamilyKey rendererFamily = 
@@ -174,6 +182,59 @@ namespace XREngine.Rendering.Vulkan
                 rendererFamilyDrawSlots[rendererFamily] = requiredDrawSlots;
                 if (!familyStrides.TryGetValue(family, out int stride) || stride < requiredDrawSlots)
                     familyStrides[family] = requiredDrawSlots;
+            }
+        }
+
+        /// <summary>
+        /// Scans producer operations for OpenXR resource prewarm without
+        /// creating a second lowered operation stream. Recording later rebuilds
+        /// the refresh cohort from the canonical sealed stream.
+        /// </summary>
+        private static void CollectAuthoringMeshFrameDataRequirements(
+            FrameOp[] operations,
+            int frameDataSlot,
+            Dictionary<VulkanMeshFrameDataRendererFamilyKey, int> rendererFamilyDrawSlots,
+            Dictionary<VulkanMeshFrameDataFamilyKey, int> familyStrides)
+        {
+            rendererFamilyDrawSlots.Clear();
+            familyStrides.Clear();
+            for (int index = 0; index < operations.Length; index++)
+            {
+                VkMeshRenderer? renderer;
+                PendingMeshDraw draw;
+                FrameOpContext context;
+                switch (operations[index])
+                {
+                    case MeshDrawOp meshDraw:
+                        renderer = meshDraw.Draw.Renderer;
+                        draw = meshDraw.Draw;
+                        context = meshDraw.Context;
+                        break;
+                    case IndirectDrawOp indirectDraw:
+                        renderer = indirectDraw.MeshRenderer;
+                        draw = indirectDraw.Draw;
+                        context = indirectDraw.Context;
+                        break;
+                    default:
+                        continue;
+                }
+
+                VulkanMeshFrameDataFamilyKey family =
+                    VulkanMeshFrameDataFamilyKey.From(
+                        frameDataSlot,
+                        EVulkanMeshFrameDataStreamKind.Primary,
+                        context,
+                        draw);
+                VulkanMeshFrameDataRendererFamilyKey rendererFamily =
+                    new(renderer, family);
+                rendererFamilyDrawSlots.TryGetValue(rendererFamily, out int count);
+                int requiredDrawSlots = count + 1;
+                rendererFamilyDrawSlots[rendererFamily] = requiredDrawSlots;
+                if (!familyStrides.TryGetValue(family, out int stride) ||
+                    stride < requiredDrawSlots)
+                {
+                    familyStrides[family] = requiredDrawSlots;
+                }
             }
         }
 
@@ -288,6 +349,57 @@ namespace XREngine.Rendering.Vulkan
             return registered;
         }
 
+        /// <summary>
+        /// Publishes the frame-data capacity required during OpenXR producer
+        /// prewarm. This is a read-only authoring scan, not a compatibility
+        /// lowering or recording path.
+        /// </summary>
+        internal bool TryRegisterAuthoringFrameWideMeshFrameDataRequirements(
+            FrameOp[] operations,
+            int frameDataSlot,
+            bool sealAfterRegister,
+            Dictionary<VkMeshRenderer, int> requirements,
+            CommandBufferRecordingScratch scratch,
+            Dictionary<VulkanMeshFrameDataRendererFamilyKey, int> resolvedFamilyBases,
+            out ulong manifestGeneration,
+            out string reason)
+        {
+            using (RuntimeRenderingHostServices.Profiling.StartProfileScope(
+                       "Vulkan.FrameDataManifest.CollectAuthoringRequirements"))
+            {
+                CollectAuthoringMeshFrameDataRequirements(
+                    operations,
+                    frameDataSlot,
+                    scratch.MeshDrawSlotsByRendererFamily,
+                    scratch.MeshFrameDataFamilyStrides);
+            }
+
+            bool registered;
+            bool manifestLayoutChanged;
+            using (RuntimeRenderingHostServices.Profiling.StartProfileScope(
+                       "Vulkan.FrameDataManifest.RegisterAuthoringRequirements"))
+            {
+                registered = _frameWideMeshFrameDataManifest.TryRegister(
+                    RuntimeEngine.Rendering.State.RenderFrameId,
+                    requirements,
+                    scratch.MeshDrawSlotsByRendererFamily,
+                    scratch.MeshFrameDataFamilyStrides,
+                    resolvedFamilyBases,
+                    sealAfterRegister,
+                    out manifestGeneration,
+                    out manifestLayoutChanged,
+                    out reason);
+            }
+
+            if (registered && manifestLayoutChanged)
+                ObserveMeshFrameDataManifestGeneration(manifestGeneration);
+
+            // Producer scans never publish command-reuse refresh requests.
+            scratch.BeginReusableFrameDataRefreshRequests();
+            PublishFrameWideMeshFrameDataManifestGauges();
+            return registered;
+        }
+
         private void BuildReusableFrameDataRefreshRequests(
             FrameOperationSequence operations,
             int frameDataSlot,
@@ -325,9 +437,10 @@ namespace XREngine.Rendering.Vulkan
                  operationIndex < operations.Length;
                  operationIndex++)
             {
-                FrameOp operation = operations[operationIndex];
+                ref readonly FrameOperationHeader header =
+                    ref operations.GetHeader(operationIndex);
                 ref readonly FrameOpContext context =
-                    ref operation.ContextReference;
+                    ref operations.GetContext(operationIndex);
                 ulong currentPlannerFingerprint =
                     context.RecordingFingerprint;
                 bool plannerFingerprintIsPublished =
@@ -344,9 +457,11 @@ namespace XREngine.Rendering.Vulkan
                     hasPlannerKey = plannerFingerprintIsPublished;
                 }
                 VulkanReusableFrameDataRefreshRequest request;
-                switch (operation)
+                switch (header.OpCode)
                 {
-                    case MeshDrawOp meshDraw:
+                    case EVulkanPrimaryPlanNodeKind.MeshDraw:
+                        ref readonly MeshDrawPayload meshDraw =
+                            ref operations.GetMeshDraw(operationIndex);
                         request =
                             VulkanReusableFrameDataRefreshRequest.CreateMesh(
                                 EVulkanReusableFrameDataRefreshKind.Mesh,
@@ -355,7 +470,7 @@ namespace XREngine.Rendering.Vulkan
                                 context,
                                 plannerKey,
                                 meshDraw.Draw.Renderer,
-                                operation,
+                                meshDraw.Draw,
                                 GetFrameWideMeshDrawUniformSlot(
                                     slotsByRendererFamily,
                                     familyBases,
@@ -365,7 +480,9 @@ namespace XREngine.Rendering.Vulkan
                                     context,
                                     meshDraw.Draw));
                         break;
-                    case IndirectDrawOp indirectDraw:
+                    case EVulkanPrimaryPlanNodeKind.IndirectDraw:
+                        ref readonly IndirectDrawPayload indirectDraw =
+                            ref operations.GetIndirectDraw(operationIndex);
                         request =
                             VulkanReusableFrameDataRefreshRequest.CreateMesh(
                                 EVulkanReusableFrameDataRefreshKind.IndirectMesh,
@@ -374,7 +491,7 @@ namespace XREngine.Rendering.Vulkan
                                 context,
                                 plannerKey,
                                 indirectDraw.MeshRenderer,
-                                operation,
+                                indirectDraw.Draw,
                                 GetFrameWideMeshDrawUniformSlot(
                                     slotsByRendererFamily,
                                     familyBases,
@@ -384,7 +501,9 @@ namespace XREngine.Rendering.Vulkan
                                     context,
                                     indirectDraw.Draw));
                         break;
-                    case ComputeDispatchOp computeDispatch:
+                    case EVulkanPrimaryPlanNodeKind.ComputeDispatch:
+                        ref readonly ComputeDispatchPayload computeDispatch =
+                            ref operations.GetComputeDispatch(operationIndex);
                         request =
                             VulkanReusableFrameDataRefreshRequest.CreateCompute(
                                 operationIndex,
@@ -394,9 +513,11 @@ namespace XREngine.Rendering.Vulkan
                                 computeDispatch.Program,
                                 computeDispatch.Snapshot,
                                 ComputeReusableComputeDescriptorBindingKey(
-                                    computeDispatch,
+                                    in computeDispatch,
+                                    in header,
+                                    in context,
                                     ResolveCommandChainInlineOperationIndex(
-                                        operations,
+                                        operations.Stream,
                                         operationIndex)),
                                 computeDispatch.GroupsX,
                                 computeDispatch.GroupsY,
@@ -507,7 +628,7 @@ namespace XREngine.Rendering.Vulkan
                     request.Context,
                     request.PlannerKey,
                     meshRenderer,
-                    request.SourceOperation!,
+                    request.Draw,
                     request.DrawUniformSlot,
                     frequencyMask,
                     ownerKey);
@@ -530,7 +651,7 @@ namespace XREngine.Rendering.Vulkan
         private static ulong ComputeReusableMeshStableDataSignature(
             in VulkanReusableFrameDataRefreshRequest request)
         {
-            ref readonly PendingMeshDraw draw = ref request.Draw;
+            PendingMeshDraw draw = request.Draw;
             XRMaterial? material =
                 draw.MaterialOverride ?? request.MeshRenderer?.MeshRenderer.Material;
             ComputeDispatchSnapshot? snapshot = draw.ProgramBindingSnapshot;

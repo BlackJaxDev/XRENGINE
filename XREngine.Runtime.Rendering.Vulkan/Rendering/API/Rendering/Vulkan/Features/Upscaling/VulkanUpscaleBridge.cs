@@ -888,7 +888,7 @@ internal sealed class VulkanUpscaleBridge : IVulkanUpscaleBridge
     /// <returns>The sanitized label.</returns>
     private static string SanitizeLabel(string value)
     {
-        Span<char> buffer = stackalloc char[value.Length];
+        char[] buffer = new char[value.Length];
         int length = 0;
         foreach (char c in value)
         {
@@ -898,7 +898,7 @@ internal sealed class VulkanUpscaleBridge : IVulkanUpscaleBridge
                 buffer[length++] = '.';
         }
 
-        return length == 0 ? "Viewport" : new string(buffer[..length]);
+        return length == 0 ? "Viewport" : new string(buffer, 0, length);
     }
 
     /// <summary>

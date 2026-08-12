@@ -5,14 +5,14 @@ using XREngine.Data.Geometry;
 
 namespace XREngine.Rendering.Vulkan;
 
-internal sealed unsafe partial class VulkanFrameLoop
+internal sealed partial class VulkanFrameLoop
 {
     private const string GetSurfaceCapabilities2ExtensionName = "VK_KHR_get_surface_capabilities2";
     private const string SurfaceMaintenance1ExtensionName = "VK_EXT_surface_maintenance1";
     internal const string SwapchainMaintenance1ExtensionName = "VK_EXT_swapchain_maintenance1";
 
 
-    internal bool QuerySwapchainMaintenance1FeatureSupport()
+    internal unsafe bool QuerySwapchainMaintenance1FeatureSupport()
     {
         PhysicalDeviceSwapchainMaintenance1FeaturesEXT supportedFeatures = new()
         {
@@ -28,7 +28,7 @@ internal sealed unsafe partial class VulkanFrameLoop
         return supportedFeatures.SwapchainMaintenance1;
     }
 
-    private bool TryGetSwapchainPresentScalingConfiguration(
+    private unsafe bool TryGetSwapchainPresentScalingConfiguration(
         PresentModeKHR presentMode,
         Extent2D imageExtent,
         out SwapchainPresentScalingCreateInfoEXT createInfo,

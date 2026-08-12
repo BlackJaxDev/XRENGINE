@@ -47,6 +47,10 @@ internal unsafe partial class VkMeshRenderer
 	// Descriptor writes are serialized per mesh renderer. Keep the reusable
 	// workspace with that owner instead of leaking it through thread-local state.
 	private readonly DescriptorWriteScratch _descriptorWriteScratch = new();
+	private readonly VulkanDescriptorPublicationTelemetry _descriptorPublicationTelemetry = new();
+
+	internal VulkanDescriptorPublicationTelemetrySnapshot DescriptorPublicationTelemetry
+		=> _descriptorPublicationTelemetry.Snapshot();
 
 	/// <summary>
 	/// Ensures the descriptor sets for one frame/draw slot are allocated and current.

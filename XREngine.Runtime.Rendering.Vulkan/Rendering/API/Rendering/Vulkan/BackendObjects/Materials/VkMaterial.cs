@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
 using System.Runtime.CompilerServices;
-using System.Runtime.InteropServices;
 using System.Threading;
 using Silk.NET.Vulkan;
 using XREngine;
@@ -39,17 +38,21 @@ namespace XREngine.Rendering.Vulkan
             _descriptorUpdateScratchPool = [];
         private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> MaterialDescriptorReadinessReasons =
             new(StringComparer.Ordinal);
+        private readonly VulkanDescriptorPublicationTelemetry _descriptorPublicationTelemetry = new();
+
+        internal VulkanDescriptorPublicationTelemetrySnapshot DescriptorPublicationTelemetry
+            => _descriptorPublicationTelemetry.Snapshot();
 
         private sealed class DescriptorUpdateScratch
         {
-            public readonly List<WriteDescriptorSet> Writes = [];
-            public readonly List<DescriptorBufferInfo> BufferInfos = [];
-            public readonly List<DescriptorImageInfo> ImageInfos = [];
-            public readonly List<BufferView> TexelBufferViews = [];
-            public readonly List<(int WriteIndex, int BufferIndex, DescriptorBindingInfo Binding, uint DescriptorCount)> BufferMap = [];
-            public readonly List<(int WriteIndex, int ImageIndex, DescriptorBindingInfo Binding, uint DescriptorCount)> ImageMap = [];
-            public readonly List<(int WriteIndex, int TexelIndex, DescriptorBindingInfo Binding, uint DescriptorCount)> TexelMap = [];
-            public readonly List<WriteDescriptorSet> TemplateWrites = [];
+            public readonly VulkanDescriptorScratchBuffer<WriteDescriptorSet> Writes = new();
+            public readonly VulkanDescriptorScratchBuffer<DescriptorBufferInfo> BufferInfos = new();
+            public readonly VulkanDescriptorScratchBuffer<DescriptorImageInfo> ImageInfos = new();
+            public readonly VulkanDescriptorScratchBuffer<BufferView> TexelBufferViews = new();
+            public readonly VulkanDescriptorScratchBuffer<(int WriteIndex, int BufferIndex, DescriptorBindingInfo Binding, uint DescriptorCount)> BufferMap = new();
+            public readonly VulkanDescriptorScratchBuffer<(int WriteIndex, int ImageIndex, DescriptorBindingInfo Binding, uint DescriptorCount)> ImageMap = new();
+            public readonly VulkanDescriptorScratchBuffer<(int WriteIndex, int TexelIndex, DescriptorBindingInfo Binding, uint DescriptorCount)> TexelMap = new();
+            public readonly VulkanDescriptorScratchBuffer<WriteDescriptorSet> TemplateWrites = new();
 
             public void Reset()
             {
@@ -872,19 +875,21 @@ namespace XREngine.Rendering.Vulkan
             DescriptorUpdateScratch scratch = RentDescriptorUpdateScratch();
             try
             {
-                // Accumulate writes and descriptor infos in thread-local growth-only
-                // lists. Their spans can be pinned directly for vkUpdateDescriptorSets.
-                List<WriteDescriptorSet> writes = scratch.Writes;
-                List<DescriptorBufferInfo> bufferInfos = scratch.BufferInfos;
-                List<DescriptorImageInfo> imageInfos = scratch.ImageInfos;
-                List<BufferView> texelBufferViews = scratch.TexelBufferViews;
-                List<(int WriteIndex, int BufferIndex, DescriptorBindingInfo Binding, uint DescriptorCount)> bufferMap = scratch.BufferMap;
-                List<(int WriteIndex, int ImageIndex, DescriptorBindingInfo Binding, uint DescriptorCount)> imageMap = scratch.ImageMap;
-                List<(int WriteIndex, int TexelIndex, DescriptorBindingInfo Binding, uint DescriptorCount)> texelMap = scratch.TexelMap;
+                // Fixed publication columns are populated before the final native-call boundary.
+                VulkanDescriptorScratchBuffer<WriteDescriptorSet> writes = scratch.Writes;
+                VulkanDescriptorScratchBuffer<DescriptorBufferInfo> bufferInfos = scratch.BufferInfos;
+                VulkanDescriptorScratchBuffer<DescriptorImageInfo> imageInfos = scratch.ImageInfos;
+                VulkanDescriptorScratchBuffer<BufferView> texelBufferViews = scratch.TexelBufferViews;
+                VulkanDescriptorScratchBuffer<(int WriteIndex, int BufferIndex, DescriptorBindingInfo Binding, uint DescriptorCount)> bufferMap = scratch.BufferMap;
+                VulkanDescriptorScratchBuffer<(int WriteIndex, int ImageIndex, DescriptorBindingInfo Binding, uint DescriptorCount)> imageMap = scratch.ImageMap;
+                VulkanDescriptorScratchBuffer<(int WriteIndex, int TexelIndex, DescriptorBindingInfo Binding, uint DescriptorCount)> texelMap = scratch.TexelMap;
+                long publicationStart = System.Diagnostics.Stopwatch.GetTimestamp();
+                int descriptorsScanned = 0;
 
                 DescriptorBindingInfo[] stateBindings = state.Bindings;
                 for (int bindingIndex = 0; bindingIndex < stateBindings.Length; bindingIndex++)
                 {
+                    descriptorsScanned++;
                     DescriptorBindingInfo binding = stateBindings[bindingIndex];
                     if (binding.Set >= state.DescriptorSets[frameIndex].Length)
                         return false;
@@ -967,10 +972,10 @@ namespace XREngine.Rendering.Vulkan
                     }
                 }
 
-                Span<WriteDescriptorSet> writeSpan = CollectionsMarshal.AsSpan(writes);
-                Span<DescriptorBufferInfo> bufferSpan = CollectionsMarshal.AsSpan(bufferInfos);
-                Span<DescriptorImageInfo> imageSpan = CollectionsMarshal.AsSpan(imageInfos);
-                Span<BufferView> texelSpan = CollectionsMarshal.AsSpan(texelBufferViews);
+                Span<WriteDescriptorSet> writeSpan = writes.Span;
+                Span<DescriptorBufferInfo> bufferSpan = bufferInfos.Span;
+                Span<DescriptorImageInfo> imageSpan = imageInfos.Span;
+                Span<BufferView> texelSpan = texelBufferViews.Span;
 
                 // Pin the reusable list storage and patch native pointers into its
                 // write structs for the duration of the Vulkan update call.
@@ -1050,6 +1055,24 @@ namespace XREngine.Rendering.Vulkan
                     }
                 }
 
+                ulong compatibilityTicks = unchecked((ulong)(System.Diagnostics.Stopwatch.GetTimestamp() - publicationStart));
+                _descriptorPublicationTelemetry.Record(
+                    descriptorsScanned,
+                    writes.Count,
+                    writes.Count,
+                    bufferInfos.Count + imageInfos.Count + texelBufferViews.Count,
+                    writes.Count,
+                    compatibilityTicks);
+                RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanDescriptorPublicationStream(
+                    descriptorsScanned,
+                    writes.Count,
+                    writes.Count,
+                    checked((long)writes.Count * System.Runtime.CompilerServices.Unsafe.SizeOf<WriteDescriptorSet>() +
+                        (long)bufferInfos.Count * System.Runtime.CompilerServices.Unsafe.SizeOf<DescriptorBufferInfo>() +
+                        (long)imageInfos.Count * System.Runtime.CompilerServices.Unsafe.SizeOf<DescriptorImageInfo>() +
+                        (long)texelBufferViews.Count * System.Runtime.CompilerServices.Unsafe.SizeOf<BufferView>()),
+                    compatibilityTicks,
+                    writes.Count);
                 return true;
             }
             finally
@@ -1062,7 +1085,7 @@ namespace XREngine.Rendering.Vulkan
             ProgramDescriptorState state,
             int frameIndex,
             ReadOnlySpan<WriteDescriptorSet> writes,
-            List<WriteDescriptorSet> setWrites)
+            VulkanDescriptorScratchBuffer<WriteDescriptorSet> setWrites)
         {
             if (RuntimeEngine.Rendering.Settings.VulkanRobustnessSettings.DescriptorUpdateBackend != EVulkanDescriptorUpdateBackend.Template)
                 return false;
@@ -1089,7 +1112,7 @@ namespace XREngine.Rendering.Vulkan
                     PipelineBindPoint.Graphics,
                     state.Program.PipelineLayout,
                     (uint)setIndex,
-                    CollectionsMarshal.AsSpan(setWrites)))
+                    setWrites.Span))
                 {
                     return false;
                 }
@@ -1216,13 +1239,14 @@ namespace XREngine.Rendering.Vulkan
                     return false;
 
                 Silk.NET.Vulkan.Buffer buffer = resource.Buffers[frameIndex];
-                void* mapped;
-                if (!BackendContext.Resources.Buffers.TryMap(BackendContext, buffer, memory, 0, resource.Size, out mapped))
+                if (!BackendContext.Resources.Buffers.TryCreateMappedSlice(
+                        BackendContext, buffer, memory, 0, resource.Size, out VulkanMappedMemorySlice slice) ||
+                    !BackendContext.Resources.Buffers.TryAcquireWrite(BackendContext, in slice, out VulkanMappedMemoryWriteLease lease))
                     return false;
 
-                try
+                using (lease)
                 {
-                    Span<byte> data = new(mapped, (int)resource.Size);
+                    Span<byte> data = lease.Bytes;
                     data.Clear();
 
                     bool wrote = resource.ReflectedBlock is { } reflectedBlock
@@ -1234,10 +1258,6 @@ namespace XREngine.Rendering.Vulkan
                         WarnOnce($"Failed to serialize material uniform binding '{resource.Name}' using reflected layout.");
                         return false;
                     }
-                }
-                finally
-                {
-                    BackendContext.Resources.Buffers.Unmap(BackendContext, buffer, memory);
                 }
             }
 

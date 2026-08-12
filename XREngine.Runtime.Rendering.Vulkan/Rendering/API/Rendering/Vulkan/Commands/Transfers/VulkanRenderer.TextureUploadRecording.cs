@@ -14,14 +14,14 @@ using XREngine.Rendering.Resources;
 
 namespace XREngine.Rendering.Vulkan
 {
-    internal sealed unsafe partial class VulkanCommandRuntime
+    internal sealed partial class VulkanCommandRuntime
     {
         private VulkanTextureUploadPublicationState _textureUploadPublicationState
             => ResourceRuntime.Uploads.PublicationState;
 
         private bool TryRecordTextureUploadCommandBuffer(
             uint imageIndex,
-            FrameOp[] textureUploadOps,
+            FrameOperationSequence textureUploadOps,
             out CommandBuffer commandBuffer,
             out CommandPool commandPool)
         {
@@ -59,13 +59,12 @@ namespace XREngine.Rendering.Vulkan
                 {
                     for (int i = 0; i < textureUploadOps.Length; i++)
                     {
-                        if (textureUploadOps[i] is not TextureUploadFrameOp textureUploadOp)
-                            continue;
-
                         bool uploadLabelActive = _deviceContext.CmdBeginLabel(commandBuffer, "TextureUpload");
                         try
                         {
-                            RecordTextureUploadOp(commandBuffer, textureUploadOp.Upload);
+                            RecordTextureUploadOp(
+                                commandBuffer,
+                                textureUploadOps.GetTextureUpload(i).Upload);
                         }
                         finally
                         {
@@ -119,7 +118,7 @@ namespace XREngine.Rendering.Vulkan
             }
         }
 
-        internal void RecordTextureUploadOp(CommandBuffer commandBuffer, VulkanImportedTexturePendingUpload upload)
+        internal unsafe void RecordTextureUploadOp(CommandBuffer commandBuffer, VulkanImportedTexturePendingUpload upload)
         {
             VulkanImportedTextureUploadRequest request = upload.Request;
             if (!upload.ShouldPublish())

@@ -6,9 +6,9 @@ namespace XREngine.Rendering.Vulkan;
 /// Tracked native transfer adapters used by renderer-owned readback and
 /// physical-resource producers after they freeze their native inputs.
 /// </summary>
-internal sealed unsafe partial class VulkanCommandRuntime
+internal sealed partial class VulkanCommandRuntime
 {
-    internal void FreeCommandBufferWithLifetime(
+    internal unsafe void FreeCommandBufferWithLifetime(
         int frameSlot,
         CommandPool commandPool,
         ref CommandBuffer commandBuffer,
@@ -25,7 +25,7 @@ internal sealed unsafe partial class VulkanCommandRuntime
         }
     }
 
-    internal void CopyImageTracked(
+    internal unsafe void CopyImageTracked(
         CommandBuffer commandBuffer,
         Image source,
         ImageLayout sourceLayout,

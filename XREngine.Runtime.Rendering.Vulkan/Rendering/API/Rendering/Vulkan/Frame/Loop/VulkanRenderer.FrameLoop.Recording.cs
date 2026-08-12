@@ -5,7 +5,7 @@ using XREngine.Data.Rendering;
 
 namespace XREngine.Rendering.Vulkan
 {
-    internal sealed unsafe partial class VulkanFrameLoop
+    internal sealed partial class VulkanFrameLoop
     {
         internal VulkanDesktopFramePhaseResult RecordDesktopFrame(
             ref VulkanFrameAttempt attempt)

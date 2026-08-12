@@ -17,7 +17,7 @@ using Buffer = Silk.NET.Vulkan.Buffer;
 
 namespace XREngine.Rendering.Vulkan;
 
-internal sealed unsafe partial class VulkanFrameLoop
+internal sealed partial class VulkanFrameLoop
 {
     private const int MaxFrameOpResourcePlannerSwitchingStates = 12;
     private static bool FrameOpResourcePlannerSwitchingEnabled => MaxFrameOpResourcePlannerSwitchingStates > 1;

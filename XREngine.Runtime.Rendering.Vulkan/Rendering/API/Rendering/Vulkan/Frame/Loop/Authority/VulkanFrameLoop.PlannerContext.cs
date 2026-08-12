@@ -3,7 +3,7 @@ using XREngine.Rendering.Resources;
 
 namespace XREngine.Rendering.Vulkan;
 
-internal sealed unsafe partial class VulkanFrameLoop
+internal sealed partial class VulkanFrameLoop
 {
     private VulkanFrameOperationQueue _frameOperationQueue => _framePlanner.Operations;
 
@@ -23,17 +23,6 @@ internal sealed unsafe partial class VulkanFrameLoop
         FrameOpRegistryCacheSource,
         ActivePassMetadataFilterCacheEntry> PlannerMutableState
         => _framePlanner.MutableState;
-    private List<VulkanFrameOpPlannerStateKey> _frameOpPlannerStateKeyScratch
-        => PlannerMutableState.PlannerStateKeyScratch;
-    private List<VulkanFrameOpPlannerStateKey> _frameOpPlannerStateEvictionScratch
-        => PlannerMutableState.PlannerStateEvictionScratch;
-    private Dictionary<VulkanFrameOpPlannerStateKey, FrameOp[]> _frameOpPlannerPartitionCache
-        => PlannerMutableState.PartitionCache;
-    private VulkanFrameOpPlannerStateKey[] _frameOpPlannerPartitionKeyBuffer
-        => PlannerMutableState.PartitionKeyBuffer;
-    private ref ulong _frameOpPlannerPartitionSignature
-        => ref PlannerMutableState.PartitionSignature;
-
     internal FrameOpContext CaptureFrameOpContextOrLastActive()
         => _resourcePlannerSessions.CaptureRuntimeState().LastActiveFrameOpContext ?? default;
 
@@ -106,9 +95,9 @@ internal sealed unsafe partial class VulkanFrameLoop
             _framePlanner.Operations,
             emitFrameOps,
             excludeTextureUploads: true);
-        signature = operations.Length == 0
-            ? 0
-            : VulkanFrameOperationSemantics.ComputeFrameOpsSignature(operations);
+        // The canonical signature is published from the lowered stream by
+        // FramePlanBuilder; producer arrays have no reusable command identity.
+        signature = 0UL;
         return operations;
     }
 
@@ -121,9 +110,7 @@ internal sealed unsafe partial class VulkanFrameLoop
             emitter,
             emission,
             excludeTextureUploads: true);
-        signature = operations.Length == 0
-            ? 0
-            : VulkanFrameOperationSemantics.ComputeFrameOpsSignature(operations);
+        signature = 0UL;
         return operations;
     }
 
@@ -134,9 +121,7 @@ internal sealed unsafe partial class VulkanFrameLoop
         FrameOp[] operations = _commandRuntime.DrainFrameOperations(
             _framePlanner.Operations,
             excludeTextureUploads: true);
-        signature = computeSignature && operations.Length != 0
-            ? VulkanFrameOperationSemantics.ComputeFrameOpsSignature(operations)
-            : 0;
+        signature = 0UL;
         return operations;
     }
 

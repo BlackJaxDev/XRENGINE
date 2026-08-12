@@ -22,7 +22,4 @@ internal sealed class FrameOpResourcePlannerSwitchingState
     public FrameOpContext ActiveContext;
     public ResourcePlannerRuntimeState PreparationState;
     public bool HasPreparationState;
-    public ulong PreparedFrameOpsSignature;
-    public ulong PreparedPlanRevision;
-    public bool HasPreparedPlan;
 }

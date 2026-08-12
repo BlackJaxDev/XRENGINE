@@ -7,7 +7,7 @@ namespace XREngine.Rendering.Vulkan;
 /// Public/API producer and frame-state translation boundary for Vulkan blits.
 /// Native resource resolution and transitions are owned by the command runtime.
 /// </summary>
-internal sealed unsafe partial class VulkanFrameLoop
+internal sealed partial class VulkanFrameLoop
 {
     internal void Blit(
         XRFrameBuffer? inFBO,

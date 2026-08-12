@@ -9,6 +9,7 @@ internal sealed class FramePlan
 {
     private FrameOperationStream _operations = new();
     private FrameOperationStream _dynamicOverlayOperations = new();
+    private FrameOperationStream _textureUploadOperations = new();
     private OutputRequest[] _outputs = Array.Empty<OutputRequest>();
     private RenderOutputDagNodeDescriptor[] _outputExecutionNodes =
         Array.Empty<RenderOutputDagNodeDescriptor>();
@@ -20,6 +21,7 @@ internal sealed class FramePlan
         Array.Empty<VulkanRenderGraphPlan>();
     private int _operationCount;
     private int _dynamicOverlayOperationCount;
+    private int _textureUploadOperationCount;
     private int _outputCount;
     private int _outputExecutionNodeCount;
     private int _operationKeyCount;
@@ -40,10 +42,13 @@ internal sealed class FramePlan
     internal bool IsSealed { get; private set; }
     internal int OperationCount => _operationCount;
     internal int DynamicOverlayOperationCount => _dynamicOverlayOperationCount;
+    internal int TextureUploadOperationCount => _textureUploadOperationCount;
     /// <summary>Canonical numeric static stream for planners and schedulers.</summary>
     internal FrameOperationStream StaticOperations => _operations;
     /// <summary>Canonical numeric dynamic-overlay stream for planners and schedulers.</summary>
     internal FrameOperationStream DynamicOverlayOperations => _dynamicOverlayOperations;
+    /// <summary>Canonical numeric transfer stream recorded before the primary stream.</summary>
+    internal FrameOperationStream TextureUploadOperations => _textureUploadOperations;
     internal int OutputCount => _outputCount;
     /// <summary>
     /// Number of output/resource DAG nodes in the validated deterministic order
@@ -80,41 +85,26 @@ internal sealed class FramePlan
         return new FrameOperationSequence(_dynamicOverlayOperations);
     }
 
-    /// <summary>
-    /// Validates the caller's already prepared native eye operations against a
-    /// target-neutral logical slice, then exposes the prepared array through a
-    /// read-only recording sequence. The caller already owns this per-eye
-    /// capture, so cloning it again would add transient work without improving
-    /// plan isolation.
-    /// </summary>
-    internal FrameOperationSequence GetNativeStaticOperationsForLogicalView(
-        ulong logicalViewId,
-        FrameOp[] nativeOperations)
+    internal FrameOperationSequence GetNativeTextureUploadOperationsForRecording()
     {
         EnsureSealed();
-        ArgumentNullException.ThrowIfNull(nativeOperations);
-        if (logicalViewId == 0UL || nativeOperations.Length == 0)
-            throw new InvalidOperationException("A paired-eye frame plan requires a non-empty logical view slice.");
+        return new FrameOperationSequence(_textureUploadOperations);
+    }
 
-        int nativeIndex = 0;
-        for (int planIndex = 0; planIndex < _operationCount; planIndex++)
-        {
-            FrameOp logicalOperation = _operations.GetPayloadForPrimaryDispatch(planIndex);
-            if (logicalOperation.Context.LogicalViewId != logicalViewId)
-                continue;
-            if (nativeIndex >= nativeOperations.Length ||
-                logicalOperation.Kind != nativeOperations[nativeIndex].Kind ||
-                nativeOperations[nativeIndex].Context.LogicalViewId != logicalViewId)
-            {
-                throw new InvalidOperationException("Native eye operations do not match the shared logical plan slice.");
-            }
-
-            nativeIndex++;
-        }
-
-        if (nativeIndex != nativeOperations.Length)
-            throw new InvalidOperationException("Native eye operation count does not match the shared logical plan slice.");
-        return new FrameOperationSequence(nativeOperations);
+    /// <summary>
+    /// Returns a header-only logical-view slice over the plan's already sealed
+    /// payload store. No eye authoring operation is inspected or lowered here.
+    /// </summary>
+    internal FrameOperationSequence GetNativeStaticOperationsForLogicalView(
+        ulong logicalViewId)
+    {
+        EnsureSealed();
+        if (logicalViewId == 0UL)
+            throw new ArgumentOutOfRangeException(nameof(logicalViewId));
+        FrameOperationStream slice = _operations.CreateLogicalViewSlice(logicalViewId);
+        if (slice.Count == 0)
+            throw new InvalidOperationException("The sealed frame plan has no operations for the requested logical view.");
+        return new FrameOperationSequence(slice);
     }
 
     internal FramePlan(ViewSetPlan viewSet)
@@ -131,6 +121,7 @@ internal sealed class FramePlan
         ulong dynamicOverlaySignature,
         FrameOperationStream operations,
         FrameOperationStream dynamicOverlayOperations,
+        FrameOperationStream textureUploadOperations,
         OutputRequest[] outputs,
         int outputCount,
         RenderOutputDagNodeDescriptor[] outputExecutionNodes,
@@ -159,8 +150,10 @@ internal sealed class FramePlan
             RenderGraphPlanSignature = renderGraphPlanSignature;
             _operations = operations;
             _dynamicOverlayOperations = dynamicOverlayOperations;
+            _textureUploadOperations = textureUploadOperations;
             _operationCount = operations.Count;
             _dynamicOverlayOperationCount = dynamicOverlayOperations.Count;
+            _textureUploadOperationCount = textureUploadOperations.Count;
             _outputs = outputs;
             _outputCount = outputCount;
             _outputExecutionNodes = outputExecutionNodes;
@@ -194,6 +187,7 @@ internal sealed class FramePlan
             RenderGraphPlanSignature = 0;
             _operationCount = 0;
             _dynamicOverlayOperationCount = 0;
+            _textureUploadOperationCount = 0;
             _outputCount = 0;
             _outputExecutionNodeCount = 0;
             _operationKeyCount = 0;
@@ -215,14 +209,7 @@ internal sealed class FramePlan
         lock (_leaseGate)
         {
             EnsureSealed();
-            if (_leaseCount++ != 0)
-                return;
-
-            LeaseOperations(_operations, _operationCount, acquire: true);
-            LeaseOperations(
-                _dynamicOverlayOperations,
-                _dynamicOverlayOperationCount,
-                acquire: true);
+            _leaseCount++;
         }
     }
 
@@ -238,14 +225,6 @@ internal sealed class FramePlan
                 return;
             }
 
-            // Keep the plan visibly pinned until all pooled operations have been
-            // released. Reset cannot enter this gate and republish their slots
-            // halfway through the final release loop.
-            LeaseOperations(_operations, _operationCount, acquire: false);
-            LeaseOperations(
-                _dynamicOverlayOperations,
-                _dynamicOverlayOperationCount,
-                acquire: false);
             _leaseCount = 0;
         }
     }
@@ -277,7 +256,8 @@ internal sealed class FramePlan
         if (_operationCount == operations.Length)
         {
             for (int index = 0; index < _operationCount; index++)
-                if (!ReferenceEquals(_operations.GetPayloadForPrimaryDispatch(index), operations[index]))
+                if (_operations.GetHeader(index).OpCode != operations.GetHeader(index).OpCode ||
+                    _operations.GetContext(index).RecordingFingerprint != operations.GetContext(index).RecordingFingerprint)
                 {
                     reason = "operation stream does not match the immutable frame-plan snapshot";
                     return false;
@@ -298,44 +278,24 @@ internal sealed class FramePlan
         if (operations.Length == 0)
             return false;
 
-        ulong logicalViewId = operations[0].Context.LogicalViewId;
+        ulong logicalViewId = operations.GetContext(0).LogicalViewId;
         if (logicalViewId == 0UL)
             return false;
 
         int nativeIndex = 0;
         for (int planIndex = 0; planIndex < _operationCount; planIndex++)
         {
-            FrameOp planOperation = _operations.GetPayloadForPrimaryDispatch(planIndex);
-            if (planOperation.Context.LogicalViewId != logicalViewId)
+            ref readonly FrameOperationHeader planHeader = ref _operations.GetHeader(planIndex);
+            if (_operations.GetContext(planIndex).LogicalViewId != logicalViewId)
                 continue;
             if (nativeIndex >= operations.Length ||
-                planOperation.Kind != operations[nativeIndex].Kind ||
-                operations[nativeIndex].Context.LogicalViewId != logicalViewId)
+                planHeader.OpCode != operations.GetHeader(nativeIndex).OpCode ||
+                operations.GetContext(nativeIndex).LogicalViewId != logicalViewId)
                 return false;
             nativeIndex++;
         }
 
         return nativeIndex == operations.Length;
-    }
-
-    private static void LeaseOperations(FrameOperationStream operations, int count, bool acquire)
-    {
-        for (int index = 0; index < count; index++)
-        {
-            if (acquire)
-                operations.GetPayloadForPrimaryDispatch(index).AcquireFramePlanLease();
-            else
-                operations.GetPayloadForPrimaryDispatch(index).ReleaseFramePlanLease();
-        }
-    }
-
-    internal ref readonly FrameOp GetOperation(int index)
-    {
-        EnsureSealed();
-        if ((uint)index >= (uint)_operationCount)
-            throw new ArgumentOutOfRangeException(nameof(index));
-
-        return ref _operations.GetPayloadForPrimaryDispatch(index);
     }
 
     /// <summary>
@@ -368,15 +328,6 @@ internal sealed class FramePlan
 
         plan = VulkanRenderGraphPlan.Empty;
         return false;
-    }
-
-    internal ref readonly FrameOp GetDynamicOverlayOperation(int index)
-    {
-        EnsureSealed();
-        if ((uint)index >= (uint)_dynamicOverlayOperationCount)
-            throw new ArgumentOutOfRangeException(nameof(index));
-
-        return ref _dynamicOverlayOperations.GetPayloadForPrimaryDispatch(index);
     }
 
     internal ref readonly OutputRequest GetOutput(int index)

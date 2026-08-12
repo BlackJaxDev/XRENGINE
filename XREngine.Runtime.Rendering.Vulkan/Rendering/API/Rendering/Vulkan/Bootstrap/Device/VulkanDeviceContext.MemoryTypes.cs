@@ -37,4 +37,15 @@ internal sealed partial class VulkanDeviceContext
         => TryFindMemoryType(api, typeFilter, requiredProperties, out uint memoryTypeIndex)
             ? memoryTypeIndex
             : throw new InvalidOperationException("Failed to find a suitable Vulkan memory type.");
+
+    /// <summary>Returns the properties actually exposed by a selected memory type.</summary>
+    internal MemoryPropertyFlags GetMemoryTypeProperties(Vk api, uint memoryTypeIndex)
+    {
+        ArgumentNullException.ThrowIfNull(api);
+        api.GetPhysicalDeviceMemoryProperties(PhysicalDevice, out PhysicalDeviceMemoryProperties memoryProperties);
+        if (memoryTypeIndex >= memoryProperties.MemoryTypeCount)
+            throw new ArgumentOutOfRangeException(nameof(memoryTypeIndex));
+
+        return memoryProperties.MemoryTypes[(int)memoryTypeIndex].PropertyFlags;
+    }
 }

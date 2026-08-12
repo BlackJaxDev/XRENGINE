@@ -66,6 +66,8 @@ internal sealed unsafe class VulkanLegacyAllocator(VulkanDeviceContext deviceCon
         result = Result.Success;
 
         uint memoryTypeIndex = ResolveMemoryType(api, memReqs.MemoryTypeBits, requiredProperties);
+        MemoryPropertyFlags actualProperties =
+            _deviceContext.GetMemoryTypeProperties(api, memoryTypeIndex);
 
         MemoryAllocateInfo allocInfo = new()
         {
@@ -90,7 +92,7 @@ internal sealed unsafe class VulkanLegacyAllocator(VulkanDeviceContext deviceCon
             Offset: 0,
             Size: memReqs.Size,
             MemoryTypeIndex: memoryTypeIndex,
-            Properties: requiredProperties,
+            Properties: actualProperties,
             BlockId: -1);
 
         return true;
