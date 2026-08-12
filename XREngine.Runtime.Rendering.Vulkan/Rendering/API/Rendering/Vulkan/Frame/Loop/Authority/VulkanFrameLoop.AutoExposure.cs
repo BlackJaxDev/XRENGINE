@@ -8,7 +8,7 @@ using XREngine.Rendering.Vulkan.RenderGraph;
 namespace XREngine.Rendering.Vulkan;
 
 /// <summary>Coordinates GPU auto-exposure work with the current frame-operation stream.</summary>
-internal sealed unsafe partial class VulkanFrameLoop
+internal sealed partial class VulkanFrameLoop
 {
     internal bool SupportsGpuAutoExposure
     {

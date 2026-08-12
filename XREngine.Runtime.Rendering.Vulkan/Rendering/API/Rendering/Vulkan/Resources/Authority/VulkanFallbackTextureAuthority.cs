@@ -152,7 +152,7 @@ internal unsafe sealed class VulkanFallbackTextureAuthority(
     {
         const ulong pixelSize = 4;
         const ulong uploadSize = pixelSize * LayerCount;
-        byte* pixels = stackalloc byte[(int)uploadSize];
+        byte[] pixels = new byte[checked((int)uploadSize)];
         for (uint layer = 0; layer < LayerCount; layer++)
         {
             int offset = (int)(layer * pixelSize);
@@ -170,7 +170,8 @@ internal unsafe sealed class VulkanFallbackTextureAuthority(
             owner: "FallbackTexture.Staging");
         try
         {
-            resources.Buffers.Update(context, staging, stagingMemory, 0, uploadSize, pixels);
+            fixed (byte* pixelsPtr = pixels)
+                resources.Buffers.Update(context, staging, stagingMemory, 0, uploadSize, pixelsPtr);
             VulkanCommandRuntime commands = RequireCommands();
             using VulkanSynchronousUploadSession upload = new(
                 context.Api,

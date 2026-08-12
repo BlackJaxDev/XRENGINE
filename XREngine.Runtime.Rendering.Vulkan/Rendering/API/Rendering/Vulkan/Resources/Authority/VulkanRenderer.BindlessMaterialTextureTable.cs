@@ -1,5 +1,4 @@
 using System;
-using System.Buffers;
 using System.Collections.Generic;
 using System.Runtime.CompilerServices;
 using Silk.NET.Vulkan;
@@ -16,7 +15,7 @@ internal sealed unsafe partial class VulkanDescriptorManager
     private object _globalMaterialTextureTableLock => BindlessMaterialTextures.Sync;
     private Dictionary<XRTexture, uint> _globalMaterialTextureDescriptorSlotsByTexture => BindlessMaterialTextures.SlotsByTexture;
     private Queue<uint> _freeGlobalMaterialTextureDescriptorSlots => BindlessMaterialTextures.FreeSlots;
-    private List<uint> _dirtyGlobalMaterialTextureDescriptorSlots => BindlessMaterialTextures.DirtySlots;
+    private VulkanBindlessDescriptorPublicationStream _globalMaterialTextureDescriptorPublication => BindlessMaterialTextures.PublicationStream;
     private ref MaterialTextureDescriptorSlot[] _globalMaterialTextureDescriptorSlots => ref BindlessMaterialTextures.Slots;
     private ref DescriptorSetLayout _globalMaterialTextureDescriptorSetLayout => ref BindlessMaterialTextures.SetLayout;
     private ref DescriptorPool _globalMaterialTextureDescriptorPool => ref BindlessMaterialTextures.Pool;
@@ -78,7 +77,7 @@ internal sealed unsafe partial class VulkanDescriptorManager
         get
         {
             lock (_globalMaterialTextureTableLock)
-                return (uint)_dirtyGlobalMaterialTextureDescriptorSlots.Count;
+                return (uint)_globalMaterialTextureDescriptorPublication.DirtyCount;
         }
     }
 
@@ -189,6 +188,9 @@ internal sealed unsafe partial class VulkanDescriptorManager
                 slot.ImageInfo.ImageLayout != imageInfo.ImageLayout)
             {
                 slot.ImageInfo = imageInfo;
+                slot.ExpectedImageLayout = imageInfo.ImageLayout;
+                slot.ImageViewGeneration = ResourceRuntime.GetPublishedGeneration(ObjectType.ImageView, imageInfo.ImageView.Handle);
+                slot.SamplerGeneration = ResourceRuntime.GetPublishedGeneration(ObjectType.Sampler, imageInfo.Sampler.Handle);
                 slot.Generation++;
                 MarkGlobalMaterialTextureDescriptorSlotDirty(descriptorIndex);
             }
@@ -344,7 +346,7 @@ internal sealed unsafe partial class VulkanDescriptorManager
             _nextGlobalMaterialTextureDescriptorSlot = 1u;
             _freeGlobalMaterialTextureDescriptorSlots.Clear();
             _globalMaterialTextureDescriptorSlotsByTexture.Clear();
-            _dirtyGlobalMaterialTextureDescriptorSlots.Clear();
+            _globalMaterialTextureDescriptorPublication.Initialize(_globalMaterialTextureDescriptorCapacity);
 
             DescriptorImageInfo fallbackInfo = BackendContext.Resources.FallbackTexture.GetImageInfo(
                 DescriptorType.CombinedImageSampler,
@@ -360,6 +362,9 @@ internal sealed unsafe partial class VulkanDescriptorManager
             _globalMaterialTextureDescriptorSlots[0] = new MaterialTextureDescriptorSlot
             {
                 ImageInfo = fallbackInfo,
+                ExpectedImageLayout = fallbackInfo.ImageLayout,
+                ImageViewGeneration = ResourceRuntime.GetPublishedGeneration(ObjectType.ImageView, fallbackInfo.ImageView.Handle),
+                SamplerGeneration = ResourceRuntime.GetPublishedGeneration(ObjectType.Sampler, fallbackInfo.Sampler.Handle),
                 Generation = 1u,
                 LastUsedFrameId = RuntimeEngine.Rendering.State.RenderFrameId,
             };
@@ -617,53 +622,62 @@ internal sealed unsafe partial class VulkanDescriptorManager
             return;
 
         RetireUnusedGlobalMaterialTextureDescriptorSlotsLocked(RuntimeEngine.Rendering.State.RenderFrameId);
-        if (_dirtyGlobalMaterialTextureDescriptorSlots.Count == 0)
+        VulkanBindlessDescriptorPublicationStream publication = _globalMaterialTextureDescriptorPublication;
+        if (publication.DirtyCount == 0)
         {
             _globalMaterialTextureDescriptorWritesLastFlush = 0ul;
             return;
         }
 
-        int dirtyCount = _dirtyGlobalMaterialTextureDescriptorSlots.Count;
-        DescriptorImageInfo[] imageInfos = ArrayPool<DescriptorImageInfo>.Shared.Rent(dirtyCount);
-        WriteDescriptorSet[] writes = ArrayPool<WriteDescriptorSet>.Shared.Rent(dirtyCount);
-
-        try
+        long publicationStart = System.Diagnostics.Stopwatch.GetTimestamp();
+        publication.BuildDirtyRanges();
+        int dirtyCount = publication.DirtyCount;
+        for (int dirtyIndex = 0; dirtyIndex < dirtyCount; dirtyIndex++)
         {
-            fixed (DescriptorImageInfo* imageInfoPtr = imageInfos)
-            fixed (WriteDescriptorSet* writePtr = writes)
-            {
-                for (int i = 0; i < dirtyCount; i++)
-                {
-                    uint descriptorIndex = _dirtyGlobalMaterialTextureDescriptorSlots[i];
-                    imageInfos[i] = _globalMaterialTextureDescriptorSlots[descriptorIndex].ImageInfo;
-                    writes[i] = new WriteDescriptorSet
-                    {
-                        SType = StructureType.WriteDescriptorSet,
-                        DstSet = _globalMaterialTextureDescriptorSet,
-                        DstBinding = VulkanBindlessMaterialDescriptors.TextureArrayBinding,
-                        DstArrayElement = descriptorIndex,
-                        DescriptorType = DescriptorType.CombinedImageSampler,
-                        DescriptorCount = 1u,
-                        PImageInfo = imageInfoPtr + i,
-                    };
-                }
-
-                ResourceRuntime.DescriptorLifetime.UpdateDescriptorSets((uint)dirtyCount, writePtr);
-                RecordVulkanDescriptorTableGeneration("GlobalMaterialTextureDescriptorSet.Update");
-            }
+            uint descriptorIndex = publication.DirtySlotIds[dirtyIndex];
+            publication.ImageInfoScratch[dirtyIndex] = _globalMaterialTextureDescriptorSlots[descriptorIndex].ImageInfo;
         }
-        finally
+
+        fixed (DescriptorImageInfo* imageInfoPtr = publication.ImageInfoScratch)
+        fixed (WriteDescriptorSet* writePtr = publication.WriteScratch)
         {
-            ArrayPool<DescriptorImageInfo>.Shared.Return(imageInfos);
-            ArrayPool<WriteDescriptorSet>.Shared.Return(writes);
+            int imageOffset = 0;
+            for (int rangeIndex = 0; rangeIndex < publication.RangeCount; rangeIndex++)
+            {
+                uint descriptorCount = publication.RangeCounts[rangeIndex];
+                writePtr[rangeIndex] = new WriteDescriptorSet
+                {
+                    SType = StructureType.WriteDescriptorSet,
+                    DstSet = _globalMaterialTextureDescriptorSet,
+                    DstBinding = VulkanBindlessMaterialDescriptors.TextureArrayBinding,
+                    DstArrayElement = publication.RangeStarts[rangeIndex],
+                    DescriptorType = DescriptorType.CombinedImageSampler,
+                    DescriptorCount = descriptorCount,
+                    PImageInfo = imageInfoPtr + imageOffset,
+                };
+                imageOffset += checked((int)descriptorCount);
+            }
+
+            ResourceRuntime.DescriptorLifetime.UpdateDescriptorSets((uint)publication.RangeCount, writePtr);
+            RecordVulkanDescriptorTableGeneration("GlobalMaterialTextureDescriptorSet.Update");
         }
 
         for (int i = 0; i < dirtyCount; i++)
-            _globalMaterialTextureDescriptorSlots[_dirtyGlobalMaterialTextureDescriptorSlots[i]].Dirty = false;
+            _globalMaterialTextureDescriptorSlots[publication.DirtySlotIds[i]].Dirty = false;
 
         _globalMaterialTextureDescriptorWritesLastFlush = (ulong)dirtyCount;
         _globalMaterialTextureDescriptorWritesTotal += (ulong)dirtyCount;
-        _dirtyGlobalMaterialTextureDescriptorSlots.Clear();
+        ulong compatibilityTicks = unchecked((ulong)(System.Diagnostics.Stopwatch.GetTimestamp() - publicationStart));
+        publication.RecordPublication(compatibilityTicks);
+        RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanDescriptorPublicationStream(
+            dirtyCount,
+            dirtyCount,
+            publication.RangeCount,
+            checked((long)dirtyCount * System.Runtime.CompilerServices.Unsafe.SizeOf<DescriptorImageInfo>() +
+                (long)publication.RangeCount * System.Runtime.CompilerServices.Unsafe.SizeOf<WriteDescriptorSet>()),
+            compatibilityTicks,
+            publication.HighWaterMark);
+        publication.Reset();
     }
 
     /// <summary>
@@ -689,6 +703,9 @@ internal sealed unsafe partial class VulkanDescriptorManager
             _globalMaterialTextureDescriptorSlotsByTexture.Remove(slot.Texture);
             slot.Texture = null;
             slot.ImageInfo = fallbackInfo;
+            slot.ExpectedImageLayout = fallbackInfo.ImageLayout;
+            slot.ImageViewGeneration = ResourceRuntime.GetPublishedGeneration(ObjectType.ImageView, fallbackInfo.ImageView.Handle);
+            slot.SamplerGeneration = ResourceRuntime.GetPublishedGeneration(ObjectType.Sampler, fallbackInfo.Sampler.Handle);
             slot.Generation++;
             slot.PendingRetirement = true;
             slot.RetireAfterFrameId = frameId;
@@ -714,7 +731,7 @@ internal sealed unsafe partial class VulkanDescriptorManager
             return;
 
         slot.Dirty = true;
-        _dirtyGlobalMaterialTextureDescriptorSlots.Add(descriptorIndex);
+        _globalMaterialTextureDescriptorPublication.AppendDirty(descriptorIndex);
     }
 
     /// <summary>
@@ -856,7 +873,7 @@ internal sealed unsafe partial class VulkanDescriptorManager
         {
             _globalMaterialTextureDescriptorSlotsByTexture.Clear();
             _freeGlobalMaterialTextureDescriptorSlots.Clear();
-            _dirtyGlobalMaterialTextureDescriptorSlots.Clear();
+            _globalMaterialTextureDescriptorPublication.Reset();
             _globalMaterialTextureDescriptorSlots = [];
             _globalMaterialTextureDescriptorCapacity = 0u;
             _nextGlobalMaterialTextureDescriptorSlot = 1u;

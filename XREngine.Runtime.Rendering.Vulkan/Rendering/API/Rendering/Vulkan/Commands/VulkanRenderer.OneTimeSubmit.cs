@@ -11,7 +11,7 @@ using XREngine.Data.Rendering;
 
 namespace XREngine.Rendering.Vulkan
 {
-    internal sealed unsafe partial class VulkanCommandRuntime
+    internal sealed partial class VulkanCommandRuntime
     {
         public class CommandScope : IDisposable
         {
@@ -109,7 +109,7 @@ namespace XREngine.Rendering.Vulkan
             return commandBuffer;
         }
 
-        private void CommandsStop(
+        private unsafe void CommandsStop(
             CommandBuffer commandBuffer,
             bool useTransferQueue,
             VulkanFrameDataArena? synchronousArena,
@@ -342,7 +342,7 @@ namespace XREngine.Rendering.Vulkan
             return DeviceContext.GraphicsQueue;
         }
 
-        private void NameOneTimeSubmissionFence(Fence fence, bool transfer)
+        private unsafe void NameOneTimeSubmissionFence(Fence fence, bool transfer)
         {
             if (fence.Handle == 0 || DeviceContext.DebugUtils is null || !FrameTelemetry._diagnosticOptions.EnableDebugUtils)
                 return;

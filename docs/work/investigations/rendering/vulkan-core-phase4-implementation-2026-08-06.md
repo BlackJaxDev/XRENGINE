@@ -1,7 +1,7 @@
 # Vulkan Core Phase 4 Implementation
 
 Date: 2026-08-06  
-Status: Phase 4.0 through Phase 4.4 complete; Phase 4.5+ active
+Status: Phase 4.0 through Phase 4.5 complete; Vulkan core-hardening Phase 4 closed
 Owner: Rendering
 
 Desktop camera/input cadence symptoms and their reusable triage rules are
@@ -729,3 +729,102 @@ Final evidence:
 Automated tests were not added or run during this feature-validation pass, per
 the repository sequencing policy. The runtime was validated through the Vulkan
 project build, full editor build, MCP rendering path, readbacks, and shutdown.
+
+### Phase 4.5 Explicit Layout And Unsafe-Boundary Completion
+
+Phase 4.5 replaced the remaining broad, reference-rich, and implicitly unsafe
+hot paths with measured canonical publications:
+
+- `GPUSceneLayoutSchema` now defines one generation transaction containing
+  cull-control, bounds, classification/sort-key, material/state, current and
+  previous transforms, visibility, and optional AABB streams. Culling consumes
+  stage-native inputs and emits unsigned visible draw IDs; the final build emits
+  the driver-required contiguous 20-byte indexed indirect record.
+- The historical 80-byte broad GPU command, its all-loaded buffer,
+  `GPURenderBuildHotCommands.comp`, extraction scratch, and `SoACull`
+  compatibility path were deleted. The compatibility conversion meter remains
+  zero on the canonical path.
+- `FramePlanBuilder` is the single authoring-object lowering boundary. It emits
+  a 32-byte numeric operation header and dense per-kind payload arrays before
+  ordering, dependency compilation, packetization, or worker scheduling. The
+  per-kind `FrameOp` sidecars and direct compatibility planner paths were
+  removed.
+- Prepared mesh draws publish a reference-free 304-byte encoder record plus
+  typed ranges into flattened descriptor, dynamic-offset, descriptor-image,
+  frame-payload, vertex, viewport, and scissor streams. Managed owners,
+  generation audits, and names are cold indexed sidecars. The primary reuse
+  wrapper and persistent prepared-array pool were deleted.
+- Compiled graph execution uses numeric resource IDs and flat offset/count
+  adjacency. Barrier records remain normalized value data until the final
+  reusable `VulkanNativeScratchArena<T>` reservation. Descriptor publication
+  scans preallocated dirty-slot/range streams and builds only the required
+  native writes.
+- Worker jobs are 24-byte AoS records; mutable counters and traces are
+  independently base/stride-aligned, single-writer blocks merged after
+  completion. Lifecycle transactions remain safe coherent AoS records.
+- Focused native and mapped owners now carry identity, offset, length,
+  alignment, generation, coherency, and ownership. Raw facade map APIs were
+  removed, pointers are acquired only inside the final lease/call scope, and
+  noncoherent flush/invalidate ranges expand to `nonCoherentAtomSize`.
+
+The reproducible layout program under
+`Build/_AgentValidation/p45-capabilities/scratch/LayoutSizeAudit/` measured the
+canonical records and confirmed that all execution records except the
+deliberately owner-bearing lifecycle/descriptor slots contain no managed
+references. Representative results include `DrawMetadata=64`, `BoundsGpu=64`,
+`DrawIndexedIndirectCommand=20`, `FrameOperationHeader=32`,
+`VulkanPrimaryPlanNode=16`, `VkPreparedMeshDraw=304`,
+`VulkanPreparedMeshDrawState=232`, worker job `=24`, and native memory/buffer/
+image barriers `=48/80/96` bytes. The strict Roslyn audit reported:
+
+```text
+SUMMARY stackalloc_in_loop=0 pointer_loops=0 unsafe_ordinary_owners=0
+```
+
+Searches found no remaining `GPUIndirectRenderCommand`,
+`AllLoadedCommandsBuffer`, `GPURenderBuildHotCommands`, `GPURenderExtractSoA`,
+`SoACull`, `VulkanPersistentArrayPool`, `VulkanPreparedPrimaryReuseInput`,
+`GetMappedAddress`, or type-wide unsafe `VulkanRenderer`. The only Vulkan
+`GCHandle.Alloc` is the non-pinned device-lifetime ImGui platform-window
+callback owner. Every retained `ArrayPool<T>` rental has a visible
+`try/finally` return owner.
+
+All 17 changed shaders passed `glslangValidator` parser validation in their
+normal engine helper/include context. Warning-as-error builds passed with zero
+warnings and zero errors for:
+
+- `XREngine.Runtime.Rendering.csproj`;
+- `XREngine.Runtime.Rendering.Vulkan.csproj`; and
+- `XREngine.Editor.csproj`.
+
+Final runtime validation used the named isolated Vulkan session
+`vulkan-phase45-final-20260812`. With
+`XRE_VULKAN_FINAL_PRESENT_LEDGER=1`, its 128 retained descriptor observations
+covered swapchain slots 0, 1, and 2. Every source image-view/sampler tuple
+matched the exact descriptor write, the ledger remained unfrozen, and no
+invariant failed. Sixteen profiler reads during a three-second camera move
+observed at most 48 numeric operations, including 40 mesh operations, one
+compute operation, and two swapchain writes. Every instrumented CPU stage and
+boundary reported zero allocated bytes; Vulkan structured validation and
+descriptor failure counts stayed at zero.
+
+The two settled, visually inspected camera-dependent images are:
+
+- `Build/_AgentValidation/p45-capabilities/mcp-captures/phase45-final-20260812/Screenshot_20260812_041328_196_48a966eba63f4cf89e282602d802a16f.png`;
+- `Build/_AgentValidation/p45-capabilities/mcp-captures/phase45-final-20260812/Screenshot_20260812_041405_919_c458f3f706494fe6b137d474cc0a81fd.png`.
+
+A no-build diagnostic replay with `XRE_VULKAN_RECORDING_DIAG=1` and file
+logging enabled recorded the expected G-buffer, AO, lighting, bloom,
+post-process, and FXAA sequence. After bounded startup/camera-triggered pipeline
+warmup recovery, the log sustained successful submissions and presentations
+through frame 30,798. The Vulkan and rendering logs contained no VUID,
+validation error, `VK_ERROR_DEVICE_LOST`, plan-precondition exception,
+descriptor-binding failure, mapped-memory failure, short-destination exception,
+or unhandled render exception. `rdc doctor` passed RenderDoc replay,
+command-line, and Vulkan-layer checks. A GPU capture was unnecessary because
+the viewport images, internal target captures, descriptor ledger, structured
+telemetry, and category logs identified and validated every relevant boundary.
+
+Automated tests were not added or run during Phase 4.5, following the repository
+sequencing policy. Live feature validation, strict builds, shader parsing,
+layout/unsafe audits, editor shutdown, and log classification completed first.

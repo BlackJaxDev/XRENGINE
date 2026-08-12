@@ -129,11 +129,12 @@ internal unsafe sealed class VulkanProgramCreationPort(VulkanBackendObjectContex
         ulong bindingKey,
         DescriptorSetLayout[] layouts,
         DescriptorPoolSize[] poolSizes,
+        int poolSizeCount,
         bool usesUpdateAfterBind,
         out DescriptorSet[] descriptorSets,
         out bool isNewAllocation)
         => TryGetOrCreateComputeDescriptorSetsCore(
-            context, imageIndex, schemaKey, bindingKey, layouts, poolSizes,
+            context, imageIndex, schemaKey, bindingKey, layouts, poolSizes, poolSizeCount,
             usesUpdateAfterBind, out descriptorSets, out isNewAllocation);
 
     /// <summary>
@@ -194,13 +195,14 @@ internal unsafe sealed class VulkanProgramCreationPort(VulkanBackendObjectContex
         ulong bindingKey,
         DescriptorSetLayout[] layouts,
         DescriptorPoolSize[] poolSizes,
+        int poolSizeCount,
         bool usesUpdateAfterBind,
         out DescriptorSet[] descriptorSets,
         out bool isNewAllocation)
     {
         descriptorSets = Array.Empty<DescriptorSet>();
         isNewAllocation = false;
-        if (layouts.Length == 0 || poolSizes.Length == 0)
+        if (layouts.Length == 0 || poolSizeCount == 0)
             return false;
 
         VulkanDescriptorManager descriptors = context.Resources.Descriptors;
@@ -232,7 +234,7 @@ internal unsafe sealed class VulkanProgramCreationPort(VulkanBackendObjectContex
             }
 
             if (!TryAllocateComputeDescriptorSetBatch(
-                    context, cache, schemaKey, layouts, poolSizes,
+                    context, cache, schemaKey, layouts, poolSizes, poolSizeCount,
                     usesUpdateAfterBind, out descriptorSets))
             {
                 return false;
@@ -250,6 +252,7 @@ internal unsafe sealed class VulkanProgramCreationPort(VulkanBackendObjectContex
         ulong schemaKey,
         DescriptorSetLayout[] layouts,
         DescriptorPoolSize[] poolSizes,
+        int poolSizeCount,
         bool usesUpdateAfterBind,
         out DescriptorSet[] descriptorSets)
     {
@@ -275,7 +278,7 @@ internal unsafe sealed class VulkanProgramCreationPort(VulkanBackendObjectContex
         }
 
         uint capacity = blocks.Count == 0 ? 64u : Math.Min(blocks[^1].MaxAllocations * 2u, 512u);
-        if (!TryCreateComputeDescriptorPool(context, capacity, layouts, poolSizes, usesUpdateAfterBind, out ComputeDescriptorPoolBlock? created))
+        if (!TryCreateComputeDescriptorPool(context, capacity, layouts, poolSizes, poolSizeCount, usesUpdateAfterBind, out ComputeDescriptorPoolBlock? created))
             return false;
         ComputeDescriptorPoolBlock createdBlock = created!;
         blocks.Add(createdBlock);
@@ -291,12 +294,13 @@ internal unsafe sealed class VulkanProgramCreationPort(VulkanBackendObjectContex
         uint allocationCapacity,
         DescriptorSetLayout[] layouts,
         DescriptorPoolSize[] poolSizes,
+        int poolSizeCount,
         bool usesUpdateAfterBind,
         out ComputeDescriptorPoolBlock? block)
     {
         block = null;
-        DescriptorPoolSize[] scaled = new DescriptorPoolSize[poolSizes.Length];
-        for (int index = 0; index < poolSizes.Length; index++)
+        DescriptorPoolSize[] scaled = new DescriptorPoolSize[poolSizeCount];
+        for (int index = 0; index < poolSizeCount; index++)
             scaled[index] = new DescriptorPoolSize
             {
                 Type = poolSizes[index].Type,

@@ -7,7 +7,7 @@ namespace XREngine.Rendering.Vulkan;
 /// <summary>
 /// Concrete native services used by presentationless and headless output targets.
 /// </summary>
-internal sealed unsafe partial class VulkanFrameLoop : IVulkanTargetOutputHost
+internal sealed partial class VulkanFrameLoop : IVulkanTargetOutputHost
 {
     public Vk VulkanApi => Api;
     public Instance Instance => _deviceContext.Instance;
@@ -97,7 +97,7 @@ internal sealed unsafe partial class VulkanFrameLoop : IVulkanTargetOutputHost
         }
     }
 
-    public Result CreateVulkanCommandPoolTracked(ref CommandPoolCreateInfo createInfo, out CommandPool pool, string owner)
+    public unsafe Result CreateVulkanCommandPoolTracked(ref CommandPoolCreateInfo createInfo, out CommandPool pool, string owner)
     {
         pool = default;
         ThrowIfVulkanDeviceOperationNotAdmitted(owner);
@@ -157,7 +157,7 @@ internal sealed unsafe partial class VulkanFrameLoop : IVulkanTargetOutputHost
     public Result EndCommandBufferTracked(CommandBuffer commandBuffer)
         => _commandRuntime.EndCommandBufferTracked(commandBuffer);
 
-    public void DestroyCommandPoolHostSynchronized(CommandPool pool)
+    public unsafe void DestroyCommandPoolHostSynchronized(CommandPool pool)
     {
         if (pool.Handle == 0)
             return;
@@ -169,7 +169,7 @@ internal sealed unsafe partial class VulkanFrameLoop : IVulkanTargetOutputHost
         }
     }
 
-    public Result CreateVulkanImageTracked(ref ImageCreateInfo createInfo, out Image image, string owner)
+    public unsafe Result CreateVulkanImageTracked(ref ImageCreateInfo createInfo, out Image image, string owner)
     {
         image = default;
         ThrowIfVulkanDeviceOperationNotAdmitted("vkCreateImage." + owner);
@@ -183,7 +183,7 @@ internal sealed unsafe partial class VulkanFrameLoop : IVulkanTargetOutputHost
         return result;
     }
 
-    public void DestroyVulkanImageImmediateTracked(Image image, string owner)
+    public unsafe void DestroyVulkanImageImmediateTracked(Image image, string owner)
     {
         if (image.Handle == 0 || !TryCompleteResource(ObjectType.Image, image.Handle, owner))
             return;
@@ -279,11 +279,22 @@ internal sealed unsafe partial class VulkanFrameLoop : IVulkanTargetOutputHost
         _resourceRuntime.Allocations.Buffers.Allocations[buffer.Handle] = allocation;
     }
 
-    public void DestroyBufferRaw(Buffer? buffer, DeviceMemory? memory)
+    public unsafe void DestroyBufferRaw(Buffer? buffer, DeviceMemory? memory)
     {
-        if (buffer is { Handle: not 0 } liveBuffer &&
-            TryCompleteResource(ObjectType.Buffer, liveBuffer.Handle, nameof(DestroyBufferRaw)))
+        if (buffer is { Handle: not 0 } liveBuffer)
         {
+            if (!TryCompleteResource(ObjectType.Buffer, liveBuffer.Handle, nameof(DestroyBufferRaw)))
+            {
+                // Buffer and allocation are one retirement unit. Freeing the memory
+                // after deferring only the buffer corrupts pooled/VMA allocations and
+                // can invalidate unrelated resources that share the backing block.
+                _resourceRuntime.Buffers.Retire(
+                    liveBuffer,
+                    memory.GetValueOrDefault(),
+                    nameof(DestroyBufferRaw));
+                return;
+            }
+
             _resourceRuntime.Allocations.Buffers.LiveHandles.TryRemove(liveBuffer.Handle, out _);
             Api.DestroyBuffer(Device, liveBuffer, null);
             if (_resourceRuntime.Allocations.Buffers.Allocations.TryRemove(
@@ -295,8 +306,21 @@ internal sealed unsafe partial class VulkanFrameLoop : IVulkanTargetOutputHost
             }
         }
 
-        if (memory is { Handle: not 0 } liveMemory)
+        if (memory is { Handle: not 0 } liveMemory &&
+            _resourceRuntime.Allocations.Buffers.MemoryAllocator is VulkanLegacyAllocator)
+        {
             Api.FreeMemory(Device, liveMemory, null);
+            return;
+        }
+
+        if (memory is { Handle: not 0 })
+        {
+            Debug.VulkanWarningEvery(
+                $"Vulkan.TargetOutput.UntrackedBufferMemory.{memory.Value.Handle}",
+                TimeSpan.FromSeconds(5),
+                "[Vulkan] Refusing to raw-free untracked buffer memory 0x{0:X}; the active allocator must release its allocation record.",
+                memory.Value.Handle);
+        }
     }
 
     public bool TryBeginDestroyImageView(ImageView imageView, string owner)
@@ -321,22 +345,142 @@ internal sealed unsafe partial class VulkanFrameLoop : IVulkanTargetOutputHost
         return result;
     }
 
-    public bool TryMapMemoryAllocation(VulkanMemoryAllocation allocation, ulong offset, ulong length, out void* mapped)
+    public unsafe bool TryReadMappedMemory<TState>(VulkanMemoryAllocation allocation, ulong offset, ulong length, TState state, VulkanMappedMemoryReadCallback<TState> callback)
     {
+        ArgumentNullException.ThrowIfNull(callback);
+        if (!TryAcquireTargetOutputMapping(allocation, offset, length, out void* mapped))
+            return false;
+
+        try
+        {
+            if (!TrySynchronizeTargetOutputMapping(allocation, offset, length, flush: false))
+                return false;
+            callback(new ReadOnlySpan<byte>(mapped, checked((int)length)), state);
+            return true;
+        }
+        finally
+        {
+            RequireMemoryAllocator().Unmap(Api, Device, allocation);
+        }
+    }
+
+    public unsafe bool TryWriteMappedMemory<TState>(VulkanMemoryAllocation allocation, ulong offset, ulong length, TState state, VulkanMappedMemoryWriteCallback<TState> callback)
+    {
+        ArgumentNullException.ThrowIfNull(callback);
+        if (!TryAcquireTargetOutputMapping(allocation, offset, length, out void* mapped))
+            return false;
+
+        try
+        {
+            callback(new Span<byte>(mapped, checked((int)length)), state);
+            return TrySynchronizeTargetOutputMapping(allocation, offset, length, flush: true);
+        }
+        finally
+        {
+            RequireMemoryAllocator().Unmap(Api, Device, allocation);
+        }
+    }
+
+    /// <summary>
+    /// Maps from the allocation's checked base rather than an arbitrary subrange. This keeps
+    /// <c>vkMapMemory</c>'s offset aligned while the returned pointer remains bounded to the
+    /// requested output range for the callback lifetime.
+    /// </summary>
+    private unsafe bool TryAcquireTargetOutputMapping(VulkanMemoryAllocation allocation, ulong offset, ulong length, out void* mapped)
+    {
+        mapped = null;
+        if (!_deviceContext.IsOperational || !allocation.IsHostVisible || allocation.Memory.Handle == 0 || length is 0 or > int.MaxValue ||
+            offset > allocation.Size || length > allocation.Size - offset)
+        {
+            return _resourceRuntime.Buffers.RecordMappingFailure();
+        }
+
+        ulong minimumMapAlignment = Math.Max(_deviceContext.MinMemoryMapAlignment, 1UL);
+        if (allocation.BlockId == -1 && allocation.Offset % minimumMapAlignment != 0 && !allocation.IsNativeBacked)
+            return _resourceRuntime.Buffers.RecordMappingFailure();
+
         bool mappedSuccessfully = RequireMemoryAllocator().TryMap(
             Api,
             Device,
             allocation,
-            offset,
-            length,
-            out mapped,
+            offset: 0,
+            allocation.Size,
+            out void* allocationBase,
             out Result result);
         ObserveNativeResult("vkMapMemory.TargetOutput", result);
-        return mappedSuccessfully;
+        if (!mappedSuccessfully)
+            return _resourceRuntime.Buffers.RecordMappingFailure();
+
+        try
+        {
+            mapped = (byte*)allocationBase + checked((nint)offset);
+            _resourceRuntime.Buffers.RecordExternalMappingReservation(length);
+            return true;
+        }
+        catch (OverflowException)
+        {
+            RequireMemoryAllocator().Unmap(Api, Device, allocation);
+            mapped = null;
+            return _resourceRuntime.Buffers.RecordMappingFailure();
+        }
     }
 
-    public void UnmapMemoryAllocation(VulkanMemoryAllocation allocation)
-        => RequireMemoryAllocator().Unmap(Api, Device, allocation);
+    /// <summary>Flushes or invalidates an atom-aligned range contained within this allocation.</summary>
+    private bool TrySynchronizeTargetOutputMapping(in VulkanMemoryAllocation allocation, ulong offset, ulong length, bool flush)
+    {
+        if (allocation.IsCoherent)
+            return true;
+
+        ulong atomSize = Math.Max(_deviceContext.NonCoherentAtomSize, 1UL);
+        ulong absoluteOffset;
+        ulong allocationEnd;
+        ulong absoluteEnd;
+        try
+        {
+            absoluteOffset = checked(allocation.Offset + offset);
+            allocationEnd = checked(allocation.Offset + allocation.Size);
+            absoluteEnd = checked(absoluteOffset + length);
+        }
+        catch (OverflowException)
+        {
+            return false;
+        }
+
+        ulong rangeOffset;
+        ulong rangeEnd;
+        try
+        {
+            rangeOffset = absoluteOffset / atomSize * atomSize;
+            rangeEnd = AlignUpForTargetOutput(absoluteEnd, atomSize);
+        }
+        catch (OverflowException)
+        {
+            return _resourceRuntime.Buffers.RecordMappingFailure();
+        }
+        rangeOffset = Math.Max(rangeOffset, allocation.Offset);
+        rangeEnd = Math.Min(rangeEnd, allocationEnd);
+        if (rangeEnd <= rangeOffset)
+            return _resourceRuntime.Buffers.RecordMappingFailure();
+
+        ulong expandedLength = rangeEnd - rangeOffset;
+        _resourceRuntime.Buffers.RecordExternalVisibilityExpansion(flush, length, expandedLength);
+
+        MappedMemoryRange range = new()
+        {
+            SType = StructureType.MappedMemoryRange,
+            Memory = allocation.Memory,
+            Offset = rangeOffset,
+            Size = expandedLength,
+        };
+        Result result = flush
+            ? Api.FlushMappedMemoryRanges(Device, 1, ref range)
+            : Api.InvalidateMappedMemoryRanges(Device, 1, ref range);
+        ObserveNativeResult(flush ? "vkFlushMappedMemoryRanges.TargetOutput" : "vkInvalidateMappedMemoryRanges.TargetOutput", result);
+        return result == Result.Success;
+    }
+
+    private static ulong AlignUpForTargetOutput(ulong value, ulong alignment)
+        => checked(((value + alignment - 1UL) / alignment) * alignment);
 
     void IVulkanTargetOutputHost.MarkDeviceLost(string reason, string operation, Result result)
     {

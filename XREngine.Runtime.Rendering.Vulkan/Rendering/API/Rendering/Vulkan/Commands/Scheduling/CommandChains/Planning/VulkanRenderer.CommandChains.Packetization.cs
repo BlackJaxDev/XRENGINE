@@ -14,7 +14,7 @@ using XREngine.Rendering.Shadows;
 
 namespace XREngine.Rendering.Vulkan;
 
-internal sealed unsafe partial class VulkanCommandRuntime
+internal sealed partial class VulkanCommandRuntime
 {
     private void BuildCommandChainRenderPackets(
         uint targetImageIndex,
@@ -53,10 +53,10 @@ internal sealed unsafe partial class VulkanCommandRuntime
             ref readonly FrameOperationHeader header = ref ops.GetHeader(i);
             if (header.OpCode == EVulkanPrimaryPlanNodeKind.Query)
             {
-                QueryOp queryOp = (QueryOp)ops.GetPayloadForPrimaryDispatch(i);
-                if (queryOp.Operation == ERenderQueryOperation.Begin)
+                ref readonly QueryPayload query = ref ops.GetQuery(i);
+                if (query.Operation == ERenderQueryOperation.Begin)
                     queryBracketDepth++;
-                else if (queryOp.Operation == ERenderQueryOperation.End && queryBracketDepth > 0)
+                else if (query.Operation == ERenderQueryOperation.End && queryBracketDepth > 0)
                     queryBracketDepth--;
                 continue;
             }
@@ -135,7 +135,9 @@ internal sealed unsafe partial class VulkanCommandRuntime
         if (!IsSchedulableCommandChainFrameOp(ops, startIndex, dynamicOverlay) ||
             ops.GetHeader(startIndex).OpCode != EVulkanPrimaryPlanNodeKind.MeshDraw)
             return 0;
-        MeshDrawOp first = (MeshDrawOp)ops.GetPayloadForPrimaryDispatch(startIndex);
+        ref readonly MeshDrawPayload first = ref ops.GetMeshDraw(startIndex);
+        ref readonly FrameOperationHeader firstHeader = ref ops.GetHeader(startIndex);
+        ref readonly FrameOpContext firstContext = ref ops.GetContext(startIndex);
 
         DrawPacket firstDraw;
         RenderViewKey viewKey;
@@ -146,13 +148,13 @@ internal sealed unsafe partial class VulkanCommandRuntime
                    EVulkanCpuStage.CommandChainCompatibilityScan,
                    profileDetail))
         {
-            firstDraw = CreateDrawPacket(startIndex, first);
+            firstDraw = CreateDrawPacket(startIndex, first.Draw, firstHeader, in firstContext);
             preparedMeshDraw = firstDraw;
             _commandChainDrawPacketScratch[0] = firstDraw;
-            viewKey = BuildRenderViewKey(first, dynamicOverlay: false);
-            targetIdentity = ResolveCommandChainTargetIdentity(first);
+            viewKey = BuildRenderViewKey(first.Draw, firstHeader.PassIndex, in firstContext, dynamicOverlay: false);
+            targetIdentity = firstHeader.TargetIdentity;
             DescriptorBindingSnapshot firstDescriptorSnapshot =
-                CreateDescriptorSnapshot(first);
+                CreateMeshDrawDescriptorSnapshot(first.Draw);
             runCount = 1;
             int packetDrawLimit = viewKey.Kind == RenderViewKind.Shadow
                 ? MaxShadowMeshDrawsPerRenderPacket
@@ -161,12 +163,16 @@ internal sealed unsafe partial class VulkanCommandRuntime
             while (runCount < available &&
                    ops.GetHeader(startIndex + runCount).OpCode == EVulkanPrimaryPlanNodeKind.MeshDraw &&
                    IsMeshDrawPacketCompatible(
-                       first,
+                        first.Draw,
+                        firstHeader,
+                        firstContext,
                        firstDraw,
                        viewKey,
                        targetIdentity,
                        firstDescriptorSnapshot,
-                       (MeshDrawOp)ops.GetPayloadForPrimaryDispatch(startIndex + runCount),
+                        ops.GetMeshDraw(startIndex + runCount).Draw,
+                        ops.GetHeader(startIndex + runCount),
+                        ops.GetContext(startIndex + runCount),
                        startIndex + runCount,
                        out DrawPacket candidateDraw))
             {
@@ -206,18 +212,18 @@ internal sealed unsafe partial class VulkanCommandRuntime
         {
             for (int i = 0; i < runCount; i++)
             {
-                MeshDrawOp drawOp = (MeshDrawOp)ops.GetPayloadForPrimaryDispatch(startIndex + i);
+                ref readonly MeshDrawPayload drawOp = ref ops.GetMeshDraw(startIndex + i);
                 DrawPacket draw = draws[i];
                 structuralHash.Add(draw.StructuralSignature);
                 frameDataHash.Add(draw.FrameDataSignature);
-                pipelineGenerationHash.Add(ResolvePipelineGeneration(drawOp));
+                pipelineGenerationHash.Add(ResolvePipelineGeneration(drawOp.Draw, in ops.GetContext(startIndex + i)));
 
                 // A secondary command buffer may bind a different material descriptor
                 // set and graphics program for every draw. Track the complete ordered
                 // dependency set instead of splitting an otherwise compatible shadow
                 // draw run into one secondary per material. Schema/identity and ordinary
                 // descriptor publication changes require re-recording.
-                DescriptorBindingSnapshot drawDescriptors = CreateDescriptorSnapshot(drawOp);
+                DescriptorBindingSnapshot drawDescriptors = CreateMeshDrawDescriptorSnapshot(drawOp.Draw);
                 descriptorGenerationHash.Add(drawDescriptors.DescriptorGeneration);
                 descriptorSetHash.Add(drawDescriptors.DescriptorSetCount);
                 descriptorSetHash.Add(drawDescriptors.DescriptorSetSignature);
@@ -235,9 +241,9 @@ internal sealed unsafe partial class VulkanCommandRuntime
                 descriptorSetHash.ToHash())
             : default;
 
-        string targetName = ResolveCommandChainTargetName(first);
+        string targetName = ResolveCommandChainTargetName(ops.GetTarget(startIndex), in firstContext);
         VulkanRecordedRenderTargetSnapshot nativeTarget =
-            CaptureRecordedRenderTargetSnapshot(first, preparedRecordingTarget);
+            CaptureRecordedRenderTargetSnapshot(ops.GetTarget(startIndex), in firstContext, preparedRecordingTarget);
         ResourcePlanSnapshot resourceSnapshot = new(
             resourcePlanRevision,
             nativeTarget.AttachmentCount > 0
@@ -248,13 +254,13 @@ internal sealed unsafe partial class VulkanCommandRuntime
             ResourcePlanSnapshot.PackRenderArea(
                 nativeTarget.Width,
                 nativeTarget.Height),
-            first.ContextReference.SubmissionQueueFamily,
+            firstContext.SubmissionQueueFamily,
             nativeTarget);
         RenderPacket packet = RentRenderPacket();
         packet.Reset(
             GetActiveCommandChainPacketPayloadArena(),
             viewKey,
-            first.PassIndex,
+            firstHeader.PassIndex,
             targetIdentity,
             targetName,
             RenderPacketVolatility.FrameDataOnly,
@@ -308,7 +314,7 @@ internal sealed unsafe partial class VulkanCommandRuntime
              relativeIndex < programLimitedCount;
              relativeIndex++)
         {
-            MeshDrawOp draw = (MeshDrawOp)ops.GetPayloadForPrimaryDispatch(
+            ref readonly MeshDrawPayload draw = ref ops.GetMeshDraw(
                 startIndex + relativeIndex);
             draw.Draw.Renderer.GetRecordedBufferBindingCounts(
                 out int vertexCount,
@@ -337,25 +343,30 @@ internal sealed unsafe partial class VulkanCommandRuntime
     }
 
     private static bool IsMeshDrawPacketCompatible(
-        MeshDrawOp first,
+        in PendingMeshDraw first,
+        in FrameOperationHeader firstHeader,
+        in FrameOpContext firstContext,
         DrawPacket firstDraw,
         RenderViewKey viewKey,
         int targetIdentity,
         DescriptorBindingSnapshot descriptorSnapshot,
-        MeshDrawOp candidate,
+        in PendingMeshDraw candidate,
+        in FrameOperationHeader candidateHeader,
+        in FrameOpContext candidateContext,
         int candidateIndex,
         out DrawPacket candidateDraw)
     {
         candidateDraw = default;
-        if (!IsSchedulableCommandChainFrameOp(candidate, dynamicOverlay: false) ||
-            candidate.PassIndex != first.PassIndex ||
-            ResolveCommandChainTargetIdentity(candidate) != targetIdentity ||
-            BuildRenderViewKey(candidate, dynamicOverlay: false) != viewKey)
+        if (candidateHeader.PassIndex != firstHeader.PassIndex ||
+            candidateHeader.TargetIdentity != targetIdentity ||
+            BuildRenderViewKey(candidate, candidateHeader.PassIndex, in candidateContext, dynamicOverlay: false) != viewKey ||
+            IsExplicitDynamicCommandRange(in candidateContext, candidateHeader.PassIndex, false, IsUiBatchTextDraw(candidate)) ||
+            candidate.ProgramBindingSnapshot?.HasMutableFrameSourceSamplerBindings == true)
         {
             return false;
         }
 
-        candidateDraw = CreateDrawPacket(candidateIndex, candidate);
+        candidateDraw = CreateDrawPacket(candidateIndex, candidate, candidateHeader, in candidateContext);
         if (candidateDraw.Transparent != firstDraw.Transparent)
             return false;
 
@@ -377,7 +388,7 @@ internal sealed unsafe partial class VulkanCommandRuntime
         // main view's fine-grained program/descriptor grouping.
         if (viewKey.Kind != RenderViewKind.Shadow)
         {
-            DescriptorBindingSnapshot candidateDescriptors = CreateDescriptorSnapshot(candidate);
+            DescriptorBindingSnapshot candidateDescriptors = CreateMeshDrawDescriptorSnapshot(candidate);
             if (candidateDraw.ProgramIdentity != firstDraw.ProgramIdentity ||
                 candidateDescriptors.DescriptorSetCount != descriptorSnapshot.DescriptorSetCount ||
                 candidateDescriptors.DescriptorSetSignature != descriptorSnapshot.DescriptorSetSignature)
@@ -386,8 +397,6 @@ internal sealed unsafe partial class VulkanCommandRuntime
             }
         }
 
-        ref readonly FrameOpContext candidateContext = ref candidate.ContextReference;
-        ref readonly FrameOpContext firstContext = ref first.ContextReference;
         return FrameOpContextCompatibility.AreCommandChainBatchCompatible(
             in candidateContext,
             in firstContext);
@@ -403,53 +412,62 @@ internal sealed unsafe partial class VulkanCommandRuntime
         in VulkanRecordedRenderTargetSnapshot preparedRecordingTarget)
     {
         ref readonly FrameOperationHeader header = ref operations.GetHeader(opIndex);
-        FrameOp op = operations.GetPayloadForPrimaryDispatch(opIndex);
-        RenderViewKey viewKey = BuildRenderViewKey(op, dynamicOverlay);
-        RenderPacketVolatility volatility = ClassifyRenderPacketVolatility(op, dynamicOverlay);
-        DrawPacket firstDraw = op switch
+        ref readonly FrameOpContext context = ref operations.GetContext(opIndex);
+        RenderPacketVolatility volatility = ClassifyRenderPacketVolatility(header.OpCode, dynamicOverlay);
+        DrawPacket firstDraw = default;
+        DispatchPacket firstDispatch = default;
+        int drawCount = 0;
+        int dispatchCount = 0;
+        DescriptorBindingSnapshot descriptorSnapshot = default;
+        ulong pipelineGeneration = ResolvePipelineGeneration(in context);
+        if (header.OpCode == EVulkanPrimaryPlanNodeKind.MeshDraw)
         {
-            MeshDrawOp => preparedMeshDraw,
-            IndirectDrawOp indirect => CreateIndirectDrawPacket(opIndex, indirect),
-            MeshTaskDispatchIndirectCountOp meshTask => CreateMeshTaskDrawPacket(opIndex, meshTask),
-            _ => default
-        };
-        int drawCount = op is MeshDrawOp or IndirectDrawOp or MeshTaskDispatchIndirectCountOp ? 1 : 0;
-        DispatchPacket firstDispatch = op is ComputeDispatchOp compute
-            ? CreateDispatchPacket(opIndex, compute)
-            : default;
-        int dispatchCount = op is ComputeDispatchOp ? 1 : 0;
-
-        bool usePreparedMeshSignatures =
-            op is MeshDrawOp && volatility == RenderPacketVolatility.FrameDataOnly;
-        ulong structuralSignature = usePreparedMeshSignatures
-            ? firstDraw.StructuralSignature
-            : ComputeFrameOpStructuralSignature(op, opIndex, volatility);
-        ulong frameDataSignature = op is MeshDrawOp
-            ? firstDraw.FrameDataSignature
-            : ComputeFrameOpFrameDataSignature(op, opIndex);
+            ref readonly MeshDrawPayload mesh = ref operations.GetMeshDraw(opIndex);
+            firstDraw = preparedMeshDraw;
+            drawCount = 1;
+            descriptorSnapshot = CreateMeshDrawDescriptorSnapshot(mesh.Draw);
+            pipelineGeneration = ResolvePipelineGeneration(mesh.Draw, in context);
+        }
+        else if (header.OpCode == EVulkanPrimaryPlanNodeKind.ComputeDispatch)
+        {
+            ref readonly ComputeDispatchPayload compute = ref operations.GetComputeDispatch(opIndex);
+            firstDispatch = CreateDispatchPacket(opIndex, compute, header, in context);
+            dispatchCount = 1;
+            descriptorSnapshot = CreateComputeDispatchDescriptorSnapshot(compute.Snapshot);
+            pipelineGeneration = ResolvePipelineGeneration(compute.Program, in context);
+        }
+        else if (header.OpCode == EVulkanPrimaryPlanNodeKind.ComputeDispatchIndirect)
+        {
+            ref readonly ComputeDispatchIndirectPayload compute = ref operations.GetComputeDispatchIndirect(opIndex);
+            pipelineGeneration = ResolvePipelineGeneration(compute.Program, in context);
+        }
+        RenderViewKey viewKey = BuildRenderViewKey(in context, header.PassIndex, dynamicOverlay);
+        ulong structuralSignature = drawCount != 0 ? firstDraw.StructuralSignature :
+            ComputeFrameOpStructuralSignature(header, in context, opIndex, volatility);
+        ulong frameDataSignature = drawCount != 0 ? firstDraw.FrameDataSignature :
+            ComputeFrameOpFrameDataSignature(header, in context, opIndex);
         int targetIdentity = header.TargetIdentity;
-        string targetName = ResolveCommandChainTargetName(op);
-        DescriptorBindingSnapshot descriptorSnapshot = CreateDescriptorSnapshot(op);
+        string targetName = ResolveCommandChainTargetName(operations.GetTarget(opIndex), in context);
         VulkanRecordedRenderTargetSnapshot nativeTarget =
-            CaptureRecordedRenderTargetSnapshot(op, preparedRecordingTarget);
+            CaptureRecordedRenderTargetSnapshot(operations.GetTarget(opIndex), in context, preparedRecordingTarget);
         ResourcePlanSnapshot resourceSnapshot = new(
             resourcePlanRevision,
             nativeTarget.AttachmentCount > 0
                 ? nativeTarget.GetAttachment(0).ImageGeneration
                 : 0UL,
             nativeTarget.FramebufferGeneration,
-            ResolvePipelineGeneration(op),
+            pipelineGeneration,
             ResourcePlanSnapshot.PackRenderArea(
                 nativeTarget.Width,
                 nativeTarget.Height),
-            operations.GetContext(opIndex).SubmissionQueueFamily,
+            context.SubmissionQueueFamily,
             nativeTarget);
 
         RenderPacket packet = RentRenderPacket();
         packet.Reset(
             GetActiveCommandChainPacketPayloadArena(),
             viewKey,
-            op.PassIndex,
+            header.PassIndex,
             targetIdentity,
             targetName,
             volatility,
@@ -464,81 +482,27 @@ internal sealed unsafe partial class VulkanCommandRuntime
             opIndex,
             1,
             dynamicOverlay);
-        packet.SetRecordedPacketKey(CaptureRecordedPacketKey(
-            op,
-            nativeTarget,
-            descriptorSnapshot,
-            resourceSnapshot));
+        packet.SetRecordedPacketKey(CreateRecordedPacketKey(
+            ResolveRenderPacketExecutionDomain(header.OpCode),
+            nativeTarget, descriptorSnapshot, resourceSnapshot,
+            Span<VulkanRecordedBufferIdentity>.Empty, 0, false,
+            Span<VulkanRecordedBufferIdentity>.Empty, 0, false, default,
+            Span<VulkanRecordedProgramIdentity>.Empty, 0, false));
         packet.Seal();
         return packet;
     }
 
     private VulkanRecordedRenderTargetSnapshot CaptureRecordedRenderTargetSnapshot(
-        FrameOp op,
+        XRFrameBuffer? target,
+        in FrameOpContext context,
         in VulkanRecordedRenderTargetSnapshot preparedRecordingTarget)
     {
-        XRFrameBuffer? target = op.Target ?? op.ContextReference.OutputFrameBuffer;
-        if (target is not null)
-        {
-            return ResourceRuntime.BackendObjects.Get(target) is VkFrameBuffer frameBuffer &&
-                   frameBuffer.TryCaptureRecordedRenderTargetSnapshot(
-                       out VulkanRecordedRenderTargetSnapshot explicitSnapshot)
-                ? explicitSnapshot
-                : default;
-        }
-
-        // Swapchain/OpenXR target identity is a producer-owned observation.
-        // Scheduling consumes the frozen snapshot supplied with the frame plan;
-        // it never reads output state or thread-local renderer context.
-        return preparedRecordingTarget;
-    }
-
-    private RecordedPacketKey CaptureRecordedPacketKey(
-        FrameOp op,
-        in VulkanRecordedRenderTargetSnapshot nativeTarget,
-        in DescriptorBindingSnapshot descriptorSnapshot,
-        in ResourcePlanSnapshot resourceSnapshot)
-    {
-        Span<VulkanRecordedBufferIdentity> vertexScratch =
-            stackalloc VulkanRecordedBufferIdentity[VulkanRecordedBufferIdentityBuffer.Capacity];
-        Span<VulkanRecordedBufferIdentity> auxiliaryScratch =
-            stackalloc VulkanRecordedBufferIdentity[VulkanRecordedBufferIdentityBuffer.Capacity];
-        Span<VulkanRecordedProgramIdentity> programScratch =
-            stackalloc VulkanRecordedProgramIdentity[VulkanRecordedProgramIdentityBuffer.Capacity];
-        int vertexCount = 0;
-        int auxiliaryCount = 0;
-        bool vertexOverflow = false;
-        bool auxiliaryOverflow = false;
-        VulkanRecordedBufferIdentity indexBuffer = default;
-        int programCount = 0;
-        bool programOverflow = false;
-        CaptureRecordedPacketOperationDependencies(
-            op,
-            ref indexBuffer,
-            vertexScratch,
-            ref vertexCount,
-            ref vertexOverflow,
-            auxiliaryScratch,
-            ref auxiliaryCount,
-            ref auxiliaryOverflow,
-            programScratch,
-            ref programCount,
-            ref programOverflow);
-        return CreateRecordedPacketKey(
-            ResolveRenderPacketExecutionDomain(op),
-            nativeTarget,
-            descriptorSnapshot,
-            resourceSnapshot,
-            vertexScratch,
-            vertexCount,
-            vertexOverflow,
-            auxiliaryScratch,
-            auxiliaryCount,
-            auxiliaryOverflow,
-            indexBuffer,
-            programScratch,
-            programCount,
-            programOverflow);
+        XRFrameBuffer? resolvedTarget = target ?? context.OutputFrameBuffer;
+        return resolvedTarget is not null &&
+               ResourceRuntime.BackendObjects.Get(resolvedTarget) is VkFrameBuffer frameBuffer &&
+               frameBuffer.TryCaptureRecordedRenderTargetSnapshot(out VulkanRecordedRenderTargetSnapshot snapshot)
+            ? snapshot
+            : preparedRecordingTarget;
     }
 
     private RecordedPacketKey CaptureRecordedPacketKey(
@@ -548,30 +512,6 @@ internal sealed unsafe partial class VulkanCommandRuntime
         in VulkanRecordedRenderTargetSnapshot nativeTarget,
         in DescriptorBindingSnapshot descriptorSnapshot,
         in ResourcePlanSnapshot resourceSnapshot)
-        => CaptureRecordedPacketKey(
-            ops.GetEncoderPayloadRange(startIndex, count),
-            nativeTarget,
-            descriptorSnapshot,
-            resourceSnapshot);
-
-    private RecordedPacketKey CaptureRecordedPacketKey(
-        FrameOp[] ops,
-        int startIndex,
-        int count,
-        in VulkanRecordedRenderTargetSnapshot nativeTarget,
-        in DescriptorBindingSnapshot descriptorSnapshot,
-        in ResourcePlanSnapshot resourceSnapshot)
-        => CaptureRecordedPacketKey(
-            ops.AsSpan(startIndex, count),
-            nativeTarget,
-            descriptorSnapshot,
-            resourceSnapshot);
-
-    private RecordedPacketKey CaptureRecordedPacketKey(
-        ReadOnlySpan<FrameOp> ops,
-        in VulkanRecordedRenderTargetSnapshot nativeTarget,
-        in DescriptorBindingSnapshot descriptorSnapshot,
-        in ResourcePlanSnapshot resourceSnapshot)
     {
         Span<VulkanRecordedBufferIdentity> vertexScratch =
             stackalloc VulkanRecordedBufferIdentity[VulkanRecordedBufferIdentityBuffer.Capacity];
@@ -579,47 +519,27 @@ internal sealed unsafe partial class VulkanCommandRuntime
             stackalloc VulkanRecordedBufferIdentity[VulkanRecordedBufferIdentityBuffer.Capacity];
         Span<VulkanRecordedProgramIdentity> programScratch =
             stackalloc VulkanRecordedProgramIdentity[VulkanRecordedProgramIdentityBuffer.Capacity];
-        int vertexCount = 0;
-        int auxiliaryCount = 0;
-        bool vertexOverflow = false;
-        bool auxiliaryOverflow = false;
+        int vertexCount = 0, auxiliaryCount = 0, programCount = 0;
+        bool vertexOverflow = false, auxiliaryOverflow = false, programOverflow = false;
         VulkanRecordedBufferIdentity indexBuffer = default;
-        int programCount = 0;
-        bool programOverflow = false;
-
-        for (int i = 0; i < ops.Length; i++)
+        RenderPacketExecutionDomain domain = RenderPacketExecutionDomain.GraphicsRendering;
+        for (int index = 0; index < count; index++)
         {
-            CaptureRecordedPacketOperationDependencies(
-                ops[i],
-                ref indexBuffer,
-                vertexScratch,
-                ref vertexCount,
-                ref vertexOverflow,
-                auxiliaryScratch,
-                ref auxiliaryCount,
-                ref auxiliaryOverflow,
-                programScratch,
-                ref programCount,
-                ref programOverflow);
+            int operationIndex = startIndex + index;
+            ref readonly FrameOperationHeader header = ref ops.GetHeader(operationIndex);
+            domain = ResolveRenderPacketExecutionDomain(header.OpCode);
+            if (header.OpCode != EVulkanPrimaryPlanNodeKind.MeshDraw)
+                continue;
+            ref readonly MeshDrawPayload mesh = ref ops.GetMeshDraw(operationIndex);
+            PendingMeshDraw draw = mesh.Draw;
+            AddRecordedProgramIdentity(CaptureRecordedProgramIdentity(draw.PreparedProgram, default),
+                programScratch, ref programCount, ref programOverflow);
+            CaptureMeshBufferDependencies(draw.Renderer, ref indexBuffer, vertexScratch,
+                ref vertexCount, ref vertexOverflow, auxiliaryScratch, ref auxiliaryCount, ref auxiliaryOverflow);
         }
-
-        return CreateRecordedPacketKey(
-            ops.Length == 0
-                ? RenderPacketExecutionDomain.GraphicsRendering
-                : ResolveRenderPacketExecutionDomain(ops[0]),
-            nativeTarget,
-            descriptorSnapshot,
-            resourceSnapshot,
-            vertexScratch,
-            vertexCount,
-            vertexOverflow,
-            auxiliaryScratch,
-            auxiliaryCount,
-            auxiliaryOverflow,
-            indexBuffer,
-            programScratch,
-            programCount,
-            programOverflow);
+        return CreateRecordedPacketKey(domain, nativeTarget, descriptorSnapshot, resourceSnapshot,
+            vertexScratch, vertexCount, vertexOverflow, auxiliaryScratch, auxiliaryCount,
+            auxiliaryOverflow, indexBuffer, programScratch, programCount, programOverflow);
     }
 
     private RecordedPacketKey CreateRecordedPacketKey(
@@ -662,171 +582,6 @@ internal sealed unsafe partial class VulkanCommandRuntime
             indexBuffer,
             vertexBuffers,
             auxiliaryBuffers);
-    }
-
-    private static RenderPacketExecutionDomain ResolveRenderPacketExecutionDomain(
-        FrameOp operation)
-        => operation switch
-        {
-            ComputeDispatchOp or ComputeDispatchIndirectOp =>
-                RenderPacketExecutionDomain.StandaloneCompute,
-            MemoryBarrierOp =>
-                RenderPacketExecutionDomain.StandaloneSynchronization,
-            BufferCopyOp or TextureUploadFrameOp =>
-                RenderPacketExecutionDomain.StandaloneTransfer,
-            _ => RenderPacketExecutionDomain.GraphicsRendering,
-        };
-
-    private void CaptureRecordedPacketOperationDependencies(
-        FrameOp op,
-        ref VulkanRecordedBufferIdentity indexBuffer,
-        Span<VulkanRecordedBufferIdentity> vertexScratch,
-        ref int vertexCount,
-        ref bool vertexOverflow,
-        Span<VulkanRecordedBufferIdentity> auxiliaryScratch,
-        ref int auxiliaryCount,
-        ref bool auxiliaryOverflow,
-        Span<VulkanRecordedProgramIdentity> programScratch,
-        ref int programCount,
-        ref bool programOverflow)
-    {
-        switch (op)
-        {
-            case MeshDrawOp draw:
-                AddRecordedProgramIdentity(
-                    CaptureRecordedProgramIdentity(draw.Draw.PreparedProgram, default),
-                    programScratch,
-                    ref programCount,
-                    ref programOverflow);
-                CaptureMeshBufferDependencies(
-                    draw.Draw.Renderer,
-                    ref indexBuffer,
-                    vertexScratch,
-                    ref vertexCount,
-                    ref vertexOverflow,
-                    auxiliaryScratch,
-                    ref auxiliaryCount,
-                    ref auxiliaryOverflow);
-                break;
-            case IndirectDrawOp indirect:
-                AddRecordedProgramIdentity(
-                    CaptureRecordedProgramIdentity(indirect.Draw.PreparedProgram, default),
-                    programScratch,
-                    ref programCount,
-                    ref programOverflow);
-                AddRecordedProgramIdentity(
-                    CaptureRecordedProgramIdentity(
-                        indirect.BindlessMaterialTextures?.Program,
-                        default),
-                    programScratch,
-                    ref programCount,
-                    ref programOverflow);
-                CaptureMeshBufferDependencies(
-                    indirect.MeshRenderer,
-                    ref indexBuffer,
-                    vertexScratch,
-                    ref vertexCount,
-                    ref vertexOverflow,
-                    auxiliaryScratch,
-                    ref auxiliaryCount,
-                    ref auxiliaryOverflow);
-                AddRecordedBufferIdentity(
-                    CaptureRecordedBufferIdentity(
-                        indirect.IndirectBuffer,
-                        EVulkanRecordedBufferBindingKind.Indirect,
-                        0u,
-                        (ulong)indirect.ByteOffset,
-                        ResolveRecordedRange(
-                            indirect.IndirectBuffer,
-                            (ulong)indirect.ByteOffset)),
-                    auxiliaryScratch,
-                    ref auxiliaryCount,
-                    ref auxiliaryOverflow);
-                AddRecordedBufferIdentity(
-                    CaptureRecordedBufferIdentity(
-                        indirect.ParameterBuffer,
-                        EVulkanRecordedBufferBindingKind.IndirectCount,
-                        0u,
-                        (ulong)indirect.CountByteOffset,
-                        ResolveRecordedRange(
-                            indirect.ParameterBuffer,
-                            (ulong)indirect.CountByteOffset)),
-                    auxiliaryScratch,
-                    ref auxiliaryCount,
-                    ref auxiliaryOverflow);
-                break;
-            case ComputeDispatchOp compute:
-                AddRecordedProgramIdentity(
-                    CaptureRecordedProgramIdentity(
-                        compute.Program,
-                        compute.Program.ComputePipeline),
-                    programScratch,
-                    ref programCount,
-                    ref programOverflow);
-                CaptureComputeBufferDependencies(
-                    compute.Snapshot,
-                    auxiliaryScratch,
-                    ref auxiliaryCount,
-                    ref auxiliaryOverflow);
-                break;
-            case ComputeDispatchIndirectOp computeIndirect:
-                AddRecordedProgramIdentity(
-                    CaptureRecordedProgramIdentity(
-                        computeIndirect.Program,
-                        computeIndirect.Program.ComputePipeline),
-                    programScratch,
-                    ref programCount,
-                    ref programOverflow);
-                AddRecordedBufferIdentity(
-                    CaptureRecordedBufferIdentity(
-                        computeIndirect.ArgumentOwner,
-                        EVulkanRecordedBufferBindingKind.DispatchArguments,
-                        0u,
-                        0UL,
-                        computeIndirect.ArgumentOwner.AllocatedByteSize),
-                    auxiliaryScratch,
-                    ref auxiliaryCount,
-                    ref auxiliaryOverflow);
-                CaptureComputeBufferDependencies(
-                    computeIndirect.Snapshot,
-                    auxiliaryScratch,
-                    ref auxiliaryCount,
-                    ref auxiliaryOverflow);
-                break;
-            case MeshTaskDispatchIndirectCountOp meshTask:
-                AddRecordedProgramIdentity(
-                    CaptureRecordedProgramIdentity(
-                        meshTask.BindlessMaterialTextures?.Program,
-                        default),
-                    programScratch,
-                    ref programCount,
-                    ref programOverflow);
-                AddRecordedBufferIdentity(
-                    CaptureRecordedBufferIdentity(
-                        meshTask.IndirectBuffer,
-                        EVulkanRecordedBufferBindingKind.Indirect,
-                        0u,
-                        (ulong)meshTask.ByteOffset,
-                        ResolveRecordedRange(
-                            meshTask.IndirectBuffer,
-                            (ulong)meshTask.ByteOffset)),
-                    auxiliaryScratch,
-                    ref auxiliaryCount,
-                    ref auxiliaryOverflow);
-                AddRecordedBufferIdentity(
-                    CaptureRecordedBufferIdentity(
-                        meshTask.CountBuffer,
-                        EVulkanRecordedBufferBindingKind.IndirectCount,
-                        0u,
-                        (ulong)meshTask.CountByteOffset,
-                        ResolveRecordedRange(
-                            meshTask.CountBuffer,
-                            (ulong)meshTask.CountByteOffset)),
-                    auxiliaryScratch,
-                    ref auxiliaryCount,
-                    ref auxiliaryOverflow);
-                break;
-        }
     }
 
     private void CaptureMeshBufferDependencies(
@@ -1131,9 +886,10 @@ internal sealed unsafe partial class VulkanCommandRuntime
         if (packet.ViewKey.Kind == RenderViewKind.Shadow &&
             packet.DrawCount > 1)
         {
+            DrawPacket firstDraw = packet.GetDraw(0);
             int bucket = ResolveShadowCommandChainBucket(
-                packet.FirstDraw.RendererIdentity,
-                packet.FirstDraw.MaterialIdentity);
+                firstDraw.RendererIdentity,
+                firstDraw.MaterialIdentity);
             ulong bucketSignature = unchecked(
                 0x534841444F570000UL | (uint)bucket);
             structuralOccurrences.TryGetValue(
@@ -1226,57 +982,11 @@ internal sealed unsafe partial class VulkanCommandRuntime
         }
     }
 
-    internal static RenderPacketVolatility ClassifyRenderPacketVolatility(FrameOp op, bool dynamicOverlay)
-    {
-        if (IsExplicitDynamicCommandRange(op, dynamicOverlay))
-            return RenderPacketVolatility.DynamicCommand;
-
-        return op switch
-        {
-            MeshDrawOp => RenderPacketVolatility.FrameDataOnly,
-            ClearOp => RenderPacketVolatility.StaticStructural,
-            BlitOp => RenderPacketVolatility.StaticStructural,
-            IndirectDrawOp => RenderPacketVolatility.FrameDataOnly,
-            MeshTaskDispatchIndirectCountOp => RenderPacketVolatility.FrameDataOnly,
-            ComputeDispatchOp => RenderPacketVolatility.FrameDataOnly,
-            // Frozen packet buffer/range identities make the command topology
-            // reusable; GPU-produced bytes and indirect counts refresh in place.
-            ComputeDispatchIndirectOp => RenderPacketVolatility.FrameDataOnly,
-            BufferCopyOp => RenderPacketVolatility.FrameDataOnly,
-            SubmissionMarkerOp => RenderPacketVolatility.DynamicCommand,
-            MemoryBarrierOp => RenderPacketVolatility.FrameDataOnly,
-            PublishFramebufferForSamplingOp => RenderPacketVolatility.StaticStructural,
-            TransformFeedbackOp => RenderPacketVolatility.DynamicCommand,
-            DlssUpscaleOp => RenderPacketVolatility.DynamicCommand,
-            DlssFrameGenerationOp => RenderPacketVolatility.DynamicCommand,
-            TextureUploadFrameOp => RenderPacketVolatility.DynamicCommand,
-            _ => RenderPacketVolatility.StructuralDirty,
-        };
-    }
-
     /// <summary>
     /// Returns whether the primary recorder can execute this frame op through a
     /// scheduled command-chain secondary. Other op kinds keep their existing
     /// inline or dedicated-secondary paths and must not occupy this cache.
     /// </summary>
-    internal static bool IsSchedulableCommandChainFrameOp(FrameOp op, bool dynamicOverlay)
-    {
-        if (ClassifyRenderPacketVolatility(op, dynamicOverlay) !=
-            RenderPacketVolatility.FrameDataOnly)
-            return false;
-
-        return op switch
-        {
-            MeshDrawOp draw => IsStableSecondaryCommandRange(draw, dynamicOverlay),
-            ComputeDispatchOp or ComputeDispatchIndirectOp or MemoryBarrierOp =>
-                !IsExplicitDynamicCommandRange(op, dynamicOverlay),
-            // Indirect/count graphics draws retain their dedicated inheritance-
-            // aware persistent secondary path.
-            IndirectDrawOp => false,
-            _ => false,
-        };
-    }
-
     private static bool IsSchedulableCommandChainFrameOp(
         FrameOperationStream operations,
         int operationIndex,
@@ -1295,11 +1005,19 @@ internal sealed unsafe partial class VulkanCommandRuntime
             return false;
         }
 
-        // The numerical opcode rejects all non-command-chain kinds before the
-        // final typed payload check needed for mesh stability policy.
-        return IsSchedulableCommandChainFrameOp(
-            operations.GetPayloadForPrimaryDispatch(operationIndex),
-            dynamicOverlay);
+        if (header.OpCode != EVulkanPrimaryPlanNodeKind.MeshDraw)
+            return !IsExplicitDynamicCommandRange(
+                in operations.GetContext(operationIndex),
+                header.PassIndex,
+                dynamicOverlay,
+                isUiBatchText: false);
+
+        return !IsExplicitDynamicCommandRange(
+                in operations.GetContext(operationIndex),
+                header.PassIndex,
+                dynamicOverlay,
+                IsUiBatchTextDraw(operations.GetMeshDraw(operationIndex).Draw)) &&
+            operations.GetMeshDraw(operationIndex).Draw.ProgramBindingSnapshot?.HasMutableFrameSourceSamplerBindings != true;
     }
 
     /// <summary>
@@ -1308,35 +1026,29 @@ internal sealed unsafe partial class VulkanCommandRuntime
     /// contract, and parsing them here previously admitted output-sensitive
     /// work when a pipeline renamed a pass.
     /// </summary>
-    private static bool IsStableSecondaryCommandRange(
-        MeshDrawOp draw,
-        bool dynamicOverlay)
-        => !IsExplicitDynamicCommandRange(draw, dynamicOverlay) &&
-           draw.Draw.ProgramBindingSnapshot?.HasMutableFrameSourceSamplerBindings != true;
-
     private static bool IsExplicitDynamicCommandRange(
-        FrameOp op,
-        bool dynamicOverlay)
+        in FrameOpContext context,
+        int passIndex,
+        bool dynamicOverlay,
+        bool isUiBatchText)
     {
-        if (dynamicOverlay || IsUiBatchTextDrawOp(op))
+        if (dynamicOverlay || isUiBatchText ||
+            context.PipelineInstance?.Pipeline is UserInterfaceRenderPipeline)
             return true;
-
-        ref readonly FrameOpContext context = ref op.ContextReference;
-        if (context.PipelineInstance?.Pipeline is UserInterfaceRenderPipeline)
+        if (ResolveSecondaryCachePolicy(in context, passIndex) != ERenderPassSecondaryCachePolicy.Stable)
             return true;
+        return context.ContextKind is EVulkanFrameOpContextKind.OpenXrMirror or
+            EVulkanFrameOpContextKind.SceneCapture or EVulkanFrameOpContextKind.LightProbeCapture or
+            EVulkanFrameOpContextKind.UiPreview or EVulkanFrameOpContextKind.DiagnosticCapture;
+    }
 
-        if (ResolveSecondaryCachePolicy(in context, op.PassIndex) !=
-            ERenderPassSecondaryCachePolicy.Stable)
-        {
-            return true;
-        }
-
-        return context.ContextKind is
-            EVulkanFrameOpContextKind.OpenXrMirror or
-            EVulkanFrameOpContextKind.SceneCapture or
-            EVulkanFrameOpContextKind.LightProbeCapture or
-            EVulkanFrameOpContextKind.UiPreview or
-            EVulkanFrameOpContextKind.DiagnosticCapture;
+    private static bool IsUiBatchTextDraw(in PendingMeshDraw draw)
+    {
+        XRMeshRenderer renderer = draw.Renderer.MeshRenderer;
+        XRMaterial? material = draw.MaterialOverride ?? renderer.Material;
+        return string.Equals(material?.Name, "UIBatchTextMaterial", StringComparison.Ordinal) ||
+            string.Equals(renderer.Name, "UIBatchTextRenderer", StringComparison.Ordinal) ||
+            string.Equals(renderer.Mesh?.Name, "UIBatchTextQuadMesh", StringComparison.Ordinal);
     }
 
     private static ERenderPassSecondaryCachePolicy ResolveSecondaryCachePolicy(
@@ -1364,86 +1076,60 @@ internal sealed unsafe partial class VulkanCommandRuntime
              name.Contains("ImGui", StringComparison.OrdinalIgnoreCase));
     }
 
-    internal static RenderViewKey BuildRenderViewKey(FrameOp op, bool dynamicOverlay)
+    private static RenderViewKey BuildRenderViewKey(
+        in FrameOpContext context,
+        int passIndex,
+        bool dynamicOverlay)
     {
-        ref readonly FrameOpContext context = ref op.ContextReference;
-        string? passName = TryGetPassName(in context, op.PassIndex);
+        string? passName = TryGetPassName(in context, passIndex);
         RenderViewKind kind = dynamicOverlay || IsOverlayLikePass(passName)
             ? RenderViewKind.Overlay
-            : ResolveRenderViewKind(op, in context, passName);
-        int viewIndex = ResolveCommandChainViewIndex(op, kind);
-        int lightIdentity = ResolveCommandChainLightIdentity(op, kind, in context);
-        int cascadeIndex = ResolveCommandChainCascadeIndex(op, kind);
-        return new RenderViewKey(
-            context.PipelineIdentity,
-            context.ViewportIdentity,
-            viewIndex,
-            kind,
-            lightIdentity,
-            cascadeIndex);
+            : context.PipelineInstance?.Pipeline is ShadowRenderPipeline
+                ? RenderViewKind.Shadow
+                : RenderViewKind.Main;
+        return new RenderViewKey(context.PipelineIdentity, context.ViewportIdentity, 0, kind,
+            ResolveCommandChainLightIdentity(context.OutputTargetIdentity, kind, in context),
+            kind == RenderViewKind.Shadow ? Math.Max(0, passIndex) : -1);
     }
 
-    private static RenderViewKind ResolveRenderViewKind(FrameOp op)
+    private static RenderViewKey BuildRenderViewKey(
+        in PendingMeshDraw draw,
+        int passIndex,
+        in FrameOpContext context,
+        bool dynamicOverlay)
     {
-        ref readonly FrameOpContext context = ref op.ContextReference;
-        return ResolveRenderViewKind(
-            op,
-            in context,
-            TryGetPassName(in context, op.PassIndex));
+        string? passName = TryGetPassName(in context, passIndex);
+        RenderViewKind kind = dynamicOverlay || IsOverlayLikePass(passName)
+            ? RenderViewKind.Overlay
+            : ResolveRenderViewKind(draw, in context, passName);
+        return new RenderViewKey(context.PipelineIdentity, context.ViewportIdentity,
+            ResolveCommandChainViewIndex(draw, kind), kind,
+            ResolveCommandChainLightIdentity(context.OutputTargetIdentity, kind, in context),
+            ResolveCommandChainCascadeIndex(draw, passIndex, kind));
     }
 
     private static RenderViewKind ResolveRenderViewKind(
-        FrameOp op,
+        in PendingMeshDraw draw,
         in FrameOpContext context,
         string? passName)
     {
-        if (context.PipelineInstance?.Pipeline is ShadowRenderPipeline)
+        if (context.PipelineInstance?.Pipeline is ShadowRenderPipeline || draw.ShadowUniformState.IsShadowPass)
             return RenderViewKind.Shadow;
-
-        if (op is MeshDrawOp { Draw: var draw })
-        {
-            // Shadow render graphs often reuse generic pass names such as
-            // DepthPrePass. The captured draw state is the authoritative signal;
-            // classifying those draws as Main prevented stable cascade runs from
-            // being grouped and conflated shadow and camera-view cache families.
-            if (draw.ShadowUniformState.IsShadowPass)
-                return RenderViewKind.Shadow;
-
-            if (draw.IsStereoPass ||
-                draw.Camera?.StereoEyeLeft.HasValue == true ||
-                draw.StereoRightEyeCamera is not null)
-            {
-                return RenderViewKind.VREye;
-            }
-        }
-
-        if (passName is not null)
-        {
-            if (passName.Contains("Shadow", StringComparison.OrdinalIgnoreCase))
-                return RenderViewKind.Shadow;
-            if (passName.Contains("Reflection", StringComparison.OrdinalIgnoreCase))
-                return RenderViewKind.Reflection;
-            if (passName.Contains("Probe", StringComparison.OrdinalIgnoreCase))
-                return RenderViewKind.Probe;
-        }
-
+        if (draw.IsStereoPass || draw.Camera?.StereoEyeLeft.HasValue == true || draw.StereoRightEyeCamera is not null)
+            return RenderViewKind.VREye;
+        if (passName?.Contains("Shadow", StringComparison.OrdinalIgnoreCase) == true) return RenderViewKind.Shadow;
+        if (passName?.Contains("Reflection", StringComparison.OrdinalIgnoreCase) == true) return RenderViewKind.Reflection;
+        if (passName?.Contains("Probe", StringComparison.OrdinalIgnoreCase) == true) return RenderViewKind.Probe;
         return RenderViewKind.Main;
     }
 
-    private static int ResolveCommandChainViewIndex(FrameOp op, RenderViewKind kind)
+    private static int ResolveCommandChainViewIndex(in PendingMeshDraw draw, RenderViewKind kind)
     {
-        if (kind == RenderViewKind.VREye && op is MeshDrawOp { Draw: var draw })
-            return ResolveStereoViewIndex(draw);
-
-        if (kind == RenderViewKind.Shadow && op is MeshDrawOp { Draw: { ShadowUniformState: var shadowState } })
-        {
-            if (shadowState.DirectionalCascadeInstancedLayeredShadowPass)
-                return Math.Max(0, shadowState.DirectionalCascadeShadowLayerCount - 1);
-            if (shadowState.PointLightInstancedLayeredShadowPass)
-                return Math.Max(0, shadowState.PointLightShadowFaceCount - 1);
-        }
-
-        return 0;
+        if (kind == RenderViewKind.VREye) return ResolveStereoViewIndex(draw);
+        if (kind != RenderViewKind.Shadow) return 0;
+        var state = draw.ShadowUniformState;
+        if (state.DirectionalCascadeInstancedLayeredShadowPass) return Math.Max(0, state.DirectionalCascadeShadowLayerCount - 1);
+        return state.PointLightInstancedLayeredShadowPass ? Math.Max(0, state.PointLightShadowFaceCount - 1) : 0;
     }
 
     private static int ResolveStereoViewIndex(in PendingMeshDraw draw)
@@ -1461,46 +1147,20 @@ internal sealed unsafe partial class VulkanCommandRuntime
         return CommandChainLeftEyeViewIndex;
     }
 
-    private static int ResolveCommandChainLightIdentity(FrameOp op, RenderViewKind kind)
+    private static int ResolveCommandChainLightIdentity(int targetIdentity, RenderViewKind kind, in FrameOpContext context)
     {
-        ref readonly FrameOpContext context = ref op.ContextReference;
-        return ResolveCommandChainLightIdentity(op, kind, in context);
-    }
-
-    private static int ResolveCommandChainLightIdentity(
-        FrameOp op,
-        RenderViewKind kind,
-        in FrameOpContext context)
-    {
-        if (kind != RenderViewKind.Shadow)
-            return 0;
-
-        int identity = HashCode.Combine(
-            context.SchedulingIdentity,
-            ResolveCommandChainTargetIdentity(op, in context));
+        if (kind != RenderViewKind.Shadow) return 0;
+        int identity = HashCode.Combine(context.SchedulingIdentity, targetIdentity);
         return identity == 0 ? 1 : identity;
     }
 
-    private static int ResolveCommandChainCascadeIndex(FrameOp op, RenderViewKind kind)
+    private static int ResolveCommandChainCascadeIndex(in PendingMeshDraw draw, int passIndex, RenderViewKind kind)
     {
-        if (kind != RenderViewKind.Shadow)
-            return -1;
-
-        if (op is MeshDrawOp { Draw: { ShadowUniformState: var shadowState } })
-        {
-            if (shadowState.DirectionalCascadeInstancedLayeredShadowPass)
-                return Math.Max(0, shadowState.DirectionalCascadeShadowLayerCount - 1);
-            if (shadowState.PointLightInstancedLayeredShadowPass)
-                return Math.Max(0, shadowState.PointLightShadowFaceCount - 1);
-        }
-
-        return Math.Max(0, op.PassIndex);
-    }
-
-    private static string? TryGetPassName(FrameOp op)
-    {
-        ref readonly FrameOpContext context = ref op.ContextReference;
-        return TryGetPassName(in context, op.PassIndex);
+        if (kind != RenderViewKind.Shadow) return -1;
+        var state = draw.ShadowUniformState;
+        if (state.DirectionalCascadeInstancedLayeredShadowPass) return Math.Max(0, state.DirectionalCascadeShadowLayerCount - 1);
+        if (state.PointLightInstancedLayeredShadowPass) return Math.Max(0, state.PointLightShadowFaceCount - 1);
+        return Math.Max(0, passIndex);
     }
 
     private static string? TryGetPassName(in FrameOpContext context, int passIndex)
@@ -1555,58 +1215,38 @@ internal sealed unsafe partial class VulkanCommandRuntime
         return false;
     }
 
-    internal static int ResolveCommandChainTargetIdentity(FrameOp op)
-    {
-        ref readonly FrameOpContext context = ref op.ContextReference;
-        return ResolveCommandChainTargetIdentity(op, in context);
-    }
-
-    private static int ResolveCommandChainTargetIdentity(
-        FrameOp op,
+    internal static int ResolveCommandChainTargetIdentity(
+        XRFrameBuffer? target,
         in FrameOpContext context)
-        => op switch
-        {
-            BlitOp blit => blit.OutFbo?.GetHashCode() ?? context.OutputTargetIdentity,
-            _ => op.Target?.GetHashCode() ?? context.OutputTargetIdentity,
-        };
+        => target?.GetHashCode() ?? context.OutputTargetIdentity;
 
-    internal static string ResolveCommandChainTargetName(FrameOp op)
+    private static RenderPacketExecutionDomain ResolveRenderPacketExecutionDomain(
+        EVulkanPrimaryPlanNodeKind kind)
+        => kind is EVulkanPrimaryPlanNodeKind.ComputeDispatch or EVulkanPrimaryPlanNodeKind.ComputeDispatchIndirect
+            ? RenderPacketExecutionDomain.StandaloneCompute
+            : kind == EVulkanPrimaryPlanNodeKind.MemoryBarrier
+                ? RenderPacketExecutionDomain.StandaloneSynchronization
+                : kind is EVulkanPrimaryPlanNodeKind.BufferCopy or EVulkanPrimaryPlanNodeKind.TextureUpload
+                    ? RenderPacketExecutionDomain.StandaloneTransfer
+                    : RenderPacketExecutionDomain.GraphicsRendering;
+    private static RenderPacketVolatility ClassifyRenderPacketVolatility(
+        EVulkanPrimaryPlanNodeKind kind, bool dynamicOverlay)
     {
-        ref readonly FrameOpContext context = ref op.ContextReference;
-        return op switch
+        if (dynamicOverlay) return RenderPacketVolatility.DynamicCommand;
+        return kind switch
         {
-            BlitOp blit => blit.OutFbo?.Name ?? context.OutputTargetName ?? "<swapchain>",
-            _ => op.Target?.Name ?? context.OutputTargetName ?? "<swapchain>",
+            EVulkanPrimaryPlanNodeKind.MeshDraw or EVulkanPrimaryPlanNodeKind.IndirectDraw or
+            EVulkanPrimaryPlanNodeKind.MeshTaskDispatchIndirectCount or EVulkanPrimaryPlanNodeKind.ComputeDispatch or
+            EVulkanPrimaryPlanNodeKind.ComputeDispatchIndirect or EVulkanPrimaryPlanNodeKind.BufferCopy or
+            EVulkanPrimaryPlanNodeKind.MemoryBarrier => RenderPacketVolatility.FrameDataOnly,
+            EVulkanPrimaryPlanNodeKind.Clear or EVulkanPrimaryPlanNodeKind.Blit or
+            EVulkanPrimaryPlanNodeKind.PublishFramebufferForSampling => RenderPacketVolatility.StaticStructural,
+            _ => RenderPacketVolatility.DynamicCommand,
         };
     }
 
-    private static ulong ResolvePipelineGeneration(FrameOp op)
-    {
-        FrameOpSignatureHasher hash = new();
-        hash.Add(op.ContextReference.PipelineIdentity);
-
-        switch (op)
-        {
-            case MeshDrawOp draw:
-                AddProgramGeneration(ref hash, draw.Draw.PreparedProgram);
-                break;
-            case IndirectDrawOp indirect:
-                AddProgramGeneration(ref hash, indirect.Draw.PreparedProgram);
-                AddProgramGeneration(ref hash, indirect.BindlessMaterialTextures?.Program);
-                break;
-            case MeshTaskDispatchIndirectCountOp meshTask:
-                AddProgramGeneration(ref hash, meshTask.BindlessMaterialTextures?.Program);
-                break;
-            case ComputeDispatchOp compute:
-                AddProgramGeneration(ref hash, compute.Program);
-                break;
-            case ComputeDispatchIndirectOp computeIndirect:
-                AddProgramGeneration(ref hash, computeIndirect.Program);
-                break;
-        }
-
-        return hash.ToHash();
-    }
+    private static string ResolveCommandChainTargetName(XRFrameBuffer? target, in FrameOpContext context)
+        => target?.Name ?? context.OutputTargetName ?? "<swapchain>";
 
     private static void AddProgramGeneration(
         ref FrameOpSignatureHasher hash,
@@ -1616,76 +1256,54 @@ internal sealed unsafe partial class VulkanCommandRuntime
         hash.Add(program?.LinkGeneration ?? 0UL);
     }
 
-    private static DescriptorBindingSnapshot CreateDescriptorSnapshot(FrameOp op)
+    internal static DescriptorBindingSnapshot CreateCommandChainDescriptorSnapshot(
+        FrameOperationStream operations,
+        int index)
     {
-        return op switch
+        ref readonly FrameOperationHeader header = ref operations.GetHeader(index);
+        return header.OpCode switch
         {
-            MeshDrawOp draw => CreateMeshDrawDescriptorSnapshot(draw),
-            ComputeDispatchOp compute => CreateComputeDispatchDescriptorSnapshot(compute),
-            IndirectDrawOp indirect => CreateDescriptorSnapshotFromSignature(unchecked((ulong)(indirect.BindlessMaterialTextures?.Program.GetHashCode() ?? 0))),
-            MeshTaskDispatchIndirectCountOp meshTask => CreateDescriptorSnapshotFromSignature(unchecked((ulong)(meshTask.BindlessMaterialTextures?.Program.GetHashCode() ?? 0))),
+            EVulkanPrimaryPlanNodeKind.MeshDraw =>
+                CreateMeshDrawDescriptorSnapshot(operations.GetMeshDraw(index).Draw),
+            EVulkanPrimaryPlanNodeKind.ComputeDispatch =>
+                CreateComputeDispatchDescriptorSnapshot(operations.GetComputeDispatch(index).Snapshot),
+            EVulkanPrimaryPlanNodeKind.IndirectDraw =>
+                CreateDescriptorSnapshotFromSignature(unchecked((ulong)(operations.GetIndirectDraw(index).BindlessMaterialTextures?.Program.GetHashCode() ?? 0))),
+            EVulkanPrimaryPlanNodeKind.MeshTaskDispatchIndirectCount =>
+                CreateDescriptorSnapshotFromSignature(unchecked((ulong)(operations.GetMeshTask(index).BindlessMaterialTextures?.Program.GetHashCode() ?? 0))),
             _ => default,
         };
     }
 
-    private static DescriptorBindingSnapshot CreateMeshDrawDescriptorSnapshot(MeshDrawOp draw)
+    private static DescriptorBindingSnapshot CreateComputeDispatchDescriptorSnapshot(ComputeDispatchSnapshot snapshot)
     {
-        bool hasMutableFrameSourceBindings =
-            draw.Draw.ProgramBindingSnapshot is
-                { HasMutableFrameSourceSamplerBindings: true };
-        if (!hasMutableFrameSourceBindings &&
-            draw.TryGetDescriptorBindingSnapshot(out DescriptorBindingSnapshot cached))
-        {
-            return cached;
-        }
+        ulong descriptorGeneration = ComputeDispatchSnapshotSignature(snapshot);
+        ulong descriptorSetSignature = ComputeDispatchSnapshotDescriptorSetSignature(snapshot);
+        return new DescriptorBindingSnapshot(descriptorGeneration,
+            descriptorSetSignature == 0UL ? 0 : 1, descriptorSetSignature);
+    }
 
+    private static DescriptorBindingSnapshot CreateMeshDrawDescriptorSnapshot(in PendingMeshDraw draw)
+    {
         ulong descriptorGeneration = 0UL;
         ulong descriptorSetSignature = 0UL;
         int setCount = 0;
-
-        if (draw.Draw.ProgramBindingSnapshot is { } snapshot)
+        if (draw.ProgramBindingSnapshot is { } snapshot)
         {
             descriptorGeneration = ComputeDispatchSnapshotSignature(snapshot);
             descriptorSetSignature = ComputeDispatchSnapshotDescriptorSetSignature(snapshot);
             setCount = descriptorSetSignature == 0 ? 0 : 1;
         }
-
-        XRMaterial? material = draw.Draw.MaterialOverride ?? draw.Draw.Renderer.MeshRenderer.Material;
+        XRMaterial? material = draw.MaterialOverride ?? draw.Renderer.MeshRenderer.Material;
         if (material is not null)
         {
-            ulong descriptorResourceSignature = draw.Draw.Renderer.ComputeRecordedDescriptorResourceSignature(
-                material,
-                draw.Draw.PreparedProgram,
-                draw.Draw.ProgramBindingSnapshot);
-            if (descriptorResourceSignature != 0UL)
-                descriptorGeneration = MixSignature(descriptorGeneration, descriptorResourceSignature);
+            ulong resources = draw.Renderer.ComputeRecordedDescriptorResourceSignature(material, draw.PreparedProgram, draw.ProgramBindingSnapshot);
+            if (resources != 0UL) descriptorGeneration = MixSignature(descriptorGeneration, resources);
         }
-
-        ulong descriptorSchemaSignature = draw.Draw.Renderer.ComputeRecordedDescriptorSchemaSignature(draw.Draw.PreparedProgram);
-        if (descriptorSchemaSignature != 0UL)
-            descriptorSetSignature = MixSignature(descriptorSetSignature, descriptorSchemaSignature);
-
-        if (draw.Draw.PreparedProgram is { } preparedProgram)
-            descriptorSetSignature = MixSignature(descriptorSetSignature, preparedProgram.BindingId);
-
-        int recordedSetCount = draw.Draw.Renderer.GetRecordedDescriptorSetCount(draw.Draw.PreparedProgram);
-        if (recordedSetCount > setCount)
-            setCount = recordedSetCount;
-
-        DescriptorBindingSnapshot descriptorSnapshot = new(
-            descriptorGeneration,
-            setCount,
-            descriptorSetSignature);
-        if (!hasMutableFrameSourceBindings && !draw.IsSealedForFramePlan)
-            draw.SetDescriptorBindingSnapshot(descriptorSnapshot);
-        return descriptorSnapshot;
-    }
-
-    private static DescriptorBindingSnapshot CreateComputeDispatchDescriptorSnapshot(ComputeDispatchOp compute)
-    {
-        ulong descriptorGeneration = ComputeDispatchSnapshotSignature(compute.Snapshot);
-        ulong descriptorSetSignature = ComputeDispatchSnapshotDescriptorSetSignature(compute.Snapshot);
-        int setCount = descriptorSetSignature == 0 ? 0 : 1;
+        ulong schema = draw.Renderer.ComputeRecordedDescriptorSchemaSignature(draw.PreparedProgram);
+        if (schema != 0UL) descriptorSetSignature = MixSignature(descriptorSetSignature, schema);
+        if (draw.PreparedProgram is { } program) descriptorSetSignature = MixSignature(descriptorSetSignature, program.BindingId);
+        setCount = Math.Max(setCount, draw.Renderer.GetRecordedDescriptorSetCount(draw.PreparedProgram));
         return new DescriptorBindingSnapshot(descriptorGeneration, setCount, descriptorSetSignature);
     }
 
@@ -1695,73 +1313,45 @@ internal sealed unsafe partial class VulkanCommandRuntime
         return new DescriptorBindingSnapshot(signature, setCount, signature);
     }
 
-    private static DrawPacket CreateDrawPacket(int opIndex, MeshDrawOp op)
+    private static DrawPacket CreateDrawPacket(
+        int opIndex,
+        in PendingMeshDraw draw,
+        in FrameOperationHeader header,
+        in FrameOpContext context)
     {
-        XRMaterial? material = op.Draw.MaterialOverride ?? op.Draw.Renderer.MeshRenderer.Material;
-        int meshIdentity = op.Draw.Renderer.MeshRenderer.Mesh?.GetHashCode() ?? 0;
+        XRMaterial? material = draw.MaterialOverride ?? draw.Renderer.MeshRenderer.Material;
+        int meshIdentity = draw.Renderer.MeshRenderer.Mesh?.GetHashCode() ?? 0;
         int materialIdentity = material?.GetHashCode() ?? 0;
-        int programIdentity = op.Draw.PreparedProgram is { } preparedProgram
+        int programIdentity = draw.PreparedProgram is { } preparedProgram
             ? unchecked((int)preparedProgram.BindingId)
             : material?.RenderOptions?.GetHashCode() ?? materialIdentity;
-        return new DrawPacket(
-            opIndex,
-            op.Draw.Renderer.GetHashCode(),
-            meshIdentity,
-            materialIdentity,
-            programIdentity,
-            op.Draw.Instances,
-            op.Draw.BlendEnabled,
-            ComputeFrameOpStructuralSignature(op, opIndex, RenderPacketVolatility.FrameDataOnly),
-            ComputeFrameOpFrameDataSignature(op, opIndex));
+        return new DrawPacket(opIndex, draw.Renderer.GetHashCode(), meshIdentity,
+            materialIdentity, programIdentity, draw.Instances, draw.BlendEnabled,
+            ComputeFrameOpStructuralSignature(draw, header, in context, opIndex, RenderPacketVolatility.FrameDataOnly),
+            ComputeFrameOpFrameDataSignature(draw, header, in context, opIndex));
     }
+    private static DispatchPacket CreateDispatchPacket(
+        int opIndex,
+        in ComputeDispatchPayload compute,
+        in FrameOperationHeader header,
+        in FrameOpContext context)
+        => new(opIndex, compute.Program.GetHashCode(), compute.GroupsX, compute.GroupsY,
+            compute.GroupsZ, ComputeFrameOpStructuralSignature(header, in context, opIndex, RenderPacketVolatility.FrameDataOnly),
+            ComputeFrameOpFrameDataSignature(header, in context, opIndex));
 
-    private static DrawPacket CreateIndirectDrawPacket(int opIndex, IndirectDrawOp op)
-        => new(
-            opIndex,
-            op.IndirectBuffer.GetHashCode(),
-            unchecked((int)ComputeCommandBufferDataBufferSignature(op.IndirectBuffer)),
-            unchecked((int)ComputeCommandBufferDataBufferSignature(op.ParameterBuffer)),
-            op.BindlessMaterialTextures?.Program.GetHashCode() ?? 0,
-            op.DrawCount,
-            false,
-            ComputeFrameOpStructuralSignature(op, opIndex, RenderPacketVolatility.FrameDataOnly),
-            ComputeFrameOpFrameDataSignature(op, opIndex));
-
-    private static DrawPacket CreateMeshTaskDrawPacket(int opIndex, MeshTaskDispatchIndirectCountOp op)
-        => new(
-            opIndex,
-            op.IndirectBuffer.GetHashCode(),
-            unchecked((int)ComputeCommandBufferDataBufferSignature(op.CountBuffer)),
-            0,
-            op.BindlessMaterialTextures?.Program.GetHashCode() ?? 0,
-            op.MaxDrawCount,
-            false,
-            ComputeFrameOpStructuralSignature(op, opIndex, RenderPacketVolatility.FrameDataOnly),
-            ComputeFrameOpFrameDataSignature(op, opIndex));
-
-    private static DispatchPacket CreateDispatchPacket(int opIndex, ComputeDispatchOp op)
-        => new(
-            opIndex,
-            op.Program.GetHashCode(),
-            op.GroupsX,
-            op.GroupsY,
-            op.GroupsZ,
-            ComputeFrameOpStructuralSignature(op, opIndex, RenderPacketVolatility.FrameDataOnly),
-            ComputeFrameOpFrameDataSignature(op, opIndex));
-
-    internal static int ResolveCommandChainInlineOperationIndex(FrameOperationSequence ops, int sourceIndex)
+    internal static int ResolveCommandChainInlineOperationIndex(FrameOperationStream ops, int sourceIndex)
     {
         int inlineOpIndex = 0;
         int queryBracketDepth = 0;
-        int lastIndex = Math.Min(sourceIndex, ops.Length - 1);
+        int lastIndex = Math.Min(sourceIndex, ops.Count - 1);
         for (int opIndex = 0; opIndex <= lastIndex; opIndex++)
         {
-            FrameOp op = ops[opIndex];
-            bool isQuery = op is QueryOp;
+            ref readonly FrameOperationHeader header = ref ops.GetHeader(opIndex);
+            bool isQuery = header.OpCode == EVulkanPrimaryPlanNodeKind.Query;
             bool secondaryOwned =
                 !isQuery &&
                 queryBracketDepth == 0 &&
-                IsSchedulableCommandChainFrameOp(op, dynamicOverlay: false);
+                IsSchedulableCommandChainFrameOp(ops, opIndex, dynamicOverlay: false);
 
             if (opIndex == sourceIndex)
                 return inlineOpIndex;
@@ -1769,11 +1359,12 @@ internal sealed unsafe partial class VulkanCommandRuntime
             if (!secondaryOwned)
                 inlineOpIndex++;
 
-            if (op is QueryOp queryOp)
+            if (isQuery)
             {
-                if (queryOp.Operation == ERenderQueryOperation.Begin)
+                ERenderQueryOperation operation = ops.GetQuery(opIndex).Operation;
+                if (operation == ERenderQueryOperation.Begin)
                     queryBracketDepth++;
-                else if (queryOp.Operation == ERenderQueryOperation.End && queryBracketDepth > 0)
+                else if (operation == ERenderQueryOperation.End && queryBracketDepth > 0)
                     queryBracketDepth--;
             }
         }
@@ -1781,159 +1372,167 @@ internal sealed unsafe partial class VulkanCommandRuntime
         return Math.Max(sourceIndex, 0);
     }
 
-    private static ulong ComputeReusableComputeDescriptorBindingKey(
-        ComputeDispatchOp op,
+    internal static ulong ComputeReusableComputeDescriptorBindingKey(
+        in ComputeDispatchPayload dispatch,
+        in FrameOperationHeader header,
+        in FrameOpContext context,
         int descriptorBindingOrdinal)
     {
-        ref readonly FrameOpContext context = ref op.ContextReference;
         FrameOpSignatureHasher hash = new();
         hash.Add(0x434F4D5055444553UL);
         hash.Add(descriptorBindingOrdinal);
-        hash.Add(op.PassIndex);
-        hash.Add(ResolveCommandChainTargetIdentity(op));
+        hash.Add(header.PassIndex);
+        hash.Add(header.TargetIdentity);
         hash.Add(context.PipelineIdentity);
         hash.Add(context.ViewportIdentity);
-        hash.Add(op.Program.BindingId);
-        hash.Add(op.Program.LinkGeneration);
-        hash.Add(op.GroupsX);
-        hash.Add(op.GroupsY);
-        hash.Add(op.GroupsZ);
-        // Snapshot resources are descriptor contents, not command topology. A
-        // stable per-dispatch set handle lets UPDATE_AFTER_BIND programs refresh
-        // rotating render targets without rebuilding the thin primary. Ordinary
-        // descriptor writes remain safe because exact dependency tracking dirties
-        // every command buffer that recorded a non-update-after-bind set.
+        hash.Add(dispatch.Program.BindingId);
+        hash.Add(dispatch.Program.LinkGeneration);
+        hash.Add(dispatch.GroupsX);
+        hash.Add(dispatch.GroupsY);
+        hash.Add(dispatch.GroupsZ);
         return hash.ToHash();
     }
 
-    private static ulong ComputeFrameOpStructuralSignature(FrameOp op, int opIndex, RenderPacketVolatility volatility)
+    private static ulong ComputeFrameOpStructuralSignature(
+        in FrameOperationHeader header,
+        in FrameOpContext context,
+        int opIndex,
+        RenderPacketVolatility volatility)
     {
-        ref readonly FrameOpContext context = ref op.ContextReference;
         FrameOpSignatureHasher hash = new();
-        hash.Add(GetCommandChainFrameOpKindId(op));
-        hash.Add(op.PassIndex);
-        hash.Add(ResolveCommandChainTargetIdentity(op));
+        hash.Add((int)header.OpCode); hash.Add(header.PassIndex); hash.Add(header.TargetIdentity);
+        hash.Add(context.PipelineIdentity); hash.Add(context.ViewportIdentity); hash.Add((int)volatility); hash.Add(opIndex);
+        return hash.ToHash();
+    }
+
+    private static ulong ResolvePipelineGeneration(in PendingMeshDraw draw, in FrameOpContext context)
+    {
+        FrameOpSignatureHasher hash = new();
+        hash.Add(context.PipelineIdentity);
+        AddProgramGeneration(ref hash, draw.PreparedProgram);
+        return hash.ToHash();
+    }
+
+    private static ulong ResolvePipelineGeneration(in FrameOpContext context)
+    {
+        FrameOpSignatureHasher hash = new();
+        hash.Add(context.PipelineIdentity);
+        return hash.ToHash();
+    }
+
+    private static ulong ResolvePipelineGeneration(VkRenderProgram program, in FrameOpContext context)
+    {
+        FrameOpSignatureHasher hash = new();
+        hash.Add(context.PipelineIdentity);
+        AddProgramGeneration(ref hash, program);
+        return hash.ToHash();
+    }
+
+    private static ulong ComputeFrameOpStructuralSignature(
+        in PendingMeshDraw draw,
+        in FrameOperationHeader header,
+        in FrameOpContext context,
+        int opIndex,
+        RenderPacketVolatility volatility)
+    {
+        FrameOpSignatureHasher hash = new();
+        hash.Add((int)header.OpCode);
+        hash.Add(header.PassIndex);
+        hash.Add(header.TargetIdentity);
         hash.Add(context.PipelineIdentity);
         hash.Add(context.ViewportIdentity);
         hash.Add((int)volatility);
+        RenderViewKind kind = ResolveRenderViewKind(draw, in context, TryGetPassName(in context, header.PassIndex));
+        hash.Add((int)kind);
+        hash.Add(ResolveCommandChainViewIndex(draw, kind));
+        hash.Add(ResolveCommandChainLightIdentity(header.TargetIdentity, kind, in context));
+        hash.Add(ResolveCommandChainCascadeIndex(draw, header.PassIndex, kind));
+        hash.Add(draw.Renderer.GetHashCode());
+        hash.Add(draw.MaterialOverride?.GetHashCode() ?? 0);
+        hash.Add(draw.Instances);
+        hash.Add(draw.BlendEnabled);
+        hash.Add(draw.AlphaToCoverageEnabled);
+        hash.Add((int)draw.ColorBlendOp); hash.Add((int)draw.AlphaBlendOp);
+        hash.Add((int)draw.SrcColorBlendFactor); hash.Add((int)draw.DstColorBlendFactor);
+        hash.Add((int)draw.SrcAlphaBlendFactor); hash.Add((int)draw.DstAlphaBlendFactor);
+        hash.Add((int)draw.ColorWriteMask); hash.Add((int)draw.CullMode); hash.Add((int)draw.FrontFace);
+        hash.Add((int)draw.RasterizationSamples); hash.Add(draw.DepthTestEnabled); hash.Add(draw.DepthWriteEnabled);
+        hash.Add((int)draw.DepthCompareOp); hash.Add(draw.StencilTestEnabled); hash.Add(draw.StencilWriteMask);
+        AddViewportScissorSignature(ref hash, draw);
+        hash.Add(draw.PreparedProgramIdentity); hash.Add(draw.PreparedProgram?.BindingId ?? 0u);
+        hash.Add(ComputeShadowCommandChainStructuralSignature(draw.ShadowUniformState));
+        return hash.ToHash();
+    }
 
-        switch (op)
+    private static ulong ComputeFrameOpFrameDataSignature(
+        in PendingMeshDraw draw,
+        in FrameOperationHeader header,
+        in FrameOpContext context,
+        int opIndex)
+    {
+        FrameOpSignatureHasher hash = new();
+        hash.Add((int)header.OpCode); hash.Add(opIndex); hash.Add(header.PassIndex);
+        hash.Add(header.TargetIdentity); hash.Add(context.RecordingFingerprint);
+        hash.Add(draw.Renderer.GetHashCode()); hash.Add(draw.Instances);
+        hash.Add(draw.PreparedProgramIdentity); hash.Add(draw.ProgramBindingSnapshot?.GetHashCode() ?? 0);
+        return hash.ToHash();
+    }
+
+    private static ulong ComputeFrameOpFrameDataSignature(
+        in FrameOperationHeader header,
+        in FrameOpContext context,
+        int opIndex)
+    {
+        FrameOpSignatureHasher hash = new();
+        hash.Add((int)header.OpCode); hash.Add(opIndex); hash.Add(header.PassIndex);
+        hash.Add(header.TargetIdentity); hash.Add(context.RecordingFingerprint);
+        return hash.ToHash();
+    }
+
+    private static void AddViewportScissorSignature(
+        ref FrameOpSignatureHasher hash,
+        in PendingMeshDraw draw)
+    {
+        AddViewportSignature(ref hash, draw.Viewport);
+        AddRectSignature(ref hash, draw.Scissor);
+        hash.Add(draw.ViewportScissorCount);
+        if (draw.ViewportScissorCount <= 1 ||
+            draw.IndexedViewports is not { } indexedViewports ||
+            draw.IndexedScissors is not { } indexedScissors)
         {
-            case MeshDrawOp draw:
-                RenderViewKind drawKind = ResolveRenderViewKind(
-                    draw,
-                    in context,
-                    TryGetPassName(in context, op.PassIndex));
-                hash.Add((int)drawKind);
-                hash.Add(ResolveCommandChainViewIndex(draw, drawKind));
-                hash.Add(ResolveCommandChainLightIdentity(draw, drawKind));
-                hash.Add(ResolveCommandChainCascadeIndex(draw, drawKind));
-                hash.Add(draw.Draw.Renderer.GetHashCode());
-                hash.Add(draw.Draw.MaterialOverride?.GetHashCode() ?? 0);
-                hash.Add(draw.Draw.Instances);
-                hash.Add(draw.Draw.BlendEnabled);
-                hash.Add(draw.Draw.AlphaToCoverageEnabled);
-                hash.Add((int)draw.Draw.ColorBlendOp);
-                hash.Add((int)draw.Draw.AlphaBlendOp);
-                hash.Add((int)draw.Draw.SrcColorBlendFactor);
-                hash.Add((int)draw.Draw.DstColorBlendFactor);
-                hash.Add((int)draw.Draw.SrcAlphaBlendFactor);
-                hash.Add((int)draw.Draw.DstAlphaBlendFactor);
-                hash.Add((int)draw.Draw.ColorWriteMask);
-                hash.Add((int)draw.Draw.CullMode);
-                hash.Add((int)draw.Draw.FrontFace);
-                hash.Add((int)draw.Draw.RasterizationSamples);
-                hash.Add(draw.Draw.DepthTestEnabled);
-                hash.Add(draw.Draw.DepthWriteEnabled);
-                hash.Add((int)draw.Draw.DepthCompareOp);
-                hash.Add(draw.Draw.StencilTestEnabled);
-                hash.Add(draw.Draw.StencilWriteMask);
-                AddViewportScissorSignature(ref hash, draw.Draw);
-                hash.Add(draw.Draw.PreparedProgramIdentity);
-                hash.Add(draw.Draw.PreparedProgram?.BindingId ?? 0u);
-                hash.Add(ComputeShadowCommandChainStructuralSignature(draw.Draw.ShadowUniformState));
-                break;
-            case QueryOp query:
-                hash.Add(query.Query.GetHashCode());
-                hash.Add(query.Descriptor.GetHashCode());
-                hash.Add(query.Query.Ticket.PoolIdentity);
-                hash.Add(query.Query.Ticket.FirstQuery);
-                hash.Add(query.Query.Ticket.QueryCount);
-                hash.Add((int)query.Operation);
-                hash.Add((ulong)query.TimestampStage);
-                hash.Add(query.PointIndex);
-                hash.Add(query.SourceHandles.Length);
-                hash.Add(query.ResultDestination.Handle);
-                hash.Add(query.ResultDestinationOffset);
-                hash.Add(query.ResultStride);
-                hash.Add(query.IncludeAvailability);
-                break;
-            case ClearOp clear:
-                hash.Add(clear.ClearColor);
-                hash.Add(clear.ClearDepth);
-                hash.Add(clear.ClearStencil);
-                break;
-            case BlitOp blit:
-                hash.Add(blit.InFbo?.GetHashCode() ?? 0);
-                hash.Add(blit.OutFbo?.GetHashCode() ?? 0);
-                hash.Add(blit.ColorBit);
-                hash.Add(blit.DepthBit);
-                hash.Add(blit.StencilBit);
-                break;
-            case PublishFramebufferForSamplingOp publish:
-                hash.Add(publish.FrameBuffer.GetHashCode());
-                break;
-            case IndirectDrawOp indirect:
-                hash.Add(ComputeCommandBufferDataBufferSignature(indirect.IndirectBuffer));
-                hash.Add(ComputeCommandBufferDataBufferSignature(indirect.ParameterBuffer));
-                hash.Add(indirect.DrawCount);
-                hash.Add(indirect.Stride);
-                hash.Add(indirect.ByteOffset);
-                hash.Add(indirect.CountByteOffset);
-                hash.Add(indirect.UseCount);
-                hash.Add(
-                    (int)indirect.SecondaryRecordingContract.Eligibility);
-                break;
-            case MeshTaskDispatchIndirectCountOp meshTask:
-                hash.Add(ComputeCommandBufferDataBufferSignature(meshTask.IndirectBuffer));
-                hash.Add(ComputeCommandBufferDataBufferSignature(meshTask.CountBuffer));
-                hash.Add(meshTask.MaxDrawCount);
-                hash.Add(meshTask.Stride);
-                break;
-            case ComputeDispatchOp compute:
-                hash.Add(compute.Program.BindingId);
-                hash.Add(compute.Program.LinkGeneration);
-                hash.Add(compute.GroupsX);
-                hash.Add(compute.GroupsY);
-                hash.Add(compute.GroupsZ);
-                break;
-            case ComputeDispatchIndirectOp computeIndirect:
-                hash.Add(computeIndirect.Program.BindingId);
-                hash.Add(computeIndirect.Program.LinkGeneration);
-                hash.Add(ComputeCommandBufferDataBufferSignature(computeIndirect.ArgumentOwner));
-                hash.Add(computeIndirect.ArgumentBuffer.Handle);
-                hash.Add(computeIndirect.ArgumentOffset);
-                break;
-            case MemoryBarrierOp barrier:
-                hash.Add((int)barrier.Mask);
-                break;
-            case TextureUploadFrameOp upload:
-                hash.Add(upload.Upload.PublicationToken);
-                hash.Add(upload.Upload.Request.StreamingGeneration);
-                hash.Add(upload.Upload.Image.Handle);
-                hash.Add(upload.Upload.ImageView.Handle);
-                hash.Add(upload.Upload.Sampler.Handle);
-                hash.Add(upload.Upload.Extent.Width);
-                hash.Add(upload.Upload.Extent.Height);
-                hash.Add(upload.Upload.MipLevels);
-                hash.Add((ulong)Math.Max(upload.Upload.CommittedBytes, 0L));
-                hash.Add(upload.Upload.StagingResources.Length);
-                break;
-            default:
-                hash.Add(opIndex);
-                break;
+            return;
         }
 
-        return hash.ToHash();
+        int indexedCount = (int)Math.Min(
+            draw.ViewportScissorCount,
+            (uint)Math.Min(indexedViewports.Length, indexedScissors.Length));
+        hash.Add(indexedCount);
+        for (int i = 0; i < indexedCount; i++)
+        {
+            AddViewportSignature(ref hash, indexedViewports[i]);
+            AddRectSignature(ref hash, indexedScissors[i]);
+        }
+    }
+
+    private static void AddViewportSignature(
+        ref FrameOpSignatureHasher hash,
+        in Viewport viewport)
+    {
+        hash.Add(viewport.X);
+        hash.Add(viewport.Y);
+        hash.Add(viewport.Width);
+        hash.Add(viewport.Height);
+        hash.Add(viewport.MinDepth);
+        hash.Add(viewport.MaxDepth);
+    }
+
+    private static void AddRectSignature(
+        ref FrameOpSignatureHasher hash,
+        in Rect2D rect)
+    {
+        hash.Add(rect.Offset.X);
+        hash.Add(rect.Offset.Y);
+        hash.Add(rect.Extent.Width);
+        hash.Add(rect.Extent.Height);
     }
 }

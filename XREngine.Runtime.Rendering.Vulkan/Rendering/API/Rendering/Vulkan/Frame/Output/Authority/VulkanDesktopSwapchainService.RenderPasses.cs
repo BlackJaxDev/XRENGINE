@@ -62,24 +62,36 @@ internal sealed unsafe partial class VulkanDesktopSwapchainService
         {
             attachments[0] = imageViews[index];
             attachments[1] = depth.View;
-            fixed (ImageView* attachmentsPtr = attachments)
-            {
-                FramebufferCreateInfo createInfo = new()
-                {
-                    SType = StructureType.FramebufferCreateInfo,
-                    RenderPass = _resources.SwapchainRenderPass,
-                    AttachmentCount = (uint)attachments.Length,
-                    PAttachments = attachmentsPtr,
-                    Width = _output.Desktop.Extent.Width,
-                    Height = _output.Desktop.Extent.Height,
-                    Layers = 1,
-                };
-                if (_api.CreateFramebuffer(_device.Device, ref createInfo, null, out Framebuffer framebuffer) != Result.Success)
-                    throw new InvalidOperationException("Failed to create a swapchain framebuffer.");
+            Framebuffer framebuffer = CreateSwapchainFramebuffer(attachments);
+            _output.Desktop.Framebuffers[index] = framebuffer;
+            _resources.RegisterFramebuffer(framebuffer, attachments, $"Swapchain.Framebuffer[{index}]");
+        }
+    }
 
-                _output.Desktop.Framebuffers[index] = framebuffer;
-                _resources.RegisterFramebuffer(framebuffer, attachments, $"Swapchain.Framebuffer[{index}]");
+    private Framebuffer CreateSwapchainFramebuffer(ReadOnlySpan<ImageView> attachments)
+    {
+        fixed (ImageView* attachmentsPtr = attachments)
+        {
+            FramebufferCreateInfo createInfo = new()
+            {
+                SType = StructureType.FramebufferCreateInfo,
+                RenderPass = _resources.SwapchainRenderPass,
+                AttachmentCount = (uint)attachments.Length,
+                PAttachments = attachmentsPtr,
+                Width = _output.Desktop.Extent.Width,
+                Height = _output.Desktop.Extent.Height,
+                Layers = 1,
+            };
+            if (_api.CreateFramebuffer(
+                    _device.Device,
+                    ref createInfo,
+                    null,
+                    out Framebuffer framebuffer) != Result.Success)
+            {
+                throw new InvalidOperationException("Failed to create a swapchain framebuffer.");
             }
+
+            return framebuffer;
         }
     }
 

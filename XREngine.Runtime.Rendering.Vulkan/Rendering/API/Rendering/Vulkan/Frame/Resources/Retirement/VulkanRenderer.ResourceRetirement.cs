@@ -6,7 +6,7 @@ namespace XREngine.Rendering.Vulkan;
 /// Renderer boundary for deferred resource retirement. Queue ownership and drain
 /// decisions live in the resource and command authorities.
 /// </summary>
-internal sealed unsafe partial class VulkanFrameLoop
+internal sealed partial class VulkanFrameLoop
 {
     internal void DrainRetiredCommandPools(int frameSlot, int maxItems = 16)
         => _commandRuntime.DrainRetiredCommandPools(

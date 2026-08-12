@@ -21,7 +21,7 @@ namespace XREngine.Rendering.Vulkan;
 /// <summary>
 /// Vulkan renderer composition root.
 /// </summary>
-public sealed unsafe class VulkanRenderer :
+public sealed class VulkanRenderer :
     AbstractRenderer<Vk>,
     IIndirectDrawStateBackendCapability,
     IIndirectDrawSecondaryRecordingBackendCapability,
@@ -95,7 +95,9 @@ public sealed unsafe class VulkanRenderer :
             new VulkanFinalPresentationDescriptorPort(
                 _outputRuntime.PresentationSource.Publication,
                 _resourceRuntime,
-                _commandRuntime));
+                _commandRuntime,
+                _frameTelemetry._finalPresentationLedger,
+                _frameLoop.CaptureActivity));
         _framePlanner.PublishResourcePlannerGeneration(
             new ResourcePlannerRuntimeGeneration(ResourcePlannerRuntimeState.CreateEmpty()));
         InitializeRenderObjectCache();
@@ -220,7 +222,6 @@ public sealed unsafe class VulkanRenderer :
 
     public void DestroyBuffer(Buffer? buffer, DeviceMemory? memory) => _commandRuntime.DestroyBuffer(buffer, memory);
     public bool CopyBuffer(Buffer? stagingBuffer, Buffer? deviceBuffer, ulong bufferSize) => _commandRuntime.CopyBuffer(stagingBuffer, deviceBuffer, bufferSize);
-    public void FlushBuffer(Buffer? buffer, DeviceMemory? memory, ulong offset, ulong length) => _commandRuntime.FlushBuffer(buffer, memory, offset, length);
 
     public override bool TryQueueScreenshotReadback(BoundingRectangle region, bool withTransparency, Action<ScreenshotReadbackResult> callback, out string? failure)
         => _frameLoop.TryQueueScreenshotReadback(region, withTransparency, callback, out failure);

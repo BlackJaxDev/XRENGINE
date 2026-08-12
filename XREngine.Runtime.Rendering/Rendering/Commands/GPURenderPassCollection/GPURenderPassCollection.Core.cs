@@ -59,7 +59,7 @@ namespace XREngine.Rendering.Commands
         }
 
         /// <summary>
-        /// The resulting culled commands that will be rendered in this pass.
+        /// The resulting compact visible draw-ID stream for this pass.
         /// </summary>
         public XRDataBuffer CulledSceneToRenderBuffer
             => _culledSceneToRenderBuffer ??= MakeCulledSceneToRenderBuffer(GPUScene.MinCommandCount);
@@ -146,11 +146,6 @@ namespace XREngine.Rendering.Commands
             /// </summary>
             public bool ValidateCopyCommandAtomicBounds { get; set; } = true;
 
-            /// <summary>
-            /// Enables compact hot-command buffers for culling/occlusion/indirect stages.
-            /// Falls back to compact 20-lane command reads when disabled.
-            /// </summary>
-            public bool EnableHotCommandLayout { get; set; } = true;
         }
 
         private static readonly IndirectDebugSettings _indirectDebug = new();
@@ -202,14 +197,6 @@ namespace XREngine.Rendering.Commands
             return value.SequenceEqual("1") || value.Equals("true", StringComparison.OrdinalIgnoreCase);
         }
 
-        private static bool IsShippingHotOnlyProfile()
-            => VulkanFeatureProfile.IsActive && VulkanFeatureProfile.ActiveProfile == EVulkanGpuDrivenProfile.ShippingFast;
-
-        private static bool IsHotCommandLayoutEnabled()
-            => IndirectDebug.EnableHotCommandLayout || IsShippingHotOnlyProfile();
-
-        private static bool IsHotCommandLayoutRequired()
-            => IsShippingHotOnlyProfile();
 
         private bool IsCpuReadbackCountDisabledForPass()
             => _passPolicySnapshotValid
@@ -485,17 +472,11 @@ namespace XREngine.Rendering.Commands
         private XRDataBuffer? _indirectDrawBuffer;         // DrawElementsIndirectCommand array
         private XRDataBuffer? _culledSceneToRenderBuffer;  // Compacted visible commands
         private XRDataBuffer? _passFilterDebugBuffer;      // Optional GPU pass-filter instrumentation
-        private XRDataBuffer? _sourceHotCommandBuffer;     // Hot source commands (16 uints)
-        private XRDataBuffer? _culledHotCommandBuffer;     // Hot compacted visible commands
-        private XRDataBuffer? _occlusionCulledHotBuffer;   // Hot ping-pong output for occlusion refine
         private XRDataBuffer? _visibleMeshletTaskBuffer;   // GpuMeshletTaskRecord stream
         private XRDataBuffer? _visibleMeshletTaskCountBuffer;
         private XRDataBuffer? _meshletDispatchIndirectBuffer;
         private XRDataBuffer? _meshletDispatchCountBuffer;
         private XRDataBuffer? _meshletExpansionOverflowFlagBuffer;
-        private bool _sourceCommandsUseHotLayout;
-        private bool _culledHotCommandsValid;
-        private bool _culledCommandsUseHotLayout;
         private bool _meshletExpansionPreparedThisFrame;
 
         // Synchronization & lifecycle
@@ -517,33 +498,12 @@ namespace XREngine.Rendering.Commands
                 name,
                 EBufferTarget.ShaderStorageBuffer,
                 capacity,
-                EComponentType.Float,
-                GPUScene.CommandFloatCount,
+                EComponentType.UInt,
+                1,
                 false,
                 false)
             {
                 Usage = EBufferUsage.StreamDraw, //We're copying commands from the gpu scene buffer to this one every frame, preferably culled using the camera
-                DisposeOnPush = false,
-                Resizable = false,
-                StorageFlags = EBufferMapStorageFlags.DynamicStorage | EBufferMapStorageFlags.Read,
-                RangeFlags = EBufferMapRangeFlags.Read,
-            };
-            buffer.Generate();
-            return buffer;
-        }
-
-        private static XRDataBuffer MakeHotCommandBuffer(string name, uint capacity)
-        {
-            XRDataBuffer buffer = new(
-                name,
-                EBufferTarget.ShaderStorageBuffer,
-                capacity,
-                EComponentType.UInt,
-                GPUScene.CommandHotUIntCount,
-                false,
-                false)
-            {
-                Usage = EBufferUsage.StreamDraw,
                 DisposeOnPush = false,
                 Resizable = false,
                 StorageFlags = EBufferMapStorageFlags.DynamicStorage | EBufferMapStorageFlags.Read,
@@ -592,7 +552,6 @@ namespace XREngine.Rendering.Commands
         //public XRRenderProgram? RadixIndexSortComputeShader;
         private XRRenderProgram? _lodSelectComputeShader;
         public XRRenderProgram? _indirectRenderTaskShader;
-        public XRRenderProgram? _buildHotCommandsProgram;
         public XRRenderProgram? _resetCountersComputeShader;
         private XRRenderProgram? _expandMeshletsComputeShader;
         private XRRenderProgram? _clearUIntsComputeShader;
@@ -627,7 +586,6 @@ namespace XREngine.Rendering.Commands
         private XRDataBuffer? _twoPassCandidateCountBuffer;
         private XRDataBuffer? _twoPassPhaseOneCountBuffer;
         private XRDataBuffer? _twoPassPhaseOneCommandBuffer;
-        private XRDataBuffer? _twoPassPhaseOneHotCommandBuffer;
         private XRDataBuffer? _twoPassPhaseOneMaterialTierIndirectDrawBuffer;
         private XRDataBuffer? _twoPassPhaseOneMaterialTierDrawCountBuffer;
 
@@ -808,8 +766,6 @@ namespace XREngine.Rendering.Commands
 
         // Simple passthrough for count/flag/stat buffer exposure
         public XRDataBuffer? CulledCountBuffer => _culledCountBuffer;
-        public XRDataBuffer? CulledHotCommandBuffer => _culledCommandsUseHotLayout ? _culledHotCommandBuffer : null;
-        public bool CulledCommandsUseHotLayout => _culledCommandsUseHotLayout;
         public XRDataBuffer? DrawCountBuffer => _drawCountBuffer;
         public XRDataBuffer? IndirectDrawBuffer => _indirectDrawBuffer;
         public XRDataBuffer? MaterialTierIndirectDrawBuffer => _materialTierIndirectDrawBuffer;
@@ -845,15 +801,12 @@ namespace XREngine.Rendering.Commands
             if (scene is null || _culledSceneToRenderBuffer is null || _culledCountBuffer is null)
                 return false;
 
-            XRDataBuffer? visibleHotCommandBuffer = _culledCommandsUseHotLayout ? _culledHotCommandBuffer : null;
             uint visibleCommandUpperBound = _visibleCommandUpperBoundValid
                 ? Math.Min(_visibleCommandUpperBound, CommandCapacity)
                 : Math.Min(VisibleCommandCount, CommandCapacity);
 
             inputs = new GpuMeshletExpansionInputs(
                 _culledSceneToRenderBuffer,
-                visibleHotCommandBuffer,
-                visibleHotCommandBuffer is not null,
                 _culledCountBuffer,
                 scene.DrawMetadataBuffer,
                 scene.MeshDataBuffer,

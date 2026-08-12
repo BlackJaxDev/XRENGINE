@@ -257,9 +257,9 @@ namespace XREngine.Rendering.Commands
             const ulong prime = 1099511628211UL;
             ulong revision = offsetBasis;
             revision = (revision ^ scene.TotalCommandCount) * prime;
-            revision = (revision ^ scene.BoundsBuffer.Revision) * prime;
+            revision = (revision ^ scene.CullBoundsBuffer.Revision) * prime;
             revision = (revision ^ scene.TransformBuffer.Revision) * prime;
-            revision = (revision ^ scene.DrawMetadataBuffer.Revision) * prime;
+            revision = (revision ^ scene.CullControlBuffer.Revision) * prime;
             revision = (revision ^ scene.MaterialStateBuffer.Revision) * prime;
             return revision;
         }
@@ -885,9 +885,9 @@ namespace XREngine.Rendering.Commands
 
             for (uint readIndex = 0; readIndex < inputCount; ++readIndex)
             {
-                GPUIndirectRenderCommand command = CulledSceneToRenderBuffer.GetDataRawAtIndex<GPUIndirectRenderCommand>(readIndex);
+                uint command = CulledSceneToRenderBuffer.GetDataRawAtIndex<uint>(readIndex);
                 bool keepVisible = true;
-                uint sourceIndex = command.Reserved1;
+                uint sourceIndex = command;
 
                 if (scene.TryGetSourceCommand(sourceIndex, out IRenderCommandMesh? sourceCommand) &&
                     sourceCommand is RenderCommand renderCommand &&
@@ -906,7 +906,7 @@ namespace XREngine.Rendering.Commands
                 if (writeIndex != readIndex)
                     CulledSceneToRenderBuffer.SetDataRawAtIndex(writeIndex, command);
 
-                visibleInstances += Math.Max(command.InstanceCount, 1u);
+                visibleInstances++;
                 writeIndex++;
             }
 
@@ -1205,19 +1205,6 @@ namespace XREngine.Rendering.Commands
             _hiZOcclusionProgram.Uniform("ActiveViewCount", (int)_activeViewCount);
             _hiZOcclusionProgram.Uniform("CurrentRenderPass", RenderPass);
 
-            bool requireHotCommands = IsHotCommandLayoutRequired();
-            bool useHotCommands = _culledHotCommandsValid &&
-                _culledHotCommandBuffer is not null &&
-                _occlusionCulledHotBuffer is not null;
-
-            if (requireHotCommands && !useHotCommands)
-            {
-                Debug.MeshesWarning($"{FormatDebugPrefix("Culling")} ShippingFast profile requires hot-command layout for Hi-Z occlusion refine; refine pass skipped.");
-                return;
-            }
-
-            _hiZOcclusionProgram.Uniform("UseHotCommands", useHotCommands ? 1 : 0);
-
             // Bind pyramid and buffers
             _hiZOcclusionProgram.Sampler("HiZDepth", _hiZDepthPyramid, 0);
             _hiZOcclusionProgram.BindBuffer(CulledSceneToRenderBuffer!, 0);
@@ -1225,23 +1212,10 @@ namespace XREngine.Rendering.Commands
             BindStorageBuffer(_hiZOcclusionProgram, _culledCountBuffer!, 2);
             BindStorageBuffer(_hiZOcclusionProgram, _cullCountScratchBuffer!, 3);
             _hiZOcclusionProgram.BindBuffer(_occlusionOverflowFlagBuffer!, 4);
-            scene.BoundsBuffer.BindTo(_hiZOcclusionProgram, 5);
+            scene.CullControlBuffer.BindTo(_hiZOcclusionProgram, 10u);
+            scene.CullBoundsBuffer.BindTo(_hiZOcclusionProgram, 5);
             if (_twoPassVisibilityBuffer is not null)
                 _twoPassVisibilityBuffer.BindTo(_hiZOcclusionProgram, 6);
-            if (useHotCommands)
-            {
-                _hiZOcclusionProgram.BindBuffer(_culledHotCommandBuffer!, 9);
-                _hiZOcclusionProgram.BindBuffer(_occlusionCulledHotBuffer!, 10);
-            }
-            else
-            {
-                // The descriptor layout still declares the optional hot streams.
-                // Bind the layout-compatible cold streams while UseHotCommands is
-                // zero so Vulkan can publish a complete descriptor set; the shader
-                // does not access these aliases on the cold-command branch.
-                _hiZOcclusionProgram.BindBuffer(CulledSceneToRenderBuffer!, 9);
-                _hiZOcclusionProgram.BindBuffer(_occlusionCulledBuffer!, 10);
-            }
             if (_statsBuffer is not null)
                 _hiZOcclusionProgram.BindBuffer(_statsBuffer, 8);
             BindViewSetBuffers(_hiZOcclusionProgram);
@@ -1283,8 +1257,6 @@ namespace XREngine.Rendering.Commands
             BindStorageBuffer(_copyCount3Program, _culledCountBuffer!, 1);
             _copyCount3Program.DispatchCompute(1, 1, 1, EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.Command);
 
-            _culledHotCommandsValid = useHotCommands;
-
             // Update VisibleCommandCount/InstanceCount from final count buffer in debug/readback mode.
             UpdateVisibleCountersFromBuffer(_culledCountBuffer);
         }
@@ -1300,8 +1272,6 @@ namespace XREngine.Rendering.Commands
             // After occlusion, the refined buffer becomes the active culled buffer.
             (_culledSceneToRenderBuffer, _occlusionCulledBuffer) = (_occlusionCulledBuffer, _culledSceneToRenderBuffer);
 
-            if (_culledHotCommandsValid && _culledHotCommandBuffer is not null && _occlusionCulledHotBuffer is not null)
-                (_culledHotCommandBuffer, _occlusionCulledHotBuffer) = (_occlusionCulledHotBuffer, _culledHotCommandBuffer);
         }
 
         private void ApplyCpuQueryAsyncOcclusionScaffold(GPUScene scene, XRCamera? camera, uint candidates)
@@ -1485,8 +1455,7 @@ namespace XREngine.Rendering.Commands
             CpuOcclusionCameraSnapshot queryCamera = CpuOcclusionCameraSnapshot.Capture(camera);
             for (uint i = 0; i < inputCount && submitted < submissionBudget; ++i)
             {
-                GPUIndirectRenderCommand cmd = CulledSceneToRenderBuffer.GetDataRawAtIndex<GPUIndirectRenderCommand>(i);
-                uint sourceIndex = cmd.Reserved1;
+                uint sourceIndex = CulledSceneToRenderBuffer.GetDataRawAtIndex<uint>(i);
 
                 // Skip if already in flight this frame.
                 if (pendingSet is not null && pendingSet.Contains(sourceIndex))
@@ -1569,8 +1538,7 @@ namespace XREngine.Rendering.Commands
 
             for (uint i = 0; i < inputCount; ++i)
             {
-                var cmd = CulledSceneToRenderBuffer.GetDataRawAtIndex<GPUIndirectRenderCommand>(i);
-                uint sourceIndex = cmd.Reserved1;
+                uint sourceIndex = CulledSceneToRenderBuffer.GetDataRawAtIndex<uint>(i);
 
                 bool resolved = _cpuOcclusionLastResolved.TryGetValue(
                     sourceIndex,
@@ -1640,9 +1608,9 @@ namespace XREngine.Rendering.Commands
                     continue;
 
                 if (writeIndex != i)
-                    CulledSceneToRenderBuffer.SetDataRawAtIndex(writeIndex, cmd);
+                    CulledSceneToRenderBuffer.SetDataRawAtIndex(writeIndex, sourceIndex);
                 writeIndex++;
-                visibleInstances += cmd.InstanceCount;
+                visibleInstances++;
             }
 
             if (writeIndex != inputCount)

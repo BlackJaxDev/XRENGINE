@@ -8,7 +8,7 @@ namespace XREngine.Rendering.Vulkan;
 /// exceptional incomplete-submit fence retirement without retaining output
 /// authority state.
 /// </summary>
-internal sealed unsafe partial class VulkanCommandRuntime
+internal sealed partial class VulkanCommandRuntime
 {
     internal bool SubmitAndWaitOpenXrCommandBuffer(CommandBuffer commandBuffer, out bool completed, VulkanSubmissionDiagnosticContext diagnosticContext = default)
     {
@@ -24,7 +24,7 @@ internal sealed unsafe partial class VulkanCommandRuntime
         return result.Succeeded;
     }
 
-    internal bool SubmitAndWaitOpenXrCommandBuffers(
+    internal unsafe bool SubmitAndWaitOpenXrCommandBuffers(
         CommandBuffer* commandBuffers,
         uint commandBufferCount,
         out bool completed,
@@ -37,7 +37,7 @@ internal sealed unsafe partial class VulkanCommandRuntime
             out _,
             diagnosticContext);
 
-    internal bool SubmitAndWaitOpenXrCommandBuffers(
+    internal unsafe bool SubmitAndWaitOpenXrCommandBuffers(
         CommandBuffer* commandBuffers,
         uint commandBufferCount,
         out bool completed,
@@ -64,7 +64,7 @@ internal sealed unsafe partial class VulkanCommandRuntime
 
     private readonly List<RetiredOpenXrSubmissionFence> _retiredOpenXrSubmissionFences = new(2);
 
-    internal VulkanOpenXrSubmissionResult SubmitAndWaitOpenXr(
+    internal unsafe VulkanOpenXrSubmissionResult SubmitAndWaitOpenXr(
         in VulkanOpenXrSubmissionInput input)
     {
         DrainRetiredOpenXrSubmissionFences();
@@ -356,7 +356,7 @@ internal sealed unsafe partial class VulkanCommandRuntime
         }
     }
 
-    private void NameOpenXrSubmissionFence(Fence fence)
+    private unsafe void NameOpenXrSubmissionFence(Fence fence)
     {
         if (fence.Handle == 0 ||
             DeviceContext.DebugUtils is null ||
@@ -381,7 +381,7 @@ internal sealed unsafe partial class VulkanCommandRuntime
         }
     }
 
-    private void RetireOpenXrSubmissionFence(
+    private unsafe void RetireOpenXrSubmissionFence(
         Fence fence,
         VulkanMappedFrameArena? arena,
         ulong generation,
@@ -427,7 +427,7 @@ internal sealed unsafe partial class VulkanCommandRuntime
         }
     }
 
-    private void DrainRetiredOpenXrSubmissionFences()
+    private unsafe void DrainRetiredOpenXrSubmissionFences()
     {
         if (!DeviceContext.IsOperational)
             return;
@@ -511,7 +511,7 @@ internal sealed unsafe partial class VulkanCommandRuntime
         return true;
     }
 
-    private bool TryPrepareOpenXrMappedFrameSlotsForSubmission(
+    private unsafe bool TryPrepareOpenXrMappedFrameSlotsForSubmission(
         VulkanMappedFrameArena arena,
         ulong generation,
         CommandBuffer* commandBuffers,
@@ -547,7 +547,7 @@ internal sealed unsafe partial class VulkanCommandRuntime
         return true;
     }
 
-    private void MarkOpenXrMappedFrameSlotsSubmitted(
+    private unsafe void MarkOpenXrMappedFrameSlotsSubmitted(
         VulkanMappedFrameArena arena,
         ulong generation,
         CommandBuffer* commandBuffers,
@@ -571,7 +571,7 @@ internal sealed unsafe partial class VulkanCommandRuntime
         }
     }
 
-    private void CancelOpenXrMappedFrameSlotsSubmission(
+    private unsafe void CancelOpenXrMappedFrameSlotsSubmission(
         VulkanMappedFrameArena arena,
         ulong generation,
         CommandBuffer* commandBuffers,
@@ -595,7 +595,7 @@ internal sealed unsafe partial class VulkanCommandRuntime
         }
     }
 
-    private bool TryCompleteOpenXrMappedFrameSlots(
+    private unsafe bool TryCompleteOpenXrMappedFrameSlots(
         VulkanMappedFrameArena arena,
         ulong generation,
         CommandBuffer* commandBuffers,
@@ -625,7 +625,7 @@ internal sealed unsafe partial class VulkanCommandRuntime
         return true;
     }
 
-    private bool OpenXrMappedFrameSlotAppearedEarlier(
+    private unsafe bool OpenXrMappedFrameSlotAppearedEarlier(
         CommandBuffer* commandBuffers,
         uint currentIndex,
         int frameSlot)

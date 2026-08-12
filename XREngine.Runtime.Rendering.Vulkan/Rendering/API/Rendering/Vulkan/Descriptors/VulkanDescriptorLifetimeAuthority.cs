@@ -672,12 +672,19 @@ internal sealed unsafe class VulkanDescriptorLifetimeAuthority
             return false;
         }
 
-        ResourceDescriptorInfoEXTNative* resources = stackalloc ResourceDescriptorInfoEXTNative[(int)descriptorCount];
-        DeviceAddressRangeEXTNative* ranges = stackalloc DeviceAddressRangeEXTNative[(int)descriptorCount];
-        ImageDescriptorInfoEXTNative* images = stackalloc ImageDescriptorInfoEXTNative[(int)descriptorCount];
-        ImageViewCreateInfo* imageViews = stackalloc ImageViewCreateInfo[(int)descriptorCount];
-        TexelBufferDescriptorInfoEXTNative* texelBuffers = stackalloc TexelBufferDescriptorInfoEXTNative[(int)descriptorCount];
+        int count = checked((int)descriptorCount);
+        ResourceDescriptorInfoEXTNative[] resourcesArray = new ResourceDescriptorInfoEXTNative[count];
+        DeviceAddressRangeEXTNative[] rangesArray = new DeviceAddressRangeEXTNative[count];
+        ImageDescriptorInfoEXTNative[] imagesArray = new ImageDescriptorInfoEXTNative[count];
+        ImageViewCreateInfo[] imageViewsArray = new ImageViewCreateInfo[count];
+        TexelBufferDescriptorInfoEXTNative[] texelBuffersArray = new TexelBufferDescriptorInfoEXTNative[count];
         VulkanBackendObjectContext context = RequireBackendContext();
+        fixed (ResourceDescriptorInfoEXTNative* resources = resourcesArray)
+        fixed (DeviceAddressRangeEXTNative* ranges = rangesArray)
+        fixed (ImageDescriptorInfoEXTNative* images = imagesArray)
+        fixed (ImageViewCreateInfo* imageViews = imageViewsArray)
+        fixed (TexelBufferDescriptorInfoEXTNative* texelBuffers = texelBuffersArray)
+        {
         for (uint index = 0; index < descriptorCount; index++)
         {
             resources[index] = new ResourceDescriptorInfoEXTNative
@@ -747,8 +754,9 @@ internal sealed unsafe class VulkanDescriptorLifetimeAuthority
         {
             return false;
         }
-        heapIndex = checked((uint)(destinationOffset / layout.ResourceStride));
-        return true;
+            heapIndex = checked((uint)(destinationOffset / layout.ResourceStride));
+            return true;
+        }
     }
 
     private bool TryWriteHeapSamplerBinding(
@@ -775,7 +783,9 @@ internal sealed unsafe class VulkanDescriptorLifetimeAuthority
             return false;
         }
 
-        SamplerCreateInfo* samplers = stackalloc SamplerCreateInfo[(int)descriptorCount];
+        SamplerCreateInfo[] samplersArray = new SamplerCreateInfo[checked((int)descriptorCount)];
+        fixed (SamplerCreateInfo* samplers = samplersArray)
+        {
         for (uint index = 0; index < descriptorCount; index++)
         {
             Sampler sampler = imageInfos[index].Sampler;
@@ -794,8 +804,9 @@ internal sealed unsafe class VulkanDescriptorLifetimeAuthority
         {
             return false;
         }
-        heapIndex = checked((uint)(destinationOffset / layout.SamplerStride));
-        return true;
+            heapIndex = checked((uint)(destinationOffset / layout.SamplerStride));
+            return true;
+        }
     }
 
     private bool TryAllocateHeapRange(
@@ -850,15 +861,28 @@ internal sealed unsafe class VulkanDescriptorLifetimeAuthority
         out string reason)
     {
         VulkanDescriptorHeapState heap = _descriptors.Heap;
-        if (!TryResolveHeapDestination(heap.SamplerStorage, offset, size, out HostAddressRangeEXTNative destination, out reason))
-            return false;
         if (heap.NativeFunctions is null || samplers is null || count == 0)
         {
             reason = "descriptor heap sampler write has no API, samplers, or count.";
             return false;
         }
         VulkanDeviceContext device = RequireOperationalDevice();
-        Result result = heap.NativeFunctions.WriteSamplerDescriptors(device.Device, count, samplers, &destination);
+        VulkanBackendObjectContext context = RequireBackendContext();
+        VulkanMappedMemorySlice mappedSlice = heap.SamplerStorage.MappedMemorySlice;
+        if (!context.Resources.Buffers.TryAcquireWrite(context, in mappedSlice, out VulkanMappedMemoryWriteLease lease))
+        {
+            reason = "descriptor heap sampler mapping lease could not be acquired.";
+            return false;
+        }
+        Result result;
+        using (lease)
+        {
+            fixed (byte* address = lease.Bytes)
+            {
+                HostAddressRangeEXTNative destination = new() { Address = address + checked((nint)offset), Size = checked((nuint)size) };
+                result = heap.NativeFunctions.WriteSamplerDescriptors(device.Device, count, samplers, &destination);
+            }
+        }
         if (result != Result.Success)
         {
             reason = $"vkWriteSamplerDescriptorsEXT failed ({result}).";
@@ -869,6 +893,7 @@ internal sealed unsafe class VulkanDescriptorLifetimeAuthority
         MarkHeapDirty(heap.SamplerStorage, offset, size, ref heap.SamplerDirtyStart, ref heap.SamplerDirtyEnd);
         RecordTableGeneration();
         heap.SamplerHighWaterBytes = Math.Max(heap.SamplerHighWaterBytes, offset + size);
+        reason = string.Empty;
         return true;
     }
 
@@ -880,15 +905,28 @@ internal sealed unsafe class VulkanDescriptorLifetimeAuthority
         out string reason)
     {
         VulkanDescriptorHeapState heap = _descriptors.Heap;
-        if (!TryResolveHeapDestination(heap.ResourceStorage, offset, size, out HostAddressRangeEXTNative destination, out reason))
-            return false;
         if (heap.NativeFunctions is null || resources is null || count == 0)
         {
             reason = "descriptor heap resource write has no API, resources, or count.";
             return false;
         }
         VulkanDeviceContext device = RequireOperationalDevice();
-        Result result = heap.NativeFunctions.WriteResourceDescriptors(device.Device, count, resources, &destination);
+        VulkanBackendObjectContext context = RequireBackendContext();
+        VulkanMappedMemorySlice mappedSlice = heap.ResourceStorage.MappedMemorySlice;
+        if (!context.Resources.Buffers.TryAcquireWrite(context, in mappedSlice, out VulkanMappedMemoryWriteLease lease))
+        {
+            reason = "descriptor heap resource mapping lease could not be acquired.";
+            return false;
+        }
+        Result result;
+        using (lease)
+        {
+            fixed (byte* address = lease.Bytes)
+            {
+                HostAddressRangeEXTNative destination = new() { Address = address + checked((nint)offset), Size = checked((nuint)size) };
+                result = heap.NativeFunctions.WriteResourceDescriptors(device.Device, count, resources, &destination);
+            }
+        }
         if (result != Result.Success)
         {
             reason = $"vkWriteResourceDescriptorsEXT failed ({result}).";
@@ -897,6 +935,7 @@ internal sealed unsafe class VulkanDescriptorLifetimeAuthority
         heap.ResourceWriteCount += count;
         heap.FrameWrites += count;
         MarkHeapDirty(heap.ResourceStorage, offset, size, ref heap.ResourceDirtyStart, ref heap.ResourceDirtyEnd);
+        reason = string.Empty;
         RecordTableGeneration();
         heap.ResourceHighWaterBytes = Math.Max(heap.ResourceHighWaterBytes, offset + size);
         return true;
@@ -1914,33 +1953,6 @@ internal sealed unsafe class VulkanDescriptorLifetimeAuthority
     private VulkanBackendObjectContext RequireBackendContext()
         => _backendContext ?? throw new InvalidOperationException(
             "The descriptor lifetime authority has not been published to a backend object context.");
-
-    private static bool TryResolveHeapDestination(
-        VulkanDescriptorHeapStorage storage,
-        ulong offset,
-        ulong size,
-        out HostAddressRangeEXTNative destination,
-        out string reason)
-    {
-        destination = default;
-        reason = string.Empty;
-        if (!storage.IsReady)
-        {
-            reason = "descriptor heap storage is not ready.";
-            return false;
-        }
-        if (size == 0 || offset > storage.Size || size > storage.Size - offset)
-        {
-            reason = $"descriptor heap write range is out of bounds (offset={offset}, size={size}, capacity={storage.Size}).";
-            return false;
-        }
-        destination = new HostAddressRangeEXTNative
-        {
-            Address = (byte*)storage.Mapped + offset,
-            Size = checked((nuint)size),
-        };
-        return true;
-    }
 
     private static void MarkHeapDirty(
         VulkanDescriptorHeapStorage storage,

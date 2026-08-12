@@ -1,4 +1,3 @@
-using System.Buffers;
 using System.Diagnostics;
 using ImageMagick;
 using Silk.NET.Vulkan;
@@ -8,7 +7,7 @@ using Buffer = Silk.NET.Vulkan.Buffer;
 
 namespace XREngine.Rendering.Vulkan;
 
-internal sealed unsafe partial class VulkanFrameLoop
+internal sealed partial class VulkanFrameLoop
 {
     private const int ScreenshotReadbackRingSize = 8;
     private const ulong MaximumScreenshotReadbackRawBytes = 256UL * 1024UL * 1024UL;
@@ -17,7 +16,7 @@ internal sealed unsafe partial class VulkanFrameLoop
     private VulkanReadbackOutputResourceService ReadbackOutputResources
         => ReadbackOutputResourceService;
 
-    internal bool TryQueueScreenshotReadback(
+    internal unsafe bool TryQueueScreenshotReadback(
         BoundingRectangle region,
         bool withTransparency,
         Action<ScreenshotReadbackResult> callback,
@@ -630,7 +629,7 @@ internal sealed unsafe partial class VulkanFrameLoop
         return ensured;
     }
 
-    private void RecordScreenshotReadbackCommands(
+    private unsafe void RecordScreenshotReadbackCommands(
         VulkanScreenshotReadbackSlot slot,
         in BlitImageInfo source,
         int sourceX,
@@ -813,7 +812,7 @@ internal sealed unsafe partial class VulkanFrameLoop
         }
 
         int rawLength = checked((int)slot.RawByteCount);
-        byte[] rawPixels = ArrayPool<byte>.Shared.Rent(rawLength);
+        VulkanPooledReadbackBytes rawPixels = new(rawLength);
         bool copied = false;
         try
         {
@@ -828,7 +827,7 @@ internal sealed unsafe partial class VulkanFrameLoop
 
             using (readScope)
             {
-                readScope.Bytes.CopyTo(rawPixels);
+                readScope.Bytes.CopyTo(rawPixels.WritableBytes);
                 copied = true;
             }
         }
@@ -836,7 +835,7 @@ internal sealed unsafe partial class VulkanFrameLoop
         {
             ReleaseScreenshotReadbackStaging(slot);
             if (!copied)
-                ArrayPool<byte>.Shared.Return(rawPixels);
+                rawPixels.Dispose();
         }
 
         if (!copied)
@@ -848,12 +847,32 @@ internal sealed unsafe partial class VulkanFrameLoop
         }
 
         Volatile.Write(ref slot.State, (int)EVulkanScreenshotReadbackSlotState.CpuProcessing);
-        Task processingTask = Task.Run(() => ProcessScreenshotReadbackPixels(
-            slot,
-            slotIndex,
-            rawPixels,
-            rawLength,
-            gpuCompletionSeconds));
+        Task processingTask;
+        try
+        {
+            processingTask = Task.Run(() => ProcessScreenshotReadbackPixels(
+                slot,
+                slotIndex,
+                rawPixels,
+                rawLength,
+                gpuCompletionSeconds));
+        }
+        catch (Exception ex)
+        {
+            rawPixels.Dispose();
+            DeliverScreenshotReadbackFailure(
+                slot,
+                $"Failed to schedule Vulkan screenshot CPU processing: {ex.Message}",
+                gpuCompletionSeconds);
+            ReleaseScreenshotReadbackReservation(slot);
+            ClearScreenshotReadbackRequest(slot);
+            Volatile.Write(
+                ref slot.State,
+                _deviceLost
+                    ? (int)EVulkanScreenshotReadbackSlotState.Abandoned
+                    : (int)EVulkanScreenshotReadbackSlotState.Idle);
+            return false;
+        }
         _commandRuntime.CommandBuffers.ReadbackTasks.Register(processingTask);
         return true;
     }
@@ -886,7 +905,7 @@ internal sealed unsafe partial class VulkanFrameLoop
     private void ProcessScreenshotReadbackPixels(
         VulkanScreenshotReadbackSlot slot,
         int slotIndex,
-        byte[] rawPixels,
+        VulkanPooledReadbackBytes rawPixels,
         int rawLength,
         double gpuCompletionSeconds)
     {
@@ -895,16 +914,17 @@ internal sealed unsafe partial class VulkanFrameLoop
         {
             int pixelCount = checked(slot.Width * slot.Height);
             byte[] rgbaPixels = GC.AllocateUninitializedArray<byte>(checked(pixelCount * 4));
-            fixed (byte* rawPtr = rawPixels)
+            if (!VulkanCommandRuntime.TryConvertColorPixelsToRgba8(
+                    rawPixels.Bytes,
+                    slot.SourceFormat,
+                    pixelCount,
+                    rgbaPixels))
             {
-                if (!VulkanCommandRuntime.TryConvertColorPixelsToRgba8(rawPtr, slot.SourceFormat, pixelCount, rgbaPixels))
-                {
-                    DeliverScreenshotReadbackFailure(
-                        slot,
-                        $"Failed to convert Vulkan screenshot source format {slot.SourceFormat} to RGBA8.",
-                        gpuCompletionSeconds);
-                    return;
-                }
+                DeliverScreenshotReadbackFailure(
+                    slot,
+                    $"Failed to convert Vulkan screenshot source format {slot.SourceFormat} to RGBA8.",
+                    gpuCompletionSeconds);
+                return;
             }
 
             if (!slot.WithTransparency)
@@ -955,7 +975,7 @@ internal sealed unsafe partial class VulkanFrameLoop
         finally
         {
             image?.Dispose();
-            ArrayPool<byte>.Shared.Return(rawPixels);
+            rawPixels.Dispose();
             ReleaseScreenshotReadbackReservation(slot);
             ClearScreenshotReadbackRequest(slot);
             if (Volatile.Read(ref slot.State) != (int)EVulkanScreenshotReadbackSlotState.Disposed)

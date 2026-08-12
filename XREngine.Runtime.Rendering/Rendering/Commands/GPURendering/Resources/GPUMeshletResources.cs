@@ -14,8 +14,6 @@ namespace XREngine.Rendering.Commands
 
     public readonly struct GpuMeshletExpansionInputs(
         XRDataBuffer visibleCommandBuffer,
-        XRDataBuffer? visibleHotCommandBuffer,
-        bool useHotCommandLayout,
         XRDataBuffer culledCountBuffer,
         XRDataBuffer drawMetadataBuffer,
         XRDataBuffer meshDataBuffer,
@@ -27,8 +25,6 @@ namespace XREngine.Rendering.Commands
         uint visibleCommandUpperBound)
     {
         public XRDataBuffer VisibleCommandBuffer { get; } = visibleCommandBuffer;
-        public XRDataBuffer? VisibleHotCommandBuffer { get; } = visibleHotCommandBuffer;
-        public bool UseHotCommandLayout { get; } = useHotCommandLayout;
         public XRDataBuffer CulledCountBuffer { get; } = culledCountBuffer;
         public XRDataBuffer DrawMetadataBuffer { get; } = drawMetadataBuffer;
         public XRDataBuffer MeshDataBuffer { get; } = meshDataBuffer;
@@ -55,7 +51,6 @@ namespace XREngine.Rendering.Commands
         public const int ExpandMeshletTaskCount = 10;
         public const int ExpandDispatchIndirect = 11;
         public const int ExpandOverflow = 12;
-        public const int ExpandVisibleHotCommands = 13;
         public const int ExpandDispatchCount = 14;
         public const int ExpandTransparencyMetadata = 15;
     }

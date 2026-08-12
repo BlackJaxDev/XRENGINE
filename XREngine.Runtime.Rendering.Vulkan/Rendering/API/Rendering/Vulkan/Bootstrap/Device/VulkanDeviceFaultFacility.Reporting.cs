@@ -134,8 +134,10 @@ internal sealed partial class VulkanDeviceFaultFacility
                 }
 
                 uint batchReturnedCount = writableCount;
-                fixed (VulkanKhrDeviceFaultInfo* batchPointer = batch)
-                    reportsResult = GetDeviceFaultReportsKhr(device, 0, &batchReturnedCount, batchPointer);
+                reportsResult = GetDeviceFaultReportsBatch(
+                    device,
+                    batch,
+                    ref batchReturnedCount);
 
                 uint initializedCount = Math.Min(batchReturnedCount, writableCount);
                 if (initializedCount > 0)
@@ -388,26 +390,43 @@ internal sealed partial class VulkanDeviceFaultFacility
             .Append(" Returned=").Append(returnedCount)
             .Append(" Incomplete=").AppendLine(incomplete.ToString());
 
-        fixed (VulkanKhrDeviceFaultInfo* reportsPointer = reports)
-        {
-            int count = Math.Min(checked((int)returnedCount), reports.Length);
-            for (int index = 0; index < count; index++)
-            {
-                VulkanKhrDeviceFaultInfo* info = reportsPointer + index;
-                string description = ReadUtf8(info->Description, VulkanKhrDeviceFaultNativeConstants.DescriptionBytes);
-                string vendorDescription = ReadUtf8(info->VendorInfo.Description, VulkanKhrDeviceFaultNativeConstants.DescriptionBytes);
-                report.Append("Report[").Append(index).Append("] flags=").Append(info->Flags)
-                    .Append(" groupId=").Append(info->GroupId)
-                    .Append(" description=").AppendLine(string.IsNullOrWhiteSpace(description) ? "<empty>" : description);
-                AppendAddress(report, "FaultAddress", info->FaultAddressInfo);
-                AppendAddress(report, "InstructionAddress", info->InstructionAddressInfo);
-                report.Append("Vendor code=0x").Append(info->VendorInfo.VendorFaultCode.ToString("X"))
-                    .Append(" data=0x").Append(info->VendorInfo.VendorFaultData.ToString("X"))
-                    .Append(" description=").AppendLine(string.IsNullOrWhiteSpace(vendorDescription) ? "<empty>" : vendorDescription);
-            }
-        }
+        int count = Math.Min(checked((int)returnedCount), reports.Length);
+        for (int index = 0; index < count; index++)
+            AppendKhrDeviceFaultReport(report, index, reports[index]);
 
         return Encoding.UTF8.GetBytes(report.ToString());
+    }
+
+    private unsafe Result GetDeviceFaultReportsBatch(
+        Device device,
+        VulkanKhrDeviceFaultInfo[] batch,
+        ref uint returnedCount)
+    {
+        fixed (VulkanKhrDeviceFaultInfo* batchPointer = batch)
+        fixed (uint* returnedCountPointer = &returnedCount)
+            return GetDeviceFaultReportsKhr!(device, 0, returnedCountPointer, batchPointer);
+    }
+
+    private static unsafe void AppendKhrDeviceFaultReport(
+        StringBuilder report,
+        int index,
+        VulkanKhrDeviceFaultInfo reportInfo)
+    {
+        VulkanKhrDeviceFaultInfo* info = &reportInfo;
+        string description = ReadUtf8(
+            info->Description,
+            VulkanKhrDeviceFaultNativeConstants.DescriptionBytes);
+        string vendorDescription = ReadUtf8(
+            info->VendorInfo.Description,
+            VulkanKhrDeviceFaultNativeConstants.DescriptionBytes);
+        report.Append("Report[").Append(index).Append("] flags=").Append(info->Flags)
+            .Append(" groupId=").Append(info->GroupId)
+            .Append(" description=").AppendLine(string.IsNullOrWhiteSpace(description) ? "<empty>" : description);
+        AppendAddress(report, "FaultAddress", info->FaultAddressInfo);
+        AppendAddress(report, "InstructionAddress", info->InstructionAddressInfo);
+        report.Append("Vendor code=0x").Append(info->VendorInfo.VendorFaultCode.ToString("X"))
+            .Append(" data=0x").Append(info->VendorInfo.VendorFaultData.ToString("X"))
+            .Append(" description=").AppendLine(string.IsNullOrWhiteSpace(vendorDescription) ? "<empty>" : vendorDescription);
     }
 
     private static unsafe byte[] FormatDebugInfo(

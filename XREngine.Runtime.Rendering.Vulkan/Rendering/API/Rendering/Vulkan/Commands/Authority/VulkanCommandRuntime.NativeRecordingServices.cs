@@ -3,12 +3,13 @@ using Silk.NET.Core.Native;
 using Silk.NET.Vulkan;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Resources;
+using XREngine.Rendering.DLSS;
 using XREngine.Rendering.RenderGraph;
 using Buffer = Silk.NET.Vulkan.Buffer;
 
 namespace XREngine.Rendering.Vulkan;
 
-internal sealed unsafe partial class VulkanCommandRuntime
+internal sealed partial class VulkanCommandRuntime
 {
     private const uint FrameTimingQueryCount = 2;
     private long _recordedPrimaryFrameCounter;
@@ -356,8 +357,8 @@ internal sealed unsafe partial class VulkanCommandRuntime
 
     internal void PrepareSubmissionMarkersForCommandBufferReuse(
         CommandBuffer commandBuffer,
-        ReadOnlySpan<FrameOp> frameOps,
-        ReadOnlySpan<FrameOp> dynamicUiFrameOps)
+        FrameOperationSequence frameOps,
+        FrameOperationSequence dynamicUiFrameOps)
     {
         lock (Synchronization._submissionMarkerLock)
         {
@@ -376,11 +377,12 @@ internal sealed unsafe partial class VulkanCommandRuntime
 
     private void RegisterSubmissionMarkersNoLock(
         CommandBuffer commandBuffer,
-        ReadOnlySpan<FrameOp> frameOps)
+        FrameOperationSequence frameOps)
     {
         for (int operationIndex = 0; operationIndex < frameOps.Length; operationIndex++)
         {
-            if (frameOps[operationIndex] is not SubmissionMarkerOp marker)
+            ref readonly FrameOperationHeader header = ref frameOps.GetHeader(operationIndex);
+            if (header.OpCode != EVulkanPrimaryPlanNodeKind.SubmissionMarker)
                 continue;
             if (!Synchronization._submissionMarkersByCommandBuffer.TryGetValue(
                     commandBuffer.Handle,
@@ -391,7 +393,7 @@ internal sealed unsafe partial class VulkanCommandRuntime
                     commandBuffer.Handle,
                     markers);
             }
-            markers.Add(marker.Fence);
+            markers.Add(frameOps.Stream.GetSubmissionMarker(operationIndex).Fence);
         }
     }
 
@@ -480,7 +482,7 @@ internal sealed unsafe partial class VulkanCommandRuntime
                 $"Cannot execute Vulkan device operation '{operation}' while device state is {DeviceContext.State}.");
     }
 
-    private bool TryAppendDescriptorHeapInheritancePNext(
+    private unsafe bool TryAppendDescriptorHeapInheritancePNext(
         ref CommandBufferInheritanceInfo inheritanceInfo,
         CommandBufferInheritanceDescriptorHeapInfoEXTNative* heapInfo,
         BindHeapInfoEXTNative* samplerHeapInfo,
@@ -525,7 +527,7 @@ internal sealed unsafe partial class VulkanCommandRuntime
             }
         }
 
-        Span<Format> colorFormats = colorCount == 0 ? [] : stackalloc Format[colorCount];
+        Format[] colorFormats = colorCount == 0 ? [] : new Format[colorCount];
         int colorIndex = 0;
         for (int index = 0; index < signatures.Length; index++)
             if (signatures[index].Role == AttachmentRole.Color)
@@ -547,23 +549,26 @@ internal sealed unsafe partial class VulkanCommandRuntime
     private bool SupportsDynamicRenderingLocalRead
         => DeviceContext.MutableCapabilities._supportsDynamicRenderingLocalRead;
 
-    private void CmdBeginDynamicRendering(
+    private unsafe void CmdBeginDynamicRendering(
         CommandBuffer commandBuffer,
         RenderingInfo* renderingInfo,
         bool preferKhrDynamicRendering = false)
     {
         if (renderingInfo is not null)
         {
-            for (uint index = 0; index < renderingInfo->ColorAttachmentCount; index++)
+            ReadOnlySpan<RenderingAttachmentInfo> colorAttachments = new(
+                renderingInfo->PColorAttachments,
+                checked((int)renderingInfo->ColorAttachmentCount));
+            for (int index = 0; index < colorAttachments.Length; index++)
             {
                 PrimaryCommandEncoder.Track(
                     commandBuffer,
                     ObjectType.ImageView,
-                    renderingInfo->PColorAttachments[index].ImageView.Handle);
+                    colorAttachments[index].ImageView.Handle);
                 PrimaryCommandEncoder.Track(
                     commandBuffer,
                     ObjectType.ImageView,
-                    renderingInfo->PColorAttachments[index].ResolveImageView.Handle);
+                    colorAttachments[index].ResolveImageView.Handle);
             }
             if (renderingInfo->PDepthAttachment is not null)
             {
@@ -1045,7 +1050,7 @@ internal sealed unsafe partial class VulkanCommandRuntime
             TransitionSecondaryDescriptorImagesForExecution(primary, secondaryBuffers[index]);
     }
 
-    private void CmdExecuteCommandsTracked(
+    private unsafe void CmdExecuteCommandsTracked(
         CommandBuffer primary,
         uint commandBufferCount,
         CommandBuffer* secondaryCommandBuffers)
@@ -1071,7 +1076,7 @@ internal sealed unsafe partial class VulkanCommandRuntime
         RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanExecuteSecondaryCommandBuffers(commandBufferCount);
     }
 
-    private void CmdBeginRenderPassTracked(
+    private unsafe void CmdBeginRenderPassTracked(
         CommandBuffer commandBuffer,
         RenderPassBeginInfo* beginInfo,
         SubpassContents contents)
@@ -1202,7 +1207,7 @@ internal sealed unsafe partial class VulkanCommandRuntime
         public readonly uint DebugFlags = debugFlags;
     }
 
-    private static void WriteFrozenClearValues(
+    private static unsafe void WriteFrozenClearValues(
         ClearValue* destination,
         uint attachmentCount,
         in VulkanCommandClearStateSnapshot clearState)
@@ -1233,7 +1238,7 @@ internal sealed unsafe partial class VulkanCommandRuntime
         => DeviceContext.DebugUtils is not null &&
            FrameTelemetry._diagnosticOptions.EnableCommandBufferLabels;
 
-    internal bool CmdBeginLabel(CommandBuffer commandBuffer, string name)
+    internal unsafe bool CmdBeginLabel(CommandBuffer commandBuffer, string name)
     {
         if (!CanRecordCommandBufferDebugLabels)
             return false;
@@ -1263,7 +1268,7 @@ internal sealed unsafe partial class VulkanCommandRuntime
             DeviceContext.DebugUtils!.CmdEndDebugUtilsLabel(commandBuffer);
     }
 
-    internal void CmdPipelineBarrierTracked(
+    internal unsafe void CmdPipelineBarrierTracked(
         CommandBuffer commandBuffer,
         PipelineStageFlags sourceStages,
         PipelineStageFlags destinationStages,
@@ -1290,7 +1295,21 @@ internal sealed unsafe partial class VulkanCommandRuntime
             imageBarriers);
     }
 
-    internal void CmdCopyBufferTracked(
+    /// <summary>Single synchronization2 ABI boundary for frozen render-graph barrier ranges.</summary>
+    internal void CmdPipelineBarrier2Tracked(CommandBuffer commandBuffer, in DependencyInfo dependencyInfo)
+    {
+        if (DeviceContext.InstanceApiVersion >= Vk.Version13)
+        {
+            Api.CmdPipelineBarrier2(commandBuffer, in dependencyInfo);
+            return;
+        }
+
+        if (DeviceContext.ExtensionFunctions.KhrSynchronization2 is not { } synchronization2)
+            throw new InvalidOperationException("VK_KHR_synchronization2 command extension is unavailable.");
+        synchronization2.CmdPipelineBarrier2(commandBuffer, in dependencyInfo);
+    }
+
+    internal unsafe void CmdCopyBufferTracked(
         CommandBuffer commandBuffer,
         Buffer source,
         Buffer destination,
@@ -1302,6 +1321,19 @@ internal sealed unsafe partial class VulkanCommandRuntime
             destination,
             regionCount,
             regions);
+
+    internal void CmdCopyBufferTracked(
+        CommandBuffer commandBuffer,
+        Buffer source,
+        Buffer destination,
+        uint regionCount,
+        ref BufferCopy region)
+        => PrimaryCommandEncoder.CopyBuffer(
+            commandBuffer,
+            source,
+            destination,
+            regionCount,
+            ref region);
 
     internal void TrackVulkanCommandBufferResource(
         CommandBuffer commandBuffer,
@@ -1370,6 +1402,82 @@ internal sealed unsafe partial class VulkanCommandRuntime
         _ = batchIndex;
     }
 
+    internal EVulkanIndirectSecondaryEligibility EvaluateIndirectSecondaryRecordingContract(
+        in IndirectDrawPayload operation)
+    {
+        VulkanIndirectSecondaryRecordingContract contract = operation.SecondaryRecordingContract;
+        if (!contract.IsEligible)
+            return contract.Eligibility == EVulkanIndirectSecondaryEligibility.NotEvaluated ? EVulkanIndirectSecondaryEligibility.MutableCurrentFrame : contract.Eligibility;
+        if (!IsProducerCompleteIndirectBuffer(operation.IndirectBuffer) || operation.UseCount && (operation.ParameterBuffer is null || !IsProducerCompleteIndirectBuffer(operation.ParameterBuffer))) return EVulkanIndirectSecondaryEligibility.ProducerIncomplete;
+        if (CaptureProducerCompleteIndirectBufferIdentity(operation.IndirectBuffer) != contract.IndirectBufferIdentity || CaptureProducerCompleteIndirectBufferIdentity(operation.ParameterBuffer) != contract.ParameterBufferIdentity) return EVulkanIndirectSecondaryEligibility.BufferIdentityChanged;
+        return IsIndirectSecondaryRangeValid(operation.IndirectBuffer, operation.ParameterBuffer, operation.DrawCount, operation.Stride, operation.ByteOffset, operation.CountByteOffset, operation.UseCount) ? EVulkanIndirectSecondaryEligibility.EligibleProducerComplete : EVulkanIndirectSecondaryEligibility.InvalidRange;
+    }
+
+    // The dense recorder has no authoring operation instance. Keep diagnostics
+    // at the numeric opcode boundary so recording cannot rehydrate one.
+    internal void RecordVulkanCommandDiagnosticMarker(
+        CommandBuffer commandBuffer,
+        EVulkanPrimaryPlanNodeKind operationCode,
+        int passIndex,
+        int batchIndex)
+    {
+        _ = commandBuffer;
+        _ = operationCode;
+        _ = passIndex;
+        _ = batchIndex;
+    }
+
+    internal void RecordComputeDispatchIndirectPayload(
+        CommandBuffer commandBuffer,
+        uint imageIndex,
+        in ComputeDispatchIndirectPayload operation)
+    {
+        Pipeline pipeline = operation.Program.ComputePipeline;
+        if (pipeline.Handle == 0)
+            throw new InvalidOperationException($"Compute pipeline '{operation.Program.Data.Name ?? "UnnamedProgram"}' is unavailable.");
+
+        BindPipelineTracked(commandBuffer, PipelineBindPoint.Compute, pipeline);
+        EnsureComputeStorageImageLayoutsForDispatch(commandBuffer, operation.Snapshot);
+        PushConstantsTracked(commandBuffer, operation.Program.PipelineLayout, CommonPushConstantStageFlags, 0, new ComputeDispatchPushConstants(0u, 0u, 0u, 0u));
+        if (!operation.Program.TryBuildAndBindComputeDescriptorSets(CreateProgramRecordingRequest(commandBuffer), imageIndex, operation.Snapshot, 0, out _, out DescriptorSet[] boundDescriptorSets, out IReadOnlyList<(Buffer buffer, DeviceMemory memory)> temporaryBuffers))
+        {
+            foreach ((Buffer buffer, DeviceMemory memory) in temporaryBuffers) DestroyBuffer(buffer, memory);
+            throw new InvalidOperationException($"Descriptor binding failed for indirect compute program '{operation.Program.Data.Name ?? "UnnamedProgram"}'.");
+        }
+        _commandBufferRecordingScratch.Value!.PreparedComputePayload = new VulkanPreparedComputePayload(boundDescriptorSets);
+        RegisterComputeTransientUniformBuffers(imageIndex, temporaryBuffers);
+        TrackVulkanCommandBufferResource(commandBuffer, ObjectType.Buffer, operation.ArgumentBuffer.Handle, $"{operation.Label}.Arguments");
+        Api.CmdDispatchIndirect(commandBuffer, operation.ArgumentBuffer, operation.ArgumentOffset);
+    }
+
+    internal unsafe void RecordBufferCopyPayload(CommandBuffer commandBuffer, in BufferCopyPayload operation)
+    {
+        BufferCopy copy = new() { SrcOffset = operation.SourceOffset, DstOffset = operation.DestinationOffset, Size = operation.ByteCount };
+        CmdCopyBufferTracked(commandBuffer, operation.SourceBuffer, operation.DestinationBuffer, 1, &copy);
+    }
+
+    internal void RecordDlssUpscalePayload(CommandBuffer commandBuffer, in DlssUpscalePayload payload)
+    {
+        VulkanStreamlineImage source = DlssFrameOp.TransitionImageToGeneral(this, commandBuffer, payload.SourceColor);
+        VulkanStreamlineImage depth = DlssFrameOp.TransitionImageToGeneral(this, commandBuffer, payload.Depth);
+        VulkanStreamlineImage motion = DlssFrameOp.TransitionImageToGeneral(this, commandBuffer, payload.Motion);
+        VulkanStreamlineImage output = DlssFrameOp.TransitionImageToGeneral(this, commandBuffer, payload.OutputColor);
+        VulkanStreamlineImage? exposure = payload.Exposure is { } value ? DlssFrameOp.TransitionImageToGeneral(this, commandBuffer, value) : null;
+        VulkanUpscaleBridgeDispatchParameters parameters = payload.Parameters;
+        if (!NvidiaDlssManager.Native.TryRecordNativeVulkanUpscale(payload.Session, commandBuffer, source, depth, motion, output, exposure, in parameters, out string reason)) DlssFrameOp.ThrowRecordingFailure("upscale", reason);
+        DlssFrameOp.MakeOutputVisibleForSampling(this, commandBuffer, output);
+    }
+
+    internal void RecordDlssFrameGenerationPayload(CommandBuffer commandBuffer, uint imageIndex, in DlssFrameGenerationPayload payload)
+    {
+        VulkanStreamlineImage depth = DlssFrameOp.TransitionImageToGeneral(this, commandBuffer, payload.Depth);
+        VulkanStreamlineImage motion = DlssFrameOp.TransitionImageToGeneral(this, commandBuffer, payload.Motion);
+        VulkanStreamlineImage hudless = DlssFrameOp.TransitionImageToGeneral(this, commandBuffer, payload.HudlessColor);
+        if (!TryPrepareStreamlineUiImage(commandBuffer, payload.UiColorAndAlpha, out VulkanStreamlineImage ui)) throw new InvalidOperationException($"DLSS frame generation requires a frozen UI color/alpha image for swapchain image {imageIndex}.");
+        VulkanUpscaleBridgeDispatchParameters parameters = payload.Parameters;
+        if (!NvidiaDlssManager.Native.TryRecordNativeVulkanFrameGeneration(payload.Session, commandBuffer, depth, motion, hudless, ui, in parameters, out string reason)) DlssFrameOp.ThrowRecordingFailure("frame generation", reason);
+    }
+
     internal void RecordComputeDispatchIndirectOp(
         CommandBuffer commandBuffer,
         uint imageIndex,
@@ -1420,7 +1528,7 @@ internal sealed unsafe partial class VulkanCommandRuntime
             operation.ArgumentOffset);
     }
 
-    internal void RecordBufferCopyOp(
+    internal unsafe void RecordBufferCopyOp(
         CommandBuffer commandBuffer,
         BufferCopyOp operation)
     {

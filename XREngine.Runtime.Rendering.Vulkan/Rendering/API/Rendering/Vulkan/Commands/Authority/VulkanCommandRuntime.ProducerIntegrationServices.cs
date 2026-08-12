@@ -3,7 +3,7 @@ using Silk.NET.Vulkan;
 namespace XREngine.Rendering.Vulkan;
 
 /// <summary>Narrow command-authority entry points for renderer-owned producers.</summary>
-internal sealed unsafe partial class VulkanCommandRuntime
+internal sealed partial class VulkanCommandRuntime
 {
     /// <summary>
     /// Enqueues a frozen texture-upload operation without giving the resource

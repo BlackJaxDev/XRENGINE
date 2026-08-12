@@ -5,7 +5,7 @@ using XREngine.Rendering.Resources;
 
 namespace XREngine.Rendering.Vulkan;
 
-internal sealed unsafe partial class VulkanCommandRuntime
+internal sealed partial class VulkanCommandRuntime
 {
     private static Silk.NET.Vulkan.Buffer RequirePreparedBuffer(VkDataBuffer resource, string role)
     {
@@ -36,7 +36,7 @@ internal sealed unsafe partial class VulkanCommandRuntime
         {
             descriptorSet = state.Set;
             descriptorSetLayout = state.SetLayout;
-            if (descriptorSet.Handle == 0 || descriptorSetLayout.Handle == 0 || state.DirtySlots.Count != 0)
+            if (descriptorSet.Handle == 0 || descriptorSetLayout.Handle == 0 || state.PublicationStream.DirtyCount != 0)
             {
                 throw new VulkanPlanPreconditionException(
                     $"Bindless material consumer '{consumer}' reached recording before its descriptor table was published.");
@@ -344,7 +344,7 @@ internal sealed unsafe partial class VulkanCommandRuntime
     private static int ClampPreparedBlitOffset(long value, int extent)
         => value <= 0 ? 0 : value >= extent ? extent : (int)value;
 
-    internal void TransitionPreparedImageForBlit(
+    internal unsafe void TransitionPreparedImageForBlit(
         CommandBuffer commandBuffer,
         BlitImageInfo info,
         ImageLayout oldLayout,

@@ -1,6 +1,7 @@
 using System;
 using System.Diagnostics;
 using System.Numerics;
+using System.Runtime.InteropServices;
 using Silk.NET.Vulkan;
 using XREngine.Data.Colors;
 using XREngine.Data.Geometry;
@@ -8,7 +9,7 @@ using XREngine.Data.Rendering;
 
 namespace XREngine.Rendering.Vulkan
 {
-    internal unsafe partial class VulkanCommandRuntime
+    internal partial class VulkanCommandRuntime
     {
         // =========== Readback Region Helpers ===========
 
@@ -123,7 +124,7 @@ namespace XREngine.Rendering.Vulkan
                     ImageLayout.TransferSrcOptimal,
                     stagingBuffer,
                     1,
-                    &copy);
+                    ref copy);
 
                 TransitionPreparedImageForBlit(
                     scope.CommandBuffer,
@@ -142,7 +143,7 @@ namespace XREngine.Rendering.Vulkan
 
             VulkanReadbackLayoutPolicy.PublishRestoredAttachmentLayout(liveSource, postTransferLayout);
 
-            if (!TryMapReadbackSlice(stagingSlice, out VulkanFrameDataReadScope readScope, out void* mappedPtr))
+            if (!TryMapReadbackSlice(stagingSlice, out VulkanFrameDataReadScope readScope))
             {
                 return false;
             }
@@ -150,7 +151,7 @@ namespace XREngine.Rendering.Vulkan
             try
             {
                 rgbaPixels = new byte[width * height * 4];
-                return TryConvertColorPixelsToRgba8(mappedPtr, liveSource.Format, width * height, rgbaPixels);
+                return TryConvertColorPixelsToRgba8(readScope.Bytes, liveSource.Format, width * height, rgbaPixels);
             }
             finally
             {
@@ -218,7 +219,7 @@ namespace XREngine.Rendering.Vulkan
                     ImageLayout.TransferSrcOptimal,
                     stagingBuffer,
                     1,
-                    &copy);
+                    ref copy);
 
                 TransitionPreparedImageForBlit(
                     scope.CommandBuffer,
@@ -237,7 +238,7 @@ namespace XREngine.Rendering.Vulkan
 
             VulkanReadbackLayoutPolicy.PublishRestoredAttachmentLayout(liveSource, postTransferLayout);
 
-            if (!TryMapReadbackSlice(stagingSlice, out VulkanFrameDataReadScope readScope, out void* mappedPtr))
+            if (!TryMapReadbackSlice(stagingSlice, out VulkanFrameDataReadScope readScope))
             {
                 return false;
             }
@@ -246,7 +247,7 @@ namespace XREngine.Rendering.Vulkan
             {
                 int pixelCount = width * height;
                 rgbaFloats = new float[pixelCount * 4];
-                return TryConvertColorPixelsToRgbaFloat(mappedPtr, liveSource.Format, pixelCount, rgbaFloats);
+                return TryConvertColorPixelsToRgbaFloat(readScope.Bytes, liveSource.Format, pixelCount, rgbaFloats);
             }
             finally
             {
@@ -317,7 +318,7 @@ namespace XREngine.Rendering.Vulkan
                     ImageLayout.TransferSrcOptimal,
                     stagingBuffer,
                     1,
-                    &copy);
+                    ref copy);
 
                 TransitionPreparedImageForBlit(
                     scope.CommandBuffer,
@@ -334,7 +335,7 @@ namespace XREngine.Rendering.Vulkan
                 return false;
             }
 
-            if (!TryMapReadbackSlice(stagingSlice, out VulkanFrameDataReadScope readScope, out void* mappedPtr))
+            if (!TryMapReadbackSlice(stagingSlice, out VulkanFrameDataReadScope readScope))
             {
                 return false;
             }
@@ -342,11 +343,12 @@ namespace XREngine.Rendering.Vulkan
             try
             {
                 rgbaFloats = new float[pixelCount * 4];
-                byte* depthPtr = (byte*)mappedPtr;
                 int depthStride = checked((int)pixelSize);
                 for (int i = 0; i < pixelCount; i++)
                 {
-                    float depth = ReadDepthValue(depthPtr + (i * depthStride), liveSource.Format);
+                    float depth = ReadDepthValue(
+                        readScope.Bytes.Slice(i * depthStride, depthStride),
+                        liveSource.Format);
                     int dst = i * 4;
                     rgbaFloats[dst + 0] = depth;
                     rgbaFloats[dst + 1] = depth;
@@ -364,18 +366,26 @@ namespace XREngine.Rendering.Vulkan
 
         // =========== Pixel Format Conversion ===========
 
-        internal static bool TryConvertColorPixelsToRgba8(void* srcPtr, Format format, int pixelCount, byte[] dstRgba)
+        internal static bool TryConvertColorPixelsToRgba8(
+            ReadOnlySpan<byte> source,
+            Format format,
+            int pixelCount,
+            byte[] dstRgba)
         {
             if (pixelCount <= 0 || dstRgba.Length < pixelCount * 4)
                 return false;
+            uint pixelSize = GetColorFormatPixelSize(format);
+            if (pixelSize == 0 ||
+                source.Length < checked(pixelCount * (int)pixelSize))
+            {
+                return false;
+            }
 
             static byte FloatToByte(float v)
             {
                 float clamped = Math.Clamp(v, 0.0f, 1.0f);
                 return (byte)Math.Clamp((int)MathF.Round(clamped * 255.0f), 0, 255);
             }
-
-            byte* src = (byte*)srcPtr;
 
             switch (format)
             {
@@ -385,10 +395,10 @@ namespace XREngine.Rendering.Vulkan
                     {
                         int srcIndex = i * 4;
                         int dstIndex = i * 4;
-                        dstRgba[dstIndex + 0] = src[srcIndex + 0];
-                        dstRgba[dstIndex + 1] = src[srcIndex + 1];
-                        dstRgba[dstIndex + 2] = src[srcIndex + 2];
-                        dstRgba[dstIndex + 3] = src[srcIndex + 3];
+                        dstRgba[dstIndex + 0] = source[srcIndex + 0];
+                        dstRgba[dstIndex + 1] = source[srcIndex + 1];
+                        dstRgba[dstIndex + 2] = source[srcIndex + 2];
+                        dstRgba[dstIndex + 3] = source[srcIndex + 3];
                     }
                     return true;
 
@@ -398,10 +408,10 @@ namespace XREngine.Rendering.Vulkan
                     {
                         int srcIndex = i * 4;
                         int dstIndex = i * 4;
-                        dstRgba[dstIndex + 0] = src[srcIndex + 2];
-                        dstRgba[dstIndex + 1] = src[srcIndex + 1];
-                        dstRgba[dstIndex + 2] = src[srcIndex + 0];
-                        dstRgba[dstIndex + 3] = src[srcIndex + 3];
+                        dstRgba[dstIndex + 0] = source[srcIndex + 2];
+                        dstRgba[dstIndex + 1] = source[srcIndex + 1];
+                        dstRgba[dstIndex + 2] = source[srcIndex + 0];
+                        dstRgba[dstIndex + 3] = source[srcIndex + 3];
                     }
                     return true;
 
@@ -410,11 +420,10 @@ namespace XREngine.Rendering.Vulkan
                     {
                         int srcIndex = i * 8;
                         int dstIndex = i * 4;
-                        ushort* p = (ushort*)(src + srcIndex);
-                        dstRgba[dstIndex + 0] = FloatToByte(p[0] / 65535.0f);
-                        dstRgba[dstIndex + 1] = FloatToByte(p[1] / 65535.0f);
-                        dstRgba[dstIndex + 2] = FloatToByte(p[2] / 65535.0f);
-                        dstRgba[dstIndex + 3] = FloatToByte(p[3] / 65535.0f);
+                        dstRgba[dstIndex + 0] = FloatToByte(ReadUInt16(source, srcIndex + 0) / 65535.0f);
+                        dstRgba[dstIndex + 1] = FloatToByte(ReadUInt16(source, srcIndex + 2) / 65535.0f);
+                        dstRgba[dstIndex + 2] = FloatToByte(ReadUInt16(source, srcIndex + 4) / 65535.0f);
+                        dstRgba[dstIndex + 3] = FloatToByte(ReadUInt16(source, srcIndex + 6) / 65535.0f);
                     }
                     return true;
 
@@ -423,11 +432,10 @@ namespace XREngine.Rendering.Vulkan
                     {
                         int srcIndex = i * 8;
                         int dstIndex = i * 4;
-                        ushort* p = (ushort*)(src + srcIndex);
-                        dstRgba[dstIndex + 0] = FloatToByte((float)BitConverter.UInt16BitsToHalf(p[0]));
-                        dstRgba[dstIndex + 1] = FloatToByte((float)BitConverter.UInt16BitsToHalf(p[1]));
-                        dstRgba[dstIndex + 2] = FloatToByte((float)BitConverter.UInt16BitsToHalf(p[2]));
-                        dstRgba[dstIndex + 3] = FloatToByte((float)BitConverter.UInt16BitsToHalf(p[3]));
+                        dstRgba[dstIndex + 0] = FloatToByte((float)BitConverter.UInt16BitsToHalf(ReadUInt16(source, srcIndex + 0)));
+                        dstRgba[dstIndex + 1] = FloatToByte((float)BitConverter.UInt16BitsToHalf(ReadUInt16(source, srcIndex + 2)));
+                        dstRgba[dstIndex + 2] = FloatToByte((float)BitConverter.UInt16BitsToHalf(ReadUInt16(source, srcIndex + 4)));
+                        dstRgba[dstIndex + 3] = FloatToByte((float)BitConverter.UInt16BitsToHalf(ReadUInt16(source, srcIndex + 6)));
                     }
                     return true;
 
@@ -436,8 +444,7 @@ namespace XREngine.Rendering.Vulkan
                     {
                         int srcIndex = i * 2;
                         int dstIndex = i * 4;
-                        ushort* p = (ushort*)(src + srcIndex);
-                        byte value = FloatToByte((float)BitConverter.UInt16BitsToHalf(p[0]));
+                        byte value = FloatToByte((float)BitConverter.UInt16BitsToHalf(ReadUInt16(source, srcIndex)));
                         dstRgba[dstIndex + 0] = value;
                         dstRgba[dstIndex + 1] = value;
                         dstRgba[dstIndex + 2] = value;
@@ -450,9 +457,8 @@ namespace XREngine.Rendering.Vulkan
                     {
                         int srcIndex = i * 4;
                         int dstIndex = i * 4;
-                        ushort* p = (ushort*)(src + srcIndex);
-                        dstRgba[dstIndex + 0] = FloatToByte((float)BitConverter.UInt16BitsToHalf(p[0]));
-                        dstRgba[dstIndex + 1] = FloatToByte((float)BitConverter.UInt16BitsToHalf(p[1]));
+                        dstRgba[dstIndex + 0] = FloatToByte((float)BitConverter.UInt16BitsToHalf(ReadUInt16(source, srcIndex + 0)));
+                        dstRgba[dstIndex + 1] = FloatToByte((float)BitConverter.UInt16BitsToHalf(ReadUInt16(source, srcIndex + 2)));
                         dstRgba[dstIndex + 2] = 0;
                         dstRgba[dstIndex + 3] = 255;
                     }
@@ -463,11 +469,10 @@ namespace XREngine.Rendering.Vulkan
                     {
                         int srcIndex = i * 16;
                         int dstIndex = i * 4;
-                        float* p = (float*)(src + srcIndex);
-                        dstRgba[dstIndex + 0] = FloatToByte(p[0]);
-                        dstRgba[dstIndex + 1] = FloatToByte(p[1]);
-                        dstRgba[dstIndex + 2] = FloatToByte(p[2]);
-                        dstRgba[dstIndex + 3] = FloatToByte(p[3]);
+                        dstRgba[dstIndex + 0] = FloatToByte(ReadSingle(source, srcIndex + 0));
+                        dstRgba[dstIndex + 1] = FloatToByte(ReadSingle(source, srcIndex + 4));
+                        dstRgba[dstIndex + 2] = FloatToByte(ReadSingle(source, srcIndex + 8));
+                        dstRgba[dstIndex + 3] = FloatToByte(ReadSingle(source, srcIndex + 12));
                     }
                     return true;
 
@@ -476,7 +481,7 @@ namespace XREngine.Rendering.Vulkan
                     {
                         int srcIndex = i * 4;
                         int dstIndex = i * 4;
-                        float value = *(float*)(src + srcIndex);
+                        float value = ReadSingle(source, srcIndex);
                         byte encoded = FloatToByte(value);
                         dstRgba[dstIndex + 0] = encoded;
                         dstRgba[dstIndex + 1] = encoded;
@@ -490,7 +495,7 @@ namespace XREngine.Rendering.Vulkan
                     {
                         int srcIndex = i * 4;
                         int dstIndex = i * 4;
-                        uint packed = *(uint*)(src + srcIndex);
+                        uint packed = ReadUInt32(source, srcIndex);
                         DecodeB10G11R11Ufloat(packed, out float r, out float g, out float b);
                         dstRgba[dstIndex + 0] = FloatToByte(r);
                         dstRgba[dstIndex + 1] = FloatToByte(g);
@@ -503,12 +508,20 @@ namespace XREngine.Rendering.Vulkan
             return false;
         }
 
-        private static bool TryConvertColorPixelsToRgbaFloat(void* srcPtr, Format format, int pixelCount, float[] dstRgba)
+        private static bool TryConvertColorPixelsToRgbaFloat(
+            ReadOnlySpan<byte> source,
+            Format format,
+            int pixelCount,
+            float[] dstRgba)
         {
             if (pixelCount <= 0 || dstRgba.Length < pixelCount * 4)
                 return false;
-
-            byte* src = (byte*)srcPtr;
+            uint pixelSize = GetColorFormatPixelSize(format);
+            if (pixelSize == 0 ||
+                source.Length < checked(pixelCount * (int)pixelSize))
+            {
+                return false;
+            }
 
             switch (format)
             {
@@ -518,10 +531,10 @@ namespace XREngine.Rendering.Vulkan
                     {
                         int srcIndex = i * 4;
                         int dstIndex = i * 4;
-                        dstRgba[dstIndex + 0] = src[srcIndex + 0] / 255.0f;
-                        dstRgba[dstIndex + 1] = src[srcIndex + 1] / 255.0f;
-                        dstRgba[dstIndex + 2] = src[srcIndex + 2] / 255.0f;
-                        dstRgba[dstIndex + 3] = src[srcIndex + 3] / 255.0f;
+                        dstRgba[dstIndex + 0] = source[srcIndex + 0] / 255.0f;
+                        dstRgba[dstIndex + 1] = source[srcIndex + 1] / 255.0f;
+                        dstRgba[dstIndex + 2] = source[srcIndex + 2] / 255.0f;
+                        dstRgba[dstIndex + 3] = source[srcIndex + 3] / 255.0f;
                     }
                     return true;
 
@@ -531,10 +544,10 @@ namespace XREngine.Rendering.Vulkan
                     {
                         int srcIndex = i * 4;
                         int dstIndex = i * 4;
-                        dstRgba[dstIndex + 0] = src[srcIndex + 2] / 255.0f;
-                        dstRgba[dstIndex + 1] = src[srcIndex + 1] / 255.0f;
-                        dstRgba[dstIndex + 2] = src[srcIndex + 0] / 255.0f;
-                        dstRgba[dstIndex + 3] = src[srcIndex + 3] / 255.0f;
+                        dstRgba[dstIndex + 0] = source[srcIndex + 2] / 255.0f;
+                        dstRgba[dstIndex + 1] = source[srcIndex + 1] / 255.0f;
+                        dstRgba[dstIndex + 2] = source[srcIndex + 0] / 255.0f;
+                        dstRgba[dstIndex + 3] = source[srcIndex + 3] / 255.0f;
                     }
                     return true;
 
@@ -543,11 +556,10 @@ namespace XREngine.Rendering.Vulkan
                     {
                         int srcIndex = i * 8;
                         int dstIndex = i * 4;
-                        ushort* p = (ushort*)(src + srcIndex);
-                        dstRgba[dstIndex + 0] = p[0] / 65535.0f;
-                        dstRgba[dstIndex + 1] = p[1] / 65535.0f;
-                        dstRgba[dstIndex + 2] = p[2] / 65535.0f;
-                        dstRgba[dstIndex + 3] = p[3] / 65535.0f;
+                        dstRgba[dstIndex + 0] = ReadUInt16(source, srcIndex + 0) / 65535.0f;
+                        dstRgba[dstIndex + 1] = ReadUInt16(source, srcIndex + 2) / 65535.0f;
+                        dstRgba[dstIndex + 2] = ReadUInt16(source, srcIndex + 4) / 65535.0f;
+                        dstRgba[dstIndex + 3] = ReadUInt16(source, srcIndex + 6) / 65535.0f;
                     }
                     return true;
 
@@ -556,11 +568,10 @@ namespace XREngine.Rendering.Vulkan
                     {
                         int srcIndex = i * 8;
                         int dstIndex = i * 4;
-                        ushort* p = (ushort*)(src + srcIndex);
-                        dstRgba[dstIndex + 0] = (float)BitConverter.UInt16BitsToHalf(p[0]);
-                        dstRgba[dstIndex + 1] = (float)BitConverter.UInt16BitsToHalf(p[1]);
-                        dstRgba[dstIndex + 2] = (float)BitConverter.UInt16BitsToHalf(p[2]);
-                        dstRgba[dstIndex + 3] = (float)BitConverter.UInt16BitsToHalf(p[3]);
+                        dstRgba[dstIndex + 0] = (float)BitConverter.UInt16BitsToHalf(ReadUInt16(source, srcIndex + 0));
+                        dstRgba[dstIndex + 1] = (float)BitConverter.UInt16BitsToHalf(ReadUInt16(source, srcIndex + 2));
+                        dstRgba[dstIndex + 2] = (float)BitConverter.UInt16BitsToHalf(ReadUInt16(source, srcIndex + 4));
+                        dstRgba[dstIndex + 3] = (float)BitConverter.UInt16BitsToHalf(ReadUInt16(source, srcIndex + 6));
                     }
                     return true;
 
@@ -569,8 +580,7 @@ namespace XREngine.Rendering.Vulkan
                     {
                         int srcIndex = i * 2;
                         int dstIndex = i * 4;
-                        ushort* p = (ushort*)(src + srcIndex);
-                        float value = (float)BitConverter.UInt16BitsToHalf(p[0]);
+                        float value = (float)BitConverter.UInt16BitsToHalf(ReadUInt16(source, srcIndex));
                         dstRgba[dstIndex + 0] = value;
                         dstRgba[dstIndex + 1] = value;
                         dstRgba[dstIndex + 2] = value;
@@ -583,9 +593,8 @@ namespace XREngine.Rendering.Vulkan
                     {
                         int srcIndex = i * 4;
                         int dstIndex = i * 4;
-                        ushort* p = (ushort*)(src + srcIndex);
-                        dstRgba[dstIndex + 0] = (float)BitConverter.UInt16BitsToHalf(p[0]);
-                        dstRgba[dstIndex + 1] = (float)BitConverter.UInt16BitsToHalf(p[1]);
+                        dstRgba[dstIndex + 0] = (float)BitConverter.UInt16BitsToHalf(ReadUInt16(source, srcIndex + 0));
+                        dstRgba[dstIndex + 1] = (float)BitConverter.UInt16BitsToHalf(ReadUInt16(source, srcIndex + 2));
                         dstRgba[dstIndex + 2] = 0.0f;
                         dstRgba[dstIndex + 3] = 1.0f;
                     }
@@ -596,11 +605,10 @@ namespace XREngine.Rendering.Vulkan
                     {
                         int srcIndex = i * 16;
                         int dstIndex = i * 4;
-                        float* p = (float*)(src + srcIndex);
-                        dstRgba[dstIndex + 0] = p[0];
-                        dstRgba[dstIndex + 1] = p[1];
-                        dstRgba[dstIndex + 2] = p[2];
-                        dstRgba[dstIndex + 3] = p[3];
+                        dstRgba[dstIndex + 0] = ReadSingle(source, srcIndex + 0);
+                        dstRgba[dstIndex + 1] = ReadSingle(source, srcIndex + 4);
+                        dstRgba[dstIndex + 2] = ReadSingle(source, srcIndex + 8);
+                        dstRgba[dstIndex + 3] = ReadSingle(source, srcIndex + 12);
                     }
                     return true;
 
@@ -609,7 +617,7 @@ namespace XREngine.Rendering.Vulkan
                     {
                         int srcIndex = i * 4;
                         int dstIndex = i * 4;
-                        float value = *(float*)(src + srcIndex);
+                        float value = ReadSingle(source, srcIndex);
                         dstRgba[dstIndex + 0] = value;
                         dstRgba[dstIndex + 1] = value;
                         dstRgba[dstIndex + 2] = value;
@@ -622,7 +630,7 @@ namespace XREngine.Rendering.Vulkan
                     {
                         int srcIndex = i * 4;
                         int dstIndex = i * 4;
-                        float value = *(uint*)(src + srcIndex);
+                        float value = ReadUInt32(source, srcIndex);
                         dstRgba[dstIndex + 0] = value;
                         dstRgba[dstIndex + 1] = value;
                         dstRgba[dstIndex + 2] = value;
@@ -635,7 +643,7 @@ namespace XREngine.Rendering.Vulkan
                     {
                         int srcIndex = i * 4;
                         int dstIndex = i * 4;
-                        DecodeB10G11R11Ufloat(*(uint*)(src + srcIndex), out float r, out float g, out float b);
+                        DecodeB10G11R11Ufloat(ReadUInt32(source, srcIndex), out float r, out float g, out float b);
                         dstRgba[dstIndex + 0] = r;
                         dstRgba[dstIndex + 1] = g;
                         dstRgba[dstIndex + 2] = b;
@@ -646,6 +654,15 @@ namespace XREngine.Rendering.Vulkan
 
             return false;
         }
+
+        private static ushort ReadUInt16(ReadOnlySpan<byte> source, int offset)
+            => MemoryMarshal.Read<ushort>(source.Slice(offset, sizeof(ushort)));
+
+        private static uint ReadUInt32(ReadOnlySpan<byte> source, int offset)
+            => MemoryMarshal.Read<uint>(source.Slice(offset, sizeof(uint)));
+
+        private static float ReadSingle(ReadOnlySpan<byte> source, int offset)
+            => MemoryMarshal.Read<float>(source.Slice(offset, sizeof(float)));
 
         private static void DecodeB10G11R11Ufloat(uint packed, out float r, out float g, out float b)
         {
@@ -766,7 +783,7 @@ namespace XREngine.Rendering.Vulkan
                     ImageLayout.TransferSrcOptimal,
                     stagingBuffer,
                     1,
-                    &copy);
+                    ref copy);
 
                 TransitionPreparedImageForBlit(
                     scope.CommandBuffer,
@@ -783,12 +800,12 @@ namespace XREngine.Rendering.Vulkan
                 return false;
             }
 
-            if (!TryMapReadbackSlice(stagingSlice, out VulkanFrameDataReadScope readScope, out void* mappedPtr))
+            if (!TryMapReadbackSlice(stagingSlice, out VulkanFrameDataReadScope readScope))
             {
                 return false;
             }
 
-            depth = ReadDepthValue(mappedPtr, liveSource.Format);
+            depth = ReadDepthValue(readScope.Bytes, liveSource.Format);
             readScope.Dispose();
             return true;
         }
@@ -869,7 +886,7 @@ namespace XREngine.Rendering.Vulkan
                     ImageLayout.TransferSrcOptimal,
                     stagingBuffer,
                     1,
-                    &copy);
+                    ref copy);
 
                 TransitionPreparedImageForBlit(
                     scope.CommandBuffer,
@@ -887,18 +904,15 @@ namespace XREngine.Rendering.Vulkan
                 return false;
             }
 
-            if (!TryMapReadbackSlice(stagingSlice, out VulkanFrameDataReadScope readScope, out void* mappedPtr))
+            if (!TryMapReadbackSlice(stagingSlice, out VulkanFrameDataReadScope readScope))
             {
                 info = VulkanDepthReadbackDebugInfo.Failed("Could not map depth readback staging memory.", x, y);
                 return false;
             }
 
             byte[] rawBytes = new byte[pixelSize];
-            byte* src = (byte*)mappedPtr;
-            for (int i = 0; i < rawBytes.Length; i++)
-                rawBytes[i] = src[i];
-
-            float decodedDepth = ReadDepthValue(mappedPtr, liveSource.Format);
+            readScope.Bytes.Slice(0, checked((int)pixelSize)).CopyTo(rawBytes);
+            float decodedDepth = ReadDepthValue(readScope.Bytes, liveSource.Format);
             readScope.Dispose();
 
             info = VulkanDepthReadbackDebugInfo.FromRawBytes(
@@ -985,7 +999,7 @@ namespace XREngine.Rendering.Vulkan
                     ImageLayout.TransferSrcOptimal,
                     stagingBuffer,
                     1,
-                    &copy);
+                    ref copy);
 
                 TransitionPreparedImageForBlit(
                     scope.CommandBuffer,
@@ -1002,12 +1016,12 @@ namespace XREngine.Rendering.Vulkan
                 return false;
             }
 
-            if (!TryMapReadbackSlice(stagingSlice, out VulkanFrameDataReadScope readScope, out void* mappedPtr))
+            if (!TryMapReadbackSlice(stagingSlice, out VulkanFrameDataReadScope readScope))
             {
                 return false;
             }
 
-            stencil = ReadStencilValue(mappedPtr, liveSource.Format);
+            stencil = ReadStencilValue(readScope.Bytes, liveSource.Format);
             readScope.Dispose();
             return true;
         }
@@ -1029,14 +1043,18 @@ namespace XREngine.Rendering.Vulkan
         /// <summary>
         /// Reads a depth value from a mapped buffer based on the depth format.
         /// </summary>
-        internal static float ReadDepthValue(void* ptr, Format format)
+        internal static float ReadDepthValue(ReadOnlySpan<byte> source, Format format)
         {
+            int requiredLength = checked((int)GetDepthFormatPixelSize(format));
+            if (requiredLength == 0 || source.Length < requiredLength)
+                return 1.0f;
+
             return format switch
             {
-                Format.D16Unorm => *(ushort*)ptr / 65535f,
-                Format.D32Sfloat => *(float*)ptr,
-                Format.D24UnormS8Uint => (*(uint*)ptr & 0x00FFFFFF) / 16777215f,
-                Format.D32SfloatS8Uint => *(float*)ptr,
+                Format.D16Unorm => ReadUInt16(source, 0) / 65535f,
+                Format.D32Sfloat => ReadSingle(source, 0),
+                Format.D24UnormS8Uint => (ReadUInt32(source, 0) & 0x00FFFFFF) / 16777215f,
+                Format.D32SfloatS8Uint => ReadSingle(source, 0),
                 _ => 1.0f,
             };
         }
@@ -1065,16 +1083,13 @@ namespace XREngine.Rendering.Vulkan
 
         private bool TryMapReadbackSlice(
             in VulkanFrameDataSlice slice,
-            out VulkanFrameDataReadScope scope,
-            out void* mapped)
+            out VulkanFrameDataReadScope scope)
         {
             scope = default;
-            mapped = null;
             VulkanFrameDataArena? arena = ResourceRuntime.SynchronousFrameDataArena;
             if (arena is null || !arena.TryBeginRead(slice, out scope))
                 return false;
 
-            mapped = scope.Pointer;
             RuntimeEngine.Rendering.Stats.GpuReadback.RecordGpuBufferMapped();
             RuntimeEngine.Rendering.Stats.GpuReadback.RecordGpuReadbackBytes(
                 checked((long)slice.Length));
@@ -1093,32 +1108,22 @@ namespace XREngine.Rendering.Vulkan
         private void DestroyReadbackBuffer(Silk.NET.Vulkan.Buffer buffer, DeviceMemory memory)
             => ResourceRuntime.Buffers.Destroy(ReadbackContext, buffer, memory, "CommandRuntime.PixelReadback.Async");
 
-        private bool TryMapReadbackMemory(Silk.NET.Vulkan.Buffer buffer, DeviceMemory memory, ulong offset, ulong length, out void* mapped)
-        {
-            mapped = null;
-            if (!ResourceRuntime.Buffers.TryMap(ReadbackContext, buffer, memory, offset, length, out void* local))
-                return false;
-            ulong allocationOffset = ResourceRuntime.Buffers.GetAllocationOffset(buffer) + offset;
-            ResourceRuntime.Buffers.Invalidate(ReadbackContext, memory, allocationOffset, Math.Max(length, 1UL));
-            mapped = local;
-            RuntimeEngine.Rendering.Stats.GpuReadback.RecordGpuBufferMapped();
-            RuntimeEngine.Rendering.Stats.GpuReadback.RecordGpuReadbackBytes(checked((long)length));
-            return true;
-        }
-
-        private void UnmapReadbackMemory(Silk.NET.Vulkan.Buffer buffer, DeviceMemory memory)
-            => ResourceRuntime.Buffers.Unmap(ReadbackContext, buffer, memory);
-
         private VulkanBackendObjectContext ReadbackContext
             => ResourceRuntime.BackendObjectContext ?? throw new InvalidOperationException("Pixel readback requires an initialized Vulkan backend-object context.");
 
-        private static byte ReadStencilValue(void* ptr, Format format)
+        private static byte ReadStencilValue(ReadOnlySpan<byte> source, Format format)
         {
+            int requiredLength = checked((int)GetDepthFormatPixelSize(format));
+            if (format == Format.S8Uint)
+                requiredLength = 1;
+            if (requiredLength == 0 || source.Length < requiredLength)
+                return 0;
+
             return format switch
             {
-                Format.D24UnormS8Uint => (byte)((*(uint*)ptr >> 24) & 0xFF),
-                Format.D32SfloatS8Uint => *((byte*)ptr + 4),
-                Format.S8Uint => *(byte*)ptr,
+                Format.D24UnormS8Uint => (byte)((ReadUInt32(source, 0) >> 24) & 0xFF),
+                Format.D32SfloatS8Uint => source[4],
+                Format.S8Uint => source[0],
                 _ => 0,
             };
         }

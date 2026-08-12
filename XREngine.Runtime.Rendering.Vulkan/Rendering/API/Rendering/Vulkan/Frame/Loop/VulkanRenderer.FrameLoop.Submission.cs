@@ -6,7 +6,7 @@ using Semaphore = Silk.NET.Vulkan.Semaphore;
 
 namespace XREngine.Rendering.Vulkan
 {
-    internal sealed unsafe partial class VulkanFrameLoop
+    internal sealed partial class VulkanFrameLoop
     {
         private const uint DesktopSubmitCommandBufferCapacity = 4;
 
@@ -16,7 +16,7 @@ namespace XREngine.Rendering.Vulkan
                 EVulkanFrameStage.QueueSubmit,
                 SubmitDesktopFrameCore(ref attempt));
 
-        private EDesktopFrameFlow SubmitDesktopFrameCore(
+        private unsafe EDesktopFrameFlow SubmitDesktopFrameCore(
             ref VulkanFrameAttempt attempt)
         {
             _ = attempt.CompletePhase(
@@ -364,7 +364,7 @@ namespace XREngine.Rendering.Vulkan
             return EDesktopFrameFlow.Continue;
         }
 
-        private static void AppendDesktopSubmitCommandBuffer(
+        private static unsafe void AppendDesktopSubmitCommandBuffer(
             CommandBuffer* commandBuffers,
             ref uint commandBufferCount,
             CommandBuffer commandBuffer)

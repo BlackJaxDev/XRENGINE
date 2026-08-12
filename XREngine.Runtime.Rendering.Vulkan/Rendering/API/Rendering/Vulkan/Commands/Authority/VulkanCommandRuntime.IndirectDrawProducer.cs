@@ -4,7 +4,7 @@ using XREngine.Data.Rendering;
 
 namespace XREngine.Rendering.Vulkan;
 
-internal sealed unsafe partial class VulkanCommandRuntime
+internal sealed partial class VulkanCommandRuntime
 {
     /// <summary>Vulkan pipelines own vertex input; legacy VAO mutation has no runtime action.</summary>
     internal void ConfigureIndirectVertexInput(XRRenderProgram program, XRMeshRenderer.BaseVersion? version)

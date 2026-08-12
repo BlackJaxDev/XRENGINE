@@ -17,8 +17,21 @@ internal unsafe sealed class VulkanBufferResourceService(VulkanAllocationAuthori
 {
     private VulkanLifetimeAuthority? _lifetime;
     private int _frameSlot;
+    private long _allocationGeneration;
+    private long _mappingReservations;
+    private long _mappedBytes;
+    private long _flushExpansionBytes;
+    private long _invalidateExpansionBytes;
+    private long _mappingFailures;
 
     internal int CurrentFrameSlot => Volatile.Read(ref _frameSlot);
+    internal VulkanMappedMemoryCounters SnapshotMappedMemoryCounters()
+        => new(
+            Volatile.Read(ref _mappingReservations),
+            Volatile.Read(ref _mappedBytes),
+            Volatile.Read(ref _flushExpansionBytes),
+            Volatile.Read(ref _invalidateExpansionBytes),
+            Volatile.Read(ref _mappingFailures));
     private static readonly HashSet<string> SceneDatabaseDeviceAddressBuffers = new(StringComparer.Ordinal)
     {
         "DrawMetadataBuffer", "TransformBuffer", "PrevTransformBuffer", "BoundsBuffer",
@@ -176,7 +189,96 @@ internal unsafe sealed class VulkanBufferResourceService(VulkanAllocationAuthori
     internal ulong GetAllocationOffset(Buffer buffer)
         => TryGetAllocation(buffer, out VulkanMemoryAllocation allocation) ? allocation.Offset : 0;
 
-    internal bool TryMap(
+    /// <summary>
+    /// Creates a pointer-free, allocation-bounded mapping contract.  The range is buffer
+    /// relative; native map offsets are derived only inside this service.
+    /// </summary>
+    internal bool TryCreateMappedSlice(
+        VulkanBackendObjectContext context,
+        Buffer buffer,
+        DeviceMemory memory,
+        ulong offset,
+        ulong length,
+        out VulkanMappedMemorySlice slice)
+    {
+        slice = default;
+        if (!context.IsDeviceOperational || buffer.Handle == 0 || memory.Handle == 0 || length == 0)
+            return RecordMappingFailure();
+        if (!TryGetAllocation(buffer, out VulkanMemoryAllocation allocation) || !allocation.IsHostVisible)
+            return RecordMappingFailure();
+        if (allocation.Memory.Handle != memory.Handle || offset > allocation.Size || length > allocation.Size - offset)
+            return RecordMappingFailure();
+
+        ulong alignment = Math.Max(context.DeviceContext.MinMemoryMapAlignment, 1UL);
+        // Map from allocation-relative zero, which is always aligned, then derive the
+        // requested pointer inside the lease.  Requiring every buffer subrange to be
+        // map-aligned would incorrectly reject valid byte-granular updates.
+        // Managed block allocations map their backing memory from offset zero;
+        // only a dedicated non-native allocation maps at AllocationOffset.
+        if (allocation.BlockId == -1 &&
+            allocation.Offset % alignment != 0 &&
+            !allocation.IsNativeBacked)
+            return RecordMappingFailure();
+
+        slice = new VulkanMappedMemorySlice(
+            buffer, memory, allocation.Offset, allocation.Size, offset, length, alignment,
+            unchecked((ulong)context.Device.Handle), Volatile.Read(ref _allocationGeneration), allocation.IsCoherent, allocation.IsHostVisible);
+        return true;
+    }
+
+    internal bool TryAcquireWrite(
+        VulkanBackendObjectContext context,
+        scoped in VulkanMappedMemorySlice slice,
+        out VulkanMappedMemoryWriteLease lease)
+    {
+        if (!TryAcquire(context, in slice, write: true, out VulkanMappedMemoryLease raw))
+        {
+            lease = default;
+            return false;
+        }
+        lease = new VulkanMappedMemoryWriteLease(raw);
+        return true;
+    }
+
+    internal bool TryAcquireRead(
+        VulkanBackendObjectContext context,
+        scoped in VulkanMappedMemorySlice slice,
+        out VulkanMappedMemoryReadLease lease)
+    {
+        if (!TryAcquire(context, in slice, write: false, out VulkanMappedMemoryLease raw))
+        {
+            lease = default;
+            return false;
+        }
+        lease = new VulkanMappedMemoryReadLease(raw);
+        return true;
+    }
+
+    internal bool TryRead(
+        VulkanBackendObjectContext context,
+        scoped in VulkanMappedMemorySlice slice,
+        VulkanMappedMemoryReadCallback callback)
+    {
+        ArgumentNullException.ThrowIfNull(callback);
+        if (!TryAcquireRead(context, in slice, out VulkanMappedMemoryReadLease lease))
+            return false;
+        using (lease)
+            return callback(lease.Bytes);
+    }
+
+    internal bool TryWrite(
+        VulkanBackendObjectContext context,
+        scoped in VulkanMappedMemorySlice slice,
+        VulkanMappedMemoryWriteCallback callback)
+    {
+        ArgumentNullException.ThrowIfNull(callback);
+        if (!TryAcquireWrite(context, in slice, out VulkanMappedMemoryWriteLease lease))
+            return false;
+        using (lease)
+            return callback(lease.Bytes);
+    }
+
+    private bool TryMap(
         VulkanBackendObjectContext context,
         Buffer buffer,
         DeviceMemory memory,
@@ -197,7 +299,7 @@ internal unsafe sealed class VulkanBufferResourceService(VulkanAllocationAuthori
         return result == Result.Success;
     }
 
-    internal void Unmap(VulkanBackendObjectContext context, Buffer buffer, DeviceMemory memory)
+    private void Unmap(VulkanBackendObjectContext context, Buffer buffer, DeviceMemory memory)
     {
         if (TryGetAllocation(buffer, out VulkanMemoryAllocation allocation))
         {
@@ -213,91 +315,70 @@ internal unsafe sealed class VulkanBufferResourceService(VulkanAllocationAuthori
     /// be aligned to <c>nonCoherentAtomSize</c>; the allocation bounds prevent a
     /// suballocation flush from spilling into an adjacent resource.
     /// </summary>
-    internal void Flush(VulkanBackendObjectContext context, Buffer buffer, DeviceMemory memory, ulong offset, ulong length)
+    internal void Flush(VulkanBackendObjectContext context, in VulkanMappedMemorySlice slice)
     {
-        if (length == 0 || (TryGetAllocation(buffer, out VulkanMemoryAllocation allocation) && allocation.IsCoherent))
+        ValidateLeaseOwnership(context, in slice);
+        if (slice.IsCoherent)
             return;
-
-        ulong atomSize = context.DeviceContext.NonCoherentAtomSize;
-        atomSize = atomSize == 0 ? 1UL : atomSize;
-        ulong flushOffset = offset / atomSize * atomSize;
-        ulong flushEnd = AlignUp(offset + length, atomSize);
-        if (allocation.Memory.Handle != 0)
-        {
-            ulong allocationStart = allocation.BlockId == -1 ? 0UL : allocation.Offset;
-            ulong allocationEnd = allocationStart + allocation.Size;
-            flushOffset = Math.Max(flushOffset, allocationStart);
-            flushEnd = Math.Min(flushEnd, allocationEnd);
-        }
-
+        NormalizeRange(context, slice.Memory, slice.MemoryOffset, slice.Length,
+            new VulkanMemoryAllocation(slice.Memory, slice.AllocationOffset, slice.AllocationSize, 0, 0, 0),
+            out ulong offset, out ulong size);
+        Interlocked.Add(ref _flushExpansionBytes, checked((long)(size - slice.Length)));
         MappedMemoryRange range = new()
         {
             SType = StructureType.MappedMemoryRange,
-            Memory = memory,
-            Offset = flushOffset,
-            Size = flushEnd > flushOffset ? flushEnd - flushOffset : Vk.WholeSize,
+            Memory = slice.Memory,
+            Offset = offset,
+            Size = size,
         };
         if (context.Api.FlushMappedMemoryRanges(context.Device, 1, ref range) != Result.Success)
-            throw new InvalidOperationException("Failed to flush Vulkan buffer memory.");
+            throw new InvalidOperationException("Failed to flush Vulkan mapped-memory lease.");
     }
 
-    internal void Invalidate(VulkanBackendObjectContext context, DeviceMemory memory, ulong offset, ulong length)
-    {
-        if (length == 0 || TryGetMemoryAllocation(memory, offset, out VulkanMemoryAllocation allocation) && allocation.IsCoherent)
-            return;
-
-        NormalizeRange(context, memory, offset, length, in allocation, out ulong rangeOffset, out ulong rangeSize);
-        MappedMemoryRange range = new()
-        {
-            SType = StructureType.MappedMemoryRange,
-            Memory = memory,
-            Offset = rangeOffset,
-            Size = rangeSize,
-        };
-        if (context.Api.InvalidateMappedMemoryRanges(context.Device, 1, ref range) != Result.Success)
-            throw new InvalidOperationException("Failed to invalidate Vulkan buffer memory.");
-    }
-
-    internal bool TryMapReadback(
+    private bool TryAcquire(
         VulkanBackendObjectContext context,
-        Buffer buffer,
-        DeviceMemory memory,
-        ulong offset,
-        ulong length,
-        out void* mapped)
+        scoped in VulkanMappedMemorySlice slice,
+        bool write,
+        out VulkanMappedMemoryLease lease)
     {
-        mapped = null;
-        ulong mappedLength = Math.Max(length, 1UL);
-        ulong memoryOffset = GetAllocationOffset(buffer) + offset;
-        if (TryGetAllocation(buffer, out VulkanMemoryAllocation allocation))
+        lease = default;
+        try
         {
-            ulong allocationStart = allocation.BlockId == -1 ? 0UL : allocation.Offset;
-            ulong allocationEnd = allocationStart + allocation.Size;
-            if (memoryOffset < allocationStart || memoryOffset >= allocationEnd)
-                return false;
-
-            ulong availableLength = allocationEnd - memoryOffset;
-            if (mappedLength > availableLength)
+            ValidateLeaseOwnership(context, in slice);
+            if (!TryMap(context, slice.Buffer, slice.Memory, 0, slice.AllocationSize, out void* pointer))
+                return RecordMappingFailure();
+            pointer = (byte*)pointer + checked((nint)slice.Offset);
+            if (!write && !slice.IsCoherent)
             {
-                Debug.VulkanWarningEvery(
-                    "Vulkan.Readback.ClampMappedRange",
-                    TimeSpan.FromSeconds(5),
-                    "[Vulkan] Clamping readback map from {0} bytes to {1} bytes for buffer 0x{2:X}; requested range exceeds allocation.",
-                    mappedLength,
-                    availableLength,
-                    buffer.Handle);
-                mappedLength = availableLength;
+                NormalizeRange(context, slice.Memory, slice.MemoryOffset, slice.Length,
+                    new VulkanMemoryAllocation(slice.Memory, slice.AllocationOffset, slice.AllocationSize, 0, 0, 0),
+                    out ulong offset, out ulong size);
+                Interlocked.Add(ref _invalidateExpansionBytes, checked((long)(size - slice.Length)));
+                MappedMemoryRange range = new()
+                {
+                    SType = StructureType.MappedMemoryRange,
+                    Memory = slice.Memory,
+                    Offset = offset,
+                    Size = size,
+                };
+                if (context.Api.InvalidateMappedMemoryRanges(context.Device, 1, ref range) != Result.Success)
+                    throw new InvalidOperationException("Failed to invalidate Vulkan mapped-memory lease.");
             }
+            Interlocked.Increment(ref _mappingReservations);
+            Interlocked.Add(ref _mappedBytes, checked((long)slice.Length));
+            lease = new VulkanMappedMemoryLease(this, context, in slice, pointer, write);
+            return true;
         }
+        catch (OverflowException)
+        {
+            return RecordMappingFailure();
+        }
+    }
 
-        if (!TryMap(context, buffer, memory, offset, mappedLength, out mapped))
-            return false;
-
-        Invalidate(context, memory, memoryOffset, mappedLength);
-        RuntimeEngine.Rendering.Stats.GpuReadback.RecordGpuBufferMapped();
-        RuntimeEngine.Rendering.Stats.GpuReadback.RecordGpuReadbackBytes(
-            checked((long)Math.Min(length, mappedLength)));
-        return true;
+    internal void Release(VulkanBackendObjectContext context, in VulkanMappedMemorySlice slice)
+    {
+        ValidateLeaseOwnership(context, in slice);
+        Unmap(context, slice.Buffer, slice.Memory);
     }
 
     internal ulong GetDeviceAddress(VulkanBackendObjectContext context, Buffer buffer)
@@ -330,17 +411,7 @@ internal unsafe sealed class VulkanBufferResourceService(VulkanAllocationAuthori
 
         try
         {
-            if (!TryMap(context, buffer, memory, 0, size, out void* mapped))
-                throw new InvalidOperationException("Failed to map Vulkan buffer memory.");
-            try
-            {
-                Unsafe.CopyBlock(mapped, data.Pointer, checked((uint)size));
-                Flush(context, buffer, memory, GetAllocationOffset(buffer), size);
-            }
-            finally
-            {
-                Unmap(context, buffer, memory);
-            }
+            UpdateFromVoidPtr(context, buffer, memory, 0, size, data);
             return (buffer, memory);
         }
         catch
@@ -597,7 +668,7 @@ internal unsafe sealed class VulkanBufferResourceService(VulkanAllocationAuthori
     internal void Destroy(VulkanBackendObjectContext context, Buffer buffer, DeviceMemory memory, string owner)
         => Retire(buffer, memory, owner);
 
-    internal void Update(
+    internal void UpdateFromVoidPtr(
         VulkanBackendObjectContext context,
         Buffer buffer,
         DeviceMemory memory,
@@ -607,16 +678,12 @@ internal unsafe sealed class VulkanBufferResourceService(VulkanAllocationAuthori
     {
         if (source is null || length == 0 || !context.IsDeviceOperational)
             return;
-        if (!TryMap(context, buffer, memory, offset, length, out void* mapped))
-            throw new InvalidOperationException("Failed to map Vulkan buffer memory.");
-        try
+        if (!TryCreateMappedSlice(context, buffer, memory, offset, length, out VulkanMappedMemorySlice slice) ||
+            !TryAcquireWrite(context, in slice, out VulkanMappedMemoryWriteLease lease))
+            throw new InvalidOperationException("Failed to acquire a Vulkan mapped-memory write lease.");
+        using (lease)
         {
-            Unsafe.CopyBlock(mapped, source, checked((uint)length));
-            Flush(context, buffer, memory, GetAllocationOffset(buffer) + offset, length);
-        }
-        finally
-        {
-            Unmap(context, buffer, memory);
+            new ReadOnlySpan<byte>(source, checked((int)length)).CopyTo(lease.Bytes);
         }
     }
 
@@ -629,37 +696,12 @@ internal unsafe sealed class VulkanBufferResourceService(VulkanAllocationAuthori
         => (properties & MemoryPropertyFlags.DeviceLocalBit) != 0 &&
            (properties & MemoryPropertyFlags.HostVisibleBit) == 0;
 
-    private bool TryGetMemoryAllocation(DeviceMemory memory, ulong offset, out VulkanMemoryAllocation allocation)
-    {
-        foreach (VulkanMemoryAllocation candidate in allocations.Buffers.Allocations.Values)
-            if (Matches(candidate, memory, offset))
-            {
-                allocation = candidate;
-                return true;
-            }
-        foreach (VulkanMemoryAllocation candidate in allocations.Buffers.LegacyAllocations.Values)
-            if (Matches(candidate, memory, offset))
-            {
-                allocation = candidate;
-                return true;
-            }
-        foreach (VulkanMemoryAllocation candidate in allocations.Images.Allocations.Values)
-            if (Matches(candidate, memory, offset))
-            {
-                allocation = candidate;
-                return true;
-            }
-
-        allocation = default;
-        return false;
-    }
-
     private void NormalizeRange(VulkanBackendObjectContext context, DeviceMemory memory, ulong offset, ulong length, in VulkanMemoryAllocation allocation, out ulong rangeOffset, out ulong rangeSize)
     {
         ulong atomSize = context.DeviceContext.NonCoherentAtomSize;
         atomSize = atomSize == 0 ? 1UL : atomSize;
         rangeOffset = offset / atomSize * atomSize;
-        ulong rangeEnd = AlignUp(offset + length, atomSize);
+        ulong rangeEnd = AlignUp(checked(offset + length), atomSize);
         if (allocation.Memory.Handle != 0)
         {
             ulong start = allocation.BlockId == -1 ? 0UL : allocation.Offset;
@@ -669,9 +711,60 @@ internal unsafe sealed class VulkanBufferResourceService(VulkanAllocationAuthori
         rangeSize = rangeEnd > rangeOffset ? rangeEnd - rangeOffset : Vk.WholeSize;
     }
 
-    private static bool Matches(in VulkanMemoryAllocation allocation, DeviceMemory memory, ulong offset)
-        => allocation.Memory.Handle == memory.Handle &&
-           (allocation.BlockId == -1 || (offset >= allocation.Offset && offset < allocation.Offset + allocation.Size));
+    internal void RecordExternalMappingReservation(ulong length)
+    {
+        Interlocked.Increment(ref _mappingReservations);
+        Interlocked.Add(ref _mappedBytes, checked((long)length));
+    }
+
+    internal void RecordExternalVisibilityExpansion(bool flush, ulong requestedLength, ulong expandedLength)
+    {
+        if (expandedLength <= requestedLength)
+            return;
+
+        long expansion = checked((long)(expandedLength - requestedLength));
+        if (flush)
+            Interlocked.Add(ref _flushExpansionBytes, expansion);
+        else
+            Interlocked.Add(ref _invalidateExpansionBytes, expansion);
+    }
+
+    internal bool RecordMappingFailure()
+    {
+        Interlocked.Increment(ref _mappingFailures);
+        return false;
+    }
+
+    private void ValidateLeaseOwnership(VulkanBackendObjectContext context, in VulkanMappedMemorySlice slice)
+    {
+        bool allocationMatches = TryGetAllocation(slice.Buffer, out VulkanMemoryAllocation allocation) &&
+            allocation.Memory.Handle == slice.Memory.Handle &&
+            allocation.Offset == slice.AllocationOffset &&
+            allocation.Size == slice.AllocationSize;
+        if (slice.DeviceIdentity != unchecked((ulong)context.Device.Handle) ||
+            slice.AllocationGeneration != Volatile.Read(ref _allocationGeneration) ||
+            !allocationMatches ||
+            !slice.IsHostVisible ||
+            slice.RequiredAlignment == 0 ||
+            (allocation.BlockId == -1 &&
+             slice.AllocationOffset % slice.RequiredAlignment != 0 &&
+             !allocation.IsNativeBacked) ||
+            slice.Length == 0 ||
+            slice.Offset > slice.AllocationSize ||
+            slice.Length > slice.AllocationSize - slice.Offset)
+        {
+            throw new InvalidOperationException("The Vulkan mapped-memory slice no longer belongs to this device allocation.");
+        }
+    }
+
+    internal void Update(
+        VulkanBackendObjectContext context,
+        Buffer buffer,
+        DeviceMemory memory,
+        ulong offset,
+        ulong length,
+        VoidPtr source)
+        => UpdateFromVoidPtr(context, buffer, memory, offset, length, source.Pointer);
 
     private IVulkanMemoryAllocator RequireAllocator()
         => allocations.Buffers.MemoryAllocator

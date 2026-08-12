@@ -3,7 +3,7 @@ using System;
 
 namespace XREngine.Rendering.Vulkan;
 
-internal sealed unsafe partial class VulkanOutputRuntime
+internal sealed partial class VulkanOutputRuntime
 {
     private const string ObsHookLayerName = "VK_LAYER_OBS_HOOK";
     private const string ObsHookPolicyEnvVar = XREngineEnvironmentVariables.VkObsHook;
@@ -142,7 +142,7 @@ internal sealed unsafe partial class VulkanOutputRuntime
         }
     }
 
-    private static bool TryQueryObsSharedTextureImportSupport(
+    private static unsafe bool TryQueryObsSharedTextureImportSupport(
         VulkanDeviceContext deviceContext,
         out ExternalMemoryFeatureFlags features,
         out Result result)

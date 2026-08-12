@@ -12,7 +12,7 @@ using XREngine.Data.Rendering;
 
 namespace XREngine.Rendering.Vulkan
 {
-    internal sealed unsafe partial class VulkanCommandRuntime
+    internal sealed partial class VulkanCommandRuntime
     {
         internal const uint CommonPushConstantSize = 16;
         internal const ShaderStageFlags CommonPushConstantStageFlags =
@@ -380,7 +380,7 @@ namespace XREngine.Rendering.Vulkan
             RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanBindChurn(pipelineBinds: 1);
         }
 
-        internal void SetViewportScissorTracked(
+        internal unsafe void SetViewportScissorTracked(
             CommandBuffer commandBuffer,
             in Viewport viewport,
             in Rect2D scissor)
@@ -395,7 +395,7 @@ namespace XREngine.Rendering.Vulkan
             Api!.CmdSetScissor(commandBuffer, 0, 1, &scissorCopy);
         }
 
-        internal void SetViewportScissorTracked(
+        internal unsafe void SetViewportScissorTracked(
             CommandBuffer commandBuffer,
             Viewport[] viewports,
             Rect2D[] scissors,
@@ -502,7 +502,7 @@ namespace XREngine.Rendering.Vulkan
                 ReadOnlySpan<uint>.Empty);
         }
 
-        internal void BindDescriptorSetsTracked(
+        internal unsafe void BindDescriptorSetsTracked(
             CommandBuffer commandBuffer,
             PipelineBindPoint bindPoint,
             PipelineLayout layout,
@@ -568,7 +568,7 @@ namespace XREngine.Rendering.Vulkan
             RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanBindChurn(descriptorBinds: 1);
         }
 
-        internal void PushConstantsTracked<T>(
+        internal unsafe void PushConstantsTracked<T>(
             CommandBuffer commandBuffer,
             PipelineLayout layout,
             ShaderStageFlags stageFlags,
@@ -596,7 +596,7 @@ namespace XREngine.Rendering.Vulkan
             RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanBindChurn(pushConstantWrites: 1);
         }
 
-        internal void BindVertexBuffersTracked(
+        internal unsafe void BindVertexBuffersTracked(
             CommandBuffer commandBuffer,
             uint firstBinding,
             Silk.NET.Vulkan.Buffer[] buffers,
@@ -650,7 +650,7 @@ namespace XREngine.Rendering.Vulkan
             RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanBindChurn(vertexBufferBinds: 1);
         }
 
-        internal void BindVertexBufferTracked(
+        internal unsafe void BindVertexBufferTracked(
             CommandBuffer commandBuffer,
             uint binding,
             Silk.NET.Vulkan.Buffer buffer,
@@ -761,7 +761,7 @@ namespace XREngine.Rendering.Vulkan
         private void DestroySwapchainCommandBuffers()
             => DestroySwapchainCommandBuffers(cancelCommandChainWorkers: true);
 
-        private void DestroySwapchainCommandBuffers(bool cancelCommandChainWorkers)
+        private unsafe void DestroySwapchainCommandBuffers(bool cancelCommandChainWorkers)
         {
             if (_commandBuffers is null &&
                 _primaryCommandArtifactOwners is null &&
@@ -1084,7 +1084,7 @@ namespace XREngine.Rendering.Vulkan
             }
         }
 
-        private void DestroyDynamicUiBatchTextSecondaryCommandBuffers()
+        private unsafe void DestroyDynamicUiBatchTextSecondaryCommandBuffers()
         {
             if (_dynamicUiBatchTextSecondaryCommandBuffers is null)
                 return;
@@ -1114,7 +1114,7 @@ namespace XREngine.Rendering.Vulkan
             _dynamicUiBatchTextSecondarySignatures = null;
         }
 
-        private void DestroyDynamicUiBatchTextOverlayCommandBuffers()
+        private unsafe void DestroyDynamicUiBatchTextOverlayCommandBuffers()
         {
             if (_dynamicUiBatchTextOverlayCommandBuffers is null)
                 return;
@@ -1401,7 +1401,7 @@ namespace XREngine.Rendering.Vulkan
             resources.UniformBuffers.Clear();
         }
 
-        internal bool TryAllocateTransientComputeDescriptorSets(
+        internal unsafe bool TryAllocateTransientComputeDescriptorSets(
             uint imageIndex,
             DescriptorSetLayout[] setLayouts,
             DescriptorPoolSize[] poolSizes,
@@ -1538,34 +1538,38 @@ namespace XREngine.Rendering.Vulkan
             hash.Add(requireUpdateAfterBind);
             hash.Add(poolSizes.Length);
 
-            Span<bool> consumed = poolSizes.Length <= 32
-                ? stackalloc bool[poolSizes.Length]
-                : new bool[poolSizes.Length];
+            bool[] rentedConsumed = ArrayPool<bool>.Shared.Rent(poolSizes.Length);
+            Span<bool> consumed = rentedConsumed.AsSpan(0, poolSizes.Length);
+            consumed.Clear();
 
-            for (int sorted = 0; sorted < poolSizes.Length; sorted++)
+            try
             {
-                int next = -1;
-                int nextType = int.MaxValue;
-                for (int i = 0; i < poolSizes.Length; i++)
+                for (int sorted = 0; sorted < poolSizes.Length; sorted++)
                 {
-                    if (consumed[i])
-                        continue;
+                    int next = -1;
+                    int nextType = int.MaxValue;
+                    for (int i = 0; i < poolSizes.Length; i++)
+                    {
+                        if (consumed[i])
+                            continue;
 
-                    int candidateType = (int)poolSizes[i].Type;
-                    if (candidateType >= nextType)
-                        continue;
+                        int candidateType = (int)poolSizes[i].Type;
+                        if (candidateType >= nextType)
+                            continue;
 
-                    next = i;
-                    nextType = candidateType;
+                        next = i;
+                        nextType = candidateType;
+                    }
+
+                    if (next < 0)
+                        break;
+
+                    consumed[next] = true;
+                    hash.Add(nextType);
+                    hash.Add(poolSizes[next].DescriptorCount);
                 }
-
-                if (next < 0)
-                    break;
-
-                consumed[next] = true;
-                hash.Add(nextType);
-                hash.Add(poolSizes[next].DescriptorCount);
             }
+            finally { ArrayPool<bool>.Shared.Return(rentedConsumed); }
 
             return unchecked((ulong)hash.ToHashCode());
         }

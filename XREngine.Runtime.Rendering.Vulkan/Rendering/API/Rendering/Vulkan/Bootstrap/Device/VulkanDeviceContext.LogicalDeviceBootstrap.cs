@@ -235,7 +235,8 @@ internal sealed unsafe partial class VulkanDeviceContext
 
         // Configure queue priorities (1.0 = highest priority)
         int maxRequestedQueueCount = checked((int)requestedQueueCounts.Values.Max());
-        float* queuePriorities = stackalloc float[maxRequestedQueueCount];
+        using var priorityMemory = GlobalMemory.Allocate(checked(maxRequestedQueueCount * sizeof(float)));
+        float* queuePriorities = (float*)Unsafe.AsPointer(ref priorityMemory.GetPinnableReference());
         for (int queueIndex = 0; queueIndex < maxRequestedQueueCount; queueIndex++)
             queuePriorities[queueIndex] = 1.0f;
 

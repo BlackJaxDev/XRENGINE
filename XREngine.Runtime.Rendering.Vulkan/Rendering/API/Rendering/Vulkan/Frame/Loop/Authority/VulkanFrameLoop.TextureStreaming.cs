@@ -3,7 +3,7 @@ using XREngine.Data.Rendering;
 
 namespace XREngine.Rendering.Vulkan;
 
-internal sealed unsafe partial class VulkanFrameLoop : IVulkanTextureUploadScheduler
+internal sealed partial class VulkanFrameLoop : IVulkanTextureUploadScheduler
 {
     bool IVulkanTextureUploadScheduler.IsSynchronizedUploadAvailable
         => VulkanTextureUploadService.IsSynchronizedImportedTextureStreamingAvailable;

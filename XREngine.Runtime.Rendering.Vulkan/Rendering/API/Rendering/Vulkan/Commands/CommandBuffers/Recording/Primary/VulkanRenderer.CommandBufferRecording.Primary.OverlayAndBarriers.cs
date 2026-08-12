@@ -16,10 +16,10 @@ using XREngine.Rendering.Resources;
 
 namespace XREngine.Rendering.Vulkan
 {
-    internal sealed unsafe partial class VulkanCommandRuntime
+    internal sealed partial class VulkanCommandRuntime
     {
 
-        private void ExecuteDynamicUiBatchTextOverlay(scoped ref PrimaryCommandBufferRecordingState recordingState)
+        private unsafe void ExecuteDynamicUiBatchTextOverlay(scoped ref PrimaryCommandBufferRecordingState recordingState)
         {
             if (recordingState.DynamicUiBatchTextOpCount <= 0)
                 return;
@@ -198,14 +198,18 @@ namespace XREngine.Rendering.Vulkan
                     };
 
                     const uint attachmentCount = 2;
-                    ClearValue* clearValues = stackalloc ClearValue[(int)attachmentCount];
-                    WriteFrozenClearValues(clearValues, attachmentCount, in recordingState.ClearState);
-                    renderPassInfo.ClearValueCount = attachmentCount;
-                    renderPassInfo.PClearValues = clearValues;
-
-                    CmdBeginRenderPassTracked(recordingState.CommandBuffer, &renderPassInfo, SubpassContents.SecondaryCommandBuffers);
-                    CmdExecuteCommandsTracked(recordingState.CommandBuffer, 1, &secondaryCommandBuffer);
-                    Api!.CmdEndRenderPass(recordingState.CommandBuffer);
+                    using VulkanNativeScratchReservation<ClearValue> clearValueReservation =
+                        Synchronization._synchronizationThreadWorkspace.Current.ClearValueScratch.Reserve((int)attachmentCount);
+                    Span<ClearValue> clearValues = clearValueReservation.Span;
+                    fixed (ClearValue* clearValuesPtr = clearValues)
+                    {
+                        WriteFrozenClearValues(clearValuesPtr, attachmentCount, in recordingState.ClearState);
+                        renderPassInfo.ClearValueCount = attachmentCount;
+                        renderPassInfo.PClearValues = clearValuesPtr;
+                        CmdBeginRenderPassTracked(recordingState.CommandBuffer, &renderPassInfo, SubpassContents.SecondaryCommandBuffers);
+                        CmdExecuteCommandsTracked(recordingState.CommandBuffer, 1, &secondaryCommandBuffer);
+                        Api!.CmdEndRenderPass(recordingState.CommandBuffer);
+                    }
 
                     recordingState.SwapchainClearedThisFrame = true;
                 }
@@ -227,7 +231,7 @@ namespace XREngine.Rendering.Vulkan
             }
         }
 
-        private int EmitPassBarriers(scoped ref PrimaryCommandBufferRecordingState recordingState, int passIndex)
+        private unsafe int EmitPassBarriers(scoped ref PrimaryCommandBufferRecordingState recordingState, int passIndex)
         {
             // Emit any global pending memory barriers that accumulated before recording.
             // After the first pass consumes them they are cleared.
@@ -239,11 +243,11 @@ namespace XREngine.Rendering.Vulkan
                 EmitMemoryBarrierMask(recordingState.CommandBuffer, perPassMask);
 
             VulkanBarrierPlan barrierPlan = recordingState.RenderGraphPlan.Barriers;
-            IReadOnlyList<VulkanBarrierPlanner.PlannedImageBarrier> imageBarriers =
+            ReadOnlySpan<VulkanFrozenImageBarrier> imageBarriers =
                 barrierPlan.GetImageBarriersForPass(passIndex);
-            IReadOnlyList<VulkanBarrierPlanner.PlannedBufferBarrier> bufferBarriers =
+            ReadOnlySpan<VulkanFrozenBufferBarrier> bufferBarriers =
                 barrierPlan.GetBufferBarriersForPass(passIndex);
-            IReadOnlyList<VulkanBarrierPlanner.PlannedSwapchainBarrier> swapchainBarriers =
+            ReadOnlySpan<VulkanFrozenSwapchainBarrier> swapchainBarriers =
                 barrierPlan.GetSwapchainBarriersForPass(passIndex);
 
             // If the barrier planner doesn't recognise this pass at all, it has no planned
@@ -255,7 +259,7 @@ namespace XREngine.Rendering.Vulkan
             // Ops that need specific image layout transitions (e.g. blits) handle them
             // internally via TransitionForBlit.
             if (passIndex != VulkanBarrierPlanner.SwapchainPassIndex &&
-                !recordingState.RenderGraphPlan.CompiledGraph.PassOrder.ContainsKey(passIndex))
+                !recordingState.RenderGraphPlan.CompiledGraph.Plan.Execution.TryGetPassOrder(passIndex, out _))
             {
                 bool contextMetadataContainsPass = TryGetPassMetadata(
                     in recordingState.ActiveContext,
@@ -272,7 +276,7 @@ namespace XREngine.Rendering.Vulkan
                     recordingState.ActiveContext.PassMetadata?.Count ?? 0,
                     recordingState.RenderGraphPlan.Revision,
                     recordingState.RenderGraphPlan.StructuralGeneration,
-                    recordingState.RenderGraphPlan.CompiledGraph.OrderedPasses.Count);
+                    recordingState.RenderGraphPlan.CompiledGraph.Plan.Execution.Passes.Length);
                 Debug.VulkanWarningEvery(
                     "Vulkan.UnknownPassBarrier.ContextPlanMismatch",
                     TimeSpan.FromSeconds(2),
@@ -304,9 +308,9 @@ namespace XREngine.Rendering.Vulkan
             int queueOwnershipTransfers = 0;
             int stageFlushes = 0;
 
-            for (int i = 0; i < imageBarriers.Count; i++)
+            for (int i = 0; i < imageBarriers.Length; i++)
             {
-                VulkanBarrierPlanner.PlannedImageBarrier planned = imageBarriers[i];
+                VulkanFrozenImageBarrier planned = imageBarriers[i];
                 if (planned.SrcQueueFamilyIndex != Vk.QueueFamilyIgnored &&
                     planned.DstQueueFamilyIndex != Vk.QueueFamilyIgnored &&
                     planned.SrcQueueFamilyIndex != planned.DstQueueFamilyIndex)
@@ -318,9 +322,9 @@ namespace XREngine.Rendering.Vulkan
                     stageFlushes++;
             }
 
-            for (int i = 0; i < swapchainBarriers.Count; i++)
+            for (int i = 0; i < swapchainBarriers.Length; i++)
             {
-                VulkanBarrierPlanner.PlannedSwapchainBarrier planned = swapchainBarriers[i];
+                VulkanFrozenSwapchainBarrier planned = swapchainBarriers[i];
                 if (planned.SrcQueueFamilyIndex != Vk.QueueFamilyIgnored &&
                     planned.DstQueueFamilyIndex != Vk.QueueFamilyIgnored &&
                     planned.SrcQueueFamilyIndex != planned.DstQueueFamilyIndex)
@@ -332,9 +336,9 @@ namespace XREngine.Rendering.Vulkan
                     stageFlushes++;
             }
 
-            for (int i = 0; i < bufferBarriers.Count; i++)
+            for (int i = 0; i < bufferBarriers.Length; i++)
             {
-                VulkanBarrierPlanner.PlannedBufferBarrier planned = bufferBarriers[i];
+                VulkanFrozenBufferBarrier planned = bufferBarriers[i];
                 if (planned.SrcQueueFamilyIndex != Vk.QueueFamilyIgnored &&
                     planned.DstQueueFamilyIndex != Vk.QueueFamilyIgnored &&
                     planned.SrcQueueFamilyIndex != planned.DstQueueFamilyIndex)
@@ -346,7 +350,7 @@ namespace XREngine.Rendering.Vulkan
                     stageFlushes++;
             }
 
-            if (swapchainBarriers.Count > 0 || imageBarriers.Count > 0 || bufferBarriers.Count > 0)
+            if (!swapchainBarriers.IsEmpty || !imageBarriers.IsEmpty || !bufferBarriers.IsEmpty)
             {
                 _deviceContext.CmdBeginLabel(recordingState.CommandBuffer, "PassBarriers");
                 EmitPlannedSwapchainBarriers(ref recordingState, recordingState.CommandBuffer, swapchainBarriers);
@@ -360,10 +364,18 @@ namespace XREngine.Rendering.Vulkan
                 _deviceContext.CmdEndLabel(recordingState.CommandBuffer);
 
                 RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanBarrierPlannerPass(
-                    imageBarrierCount: imageBarriers.Count + swapchainBarriers.Count,
-                    bufferBarrierCount: bufferBarriers.Count,
+                    imageBarrierCount: imageBarriers.Length + swapchainBarriers.Length,
+                    bufferBarrierCount: bufferBarriers.Length,
                     queueOwnershipTransfers: queueOwnershipTransfers,
                     stageFlushes: stageFlushes);
+                VulkanSynchronizationThreadState.BarrierExecutionTelemetry telemetry =
+                    Synchronization._synchronizationThreadWorkspace.Current.GetBarrierExecutionTelemetry(
+                        recordingState.RenderGraphPlan.CompiledGraph.Plan.Execution.EdgeCount);
+                RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanGraphBarrierExecution(
+                    telemetry.Reservations,
+                    telemetry.RequestedBytes,
+                    telemetry.HighWaterBytes,
+                    telemetry.GraphEdgeCount);
 
                 if (CommandRecordingDiagnosticsEnabled)
                 {
@@ -372,8 +384,8 @@ namespace XREngine.Rendering.Vulkan
                         TimeSpan.FromSeconds(2),
                         "Pass barrier summary: pass={0} image={1} buffer={2} queueTransfers={3} stageFlushes={4}",
                         passIndex,
-                        imageBarriers.Count + swapchainBarriers.Count,
-                        bufferBarriers.Count,
+                        imageBarriers.Length + swapchainBarriers.Length,
+                        bufferBarriers.Length,
                         queueOwnershipTransfers,
                         stageFlushes);
                 }

@@ -61,14 +61,8 @@ public partial class XRTexture2D
             throw new InvalidOperationException($"Texture streaming payload exceeds maximum supported size ({size} bytes).");
 
         byte[] payload = new byte[(int)size];
-        unsafe
-        {
-            fixed (byte* ptr = payload)
-            {
-                using CookedBinaryWriter writer = new(ptr, payload.Length);
-                ((ICookedBinarySerializable)texture).WriteCookedBinary(writer);
-            }
-        }
+        CookedBinaryWriter writer = new(payload);
+        ((ICookedBinarySerializable)texture).WriteCookedBinary(writer);
 
         return payload;
     }
@@ -301,11 +295,8 @@ public partial class XRTexture2D
 
         try
         {
-            unsafe
             {
-                fixed (byte* ptr = payload)
-                {
-                    using CookedBinaryReader reader = new(ptr, payload.Length);
+                    CookedBinaryReader reader = new(payload);
                     if (!TryEnterTexturePayloadBody(reader))
                         return false;
 
@@ -329,7 +320,6 @@ public partial class XRTexture2D
                         sourceHeight,
                         residentMaxDimension);
                     return true;
-                }
             }
         }
         catch (Exception ex) when (ex is EndOfStreamException or InvalidCastException or InvalidOperationException or NotSupportedException or FormatException)
@@ -430,11 +420,8 @@ public partial class XRTexture2D
 
         try
         {
-            unsafe
             {
-                fixed (byte* ptr = payload)
-                {
-                    using CookedBinaryReader reader = new(ptr, payload.Length);
+                    CookedBinaryReader reader = new(payload);
                     if (!TryEnterTexturePayloadBody(reader))
                         return false;
 
@@ -443,7 +430,6 @@ public partial class XRTexture2D
                     scratch.ReadTextureStreamingSettings(reader);
                     scratch.GrabPass = ReadGrabPass(reader, scratch);
                     return TryReadStreamableMipManifest(reader, scratch.SizedInternalFormat, scratch.SamplerName, out manifest);
-                }
             }
         }
         catch (Exception ex) when (ex is EndOfStreamException or InvalidCastException or InvalidOperationException or NotSupportedException or FormatException)

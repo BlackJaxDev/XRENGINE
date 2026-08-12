@@ -123,6 +123,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
     private long _pendingGenerationFirstResizeRequestTimestamp;
     private ResourceGenerationKey? _lastFailedGenerationKey;
     private long _failedGenerationRetryAfterTimestamp;
+    private string? _lastResourceGenerationFailure;
     private ulong _resizeCatchUpSkippedFrameId = ulong.MaxValue;
 
     /// <summary>
@@ -137,6 +138,10 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
     /// </summary>
     public long ResourceGenerationDivergenceCount
         => System.Threading.Interlocked.Read(ref _resourceGenerationDivergenceCount);
+    /// <summary>
+    /// Retains the most recent resource-generation failure until a generation commits successfully.
+    /// </summary>
+    public string? LastResourceGenerationFailure => _lastResourceGenerationFailure;
     internal IRenderResourceGenerationBackend? ResourceGenerationBackendOverride { get; set; }
 
     internal bool TryGetLastResourceFeatureMask(XRViewport? viewport, out ulong featureMask)
@@ -1465,7 +1470,10 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
 
         if (!_resourceManager.MaterializeIncremental(this, pending, maxDuration, maxSpecsPerSlice, out bool completed))
         {
-            RegisterPendingGenerationFailure(pending.Key, reason);
+            string failure = pending.Diagnostics.Count > 0
+                ? pending.Diagnostics[^1]
+                : reason;
+            RegisterPendingGenerationFailure(pending.Key, failure);
             PendingGeneration = null;
             ClearPendingGenerationDebounce();
             pending.Dispose();
@@ -1548,6 +1556,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         _lastFailedGenerationKey = key;
         _failedGenerationRetryAfterTimestamp = System.Diagnostics.Stopwatch.GetTimestamp()
             + StopwatchTicksFromMilliseconds(FailedGenerationRetryBackoffMilliseconds);
+        SetField(ref _lastResourceGenerationFailure, reason, nameof(LastResourceGenerationFailure));
 
         Debug.RenderingWarning(
             "[RenderResources] Generation retry backoff armed. Pipeline={0} Reason={1} Target={2} RetryAfterMs={3:F0}",
@@ -1665,6 +1674,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
 
             ClearPendingGenerationDebounce();
             ClearFailedGenerationBackoff(ActiveGeneration.Key);
+            SetField(ref _lastResourceGenerationFailure, null, nameof(LastResourceGenerationFailure));
 
             if (old is not null)
                 RetireGeneration(old, $"Committed replacement generation: {reason}");

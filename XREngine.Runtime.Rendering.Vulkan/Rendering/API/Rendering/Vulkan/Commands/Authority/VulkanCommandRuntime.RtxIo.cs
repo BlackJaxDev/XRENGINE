@@ -1,11 +1,12 @@
 using System.Diagnostics;
+using System.Runtime.CompilerServices;
 using Silk.NET.Vulkan;
 using Buffer = Silk.NET.Vulkan.Buffer;
 
 namespace XREngine.Rendering.Vulkan;
 
 /// <summary>Command-owned RTX IO encoding and transient command storage.</summary>
-internal sealed unsafe partial class VulkanCommandRuntime
+internal sealed partial class VulkanCommandRuntime
 {
     private const bool EnableNvIndirectCopyUploads = false;
 
@@ -17,7 +18,7 @@ internal sealed unsafe partial class VulkanCommandRuntime
     internal ulong GetBufferDeviceAddress(Buffer buffer)
         => DeviceContext.GetBufferDeviceAddress(buffer);
 
-    internal bool TryCopyBufferViaIndirectNv(
+    internal unsafe bool TryCopyBufferViaIndirectNv(
         Buffer source,
         Buffer destination,
         ulong size,
@@ -64,7 +65,7 @@ internal sealed unsafe partial class VulkanCommandRuntime
         }
     }
 
-    internal bool TryCopyBufferToImageViaIndirectNv(
+    internal unsafe bool TryCopyBufferToImageViaIndirectNv(
         Buffer source,
         ulong sourceOffset,
         Image destination,
@@ -143,7 +144,7 @@ internal sealed unsafe partial class VulkanCommandRuntime
         }
     }
 
-    internal bool TryCopyMemoryToImageIndirectNv(
+    internal unsafe bool TryCopyMemoryToImageIndirectNv(
         ulong commandAddress,
         uint copyCount,
         uint stride,
@@ -267,7 +268,7 @@ internal sealed unsafe partial class VulkanCommandRuntime
         }
     }
 
-    private bool TryCreateIndirectCopyCommandBuffer<TCommand>(
+    private unsafe bool TryCreateIndirectCopyCommandBuffer<TCommand>(
         TCommand command,
         out Buffer commandBuffer,
         out DeviceMemory commandMemory,
@@ -289,13 +290,9 @@ internal sealed unsafe partial class VulkanCommandRuntime
                 MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit,
                 enableDeviceAddress: true,
                 owner: "RtxIo.IndirectCommand");
-            if (!ResourceRuntime.Buffers.TryMap(
-                    context,
-                    commandBuffer,
-                    commandMemory,
-                    0,
-                    commandSize,
-                    out void* mapped))
+            if (!ResourceRuntime.Buffers.TryCreateMappedSlice(
+                    context, commandBuffer, commandMemory, 0, commandSize, out VulkanMappedMemorySlice slice) ||
+                !ResourceRuntime.Buffers.TryAcquireWrite(context, in slice, out VulkanMappedMemoryWriteLease lease))
             {
                 DestroyIndirectCommandBuffer(commandBuffer, commandMemory);
                 commandBuffer = default;
@@ -303,13 +300,11 @@ internal sealed unsafe partial class VulkanCommandRuntime
                 return false;
             }
 
-            try
+            using (lease)
             {
-                *(TCommand*)mapped = command;
-            }
-            finally
-            {
-                ResourceRuntime.Buffers.Unmap(context, commandBuffer, commandMemory);
+                if (lease.Bytes.Length < sizeof(TCommand))
+                    return false;
+                Unsafe.WriteUnaligned(ref lease.Bytes[0], command);
             }
 
             commandAddress = DeviceContext.GetBufferDeviceAddress(commandBuffer);

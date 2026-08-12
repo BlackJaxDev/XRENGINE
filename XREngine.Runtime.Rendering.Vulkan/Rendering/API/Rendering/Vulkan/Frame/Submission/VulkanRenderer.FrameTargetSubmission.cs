@@ -5,7 +5,7 @@ using Semaphore = Silk.NET.Vulkan.Semaphore;
 
 namespace XREngine.Rendering.Vulkan;
 
-internal sealed unsafe partial class VulkanFrameLoop
+internal sealed partial class VulkanFrameLoop
 {
     private string FrameExecutionLabel
         => TargetExecutionMode switch
@@ -63,7 +63,7 @@ internal sealed unsafe partial class VulkanFrameLoop
     /// Executes an explicit target frame through the same allocation-free queue
     /// submission primitive used by the desktop production frame loop.
     /// </summary>
-    internal void ExecuteExplicitTargetFrame(
+    internal unsafe void ExecuteExplicitTargetFrame(
         Action<Vk, CommandBuffer, VulkanRenderFrameTarget> record)
     {
         ArgumentNullException.ThrowIfNull(record);
@@ -201,7 +201,7 @@ internal sealed unsafe partial class VulkanFrameLoop
     /// Builds binary and optional timeline semaphore arrays on the stack and
     /// submits one frame-target lease without managed allocation.
     /// </summary>
-    private Result SubmitFrameTargetLease(
+    private unsafe Result SubmitFrameTargetLease(
         in VulkanFrameTargetLease lease,
         CommandBuffer* commandBuffers,
         uint commandBufferCount,

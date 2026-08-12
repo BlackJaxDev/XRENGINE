@@ -25,19 +25,9 @@ internal sealed class VulkanFrameOpWorkspace
             state.Cursor = 0;
         }
 
-        reusable = null;
-        int slot = state.Cursor;
-        while (slot < state.Items.Count)
-        {
-            T candidate = state.Items[slot++];
-            if (candidate.IsPinnedByFramePlan)
-                continue;
-
-            reusable = candidate;
-            break;
-        }
-
-        state.Cursor = reusable is null ? slot + 1 : slot;
+        reusable = state.Cursor < state.Items.Count
+            ? state.Items[state.Cursor++]
+            : null;
         return true;
     }
 

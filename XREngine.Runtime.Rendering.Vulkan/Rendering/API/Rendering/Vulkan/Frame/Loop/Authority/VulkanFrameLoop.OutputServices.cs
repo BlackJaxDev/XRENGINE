@@ -4,7 +4,7 @@ using XREngine.Rendering.UI;
 
 namespace XREngine.Rendering.Vulkan;
 
-internal sealed unsafe partial class VulkanFrameLoop
+internal sealed partial class VulkanFrameLoop
 {
     private VulkanDesktopSwapchainService? _desktopSwapchainService;
     private VulkanTargetOutputContext? _targetOutputSession;

@@ -6,7 +6,7 @@ namespace XREngine.Rendering.Vulkan;
 /// Narrow resource and snapshot services used while lowering a sealed frame plan
 /// into command-chain packets.
 /// </summary>
-internal sealed unsafe partial class VulkanCommandRuntime
+internal sealed partial class VulkanCommandRuntime
 {
     private static bool HasMutableCommandChainFrameOps(FrameOperationStream operations)
         // Submission markers publish no Vulkan command. Their current fence is

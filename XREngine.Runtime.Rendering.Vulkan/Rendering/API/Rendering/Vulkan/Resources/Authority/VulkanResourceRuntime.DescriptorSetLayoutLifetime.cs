@@ -2,7 +2,7 @@ using Silk.NET.Vulkan;
 
 namespace XREngine.Rendering.Vulkan;
 
-internal sealed unsafe partial class VulkanResourceRuntime
+internal sealed partial class VulkanResourceRuntime
 {
     /// <summary>Registers a descriptor-set layout with this device generation.</summary>
     internal void RegisterDescriptorSetLayout(DescriptorSetLayout layout, string owner)
@@ -21,7 +21,7 @@ internal sealed unsafe partial class VulkanResourceRuntime
     /// Destroys a descriptor-set layout once the last command-buffer dependency
     /// has completed, or queues it on the supplied frame slot otherwise.
     /// </summary>
-    internal void DestroyDescriptorSetLayout(
+    internal unsafe void DestroyDescriptorSetLayout(
         Vk api,
         Device device,
         int frameSlot,

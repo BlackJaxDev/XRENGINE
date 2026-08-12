@@ -14,7 +14,7 @@ using XREngine.Rendering.Resources;
 
 namespace XREngine.Rendering.Vulkan
 {
-    internal sealed unsafe partial class VulkanCommandRuntime
+    internal sealed partial class VulkanCommandRuntime
     {
         private bool RecordBlitOp(CommandBuffer commandBuffer, uint imageIndex, BlitOp op)
         {
@@ -27,10 +27,10 @@ namespace XREngine.Rendering.Vulkan
             uint imageIndex,
             BlitOp op,
             in SwapchainRecordingTarget swapchainTarget)
-            => RecordBlitOp(
+            => RecordBlitPayload(
                 commandBuffer,
                 imageIndex,
-                op,
+                new BlitPayload(op.InFbo, op.OutFbo, op.InX, op.InY, op.InW, op.InH, op.OutX, op.OutY, op.OutW, op.OutH, op.ReadBufferMode, op.ColorBit, op.DepthBit, op.StencilBit, op.LinearFilter),
                 in swapchainTarget,
                 exactColorSource: null);
 
@@ -47,24 +47,6 @@ namespace XREngine.Rendering.Vulkan
             int passIndex,
             in FrameOpContext context)
         {
-            BlitOp operation = new(
-                passIndex,
-                null,
-                null,
-                0,
-                0,
-                source.Width,
-                source.Height,
-                0,
-                0,
-                swapchainTarget.Extent.Width,
-                swapchainTarget.Extent.Height,
-                EReadBufferMode.ColorAttachment0,
-                ColorBit: true,
-                DepthBit: false,
-                StencilBit: false,
-                LinearFilter: true,
-                context);
             BlitImageInfo exactSource = new(
                 source.Image,
                 source.Format,
@@ -77,18 +59,18 @@ namespace XREngine.Rendering.Vulkan
                 PipelineStageFlags.FragmentShaderBit,
                 AccessFlags.ShaderReadBit,
                 samples: source.Samples);
-            return RecordBlitOp(
+            return RecordBlitPayload(
                 commandBuffer,
                 imageIndex,
-                operation,
+                new BlitPayload(null, null, 0, 0, source.Width, source.Height, 0, 0, swapchainTarget.Extent.Width, swapchainTarget.Extent.Height, EReadBufferMode.ColorAttachment0, true, false, false, true),
                 in swapchainTarget,
                 exactSource);
         }
 
-        private bool RecordBlitOp(
+        internal bool RecordBlitPayload(
             CommandBuffer commandBuffer,
             uint imageIndex,
-            BlitOp op,
+            BlitPayload op,
             in SwapchainRecordingTarget swapchainTarget,
             BlitImageInfo? exactColorSource)
         {

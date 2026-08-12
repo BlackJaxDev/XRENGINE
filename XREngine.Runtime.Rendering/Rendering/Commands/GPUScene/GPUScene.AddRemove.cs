@@ -126,7 +126,7 @@ namespace XREngine.Rendering.Commands
                         uint index = UpdatingCommandCount++;
                         uint boundsId = index;
 
-                        var gpuCommand = ConvertToGPUCommand(
+                        var stageNativeRecords = CreateStageNativeDrawRecords(
                             renderInfo,
                             meshCmd,
                             mesh,
@@ -139,12 +139,12 @@ namespace XREngine.Rendering.Commands
                             skinId,
                             stateClassId,
                             boundsId);
-                        if (gpuCommand is null)
+                        if (stageNativeRecords is null)
                         {
                             ReleaseTransformId(transformId);
                             ReleaseSkinId(skinId);
                             --UpdatingCommandCount;
-                            SceneLog($"Skipping adding mesh command submesh {subMeshIndex} due to conversion failure.");
+                            SceneLog($"Skipping mesh-command submesh {subMeshIndex} because stage-native publication failed.");
                             continue;
                         }
 
@@ -154,12 +154,10 @@ namespace XREngine.Rendering.Commands
                         indices.Add(index);
                         _commandIndexLookup.Add(index, (meshCmd, subMeshIndex));
 
-                        GPUIndirectRenderCommand commandValue = gpuCommand.Value;
-                        // Preserve the source command index so post-cull stages can map back to CPU-side data.
-                        commandValue.Reserved1 = index;
-                        UpdatingCommandsBuffer.SetDataRawAtIndex(index, commandValue);
+                        DrawMetadata commandValue = stageNativeRecords.Value.Metadata;
+                        commandValue.DrawID = index;
                         WriteDrawMetadata(index, commandValue);
-                        WriteBounds(boundsId, ComputeRenderCullingBoundsGpu(renderInfo, mesh.Bounds, modelMatrix, 1u));
+                        WriteBounds(boundsId, stageNativeRecords.Value.Bounds);
                         UpdatingTransparencyMetadataBuffer.SetDataRawAtIndex(index, GPUTransparencyMetadata.FromMaterial(m));
                         if (_useInternalBvh)
                             WriteTightCommandAabb(index, renderInfo, mesh.Bounds, modelMatrix);
@@ -173,7 +171,7 @@ namespace XREngine.Rendering.Commands
                                 SceneLog($"[GPUScene/Build] idx={index} mesh={commandValue.MeshID} material={commandValue.MaterialID} pass={commandValue.RenderPass} instances={commandValue.InstanceCount}");
                             }
 
-                            GPUIndirectRenderCommand roundTrip = UpdatingCommandsBuffer.GetDataRawAtIndex<GPUIndirectRenderCommand>(index);
+                            DrawMetadata roundTrip = UpdatingDrawMetadataBuffer.GetDataRawAtIndex<DrawMetadata>(index);
                             bool matches = roundTrip.MeshID == commandValue.MeshID
                                 && roundTrip.MaterialID == commandValue.MaterialID
                                 && roundTrip.RenderPass == commandValue.RenderPass;
@@ -201,16 +199,10 @@ namespace XREngine.Rendering.Commands
                     // Upload only the newly appended command range.
                     // Pushing the full buffer can hitch when high-detail meshes/submeshes stream in later.
                     uint addedCount = UpdatingCommandCount - startCommandCount;
-                    uint elementSize = UpdatingCommandsBuffer.ElementSize;
-                    if (elementSize == 0)
-                        elementSize = (uint)(CommandFloatCount * sizeof(float));
-
-                    uint byteOffset = startCommandCount * elementSize;
-                    uint byteCount = addedCount * elementSize;
-                                        LodTransitionBuffer.PushSubData((int)(startCommandCount * LodTransitionBuffer.ElementSize), addedCount * LodTransitionBuffer.ElementSize);
-                    UpdatingCommandsBuffer.PushSubData((int)byteOffset, byteCount);
+                    FlushDrawIndexedSoARange(startCommandCount, addedCount);
+                    LodTransitionBuffer.PushSubData((int)(startCommandCount * LodTransitionBuffer.ElementSize), addedCount * LodTransitionBuffer.ElementSize);
                     MarkUpdatingCommandsDirty();
-                    SceneLog($"GPUScene.Add: Added commands, total now {UpdatingCommandCount} in UpdatingCommandsBuffer");
+                    SceneLog($"GPUScene.Add: Added commands, total now {UpdatingCommandCount} in draw-indexed streams");
 
                     // Mark BVH dirty so it gets rebuilt before next cull pass
                     if (_gpuBvhTree is not null)
@@ -1012,7 +1004,7 @@ namespace XREngine.Rendering.Commands
                 VerifyUpdatingBufferSize(UpdatingCommandCount);
                 if (anyRemoved)
                 {
-                    UpdatingCommandsBuffer.PushSubData();
+                    FlushDrawIndexedSoARange(0u, UpdatingCommandCount);
                     FlushCpuLodTransitionWrites();
                     MarkUpdatingCommandsDirty();
 
@@ -1038,7 +1030,7 @@ namespace XREngine.Rendering.Commands
             }
 
             // Capture removed command before we overwrite slots (swap-remove).
-            GPUIndirectRenderCommand removedCommand = UpdatingCommandsBuffer.GetDataRawAtIndex<GPUIndirectRenderCommand>(targetIndex);
+            DrawMetadata removedCommand = UpdatingDrawMetadataBuffer.GetDataRawAtIndex<DrawMetadata>(targetIndex);
             uint removedMeshId = removedCommand.MeshID;
             uint removedLogicalMeshId = removedCommand.LogicalMeshID;
             uint removedTransformId = removedCommand.TransformID;
@@ -1050,11 +1042,10 @@ namespace XREngine.Rendering.Commands
             _commandIndexLookup.Remove(targetIndex);
             if (targetIndex < lastIndex)
             {
-                GPUIndirectRenderCommand lastCommand = UpdatingCommandsBuffer.GetDataRawAtIndex<GPUIndirectRenderCommand>(lastIndex);
+                DrawMetadata lastCommand = UpdatingDrawMetadataBuffer.GetDataRawAtIndex<DrawMetadata>(lastIndex);
                 GPUTransparencyMetadata lastMetadata = UpdatingTransparencyMetadataBuffer.GetDataRawAtIndex<GPUTransparencyMetadata>(lastIndex);
-                lastCommand.Reserved1 = targetIndex;
+                lastCommand.DrawID = targetIndex;
                 lastCommand.BoundsID = targetIndex;
-                UpdatingCommandsBuffer.SetDataRawAtIndex(targetIndex, lastCommand);
                 WriteDrawMetadata(targetIndex, lastCommand);
 
                 BoundsGpu lastBounds = UpdatingBoundsBuffer.GetDataRawAtIndex<BoundsGpu>(lastIndex);
@@ -1108,21 +1099,22 @@ namespace XREngine.Rendering.Commands
         // Command buffers grow at powers of two and never shrink during a scene lifetime.
         private void VerifyUpdatingBufferSize(uint requiredSize)
         {
-            uint currentCapacity = UpdatingCommandsBuffer.ElementCount;
+            uint currentCapacity = UpdatingDrawMetadataBuffer.ElementCount;
             uint nextPowerOfTwo = XRMath.NextPowerOfTwo(requiredSize).ClampMin(MinCommandCount);
             if (nextPowerOfTwo <= currentCapacity)
                 return;
 
-            SceneLog($"Resizing updating command buffer from {currentCapacity} to {nextPowerOfTwo}.");
-            UpdatingCommandsBuffer.Resize(nextPowerOfTwo);
+            SceneLog($"Resizing updating draw-indexed streams from {currentCapacity} to {nextPowerOfTwo}.");
             UpdatingTransparencyMetadataBuffer.Resize(nextPowerOfTwo);
             UpdatingDrawMetadataBuffer.Resize(nextPowerOfTwo);
             UpdatingBoundsBuffer.Resize(nextPowerOfTwo);
+            UpdatingClassificationBuffer.Resize(nextPowerOfTwo);
+            UpdatingVisibilityBuffer.Resize(nextPowerOfTwo);
             EnsureLodTransitionBufferCapacity(nextPowerOfTwo);
-            uint newCapacity = UpdatingCommandsBuffer.ElementCount;
+            uint newCapacity = UpdatingDrawMetadataBuffer.ElementCount;
             if (newCapacity > currentCapacity)
             {
-                ZeroUpdatingCommandRange(currentCapacity, newCapacity - currentCapacity);
+                ZeroUpdatingDrawMetadataRange(currentCapacity, newCapacity - currentCapacity);
                 ZeroUpdatingTransparencyMetadataRange(currentCapacity, newCapacity - currentCapacity);
                 for (uint i = currentCapacity; i < newCapacity; ++i)
                     ClearDrawIndexedSoA(i);
@@ -1130,27 +1122,39 @@ namespace XREngine.Rendering.Commands
             }
         }
 
-        private void ZeroUpdatingCommandRange(uint startIndex, uint count)
+        private void ZeroUpdatingDrawMetadataRange(uint startIndex, uint count)
         {
             if (count == 0)
                 return;
 
-            var blank = default(GPUIndirectRenderCommand);
+            var blank = default(DrawMetadata);
             uint end = startIndex + count;
             for (uint i = startIndex; i < end; ++i)
-                UpdatingCommandsBuffer.SetDataRawAtIndex(i, blank);
+                UpdatingDrawMetadataBuffer.SetDataRawAtIndex(i, blank);
 
-            uint elementSize = UpdatingCommandsBuffer.ElementSize;
-            if (elementSize == 0)
-                elementSize = (uint)(CommandFloatCount * sizeof(float));
+            uint elementSize = UpdatingDrawMetadataBuffer.ElementSize;
 
             uint byteOffset = startIndex * elementSize;
             uint byteCount = count * elementSize;
-            UpdatingCommandsBuffer.PushSubData((int)byteOffset, byteCount);
+            UpdatingDrawMetadataBuffer.PushSubData((int)byteOffset, byteCount);
             MarkUpdatingCommandsDirty();
 
             if (IsGpuSceneLoggingEnabled())
-                SceneLog($"Zeroed updating command buffer range [{startIndex}, {end}) ({byteCount} bytes)");
+                SceneLog($"Zeroed updating draw metadata range [{startIndex}, {end}) ({byteCount} bytes)");
+        }
+
+        private void FlushDrawIndexedSoARange(uint startIndex, uint count)
+        {
+            if (count == 0u)
+                return;
+
+            static void Flush(XRDataBuffer buffer, uint start, uint length)
+                => buffer.PushSubData((int)(start * buffer.ElementSize), length * buffer.ElementSize);
+
+            Flush(UpdatingDrawMetadataBuffer, startIndex, count);
+            Flush(UpdatingBoundsBuffer, startIndex, count);
+            Flush(UpdatingClassificationBuffer, startIndex, count);
+            Flush(UpdatingVisibilityBuffer, startIndex, count);
         }
 
         private void ZeroUpdatingTransparencyMetadataRange(uint startIndex, uint count)
@@ -1176,44 +1180,43 @@ namespace XREngine.Rendering.Commands
         // Command buffers grow at powers of two and never shrink during a scene lifetime.
         private void VerifyCommandBufferSize(uint requiredSize)
         {
-            uint currentCapacity = AllLoadedCommandsBuffer.ElementCount;
+            uint currentCapacity = DrawMetadataBuffer.ElementCount;
             uint nextPowerOfTwo = XRMath.NextPowerOfTwo(requiredSize).ClampMin(MinCommandCount);
             if (nextPowerOfTwo <= currentCapacity)
                 return;
 
-            SceneLog($"Resizing command buffer from {currentCapacity} to {nextPowerOfTwo}.");
-            AllLoadedCommandsBuffer.Resize(nextPowerOfTwo);
+            SceneLog($"Resizing published draw-indexed streams from {currentCapacity} to {nextPowerOfTwo}.");
             AllLoadedTransparencyMetadataBuffer.Resize(nextPowerOfTwo);
             DrawMetadataBuffer.Resize(nextPowerOfTwo);
             BoundsBuffer.Resize(nextPowerOfTwo);
-            uint newCapacity = AllLoadedCommandsBuffer.ElementCount;
+            ClassificationBuffer.Resize(nextPowerOfTwo);
+            VisibilityBuffer.Resize(nextPowerOfTwo);
+            uint newCapacity = DrawMetadataBuffer.ElementCount;
             if (newCapacity > currentCapacity)
             {
-                ZeroCommandRange(currentCapacity, newCapacity - currentCapacity);
+                ZeroDrawMetadataRange(currentCapacity, newCapacity - currentCapacity);
                 ZeroTransparencyMetadataRange(currentCapacity, newCapacity - currentCapacity);
             }
         }
 
-        private void ZeroCommandRange(uint startIndex, uint count)
+        private void ZeroDrawMetadataRange(uint startIndex, uint count)
         {
             if (count == 0)
                 return;
 
-            var blank = default(GPUIndirectRenderCommand);
+            var blank = default(DrawMetadata);
             uint end = startIndex + count;
             for (uint i = startIndex; i < end; ++i)
-                AllLoadedCommandsBuffer.SetDataRawAtIndex(i, blank);
+                DrawMetadataBuffer.SetDataRawAtIndex(i, blank);
 
-            uint elementSize = AllLoadedCommandsBuffer.ElementSize;
-            if (elementSize == 0)
-                elementSize = (uint)(CommandFloatCount * sizeof(float));
+            uint elementSize = DrawMetadataBuffer.ElementSize;
 
             uint byteOffset = startIndex * elementSize;
             uint byteCount = count * elementSize;
-            AllLoadedCommandsBuffer.PushSubData((int)byteOffset, byteCount);
+            DrawMetadataBuffer.PushSubData((int)byteOffset, byteCount);
 
             if (IsGpuSceneLoggingEnabled())
-                SceneLog($"Zeroed command buffer range [{startIndex}, {end}) ({byteCount} bytes)");
+                SceneLog($"Zeroed published draw metadata range [{startIndex}, {end}) ({byteCount} bytes)");
         }
 
         private void ZeroTransparencyMetadataRange(uint startIndex, uint count)

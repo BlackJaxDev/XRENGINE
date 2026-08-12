@@ -244,6 +244,18 @@ internal readonly unsafe struct VulkanTrackedCommandEncoder(VulkanCommandRuntime
         Api.CmdCopyBuffer(commandBuffer, source, destination, regionCount, regions);
     }
 
+    internal void CopyBuffer(
+        CommandBuffer commandBuffer,
+        Silk.NET.Vulkan.Buffer source,
+        Silk.NET.Vulkan.Buffer destination,
+        uint regionCount,
+        ref BufferCopy region)
+    {
+        Track(commandBuffer, ObjectType.Buffer, source.Handle);
+        Track(commandBuffer, ObjectType.Buffer, destination.Handle);
+        Api.CmdCopyBuffer(commandBuffer, source, destination, regionCount, ref region);
+    }
+
     /// <summary>Blits between images and records both lifetime dependencies.</summary>
     internal void BlitImage(
         CommandBuffer commandBuffer,
@@ -299,17 +311,29 @@ internal readonly unsafe struct VulkanTrackedCommandEncoder(VulkanCommandRuntime
     internal bool TryPushDescriptorHeapProgramData(
         CommandBuffer commandBuffer,
         VkRenderProgram program,
-        uint[]? dwords,
+        ReadOnlySpan<uint> dwords,
+        int dwordCount)
+        => TryPushDescriptorHeapProgramData(
+            commandBuffer,
+            program.DescriptorHeapLayout?.PushByteCount ?? 0u,
+            dwords,
+            dwordCount);
+
+    /// <summary>Pushes an already-prepared program heap payload without retaining the program object in a worker-side draw record.</summary>
+    internal bool TryPushDescriptorHeapProgramData(
+        CommandBuffer commandBuffer,
+        uint pushByteCount,
+        ReadOnlySpan<uint> dwords,
         int dwordCount)
     {
         VulkanDescriptorHeapState heap = Runtime.ResourceRuntime.Descriptors.Heap;
         if (heap.ActiveBackend != EVulkanDescriptorBackend.DescriptorHeap)
             return true;
 
-        DescriptorHeapProgramLayout? layout = program.DescriptorHeapLayout;
-        if (layout is null || layout.PushByteCount == 0)
+        if (pushByteCount == 0)
             return true;
-        if (dwords is null || dwordCount < layout.PushDwordCount || dwords.Length < dwordCount ||
+        int requiredDwordCount = checked((int)((pushByteCount + sizeof(uint) - 1) / sizeof(uint)));
+        if (dwordCount < requiredDwordCount || dwords.Length < dwordCount ||
             heap.NativeFunctions is null || !heap.SamplerStorage.IsReady || !heap.ResourceStorage.IsReady)
         {
             return false;
@@ -349,7 +373,7 @@ internal readonly unsafe struct VulkanTrackedCommandEncoder(VulkanCommandRuntime
                 Data = new HostAddressRangeConstEXTNative
                 {
                     Address = data,
-                    Size = layout.PushByteCount,
+                    Size = pushByteCount,
                 },
             };
             heap.NativeFunctions.CmdPushData(commandBuffer, &push);
@@ -552,7 +576,7 @@ internal readonly unsafe struct VulkanTrackedCommandEncoder(VulkanCommandRuntime
         Api.CmdSetScissor(commandBuffer, 0, 1, &scissorCopy);
     }
 
-    internal void SetViewportScissor(CommandBuffer commandBuffer, Viewport[] viewports, Rect2D[] scissors, uint count)
+    internal void SetViewportScissor(CommandBuffer commandBuffer, ReadOnlySpan<Viewport> viewports, ReadOnlySpan<Rect2D> scissors, uint count)
     {
         fixed (Viewport* viewportsPtr = viewports)
         fixed (Rect2D* scissorsPtr = scissors)

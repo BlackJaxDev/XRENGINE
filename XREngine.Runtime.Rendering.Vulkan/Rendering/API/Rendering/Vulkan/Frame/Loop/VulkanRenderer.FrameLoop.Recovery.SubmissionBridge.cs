@@ -3,12 +3,12 @@ using Semaphore = Silk.NET.Vulkan.Semaphore;
 
 namespace XREngine.Rendering.Vulkan
 {
-    internal sealed unsafe partial class VulkanFrameLoop
+    internal sealed partial class VulkanFrameLoop
     {
-        private VulkanSubmissionReceipt SubmitAcquireSemaphoreBridge(Semaphore acquireSemaphore, ulong signalTimelineValue)
+        private unsafe VulkanSubmissionReceipt SubmitAcquireSemaphoreBridge(Semaphore acquireSemaphore, ulong signalTimelineValue)
             => SubmitAcquireSemaphoreBridge(acquireSemaphore, signalTimelineValue, default, null, 0);
 
-        private VulkanSubmissionReceipt SubmitAcquireSemaphoreBridge(
+        private unsafe VulkanSubmissionReceipt SubmitAcquireSemaphoreBridge(
             Semaphore acquireSemaphore,
             ulong signalTimelineValue,
             Semaphore signalPresentSemaphore,

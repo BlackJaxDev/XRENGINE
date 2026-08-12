@@ -210,25 +210,18 @@ public sealed partial class GpuBvhTree
         RuntimeEngine.Rendering.Stats.GpuReadback.RecordGpuBufferMapped();
         try
         {
-            foreach (var addr in _overflowFlagBuffer.GetMappedAddresses())
+            uint value = 0u;
+            if (_overflowFlagBuffer.TryReadMapped(bytes =>
             {
-                if (addr.IsValid)
-                {
-                    unsafe
-                    {
-                        // Phase B invariant: every GPU->CPU readback must be
-                        // recorded in RuntimeEngine.Rendering.Stats so
-                        // GpuReadbackBytes stays honest under the instrumented
-                        // strategy. This is a 4-byte read, but it counts.
-                        RuntimeEngine.Rendering.Stats.GpuReadback.RecordGpuReadbackBytes(sizeof(uint));
-                        if (synchronous)
-                            _synchronousReadbackBytes += sizeof(uint);
-                        else
-                            _asynchronousReadbackBytes += sizeof(uint);
-                        return *((uint*)addr.Pointer);
-                    }
-                }
-            }
+                RuntimeEngine.Rendering.Stats.GpuReadback.RecordGpuReadbackBytes(sizeof(uint));
+                if (synchronous)
+                    _synchronousReadbackBytes += sizeof(uint);
+                else
+                    _asynchronousReadbackBytes += sizeof(uint);
+                value = System.Runtime.InteropServices.MemoryMarshal.Read<uint>(bytes);
+                return true;
+            }))
+                return value;
         }
         finally
         {

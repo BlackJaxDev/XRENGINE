@@ -62,9 +62,6 @@ namespace XREngine.Rendering.Commands
             _lodStreamingHasDrained = false;
             _lodStreamingFailedRequests.Clear();
 
-            _allLoadedCommandsBuffer?.Destroy();
-            _allLoadedCommandsBuffer = MakeCommandsInputBuffer();
-
             _allLoadedDrawMetadataBuffer?.Destroy();
             _allLoadedDrawMetadataBuffer = MakeDrawMetadataBuffer("DrawMetadataBuffer");
             _allLoadedTransformBuffer?.Destroy();
@@ -73,29 +70,39 @@ namespace XREngine.Rendering.Commands
             _allLoadedPrevTransformBuffer = MakeTransformBuffer("PrevTransformBuffer");
             _allLoadedBoundsBuffer?.Destroy();
             _allLoadedBoundsBuffer = MakeBoundsBuffer("BoundsBuffer");
+            _allLoadedClassificationBuffer?.Destroy();
+            _allLoadedClassificationBuffer = MakeClassificationBuffer("GPUSceneClassificationBuffer");
+            _allLoadedVisibilityBuffer?.Destroy();
+            _allLoadedVisibilityBuffer = MakeVisibilityBuffer("GPUSceneVisibilityBuffer");
 
             _allLoadedTransparencyMetadataBuffer?.Destroy();
             _allLoadedTransparencyMetadataBuffer = MakeTransparencyMetadataBuffer();
             
-            _updatingCommandsBuffer?.Destroy();
-            _updatingCommandsBuffer = MakeCommandsInputBuffer();
-
             _updatingDrawMetadataBuffer?.Destroy();
             _updatingDrawMetadataBuffer = MakeDrawMetadataBuffer("UpdatingDrawMetadataBuffer");
             _updatingTransformBuffer?.Destroy();
             _updatingTransformBuffer = MakeTransformBuffer("UpdatingTransformBuffer");
             _updatingBoundsBuffer?.Destroy();
             _updatingBoundsBuffer = MakeBoundsBuffer("UpdatingBoundsBuffer");
+            _updatingClassificationBuffer?.Destroy();
+            _updatingClassificationBuffer = MakeClassificationBuffer("UpdatingGPUSceneClassificationBuffer");
+            _updatingVisibilityBuffer?.Destroy();
+            _updatingVisibilityBuffer = MakeVisibilityBuffer("UpdatingGPUSceneVisibilityBuffer");
 
             _updatingTransparencyMetadataBuffer?.Destroy();
             _updatingTransparencyMetadataBuffer = MakeTransparencyMetadataBuffer();
 
             _materialStateBuffer?.Destroy();
             _materialStateBuffer = MakeMaterialStateBuffer();
+            _updatingMaterialStateBuffer?.Destroy();
+            _updatingMaterialStateBuffer = MakeMaterialStateBuffer();
             _skinningPaletteBuffer?.Destroy();
             _skinningPaletteBuffer = MakeSkinningPaletteBuffer();
             _transformDirtyRange.Clear();
             _previousPublishedTransformDirtyRange.Clear();
+            _classificationDirtyRange.Clear();
+            _visibilityDirtyRange.Clear();
+            _streamTelemetry = default;
             _newTransformIdsAwaitingPublication.Clear();
             _totalCommandCount = 0;
             _updatingCommandCount = 0;
@@ -153,8 +160,6 @@ namespace XREngine.Rendering.Commands
             _lodStreamingLastDrainFrameId = 0;
             _lodStreamingHasDrained = false;
             _lodStreamingFailedRequests.Clear();
-            _allLoadedCommandsBuffer?.Destroy();
-            _allLoadedCommandsBuffer = null;
             _allLoadedDrawMetadataBuffer?.Destroy();
             _allLoadedDrawMetadataBuffer = null;
             _allLoadedTransformBuffer?.Destroy();
@@ -163,20 +168,28 @@ namespace XREngine.Rendering.Commands
             _allLoadedPrevTransformBuffer = null;
             _allLoadedBoundsBuffer?.Destroy();
             _allLoadedBoundsBuffer = null;
+            _allLoadedClassificationBuffer?.Destroy();
+            _allLoadedClassificationBuffer = null;
+            _allLoadedVisibilityBuffer?.Destroy();
+            _allLoadedVisibilityBuffer = null;
             _allLoadedTransparencyMetadataBuffer?.Destroy();
             _allLoadedTransparencyMetadataBuffer = null;
-            _updatingCommandsBuffer?.Destroy();
-            _updatingCommandsBuffer = null;
             _updatingDrawMetadataBuffer?.Destroy();
             _updatingDrawMetadataBuffer = null;
             _updatingTransformBuffer?.Destroy();
             _updatingTransformBuffer = null;
             _updatingBoundsBuffer?.Destroy();
             _updatingBoundsBuffer = null;
+            _updatingClassificationBuffer?.Destroy();
+            _updatingClassificationBuffer = null;
+            _updatingVisibilityBuffer?.Destroy();
+            _updatingVisibilityBuffer = null;
             _updatingTransparencyMetadataBuffer?.Destroy();
             _updatingTransparencyMetadataBuffer = null;
             _materialStateBuffer?.Destroy();
             _materialStateBuffer = null;
+            _updatingMaterialStateBuffer?.Destroy();
+            _updatingMaterialStateBuffer = null;
             _skinningPaletteBuffer?.Destroy();
             _skinningPaletteBuffer = null;
 

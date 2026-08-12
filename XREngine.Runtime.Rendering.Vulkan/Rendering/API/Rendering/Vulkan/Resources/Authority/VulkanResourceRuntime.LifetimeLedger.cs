@@ -5,7 +5,7 @@ using XREngine.Rendering.Models.Materials;
 
 namespace XREngine.Rendering.Vulkan;
 
-internal sealed unsafe partial class VulkanResourceRuntime
+internal sealed partial class VulkanResourceRuntime
 {
     internal VulkanRetirementTicket CaptureRetirementWatermark()
         => Lifetime.Tracker.CaptureRetirementWatermark();
@@ -171,7 +171,7 @@ internal sealed unsafe partial class VulkanResourceRuntime
         }
     }
 
-    internal Result CreateImageTracked(
+    internal unsafe Result CreateImageTracked(
         Vk api,
         Device device,
         ref ImageCreateInfo createInfo,
@@ -184,7 +184,7 @@ internal sealed unsafe partial class VulkanResourceRuntime
         return result;
     }
 
-    internal void DestroyImageImmediateTracked(
+    internal unsafe void DestroyImageImmediateTracked(
         Vk api,
         Device device,
         Image image,

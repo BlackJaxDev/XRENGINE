@@ -57,27 +57,30 @@ internal enum RuntimeCookedBinaryTypeMarker : byte
     CustomObject = 25,
 }
 
-public sealed unsafe class RuntimeCookedBinaryWriter(byte* buffer, long length) : IDisposable
+/// <summary>Stack-confined writer over a caller-owned cooked-binary destination.</summary>
+public ref struct RuntimeCookedBinaryWriter
 {
-    private readonly byte* _start = buffer;
-    private byte* _cursor = buffer;
-    private readonly byte* _end = buffer + length;
+    private Span<byte> _buffer;
+    private readonly RuntimeCookedBinaryCursor _cursor;
+
+    public RuntimeCookedBinaryWriter(Span<byte> buffer)
+    {
+        _buffer = buffer;
+        _cursor = new RuntimeCookedBinaryCursor();
+    }
 
     public long Position
     {
-        get => _cursor - _start;
+        get => _cursor.Position;
         set
         {
-            byte* target = _start + value;
-            if (target < _start || target > _end)
+            if (value is < 0 or > int.MaxValue || (uint)value > (uint)_buffer.Length)
                 throw new ArgumentOutOfRangeException(nameof(value));
-            _cursor = target;
+            _cursor.Position = (int)value;
         }
     }
 
-    public void Dispose()
-    {
-    }
+    public readonly void Dispose() { }
 
     [RequiresUnreferencedCode(RuntimeCookedBinarySerializer.ReflectionWarningMessage)]
     [RequiresDynamicCode(RuntimeCookedBinarySerializer.ReflectionWarningMessage)]
@@ -89,17 +92,17 @@ public sealed unsafe class RuntimeCookedBinaryWriter(byte* buffer, long length) 
     public void WriteBaseObject<T>(T instance) where T : class
         => RuntimeCookedBinarySerializer.WriteBaseObject(this, instance!, typeof(T));
 
-    public void WriteBytes(ReadOnlySpan<byte> data)
+    public void WriteBytes(scoped ReadOnlySpan<byte> data)
     {
         EnsureCapacity(data.Length);
-        data.CopyTo(new Span<byte>(_cursor, data.Length));
-        _cursor += data.Length;
+        data.CopyTo(_buffer.Slice(_cursor.Position, data.Length));
+        _cursor.Position += data.Length;
     }
 
     public void Write(byte value)
     {
         EnsureCapacity(1);
-        *_cursor++ = value;
+        _buffer[_cursor.Position++] = value;
     }
 
     public void Write(sbyte value) => WriteUnmanaged(value);
@@ -127,8 +130,8 @@ public sealed unsafe class RuntimeCookedBinaryWriter(byte* buffer, long length) 
         int byteCount = Encoding.UTF8.GetByteCount(value);
         Write7BitEncodedInt(byteCount);
         EnsureCapacity(byteCount);
-        Encoding.UTF8.GetBytes(value, new Span<byte>(_cursor, byteCount));
-        _cursor += byteCount;
+        Encoding.UTF8.GetBytes(value, _buffer.Slice(_cursor.Position, byteCount));
+        _cursor.Position += byteCount;
     }
 
     internal void Write7BitEncodedInt(int value)
@@ -145,43 +148,50 @@ public sealed unsafe class RuntimeCookedBinaryWriter(byte* buffer, long length) 
 
     private void EnsureCapacity(int count)
     {
-        if (_cursor + count > _end)
+        if (count < 0 || count > _buffer.Length - _cursor.Position)
             throw new InvalidOperationException("Runtime cooked binary writer exceeded allocated buffer.");
     }
 
     private void WriteUnmanaged<T>(T value) where T : unmanaged
     {
-        int size = sizeof(T);
+        int size = Unsafe.SizeOf<T>();
         EnsureCapacity(size);
-        Unsafe.WriteUnaligned(_cursor, value);
-        _cursor += size;
+        Unsafe.WriteUnaligned(ref _buffer[_cursor.Position], value);
+        _cursor.Position += size;
     }
 }
 
-public sealed unsafe class RuntimeCookedBinaryReader(byte* buffer, long length) : IDisposable
+/// <summary>
+/// Bounds-validated decoder for runtime cooked binary payloads. The stack-confined
+/// owner retains only a <see cref="ReadOnlySpan{T}"/> and numeric cursor, so no raw
+/// address can escape a decoding call.
+/// </summary>
+public ref struct RuntimeCookedBinaryReader
 {
-    private readonly byte* _start = buffer;
-    private byte* _cursor = buffer;
-    private readonly byte* _end = buffer + length;
+    private readonly ReadOnlySpan<byte> _buffer;
+    private readonly RuntimeCookedBinaryCursor _cursor;
 
-    public long Remaining => _end - _cursor;
-    public long Length => _end - _start;
+    public RuntimeCookedBinaryReader(ReadOnlySpan<byte> buffer)
+    {
+        _buffer = buffer;
+        _cursor = new RuntimeCookedBinaryCursor();
+    }
+
+    public long Remaining => _buffer.Length - _cursor.Position;
+    public long Length => _buffer.Length;
 
     public long Position
     {
-        get => _cursor - _start;
+        get => _cursor.Position;
         set
         {
-            byte* target = _start + value;
-            if (target < _start || target > _end)
+            if (value is < 0 or > int.MaxValue || (uint)value > (uint)_buffer.Length)
                 throw new ArgumentOutOfRangeException(nameof(value));
-            _cursor = target;
+            _cursor.Position = (int)value;
         }
     }
 
-    public void Dispose()
-    {
-    }
+    public readonly void Dispose() { }
 
     [RequiresUnreferencedCode(RuntimeCookedBinarySerializer.ReflectionWarningMessage)]
     [RequiresDynamicCode(RuntimeCookedBinarySerializer.ReflectionWarningMessage)]
@@ -196,7 +206,9 @@ public sealed unsafe class RuntimeCookedBinaryReader(byte* buffer, long length) 
     public byte ReadByte()
     {
         EnsureAvailable(1);
-        return *_cursor++;
+        byte value = _buffer[_cursor.Position];
+        _cursor.Position++;
+        return value;
     }
 
     public sbyte ReadSByte() => ReadUnmanaged<sbyte>();
@@ -219,8 +231,8 @@ public sealed unsafe class RuntimeCookedBinaryReader(byte* buffer, long length) 
             return string.Empty;
 
         EnsureAvailable(length);
-        string value = Encoding.UTF8.GetString(new ReadOnlySpan<byte>(_cursor, length));
-        _cursor += length;
+        string value = Encoding.UTF8.GetString(_buffer.Slice(_cursor.Position, length));
+        _cursor.Position += length;
         return value;
     }
 
@@ -228,28 +240,30 @@ public sealed unsafe class RuntimeCookedBinaryReader(byte* buffer, long length) 
     {
         EnsureAvailable(length);
         byte[] result = new byte[length];
-        new ReadOnlySpan<byte>(_cursor, length).CopyTo(result);
-        _cursor += length;
+        _buffer.Slice(_cursor.Position, length).CopyTo(result);
+        _cursor.Position += length;
         return result;
     }
 
-    public void ReadBytes(void* destination, int length)
+    public void ReadBytes(scoped Span<byte> destination)
     {
-        if (length <= 0)
+        if (destination.IsEmpty)
             return;
 
-        EnsureAvailable(length);
-        Unsafe.CopyBlockUnaligned(destination, _cursor, (uint)length);
-        _cursor += length;
+        EnsureAvailable(destination.Length);
+        _buffer.Slice(_cursor.Position, destination.Length).CopyTo(destination);
+        _cursor.Position += destination.Length;
     }
 
     public void SkipBytes(int length)
     {
-        if (length <= 0)
+        if (length == 0)
             return;
+        if (length < 0)
+            throw new ArgumentOutOfRangeException(nameof(length));
 
         EnsureAvailable(length);
-        _cursor += length;
+        _cursor.Position += length;
     }
 
     internal int Read7BitEncodedInt()
@@ -273,16 +287,18 @@ public sealed unsafe class RuntimeCookedBinaryReader(byte* buffer, long length) 
 
     private void EnsureAvailable(int count)
     {
-        if (_cursor + count > _end)
+        if (count < 0)
+            throw new ArgumentOutOfRangeException(nameof(count));
+        if (count > Remaining)
             throw new EndOfStreamException("Attempted to read beyond the end of the runtime cooked buffer.");
     }
 
     private T ReadUnmanaged<T>() where T : unmanaged
     {
-        int size = sizeof(T);
+        int size = Unsafe.SizeOf<T>();
         EnsureAvailable(size);
-        T value = Unsafe.ReadUnaligned<T>(_cursor);
-        _cursor += size;
+        T value = Unsafe.ReadUnaligned<T>(ref Unsafe.AsRef(in _buffer[_cursor.Position]));
+        _cursor.Position += size;
         return value;
     }
 }
@@ -334,18 +350,15 @@ public static class RuntimeCookedBinarySerializer
 
     [RequiresUnreferencedCode(ReflectionWarningMessage)]
     [RequiresDynamicCode(ReflectionWarningMessage)]
-    public static unsafe byte[] Serialize(object? value)
+    public static byte[] Serialize(object? value)
     {
         long length = CalculateSize(value);
         if (length > int.MaxValue)
             throw new InvalidOperationException($"Runtime cooked payload exceeds maximum supported size ({length} bytes).");
 
         byte[] buffer = new byte[(int)length];
-        fixed (byte* ptr = buffer)
-        {
-            using RuntimeCookedBinaryWriter writer = new(ptr, buffer.Length);
-            WriteValue(writer, value);
-        }
+        RuntimeCookedBinaryWriter writer = new(buffer);
+        WriteValue(writer, value);
 
         return buffer;
     }
@@ -395,13 +408,10 @@ public static class RuntimeCookedBinarySerializer
 
     [RequiresUnreferencedCode(ReflectionWarningMessage)]
     [RequiresDynamicCode(ReflectionWarningMessage)]
-    private static unsafe object? DeserializeCore(Type expectedType, ReadOnlySpan<byte> data)
+    private static object? DeserializeCore(Type expectedType, ReadOnlySpan<byte> data)
     {
-        fixed (byte* ptr = data)
-        {
-            using RuntimeCookedBinaryReader reader = new(ptr, data.Length);
-            return ReadValue(reader, expectedType);
-        }
+        RuntimeCookedBinaryReader reader = new(data);
+        return ReadValue(reader, expectedType);
     }
 
     public static T ExecuteWithMemoryPackSuppressed<T>(Func<T> func)
@@ -444,7 +454,6 @@ public static class RuntimeCookedBinarySerializer
     [RequiresDynamicCode(ReflectionWarningMessage)]
     internal static void WriteBaseObject(RuntimeCookedBinaryWriter writer, object instance, Type metadataType)
     {
-        ArgumentNullException.ThrowIfNull(writer);
         ArgumentNullException.ThrowIfNull(instance);
         ArgumentNullException.ThrowIfNull(metadataType);
 
@@ -462,7 +471,6 @@ public static class RuntimeCookedBinarySerializer
     [RequiresDynamicCode(ReflectionWarningMessage)]
     internal static void ReadBaseObject(RuntimeCookedBinaryReader reader, object instance, Type metadataType)
     {
-        ArgumentNullException.ThrowIfNull(reader);
         ArgumentNullException.ThrowIfNull(instance);
         ArgumentNullException.ThrowIfNull(metadataType);
 

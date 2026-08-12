@@ -694,57 +694,16 @@ internal unsafe partial class VkMeshRenderer
 				continue;
 			}
 
-			fixed (DescriptorImageInfo* imageInfoPtr = imageInfos)
+			if (!TryWriteFrameSourceDescriptor(
+					allocation,
+					descriptorSlotIndex,
+					frameSets[binding.Set],
+					binding,
+					descriptorCount,
+					resolvedImageInfos,
+					out reason))
 			{
-				WriteDescriptorSet write = new()
-				{
-					SType = StructureType.WriteDescriptorSet,
-					DstSet = frameSets[binding.Set],
-					DstBinding = binding.Binding,
-					DescriptorCount = descriptorCount,
-					DescriptorType = binding.DescriptorType,
-					PImageInfo = imageInfoPtr
-				};
-
-				if (!ValidateDescriptorWrites(&write, 1))
-				{
-					reason = $"invalid frame-source sampler descriptor '{binding.Name}'";
-					return false;
-				}
-
-				if (BackendContext.Resources.Descriptors.Heap.ActiveBackend == EVulkanDescriptorBackend.DescriptorHeap)
-				{
-					DescriptorHeapPushDataPayload? payload = allocation?.DescriptorHeapPushData is { Length: > 0 } heapPayloads &&
-						(uint)descriptorSlotIndex < (uint)heapPayloads.Length
-							? heapPayloads[descriptorSlotIndex]
-							: null;
-					if (payload is null || _program is null)
-					{
-						reason = $"descriptor heap frame-source payload missing for '{binding.Name}'";
-						return false;
-					}
-
-					if (!BackendContext.Resources.DescriptorLifetime.TryWriteDescriptorHeapBinding(_program, binding, payload, null, imageInfoPtr, null, descriptorCount, out string heapReason))
-					{
-						reason = $"descriptor heap frame-source sampler '{binding.Name}' update failed: {heapReason}";
-						return false;
-					}
-				}
-
-				if (!BackendContext.Resources.DescriptorLifetime.TryUpdateDescriptorSets(1, &write, out string updateFailureReason))
-				{
-					reason = $"frame-source sampler '{binding.Name}' update deferred: {updateFailureReason}";
-					Debug.VulkanWarningEvery(
-						$"Vulkan.MeshRenderer.FrameSourceDescriptorGenerationRace.{GetHashCode()}",
-						TimeSpan.FromSeconds(1),
-						"[Vulkan] Deferred frame-source sampler descriptor update because a render-resource generation retired concurrently: {0}",
-						updateFailureReason);
-					return false;
-				}
-				// The completed frame slot keeps the same descriptor-set handle. Its
-				// contents are data publication, not a command-buffer binding change.
-				// Advancing the global descriptor generation here would unnecessarily
-				// invalidate every cached primary before the next slot can reuse it.
+				return false;
 			}
 
 			RecordFrameSourceDescriptorWriteSignature(allocation, descriptorSlotIndex, binding, descriptorCount, resolvedImageInfos);
@@ -778,6 +737,79 @@ internal unsafe partial class VkMeshRenderer
 			reason = "refreshed frame-source sampler descriptors";
 		}
 		return true;
+	}
+
+	private bool TryWriteFrameSourceDescriptor(
+		DescriptorAllocation? allocation,
+		int descriptorSlotIndex,
+		DescriptorSet destinationSet,
+		DescriptorBindingInfo binding,
+		uint descriptorCount,
+		ReadOnlySpan<DescriptorImageInfo> imageInfos,
+		out string reason)
+	{
+		fixed (DescriptorImageInfo* imageInfoPtr = imageInfos)
+		{
+			WriteDescriptorSet write = new()
+			{
+				SType = StructureType.WriteDescriptorSet,
+				DstSet = destinationSet,
+				DstBinding = binding.Binding,
+				DescriptorCount = descriptorCount,
+				DescriptorType = binding.DescriptorType,
+				PImageInfo = imageInfoPtr
+			};
+
+			if (!ValidateDescriptorWrites(&write, 1))
+			{
+				reason = $"invalid frame-source sampler descriptor '{binding.Name}'";
+				return false;
+			}
+
+			if (BackendContext.Resources.Descriptors.Heap.ActiveBackend == EVulkanDescriptorBackend.DescriptorHeap)
+			{
+				DescriptorHeapPushDataPayload? payload = allocation?.DescriptorHeapPushData is { Length: > 0 } heapPayloads &&
+					(uint)descriptorSlotIndex < (uint)heapPayloads.Length
+						? heapPayloads[descriptorSlotIndex]
+						: null;
+				if (payload is null || _program is null)
+				{
+					reason = $"descriptor heap frame-source payload missing for '{binding.Name}'";
+					return false;
+				}
+
+				if (!BackendContext.Resources.DescriptorLifetime.TryWriteDescriptorHeapBinding(
+						_program,
+						binding,
+						payload,
+						null,
+						imageInfoPtr,
+						null,
+						descriptorCount,
+						out string heapReason))
+				{
+					reason = $"descriptor heap frame-source sampler '{binding.Name}' update failed: {heapReason}";
+					return false;
+				}
+			}
+
+			if (!BackendContext.Resources.DescriptorLifetime.TryUpdateDescriptorSets(
+					1,
+					&write,
+					out string updateFailureReason))
+			{
+				reason = $"frame-source sampler '{binding.Name}' update deferred: {updateFailureReason}";
+				Debug.VulkanWarningEvery(
+					$"Vulkan.MeshRenderer.FrameSourceDescriptorGenerationRace.{GetHashCode()}",
+					TimeSpan.FromSeconds(1),
+					"[Vulkan] Deferred frame-source sampler descriptor update because a render-resource generation retired concurrently: {0}",
+					updateFailureReason);
+				return false;
+			}
+
+			reason = string.Empty;
+			return true;
+		}
 	}
 
 	private static bool SnapshotContainsNamedSampler(
@@ -1161,13 +1193,13 @@ internal unsafe partial class VkMeshRenderer
 			descriptorSlot,
 			commandBuffer,
 			descriptorSet,
+			set,
+			binding,
 			bindingName,
 			imageInfo,
 			resourceSignature,
+			writeMatched,
 			writeSucceeded);
-		_ = set;
-		_ = binding;
-		_ = writeMatched;
 	}
 
 	/// <summary>Resolves one or more buffer descriptors for a binding, duplicating for array bindings.</summary>

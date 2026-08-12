@@ -3,7 +3,7 @@ using Buffer = Silk.NET.Vulkan.Buffer;
 
 namespace XREngine.Rendering.Vulkan;
 
-internal sealed unsafe partial class VulkanCommandRuntime
+internal sealed partial class VulkanCommandRuntime
 {
     /// <summary>
     /// Records and synchronously submits one tracked buffer copy on the graphics
@@ -11,7 +11,7 @@ internal sealed unsafe partial class VulkanCommandRuntime
     /// ownership plan, so this compatibility operation deliberately stays on the
     /// graphics queue.
     /// </summary>
-    internal bool ExecuteSynchronousBufferUpload(
+    internal unsafe bool ExecuteSynchronousBufferUpload(
         Buffer source,
         Buffer destination,
         ulong size,

@@ -13,7 +13,7 @@ using XREngine.Rendering.Shadows;
 
 namespace XREngine.Rendering.Vulkan;
 
-internal sealed unsafe partial class VulkanCommandRuntime
+internal sealed partial class VulkanCommandRuntime
 {
     internal const string CommandChainsEnvVar = XREngineEnvironmentVariables.VulkanCommandChains;
     internal const string CommandChainsSingleThreadEnvVar = XREngineEnvironmentVariables.VulkanCommandChainsSingleThread;
@@ -219,7 +219,7 @@ internal sealed unsafe partial class VulkanCommandRuntime
     }
 
     internal static bool TryResolveCommandChainRecordingRendererFamily(
-        FrameOp[] ops,
+        FrameOperationSequence operations,
         CommandChain chain,
         int frameDataSlot,
         EVulkanMeshFrameDataStreamKind streamKind,
@@ -228,8 +228,8 @@ internal sealed unsafe partial class VulkanCommandRuntime
         rendererFamily = default;
         if (chain.SourceStartIndex < 0 ||
             chain.SourceCount <= 0 ||
-            chain.SourceStartIndex > ops.Length - chain.SourceCount ||
-            ops[chain.SourceStartIndex] is not MeshDrawOp firstDraw)
+            chain.SourceStartIndex > operations.Length - chain.SourceCount ||
+            operations.GetHeader(chain.SourceStartIndex).OpCode != EVulkanPrimaryPlanNodeKind.MeshDraw)
         {
             return false;
         }
@@ -237,23 +237,25 @@ internal sealed unsafe partial class VulkanCommandRuntime
         VulkanMeshFrameDataFamilyKey firstFamily = VulkanMeshFrameDataFamilyKey.From(
             frameDataSlot,
             streamKind,
-            firstDraw.Context,
-            firstDraw.Draw);
-        rendererFamily = new VulkanMeshFrameDataRendererFamilyKey(firstDraw.Draw.Renderer, firstFamily);
+            operations.GetContext(chain.SourceStartIndex),
+            operations.Stream.GetMeshDraw(chain.SourceStartIndex).Draw);
+        rendererFamily = new VulkanMeshFrameDataRendererFamilyKey(operations.Stream.GetMeshDraw(chain.SourceStartIndex).Draw.Renderer, firstFamily);
 
         VulkanMeshFrameDataRendererFamilyKeyComparer comparer =
             VulkanMeshFrameDataRendererFamilyKeyComparer.Instance;
         for (int drawIndex = 1; drawIndex < chain.SourceCount; drawIndex++)
         {
-            if (ops[chain.SourceStartIndex + drawIndex] is not MeshDrawOp draw)
+            int operationIndex = chain.SourceStartIndex + drawIndex;
+            if (operations.GetHeader(operationIndex).OpCode != EVulkanPrimaryPlanNodeKind.MeshDraw)
                 return false;
+            PendingMeshDraw draw = operations.Stream.GetMeshDraw(operationIndex).Draw;
 
             VulkanMeshFrameDataFamilyKey family = VulkanMeshFrameDataFamilyKey.From(
                 frameDataSlot,
                 streamKind,
-                draw.Context,
-                draw.Draw);
-            VulkanMeshFrameDataRendererFamilyKey candidate = new(draw.Draw.Renderer, family);
+                operations.GetContext(operationIndex),
+                draw);
+            VulkanMeshFrameDataRendererFamilyKey candidate = new(draw.Renderer, family);
             if (!comparer.Equals(rendererFamily, candidate))
                 return false;
         }

@@ -10,7 +10,7 @@ namespace XREngine.Rendering.Vulkan;
 /// Every lookup is generation-local; no renderer facade, output authority, or
 /// mutable render-graph planner participates in command recording.
 /// </summary>
-internal sealed unsafe partial class VulkanCommandRuntime
+internal sealed partial class VulkanCommandRuntime
 {
     private static bool IsBloomDiagnosticName(string? name)
         => !string.IsNullOrWhiteSpace(name) &&

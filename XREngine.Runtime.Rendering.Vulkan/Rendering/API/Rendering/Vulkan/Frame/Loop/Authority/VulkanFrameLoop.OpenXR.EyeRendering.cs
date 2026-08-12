@@ -12,7 +12,7 @@ using XREngine.Rendering.Resources;
 
 namespace XREngine.Rendering.Vulkan;
 
-internal sealed unsafe partial class VulkanFrameLoop
+internal sealed partial class VulkanFrameLoop
 {
     internal bool TryRenderOpenXrEyeSwapchain(
         Image image,
@@ -418,7 +418,6 @@ internal sealed unsafe partial class VulkanFrameLoop
 
                 ulong plannerRevision;
                 ulong frameOpsSignature;
-                CommandChainSchedule? commandChainSchedule;
                 FrameOpContext plannerContext;
                 ResourcePlannerRuntimeState plannerState;
                 using (RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.Vulkan.RecordEye.PlanAndSchedule"))
@@ -435,8 +434,6 @@ internal sealed unsafe partial class VulkanFrameLoop
 
                     plannerContext = PrepareResourcePlannerForFrameOps(ops);
                     plannerState = CaptureResourcePlannerRuntimeState();
-                    using (RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.Vulkan.RecordEye.PlanAndSchedule.Sort"))
-                        ops = _framePlanner.FrameScheduler.SortFrameOpsCore(ops, plannerState.CompiledRenderGraph);
                     if (TryDescribeRecentResourceAllocationFailure(out string postPlanFailureReason))
                     {
                         Debug.VulkanWarningEvery(
@@ -469,30 +466,7 @@ internal sealed unsafe partial class VulkanFrameLoop
                         return false;
                     }
                     plannerRevision = plannerState.ResourcePlannerRevision;
-                    using (RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.Vulkan.RecordEye.PlanAndSchedule.Signature"))
-                    {
-                        frameOpsSignature = VulkanFrameOperationSemantics.ComputeFrameOpsSignature(ops);
-                    }
-                    if (RuntimeEngine.EffectiveSettings.GpuOcclusionCullingMode == EOcclusionCullingMode.CpuQueryAsync)
-                    {
-                        // Query probes and the visible mesh subset change as prior
-                        // results arrive. The current per-draw secondary cache is
-                        // neither bounded nor sufficiently reusable for that
-                        // external-image workload, so keep the OpenXR primary inline.
-                        // CpuQueryAsync itself remains enabled and submits fresh probes.
-                        commandChainSchedule = null;
-                    }
-                    else
-                    {
-                        commandChainSchedule = TryBuildOpenXrEyeCommandChainSchedule(
-                            targetContext.CommandChainImageKey,
-                            targetContext.OpenXrViewIndex,
-                            targetContext.OpenXrImageIndex,
-                            targetContext.Image,
-                            ops,
-                            frameOpsSignature,
-                            plannerRevision);
-                    }
+                    frameOpsSignature = 0UL;
                 }
 
                 VulkanFramePlanningSnapshot planningSnapshot =
@@ -511,8 +485,7 @@ internal sealed unsafe partial class VulkanFrameLoop
                         plannerState.ResourcePlannerSignature,
                         plannerState.ResourceAllocationSignature),
                     frameOpsSignature,
-                    plannerRevision,
-                    commandChainSchedule);
+                    plannerRevision);
 
                 if (_commandRuntime.IsOpenXrTraceEnabled)
                 {
@@ -606,9 +579,19 @@ internal sealed unsafe partial class VulkanFrameLoop
             return false;
 
         FrameOperationSequence nativeOperations =
-            framePlan.GetNativeStaticOperationsForLogicalView(
-                logicalViewId,
-                prepared.Ops);
+            framePlan.GetNativeStaticOperationsForLogicalView(logicalViewId);
+        ulong frameOpsSignature = framePlan.StaticOperationSignature;
+        CommandChainSchedule? commandChainSchedule =
+            RuntimeEngine.EffectiveSettings.GpuOcclusionCullingMode == EOcclusionCullingMode.CpuQueryAsync
+                ? null
+                : TryBuildOpenXrEyeCommandChainSchedule(
+                    targetContext.CommandChainImageKey,
+                    targetContext.OpenXrViewIndex,
+                    targetContext.OpenXrImageIndex,
+                    targetContext.Image,
+                    nativeOperations.Stream,
+                    frameOpsSignature,
+                    prepared.PlannerRevision);
         _commandRuntime.PublishOpenXrExternalImageAcquireState(
             targetContext.Image,
             CreateOpenXrRuntimeColorSubresourceRange());
@@ -628,13 +611,13 @@ internal sealed unsafe partial class VulkanFrameLoop
                 targetContext.FrameDataSlotIndex,
                 in targetContext);
         owner.PrimaryCommandPlan.Build(
-            nativeOperations,
+            nativeOperations.Stream,
             framePlan.StaticOperationSignature,
             new VulkanPrimaryPlanTerminalContext(
                 PreserveSwapchainForOverlay: false,
                 TransitionSwapchainToPresent: false,
                 ReleaseExternalImageOwnership: true),
-            framePlan);
+            framePlan: framePlan);
 
         SwapchainRecordingTarget recordingTarget = new(
             targetContext.Image,
@@ -674,9 +657,9 @@ internal sealed unsafe partial class VulkanFrameLoop
             trackedTargetLayout,
             FrameDataImageIndexOverride: targetContext.FrameDataSlotIndex,
             OpenXrTargetContext: targetContext,
-            CommandChainSchedule: prepared.CommandChainSchedule,
+            CommandChainSchedule: commandChainSchedule,
             ExcludeDesktopSwapchainBarriers: true,
-            NativeOperationsOverride: prepared.Ops,
+            LogicalViewOperationsOverride: nativeOperations.Stream,
             LogicalViewId: logicalViewId);
         frozen = new OpenXrPreparedEyeRecordWorkerInput(
             commandInput,
@@ -684,7 +667,7 @@ internal sealed unsafe partial class VulkanFrameLoop
             targetContext.OpenXrViewIndex,
             targetContext.OpenXrImageIndex,
             targetContext.FrameDataSlotIndex,
-            prepared.FrameOpsSignature,
+            frameOpsSignature,
             prepared.PlannerRevision,
             prepared.PlannerContext.ContextId,
             prepared.PlannerContext.ResourceGeneration,
@@ -826,7 +809,7 @@ internal sealed unsafe partial class VulkanFrameLoop
             plan = _framePlanner.FramePlanBuilder.BuildAndSeal(
                 frameSlot: 0,
                 firstEye.PlannerRevision,
-                VulkanFrameOperationSemantics.ComputeFrameOpsSignature(combined),
+                staticOperationSignature: 0UL,
                 dynamicOverlaySignature: 0UL,
                 combined,
                 Array.Empty<FrameOp>(),

@@ -10,15 +10,20 @@ namespace XREngine.Rendering.Vulkan;
 internal sealed class VulkanFinalPresentationDescriptorPort(
     VulkanPresentationSourcePublication publication,
     VulkanResourceRuntime resources,
-    VulkanCommandRuntime commands)
+    VulkanCommandRuntime commands,
+    VulkanFinalPresentationLedgerState ledger,
+    Func<DesktopFrameActivitySnapshot> captureFrameActivity)
 {
     internal void Observe(
         int descriptorSlot,
         CommandBuffer commandBuffer,
         DescriptorSet descriptorSet,
+        uint set,
+        uint binding,
         string? bindingName,
         in DescriptorImageInfo imageInfo,
         ulong resourceSignature,
+        bool writeMatched,
         bool writeSucceeded)
     {
         if (!writeSucceeded ||
@@ -28,15 +33,38 @@ internal sealed class VulkanFinalPresentationDescriptorPort(
         }
 
         VulkanPresentationSourceTuple current = publication.CaptureLogical();
-        _ = publication.TryBindDescriptor(
-            current.LogicalEpoch,
-            imageInfo,
-            descriptorSet,
-            resources.GetPublishedGeneration(ObjectType.DescriptorSet, descriptorSet.Handle),
+        if (!publication.TryBindDescriptor(
+                current.LogicalEpoch,
+                imageInfo,
+                descriptorSet,
+                resources.GetPublishedGeneration(ObjectType.DescriptorSet, descriptorSet.Handle),
+                descriptorSlot,
+                resourceSignature,
+                commandBuffer,
+                commands.ResolveCommandBufferRecordingGeneration(commandBuffer),
+                out _))
+        {
+            return;
+        }
+
+        if (!ledger.Enabled)
+            return;
+
+        DesktopFrameActivitySnapshot activity = captureFrameActivity();
+        if (!activity.IsActive)
+            return;
+
+        ledger.ObserveDescriptor(
+            activity.FrameNumber,
             descriptorSlot,
+            unchecked((ulong)commandBuffer.Handle),
+            descriptorSet.Handle,
+            set,
+            binding,
+            bindingName,
+            imageInfo,
             resourceSignature,
-            commandBuffer,
-            commands.ResolveCommandBufferRecordingGeneration(commandBuffer),
-            out _);
+            writeMatched,
+            writeSucceeded);
     }
 }

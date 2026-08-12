@@ -15,7 +15,7 @@ using XREngine.Rendering.Resources;
 
 namespace XREngine.Rendering.Vulkan
 {
-    internal sealed unsafe partial class VulkanCommandRuntime
+    internal sealed partial class VulkanCommandRuntime
     {
 
         internal int GetMeshDrawUniformSlot(scoped ref PrimaryCommandBufferRecordingState recordingState,
@@ -36,6 +36,41 @@ namespace XREngine.Rendering.Vulkan
                 renderer,
                 context,
                 draw);
+        }
+
+        internal bool RecordMeshDrawPayloadIntoCommandBuffer(
+            scoped ref PrimaryCommandBufferRecordingState recordingState,
+            CommandBuffer commandBuffer,
+            in MeshDrawPayload payload,
+            XRFrameBuffer? target,
+            in FrameOpContext context,
+            int passIndex,
+            int uniformSlot)
+        {
+            PendingMeshDraw draw = payload.Draw;
+            if (draw.ViewportScissorCount > 1 && draw.IndexedViewports is { } viewports && draw.IndexedScissors is { } scissors && viewports.Length >= (int)draw.ViewportScissorCount && scissors.Length >= (int)draw.ViewportScissorCount)
+                SetViewportScissorTracked(commandBuffer, viewports, scissors, draw.ViewportScissorCount);
+            else
+                SetViewportScissorTracked(commandBuffer, draw.Viewport, draw.Scissor);
+            return draw.Renderer.RecordDraw(commandBuffer, draw, recordingState.RenderScope.RenderPass, recordingState.RenderScope.UsesDynamicRendering, recordingState.RenderScope.DynamicRenderingFormats, passIndex, context.PassMetadata, target, context, recordingState.RenderScope.DepthStencilReadOnly, context.PipelineInstance?.DebugName ?? "<no pipeline>", target?.Name ?? "<swapchain>", uniformSlot, recordingState.CommandBufferImageSlot);
+        }
+
+        internal void RecordIndirectDrawPayloadIntoCommandBuffer(
+            scoped ref PrimaryCommandBufferRecordingState recordingState,
+            CommandBuffer commandBuffer,
+            in IndirectDrawPayload payload,
+            XRFrameBuffer? target,
+            in FrameOpContext context,
+            int passIndex,
+            int opIndex)
+        {
+            PendingMeshDraw draw = payload.Draw;
+            if (draw.ViewportScissorCount > 1 && draw.IndexedViewports is { } viewports && draw.IndexedScissors is { } scissors && viewports.Length >= (int)draw.ViewportScissorCount && scissors.Length >= (int)draw.ViewportScissorCount)
+                SetViewportScissorTracked(commandBuffer, viewports, scissors, draw.ViewportScissorCount);
+            else
+                SetViewportScissorTracked(commandBuffer, draw.Viewport, draw.Scissor);
+            if (!payload.MeshRenderer.RecordIndirectDrawState(commandBuffer, draw, recordingState.RenderScope.RenderPass, recordingState.RenderScope.UsesDynamicRendering, recordingState.RenderScope.DynamicRenderingFormats, passIndex, context.PassMetadata, recordingState.RenderScope.DepthStencilReadOnly, context.PipelineInstance?.DebugName ?? "<no pipeline>", target?.Name ?? "<swapchain>", GetMeshDrawUniformSlot(ref recordingState, opIndex, payload.MeshRenderer, context, draw), out _)) return;
+            RecordIndirectDrawPayload(commandBuffer, in payload, allowInlineBarrier: false);
         }
 
         internal bool RecordMeshDrawIntoCommandBuffer(scoped ref PrimaryCommandBufferRecordingState recordingState,
@@ -130,6 +165,8 @@ namespace XREngine.Rendering.Vulkan
                 recordingState.RenderScope.DynamicRenderingFormats,
                 passIndex,
                 drawOp.Context.PassMetadata,
+                drawOp.Target,
+                drawOp.Context,
                 recordingState.RenderScope.DepthStencilReadOnly,
                 drawOp.Context.PipelineInstance?.DebugName ?? "<no pipeline>",
                 drawOp.Target?.Name ?? "<swapchain>",
@@ -198,7 +235,9 @@ namespace XREngine.Rendering.Vulkan
 
         private void RecordIndirectDrawIntoSecondaryCommandBuffer(
             CommandBuffer targetCommandBuffer,
-            IndirectDrawOp indirectOp,
+            in IndirectDrawPayload payload,
+            XRFrameBuffer? target,
+            in FrameOpContext context,
             in VkMeshRenderer.IndirectDrawRecordingState recordingState,
             int passIndex,
             bool inheritedDynamicRendering,
@@ -207,46 +246,46 @@ namespace XREngine.Rendering.Vulkan
             bool inheritedDepthStencilReadOnly,
             int uniformSlot)
         {
-            Viewport viewport = indirectOp.Draw.Viewport;
-            Rect2D scissor = indirectOp.Draw.Scissor;
-            uint viewportScissorCount = indirectOp.Draw.ViewportScissorCount;
+            Viewport viewport = payload.Draw.Viewport;
+            Rect2D scissor = payload.Draw.Scissor;
+            uint viewportScissorCount = payload.Draw.ViewportScissorCount;
             if (viewportScissorCount > 1 &&
-                indirectOp.Draw.IndexedViewports is { } indexedViewports &&
-                indirectOp.Draw.IndexedScissors is { } indexedScissors &&
+                payload.Draw.IndexedViewports is { } indexedViewports &&
+                payload.Draw.IndexedScissors is { } indexedScissors &&
                 indexedViewports.Length >= (int)viewportScissorCount &&
                 indexedScissors.Length >= (int)viewportScissorCount)
                 SetViewportScissorTracked(targetCommandBuffer, indexedViewports, indexedScissors, viewportScissorCount);
             else
                 SetViewportScissorTracked(targetCommandBuffer, viewport, scissor);
 
-            if (!indirectOp.MeshRenderer.RecordPreparedIndirectDrawState(targetCommandBuffer, recordingState))
+            if (!payload.MeshRenderer.RecordPreparedIndirectDrawState(targetCommandBuffer, recordingState))
             {
                 Debug.VulkanWarningEvery(
-                    $"Vulkan.IndirectSecondary.PreparedStateMissing.{GetHashCode()}.{indirectOp.MeshRenderer.GetHashCode()}.{uniformSlot}",
+                    $"Vulkan.IndirectSecondary.PreparedStateMissing.{GetHashCode()}.{payload.MeshRenderer.GetHashCode()}.{uniformSlot}",
                     TimeSpan.FromSeconds(1),
                     "[Vulkan] Skipping indirect secondary draw because prepared immutable recording state is unavailable. mesh='{0}' target='{1}' slot={2}",
-                    indirectOp.MeshRenderer.MeshRenderer.Mesh?.Name ?? "<unnamed mesh>",
-                    indirectOp.Target?.Name ?? "<swapchain>",
+                    payload.MeshRenderer.MeshRenderer.Mesh?.Name ?? "<unnamed mesh>",
+                    target?.Name ?? "<swapchain>",
                     uniformSlot);
                 return;
             }
 
-            RecordIndirectDrawOp(targetCommandBuffer, indirectOp, allowInlineBarrier: false);
+            RecordIndirectDrawPayload(targetCommandBuffer, in payload, allowInlineBarrier: false);
         }
 
-        private int ResolveRunCandidatePassIndex(scoped ref PrimaryCommandBufferRecordingState recordingState, MeshDrawOp drawOp)
-            => drawOp.PassIndex == int.MinValue &&
+        private int ResolveRunCandidatePassIndex(scoped ref PrimaryCommandBufferRecordingState recordingState, int drawPassIndex)
+            => drawPassIndex == int.MinValue &&
                 recordingState.ActivePassIndex != int.MinValue
                 ? recordingState.ActivePassIndex
-                : drawOp.PassIndex;
+                : drawPassIndex;
 
-        private int ResolveIndirectRunCandidatePassIndex(scoped ref PrimaryCommandBufferRecordingState recordingState, IndirectDrawOp drawOp)
-            => drawOp.PassIndex == int.MinValue &&
+        private int ResolveIndirectRunCandidatePassIndex(scoped ref PrimaryCommandBufferRecordingState recordingState, int drawPassIndex)
+            => drawPassIndex == int.MinValue &&
                 recordingState.ActivePassIndex != int.MinValue
                 ? recordingState.ActivePassIndex
-                : drawOp.PassIndex;
+                : drawPassIndex;
 
-        internal int CountContiguousMeshCommandChainRun(scoped ref PrimaryCommandBufferRecordingState recordingState, int startIndex, MeshDrawOp firstDraw, int passIndex)
+        internal int CountContiguousMeshCommandChainRun(scoped ref PrimaryCommandBufferRecordingState recordingState, int startIndex, in MeshDrawPayload firstDraw, int passIndex)
         {
             bool partitionByScheduledMembership =
                 recordingState.ScheduledCommandChainKeysByOpIndex is not null &&
@@ -260,23 +299,26 @@ namespace XREngine.Rendering.Vulkan
             int count = 0;
             for (int i = startIndex; i < recordingState.Ops.Length; i++)
             {
-                if (recordingState.PipelineDeferredOps.Contains(recordingState.Ops[i]))
+                if (recordingState.PipelineDeferredOperationIndices.Contains(i))
                     break;
-                if (recordingState.Ops[i] is not MeshDrawOp candidate)
+                if (recordingState.Ops.GetHeader(i).OpCode != EVulkanPrimaryPlanNodeKind.MeshDraw)
                     break;
-                if (recordingState.SkipUiPipelineOps && candidate.Context.PipelineInstance?.Pipeline is UserInterfaceRenderPipeline)
+                ref readonly MeshDrawPayload candidate = ref recordingState.Ops.GetMeshDraw(i);
+                ref readonly FrameOpContext candidateContext = ref recordingState.Ops.GetContext(i);
+                XRFrameBuffer? candidateTarget = recordingState.Ops.GetTarget(i);
+                if (recordingState.SkipUiPipelineOps && candidateContext.PipelineInstance?.Pipeline is UserInterfaceRenderPipeline)
                     break;
-                if (recordingState.SkipUiBatchTextOps && IsUiBatchTextDrawOp(candidate))
+                if (recordingState.SkipUiBatchTextOps && IsUiBatchTextDrawPayload(in candidate))
                     break;
-                if (candidate.Context.PipelineInstance?.Pipeline is UserInterfaceRenderPipeline)
+                if (candidateContext.PipelineInstance?.Pipeline is UserInterfaceRenderPipeline)
                     break;
-                if (candidate.Target != firstDraw.Target)
+                if (candidateTarget != recordingState.Ops.GetTarget(startIndex))
                     break;
-                if (!FrameOpContextCompatibility.AreCommandChainBatchCompatible(candidate.Context, firstDraw.Context))
+                if (!FrameOpContextCompatibility.AreCommandChainBatchCompatible(candidateContext, recordingState.Ops.GetContext(startIndex)))
                     break;
-                if (candidate.Context.SchedulingIdentity != recordingState.ActiveSchedulingIdentity)
+                if (candidateContext.SchedulingIdentity != recordingState.ActiveSchedulingIdentity)
                     break;
-                if (ResolveRunCandidatePassIndex(ref recordingState, candidate) != passIndex)
+                if (ResolveRunCandidatePassIndex(ref recordingState, recordingState.Ops.GetHeader(i).PassIndex) != passIndex)
                     break;
                 if (partitionByScheduledMembership &&
                     TryGetScheduledCommandChainForOp(
@@ -298,24 +340,37 @@ namespace XREngine.Rendering.Vulkan
             return count;
         }
 
-        internal int CountContiguousIndirectCommandChainRun(scoped ref PrimaryCommandBufferRecordingState recordingState, int startIndex, IndirectDrawOp firstDraw, int passIndex)
+        internal int CountContiguousMeshCommandChainRun(scoped ref PrimaryCommandBufferRecordingState recordingState, int startIndex, int passIndex)
+        {
+            ref readonly MeshDrawPayload firstDraw =
+                ref recordingState.Ops.GetMeshDraw(startIndex);
+            return CountContiguousMeshCommandChainRun(
+                ref recordingState,
+                startIndex,
+                in firstDraw,
+                passIndex);
+        }
+
+        internal int CountContiguousIndirectCommandChainRun(scoped ref PrimaryCommandBufferRecordingState recordingState, int startIndex, in IndirectDrawPayload firstDraw, int passIndex)
         {
             int count = 0;
             for (int i = startIndex; i < recordingState.Ops.Length; i++)
             {
-                if (recordingState.PipelineDeferredOps.Contains(recordingState.Ops[i]))
+                if (recordingState.PipelineDeferredOperationIndices.Contains(i))
                     break;
-                if (recordingState.Ops[i] is not IndirectDrawOp candidate)
+                if (recordingState.Ops.GetHeader(i).OpCode != EVulkanPrimaryPlanNodeKind.IndirectDraw)
                     break;
-                if (!FrameOpContextCompatibility.AreRecordingCompatible(candidate.Context, recordingState.ActiveContext))
+                ref readonly IndirectDrawPayload candidate = ref recordingState.Ops.GetIndirectDraw(i);
+                ref readonly FrameOpContext candidateContext = ref recordingState.Ops.GetContext(i);
+                if (!FrameOpContextCompatibility.AreRecordingCompatible(candidateContext, recordingState.ActiveContext))
                     break;
-                if (candidate.Context.SchedulingIdentity != recordingState.ActiveSchedulingIdentity)
+                if (candidateContext.SchedulingIdentity != recordingState.ActiveSchedulingIdentity)
                     break;
-                if (candidate.Target != firstDraw.Target)
+                if (recordingState.Ops.GetTarget(i) != recordingState.Ops.GetTarget(startIndex))
                     break;
-                if (ResolveIndirectRunCandidatePassIndex(ref recordingState, candidate) != passIndex)
+                if (ResolveIndirectRunCandidatePassIndex(ref recordingState, recordingState.Ops.GetHeader(i).PassIndex) != passIndex)
                     break;
-                if (_commandRuntime.EvaluateIndirectSecondaryRecordingContract(candidate) != EVulkanIndirectSecondaryEligibility.EligibleProducerComplete)
+                if (_commandRuntime.EvaluateIndirectSecondaryRecordingContract(in candidate) != EVulkanIndirectSecondaryEligibility.EligibleProducerComplete)
                     break;
 
                 count++;
@@ -324,7 +379,18 @@ namespace XREngine.Rendering.Vulkan
             return count;
         }
 
-        internal void EmitIndirectDrawRunReadBarrier(scoped ref PrimaryCommandBufferRecordingState recordingState)
+        internal int CountContiguousIndirectCommandChainRun(scoped ref PrimaryCommandBufferRecordingState recordingState, int startIndex, int passIndex)
+        {
+            ref readonly IndirectDrawPayload firstDraw =
+                ref recordingState.Ops.GetIndirectDraw(startIndex);
+            return CountContiguousIndirectCommandChainRun(
+                ref recordingState,
+                startIndex,
+                in firstDraw,
+                passIndex);
+        }
+
+        internal unsafe void EmitIndirectDrawRunReadBarrier(scoped ref PrimaryCommandBufferRecordingState recordingState)
         {
             MemoryBarrier memoryBarrier = new()
             {
@@ -346,6 +412,13 @@ namespace XREngine.Rendering.Vulkan
                 null);
 
             RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanAdhocBarrier(emittedCount: 1, redundantCount: 0);
+        }
+
+        private static bool IsUiBatchTextDrawPayload(in MeshDrawPayload payload)
+        {
+            XRMeshRenderer mesh = payload.Draw.Renderer.MeshRenderer;
+            XRMaterial? material = payload.Draw.MaterialOverride ?? mesh.Material;
+            return string.Equals(material?.Name, "UIBatchTextMaterial", StringComparison.Ordinal) || string.Equals(mesh.Name, "UIBatchTextRenderer", StringComparison.Ordinal) || string.Equals(mesh.Mesh?.Name, "UIBatchTextQuadMesh", StringComparison.Ordinal);
         }
     }
 }

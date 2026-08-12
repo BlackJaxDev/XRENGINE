@@ -1,5 +1,5 @@
 // =====================================================================================
-// GPUScene.CommandConversion.cs - CPU command -> GPU command conversion, Phase 1 updates, and mesh label/validation helpers.
+// GPUScene.CommandConversion.cs - stage-native record creation, Phase 1 updates, and mesh label/validation helpers.
 // Part of the GPUScene partial class. See GPUScene.cs for the canonical class summary.
 // =====================================================================================
 
@@ -31,15 +31,15 @@ namespace XREngine.Rendering.Commands
     {
 
         /// <summary>
-        /// Converts a render command to a GPU-friendly format.
+        /// Creates the stage-native cull-control and cull-bounds records for one draw.
         /// </summary>
         /// <param name="renderInfo">The parent render info.</param>
-        /// <param name="command">The mesh render command to convert.</param>
+        /// <param name="command">The mesh render command to publish.</param>
         /// <param name="mesh">The mesh to render.</param>
         /// <param name="material">The material to use.</param>
         /// <param name="submeshLocalIndex">The submesh index within the mesh renderer.</param>
-        /// <returns>The GPU command, or null if conversion failed.</returns>
-        private GPUIndirectRenderCommand? ConvertToGPUCommand(
+        /// <returns>The two canonical stream records, or null if publication failed.</returns>
+        private (DrawMetadata Metadata, BoundsGpu Bounds)? CreateStageNativeDrawRecords(
             RenderInfo renderInfo,
             IRenderCommandMesh command,
             XRMesh? mesh,
@@ -60,30 +60,26 @@ namespace XREngine.Rendering.Commands
 
             Matrix4x4 modelMatrix = command.WorldMatrixIsModelMatrix ? command.WorldMatrix : Matrix4x4.Identity;
 
-            var gpuCommand = new GPUIndirectRenderCommand
+            DrawMetadata metadata = new()
             {
+                DrawID = boundsId,
                 MeshID = meshID,
                 SubmeshID = (meshID << 16) | (submeshLocalIndex & 0xFFFF),
                 MaterialID = materialID,
                 RenderPass = (uint)command.RenderPass,
                 InstanceCount = command.Instances == 0 ? 1u : command.Instances,
                 LayerMask = 0xFFFFFFFF,
-                RenderDistance = 0f,
                 Flags = 0,
-                LODLevel = 0,
+                LodPolicy = 0,
                 RenderIdentityID = command.StableQueryKey,
                 LogicalMeshID = logicalMeshID,
                 TransformID = transformId,
                 SkinID = skinId,
                 StateClassID = stateClassId,
                 BoundsID = boundsId,
-                Reserved1 = 0
             };
 
-            // Bounds: world-space (center + radius), conservative for non-uniform scale.
-            gpuCommand.BoundingSphere = ComputeRenderCullingBoundsGpu(renderInfo, mesh.Bounds, modelMatrix, boundsId + 1u).BoundingSphere;
-
-            gpuCommand.RenderDistance = command.RenderDistance.ClampMin(0.0f);
+            BoundsGpu bounds = ComputeRenderCullingBoundsGpu(renderInfo, mesh.Bounds, modelMatrix, boundsId + 1u);
 
             uint flags = 0;
             if (renderInfo is RenderInfo3D info3d && command is RenderCommandMesh3D)
@@ -96,7 +92,7 @@ namespace XREngine.Rendering.Commands
                     flags |= (uint)GPUIndirectRenderFlags.ReceiveShadows;
 
                 // LayerMask is consumed by GPU culling paths (GPURenderCulling*.comp).
-                gpuCommand.LayerMask = 1u << info3d.Layer;
+                metadata.LayerMask = 1u << info3d.Layer;
             }
 
             if (lodCount > 1)
@@ -104,8 +100,8 @@ namespace XREngine.Rendering.Commands
             if (command.ForceCpuRendering || material.RenderOptions?.ExcludeFromGpuIndirect == true)
                 flags |= (uint)GPUIndirectRenderFlags.CpuFallbackOnly;
 
-            gpuCommand.Flags = flags;
-            return gpuCommand;
+            metadata.Flags = flags;
+            return (metadata, bounds);
         }
 
         /// <summary>
@@ -194,21 +190,18 @@ namespace XREngine.Rendering.Commands
                         return true;
                     }
 
-                    var existing = UpdatingCommandsBuffer.GetDataRawAtIndex<GPUIndirectRenderCommand>(index);
+                    var existing = UpdatingDrawMetadataBuffer.GetDataRawAtIndex<DrawMetadata>(index);
                     var updated = existing;
 
                     bool transformChanged = UpdateTransform(existing.TransformID, modelMatrix);
                     BoundsGpu updatedBounds = ComputeRenderCullingBoundsGpu(renderInfo, mesh.Bounds, modelMatrix, updated.BoundsID + 1u);
-                    updated.BoundingSphere = updatedBounds.BoundingSphere;
-
                     updated.MeshID = newMeshID;
                     updated.SubmeshID = (newMeshID << 16) | ((uint)subMeshIndex & 0xFFFF);
                     updated.MaterialID = newMaterialID;
                     updated.InstanceCount = meshCmd.Instances == 0 ? 1u : meshCmd.Instances;
                     updated.RenderPass = (uint)meshCmd.RenderPass;
-                    updated.RenderDistance = meshCmd.RenderDistance.ClampMin(0.0f);
                     updated.LogicalMeshID = newLogicalMeshID;
-                    updated.Reserved1 = index;
+                    updated.DrawID = index;
                     updated.BoundsID = index;
                     updated.StateClassID = ResolveStateClassId(material, meshCmd.RenderPass, newMaterialID);
 
@@ -242,7 +235,6 @@ namespace XREngine.Rendering.Commands
 
                     if (!existing.Equals(updated) || transformChanged || boundsChanged)
                     {
-                        UpdatingCommandsBuffer.SetDataRawAtIndex(index, updated);
                         WriteDrawMetadata(index, updated);
                         WriteBounds(index, updatedBounds);
                         if (existing.MeshID != updated.MeshID || existing.LogicalMeshID != updated.LogicalMeshID)
@@ -263,13 +255,11 @@ namespace XREngine.Rendering.Commands
                     if (!anyChanged)
                         return false;
 
-                    uint elementSize = UpdatingCommandsBuffer.ElementSize;
-                    if (elementSize == 0)
-                        elementSize = (uint)(CommandFloatCount * sizeof(float));
+                    uint elementSize = UpdatingDrawMetadataBuffer.ElementSize;
 
                     uint byteOffset = minIndex * elementSize;
                     uint byteCount = (maxIndex - minIndex + 1) * elementSize;
-                    UpdatingCommandsBuffer.PushSubData((int)byteOffset, byteCount);
+                    UpdatingDrawMetadataBuffer.PushSubData((int)byteOffset, byteCount);
                     FlushCpuLodTransitionWrites();
                     MarkUpdatingCommandsDirty();
 

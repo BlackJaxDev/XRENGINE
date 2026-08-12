@@ -3,7 +3,7 @@ using Silk.NET.Vulkan;
 namespace XREngine.Rendering.Vulkan;
 
 /// <summary>Command-owned Streamline UI image preparation.</summary>
-internal sealed unsafe partial class VulkanCommandRuntime
+internal sealed partial class VulkanCommandRuntime
 {
     /// <summary>
     /// Clears and transitions a producer-frozen UI image for native DLSS-G recording.
@@ -49,7 +49,7 @@ internal sealed unsafe partial class VulkanCommandRuntime
         return true;
     }
 
-    private void TransitionStreamlineUiImage(
+    private unsafe void TransitionStreamlineUiImage(
         CommandBuffer commandBuffer,
         Image image,
         ImageLayout oldLayout,

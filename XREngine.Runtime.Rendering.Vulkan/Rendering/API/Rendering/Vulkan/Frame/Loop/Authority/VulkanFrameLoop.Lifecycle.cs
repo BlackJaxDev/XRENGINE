@@ -6,7 +6,7 @@ using XREngine.Rendering.Vulkan.DeviceBootstrap;
 namespace XREngine.Rendering.Vulkan;
 
 /// <summary>Owns native Vulkan startup and shutdown ordering for one frame-loop generation.</summary>
-internal sealed unsafe partial class VulkanFrameLoop
+internal sealed partial class VulkanFrameLoop
 {
     internal void Initialize()
     {
@@ -262,7 +262,7 @@ internal sealed unsafe partial class VulkanFrameLoop
         return new VulkanOpenXrRequestedDeviceFacts(true, requestedDevice);
     }
 
-    private static void PublishSelectedDeviceState(in VulkanPhysicalDeviceSelectionResult selection)
+    private static unsafe void PublishSelectedDeviceState(in VulkanPhysicalDeviceSelectionResult selection)
     {
         PhysicalDeviceProperties properties = selection.Capabilities.Properties;
         RuntimeEngine.Rendering.State.IsNVIDIA = properties.VendorID == 0x10DE;

@@ -16,7 +16,7 @@ using Buffer = Silk.NET.Vulkan.Buffer;
 
 namespace XREngine.Rendering.Vulkan;
 
-internal sealed unsafe partial class VulkanCommandRuntime
+internal sealed partial class VulkanCommandRuntime
 {
     private ref long _commandBufferDirtyGeneration => ref CommandBuffers.DirtyGeneration;
     private ref long _lastCommandBufferDirtyTimestamp => ref CommandBuffers.LastDirtyTimestamp;

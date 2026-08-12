@@ -7,7 +7,7 @@ using XREngine.Scene;
 
 namespace XREngine.Rendering.Vulkan;
 
-internal sealed unsafe partial class VulkanCommandRuntime
+internal sealed partial class VulkanCommandRuntime
 {
     internal float MaterialUniformUpdateDelta => RuntimeEngine.Time.Timer.Update.Delta;
     internal float MaterialUniformSeconds => RuntimeEngine.ElapsedTime;

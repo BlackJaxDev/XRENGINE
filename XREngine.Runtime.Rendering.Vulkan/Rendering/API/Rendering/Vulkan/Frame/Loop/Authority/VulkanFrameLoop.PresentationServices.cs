@@ -5,7 +5,7 @@ using XREngine.Rendering.DLSS;
 
 namespace XREngine.Rendering.Vulkan;
 
-internal sealed unsafe partial class VulkanFrameLoop
+internal sealed partial class VulkanFrameLoop
 {
     private bool UseDynamicRenderingRenderTargets
         => _deviceContext.MutableCapabilities._useDynamicRenderingRenderTargets;
@@ -284,7 +284,8 @@ internal sealed unsafe partial class VulkanFrameLoop
             source.Sampler.Handle != 0 &&
             source.DescriptorResourceEpoch != 0;
         VulkanFinalPresentationDescriptorObservation descriptor =
-            _frameTelemetry._finalPresentationLedger.CaptureLatestDescriptor();
+            _frameTelemetry._finalPresentationLedger.CaptureLatestDescriptor(
+                unchecked((int)attempt.ImageIndex));
 
         _ = _commandRuntime.CommandBuffers.TryGetDiagnosticMetadata(
             attempt.ImageIndex,
@@ -305,13 +306,20 @@ internal sealed unsafe partial class VulkanFrameLoop
         string? invariantFailure = null;
         if (presentAccepted && hasValidFrameContent)
         {
-            if (source.ColorTexture is not null && !sourceSnapshotReady)
+            // A recovery command owns the final swapchain write during bootstrap
+            // and rejection handling, so the scene's sampled presentation source
+            // is not the content accepted by this present attempt.
+            bool presentedSceneSource = attempt.RecoverySwapchainWriteCount <= 0;
+            if (presentedSceneSource &&
+                source.ColorTexture is not null &&
+                !sourceSnapshotReady)
             {
                 invariantFailed = true;
                 invariantFailure =
                     "accepted desktop present source is not descriptor-ready";
             }
-            else if (source.ColorTexture is not null &&
+            else if (presentedSceneSource &&
+                     source.ColorTexture is not null &&
                      (descriptor.Sequence == 0 ||
                       descriptor.DescriptorSlot != unchecked((int)attempt.ImageIndex)))
             {
@@ -319,13 +327,16 @@ internal sealed unsafe partial class VulkanFrameLoop
                 invariantFailure =
                     "final source descriptor observation is missing or belongs to another frame-data slot";
             }
-            else if (source.ColorTexture is not null && !descriptor.WriteSucceeded)
+            else if (presentedSceneSource &&
+                     source.ColorTexture is not null &&
+                     !descriptor.WriteSucceeded)
             {
                 invariantFailed = true;
                 invariantFailure =
                     "final source descriptor write did not complete";
             }
-            else if (source.ColorTexture is not null &&
+            else if (presentedSceneSource &&
+                     source.ColorTexture is not null &&
                      (descriptor.ImageView != source.ImageView.Handle ||
                       descriptor.Sampler != source.Sampler.Handle))
             {

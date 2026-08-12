@@ -20,6 +20,11 @@ namespace XREngine.Rendering.Vulkan;
 
 internal unsafe partial class VkRenderProgram
 {
+    private readonly VulkanComputeDescriptorScratchBuilder _computeDescriptorScratch = new();
+
+    /// <summary>Allocation-free work counters for this program's compute descriptor publication scratch.</summary>
+    internal VulkanComputeDescriptorScratchBuilder.Telemetry ComputeDescriptorPublicationTelemetry
+        => _computeDescriptorScratch.GetTelemetry();
     internal Pipeline ComputePipeline => _computePipeline;
 
     public Pipeline CreateComputePipeline(ref ComputePipelineCreateInfo pipelineInfo, PipelineCache pipelineCache = default)
@@ -237,107 +242,11 @@ internal unsafe partial class VkRenderProgram
             return true;
         }
 
-        Dictionary<DescriptorType, uint> poolSizeCounts = new();
-        foreach (DescriptorBindingInfo binding in _programDescriptorBindings)
-        {
-            uint count = Math.Max(binding.Count, 1u);
-            if (poolSizeCounts.TryGetValue(binding.DescriptorType, out uint existing))
-                poolSizeCounts[binding.DescriptorType] = existing + count;
-            else
-                poolSizeCounts[binding.DescriptorType] = count;
-        }
-
-        if (poolSizeCounts.Count == 0)
+        if (!TryBuildComputeDescriptorScratch(imageIndex, snapshot, reusableDescriptorBindingKey, reportFailures: true))
             return false;
+        VulkanComputeDescriptorScratchBuilder scratch = _computeDescriptorScratch;
 
-        DescriptorPoolSize[] poolSizes = poolSizeCounts
-            .Select(p => new DescriptorPoolSize { Type = p.Key, DescriptorCount = p.Value })
-            .ToArray();
-
-        List<PendingDescriptorWrite> pendingWrites = [];
-        List<DescriptorBufferInfo> bufferInfos = [];
-        List<DescriptorImageInfo> imageInfos = [];
-        List<BufferView> texelBufferViews = [];
-        bool hasUnresolvedBinding = false;
-
-        foreach (DescriptorBindingInfo binding in _programDescriptorBindings)
-        {
-            if (binding.Set >= _descriptorSetLayouts.Length)
-                continue;
-
-            uint descriptorCount = Math.Max(binding.Count, 1u);
-            switch (binding.DescriptorType)
-            {
-                case DescriptorType.UniformBuffer:
-                case DescriptorType.StorageBuffer:
-                    if (!TryResolveComputeBuffer(binding, imageIndex, snapshot, reusableDescriptorBindingKey, out DescriptorBufferInfo bufferInfo))
-                    {
-                        hasUnresolvedBinding = true;
-                        WarnComputeOnce($"Skipping unresolved {binding.DescriptorType} binding '{binding.Name}' (set {binding.Set}, binding {binding.Binding}). Compute dispatch will be skipped.");
-                        RecordComputeDescriptorFailure(binding, "buffer resolution failed", skippedDispatch: true);
-                        continue;
-                    }
-
-                    int bufferStart = bufferInfos.Count;
-                    for (int i = 0; i < descriptorCount; i++)
-                        bufferInfos.Add(bufferInfo);
-
-                    pendingWrites.Add(PendingDescriptorWrite.Buffer(binding.Set, binding.Binding, binding.DescriptorType, descriptorCount, bufferStart));
-                    break;
-
-                case DescriptorType.CombinedImageSampler:
-                case DescriptorType.SampledImage:
-                case DescriptorType.Sampler:
-                case DescriptorType.StorageImage:
-                    if (!TryResolveComputeImage(binding, snapshot, out DescriptorImageInfo imageInfo))
-                    {
-                        hasUnresolvedBinding = true;
-                        WarnComputeOnce($"Skipping unresolved {binding.DescriptorType} image binding '{binding.Name}' (set {binding.Set}, binding {binding.Binding}). Compute dispatch will be skipped.");
-                        RecordComputeDescriptorFailure(binding, "image resolution failed", skippedDispatch: true);
-                        continue;
-                    }
-
-                    int imageStart = imageInfos.Count;
-                    for (int i = 0; i < descriptorCount; i++)
-                        imageInfos.Add(imageInfo);
-
-                    pendingWrites.Add(PendingDescriptorWrite.Image(binding.Set, binding.Binding, binding.DescriptorType, descriptorCount, imageStart));
-                    break;
-
-                case DescriptorType.UniformTexelBuffer:
-                case DescriptorType.StorageTexelBuffer:
-                    if (!TryResolveComputeTexelBuffer(binding, snapshot, out BufferView texelView))
-                    {
-                        hasUnresolvedBinding = true;
-                        WarnComputeOnce($"Skipping unresolved {binding.DescriptorType} texel binding '{binding.Name}' (set {binding.Set}, binding {binding.Binding}). Compute dispatch will be skipped.");
-                        RecordComputeDescriptorFailure(binding, "texel buffer resolution failed", skippedDispatch: true);
-                        continue;
-                    }
-
-                    int texelStart = texelBufferViews.Count;
-                    for (int i = 0; i < descriptorCount; i++)
-                        texelBufferViews.Add(texelView);
-
-                    pendingWrites.Add(PendingDescriptorWrite.Texel(binding.Set, binding.Binding, binding.DescriptorType, descriptorCount, texelStart));
-                    break;
-            }
-        }
-
-        if (hasUnresolvedBinding)
-        {
-            RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanDescriptorBindingFailure(
-                Data.Name,
-                "descriptor-set",
-                "<compute-required-binding>",
-                0,
-                0,
-                skippedDraw: false,
-                skippedDispatch: true,
-                "compute descriptor build had unresolved required bindings");
-            return false;
-        }
-
-        if (pendingWrites.Count == 0)
+        if (scratch.WriteCount == 0)
         {
             RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanDescriptorBindingFailure(
                 Data.Name,
@@ -351,10 +260,10 @@ internal unsafe partial class VkRenderProgram
             return false;
         }
 
-        PendingDescriptorWrite[] pendingWriteArray = pendingWrites.ToArray();
-        DescriptorBufferInfo[] bufferArray = bufferInfos.ToArray();
-        DescriptorImageInfo[] imageArray = imageInfos.ToArray();
-        BufferView[] texelArray = texelBufferViews.ToArray();
+        PendingDescriptorWrite[] pendingWriteArray = scratch.Writes;
+        DescriptorBufferInfo[] bufferArray = scratch.Buffers;
+        DescriptorImageInfo[] imageArray = scratch.Images;
+        BufferView[] texelArray = scratch.Texels;
 
         if (BackendContext.Resources.Descriptors.Heap.ActiveBackend == EVulkanDescriptorBackend.DescriptorHeap)
         {
@@ -363,7 +272,7 @@ internal unsafe partial class VkRenderProgram
             fixed (DescriptorImageInfo* imagePtr = imageArray)
             fixed (BufferView* texelPtr = texelArray)
             {
-                for (int i = 0; i < pendingWriteArray.Length; i++)
+                for (int i = 0; i < scratch.WriteCount; i++)
                 {
                     PendingDescriptorWrite pending = pendingWriteArray[i];
                     DescriptorBindingInfo binding = FindDescriptorBinding(pending.Set, pending.Binding, pending.DescriptorType);
@@ -412,16 +321,15 @@ internal unsafe partial class VkRenderProgram
         }
 
         ulong schemaFingerprint = ComputeComputeDescriptorSchemaFingerprint();
-        ulong bindingFingerprint = ComputeComputeDescriptorBindingFingerprint(pendingWriteArray, bufferArray, imageArray, texelArray);
+        ulong bindingFingerprint = ComputeComputeDescriptorBindingFingerprint(pendingWriteArray.AsSpan(0, scratch.WriteCount), bufferArray.AsSpan(0, scratch.BufferCount), imageArray.AsSpan(0, scratch.ImageCount), texelArray.AsSpan(0, scratch.TexelCount));
         ulong cacheBindingFingerprint = reusableDescriptorBindingKey == 0UL ? bindingFingerprint : reusableDescriptorBindingKey;
-        DescriptorSetLayout[] layoutArray = _descriptorSetLayouts.ToArray();
-
         if (!ProgramCreationPort.TryGetOrCreateComputeDescriptorSets(
             imageIndex,
             schemaFingerprint,
             cacheBindingFingerprint,
-            layoutArray,
-            poolSizes,
+            _descriptorSetLayouts,
+            scratch.PoolSizeArray,
+            scratch.PoolSizeCount,
             _descriptorSetsRequireUpdateAfterBind,
             out DescriptorSet[] descriptorSets,
             out bool isNewAllocation))
@@ -441,7 +349,7 @@ internal unsafe partial class VkRenderProgram
 
         bool shouldUpdateDescriptorData = isNewAllocation || reusableDescriptorBindingKey != 0UL;
         if (shouldUpdateDescriptorData)
-            UpdateComputeDescriptorSets(descriptorSets, pendingWriteArray, bufferArray, imageArray, texelArray);
+            UpdateComputeDescriptorSets(descriptorSets, scratch);
 
         recording.Commands.BindDescriptorSetsTracked(
             recording.CommandBuffer,
@@ -455,15 +363,15 @@ internal unsafe partial class VkRenderProgram
         return true;
     }
 
-    private void UpdateComputeDescriptorSets(
-        DescriptorSet[] descriptorSets,
-        PendingDescriptorWrite[] pendingWrites,
-        DescriptorBufferInfo[] bufferArray,
-        DescriptorImageInfo[] imageArray,
-        BufferView[] texelArray)
+    private void UpdateComputeDescriptorSets(DescriptorSet[] descriptorSets, VulkanComputeDescriptorScratchBuilder scratch)
     {
-        WriteDescriptorSet[] writeArray = new WriteDescriptorSet[pendingWrites.Length];
-        for (int i = 0; i < pendingWrites.Length; i++)
+        PendingDescriptorWrite[] pendingWrites = scratch.Writes;
+        DescriptorBufferInfo[] bufferArray = scratch.Buffers;
+        DescriptorImageInfo[] imageArray = scratch.Images;
+        BufferView[] texelArray = scratch.Texels;
+        scratch.EnsureNativeWriteCapacity(scratch.WriteCount);
+        WriteDescriptorSet[] writeArray = scratch.NativeWrites;
+        for (int i = 0; i < scratch.WriteCount; i++)
         {
             PendingDescriptorWrite pending = pendingWrites[i];
             writeArray[i] = new WriteDescriptorSet
@@ -481,7 +389,7 @@ internal unsafe partial class VkRenderProgram
         fixed (DescriptorImageInfo* imagePtr = imageArray)
         fixed (BufferView* texelPtr = texelArray)
         {
-            for (int i = 0; i < pendingWrites.Length; i++)
+            for (int i = 0; i < scratch.WriteCount; i++)
             {
                 PendingDescriptorWrite pending = pendingWrites[i];
                 switch (pending.Source)
@@ -498,10 +406,65 @@ internal unsafe partial class VkRenderProgram
                 }
             }
 
-            if (!TryUpdateComputeDescriptorSetsWithTemplates(descriptorSets, writeArray))
-                BackendContext.Resources.DescriptorLifetime.UpdateDescriptorSets((uint)writeArray.Length, writePtr);
+            if (!TryUpdateComputeDescriptorSetsWithTemplates(descriptorSets, writeArray.AsSpan(0, scratch.WriteCount)))
+                BackendContext.Resources.DescriptorLifetime.UpdateDescriptorSets((uint)scratch.WriteCount, writePtr);
             BackendContext.Resources.DescriptorLifetime.RecordTableGeneration();
         }
+    }
+
+    private bool TryBuildComputeDescriptorScratch(uint imageIndex, ComputeDispatchSnapshot snapshot, ulong bindingKey, bool reportFailures)
+    {
+        VulkanComputeDescriptorScratchBuilder scratch = _computeDescriptorScratch;
+        scratch.Reset();
+        bool unresolved = false;
+        for (int index = 0; index < _programDescriptorBindings.Count; index++)
+        {
+            DescriptorBindingInfo binding = _programDescriptorBindings[index];
+            scratch.RecordScanned();
+            if (binding.Set >= _descriptorSetLayouts.Length)
+                continue;
+            uint count = Math.Max(binding.Count, 1u);
+            scratch.AddPoolSize(binding.DescriptorType, count);
+            if (binding.DescriptorType is DescriptorType.UniformBuffer or DescriptorType.StorageBuffer)
+            {
+                if (!TryResolveComputeBuffer(binding, imageIndex, snapshot, bindingKey, out DescriptorBufferInfo info))
+                    unresolved = true;
+                else
+                {
+                    int start = scratch.BufferCount;
+                    scratch.AddBuffer(in info, count);
+                    scratch.AddWrite(binding.Set, binding.Binding, binding.DescriptorType, count, PendingDescriptorSource.Buffer, start);
+                }
+            }
+            else if (binding.DescriptorType is DescriptorType.CombinedImageSampler or DescriptorType.SampledImage or DescriptorType.Sampler or DescriptorType.StorageImage)
+            {
+                if (!TryResolveComputeImage(binding, snapshot, out DescriptorImageInfo info))
+                    unresolved = true;
+                else
+                {
+                    int start = scratch.ImageCount;
+                    scratch.AddImage(in info, count);
+                    scratch.AddWrite(binding.Set, binding.Binding, binding.DescriptorType, count, PendingDescriptorSource.Image, start);
+                }
+            }
+            else if (binding.DescriptorType is DescriptorType.UniformTexelBuffer or DescriptorType.StorageTexelBuffer)
+            {
+                if (!TryResolveComputeTexelBuffer(binding, snapshot, out BufferView view))
+                    unresolved = true;
+                else
+                {
+                    int start = scratch.TexelCount;
+                    scratch.AddTexel(in view, count);
+                    scratch.AddWrite(binding.Set, binding.Binding, binding.DescriptorType, count, PendingDescriptorSource.TexelBuffer, start);
+                }
+            }
+        }
+
+        if (!unresolved)
+            return scratch.WriteCount != 0;
+        if (reportFailures)
+            RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanDescriptorBindingFailure(Data.Name, "descriptor-set", "<compute-required-binding>", 0, 0, false, true, "compute descriptor build had unresolved required bindings");
+        return false;
     }
 
     private static PushConstantRange CreateCommonPushConstantRange()
@@ -512,7 +475,7 @@ internal unsafe partial class VkRenderProgram
             Size = VulkanPipelineManager.CommonPushConstantByteSize
         };
 
-    private bool TryUpdateComputeDescriptorSetsWithTemplates(DescriptorSet[] descriptorSets, WriteDescriptorSet[] writeArray)
+    private bool TryUpdateComputeDescriptorSetsWithTemplates(DescriptorSet[] descriptorSets, ReadOnlySpan<WriteDescriptorSet> writeArray)
     {
         if (RuntimeEngine.Rendering.Settings.VulkanRobustnessSettings.DescriptorUpdateBackend != EVulkanDescriptorUpdateBackend.Template)
             return false;
@@ -522,14 +485,17 @@ internal unsafe partial class VkRenderProgram
 
         for (int setIndex = 0; setIndex < descriptorSets.Length; setIndex++)
         {
-            List<WriteDescriptorSet> setWrites = [];
+            int first = -1;
+            int count = 0;
             for (int i = 0; i < writeArray.Length; i++)
-            {
                 if (writeArray[i].DstSet.Handle == descriptorSets[setIndex].Handle)
-                    setWrites.Add(writeArray[i]);
-            }
+                {
+                    if (first < 0)
+                        first = i;
+                    count++;
+                }
 
-            if (setWrites.Count == 0)
+            if (count == 0)
                 continue;
 
             if (!BackendContext.Resources.DescriptorLifetime.TryUpdateDescriptorSetWithTemplate(
@@ -538,7 +504,7 @@ internal unsafe partial class VkRenderProgram
                 PipelineBindPoint.Compute,
                 _pipelineLayout,
                 (uint)setIndex,
-                CollectionsMarshal.AsSpan(setWrites)))
+                writeArray.Slice(first, count)))
             {
                 return false;
             }
@@ -573,10 +539,10 @@ internal unsafe partial class VkRenderProgram
     }
 
     private ulong ComputeComputeDescriptorBindingFingerprint(
-        PendingDescriptorWrite[] writes,
-        DescriptorBufferInfo[] buffers,
-        DescriptorImageInfo[] images,
-        BufferView[] texelViews)
+        ReadOnlySpan<PendingDescriptorWrite> writes,
+        ReadOnlySpan<DescriptorBufferInfo> buffers,
+        ReadOnlySpan<DescriptorImageInfo> images,
+        ReadOnlySpan<BufferView> texelViews)
     {
         ulong hash = 1469598103934665603UL;
 
@@ -652,30 +618,6 @@ internal unsafe partial class VkRenderProgram
         return hash;
     }
 
-    private enum PendingDescriptorSource : byte
-    {
-        Buffer,
-        Image,
-        TexelBuffer
-    }
-
-    private readonly record struct PendingDescriptorWrite(
-        uint Set,
-        uint Binding,
-        DescriptorType DescriptorType,
-        uint DescriptorCount,
-        PendingDescriptorSource Source,
-        int SourceStartIndex)
-    {
-        public static PendingDescriptorWrite Buffer(uint set, uint binding, DescriptorType descriptorType, uint descriptorCount, int sourceStartIndex)
-            => new(set, binding, descriptorType, descriptorCount, PendingDescriptorSource.Buffer, sourceStartIndex);
-
-        public static PendingDescriptorWrite Image(uint set, uint binding, DescriptorType descriptorType, uint descriptorCount, int sourceStartIndex)
-            => new(set, binding, descriptorType, descriptorCount, PendingDescriptorSource.Image, sourceStartIndex);
-
-        public static PendingDescriptorWrite Texel(uint set, uint binding, DescriptorType descriptorType, uint descriptorCount, int sourceStartIndex)
-            => new(set, binding, descriptorType, descriptorCount, PendingDescriptorSource.TexelBuffer, sourceStartIndex);
-    }
 
     private DescriptorBindingInfo FindDescriptorBinding(uint set, uint binding, DescriptorType descriptorType)
     {
@@ -964,99 +906,17 @@ internal unsafe partial class VkRenderProgram
             return true;
         }
 
-        Dictionary<DescriptorType, uint> poolSizeCounts = new();
-        foreach (DescriptorBindingInfo binding in _programDescriptorBindings)
-        {
-            uint count = Math.Max(binding.Count, 1u);
-            if (poolSizeCounts.TryGetValue(binding.DescriptorType, out uint existing))
-                poolSizeCounts[binding.DescriptorType] = existing + count;
-            else
-                poolSizeCounts[binding.DescriptorType] = count;
-        }
-
-        if (poolSizeCounts.Count == 0)
-            return true;
-
-        DescriptorPoolSize[] poolSizes = poolSizeCounts
-            .Select(p => new DescriptorPoolSize { Type = p.Key, DescriptorCount = p.Value })
-            .ToArray();
-
-        List<PendingDescriptorWrite> pendingWrites = [];
-        List<DescriptorBufferInfo> bufferInfos = [];
-        List<DescriptorImageInfo> imageInfos = [];
-        List<BufferView> texelBufferViews = [];
-        bool hasUnresolvedBinding = false;
-
-        foreach (DescriptorBindingInfo binding in _programDescriptorBindings)
-        {
-            if (binding.Set >= _descriptorSetLayouts.Length)
-                continue;
-
-            uint descriptorCount = Math.Max(binding.Count, 1u);
-            switch (binding.DescriptorType)
-            {
-                case DescriptorType.UniformBuffer:
-                case DescriptorType.StorageBuffer:
-                    if (!TryResolveComputeBuffer(binding, imageIndex, snapshot, reusableDescriptorBindingKey, out DescriptorBufferInfo bufferInfo))
-                    {
-                        hasUnresolvedBinding = true;
-                        RecordComputeDescriptorFailure(binding, "buffer refresh failed", skippedDispatch: true);
-                        continue;
-                    }
-
-                    int bufferStart = bufferInfos.Count;
-                    for (int i = 0; i < descriptorCount; i++)
-                        bufferInfos.Add(bufferInfo);
-
-                    pendingWrites.Add(PendingDescriptorWrite.Buffer(binding.Set, binding.Binding, binding.DescriptorType, descriptorCount, bufferStart));
-                    break;
-
-                case DescriptorType.CombinedImageSampler:
-                case DescriptorType.SampledImage:
-                case DescriptorType.Sampler:
-                case DescriptorType.StorageImage:
-                    if (!TryResolveComputeImage(binding, snapshot, out DescriptorImageInfo imageInfo))
-                    {
-                        hasUnresolvedBinding = true;
-                        RecordComputeDescriptorFailure(binding, "image refresh failed", skippedDispatch: true);
-                        continue;
-                    }
-
-                    int imageStart = imageInfos.Count;
-                    for (int i = 0; i < descriptorCount; i++)
-                        imageInfos.Add(imageInfo);
-
-                    pendingWrites.Add(PendingDescriptorWrite.Image(binding.Set, binding.Binding, binding.DescriptorType, descriptorCount, imageStart));
-                    break;
-
-                case DescriptorType.UniformTexelBuffer:
-                case DescriptorType.StorageTexelBuffer:
-                    if (!TryResolveComputeTexelBuffer(binding, snapshot, out BufferView texelView))
-                    {
-                        hasUnresolvedBinding = true;
-                        RecordComputeDescriptorFailure(binding, "texel refresh failed", skippedDispatch: true);
-                        continue;
-                    }
-
-                    int texelStart = texelBufferViews.Count;
-                    for (int i = 0; i < descriptorCount; i++)
-                        texelBufferViews.Add(texelView);
-
-                    pendingWrites.Add(PendingDescriptorWrite.Texel(binding.Set, binding.Binding, binding.DescriptorType, descriptorCount, texelStart));
-                    break;
-            }
-        }
-
-        if (hasUnresolvedBinding || pendingWrites.Count == 0)
+        if (!TryBuildComputeDescriptorScratch(imageIndex, snapshot, reusableDescriptorBindingKey, reportFailures: true))
             return false;
 
-        DescriptorSetLayout[] layoutArray = _descriptorSetLayouts.ToArray();
+        VulkanComputeDescriptorScratchBuilder scratch = _computeDescriptorScratch;
         if (!ProgramCreationPort.TryGetOrCreateComputeDescriptorSets(
             imageIndex,
             schemaFingerprint,
             reusableDescriptorBindingKey,
-            layoutArray,
-            poolSizes,
+            _descriptorSetLayouts,
+            scratch.PoolSizeArray,
+            scratch.PoolSizeCount,
             _descriptorSetsRequireUpdateAfterBind,
             out DescriptorSet[] descriptorSets,
             out _))
@@ -1064,12 +924,7 @@ internal unsafe partial class VkRenderProgram
             return false;
         }
 
-        UpdateComputeDescriptorSets(
-            descriptorSets,
-            pendingWrites.ToArray(),
-            bufferInfos.ToArray(),
-            imageInfos.ToArray(),
-            texelBufferViews.ToArray());
+        UpdateComputeDescriptorSets(descriptorSets, scratch);
         if (snapshot.HasPublishedBindingLayoutSignatures)
             _reusableComputeDescriptorResourceSignatures[refreshKey] =
                 resourceSignature;
@@ -1127,15 +982,20 @@ internal unsafe partial class VkRenderProgram
         ComputeDispatchSnapshot snapshot,
         AutoUniformBlockInfo block)
     {
-        if (resource.Mapped == null || resource.Size < size)
+        VulkanMappedMemorySlice slice = resource.Slice;
+        if (resource.Size < size ||
+            !BackendContext.Resources.Buffers.TryAcquireWrite(BackendContext, in slice, out VulkanMappedMemoryWriteLease lease))
             return false;
 
-        Span<byte> data = new(resource.Mapped, (int)size);
-        data.Clear();
+        using (lease)
+        {
+            Span<byte> data = lease.Bytes[..checked((int)size)];
+            data.Clear();
 
-        IReadOnlyList<AutoUniformMember> members = block.Members;
-        for (int memberIndex = 0; memberIndex < members.Count; memberIndex++)
-            TryWriteAutoUniformMember(data, members[memberIndex], snapshot);
+            IReadOnlyList<AutoUniformMember> members = block.Members;
+            for (int memberIndex = 0; memberIndex < members.Count; memberIndex++)
+                TryWriteAutoUniformMember(data, members[memberIndex], snapshot);
+        }
 
         return true;
     }
@@ -1174,14 +1034,14 @@ internal unsafe partial class VkRenderProgram
             return false;
         }
 
-        if (!BackendContext.Resources.Buffers.TryMap(BackendContext,buffer, memory, 0, size, out void* mapped))
+        if (!BackendContext.Resources.Buffers.TryCreateMappedSlice(BackendContext, buffer, memory, 0, size, out VulkanMappedMemorySlice slice))
         {
             BackendContext.Resources.Buffers.Retire(buffer, memory, "VkRenderProgram.ComputeUniformBuffer");
             resource = default;
             return false;
         }
 
-        resource = new ComputeUniformBuffer(buffer, memory, size, mapped);
+        resource = new ComputeUniformBuffer(buffer, memory, size, slice);
         _computeUniformBuffers[key] = resource;
         created = true;
         return true;
@@ -1189,11 +1049,12 @@ internal unsafe partial class VkRenderProgram
 
     private bool ClearComputeUniformBuffer(ComputeUniformBuffer resource, uint size)
     {
-        if (resource.Mapped == null || resource.Size < size)
+        VulkanMappedMemorySlice slice = resource.Slice;
+        if (resource.Size < size ||
+            !BackendContext.Resources.Buffers.TryAcquireWrite(BackendContext, in slice, out VulkanMappedMemoryWriteLease lease))
             return false;
-
-        Span<byte> data = new(resource.Mapped, (int)size);
-        data.Clear();
+        using (lease)
+            lease.Bytes[..checked((int)size)].Clear();
         return true;
     }
 

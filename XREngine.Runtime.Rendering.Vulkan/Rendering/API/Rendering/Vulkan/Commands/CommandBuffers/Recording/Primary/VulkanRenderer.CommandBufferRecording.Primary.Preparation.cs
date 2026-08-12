@@ -15,7 +15,7 @@ using XREngine.Rendering.Resources;
 
 namespace XREngine.Rendering.Vulkan
 {
-    internal sealed unsafe partial class VulkanCommandRuntime
+    internal sealed partial class VulkanCommandRuntime
     {
         private static void CapturePrimaryCommandBufferRecordingContext(
             scoped in VulkanCommandRecordingContext context,
@@ -112,7 +112,7 @@ namespace XREngine.Rendering.Vulkan
                 frameDataManifest.Begin(frameDataGeneration, recordingState.RecordingScratch.RecordMeshDrawSlotCapacityHint);
                 if (!TryRegisterFrameWideMeshFrameDataRequirements(
                         recordingState.Ops,
-                        Array.Empty<FrameOp>(),
+                        FrameOperationSequence.Empty,
                         recordingState.CommandBufferImageSlot,
                         sealAfterRegister: true,
                         meshDrawSlotsByRenderer,
@@ -141,8 +141,8 @@ namespace XREngine.Rendering.Vulkan
             recordingState.MeshDrawSlotsByRendererFamily = recordingState.RecordingScratch.PrimaryMeshDrawSlotsByRendererFamily;
             recordingState.MeshFrameDataFamilyBases = recordingState.RecordingScratch.PrimaryMeshFrameDataFamilyBases;
             recordingState.MeshDrawSlotsByRendererFamily.Clear();
-            recordingState.PipelineDeferredOps = recordingState.RecordingScratch.PipelineDeferredOps;
-            recordingState.PipelineDeferredOps.Clear();
+            recordingState.PipelineDeferredOperationIndices = recordingState.RecordingScratch.PipelineDeferredOperationIndices;
+            recordingState.PipelineDeferredOperationIndices.Clear();
             PrepareScheduledCommandChainFrameDataRefresh(
                 ref recordingState);
             EMeshSubmissionStrategy submissionStrategy = RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy();
@@ -186,10 +186,14 @@ namespace XREngine.Rendering.Vulkan
                     VulkanPipelineVariantRequirement requirement =
                         pipelineVariantManifest.Requirements[requirementIndex];
                     int opIndex = requirement.OpIndex;
-                    PendingMeshDraw pendingDraw = recordingState.Ops[opIndex] switch
+                    ref readonly FrameOperationHeader operationHeader =
+                        ref recordingState.Ops.GetHeader(opIndex);
+                    PendingMeshDraw pendingDraw = operationHeader.OpCode switch
                     {
-                        MeshDrawOp direct => direct.Draw,
-                        IndirectDrawOp indirect => indirect.Draw,
+                        EVulkanPrimaryPlanNodeKind.MeshDraw =>
+                            recordingState.Ops.GetMeshDraw(opIndex).Draw,
+                        EVulkanPrimaryPlanNodeKind.IndirectDraw =>
+                            recordingState.Ops.GetIndirectDraw(opIndex).Draw,
                         _ => default,
                     };
                     VkMeshRenderer? meshRenderer = pendingDraw.Renderer;
@@ -204,11 +208,12 @@ namespace XREngine.Rendering.Vulkan
                         }
                         else
                         {
-                            recordingState.PipelineDeferredOps.Add(recordingState.Ops[opIndex]);
+                            recordingState.PipelineDeferredOperationIndices.Add(opIndex);
                         }
                         continue;
                     }
-                    XRFrameBuffer? target = recordingState.Ops[opIndex].Target;
+                    XRFrameBuffer? target = recordingState.Ops.GetTarget(opIndex);
+                    FrameOpContext operationContext = recordingState.Ops.GetContext(opIndex);
 
                     int drawSlot =
                         recordingState.MeshDrawUniformSlotsByOpIndex[opIndex];
@@ -220,7 +225,7 @@ namespace XREngine.Rendering.Vulkan
                             meshRenderer,
                             recordingState.CommandBufferImageSlot,
                             EVulkanMeshFrameDataStreamKind.Primary,
-                            recordingState.Ops[opIndex].Context,
+                            operationContext,
                             pendingDraw);
                     }
                     recordingState.MeshDrawUniformSlotsByOpIndex[opIndex] = drawSlot;
@@ -239,7 +244,7 @@ namespace XREngine.Rendering.Vulkan
                     }
 
                     using var pipelineScope = RuntimeEngine.Rendering.State.PushRenderingPipelineOverride(
-                        recordingState.Ops[opIndex].Context.PipelineInstance);
+                        operationContext.PipelineInstance);
                     if (!meshRenderer.TryPrewarmFrameDataForRecording(
                             pendingDraw,
                             drawSlot,
@@ -260,7 +265,7 @@ namespace XREngine.Rendering.Vulkan
                         return false;
                     }
 
-                    int pipelinePassIndex = recordingState.Ops[opIndex].PassIndex;
+                    int pipelinePassIndex = operationHeader.PassIndex;
                     if (pipelinePassIndex == int.MinValue)
                         continue;
 
@@ -274,7 +279,7 @@ namespace XREngine.Rendering.Vulkan
                     if (reuseDeferredPipelineReadiness &&
                         deferredRequirementIndices.Contains(requirementIndex))
                     {
-                        recordingState.PipelineDeferredOps.Add(recordingState.Ops[opIndex]);
+                        recordingState.PipelineDeferredOperationIndices.Add(opIndex);
                         deferredPipelineDrawCount++;
                         if (firstDeferredPipelineReason.Length == 0)
                         {
@@ -287,8 +292,6 @@ namespace XREngine.Rendering.Vulkan
 
                     VulkanCompiledRenderGraph operationGraph =
                         recordingState.RenderGraphPlan.CompiledGraph;
-                    FrameOpContext operationContext =
-                        recordingState.Ops[opIndex].Context;
                     if (recordingState.FramePlan is not null &&
                         recordingState.FramePlan.TryResolveRenderGraphPlan(
                             in operationContext,
@@ -300,7 +303,7 @@ namespace XREngine.Rendering.Vulkan
                     if (!TryResolveGraphicsPipelinePrewarmTarget(
                             target,
                             pipelinePassIndex,
-                            recordingState.Ops[opIndex].Context,
+                            operationContext,
                             recordingState.SwapchainTarget,
                             recordingState.Policy.UseDynamicRendering,
                             operationGraph,
@@ -312,7 +315,7 @@ namespace XREngine.Rendering.Vulkan
                     {
                         if (!requirement.Required)
                         {
-                            recordingState.PipelineDeferredOps.Add(recordingState.Ops[opIndex]);
+                            recordingState.PipelineDeferredOperationIndices.Add(opIndex);
                             Debug.VulkanEvery(
                                 $"Vulkan.OptionalPipelineNodeDeferred.{GetHashCode()}.{requirement.PassIndex}",
                                 TimeSpan.FromSeconds(1),
@@ -338,15 +341,15 @@ namespace XREngine.Rendering.Vulkan
                             useDynamicRendering,
                             prewarmDynamicRenderingFormats,
                             pipelinePassIndex,
-                            recordingState.Ops[opIndex].Context.PassMetadata,
+                            operationContext.PassMetadata,
                             depthStencilReadOnly,
-                            recordingState.Ops[opIndex].Context.PipelineInstance?.DebugName ?? "<no pipeline>",
+                            operationContext.PipelineInstance?.DebugName ?? "<no pipeline>",
                             out string pipelineReason))
                     {
                         continue;
                     }
 
-                    recordingState.PipelineDeferredOps.Add(recordingState.Ops[opIndex]);
+                    recordingState.PipelineDeferredOperationIndices.Add(opIndex);
                     if (IsVulkanPipelineAsyncCompilationEnabled)
                         deferredRequirementIndices.Add(requirementIndex);
                     deferredPipelineDrawCount++;
@@ -608,7 +611,7 @@ namespace XREngine.Rendering.Vulkan
             // before the first pass barrier group via EmitPassBarriers.
 
             if (recordingState.Ops.Length > 0)
-                recordingState.InitialContext = recordingState.Ops[0].Context;
+                recordingState.InitialContext = recordingState.Ops.GetContext(0);
         }
 
         private void InitializePrimaryCommandEncodingState(
@@ -628,7 +631,7 @@ namespace XREngine.Rendering.Vulkan
 
             if (recordingState.Ops.Length > 0)
             {
-                FrameOpContext firstContext = recordingState.Ops[0].Context;
+                FrameOpContext firstContext = recordingState.Ops.GetContext(0);
                 recordingState.RenderGraphPlan = ResolvePrimaryRenderGraphPlan(
                     ref recordingState,
                     in firstContext);
@@ -661,7 +664,6 @@ namespace XREngine.Rendering.Vulkan
             recordingState.SwapchainWritesByPipeline = recordingState.RecordingScratch.SwapchainWritesByPipeline;
             recordingState.SwapchainWriterLabelByPipeline = recordingState.RecordingScratch.SwapchainWriterLabelByPipeline;
             recordingState.SwapchainWriterDetailByPipeline = recordingState.RecordingScratch.SwapchainWriterDetailByPipeline;
-            recordingState.SwapchainWriterOpByPipeline = recordingState.RecordingScratch.SwapchainWriterOpByPipeline;
             recordingState.SwapchainWriterDynamicUiDrawCountByPipeline = recordingState.RecordingScratch.SwapchainWriterDynamicUiDrawCountByPipeline;
             recordingState.SwapchainWriterPassByPipeline = recordingState.RecordingScratch.SwapchainWriterPassByPipeline;
             recordingState.SwapchainWriterOpIndexByPipeline = recordingState.RecordingScratch.SwapchainWriterOpIndexByPipeline;

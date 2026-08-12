@@ -17,28 +17,10 @@ using XREngine.Rendering.Pipelines.Commands;
 
 namespace XREngine.Rendering.Vulkan;
 
-internal static unsafe class VulkanFrameOperationSemantics
+internal static class VulkanFrameOperationSemantics
 {
     #region Frame Operation Queue
 
-
-    private const int FrameOpKindUnknown = 0;
-    private const int FrameOpKindClear = 1;
-    private const int FrameOpKindMeshDraw = 2;
-    private const int FrameOpKindBlit = 3;
-    private const int FrameOpKindIndirectDraw = 4;
-    private const int FrameOpKindMeshTaskDispatchIndirectCount = 5;
-    private const int FrameOpKindMemoryBarrier = 6;
-    private const int FrameOpKindDlssUpscale = 7;
-    private const int FrameOpKindDlssFrameGeneration = 8;
-    private const int FrameOpKindTransformFeedback = 9;
-    private const int FrameOpKindComputeDispatch = 10;
-    private const int FrameOpKindTextureUpload = 11;
-    private const int FrameOpKindQuery = 12;
-    private const int FrameOpKindPublishFramebufferForSampling = 13;
-    private const int FrameOpKindComputeDispatchIndirect = 14;
-    private const int FrameOpKindBufferCopy = 15;
-    private const int FrameOpKindSubmissionMarker = 16;
 
     internal const ulong FrameSourceMutableDescriptorSignature = 0x4652534D55544453UL;
 
@@ -391,20 +373,22 @@ internal static unsafe class VulkanFrameOperationSemantics
 
         for (int i = 0; i < ops.Length; i++)
         {
-            FrameOp op = ops[i];
-            hash.Add(GetFrameOpKindId(op));
-            hash.Add(op.PassIndex);
-            hash.Add(VulkanCommandRuntime.ResolveCommandChainTargetIdentity(op));
-            hash.Add((int)op.Context.ContextKind);
-            hash.Add(op.Context.RecordingFingerprint);
-            hash.Add(op.Context.PipelineIdentity);
-            hash.Add(op.Context.ViewportIdentity);
-            hash.Add(op.Context.OutputFrameBufferIdentity);
-            hash.Add(op.Context.OutputTargetIdentity);
+            ref readonly FrameOperationHeader header = ref ops.GetHeader(i);
+            ref readonly FrameOpContext context = ref ops.GetContext(i);
+            hash.Add((int)header.OpCode);
+            hash.Add(header.PassIndex);
+            hash.Add(header.TargetIdentity);
+            hash.Add((int)context.ContextKind);
+            hash.Add(context.RecordingFingerprint);
+            hash.Add(context.PipelineIdentity);
+            hash.Add(context.ViewportIdentity);
+            hash.Add(context.OutputFrameBufferIdentity);
+            hash.Add(context.OutputTargetIdentity);
 
-            switch (op)
+            switch (header.OpCode)
             {
-                case ClearOp clear:
+                case EVulkanPrimaryPlanNodeKind.Clear:
+                    ref readonly ClearPayload clear = ref ops.GetClear(i);
                     hash.Add(clear.ClearColor);
                     hash.Add(clear.ClearDepth);
                     hash.Add(clear.ClearStencil);
@@ -419,8 +403,8 @@ internal static unsafe class VulkanFrameOperationSemantics
                     hash.Add(clear.Rect.Extent.Width);
                     hash.Add(clear.Rect.Extent.Height);
                     break;
-                case MeshDrawOp meshDraw:
-                    ref readonly PendingMeshDraw draw = ref meshDraw.DrawRef;
+                case EVulkanPrimaryPlanNodeKind.MeshDraw:
+                    PendingMeshDraw draw = ops.GetMeshDraw(i).Draw;
                     hash.Add(draw.Renderer?.GetHashCode() ?? 0);
                     hash.Add(draw.Viewport.X);
                     hash.Add(draw.Viewport.Y);
@@ -478,7 +462,8 @@ internal static unsafe class VulkanFrameOperationSemantics
                     hash.Add(draw.PreparedProgram?.BindingId ?? 0u);
                     HashProgramBindingLayoutSnapshot(ref hash, draw.ProgramBindingSnapshot);
                     break;
-                case QueryOp query:
+                case EVulkanPrimaryPlanNodeKind.Query:
+                    ref readonly QueryPayload query = ref ops.GetQuery(i);
                     hash.Add(query.Query.GetHashCode());
                     hash.Add(query.Descriptor.GetHashCode());
                     hash.Add(query.Query.Ticket.PoolIdentity);
@@ -493,7 +478,8 @@ internal static unsafe class VulkanFrameOperationSemantics
                     hash.Add(query.ResultStride);
                     hash.Add(query.IncludeAvailability);
                     break;
-                case BlitOp blit:
+                case EVulkanPrimaryPlanNodeKind.Blit:
+                    ref readonly BlitPayload blit = ref ops.GetBlit(i);
                     hash.Add(blit.InFbo?.GetHashCode() ?? 0);
                     hash.Add(blit.OutFbo?.GetHashCode() ?? 0);
                     hash.Add(blit.InX);
@@ -510,7 +496,8 @@ internal static unsafe class VulkanFrameOperationSemantics
                     hash.Add(blit.StencilBit);
                     hash.Add(blit.LinearFilter);
                     break;
-                case IndirectDrawOp indirect:
+                case EVulkanPrimaryPlanNodeKind.IndirectDraw:
+                    ref readonly IndirectDrawPayload indirect = ref ops.GetIndirectDraw(i);
                     hash.Add(ComputeCommandBufferDataBufferSignature(indirect.IndirectBuffer));
                     hash.Add(ComputeCommandBufferDataBufferSignature(indirect.ParameterBuffer));
                     hash.Add(indirect.DrawCount);
@@ -521,7 +508,8 @@ internal static unsafe class VulkanFrameOperationSemantics
                     hash.Add(
                         (int)indirect.SecondaryRecordingContract.Eligibility);
                     break;
-                case MeshTaskDispatchIndirectCountOp meshTaskDispatch:
+                case EVulkanPrimaryPlanNodeKind.MeshTaskDispatchIndirectCount:
+                    ref readonly MeshTaskDispatchIndirectCountPayload meshTaskDispatch = ref ops.GetMeshTask(i);
                     hash.Add(ComputeCommandBufferDataBufferSignature(meshTaskDispatch.IndirectBuffer));
                     hash.Add(ComputeCommandBufferDataBufferSignature(meshTaskDispatch.CountBuffer));
                     hash.Add(meshTaskDispatch.MaxDrawCount);
@@ -529,13 +517,16 @@ internal static unsafe class VulkanFrameOperationSemantics
                     hash.Add(meshTaskDispatch.ByteOffset);
                     hash.Add(meshTaskDispatch.CountByteOffset);
                     break;
-                case MemoryBarrierOp barrier:
+                case EVulkanPrimaryPlanNodeKind.MemoryBarrier:
+                    ref readonly MemoryBarrierPayload barrier = ref ops.GetMemoryBarrier(i);
                     hash.Add((int)barrier.Mask);
                     break;
-                case PublishFramebufferForSamplingOp publish:
+                case EVulkanPrimaryPlanNodeKind.PublishFramebufferForSampling:
+                    ref readonly PublishFramebufferPayload publish = ref ops.GetPublishedFramebuffer(i);
                     hash.Add(publish.FrameBuffer.GetHashCode());
                     break;
-                case DlssUpscaleOp dlss:
+                case EVulkanPrimaryPlanNodeKind.DlssUpscale:
+                    ref readonly DlssUpscalePayload dlss = ref ops.GetDlssUpscale(i);
                     hash.Add(dlss.Session.GetHashCode());
                     hash.Add(dlss.SourceColor.Image.Handle);
                     hash.Add(dlss.Depth.Image.Handle);
@@ -551,7 +542,8 @@ internal static unsafe class VulkanFrameOperationSemantics
                     hash.Add(dlss.Parameters.OutputHdr);
                     hash.Add((int)dlss.Parameters.DlssQuality);
                     break;
-                case DlssFrameGenerationOp dlssFrameGeneration:
+                case EVulkanPrimaryPlanNodeKind.DlssFrameGeneration:
+                    ref readonly DlssFrameGenerationPayload dlssFrameGeneration = ref ops.GetDlssFrameGeneration(i);
                     hash.Add(dlssFrameGeneration.Session.GetHashCode());
                     HashStreamlineImageIdentity(ref hash, dlssFrameGeneration.Depth);
                     HashStreamlineImageIdentity(ref hash, dlssFrameGeneration.Motion);
@@ -565,7 +557,8 @@ internal static unsafe class VulkanFrameOperationSemantics
                     hash.Add(dlssFrameGeneration.Parameters.ResetHistory);
                     hash.Add(dlssFrameGeneration.Parameters.OutputHdr);
                     break;
-                case TransformFeedbackOp transformFeedback:
+                case EVulkanPrimaryPlanNodeKind.TransformFeedback:
+                    ref readonly TransformFeedbackPayload transformFeedback = ref ops.GetTransformFeedback(i);
                     hash.Add(transformFeedback.TransformFeedback.GetHashCode());
                     hash.Add((int)transformFeedback.Operation);
                     hash.Add(transformFeedback.CounterBuffer?.GetHashCode() ?? 0);
@@ -577,43 +570,47 @@ internal static unsafe class VulkanFrameOperationSemantics
                     hash.Add(transformFeedback.InstanceCount);
                     hash.Add(transformFeedback.FirstInstance);
                     break;
-                case ComputeDispatchOp compute:
+                case EVulkanPrimaryPlanNodeKind.ComputeDispatch:
+                    ref readonly ComputeDispatchPayload compute = ref ops.GetComputeDispatch(i);
                     hash.Add(compute.Program.GetHashCode());
                     hash.Add(compute.GroupsX);
                     hash.Add(compute.GroupsY);
                     hash.Add(compute.GroupsZ);
                     HashProgramBindingLayoutSnapshot(ref hash, compute.Snapshot);
                     break;
-                case ComputeDispatchIndirectOp computeIndirect:
+                case EVulkanPrimaryPlanNodeKind.ComputeDispatchIndirect:
+                    ref readonly ComputeDispatchIndirectPayload computeIndirect = ref ops.GetComputeDispatchIndirect(i);
                     hash.Add(computeIndirect.Program.GetHashCode());
                     hash.Add(computeIndirect.ArgumentBuffer.Handle);
                     hash.Add(computeIndirect.ArgumentOffset);
                     HashProgramBindingLayoutSnapshot(ref hash, computeIndirect.Snapshot);
                     break;
-                case BufferCopyOp copy:
+                case EVulkanPrimaryPlanNodeKind.BufferCopy:
+                    ref readonly BufferCopyPayload copy = ref ops.GetBufferCopy(i);
                     hash.Add(copy.SourceBuffer.Handle);
                     hash.Add(copy.SourceOffset);
                     hash.Add(copy.DestinationBuffer.Handle);
                     hash.Add(copy.DestinationOffset);
                     hash.Add(copy.ByteCount);
                     break;
-                case SubmissionMarkerOp:
+                case EVulkanPrimaryPlanNodeKind.SubmissionMarker:
                     // The fence object is CPU-side submission state and is rebound
                     // whenever a cached primary is reused. Marker position remains
                     // part of the structural signature because recording it closes
                     // the active render pass.
                     break;
-                case TextureUploadFrameOp upload:
-                    hash.Add(upload.Upload.PublicationToken);
-                    hash.Add(upload.Upload.Request.StreamingGeneration);
-                    hash.Add(upload.Upload.Image.Handle);
-                    hash.Add(upload.Upload.ImageView.Handle);
-                    hash.Add(upload.Upload.Sampler.Handle);
-                    hash.Add(upload.Upload.Extent.Width);
-                    hash.Add(upload.Upload.Extent.Height);
-                    hash.Add(upload.Upload.MipLevels);
-                    hash.Add((ulong)Math.Max(upload.Upload.CommittedBytes, 0L));
-                    hash.Add(upload.Upload.StagingResources.Length);
+                case EVulkanPrimaryPlanNodeKind.TextureUpload:
+                    VulkanImportedTexturePendingUpload upload = ops.GetTextureUpload(i).Upload;
+                    hash.Add(upload.PublicationToken);
+                    hash.Add(upload.Request.StreamingGeneration);
+                    hash.Add(upload.Image.Handle);
+                    hash.Add(upload.ImageView.Handle);
+                    hash.Add(upload.Sampler.Handle);
+                    hash.Add(upload.Extent.Width);
+                    hash.Add(upload.Extent.Height);
+                    hash.Add(upload.MipLevels);
+                    hash.Add((ulong)Math.Max(upload.CommittedBytes, 0L));
+                    hash.Add(upload.StagingResources.Length);
                     break;
             }
         }
@@ -635,28 +632,6 @@ internal static unsafe class VulkanFrameOperationSemantics
         hash.Add(image.Width);
         hash.Add(image.Height);
     }
-
-    private static int GetFrameOpKindId(FrameOp op)
-        => op switch
-        {
-            ClearOp => FrameOpKindClear,
-            MeshDrawOp => FrameOpKindMeshDraw,
-            QueryOp => FrameOpKindQuery,
-            BlitOp => FrameOpKindBlit,
-            IndirectDrawOp => FrameOpKindIndirectDraw,
-            MeshTaskDispatchIndirectCountOp => FrameOpKindMeshTaskDispatchIndirectCount,
-            MemoryBarrierOp => FrameOpKindMemoryBarrier,
-            PublishFramebufferForSamplingOp => FrameOpKindPublishFramebufferForSampling,
-            DlssUpscaleOp => FrameOpKindDlssUpscale,
-            DlssFrameGenerationOp => FrameOpKindDlssFrameGeneration,
-            TransformFeedbackOp => FrameOpKindTransformFeedback,
-            ComputeDispatchOp => FrameOpKindComputeDispatch,
-            ComputeDispatchIndirectOp => FrameOpKindComputeDispatchIndirect,
-            BufferCopyOp => FrameOpKindBufferCopy,
-            SubmissionMarkerOp => FrameOpKindSubmissionMarker,
-            TextureUploadFrameOp => FrameOpKindTextureUpload,
-            _ => FrameOpKindUnknown
-        };
 
     private static ulong ComputeCommandBufferDataBufferSignature(VkDataBuffer? buffer)
     {

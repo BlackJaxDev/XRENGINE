@@ -10,7 +10,7 @@ using Buffer = Silk.NET.Vulkan.Buffer;
 
 namespace XREngine.Rendering.Vulkan
 {
-    internal sealed unsafe partial class VulkanCommandRuntime
+    internal sealed partial class VulkanCommandRuntime
     {
         /// <summary>The active memory allocator (legacy per-resource or block suballocator).</summary>
         internal IVulkanMemoryAllocator MemoryAllocator
@@ -28,30 +28,6 @@ namespace XREngine.Rendering.Vulkan
         internal ulong GetBufferAllocationOffset(Buffer buffer)
             => ResourceRuntime.GetBufferAllocationOffset(buffer);
 
-        internal bool TryMapBufferMemory(
-            Buffer buffer,
-            DeviceMemory memory,
-            ulong bufferOffset,
-            ulong length,
-            out void* mappedPtr)
-            => ResourceRuntime.TryMapBufferMemory(buffer, memory, bufferOffset, length, out mappedPtr);
-
-        internal void UnmapBufferMemory(Buffer buffer, DeviceMemory memory)
-            => ResourceRuntime.UnmapBufferMemory(buffer, memory);
-
-        internal void* MapBufferMemoryOrThrow(
-            Buffer buffer,
-            DeviceMemory memory,
-            ulong bufferOffset,
-            ulong length,
-            string failureMessage)
-        {
-            if (!TryMapBufferMemory(buffer, memory, bufferOffset, length, out void* mappedPtr))
-                throw new InvalidOperationException(failureMessage);
-
-            return mappedPtr;
-        }
-
         /// <summary>
         /// Returns the suballocation offset for a tracked image, or 0 if untracked (legacy).
         /// </summary>
@@ -65,16 +41,6 @@ namespace XREngine.Rendering.Vulkan
         /// <summary>
         /// Vulkan data buffer with best practices: staging, synchronization, descriptor integration, lifetime, mapping, error handling, and multi-frame support.
         /// </summary>
-        internal void* MapBuffer(Buffer? vkBuffer, DeviceMemory? vkMemory, ulong offset, ulong length)
-        {
-            if (vkBuffer is null)
-                throw new ArgumentNullException(nameof(vkBuffer), "Cannot map null Vulkan buffer.");
-            if (vkMemory is null)
-                throw new ArgumentNullException(nameof(vkMemory), "Cannot map null Vulkan memory.");
-
-            return MapBufferMemoryOrThrow(vkBuffer.Value, vkMemory.Value, offset, length, "Failed to map Vulkan buffer memory.");
-        }
-
         internal bool CopyBuffer(Buffer? stagingBuffer, Buffer? vkBuffer, uint length, ulong offset)
         {
             if (_deviceLost)
@@ -92,27 +58,6 @@ namespace XREngine.Rendering.Vulkan
                 length,
                 0,
                 offset);
-        }
-
-        internal void UpdateBuffer(Buffer? vkBuffer, DeviceMemory? vkMemory, ulong offset, ulong length, void* addr)
-        {
-            if (_deviceLost)
-                return;
-
-            if (vkBuffer is null || vkMemory is null || addr is null)
-                throw new ArgumentNullException("Buffer, memory, or address cannot be null for update operation.");
-
-            ResourceRuntime.UpdateBufferMemory(vkBuffer.Value, vkMemory.Value, offset, length, addr);
-        }
-
-        internal void UnmapBuffer(Buffer? vkBuffer, DeviceMemory? vkMemory)
-        {
-            if (vkBuffer is null)
-                throw new ArgumentNullException(nameof(vkBuffer), "Cannot unmap null Vulkan buffer.");
-            if (vkMemory is null)
-                throw new ArgumentNullException(nameof(vkMemory), "Cannot unmap null Vulkan memory.");
-
-            UnmapBufferMemory(vkBuffer.Value, vkMemory.Value);
         }
 
         public bool CopyBuffer(
@@ -233,7 +178,7 @@ namespace XREngine.Rendering.Vulkan
         /// <param name="stagingBuffer">The created staging buffer (TransferSrc, HostVisible).</param>
         /// <param name="stagingMemory">The staging buffer's device memory.</param>
         /// <returns><c>true</c> if successful.</returns>
-        public bool TryCreateStagingBufferFromFile(
+        public unsafe bool TryCreateStagingBufferFromFile(
             string filePath, long offset, int length,
             out Buffer stagingBuffer, out DeviceMemory stagingMemory)
         {
@@ -251,8 +196,8 @@ namespace XREngine.Rendering.Vulkan
                 BufferUsageFlags.TransferSrcBit,
                 MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit);
 
-            void* mappedPtr = null;
-            if (!TryMapBufferMemory(stagingBuffer, stagingMemory, 0, (ulong)length, out mappedPtr))
+            if (!ResourceRuntime.Buffers.TryCreateMappedSlice(BackendObjectContext, stagingBuffer, stagingMemory, 0, (ulong)length, out VulkanMappedMemorySlice slice) ||
+                !ResourceRuntime.Buffers.TryAcquireWrite(BackendObjectContext, in slice, out VulkanMappedMemoryWriteLease lease))
             {
                 DestroyBufferRaw(stagingBuffer, stagingMemory);
                 stagingBuffer = default;
@@ -262,18 +207,19 @@ namespace XREngine.Rendering.Vulkan
 
             try
             {
-                RuntimeDirectStorageIO.TryReadInto(filePath, offset, length, mappedPtr);
+                using (lease)
+                {
+                    fixed (byte* destination = lease.Bytes)
+                        RuntimeDirectStorageIO.TryReadInto(filePath, offset, length, destination);
+                }
             }
             catch
             {
-                UnmapBufferMemory(stagingBuffer, stagingMemory);
                 DestroyBufferRaw(stagingBuffer, stagingMemory);
                 stagingBuffer = default;
                 stagingMemory = default;
                 return false;
             }
-
-            UnmapBufferMemory(stagingBuffer, stagingMemory);
             return true;
         }
 
@@ -308,33 +254,6 @@ namespace XREngine.Rendering.Vulkan
                 BackendObjectContext,
                 memory,
                 owner);
-
-        public void FlushBuffer(
-            Buffer? vkBuffer,
-            DeviceMemory? vkMemory,
-            ulong offset,
-            ulong length)
-        {
-            if (vkBuffer is null || vkMemory is null)
-                throw new ArgumentNullException(vkBuffer is null ? nameof(vkBuffer) : nameof(vkMemory));
-            ResourceRuntime.Buffers.Flush(
-                BackendObjectContext,
-                vkBuffer.Value,
-                vkMemory.Value,
-                offset,
-                length);
-        }
-
-        internal void InvalidateBuffer(DeviceMemory? vkMemory, ulong offset, ulong length)
-        {
-            if (vkMemory is null)
-                throw new ArgumentNullException(nameof(vkMemory));
-            ResourceRuntime.Buffers.Invalidate(
-                BackendObjectContext,
-                vkMemory.Value,
-                offset,
-                length);
-        }
 
         private static string ClassifyVulkanAllocation(
             MemoryPropertyFlags requestedProperties,

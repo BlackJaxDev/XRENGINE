@@ -35,19 +35,19 @@ internal sealed class VulkanCompiledRenderGraph
         Plan = new VulkanCompiledRenderGraphPlan(orderedPasses, batches, synchronization);
     }
 
-    /// <summary>Topologically sorted passes from the source graph.</summary>
+    /// <summary>Cold compiler/diagnostic metadata; recording must use the plan execution snapshot.</summary>
     public IReadOnlyList<RenderPassMetadata> OrderedPasses { get; }
 
-    /// <summary>Lookup from pass index to its topological order rank.</summary>
+    /// <summary>Cold compiler lookup. Hot scheduling uses the flat execution pass array.</summary>
     public IReadOnlyDictionary<int, int> PassOrder { get; }
 
     /// <summary>Precomputed topological order for nested screen-space UI, or int.MaxValue when absent.</summary>
     public int ScreenSpaceUiPassOrder { get; }
 
-    /// <summary>Adjacent compatible graphics pass batches.</summary>
+    /// <summary>Cold compiler batch metadata.</summary>
     public IReadOnlyList<VulkanCompiledPassBatch> Batches { get; }
 
-    /// <summary>Derived synchronization plan for barriers/dependencies.</summary>
+    /// <summary>Cold synchronization source used to construct frozen barriers.</summary>
     public RenderGraphSynchronizationInfo Synchronization { get; }
 
     /// <summary>Immutable structural plan generation used for cache and recording identity.</summary>

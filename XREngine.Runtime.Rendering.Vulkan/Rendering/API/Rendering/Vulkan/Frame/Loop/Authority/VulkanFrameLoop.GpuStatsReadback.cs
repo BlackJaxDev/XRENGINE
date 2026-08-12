@@ -2,6 +2,7 @@ using System;
 using System.Buffers;
 using System.Collections.Generic;
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Text;
 using Silk.NET.Vulkan;
 using XREngine.Data.Rendering;
@@ -9,13 +10,11 @@ using Buffer = Silk.NET.Vulkan.Buffer;
 
 namespace XREngine.Rendering.Vulkan;
 
-internal sealed unsafe partial class VulkanFrameLoop
+internal sealed partial class VulkanFrameLoop
 {
     private static bool IndirectTraceEnabled
         => XREnvironment.IsEnabled(
             XREngineEnvironmentVariables.VulkanIndirectTrace);
-    private const uint GpuRenderStatsReadbackInlineUIntCapacity = 64u;
-
 
     internal void PollGpuRenderStatsReadbacks()
     {
@@ -68,7 +67,7 @@ internal sealed unsafe partial class VulkanFrameLoop
             publishTriangles);
     }
 
-    private bool QueueGpuRenderStatsReadback(
+    private unsafe bool QueueGpuRenderStatsReadback(
         XRDataBuffer sourceBuffer,
         uint sourceByteOffset,
         uint byteCount,
@@ -176,7 +175,12 @@ internal sealed unsafe partial class VulkanFrameLoop
                 DstOffset = slot.DataSlice.Offset,
                 Size = byteCount,
             };
-            _commandRuntime.CmdCopyBufferTracked(slot.CommandBuffer, sourceHandle, slot.DataSlice.Buffer, 1, &copy);
+            _commandRuntime.CmdCopyBufferTracked(
+                slot.CommandBuffer,
+                sourceHandle,
+                slot.DataSlice.Buffer,
+                1,
+                ref copy);
 
             if (_commandRuntime.EndCommandBufferTracked(slot.CommandBuffer) != Result.Success ||
                 !ReadbackOutputResources.TryPrepareGpuStatsSlice(slot.DataSlice))
@@ -300,7 +304,7 @@ internal sealed unsafe partial class VulkanFrameLoop
         return true;
     }
 
-    private bool TryConsumeGpuRenderStatsReadback(GpuRenderStatsReadbackSlot slot)
+    private unsafe bool TryConsumeGpuRenderStatsReadback(GpuRenderStatsReadbackSlot slot)
     {
         if (!slot.Active)
             return true;
@@ -328,25 +332,22 @@ internal sealed unsafe partial class VulkanFrameLoop
             return false;
         }
 
-        uint inlineCount = Math.Min(slot.ElementCount, GpuRenderStatsReadbackInlineUIntCapacity);
-        Span<uint> inlineValues = stackalloc uint[(int)inlineCount];
-        uint[]? rented = null;
-        Span<uint> values = slot.ElementCount <= GpuRenderStatsReadbackInlineUIntCapacity
-            ? inlineValues[..(int)slot.ElementCount]
-            : (rented = ArrayPool<uint>.Shared.Rent((int)slot.ElementCount)).AsSpan(0, (int)slot.ElementCount);
+        uint[] rented = ArrayPool<uint>.Shared.Rent(checked((int)slot.ElementCount));
+        Span<uint> values = rented.AsSpan(0, checked((int)slot.ElementCount));
 
         try
         {
             using (readScope)
-                new ReadOnlySpan<uint>(readScope.Pointer, (int)slot.ElementCount).CopyTo(values);
+                MemoryMarshal.Cast<byte, uint>(readScope.Bytes).Slice(
+                    0,
+                    checked((int)slot.ElementCount)).CopyTo(values);
 
             PublishGpuRenderStatsReadback(slot, values);
             RuntimeEngine.Rendering.Stats.GpuDriven.RecordDelayedDiagnosticReadback(slot.ByteCount);
         }
         finally
         {
-            if (rented is not null)
-                ArrayPool<uint>.Shared.Return(rented);
+            ArrayPool<uint>.Shared.Return(rented);
 
             slot.Active = false;
             slot.ByteCount = 0u;

@@ -4,7 +4,7 @@ using Silk.NET.Vulkan;
 
 namespace XREngine.Rendering.Vulkan
 {
-    internal sealed unsafe partial class VulkanFrameLoop
+    internal sealed partial class VulkanFrameLoop
     {
         private static readonly TimeSpan SwapchainRecreateDebounce =
             TimeSpan.FromMilliseconds(16);

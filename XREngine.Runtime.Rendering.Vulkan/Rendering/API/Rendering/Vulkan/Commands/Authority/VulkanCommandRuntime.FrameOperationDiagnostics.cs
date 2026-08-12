@@ -5,7 +5,7 @@ using XREngine.Data.Colors;
 
 namespace XREngine.Rendering.Vulkan;
 
-internal sealed unsafe partial class VulkanCommandRuntime
+internal sealed partial class VulkanCommandRuntime
 {
     private readonly VulkanFrameOpDiagnosticsState _recordingFrameOpDiagnostics = new();
     private string? _lastOnScreenDiagnostic;
@@ -134,7 +134,6 @@ internal sealed unsafe partial class VulkanCommandRuntime
         List<KeyValuePair<int, int>> sortedWriters,
         Dictionary<int, string> writerLabels,
         Dictionary<int, string> writerDetails,
-        Dictionary<int, FrameOp> writerOps,
         Dictionary<int, int> writerDynamicUiDrawCounts,
         Dictionary<int, int> writerPasses,
         Dictionary<int, int> writerOpIndices,
@@ -161,9 +160,7 @@ internal sealed unsafe partial class VulkanCommandRuntime
                 .Append("/op")
                 .Append(operationIndex)
                 .Append(": ");
-            if (writerOps.TryGetValue(writer.Key, out FrameOp? writerOperation))
-                builder.Append(BuildSwapchainWriterDetail(writerOperation));
-            else if (writerDynamicUiDrawCounts.TryGetValue(writer.Key, out int dynamicDrawCount))
+            if (writerDynamicUiDrawCounts.TryGetValue(writer.Key, out int dynamicDrawCount))
                 builder.Append("secondary overlay draws=").Append(dynamicDrawCount);
             else
                 builder.Append(writerDetails.TryGetValue(writer.Key, out string? detail) ? detail : "<no detail>");
@@ -192,12 +189,13 @@ internal sealed unsafe partial class VulkanCommandRuntime
         {
             if (index > 0)
                 operationSummary.Append(", ");
-            FrameOp operation = operations[index];
-            operationSummary.Append(operation.GetType().Name)
-                .Append(":p").Append(operation.PassIndex)
-                .Append(":pipe").Append(operation.Context.PipelineIdentity)
-                .Append(":vp").Append(operation.Context.ViewportIdentity)
-                .Append(":target=").Append(operation.Target?.Name ?? "<swapchain>");
+            ref readonly FrameOperationHeader header = ref operations.GetHeader(index);
+            ref readonly FrameOpContext operationContext = ref operations.GetContext(index);
+            operationSummary.Append(header.OpCode)
+                .Append(":p").Append(header.PassIndex)
+                .Append(":pipe").Append(operationContext.PipelineIdentity)
+                .Append(":vp").Append(operationContext.ViewportIdentity)
+                .Append(":target=").Append(operations.GetTarget(index)?.Name ?? "<swapchain>");
         }
 
         string failureSummary = firstFailure is { } failure
@@ -310,10 +308,13 @@ internal sealed unsafe partial class VulkanCommandRuntime
         int uniqueTargetCount = 0;
         for (int index = 0; index < operations.Length; index++)
         {
-            FrameOp operation = operations[index];
-            AddUnique(passIds, ref uniquePassCount, operation.PassIndex);
-            AddUnique(contextIds, ref uniqueContextCount, operation.Context.SchedulingIdentity);
-            XRFrameBuffer? target = operation is BlitOp blit ? blit.OutFbo : operation.Target;
+            ref readonly FrameOperationHeader header = ref operations.GetHeader(index);
+            ref readonly FrameOpContext context = ref operations.GetContext(index);
+            AddUnique(passIds, ref uniquePassCount, header.PassIndex);
+            AddUnique(contextIds, ref uniqueContextCount, context.SchedulingIdentity);
+            XRFrameBuffer? target = header.OpCode == EVulkanPrimaryPlanNodeKind.Blit
+                ? operations.GetBlit(index).OutFbo
+                : operations.GetTarget(index);
             AddUnique(
                 targetIds,
                 ref uniqueTargetCount,
@@ -406,14 +407,16 @@ internal sealed unsafe partial class VulkanCommandRuntime
         VulkanFrameOpTraceEntry[] entries = new VulkanFrameOpTraceEntry[count];
         for (int index = 0; index < count; index++)
         {
-            FrameOp operation = operations[index];
-            FrameOpContext context = operation.Context;
-            XRFrameBuffer? target = operation is BlitOp blit ? blit.OutFbo : operation.Target;
+            ref readonly FrameOperationHeader header = ref operations.GetHeader(index);
+            FrameOpContext context = operations.GetContext(index);
+            XRFrameBuffer? target = header.OpCode == EVulkanPrimaryPlanNodeKind.Blit
+                ? operations.GetBlit(index).OutFbo
+                : operations.GetTarget(index);
             entries[index] = new VulkanFrameOpTraceEntry(
                 index,
-                operation.GetType().Name,
-                operation.PassIndex,
-                ResolveFrozenPassName(operation),
+                header.OpCode.ToString(),
+                header.PassIndex,
+                ResolveFrozenPassName(in header, in context),
                 target?.Name ?? "<swapchain>",
                 target is null ? 0 : RuntimeHelpers.GetHashCode(target),
                 context.PipelineIdentity,
@@ -423,20 +426,47 @@ internal sealed unsafe partial class VulkanCommandRuntime
                 context.DisplayHeight,
                 context.InternalWidth,
                 context.InternalHeight,
-                BuildSwapchainWriterDetail(operation));
+                BuildSwapchainWriterDetail(operations, index));
         }
 
         _recordingFrameOpDiagnostics.StoreTrace(entries, VulkanFrameCounter, operations.Length);
     }
 
-    private static string ResolveFrozenPassName(FrameOp operation)
+    private static string ResolveFrozenPassName(
+        in FrameOperationHeader header,
+        in FrameOpContext context)
     {
-        if (operation.Context.PassMetadata is not { } metadata)
+        if (context.PassMetadata is not { } metadata)
             return "<unknown>";
         foreach (var pass in metadata)
-            if (pass.PassIndex == operation.PassIndex)
+            if (pass.PassIndex == header.PassIndex)
                 return pass.Name ?? "<unnamed>";
         return "<unknown>";
+    }
+
+    private static string BuildSwapchainWriterDetail(
+        FrameOperationSequence operations,
+        int index)
+    {
+        ref readonly FrameOperationHeader header = ref operations.GetHeader(index);
+        ref readonly FrameOpContext context = ref operations.GetContext(index);
+        string pipelineLabel =
+            context.PipelineInstance?.Pipeline?.GetType().Name ?? "<no pipeline>";
+        return header.OpCode switch
+        {
+            EVulkanPrimaryPlanNodeKind.MeshDraw =>
+                $"pass={header.PassIndex} pipe={context.PipelineIdentity}({pipelineLabel}) vp={context.ViewportIdentity} mesh='{operations.GetMeshDraw(index).Draw.Renderer.MeshRenderer.Mesh?.Name ?? "<unnamed mesh>"}' instances={operations.GetMeshDraw(index).Draw.Instances} stereo={operations.GetMeshDraw(index).Draw.IsStereoPass}",
+            EVulkanPrimaryPlanNodeKind.IndirectDraw =>
+                $"pass={header.PassIndex} pipe={context.PipelineIdentity}({pipelineLabel}) vp={context.ViewportIdentity} indirectDraws={operations.GetIndirectDraw(index).DrawCount} useCount={operations.GetIndirectDraw(index).UseCount}",
+            EVulkanPrimaryPlanNodeKind.MeshTaskDispatchIndirectCount =>
+                $"pass={header.PassIndex} pipe={context.PipelineIdentity}({pipelineLabel}) vp={context.ViewportIdentity} meshTaskMaxDraws={operations.GetMeshTask(index).MaxDrawCount}",
+            EVulkanPrimaryPlanNodeKind.Blit =>
+                $"pass={header.PassIndex} pipe={context.PipelineIdentity}({pipelineLabel}) vp={context.ViewportIdentity} color={operations.GetBlit(index).ColorBit} depth={operations.GetBlit(index).DepthBit} stencil={operations.GetBlit(index).StencilBit}",
+            EVulkanPrimaryPlanNodeKind.Clear =>
+                $"pass={header.PassIndex} pipe={context.PipelineIdentity}({pipelineLabel}) vp={context.ViewportIdentity} clearColor={operations.GetClear(index).ClearColor} clearDepth={operations.GetClear(index).ClearDepth} clearStencil={operations.GetClear(index).ClearStencil}",
+            _ =>
+                $"pass={header.PassIndex} pipe={context.PipelineIdentity}({pipelineLabel}) vp={context.ViewportIdentity} op={header.OpCode}",
+        };
     }
 
 }

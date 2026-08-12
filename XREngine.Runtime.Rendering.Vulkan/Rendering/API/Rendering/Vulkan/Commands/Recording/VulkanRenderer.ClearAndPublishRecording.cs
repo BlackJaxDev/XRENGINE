@@ -14,7 +14,7 @@ using XREngine.Rendering.Resources;
 
 namespace XREngine.Rendering.Vulkan
 {
-    internal sealed unsafe partial class VulkanCommandRuntime
+    internal sealed partial class VulkanCommandRuntime
     {
         internal void RecordClearOp(
             CommandBuffer commandBuffer,
@@ -26,15 +26,29 @@ namespace XREngine.Rendering.Vulkan
             uint activeRenderViewMask = 0u,
             bool suppressColorClear = false)
         {
-            _ = imageIndex;
-            bool clearColor = op.ClearColor && !suppressColorClear;
+            RecordClearPayload(commandBuffer, imageIndex, new ClearPayload(op.ClearColor, op.ClearDepth, op.ClearStencil, op.Color, op.Depth, op.Stencil, op.Rect), op.Target, activeRenderArea, in swapchainTarget, activeRenderLayerCount, activeRenderViewMask, suppressColorClear);
+        }
 
-            Extent2D targetExtent = op.Target is null
+        internal unsafe void RecordClearPayload(
+            CommandBuffer commandBuffer,
+            uint imageIndex,
+            in ClearPayload payload,
+            XRFrameBuffer? target,
+            Rect2D activeRenderArea,
+            in SwapchainRecordingTarget swapchainTarget,
+            uint activeRenderLayerCount = 0u,
+            uint activeRenderViewMask = 0u,
+            bool suppressColorClear = false)
+        {
+            _ = imageIndex;
+            bool clearColor = payload.ClearColor && !suppressColorClear;
+
+            Extent2D targetExtent = target is null
                 ? swapchainTarget.Extent
-                : new Extent2D(Math.Max(op.Target.Width, 1u), Math.Max(op.Target.Height, 1u));
+                : new Extent2D(Math.Max(target.Width, 1u), Math.Max(target.Height, 1u));
 
             Rect2D clearArea = ClampRectToExtent(
-                op.Rect,
+                payload.Rect,
                 targetExtent);
             clearArea = ClampRectToRenderArea(clearArea, activeRenderArea);
 
@@ -42,23 +56,23 @@ namespace XREngine.Rendering.Vulkan
             if (clearArea.Extent.Width == 0 || clearArea.Extent.Height == 0)
                 return;
 
-            VkFrameBuffer? clearTargetFrameBuffer = op.Target is not null
-                ? GenericToAPI<VkFrameBuffer>(op.Target)
+            VkFrameBuffer? clearTargetFrameBuffer = target is not null
+                ? GenericToAPI<VkFrameBuffer>(target)
                 : null;
             if (clearTargetFrameBuffer is not null && !clearTargetFrameBuffer.IsActive)
                 throw new VulkanPlanPreconditionException(
-                    $"Clear target '{op.Target?.Name ?? "<unnamed>"}' has no prepared Vulkan framebuffer state.");
-            uint clearLayerCount = ResolveClearRectLayerCount(op.Target, clearTargetFrameBuffer, activeRenderLayerCount, activeRenderViewMask);
+                    $"Clear target '{target?.Name ?? "<unnamed>"}' has no prepared Vulkan framebuffer state.");
+            uint clearLayerCount = ResolveClearRectLayerCount(target, clearTargetFrameBuffer, activeRenderLayerCount, activeRenderViewMask);
 
             if (clearLayerCount > 1u)
             {
                 if (FrameDiagnosticsTraceEnabled)
                 {
                     Debug.VulkanEvery(
-                    $"Vulkan.CmdClearAttachments.Layered.{op.Target?.Name ?? "<swapchain>"}",
+                    $"Vulkan.CmdClearAttachments.Layered.{target?.Name ?? "<swapchain>"}",
                     TimeSpan.FromSeconds(2),
                     "[Vulkan] CmdClearAttachments layered clear target='{0}' layers={1} activeLayers={2} activeViewMask=0x{3:X} fboLayers={4} fboViewMask=0x{5:X}",
-                    op.Target?.Name ?? "<swapchain>",
+                    target?.Name ?? "<swapchain>",
                     clearLayerCount,
                     activeRenderLayerCount,
                     activeRenderViewMask,
@@ -77,7 +91,7 @@ namespace XREngine.Rendering.Vulkan
             ClearRect* rectPtr = stackalloc ClearRect[1];
             rectPtr[0] = clearRect;
 
-            if (op.Target is null)
+            if (target is null)
             {
                 // Swapchain: single color attachment + depth.
                 ClearAttachment* attachments = stackalloc ClearAttachment[2];
@@ -93,21 +107,21 @@ namespace XREngine.Rendering.Vulkan
                         {
                             Color = new ClearColorValue
                             {
-                                Float32_0 = op.Color.R,
-                                Float32_1 = op.Color.G,
-                                Float32_2 = op.Color.B,
-                                Float32_3 = op.Color.A
+                                Float32_0 = payload.Color.R,
+                                Float32_1 = payload.Color.G,
+                                Float32_2 = payload.Color.B,
+                                Float32_3 = payload.Color.A
                             }
                         }
                     };
                 }
 
-                if (op.ClearDepth || op.ClearStencil)
+                if (payload.ClearDepth || payload.ClearStencil)
                 {
                     ImageAspectFlags requestedAspects = ImageAspectFlags.None;
-                    if (op.ClearDepth)
+                    if (payload.ClearDepth)
                         requestedAspects |= ImageAspectFlags.DepthBit;
-                    if (op.ClearStencil)
+                    if (payload.ClearStencil)
                         requestedAspects |= ImageAspectFlags.StencilBit;
 
                     // Only emit aspects actually supported by the swapchain depth attachment view.
@@ -125,8 +139,8 @@ namespace XREngine.Rendering.Vulkan
                         {
                             DepthStencil = new ClearDepthStencilValue
                             {
-                                Depth = op.Depth,
-                                Stencil = op.Stencil
+                                Depth = payload.Depth,
+                                Stencil = payload.Stencil
                             }
                         }
                     };
@@ -145,16 +159,20 @@ namespace XREngine.Rendering.Vulkan
                 return;
 
             uint maxAttachments = Math.Max(vkFrameBuffer.AttachmentCount + 1u, 2u);
-            ClearAttachment* fboAttachments = stackalloc ClearAttachment[(int)maxAttachments];
-            uint fboCount = vkFrameBuffer.WriteClearAttachments(
-                fboAttachments,
+            using VulkanNativeScratchReservation<ClearAttachment> clearAttachmentReservation =
+                Synchronization._synchronizationThreadWorkspace.Current.ClearAttachmentScratch.Reserve(checked((int)maxAttachments));
+            Span<ClearAttachment> fboAttachments = clearAttachmentReservation.Span;
+            uint fboCount;
+            fixed (ClearAttachment* fboAttachmentsPtr = fboAttachments)
+                fboCount = vkFrameBuffer.WriteClearAttachments(
+                fboAttachmentsPtr,
                 clearColor,
-                op.ClearDepth,
-                op.ClearStencil,
-                op.Color,
-                op.Depth,
-                op.Stencil);
-            string targetName = op.Target.Name ?? "<unnamed>";
+                payload.ClearDepth,
+                payload.ClearStencil,
+                payload.Color,
+                payload.Depth,
+                payload.Stencil);
+            string targetName = target.Name ?? "<unnamed>";
             if (DeferredLightingDiagnostics.Enabled && DeferredLightingDiagnostics.IsWatchedFrameBufferName(targetName))
             {
                 Debug.VulkanEvery(
@@ -164,8 +182,8 @@ namespace XREngine.Rendering.Vulkan
                     targetName,
                     fboCount,
                     clearColor,
-                    op.ClearDepth,
-                    op.ClearStencil,
+                    payload.ClearDepth,
+                    payload.ClearStencil,
                     clearArea.Offset.X,
                     clearArea.Offset.Y,
                     clearArea.Extent.Width,
@@ -173,7 +191,8 @@ namespace XREngine.Rendering.Vulkan
             }
 
             if (fboCount > 0)
-                Api!.CmdClearAttachments(commandBuffer, fboCount, fboAttachments, 1, rectPtr);
+                fixed (ClearAttachment* fboAttachmentsPtr = fboAttachments)
+                    Api!.CmdClearAttachments(commandBuffer, fboCount, fboAttachmentsPtr, 1, rectPtr);
         }
 
         private static uint ResolveClearRectLayerCount(
@@ -319,8 +338,10 @@ namespace XREngine.Rendering.Vulkan
         }
 
         internal void RecordPublishFramebufferForSamplingOp(CommandBuffer commandBuffer, PublishFramebufferForSamplingOp op)
+            => RecordPublishFramebufferForSamplingPayload(commandBuffer, op.FrameBuffer);
+
+        internal unsafe void RecordPublishFramebufferForSamplingPayload(CommandBuffer commandBuffer, XRFrameBuffer fbo)
         {
-            XRFrameBuffer fbo = op.FrameBuffer;
             if (GenericToAPI<VkFrameBuffer>(fbo) is not { IsActive: true } vkFbo)
                 throw new VulkanPlanPreconditionException(
                     $"Framebuffer '{fbo.Name ?? "<unnamed>"}' was not prepared for sampling publication.");
@@ -328,7 +349,9 @@ namespace XREngine.Rendering.Vulkan
                 return;
 
             int maxLayerSpan = Math.Max((int)vkFbo.FramebufferLayers, 1);
-            ImageMemoryBarrier* barriers = stackalloc ImageMemoryBarrier[checked((int)vkFbo.AttachmentCount * maxLayerSpan)];
+            using VulkanNativeScratchReservation<ImageMemoryBarrier> barrierReservation =
+                Synchronization._synchronizationThreadWorkspace.Current.ImageMemoryBarrierScratch.Reserve(checked((int)vkFbo.AttachmentCount * maxLayerSpan));
+            Span<ImageMemoryBarrier> barriers = barrierReservation.Span;
             uint barrierCount = 0;
             PipelineStageFlags srcStages = 0;
             PipelineStageFlags dstStages = 0;
@@ -430,7 +453,7 @@ namespace XREngine.Rendering.Vulkan
                         SubresourceRange = transitionRange
                     };
 
-                    barriers[barrierCount++] = barrier;
+                barriers[checked((int)barrierCount++)] = barrier;
                     srcStages |= srcStage;
                     dstStages |= dstStage;
                 }
@@ -439,17 +462,18 @@ namespace XREngine.Rendering.Vulkan
             if (barrierCount == 0)
                 return;
 
-            CmdPipelineBarrierTracked(
-                commandBuffer,
-                NormalizePipelineStages(srcStages),
-                NormalizePipelineStages(dstStages),
-                DependencyFlags.None,
-                0,
-                null,
-                0,
-                null,
-                barrierCount,
-                barriers);
+            fixed (ImageMemoryBarrier* nativeBarriers = barriers)
+                CmdPipelineBarrierTracked(
+                    commandBuffer,
+                    NormalizePipelineStages(srcStages),
+                    NormalizePipelineStages(dstStages),
+                    DependencyFlags.None,
+                    0,
+                    null,
+                    0,
+                    null,
+                    barrierCount,
+                    nativeBarriers);
         }
 
         private static ImageLayout ResolvePublishedSampledLayout(IVkImageDescriptorSource? source, ImageAspectFlags aspectMask)

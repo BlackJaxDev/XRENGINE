@@ -13,15 +13,6 @@ internal ref struct VulkanFrameDataReadScope
 
     internal Span<byte> Bytes { get; }
 
-    internal unsafe void* Pointer
-    {
-        get
-        {
-            ref byte first = ref System.Runtime.InteropServices.MemoryMarshal.GetReference(Bytes);
-            return System.Runtime.CompilerServices.Unsafe.AsPointer(ref first);
-        }
-    }
-
     public void Dispose()
     {
         VulkanFrameDataArena? arena = _arena;

@@ -10,7 +10,7 @@ internal sealed partial class VulkanDescriptorManager
     /// <see cref="BindlessMaterialTextures"/>; this descriptor authority owns
     /// the native update rather than routing through the renderer facade.
     /// </summary>
-    internal unsafe void RefreshGlobalMaterialTextureDescriptorForPublishedTexture(XRTexture texture)
+    internal void RefreshGlobalMaterialTextureDescriptorForPublishedTexture(XRTexture texture)
     {
         ArgumentNullException.ThrowIfNull(texture);
         VulkanBackendObjectContext context = _backendContext ?? throw new InvalidOperationException(
@@ -33,21 +33,12 @@ internal sealed partial class VulkanDescriptorManager
             }
 
             slot.ImageInfo = imageInfo;
+            slot.ExpectedImageLayout = imageInfo.ImageLayout;
+            slot.ImageViewGeneration = context.Resources.GetPublishedGeneration(ObjectType.ImageView, imageInfo.ImageView.Handle);
+            slot.SamplerGeneration = context.Resources.GetPublishedGeneration(ObjectType.Sampler, imageInfo.Sampler.Handle);
             slot.Generation++;
-            WriteDescriptorSet write = new()
-            {
-                SType = StructureType.WriteDescriptorSet,
-                DstSet = state.Set,
-                DstBinding = VulkanBindlessMaterialDescriptors.TextureArrayBinding,
-                DstArrayElement = slotIndex,
-                DescriptorType = DescriptorType.CombinedImageSampler,
-                DescriptorCount = 1,
-                PImageInfo = &imageInfo,
-            };
-            context.Resources.DescriptorLifetime.UpdateDescriptorSets(1, &write);
-            state.WritesLastFlush = 1;
-            state.WritesTotal++;
-            slot.Dirty = false;
+            MarkGlobalMaterialTextureDescriptorSlotDirty(slotIndex);
+            FlushGlobalMaterialTextureDescriptorUpdatesLocked();
         }
     }
 

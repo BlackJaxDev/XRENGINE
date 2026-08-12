@@ -692,10 +692,9 @@ Target:                 new RenderFrameViewTargetDescriptor(
                             MipCount = 1
                         };
 
-                        fixed (Swapchain* swapchainPtr = &_swapchains[i])
-                        {
-                            lastResult = Api.CreateSwapchain(_session, in swapchainCreateInfo, swapchainPtr);
-                        }
+                        lastResult = CreateSwapchain(
+                            in swapchainCreateInfo,
+                            ref _swapchains[i]);
 
                         if (lastResult == Result.Success)
                         {
@@ -723,30 +722,7 @@ Target:                 new RenderFrameViewTargetDescriptor(
 
             _vulkanOpenXrSwapchainFormats[i] = createdFormat;
 
-            // Get swapchain images
-            uint imageCount = 0;
-            var enumerateResult = Api.EnumerateSwapchainImages(_swapchains[i], 0, &imageCount, null);
-            if (enumerateResult != Result.Success || imageCount == 0)
-                throw new Exception($"Failed to query Vulkan swapchain image count for view {i}. Result={enumerateResult}, Count={imageCount}");
-
-            _swapchainImagesVK[i] = (SwapchainImageVulkan2KHR*)Marshal.AllocHGlobal((int)imageCount * sizeof(SwapchainImageVulkan2KHR));
-
-            for (uint j = 0; j < imageCount; j++)
-            {
-                // XR_KHR_vulkan_enable2 aliases this structure to the original
-                // KHR Vulkan swapchain-image ABI. Silk exposes a distinct enum
-                // member, but runtimes such as Monado require the aliased KHR
-                // type value. Initialize the whole native entry as well: this
-                // memory is reused by the runtime as an in/out structure array.
-                _swapchainImagesVK[i][j] = new SwapchainImageVulkan2KHR
-                {
-                    Type = StructureType.SwapchainImageVulkanKhr
-                };
-            }
-
-            enumerateResult = Api.EnumerateSwapchainImages(_swapchains[i], imageCount, &imageCount, (SwapchainImageBaseHeader*)_swapchainImagesVK[i]);
-            if (enumerateResult != Result.Success || imageCount == 0)
-                throw new Exception($"Failed to enumerate Vulkan swapchain images for view {i}. Result={enumerateResult}, Count={imageCount}");
+            uint imageCount = InitializeVulkanSwapchainImages(i);
 
             _swapchainImageCounts[i] = imageCount;
             RecordSmokeSwapchain(
@@ -761,6 +737,60 @@ Target:                 new RenderFrameViewTargetDescriptor(
             Console.WriteLine($"Created Vulkan swapchain {i} with {imageCount} images ({width}x{height})");
         }
         RecordSmokeSwapchainsCreated();
+    }
+
+    private unsafe Result CreateSwapchain(
+        in SwapchainCreateInfo createInfo,
+        ref Swapchain swapchain)
+    {
+        fixed (Swapchain* swapchainPtr = &swapchain)
+            return Api.CreateSwapchain(_session, in createInfo, swapchainPtr);
+    }
+
+    private unsafe uint InitializeVulkanSwapchainImages(int viewIndex)
+    {
+        uint imageCount = 0;
+        Result enumerateResult = Api.EnumerateSwapchainImages(
+            _swapchains[viewIndex],
+            0,
+            &imageCount,
+            null);
+        if (enumerateResult != Result.Success || imageCount == 0)
+        {
+            throw new Exception(
+                $"Failed to query Vulkan swapchain image count for view {viewIndex}. " +
+                $"Result={enumerateResult}, Count={imageCount}");
+        }
+
+        _swapchainImagesVK[viewIndex] = (SwapchainImageVulkan2KHR*)Marshal.AllocHGlobal(
+            checked((int)imageCount * sizeof(SwapchainImageVulkan2KHR)));
+        Span<SwapchainImageVulkan2KHR> images = new(
+            _swapchainImagesVK[viewIndex],
+            checked((int)imageCount));
+        for (int imageIndex = 0; imageIndex < images.Length; imageIndex++)
+        {
+            // XR_KHR_vulkan_enable2 aliases this structure to the original KHR
+            // Vulkan swapchain-image ABI. The runtime reuses this initialized
+            // native owner as its in/out image array.
+            images[imageIndex] = new SwapchainImageVulkan2KHR
+            {
+                Type = StructureType.SwapchainImageVulkanKhr
+            };
+        }
+
+        enumerateResult = Api.EnumerateSwapchainImages(
+            _swapchains[viewIndex],
+            imageCount,
+            &imageCount,
+            (SwapchainImageBaseHeader*)_swapchainImagesVK[viewIndex]);
+        if (enumerateResult != Result.Success || imageCount == 0)
+        {
+            throw new Exception(
+                $"Failed to enumerate Vulkan swapchain images for view {viewIndex}. " +
+                $"Result={enumerateResult}, Count={imageCount}");
+        }
+
+        return imageCount;
     }
 
     private bool TryRenderVulkanEye(uint viewIndex, uint imageIndex)

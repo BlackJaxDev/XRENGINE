@@ -70,10 +70,6 @@ internal sealed unsafe partial class VulkanDescriptorManager
             enableDeviceAddress,
             "DescriptorHeap");
 
-    private bool TryMapBufferMemory(Buffer buffer, DeviceMemory memory, ulong offset, ulong length, out void* mapped)
-        => BackendContext.Resources.Buffers.TryMap(BackendContext, buffer, memory, offset, length, out mapped);
-    private void UnmapBufferMemory(Buffer buffer, DeviceMemory memory)
-        => BackendContext.Resources.Buffers.Unmap(BackendContext, buffer, memory);
     private void DestroyBuffer(Buffer buffer, DeviceMemory memory)
         => BackendContext.Resources.Buffers.DestroyUnpublished(BackendContext, buffer, memory);
     private ulong GetBufferDeviceAddress(Buffer buffer)

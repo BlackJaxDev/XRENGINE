@@ -187,7 +187,6 @@ namespace XREngine.Rendering.Commands
             _lodSelectComputeShader = CreateDeferredComputeProgram("Compute/Indirect/GPURenderLODSelect.comp", "GPURenderLODSelect");
             //RadixIndexSortComputeShader = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/Sorting/GPURenderRadixIndexSort.comp", EShaderType.Compute));
             _indirectRenderTaskShader = CreateDeferredComputeProgram("Compute/Indirect/GPURenderIndirect.comp", "GPURenderIndirect");
-            _buildHotCommandsProgram = CreateDeferredComputeProgram("Compute/Indirect/GPURenderBuildHotCommands.comp", "GPURenderBuildHotCommands");
             _resetCountersComputeShader = CreateDeferredComputeProgram("Compute/Indirect/GPURenderResetCounters.comp", "GPURenderResetCounters");
             _expandMeshletsComputeShader = CreateDeferredComputeProgram("Compute/Indirect/GPURenderExpandMeshlets.comp", "GPURenderExpandMeshlets");
             _clearUIntsComputeShader = CreateDeferredComputeProgram("Compute/Indirect/GPURenderClearUInts.comp", "GPURenderClearUInts");
@@ -211,7 +210,6 @@ namespace XREngine.Rendering.Commands
                 _classifyTransparencyComputeShader,
                 _lodSelectComputeShader,
                 _indirectRenderTaskShader,
-                _buildHotCommandsProgram,
                 _resetCountersComputeShader,
                 _expandMeshletsComputeShader,
                 _clearUIntsComputeShader,
@@ -483,33 +481,6 @@ namespace XREngine.Rendering.Commands
                     "TwoPassPhaseOneCommands");
             }
 
-            if (IsHotCommandLayoutEnabled())
-            {
-                if (_sourceHotCommandBuffer is null || _sourceHotCommandBuffer.ElementCount != capacity)
-                {
-                    _sourceHotCommandBuffer?.Destroy();
-                    _sourceHotCommandBuffer = MakeHotCommandBuffer("SourceHotCommands", capacity);
-                }
-
-                if (_culledHotCommandBuffer is null || _culledHotCommandBuffer.ElementCount != capacity)
-                {
-                    _culledHotCommandBuffer?.Destroy();
-                    _culledHotCommandBuffer = MakeHotCommandBuffer("CulledHotCommands", capacity);
-                }
-
-                if (_occlusionCulledHotBuffer is null || _occlusionCulledHotBuffer.ElementCount != capacity)
-                {
-                    _occlusionCulledHotBuffer?.Destroy();
-                    _occlusionCulledHotBuffer = MakeHotCommandBuffer("OcclusionCulledHotCommands", capacity);
-                }
-
-                if (_twoPassPhaseOneHotCommandBuffer is null || _twoPassPhaseOneHotCommandBuffer.ElementCount != capacity)
-                {
-                    _twoPassPhaseOneHotCommandBuffer?.Destroy();
-                    _twoPassPhaseOneHotCommandBuffer = MakeHotCommandBuffer("TwoPassPhaseOneHotCommands", capacity);
-                }
-            }
-
             // Track remap needs per-buffer
             EnsureIndirectDrawBuffer(MaxIndirectDrawCapacity);
             _culledCountNeedsMap = EnsureParameterBuffer(ref _culledCountBuffer, "CulledCount", GPUScene.VisibleCountComponents);
@@ -552,7 +523,7 @@ namespace XREngine.Rendering.Commands
             EnsureMeshletExpansionBuffers(capacity);
             _statsNeedsMap |= EnsureStatsBuffer();
 
-            // Phase 3: occlusion ping-pong buffer (same layout as CulledSceneToRenderBuffer)
+            // Phase 3: occlusion ping-pong buffer (same compact visible draw-ID layout).
             if (_occlusionCulledBuffer is null || _occlusionCulledBuffer.ElementCount != capacity)
             {
                 _occlusionCulledBuffer?.Destroy();
@@ -560,8 +531,8 @@ namespace XREngine.Rendering.Commands
                     $"CulledCommandsBuffer_Occlusion",
                     EBufferTarget.ShaderStorageBuffer,
                     capacity,
-                    EComponentType.Float,
-                    GPUScene.CommandFloatCount,
+                    EComponentType.UInt,
+                    1,
                     false,
                     false)
                 {

@@ -36,68 +36,6 @@ internal sealed record IndirectDrawOp(
     public VulkanIndirectSecondaryRecordingContract SecondaryRecordingContract { get; private set; } = SecondaryRecordingContract;
     public override EVulkanPrimaryPlanNodeKind Kind => EVulkanPrimaryPlanNodeKind.IndirectDraw;
 
-    internal override FrameOp CreateSealedPlanSnapshot()
-    {
-        ThrowIfSealedForFramePlan();
-        return SealPlanSnapshot(this with { Draw = Draw.CreateSealedCopy() });
-    }
-
-    internal override int RecordPrimary(
-        VulkanCommandRuntime commandRuntime,
-        scoped ref PrimaryCommandBufferRecordingState recordingState,
-        in VulkanPrimaryOperationRecordingInfo recordingInfo)
-    {
-        int commandChainRunCount =
-            commandRuntime.CountContiguousIndirectCommandChainRun(
-                ref recordingState,
-                recordingInfo.OperationIndex,
-                this,
-                recordingInfo.PassIndex);
-        if (recordingInfo.ExecutesSecondaryRange &&
-            commandRuntime.TryExecuteIndirectCommandChainSecondaryRun(
-                ref recordingState,
-                recordingInfo.OperationIndex,
-                commandChainRunCount,
-                recordingInfo.PassIndex,
-                this))
-        {
-            if (Target is null)
-                recordingState.ActualSwapchainWriteCount += commandChainRunCount;
-            return recordingInfo.OperationIndex + commandChainRunCount - 1;
-        }
-
-        commandRuntime.EmitIndirectDrawRunReadBarrier(ref recordingState);
-        System.Diagnostics.Debug.Assert(
-            recordingInfo.BeginsRendering,
-            "Indirect-draw primary-plan nodes must own render-scope entry.");
-        if (recordingInfo.BeginsRendering)
-        {
-        commandRuntime.BeginRenderPassForTarget(
-                ref recordingState,
-                Target,
-                recordingInfo.PassIndex,
-                recordingState.ActiveContext);
-        }
-
-        commandRuntime.CmdBeginLabel(recordingState.CommandBuffer, "IndirectDraw");
-        commandRuntime.RecordIndirectDrawIntoCommandBuffer(
-            ref recordingState,
-            recordingState.CommandBuffer,
-            this,
-            recordingInfo.PassIndex,
-            recordingInfo.OperationIndex);
-        commandRuntime.CmdEndLabel(recordingState.CommandBuffer);
-
-        RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanIndirectRecordingMode(
-            usedSecondary: false,
-            usedParallel: false,
-            opCount: 1);
-        if (Target is null)
-            recordingState.ActualSwapchainWriteCount++;
-
-        return recordingInfo.OperationIndex;
-    }
-
     internal static IndirectDrawOp Rent(
         int passIndex,
         XRFrameBuffer? target,

@@ -67,25 +67,6 @@ internal unsafe partial class VkMeshRenderer(
     private bool _indexBuffersSkippedForShaderGeneratedVertices;
 
     private readonly Dictionary<VulkanGraphicsPipelineKey, Pipeline> _pipelines = new();
-    private readonly VulkanPersistentArrayPool<uint> _preparedUIntArrays = new();
-    private readonly VulkanPersistentArrayPool<Silk.NET.Vulkan.Buffer> _preparedVertexBufferArrays = new();
-    private readonly VulkanPersistentArrayPool<VulkanPreparedDescriptorSetBinding> _preparedDescriptorBindingArrays = new();
-    private readonly VulkanPersistentArrayPool<VulkanPreparedFrameDataPayloadHandle> _preparedFrameDataPayloadArrays = new();
-    private readonly VulkanPersistentArrayPool<Viewport> _preparedViewportArrays = new();
-    private readonly VulkanPersistentArrayPool<Rect2D> _preparedScissorArrays = new();
-    private readonly VulkanPersistentArrayPool<byte> _preparedByteArrays = new();
-
-    internal Viewport[] RentPreparedViewportArray(int count)
-        => _preparedViewportArrays.Rent(count);
-
-    internal Rect2D[] RentPreparedScissorArray(int count)
-        => _preparedScissorArrays.Rent(count);
-
-    internal void ReturnPreparedViewportArray(Viewport[] buffer)
-        => _preparedViewportArrays.Return(buffer);
-
-    internal void ReturnPreparedScissorArray(Rect2D[] buffer)
-        => _preparedScissorArrays.Return(buffer);
 
     internal VulkanFrameDrawStats EstimateFrameDrawStats(in PendingMeshDraw draw)
     {

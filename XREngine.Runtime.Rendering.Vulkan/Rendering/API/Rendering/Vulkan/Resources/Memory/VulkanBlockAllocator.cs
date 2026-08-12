@@ -94,12 +94,22 @@ internal sealed unsafe class VulkanBlockAllocator : IVulkanMemoryAllocator
         allocation = VulkanMemoryAllocation.Null;
         result = Result.Success;
         uint memoryTypeIndex = ResolveMemoryType(api, memReqs.MemoryTypeBits, requiredProperties);
-        ulong alignment = Math.Max(memReqs.Alignment, 1UL);
-        ulong size = memReqs.Size;
+        MemoryPropertyFlags actualProperties =
+            _deviceContext.GetMemoryTypeProperties(api, memoryTypeIndex);
+        bool hostVisibleNonCoherent =
+            (actualProperties & MemoryPropertyFlags.HostVisibleBit) != 0 &&
+            (actualProperties & MemoryPropertyFlags.HostCoherentBit) == 0;
+        ulong atomSize = hostVisibleNonCoherent
+            ? Math.Max(_deviceContext.NonCoherentAtomSize, 1UL)
+            : 1UL;
+        // Non-coherent suballocations reserve whole atom ranges. This permits
+        // flush/invalidate expansion without touching the next allocation.
+        ulong alignment = Math.Max(Math.Max(memReqs.Alignment, 1UL), atomSize);
+        ulong size = AlignAllocationSize(memReqs.Size, atomSize);
 
         // Very large allocations get dedicated memory.
         if (size >= _dedicatedThreshold)
-            return TryDedicatedAllocation(api, device, memReqs, memoryTypeIndex, requiredProperties, out allocation, out result);
+            return TryDedicatedAllocation(api, device, memReqs, memoryTypeIndex, actualProperties, out allocation, out result);
 
         var poolKey = (memoryTypeIndex, isImage);
 
@@ -118,7 +128,7 @@ internal sealed unsafe class VulkanBlockAllocator : IVulkanMemoryAllocator
                 {
                     Interlocked.Add(ref _totalAllocatedBytes, (long)size);
                     allocation = new VulkanMemoryAllocation(
-                        block.Memory, offset, size, memoryTypeIndex, requiredProperties, block.Id);
+                        block.Memory, offset, size, memoryTypeIndex, actualProperties, block.Id);
                     return true;
                 }
             }
@@ -146,7 +156,7 @@ internal sealed unsafe class VulkanBlockAllocator : IVulkanMemoryAllocator
             {
                 Interlocked.Add(ref _totalAllocatedBytes, (long)size);
                 allocation = new VulkanMemoryAllocation(
-                    newBlock.Memory, newOffset, size, memoryTypeIndex, requiredProperties, newBlock.Id);
+                    newBlock.Memory, newOffset, size, memoryTypeIndex, actualProperties, newBlock.Id);
                 return true;
             }
 
@@ -179,6 +189,11 @@ internal sealed unsafe class VulkanBlockAllocator : IVulkanMemoryAllocator
 
         return _deviceContext.FindMemoryType(api, typeFilter, properties);
     }
+
+    private static ulong AlignAllocationSize(ulong value, ulong alignment)
+        => alignment <= 1UL
+            ? value
+            : checked(((value + alignment - 1UL) / alignment) * alignment);
 
     private bool TryDedicatedAllocation(
         Vk api, Device device,

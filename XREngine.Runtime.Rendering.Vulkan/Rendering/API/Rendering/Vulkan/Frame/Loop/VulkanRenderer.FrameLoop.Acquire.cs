@@ -5,7 +5,7 @@ using XREngine.Rendering.DLSS;
 
 namespace XREngine.Rendering.Vulkan
 {
-    internal sealed unsafe partial class VulkanFrameLoop
+    internal sealed partial class VulkanFrameLoop
     {
         private const ulong BlockingAcquireTimeoutNanoseconds = ulong.MaxValue;
         private const ulong InteractiveResizeAcquireTimeoutNanoseconds = 0UL;

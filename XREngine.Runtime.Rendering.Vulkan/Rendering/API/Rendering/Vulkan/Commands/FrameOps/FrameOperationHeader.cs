@@ -13,4 +13,5 @@ internal readonly record struct FrameOperationHeader(
     int ContextIndex,
     int ResourceUseIndex,
     int OriginalIndex,
-    bool RequiresPrimaryRecordingContext);
+    bool RequiresPrimaryRecordingContext,
+    bool PreserveSubmissionOrder);

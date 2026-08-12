@@ -1,5 +1,3 @@
-using Silk.NET.Vulkan;
-
 namespace XREngine.Rendering.Vulkan;
 
 internal sealed record BlitOp(
@@ -28,50 +26,14 @@ internal sealed record BlitOp(
     {
         get => _inFbo;
         internal set
-        {
-            ThrowIfSealedForFramePlan();
-            _inFbo = value;
-        }
+            => _inFbo = value;
     }
     public XRFrameBuffer? OutFbo
     {
         get => _outFbo;
         internal set
-        {
-            ThrowIfSealedForFramePlan();
-            _outFbo = value;
-        }
+            => _outFbo = value;
     }
     public override EVulkanPrimaryPlanNodeKind Kind => EVulkanPrimaryPlanNodeKind.Blit;
 
-    internal override int RecordPrimary(
-        VulkanCommandRuntime commandRuntime,
-        scoped ref PrimaryCommandBufferRecordingState recordingState,
-        in VulkanPrimaryOperationRecordingInfo recordingInfo)
-    {
-        if (ColorBit && (InFbo is null || OutFbo is null))
-            commandRuntime.EnsureSwapchainColorAttachmentLayoutForBlit(ref recordingState);
-
-        commandRuntime.CmdBeginLabel(recordingState.CommandBuffer, "Blit");
-        bool recorded = commandRuntime.RecordBlitOp(
-            recordingState.CommandBuffer,
-            recordingState.ImageIndex,
-            this,
-            in recordingState.SwapchainTarget);
-        commandRuntime.CmdEndLabel(recordingState.CommandBuffer);
-
-        if (OutFbo is not null ||
-            (!ColorBit && !DepthBit && !StencilBit) ||
-            !recorded)
-            return recordingInfo.OperationIndex;
-
-        recordingState.SwapchainWrittenOutsideRenderPass = true;
-        if (ColorBit)
-        {
-            recordingState.SwapchainInColorAttachmentLayout = true;
-            recordingState.SwapchainFinalLayout = ImageLayout.ColorAttachmentOptimal;
-        }
-        recordingState.ActualSwapchainWriteCount++;
-        return recordingInfo.OperationIndex;
-    }
 }

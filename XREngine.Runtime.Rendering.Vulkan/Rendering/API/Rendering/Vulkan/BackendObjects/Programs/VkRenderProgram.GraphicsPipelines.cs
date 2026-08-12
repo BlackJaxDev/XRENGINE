@@ -70,8 +70,11 @@ internal unsafe partial class VkRenderProgram
                     if (colorAttachmentCount > 0 && renderingInfo->PColorAttachmentFormats is not null)
                     {
                         var formats = new string[colorAttachmentCount];
+                        ReadOnlySpan<Format> nativeFormats = new(
+                            renderingInfo->PColorAttachmentFormats,
+                            checked((int)colorAttachmentCount));
                         for (int i = 0; i < colorAttachmentCount; i++)
-                            formats[i] = renderingInfo->PColorAttachmentFormats[i].ToString();
+                            formats[i] = nativeFormats[i].ToString();
                         colorFormats = string.Join(",", formats);
                     }
                 }
@@ -116,36 +119,38 @@ internal unsafe partial class VkRenderProgram
                 {
                     fixed (DescriptorSetAndBindingMappingEXTNative* mappingPtr = descriptorHeapLayout.Mappings)
                     {
-                        void** originalStagePNext = stackalloc void*[stages.Length];
-                        ShaderDescriptorSetAndBindingMappingInfoEXTNative* mappingInfos = stackalloc ShaderDescriptorSetAndBindingMappingInfoEXTNative[stages.Length];
-                        for (int i = 0; i < stages.Length; i++)
+                        nint[] originalStagePNextAddresses = new nint[stages.Length];
+                        ShaderDescriptorSetAndBindingMappingInfoEXTNative[] mappingInfos = new ShaderDescriptorSetAndBindingMappingInfoEXTNative[stages.Length];
+                        fixed (nint* originalStagePNextPtr = originalStagePNextAddresses)
+                        fixed (ShaderDescriptorSetAndBindingMappingInfoEXTNative* mappingInfosPtr = mappingInfos)
                         {
-                            originalStagePNext[i] = stagesPtr[i].PNext;
-                            mappingInfos[i] = new ShaderDescriptorSetAndBindingMappingInfoEXTNative
+                            void** originalStagePNext = (void**)originalStagePNextPtr;
+                            for (int i = 0; i < stages.Length; i++)
                             {
-                                SType = VulkanDescriptorHeapExt.ShaderDescriptorSetAndBindingMappingInfoSType,
-                                PNext = originalStagePNext[i],
-                                MappingCount = (uint)descriptorHeapLayout.Mappings.Length,
-                                Mappings = mappingPtr,
-                            };
-                            stagesPtr[i].PNext = mappingInfos + i;
+                                originalStagePNext[i] = stagesPtr[i].PNext;
+                                mappingInfosPtr[i] = new ShaderDescriptorSetAndBindingMappingInfoEXTNative
+                                {
+                                    SType = VulkanDescriptorHeapExt.ShaderDescriptorSetAndBindingMappingInfoSType,
+                                    PNext = originalStagePNext[i],
+                                    MappingCount = (uint)descriptorHeapLayout.Mappings.Length,
+                                    Mappings = mappingPtr,
+                                };
+                                stagesPtr[i].PNext = mappingInfosPtr + i;
+                            }
+
+                            result = BackendContext.Resources.PipelineManager.CreateGraphicsPipelinesSynchronized(pipelineCache, ref pipelineInfo, out Pipeline mappedHeapPipeline);
+                            for (int i = 0; i < stages.Length; i++)
+                                stagesPtr[i].PNext = originalStagePNext[i];
+                            pipelineInfo.PNext = originalPipelinePNext;
+                            if (result != Result.Success)
+                            {
+                                WriteShaderDiagnostics($"vkCreateGraphicsPipelines failed result={result}");
+                                throw new InvalidOperationException($"Failed to create graphics pipeline ({result}).");
+                            }
+                            ProgramCreationPort.RegisterPipeline(mappedHeapPipeline, "VkRenderProgram.GraphicsMappedHeap");
+                            ProgramCreationPort.NotifyPipelineCreated("graphics");
+                            return mappedHeapPipeline;
                         }
-
-                        result = BackendContext.Resources.PipelineManager.CreateGraphicsPipelinesSynchronized(pipelineCache, ref pipelineInfo, out Pipeline mappedHeapPipeline);
-                        for (int i = 0; i < stages.Length; i++)
-                            stagesPtr[i].PNext = originalStagePNext[i];
-
-                        pipelineInfo.PNext = originalPipelinePNext;
-
-                        if (result != Result.Success)
-                        {
-                            WriteShaderDiagnostics($"vkCreateGraphicsPipelines failed result={result}");
-                            throw new InvalidOperationException($"Failed to create graphics pipeline ({result}).");
-                        }
-
-                        ProgramCreationPort.RegisterPipeline(mappedHeapPipeline, "VkRenderProgram.GraphicsMappedHeap");
-                        ProgramCreationPort.NotifyPipelineCreated("graphics");
-                        return mappedHeapPipeline;
                     }
                 }
 

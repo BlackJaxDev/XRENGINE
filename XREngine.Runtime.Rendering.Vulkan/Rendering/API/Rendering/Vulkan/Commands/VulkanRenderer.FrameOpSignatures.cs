@@ -12,7 +12,7 @@ using XREngine.Data.Rendering;
 
 namespace XREngine.Rendering.Vulkan
 {
-    internal sealed unsafe partial class VulkanCommandRuntime
+    internal sealed partial class VulkanCommandRuntime
     {
         private void StoreFrameOpSignatureDebugParts(
             PrimaryCommandArtifactOwner variant,
@@ -52,6 +52,27 @@ namespace XREngine.Rendering.Vulkan
                 ? "no previous component snapshot for this swapchain image"
                 : BuildFrameOpSignatureDiffSummary(variant.SignatureDebugParts, currentParts);
 
+            Debug.Vulkan(
+                $"[Vulkan] Frame-op signature mismatch image={imageIndex} previous=0x{variant.FrameOpsSignature:X16} current=0x{currentSignature:X16} ops={ops.Length}: {summary}");
+        }
+
+        private void LogFrameOpSignatureDiff(
+            uint imageIndex,
+            PrimaryCommandArtifactOwner variant,
+            ulong currentSignature,
+            FrameOperationSequence ops)
+        {
+            if (!FrameOpSignatureDiffDiagnosticsEnabled || variant.FrameOpsSignature == ulong.MaxValue)
+                return;
+
+            int logIndex = Interlocked.Increment(ref _frameOpSignatureDiffLogCount);
+            if (logIndex > FrameOpSignatureDiffLogLimit)
+                return;
+
+            FrameOpSignatureDebugPart[] currentParts = CaptureFrameOpSignatureDebugParts(ops);
+            string summary = variant.SignatureDebugParts is null
+                ? "no previous component snapshot for this swapchain image"
+                : BuildFrameOpSignatureDiffSummary(variant.SignatureDebugParts, currentParts);
             Debug.Vulkan(
                 $"[Vulkan] Frame-op signature mismatch image={imageIndex} previous=0x{variant.FrameOpsSignature:X16} current=0x{currentSignature:X16} ops={ops.Length}: {summary}");
         }
@@ -177,37 +198,23 @@ namespace XREngine.Rendering.Vulkan
             List<FrameOpSignatureDebugPart> parts = new(Math.Max(ops.Length * 5, 8));
             for (int index = 0; index < ops.Length; index++)
             {
-                FrameOp op = ops[index];
-                string opType = op.GetType().Name;
-                AddFrameOpBaseSignaturePart(parts, index, opType, op);
-
-                switch (op)
-                {
-                    case ClearOp clear:
-                        AddClearSignaturePart(parts, index, opType, clear);
-                        break;
-                    case MeshDrawOp draw:
-                        AddMeshDrawSignatureParts(parts, index, opType, draw);
-                        break;
-                    case QueryOp query:
-                        AddQuerySignaturePart(parts, index, opType, query);
-                        break;
-                    case BlitOp blit:
-                        AddBlitSignaturePart(parts, index, opType, blit);
-                        break;
-                    case IndirectDrawOp indirect:
-                        AddIndirectDrawSignaturePart(parts, index, opType, indirect);
-                        break;
-                    case MeshTaskDispatchIndirectCountOp meshTask:
-                        AddMeshTaskSignaturePart(parts, index, opType, meshTask);
-                        break;
-                    case MemoryBarrierOp barrier:
-                        AddMemoryBarrierSignaturePart(parts, index, opType, barrier);
-                        break;
-                    case PublishFramebufferForSamplingOp publish:
-                        AddPublishFramebufferForSamplingSignaturePart(parts, index, opType, publish);
-                        break;
-                }
+                ref readonly FrameOperationHeader header = ref ops.GetHeader(index);
+                ref readonly FrameOpContext context = ref ops.GetContext(index);
+                string opType = header.OpCode.ToString();
+                HashCode hash = new();
+                hash.Add(opType, StringComparer.Ordinal);
+                hash.Add(header.PassIndex);
+                hash.Add(header.TargetIdentity);
+                hash.Add(context.PipelineIdentity);
+                hash.Add(context.ViewportIdentity);
+                hash.Add(context.OutputTargetIdentity);
+                AddSignaturePart(
+                    parts,
+                    index,
+                    opType,
+                    "base",
+                    hash,
+                    $"pass={header.PassIndex} target='{ops.GetTarget(index)?.Name ?? context.OutputTargetName ?? "<swapchain>"}' targetId={header.TargetIdentity} pipe={context.PipelineIdentity} vp={context.ViewportIdentity} sched={context.SchedulingIdentity}");
             }
 
             return [.. parts];

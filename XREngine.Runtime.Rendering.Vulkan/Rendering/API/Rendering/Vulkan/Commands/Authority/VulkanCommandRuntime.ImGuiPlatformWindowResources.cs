@@ -8,9 +8,9 @@ namespace XREngine.Rendering.Vulkan;
 /// platform viewport. The corresponding WSI images live in the output
 /// authority; this service deliberately has no renderer facade dependency.
 /// </summary>
-internal sealed unsafe partial class VulkanCommandRuntime
+internal sealed partial class VulkanCommandRuntime
 {
-    internal VulkanImGuiPlatformWindowCommandResources CreateImGuiPlatformWindowResources(
+    internal unsafe VulkanImGuiPlatformWindowCommandResources CreateImGuiPlatformWindowResources(
         VulkanDeviceContext device,
         VulkanTargetOutputContext target,
         uint graphicsQueueFamily,
@@ -95,7 +95,7 @@ internal sealed unsafe partial class VulkanCommandRuntime
         }
     }
 
-    internal void DestroyImGuiPlatformWindowResources(
+    internal unsafe void DestroyImGuiPlatformWindowResources(
         VulkanDeviceContext device,
         VulkanTargetOutputContext target,
         in VulkanImGuiPlatformWindowCommandResources resources,

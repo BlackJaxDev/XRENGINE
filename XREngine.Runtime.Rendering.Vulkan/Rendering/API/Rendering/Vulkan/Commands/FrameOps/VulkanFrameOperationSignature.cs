@@ -6,23 +6,13 @@ namespace XREngine.Rendering.Vulkan;
 /// </summary>
 internal static class VulkanFrameOperationSignature
 {
-    internal static ulong Compute(FrameOp[] operations)
-        // FrameOp records contain frame-plan-owned snapshot objects. Their
-        // generated GetHashCode() includes those managed object identities, so
-        // hashing the record itself made an unchanged command stream appear new
-        // every frame. The canonical semantic hasher captures native command
-        // structure and binding layouts while deliberately excluding mutable
-        // frame payload identity.
-        => VulkanFrameOperationSemantics.ComputeFrameOpsSignature(operations);
-
     /// <summary>
     /// Computes the resource and descriptor publication versions used by a
-    /// sealed frame plan. Keeping this calculation producer-array based lets an
-    /// exact cache hit be proven before the relatively expensive lowering step.
+    /// sealed frame plan from its canonical lowered streams.
     /// </summary>
     internal static void ComputeVersionSignatures(
-        FrameOp[] operations,
-        FrameOp[] dynamicOverlayOperations,
+        FrameOperationStream operations,
+        FrameOperationStream dynamicOverlayOperations,
         out ulong resourceVersionSignature,
         out ulong descriptorVersionSignature)
     {
@@ -39,14 +29,14 @@ internal static class VulkanFrameOperationSignature
     }
 
     private static void AddVersionComponents(
-        FrameOp[] operations,
+        FrameOperationStream operations,
         ref ulong resourceVersionSignature,
         ref ulong descriptorVersionSignature)
     {
-        for (int index = 0; index < operations.Length; index++)
+        for (int index = 0; index < operations.Count; index++)
         {
             ref readonly FrameOpContext context =
-                ref operations[index].ContextReference;
+                ref operations.GetContext(index);
             Add(ref resourceVersionSignature, context.ResourceGeneration);
             Add(ref resourceVersionSignature, context.RecordingFingerprint);
             Add(ref descriptorVersionSignature, context.DescriptorGeneration);

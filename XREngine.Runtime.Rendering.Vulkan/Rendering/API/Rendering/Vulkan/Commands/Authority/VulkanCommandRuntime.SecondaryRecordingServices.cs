@@ -8,7 +8,7 @@ namespace XREngine.Rendering.Vulkan;
 /// owns command-buffer policy while device and resource authorities retain
 /// native lifetime and diagnostic ownership.
 /// </summary>
-internal sealed unsafe partial class VulkanCommandRuntime
+internal sealed partial class VulkanCommandRuntime
 {
     private static DynamicRenderingFormatSignature
         CreateSwapchainColorOnlyDynamicRenderingFormatSignature(
@@ -48,7 +48,7 @@ internal sealed unsafe partial class VulkanCommandRuntime
 
     private bool SupportsSecondaryDebugNames => DeviceContext.DebugUtils is not null;
 
-    private void SetSecondaryDebugObjectName(
+    private unsafe void SetSecondaryDebugObjectName(
         ObjectType objectType,
         ulong objectHandle,
         string name)

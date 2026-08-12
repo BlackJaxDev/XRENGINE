@@ -428,13 +428,6 @@ internal sealed partial class VulkanFramePlanner
             switchingState.HasPreparationState = false;
         }
 
-        if (staleKeys.Count > 0 || preparationReferencedAllocator)
-        {
-            switchingState.PreparedFrameOpsSignature = 0;
-            switchingState.PreparedPlanRevision = 0;
-            switchingState.HasPreparedPlan = false;
-        }
-
         switchingState.SwitchingActive = switchingState.ActiveKeys.Count > 1;
         staleKeys.Clear();
     }

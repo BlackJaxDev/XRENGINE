@@ -4,7 +4,7 @@ using XREngine.Rendering.RenderGraph;
 
 namespace XREngine.Rendering.Vulkan;
 
-internal sealed unsafe partial class VulkanCommandRuntime
+internal sealed partial class VulkanCommandRuntime
 {
     /// <summary>
     /// Links compute programs and creates their pipelines before the frame plan
@@ -13,10 +13,41 @@ internal sealed unsafe partial class VulkanCommandRuntime
     /// </summary>
     internal VulkanComputePreparationResult PrepareComputeProgramsForFramePlan(
         FrameOp[] operations)
-        => PrepareComputeFrameOps(
-            imageIndex: 0,
-            operations,
-            prepareDescriptors: false);
+    {
+        for (int operationIndex = 0; operationIndex < operations.Length; operationIndex++)
+        {
+            VkRenderProgram program;
+            int passIndex;
+            IReadOnlyCollection<RenderPassMetadata>? passMetadata;
+            switch (operations[operationIndex])
+            {
+                case ComputeDispatchOp dispatch:
+                    program = dispatch.Program;
+                    passIndex = dispatch.PassIndex;
+                    passMetadata = dispatch.Context.PassMetadata;
+                    break;
+                case ComputeDispatchIndirectOp indirect:
+                    program = indirect.Program;
+                    passIndex = indirect.PassIndex;
+                    passMetadata = indirect.Context.PassMetadata;
+                    break;
+                default:
+                    continue;
+            }
+
+            VulkanComputePreparationResult preparation =
+                TryPrepareComputeProgram(
+                    program,
+                    passIndex,
+                    passMetadata,
+                    operationIndex,
+                    operations.Length);
+            if (!preparation.Succeeded)
+                return preparation;
+        }
+
+        return VulkanComputePreparationResult.Success;
+    }
 
     /// <summary>
     /// Publishes persistent uniform buffers and reusable descriptor sets for
@@ -37,60 +68,52 @@ internal sealed unsafe partial class VulkanCommandRuntime
     {
         for (int operationIndex = 0; operationIndex < operations.Length; operationIndex++)
         {
-            VkRenderProgram? program;
+            VkRenderProgram program;
             ComputeDispatchSnapshot? snapshot;
             ulong reusableDescriptorKey;
             int passIndex;
             IReadOnlyCollection<RenderPassMetadata>? passMetadata;
             FrameOpContext frameContext;
 
-            switch (operations[operationIndex])
+            ref readonly FrameOperationHeader header =
+                ref operations.GetHeader(operationIndex);
+            ref readonly FrameOpContext operationContext =
+                ref operations.GetContext(operationIndex);
+            switch (header.OpCode)
             {
-                case ComputeDispatchOp dispatch:
+                case EVulkanPrimaryPlanNodeKind.ComputeDispatch:
+                    ref readonly ComputeDispatchPayload dispatch =
+                        ref operations.GetComputeDispatch(operationIndex);
                     program = dispatch.Program;
                     snapshot = dispatch.Snapshot;
                     reusableDescriptorKey = 0UL;
-                    passIndex = dispatch.PassIndex;
-                    passMetadata = dispatch.Context.PassMetadata;
-                    frameContext = dispatch.Context;
+                    passIndex = header.PassIndex;
+                    passMetadata = operationContext.PassMetadata;
+                    frameContext = operationContext;
                     break;
-                case ComputeDispatchIndirectOp indirect:
+                case EVulkanPrimaryPlanNodeKind.ComputeDispatchIndirect:
+                    ref readonly ComputeDispatchIndirectPayload indirect =
+                        ref operations.GetComputeDispatchIndirect(operationIndex);
                     program = indirect.Program;
                     snapshot = indirect.Snapshot;
                     reusableDescriptorKey = 0UL;
-                    passIndex = indirect.PassIndex;
-                    passMetadata = indirect.Context.PassMetadata;
-                    frameContext = indirect.Context;
+                    passIndex = header.PassIndex;
+                    passMetadata = operationContext.PassMetadata;
+                    frameContext = operationContext;
                     break;
                 default:
                     continue;
             }
 
-            if (!program.Link())
-                return new(
-                    EVulkanComputePreparationOutcome.ProgramLinkFailed,
+            VulkanComputePreparationResult preparation =
+                TryPrepareComputeProgram(
+                    program,
+                    passIndex,
+                    passMetadata,
                     operationIndex,
-                    operations.Length,
-                    program.Data.Name);
-
-            try
-            {
-                if (program.GetOrCreateComputePipeline(passIndex, passMetadata).Handle == 0)
-                    return new(
-                        EVulkanComputePreparationOutcome.PipelineUnavailable,
-                        operationIndex,
-                        operations.Length,
-                        program.Data.Name);
-            }
-            catch (Exception exception)
-            {
-                return new(
-                    EVulkanComputePreparationOutcome.PipelineCreationFailed,
-                    operationIndex,
-                    operations.Length,
-                    program.Data.Name,
-                    exception);
-            }
+                    operations.Length);
+            if (!preparation.Succeeded)
+                return preparation;
 
             if (!prepareDescriptors)
                 continue;
@@ -99,15 +122,19 @@ internal sealed unsafe partial class VulkanCommandRuntime
             // the reusable descriptor key. The sealed FramePlan sequence also
             // publishes the final resource-DAG order used by secondary recording;
             // preparing from the authoring array would publish a different key.
-            if (operations[operationIndex] is ComputeDispatchOp preparedDispatch)
+            if (header.OpCode == EVulkanPrimaryPlanNodeKind.ComputeDispatch)
             {
                 int descriptorBindingOrdinal =
                     ResolveCommandChainInlineOperationIndex(
-                        operations,
+                        operations.Stream,
                         operationIndex);
+                ref readonly ComputeDispatchPayload preparedDispatch =
+                    ref operations.GetComputeDispatch(operationIndex);
                 reusableDescriptorKey =
                     ComputeReusableComputeDescriptorBindingKey(
-                        preparedDispatch,
+                        in preparedDispatch,
+                        in header,
+                        in operationContext,
                         descriptorBindingOrdinal);
             }
 
@@ -128,5 +155,43 @@ internal sealed unsafe partial class VulkanCommandRuntime
         }
 
         return VulkanComputePreparationResult.Success;
+    }
+
+    private static VulkanComputePreparationResult TryPrepareComputeProgram(
+        VkRenderProgram program,
+        int passIndex,
+        IReadOnlyCollection<RenderPassMetadata>? passMetadata,
+        int operationIndex,
+        int operationCount)
+    {
+        if (!program.Link())
+        {
+            return new(
+                EVulkanComputePreparationOutcome.ProgramLinkFailed,
+                operationIndex,
+                operationCount,
+                program.Data.Name);
+        }
+
+        try
+        {
+            if (program.GetOrCreateComputePipeline(passIndex, passMetadata).Handle != 0)
+                return VulkanComputePreparationResult.Success;
+
+            return new(
+                EVulkanComputePreparationOutcome.PipelineUnavailable,
+                operationIndex,
+                operationCount,
+                program.Data.Name);
+        }
+        catch (Exception exception)
+        {
+            return new(
+                EVulkanComputePreparationOutcome.PipelineCreationFailed,
+                operationIndex,
+                operationCount,
+                program.Data.Name,
+                exception);
+        }
     }
 }

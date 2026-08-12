@@ -34,9 +34,6 @@ namespace XREngine.Rendering.Vulkan
             // private VulkanBuffer[]? _perFrameBuffers;
             // private VulkanDeviceMemory[]? _perFrameMemories;
 
-            // For persistent mapping
-            private void* _persistentMappedPtr = null;
-
             // For resource lifetime management
             private BufferUsageFlags _lastUsageFlags;
             private MemoryPropertyFlags _lastMemProps;
@@ -109,7 +106,7 @@ namespace XREngine.Rendering.Vulkan
             public ulong BackendUploadedByteCount => _uploadedByteCount;
             public bool BackendHasPendingUpload => _hasPendingUpload;
             public bool BackendIsReadyForGpuUse => IsReadyForRendering;
-            public bool BackendIsPersistentlyMapped => _persistentMappedPtr != null;
+            public bool BackendIsPersistentlyMapped => _mappedSlice.HasValue;
             public XRBufferResolvedRoute BackendResolvedRoute => ResolveBackendRoute();
 
             public bool TryGetGpuAddress(out ulong address, out string downgradeReason)
@@ -167,7 +164,7 @@ namespace XREngine.Rendering.Vulkan
                     return XRBufferResolvedRoute.DeviceLocal;
                 if (_lastUploadRoute.Contains("Staging", StringComparison.OrdinalIgnoreCase))
                     return XRBufferResolvedRoute.StagingUpload;
-                if (_persistentMappedPtr != null)
+                if (_mappedSlice.HasValue)
                     return XRBufferResolvedRoute.PersistentMappedRing;
                 if ((_lastMemProps & MemoryPropertyFlags.HostVisibleBit) != 0)
                     return XRBufferResolvedRoute.HostVisible;
@@ -734,29 +731,28 @@ namespace XREngine.Rendering.Vulkan
             {
                 if (RuntimeEngine.InvokeOnMainThread(Flush, "VkDataBuffer.Flush"))
                     return;
-                if (!CanFlushMappedMemory(out ulong length))
+                if (_mappedSlice is not { } slice)
                     return;
-                // Only needed for non-coherent memory
-                if ((_lastMemProps & MemoryPropertyFlags.HostCoherentBit) == 0)
-                    BackendContext.Resources.Buffers.Flush(BackendContext, _vkBuffer!.Value, _vkMemory!.Value, GetMappedMemoryOffset(0), length);
+
+                // Scoped write leases publish automatically. Keep the explicit API as a
+                // validated compatibility operation for callers that request a flush.
+                BackendContext.Resources.Buffers.Flush(BackendContext, in slice);
             }
             public void FlushRange(int offset, uint length)
             {
                 if (RuntimeEngine.InvokeOnMainThread(() => FlushRange(offset, length), "VkDataBuffer.FlushRange"))
                     return;
-                if (!NormalizeMappedRange(offset, length, out ulong memoryOffset, out ulong mappedLength))
+                if (_mappedSlice is null || _vkBuffer is not { } buffer || _vkMemory is not { } memory ||
+                    !NormalizeMappedRange(offset, length, out ulong bufferOffset, out ulong mappedLength) ||
+                    !BackendContext.Resources.Buffers.TryCreateMappedSlice(
+                        BackendContext, buffer, memory, bufferOffset, mappedLength, out VulkanMappedMemorySlice slice))
                     return;
-                if ((_lastMemProps & MemoryPropertyFlags.HostCoherentBit) == 0)
-                    BackendContext.Resources.Buffers.Flush(BackendContext, _vkBuffer!.Value, _vkMemory!.Value, memoryOffset, mappedLength);
+
+                BackendContext.Resources.Buffers.Flush(BackendContext, in slice);
             }
 
             // --- Persistent mapping for dynamic buffers ---
-            private DataSource? _gpuSideSource = null;
-            public DataSource? GPUSideSource
-            {
-                get => _gpuSideSource;
-                set => SetField(ref _gpuSideSource, value);
-            }
+            private VulkanMappedMemorySlice? _mappedSlice;
             private bool _immutableStorageSet = false;
             public bool ImmutableStorageSet
             {
@@ -800,13 +796,8 @@ namespace XREngine.Rendering.Vulkan
                     return;
                 }
                 WarnUnsupportedMappingFlags();
-                GPUSideSource?.Dispose();
-                // Persistent mapping for dynamic buffers
-                if (_persistentMappedPtr == null)
-                    _persistentMappedPtr = MapCurrentBufferOrThrow(0, Math.Max(_bufferSize, 1UL));
-                if (_persistentMappedPtr == null)
+                if (!TryCreateMappedSlice(0, Math.Max(_bufferSize, 1UL)))
                     return;
-                GPUSideSource = new DataSource(_persistentMappedPtr, (uint)_bufferSize);
                 RecordMappedReadbackBytes(_bufferSize);
                 if (!Data.ActivelyMapping.Contains(this))
                     Data.ActivelyMapping.Add(this);
@@ -828,46 +819,29 @@ namespace XREngine.Rendering.Vulkan
                         GetDescribingName());
                     return;
                 }
-                if (!NormalizeMappedRange(offset, length, out ulong memoryOffset, out ulong mappedLength))
+                if (!NormalizeMappedRange(offset, length, out ulong bufferOffset, out ulong mappedLength))
                     return;
                 WarnUnsupportedMappingFlags();
-                GPUSideSource?.Dispose();
-                if (_persistentMappedPtr == null)
-                    _persistentMappedPtr = MapCurrentBufferOrThrow((ulong)offset, mappedLength);
-                if (_persistentMappedPtr == null)
+                if (!TryCreateMappedSlice(bufferOffset, mappedLength))
                     return;
-                GPUSideSource = new DataSource(_persistentMappedPtr, (uint)mappedLength);
                 RecordMappedReadbackBytes(mappedLength);
                 if (!Data.ActivelyMapping.Contains(this))
                     Data.ActivelyMapping.Add(this);
             }
 
-            private ulong GetMappedMemoryOffset(ulong bufferOffset)
-                => _vkBuffer.HasValue
-                    ? BackendContext.Resources.Buffers.GetAllocationOffset(_vkBuffer.Value) + bufferOffset
-                    : bufferOffset;
-
-            private void* MapCurrentBufferOrThrow(ulong offset, ulong length)
+            private bool TryCreateMappedSlice(ulong offset, ulong length)
             {
                 if (!_vkBuffer.HasValue || !_vkMemory.HasValue ||
-                    !BackendContext.Resources.Buffers.TryMap(
-                        BackendContext,
-                        _vkBuffer.Value,
-                        _vkMemory.Value,
-                        offset,
-                        length,
-                        out void* mapped))
-                {
-                    throw new InvalidOperationException("Failed to map Vulkan buffer memory.");
-                }
-
-                return mapped;
+                    !BackendContext.Resources.Buffers.TryCreateMappedSlice(
+                        BackendContext, _vkBuffer.Value, _vkMemory.Value, offset, length, out VulkanMappedMemorySlice slice))
+                    return false;
+                _mappedSlice = slice;
+                return true;
             }
 
             private void UnmapCurrentBuffer()
             {
-                if (_vkBuffer.HasValue && _vkMemory.HasValue)
-                    BackendContext.Resources.Buffers.Unmap(BackendContext, _vkBuffer.Value, _vkMemory.Value);
+                _mappedSlice = null;
             }
 
             public uint GetLength()
@@ -894,50 +868,18 @@ namespace XREngine.Rendering.Vulkan
                     return;
                 if (RuntimeEngine.InvokeOnMainThread(UnmapBufferData, "VkDataBuffer.UnmapBufferData"))
                     return;
-                if (_persistentMappedPtr != null)
-                {
-                    if ((Data.RangeFlags &
-                         (EBufferMapRangeFlags.Read |
-                          EBufferMapRangeFlags.InvalidateRange |
-                          EBufferMapRangeFlags.InvalidateBuffer)) != 0)
-                    {
-                        BackendContext.Resources.Buffers.Invalidate(BackendContext, _vkMemory!.Value, GetMappedMemoryOffset(0), _bufferSize);
-                    }
-
-                    UnmapCurrentBuffer();
-                    _persistentMappedPtr = null;
-                }
+                _mappedSlice = null;
                 Data.ActivelyMapping.Remove(this);
-                GPUSideSource?.Dispose();
-                GPUSideSource = null;
             }
 
             private void ReleasePersistentMappingBeforeResourceRetire()
             {
-                if (_persistentMappedPtr != null)
-                {
-                    if (_vkBuffer.HasValue && _vkMemory.HasValue)
-                    {
-                        if ((Data.RangeFlags &
-                             (EBufferMapRangeFlags.Read |
-                              EBufferMapRangeFlags.InvalidateRange |
-                              EBufferMapRangeFlags.InvalidateBuffer)) != 0)
-                        {
-                            BackendContext.Resources.Buffers.Invalidate(BackendContext, _vkMemory!.Value, GetMappedMemoryOffset(0), _bufferSize);
-                        }
-
-                        UnmapCurrentBuffer();
-                    }
-
-                    _persistentMappedPtr = null;
-                }
+                _mappedSlice = null;
 
                 while (Data.ActivelyMapping.Remove(this))
                 {
                 }
 
-                GPUSideSource?.Dispose();
-                GPUSideSource = null;
             }
 
             /// <summary>
@@ -989,8 +931,6 @@ namespace XREngine.Rendering.Vulkan
             protected internal override void PreDeleted()
             {
                 UnmapBufferData();
-                GPUSideSource?.Dispose();
-                GPUSideSource = null;
                 _uploadedByteCount = 0ul;
                 _hasPendingUpload = false;
             }
@@ -1002,7 +942,45 @@ namespace XREngine.Rendering.Vulkan
 
             public override bool IsGenerated => _vkBuffer.HasValue && _vkBuffer.Value.Handle != 0;
 
-            public VoidPtr? GetMappedAddress() => GPUSideSource?.Address;
+            public bool TryReadMapped(DataBufferMappedReadCallback callback)
+            {
+                ArgumentNullException.ThrowIfNull(callback);
+                return _mappedSlice is { } slice &&
+                    BackendContext.Resources.Buffers.TryRead(BackendContext, in slice, bytes => callback(bytes));
+            }
+
+            public bool TryWriteMapped(DataBufferMappedWriteCallback callback)
+            {
+                ArgumentNullException.ThrowIfNull(callback);
+                return _mappedSlice is { } slice &&
+                    BackendContext.Resources.Buffers.TryWrite(BackendContext, in slice, bytes => callback(bytes));
+            }
+
+            public bool TryReadMapped<TState>(ref TState state, DataBufferMappedReadCallback<TState> callback)
+                where TState : allows ref struct
+            {
+                ArgumentNullException.ThrowIfNull(callback);
+                if (_mappedSlice is not { } slice || !BackendContext.Resources.Buffers.TryAcquireRead(BackendContext, in slice, out VulkanMappedMemoryReadLease lease))
+                    return false;
+                using (lease)
+                {
+                    ReadOnlySpan<byte> bytes = lease.Bytes;
+                    return callback(bytes, ref state);
+                }
+            }
+
+            public bool TryWriteMapped<TState>(ref TState state, DataBufferMappedWriteCallback<TState> callback)
+                where TState : allows ref struct
+            {
+                ArgumentNullException.ThrowIfNull(callback);
+                if (_mappedSlice is not { } slice || !BackendContext.Resources.Buffers.TryAcquireWrite(BackendContext, in slice, out VulkanMappedMemoryWriteLease lease))
+                    return false;
+                using (lease)
+                {
+                    Span<byte> bytes = lease.Bytes;
+                    return callback(bytes, ref state);
+                }
+            }
 
             internal bool SupportsDescriptorType(DescriptorType descriptorType)
                 => SupportsDescriptorType(descriptorType, _lastUsageFlags);
@@ -1178,30 +1156,19 @@ namespace XREngine.Rendering.Vulkan
             void IApiDataBuffer.EnsureStorageAllocatedForGpuUse()
                 => EnsureStorageAllocatedForGpuUse();
 
-            private bool CanFlushMappedMemory(out ulong length)
+            private bool NormalizeMappedRange(int offset, uint length, out ulong bufferOffset, out ulong mappedLength)
             {
-                length = 0ul;
-                if (_vkMemory is null || _bufferSize == 0)
-                    return false;
-
-                length = _bufferSize;
-                return true;
-            }
-
-            private bool NormalizeMappedRange(int offset, uint length, out ulong memoryOffset, out ulong mappedLength)
-            {
-                memoryOffset = 0ul;
+                bufferOffset = 0ul;
                 mappedLength = 0ul;
 
                 if (_vkMemory is null || _bufferSize == 0 || offset < 0 || length == 0)
                     return false;
 
-                ulong bufferOffset = (uint)offset;
+                bufferOffset = (uint)offset;
                 if (bufferOffset >= _bufferSize)
                     return false;
 
                 mappedLength = Math.Min((ulong)length, _bufferSize - bufferOffset);
-                memoryOffset = GetMappedMemoryOffset(bufferOffset);
                 return mappedLength > 0;
             }
 

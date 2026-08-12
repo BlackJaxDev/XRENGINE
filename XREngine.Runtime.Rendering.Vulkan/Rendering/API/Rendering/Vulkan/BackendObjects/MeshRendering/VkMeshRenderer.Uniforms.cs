@@ -107,7 +107,7 @@ internal unsafe partial class VkMeshRenderer
 			return false;
 		}
 
-		if (!BackendContext.Resources.Buffers.TryMap(BackendContext, buffer, memory, 0, totalSize, out void* mappedPtr))
+		if (!BackendContext.Resources.Buffers.TryCreateMappedSlice(BackendContext, buffer, memory, 0, totalSize, out VulkanMappedMemorySlice mappedSlice))
 		{
 			BackendContext.Resources.Buffers.Destroy(BackendContext, buffer, memory, "VkMeshRenderer.UniformBuffer");
 			return false;
@@ -116,8 +116,12 @@ internal unsafe partial class VkMeshRenderer
 		for (int i = 0; i < bufferCount; i++)
 		{
 			ulong offset = stride * (ulong)i;
-			void* slotPtr = (byte*)mappedPtr + checked((nint)offset);
-			buffers[i] = new EngineUniformBuffer(buffer, memory, size, slotPtr, offset, ownsBuffer: i == 0);
+			if (!BackendContext.Resources.Buffers.TryCreateMappedSlice(BackendContext, buffer, memory, offset, size, out VulkanMappedMemorySlice slotSlice))
+			{
+				BackendContext.Resources.Buffers.Destroy(BackendContext, buffer, memory, "VkMeshRenderer.UniformBuffer");
+				return false;
+			}
+			buffers[i] = new EngineUniformBuffer(buffer, memory, size, offset, ownsBuffer: i == 0, mappedMemorySlice: slotSlice);
 		}
 
 		_engineUniformBuffers[name] = buffers;
@@ -173,7 +177,7 @@ internal unsafe partial class VkMeshRenderer
 			return false;
 		}
 
-		if (!BackendContext.Resources.Buffers.TryMap(BackendContext, buffer, memory, 0, totalSize, out void* mappedPtr))
+		if (!BackendContext.Resources.Buffers.TryCreateMappedSlice(BackendContext, buffer, memory, 0, totalSize, out VulkanMappedMemorySlice mappedSlice))
 		{
 			BackendContext.Resources.Buffers.Destroy(BackendContext, buffer, memory, "VkMeshRenderer.UniformBuffer");
 			return false;
@@ -182,8 +186,12 @@ internal unsafe partial class VkMeshRenderer
 		for (int i = 0; i < bufferCount; i++)
 		{
 			ulong offset = stride * (ulong)i;
-			void* slotPtr = (byte*)mappedPtr + checked((nint)offset);
-			buffers[i] = new AutoUniformBuffer(buffer, memory, size, slotPtr, offset, ownsBuffer: i == 0);
+			if (!BackendContext.Resources.Buffers.TryCreateMappedSlice(BackendContext, buffer, memory, offset, size, out VulkanMappedMemorySlice slotSlice))
+			{
+				BackendContext.Resources.Buffers.Destroy(BackendContext, buffer, memory, "VkMeshRenderer.UniformBuffer");
+				return false;
+			}
+			buffers[i] = new AutoUniformBuffer(buffer, memory, size, offset, ownsBuffer: i == 0, mappedMemorySlice: slotSlice);
 		}
 
 		_autoUniformBuffers[name] = buffers;
@@ -207,7 +215,7 @@ internal unsafe partial class VkMeshRenderer
 					return false;
 				int index = frame * UniformBufferSlotCount + drawSlot;
 				buffers[index] = new EngineUniformBuffer(
-					slice.Buffer, slice.Memory, size, mappedPtr: null, offset: slice.Offset,
+					 slice.Buffer, slice.Memory, size, offset: slice.Offset,
 					ownsBuffer: false, mappedSlice: slice);
 			}
 		}
@@ -245,7 +253,6 @@ internal unsafe partial class VkMeshRenderer
 						slice.Buffer,
 						slice.Memory,
 						size,
-						mappedPtr: null,
 						offset: 0,
 						ownsBuffer: false,
 						mappedSlice: slice);
@@ -266,7 +273,7 @@ internal unsafe partial class VkMeshRenderer
 					return false;
 				int index = frame * UniformBufferSlotCount + drawSlot;
 				buffers[index] = new AutoUniformBuffer(
-					slice.Buffer, slice.Memory, size, mappedPtr: null, offset: slice.Offset,
+					slice.Buffer, slice.Memory, size, offset: slice.Offset,
 					ownsBuffer: false, mappedSlice: slice);
 			}
 		}
@@ -303,7 +310,7 @@ internal unsafe partial class VkMeshRenderer
 		for (int i = 0; i < buffers.Length; i++)
 		{
 			if (buffers[i].Buffer.Handle == 0 ||
-				(!buffers[i].UsesMappedFrameArena && buffers[i].MappedPtr == null) ||
+				(!buffers[i].UsesMappedFrameArena && !buffers[i].UsesMappedMemoryLease) ||
 				buffers[i].Size < requiredSize)
 				return false;
 		}
@@ -323,7 +330,7 @@ internal unsafe partial class VkMeshRenderer
 		for (int i = 0; i < buffers.Length; i++)
 		{
 			if (buffers[i].Buffer.Handle == 0 ||
-				(requireMappedPointers && !buffers[i].UsesMappedFrameArena && buffers[i].MappedPtr == null) ||
+				(requireMappedPointers && !buffers[i].UsesMappedFrameArena && !buffers[i].UsesMappedMemoryLease) ||
 				buffers[i].Size < requiredSize)
 				return false;
 		}
@@ -456,7 +463,6 @@ internal unsafe partial class VkMeshRenderer
 					sharedSlice.Buffer,
 					sharedSlice.Memory,
 					block.Size,
-					mappedPtr: null,
 					offset: frequencyReservation.Offset,
 					ownsBuffer: false,
 					mappedSlice: sharedSlice);
@@ -492,6 +498,7 @@ internal unsafe partial class VkMeshRenderer
 		VulkanFrequencyAutoUniformReservation? frequencyReservation)
 	{
 		VulkanMappedFrameWriteScope mappedWrite = default;
+		VulkanMappedMemoryWriteLease mappedMemoryWrite = default;
 		try
 		{
 			Span<byte> data;
@@ -506,9 +513,11 @@ internal unsafe partial class VkMeshRenderer
 			}
 			else
 			{
-				if (buffer.MappedPtr == null)
+				VulkanMappedMemorySlice mappedMemorySlice = buffer.MappedMemorySlice;
+				if (!buffer.UsesMappedMemoryLease ||
+					!BackendContext.Resources.Buffers.TryAcquireWrite(BackendContext, in mappedMemorySlice, out mappedMemoryWrite))
 					return false;
-				data = new Span<byte>(buffer.MappedPtr, (int)buffer.Size);
+				data = mappedMemoryWrite.Bytes;
 			}
 		EVulkanAutoUniformFallbackReason fallbackReason =
 			EVulkanAutoUniformFallbackReason.BindingSnapshotIneligible;
@@ -694,6 +703,7 @@ internal unsafe partial class VkMeshRenderer
 		}
 		finally
 		{
+			mappedMemoryWrite.Dispose();
 			mappedWrite.Dispose();
 		}
 	}
@@ -3260,10 +3270,16 @@ internal unsafe partial class VkMeshRenderer
 			return true;
 		}
 
-		if (buffer.MappedPtr == null)
+		VulkanMappedMemorySlice mappedMemorySlice = buffer.MappedMemorySlice;
+		if (!buffer.UsesMappedMemoryLease ||
+			!BackendContext.Resources.Buffers.TryAcquireWrite(BackendContext, in mappedMemorySlice, out VulkanMappedMemoryWriteLease mappedWriteLease))
 			return false;
-		T local = value;
-		Unsafe.CopyBlock(buffer.MappedPtr, Unsafe.AsPointer(ref local), copySize);
+		using (mappedWriteLease)
+		{
+			T local = value;
+			ReadOnlySpan<byte> source = new(Unsafe.AsPointer(ref local), checked((int)copySize));
+			source.CopyTo(mappedWriteLease.Bytes);
+		}
 		return true;
 	}
 
@@ -3281,9 +3297,12 @@ internal unsafe partial class VkMeshRenderer
 			return true;
 		}
 
-		if (buffer.MappedPtr == null)
+		VulkanMappedMemorySlice mappedMemorySlice = buffer.MappedMemorySlice;
+		if (!buffer.UsesMappedMemoryLease ||
+			!BackendContext.Resources.Buffers.TryAcquireWrite(BackendContext, in mappedMemorySlice, out VulkanMappedMemoryWriteLease mappedWriteLease))
 			return false;
-		new Span<byte>(buffer.MappedPtr, (int)buffer.Size).Clear();
+		using (mappedWriteLease)
+			mappedWriteLease.Bytes.Clear();
 		return true;
 	}
 

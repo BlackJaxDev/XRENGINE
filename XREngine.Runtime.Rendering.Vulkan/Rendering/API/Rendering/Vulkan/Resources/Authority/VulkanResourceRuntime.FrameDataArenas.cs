@@ -109,6 +109,32 @@ internal sealed partial class VulkanResourceRuntime
         frameData?.Destroy();
     }
 
+    /// <summary>
+    /// Publishes the fixed set of mapped-memory owners at a frame boundary. This reads only
+    /// owner-maintained counters; it never walks allocation registries or dirty-range storage.
+    /// </summary>
+    internal void PublishMappedMemoryTelemetry()
+    {
+        VulkanMappedMemoryCounters mappedMemory = Buffers.SnapshotMappedMemoryCounters();
+        RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanMappedMemoryGauges(
+            mappedMemory.Reservations,
+            mappedMemory.ReservedBytes,
+            mappedMemory.FlushExpansionBytes,
+            mappedMemory.InvalidateExpansionBytes,
+            mappedMemory.Failures);
+
+        VulkanFrameDataArena.MappingTelemetry frameData = FrameDataArena?.GetMappingTelemetry() ?? default;
+        RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanFrameDataArenaMappingGauges(
+            frameData.AllocatedBytes,
+            frameData.AllocationCount,
+            frameData.DirtyBytes,
+            frameData.DirtyRangeCount,
+            frameData.FlushExpansionBytes,
+            frameData.InvalidateExpansionBytes);
+
+        MappedFrameArena?.PublishTelemetry();
+    }
+
     internal void RegisterMappedFrameArenaChunkLifetime(
         Silk.NET.Vulkan.Buffer buffer,
         string owner)

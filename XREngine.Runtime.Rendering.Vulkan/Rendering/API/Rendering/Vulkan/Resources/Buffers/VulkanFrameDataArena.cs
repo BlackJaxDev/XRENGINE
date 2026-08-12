@@ -7,7 +7,7 @@ namespace XREngine.Rendering.Vulkan;
 /// Canonical frame-slot-owned mapped transfer/storage arena. Chunk groups grow by appending
 /// equally shaped buffers for every frame slot, so an issued buffer/offset is never relocated.
 /// </summary>
-internal unsafe sealed class VulkanFrameDataArena
+internal sealed class VulkanFrameDataArena
 {
     private const int LaneCount = (int)EVulkanFrameDataLane.Count;
     private const int MaxFrameSlots = 32;
@@ -33,6 +33,17 @@ internal unsafe sealed class VulkanFrameDataArena
     private long _allocatedBytesHighWater;
     private long _allocationHighWater;
     private long _flushExpansionBytes;
+    private long _invalidateExpansionBytes;
+    private long _dirtyBytes;
+    private int _dirtyRangeCount;
+
+    internal readonly record struct MappingTelemetry(
+        long AllocatedBytes,
+        long AllocationCount,
+        long DirtyBytes,
+        int DirtyRangeCount,
+        long FlushExpansionBytes,
+        long InvalidateExpansionBytes);
 
     internal VulkanFrameDataArena(VulkanMappedFrameArenaBackend backend, ulong initialChunkCapacity = 65_536UL)
     {
@@ -67,8 +78,18 @@ internal unsafe sealed class VulkanFrameDataArena
     internal long AllocatedBytesHighWater => Volatile.Read(ref _allocatedBytesHighWater);
     internal long AllocationHighWater => Volatile.Read(ref _allocationHighWater);
     internal long FlushExpansionBytes => Volatile.Read(ref _flushExpansionBytes);
-    internal int DirtyRangeCount => CountDirtyRanges();
-    internal long DirtyBytes => CountDirtyBytes();
+    internal long InvalidateExpansionBytes => Volatile.Read(ref _invalidateExpansionBytes);
+    internal int DirtyRangeCount => Volatile.Read(ref _dirtyRangeCount);
+    internal long DirtyBytes => Volatile.Read(ref _dirtyBytes);
+
+    internal MappingTelemetry GetMappingTelemetry()
+        => new(
+            AllocatedBytes,
+            AllocationCount,
+            DirtyBytes,
+            DirtyRangeCount,
+            FlushExpansionBytes,
+            InvalidateExpansionBytes);
 
     internal void Initialize(int frameSlotCount)
     {
@@ -123,7 +144,7 @@ internal unsafe sealed class VulkanFrameDataArena
         return true;
     }
 
-    internal bool TryAllocateWrite(int frameSlot, EVulkanFrameDataLane lane, void* source, ulong sourceOffset, uint length, uint alignment, out VulkanFrameDataSlice slice)
+    internal unsafe bool TryAllocateWrite(int frameSlot, EVulkanFrameDataLane lane, void* source, ulong sourceOffset, uint length, uint alignment, out VulkanFrameDataSlice slice)
     {
         slice = default;
         if (source is null || length == 0 || sourceOffset > (ulong)nint.MaxValue ||
@@ -134,7 +155,7 @@ internal unsafe sealed class VulkanFrameDataArena
         return true;
     }
 
-    internal bool TryBeginWrite(in VulkanFrameDataSlice slice, out VulkanFrameDataWriteScope scope)
+    internal unsafe bool TryBeginWrite(in VulkanFrameDataSlice slice, out VulkanFrameDataWriteScope scope)
     {
         scope = default;
         if (!TryEnterHostAccess())
@@ -148,7 +169,7 @@ internal unsafe sealed class VulkanFrameDataArena
         return true;
     }
 
-    internal bool TryBeginRead(in VulkanFrameDataSlice slice, out VulkanFrameDataReadScope scope)
+    internal unsafe bool TryBeginRead(in VulkanFrameDataSlice slice, out VulkanFrameDataReadScope scope)
     {
         scope = default;
         if (!TryEnterHostAccess())
@@ -160,9 +181,11 @@ internal unsafe sealed class VulkanFrameDataArena
         }
         try
         {
-            ExpandVisibilityRange(slice.Offset, slice.Length, chunk.AllocationLength, out ulong offset, out ulong length);
             if (!chunk.IsHostCoherent)
+            {
+                ExpandInvalidateRange(slice.Offset, slice.Length, chunk.AllocationLength, out ulong offset, out ulong length);
                 _backend.Invalidate(chunk.Memory, offset, length);
+            }
             scope = new VulkanFrameDataReadScope(this, new Span<byte>((byte*)chunk.MappedPointer + checked((nint)slice.Offset), checked((int)slice.Length)));
             return true;
         }
@@ -266,7 +289,7 @@ internal unsafe sealed class VulkanFrameDataArena
                         if (chunk.GetState(generation) == VulkanFrameDataArenaSlotState.Submitted &&
                             !chunk.TryTransition(generation, VulkanFrameDataArenaSlotState.Submitted, VulkanFrameDataArenaSlotState.Writable))
                             return false;
-                        chunk.DirtyRanges.Clear();
+                        ClearDirtyRanges(chunk);
                         _nextOffsets[lane][group][frameSlot] = 0;
                     }
         return true;
@@ -287,7 +310,13 @@ internal unsafe sealed class VulkanFrameDataArena
     internal void EndWrite(in VulkanFrameDataSlice slice)
     {
         if (TryValidateSlice(slice, VulkanFrameDataArenaSlotState.Writable, out VulkanFrameDataChunk chunk))
+        {
+            int previousRangeCount = chunk.DirtyRanges.Count;
+            ulong previousDirtyBytes = chunk.DirtyRanges.TotalLength;
             chunk.DirtyRanges.Include(slice.Offset, slice.Length);
+            Interlocked.Add(ref _dirtyRangeCount, chunk.DirtyRanges.Count - previousRangeCount);
+            Interlocked.Add(ref _dirtyBytes, checked((long)(chunk.DirtyRanges.TotalLength - previousDirtyBytes)));
+        }
         ExitHostAccess();
     }
 
@@ -365,7 +394,7 @@ internal unsafe sealed class VulkanFrameDataArena
         return true;
     }
 
-    private VulkanFrameDataChunk CreateChunk(ulong capacity, BufferUsageFlags usage, string label)
+    private unsafe VulkanFrameDataChunk CreateChunk(ulong capacity, BufferUsageFlags usage, string label)
     {
         if (!_backend.TryCreateChunk(capacity, usage, label, out Buffer buffer, out DeviceMemory memory, out void* pointer, out bool coherent, out ulong allocationLength) || allocationLength < capacity)
             throw new InvalidOperationException($"Failed to create mapped frame-data chunk '{label}'.");
@@ -417,21 +446,29 @@ internal unsafe sealed class VulkanFrameDataArena
         for (int index = 0; index < chunk.DirtyRanges.Count; index++)
         {
             VulkanDynamicDataDirtyRange dirty = chunk.DirtyRanges.Get(index);
-            ExpandVisibilityRange(dirty.Offset, dirty.Length, chunk.AllocationLength, out ulong expandedOffset, out ulong expandedLength);
             if (!chunk.IsHostCoherent)
+            {
+                ExpandFlushRange(dirty.Offset, dirty.Length, chunk.AllocationLength, out ulong expandedOffset, out ulong expandedLength);
                 _backend.Flush(chunk.Memory, expandedOffset, expandedLength);
+            }
         }
-        chunk.DirtyRanges.Clear();
+        ClearDirtyRanges(chunk);
     }
 
-    private void ExpandVisibilityRange(ulong offset, ulong length, ulong allocationLength, out ulong expandedOffset, out ulong expandedLength)
+    private void ExpandFlushRange(ulong offset, ulong length, ulong allocationLength, out ulong expandedOffset, out ulong expandedLength)
+        => ExpandNonCoherentRange(offset, length, allocationLength, ref _flushExpansionBytes, out expandedOffset, out expandedLength);
+
+    private void ExpandInvalidateRange(ulong offset, ulong length, ulong allocationLength, out ulong expandedOffset, out ulong expandedLength)
+        => ExpandNonCoherentRange(offset, length, allocationLength, ref _invalidateExpansionBytes, out expandedOffset, out expandedLength);
+
+    private void ExpandNonCoherentRange(ulong offset, ulong length, ulong allocationLength, ref long expansionTelemetry, out ulong expandedOffset, out ulong expandedLength)
     {
         ulong atom = _backend.NonCoherentAtomSize;
         expandedOffset = offset / atom * atom;
         ulong end = AlignUp(checked(offset + length), atom);
         end = Math.Min(end, allocationLength);
         expandedLength = end - expandedOffset;
-        Interlocked.Add(ref _flushExpansionBytes, checked((long)(expandedLength - length)));
+        Interlocked.Add(ref expansionTelemetry, checked((long)(expandedLength - length)));
     }
 
     private bool TryEnterHostAccess()
@@ -459,28 +496,16 @@ internal unsafe sealed class VulkanFrameDataArena
                 return;
     }
 
-    private int CountDirtyRanges()
+    private void ClearDirtyRanges(VulkanFrameDataChunk chunk)
     {
-        int count = 0;
-        for (int lane = 0; lane < LaneCount; lane++)
-            if (_chunks[lane] is { } groups)
-                for (int group = 0; group < groups.Length; group++)
-                    for (int slot = 0; slot < _frameSlotCount; slot++)
-                        if (groups[group][slot] is { } chunk)
-                            count += chunk.DirtyRanges.Count;
-        return count;
-    }
+        int dirtyRangeCount = chunk.DirtyRanges.Count;
+        ulong dirtyBytes = chunk.DirtyRanges.TotalLength;
+        if (dirtyRangeCount == 0)
+            return;
 
-    private long CountDirtyBytes()
-    {
-        ulong total = 0;
-        for (int lane = 0; lane < LaneCount; lane++)
-            if (_chunks[lane] is { } groups)
-                for (int group = 0; group < groups.Length; group++)
-                    for (int slot = 0; slot < _frameSlotCount; slot++)
-                        if (groups[group][slot] is { } chunk)
-                            total += chunk.DirtyRanges.TotalLength;
-        return checked((long)Math.Min(total, (ulong)long.MaxValue));
+        chunk.DirtyRanges.Clear();
+        Interlocked.Add(ref _dirtyRangeCount, -dirtyRangeCount);
+        Interlocked.Add(ref _dirtyBytes, -checked((long)dirtyBytes));
     }
 
     private static BufferUsageFlags GetUsage(EVulkanFrameDataLane lane) => lane switch

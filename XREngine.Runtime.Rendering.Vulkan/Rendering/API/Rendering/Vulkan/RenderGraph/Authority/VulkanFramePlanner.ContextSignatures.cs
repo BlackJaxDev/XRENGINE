@@ -75,10 +75,6 @@ internal sealed partial class VulkanFramePlanner
             context.ViewportIdentity);
     }
 
-    internal static bool FrameOpMatchesPlannerStateKey(FrameOp op, in VulkanFrameOpPlannerStateKey key)
-        => FrameOpContextHasPlannerResources(op.Context) &&
-            FrameOpContextMatchesPlannerStateKey(op.Context, key);
-
     internal static bool FrameOpContextMatchesPlannerStateKey(in FrameOpContext context, in VulkanFrameOpPlannerStateKey key)
         => context.ContextKind == key.ContextKind &&
             context.PipelineIdentity == key.PipelineIdentity &&
@@ -184,47 +180,6 @@ internal sealed partial class VulkanFramePlanner
         }
 
         return best;
-    }
-
-    internal static FrameOpContext SelectPrimaryPlannerContext(FrameOp[] ops, in VulkanFrameOpPlannerStateKey key)
-    {
-        FrameOpContext best = default;
-        bool hasBest = false;
-        int bestScore = int.MinValue;
-
-        foreach (FrameOp op in ops)
-        {
-            if (!FrameOpMatchesPlannerStateKey(op, key))
-                continue;
-
-            FrameOpContext context = op.Context;
-            if (!hasBest)
-            {
-                best = context;
-                hasBest = true;
-            }
-
-            if (context.ResourceRegistry is null)
-                continue;
-
-            int score = 1;
-            score += Math.Min(context.ResourceRegistry.TextureRecords.Count, 128);
-            score += Math.Min(context.ResourceRegistry.FrameBufferRecords.Count, 128) * 2;
-            score += (context.PassMetadata?.Count ?? 0) * 4;
-            if (VulkanSwapchainContextCoalescer.TargetsSwapchain(op))
-                score += 16;
-
-            score += ScoreFrameOpFrameBufferTargets(op, context.ResourceRegistry);
-
-            if (score > bestScore ||
-                (score == bestScore && ComparePlannerContextTieBreak(context, best) < 0))
-            {
-                bestScore = score;
-                best = context;
-            }
-        }
-
-        return hasBest ? best : SelectPrimaryPlannerContext(ops);
     }
 
     internal static int ScoreFrameOpFrameBufferTargets(FrameOp op, RenderResourceRegistry registry)

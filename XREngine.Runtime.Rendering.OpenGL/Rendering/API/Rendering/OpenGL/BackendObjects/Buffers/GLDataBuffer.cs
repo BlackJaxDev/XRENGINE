@@ -1289,8 +1289,35 @@ namespace XREngine.Rendering.OpenGL
 
             public bool IsMapped => Data.ActivelyMapping.Contains(this);
 
-            public VoidPtr? GetMappedAddress()
-                => GPUSideSource?.Address;
+            public unsafe bool TryReadMapped(DataBufferMappedReadCallback callback)
+            {
+                ArgumentNullException.ThrowIfNull(callback);
+                DataSource? source = GPUSideSource;
+                return source is not null && source.Address.IsValid && callback(new ReadOnlySpan<byte>(source.Address.Pointer, checked((int)source.Length)));
+            }
+
+            public unsafe bool TryWriteMapped(DataBufferMappedWriteCallback callback)
+            {
+                ArgumentNullException.ThrowIfNull(callback);
+                DataSource? source = GPUSideSource;
+                return source is not null && source.Address.IsValid && callback(new Span<byte>(source.Address.Pointer, checked((int)source.Length)));
+            }
+
+            public unsafe bool TryReadMapped<TState>(ref TState state, DataBufferMappedReadCallback<TState> callback)
+                where TState : allows ref struct
+            {
+                ArgumentNullException.ThrowIfNull(callback);
+                DataSource? source = GPUSideSource;
+                return source is not null && source.Address.IsValid && callback(new ReadOnlySpan<byte>(source.Address.Pointer, checked((int)source.Length)), ref state);
+            }
+
+            public unsafe bool TryWriteMapped<TState>(ref TState state, DataBufferMappedWriteCallback<TState> callback)
+                where TState : allows ref struct
+            {
+                ArgumentNullException.ThrowIfNull(callback);
+                DataSource? source = GPUSideSource;
+                return source is not null && source.Address.IsValid && callback(new Span<byte>(source.Address.Pointer, checked((int)source.Length)), ref state);
+            }
 
             public void BindSSBO(XRRenderProgram program, uint? bindindIndexOverride = null)
             {

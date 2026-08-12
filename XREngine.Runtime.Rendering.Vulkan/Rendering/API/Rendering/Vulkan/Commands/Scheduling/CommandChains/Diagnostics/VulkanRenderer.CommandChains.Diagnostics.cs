@@ -13,7 +13,7 @@ using XREngine.Rendering.Shadows;
 
 namespace XREngine.Rendering.Vulkan;
 
-internal sealed unsafe partial class VulkanCommandRuntime
+internal sealed partial class VulkanCommandRuntime
 {
     private int CountDistinctViewKeys(List<RenderPacket> packets)
     {
@@ -80,20 +80,22 @@ internal sealed unsafe partial class VulkanCommandRuntime
         for (int i = 0; i < packetLimit; i++)
         {
             RenderPacket packet = packets[i];
-            FrameOp? sourceOp = ResolveCommandChainTraceSourceOp(packet, staticOps, volatileOps);
+            FrameOperationStream sourceOps = packet.DynamicOverlay ? volatileOps : staticOps;
+            int sourceIndex = packet.SourceStartIndex;
+            bool hasSource = sourceIndex >= 0 && sourceIndex < sourceOps.Count;
             builder.AppendLine()
                 .Append("  #")
                 .Append(i)
                 .Append(" pass=")
                 .Append(packet.PassIndex)
                 .Append(" passName=")
-                .Append(sourceOp is null ? "<unknown>" : TryGetPassName(sourceOp) ?? "<unnamed>")
+                .Append(hasSource ? TryGetPassName(in sourceOps.GetContext(sourceIndex), packet.PassIndex) ?? "<unnamed>" : "<unknown>")
                 .Append(" target=")
                 .Append(packet.GetDiagnosticTargetName())
                 .Append(" view=")
                 .Append(packet.ViewKey.Kind)
                 .Append(" op=")
-                .Append(sourceOp is null ? "<unknown>" : DescribeCommandChainTraceOp(sourceOp))
+                .Append(hasSource ? DescribeCommandChainTraceOp(sourceOps, sourceIndex) : "<unknown>")
                 .Append(" draws=")
                 .Append(packet.DrawCount)
                 .Append(" dispatches=")
@@ -117,46 +119,30 @@ internal sealed unsafe partial class VulkanCommandRuntime
         Debug.Vulkan(builder.ToString());
     }
 
-    private static string DescribeCommandChainTraceRow(int packetIndex, RenderPacket packet, CommandChain chain, FrameOp? sourceOp)
+    private static string DescribeCommandChainTraceRow(int packetIndex, RenderPacket packet, CommandChain chain, FrameOperationStream sourceOps)
     {
         string dirtyDetails = chain.State == CommandChainState.Recorded && chain.DirtyReason != CommandChainDirtyReason.VolatileCommand
-            ? " " + DescribeCommandChainDirtyReason(chain, packet)
-            : string.Empty;
-        string passName = sourceOp is null ? "<unknown>" : TryGetPassName(sourceOp) ?? "<unnamed>";
-        string opDescription = sourceOp is null ? "<unknown>" : DescribeCommandChainTraceOp(sourceOp);
-
+            ? " " + DescribeCommandChainDirtyReason(chain, packet) : string.Empty;
+        int index = packet.SourceStartIndex;
+        bool hasSource = index >= 0 && index < sourceOps.Count;
+        string passName = hasSource ? TryGetPassName(in sourceOps.GetContext(index), packet.PassIndex) ?? "<unnamed>" : "<unknown>";
+        string opDescription = hasSource ? DescribeCommandChainTraceOp(sourceOps, index) : "<unknown>";
         return $"#{packetIndex} state={chain.State} reason={chain.DirtyReason} pass={packet.PassIndex} passName={passName} target={packet.GetDiagnosticTargetName()} view={packet.ViewKey.Kind}:{packet.ViewKey.ViewIndex} op={opDescription} draws={packet.DrawCount} dispatches={packet.DispatchCount} volatility={packet.Volatility}{dirtyDetails}";
     }
 
-    private static FrameOp? ResolveCommandChainTraceSourceOp(RenderPacket packet, FrameOperationStream staticOps, FrameOperationStream volatileOps)
+    private static string DescribeCommandChainTraceOp(FrameOperationStream ops, int index)
     {
-        FrameOperationStream sourceOps = packet.DynamicOverlay ? volatileOps : staticOps;
-        int index = packet.SourceStartIndex;
-        return index >= 0 && index < sourceOps.Count
-            ? sourceOps.GetPayloadForPrimaryDispatch(index)
-            : null;
-    }
-
-    private static string DescribeCommandChainTraceOp(FrameOp op)
-        => op switch
+        ref readonly FrameOperationHeader header = ref ops.GetHeader(index);
+        return header.OpCode switch
         {
-            MeshDrawOp draw => $"MeshDraw[{draw.Draw.Renderer?.MeshRenderer?.Name ?? "<unnamed renderer>"}]",
-            ComputeDispatchOp compute => $"ComputeDispatch[{compute.Program?.Data?.Name ?? "<unnamed program>"} {compute.GroupsX}x{compute.GroupsY}x{compute.GroupsZ}]",
-            ComputeDispatchIndirectOp computeIndirect => $"ComputeDispatchIndirect[{computeIndirect.Program?.Data?.Name ?? "<unnamed program>"} offset={computeIndirect.ArgumentOffset}]",
-            BufferCopyOp copy => $"BufferCopy[{copy.ByteCount} bytes]",
-            SubmissionMarkerOp marker => $"SubmissionMarker[{marker.Label}]",
-            IndirectDrawOp indirect => $"IndirectDraw[count={indirect.DrawCount}]",
-            MeshTaskDispatchIndirectCountOp meshTask => $"MeshTaskDispatch[max={meshTask.MaxDrawCount}]",
-            BlitOp => "Blit",
-            ClearOp => "Clear",
-            MemoryBarrierOp barrier => $"MemoryBarrier[{barrier.Mask}]",
-            PublishFramebufferForSamplingOp publish => $"PublishFramebufferForSampling[{publish.FrameBuffer?.Name ?? "<unnamed>"}]",
-            TransformFeedbackOp => "TransformFeedback",
-            DlssUpscaleOp => "DlssUpscale",
-            DlssFrameGenerationOp => "DlssFrameGeneration",
-            TextureUploadFrameOp => "TextureUpload",
-            _ => op.GetType().Name,
+            EVulkanPrimaryPlanNodeKind.MeshDraw => $"MeshDraw[{ops.GetMeshDraw(index).Draw.Renderer.MeshRenderer.Name ?? "<unnamed renderer>"}]",
+            EVulkanPrimaryPlanNodeKind.ComputeDispatch => $"ComputeDispatch[{ops.GetComputeDispatch(index).Program.Data?.Name ?? "<unnamed program>"}]",
+            EVulkanPrimaryPlanNodeKind.ComputeDispatchIndirect => $"ComputeDispatchIndirect[offset={ops.GetComputeDispatchIndirect(index).ArgumentOffset}]",
+            EVulkanPrimaryPlanNodeKind.BufferCopy => $"BufferCopy[{ops.GetBufferCopy(index).ByteCount} bytes]",
+            EVulkanPrimaryPlanNodeKind.MemoryBarrier => $"MemoryBarrier[{ops.GetMemoryBarrier(index).Mask}]",
+            _ => header.OpCode.ToString(),
         };
+    }
 
     private static void ValidateCommandChainSchedule(CommandChainSchedule schedule, List<RenderPacket> packets, ulong frameOpsSignature)
     {

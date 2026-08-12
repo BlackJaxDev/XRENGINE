@@ -434,27 +434,19 @@ void main()
     }
 
     uint transitionBase = drawID * LOD_TRANSITION_UINTS;
-    bool transitionActive = false;
-    uint previousMeshID = 0u;
+    uint selectedMeshID = meta.MeshID;
     if (inputValid && transitionBase + 3u < uint(lodTransitions.length()))
     {
-        previousMeshID = lodTransitions[transitionBase + 0u];
+        selectedMeshID = lodTransitions[transitionBase + 0u];
         uint transitionFlags = lodTransitions[transitionBase + 2u];
-        float transitionProgress = clamp(uintBitsToFloat(lodTransitions[transitionBase + 3u]), 0.0, 1.0);
-        transitionActive = (transitionFlags & LOD_TRANSITION_ACTIVE) != 0u && previousMeshID != 0u && transitionProgress < 1.0;
+        if ((transitionFlags & LOD_TRANSITION_ACTIVE) == 0u || selectedMeshID == 0u)
+            selectedMeshID = meta.MeshID;
     }
 
-    DrawCandidate previousCandidate = transitionActive
-        ? BuildDrawCandidate(
-            previousMeshID,
-            meta.MaterialID,
-            meta.InstanceCount,
-            drawID,
-            true)
-        : BuildDrawCandidate(0u, 0u, 0u, 0u, false);
+    DrawCandidate previousCandidate = BuildDrawCandidate(0u, 0u, 0u, 0u, false);
     DrawCandidate currentCandidate = inputValid
         ? BuildDrawCandidate(
-            meta.MeshID,
+            selectedMeshID,
             meta.MaterialID,
             meta.InstanceCount,
             drawID,

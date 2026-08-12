@@ -139,7 +139,7 @@ namespace XREngine.Rendering.Commands
 
             for (uint commandIndex = 0u; commandIndex < safeCount; ++commandIndex)
             {
-                GPUIndirectRenderCommand command = sourceCommands.GetDataRawAtIndex<GPUIndirectRenderCommand>(commandIndex);
+                DrawMetadata command = sourceCommands.GetDataRawAtIndex<DrawMetadata>(commandIndex);
                 GPUViewMask commandMask = BuildCommandViewMask(command.RenderPass);
                 _commandViewMaskBuffer.SetDataRawAtIndex(commandIndex, commandMask);
             }

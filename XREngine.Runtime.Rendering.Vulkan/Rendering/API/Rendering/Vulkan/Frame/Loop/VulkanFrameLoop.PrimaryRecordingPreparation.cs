@@ -5,7 +5,7 @@ using XREngine.Rendering.Vulkan.RenderGraph;
 namespace XREngine.Rendering.Vulkan;
 
 /// <summary>Frozen primary-recording preparation owned by the desktop frame loop.</summary>
-internal sealed unsafe partial class VulkanFrameLoop
+internal sealed partial class VulkanFrameLoop
 {
     private VulkanPrimaryCommandRecordingResult RecordPreparedDesktopPrimary(
         ref VulkanFrameAttempt attempt,
@@ -60,16 +60,7 @@ internal sealed unsafe partial class VulkanFrameLoop
                 planningSnapshot = _framePlanner.CaptureSnapshot();
             }
 
-            FrameOp[] sortedOperations;
-            using (RuntimeRenderingHostServices.Profiling.StartProfileScope(
-                       "Vulkan.PrepareFrameOps.Sort"))
-            {
-                sortedOperations = drainedOperations.Length == 0
-                    ? drainedOperations
-                    : _framePlanner.FrameScheduler.SortFrameOpsCore(
-                        drainedOperations,
-                        planningSnapshot.RenderGraphPlan.CompiledGraph);
-            }
+            FrameOp[] sortedOperations = drainedOperations;
 
             using (RuntimeRenderingHostServices.Profiling.StartProfileScope(
                        "Vulkan.PrepareFrameOps.CoalesceContexts"))
@@ -169,87 +160,6 @@ internal sealed unsafe partial class VulkanFrameLoop
                 continue;
             }
 
-            ulong preparationSignature;
-            ulong dynamicSignature;
-            ulong operationResourceVersionSignature;
-            ulong descriptorVersionSignature;
-            using (VulkanCpuStageScope packetConstructionStage = new(
-                       _telemetry,
-                       EVulkanCpuStage.PacketConstruction))
-            {
-                using (RuntimeRenderingHostServices.Profiling.StartProfileScope(
-                           "Vulkan.BuildFramePlan.OperationSignatures"))
-                {
-                    preparationSignature =
-                        VulkanFrameOperationSignature.Compute(staticOperations);
-                    dynamicSignature =
-                        VulkanFrameOperationSignature.Compute(dynamicUiOperations);
-                    VulkanFrameOperationSignature.ComputeVersionSignatures(
-                        staticOperations,
-                        dynamicUiOperations,
-                        out operationResourceVersionSignature,
-                        out descriptorVersionSignature);
-                }
-            }
-
-            if (textureUploadOperations.Length == 0)
-            {
-                FrameOpSignatureHasher resourceVersionHasher = new();
-                resourceVersionHasher.Add(operationResourceVersionSignature);
-                resourceVersionHasher.Add(
-                    plannerState.ResourceAllocationSignature);
-                CommandChainScheduleCacheIdentity reuseScheduleIdentity = new(
-                    staticOperations.Length,
-                    preserveSwapchainForOverlay
-                        ? 0
-                        : dynamicUiOperations.Length,
-                    preparationSignature,
-                    preserveSwapchainForOverlay
-                        ? 0UL
-                        : dynamicSignature,
-                    plannerState.ResourcePlannerRevision,
-                    resourceVersionHasher.ToHash(),
-                    descriptorVersionSignature,
-                    authority.RecordingTargetSnapshot);
-                if (_commandRuntime.TryReuseCachedCommandChainSchedule(
-                        imageIndex,
-                        in reuseScheduleIdentity,
-                        out CommandChainSchedule? reuseSchedule,
-                        out _) &&
-                    reuseSchedule is not null)
-                {
-                    VulkanPreparedPrimaryReuseInput reuseInput = new(
-                        imageIndex,
-                        primaryBuffers[imageIndex],
-                        staticOperations,
-                        dynamicUiOperations,
-                        preparationSignature,
-                        dynamicSignature,
-                        RuntimeRenderingHostServices.FrameTiming
-                            .CurrentRenderFrameId,
-                        reuseSchedule,
-                        authority);
-                    VulkanPrimaryCommandRecordingResult reuseResult;
-                    using (VulkanCpuStageScope primaryRecordingStage = new(
-                               _telemetry,
-                               EVulkanCpuStage.PrimaryRecording))
-                    {
-                        if (_commandRuntime.TryReusePreparedPrimary(
-                                in reuseInput,
-                                out reuseResult))
-                        {
-                            _ = attempt.CompletePhase(
-                                EVulkanFrameStage.WorkSchedule,
-                                EDesktopFrameFlow.Continue);
-                            _ = attempt.CompletePhase(
-                                EVulkanFrameStage.CommandRecord,
-                                EDesktopFrameFlow.Continue);
-                            return reuseResult;
-                        }
-                    }
-                }
-            }
-
             FramePlan framePlan;
             using (VulkanCpuStageScope packetConstructionStage = new(
                        _telemetry,
@@ -261,13 +171,14 @@ internal sealed unsafe partial class VulkanFrameLoop
                     framePlan = _framePlanner.FramePlanBuilder.BuildAndSeal(
                         CurrentFrameSlot,
                         plannerState.ResourcePlannerRevision,
-                        preparationSignature,
-                        dynamicSignature,
+                        staticOperationSignature: 0UL,
+                        dynamicOverlaySignature: 0UL,
                         staticOperations,
                         dynamicUiOperations,
                         new VulkanFramePlanRenderGraphAuthority(
                             frozenPlanningSnapshot.RenderGraphPlan,
-                            plannerState.FrameOpResourcePlannerSwitchingState));
+                            plannerState.FrameOpResourcePlannerSwitchingState),
+                        textureUploadOperations: textureUploadOperations);
                 }
             }
             FrameOperationSequence preparedOperations =
@@ -289,13 +200,13 @@ internal sealed unsafe partial class VulkanFrameLoop
                 EVulkanFrameStage.WorkSchedule,
                 EDesktopFrameFlow.Continue);
             primaryPlan.Build(
-                preparedOperations,
+                preparedOperations.Stream,
                 framePlan.StaticOperationSignature,
                 new VulkanPrimaryPlanTerminalContext(
                     preserveSwapchainForOverlay,
                     TransitionSwapchainToPresent: true,
                     ReleaseExternalImageOwnership: false),
-                framePlan);
+                framePlan: framePlan);
 
             VulkanPreparedPrimaryCommandInput input =
                 PreparePrimaryCommandInput(
@@ -306,15 +217,6 @@ internal sealed unsafe partial class VulkanFrameLoop
                     primaryPlan,
                     in authority);
 
-            input = input with
-            {
-                // Producer-owned authoring arrays are retained only for exact
-                // cache identity and frame-data refresh. Native encoding still
-                // consumes the sealed numeric FramePlan stream.
-                NativeOperationsOverride = staticOperations,
-                DynamicUiOperations = dynamicUiOperations,
-                TextureUploadOperations = textureUploadOperations,
-            };
             _ = attempt.CompletePhase(
                 EVulkanFrameStage.CommandRecord,
                 EDesktopFrameFlow.Continue);
@@ -699,70 +601,9 @@ internal sealed unsafe partial class VulkanFrameLoop
             return true;
         }
 
-        int bufferBarrierCount = sourceBarriers.BufferBarriers.Count;
-        VulkanBarrierPlanner.PlannedBufferBarrier[] frozenBufferBarriers =
-            new VulkanBarrierPlanner.PlannedBufferBarrier[bufferBarrierCount];
-        for (int index = 0; index < bufferBarrierCount; index++)
-        {
-            VulkanBarrierPlanner.PlannedBufferBarrier barrier =
-                sourceBarriers.BufferBarriers[index];
-            if (!TryResolveFrozenBarrierBuffer(
-                    barrier.ResourceName,
-                    in plannerState,
-                    allowSynchronousResourceUploads,
-                    out Silk.NET.Vulkan.Buffer nativeBuffer,
-                    out ulong nativeSize))
-            {
-                frozenSnapshot = default;
-                reason =
-                    $"Prepared resource plan {plannerState.ResourcePlannerRevision} cannot resolve native buffer barrier '{barrier.ResourceName}'.";
-                return false;
-            }
-
-            frozenBufferBarriers[index] = barrier with
-            {
-                NativeBuffer = nativeBuffer,
-                NativeOffset = 0,
-                NativeSize = nativeSize,
-            };
-        }
-
-        VulkanBarrierPlanner.PlannedImageBarrier[] frozenImageBarriers =
-            new VulkanBarrierPlanner.PlannedImageBarrier[sourceBarriers.ImageBarriers.Count];
-        for (int index = 0; index < frozenImageBarriers.Length; index++)
-        {
-            VulkanBarrierPlanner.PlannedImageBarrier barrier =
-                sourceBarriers.ImageBarriers[index];
-            Image nativeImage = barrier.Group.Image;
-            if (nativeImage.Handle == 0)
-            {
-                frozenSnapshot = default;
-                reason =
-                    $"Prepared resource plan {plannerState.ResourcePlannerRevision} cannot resolve native image barrier '{barrier.ResourceName}'.";
-                return false;
-            }
-
-            frozenImageBarriers[index] = barrier with
-            {
-                NativeImage = nativeImage,
-                NativeFormat = barrier.Group.Format,
-            };
-        }
-        VulkanBarrierPlanner.PlannedSwapchainBarrier[] frozenSwapchainBarriers =
-            new VulkanBarrierPlanner.PlannedSwapchainBarrier[sourceBarriers.SwapchainBarriers.Count];
-        sourceBarriers.SwapchainBarriers.CopyTo(frozenSwapchainBarriers, 0);
-        VulkanBarrierPlan frozenBarriers = new(
-            sourceBarriers.Generation,
-            frozenImageBarriers,
-            frozenBufferBarriers,
-            frozenSwapchainBarriers);
-        VulkanRenderGraphPlan frozenPlan = new(
-            sourcePlan.Revision,
-            sourcePlan.CompiledGraph,
-            frozenBarriers);
-        frozenSnapshot = planningSnapshot with { RenderGraphPlan = frozenPlan };
-        reason = string.Empty;
-        return true;
+        frozenSnapshot = default;
+        reason = $"Prepared resource plan {plannerState.ResourcePlannerRevision} contains unresolved frozen barrier bindings.";
+        return false;
     }
 
     private bool TryResolveFrozenBarrierBuffer(

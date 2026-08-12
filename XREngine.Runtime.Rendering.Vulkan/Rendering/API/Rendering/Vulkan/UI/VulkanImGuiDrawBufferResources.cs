@@ -1,5 +1,6 @@
 using ImGuiNET;
 using Silk.NET.Vulkan;
+using System.Runtime.InteropServices;
 using Buffer = Silk.NET.Vulkan.Buffer;
 
 namespace XREngine.Rendering.Vulkan;
@@ -48,40 +49,21 @@ internal unsafe sealed class VulkanImGuiDrawBufferResources(
     {
         ulong vertexBytes = checked((ulong)snapshot.TotalVertexCount * (ulong)sizeof(ImDrawVert));
         ulong indexBytes = checked((ulong)snapshot.TotalIndexCount * sizeof(ushort));
-        VulkanTargetOutputContext target = _target;
-        if (!target.TryMapMemoryAllocation(
+        if (!_target.TryWriteMappedMemory(
                 ResolveBufferAllocation(buffers.VertexBuffer),
                 0,
                 Math.Max(vertexBytes, 1UL),
-                out void* vertices))
-        {
+                snapshot,
+                static (destination, state) => CopySnapshotVertices(in state, destination)))
             throw new InvalidOperationException("Failed to map ImGui vertex-buffer memory.");
-        }
 
-        try
-        {
-            if (!target.TryMapMemoryAllocation(
-                    ResolveBufferAllocation(buffers.IndexBuffer),
-                    0,
-                    Math.Max(indexBytes, 1UL),
-                    out void* indices))
-            {
-                throw new InvalidOperationException("Failed to map ImGui index-buffer memory.");
-            }
-
-            try
-            {
-                CopySnapshot(snapshot, vertices, indices);
-            }
-            finally
-            {
-                target.UnmapMemoryAllocation(ResolveBufferAllocation(buffers.IndexBuffer));
-            }
-        }
-        finally
-        {
-            target.UnmapMemoryAllocation(ResolveBufferAllocation(buffers.VertexBuffer));
-        }
+        if (!_target.TryWriteMappedMemory(
+                ResolveBufferAllocation(buffers.IndexBuffer),
+                0,
+                Math.Max(indexBytes, 1UL),
+                snapshot,
+                static (destination, state) => CopySnapshotIndices(in state, destination)))
+            throw new InvalidOperationException("Failed to map ImGui index-buffer memory.");
     }
 
     /// <summary>Queues every generation-owned draw buffer for exact retirement.</summary>
@@ -157,7 +139,7 @@ internal unsafe sealed class VulkanImGuiDrawBufferResources(
         }
         catch
         {
-            target.DestroyBufferRaw(created, allocation.Memory);
+            _resourceRuntime.Buffers.Retire(created, allocation.Memory, $"{owner}.CreateFailure");
             throw;
         }
 
@@ -194,24 +176,29 @@ internal unsafe sealed class VulkanImGuiDrawBufferResources(
         return value == ulong.MaxValue ? ulong.MaxValue : value + 1;
     }
 
-    private static void CopySnapshot(
+    private static void CopySnapshotVertices(
         in VulkanImGuiFrameSnapshot snapshot,
-        void* vertexDestination,
-        void* indexDestination)
+        Span<byte> destination)
     {
-        byte* vertices = (byte*)vertexDestination;
-        byte* indices = (byte*)indexDestination;
+        Span<ImDrawVert> vertices = MemoryMarshal.Cast<byte, ImDrawVert>(destination);
+        int vertexOffset = 0;
         for (int listIndex = 0; listIndex < snapshot.CommandListCount; listIndex++)
         {
             VulkanImGuiCommandListSnapshot list = snapshot.CommandLists[listIndex];
-            nuint vertexBytes = checked((nuint)list.VertexCount * (nuint)sizeof(ImDrawVert));
-            nuint indexBytes = checked((nuint)list.IndexCount * sizeof(ushort));
-            fixed (ImDrawVert* sourceVertices = list.Vertices)
-                System.Buffer.MemoryCopy(sourceVertices, vertices, (long)vertexBytes, (long)vertexBytes);
-            fixed (ushort* sourceIndices = list.Indices)
-                System.Buffer.MemoryCopy(sourceIndices, indices, (long)indexBytes, (long)indexBytes);
-            vertices += vertexBytes;
-            indices += indexBytes;
+            list.Vertices.AsSpan(0, list.VertexCount).CopyTo(vertices.Slice(vertexOffset, list.VertexCount));
+            vertexOffset += list.VertexCount;
+        }
+    }
+
+    private static void CopySnapshotIndices(in VulkanImGuiFrameSnapshot snapshot, Span<byte> destination)
+    {
+        Span<ushort> indices = MemoryMarshal.Cast<byte, ushort>(destination);
+        int indexOffset = 0;
+        for (int listIndex = 0; listIndex < snapshot.CommandListCount; listIndex++)
+        {
+            VulkanImGuiCommandListSnapshot list = snapshot.CommandLists[listIndex];
+            list.Indices.AsSpan(0, list.IndexCount).CopyTo(indices.Slice(indexOffset, list.IndexCount));
+            indexOffset += list.IndexCount;
         }
     }
 }

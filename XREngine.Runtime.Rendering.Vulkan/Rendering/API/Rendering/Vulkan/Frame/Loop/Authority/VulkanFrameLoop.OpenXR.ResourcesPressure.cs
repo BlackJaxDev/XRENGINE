@@ -1,6 +1,7 @@
 using Silk.NET.Vulkan;
 using System;
 using System.Collections.Generic;
+using System.Buffers;
 using System.Diagnostics;
 using System.Linq;
 using System.Runtime.CompilerServices;
@@ -12,7 +13,7 @@ using XREngine.Rendering.Resources;
 
 namespace XREngine.Rendering.Vulkan;
 
-internal sealed unsafe partial class VulkanFrameLoop
+internal sealed partial class VulkanFrameLoop
 {
     internal bool TryClearOpenXrSwapchainImage(Image image, Extent2D extent, ColorF4 color)
     {
@@ -217,10 +218,13 @@ internal sealed unsafe partial class VulkanFrameLoop
             FrameSlotCount);
         DesktopFrameActivitySnapshot desktopActivity =
             CaptureDesktopFrameActivity();
-        Span<bool> drainableSlots =
-            stackalloc bool[FrameSlotCount];
-        for (int i = 0; i < frameSlotCount; i++)
+        bool[] rentedDrainableSlots = ArrayPool<bool>.Shared.Rent(frameSlotCount);
+        Span<bool> drainableSlots = rentedDrainableSlots.AsSpan(0, frameSlotCount);
+        drainableSlots.Clear();
+        try
         {
+            for (int i = 0; i < frameSlotCount; i++)
+            {
             if (desktopActivity.IsActive &&
                 i == desktopActivity.FrameSlot)
             {
@@ -248,43 +252,43 @@ internal sealed unsafe partial class VulkanFrameLoop
                 continue;
             }
 
-            drainableSlots[i] = true;
-        }
+                drainableSlots[i] = true;
+            }
 
         for (int i = 0; i < frameSlotCount; i++)
-            if (drainableSlots[i])
-                DrainRetiredCommandBuffers(i, int.MaxValue);
-        for (int i = 0; i < frameSlotCount; i++)
+                if (drainableSlots[i])
+                    DrainRetiredCommandBuffers(i, int.MaxValue);
+            for (int i = 0; i < frameSlotCount; i++)
             if (drainableSlots[i])
                 DrainRetiredCommandPools(i, int.MaxValue);
-        for (int i = 0; i < frameSlotCount; i++)
+            for (int i = 0; i < frameSlotCount; i++)
             if (drainableSlots[i])
                 DrainRetiredDescriptorSets(i, int.MaxValue);
-        for (int i = 0; i < frameSlotCount; i++)
+            for (int i = 0; i < frameSlotCount; i++)
             if (drainableSlots[i])
                 DrainRetiredDescriptorPools(i, int.MaxValue);
-        for (int i = 0; i < frameSlotCount; i++)
+            for (int i = 0; i < frameSlotCount; i++)
             if (drainableSlots[i])
                 DrainRetiredPipelines(i, int.MaxValue);
-        for (int i = 0; i < frameSlotCount; i++)
+            for (int i = 0; i < frameSlotCount; i++)
             if (drainableSlots[i])
                 ResourceRuntime.DrainRetiredPipelineLayouts(Api!, _deviceContext.Device, i, int.MaxValue);
-        for (int i = 0; i < frameSlotCount; i++)
+            for (int i = 0; i < frameSlotCount; i++)
             if (drainableSlots[i])
                 ResourceRuntime.DrainRetiredDescriptorSetLayouts(Api!, _deviceContext.Device, i, int.MaxValue);
-        for (int i = 0; i < frameSlotCount; i++)
+            for (int i = 0; i < frameSlotCount; i++)
             if (drainableSlots[i])
                 DrainRetiredQueryPools(i, int.MaxValue);
-        for (int i = 0; i < frameSlotCount; i++)
+            for (int i = 0; i < frameSlotCount; i++)
             if (drainableSlots[i])
                 DrainRetiredBufferViews(i, int.MaxValue);
-        for (int i = 0; i < frameSlotCount; i++)
+            for (int i = 0; i < frameSlotCount; i++)
             if (drainableSlots[i])
                 DrainRetiredFramebuffers(i, int.MaxValue);
-        for (int i = 0; i < frameSlotCount; i++)
+            for (int i = 0; i < frameSlotCount; i++)
             if (drainableSlots[i])
                 DrainRetiredBuffers(i, int.MaxValue);
-        for (int pass = 0; pass < frameSlotCount; pass++)
+            for (int pass = 0; pass < frameSlotCount; pass++)
             for (int i = 0; i < frameSlotCount; i++)
                 if (drainableSlots[i])
                     ResourceRuntime.DrainRetiredImages(
@@ -293,8 +297,13 @@ internal sealed unsafe partial class VulkanFrameLoop
                         i,
                         int.MaxValue);
 
-        ResourceRuntime.Uploads.DrainCompletedRecordedTextureUploadPublications(
-            Api!, _deviceContext, _commandRuntime, ResourceRuntime, IsDeviceLost);
+            ResourceRuntime.Uploads.DrainCompletedRecordedTextureUploadPublications(
+                Api!, _deviceContext, _commandRuntime, ResourceRuntime, IsDeviceLost);
+        }
+        finally
+        {
+            ArrayPool<bool>.Shared.Return(rentedDrainableSlots);
+        }
     }
     private bool WaitForOpenXrFrameDataSlot(uint frameDataImageIndex, string reason)
     {

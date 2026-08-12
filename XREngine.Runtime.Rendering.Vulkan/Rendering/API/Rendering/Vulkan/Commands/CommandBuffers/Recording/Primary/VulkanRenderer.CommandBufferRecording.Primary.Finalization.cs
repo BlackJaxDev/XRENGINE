@@ -15,9 +15,9 @@ using XREngine.Rendering.Resources;
 
 namespace XREngine.Rendering.Vulkan
 {
-    internal sealed unsafe partial class VulkanCommandRuntime
+    internal sealed partial class VulkanCommandRuntime
     {
-        private void FinalizePrimaryCommandRecording(
+        private unsafe void FinalizePrimaryCommandRecording(
             scoped ref PrimaryCommandBufferRecordingState recordingState)
         {
             using (RuntimeRenderingHostServices.Profiling.StartProfileScope("Vulkan.RecordPrimary.FinalOverlayAndDiagnostics"))

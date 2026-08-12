@@ -13,39 +13,8 @@ using XREngine.Rendering.Shadows;
 
 namespace XREngine.Rendering.Vulkan;
 
-internal sealed unsafe partial class VulkanCommandRuntime
+internal sealed partial class VulkanCommandRuntime
 {
-    // Cold pre-plan/OpenXR compatibility only. Desktop lifecycle scheduling
-    // calls the stream overload below after FramePlan sealing.
-    internal CommandChainSchedule? TryBuildCommandChainSchedule(
-        uint imageIndex,
-        FrameOp[] staticOps,
-        FrameOp[] volatileOps,
-        ulong frameOpsSignature,
-        ulong volatileSignature,
-        ulong resourcePlanRevision,
-        bool allowExternalSwapchainTarget,
-        out CommandChainLoweringStats stats,
-        ulong? preparedFastScheduleSignature = null,
-        VulkanRecordedRenderTargetSnapshot preparedRecordingTarget = default,
-        ulong resourceVersionSignature = 0UL,
-        ulong sharedResourceVersionSignature = 0UL,
-        ulong descriptorVersionSignature = 0UL)
-        => TryBuildCommandChainSchedule(
-            imageIndex,
-            FrameOperationStream.CreateCompatibility(staticOps),
-            FrameOperationStream.CreateCompatibility(volatileOps),
-            frameOpsSignature,
-            volatileSignature,
-            resourcePlanRevision,
-            allowExternalSwapchainTarget,
-            out stats,
-            preparedFastScheduleSignature,
-            preparedRecordingTarget,
-            resourceVersionSignature,
-            sharedResourceVersionSignature,
-            descriptorVersionSignature);
-
     internal CommandChainSchedule? TryBuildCommandChainSchedule(
         uint imageIndex,
         FrameOperationStream staticOps,
@@ -409,8 +378,8 @@ internal sealed unsafe partial class VulkanCommandRuntime
             if (commandChainTraceRows is not null &&
                 (chain.State == CommandChainState.Recorded || chain.State == CommandChainState.FrameDataRefreshed))
             {
-                FrameOp? sourceOp = ResolveCommandChainTraceSourceOp(packet, staticOps, volatileOps);
-                commandChainTraceRows.Add(DescribeCommandChainTraceRow(i, packet, chain, sourceOp));
+                commandChainTraceRows.Add(DescribeCommandChainTraceRow(
+                    i, packet, chain, packet.DynamicOverlay ? volatileOps : staticOps));
             }
 
             chain.StructuralSignature = packet.StructuralSignature;

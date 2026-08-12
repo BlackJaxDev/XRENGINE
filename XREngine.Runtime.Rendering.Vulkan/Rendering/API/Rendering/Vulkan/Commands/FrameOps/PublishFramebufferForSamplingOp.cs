@@ -20,25 +20,8 @@ internal sealed record PublishFramebufferForSamplingOp(
     {
         get => _frameBuffer;
         internal set
-        {
-            ThrowIfSealedForFramePlan();
-            _frameBuffer = value;
-        }
+            => _frameBuffer = value;
     }
     public override EVulkanPrimaryPlanNodeKind Kind => EVulkanPrimaryPlanNodeKind.PublishFramebufferForSampling;
 
-    internal override int RecordPrimary(
-        VulkanCommandRuntime commandRuntime,
-        scoped ref PrimaryCommandBufferRecordingState recordingState,
-        in VulkanPrimaryOperationRecordingInfo recordingInfo)
-    {
-        commandRuntime.CmdBeginLabel(
-            recordingState.CommandBuffer,
-            "PublishFramebufferForSampling");
-        commandRuntime.RecordPublishFramebufferForSamplingOp(
-            recordingState.CommandBuffer,
-            this);
-        commandRuntime.CmdEndLabel(recordingState.CommandBuffer);
-        return recordingInfo.OperationIndex;
-    }
 }

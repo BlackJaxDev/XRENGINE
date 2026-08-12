@@ -16,13 +16,13 @@ using XREngine.Rendering.Vulkan.RenderGraph;
 
 namespace XREngine.Rendering.Vulkan
 {
-    internal sealed unsafe partial class VulkanCommandRuntime
+    internal sealed partial class VulkanCommandRuntime
     {
-        private static bool HasQueryFrameOps(ReadOnlySpan<FrameOp> ops)
+        private static bool HasQueryFrameOps(FrameOperationSequence ops)
         {
             for (int i = 0; i < ops.Length; i++)
             {
-                if (ops[i] is QueryOp)
+                if (ops.GetHeader(i).OpCode == EVulkanPrimaryPlanNodeKind.Query)
                     return true;
             }
 
@@ -48,8 +48,8 @@ namespace XREngine.Rendering.Vulkan
         private CommandBufferGenerationDomains CaptureCommandBufferGenerationDomains(
             uint imageIndex,
             ulong structuralSignature,
-            ReadOnlySpan<FrameOp> staticOps,
-            ReadOnlySpan<FrameOp> volatileOps,
+            FrameOperationSequence staticOps,
+            FrameOperationSequence volatileOps,
             ulong overlaySignature,
             in FrameOpContext context,
             ulong frameOpContextFingerprint,
@@ -74,7 +74,7 @@ namespace XREngine.Rendering.Vulkan
             ulong volatileSuffixSignature,
             in FrameOpContext context,
             in CommandBufferGenerationDomains generations,
-            ReadOnlySpan<FrameOp> preparedStaticOps,
+            FrameOperationSequence preparedStaticOps,
             ulong sharedGraphicsPipelineGeneration)
         {
             VulkanFrameOpPlannerStateKey plannerState =
@@ -163,7 +163,7 @@ namespace XREngine.Rendering.Vulkan
         private static CommandRecordingDependencySignature
             CaptureCommandChainPrimaryPreparedBindingDependencies(
                 in CommandRecordingDependencySignature signature,
-                ReadOnlySpan<FrameOp> ops)
+                FrameOperationSequence ops)
         {
             CapturePreparedBindingIdentities(
                 ops,
@@ -195,7 +195,7 @@ namespace XREngine.Rendering.Vulkan
         }
 
         private static ulong CaptureCommandChainPrimaryDescriptorBindingIdentity(
-            ReadOnlySpan<FrameOp> ops)
+            FrameOperationSequence ops)
         {
             FrameOpSignatureHasher hash = new();
             hash.Add(0x5052494D44455343UL);
@@ -204,9 +204,10 @@ namespace XREngine.Rendering.Vulkan
             int inlineOpIndex = 0;
             for (int i = 0; i < ops.Length; i++)
             {
-                FrameOp op = ops[i];
-                if (op is QueryOp queryOp)
+                ref readonly FrameOperationHeader header = ref ops.GetHeader(i);
+                if (header.OpCode == EVulkanPrimaryPlanNodeKind.Query)
                 {
+                    ref readonly QueryPayload queryOp = ref ops.Stream.GetQuery(i);
                     if (queryOp.Operation == ERenderQueryOperation.Begin)
                         queryBracketDepth++;
                     else if (queryOp.Operation == ERenderQueryOperation.End && queryBracketDepth > 0)
@@ -216,7 +217,7 @@ namespace XREngine.Rendering.Vulkan
                 }
 
                 if (queryBracketDepth == 0 &&
-                    IsSchedulableCommandChainFrameOp(op, dynamicOverlay: false))
+                    IsSchedulableCommandChainFrameOp(ops.Stream, i, dynamicOverlay: false))
                 {
                     continue;
                 }
@@ -227,8 +228,9 @@ namespace XREngine.Rendering.Vulkan
                 // index, so those secondary insertions do not invalidate an
                 // otherwise identical compute or descriptor-set bind.
                 int bindingOpIndex = inlineOpIndex++;
-                if (op is ComputeDispatchOp computeDispatch)
+                if (header.OpCode == EVulkanPrimaryPlanNodeKind.ComputeDispatch)
                 {
+                    ref readonly ComputeDispatchPayload computeDispatch = ref ops.Stream.GetComputeDispatch(i);
                     // Reusable compute dispatches bind descriptor sets from the
                     // per-image cache using this structural key. Their sampled
                     // images and uniform values are frame data: the completed
@@ -238,15 +240,15 @@ namespace XREngine.Rendering.Vulkan
                     // even though its vkCmdBindDescriptorSets command was unchanged.
                     hash.Add(bindingOpIndex);
                     hash.Add(ComputeReusableComputeDescriptorBindingKey(
-                        computeDispatch,
-                        bindingOpIndex));
+                        computeDispatch, header, ops.GetContext(i), bindingOpIndex));
                     hash.Add(computeDispatch.Program.BindingId);
                     hash.Add(computeDispatch.Program.LinkGeneration);
                     bindingCount++;
                     continue;
                 }
 
-                DescriptorBindingSnapshot snapshot = CreateDescriptorSnapshot(op);
+                DescriptorBindingSnapshot snapshot =
+                    CreateCommandChainDescriptorSnapshot(ops.Stream, i);
                 if (snapshot.DescriptorSetCount == 0 &&
                     snapshot.DescriptorGeneration == 0 &&
                     snapshot.DescriptorSetSignature == 0)
@@ -266,7 +268,7 @@ namespace XREngine.Rendering.Vulkan
         }
 
         private static void CapturePreparedBindingIdentities(
-            ReadOnlySpan<FrameOp> ops,
+            FrameOperationSequence ops,
             bool commandChainPrimaryOnly,
             out ulong meshIdentity,
             out ulong indexIdentity,
@@ -280,9 +282,10 @@ namespace XREngine.Rendering.Vulkan
             int queryBracketDepth = 0;
             for (int i = 0; i < ops.Length; i++)
             {
-                FrameOp op = ops[i];
-                if (op is QueryOp queryOp)
+                ref readonly FrameOperationHeader header = ref ops.GetHeader(i);
+                if (header.OpCode == EVulkanPrimaryPlanNodeKind.Query)
                 {
+                    ref readonly QueryPayload queryOp = ref ops.Stream.GetQuery(i);
                     if (queryOp.Operation == ERenderQueryOperation.Begin)
                         queryBracketDepth++;
                     else if (queryOp.Operation == ERenderQueryOperation.End && queryBracketDepth > 0)
@@ -292,15 +295,15 @@ namespace XREngine.Rendering.Vulkan
 
                 if (commandChainPrimaryOnly &&
                     queryBracketDepth == 0 &&
-                    IsSchedulableCommandChainFrameOp(op, dynamicOverlay: false))
+                    IsSchedulableCommandChainFrameOp(ops.Stream, i, dynamicOverlay: false))
                 {
                     continue;
                 }
 
-                PendingMeshDraw draw = op switch
+                PendingMeshDraw draw = header.OpCode switch
                 {
-                    MeshDrawOp direct => direct.Draw,
-                    IndirectDrawOp indirect => indirect.Draw,
+                    EVulkanPrimaryPlanNodeKind.MeshDraw => ops.Stream.GetMeshDraw(i).Draw,
+                    EVulkanPrimaryPlanNodeKind.IndirectDraw => ops.Stream.GetIndirectDraw(i).Draw,
                     _ => default,
                 };
                 if (draw.Renderer is not { } renderer)
@@ -375,8 +378,8 @@ namespace XREngine.Rendering.Vulkan
         }
 
         private static ulong ComputeCameraPoseGeneration(
-            ReadOnlySpan<FrameOp> staticOps,
-            ReadOnlySpan<FrameOp> volatileOps,
+            FrameOperationSequence staticOps,
+            FrameOperationSequence volatileOps,
             in FrameOpContext outputContext)
         {
             // A primary-cache camera transition only concerns the camera that owns the output
@@ -420,7 +423,7 @@ namespace XREngine.Rendering.Vulkan
         }
 
         private static void AddCameraPoseGenerationParts(
-            ReadOnlySpan<FrameOp> ops,
+            FrameOperationSequence ops,
             int outputViewportIdentity,
             Span<ulong> uniqueCameraPoseSignatures,
             ref int uniqueCameraPoseCount,
@@ -429,7 +432,8 @@ namespace XREngine.Rendering.Vulkan
             for (int i = 0; i < ops.Length; i++)
             {
                 if (!TryGetPrimaryViewportCameraPoseDraw(
-                        ops[i],
+                        ops,
+                        i,
                         outputViewportIdentity,
                         out PendingMeshDraw draw))
                 {
@@ -461,8 +465,8 @@ namespace XREngine.Rendering.Vulkan
         }
 
         private static ulong ComputeCameraPoseGenerationConservatively(
-            ReadOnlySpan<FrameOp> staticOps,
-            ReadOnlySpan<FrameOp> volatileOps,
+            FrameOperationSequence staticOps,
+            FrameOperationSequence volatileOps,
             int outputViewportIdentity)
         {
             FrameOpSignatureHasher hash = new();
@@ -482,14 +486,15 @@ namespace XREngine.Rendering.Vulkan
 
         private static void AddCameraPoseGenerationPartsConservatively(
             ref FrameOpSignatureHasher hash,
-            ReadOnlySpan<FrameOp> ops,
+            FrameOperationSequence ops,
             int outputViewportIdentity,
             ref int cameraDrawCount)
         {
             for (int i = 0; i < ops.Length; i++)
             {
                 if (!TryGetPrimaryViewportCameraPoseDraw(
-                        ops[i],
+                        ops,
+                        i,
                         outputViewportIdentity,
                         out PendingMeshDraw draw))
                 {
@@ -502,21 +507,23 @@ namespace XREngine.Rendering.Vulkan
         }
 
         private static bool TryGetPrimaryViewportCameraPoseDraw(
-            FrameOp op,
+            FrameOperationSequence ops,
+            int index,
             int outputViewportIdentity,
             out PendingMeshDraw draw)
         {
-            switch (op)
+            ref readonly FrameOperationHeader header = ref ops.GetHeader(index);
+            switch (header.OpCode)
             {
-                case MeshDrawOp meshDraw when IsCameraAttachedToOutputViewport(
-                    meshDraw.Draw.Camera,
+                case EVulkanPrimaryPlanNodeKind.MeshDraw when IsCameraAttachedToOutputViewport(
+                    ops.Stream.GetMeshDraw(index).Draw.Camera,
                     outputViewportIdentity):
-                    draw = meshDraw.Draw;
+                    draw = ops.Stream.GetMeshDraw(index).Draw;
                     return true;
-                case IndirectDrawOp indirectDraw when IsCameraAttachedToOutputViewport(
-                    indirectDraw.Draw.Camera,
+                case EVulkanPrimaryPlanNodeKind.IndirectDraw when IsCameraAttachedToOutputViewport(
+                    ops.Stream.GetIndirectDraw(index).Draw.Camera,
                     outputViewportIdentity):
-                    draw = indirectDraw.Draw;
+                    draw = ops.Stream.GetIndirectDraw(index).Draw;
                     return true;
                 default:
                     draw = default;
@@ -581,22 +588,63 @@ namespace XREngine.Rendering.Vulkan
         }
 
         private static ulong ComputeFrameDataGeneration(
-            ReadOnlySpan<FrameOp> staticOps,
-            ReadOnlySpan<FrameOp> volatileOps)
+            FrameOperationSequence staticOps,
+            FrameOperationSequence volatileOps)
         {
             FrameOpSignatureHasher hash = new();
             hash.Add(staticOps.Length);
             for (int i = 0; i < staticOps.Length; i++)
-                hash.Add(ComputeFrameOpFrameDataSignature(staticOps[i], i));
+                hash.Add(ComputeFrameOperationFrameDataSignature(staticOps, i));
             hash.Add(volatileOps.Length);
             for (int i = 0; i < volatileOps.Length; i++)
-                hash.Add(ComputeFrameOpFrameDataSignature(volatileOps[i], i));
+                hash.Add(ComputeFrameOperationFrameDataSignature(volatileOps, i));
+            return hash.ToHash();
+        }
+
+        /// <summary>
+        /// Captures replay-sensitive input directly from the sealed dense stream.
+        /// This intentionally keys every opcode's concrete payload rather than
+        /// recreating a polymorphic authoring operation during command reuse.
+        /// </summary>
+        private static ulong ComputeFrameOperationFrameDataSignature(
+            FrameOperationSequence operations,
+            int index)
+        {
+            ref readonly FrameOperationHeader header = ref operations.GetHeader(index);
+            ref readonly FrameOpContext context = ref operations.GetContext(index);
+            FrameOpSignatureHasher hash = new();
+            hash.Add((int)header.OpCode);
+            hash.Add(header.PassIndex);
+            hash.Add(header.TargetIdentity);
+            hash.Add(context.RecordingFingerprint);
+
+            int payloadHash = header.OpCode switch
+            {
+                EVulkanPrimaryPlanNodeKind.TextureUpload => operations.Stream.GetTextureUpload(index).GetHashCode(),
+                EVulkanPrimaryPlanNodeKind.Blit => operations.Stream.GetBlit(index).GetHashCode(),
+                EVulkanPrimaryPlanNodeKind.Clear => operations.Stream.GetClear(index).GetHashCode(),
+                EVulkanPrimaryPlanNodeKind.TransformFeedback => operations.Stream.GetTransformFeedback(index).GetHashCode(),
+                EVulkanPrimaryPlanNodeKind.Query => operations.Stream.GetQuery(index).GetHashCode(),
+                EVulkanPrimaryPlanNodeKind.MeshDraw => operations.Stream.GetMeshDraw(index).GetHashCode(),
+                EVulkanPrimaryPlanNodeKind.IndirectDraw => operations.Stream.GetIndirectDraw(index).GetHashCode(),
+                EVulkanPrimaryPlanNodeKind.MeshTaskDispatchIndirectCount => operations.Stream.GetMeshTask(index).GetHashCode(),
+                EVulkanPrimaryPlanNodeKind.ComputeDispatch => operations.Stream.GetComputeDispatch(index).GetHashCode(),
+                EVulkanPrimaryPlanNodeKind.ComputeDispatchIndirect => operations.Stream.GetComputeDispatchIndirect(index).GetHashCode(),
+                EVulkanPrimaryPlanNodeKind.BufferCopy => operations.Stream.GetBufferCopy(index).GetHashCode(),
+                EVulkanPrimaryPlanNodeKind.SubmissionMarker => operations.Stream.GetSubmissionMarker(index).GetHashCode(),
+                EVulkanPrimaryPlanNodeKind.MemoryBarrier => operations.Stream.GetMemoryBarrier(index).GetHashCode(),
+                EVulkanPrimaryPlanNodeKind.PublishFramebufferForSampling => operations.Stream.GetPublishedFramebuffer(index).GetHashCode(),
+                EVulkanPrimaryPlanNodeKind.DlssUpscale => operations.Stream.GetDlssUpscale(index).GetHashCode(),
+                EVulkanPrimaryPlanNodeKind.DlssFrameGeneration => operations.Stream.GetDlssFrameGeneration(index).GetHashCode(),
+                _ => 0,
+            };
+            hash.Add(payloadHash);
             return hash.ToHash();
         }
 
         private static ulong ComputeQueryGeneration(
-            ReadOnlySpan<FrameOp> staticOps,
-            ReadOnlySpan<FrameOp> volatileOps)
+            FrameOperationSequence staticOps,
+            FrameOperationSequence volatileOps)
         {
             FrameOpSignatureHasher hash = new();
             int queryCount = 0;
@@ -609,21 +657,19 @@ namespace XREngine.Rendering.Vulkan
 
         private static void AddQueryGenerationParts(
             ref FrameOpSignatureHasher hash,
-            ReadOnlySpan<FrameOp> ops,
+            FrameOperationSequence ops,
             ref int queryCount)
         {
             int queryBracketDepth = 0;
             for (int i = 0; i < ops.Length; i++)
             {
-                FrameOp op = ops[i];
-                if (op is QueryOp query)
+                ref readonly FrameOperationHeader header = ref ops.GetHeader(i);
+                if (header.OpCode == EVulkanPrimaryPlanNodeKind.Query)
                 {
+                    ref readonly QueryPayload query = ref ops.Stream.GetQuery(i);
                     queryCount++;
                     hash.Add(i);
-                    hash.Add(ComputeFrameOpStructuralSignature(
-                        query,
-                        i,
-                        RenderPacketVolatility.FrameDataOnly));
+                    hash.Add(ComputeFrameOperationFrameDataSignature(ops, i));
 
                     if (query.Operation == ERenderQueryOperation.Begin)
                         queryBracketDepth++;
@@ -639,10 +685,7 @@ namespace XREngine.Rendering.Vulkan
                 if (queryBracketDepth > 0)
                 {
                     hash.Add(i);
-                    hash.Add(ComputeFrameOpStructuralSignature(
-                        op,
-                        i,
-                        RenderPacketVolatility.FrameDataOnly));
+                    hash.Add(ComputeFrameOperationFrameDataSignature(ops, i));
                 }
             }
         }
@@ -766,8 +809,8 @@ namespace XREngine.Rendering.Vulkan
         }
 
         private static ulong ComputeCommandBufferFrameOpContextFingerprint(
-            ReadOnlySpan<FrameOp> ops,
-            FrameOp[] dynamicUiBatchTextOps,
+            FrameOperationSequence ops,
+            FrameOperationSequence dynamicUiBatchTextOps,
             in FrameOpContext fallbackContext)
         {
             FrameOpSignatureHasher hash = new();
@@ -782,25 +825,26 @@ namespace XREngine.Rendering.Vulkan
 
         private static void AddFrameOpContextFingerprints(
             ref FrameOpSignatureHasher hash,
-            ReadOnlySpan<FrameOp> ops)
+            FrameOperationSequence ops)
         {
             hash.Add(ops.Length);
             for (int i = 0; i < ops.Length; i++)
             {
-                hash.Add(ops[i].Context.RecordingFingerprint);
-                hash.Add((int)ops[i].Context.ContextKind);
+                ref readonly FrameOpContext context = ref ops.GetContext(i);
+                hash.Add(context.RecordingFingerprint);
+                hash.Add((int)context.ContextKind);
             }
         }
 
         private static ulong ResolveCommandBufferFrameOpContextId(
-            ReadOnlySpan<FrameOp> ops,
-            ReadOnlySpan<FrameOp> dynamicUiBatchTextOps,
+            FrameOperationSequence ops,
+            FrameOperationSequence dynamicUiBatchTextOps,
             in FrameOpContext fallbackContext)
         {
             if (ops.Length > 0)
-                return ops[0].Context.ContextId;
+                return ops.GetContext(0).ContextId;
             if (dynamicUiBatchTextOps.Length > 0)
-                return dynamicUiBatchTextOps[0].Context.ContextId;
+                return dynamicUiBatchTextOps.GetContext(0).ContextId;
             return fallbackContext.ContextId;
         }
 

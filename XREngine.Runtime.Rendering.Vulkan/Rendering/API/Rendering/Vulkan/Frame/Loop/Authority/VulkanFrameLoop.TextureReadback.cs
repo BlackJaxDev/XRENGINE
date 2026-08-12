@@ -7,7 +7,7 @@ using Buffer = Silk.NET.Vulkan.Buffer;
 namespace XREngine.Rendering.Vulkan;
 
 /// <summary>Owns synchronous native texture readbacks performed during desktop frame policy.</summary>
-internal sealed unsafe partial class VulkanFrameLoop
+internal sealed partial class VulkanFrameLoop
 {
     private const ulong AutoExposureByteCount = sizeof(float);
 
@@ -161,7 +161,7 @@ internal sealed unsafe partial class VulkanFrameLoop
         return true;
     }
 
-    private bool TryReadExposureSample(Image sourceImage, Format sourceFormat, ImageLayout sourceLayout, out float sample, out string diagnostic)
+    private unsafe bool TryReadExposureSample(Image sourceImage, Format sourceFormat, ImageLayout sourceLayout, out float sample, out string diagnostic)
     {
         sample = 0.0f;
         diagnostic = string.Empty;
@@ -226,7 +226,7 @@ internal sealed unsafe partial class VulkanFrameLoop
         }
     }
 
-    private bool TryRecordExposureCopy(Vk api, Image sourceImage, ImageLayout sourceLayout, Buffer stagingBuffer, ulong stagingBufferOffset, out CommandBuffer commandBuffer, out string diagnostic)
+    private unsafe bool TryRecordExposureCopy(Vk api, Image sourceImage, ImageLayout sourceLayout, Buffer stagingBuffer, ulong stagingBufferOffset, out CommandBuffer commandBuffer, out string diagnostic)
     {
         commandBuffer = default;
         diagnostic = string.Empty;
@@ -285,7 +285,7 @@ internal sealed unsafe partial class VulkanFrameLoop
         return false;
     }
 
-    private bool TrySubmitExposureCopyAndWait(
+    private unsafe bool TrySubmitExposureCopyAndWait(
         Vk api,
         CommandBuffer commandBuffer,
         Image sourceImage,
@@ -409,7 +409,7 @@ internal sealed unsafe partial class VulkanFrameLoop
         return false;
     }
 
-    private void DestroyTrackedExposureCommandBuffer(Vk api, ref CommandBuffer commandBuffer)
+    private unsafe void DestroyTrackedExposureCommandBuffer(Vk api, ref CommandBuffer commandBuffer)
     {
         CommandPool pool = _commandRuntime.Pools.PrimaryGraphics;
         if (pool.Handle != 0)

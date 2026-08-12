@@ -12,5 +12,4 @@ internal readonly record struct OpenXrPreparedEyeCommandBufferInput(
     VulkanPreparedResourcePlanStamp ResourcePlanStamp,
     ulong FrameOpsSignature,
     ulong PlannerRevision,
-    CommandChainSchedule? CommandChainSchedule,
     FramePlan? PairedLogicalPlan = null);

@@ -295,16 +295,8 @@ internal sealed unsafe class VulkanPresentationlessTargetDriver :
         renderer.NotifyVulkanFenceCompleted(fence);
 
         byte[] bytes = GC.AllocateUninitializedArray<byte>(checked((int)slot.ReadbackByteCount));
-        if (!renderer.TryMapMemoryAllocation(slot.ReadbackAllocation, 0, slot.ReadbackByteCount, out void* mapped))
+        if (!renderer.TryReadMappedMemory(slot.ReadbackAllocation, 0, slot.ReadbackByteCount, bytes, static (mapped, destination) => mapped.CopyTo(destination)))
             throw new InvalidOperationException("The production Vulkan allocator could not map the presentationless readback staging allocation.");
-        try
-        {
-            new ReadOnlySpan<byte>(mapped, bytes.Length).CopyTo(bytes);
-        }
-        finally
-        {
-            renderer.UnmapMemoryAllocation(slot.ReadbackAllocation);
-        }
         return bytes;
     }
 

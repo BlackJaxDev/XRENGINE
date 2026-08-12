@@ -3,7 +3,7 @@ using Silk.NET.Vulkan;
 namespace XREngine.Rendering.Vulkan;
 
 /// <summary>Owns command artifacts whose cardinality is defined by desktop swapchain images.</summary>
-internal sealed unsafe partial class VulkanCommandRuntime
+internal sealed partial class VulkanCommandRuntime
 {
     /// <summary>Ensures command-owned per-frame storage can address desktop and OpenXR frame-data slots.</summary>
     internal void EnsureFrameDataSlotCapacity(int frameDataSlotCount)

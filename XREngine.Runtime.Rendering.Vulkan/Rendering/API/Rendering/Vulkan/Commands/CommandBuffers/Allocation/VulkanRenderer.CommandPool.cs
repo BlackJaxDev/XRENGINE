@@ -4,7 +4,7 @@ using Silk.NET.Vulkan;
 
 namespace XREngine.Rendering.Vulkan
 {
-    internal sealed unsafe partial class VulkanCommandRuntime
+    internal sealed partial class VulkanCommandRuntime
     {
         private CommandPool commandPool => _commandRuntime.Pools.PrimaryGraphics;
         private CommandPool transferCommandPool => _commandRuntime.Pools.PrimaryTransfer;
@@ -12,7 +12,7 @@ namespace XREngine.Rendering.Vulkan
         private Dictionary<int, CommandPool> ThreadCommandPools => _commandRuntime.Pools.GraphicsByThread;
         private Dictionary<int, CommandPool> ThreadTransferCommandPools => _commandRuntime.Pools.TransferByThread;
 
-        private Result AllocateCommandBuffersHostSynchronized(
+        private unsafe Result AllocateCommandBuffersHostSynchronized(
             ref CommandBufferAllocateInfo allocateInfo,
             CommandBuffer* commandBuffers)
         {
@@ -23,7 +23,7 @@ namespace XREngine.Rendering.Vulkan
                 return Api.AllocateCommandBuffers(DeviceContext.Device, ref allocateInfo, commandBuffers);
         }
 
-        private void FreeCommandBuffersHostSynchronized(
+        private unsafe void FreeCommandBuffersHostSynchronized(
             CommandPool pool,
             uint commandBufferCount,
             CommandBuffer* commandBuffers)
@@ -45,7 +45,7 @@ namespace XREngine.Rendering.Vulkan
                 ResourceRuntime.FramebufferRetirementFrameSlot);
         }
 
-        private void DestroyCommandPoolNativeHostSynchronized(CommandPool pool)
+        private unsafe void DestroyCommandPoolNativeHostSynchronized(CommandPool pool)
         {
             lock (CommandPoolsGate)
                 Api.DestroyCommandPool(DeviceContext.Device, pool, null);
@@ -155,7 +155,7 @@ namespace XREngine.Rendering.Vulkan
             }
         }
 
-        private CommandPool CreateCommandPoolForFamily(uint familyIndex)
+        private unsafe CommandPool CreateCommandPoolForFamily(uint familyIndex)
         {
             CommandPoolCreateInfo poolInfo = new()
             {
@@ -179,7 +179,7 @@ namespace XREngine.Rendering.Vulkan
         }
 
         /// <summary>Creates a sidecar-owned command pool under the renderer lifetime tracker.</summary>
-        internal Result CreateVulkanCommandPoolTracked(
+        internal unsafe Result CreateVulkanCommandPoolTracked(
             ref CommandPoolCreateInfo createInfo,
             out CommandPool pool,
             string owner)
@@ -202,7 +202,7 @@ namespace XREngine.Rendering.Vulkan
         }
 
         /// <summary>Allocates a sidecar command buffer with persistent pool ownership.</summary>
-        internal Result AllocateVulkanCommandBufferTracked(
+        internal unsafe Result AllocateVulkanCommandBufferTracked(
             ref CommandBufferAllocateInfo allocateInfo,
             out CommandBuffer commandBuffer,
             string owner)
@@ -212,7 +212,7 @@ namespace XREngine.Rendering.Vulkan
                 return AllocateVulkanCommandBuffersTracked(ref allocateInfo, commandBufferPtr, owner);
         }
 
-        private Result AllocateVulkanCommandBuffersTracked(
+        private unsafe Result AllocateVulkanCommandBuffersTracked(
             ref CommandBufferAllocateInfo allocateInfo,
             CommandBuffer* commandBuffers,
             string owner)

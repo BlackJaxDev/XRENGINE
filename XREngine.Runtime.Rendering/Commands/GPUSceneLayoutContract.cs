@@ -16,8 +16,6 @@ public static class GPUSceneLayoutContract
     public const int TransformGpuSize = 64;
     public const int BoundsGpuSize = 64;
     public const int MaterialStateGpuSize = 32;
-    public const int CompatibilityCommandSize = 80;
-    public const int CompatibilityCommandColdSize = 32;
     public const int MeshDataEntrySize = 16;
     public const int LodTableEntrySize = 48;
     public const int LodTransitionStateSize = 16;
@@ -50,25 +48,6 @@ public static class GPUSceneLayoutContract
         RequireOffset<MaterialStateGpu>(nameof(MaterialStateGpu.StateClassID), 0);
         RequireOffset<MaterialStateGpu>(nameof(MaterialStateGpu.DescriptorStart), 20);
         RequireOffset<MaterialStateGpu>(nameof(MaterialStateGpu.Flags), 28);
-
-        RequireSize<GPUIndirectRenderCommand>(CompatibilityCommandSize);
-        RequireOffset<GPUIndirectRenderCommand>(nameof(GPUIndirectRenderCommand.BoundingSphere), 0);
-        RequireOffset<GPUIndirectRenderCommand>(nameof(GPUIndirectRenderCommand.MeshID), 16);
-        RequireOffset<GPUIndirectRenderCommand>(nameof(GPUIndirectRenderCommand.RenderDistance), 40);
-        RequireOffset<GPUIndirectRenderCommand>(nameof(GPUIndirectRenderCommand.BoundsID), 72);
-        RequireOffset<GPUIndirectRenderCommand>(nameof(GPUIndirectRenderCommand.Reserved1), 76);
-
-        RequireSize<GPUIndirectRenderCommandHot>(CompatibilityCommandSize);
-        RequireOffset<GPUIndirectRenderCommandHot>(nameof(GPUIndirectRenderCommandHot.BoundingSphere), 0);
-        RequireOffset<GPUIndirectRenderCommandHot>(nameof(GPUIndirectRenderCommandHot.MeshID), 16);
-        RequireOffset<GPUIndirectRenderCommandHot>(nameof(GPUIndirectRenderCommandHot.RenderDistance), 52);
-        RequireOffset<GPUIndirectRenderCommandHot>(nameof(GPUIndirectRenderCommandHot.SourceCommandIndex), 56);
-        RequireOffset<GPUIndirectRenderCommandHot>(nameof(GPUIndirectRenderCommandHot.BoundsID), 76);
-
-        RequireSize<GPUIndirectRenderCommandCold>(CompatibilityCommandColdSize);
-        RequireOffset<GPUIndirectRenderCommandCold>(nameof(GPUIndirectRenderCommandCold.RenderIdentityID), 0);
-        RequireOffset<GPUIndirectRenderCommandCold>(nameof(GPUIndirectRenderCommandCold.RenderDistance), 4);
-        RequireOffset<GPUIndirectRenderCommandCold>(nameof(GPUIndirectRenderCommandCold.BoundsID), 24);
 
         RequireSize<GPUScene.MeshDataEntry>(MeshDataEntrySize);
         RequireSize<GPUScene.LODTableEntry>(LodTableEntrySize);

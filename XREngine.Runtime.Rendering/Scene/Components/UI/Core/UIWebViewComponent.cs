@@ -461,20 +461,11 @@ namespace XREngine.Rendering.UI
         private static unsafe void CopyPixelsToPbo(IntPtr srcPtr, int byteLength, XRDataBuffer<byte> pbo)
         {
             pbo.MapBufferData();
-            var activelyMapping = pbo.ActivelyMapping;
-            for (int i = 0; i < activelyMapping.Count; i++)
+            pbo.TryWriteMapped(bytes =>
             {
-                var apiBuffer = activelyMapping[i];
-                if (apiBuffer is null)
-                    continue;
-
-                var dstPtr = apiBuffer.GetMappedAddress();
-                if (dstPtr is null || !dstPtr.Value.IsValid)
-                    continue;
-
-                // Direct memory copy - no managed array allocation
-                Buffer.MemoryCopy((void*)srcPtr, (void*)dstPtr.Value, byteLength, byteLength);
-            }
+                new ReadOnlySpan<byte>((void*)srcPtr, byteLength).CopyTo(bytes);
+                return true;
+            });
             pbo.UnmapBufferData();
         }
 

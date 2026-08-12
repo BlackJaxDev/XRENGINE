@@ -65,7 +65,10 @@ internal unsafe sealed class VulkanImGuiFontAtlasResources(
             RecordImageUpload(upload.Encoder, upload.CommandBuffer, resources.FontImage, stagingBuffer, (uint)width, (uint)height);
             upload.CompleteAndWait(resources.FontImage, stagingBuffer, "ImGui.FontAtlas.Upload");
 
-            target.DestroyBufferRaw(stagingBuffer, stagingAllocation.Memory);
+            _resourceRuntime.Buffers.Retire(
+                stagingBuffer,
+                stagingAllocation.Memory,
+                "ImGui.FontAtlas.StagingBuffer");
             stagingTracked = false;
             CreateDescriptorResources(target, resources);
             resources.FontReady = true;
@@ -73,7 +76,10 @@ internal unsafe sealed class VulkanImGuiFontAtlasResources(
         catch
         {
             if (stagingTracked)
-                target.DestroyBufferRaw(stagingBuffer, stagingAllocation.Memory);
+                _resourceRuntime.Buffers.Retire(
+                    stagingBuffer,
+                    stagingAllocation.Memory,
+                    "ImGui.FontAtlas.StagingBuffer.CreateFailure");
             DestroyIncompleteFontResources(target, resources);
             throw;
         }
@@ -145,22 +151,18 @@ internal unsafe sealed class VulkanImGuiFontAtlasResources(
             if (result != Result.Success)
                 throw new InvalidOperationException($"Failed to bind ImGui font staging memory ({result}).");
 
-            if (!target.TryMapMemoryAllocation(allocation, 0, size, out void* destination))
+            if (!target.TryWriteMappedMemory(allocation, 0, size, (nint)source, static (destination, state) =>
+                    new ReadOnlySpan<byte>((void*)state, destination.Length).CopyTo(destination)))
                 throw new InvalidOperationException("Failed to map ImGui font staging memory.");
-            try
-            {
-                System.Buffer.MemoryCopy(source, destination, checked((long)size), checked((long)size));
-            }
-            finally
-            {
-                target.UnmapMemoryAllocation(allocation);
-            }
 
             return (buffer, allocation);
         }
         catch
         {
-            target.DestroyBufferRaw(buffer, allocation.Memory);
+            _resourceRuntime.Buffers.Retire(
+                buffer,
+                allocation.Memory,
+                "ImGui.FontAtlas.StagingBuffer.CreateFailure");
             throw;
         }
     }

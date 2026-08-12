@@ -8,7 +8,7 @@ using Semaphore = Silk.NET.Vulkan.Semaphore;
 
 namespace XREngine.Rendering.Vulkan;
 
-internal sealed unsafe partial class VulkanFrameLoop : IVulkanImGuiOutputHost
+internal sealed partial class VulkanFrameLoop : IVulkanImGuiOutputHost
 {
     private readonly VulkanImGuiPlatformViewportRecorder _imguiPlatformViewportRecorder = new();
 
@@ -103,7 +103,7 @@ internal sealed unsafe partial class VulkanFrameLoop : IVulkanImGuiOutputHost
             imageCount,
             viewportId);
 
-    PresentModeKHR[] IVulkanImGuiOutputHost.GetPlatformPresentModes(SurfaceKHR surface)
+    unsafe PresentModeKHR[] IVulkanImGuiOutputHost.GetPlatformPresentModes(SurfaceKHR surface)
     {
         KhrSurface surfaceApi = _outputRuntime.SurfaceApi!;
         uint count = 0;
@@ -133,7 +133,7 @@ internal sealed unsafe partial class VulkanFrameLoop : IVulkanImGuiOutputHost
         return result;
     }
 
-    Result IVulkanImGuiOutputHost.AcquirePlatformImage(
+    unsafe Result IVulkanImGuiOutputHost.AcquirePlatformImage(
         SwapchainKHR swapchain,
         Silk.NET.Vulkan.Semaphore imageAvailable,
         out uint imageIndex)

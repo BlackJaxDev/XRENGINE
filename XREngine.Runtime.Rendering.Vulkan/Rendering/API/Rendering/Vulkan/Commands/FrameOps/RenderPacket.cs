@@ -9,9 +9,6 @@ namespace XREngine.Rendering.Vulkan;
 /// </summary>
 internal sealed class RenderPacket
 {
-    // Kept only for direct construction in isolated diagnostics/tests. Runtime
-    // packet lowering always supplies a frame-publication arena.
-    private RenderPacketPayloadArena? _standalonePayloadArena;
     private RenderPacketPayloadArena? _payloadArena;
     private int _leaseCount;
     private RecordedPacketKey _recordedPacketKey;
@@ -41,49 +38,11 @@ internal sealed class RenderPacket
     {
     }
 
-    internal RenderPacket(
-        RenderViewKey viewKey,
-        int passIndex,
-        int targetIdentity,
-        string targetName,
-        RenderPacketVolatility volatility,
-        ReadOnlyMemory<DrawPacket> draws,
-        ReadOnlyMemory<DispatchPacket> dispatches,
-        DescriptorBindingSnapshot descriptorSnapshot,
-        ResourcePlanSnapshot resourcePlanSnapshot,
-        ulong structuralSignature,
-        ulong frameDataSignature,
-        int sourceStartIndex,
-        int sourceCount,
-        bool dynamicOverlay)
-        => Reset(
-            viewKey,
-            passIndex,
-            targetIdentity,
-            targetName,
-            volatility,
-            draws.Span,
-            dispatches.Span,
-            descriptorSnapshot,
-            resourcePlanSnapshot,
-            structuralSignature,
-            frameDataSignature,
-            sourceStartIndex,
-            sourceCount,
-            dynamicOverlay);
-
     /// <summary>Cold diagnostic text. Worker recording must use <see cref="TargetIdentity"/>.</summary>
     internal string GetDiagnosticTargetName()
         => _payloadArena is null || TargetNameDiagnosticIndex < 0
             ? string.Empty
             : _payloadArena.GetTargetName(TargetNameDiagnosticIndex);
-
-    // Compatibility properties intentionally resolve a range through the arena;
-    // they do not reintroduce packet-owned draw/dispatch arrays.
-    public DrawPacket FirstDraw
-        => DrawCount == 0 ? default : _payloadArena!.GetDraw(DrawStartIndex);
-    public DispatchPacket FirstDispatch
-        => DispatchCount == 0 ? default : _payloadArena!.GetDispatch(DispatchStartIndex);
 
     internal void Reset(
         RenderPacketPayloadArena payloadArena,
@@ -122,42 +81,6 @@ internal sealed class RenderPacket
         SourceStartIndex = sourceStartIndex;
         SourceCount = sourceCount;
         DynamicOverlay = dynamicOverlay;
-    }
-
-    internal void Reset(
-        RenderViewKey viewKey,
-        int passIndex,
-        int targetIdentity,
-        string targetName,
-        RenderPacketVolatility volatility,
-        ReadOnlySpan<DrawPacket> draws,
-        ReadOnlySpan<DispatchPacket> dispatches,
-        DescriptorBindingSnapshot descriptorSnapshot,
-        ResourcePlanSnapshot resourcePlanSnapshot,
-        ulong structuralSignature,
-        ulong frameDataSignature,
-        int sourceStartIndex,
-        int sourceCount,
-        bool dynamicOverlay)
-    {
-        RenderPacketPayloadArena standaloneArena = _standalonePayloadArena ??= new();
-        standaloneArena.ResetForPublication();
-        Reset(
-            standaloneArena,
-            viewKey,
-            passIndex,
-            targetIdentity,
-            targetName,
-            volatility,
-            draws,
-            dispatches,
-            descriptorSnapshot,
-            resourcePlanSnapshot,
-            structuralSignature,
-            frameDataSignature,
-            sourceStartIndex,
-            sourceCount,
-            dynamicOverlay);
     }
 
     internal void Reset(

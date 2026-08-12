@@ -3,7 +3,7 @@ using Silk.NET.Vulkan;
 namespace XREngine.Rendering.Vulkan;
 
 /// <summary>Command-owned pools and primary artifacts for OpenXR eye recording.</summary>
-internal sealed unsafe partial class VulkanCommandRuntime
+internal sealed partial class VulkanCommandRuntime
 {
     private readonly object _openXrEyeCommandPoolsGate = new();
     private readonly CommandPool[] _openXrEyeCommandPools = new CommandPool[2];
@@ -86,7 +86,7 @@ internal sealed unsafe partial class VulkanCommandRuntime
         }
     }
 
-    private CommandPool GetOrCreateOpenXrEyeCommandPool(uint openXrViewIndex)
+    private unsafe CommandPool GetOrCreateOpenXrEyeCommandPool(uint openXrViewIndex)
     {
         int poolIndex = (int)Math.Min(openXrViewIndex, 1U);
         lock (_openXrEyeCommandPoolsGate)
@@ -126,7 +126,7 @@ internal sealed unsafe partial class VulkanCommandRuntime
         }
     }
 
-    internal void DestroyOpenXrEyeCommandPools()
+    internal unsafe void DestroyOpenXrEyeCommandPools()
     {
         lock (_openXrEyeCommandPoolsGate)
             lock (CommandBuffers.OneTimeSubmitGate)

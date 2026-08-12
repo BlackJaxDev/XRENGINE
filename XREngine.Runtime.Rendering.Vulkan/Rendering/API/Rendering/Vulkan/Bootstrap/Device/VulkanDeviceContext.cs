@@ -65,6 +65,8 @@ internal sealed partial class VulkanDeviceContext
         SupportsMultipleGraphicsQueues &&
         SecondaryGraphicsQueue.Handle != 0;
     public ulong NonCoherentAtomSize { get; private set; } = 1UL;
+    /// <summary>Minimum alignment accepted by <c>vkMapMemory</c> for mapped offsets.</summary>
+    public ulong MinMemoryMapAlignment { get; private set; } = 1UL;
     public ulong MinUniformBufferOffsetAlignment { get; private set; } = 1UL;
 
     public Queue GraphicsQueue { get; private set; }
@@ -109,6 +111,7 @@ internal sealed partial class VulkanDeviceContext
         EnabledDeviceExtensions = VulkanDeviceExtensionSet.Empty;
         Capabilities = VulkanDeviceCapabilities.Empty;
         NonCoherentAtomSize = Math.Max(capabilities.Properties.Limits.NonCoherentAtomSize, 1UL);
+        MinMemoryMapAlignment = Math.Max(capabilities.Properties.Limits.MinMemoryMapAlignment, 1UL);
         MinUniformBufferOffsetAlignment = Math.Max(
             capabilities.Properties.Limits.MinUniformBufferOffsetAlignment,
             1UL);
@@ -345,6 +348,7 @@ internal sealed partial class VulkanDeviceContext
         Capabilities = VulkanDeviceCapabilities.Empty;
         Volatile.Write(ref _capabilityPublicationState, 0);
         NonCoherentAtomSize = 1UL;
+        MinMemoryMapAlignment = 1UL;
         MinUniformBufferOffsetAlignment = 1UL;
         CreatedThroughOpenXr = false;
         SupportsMultipleGraphicsQueues = false;

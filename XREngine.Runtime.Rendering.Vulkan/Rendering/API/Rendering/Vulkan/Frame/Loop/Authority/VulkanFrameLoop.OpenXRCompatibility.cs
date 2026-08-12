@@ -3,7 +3,7 @@ using XREngine.Rendering.Resources;
 
 namespace XREngine.Rendering.Vulkan;
 
-internal sealed unsafe partial class VulkanFrameLoop
+internal sealed partial class VulkanFrameLoop
 {
     // OpenXR preparation consumes the same published wrapper generation as the
     // desktop loop. It never reaches through the renderer facade.

@@ -362,14 +362,14 @@ internal unsafe class VkFrameBuffer(
             return fallback;
         }
 
-        Span<bool> writeCapableDepthStencilAttachments = stackalloc bool[signatures.Length];
+        bool[] writeCapableDepthStencilAttachments = new bool[signatures.Length];
         CollectWriteCapableDepthStencilAttachments(
             signatures,
             pass,
             Data.Name!,
             writeCapableDepthStencilAttachments);
 
-        Span<int> matchingIndices = stackalloc int[signatures.Length];
+        int[] matchingIndices = new int[signatures.Length];
         for (int usageIndex = 0; usageIndex < pass.ResourceUsages.Count; usageIndex++)
         {
             RenderPassResourceUsage usage = pass.ResourceUsages[usageIndex];
@@ -994,9 +994,9 @@ internal unsafe class VkFrameBuffer(
         RenderGraphSynchronizationInfo? synchronization)
     {
         FrameBufferAttachmentSignature[] planned = (FrameBufferAttachmentSignature[])_attachmentSignature!.Clone();
-        Span<bool> touchedAttachments = stackalloc bool[planned.Length];
-        Span<bool> writeCapableDepthStencilAttachments = stackalloc bool[planned.Length];
-        Span<int> matchingIndices = stackalloc int[planned.Length];
+        bool[] touchedAttachments = new bool[planned.Length];
+        bool[] writeCapableDepthStencilAttachments = new bool[planned.Length];
+        int[] matchingIndices = new int[planned.Length];
         int touchedAttachmentCount = 0;
         CollectWriteCapableDepthStencilAttachments(
             planned,
@@ -1103,7 +1103,7 @@ internal unsafe class VkFrameBuffer(
         string frameBufferName,
         Span<bool> result)
     {
-        Span<int> matchingIndices = stackalloc int[signatures.Length];
+        int[] matchingIndices = new int[signatures.Length];
         for (int usageIndex = 0; usageIndex < pass.ResourceUsages.Count; usageIndex++)
         {
             RenderPassResourceUsage usage = pass.ResourceUsages[usageIndex];

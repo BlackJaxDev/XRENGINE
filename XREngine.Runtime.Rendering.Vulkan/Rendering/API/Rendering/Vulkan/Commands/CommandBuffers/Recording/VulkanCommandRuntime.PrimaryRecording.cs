@@ -2,190 +2,8 @@ using Silk.NET.Vulkan;
 
 namespace XREngine.Rendering.Vulkan;
 
-internal sealed unsafe partial class VulkanCommandRuntime
+internal sealed partial class VulkanCommandRuntime
 {
-    /// <summary>
-    /// Attempts exact desktop primary reuse from current producer payloads before
-    /// a new frame plan is lowered. The recorded source-order permutation is the
-    /// authority that keeps dynamic UBO slot ordinals identical to the cached
-    /// secondary command buffers.
-    /// </summary>
-    internal bool TryReusePreparedPrimary(
-        in VulkanPreparedPrimaryReuseInput input,
-        out VulkanPrimaryCommandRecordingResult result)
-    {
-        result = default;
-        VulkanPreparedPrimaryAuthority authority = input.Authority;
-        if (input.PrimaryCommandBuffer.Handle == 0 ||
-            !authority.RecordingTarget.IsValid ||
-            input.RenderFrameId == 0UL ||
-            authority.ResourcePlanStamp.PlanningSnapshot.RenderGraphPlan.Revision !=
-                authority.ResourcePlanStamp.ResourcePlannerRevision ||
-            authority.Policy.FreshSerialRecording ||
-            !VulkanPrimaryCommandBufferReuseEnabled ||
-            !CommandChainsEnabledForCurrentRecording ||
-            input.CommandChainSchedule.RequiresFreshPrimary)
-        {
-            return false;
-        }
-
-        CommandChainScheduleCacheIdentity scheduleIdentity =
-            input.CommandChainSchedule.CacheIdentity;
-        int scheduledDynamicOperationCount =
-            authority.Policy.PreserveSwapchainForOverlay
-                ? 0
-                : input.DynamicUiOperations.Length;
-        ulong scheduledDynamicOperationSignature =
-            authority.Policy.PreserveSwapchainForOverlay
-                ? 0UL
-                : input.DynamicUiOperationSignature;
-        if (scheduleIdentity.StaticOperationCount !=
-                input.StaticOperations.Length ||
-            scheduleIdentity.DynamicOperationCount !=
-                scheduledDynamicOperationCount ||
-            scheduleIdentity.StaticOperationSignature !=
-                input.StaticOperationSignature ||
-            scheduleIdentity.DynamicOperationSignature !=
-                scheduledDynamicOperationSignature ||
-            scheduleIdentity.ResourcePlanRevision !=
-                authority.ResourcePlanStamp.ResourcePlannerRevision ||
-            scheduleIdentity.RecordingTarget !=
-                authority.RecordingTargetSnapshot)
-        {
-            return false;
-        }
-
-        PrimaryCommandArtifactOwner? owner = ResolvePreparedPrimaryOwner(
-            input.PrimaryCommandBuffer);
-        if (owner is null || owner.Dirty ||
-            owner.RecordedCommandChainScheduleCacheIdentity != scheduleIdentity ||
-            !owner.TryProjectRecordedOperationOrder(
-                input.StaticOperations,
-                input.DynamicUiOperations,
-                out FrameOp[] orderedStaticOperations,
-                out FrameOp[] orderedDynamicUiOperations))
-        {
-            return false;
-        }
-
-        ReadOnlySpan<FrameOp> reuseStaticOperations =
-            orderedStaticOperations;
-        FrameOpContext fallbackContext = reuseStaticOperations.Length > 0
-            ? reuseStaticOperations[0].Context
-            : orderedDynamicUiOperations.Length > 0
-                ? orderedDynamicUiOperations[0].Context
-                : authority.PresentationSource.Context;
-        ulong frameOpContextFingerprint =
-            ComputeCommandBufferFrameOpContextFingerprint(
-                reuseStaticOperations,
-                orderedDynamicUiOperations,
-                in fallbackContext);
-        if (owner.FrameOpsSignature != input.StaticOperationSignature ||
-            owner.DynamicUiSignature != input.DynamicUiOperationSignature ||
-            owner.DynamicUiOpCount != orderedDynamicUiOperations.Length ||
-            owner.PlannerRevision !=
-                authority.ResourcePlanStamp.ResourcePlannerRevision ||
-            owner.RecordedFrameOpContextFingerprint != frameOpContextFingerprint)
-        {
-            return false;
-        }
-
-        FrameOperationSequence staticOperations =
-            new(orderedStaticOperations);
-        FrameOperationSequence dynamicUiOperations =
-            new(orderedDynamicUiOperations);
-        VulkanComputePreparationResult computePreparation =
-            PrepareComputeFrameOpsForRecording(
-                input.ImageIndex,
-                staticOperations);
-        if (computePreparation.Succeeded)
-        {
-            computePreparation = PrepareComputeFrameOpsForRecording(
-                input.ImageIndex,
-                dynamicUiOperations);
-        }
-        if (!computePreparation.Succeeded)
-            return false;
-
-        ulong cohortGeneration = unchecked((ulong)Interlocked.Increment(
-            ref _primaryReuseCohortGeneration));
-        if (cohortGeneration == 0UL)
-        {
-            cohortGeneration = unchecked((ulong)Interlocked.Increment(
-                ref _primaryReuseCohortGeneration));
-        }
-        if (!TryPreparePrimaryReuseFrameDataCohort(
-                input.ImageIndex,
-                input.ImageIndex,
-                cohortGeneration,
-                input.RenderFrameId,
-                input.CommandChainSchedule,
-                staticOperations,
-                dynamicUiOperations))
-        {
-            return false;
-        }
-
-        ulong frameOpContextId = ResolveCommandBufferFrameOpContextId(
-            reuseStaticOperations,
-            orderedDynamicUiOperations,
-            in fallbackContext);
-        ulong imageLayoutStartSignature =
-            ComputePreparedImageLayoutStartSignature(
-                authority.RecordingTarget,
-                authority.TrackedTargetLayout,
-                authority.ResourcePlanStamp.ResourceAllocationSignature);
-        if (!TryReuseCleanCommandChainPrimaryVariant(
-                input.ImageIndex,
-                cohortGeneration,
-                input.RenderFrameId,
-                input.ImageIndex,
-                input.StaticOperationSignature,
-                frameOpContextFingerprint,
-                frameOpContextId,
-                input.DynamicUiOperationSignature,
-                orderedDynamicUiOperations.Length,
-                authority.ResourcePlanStamp.ResourcePlannerRevision,
-                imageLayoutStartSignature,
-                gpuPipelineProfilingActive: false,
-                commandBufferImageSlot: checked((int)input.ImageIndex),
-                reuseStaticOperations,
-                orderedDynamicUiOperations,
-                dynamicUiOperations,
-                delayDynamicUiSecondaryRecording:
-                    authority.Policy.PreserveSwapchainForOverlay,
-                authority.Policy.PreserveSwapchainForOverlay,
-                requiresTrackedPresentSourceRefresh:
-                    authority.PresentationSource.HasLogicalSource,
-                authority.RecordingTarget.ImageEverPresentedAtRecordStart,
-                input.CommandChainSchedule,
-                authority.RecordingTarget,
-                authority.Policy,
-                out CommandBuffer reusedPrimary,
-                out CommandBuffer reusedDynamicUi,
-                out int reusedDynamicUiCount,
-                out _,
-                out ImageLayout reusedFinalLayout))
-        {
-            return false;
-        }
-
-        owner.LastUsedFrameId = unchecked((ulong)Interlocked.Increment(
-            ref _recordedPrimaryFrameCounter));
-        result = new VulkanPrimaryCommandRecordingResult(
-            EVulkanPrimaryCommandRecordingDisposition.Reused,
-            reusedPrimary,
-            reusedDynamicUi,
-            reusedDynamicUiCount,
-            TextureUploadCommandBuffer: default,
-            TextureUploadCommandPool: default,
-            reusedFinalLayout,
-            owner.RecordedSwapchainWriteCount,
-            Volatile.Read(ref CommandBuffers.DirtyGeneration),
-            Reason: null);
-        return true;
-    }
-
     /// <summary>
     /// Records one primary command buffer exclusively from a sealed frame plan
     /// and frozen output/planner observations.
@@ -204,7 +22,8 @@ internal sealed unsafe partial class VulkanCommandRuntime
 
         CommandBuffer uploadCommandBuffer = default;
         CommandPool uploadCommandPool = default;
-        FrameOp[] uploadOperations = input.TextureUploadOperations ?? [];
+        FrameOperationSequence uploadOperations =
+            input.FramePlan.GetNativeTextureUploadOperationsForRecording();
         if (uploadOperations.Length > 0 &&
             !TryRecordTextureUploadCommandBuffer(
                 input.ImageIndex,
@@ -218,16 +37,14 @@ internal sealed unsafe partial class VulkanCommandRuntime
 
         FrameOperationSequence operations = input.LogicalViewId == 0
             ? input.FramePlan.GetNativeStaticOperationsForRecording()
-            : input.FramePlan.GetNativeStaticOperationsForLogicalView(
-                input.LogicalViewId,
-                input.NativeOperationsOverride ?? []);
+            : input.LogicalViewOperationsOverride is { } logicalViewOperations
+                ? new FrameOperationSequence(logicalViewOperations)
+                : input.FramePlan.GetNativeStaticOperationsForLogicalView(input.LogicalViewId);
 
         PrimaryCommandArtifactOwner? owner = ResolvePreparedPrimaryOwner(
             input.PrimaryCommandBuffer);
-        FrameOp[] dynamicUiOperations = input.DynamicUiOperations ?? [];
         FrameOperationSequence sealedDynamicUiOperations =
             input.FramePlan.GetNativeDynamicOverlayOperationsForRecording();
-        ReadOnlySpan<FrameOp> reuseStaticOperations = operations.AsSpan();
         if (owner is not null &&
             VulkanPrimaryCommandBufferReuseEnabled &&
             CommandChainsEnabledForCurrentRecording &&
@@ -240,19 +57,19 @@ internal sealed unsafe partial class VulkanCommandRuntime
                 operations,
                 sealedDynamicUiOperations))
         {
-            FrameOpContext fallbackContext = reuseStaticOperations.Length > 0
-                ? reuseStaticOperations[0].Context
-                : dynamicUiOperations.Length > 0
-                    ? dynamicUiOperations[0].Context
+            FrameOpContext fallbackContext = operations.Length > 0
+                ? operations.GetContext(0)
+                : sealedDynamicUiOperations.Length > 0
+                    ? sealedDynamicUiOperations.GetContext(0)
                     : input.PresentationSource.Context;
             ulong frameOpContextFingerprint =
                 ComputeCommandBufferFrameOpContextFingerprint(
-                    reuseStaticOperations,
-                    dynamicUiOperations,
+                    operations,
+                    sealedDynamicUiOperations,
                     in fallbackContext);
             ulong frameOpContextId = ResolveCommandBufferFrameOpContextId(
-                reuseStaticOperations,
-                dynamicUiOperations,
+                operations,
+                sealedDynamicUiOperations,
                 in fallbackContext);
             ulong imageLayoutStartSignature = ComputePreparedImageLayoutStartSignature(in input);
             if (TryReuseCleanCommandChainPrimaryVariant(
@@ -269,8 +86,8 @@ internal sealed unsafe partial class VulkanCommandRuntime
                     imageLayoutStartSignature,
                     gpuPipelineProfilingActive,
                     commandBufferImageSlot: checked((int)input.ImageIndex),
-                    reuseStaticOperations,
-                    dynamicUiOperations,
+                    operations,
+                    sealedDynamicUiOperations,
                     sealedDynamicUiOperations,
                     delayDynamicUiSecondaryRecording:
                         input.Policy.PreserveSwapchainForOverlay,
@@ -300,7 +117,7 @@ internal sealed unsafe partial class VulkanCommandRuntime
             }
         }
 
-        if (owner is not null && dynamicUiOperations.Length > 0 &&
+        if (owner is not null && sealedDynamicUiOperations.Length > 0 &&
             !RecordDynamicUiBatchTextSecondaryCommandBuffer(
                 input.ImageIndex,
                 owner,
@@ -363,7 +180,12 @@ internal sealed unsafe partial class VulkanCommandRuntime
                 uploadCommandPool);
 
         if (owner is not null)
-            PublishRecordedPrimaryOwner(owner, in input, operations, dynamicUiOperations, ref context);
+            PublishRecordedPrimaryOwner(
+                owner,
+                in input,
+                operations,
+                sealedDynamicUiOperations,
+                ref context);
 
         return new VulkanPrimaryCommandRecordingResult(
             EVulkanPrimaryCommandRecordingDisposition.Recorded,
@@ -486,27 +308,29 @@ internal sealed unsafe partial class VulkanCommandRuntime
         PrimaryCommandArtifactOwner owner,
         in VulkanPreparedPrimaryCommandInput input,
         FrameOperationSequence operations,
-        FrameOp[] dynamicUiOperations,
+        FrameOperationSequence dynamicUiOperations,
         scoped ref VulkanCommandRecordingContext context)
     {
         FrameOpContext fallbackContext = operations.Length > 0
-            ? operations[0].Context
+            ? operations.GetContext(0)
             : dynamicUiOperations.Length > 0
-                ? dynamicUiOperations[0].Context
+                ? dynamicUiOperations.GetContext(0)
                 : input.PresentationSource.Context;
         FrameOpSignatureHasher contextHash = new();
         contextHash.Add(0x434D444354584654UL);
         contextHash.Add(operations.Length);
         for (int operationIndex = 0; operationIndex < operations.Length; operationIndex++)
         {
-            contextHash.Add(operations[operationIndex].Context.RecordingFingerprint);
-            contextHash.Add((int)operations[operationIndex].Context.ContextKind);
+            FrameOpContext operationContext = operations.GetContext(operationIndex);
+            contextHash.Add(operationContext.RecordingFingerprint);
+            contextHash.Add((int)operationContext.ContextKind);
         }
         contextHash.Add(dynamicUiOperations.Length);
         for (int operationIndex = 0; operationIndex < dynamicUiOperations.Length; operationIndex++)
         {
-            contextHash.Add(dynamicUiOperations[operationIndex].Context.RecordingFingerprint);
-            contextHash.Add((int)dynamicUiOperations[operationIndex].Context.ContextKind);
+            FrameOpContext operationContext = dynamicUiOperations.GetContext(operationIndex);
+            contextHash.Add(operationContext.RecordingFingerprint);
+            contextHash.Add((int)operationContext.ContextKind);
         }
         if (operations.Length == 0 && dynamicUiOperations.Length == 0)
             contextHash.Add(fallbackContext.RecordingFingerprint);
@@ -521,9 +345,9 @@ internal sealed unsafe partial class VulkanCommandRuntime
         owner.PreserveSwapchainForOverlay = input.Policy.PreserveSwapchainForOverlay;
         owner.RecordedFrameOpContextFingerprint = contextHash.ToHash();
         owner.RecordedFrameOpContextId = operations.Length > 0
-            ? operations[0].Context.ContextId
+            ? operations.GetContext(0).ContextId
             : dynamicUiOperations.Length > 0
-                ? dynamicUiOperations[0].Context.ContextId
+                ? dynamicUiOperations.GetContext(0).ContextId
                 : fallbackContext.ContextId;
         owner.RecordedSwapchainImageEverPresented =
             input.RecordingTarget.ImageEverPresentedAtRecordStart;
@@ -546,7 +370,7 @@ internal sealed unsafe partial class VulkanCommandRuntime
             owner.CaptureRecordedOperationOrder(input.FramePlan);
         else
             owner.ClearRecordedOperationOrder();
-        ReadOnlySpan<FrameOp> staticOperations = operations.AsSpan();
+        FrameOperationSequence staticOperations = operations;
         CommandBufferGenerationDomains generations = CaptureCommandBufferGenerationDomains(
             input.ImageIndex,
             input.FramePlan.StaticOperationSignature,
@@ -581,9 +405,9 @@ internal sealed unsafe partial class VulkanCommandRuntime
                 schedule.CacheIdentity;
             owner.CommandChainPrimaryGroupCount = schedule.Groups.Length;
             owner.CommandChainPrimarySkeletonSignature =
-                ComputeCommandChainPrimarySkeletonSignature(staticOperations);
+                ComputeCommandChainPrimarySkeletonSignature(staticOperations.Stream);
             owner.AllPreparedDrawBindingsUseSecondaryBuffers =
-                AreAllPreparedDrawBindingsSecondaryOwned(schedule, staticOperations);
+                AreAllPreparedDrawBindingsSecondaryOwned(schedule, staticOperations.Stream);
             owner.RecordedDependencySignature =
                 CaptureCommandChainPrimaryPreparedBindingDependencies(
                     dependencySignature,
@@ -708,27 +532,27 @@ internal sealed unsafe partial class VulkanCommandRuntime
             return false;
         }
 
-        IReadOnlyList<RenderGraph.VulkanBarrierPlanner.PlannedImageBarrier> imageBarriers =
+        ReadOnlySpan<RenderGraph.VulkanFrozenImageBarrier> imageBarriers =
             input.ResourcePlanStamp.PlanningSnapshot.RenderGraphPlan.Barriers.ImageBarriers;
-        for (int barrierIndex = 0; barrierIndex < imageBarriers.Count; barrierIndex++)
+        for (int barrierIndex = 0; barrierIndex < imageBarriers.Length; barrierIndex++)
             if (imageBarriers[barrierIndex].NativeImage.Handle == 0)
             {
                 reason =
-                    $"frame-plan precondition failed: frozen barrier resource '{imageBarriers[barrierIndex].ResourceName}' is not allocated";
+                    $"frame-plan precondition failed: frozen barrier resource id={imageBarriers[barrierIndex].ResourceId.Value} is not allocated";
                 return false;
             }
 
-        IReadOnlyList<RenderGraph.VulkanBarrierPlanner.PlannedBufferBarrier> bufferBarriers =
+        ReadOnlySpan<RenderGraph.VulkanFrozenBufferBarrier> bufferBarriers =
             input.ResourcePlanStamp.PlanningSnapshot.RenderGraphPlan.Barriers.BufferBarriers;
-        for (int barrierIndex = 0; barrierIndex < bufferBarriers.Count; barrierIndex++)
+        for (int barrierIndex = 0; barrierIndex < bufferBarriers.Length; barrierIndex++)
         {
-            RenderGraph.VulkanBarrierPlanner.PlannedBufferBarrier barrier =
+            RenderGraph.VulkanFrozenBufferBarrier barrier =
                 bufferBarriers[barrierIndex];
             if (barrier.NativeBuffer.Handle != 0 && barrier.NativeSize != 0)
                 continue;
 
             reason =
-                $"frame-plan precondition failed: frozen buffer barrier resource '{barrier.ResourceName}' has no native binding";
+                $"frame-plan precondition failed: frozen buffer barrier resource id={barrier.ResourceId.Value} has no native binding";
             return false;
         }
 
