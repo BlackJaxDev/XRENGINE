@@ -16,7 +16,8 @@ namespace XREngine.Rendering.Vulkan
             attempt.ImageIndex = 0;
             attempt.AcquireSemaphore =
                 _commandRuntime.Synchronization.acquireBridgeSemaphores![attempt.FrameSlot];
-            ulong acquireTimeoutNanoseconds = attempt.InteractiveResize
+            bool xrOwnsFrameDeadline = RuntimeRenderingHostServices.Presentation.IsOpenXRActive;
+            ulong acquireTimeoutNanoseconds = attempt.InteractiveResize || xrOwnsFrameDeadline
                 ? InteractiveResizeAcquireTimeoutNanoseconds
                 : BlockingAcquireTimeoutNanoseconds;
 
@@ -136,7 +137,8 @@ namespace XREngine.Rendering.Vulkan
                 case Result.Timeout:
                     return HandleDesktopAcquireUnavailable(
                         ref attempt,
-                        in acquireOutcome);
+                        in acquireOutcome,
+                        xrOwnsFrameDeadline);
                 default:
                     Debug.VulkanWarningEvery(
                         $"Vulkan.Frame.{GetHashCode()}.AcquireFailure.{(int)attempt.AcquireResult}",
@@ -160,7 +162,8 @@ namespace XREngine.Rendering.Vulkan
 
         private EDesktopFrameFlow HandleDesktopAcquireUnavailable(
             ref VulkanFrameAttempt attempt,
-            in VulkanDesktopAcquireOutcome outcome)
+            in VulkanDesktopAcquireOutcome outcome,
+            bool xrOwnsFrameDeadline)
         {
             EDesktopFrameReason reason = outcome.Reason switch
             {
@@ -176,16 +179,22 @@ namespace XREngine.Rendering.Vulkan
                     attempt.InteractiveResize,
                     out int observedCount);
 
-            if (attempt.InteractiveResize)
+            if (attempt.InteractiveResize || xrOwnsFrameDeadline)
             {
                 Debug.VulkanEvery(
-                    $"Vulkan.Frame.{GetHashCode()}.InteractiveAcquireNotReady",
+                    "Vulkan.Frame.NonBlockingAcquireNotReady",
                     TimeSpan.FromMilliseconds(500),
-                    "[Vulkan] AcquireNextImage returned {0} during interactive resize; skipping this repaint tick.",
-                    attempt.AcquireResult);
+                    "[Vulkan] AcquireNextImage returned {0} during {1}; deferring desktop output without blocking the XR/resize critical path.",
+                    attempt.AcquireResult,
+                    xrOwnsFrameDeadline ? "an XR-owned frame" : "interactive resize");
                 DrainSkippedResizeFrameOps(
-                    $"AcquireNextImage returned {attempt.AcquireResult} during interactive resize");
-                MarkSkippedResizeFrameObserved(attempt.StartTimestamp);
+                    xrOwnsFrameDeadline
+                        ? "Nonblocking desktop acquisition was unavailable during an XR-owned frame"
+                        : "Nonblocking desktop acquisition was unavailable during interactive resize");
+                if (attempt.InteractiveResize)
+                    MarkSkippedResizeFrameObserved(attempt.StartTimestamp);
+                RuntimeRenderingHostServices.Presentation.RecordRenderFrameOutputWork(
+                    new FrameOutputWorkTelemetry(CpuBudgetDeferrals: 1));
                 attempt.Stop(reason);
                 return EDesktopFrameFlow.Stop;
             }

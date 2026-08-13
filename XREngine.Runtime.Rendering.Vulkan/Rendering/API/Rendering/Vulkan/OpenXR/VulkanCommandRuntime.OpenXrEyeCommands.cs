@@ -129,7 +129,7 @@ internal sealed partial class VulkanCommandRuntime
     internal unsafe void DestroyOpenXrEyeCommandPools()
     {
         lock (_openXrEyeCommandPoolsGate)
-            lock (CommandBuffers.OneTimeSubmitGate)
+            lock (CommandBuffers.SubmissionStateGate)
             {
                 for (int index = 0; index < _openXrEyeCommandPools.Length; index++)
                 {

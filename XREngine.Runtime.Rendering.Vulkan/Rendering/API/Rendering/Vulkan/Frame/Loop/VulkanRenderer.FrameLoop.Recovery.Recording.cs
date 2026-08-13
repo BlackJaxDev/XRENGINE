@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 using Silk.NET.Vulkan;
 
 namespace XREngine.Rendering.Vulkan
@@ -434,6 +435,55 @@ namespace XREngine.Rendering.Vulkan
                     ex.GetType().Name,
                     ex.Message);
                 return false;
+            }
+        }
+
+        private bool TryRecordRejectedDesktopDynamicTextOverlay(
+            ref VulkanFrameAttempt attempt,
+            CommandBuffer secondaryCommandBuffer,
+            int operationCount,
+            CommandBuffer predecessorCommandBuffer,
+            out CommandBuffer overlayCommandBuffer)
+        {
+            long stageStartTimestamp = Stopwatch.GetTimestamp();
+            bool recorded = false;
+            overlayCommandBuffer = default;
+            try
+            {
+                recorded = TryRecordDesktopDynamicTextOverlayCommandBuffer(
+                    attempt.ImageIndex,
+                    secondaryCommandBuffer,
+                    operationCount,
+                    ImageLayout.PresentSrcKhr,
+                    predecessorCommandBuffer,
+                    out overlayCommandBuffer);
+                return recorded;
+            }
+            catch (Exception ex)
+            {
+                overlayCommandBuffer = default;
+                Debug.VulkanWarningEvery(
+                    "Vulkan.Frame.RecoveryDynamicTextOverlayFailed",
+                    TimeSpan.FromSeconds(1),
+                    "[Vulkan] Rejected-frame dynamic text recovery overlay failed; presenting the remaining recovery chain instead. {0}: {1}",
+                    ex.GetType().Name,
+                    ex.Message);
+                return false;
+            }
+            finally
+            {
+                long elapsedTicks =
+                    Stopwatch.GetTimestamp() - stageStartTimestamp;
+                TimeSpan elapsed =
+                    Stopwatch.GetElapsedTime(stageStartTimestamp);
+                attempt.Timing.RecordDynamicUiTextOverlay += elapsed;
+                attempt.Timing.RecordCommandBuffer += elapsed;
+                RecordOverlayFrameOutput(
+                    EFrameOutputKind.DynamicTextOverlay,
+                    "Vulkan rejected-frame dynamic text overlay",
+                    recorded,
+                    recorded ? 1 : 0,
+                    elapsedTicks);
             }
         }
 

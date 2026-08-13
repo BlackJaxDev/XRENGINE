@@ -33,6 +33,9 @@ internal sealed partial class VulkanDeviceContext
     /// its renderer composition root, defines whether new Vulkan work is legal.
     /// </summary>
     public VulkanDeviceStateMachine StateMachine { get; } = new();
+    /// <summary>Device-wide admission that excludes queue calls while vkDeviceWaitIdle runs.</summary>
+    internal ReaderWriterLockSlim QueueAdmissionGate { get; } =
+        new(LockRecursionPolicy.NoRecursion);
 
     public VulkanDeviceExtensionFunctions ExtensionFunctions { get; } = new();
     public VulkanDeviceMutableCapabilities MutableCapabilities { get; } = new();

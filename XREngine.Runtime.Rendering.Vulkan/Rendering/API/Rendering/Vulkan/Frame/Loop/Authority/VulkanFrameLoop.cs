@@ -25,6 +25,17 @@ internal sealed partial class VulkanFrameLoop
     private readonly VulkanFrameTelemetry _telemetry;
     private readonly IVulkanRendererTargetDriver _targetDriver;
     internal VulkanMeshOperationRequestQueue MeshOperationRequests { get; } = new();
+    private readonly VulkanMeshRenderRequest[] _meshOperationRequestScratch =
+        new VulkanMeshRenderRequest[VulkanMeshOperationRequestQueue.Capacity];
+    // Visibility sorting is allowed to reorder the request cohort every frame.
+    // Key warm preparation by the captured compatibility identity rather than by
+    // its transient queue index, otherwise camera motion repeatedly classifies
+    // already-prepared Sponza meshes as cold work.
+    private const int MaxWarmMeshPreparationSignatures =
+        VulkanMeshOperationRequestQueue.Capacity * 4;
+    private readonly HashSet<ulong> _meshOperationWarmPreparationSignatures =
+        new(MaxWarmMeshPreparationSignatures);
+    private int _meshOperationPreparationCursor;
     private VulkanImGuiBackend? _imguiBackend;
     private readonly VulkanImGuiOverlayCommandRecorder _imguiOverlayRecorder = new();
     private readonly DesktopFrameActivityState _activity = new();

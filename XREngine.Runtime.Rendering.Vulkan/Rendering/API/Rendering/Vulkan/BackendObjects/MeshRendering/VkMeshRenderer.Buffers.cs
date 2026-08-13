@@ -59,6 +59,7 @@ internal unsafe partial class VkMeshRenderer
 			PublishCachedBufferResourceFingerprint();
 			if (structuralBindingsChanged)
 			{
+				BumpPreparationCompatibilityRevision();
 				_buffersDirty = true;
 				_descriptorDirty = true;
 				_vertexInputStateDirty = true;
@@ -497,6 +498,7 @@ internal unsafe partial class VkMeshRenderer
 	{
 		lock (_bufferStateSync)
 		{
+			BumpPreparationCompatibilityRevision();
 			_buffersDirty = true;
 			_pipelineDirty = true;
 			_descriptorDirty = true;

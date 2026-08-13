@@ -598,6 +598,11 @@ namespace XREngine.Rendering.Vulkan
             batchScratch.EnsureNonGraphicsSecondaryCapacity(count);
             CommandBuffer[] secondaryBuffers = batchScratch.NonGraphicsSecondaryBuffers;
             CommandChain[] secondaryChains = batchScratch.NonGraphicsSecondaryChains;
+            bool persistentWorkersReady = TryPrepareNonGraphicsRecordingWorkers(
+                count,
+                imageIndex,
+                out CommandChainRecordingWorkerState[] workers,
+                out int workerCount);
 
             try
             {
@@ -605,7 +610,25 @@ namespace XREngine.Rendering.Vulkan
                 {
                     int opIndex = startIndex + i;
                     CommandChain chain = scheduledCache[scheduledKeysByOpIndex[opIndex]];
-                    if (!TryEnsureMutableCommandChainSecondaryCommandBuffer(chain, imageIndex, executedCommandChainSecondaryHandles, out CommandBuffer secondary))
+                    int workerIndex = persistentWorkersReady
+                        ? ResolveCommandChainRecordingWorkerIndex(
+                            chain.Key,
+                            workerCount)
+                        : -1;
+                    CommandBuffer secondary;
+                    bool bufferReady = persistentWorkersReady
+                        ? TryEnsureMutableCommandChainSecondaryCommandBufferFromWorkerPool(
+                            chain,
+                            imageIndex,
+                            workers[workerIndex].Arena,
+                            executedCommandChainSecondaryHandles,
+                            out secondary)
+                        : TryEnsureMutableCommandChainSecondaryCommandBuffer(
+                            chain,
+                            imageIndex,
+                            executedCommandChainSecondaryHandles,
+                            out secondary);
+                    if (!bufferReady)
                         throw new InvalidOperationException("Failed to allocate Vulkan primary-owned secondary command buffer.");
 
                     secondaryChains[i] = chain;
@@ -616,92 +639,14 @@ namespace XREngine.Rendering.Vulkan
                 {
                     CommandChain chain = secondaryChains[relativeIndex];
                     CommandBuffer secondary = secondaryBuffers[relativeIndex];
-                    RenderPacket packet = chain.PacketSnapshot!;
-                    int sourceIndex = packet.SourceStartIndex;
-                    ref readonly FrameOperationHeader header = ref ops.GetHeader(sourceIndex);
-
                     try
                     {
-                        // Fixed explicit memory barriers have no mutable native
-                        // payload. Their schedule identity and mask are the full
-                        // prepared key, so retain the executable artifact.
-                        ulong preparedSignature = ComputeNonGraphicsSecondaryPreparedSignature(ops, sourceIndex);
-                        if (header.OpCode == EVulkanPrimaryPlanNodeKind.MemoryBarrier &&
-                            chain.StructuralSignature == preparedSignature &&
-                            chain.RecordedArtifact.IsExecutable)
-                            return;
-
-                        if (header.OpCode is EVulkanPrimaryPlanNodeKind.ComputeDispatch or EVulkanPrimaryPlanNodeKind.ComputeDispatchIndirect &&
-                            TryCapturePreparedNonGraphicsComputeKey(ops, sourceIndex, chain, out VulkanPreparedCommandChainKey currentKey) &&
-                            chain.PreparedKey.IsComplete &&
-                            chain.PreparedKey.Matches(in currentKey) &&
-                            chain.RecordedArtifact.IsExecutable)
-                            return;
-
-                        MarkCommandChainSecondaryCommandBufferInvalid(chain);
-                        ResetVulkanCommandBufferTracked(secondary);
-
-                        CommandBufferBeginInfo beginInfo = new()
-                        {
-                            SType = StructureType.CommandBufferBeginInfo,
-                            Flags = CommandBufferUsageFlags.SimultaneousUseBit
-                        };
-
-                        CommandBufferInheritanceInfo inheritanceInfo = new()
-                        {
-                            SType = StructureType.CommandBufferInheritanceInfo,
-                            RenderPass = default,
-                            Subpass = 0,
-                            Framebuffer = default,
-                            OcclusionQueryEnable =
-                                queryInheritance.OcclusionQueryEnable
-                                    ? Vk.True
-                                    : Vk.False,
-                            QueryFlags = queryInheritance.QueryFlags,
-                            PipelineStatistics =
-                                queryInheritance.PipelineStatistics
-                        };
-
-                        beginInfo.PInheritanceInfo = &inheritanceInfo;
-
-                        ThrowIfVulkanDeviceOperationNotAdmitted("vkBeginCommandBuffer.CommandChainSecondary");
-                        if (Api!.BeginCommandBuffer(secondary, ref beginInfo) != Result.Success)
-                            throw new Exception("Failed to begin Vulkan primary-owned secondary command buffer.");
-
-                        ResetCommandBufferBindState(secondary);
-                        MarkCommandChainSecondaryRecording(chain, secondary);
-                        CommandBufferRecordingScratch recordingScratch =
-                            _commandBufferRecordingScratch.Value!;
-                        recordingScratch.PreparedComputePayload = null;
-                        int opIndex = packet.SourceStartIndex;
-                        RecordFrameOpInSecondary(
-                            secondary,
-                            imageIndex,
+                        RecordPreparedNonGraphicsSecondary(
                             ops,
-                            opIndex,
-                            ResolveCommandChainInlineOperationIndex(ops.Stream, opIndex),
-                            packet);
-                        if (header.OpCode is EVulkanPrimaryPlanNodeKind.ComputeDispatch or EVulkanPrimaryPlanNodeKind.ComputeDispatchIndirect)
-                            chain.PreparedComputePayload =
-                                recordingScratch.PreparedComputePayload;
-
-                        if (EndCommandBufferTracked(secondary) != Result.Success)
-                            throw new Exception("Failed to end Vulkan primary-owned secondary command buffer.");
-
-                        chain.StructuralSignature = preparedSignature;
-                        if (header.OpCode is EVulkanPrimaryPlanNodeKind.ComputeDispatch or EVulkanPrimaryPlanNodeKind.ComputeDispatchIndirect &&
-                            TryCapturePreparedNonGraphicsComputeKey(ops, sourceIndex, chain, out VulkanPreparedCommandChainKey preparedKey))
-                        {
-                            VulkanPreparedCommandChainAuthority authority =
-                                chain.PreparedAuthority is { } currentAuthority &&
-                                currentAuthority.PreparedKey.Matches(in preparedKey)
-                                    ? currentAuthority
-                                    : new VulkanPreparedCommandChainAuthority(preparedKey);
-                            PublishPreparedCommandChainAuthority(chain, authority);
-                        }
-                        else if (header.OpCode is EVulkanPrimaryPlanNodeKind.ComputeDispatch or EVulkanPrimaryPlanNodeKind.ComputeDispatchIndirect)
-                            chain.PreparedKey = VulkanPreparedCommandChainKey.Incomplete;
-                        MarkCommandChainSecondaryCommandBufferRecorded(chain);
+                            imageIndex,
+                            chain,
+                            secondary,
+                            queryInheritance);
                     }
                     catch (Exception ex)
                     {
@@ -713,8 +658,23 @@ namespace XREngine.Rendering.Vulkan
                     }
                 }
 
-                for (int i = 0; i < count; i++)
-                    RecordSecondaryAt(i);
+                if (persistentWorkersReady)
+                {
+                    DispatchNonGraphicsRecordingWorkers(
+                        workers,
+                        workerCount,
+                        ops,
+                        imageIndex,
+                        secondaryChains,
+                        secondaryBuffers,
+                        count,
+                        queryInheritance);
+                }
+                else
+                {
+                    for (int i = 0; i < count; i++)
+                        RecordSecondaryAt(i);
+                }
 
                 fixed (CommandBuffer* secondaryPtr = secondaryBuffers)
                     CmdExecuteCommandsTracked(primaryCommandBuffer, (uint)count, secondaryPtr);
@@ -757,6 +717,125 @@ namespace XREngine.Rendering.Vulkan
                     break; }
             }
             return hash.ToHash();
+        }
+
+        /// <summary>
+        /// Shared encoder for serial and persistent-worker non-graphics packet
+        /// classes. The caller must own the command pool that supplied
+        /// <paramref name="secondary"/> for the duration of this call.
+        /// </summary>
+        private unsafe void RecordPreparedNonGraphicsSecondary(
+            FrameOperationSequence operations,
+            uint imageIndex,
+            CommandChain chain,
+            CommandBuffer secondary,
+            VulkanQuerySecondaryInheritanceContract queryInheritance)
+        {
+            RenderPacket packet = chain.PacketSnapshot ??
+                throw new InvalidOperationException("A non-graphics packet must be sealed before secondary recording.");
+            int sourceIndex = packet.SourceStartIndex;
+            ref readonly FrameOperationHeader header = ref operations.GetHeader(sourceIndex);
+
+            ulong preparedSignature = ComputeNonGraphicsSecondaryPreparedSignature(
+                operations,
+                sourceIndex);
+            if (header.OpCode == EVulkanPrimaryPlanNodeKind.MemoryBarrier &&
+                chain.StructuralSignature == preparedSignature &&
+                chain.RecordedArtifact.IsExecutable)
+            {
+                return;
+            }
+
+            if (header.OpCode is EVulkanPrimaryPlanNodeKind.ComputeDispatch or
+                    EVulkanPrimaryPlanNodeKind.ComputeDispatchIndirect &&
+                TryCapturePreparedNonGraphicsComputeKey(
+                    operations,
+                    sourceIndex,
+                    chain,
+                    out VulkanPreparedCommandChainKey currentKey) &&
+                chain.PreparedKey.IsComplete &&
+                chain.PreparedKey.Matches(in currentKey) &&
+                chain.RecordedArtifact.IsExecutable)
+            {
+                return;
+            }
+
+            MarkCommandChainSecondaryCommandBufferInvalid(chain);
+            Result resetResult = ResetVulkanCommandBufferTracked(secondary);
+            if (resetResult != Result.Success)
+                throw new InvalidOperationException(
+                    $"Failed to reset Vulkan non-graphics secondary command buffer: {resetResult}.");
+
+            CommandBufferInheritanceInfo inheritanceInfo = new()
+            {
+                SType = StructureType.CommandBufferInheritanceInfo,
+                RenderPass = default,
+                Subpass = 0,
+                Framebuffer = default,
+                OcclusionQueryEnable = queryInheritance.OcclusionQueryEnable
+                    ? Vk.True
+                    : Vk.False,
+                QueryFlags = queryInheritance.QueryFlags,
+                PipelineStatistics = queryInheritance.PipelineStatistics,
+            };
+            CommandBufferBeginInfo beginInfo = new()
+            {
+                SType = StructureType.CommandBufferBeginInfo,
+                Flags = CommandBufferUsageFlags.SimultaneousUseBit,
+                PInheritanceInfo = &inheritanceInfo,
+            };
+
+            ThrowIfVulkanDeviceOperationNotAdmitted(
+                "vkBeginCommandBuffer.CommandChainSecondary");
+            if (Api!.BeginCommandBuffer(secondary, ref beginInfo) != Result.Success)
+                throw new InvalidOperationException(
+                    "Failed to begin Vulkan non-graphics secondary command buffer.");
+
+            ResetCommandBufferBindState(secondary);
+            MarkCommandChainSecondaryRecording(chain, secondary);
+            CommandBufferRecordingScratch recordingScratch =
+                _commandBufferRecordingScratch.Value!;
+            recordingScratch.PreparedComputePayload = null;
+            RecordFrameOpInSecondary(
+                secondary,
+                imageIndex,
+                operations,
+                sourceIndex,
+                ResolveCommandChainInlineOperationIndex(operations.Stream, sourceIndex),
+                packet);
+            if (header.OpCode is EVulkanPrimaryPlanNodeKind.ComputeDispatch or
+                EVulkanPrimaryPlanNodeKind.ComputeDispatchIndirect)
+            {
+                chain.PreparedComputePayload = recordingScratch.PreparedComputePayload;
+            }
+
+            if (EndCommandBufferTracked(secondary) != Result.Success)
+                throw new InvalidOperationException(
+                    "Failed to end Vulkan non-graphics secondary command buffer.");
+
+            chain.StructuralSignature = preparedSignature;
+            if (header.OpCode is EVulkanPrimaryPlanNodeKind.ComputeDispatch or
+                    EVulkanPrimaryPlanNodeKind.ComputeDispatchIndirect &&
+                TryCapturePreparedNonGraphicsComputeKey(
+                    operations,
+                    sourceIndex,
+                    chain,
+                    out VulkanPreparedCommandChainKey preparedKey))
+            {
+                VulkanPreparedCommandChainAuthority authority =
+                    chain.PreparedAuthority is { } currentAuthority &&
+                    currentAuthority.PreparedKey.Matches(in preparedKey)
+                        ? currentAuthority
+                        : new VulkanPreparedCommandChainAuthority(preparedKey);
+                PublishPreparedCommandChainAuthority(chain, authority);
+            }
+            else if (header.OpCode is EVulkanPrimaryPlanNodeKind.ComputeDispatch or
+                     EVulkanPrimaryPlanNodeKind.ComputeDispatchIndirect)
+            {
+                chain.PreparedKey = VulkanPreparedCommandChainKey.Incomplete;
+            }
+
+            MarkCommandChainSecondaryCommandBufferRecorded(chain);
         }
 
         private bool TryCapturePreparedNonGraphicsComputeKey(

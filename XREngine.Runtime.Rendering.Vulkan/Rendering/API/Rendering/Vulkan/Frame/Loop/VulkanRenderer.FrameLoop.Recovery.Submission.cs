@@ -11,10 +11,11 @@ namespace XREngine.Rendering.Vulkan
             CommandPool commandPool,
             CommandBuffer commandBuffer,
             CommandBuffer overlayCommandBuffer,
+            CommandBuffer dynamicTextCommandBuffer,
             ref bool submitted)
         {
             CommandBuffer* submittedCommandBuffers =
-                stackalloc CommandBuffer[3];
+                stackalloc CommandBuffer[4];
             uint submittedCommandBufferCount = 0;
             if (attempt.TextureUploadCommandBuffer.Handle != 0)
             {
@@ -28,6 +29,11 @@ namespace XREngine.Rendering.Vulkan
             {
                 submittedCommandBuffers[submittedCommandBufferCount++] =
                     overlayCommandBuffer;
+            }
+            if (dynamicTextCommandBuffer.Handle != 0)
+            {
+                submittedCommandBuffers[submittedCommandBufferCount++] =
+                    dynamicTextCommandBuffer;
             }
             ulong signalValue = Math.Max(
                 _commandRuntime.Synchronization._graphicsTimelineValue + 1,

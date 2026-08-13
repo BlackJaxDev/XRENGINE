@@ -12,7 +12,7 @@ internal sealed class VulkanMeshOperationRequestQueue
     // pass to consume the entire queue, dropping the later fullscreen present
     // draw while the camera was moving.  Four cohorts cover the current
     // directional-cascade workload without allocating in the render hot path.
-    private const int Capacity = 4096;
+    internal const int Capacity = 4096;
     private readonly VulkanMeshRenderRequest[] _entries = new VulkanMeshRenderRequest[Capacity];
     private readonly object _gate = new();
     private int _head;
@@ -51,6 +51,36 @@ internal sealed class VulkanMeshOperationRequestQueue
                 _head = 0;
             _count--;
             return true;
+        }
+    }
+
+    /// <summary>
+    /// Moves the currently published request cohort into caller-owned storage
+    /// under one short queue lock. New producers may begin publishing the next
+    /// cohort as soon as the copy completes; Vulkan resource preparation never
+    /// runs while the handoff gate is held.
+    /// </summary>
+    internal int DrainTo(Span<VulkanMeshRenderRequest> destination)
+    {
+        lock (_gate)
+        {
+            int drainCount = Math.Min(_count, destination.Length);
+            int firstCount = Math.Min(drainCount, Capacity - _head);
+            _entries.AsSpan(_head, firstCount).CopyTo(destination);
+            _entries.AsSpan(_head, firstCount).Clear();
+
+            int secondCount = drainCount - firstCount;
+            if (secondCount > 0)
+            {
+                _entries.AsSpan(0, secondCount).CopyTo(destination[firstCount..]);
+                _entries.AsSpan(0, secondCount).Clear();
+            }
+
+            _head += drainCount;
+            if (_head >= Capacity)
+                _head -= Capacity;
+            _count -= drainCount;
+            return drainCount;
         }
     }
 }

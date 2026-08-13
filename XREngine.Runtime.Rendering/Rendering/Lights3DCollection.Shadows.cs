@@ -311,10 +311,19 @@ namespace XREngine.Scene
             if (ShouldDeferAuxiliaryCaptures())
                 return;
 
+            int processedCaptureWorkItems = 0;
             while (_captureWorkQueue.TryPeek(out _))
             {
-                if (_captureBudgetStopwatch.Elapsed.TotalMilliseconds > budgetMs)
+                if (processedCaptureWorkItems > 0 &&
+                    _captureBudgetStopwatch.Elapsed.TotalMilliseconds > budgetMs)
+                {
+                    LastCaptureDeferralReason = ERenderOutputPolicyReason.CpuBudget;
+                    RuntimeEngine.Rendering.Stats.FrameOutputs.RecordWork(
+                        new FrameOutputWorkTelemetry(
+                            CpuBudgetDeferrals: 1,
+                            StaleResultReuses: PendingCaptureComponentCount > 0 ? 1 : 0));
                     break;
+                }
 
                 if (ShouldDeferAuxiliaryCaptures())
                     break;
@@ -323,6 +332,7 @@ namespace XREngine.Scene
                     break;
 
                 NoteCaptureWorkItemDequeued();
+                processedCaptureWorkItems++;
 
                 switch (item.WorkType)
                 {

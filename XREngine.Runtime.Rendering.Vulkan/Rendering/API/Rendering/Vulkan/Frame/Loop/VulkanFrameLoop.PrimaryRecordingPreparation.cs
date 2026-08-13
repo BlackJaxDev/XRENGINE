@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Silk.NET.Vulkan;
 using XREngine.Data.Colors;
 using XREngine.Rendering.Vulkan.RenderGraph;
@@ -7,6 +8,12 @@ namespace XREngine.Rendering.Vulkan;
 /// <summary>Frozen primary-recording preparation owned by the desktop frame loop.</summary>
 internal sealed partial class VulkanFrameLoop
 {
+    // Cold shader/program/buffer preparation persists on each mesh wrapper, so
+    // a small per-frame slice converges without exposing a partial scene. Warm
+    // materialization is not charged to this budget and retains normal throughput.
+    private static readonly long ColdMeshPreparationSliceTicks =
+        Math.Max(1L, Stopwatch.Frequency / 250L);
+
     private VulkanPrimaryCommandRecordingResult RecordPreparedDesktopPrimary(
         ref VulkanFrameAttempt attempt,
         uint imageIndex,
@@ -36,6 +43,8 @@ internal sealed partial class VulkanFrameLoop
         FrameOp[] staticOperations;
         FrameOp[] dynamicUiOperations;
         VulkanFramePlanningSnapshot planningSnapshot;
+        bool meshMaterializationComplete;
+        string meshMaterializationDeferredReason;
         using (VulkanCpuStageScope preparationStage = new(
                    _telemetry,
                    EVulkanCpuStage.FrameOpPreparation))
@@ -43,7 +52,8 @@ internal sealed partial class VulkanFrameLoop
             using (RuntimeRenderingHostServices.Profiling.StartProfileScope(
                        "Vulkan.PrepareFrameOps.MaterializeQueuedMeshes"))
             {
-                DrainQueuedMeshRenderRequests();
+                meshMaterializationComplete = DrainQueuedMeshRenderRequests(
+                    out meshMaterializationDeferredReason);
             }
 
             FrameOp[] drainedOperations;
@@ -75,6 +85,13 @@ internal sealed partial class VulkanFrameLoop
                     sortedOperations,
                     out staticOperations,
                     out dynamicUiOperations);
+                if (!meshMaterializationComplete)
+                {
+                    // No subset of a scene is publishable. Dynamic text remains
+                    // eligible for a recovery secondary and texture uploads remain
+                    // eligible for the recovery submit while cold resources converge.
+                    staticOperations = [];
+                }
             }
 
             using (RuntimeRenderingHostServices.Profiling.StartProfileScope(
@@ -228,7 +245,19 @@ internal sealed partial class VulkanFrameLoop
                 result = _commandRuntime.RecordPrimary(in input);
             }
             if (!result.RequiresReplan)
-                return result;
+            {
+                if (meshMaterializationComplete)
+                    return result;
+
+                return result with
+                {
+                    Disposition = EVulkanPrimaryCommandRecordingDisposition.Deferred,
+                    CommandBuffer = default,
+                    SwapchainLayoutAfterCommandBuffer = ImageLayout.Undefined,
+                    RecordedSwapchainWriteCount = 0,
+                    Reason = meshMaterializationDeferredReason,
+                };
+            }
             replanReason = result.Reason ??
                 "primary command recording requested a fresh plan";
         }
@@ -241,57 +270,187 @@ internal sealed partial class VulkanFrameLoop
     /// Converts wrapper-owned render events into prepared mesh operations at the only
     /// point where frame, output, command, and planner state are jointly authoritative.
     /// </summary>
-    private void DrainQueuedMeshRenderRequests()
+    private bool DrainQueuedMeshRenderRequests(out string deferredReason)
     {
-        while (MeshOperationRequests.TryDequeue(
-                   out VulkanMeshRenderRequest request))
+        deferredReason = string.Empty;
+        int requestCount = MeshOperationRequests.DrainTo(
+            _meshOperationRequestScratch);
+        if (requestCount == 0)
+            return true;
+
+        long coldPreparationTicks = 0;
+        int deferredRequestCount = 0;
+        int unavailableRequestCount = 0;
+        int warmRequestCount = 0;
+        int coldRequestCount = 0;
+        int resumeRequestIndex = -1;
+        int startRequestIndex = _meshOperationPreparationCursor % requestCount;
+        try
         {
-            XRRenderPipelineInstance? pipeline = request.Pipeline;
-            if (pipeline is null)
-                continue;
-
-            FrameOpContext requestContext =
-                request.Context.PipelineInstance is not null
-                    ? request.Context
-                    : CreateFrameOpContext(
-                        pipeline,
-                        pipeline.LastWindowViewport);
-            VulkanMeshProducerSnapshot producer = request.Producer with
+            for (int scanIndex = 0;
+                 scanIndex < requestCount;
+                 scanIndex++)
             {
-                Context = requestContext,
-                IsExternalSwapchainTarget =
-                    TryResolveExternalSwapchainTargetExtent(out _),
-                IsPrewarmingExternalSwapchainTarget =
-                    IsPrewarmingOpenXrExternalSwapchainTarget,
-            };
-            VulkanMeshMaterializationSnapshot materializationSnapshot = new(
-                PublishedResourcePlannerRuntimeState.LastActiveFrameOpContext,
-                ResolveQueuedMeshDescriptorViewFamilyIdentity(),
-                _resourceRuntime.ShouldAvoidSynchronousImageAllocationForOpenXr(
-                    _deviceContext.Api,
-                    _deviceContext,
-                    RuntimeRenderingHostServices.Presentation,
-                    RuntimeRenderingHostServices.FrameTiming,
-                    out _),
-                _telemetry);
-            using IDisposable? pipelineScope =
-                RuntimeRenderingHostServices.Diagnostics
-                    .PushRenderingPipeline(pipeline);
-            using IDisposable? cameraScope =
-                pipeline.RenderState.PushRenderingCamera(
-                    pipeline.LastRenderingCamera ??
-                    pipeline.LastSceneCamera);
-            if (!request.Renderer.TryMaterializeQueuedRenderRequest(
+                int requestIndex = startRequestIndex + scanIndex;
+                if (requestIndex >= requestCount)
+                    requestIndex -= requestCount;
+
+                ref readonly VulkanMeshRenderRequest request =
+                    ref _meshOperationRequestScratch[requestIndex];
+                XRRenderPipelineInstance? pipeline = request.Pipeline;
+                if (pipeline is null)
+                    continue;
+
+                bool dynamicUiOverlay = IsQueuedDynamicUiOverlayRequest(
+                    in request);
+                bool previouslyMaterialized =
+                    request.PreparationCompatibilitySignature != 0 &&
+                    _meshOperationWarmPreparationSignatures.Contains(
+                        request.PreparationCompatibilitySignature);
+                if (previouslyMaterialized)
+                    warmRequestCount++;
+                else
+                    coldRequestCount++;
+                bool resourcesReady = previouslyMaterialized;
+                if (!dynamicUiOverlay &&
+                    !resourcesReady &&
+                    coldPreparationTicks >= ColdMeshPreparationSliceTicks)
+                {
+                    deferredRequestCount++;
+                    if (resumeRequestIndex < 0)
+                        resumeRequestIndex = requestIndex;
+                    continue;
+                }
+
+                long preparationStart = resourcesReady
+                    ? 0L
+                    : Stopwatch.GetTimestamp();
+                bool materialized = TryMaterializeQueuedMeshRenderRequest(
                     in request,
-                    in producer,
-                    in materializationSnapshot,
-                    out VulkanMeshOperationRequest operationRequest))
-            {
-                continue;
-            }
+                    pipeline,
+                    out VulkanMeshOperationRequest operationRequest);
+                if (!resourcesReady)
+                {
+                    coldPreparationTicks +=
+                        Stopwatch.GetTimestamp() - preparationStart;
+                }
 
-            EnqueueQueuedMeshDraw(in operationRequest);
+                if (!materialized)
+                {
+                    _meshOperationWarmPreparationSignatures.Remove(
+                        request.PreparationCompatibilitySignature);
+                    unavailableRequestCount++;
+                    if (resumeRequestIndex < 0)
+                        resumeRequestIndex = requestIndex;
+                    continue;
+                }
+
+                if (request.PreparationCompatibilitySignature != 0)
+                {
+                    // Keep the hot-path cache finite and pre-sized. Reaching this
+                    // bound requires several complete queue cohorts of distinct
+                    // structural variants; clearing is a recoverable cold event.
+                    if (_meshOperationWarmPreparationSignatures.Count >=
+                            MaxWarmMeshPreparationSignatures &&
+                        !_meshOperationWarmPreparationSignatures.Contains(
+                            request.PreparationCompatibilitySignature))
+                    {
+                        _meshOperationWarmPreparationSignatures.Clear();
+                    }
+
+                    _meshOperationWarmPreparationSignatures.Add(
+                        request.PreparationCompatibilitySignature);
+                }
+                EnqueueQueuedMeshDraw(in operationRequest);
+            }
         }
+        finally
+        {
+            _meshOperationRequestScratch.AsSpan(0, requestCount).Clear();
+        }
+
+        // A stable visible cohort can contain hundreds of cold requests. Resume at
+        // the first request that did not finish so a bounded slice cannot starve the
+        // tail by repeatedly beginning at request zero.
+        _meshOperationPreparationCursor = resumeRequestIndex >= 0
+            ? resumeRequestIndex
+            : 0;
+
+        if (deferredRequestCount == 0 && unavailableRequestCount == 0)
+            return true;
+
+        deferredReason =
+            $"Mesh resource preparation yielded before publishing a partial scene. " +
+            $"deferred={deferredRequestCount} unavailable={unavailableRequestCount} " +
+            $"requests={requestCount} warm={warmRequestCount} cold={coldRequestCount}.";
+        Debug.VulkanWarningEvery(
+            "Vulkan.MeshMaterialization.Deferred",
+            TimeSpan.FromSeconds(1),
+            "[Vulkan] {0}",
+            deferredReason);
+        return false;
+    }
+
+    private bool TryMaterializeQueuedMeshRenderRequest(
+        in VulkanMeshRenderRequest request,
+        XRRenderPipelineInstance pipeline,
+        out VulkanMeshOperationRequest operationRequest)
+    {
+        FrameOpContext requestContext =
+            request.Context.PipelineInstance is not null
+                ? request.Context
+                : CreateFrameOpContext(
+                    pipeline,
+                    pipeline.LastWindowViewport);
+        VulkanMeshProducerSnapshot producer = request.Producer with
+        {
+            Context = requestContext,
+            IsExternalSwapchainTarget =
+                TryResolveExternalSwapchainTargetExtent(out _),
+            IsPrewarmingExternalSwapchainTarget =
+                IsPrewarmingOpenXrExternalSwapchainTarget,
+        };
+        VulkanMeshMaterializationSnapshot materializationSnapshot = new(
+            PublishedResourcePlannerRuntimeState.LastActiveFrameOpContext,
+            ResolveQueuedMeshDescriptorViewFamilyIdentity(),
+            _resourceRuntime.ShouldAvoidSynchronousImageAllocationForOpenXr(
+                _deviceContext.Api,
+                _deviceContext,
+                RuntimeRenderingHostServices.Presentation,
+                RuntimeRenderingHostServices.FrameTiming,
+                out _),
+            _telemetry);
+        using IDisposable? pipelineScope =
+            RuntimeRenderingHostServices.Diagnostics
+                .PushRenderingPipeline(pipeline);
+        using IDisposable? cameraScope =
+            pipeline.RenderState.PushRenderingCamera(
+                pipeline.LastRenderingCamera ??
+                pipeline.LastSceneCamera);
+        return request.Renderer.TryMaterializeQueuedRenderRequest(
+            in request,
+            in producer,
+            in materializationSnapshot,
+            out operationRequest);
+    }
+
+    private static bool IsQueuedDynamicUiOverlayRequest(
+        in VulkanMeshRenderRequest request)
+    {
+        XRMeshRenderer meshRenderer = request.Renderer.MeshRenderer;
+        XRMaterial? material = request.MaterialOverride ?? meshRenderer.Material;
+        return string.Equals(
+                   material?.Name,
+                   "UIBatchTextMaterial",
+                   StringComparison.Ordinal) ||
+               string.Equals(
+                   meshRenderer.Name,
+                   "UIBatchTextRenderer",
+                   StringComparison.Ordinal) ||
+               string.Equals(
+                   meshRenderer.Mesh?.Name,
+                   "UIBatchTextQuadMesh",
+                   StringComparison.Ordinal);
     }
 
     private int ResolveQueuedMeshDescriptorViewFamilyIdentity()

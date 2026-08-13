@@ -710,14 +710,81 @@ namespace XREngine.Timers
         /// the ordinary render clock, callbacks, visibility-generation handoff, and
         /// collect/swap publication instead of drawing a window-only frame.
         /// </remarks>
-        public bool TryDispatchInteractiveResizeFrame()
+        public XREngine.Rendering.InteractiveResizeDispatchResult TryDispatchInteractiveResizeFrame()
         {
-            if (!IsRunning || !Engine.IsRenderThread || Engine.IsDispatchingRenderFrame)
-                return false;
+            long started = Stopwatch.GetTimestamp();
+            if (!IsRunning)
+                return XREngine.Rendering.InteractiveResizeDispatchResult.Deferred(
+                    XREngine.Rendering.EInteractiveResizeDispatchReason.RuntimeStopped,
+                    PresentFrameId);
+            if (!Engine.IsRenderThread)
+                return XREngine.Rendering.InteractiveResizeDispatchResult.Deferred(
+                    XREngine.Rendering.EInteractiveResizeDispatchReason.WrongThread,
+                    PresentFrameId);
+            if (Engine.IsDispatchingRenderFrame)
+                return XREngine.Rendering.InteractiveResizeDispatchResult.Deferred(
+                    XREngine.Rendering.EInteractiveResizeDispatchReason.FrameAlreadyActive,
+                    PresentFrameId);
+
+            if (!IsRenderDispatchDue())
+            {
+                return XREngine.Rendering.InteractiveResizeDispatchResult.Deferred(
+                    XREngine.Rendering.EInteractiveResizeDispatchReason.RenderCadenceNotDue,
+                    PresentFrameId,
+                    Stopwatch.GetTimestamp() - started);
+            }
+
+            bool hasFreshVisibility = _visibilityGenerationGate.TryConsumeFresh(out _);
+            bool reusePublishedVisibility = !hasFreshVisibility &&
+                _visibilityGenerationGate.CanReusePreviousForRequiredGeneration(
+                    CollectVisibleLatePolicy);
+            if (!hasFreshVisibility && !reusePublishedVisibility)
+            {
+                return XREngine.Rendering.InteractiveResizeDispatchResult.Deferred(
+                    XREngine.Rendering.EInteractiveResizeDispatchReason.VisibilityUnavailable,
+                    PresentFrameId,
+                    Stopwatch.GetTimestamp() - started);
+            }
 
             ulong previousPresentFrameId = PresentFrameId;
-            WaitToRender();
-            return IsRunning && PresentFrameId != previousPresentFrameId;
+            if (!DispatchRender())
+            {
+                return XREngine.Rendering.InteractiveResizeDispatchResult.Deferred(
+                    XREngine.Rendering.EInteractiveResizeDispatchReason.RenderCadenceNotDue,
+                    PresentFrameId,
+                    Stopwatch.GetTimestamp() - started);
+            }
+
+            if (reusePublishedVisibility)
+            {
+                _ = _visibilityGenerationGate.TryRecordStaleReuse(
+                    _visibilityGenerationGate.RequiredGeneration);
+                RuntimeEngine.Rendering.Stats.FrameLifecycle.RecordStaleCollectReuse();
+            }
+
+            MarkRenderFrameReadyForCollect();
+            bool advanced = IsRunning && PresentFrameId != previousPresentFrameId;
+            return new XREngine.Rendering.InteractiveResizeDispatchResult(
+                advanced
+                    ? hasFreshVisibility
+                        ? XREngine.Rendering.EInteractiveResizeDispatchOutcome.Submitted
+                        : XREngine.Rendering.EInteractiveResizeDispatchOutcome.PresentedScaledStale
+                    : XREngine.Rendering.EInteractiveResizeDispatchOutcome.Deferred,
+                advanced
+                    ? XREngine.Rendering.EInteractiveResizeDispatchReason.None
+                    : XREngine.Rendering.EInteractiveResizeDispatchReason.FrameDidNotAdvance,
+                PresentFrameId,
+                Stopwatch.GetTimestamp() - started);
+        }
+
+        private bool IsRenderDispatchDue()
+        {
+            long timestampTicks = TimeTicks();
+            long elapsedTicks = Math.Clamp(
+                timestampTicks - Render.LastTimestampTicks,
+                0L,
+                Stopwatch.Frequency);
+            return elapsedTicks > 0L && elapsedTicks >= _targetRenderPeriodTicks;
         }
 
         public bool DispatchRender()

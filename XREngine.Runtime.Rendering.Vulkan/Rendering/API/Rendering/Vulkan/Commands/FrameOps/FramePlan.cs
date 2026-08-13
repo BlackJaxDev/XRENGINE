@@ -43,6 +43,7 @@ internal sealed class FramePlan
     internal int OperationCount => _operationCount;
     internal int DynamicOverlayOperationCount => _dynamicOverlayOperationCount;
     internal int TextureUploadOperationCount => _textureUploadOperationCount;
+    internal int TextureUploadExecutionNodeIndex { get; private set; } = -1;
     /// <summary>Canonical numeric static stream for planners and schedulers.</summary>
     internal FrameOperationStream StaticOperations => _operations;
     /// <summary>Canonical numeric dynamic-overlay stream for planners and schedulers.</summary>
@@ -126,6 +127,7 @@ internal sealed class FramePlan
         int outputCount,
         RenderOutputDagNodeDescriptor[] outputExecutionNodes,
         int outputExecutionNodeCount,
+        int textureUploadExecutionNodeIndex,
         FramePlanOperationKey[] operationKeys,
         int operationKeyCount,
         VulkanFrameOpPlannerStateKey[] staticPlannerContextKeys,
@@ -158,6 +160,7 @@ internal sealed class FramePlan
             _outputCount = outputCount;
             _outputExecutionNodes = outputExecutionNodes;
             _outputExecutionNodeCount = outputExecutionNodeCount;
+            TextureUploadExecutionNodeIndex = textureUploadExecutionNodeIndex;
             _operationKeys = operationKeys;
             _operationKeyCount = operationKeyCount;
             _staticPlannerContextKeys = staticPlannerContextKeys;
@@ -177,6 +180,7 @@ internal sealed class FramePlan
                 throw new InvalidOperationException("A pinned frame plan cannot be reset.");
 
             FrameSlot = -1;
+            TextureUploadExecutionNodeIndex = -1;
             Generation = 0;
             RenderFrameId = 0;
             PlannerRevision = 0;

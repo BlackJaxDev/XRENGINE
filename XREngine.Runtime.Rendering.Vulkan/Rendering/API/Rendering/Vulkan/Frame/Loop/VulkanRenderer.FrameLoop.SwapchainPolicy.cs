@@ -10,8 +10,6 @@ namespace XREngine.Rendering.Vulkan
             TimeSpan.FromMilliseconds(16);
         private static readonly TimeSpan SwapchainResizeSettleDelay =
             TimeSpan.FromMilliseconds(250);
-        private static readonly TimeSpan InteractiveSwapchainRecreateMinInterval =
-            TimeSpan.FromMilliseconds(16);
 
         private void ScheduleSwapchainRecreate(string reason)
         {
@@ -181,21 +179,10 @@ namespace XREngine.Rendering.Vulkan
 
             if (attempt.InteractiveResize)
             {
-                if (pendingMatchesLive &&
-                    ShouldRunInteractiveSwapchainRecreate())
-                {
-                    TryRecreateSwapchainNow(
-                        "Interactive resize presentation extent");
-                    _outputRuntime._desktopSwapchainPolicy.LastInteractiveRecreateTimestamp =
-                        Stopwatch.GetTimestamp();
-                    UpdateAttemptSwapchainExtentMatch(ref attempt);
-                    return;
-                }
-
                 Debug.VulkanEvery(
                     $"Vulkan.Frame.{GetHashCode()}.RecreateDeferredForInteractiveResize",
                     TimeSpan.FromSeconds(1),
-                    "[Vulkan] Deferring interactive swapchain recreate. Pending={0}x{1} Live={2}x{3} Swapchain={4}x{5} PendingMatchesLive={6}",
+                    "[Vulkan] Freezing the published swapchain/resource generation during interactive resize. Pending={0}x{1} Live={2}x{3} Swapchain={4}x{5} PendingMatchesLive={6}",
                     _outputRuntime._desktopSwapchainPolicy.PendingSurfaceWidth,
                     _outputRuntime._desktopSwapchainPolicy.PendingSurfaceHeight,
                     attempt.LiveSurfaceWidth,
@@ -241,19 +228,12 @@ namespace XREngine.Rendering.Vulkan
                 return false;
 
             if (interactiveResize)
-                return true;
+                return false;
 
             if (_outputRuntime._desktopSwapchainPolicy.RecreateRequestedAt == 0)
                 return true;
 
             return Stopwatch.GetElapsedTime(_outputRuntime._desktopSwapchainPolicy.RecreateRequestedAt) >= SwapchainRecreateDebounce;
-        }
-
-        private bool ShouldRunInteractiveSwapchainRecreate()
-        {
-            long last = _outputRuntime._desktopSwapchainPolicy.LastInteractiveRecreateTimestamp;
-            return last == 0 ||
-                Stopwatch.GetElapsedTime(last) >= InteractiveSwapchainRecreateMinInterval;
         }
 
         private bool CanPresentMismatchedSwapchainExtent(

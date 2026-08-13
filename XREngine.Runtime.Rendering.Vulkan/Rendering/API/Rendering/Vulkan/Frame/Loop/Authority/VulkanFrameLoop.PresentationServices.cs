@@ -7,6 +7,37 @@ namespace XREngine.Rendering.Vulkan;
 
 internal sealed partial class VulkanFrameLoop
 {
+    public Result PresentToQueueTracked(
+        KhrSwapchain swapchainApi,
+        Queue queue,
+        ref PresentInfoKHR presentInfo,
+        string caller)
+    {
+        if (!TryAdmitVulkanDeviceOperation(caller, out _))
+            return Result.ErrorDeviceLost;
+
+        Result result;
+        _commandRuntime.CommandBuffers.DeviceQueueAdmissionGate.EnterReadLock();
+        try
+        {
+            using VulkanQueueOperationLease queueOperation =
+                VulkanQueueOperationLease.TryEnter(
+                    _oneTimeSubmitLock,
+                    _deviceContext.StateMachine,
+                    _frameTelemetry);
+            if (!queueOperation.Acquired)
+                return Result.ErrorDeviceLost;
+
+            result = swapchainApi.QueuePresent(queue, ref presentInfo);
+        }
+        finally
+        {
+            _commandRuntime.CommandBuffers.DeviceQueueAdmissionGate.ExitReadLock();
+        }
+        _deviceContext.ObserveNativeResult(caller, result);
+        RecordQueueOperation("present", queue, result, caller);
+        return result;
+    }
     private bool UseDynamicRenderingRenderTargets
         => _deviceContext.MutableCapabilities._useDynamicRenderingRenderTargets;
 
@@ -162,42 +193,49 @@ internal sealed partial class VulkanFrameLoop
                 out failureReason))
         {
             result = Result.ErrorDeviceLost;
-            lock (_oneTimeSubmitLock)
-                RecordQueueOperation("present-rejected", queue, result, caller);
-            return false;
-        }
-
-        using VulkanQueueOperationLease queueOperation =
-            VulkanQueueOperationLease.TryEnter(
-                _oneTimeSubmitLock,
-                _deviceContext.StateMachine,
-                _frameTelemetry);
-        if (!queueOperation.Acquired)
-        {
-            result = Result.ErrorDeviceLost;
-            failureReason = "Vulkan device is not operational";
-            lock (_oneTimeSubmitLock)
-                RecordQueueOperation("present-rejected", queue, result, caller);
+            RecordQueueOperation("present-rejected", queue, result, caller);
             return false;
         }
 
         bool dispatched;
-        if (OutputRuntime.Desktop.StreamlineFrameGenerationActive)
+        _commandRuntime.CommandBuffers.DeviceQueueAdmissionGate.EnterReadLock();
+        try
         {
-            dispatched = NvidiaDlssManager.Native.TryQueueProxyPresent(
-                StreamlineDeviceBinding,
-                queue,
-                ref presentInfo,
-                out result,
-                out failureReason);
+            using VulkanQueueOperationLease queueOperation =
+                VulkanQueueOperationLease.TryEnter(
+                    _oneTimeSubmitLock,
+                    _deviceContext.StateMachine,
+                    _frameTelemetry);
+            if (!queueOperation.Acquired)
+            {
+                result = Result.ErrorDeviceLost;
+                failureReason = "Vulkan device is not operational";
+                RecordQueueOperation("present-rejected", queue, result, caller);
+                return false;
+            }
+
+            if (OutputRuntime.Desktop.StreamlineFrameGenerationActive)
+            {
+                dispatched = NvidiaDlssManager.Native.TryQueueProxyPresent(
+                    StreamlineDeviceBinding,
+                    queue,
+                    ref presentInfo,
+                    out result,
+                    out failureReason);
+            }
+            else
+            {
+                result = OutputRuntime.Desktop.SwapchainExtension!.QueuePresent(
+                    queue,
+                    ref presentInfo);
+                failureReason = string.Empty;
+                dispatched = true;
+            }
+
         }
-        else
+        finally
         {
-            result = OutputRuntime.Desktop.SwapchainExtension!.QueuePresent(
-                queue,
-                ref presentInfo);
-            failureReason = string.Empty;
-            dispatched = true;
+            _commandRuntime.CommandBuffers.DeviceQueueAdmissionGate.ExitReadLock();
         }
 
         try

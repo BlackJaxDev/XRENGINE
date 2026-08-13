@@ -13,4 +13,5 @@ internal readonly record struct VulkanPipelineVariantRequirement(
     bool Stereo,
     bool Multiview,
     bool DynamicRendering,
-    bool LegacyRenderPass);
+    bool LegacyRenderPass,
+    ulong PreparationCompatibilitySignature);

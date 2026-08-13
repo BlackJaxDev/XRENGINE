@@ -29,14 +29,45 @@ public sealed class RenderOutputGraphPlanner
         bool isDue,
         bool independentDesktopScene,
         EFrameOutputKind xrSourceKind)
+        => Plan(
+            request,
+            isDue,
+            independentDesktopScene,
+            xrSourceKind,
+            ERenderOutputPolicyReason.None,
+            xrImagesAcquired: false,
+            out _);
+
+    public int Plan(
+        in RenderOutputRequest request,
+        bool isDue,
+        bool independentDesktopScene,
+        EFrameOutputKind xrSourceKind,
+        ERenderOutputPolicyReason deferralReason,
+        bool xrImagesAcquired,
+        out RenderOutputSchedulingDecision decision)
     {
         if (!EnsureFrame(request.FrameId))
+        {
+            decision = new(
+                Execute: false,
+                ERenderOutputWorkDisposition.Skipped,
+                ERenderOutputPolicyReason.DependencyUnavailable,
+                ContentAgeFrames: 0u,
+                XrCriticalPathReserved: false,
+                ForcedRefresh: false);
             return -1;
+        }
         ulong terminalKey = GetTerminalNodeKey(request);
         if (_graph.TryGetNodeIndex(terminalKey, out int plannedNode))
         {
-            if (!isDue && !_graph.TryReuse(plannedNode))
-                _graph.SetSkipped(plannedNode);
+            ApplyScheduleAndAdmission(
+                plannedNode,
+                request,
+                isDue,
+                deferralReason,
+                xrImagesAcquired,
+                out decision);
             return plannedNode;
         }
 
@@ -58,9 +89,124 @@ public sealed class RenderOutputGraphPlanner
             _ => AddNonSceneOutput(request, publicationNode),
         };
 
-        if (terminalNode >= 0 && !isDue && !_graph.TryReuse(terminalNode))
-            _graph.SetSkipped(terminalNode);
+        if (terminalNode >= 0)
+        {
+            ApplyScheduleAndAdmission(
+                terminalNode,
+                request,
+                isDue,
+                deferralReason,
+                xrImagesAcquired,
+                out decision);
+        }
+        else
+        {
+            decision = new(
+                Execute: false,
+                ERenderOutputWorkDisposition.Skipped,
+                ERenderOutputPolicyReason.DependencyUnavailable,
+                ContentAgeFrames: 0u,
+                XrCriticalPathReserved: false,
+                ForcedRefresh: false);
+        }
         return terminalNode;
+    }
+
+    private void ApplyScheduleAndAdmission(
+        int terminalNode,
+        in RenderOutputRequest request,
+        bool isDue,
+        ERenderOutputPolicyReason deferralReason,
+        bool xrImagesAcquired,
+        out RenderOutputSchedulingDecision decision)
+    {
+        bool reserveXrPath = xrImagesAcquired &&
+            request.OutputClass == ERenderOutputClass.XrCritical;
+        _graph.ApplyScheduleToPrerequisites(
+            terminalNode,
+            request.Schedule.Priority,
+            request.Schedule.DeadlineMs,
+            reserveXrPath);
+
+        if (isDue)
+        {
+            decision = RenderOutputSchedulingDecision.Fresh(reserveXrPath);
+            return;
+        }
+
+        RenderOutputDagNodeStatus status = _graph.GetStatus(terminalNode);
+        uint maximumDeferrals = ResolveMaximumDeferrals(request);
+        bool forceRefresh = !status.HasCompletedResult ||
+            maximumDeferrals != uint.MaxValue &&
+            status.ConsecutiveDeferrals >= maximumDeferrals;
+        if (forceRefresh)
+        {
+            decision = new(
+                Execute: true,
+                ERenderOutputWorkDisposition.FreshRender,
+                ERenderOutputPolicyReason.MaximumDeferralReached,
+                status.ContentAgeFrames,
+                reserveXrPath,
+                ForcedRefresh: true);
+            return;
+        }
+
+        if ((request.FallbackPolicy & ERenderOutputFallbackPolicy.AllowStaleReuse) != 0 &&
+            _graph.TryReuse(terminalNode))
+        {
+            status = _graph.GetStatus(terminalNode);
+            decision = new(
+                Execute: false,
+                ERenderOutputWorkDisposition.ReusedStale,
+                ERenderOutputPolicyReason.HeldLastImage,
+                status.ContentAgeFrames,
+                reserveXrPath,
+                ForcedRefresh: false);
+            return;
+        }
+
+        ERenderOutputPolicyReason reason = deferralReason == ERenderOutputPolicyReason.None
+            ? ERenderOutputPolicyReason.Cadence
+            : deferralReason;
+        if ((request.FallbackPolicy &
+             (ERenderOutputFallbackPolicy.AllowCadenceReduction |
+              ERenderOutputFallbackPolicy.AllowBudgetDeferral)) != 0)
+        {
+            _graph.SetDeferred(terminalNode, reason);
+            status = _graph.GetStatus(terminalNode);
+            decision = new(
+                Execute: false,
+                ERenderOutputWorkDisposition.Deferred,
+                reason,
+                status.ContentAgeFrames,
+                reserveXrPath,
+                ForcedRefresh: false);
+            return;
+        }
+
+        _graph.SetSkipped(terminalNode, reason);
+        decision = new(
+            Execute: false,
+            ERenderOutputWorkDisposition.Skipped,
+            reason,
+            status.ContentAgeFrames,
+            reserveXrPath,
+            ForcedRefresh: false);
+    }
+
+    private static uint ResolveMaximumDeferrals(in RenderOutputRequest request)
+    {
+        uint configured = request.Schedule.MaxContentAgeFrames;
+        if (configured != uint.MaxValue)
+            return configured;
+
+        return request.OutputClass switch
+        {
+            ERenderOutputClass.VisibleMirror => 2u,
+            ERenderOutputClass.BackgroundCapture => 8u,
+            ERenderOutputClass.Diagnostic => 4u,
+            _ => 1u,
+        };
     }
 
     public void Complete(in RenderOutputRequest request)
@@ -121,6 +267,39 @@ public sealed class RenderOutputGraphPlanner
         return true;
     }
 
+    /// <summary>
+    /// Adds an engine-owned prerequisite edge, such as shadow production before
+    /// a scene output, without requiring a producer/consumer data-set contract
+    /// from the caller-facing request.
+    /// </summary>
+    public bool TryAddRequiredDependency(
+        in RenderOutputRequest prerequisite,
+        in RenderOutputRequest dependent)
+    {
+        if (!_graph.TryGetNodeIndex(GetTerminalNodeKey(prerequisite), out int prerequisiteNode) ||
+            !_graph.TryGetNodeIndex(GetTerminalNodeKey(dependent), out int dependentNode))
+        {
+            return false;
+        }
+
+        return _graph.AddDependency(prerequisiteNode, dependentNode);
+    }
+
+    public bool RefreshSchedule(
+        in RenderOutputRequest request,
+        bool xrImagesAcquired)
+    {
+        if (!_graph.TryGetNodeIndex(GetTerminalNodeKey(request), out int terminalNode))
+            return false;
+
+        _graph.ApplyScheduleToPrerequisites(
+            terminalNode,
+            request.Schedule.Priority,
+            request.Schedule.DeadlineMs,
+            xrImagesAcquired && request.OutputClass == ERenderOutputClass.XrCritical);
+        return true;
+    }
+
     private bool EnsureFrame(ulong frameId)
     {
         if (_frameId == frameId)
@@ -133,7 +312,8 @@ public sealed class RenderOutputGraphPlanner
     }
 
     private int AddPublicationNode()
-        => _graph.AddNode(new(
+    {
+        int publication = _graph.AddNode(new(
             PublicationNodeKey,
             PublicationNodeKey,
             ERenderOutputDagNodeKind.Publish,
@@ -144,6 +324,21 @@ public sealed class RenderOutputGraphPlanner
             Cacheable: false,
             Resumable: false,
             "Shared scene/material/light publication"));
+        int uploads = _graph.AddNode(new(
+            PublicationNodeKey + 1UL,
+            PublicationNodeKey,
+            ERenderOutputDagNodeKind.Upload,
+            ERenderOutputDataClass.ViewIndependent,
+            0UL,
+            PublicationNodeKey,
+            0u,
+            Cacheable: false,
+            Resumable: false,
+            "Frame texture/resource uploads"));
+        if (publication >= 0 && uploads >= 0)
+            _graph.AddDependency(publication, uploads);
+        return uploads;
+    }
 
     private int AddDesktopOutput(
         in RenderOutputRequest request,
@@ -173,7 +368,9 @@ public sealed class RenderOutputGraphPlanner
             request.OutputId,
             eyeNode,
             independentDesktopScene,
-            publicationNode);
+            publicationNode,
+            request.Schedule.MaxContentAgeFrames,
+            cacheLastResult: (request.FallbackPolicy & ERenderOutputFallbackPolicy.AllowStaleReuse) != 0);
     }
 
     private int AddSceneOutput(in RenderOutputRequest request, int publicationNode)
@@ -184,7 +381,9 @@ public sealed class RenderOutputGraphPlanner
             request.OutputId,
             renderedEyeNode: -1,
             independentCamera: true,
-            publicationNode);
+            publicationNode,
+            request.Schedule.MaxContentAgeFrames,
+            cacheLastResult: (request.FallbackPolicy & ERenderOutputFallbackPolicy.AllowStaleReuse) != 0);
 
     private int AddViewDependentOutput(in RenderOutputRequest request, int publicationNode)
     {
@@ -192,7 +391,13 @@ public sealed class RenderOutputGraphPlanner
         int node = AuxiliaryOutputGraphBuilder.AddViewDependentOutput(
             _graph, policy, request.OutputId, GetOutputNodeKey(request), publicationNode);
         return AuxiliaryOutputGraphBuilder.AddPostProcess(
-            _graph, GetTerminalNodeKey(request), request.OutputId, node, policy.EnablePostProcess);
+            _graph,
+            GetTerminalNodeKey(request),
+            request.OutputId,
+            node,
+            policy.EnablePostProcess,
+            request.Schedule.MaxContentAgeFrames,
+            policy.CacheLastResult);
     }
 
     private int AddCaptureOutput(in RenderOutputRequest request, int publicationNode)
@@ -210,7 +415,13 @@ public sealed class RenderOutputGraphPlanner
         if (!postProcess)
             return node;
         return AuxiliaryOutputGraphBuilder.AddPostProcess(
-            _graph, GetTerminalNodeKey(request), request.OutputId, node, enabled: true);
+            _graph,
+            GetTerminalNodeKey(request),
+            request.OutputId,
+            node,
+            enabled: true,
+            request.Schedule.MaxContentAgeFrames,
+            cacheLastResult: cache);
     }
 
     private int AddProbeOutput(in RenderOutputRequest request, int publicationNode)
@@ -224,10 +435,16 @@ public sealed class RenderOutputGraphPlanner
 
     private int AddNonSceneOutput(in RenderOutputRequest request, int publicationNode)
     {
+        ERenderOutputDagNodeKind nodeKind = request.OutputKind switch
+        {
+            EFrameOutputKind.Shadow => ERenderOutputDagNodeKind.Shadow,
+            EFrameOutputKind.Present => ERenderOutputDagNodeKind.Present,
+            _ => ERenderOutputDagNodeKind.Publish,
+        };
         int node = _graph.AddNode(new(
             GetTerminalNodeKey(request),
             request.OutputId,
-            ERenderOutputDagNodeKind.Publish,
+            nodeKind,
             ERenderOutputDataClass.ViewIndependent,
             0UL,
             request.OutputId,

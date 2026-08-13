@@ -63,6 +63,7 @@ internal sealed partial class VulkanCommandRuntime
     }
 
     private readonly List<RetiredOpenXrSubmissionFence> _retiredOpenXrSubmissionFences = new(2);
+    private readonly object _retiredOpenXrSubmissionFencesGate = new();
 
     internal unsafe VulkanOpenXrSubmissionResult SubmitAndWaitOpenXr(
         in VulkanOpenXrSubmissionInput input)
@@ -411,7 +412,7 @@ internal sealed partial class VulkanCommandRuntime
             frameSlots[frameSlotCount++] = checked((uint)frameSlot);
         }
 
-        lock (CommandBuffers.OneTimeSubmitGate)
+        lock (_retiredOpenXrSubmissionFencesGate)
         {
             _retiredOpenXrSubmissionFences.Add(
                 new RetiredOpenXrSubmissionFence(
@@ -432,7 +433,7 @@ internal sealed partial class VulkanCommandRuntime
         if (!DeviceContext.IsOperational)
             return;
 
-        lock (CommandBuffers.OneTimeSubmitGate)
+        lock (_retiredOpenXrSubmissionFencesGate)
         {
             for (int index = _retiredOpenXrSubmissionFences.Count - 1;
                  index >= 0;

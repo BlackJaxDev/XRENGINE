@@ -78,7 +78,10 @@ public sealed class VulkanRenderer :
             _commandRuntime,
             _frameTelemetry,
             targetDriver,
-            Window);
+            hostContext.TryGetDesktopWindowHost(out IRuntimeRenderWindowHost? windowHost) &&
+            windowHost is XRWindow desktopWindow
+                ? desktopWindow.Window
+                : null);
         VulkanBackendObjectContext backendObjectContext = _resourceRuntime.GetOrCreateBackendObjectContext(
             Api!,
             _deviceContext);
@@ -127,6 +130,13 @@ public sealed class VulkanRenderer :
     internal bool TargetRequiresSwapchainOutput => _outputRuntime.TargetPolicy.RequiresSwapchainOutput;
     internal bool HasInitializedMemoryAllocator => _resourceRuntime.Allocations.Buffers.MemoryAllocator is not null;
     internal bool HasExplicitFrameTarget => _outputRuntime.TargetPolicy.HasExplicitFrameTarget;
+    internal bool ExplicitTargetIsDeviceLost => _frameLoop.RequireExplicitFrameTarget().IsDeviceLost;
+    internal RenderTargetOutputProperties ExplicitTargetOutputProperties => _frameLoop.RequireExplicitFrameTarget().OutputProperties;
+    internal ulong ExplicitTargetGeneration => _frameLoop.RequireExplicitFrameTarget().TargetGeneration;
+    internal double ExplicitTargetLastCompletedGpuFrameNanoseconds => _frameLoop.RequireExplicitFrameTarget().LastCompletedGpuFrameNanoseconds;
+    internal string ExplicitTargetPresentationDescription => _frameLoop.RequireExplicitFrameTarget().PresentationDescription;
+    internal IReadOnlyList<string> EnabledInstanceExtensions => _deviceContext.EnabledInstanceExtensions;
+    internal PhysicalDevice PhysicalDevice => _deviceContext.PhysicalDevice;
     public bool StreamlineFrameGenerationSwapchainActive
         => _outputRuntime.Desktop.StreamlineFrameGenerationActive;
     public bool SwapchainRequiresSrgbEncoding
@@ -439,4 +449,16 @@ public sealed class VulkanRenderer :
     public override void SetCroppingEnabled(bool enabled) => _commandRuntime.SetCroppingEnabled(enabled);
     public void DeviceWaitIdle() => _frameLoop.WaitForDeviceIdle();
     public bool SupportsMultipleGraphicsQueues() => _deviceContext.HasSecondaryGraphicsQueue;
+
+    /// <summary>Records and submits one frame through an explicit presentation target.</summary>
+    internal void SubmitExplicitTargetFrame(Action<Vk, CommandBuffer, VulkanRenderFrameTarget> record)
+        => _frameLoop.ExecuteExplicitTargetFrame(record);
+
+    /// <summary>Reads the last completed explicit-target color output.</summary>
+    internal byte[] ReadbackExplicitTargetColor(int maxByteCount, ImageLayout sourceLayout)
+        => _frameLoop.RequireExplicitFrameTarget().ReadbackLastSubmittedColor(maxByteCount, sourceLayout);
+
+    /// <summary>Hashes the last completed explicit-target color output.</summary>
+    internal string ComputeExplicitTargetColorHash(ImageLayout sourceLayout)
+        => _frameLoop.RequireExplicitFrameTarget().ComputeLastSubmittedColorHash(sourceLayout);
 }

@@ -1868,6 +1868,7 @@ Target:                 new RenderFrameViewTargetDescriptor(
                 PublishVulkanEyeMirror(renderer, target.RightColorView, 1, rightImageIndex, width, height);
 
             RecordVulkanTrueSinglePassStereoOutput(
+                stereoViewport.CurrentFrameOutputRequest,
                 stereoPipeline.DebugName,
                 stereoViewport.RenderPipelineInstance.ResourceGeneration,
                 width,
@@ -1884,6 +1885,7 @@ Target:                 new RenderFrameViewTargetDescriptor(
     }
 
     private static void RecordVulkanTrueSinglePassStereoOutput(
+        in RenderOutputRequest plannedRequest,
         string pipelineName,
         int resourceGeneration,
         uint width,
@@ -1894,10 +1896,12 @@ Target:                 new RenderFrameViewTargetDescriptor(
         int commandCount)
     {
         ulong frameId = RuntimeEngine.Rendering.State.RenderFrameId;
-        RenderOutputRequest request = RenderOutputRequest.CreateDefault(
-            EVrOutputViewKind.LeftEye,
-            EFrameOutputKind.OpenXREyeSubmit,
-            frameId);
+        RenderOutputRequest request = plannedRequest.IsDefined
+            ? plannedRequest
+            : RenderOutputRequest.CreateDefault(
+                EVrOutputViewKind.LeftEye,
+                EFrameOutputKind.OpenXREyeSubmit,
+                frameId);
         ulong formatKey = ((ulong)(uint)leftFormat << 32) | (uint)rightFormat;
         RenderOutputTargetDescriptor target = request.Target with
         {
@@ -1919,7 +1923,7 @@ Target:                 new RenderFrameViewTargetDescriptor(
         RuntimeRenderingHostServices.Presentation.RecordRenderFrameOutput(new FrameOutputTelemetry(
             EFrameOutputKind.OpenXREyeSubmit,
             EVrOutputViewKind.LeftEye,
-            EFrameOutputPhase.Render,
+            EFrameOutputPhase.Submit,
             pacing,
             "OpenXR true single-pass stereo",
             pipelineName,

@@ -111,6 +111,8 @@ internal sealed partial class VulkanFrameLoop
         context = CompleteFrameOpContext(context with
         {
             OutputFrameBuffer = outputFrameBuffer,
+            OutputSchedulingInstanceIdentity = viewport?.FrameOutputIdentity ?? 0UL,
+            OutputSchedulingRequest = viewport?.CurrentFrameOutputRequest ?? default,
             OperationWorkspace = _commandRuntime.GetFrameOpWorkspace(),
         });
         context = ApplyInteractiveResizePlannerFreeze(context);
@@ -653,7 +655,12 @@ internal sealed partial class VulkanFrameLoop
             pipeline.ActiveMeshRenderCommands.RenderingBackendReadyPackage.PassMetadata ?? pipeline.Pipeline?.PassMetadata,
             displayWidth, displayHeight, internalWidth, internalHeight, outputFrameBuffer?.Name,
             ShouldPreserveSubmissionOrderBlock(), outputTargetIdentity, outputTargetName);
-        return ApplyInteractiveResizePlannerFreeze(CompleteFrameOpContext(context with { OutputFrameBuffer = outputFrameBuffer }));
+        return ApplyInteractiveResizePlannerFreeze(CompleteFrameOpContext(context with
+        {
+            OutputFrameBuffer = outputFrameBuffer,
+            OutputSchedulingInstanceIdentity = viewport?.FrameOutputIdentity ?? 0UL,
+            OutputSchedulingRequest = viewport?.CurrentFrameOutputRequest ?? default,
+        }));
     }
 
     private FrameOpContext CompleteFrameOpContext(in FrameOpContext context)

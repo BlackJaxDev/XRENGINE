@@ -214,6 +214,33 @@ internal sealed partial class VulkanCommandRuntime
     private int RecordMeshDrawPayload(scoped ref PrimaryCommandBufferRecordingState state, in MeshDrawPayload payload, in VulkanPrimaryOperationRecordingInfo info)
     {
         XRFrameBuffer? target = state.Ops.GetTarget(info.OperationIndex);
+        if (state.CommandChainSchedule is not null &&
+            state.ScheduledCommandChainKeysByOpIndex is not null &&
+            state.ScheduledCommandChainCache is not null &&
+            TryGetScheduledCommandChainForOp(
+                ref state,
+                info.OperationIndex,
+                out _,
+                out _))
+        {
+            int scheduledRunCount = CountContiguousMeshCommandChainRun(
+                ref state,
+                info.OperationIndex,
+                in payload,
+                info.PassIndex);
+            if (scheduledRunCount > 0 &&
+                TryExecuteScheduledMeshCommandChainSecondaryRun(
+                    ref state,
+                    info.OperationIndex,
+                    scheduledRunCount,
+                    info.PassIndex))
+            {
+                if (target is null)
+                    state.ActualSwapchainWriteCount += scheduledRunCount;
+                return info.OperationIndex + scheduledRunCount - 1;
+            }
+        }
+
         if (info.BeginsRendering && !state.RenderScope.MatchesTarget(target))
         {
             EndActiveRenderPass(ref state);

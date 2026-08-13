@@ -17,6 +17,7 @@ internal readonly record struct VulkanMeshRenderRequest(
     FrameOpContext Context,
     VulkanMeshProducerSnapshot Producer,
     DeferredRenderBindingPublication DeferredBindings,
+    ulong PreparationCompatibilitySignature,
     Matrix4x4 ModelMatrix,
     Matrix4x4 PreviousModelMatrix,
     XRMaterial? MaterialOverride,

@@ -9,35 +9,31 @@ namespace XREngine.Rendering.Vulkan
         {
             long stageStartTimestamp = Stopwatch.GetTimestamp();
             ulong slotWaitValue;
+            bool xrOwnsFrameDeadline =
+                RuntimeRenderingHostServices.Presentation.IsOpenXRActive;
             using (RuntimeRenderingHostServices.Profiling.StartProfileScope(
                        "Vulkan.FrameLifecycle.WaitFrameSlot"))
             {
                 slotWaitValue =
                     _commandRuntime.Synchronization._frameSlotTimelineValues![attempt.FrameSlot];
-                if (attempt.InteractiveResize &&
-                    !HasTimelineValueCompleted(
-                        _commandRuntime.Synchronization._graphicsTimelineSemaphore,
-                        slotWaitValue))
+                bool deadlineBoundDesktop = attempt.InteractiveResize || xrOwnsFrameDeadline;
+                bool frameSlotReady = HasTimelineValueCompleted(
+                    _commandRuntime.Synchronization._graphicsTimelineSemaphore,
+                    slotWaitValue);
+                bool imageSlotsReady = !xrOwnsFrameDeadline ||
+                    AreDesktopImageTimelinesCompleted();
+                if (deadlineBoundDesktop && (!frameSlotReady || !imageSlotsReady))
                 {
                     DrainSkippedResizeFrameOps(
-                        $"Interactive resize frame slot {attempt.FrameSlot} is still busy. TimelineValue={slotWaitValue}");
-                    MarkSkippedResizeFrameObserved(attempt.StartTimestamp);
-                    VulkanDesktopPreflightOutcome outcome =
-                        DesktopWsiOutput.ClassifyPreflight(
-                            EVulkanDesktopPreflightStatus
-                                .InteractiveSlotBusy);
-                    attempt.Stop(
-                        outcome.Reason ==
-                            EVulkanDesktopPolicyReason
-                                .InteractiveSlotBusy
-                            ? EDesktopFrameReason.FrameSlotBusy
-                            : throw new InvalidOperationException(
-                                $"Unexpected interactive slot policy {outcome.Reason}."));
-                    return outcome.Flow ==
-                        EVulkanDesktopPolicyFlow.Stop
-                            ? EDesktopFrameFlow.Stop
-                            : throw new InvalidOperationException(
-                                $"Unexpected interactive slot flow {outcome.Flow}.");
+                        deadlineBoundDesktop && xrOwnsFrameDeadline
+                            ? "XR-owned desktop frame slot or swapchain image is still busy"
+                            : "Interactive resize frame slot is still busy");
+                    if (attempt.InteractiveResize)
+                        MarkSkippedResizeFrameObserved(attempt.StartTimestamp);
+                    RuntimeRenderingHostServices.Presentation.RecordRenderFrameOutputWork(
+                        new FrameOutputWorkTelemetry(GpuBudgetDeferrals: 1));
+                    attempt.Stop(EDesktopFrameReason.FrameSlotBusy);
+                    return EDesktopFrameFlow.Stop;
                 }
 
                 WaitForTimelineValue(_commandRuntime.Synchronization._graphicsTimelineSemaphore, slotWaitValue);
@@ -57,6 +53,15 @@ namespace XREngine.Rendering.Vulkan
             }
 
             stageStartTimestamp = Stopwatch.GetTimestamp();
+            if (attempt.InteractiveResize || xrOwnsFrameDeadline)
+            {
+                // The modal callback must remain bounded. Completed retirement
+                // work is left for the next ordinary frame instead of turning a
+                // repaint callback into an unbounded destruction drain.
+                RuntimeRenderingHostServices.Presentation.RecordRenderFrameOutputWork(
+                    new FrameOutputWorkTelemetry(PlannerEvictionDeferrals: 1));
+            }
+            else
             using (RuntimeRenderingHostServices.Profiling.StartProfileScope(
                        "Vulkan.FrameLifecycle.DrainRetiredResources"))
             {
@@ -129,6 +134,25 @@ namespace XREngine.Rendering.Vulkan
             return EDesktopFrameFlow.Continue;
         }
 
+        private bool AreDesktopImageTimelinesCompleted()
+        {
+            ulong[]? imageTimelineValues = OutputRuntime.Desktop.ImageTimelineValues;
+            if (imageTimelineValues is null)
+                return true;
+
+            for (int index = 0; index < imageTimelineValues.Length; index++)
+            {
+                if (!HasTimelineValueCompleted(
+                        _commandRuntime.Synchronization._graphicsTimelineSemaphore,
+                        imageTimelineValues[index]))
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
         internal void PrepareAcquiredDesktopImage(ref VulkanFrameAttempt attempt)
         {
             ThrowIfDesktopFrameFaultInjected(
@@ -143,9 +167,12 @@ namespace XREngine.Rendering.Vulkan
                 {
                     imageCompletionValue =
                         OutputRuntime.Desktop.ImageTimelineValues[attempt.ImageIndex];
-                    WaitForTimelineValue(
-                        _commandRuntime.Synchronization._graphicsTimelineSemaphore,
-                        imageCompletionValue);
+                    if (!RuntimeRenderingHostServices.Presentation.IsOpenXRActive)
+                    {
+                        WaitForTimelineValue(
+                            _commandRuntime.Synchronization._graphicsTimelineSemaphore,
+                            imageCompletionValue);
+                    }
                 }
             }
 

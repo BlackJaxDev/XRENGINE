@@ -5,6 +5,7 @@ namespace XREngine.Rendering.Vulkan;
 
 internal sealed partial class CommandBufferRecordingScratch
 {
+            internal const int MaxAdmittedPipelinePreparationSignatures = 16384;
             public VulkanRenderScopeController RenderScope { get; } = new();
             public Dictionary<int, VulkanSecondaryRecordingBucket> SecondaryBucketByStart { get; } = new();
             public List<VulkanSecondaryRecordingBucket> SecondaryRecordingBuckets { get; } = new(32);
@@ -16,9 +17,12 @@ internal sealed partial class CommandBufferRecordingScratch
             public VulkanPrimarySecondaryArtifactSequence ExecutedCommandChainSecondaryArtifactSequence { get; } = new();
             public HashSet<int> PipelineDeferredOperationIndices { get; } = [];
             public HashSet<int> PipelineDeferredRequirementIndices { get; } = [];
+            public HashSet<int> PipelineOptionalDeferredRequirementIndices { get; } = [];
+            public HashSet<ulong> AdmittedPipelinePreparationSignatures { get; } =
+                new(MaxAdmittedPipelinePreparationSignatures);
             public ulong PipelineDeferredManifestIdentity { get; set; }
-            public ulong PipelineDeferredActivityGeneration { get; set; }
-            public ulong PipelineDeferredSharedPipelineGeneration { get; set; }
+            public int PipelinePrewarmRequirementCursor { get; set; }
+            public bool PipelinePrewarmInitialScanComplete { get; set; }
             public HashSet<VkRenderQuery> PreparedInlineQueries { get; } = new(ReferenceEqualityComparer.Instance);
             public HashSet<VkRenderQuery> BegunInlineQueries { get; } = new(ReferenceEqualityComparer.Instance);
             public HashSet<object> VisitedResourceRegistries { get; } = new(ReferenceEqualityComparer.Instance);

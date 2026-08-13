@@ -2025,7 +2025,13 @@ internal unsafe partial class VkMeshRenderer
 		string pipelineName,
 		out string reason)
 	{
-		lock (_recordDrawSync)
+		if (!_recordDrawSync.TryEnter())
+		{
+			reason = "renderer recording state is busy";
+			return false;
+		}
+
+		try
 		{
 			XRMaterial material = draw.MaterialOverride ?? ResolveMaterial(null, draw.Instances);
 			bool triangleIndexed = (_triangleIndexBuffer?.BufferHandle?.Handle ?? 0UL) != 0UL;
@@ -2118,6 +2124,10 @@ internal unsafe partial class VkMeshRenderer
 
 			reason = ready ? "Ready" : "pipeline compile queued or pending";
 			return ready;
+		}
+		finally
+		{
+			_recordDrawSync.Exit();
 		}
 	}
 
