@@ -1237,8 +1237,10 @@ namespace XREngine.Editor.Mcp
                 return new McpError(-32601, $"Tool '{name}' not found.");
 
             var world = McpWorldResolver.TryGetActiveWorldInstance();
-            if (world is null)
-                return new McpError(-32000, "No active world instance.");
+            var context = new McpToolContext(world);
+            var missingCapabilities = tool!.RequiredCapabilities & ~context.Capabilities;
+            if (missingCapabilities != XREngine.Runtime.Automation.Mcp.McpCapability.None)
+                return new McpError(-32000, $"Tool '{name}' requires unavailable capabilities: {missingCapabilities}.");
 
             JsonElement argsElement;
             if (paramsElement.TryGetProperty("arguments", out var arguments))
@@ -1264,8 +1266,6 @@ namespace XREngine.Editor.Mcp
             var permissionPolicy = Engine.EditorPreferences.McpPermissionPolicy;
             if (!await McpPermissionManager.Instance.RequestPermissionAsync(tool!, permissionPolicy, argsElement, "MCP Server", token))
                 return new McpError(-32602, $"Tool '{name}' was denied by the user.");
-
-            var context = new McpToolContext(world);
 
             // Resolve effective thread affinity: explicit attribute overrides global dispatch mode.
             var dispatchMode = Engine.EditorPreferences.McpDispatchMode;

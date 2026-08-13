@@ -1,6 +1,6 @@
 # XREngine MCP (Model Context Protocol) Server
 
-This document describes the MCP server implementation in XREngine Editor, which enables AI assistants and external tools to interact with the engine through a standardized JSON-RPC 2.0 protocol.
+This document describes the MCP server implementation in XREngine Editor and the editor-independent runtime automation host, which enable AI assistants and external tools to interact with the engine through a standardized JSON-RPC 2.0 protocol.
 
 For enabling the server, configuring editor preferences, and connecting VS Code or the in-editor assistant, start with the [MCP Server And Assistant user guide](../../user-guide/ai/mcp-server.md). This page is the protocol, tool surface, and contributor implementation reference.
 
@@ -22,6 +22,19 @@ The XREngine MCP Server exposes the editor's functionality via HTTP, allowing ex
 - List worlds and scenes
 
 The server implements the [Model Context Protocol](https://modelcontextprotocol.io/) specification (version `2024-11-05`).
+
+Runtime-only hosts use `XREngine.Runtime.Automation`. That assembly owns the
+small HTTP transport, tool registry, permission/idempotency enforcement,
+capability-scoped context, and asynchronous job primitives required by
+RenderBench. It does not reference `XREngine.Editor`. The editor can adapt and
+register its scene/action catalog through `EditorMcpToolBundle`; runtime
+profiling tools register independently through `RenderProfileMcpToolBundle`.
+
+Runtime tools declare any required `World`, `Renderer`, `RenderTarget`,
+`ProfilerSession`, `Editor`, or `Window` capabilities. Dispatch reports the
+specific missing capabilities instead of applying a process-wide active-world
+gate. Existing editor scene tools retain `World` as their default requirement,
+while profiler dumps can explicitly require only `ProfilerSession`.
 
 ---
 
@@ -754,6 +767,15 @@ When a tool executes but encounters an error, `isError` is set to `true`:
 ---
 
 ## Architecture
+
+Runtime profiling recipes and fixture execution are editor-independent. The
+strict Phase 4 schema is `.vscode/schemas/render-profile-recipe.schema.json`;
+`list_render_profile_targets` reports each catalog target's component, mode,
+inclusions, exclusions, and output-hash support. Recipes loaded through MCP and
+recipes passed to RenderBench with `--recipe-file` use the same executor,
+workload identity, correctness gates, and artifact format. Worker-count matrix
+variants retain a common underlying workload hash and suspend MCP only during
+each child capture/drain interval.
 
 The MCP implementation consists of the following classes:
 

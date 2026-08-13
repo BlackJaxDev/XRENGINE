@@ -1,5 +1,6 @@
 using Silk.NET.Core.Native;
 using Silk.NET.Vulkan;
+using Silk.NET.Vulkan.Extensions.EXT;
 
 namespace XREngine.Rendering.Vulkan;
 
@@ -54,6 +55,20 @@ public sealed unsafe class VulkanExplicitTargetRendererHost : IRuntimeRendererHo
     public IReadOnlyList<string> EnabledInstanceExtensions => _renderer.EnabledInstanceExtensions;
     public IReadOnlyList<string> EnabledDeviceExtensions => _renderer.EnabledDeviceExtensions;
     public VulkanRenderer Renderer => _renderer;
+    /// <summary>Native API used by prepared deterministic component fixtures.</summary>
+    public Vk Api => _renderer.VulkanApi;
+    /// <summary>Logical device used only to precreate fixture-owned Vulkan objects.</summary>
+    public Device Device => _renderer.Device;
+    /// <summary>Selected physical adapter handle for fixture memory-type selection.</summary>
+    public PhysicalDevice PhysicalDevice => _renderer.PhysicalDevice;
+    public Instance Instance => _renderer.Instance;
+    /// <summary>Loaded debug-label extension, when enabled for this host.</summary>
+    public ExtDebugUtils? DebugUtils => _renderer.DeviceContext.DebugUtils;
+    /// <summary>Graphics queue family used for fixture-owned secondary command pools.</summary>
+    public uint GraphicsQueueFamilyIndex => _renderer.DeviceContext.QueueFamilies.GraphicsFamilyIndex
+        ?? throw new InvalidOperationException("The Vulkan host has no selected graphics queue family.");
+    /// <summary>Whether dynamic rendering is enabled for the selected device.</summary>
+    public bool SupportsDynamicRendering => _renderer.DeviceContext.SupportsDynamicRendering;
 
     public string AdapterName
     {

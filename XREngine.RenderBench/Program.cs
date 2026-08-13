@@ -1,6 +1,8 @@
 namespace XREngine.RenderBench;
 
 using XREngine.Runtime.Bootstrap;
+using XREngine.Runtime.Automation.Profiling;
+using XREngine.Rendering;
 
 public static class Program
 {
@@ -26,12 +28,24 @@ public static class Program
         Directory.CreateDirectory(options.OutputDirectory);
         RuntimeRenderingBootstrap.InstallEngineHostServices();
         RenderBenchProcessState state = new(options);
+        RenderProfileControlService profileService = new(
+            new RenderBenchProfileExecutorFactory(options, state),
+            RenderBenchFixtureCatalog.Definitions.SelectMany(static fixture => fixture.ExecutionModes.Select(mode =>
+                new RenderProfileTargetDefinition(
+                    $"{fixture.Name}-{mode.ToString().ToLowerInvariant()}",
+                    fixture.Component,
+                    fixture.Name,
+                    mode,
+                    Supported: true,
+                    Inclusions: fixture.Inclusions,
+                    Exclusions: fixture.Exclusions,
+                    SupportsOutputHash: fixture.SupportsOutputHash))));
         using EventWaitHandle? shutdownEvent = string.IsNullOrWhiteSpace(options.ShutdownEventName)
             ? null
             : new EventWaitHandle(false, EventResetMode.ManualReset, options.ShutdownEventName);
         await using RenderBenchMcpHost? mcpHost = options.McpPolicy == RenderBenchMcpPolicy.Disabled
             ? null
-            : new RenderBenchMcpHost(options, state);
+            : new RenderBenchMcpHost(options, state, profileService);
 
         try
         {

@@ -28,13 +28,18 @@ public sealed record RenderBenchResult
     public required int WarmupFrames { get; init; }
     public required int StabilityFrames { get; init; }
     public required int CaptureFrames { get; init; }
+    public required int Repetitions { get; init; }
     public required double FixedStepSeconds { get; init; }
     public required int RandomSeed { get; init; }
     public required bool FrozenWorld { get; init; }
     public required RenderBenchInputManifest DeterministicInputs { get; init; }
+    public required RenderBenchFixtureManifest FixtureManifest { get; init; }
+    public required RenderBenchWorkCounters WorkCounters { get; init; }
     public required long[] CpuFrameNanoseconds { get; init; }
     public required double[] GpuFrameNanoseconds { get; init; }
     public required long AllocatedBytesOnCaptureThread { get; init; }
+    public required long AllocatedBytesOnFixtureWorkers { get; init; }
     public string? OutputSha256 { get; init; }
+    public string? OutputImagePath { get; init; }
     public required IReadOnlyList<RenderBenchGateResult> StabilityGates { get; init; }
 }

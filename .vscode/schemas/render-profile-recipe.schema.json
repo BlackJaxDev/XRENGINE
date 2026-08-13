@@ -1,0 +1,136 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://xrengine.dev/schemas/render-profile-recipe.schema.json",
+  "title": "XRENGINE Render Profile Recipe",
+  "description": "Versioned, editor-independent deterministic Vulkan profiling recipe.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "name", "component", "execution_mode", "backend", "fixture"],
+  "properties": {
+    "$schema": { "type": "string", "format": "uri-reference" },
+    "schema_version": { "const": 1 },
+    "name": { "$ref": "#/$defs/nonEmptyString" },
+    "component": { "$ref": "#/$defs/nonEmptyString" },
+    "execution_mode": { "enum": ["component", "presentationless", "headless_wsi", "desktop_wsi", "open_xr"] },
+    "backend": { "enum": ["vulkan", "open_gl", "direct_3_d_12"] },
+    "adapter": { "$ref": "#/$defs/nonEmptyString", "default": "default" },
+    "fixture": { "$ref": "#/$defs/nonEmptyString" },
+    "width": { "$ref": "#/$defs/positiveInteger", "default": 1920 },
+    "height": { "$ref": "#/$defs/positiveInteger", "default": 1080 },
+    "render_scale": { "type": "number", "exclusiveMinimum": 0, "maximum": 4, "default": 1 },
+    "color_format": { "$ref": "#/$defs/nonEmptyString", "default": "Rgba8" },
+    "depth_format": { "$ref": "#/$defs/nonEmptyString", "default": "DepthComponent32f" },
+    "sample_count": { "$ref": "#/$defs/positiveInteger", "default": 1 },
+    "frame_slots": { "$ref": "#/$defs/positiveInteger", "default": 3 },
+    "warmup_frames": { "$ref": "#/$defs/nonNegativeInteger", "default": 120 },
+    "stability_frames": { "$ref": "#/$defs/nonNegativeInteger", "default": 60 },
+    "capture_frames": { "$ref": "#/$defs/positiveInteger", "default": 240 },
+    "repetitions": { "$ref": "#/$defs/positiveInteger", "default": 1 },
+    "timeout_seconds": { "$ref": "#/$defs/positiveInteger", "default": 120 },
+    "instrumentation": {
+      "oneOf": [
+        { "type": "integer", "minimum": 0 },
+        { "type": "string" }
+      ]
+    },
+    "validation_mode": { "enum": ["counters_only", "counters_and_hash", "counters_hash_and_image"] },
+    "label_policy": { "enum": ["disabled", "stable_fixture_labels", "detailed_diagnostic_labels"] },
+    "hardware_counter_policy": { "enum": ["disabled", "optional", "required"] },
+    "cpu_sampling_policy": { "enum": ["disabled", "aggregate_only", "targeted_spans", "external_sampler_optional", "external_sampler_required"] },
+    "scene": { "$ref": "#/$defs/scene" },
+    "mutation": { "$ref": "#/$defs/mutation" },
+    "workload": { "$ref": "#/$defs/workload" },
+    "contract": { "$ref": "#/$defs/contract" },
+    "worker_counts": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/positiveInteger" },
+      "default": [1]
+    },
+    "expected": { "$ref": "#/$defs/expected" },
+    "budgets": { "$ref": "#/$defs/budgets" }
+  },
+  "$defs": {
+    "nonEmptyString": { "type": "string", "minLength": 1 },
+    "positiveInteger": { "type": "integer", "minimum": 1 },
+    "nonNegativeInteger": { "type": "integer", "minimum": 0 },
+    "stringArray": { "type": "array", "items": { "$ref": "#/$defs/nonEmptyString" } },
+    "scene": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "scene_identity": { "$ref": "#/$defs/nonEmptyString" },
+        "camera_identity": { "$ref": "#/$defs/nonEmptyString" },
+        "light_identities": { "$ref": "#/$defs/stringArray" },
+        "animation_identity": { "$ref": "#/$defs/nonEmptyString" },
+        "fixed_time_step_seconds": { "type": "number", "exclusiveMinimum": 0 },
+        "random_seed": { "type": "integer" },
+        "mesh_strategy": { "enum": ["direct", "instanced", "multi_draw_indirect", "mesh_shader", "render_command"] },
+        "render_features": { "$ref": "#/$defs/stringArray" },
+        "stereo_mode": { "enum": ["mono", "side_by_side", "multiview", "open_xr"] },
+        "output_identities": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/nonEmptyString" } }
+      }
+    },
+    "mutation": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "policy": { "enum": ["stable_reuse", "forced_dirty_every_frame", "dirty_every_n_frames", "resource_churn", "descriptor_churn", "pipeline_churn"] },
+        "dirty_every_n_frames": { "$ref": "#/$defs/positiveInteger" }
+      }
+    },
+    "workload": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "chain_count": { "$ref": "#/$defs/nonNegativeInteger" },
+        "draw_count": { "$ref": "#/$defs/nonNegativeInteger" },
+        "descriptor_count": { "$ref": "#/$defs/nonNegativeInteger" },
+        "barrier_count": { "$ref": "#/$defs/nonNegativeInteger" },
+        "upload_bytes": { "$ref": "#/$defs/nonNegativeInteger" },
+        "pass_iterations": { "$ref": "#/$defs/positiveInteger" },
+        "target_inputs": {
+          "type": "object",
+          "additionalProperties": { "type": "integer", "minimum": 0 }
+        }
+      }
+    },
+    "contract": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "inclusions": { "$ref": "#/$defs/stringArray" },
+        "exclusions": { "$ref": "#/$defs/stringArray" },
+        "validity_requirements": { "$ref": "#/$defs/stringArray" }
+      }
+    },
+    "expected": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "draws": { "$ref": "#/$defs/nonNegativeInteger" },
+        "dispatches": { "$ref": "#/$defs/nonNegativeInteger" },
+        "submissions": { "$ref": "#/$defs/nonNegativeInteger" },
+        "command_buffers": { "$ref": "#/$defs/nonNegativeInteger" },
+        "descriptors": { "$ref": "#/$defs/nonNegativeInteger" },
+        "barriers": { "$ref": "#/$defs/nonNegativeInteger" },
+        "upload_bytes": { "$ref": "#/$defs/nonNegativeInteger" },
+        "pass_iterations": { "$ref": "#/$defs/nonNegativeInteger" },
+        "command_buffer_decisions": { "$ref": "#/$defs/nonNegativeInteger" }
+      }
+    },
+    "budgets": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "max_cpu_p50_ms": { "type": "number", "minimum": 0 },
+        "max_cpu_p95_ms": { "type": "number", "minimum": 0 },
+        "max_gpu_p95_ms": { "type": "number", "minimum": 0 },
+        "max_capture_thread_allocated_bytes": { "type": "integer", "minimum": 0 },
+        "max_worker_allocated_bytes": { "type": "integer", "minimum": 0 },
+        "require_output_hash": { "type": "boolean" },
+        "required_output_sha256": { "type": "string", "pattern": "^[0-9A-Fa-f]{64}$" }
+      }
+    }
+  }
+}

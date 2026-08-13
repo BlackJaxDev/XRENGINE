@@ -1,0 +1,30 @@
+{
+  "$schema": "../../../../.vscode/schemas/render-profile-recipe.schema.json",
+  "schema_version": 1,
+  "name": "secondary-command-recording",
+  "component": "SecondaryCommandRecording",
+  "execution_mode": "component",
+  "backend": "vulkan",
+  "fixture": "secondary-command-recording",
+  "width": 640,
+  "height": 360,
+  "frame_slots": 3,
+  "warmup_frames": 60,
+  "stability_frames": 30,
+  "capture_frames": 180,
+  "repetitions": 3,
+  "timeout_seconds": 120,
+  "scene": {
+    "scene_identity": "synthetic:immutable-command-chains",
+    "camera_identity": "synthetic:none",
+    "animation_identity": "frozen",
+    "output_identities": ["control-color"]
+  },
+  "mutation": { "policy": "forced_dirty_every_frame" },
+  "workload": { "chain_count": 32, "barrier_count": 258 },
+  "worker_counts": [1, 2, 4, 8],
+  "contract": {
+    "validity_requirements": ["exact secondary count", "exact barrier count", "stable output hash"]
+  },
+  "budgets": { "max_capture_thread_allocated_bytes": 0, "require_output_hash": true }
+}

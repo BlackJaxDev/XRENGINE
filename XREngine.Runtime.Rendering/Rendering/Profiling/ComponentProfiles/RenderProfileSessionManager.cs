@@ -9,8 +9,13 @@ namespace XREngine.Rendering.Profiling;
 /// </summary>
 public interface IRenderProfileExecutor
 {
+    /// <summary>The next engine/render frame identifier that can be armed.</summary>
+    long NextFrameId => 0;
+
     Task<RenderProfilePreparation> PrepareAsync(RenderProfileRecipe recipe, CancellationToken cancellationToken);
     Task StabilizeAsync(RenderProfileRecipe recipe, CancellationToken cancellationToken);
+    /// <summary>Performs one-time capture-thread initialization before the armed boundary is published.</summary>
+    void WarmCaptureThread(RenderProfileRecipe recipe) { }
     void ExecuteMeasuredFrame(RenderProfileRecipe recipe, int frameIndex);
     Task<RenderProfileResult> DrainAsync(RenderProfileRecipe recipe, RenderProfilePreparation preparation, CancellationToken cancellationToken);
     Task CancelAsync(CancellationToken cancellationToken);
@@ -45,7 +50,9 @@ public sealed record RenderProfileStatus(
     RenderProfileState State,
     string? Error,
     int CapturedFrames,
-    RenderProfilePreparation? Preparation);
+    RenderProfilePreparation? Preparation,
+    long? ArmedFrameId = null,
+    long? CaptureStartFrameId = null);
 
 /// <summary>
 /// Thread-safe state machine for deterministic render profiling. The state transition methods are
@@ -80,12 +87,17 @@ public sealed class RenderProfileSessionManager
 
     public void Arm(string sessionId) => GetRequired(sessionId).Arm();
 
-    public void Start(string sessionId) => GetRequired(sessionId).Start();
+    public void Arm(string sessionId, long frameId) => GetRequired(sessionId).Arm(frameId);
+
+    public Task Start(string sessionId) => GetRequired(sessionId).Start();
 
     public void Stop(string sessionId) => GetRequired(sessionId).Stop();
 
     public Task CancelAsync(string sessionId, CancellationToken cancellationToken = default)
         => GetRequired(sessionId).CancelAsync(cancellationToken);
+
+    public Task WaitForTerminalStateAsync(string sessionId, CancellationToken cancellationToken = default)
+        => GetRequired(sessionId).WaitForTerminalStateAsync(cancellationToken);
 
     public RenderProfileResult GetResult(string sessionId) => GetRequired(sessionId).GetResult();
 
@@ -94,10 +106,16 @@ public sealed class RenderProfileSessionManager
             ? session
             : throw new KeyNotFoundException($"Render-profile session '{sessionId}' was not found.");
 
-    private sealed class Session(string id, RenderProfileRecipe recipe, IRenderProfileExecutor executor)
+    private sealed class Session
     {
+        private readonly string id;
+        private readonly RenderProfileRecipe recipe;
+        private readonly IRenderProfileExecutor executor;
         private readonly object _sync = new();
         private readonly CancellationTokenSource _cancellation = new();
+        private readonly TaskCompletionSource _terminal = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly ManualResetEventSlim _captureStartSignal = new(false);
+        private readonly ManualResetEventSlim _captureWorkerReady = new(false);
         private RenderProfileState _state = RenderProfileState.Created;
         private RenderProfilePreparation? _preparation;
         private RenderProfileResult? _result;
@@ -105,13 +123,26 @@ public sealed class RenderProfileSessionManager
         private int _capturedFrames;
         private Task? _preparationTask;
         private Task? _captureTask;
+        private long? _armedFrameId;
+        private long? _captureStartFrameId;
+        private bool _stopRequested;
+        private bool _cancelRequested;
+        private long? _requestedFrameId;
+
+        public Session(string id, RenderProfileRecipe recipe, IRenderProfileExecutor executor)
+        {
+            this.id = id;
+            this.recipe = recipe;
+            this.executor = executor;
+            _cancellation.CancelAfter(TimeSpan.FromSeconds(recipe.TimeoutSeconds));
+        }
 
         public void BeginPreparation()
         {
             lock (_sync)
             {
                 Transition(RenderProfileState.Created, RenderProfileState.Preparing);
-                _preparationTask = PrepareAsync();
+                _preparationTask = Task.Run(PrepareAsync);
             }
         }
 
@@ -133,16 +164,16 @@ public sealed class RenderProfileSessionManager
             }
             catch (OperationCanceledException) when (_cancellation.IsCancellationRequested)
             {
+                await TryCancelExecutorAsync().ConfigureAwait(false);
                 lock (_sync)
-                    _state = RenderProfileState.Cancelled;
+                    SetTerminal(_cancelRequested ? RenderProfileState.Cancelled : RenderProfileState.Failed,
+                        _cancelRequested ? null : $"Render-profile session '{id}' timed out after {recipe.TimeoutSeconds} seconds.");
             }
             catch (Exception ex)
             {
+                await TryCancelExecutorAsync().ConfigureAwait(false);
                 lock (_sync)
-                {
-                    _error = ex.Message;
-                    _state = RenderProfileState.Failed;
-                }
+                    SetTerminal(RenderProfileState.Failed, ex.Message);
             }
         }
 
@@ -153,22 +184,48 @@ public sealed class RenderProfileSessionManager
             RenderProfileState state = Snapshot().State;
             if (state == RenderProfileState.Failed)
                 throw new InvalidOperationException(_error ?? "Render-profile preparation failed.");
+            if (state == RenderProfileState.Cancelled)
+                throw new InvalidOperationException("Render-profile preparation was cancelled.");
         }
 
         public void Arm()
+            => ArmCore(null);
+
+        public void Arm(long frameId)
+            => ArmCore(frameId);
+
+        private void ArmCore(long? requestedFrameId)
         {
             lock (_sync)
+            {
+                if (_state != RenderProfileState.Created)
+                    throw new InvalidOperationException($"Cannot arm render-profile session '{id}' from {_state}.");
+                _requestedFrameId = requestedFrameId;
+                _captureTask = Task.Factory.StartNew(
+                    CaptureAsync,
+                    CancellationToken.None,
+                    TaskCreationOptions.LongRunning,
+                    TaskScheduler.Default).Unwrap();
+            }
+
+            _captureWorkerReady.Wait(_cancellation.Token);
+            lock (_sync)
+            {
+                if (_state == RenderProfileState.Failed)
+                    throw new InvalidOperationException(_error ?? "The capture worker failed while arming.");
                 Transition(RenderProfileState.Created, RenderProfileState.Armed);
+            }
         }
 
-        public void Start()
+        public Task Start()
         {
             lock (_sync)
             {
                 Transition(RenderProfileState.Armed, RenderProfileState.Capturing);
-                // The control-plane caller only arms work. The captured interval executes on
-                // the profile host's worker, never while serializing an MCP response.
-                _captureTask = Task.Run(CaptureAsync);
+                _captureStartFrameId = _armedFrameId;
+                // The parked capture worker is released only by the post-response callback.
+                _captureStartSignal.Set();
+                return _terminal.Task;
             }
         }
 
@@ -176,10 +233,20 @@ public sealed class RenderProfileSessionManager
         {
             try
             {
-                for (int frame = 0; frame < recipe.CaptureFrames; frame++)
+                executor.WarmCaptureThread(recipe);
+                long armedFrameId = executor.NextFrameId;
+                if (_requestedFrameId.HasValue && _requestedFrameId.Value != armedFrameId)
+                    throw new InvalidOperationException(
+                        $"Requested frame boundary {_requestedFrameId.Value} is unavailable after capture-thread warmup; next frame is {armedFrameId}.");
+                _armedFrameId = armedFrameId;
+                _captureWorkerReady.Set();
+                _captureStartSignal.Wait(_cancellation.Token);
+
+                for (int frame = 0; frame < recipe.TotalCaptureFrames && !Volatile.Read(ref _stopRequested); frame++)
                 {
                     _cancellation.Token.ThrowIfCancellationRequested();
-                    executor.ExecuteMeasuredFrame(recipe, frame);
+                    long engineFrameId = checked(_captureStartFrameId!.Value + frame);
+                    executor.ExecuteMeasuredFrame(recipe, checked((int)engineFrameId));
                     Volatile.Write(ref _capturedFrames, frame + 1);
                 }
 
@@ -200,40 +267,52 @@ public sealed class RenderProfileSessionManager
                             recipe.Instrumentation.HasFlag(RenderProfileInstrumentation.HardwareCounters),
                     };
                     Transition(RenderProfileState.Draining, RenderProfileState.Completed);
+                    _terminal.TrySetResult();
                 }
             }
             catch (OperationCanceledException) when (_cancellation.IsCancellationRequested)
             {
+                _captureWorkerReady.Set();
+                await TryCancelExecutorAsync().ConfigureAwait(false);
                 lock (_sync)
-                    _state = RenderProfileState.Cancelled;
+                    SetTerminal(_cancelRequested ? RenderProfileState.Cancelled : RenderProfileState.Failed,
+                        _cancelRequested ? null : $"Render-profile session '{id}' timed out after {recipe.TimeoutSeconds} seconds.");
             }
             catch (Exception ex)
             {
+                _captureWorkerReady.Set();
+                await TryCancelExecutorAsync().ConfigureAwait(false);
                 lock (_sync)
-                {
-                    _error = ex.Message;
-                    _state = RenderProfileState.Failed;
-                }
+                    SetTerminal(RenderProfileState.Failed, ex.Message);
             }
         }
 
         public void Stop()
         {
-            lock (_sync)
-            {
-                if (_state is RenderProfileState.Capturing or RenderProfileState.Draining)
-                    _cancellation.Cancel();
-            }
+            Volatile.Write(ref _stopRequested, true);
         }
 
         public async Task CancelAsync(CancellationToken cancellationToken)
         {
+            _cancelRequested = true;
             _cancellation.Cancel();
-            await executor.CancelAsync(cancellationToken).ConfigureAwait(false);
+            _captureStartSignal.Set();
             Task? activeTask = _captureTask ?? _preparationTask;
             if (activeTask is not null)
-                await activeTask.ConfigureAwait(false);
+            {
+                try { await activeTask.WaitAsync(cancellationToken).ConfigureAwait(false); }
+                catch (OperationCanceledException) when (_cancellation.IsCancellationRequested) { }
+            }
+            await TryCancelExecutorAsync(cancellationToken).ConfigureAwait(false);
+            lock (_sync)
+            {
+                if (_state is not (RenderProfileState.Completed or RenderProfileState.Failed or RenderProfileState.Cancelled))
+                    SetTerminal(RenderProfileState.Cancelled, null);
+            }
         }
+
+        public Task WaitForTerminalStateAsync(CancellationToken cancellationToken)
+            => _terminal.Task.WaitAsync(cancellationToken);
 
         public RenderProfileResult GetResult()
         {
@@ -248,7 +327,7 @@ public sealed class RenderProfileSessionManager
         public RenderProfileStatus Snapshot()
         {
             lock (_sync)
-                return new(id, _state, _error, Volatile.Read(ref _capturedFrames), _preparation);
+                return new(id, _state, _error, Volatile.Read(ref _capturedFrames), _preparation, _armedFrameId, _captureStartFrameId);
         }
 
         private void Transition(RenderProfileState expected, RenderProfileState next)
@@ -256,6 +335,19 @@ public sealed class RenderProfileSessionManager
             if (_state != expected)
                 throw new InvalidOperationException($"Cannot transition render-profile session '{id}' from {_state} to {next}; expected {expected}.");
             _state = next;
+        }
+
+        private void SetTerminal(RenderProfileState state, string? error)
+        {
+            _error = error;
+            _state = state;
+            _terminal.TrySetResult();
+        }
+
+        private async Task TryCancelExecutorAsync(CancellationToken cancellationToken = default)
+        {
+            try { await executor.CancelAsync(cancellationToken).ConfigureAwait(false); }
+            catch when (_cancellation.IsCancellationRequested) { }
         }
     }
 }

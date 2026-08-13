@@ -1,20 +1,9 @@
-using XREngine.Data.Rendering;
-using XREngine.Rendering;
+using XREngine.Rendering.Profiling;
 
 namespace XREngine.RenderBench;
 
+/// <summary>Exact recipe plus resolved catalog defaults used by one run.</summary>
 public sealed record RenderBenchEffectiveConfiguration(
     int SchemaVersion,
-    string Backend,
-    RenderExecutionMode ExecutionMode,
-    string Recipe,
-    string Fixture,
-    RenderTargetOutputProperties Output,
-    int WarmupFrames,
-    int StabilityFrames,
-    int CaptureFrames,
-    double FixedStepSeconds,
-    int RandomSeed,
-    bool FrozenWorld,
-    EPixelInternalFormat ColorFormat,
-    EPixelInternalFormat DepthFormat);
+    RenderProfileRecipe Recipe,
+    RenderBenchFixtureManifest Fixture);
