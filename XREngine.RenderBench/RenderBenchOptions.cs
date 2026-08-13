@@ -8,7 +8,7 @@ public sealed record RenderBenchOptions
 {
     private static readonly HashSet<string> s_allowedArguments = new(StringComparer.OrdinalIgnoreCase)
     {
-        "backend", "execution-mode", "recipe", "fixture", "output-dir", "mcp-policy", "mcp-port",
+        "backend", "execution-mode", "recipe", "recipe-file", "fixture", "output-dir", "mcp-policy", "mcp-port",
         "session-name", "session-token", "shutdown-event", "wait-for-mcp-start", "width", "height",
         "layers", "frame-slots", "samples", "color-format", "depth-format", "warmup-frames",
         "stability-frames", "capture-frames", "fixed-step", "random-seed", "frozen-world", "help",
@@ -17,6 +17,7 @@ public sealed record RenderBenchOptions
     public string Backend { get; init; } = "Vulkan";
     public RenderExecutionMode ExecutionMode { get; init; } = RenderExecutionMode.Presentationless;
     public string Recipe { get; init; } = "deterministic-clear";
+    public string? RecipeFile { get; init; }
     public string Fixture { get; init; } = "synthetic-clear";
     public required string OutputDirectory { get; init; }
     public RenderBenchMcpPolicy McpPolicy { get; init; } = RenderBenchMcpPolicy.Disabled;
@@ -92,6 +93,9 @@ public sealed record RenderBenchOptions
             Backend = "Vulkan",
             ExecutionMode = mode,
             Recipe = Get(values, "recipe", "deterministic-clear"),
+            RecipeFile = values.TryGetValue("recipe-file", out string? recipeFile) && !string.IsNullOrWhiteSpace(recipeFile)
+                ? Path.GetFullPath(recipeFile)
+                : null,
             Fixture = Get(values, "fixture", "synthetic-clear"),
             OutputDirectory = Path.GetFullPath(outputDirectory),
             McpPolicy = mcpPolicy,
@@ -115,8 +119,9 @@ public sealed record RenderBenchOptions
             FrozenWorld = values.ContainsKey("frozen-world"),
         };
 
-        if (!result.Recipe.Equals("deterministic-clear", StringComparison.OrdinalIgnoreCase) ||
-            !result.Fixture.Equals("synthetic-clear", StringComparison.OrdinalIgnoreCase))
+        if (result.RecipeFile is null &&
+            (!result.Recipe.Equals("deterministic-clear", StringComparison.OrdinalIgnoreCase) ||
+             !result.Fixture.Equals("synthetic-clear", StringComparison.OrdinalIgnoreCase)))
         {
             throw new NotSupportedException(
                 $"Phase 2 supports only recipe 'deterministic-clear' with fixture 'synthetic-clear'; received '{result.Recipe}'/'{result.Fixture}'.");
@@ -130,7 +135,8 @@ public sealed record RenderBenchOptions
         XREngine.RenderBench --output-dir <path> [options]
           --backend Vulkan
           --execution-mode Presentationless|Component
-          --recipe deterministic-clear --fixture synthetic-clear
+          --recipe-file <versioned-jsonc-recipe>
+          --recipe deterministic-clear --fixture synthetic-clear (legacy control shortcut)
           --width N --height N --layers N --samples N --frame-slots N
           --color-format Rgba8 --depth-format DepthComponent32f
           --warmup-frames N --stability-frames N --capture-frames N

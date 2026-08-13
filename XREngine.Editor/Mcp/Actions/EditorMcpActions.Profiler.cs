@@ -7,6 +7,7 @@ using XREngine.Data.Core;
 using XREngine.Rendering;
 using XREngine.Rendering.Occlusion;
 using XREngine.Rendering.Vulkan;
+using McpCapability = XREngine.Runtime.Automation.Mcp.McpCapability;
 using GpuDrivenStats = XREngine.RuntimeEngine.Rendering.Stats.GpuDriven;
 using GpuPipelineStats = XREngine.RuntimeEngine.Rendering.Stats.GpuPipelineProfiler;
 using OcclusionTelemetry = XREngine.Rendering.Occlusion.OcclusionTelemetry;
@@ -18,6 +19,7 @@ namespace XREngine.Editor.Mcp
     public sealed partial class EditorMcpActions
     {
         [XRMcp(Name = "dump_cpu_frame_profile", Permission = McpPermissionLevel.ReadOnly)]
+        [McpRequiredCapabilities(McpCapability.ProfilerSession)]
         [Description("Dump the latest CPU profiler frame snapshot to an LLM-readable log file in the current Build/Logs run directory.")]
         public static Task<McpToolResponse> DumpCpuFrameProfileAsync(McpToolContext context)
         {
@@ -35,6 +37,7 @@ namespace XREngine.Editor.Mcp
         }
 
         [XRMcp(Name = "dump_gpu_render_pipeline_profile", Permission = McpPermissionLevel.ReadOnly)]
+        [McpRequiredCapabilities(McpCapability.ProfilerSession)]
         [Description("Dump retained GPU timing history for one render pipeline, or all captured pipelines when pipeline_name is omitted.")]
         public static Task<McpToolResponse> DumpGpuRenderPipelineProfileAsync(
             McpToolContext context,
