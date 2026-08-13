@@ -14,6 +14,7 @@ internal sealed class CommandChainRecordingWorkerState(VulkanCommandRuntime comm
         new(workerIndex);
     public Thread? Thread;
     public VulkanCommandChainRecordingBatch? Batch;
+    public VulkanNonGraphicsRecordingBatch? NonGraphicsBatch;
     public volatile bool StopRequested;
     public ulong LastFrameId;
 
@@ -38,6 +39,8 @@ internal sealed class CommandChainRecordingWorkerState(VulkanCommandRuntime comm
             VulkanCommandChainRecordingBatch? batch = Batch;
             if (batch is not null)
                 _commandRuntime.ExecuteCommandChainRecordingWorker(this);
+            else if (NonGraphicsBatch is not null)
+                _commandRuntime.ExecuteNonGraphicsRecordingWorker(this);
         }
     }
 }

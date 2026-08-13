@@ -37,7 +37,10 @@ internal sealed class EngineRuntimeRenderingHostServices :
     private IDisposable? _rendererBackendRegistrations;
     private readonly object _vrDesktopPressureLock = new();
     private readonly object _renderOutputGraphLock = new();
-    private readonly RenderOutputGraphPlanner _renderOutputGraphPlanner = new();
+    private readonly RenderOutputAdmissionLedger _renderOutputAdmissionLedger = new();
+    private readonly RenderOutputSchedulingSnapshot[] _renderOutputSchedulingSnapshots =
+        new RenderOutputSchedulingSnapshot[64];
+    private int _nextRenderOutputSchedulingSnapshot;
     private int _vrDesktopPressureHoldFramesRemaining;
     private int _vrDesktopPressureConsecutiveSkips;
     private ulong _vrDesktopPressureFrameId;
@@ -414,7 +417,7 @@ internal sealed class EngineRuntimeRenderingHostServices :
         Engine.Time.Timer.RenderFrame -= renderFrame;
     }
 
-    public bool TryDispatchInteractiveResizeFrame()
+    public InteractiveResizeDispatchResult TryDispatchInteractiveResizeFrame()
         => Engine.Time.Timer.TryDispatchInteractiveResizeFrame();
 
     public void SubscribePlayModeTransitions(Action callback)
@@ -1598,24 +1601,102 @@ internal sealed class EngineRuntimeRenderingHostServices :
         }
     }
 
-    public void PlanRenderOutput(in RenderOutputRequest request, bool isDue)
+    public RenderOutputSchedulingDecision PlanRenderOutput(
+        in RenderOutputRequest request,
+        bool isDue,
+        ERenderOutputPolicyReason deferralReason = ERenderOutputPolicyReason.None)
     {
         if (!request.IsDefined)
-            return;
+            return new(
+                Execute: false,
+                ERenderOutputWorkDisposition.Skipped,
+                ERenderOutputPolicyReason.DependencyUnavailable,
+                ContentAgeFrames: 0u,
+                XrCriticalPathReserved: false,
+                ForcedRefresh: false);
 
+        bool admittedDue = isDue;
+        ERenderOutputPolicyReason admittedReason = deferralReason;
+        double cpuBudgetMs = request.Schedule.MaxCpuBudgetMs;
+        if (admittedDue &&
+            request.OutputClass != ERenderOutputClass.XrCritical &&
+            cpuBudgetMs > 0.0 &&
+            RuntimeEngine.Rendering.Stats.FrameOutputs.LastWholeFrameMs > cpuBudgetMs)
+        {
+            admittedDue = false;
+            admittedReason = ERenderOutputPolicyReason.CpuBudget;
+        }
+        double gpuBudgetMs = request.Schedule.MaxGpuBudgetMs;
+        if (admittedDue &&
+            request.OutputClass != ERenderOutputClass.XrCritical &&
+            gpuBudgetMs > 0.0 &&
+            RuntimeEngine.Rendering.Stats.FrameOutputs.GetLastOutputGpuMs(request.OutputId) > gpuBudgetMs)
+        {
+            admittedDue = false;
+            admittedReason = ERenderOutputPolicyReason.GpuBudget;
+        }
+
+        RenderOutputSchedulingDecision decision;
         lock (_renderOutputGraphLock)
         {
-            bool independentDesktopScene =
-                RuntimeEngine.Rendering.Settings.VrMirrorMode == EVrMirrorMode.FullIndependentRender;
-            EFrameOutputKind xrSourceKind = RuntimeEngine.VRState.IsOpenXRActive
-                ? EFrameOutputKind.OpenXREyeSubmit
-                : EFrameOutputKind.OpenVRSubmit;
-            _renderOutputGraphPlanner.Plan(
+            decision = _renderOutputAdmissionLedger.Plan(
                 request,
-                isDue,
-                independentDesktopScene,
-                xrSourceKind);
+                admittedDue,
+                admittedReason);
+            int snapshotIndex = FindRenderOutputSchedulingSnapshot(request.OutputId);
+            if (snapshotIndex < 0)
+            {
+                snapshotIndex = _nextRenderOutputSchedulingSnapshot;
+                _nextRenderOutputSchedulingSnapshot =
+                    (_nextRenderOutputSchedulingSnapshot + 1) %
+                    _renderOutputSchedulingSnapshots.Length;
+            }
+            _renderOutputSchedulingSnapshots[snapshotIndex] = new(request, decision);
         }
+
+        RuntimeEngine.Rendering.Stats.FrameOutputs.RecordWork(new FrameOutputWorkTelemetry(
+            CpuBudgetDeferrals: decision.Reason == ERenderOutputPolicyReason.CpuBudget ? 1 : 0,
+            GpuBudgetDeferrals: decision.Reason == ERenderOutputPolicyReason.GpuBudget ? 1 : 0,
+            StaleResultReuses: decision.Disposition == ERenderOutputWorkDisposition.ReusedStale ? 1 : 0,
+            MissedDeadlines: decision.Reason == ERenderOutputPolicyReason.DeadlineRisk ? 1 : 0));
+        return decision;
+    }
+
+    public bool TryGetRenderOutputSchedulingSnapshot(
+        ulong outputId,
+        EFrameOutputKind outputKind,
+        EVrOutputViewKind viewKind,
+        ulong frameId,
+        out RenderOutputSchedulingSnapshot snapshot)
+    {
+        lock (_renderOutputGraphLock)
+        {
+            for (int index = 0; index < _renderOutputSchedulingSnapshots.Length; index++)
+            {
+                RenderOutputSchedulingSnapshot candidate =
+                    _renderOutputSchedulingSnapshots[index];
+                if (candidate.IsDefined &&
+                    candidate.Request.OutputId == outputId &&
+                    candidate.Request.OutputKind == outputKind &&
+                    candidate.Request.ViewKind == viewKind &&
+                    candidate.Request.FrameId == frameId)
+                {
+                    snapshot = candidate;
+                    return true;
+                }
+            }
+        }
+
+        snapshot = default;
+        return false;
+    }
+
+    private int FindRenderOutputSchedulingSnapshot(ulong outputId)
+    {
+        for (int index = 0; index < _renderOutputSchedulingSnapshots.Length; index++)
+            if (_renderOutputSchedulingSnapshots[index].Request.OutputId == outputId)
+                return index;
+        return -1;
     }
 
     public void RecordRenderFrameOutput(in FrameOutputTelemetry telemetry)
@@ -1628,29 +1709,36 @@ internal sealed class EngineRuntimeRenderingHostServices :
         {
             lock (_renderOutputGraphLock)
             {
-                bool independentDesktopScene =
-                    RuntimeEngine.Rendering.Settings.VrMirrorMode == EVrMirrorMode.FullIndependentRender;
-                EFrameOutputKind xrSourceKind = RuntimeEngine.VRState.IsOpenXRActive
-                    ? EFrameOutputKind.OpenXREyeSubmit
-                    : EFrameOutputKind.OpenVRSubmit;
-                _renderOutputGraphPlanner.Plan(
-                    request,
-                    telemetry.Pacing.IsDue,
-                    independentDesktopScene,
-                    xrSourceKind);
-                if (telemetry.Rendered)
-                    _renderOutputGraphPlanner.Complete(request);
-
-                if (_renderOutputGraphPlanner.TryGetStatus(request, out RenderOutputDagNodeStatus status))
+                bool terminalPhase = request.CompletionRequirement switch
                 {
-                    ERenderOutputWorkDisposition disposition = status.State == ERenderOutputNodeState.Reused
-                        ? ERenderOutputWorkDisposition.ReusedStale
-                        : telemetry.WorkDisposition;
+                    ERenderOutputCompletionRequirement.GpuCompleteBeforeRuntimeRelease =>
+                        telemetry.Phase == EFrameOutputPhase.Submit,
+                    ERenderOutputCompletionRequirement.BeforePresent =>
+                        telemetry.Phase == EFrameOutputPhase.Present,
+                    ERenderOutputCompletionRequirement.BeforeConsumer =>
+                        telemetry.Phase is EFrameOutputPhase.Render or EFrameOutputPhase.Submit,
+                    _ => telemetry.Phase is EFrameOutputPhase.Render or
+                        EFrameOutputPhase.Submit or EFrameOutputPhase.Overlay or
+                        EFrameOutputPhase.Present,
+                };
+                if (telemetry.Rendered && terminalPhase)
+                    _renderOutputAdmissionLedger.Complete(request);
+
+                if (_renderOutputAdmissionLedger.TryGetStatus(request, out RenderOutputDagNodeStatus status))
+                {
+                    ERenderOutputWorkDisposition disposition = status.State is
+                        ERenderOutputNodeState.Reused or ERenderOutputNodeState.Deferred or
+                        ERenderOutputNodeState.Skipped
+                            ? status.Disposition
+                            : telemetry.WorkDisposition;
                     recorded = telemetry with
                     {
                         Request = request,
                         WorkDisposition = disposition,
                         ContentAgeFrames = status.ContentAgeFrames,
+                        PolicyReason = status.PolicyReason != ERenderOutputPolicyReason.None
+                            ? status.PolicyReason
+                            : telemetry.PolicyReason,
                         PolicyAuthorized = status.State != ERenderOutputNodeState.Reused || status.AuthorizedReuse,
                     };
                 }

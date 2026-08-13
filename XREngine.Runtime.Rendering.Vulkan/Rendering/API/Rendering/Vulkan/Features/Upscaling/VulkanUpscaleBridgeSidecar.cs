@@ -35,6 +35,9 @@ internal sealed unsafe partial class VulkanUpscaleBridgeSidecar : IDisposable
     private readonly uint _streamlineComputeQueueIndex;
     private readonly uint _streamlineOpticalFlowQueueIndex;
     private readonly VulkanUpscaleBridgeVulkanContext _nativeContext;
+    // The sidecar owns a distinct VkDevice and queue domain. Its native submit
+    // gateway must therefore remain isolated from the main renderer's command
+    // authority while preserving the same narrow no-wait lease contract.
     private readonly object _graphicsQueueOperationGate = new();
     private readonly VulkanDeviceStateMachine _deviceState = new();
     private readonly VulkanFrameTelemetry _telemetry = new();

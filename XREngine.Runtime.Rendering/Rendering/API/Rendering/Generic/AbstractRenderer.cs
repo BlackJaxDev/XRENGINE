@@ -563,8 +563,19 @@ namespace XREngine.Rendering
                         RecordImGuiCpuPhase(profilingActive, frameId, "ImGui.Backend.Render", phaseStart);
 
                         phaseStart = BeginImGuiCpuPhase(profilingActive);
-                        using (profilingActive ? profiler.StartScope("ImGui.PlatformWindows") : default)
-                            backend.RenderPlatformWindows();
+                        // Detached platform windows own blocking fence/acquire
+                        // paths. During a Win32 modal drag they keep their last
+                        // published images while the primary viewport uses WSI
+                        // scaling, so the callback stays bounded.
+                        bool xrOwnsCurrentOutput = viewport?.CurrentFrameOutputRequest.OutputKind is
+                            EFrameOutputKind.OpenXREyeSubmit or EFrameOutputKind.OpenVRSubmit;
+                        bool xrAuxiliaryCadenceDue = !RuntimeRenderingHostServices.Presentation.IsOpenXRActive ||
+                            (frameId & 7UL) == 0UL;
+                        if (!allowResizeFrame && !xrOwnsCurrentOutput && xrAuxiliaryCadenceDue)
+                        {
+                            using (profilingActive ? profiler.StartScope("ImGui.PlatformWindows") : default)
+                                backend.RenderPlatformWindows();
+                        }
                         RecordImGuiCpuPhase(profilingActive, frameId, "ImGui.PlatformWindows", phaseStart);
 
                         frameStarted = false;

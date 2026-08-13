@@ -32,6 +32,7 @@ internal sealed unsafe partial class VulkanPipelineManager
     internal readonly object _vulkanPipelineCompileDependencyMutationLock = new();
     internal readonly Lock _vulkanPipelineCompileGateLock = new();
     internal SemaphoreSlim? _vulkanPipelineCompileGate;
+    internal VulkanPipelineCompileTask? _vulkanPipelineCompileTask;
     internal int _vulkanPipelineCompileWorkerCount;
     internal int _vulkanPipelineCompileQueueAnnounced;
     internal int _vulkanPipelineCompileShutdownStarted;
@@ -539,7 +540,9 @@ internal sealed unsafe partial class VulkanPipelineManager
             double elapsedMs = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
             PublishBackgroundPipelineCache(elapsedMs);
             uint keyHash = unchecked((uint)request.Key.GetHashCode());
-            Debug.Vulkan(
+            if (elapsedMs >= 2.0)
+            {
+                Debug.Vulkan(
                 "[Vulkan] Async graphics pipeline compiled in {0:F2} ms: pipeline='{1}' program='{2}' key=0x{3:X8} programHash=0x{4:X16} vertexLayout=0x{5:X16} descriptorLayout=0x{6:X16} depthTest={7} depthWrite={8} depthCompare={9} blend={10} atc={11} cull={12} handle=0x{13:X}.",
                 elapsedMs,
                 request.PipelineName,
@@ -555,6 +558,7 @@ internal sealed unsafe partial class VulkanPipelineManager
                 request.Key.AlphaToCoverageEnabled,
                 request.Key.CullMode,
                 pipeline.Handle);
+            }
             return new VulkanGraphicsPipelineCompileResult(true, pipeline, null, elapsedMs);
         }
         catch (VulkanPipelineCompilationDeferredException ex)

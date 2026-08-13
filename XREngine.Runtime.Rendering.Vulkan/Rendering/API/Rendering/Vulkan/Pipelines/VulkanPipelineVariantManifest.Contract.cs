@@ -86,6 +86,41 @@ internal sealed class VulkanPipelineVariantManifest
             bool stereo = draw.IsStereoPass || operationContext.StereoEnabled;
             bool multiview = operationContext.MultiviewEnabled;
 
+            var preparationHash = new VulkanStableHash64(schemaVersion: 1);
+            preparationHash.Add(renderGraphPlanSignature);
+            preparationHash.Add(operationPlan.CompatibilityIdentity);
+            preparationHash.Add(draw.PreparationCompatibilitySignature);
+            preparationHash.Add(draw.Renderer.BindingId);
+            preparationHash.Add(passIndex);
+            preparationHash.Add(header.TargetIdentity);
+            preparationHash.Add(draw.PreparedProgramIdentity);
+            preparationHash.Add(draw.PreparedProgram?.BindingId ?? 0u);
+            preparationHash.Add(draw.PreparedProgramLinkGeneration);
+            preparationHash.Add((int)draw.RasterizationSamples);
+            preparationHash.Add(draw.DepthTestEnabled);
+            preparationHash.Add(draw.DepthWriteEnabled);
+            preparationHash.Add((int)draw.DepthCompareOp);
+            preparationHash.Add(draw.StencilTestEnabled);
+            AddStencilState(ref preparationHash, draw.FrontStencilState);
+            AddStencilState(ref preparationHash, draw.BackStencilState);
+            preparationHash.Add(draw.StencilWriteMask);
+            preparationHash.Add((int)draw.ColorWriteMask);
+            preparationHash.Add((int)draw.CullMode);
+            preparationHash.Add((int)draw.FrontFace);
+            preparationHash.Add(draw.BlendEnabled);
+            preparationHash.Add(draw.AlphaToCoverageEnabled);
+            preparationHash.Add((int)draw.ColorBlendOp);
+            preparationHash.Add((int)draw.AlphaBlendOp);
+            preparationHash.Add((int)draw.SrcColorBlendFactor);
+            preparationHash.Add((int)draw.DstColorBlendFactor);
+            preparationHash.Add((int)draw.SrcAlphaBlendFactor);
+            preparationHash.Add((int)draw.DstAlphaBlendFactor);
+            preparationHash.Add(draw.ViewportScissorCount);
+            preparationHash.Add(materialOverride);
+            preparationHash.Add(stereo);
+            preparationHash.Add(multiview);
+            preparationHash.Add(dynamicRendering);
+
             requirements[requirementIndex++] = new VulkanPipelineVariantRequirement(
                 opIndex,
                 passIndex,
@@ -99,7 +134,8 @@ internal sealed class VulkanPipelineVariantManifest
                 stereo,
                 multiview,
                 dynamicRendering,
-                LegacyRenderPass: !dynamicRendering);
+                LegacyRenderPass: !dynamicRendering,
+                preparationHash.Value);
 
             hash.Add(opIndex);
             hash.Add(passIndex);
@@ -112,6 +148,19 @@ internal sealed class VulkanPipelineVariantManifest
         }
 
         return new VulkanPipelineVariantManifest(hash.Value, requirements);
+
+        static void AddStencilState(
+            ref VulkanStableHash64 hash,
+            Silk.NET.Vulkan.StencilOpState state)
+        {
+            hash.Add((int)state.FailOp);
+            hash.Add((int)state.PassOp);
+            hash.Add((int)state.DepthFailOp);
+            hash.Add((int)state.CompareOp);
+            hash.Add(state.CompareMask);
+            hash.Add(state.WriteMask);
+            hash.Add(state.Reference);
+        }
     }
 
     private static RenderGraphPlanPass? FindPass(

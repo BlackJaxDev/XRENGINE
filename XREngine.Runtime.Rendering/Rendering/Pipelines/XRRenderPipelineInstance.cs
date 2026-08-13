@@ -760,10 +760,11 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
     /// <returns>True if resource generation is ensured; false otherwise.</returns>
     private bool EnsureResourceGenerationForCurrentFrame(XRViewport? viewport)
     {
-        DrainRetiredGenerations();
-
         if (Pipeline is null || viewport is null)
+        {
+            DrainRetiredGenerations();
             return true;
+        }
 
         if (ShouldDeferResourceGenerationForInteractiveWindowResize(viewport) &&
             ActiveGeneration is not null)
@@ -771,6 +772,12 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             DiscardPendingGeneration("InteractiveResize");
             return true;
         }
+
+        // Retiring an old physical generation is intentionally outside the
+        // Win32 modal-resize path. The drag keeps the complete published scene,
+        // shadow, UI, and presentation resource tuple alive until the settled
+        // catch-up generation is prepared after WM_EXITSIZEMOVE.
+        DrainRetiredGenerations();
 
         var dimensions = ResolvePipelineResourceDimensions(viewport);
         ResourceGenerationKey key = BuildResourceGenerationKey(

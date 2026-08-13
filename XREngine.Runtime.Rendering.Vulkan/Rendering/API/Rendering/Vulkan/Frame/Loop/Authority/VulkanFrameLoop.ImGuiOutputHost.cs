@@ -1,3 +1,4 @@
+using System.Threading;
 using Silk.NET.Core;
 using Silk.NET.Input;
 using Silk.NET.Maths;
@@ -127,7 +128,11 @@ internal sealed partial class VulkanFrameLoop : IVulkanImGuiOutputHost
     Result IVulkanImGuiOutputHost.WaitForPlatformFence(Fence fence)
     {
         TargetOutputSession.ThrowIfVulkanDeviceOperationNotAdmitted("vkWaitForFences.ImGuiViewport");
-        Result result = Api.WaitForFences(_deviceContext.Device, 1, in fence, true, ulong.MaxValue);
+        ulong timeout = DesktopWsiOutput.IsInteractiveResizeInProgress ||
+            RuntimeRenderingHostServices.Presentation.IsOpenXRActive
+                ? 0UL
+                : ulong.MaxValue;
+        Result result = Api.WaitForFences(_deviceContext.Device, 1, in fence, true, timeout);
         if (result == Result.Success)
             TargetOutputSession.NotifyVulkanFenceCompleted(fence);
         return result;
@@ -139,8 +144,12 @@ internal sealed partial class VulkanFrameLoop : IVulkanImGuiOutputHost
         out uint imageIndex)
     {
         uint acquiredImageIndex = 0;
+        ulong timeout = DesktopWsiOutput.IsInteractiveResizeInProgress ||
+            RuntimeRenderingHostServices.Presentation.IsOpenXRActive
+                ? 0UL
+                : ulong.MaxValue;
         Result result = _outputRuntime.Desktop.SwapchainExtension!.AcquireNextImage(
-            _deviceContext.Device, swapchain, ulong.MaxValue, imageAvailable, default, &acquiredImageIndex);
+            _deviceContext.Device, swapchain, timeout, imageAvailable, default, &acquiredImageIndex);
         imageIndex = acquiredImageIndex;
         return result;
     }
@@ -244,13 +253,24 @@ internal sealed partial class VulkanFrameLoop : IVulkanImGuiOutputHost
     {
         if (!TargetOutputSession.TryAdmitVulkanDeviceOperation(operation, out _))
             return Result.ErrorDeviceLost;
-        using VulkanQueueOperationLease queueOperation = VulkanQueueOperationLease.TryEnter(
-            _commandRuntime.CommandBuffers.OneTimeSubmitGate,
-            _deviceContext.StateMachine,
-            _telemetry);
-        if (!queueOperation.Acquired)
-            return Result.ErrorDeviceLost;
-        Result result = Api.QueueWaitIdle(queue);
+        ReaderWriterLockSlim admissionGate =
+            _commandRuntime.CommandBuffers.DeviceQueueAdmissionGate;
+        admissionGate.EnterReadLock();
+        Result result;
+        try
+        {
+            using VulkanQueueOperationLease queueOperation = VulkanQueueOperationLease.TryEnter(
+                _commandRuntime.CommandBuffers.OneTimeSubmitGate,
+                _deviceContext.StateMachine,
+                _telemetry);
+            if (!queueOperation.Acquired)
+                return Result.ErrorDeviceLost;
+            result = Api.QueueWaitIdle(queue);
+        }
+        finally
+        {
+            admissionGate.ExitReadLock();
+        }
         _deviceContext.ObserveNativeResult(operation, result);
         _commandRuntime.Synchronization.RecordQueueOperation(
             _deviceContext.State, "wait-idle", queue, result, 0, operation);
@@ -264,14 +284,25 @@ internal sealed partial class VulkanFrameLoop : IVulkanImGuiOutputHost
         const string operation = "ImGuiViewport.Present";
         if (!TargetOutputSession.TryAdmitVulkanDeviceOperation(operation, out _))
             return Result.ErrorDeviceLost;
-        using VulkanQueueOperationLease queueOperation = VulkanQueueOperationLease.TryEnter(
-            _commandRuntime.CommandBuffers.OneTimeSubmitGate,
-            _deviceContext.StateMachine,
-            _telemetry);
-        if (!queueOperation.Acquired)
-            return Result.ErrorDeviceLost;
-        Result result = _outputRuntime.Desktop.SwapchainExtension!.QueuePresent(
-            _deviceContext.PresentQueue, ref presentInfo);
+        ReaderWriterLockSlim admissionGate =
+            _commandRuntime.CommandBuffers.DeviceQueueAdmissionGate;
+        admissionGate.EnterReadLock();
+        Result result;
+        try
+        {
+            using VulkanQueueOperationLease queueOperation = VulkanQueueOperationLease.TryEnter(
+                _commandRuntime.CommandBuffers.OneTimeSubmitGate,
+                _deviceContext.StateMachine,
+                _telemetry);
+            if (!queueOperation.Acquired)
+                return Result.ErrorDeviceLost;
+            result = _outputRuntime.Desktop.SwapchainExtension!.QueuePresent(
+                _deviceContext.PresentQueue, ref presentInfo);
+        }
+        finally
+        {
+            admissionGate.ExitReadLock();
+        }
         _deviceContext.ObserveNativeResult("vkQueuePresentKHR.ImGuiViewport", result);
         _commandRuntime.Synchronization.RecordQueueOperation(
             _deviceContext.State,

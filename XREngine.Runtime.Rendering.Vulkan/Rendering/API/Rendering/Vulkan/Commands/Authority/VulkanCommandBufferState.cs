@@ -29,6 +29,9 @@ internal sealed class VulkanCommandBufferState
     internal object OneTimePoolsGate { get; } = new();
     internal Dictionary<nint, OneTimeCommandOwner> OneTimePools { get; } = new();
     internal object OneTimeSubmitGate { get; } = new();
+    internal object SubmissionStateGate { get; } = new();
+    internal ReaderWriterLockSlim DeviceQueueAdmissionGate { get; set; } =
+        new(LockRecursionPolicy.NoRecursion);
     internal object BindStateGate { get; } = new();
     internal Dictionary<ulong, CommandBufferBindState> BindStates { get; } = new();
     internal Dictionary<ulong, int> ImageIndices { get; } = new();

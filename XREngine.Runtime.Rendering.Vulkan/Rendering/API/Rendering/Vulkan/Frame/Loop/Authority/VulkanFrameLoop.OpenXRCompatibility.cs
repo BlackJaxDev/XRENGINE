@@ -37,14 +37,26 @@ internal sealed partial class VulkanFrameLoop
 
     private void DeviceWaitIdle()
     {
-        if (!_deviceContext.IsOperational)
-            return;
+        ReaderWriterLockSlim admissionGate = _deviceContext.QueueAdmissionGate;
+        bool ownsAdmission = !admissionGate.IsWriteLockHeld;
+        if (ownsAdmission)
+            admissionGate.EnterWriteLock();
+        try
+        {
+            if (!_deviceContext.IsOperational)
+                return;
 
-        Result result = _deviceContext.Api.DeviceWaitIdle(_deviceContext.Device);
-        if (result == Result.ErrorDeviceLost)
-            MarkDeviceLost("DeviceWaitIdle returned ErrorDeviceLost", "vkDeviceWaitIdle", result);
-        else if (result != Result.Success)
-            throw new InvalidOperationException($"vkDeviceWaitIdle failed: {result}.");
+            Result result = _deviceContext.Api.DeviceWaitIdle(_deviceContext.Device);
+            if (result == Result.ErrorDeviceLost)
+                MarkDeviceLost("DeviceWaitIdle returned ErrorDeviceLost", "vkDeviceWaitIdle", result);
+            else if (result != Result.Success)
+                throw new InvalidOperationException($"vkDeviceWaitIdle failed: {result}.");
+        }
+        finally
+        {
+            if (ownsAdmission)
+                admissionGate.ExitWriteLock();
+        }
     }
 
     private IVulkanMemoryAllocator MemoryAllocator

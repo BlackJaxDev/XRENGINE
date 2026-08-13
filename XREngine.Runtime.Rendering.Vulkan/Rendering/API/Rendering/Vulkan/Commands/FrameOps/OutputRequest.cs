@@ -30,11 +30,19 @@ internal readonly record struct OutputRequest(
     internal static OutputRequest FromContext(
         in FrameOpContext context,
         EVrOutputViewKind? openXrViewKind = null)
-        => new(
-            ResolveOutputKind(context.ContextKind),
-            ResolveViewKind(context.ContextKind, openXrViewKind),
-            ComputeStableOutputId(context, openXrViewKind),
-            ComputeStableViewFamilyId(context, openXrViewKind),
+    {
+        ResolveOutputIdentity(
+            context,
+            openXrViewKind,
+            out EFrameOutputKind outputKind,
+            out EVrOutputViewKind viewKind,
+            out ulong outputId,
+            out ulong viewFamilyId);
+        return new(
+            outputKind,
+            viewKind,
+            outputId,
+            viewFamilyId,
             context.OutputTargetIdentity,
             context.OutputFrameBufferIdentity,
             context.ContextKind,
@@ -48,16 +56,24 @@ internal readonly record struct OutputRequest(
             context.DescriptorGeneration,
             context.RecordingFingerprint,
             context.OutputProducerDependencySetId == 0UL
-                ? ComputeStableOutputId(context, openXrViewKind)
+                ? outputId
                 : context.OutputProducerDependencySetId,
             context.OutputConsumerDependencySetId);
+    }
 
-    internal RenderOutputRequest ToGraphRequest(ulong frameId)
+    internal RenderOutputRequest ToGraphRequest(ulong frameId, out bool execute)
     {
-        RenderOutputRequest request = RenderOutputRequest.CreateDefault(
-            ViewKind,
-            OutputKind,
-            frameId);
+        bool hasSchedulingSnapshot =
+            RuntimeRenderingHostServices.Presentation.TryGetRenderOutputSchedulingSnapshot(
+                StableOutputId,
+                OutputKind,
+                ViewKind,
+                frameId,
+                out RenderOutputSchedulingSnapshot scheduling);
+        execute = !hasSchedulingSnapshot || scheduling.Decision.Execute;
+        RenderOutputRequest request = hasSchedulingSnapshot
+            ? scheduling.Request
+            : RenderOutputRequest.CreateDefault(ViewKind, OutputKind, frameId);
         RenderOutputTargetDescriptor target = request.Target with
         {
             StableTargetId = StableOutputId,
@@ -138,18 +154,77 @@ internal readonly record struct OutputRequest(
         in FrameOpContext context,
         EVrOutputViewKind? openXrViewKind)
     {
+        EFrameOutputKind outputKind = ResolveOutputKind(context.ContextKind);
+        EVrOutputViewKind viewKind = ResolveViewKind(context.ContextKind, openXrViewKind);
+        if (context.OutputSchedulingInstanceIdentity != 0UL)
+        {
+            ulong contractIdentity = RenderOutputRequest.CreateDefault(
+                viewKind,
+                outputKind).OutputId;
+            ulong canonical = 1469598103934665603UL;
+            canonical = (canonical ^ contractIdentity) * 1099511628211UL;
+            canonical = (canonical ^ context.OutputSchedulingInstanceIdentity) * 1099511628211UL;
+            return canonical == 0UL ? 1UL : canonical;
+        }
+
         ulong hash = 1469598103934665603UL;
-        Add(ref hash, (ulong)(uint)ResolveOutputKind(context.ContextKind));
+        Add(ref hash, (ulong)(uint)outputKind);
         Add(ref hash, unchecked((ulong)(uint)context.OutputTargetIdentity));
         Add(ref hash, unchecked((ulong)(uint)context.OutputFrameBufferIdentity));
         Add(ref hash, unchecked((ulong)(uint)context.PipelineIdentity));
         Add(ref hash, unchecked((ulong)(uint)context.ViewportIdentity));
-        Add(ref hash, (ulong)(uint)ResolveViewKind(context.ContextKind, openXrViewKind));
+        Add(ref hash, (ulong)(uint)viewKind);
         // Paired OpenXR plans are target-neutral: logical view identity, not
         // an acquired image identity, keeps the two eye terminals distinct.
         if (context.ContextKind == EVulkanFrameOpContextKind.OpenXrEye)
             Add(ref hash, context.LogicalViewId);
         return hash == 0UL ? 1UL : hash;
+    }
+
+    private static void ResolveOutputIdentity(
+        in FrameOpContext context,
+        EVrOutputViewKind? openXrViewKind,
+        out EFrameOutputKind outputKind,
+        out EVrOutputViewKind viewKind,
+        out ulong outputId,
+        out ulong viewFamilyId)
+    {
+        RenderOutputRequest canonical = context.OutputSchedulingRequest;
+        EFrameOutputKind inferredKind = ResolveOutputKind(context.ContextKind);
+        bool acceptsCanonical = canonical.IsDefined && (context.ContextKind switch
+        {
+            EVulkanFrameOpContextKind.OpenXrEye =>
+                canonical.OutputKind == EFrameOutputKind.OpenXREyeSubmit,
+            EVulkanFrameOpContextKind.OpenXrMirror =>
+                canonical.OutputKind == EFrameOutputKind.DesktopMirror,
+            EVulkanFrameOpContextKind.SceneCapture =>
+                canonical.OutputKind == EFrameOutputKind.SceneCapture,
+            EVulkanFrameOpContextKind.LightProbeCapture =>
+                canonical.OutputKind is EFrameOutputKind.LightProbeCapture or
+                    EFrameOutputKind.ReflectionProbeCapture or
+                    EFrameOutputKind.ImageBasedLighting,
+            EVulkanFrameOpContextKind.Shadow =>
+                canonical.OutputKind == EFrameOutputKind.Shadow,
+            EVulkanFrameOpContextKind.UiPreview =>
+                canonical.OutputKind == EFrameOutputKind.UiPreview,
+            EVulkanFrameOpContextKind.DiagnosticCapture =>
+                canonical.OutputKind == EFrameOutputKind.Diagnostic,
+            _ => canonical.OutputKind is EFrameOutputKind.DesktopScene or
+                EFrameOutputKind.EditorScenePanel,
+        });
+        if (acceptsCanonical)
+        {
+            outputKind = canonical.OutputKind;
+            viewKind = canonical.ViewKind;
+            outputId = canonical.OutputId;
+            viewFamilyId = canonical.ViewFamilyId;
+            return;
+        }
+
+        outputKind = inferredKind;
+        viewKind = ResolveViewKind(context.ContextKind, openXrViewKind);
+        outputId = ComputeStableOutputId(context, openXrViewKind);
+        viewFamilyId = ComputeStableViewFamilyId(context, openXrViewKind);
     }
 
     private static ulong ComputeStableViewFamilyId(

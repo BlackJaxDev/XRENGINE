@@ -79,9 +79,14 @@ internal unsafe sealed class VulkanSynchronousUploadSession : IDisposable
                 CommandBufferCount = 1,
                 PCommandBuffers = &commandBuffer,
             };
-            lock (_commands.CommandBuffers.OneTimeSubmitGate)
-                result = _api.QueueSubmit(_deviceContext.GraphicsQueue, 1, ref submit, fence);
-            _deviceContext.ObserveNativeResult($"vkQueueSubmit.{owner}", result);
+            result = _commands.SubmitToQueueTracked(
+                _api,
+                _deviceContext,
+                _commands.FrameTelemetry,
+                _deviceContext.GraphicsQueue,
+                ref submit,
+                fence,
+                $"vkQueueSubmit.{owner}");
             if (result != Result.Success)
                 throw new InvalidOperationException($"Failed to submit synchronous upload ({result}).");
 

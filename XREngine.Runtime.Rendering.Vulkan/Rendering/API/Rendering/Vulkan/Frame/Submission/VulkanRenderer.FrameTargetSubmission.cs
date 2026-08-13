@@ -276,16 +276,13 @@ internal sealed partial class VulkanFrameLoop
                 : null,
         };
 
-        lock (_oneTimeSubmitLock)
-        {
-            return _commandRuntime.SubmitToQueueTracked(
-                Api,
-                _deviceContext,
-                _telemetry,
-                _deviceContext.GraphicsQueue,
-                ref submitInfo,
-                lease.CompletionFence,
-                caller);
-        }
+        return _commandRuntime.SubmitToQueueTracked(
+            Api,
+            _deviceContext,
+            _telemetry,
+            _deviceContext.GraphicsQueue,
+            ref submitInfo,
+            lease.CompletionFence,
+            caller);
     }
 }

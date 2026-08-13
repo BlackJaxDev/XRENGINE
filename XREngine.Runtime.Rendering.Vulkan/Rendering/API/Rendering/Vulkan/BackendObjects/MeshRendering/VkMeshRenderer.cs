@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
 using System.Runtime.CompilerServices;
+using System.Threading;
 using Silk.NET.Vulkan;
 using XREngine;
 using XREngine.Data;
@@ -26,6 +27,7 @@ internal unsafe partial class VkMeshRenderer(
     private VulkanMeshOperationRequestQueue? _meshRequests;
     private VulkanFinalPresentationDescriptorPort? _finalPresentationDescriptors;
     private VulkanMeshMaterializationSnapshot _materializationSnapshot;
+    private long _preparationCompatibilityRevision = 1;
 
     private ref readonly VulkanMeshMaterializationSnapshot MaterializationSnapshot
         => ref _materializationSnapshot;
@@ -279,6 +281,7 @@ internal unsafe partial class VkMeshRenderer(
                 _pipelineDirty = true;
                 _descriptorDirty = true;
                 _lastPreparedMaterial = null;
+                BumpPreparationCompatibilityRevision();
                 break;
         }
     }
@@ -320,6 +323,7 @@ internal unsafe partial class VkMeshRenderer(
     {
         lock (_bufferStateSync)
         {
+            BumpPreparationCompatibilityRevision();
             _pipelineDirty = true;
             _buffersDirty = true;
             _descriptorDirty = true;
@@ -348,13 +352,23 @@ internal unsafe partial class VkMeshRenderer(
     private void OnRenderRequested(Matrix4x4 modelMatrix, Matrix4x4 prevModelMatrix, XRMaterial? materialOverride, RenderingParameters? renderOptionsOverride, uint instances, EMeshBillboardMode billboardMode, bool forceNoStereo)
     {
         FrameOpContext context = _programPlanner?.CaptureFrameOpContext() ?? default;
+        DeferredRenderBindingPublication deferredBindings =
+            MeshRenderer.BindingPublishers.CaptureDeferredPublication();
+        ulong preparationCompatibilitySignature =
+            CapturePreparationCompatibilitySignature(
+                materialOverride,
+                renderOptionsOverride,
+                instances,
+                RuntimeEngine.Rendering.State.CurrentRenderGraphPassIndex,
+                deferredBindings.Publisher);
         VulkanMeshRenderRequest request = new(
             this,
             RuntimeEngine.Rendering.State.CurrentRenderGraphPassIndex,
             RuntimeEngine.Rendering.State.CurrentRenderingPipeline,
             context,
             CommandOperations.CaptureMeshProducerSnapshot(in context),
-            MeshRenderer.BindingPublishers.CaptureDeferredPublication(),
+            deferredBindings,
+            preparationCompatibilitySignature,
             modelMatrix,
             prevModelMatrix,
             materialOverride,
@@ -371,6 +385,40 @@ internal unsafe partial class VkMeshRenderer(
             TimeSpan.FromSeconds(2),
             "[Vulkan] Dropping mesh render request for renderer='{0}' because the bounded frame-loop request queue is unavailable or full.",
             MeshRenderer.Name ?? "<unnamed renderer>");
+    }
+
+    private ulong CapturePreparationCompatibilitySignature(
+        XRMaterial? materialOverride,
+        RenderingParameters? renderOptionsOverride,
+        uint instances,
+        int passIndex,
+        IDeferredRenderBindingPublisher? deferredPublisher)
+    {
+        const ulong offset = 1469598103934665603UL;
+        const ulong prime = 1099511628211UL;
+        XRMaterial material = ResolveMaterial(materialOverride, instances);
+        ulong hash = offset;
+        hash = (hash ^ ReferenceIdentity(this)) * prime;
+        hash = (hash ^ ReferenceIdentity(material)) * prime;
+        hash = (hash ^ unchecked((ulong)material.ShaderStateRevision)) * prime;
+        hash = (hash ^ material.ActiveUberVariant.VariantHash) * prime;
+        hash = (hash ^ ReferenceIdentity(Mesh)) * prime;
+        hash = (hash ^ ReferenceIdentity(renderOptionsOverride)) * prime;
+        hash = (hash ^ ReferenceIdentity(deferredPublisher)) * prime;
+        hash = (hash ^ unchecked((uint)passIndex)) * prime;
+        hash = (hash ^ instances) * prime;
+        hash = (hash ^ unchecked((ulong)Volatile.Read(
+            ref _preparationCompatibilityRevision))) * prime;
+        hash = (hash ^ unchecked((uint)RuntimeEngine.Rendering.Settings.ShaderConfigVersion)) * prime;
+        return hash == 0 ? 1UL : hash;
+    }
+
+    private void BumpPreparationCompatibilityRevision()
+    {
+        long revision = Interlocked.Increment(
+            ref _preparationCompatibilityRevision);
+        if (revision <= 0)
+            Interlocked.Exchange(ref _preparationCompatibilityRevision, 1);
     }
 
     /// <summary>
@@ -583,7 +631,18 @@ internal unsafe partial class VkMeshRenderer(
 
         try
         {
-            lock (_recordDrawSync)
+            if (!_recordDrawSync.TryEnter())
+            {
+                CommandOperations.MarkCommandBuffersDirtyForLegacyMeshState();
+                _ = SetPrepareResult(
+                    false,
+                    "RendererBusy",
+                    "Renderer recording state is owned by another command-recording operation.",
+                    out _);
+                return false;
+            }
+
+            try
             {
                 bool prepared;
                 string prepareReason;
@@ -631,6 +690,10 @@ internal unsafe partial class VkMeshRenderer(
                 preparedProgramSnapshot = _program;
                 preparedProgramIdentitySnapshot = _activeProgramIdentity;
                 preparedProgramLinkGenerationSnapshot = _program?.LinkGeneration ?? 0UL;
+            }
+            finally
+            {
+                _recordDrawSync.Exit();
             }
         }
         finally
@@ -680,6 +743,8 @@ internal unsafe partial class VkMeshRenderer(
             programBindingSnapshot);
         draw = draw with
         {
+            PreparationCompatibilitySignature =
+                request.PreparationCompatibilitySignature,
             AutoUniformPublication =
                 VulkanAutoUniformPublicationSnapshot.Capture(
                     draw,

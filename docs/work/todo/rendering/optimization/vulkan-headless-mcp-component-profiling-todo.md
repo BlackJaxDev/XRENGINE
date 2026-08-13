@@ -1,6 +1,6 @@
 # Vulkan Headless MCP Component Profiling TODO
 
-Last Updated: 2026-07-30
+Last Updated: 2026-08-12
 Owner: Rendering / Vulkan / Profiling / MCP
 Status: In Progress
 
@@ -256,35 +256,45 @@ Acceptance criteria:
 
 ## Phase 2 - Dedicated Render Benchmark Process
 
-- [ ] Add a small runtime executable, tentatively `XREngine.RenderBench`, that
+- [x] Add a small runtime executable, `XREngine.RenderBench`, that
   references the runtime/rendering modules without referencing editor UI.
-- [ ] Keep startup deterministic and expose explicit configuration for backend,
+- [x] Keep startup deterministic and expose explicit configuration for backend,
   execution mode, recipe, output directory, MCP policy, and MCP port.
-- [ ] Load only the world or synthetic fixture required by the recipe.
-- [ ] Support fixed-step time, deterministic camera/animation inputs, fixed
+- [x] Load only the world or synthetic fixture required by the recipe. Phase 2
+  supplies the allocation-free `synthetic-clear` control fixture and loads no
+  world or assets.
+- [x] Support fixed-step time, deterministic camera/animation inputs, fixed
   random seeds, and an optional frozen-world mode.
-- [ ] Disable editor preferences, editor panels, ImGui, dynamic text, input
+- [x] Disable editor preferences, editor panels, ImGui, dynamic text, input
   polling, window title updates, and unrelated editor services.
-- [ ] Keep shader/pipeline warmup, texture residency, resource retirement,
+- [x] Keep shader/pipeline warmup, texture residency, resource retirement,
   workload identity, and stability gates.
-- [ ] Add `Tools/Manage-McpRenderBenchSession.ps1` or an equivalently isolated
+- [x] Add `Tools/Manage-McpRenderBenchSession.ps1` or an equivalently isolated
   session manager rather than overloading normal editor sessions.
-- [ ] Reuse the named-session ownership rules, per-session build artifacts,
+- [x] Reuse the named-session ownership rules, per-session build artifacts,
   environment isolation, PID validation, logs, and safe shutdown behavior from
   `Manage-McpEditorSession.ps1`.
-- [ ] Store disposable evidence under
+- [x] Store disposable evidence under
   `Build/_AgentValidation/<run>/` and engine-owned logs under the normal
   session log directory.
 
 Acceptance criteria:
 
-- [ ] One command starts a named presentationless Vulkan process, waits for MCP
+- [x] One command starts a named presentationless Vulkan process, waits for MCP
   readiness, reports its endpoint and process identity, and can stop only that
   named process.
-- [ ] The process remains usable without an interactive desktop session.
-- [ ] Startup does not wait for creation of a first editor window.
-- [ ] A fixture can run for a bounded frame count and exit cleanly without MCP.
-- [ ] The executable and settings hashes are recorded in every result.
+- [x] The process remains usable without an interactive desktop session; it
+  owns no desktop window or input dependency.
+- [x] Startup does not wait for creation of a first editor window.
+- [x] A fixture can run for a bounded frame count and exit cleanly without MCP.
+- [x] The managed executable, effective-configuration, and workload hashes are
+  recorded in every result.
+
+Implementation note (2026-08-12): Phase 2 deliberately establishes the
+dedicated process with the target-submit control fixture. Production Deferred,
+Uber, and component fixtures remain owned by Phase 4 and still depend on the
+unchecked Phase 1.2 normal-render-graph integration item above. A RenderBench
+control result must not be labeled as production render-graph evidence.
 
 ## Phase 3 - Runtime MCP Control Plane
 

@@ -26,6 +26,13 @@ Completed implementation history remains in the
 
 ### 5. Schedule Outputs And Submission Without Cross-Output Blocking
 
+> Reopened on 2026-08-12. The first closeout removed this checklist before its
+> item-level state was preserved in the completed-work sibling. The checklist is
+> restored here, and the two completed implementation criteria are also recorded
+> in the sibling history. The section remains active: the output DAG is not yet
+> the sole execution authority, OpenXR requests do not consistently carry a real
+> runtime deadline, and the Sponza camera-motion no-regression gate is still open.
+
 - [ ] Build one deadline-aware submission DAG for uploads, shadows, desktop,
   OpenXR eyes, mirror, probes, captures, and publication.
 - [ ] Prioritize acquired OpenXR eyes and reserve their critical path before
@@ -36,7 +43,7 @@ Completed implementation history remains in the
 - [ ] Narrow native queue-lock ownership and never hold it across a blocking
   fence wait; use timeline/frame-slot completion for queue and OpenXR image
   ownership.
-- [ ] During Win32 modal interactive resize, keep the already-published scene,
+- [x] During Win32 modal interactive resize, keep the already-published scene,
   shadow, UI, and presentation generations frozen independently and use WSI
   presentation scaling for the changing surface. Do not rebuild or retire the
   main physical resource plan inside the drag callback; publish one catch-up
@@ -45,7 +52,7 @@ Completed implementation history remains in the
   visibility publication, GPU completion, and retirement drains. A missing or
   incompatible frame package must produce an explicit defer/stale-reuse result,
   not leave the interactive-render guard latched indefinitely.
-- [ ] Add persistent worker recording for independent safe packet classes and
+- [x] Add persistent worker recording for independent safe packet classes and
   preserve serial recording for packets that cannot yet be isolated.
 
 ### 6. Simplify The Forward+ Render Graph

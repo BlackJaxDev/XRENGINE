@@ -249,9 +249,11 @@ internal sealed unsafe class VulkanHeadlessWsiTargetDriver :
             PSwapchains = &swapchain,
             PImageIndices = &imageIndex,
         };
-        Result presentResult = _swapchainApi!.QueuePresent(
+        Result presentResult = renderer.PresentToQueueTracked(
+            _swapchainApi!,
             renderer.PresentQueue,
-            in present);
+            ref present,
+            "vkQueuePresentKHR.HeadlessWsi");
         ThrowIfHeadlessSurfaceUnavailable(presentResult, "present");
         ThrowIfDeviceFailureAllowSuboptimal(presentResult, "present headless WSI frame");
         _imagePresented[imageIndex] = true;

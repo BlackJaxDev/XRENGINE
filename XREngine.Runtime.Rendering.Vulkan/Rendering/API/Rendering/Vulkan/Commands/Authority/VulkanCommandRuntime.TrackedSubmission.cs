@@ -63,23 +63,11 @@ internal sealed partial class VulkanCommandRuntime
             return VulkanSubmissionReceipt.Rejected(Result.ErrorDeviceLost);
         }
 
-        using VulkanQueueOperationLease queueOperation = VulkanQueueOperationLease.TryEnter(
-            CommandBuffers.OneTimeSubmitGate,
-            DeviceContext.StateMachine,
-            FrameTelemetry);
-        if (!queueOperation.Acquired)
+        // Submission state is serialized independently from the native queue
+        // lease. Validation, lifetime pinning, and post-submit publication may
+        // be substantial, but only vkQueueSubmit owns the queue gate.
+        lock (CommandBuffers.SubmissionStateGate)
         {
-            ResolveSubmissionMarkers(ref submitInfo, false);
-            Synchronization.RecordQueueOperation(
-                DeviceContext.State,
-                "submit-rejected",
-                queue,
-                Result.ErrorDeviceLost,
-                diagnosticContext.SubmissionSerial,
-                caller);
-            return VulkanSubmissionReceipt.Rejected(Result.ErrorDeviceLost);
-        }
-
         DeviceContext.RecordSubmissionDiagnostics(diagnosticContext);
         if (!ValidateOrderedCommandBufferImageStateContracts(queue, ref submitInfo, out _) ||
             !TryAcquireSubmissionLifetimePins(
@@ -116,8 +104,32 @@ internal sealed partial class VulkanCommandRuntime
             queueDispatchAttempted = true;
             using (VulkanCpuStageScope stage = new(FrameTelemetry, EVulkanCpuStage.QueueSubmit))
             {
-                result = SubmitNative(queue, ref submitInfo, fence);
-                submissionAccepted = result == Result.Success;
+                CommandBuffers.DeviceQueueAdmissionGate.EnterReadLock();
+                try
+                {
+                    using VulkanQueueOperationLease queueOperation = VulkanQueueOperationLease.TryEnter(
+                        CommandBuffers.OneTimeSubmitGate,
+                        DeviceContext.StateMachine,
+                        FrameTelemetry);
+                    if (!queueOperation.Acquired)
+                    {
+                        ResolveSubmissionMarkers(ref submitInfo, false);
+                        Synchronization.RecordQueueOperation(
+                            DeviceContext.State,
+                            "submit-rejected",
+                            queue,
+                            Result.ErrorDeviceLost,
+                            diagnosticContext.SubmissionSerial,
+                            caller);
+                        return VulkanSubmissionReceipt.Rejected(Result.ErrorDeviceLost);
+                    }
+                    result = SubmitNative(queue, ref submitInfo, fence);
+                    submissionAccepted = result == Result.Success;
+                }
+                finally
+                {
+                    CommandBuffers.DeviceQueueAdmissionGate.ExitReadLock();
+                }
             }
             DeviceContext.ObserveNativeResult($"vkQueueSubmit:{caller ?? "<unknown>"}", result);
             Synchronization.RecordQueueOperation(
@@ -175,6 +187,7 @@ internal sealed partial class VulkanCommandRuntime
             submissionAccepted,
             lifetimePinsTransferred,
             publicationSucceeded);
+        }
     }
 
     private unsafe bool ValidateOrderedCommandBufferImageStateContracts(

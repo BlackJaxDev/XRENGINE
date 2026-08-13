@@ -38,6 +38,8 @@ namespace XREngine.Rendering.Vulkan.RenderGraph;
 /// <param name="ResourceRegistrySignatureSnapshot">The immutable registry descriptor signature captured for this operation.</param>
 /// <param name="OutputProducerDependencySetId">Optional semantic output-resource set produced by this context.</param>
 /// <param name="OutputConsumerDependencySetId">Optional semantic output-resource set required before this context may execute.</param>
+/// <param name="OutputSchedulingInstanceIdentity">Stable engine output instance used to correlate backend work with pacing admission.</param>
+/// <param name="OutputSchedulingRequest">Canonical engine output request frozen for this backend context.</param>
 internal readonly record struct FrameOpContext(
     int PipelineIdentity,
     int ViewportIdentity,
@@ -66,6 +68,8 @@ internal readonly record struct FrameOpContext(
     int? ResourceRegistrySignatureSnapshot = null,
     ulong OutputProducerDependencySetId = 0,
     ulong OutputConsumerDependencySetId = 0,
+    ulong OutputSchedulingInstanceIdentity = 0,
+    RenderOutputRequest OutputSchedulingRequest = default,
     VulkanFrameOpWorkspace? OperationWorkspace = null)
 {
     public int SchedulingIdentity => OutputTargetIdentity == 0

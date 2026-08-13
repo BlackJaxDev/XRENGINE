@@ -2437,6 +2437,41 @@ descriptor, barrier, or native command code.
   scratch buffers, descriptor builders, and unsafe helpers immediately after
   their final consumer moves to the canonical layout.
 
+## Phase 5 Partial Completed Implementation - 2026-08-12
+
+Phase 5 remains open. The first closeout removed the section before preserving
+its item-level state, so the active checklist has been restored in the
+[current todo](vulkan-core-hardening-and-device-loss-todo.md). Only the two
+criteria below are complete; the other five criteria remain unchecked there.
+
+- [x] During Win32 modal interactive resize, keep the already-published scene,
+  shadow, UI, and presentation generations frozen independently and use WSI
+  presentation scaling for the changing surface. Do not rebuild or retire the
+  main physical resource plan inside the drag callback; publish one catch-up
+  generation after the modal loop exits.
+  - `XRRenderPipelineInstance` retains the active physical generation and does
+    not drain retired generations during the modal loop.
+  - `VulkanFrameLoop` freezes planner extents, and the desktop swapchain policy
+    rejects all interactive recreation. The settled post-modal surface update
+    is the only catch-up recreation path.
+  - The swapchain advertises and validates `VK_EXT_surface_maintenance1` WSI
+    presentation scaling where the device/surface supports it.
+- [x] Add persistent worker recording for independent safe packet classes and
+  preserve serial recording for packets that cannot yet be isolated.
+  - Persistent worker-owned command pools and arenas record eligible independent
+    non-graphics secondary packets; small or ineligible batches retain the
+    serial path.
+  - Timeout cancellation rejects the partial batch. Workers that outlive the
+    grace interval quarantine primary recording and their artifacts until the
+    last worker exits, preventing serial/reuse races with worker-owned state.
+
+The focused Vulkan project build passed with zero warnings and errors. Live
+Win32 modal-resize soak and deterministic worker-timeout fault injection remain
+in the companion validation backlog; they are validation gates, not claims that
+the remaining Phase 5 scheduling work is complete. The implementation and
+camera-motion evidence are tracked in
+`../../investigations/rendering/vulkan-phase5-output-scheduling-validation.md`.
+
 ## Continuing Work
 
 All unchecked criteria and future phases remain in the

@@ -635,3 +635,51 @@ Invokes exposes **Invoke Diagnostics**.
 
 For minimal editor overhead, keep in-process profiler panels closed and use the
 remote profiler instead.
+
+## Dedicated Vulkan RenderBench
+
+`XREngine.RenderBench` is the editor-free process for deterministic
+presentationless Vulkan control measurements. It constructs no `XRWindow`,
+editor panel, ImGui UI, input service, dynamic text, or window title. The Phase
+2 fixture is a synthetic clear whose fixed-step animation, random seed, output
+contract, warmup, stability window, and capture length are explicit.
+
+Run a bounded process without MCP:
+
+```powershell
+dotnet run --project .\XREngine.RenderBench\XREngine.RenderBench.csproj -- `
+  --output-dir .\Build\_AgentValidation\<run> `
+  --execution-mode Presentationless `
+  --recipe deterministic-clear `
+  --fixture synthetic-clear `
+  --warmup-frames 30 `
+  --stability-frames 5 `
+  --capture-frames 120 `
+  --fixed-step 0.016666666666666666 `
+  --random-seed 5784133 `
+  --frozen-world
+```
+
+Use the named manager for an isolated build and MCP lifecycle:
+
+```powershell
+.\Tools\Manage-McpRenderBenchSession.ps1 Start -Name profile-control
+.\Tools\Manage-McpRenderBenchSession.ps1 Run -Name profile-control
+.\Tools\Manage-McpRenderBenchSession.ps1 Status -Name profile-control
+.\Tools\Manage-McpRenderBenchSession.ps1 Stop -Name profile-control
+```
+
+The manager places build artifacts, logs, cache, metadata, PID/start-time
+ownership, endpoint identity, and the shutdown event under its named shared
+session. Result evidence is placed in a bounded
+`Build/_AgentValidation/<run>/` root. `Stop` validates process ownership and
+requests frame-boundary cancellation before it considers forced termination.
+
+MCP is available while the process is idle and after completion. The listener
+and all in-flight request handlers are stopped and drained before warmup or
+measurement starts. The result contains canonical effective-configuration and
+workload hashes, managed executable hash, adapter/driver identity, delayed GPU
+query results, CPU samples, allocation count, output hash, and explicit
+stability gates. Control-fixture results are diagnostic renderer-submit
+evidence; they are not equivalent to desktop WSI, OpenXR, or a production
+render-graph cohort.

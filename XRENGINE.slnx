@@ -13,6 +13,7 @@
   <Project Path="XREngine.Modeling/XREngine.Modeling.csproj" />
   <Project Path="XREngine.Profiler.UI/XREngine.Profiler.UI.csproj" />
   <Project Path="XREngine.Profiler/XREngine.Profiler.csproj" />
+  <Project Path="XREngine.RenderBench/XREngine.RenderBench.csproj" />
   <Project Path="XREngine.Runtime.AnimationIntegration/XREngine.Runtime.AnimationIntegration.csproj" />
   <Project Path="XREngine.Runtime.AudioIntegration/XREngine.Runtime.AudioIntegration.csproj" />
   <Project Path="XREngine.Runtime.Bootstrap/XREngine.Runtime.Bootstrap.csproj" />

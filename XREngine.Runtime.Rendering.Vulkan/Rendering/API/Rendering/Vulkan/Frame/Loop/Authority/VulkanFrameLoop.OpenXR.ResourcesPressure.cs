@@ -375,7 +375,15 @@ internal sealed partial class VulkanFrameLoop
 
         try
         {
-            DeviceWaitIdle();
+            _commandRuntime.CommandBuffers.DeviceQueueAdmissionGate.EnterWriteLock();
+            try
+            {
+                DeviceWaitIdle();
+            }
+            finally
+            {
+                _commandRuntime.CommandBuffers.DeviceQueueAdmissionGate.ExitWriteLock();
+            }
         }
         catch (Exception ex)
         {
@@ -398,35 +406,41 @@ internal sealed partial class VulkanFrameLoop
         if (_deviceLost || Api is null || _deviceContext.Device.Handle == 0)
             throw new InvalidOperationException("Cannot initialize OpenXR Vulkan session resources after the Vulkan device was lost.");
 
-        using VulkanQueueOperationLease commandSection =
-            _commandRuntime.EnterSerializedOpenXrCommandSection(
-                "RuntimeGraphicsTransition");
-        if (!commandSection.Acquired)
-            throw new InvalidOperationException(
-                "Vulkan device became unavailable while entering the OpenXR runtime graphics transition.");
-
         using (RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.Vulkan.RuntimeGraphicsTransition"))
         {
-                Debug.Vulkan(
-                    "[OpenXR] Beginning Vulkan runtime graphics transition. Reason={0}",
-                    string.IsNullOrWhiteSpace(reason) ? "<unspecified>" : reason);
+            Debug.Vulkan(
+                "[OpenXR] Beginning Vulkan runtime graphics transition. Reason={0}",
+                string.IsNullOrWhiteSpace(reason) ? "<unspecified>" : reason);
 
+            _commandRuntime.CommandBuffers.DeviceQueueAdmissionGate.EnterWriteLock();
+            try
+            {
+                // Exclusive device admission prevents new submits/presents while
+                // completion is proven. It is not the native queue gate, so no
+                // queue mutex is held across timeline or device waits.
                 WaitForAllInFlightWork();
                 if (!_deviceLost)
                     DeviceWaitIdle();
                 if (_deviceLost)
                     throw new InvalidOperationException("Vulkan device lost while waiting for idle before OpenXR session initialization.");
 
+                // Runtime session/reference-space/swapchain setup is protected
+                // by exclusive device admission, not by the native queue mutex.
                 transition();
 
                 if (!_deviceLost)
                     DeviceWaitIdle();
                 if (_deviceLost)
                     throw new InvalidOperationException("Vulkan device lost while waiting for idle after OpenXR session initialization.");
+            }
+            finally
+            {
+                _commandRuntime.CommandBuffers.DeviceQueueAdmissionGate.ExitWriteLock();
+            }
 
-                Debug.Vulkan(
-                    "[OpenXR] Completed Vulkan runtime graphics transition. Reason={0}",
-                    string.IsNullOrWhiteSpace(reason) ? "<unspecified>" : reason);
+            Debug.Vulkan(
+                "[OpenXR] Completed Vulkan runtime graphics transition. Reason={0}",
+                string.IsNullOrWhiteSpace(reason) ? "<unspecified>" : reason);
         }
     }
 

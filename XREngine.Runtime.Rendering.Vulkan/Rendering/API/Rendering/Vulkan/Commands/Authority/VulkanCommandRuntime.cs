@@ -108,6 +108,7 @@ internal sealed partial class VulkanCommandRuntime
         }
 
         _configuredDeviceContext = deviceContext;
+        CommandBuffers.DeviceQueueAdmissionGate = deviceContext.QueueAdmissionGate;
         _configuredResourceRuntime = resourceRuntime;
         _configuredFrameTelemetry = telemetry;
         resourceRuntime.Images.ConfigureCommandRuntime(this);
@@ -304,25 +305,33 @@ internal sealed partial class VulkanCommandRuntime
             return Result.ErrorDeviceLost;
         }
 
-        using VulkanQueueOperationLease queueOperation = VulkanQueueOperationLease.TryEnter(
-            CommandBuffers.OneTimeSubmitGate,
-            deviceContext.StateMachine,
-            telemetry);
-        if (!queueOperation.Acquired)
-        {
-            Synchronization.RecordQueueOperation(
-                deviceContext.State,
-                "submit-rejected",
-                queue,
-                Result.ErrorDeviceLost,
-                0,
-                operation);
-            return Result.ErrorDeviceLost;
-        }
-
         Result result;
-        using (VulkanCpuStageScope cpuStage = new(telemetry, EVulkanCpuStage.QueueSubmit))
-            result = api.QueueSubmit(queue, 1, ref submitInfo, fence);
+        CommandBuffers.DeviceQueueAdmissionGate.EnterReadLock();
+        try
+        {
+            using VulkanQueueOperationLease queueOperation = VulkanQueueOperationLease.TryEnter(
+                CommandBuffers.OneTimeSubmitGate,
+                deviceContext.StateMachine,
+                telemetry);
+            if (!queueOperation.Acquired)
+            {
+                Synchronization.RecordQueueOperation(
+                    deviceContext.State,
+                    "submit-rejected",
+                    queue,
+                    Result.ErrorDeviceLost,
+                    0,
+                    operation);
+                return Result.ErrorDeviceLost;
+            }
+
+            using (VulkanCpuStageScope cpuStage = new(telemetry, EVulkanCpuStage.QueueSubmit))
+                result = api.QueueSubmit(queue, 1, ref submitInfo, fence);
+        }
+        finally
+        {
+            CommandBuffers.DeviceQueueAdmissionGate.ExitReadLock();
+        }
 
         deviceContext.ObserveNativeResult(operation, result);
         Synchronization.RecordQueueOperation(
@@ -679,6 +688,70 @@ internal sealed partial class VulkanCommandRuntime
             long workerCompletion = Stopwatch.GetTimestamp();
             batch.WorkerLocalStates.Complete(worker.WorkerIndex, workerCompletion);
             worker.Batch = null;
+            bool lastWorker = Workers.Countdown.Signal();
+            if (lastWorker)
+            {
+                Volatile.Write(ref Workers.ActiveWorkerCount, 0);
+                Workers.Idle.Set();
+                if (batch.Abandoned)
+                    batch.ClearReferences();
+            }
+        }
+    }
+
+    /// <summary>
+    /// Records frozen standalone non-graphics packet classes on the same
+    /// persistent worker domain as prepared mesh secondaries.
+    /// </summary>
+    internal void ExecuteNonGraphicsRecordingWorker(
+        CommandChainRecordingWorkerState worker)
+    {
+        VulkanNonGraphicsRecordingBatch? batch = worker.NonGraphicsBatch;
+        if (batch is null)
+            return;
+
+        using VulkanCpuStageScope cpuStage = new(
+            FrameTelemetry,
+            EVulkanCpuStage.SecondaryRecording);
+        try
+        {
+            using VulkanWorkerSecondaryCommandArena.RecordingLease arenaLease =
+                VulkanWorkerSecondaryCommandArena.EnterRecording(worker.Arena);
+            for (int entryIndex = 0; entryIndex < batch.EntryCount; entryIndex++)
+            {
+                if (Volatile.Read(ref batch.Error) is not null ||
+                    Volatile.Read(ref batch.CancelRequested) != 0)
+                {
+                    break;
+                }
+
+                ref VulkanNonGraphicsRecordingEntry entry =
+                    ref batch.Entries[entryIndex];
+                if (entry.WorkerIndex != worker.WorkerIndex ||
+                    entry.Chain is not { } chain)
+                {
+                    continue;
+                }
+
+                try
+                {
+                    RecordPreparedNonGraphicsSecondary(
+                        batch.Operations,
+                        batch.ImageIndex,
+                        chain,
+                        entry.SecondaryBuffer,
+                        batch.QueryInheritance);
+                }
+                catch (Exception ex)
+                {
+                    Interlocked.CompareExchange(ref batch.Error, ex, null);
+                    break;
+                }
+            }
+        }
+        finally
+        {
+            worker.NonGraphicsBatch = null;
             bool lastWorker = Workers.Countdown.Signal();
             if (lastWorker)
             {

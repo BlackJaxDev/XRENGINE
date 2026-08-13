@@ -340,9 +340,14 @@ internal sealed partial class VulkanFrameLoop : IVulkanTargetOutputHost
     public Result SubmitToQueueTracked(Queue queue, ref SubmitInfo submitInfo, Fence fence, string caller)
     {
         ThrowIfVulkanDeviceOperationNotAdmitted(caller);
-        Result result = Api.QueueSubmit(queue, 1, ref submitInfo, fence);
-        ObserveNativeResult(caller, result);
-        return result;
+        return _commandRuntime.SubmitToQueueTracked(
+            Api,
+            _deviceContext,
+            _telemetry,
+            queue,
+            ref submitInfo,
+            fence,
+            caller);
     }
 
     public unsafe bool TryReadMappedMemory<TState>(VulkanMemoryAllocation allocation, ulong offset, ulong length, TState state, VulkanMappedMemoryReadCallback<TState> callback)

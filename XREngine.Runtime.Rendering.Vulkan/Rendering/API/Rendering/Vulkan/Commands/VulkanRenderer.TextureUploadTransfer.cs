@@ -129,22 +129,21 @@ internal sealed partial class VulkanCommandRuntime
                 CalculateUploadStagingBytes(upload));
 
             VulkanSubmissionReceipt submitReceipt;
-            lock (_oneTimeSubmitLock)
-                submitReceipt = SubmitToQueueTrackedWithDisposition(
-                    DeviceContext.TransferQueue,
-                    ref submitInfo,
-                    fence,
-                    new VulkanSubmissionDiagnosticContext
-                    {
-                        SubmissionKind = "TextureUpload.Transfer",
-                        QueueKind = "Transfer",
-                        CommandBufferCount = 1,
-                        FirstCommandBufferHandle = (ulong)commandBuffer.Handle,
-                        FenceHandle = fence.Handle,
-                    },
-                    out _,
-                    out _,
-                    "TextureUpload.Transfer");
+            submitReceipt = SubmitToQueueTrackedWithDisposition(
+                DeviceContext.TransferQueue,
+                ref submitInfo,
+                fence,
+                new VulkanSubmissionDiagnosticContext
+                {
+                    SubmissionKind = "TextureUpload.Transfer",
+                    QueueKind = "Transfer",
+                    CommandBufferCount = 1,
+                    FirstCommandBufferHandle = (ulong)commandBuffer.Handle,
+                    FenceHandle = fence.Handle,
+                },
+                out _,
+                out _,
+                "TextureUpload.Transfer");
 
             if (!submitReceipt.SubmissionAccepted)
             {

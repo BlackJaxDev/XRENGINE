@@ -37,6 +37,8 @@ internal sealed class FramePlanBuilder
         internal readonly Dictionary<ResourceVersionKey, int> LastResourceWriters = new(256);
         internal int[] DynamicOverlayOperationOrderScratch = new int[16];
         internal OutputRequest[] Outputs = new OutputRequest[8];
+        internal RenderOutputRequest[] OutputGraphRequests = new RenderOutputRequest[8];
+        internal bool[] OutputDue = new bool[8];
         internal int[] OutputExecutionRanks = new int[8];
         internal RenderOutputDagNodeDescriptor[] OutputExecutionNodes =
             new RenderOutputDagNodeDescriptor[32];
@@ -111,6 +113,10 @@ internal sealed class FramePlanBuilder
             slot,
             outputCount,
             renderFrameId);
+        int textureUploadExecutionNodeIndex = ResolveTextureUploadExecutionNodeIndex(
+            slot.OutputExecutionNodes,
+            outputExecutionNodeCount,
+            slot.TextureUploadOperations.Count);
         int operationCount = CopyOperationsInDagOrder(
             slot,
             slot.Operations,
@@ -157,6 +163,7 @@ internal sealed class FramePlanBuilder
             outputCount,
             slot.OutputExecutionNodes,
             outputExecutionNodeCount,
+            textureUploadExecutionNodeIndex,
             slot.OperationKeys,
             operationKeyCount,
             slot.StaticPlannerContextKeys,
@@ -165,6 +172,21 @@ internal sealed class FramePlanBuilder
             staticPlannerContextKeyCount,
             renderGraphPlanSignature);
         return slot.Plan;
+    }
+
+    private static int ResolveTextureUploadExecutionNodeIndex(
+        RenderOutputDagNodeDescriptor[] nodes,
+        int nodeCount,
+        int uploadOperationCount)
+    {
+        for (int index = 0; index < nodeCount; index++)
+            if (nodes[index].Kind == ERenderOutputDagNodeKind.Upload)
+                return index;
+
+        if (uploadOperationCount != 0)
+            throw new InvalidOperationException(
+                "The frame contains texture-upload operations without an executable output-DAG upload node.");
+        return -1;
     }
 
     private static int CollectStaticPlannerContextKeys(Slot slot)
@@ -631,9 +653,15 @@ internal sealed class FramePlanBuilder
         if (outputCount == 0)
             return 0;
 
+        EnsureCapacity(ref slot.OutputGraphRequests, outputCount);
+        EnsureCapacity(ref slot.OutputDue, outputCount);
         for (int index = 0; index < outputCount; index++)
         {
-            if (!_outputGraphPlanner.Reserve(slot.Outputs[index].ToGraphRequest(renderFrameId)))
+            ref readonly OutputRequest output = ref slot.Outputs[index];
+            RenderOutputRequest request = output.ToGraphRequest(renderFrameId, out bool execute);
+            slot.OutputGraphRequests[index] = request;
+            slot.OutputDue[index] = execute;
+            if (!_outputGraphPlanner.Reserve(request))
             {
                 throw new InvalidOperationException(
                     "Frame output planning exceeded the configured DAG reservation capacity or used an invalid frame id.");
@@ -643,13 +671,16 @@ internal sealed class FramePlanBuilder
         for (int index = 0; index < outputCount; index++)
         {
             ref readonly OutputRequest output = ref slot.Outputs[index];
-            RenderOutputRequest request = output.ToGraphRequest(renderFrameId);
+            RenderOutputRequest request = slot.OutputGraphRequests[index];
             bool independentDesktopScene = output.OutputKind != EFrameOutputKind.DesktopMirror;
             int terminalNode = _outputGraphPlanner.Plan(
                 request,
-                isDue: true,
+                slot.OutputDue[index],
                 independentDesktopScene,
-                EFrameOutputKind.OpenXREyeSubmit);
+                EFrameOutputKind.OpenXREyeSubmit,
+                ERenderOutputPolicyReason.None,
+                xrImagesAcquired: output.OutputKind == EFrameOutputKind.OpenXREyeSubmit,
+                out _);
             if (terminalNode < 0)
             {
                 throw new InvalidOperationException(
@@ -657,13 +688,23 @@ internal sealed class FramePlanBuilder
             }
         }
 
-        AddExplicitOutputDependencies(slot, outputCount, renderFrameId);
+        AddExplicitOutputDependencies(slot, outputCount);
+        // Explicit producer edges are known only after all terminals exist.
+        // Re-propagate scheduling now so an acquired XR terminal promotes its
+        // entire final prerequisite path, including late dataflow edges.
+        for (int index = 0; index < outputCount; index++)
+        {
+            ref readonly OutputRequest output = ref slot.Outputs[index];
+            _ = _outputGraphPlanner.RefreshSchedule(
+                slot.OutputGraphRequests[index],
+                output.OutputKind == EFrameOutputKind.OpenXREyeSubmit);
+        }
 
         RenderOutputDag graph = _outputGraphPlanner.Graph;
         EnsureCapacity(ref slot.OutputExecutionNodes, graph.NodeCount);
         EnsureCapacity(ref slot.OutputNodeOrderScratch, graph.NodeCount);
         EnsureCapacity(ref slot.OutputNodeIndegreeScratch, graph.SlotCount);
-        if (!graph.TryCompileDeterministicOrder(
+        if (!graph.TryCompileDeadlineOrder(
                 slot.OutputNodeOrderScratch,
                 slot.OutputNodeIndegreeScratch,
                 out int executionNodeCount,
@@ -703,8 +744,7 @@ internal sealed class FramePlanBuilder
 
     private void AddExplicitOutputDependencies(
         Slot slot,
-        int outputCount,
-        ulong renderFrameId)
+        int outputCount)
     {
         for (int dependentIndex = 0; dependentIndex < outputCount; dependentIndex++)
         {
@@ -736,8 +776,8 @@ internal sealed class FramePlanBuilder
             }
 
             if (!_outputGraphPlanner.TryAddOutputDependency(
-                    slot.Outputs[producerIndex].ToGraphRequest(renderFrameId),
-                    dependent.ToGraphRequest(renderFrameId),
+                    slot.OutputGraphRequests[producerIndex],
+                    slot.OutputGraphRequests[dependentIndex],
                     out string? failureReason))
             {
                 throw new InvalidOperationException(

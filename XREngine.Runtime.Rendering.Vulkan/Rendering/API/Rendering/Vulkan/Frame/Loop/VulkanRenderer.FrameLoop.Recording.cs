@@ -95,7 +95,9 @@ namespace XREngine.Rendering.Vulkan
                             return HandleDesktopRecordingDeferred(
                                 ref attempt,
                                 recordingDeferredReason,
-                                imguiOverlaySnapshot);
+                                imguiOverlaySnapshot,
+                                dynamicTextSecondaryCommandBuffer,
+                                dynamicTextOverlayOpCount);
                         }
                     }
                     catch (InvalidOperationException ex)
@@ -189,7 +191,9 @@ namespace XREngine.Rendering.Vulkan
         private EDesktopFrameFlow HandleDesktopRecordingDeferred(
             ref VulkanFrameAttempt attempt,
             string reason,
-            VulkanImGuiFrameSnapshot? recoveryOverlaySnapshot)
+            VulkanImGuiFrameSnapshot? recoveryOverlaySnapshot,
+            CommandBuffer recoveryDynamicTextSecondaryCommandBuffer = default,
+            int recoveryDynamicTextOperationCount = 0)
         {
             Debug.VulkanWarningEvery(
                 $"Vulkan.Frame.{GetHashCode()}.RecordDeferredReason",
@@ -207,7 +211,11 @@ namespace XREngine.Rendering.Vulkan
                     rejectionStage: "RecordDeferred",
                     rejectedSubmitResult: null,
                     recoveryOverlaySnapshot:
-                        recoveryOverlaySnapshot))
+                        recoveryOverlaySnapshot,
+                    recoveryDynamicTextSecondaryCommandBuffer:
+                        recoveryDynamicTextSecondaryCommandBuffer,
+                    recoveryDynamicTextOperationCount:
+                        recoveryDynamicTextOperationCount))
             {
                 if (swapchainAttachmentRetired)
                 {

@@ -105,6 +105,14 @@ internal readonly record struct PendingMeshDraw(
         => ViewSnapshot?.ShadowUniformState ?? default;
 
     /// <summary>
+    /// Stable producer-side identity for resource and pipeline preparation. It
+    /// excludes frame-local transforms so visibility/order changes can reuse a
+    /// prior successful preparation while material, shader, geometry, pass, and
+    /// binding-publisher changes still invalidate it.
+    /// </summary>
+    internal ulong PreparationCompatibilitySignature { get; init; }
+
+    /// <summary>
     /// Detaches every producer-owned mutable collection before a frame plan is
     /// sealed. Renderer, material, and camera references are logical owners;
     /// native binding dictionaries and indexed viewport arrays are snapshot data.

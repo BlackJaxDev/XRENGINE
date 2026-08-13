@@ -162,13 +162,14 @@ namespace XREngine.Rendering.Vulkan
             if (fenceResult != Result.Success)
             {
                 if (synchronousArena is not null)
-                {
                     _ = synchronousArena.TryCancelFrameSlotSubmission(0, synchronousSlice.Generation);
-                    throw new InvalidOperationException(
-                        $"Failed to create a fence for synchronous frame-data submission ({fenceResult}).");
-                }
-                Debug.VulkanWarning($"[Vulkan] Failed to create one-shot submit fence (result={fenceResult}). Falling back to QueueWaitIdle.");
-                submitFence = default;
+                RemoveCommandBufferBindState(commandBuffer);
+                ReleaseUnsubmittedOneTimeCommandBuffer(
+                    ref commandBuffer,
+                    useTransferQueue,
+                    "OneTimeSubmit.FenceCreateRejected");
+                throw new InvalidOperationException(
+                    $"Failed to create a completion fence for one-shot submission ({fenceResult}); the command buffer was not submitted.");
             }
             else
             {
@@ -195,7 +196,8 @@ namespace XREngine.Rendering.Vulkan
             }
 
             bool waitSucceeded;
-            lock (_oneTimeSubmitLock)
+            // The tracked submit gateway owns the native queue lease. Fence and
+            // idle waits below deliberately run after that narrow lease exits.
             {
                 Queue submitQueue = SelectOneTimeSubmitQueue(useTransferQueue);
                 VulkanSubmissionReceipt receipt = SubmitToQueueTrackedWithDisposition(
@@ -219,6 +221,10 @@ namespace XREngine.Rendering.Vulkan
                     if (submitFence.Handle != 0 && submitResult != Result.ErrorDeviceLost)
                         Api.DestroyFence(DeviceContext.Device, submitFence, null);
                     RemoveCommandBufferBindState(commandBuffer);
+                    ReleaseUnsubmittedOneTimeCommandBuffer(
+                        ref commandBuffer,
+                        useTransferQueue,
+                        "OneTimeSubmit.SubmitRejected");
                     if (synchronousArena is not null)
                         throw new InvalidOperationException(
                             $"Synchronous frame-data QueueSubmit was rejected ({submitResult}).");
@@ -268,7 +274,22 @@ namespace XREngine.Rendering.Vulkan
                 else
                 {
                     // Fence creation failed â€” fall back to QueueWaitIdle.
-                    Result waitResult = Api.QueueWaitIdle(submitQueue);
+                    CommandBuffers.DeviceQueueAdmissionGate.EnterReadLock();
+                    Result waitResult;
+                    try
+                    {
+                        using VulkanQueueOperationLease queueOperation = VulkanQueueOperationLease.TryEnter(
+                            CommandBuffers.OneTimeSubmitGate,
+                            DeviceContext.StateMachine,
+                            FrameTelemetry);
+                        waitResult = queueOperation.Acquired
+                            ? Api.QueueWaitIdle(submitQueue)
+                            : Result.ErrorDeviceLost;
+                    }
+                    finally
+                    {
+                        CommandBuffers.DeviceQueueAdmissionGate.ExitReadLock();
+                    }
                     DeviceContext.ObserveNativeResult("vkQueueWaitIdle.OneTimeSubmit", waitResult);
                     waitSucceeded = waitResult == Result.Success;
                     if (waitSucceeded)
@@ -332,6 +353,27 @@ namespace XREngine.Rendering.Vulkan
 
             RemoveCommandBufferBindState(commandBuffer);
             FreeVulkanCommandBufferTracked(pool, ref commandBuffer, "OneTimeSubmit.Completed");
+        }
+
+        private void ReleaseUnsubmittedOneTimeCommandBuffer(
+            ref CommandBuffer commandBuffer,
+            bool useTransferQueue,
+            string reason)
+        {
+            CommandPool pool = useTransferQueue
+                ? GetThreadTransferCommandPool()
+                : GetThreadCommandPool();
+            lock (_oneTimeCommandPoolsLock)
+            {
+                if (_oneTimeCommandPools.Remove(commandBuffer.Handle, out OneTimeCommandOwner owner) &&
+                    owner.Pool.Handle != 0)
+                {
+                    pool = owner.Pool;
+                }
+            }
+
+            if (DeviceContext.IsOperational)
+                FreeVulkanCommandBufferTracked(pool, ref commandBuffer, reason);
         }
 
         private Queue SelectOneTimeSubmitQueue(bool useTransferQueue)

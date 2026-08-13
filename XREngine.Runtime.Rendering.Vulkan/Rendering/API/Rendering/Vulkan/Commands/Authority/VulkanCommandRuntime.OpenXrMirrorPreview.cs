@@ -33,7 +33,7 @@ internal sealed partial class VulkanCommandRuntime
 
     internal void DestroyOpenXrPrimaryCommandArtifacts()
     {
-        lock (CommandBuffers.OneTimeSubmitGate)
+        lock (CommandBuffers.SubmissionStateGate)
             lock (CommandBuffers.OpenXrPrimaryOwnersGate)
             {
                 foreach (PrimaryCommandArtifactOwner owner in

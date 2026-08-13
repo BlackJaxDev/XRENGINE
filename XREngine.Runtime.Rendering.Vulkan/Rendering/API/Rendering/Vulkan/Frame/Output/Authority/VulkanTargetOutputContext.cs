@@ -87,6 +87,9 @@ internal sealed class VulkanTargetOutputContext
     internal Result SubmitToQueueTracked(Queue queue, ref SubmitInfo submitInfo, Fence fence, string caller)
         => _host.SubmitToQueueTracked(queue, ref submitInfo, fence, caller);
 
+    internal Result PresentToQueueTracked(KhrSwapchain swapchainApi, Queue queue, ref PresentInfoKHR presentInfo, string caller)
+        => _host.PresentToQueueTracked(swapchainApi, queue, ref presentInfo, caller);
+
     internal bool TryReadMappedMemory<TState>(VulkanMemoryAllocation allocation, ulong offset, ulong length, TState state, VulkanMappedMemoryReadCallback<TState> callback)
         => _host.TryReadMappedMemory(allocation, offset, length, state, callback);
 

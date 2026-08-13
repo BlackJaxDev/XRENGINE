@@ -148,7 +148,10 @@ internal sealed partial class VulkanFrameLoop
 
     internal void WaitForDeviceIdle()
     {
-        lock (_commandRuntime.CommandBuffers.OneTimeSubmitGate)
+        ReaderWriterLockSlim admissionGate =
+            _commandRuntime.CommandBuffers.DeviceQueueAdmissionGate;
+        admissionGate.EnterWriteLock();
+        try
         {
             if (!_deviceContext.IsOperational)
                 return;
@@ -167,6 +170,10 @@ internal sealed partial class VulkanFrameLoop
 
             throw new InvalidOperationException(
                 $"vkDeviceWaitIdle failed with {result}.");
+        }
+        finally
+        {
+            admissionGate.ExitWriteLock();
         }
     }
 

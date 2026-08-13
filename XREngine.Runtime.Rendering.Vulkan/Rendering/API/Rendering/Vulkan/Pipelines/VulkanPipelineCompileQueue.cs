@@ -143,13 +143,13 @@ internal sealed unsafe partial class VulkanPipelineManager
 
             AnnounceVulkanPipelineCompileQueue(workerCount, capacity);
 
-            SemaphoreSlim gate = EnsureVulkanPipelineCompileGate(workerCount);
+            VulkanPipelineCompileTask compileTask =
+                EnsureVulkanPipelineCompileTask();
             _vulkanGraphicsPipelineProgramCompileJobs.Add(
                 request.Key.ProgramPipelineHash,
                 request.CompileKey);
             Task<VulkanGraphicsPipelineCompileResult> task =
-                VulkanPipelineCompileTask.RunAsync(
-                    gate,
+                compileTask.Enqueue(
                     () => CreateGraphicsPipelineOnWorker(
                         request,
                         BackgroundPipelineCache));
@@ -244,15 +244,15 @@ internal sealed unsafe partial class VulkanPipelineManager
         }
     }
 
-    private SemaphoreSlim EnsureVulkanPipelineCompileGate(int workerCount)
+    private VulkanPipelineCompileTask EnsureVulkanPipelineCompileTask()
     {
-        if (_vulkanPipelineCompileGate is not null)
-            return _vulkanPipelineCompileGate;
+        if (_vulkanPipelineCompileTask is not null)
+            return _vulkanPipelineCompileTask;
 
         lock (_vulkanPipelineCompileGateLock)
         {
-            _vulkanPipelineCompileGate ??= new SemaphoreSlim(workerCount, workerCount);
-            return _vulkanPipelineCompileGate;
+            _vulkanPipelineCompileTask ??= new VulkanPipelineCompileTask();
+            return _vulkanPipelineCompileTask;
         }
     }
 
@@ -469,5 +469,7 @@ internal sealed unsafe partial class VulkanPipelineManager
 
         _vulkanPipelineCompileGate?.Dispose();
         _vulkanPipelineCompileGate = null;
+        _vulkanPipelineCompileTask?.Dispose();
+        _vulkanPipelineCompileTask = null;
     }
 }

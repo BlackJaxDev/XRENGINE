@@ -11,6 +11,11 @@ internal sealed partial class VulkanCommandRuntime
     internal VulkanPrimaryCommandRecordingResult RecordPrimary(
         in VulkanPreparedPrimaryCommandInput input)
     {
+        // A timed-out worker may still own a command-chain artifact or its
+        // recording arena. Quarantine the entire primary-recording surface,
+        // including reuse and direct-secondary paths, until that worker exits.
+        ThrowIfAbandonedRecordingWorkersRemainActive();
+
         if (!TryValidatePreparedPrimaryInput(in input, out string reason))
             return VulkanPrimaryCommandRecordingResult.ReplanRequired(reason);
 
@@ -24,6 +29,12 @@ internal sealed partial class VulkanCommandRuntime
         CommandPool uploadCommandPool = default;
         FrameOperationSequence uploadOperations =
             input.FramePlan.GetNativeTextureUploadOperationsForRecording();
+        if (uploadOperations.Length > 0 &&
+            input.FramePlan.TextureUploadExecutionNodeIndex < 0)
+        {
+            return VulkanPrimaryCommandRecordingResult.ReplanRequired(
+                "texture-upload operations are not admitted by the executable output DAG");
+        }
         if (uploadOperations.Length > 0 &&
             !TryRecordTextureUploadCommandBuffer(
                 input.ImageIndex,
@@ -134,10 +145,17 @@ internal sealed partial class VulkanCommandRuntime
                 uploadCommandBuffer,
                 uploadCommandPool);
         }
+        CommandBuffer dynamicUiSecondaryCommandBuffer =
+            owner?.DynamicUiSecondaryCommandBuffer ??
+            input.DynamicUiSecondaryCommandBuffer;
+        int dynamicUiOverlayOperationCount =
+            owner is null || owner.DynamicUiSecondaryRecorded
+                ? input.FramePlan.DynamicOverlayOperationCount
+                : 0;
         VulkanCommandRecordingContext context = new(
             input.ImageIndex,
             input.PrimaryCommandBuffer,
-            input.DynamicUiSecondaryCommandBuffer,
+            dynamicUiSecondaryCommandBuffer,
             operations,
             input.Policy.PreserveSwapchainForOverlay
                 ? 0
@@ -158,10 +176,16 @@ internal sealed partial class VulkanCommandRuntime
             input.ClearState);
 
         if (!Recorder.Prepare(ref context))
-            return AttachUploadArtifacts(
+            return AttachDeferredRecordingArtifacts(
                 ClassifyPrimaryRecordingFailure(ref context),
                 uploadCommandBuffer,
-                uploadCommandPool);
+                uploadCommandPool,
+                input.Policy.PreserveSwapchainForOverlay
+                    ? dynamicUiSecondaryCommandBuffer
+                    : default,
+                input.Policy.PreserveSwapchainForOverlay
+                    ? dynamicUiOverlayOperationCount
+                    : 0);
 
         Recorder.EnterRecordingScope();
         bool recorded;
@@ -174,10 +198,16 @@ internal sealed partial class VulkanCommandRuntime
             Recorder.ExitRecordingScope();
         }
         if (!recorded)
-            return AttachUploadArtifacts(
+            return AttachDeferredRecordingArtifacts(
                 ClassifyPrimaryRecordingFailure(ref context),
                 uploadCommandBuffer,
-                uploadCommandPool);
+                uploadCommandPool,
+                input.Policy.PreserveSwapchainForOverlay
+                    ? dynamicUiSecondaryCommandBuffer
+                    : default,
+                input.Policy.PreserveSwapchainForOverlay
+                    ? dynamicUiOverlayOperationCount
+                    : 0);
 
         if (owner is not null)
             PublishRecordedPrimaryOwner(
@@ -190,8 +220,8 @@ internal sealed partial class VulkanCommandRuntime
         return new VulkanPrimaryCommandRecordingResult(
             EVulkanPrimaryCommandRecordingDisposition.Recorded,
             input.PrimaryCommandBuffer,
-            input.DynamicUiSecondaryCommandBuffer,
-            input.FramePlan.DynamicOverlayOperationCount,
+            dynamicUiSecondaryCommandBuffer,
+            dynamicUiOverlayOperationCount,
             uploadCommandBuffer,
             uploadCommandPool,
             context.RecordedSwapchainFinalLayout,
@@ -486,6 +516,23 @@ internal sealed partial class VulkanCommandRuntime
         {
             TextureUploadCommandBuffer = uploadCommandBuffer,
             TextureUploadCommandPool = uploadCommandPool,
+        };
+
+    private static VulkanPrimaryCommandRecordingResult
+        AttachDeferredRecordingArtifacts(
+            VulkanPrimaryCommandRecordingResult result,
+            CommandBuffer uploadCommandBuffer,
+            CommandPool uploadCommandPool,
+            CommandBuffer dynamicUiSecondaryCommandBuffer,
+            int dynamicUiOverlayOperationCount)
+        => result with
+        {
+            TextureUploadCommandBuffer = uploadCommandBuffer,
+            TextureUploadCommandPool = uploadCommandPool,
+            DynamicUiSecondaryCommandBuffer =
+                dynamicUiSecondaryCommandBuffer,
+            DynamicUiOverlayOperationCount =
+                dynamicUiOverlayOperationCount,
         };
 
     private static bool TryValidatePreparedPrimaryInput(

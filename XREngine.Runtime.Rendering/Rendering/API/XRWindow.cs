@@ -1408,20 +1408,27 @@ namespace XREngine.Rendering
 
             if (Interlocked.CompareExchange(ref _interactiveResizeRenderActive, 1, 0) != 0)
             {
-                InteractiveResizeDiagnostics.RecordSuppressedRender(reason + ":interactive-active");
+                InteractiveResizeDiagnostics.RecordSuppressedRender("interactive-active");
+                long activeSince = InteractiveResizeDiagnostics.CallbackActiveSinceTimestamp;
+                TimeSpan activeFor = activeSince == 0L
+                    ? TimeSpan.Zero
+                    : System.Diagnostics.Stopwatch.GetElapsedTime(activeSince);
                 Debug.RenderingWarningEvery(
                     $"XRWindow.InteractiveResize.InteractiveActive.{GetHashCode()}",
                     TimeSpan.FromSeconds(1),
-                    "[InteractiveResize] Suppressed interactive render window={0} reason={1} cause=interactive-active.",
+                    "[InteractiveResize] Suppressed interactive render window={0} reason={1} cause=interactive-active activeMs={2:F3} lastOutcome={3} lastDispatchReason={4}.",
                     GetHashCode(),
-                    reason);
+                    reason,
+                    activeFor.TotalMilliseconds,
+                    InteractiveResizeDiagnostics.LastDispatchOutcome,
+                    InteractiveResizeDiagnostics.LastDispatchReason);
                 return;
             }
 
             if (Volatile.Read(ref _normalRenderActive) != 0)
             {
                 Volatile.Write(ref _interactiveResizeRenderActive, 0);
-                InteractiveResizeDiagnostics.RecordSuppressedRender(reason + ":normal-render-active");
+                InteractiveResizeDiagnostics.RecordSuppressedRender("normal-render-active");
                 Debug.RenderingWarningEvery(
                     $"XRWindow.InteractiveResize.NormalRenderActive.{GetHashCode()}",
                     TimeSpan.FromSeconds(1),
@@ -1433,21 +1440,35 @@ namespace XREngine.Rendering
 
             try
             {
+                long callbackStarted = System.Diagnostics.Stopwatch.GetTimestamp();
+                InteractiveResizeDiagnostics.RecordCallbackEntry(callbackStarted);
                 ObserveRenderOwnerThread("interactive-resize-render");
                 WarnIfNotRenderOwnerThread("InteractiveResize.Render");
 
-                if (!RuntimeRenderingHostServices.Scheduling.TryDispatchInteractiveResizeFrame())
+                InteractiveResizeDispatchResult dispatch =
+                    RuntimeRenderingHostServices.Scheduling.TryDispatchInteractiveResizeFrame();
+                InteractiveResizeDiagnostics.RecordDispatch(dispatch);
+                if (!dispatch.Presented)
                 {
-                    InteractiveResizeDiagnostics.RecordSuppressedRender(reason + ":frame-not-ready");
+                    InteractiveResizeDiagnostics.RecordSuppressedRender(
+                        GetInteractiveResizeDispatchReasonName(dispatch.Reason));
                     return;
                 }
 
-                InteractiveResizeDiagnostics.RecordInteractiveRender(reason);
+                InteractiveResizeDiagnostics.RecordInteractiveRender(
+                    dispatch.Outcome == EInteractiveResizeDispatchOutcome.PresentedScaledStale
+                        ? "scaled-stale"
+                        : reason);
             }
             catch (Exception ex)
             {
                 _lastRenderException = ex;
-                InteractiveResizeDiagnostics.RecordSuppressedRender(reason + ":exception");
+                InteractiveResizeDiagnostics.RecordDispatch(new(
+                    EInteractiveResizeDispatchOutcome.Faulted,
+                    EInteractiveResizeDispatchReason.Exception,
+                    RuntimeRenderingHostServices.FrameTiming.CurrentRenderFrameId,
+                    ElapsedStopwatchTicks: 0L));
+                InteractiveResizeDiagnostics.RecordSuppressedRender("exception");
                 Debug.RenderingWarningEvery(
                     $"XRWindow.InteractiveResize.Exception.{GetHashCode()}",
                     TimeSpan.FromSeconds(1),
@@ -1458,9 +1479,29 @@ namespace XREngine.Rendering
             }
             finally
             {
+                long activeSince = InteractiveResizeDiagnostics.CallbackActiveSinceTimestamp;
+                if (activeSince != 0L)
+                {
+                    InteractiveResizeDiagnostics.RecordCallbackExit(
+                        System.Diagnostics.Stopwatch.GetTimestamp() - activeSince);
+                }
                 Volatile.Write(ref _interactiveResizeRenderActive, 0);
             }
         }
+
+        private static string GetInteractiveResizeDispatchReasonName(
+            EInteractiveResizeDispatchReason reason)
+            => reason switch
+            {
+                EInteractiveResizeDispatchReason.RuntimeStopped => "runtime-stopped",
+                EInteractiveResizeDispatchReason.WrongThread => "wrong-thread",
+                EInteractiveResizeDispatchReason.FrameAlreadyActive => "frame-already-active",
+                EInteractiveResizeDispatchReason.RenderCadenceNotDue => "render-cadence-not-due",
+                EInteractiveResizeDispatchReason.VisibilityUnavailable => "visibility-unavailable",
+                EInteractiveResizeDispatchReason.FrameDidNotAdvance => "frame-did-not-advance",
+                EInteractiveResizeDispatchReason.Exception => "exception",
+                _ => "none",
+            };
 
         private void ProcessPendingInteractivePresentationResize()
         {

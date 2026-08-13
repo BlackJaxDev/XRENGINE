@@ -390,8 +390,10 @@ internal sealed class UninstalledRuntimeRenderingHostServices : IRuntimeRenderin
     {
     }
 
-    public bool TryDispatchInteractiveResizeFrame()
-        => false;
+    public InteractiveResizeDispatchResult TryDispatchInteractiveResizeFrame()
+        => InteractiveResizeDispatchResult.Deferred(
+            EInteractiveResizeDispatchReason.RuntimeStopped,
+            presentFrameId: 0UL);
 
     public void SubscribePlayModeTransitions(Action callback)
     {

@@ -332,7 +332,9 @@ namespace XREngine.Rendering.Vulkan
             int recordedSwapchainWriteCount,
             string rejectionStage,
             Result? rejectedSubmitResult,
-            VulkanImGuiFrameSnapshot? recoveryOverlaySnapshot = null)
+            VulkanImGuiFrameSnapshot? recoveryOverlaySnapshot = null,
+            CommandBuffer recoveryDynamicTextSecondaryCommandBuffer = default,
+            int recoveryDynamicTextOperationCount = 0)
         {
             RejectedDesktopFramePolicyDecision policy =
                 ResolveRejectedDesktopRecoveryPolicy(
@@ -373,6 +375,7 @@ namespace XREngine.Rendering.Vulkan
             CommandPool abortCommandPool = default;
             CommandBuffer abortCommandBuffer = default;
             CommandBuffer recoveryOverlayCommandBuffer = default;
+            CommandBuffer recoveryDynamicTextCommandBuffer = default;
             bool abortSubmitted = false;
             try
             {
@@ -394,8 +397,28 @@ namespace XREngine.Rendering.Vulkan
                     hasRecoveryOverlay
                         ? recoveryOverlayCommandBuffer
                         : default;
+                bool hasRecoveryDynamicText =
+                    recoveryDynamicTextOperationCount > 0 &&
+                    recoveryDynamicTextSecondaryCommandBuffer.Handle != 0 &&
+                    TryRecordRejectedDesktopDynamicTextOverlay(
+                        ref attempt,
+                        recoveryDynamicTextSecondaryCommandBuffer,
+                        recoveryDynamicTextOperationCount,
+                        hasRecoveryOverlay
+                            ? recoveryOverlayCommandBuffer
+                            : abortCommandBuffer,
+                        out recoveryDynamicTextCommandBuffer);
+                attempt.HasDynamicTextOverlayCommandBuffer =
+                    hasRecoveryDynamicText;
+                attempt.DynamicTextOverlayCommandBuffer =
+                    hasRecoveryDynamicText
+                        ? recoveryDynamicTextCommandBuffer
+                        : default;
                 attempt.RecoverySwapchainWriteCount =
-                    replayedPresentationSource || policy.ShouldClearBeforePresent || hasRecoveryOverlay
+                    replayedPresentationSource ||
+                    policy.ShouldClearBeforePresent ||
+                    hasRecoveryOverlay ||
+                    hasRecoveryDynamicText
                         ? 1
                         : 0;
                 if (!TrySubmitRejectedDesktopAbort(
@@ -403,6 +426,7 @@ namespace XREngine.Rendering.Vulkan
                         abortCommandPool,
                         abortCommandBuffer,
                         recoveryOverlayCommandBuffer,
+                        recoveryDynamicTextCommandBuffer,
                         ref abortSubmitted))
                 {
                     ReleaseUnsubmittedDesktopUpload(

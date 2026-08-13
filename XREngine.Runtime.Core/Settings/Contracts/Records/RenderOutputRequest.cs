@@ -50,7 +50,8 @@ public readonly record struct RenderOutputRequest(
             ERenderOutputClass.XrCritical or ERenderOutputClass.RequiredDependency or ERenderOutputClass.Presentation => 0u,
             ERenderOutputClass.InteractiveScene or ERenderOutputClass.Overlay => 1u,
             ERenderOutputClass.VisibleMirror => 2u,
-            _ => uint.MaxValue,
+            ERenderOutputClass.BackgroundCapture => 8u,
+            _ => 4u,
         };
 
         ulong outputId = PackIdentity(1u, outputKind, viewKind);

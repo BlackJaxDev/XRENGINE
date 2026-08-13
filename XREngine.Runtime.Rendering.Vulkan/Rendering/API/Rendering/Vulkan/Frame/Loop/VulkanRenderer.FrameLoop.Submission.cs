@@ -208,7 +208,9 @@ namespace XREngine.Rendering.Vulkan
                 using (VulkanCpuStageScope cpuStage =
                        new(_frameTelemetry, EVulkanCpuStage.Submission))
                 {
-                    lock (_oneTimeSubmitLock)
+                    // SubmitToQueueTrackedWithDisposition is the sole queue
+                    // gateway. Keep diagnostic preparation and completion-ledger
+                    // publication outside its narrow native queue lease.
                     {
                         ulong frameOpsSignature =
                             _commandBufferFrameOpSignatures is not null &&

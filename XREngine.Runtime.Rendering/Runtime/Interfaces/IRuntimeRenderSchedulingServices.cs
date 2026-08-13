@@ -89,7 +89,7 @@ public interface IRuntimeRenderSchedulingServices
     /// Attempts to dispatch one complete host frame while the native window thread
     /// is inside an interactive resize modal loop.
     /// </summary>
-    bool TryDispatchInteractiveResizeFrame();
+    InteractiveResizeDispatchResult TryDispatchInteractiveResizeFrame();
 
     /// <summary>
     /// Subscribes a callback to host play-mode transition notifications that affect rendering.
