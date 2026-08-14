@@ -260,9 +260,7 @@ namespace XREngine.Rendering.Vulkan
                        EVulkanDesktopAcquireOwnership.AcquiredUnresolved;
             }
 
-            ulong signalValue = Math.Max(
-                _commandRuntime.Synchronization._graphicsTimelineValue + 1,
-                attempt.AcquireTimelineValue + 1);
+            ulong signalValue;
             long stageStartTimestamp = Stopwatch.GetTimestamp();
             VulkanSubmissionReceipt submitReceipt;
             using (RuntimeRenderingHostServices.Profiling.StartProfileScope(
@@ -270,7 +268,8 @@ namespace XREngine.Rendering.Vulkan
             {
                 submitReceipt = SubmitAcquireSemaphoreBridge(
                     attempt.AcquireSemaphore,
-                    signalValue);
+                    attempt.AcquireTimelineValue + 1UL,
+                    out signalValue);
             }
 
             attempt.Timing.AcquireBridgeSubmit +=
@@ -278,9 +277,6 @@ namespace XREngine.Rendering.Vulkan
             Result result = submitReceipt.Result;
             if (submitReceipt.SubmissionAccepted)
             {
-                _commandRuntime.Synchronization._graphicsTimelineValue = Math.Max(
-                    _commandRuntime.Synchronization._graphicsTimelineValue,
-                    signalValue);
                 attempt.TransitionAcquireOwnership(
                     EVulkanDesktopAcquireOwnership
                         .ConsumedByRecoveryImagePendingPresent);

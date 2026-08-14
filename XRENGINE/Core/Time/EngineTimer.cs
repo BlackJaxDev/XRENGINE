@@ -706,74 +706,49 @@ namespace XREngine.Timers
         /// </summary>
         /// <remarks>
         /// The collapsed Windows window/render thread can remain inside the OS size/move
-        /// loop while the normal outer render loop is paused. This entry point preserves
-        /// the ordinary render clock, callbacks, visibility-generation handoff, and
-        /// collect/swap publication instead of drawing a window-only frame.
+        /// loop while the normal outer render loop is paused. The callback must not enter
+        /// ordinary render dispatch because that path may wait for visibility, GPU
+        /// completion, workers, or retirement. The already-published swapchain image is
+        /// instead retained for WSI/compositor scaling until the modal loop exits.
         /// </remarks>
-        public XREngine.Rendering.InteractiveResizeDispatchResult TryDispatchInteractiveResizeFrame()
+        public XREngine.Rendering.InteractiveResizeDispatchResult TryDispatchInteractiveResizeFrame(
+            ulong? presentationPackageId = null)
         {
             long started = Stopwatch.GetTimestamp();
+            ulong packageId = presentationPackageId ?? PresentFrameId;
             if (!IsRunning)
                 return XREngine.Rendering.InteractiveResizeDispatchResult.Deferred(
                     XREngine.Rendering.EInteractiveResizeDispatchReason.RuntimeStopped,
-                    PresentFrameId);
+                    packageId);
             if (!Engine.IsRenderThread)
                 return XREngine.Rendering.InteractiveResizeDispatchResult.Deferred(
                     XREngine.Rendering.EInteractiveResizeDispatchReason.WrongThread,
-                    PresentFrameId);
+                    packageId);
             if (Engine.IsDispatchingRenderFrame)
                 return XREngine.Rendering.InteractiveResizeDispatchResult.Deferred(
                     XREngine.Rendering.EInteractiveResizeDispatchReason.FrameAlreadyActive,
-                    PresentFrameId);
+                    packageId);
 
             if (!IsRenderDispatchDue())
             {
                 return XREngine.Rendering.InteractiveResizeDispatchResult.Deferred(
                     XREngine.Rendering.EInteractiveResizeDispatchReason.RenderCadenceNotDue,
-                    PresentFrameId,
+                    packageId,
                     Stopwatch.GetTimestamp() - started);
             }
 
-            bool hasFreshVisibility = _visibilityGenerationGate.TryConsumeFresh(out _);
-            bool reusePublishedVisibility = !hasFreshVisibility &&
-                _visibilityGenerationGate.CanReusePreviousForRequiredGeneration(
-                    CollectVisibleLatePolicy);
-            if (!hasFreshVisibility && !reusePublishedVisibility)
+            if (packageId == 0UL)
             {
                 return XREngine.Rendering.InteractiveResizeDispatchResult.Deferred(
-                    XREngine.Rendering.EInteractiveResizeDispatchReason.VisibilityUnavailable,
-                    PresentFrameId,
+                    XREngine.Rendering.EInteractiveResizeDispatchReason.PresentationPackageUnavailable,
+                    packageId,
                     Stopwatch.GetTimestamp() - started);
             }
 
-            ulong previousPresentFrameId = PresentFrameId;
-            if (!DispatchRender())
-            {
-                return XREngine.Rendering.InteractiveResizeDispatchResult.Deferred(
-                    XREngine.Rendering.EInteractiveResizeDispatchReason.RenderCadenceNotDue,
-                    PresentFrameId,
-                    Stopwatch.GetTimestamp() - started);
-            }
-
-            if (reusePublishedVisibility)
-            {
-                _ = _visibilityGenerationGate.TryRecordStaleReuse(
-                    _visibilityGenerationGate.RequiredGeneration);
-                RuntimeEngine.Rendering.Stats.FrameLifecycle.RecordStaleCollectReuse();
-            }
-
-            MarkRenderFrameReadyForCollect();
-            bool advanced = IsRunning && PresentFrameId != previousPresentFrameId;
             return new XREngine.Rendering.InteractiveResizeDispatchResult(
-                advanced
-                    ? hasFreshVisibility
-                        ? XREngine.Rendering.EInteractiveResizeDispatchOutcome.Submitted
-                        : XREngine.Rendering.EInteractiveResizeDispatchOutcome.PresentedScaledStale
-                    : XREngine.Rendering.EInteractiveResizeDispatchOutcome.Deferred,
-                advanced
-                    ? XREngine.Rendering.EInteractiveResizeDispatchReason.None
-                    : XREngine.Rendering.EInteractiveResizeDispatchReason.FrameDidNotAdvance,
-                PresentFrameId,
+                XREngine.Rendering.EInteractiveResizeDispatchOutcome.PresentedScaledStale,
+                XREngine.Rendering.EInteractiveResizeDispatchReason.None,
+                packageId,
                 Stopwatch.GetTimestamp() - started);
         }
 

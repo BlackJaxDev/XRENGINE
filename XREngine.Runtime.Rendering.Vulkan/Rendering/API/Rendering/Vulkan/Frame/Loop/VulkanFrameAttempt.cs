@@ -220,6 +220,11 @@ internal ref struct VulkanFrameAttempt
     /// which contains information about the presentation surface and swapchain used for presenting the rendered content.
     /// </summary>
     public VulkanPresentationSourceTuple PresentationSource;
+    /// <summary>
+    /// Immutable output-DAG manifest that admitted and ordered the command
+    /// buffers owned by this attempt.
+    /// </summary>
+    public FramePlan? OutputExecutionPlan;
 
     /// <summary>
     /// Indicates whether the resources associated with the current frame attempt have been released,

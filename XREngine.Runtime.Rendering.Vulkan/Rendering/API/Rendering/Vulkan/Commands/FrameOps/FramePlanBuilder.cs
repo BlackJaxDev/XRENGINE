@@ -38,6 +38,8 @@ internal sealed class FramePlanBuilder
         internal int[] DynamicOverlayOperationOrderScratch = new int[16];
         internal OutputRequest[] Outputs = new OutputRequest[8];
         internal RenderOutputRequest[] OutputGraphRequests = new RenderOutputRequest[8];
+        internal RenderOutputSchedulingDecision[] OutputDecisions =
+            new RenderOutputSchedulingDecision[8];
         internal bool[] OutputDue = new bool[8];
         internal int[] OutputExecutionRanks = new int[8];
         internal RenderOutputDagNodeDescriptor[] OutputExecutionNodes =
@@ -68,6 +70,7 @@ internal sealed class FramePlanBuilder
         FrameOp[] dynamicOverlayOperations,
         in VulkanFramePlanRenderGraphAuthority renderGraphAuthority,
         uint? openXrViewIndex = null,
+        bool openXrImagesAcquired = false,
         FrameOp[]? textureUploadOperations = null)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(frameSlot);
@@ -112,7 +115,20 @@ internal sealed class FramePlanBuilder
         int outputExecutionNodeCount = CompileOutputGraph(
             slot,
             outputCount,
-            renderFrameId);
+            renderFrameId,
+            openXrImagesAcquired);
+        ApplyOutputAdmission(
+            slot,
+            slot.Operations,
+            outputCount,
+            openXrViewKind);
+        ApplyOutputAdmission(
+            slot,
+            slot.DynamicOverlayOperations,
+            outputCount,
+            openXrViewKind);
+        if (!HasAdmittedOutput(slot, outputCount))
+            slot.TextureUploadOperations.Reset();
         int textureUploadExecutionNodeIndex = ResolveTextureUploadExecutionNodeIndex(
             slot.OutputExecutionNodes,
             outputExecutionNodeCount,
@@ -160,6 +176,8 @@ internal sealed class FramePlanBuilder
             slot.DynamicOverlayOperations,
             slot.TextureUploadOperations,
             slot.Outputs,
+            slot.OutputGraphRequests,
+            slot.OutputDecisions,
             outputCount,
             slot.OutputExecutionNodes,
             outputExecutionNodeCount,
@@ -648,19 +666,31 @@ internal sealed class FramePlanBuilder
         slot.Outputs[outputCount++] = request;
     }
 
-    private int CompileOutputGraph(Slot slot, int outputCount, ulong renderFrameId)
+    private int CompileOutputGraph(
+        Slot slot,
+        int outputCount,
+        ulong renderFrameId,
+        bool openXrImagesAcquired)
     {
         if (outputCount == 0)
             return 0;
 
+        _outputGraphPlanner.BeginManifest(renderFrameId);
         EnsureCapacity(ref slot.OutputGraphRequests, outputCount);
+        EnsureCapacity(ref slot.OutputDecisions, outputCount);
         EnsureCapacity(ref slot.OutputDue, outputCount);
         for (int index = 0; index < outputCount; index++)
         {
             ref readonly OutputRequest output = ref slot.Outputs[index];
-            RenderOutputRequest request = output.ToGraphRequest(renderFrameId, out bool execute);
+            RenderOutputRequest request = output.ToGraphRequest(
+                renderFrameId,
+                out RenderOutputSchedulingDecision decision);
+            bool reserveXrPath = openXrImagesAcquired &&
+                output.OutputKind == EFrameOutputKind.OpenXREyeSubmit;
+            decision = WithActualXrReservation(decision, reserveXrPath);
             slot.OutputGraphRequests[index] = request;
-            slot.OutputDue[index] = execute;
+            slot.OutputDecisions[index] = decision;
+            slot.OutputDue[index] = decision.Execute;
             if (!_outputGraphPlanner.Reserve(request))
             {
                 throw new InvalidOperationException(
@@ -675,12 +705,11 @@ internal sealed class FramePlanBuilder
             bool independentDesktopScene = output.OutputKind != EFrameOutputKind.DesktopMirror;
             int terminalNode = _outputGraphPlanner.Plan(
                 request,
-                slot.OutputDue[index],
+                slot.OutputDecisions[index],
                 independentDesktopScene,
                 EFrameOutputKind.OpenXREyeSubmit,
-                ERenderOutputPolicyReason.None,
-                xrImagesAcquired: output.OutputKind == EFrameOutputKind.OpenXREyeSubmit,
-                out _);
+                xrImagesAcquired: openXrImagesAcquired &&
+                    output.OutputKind == EFrameOutputKind.OpenXREyeSubmit);
             if (terminalNode < 0)
             {
                 throw new InvalidOperationException(
@@ -697,7 +726,8 @@ internal sealed class FramePlanBuilder
             ref readonly OutputRequest output = ref slot.Outputs[index];
             _ = _outputGraphPlanner.RefreshSchedule(
                 slot.OutputGraphRequests[index],
-                output.OutputKind == EFrameOutputKind.OpenXREyeSubmit);
+                openXrImagesAcquired &&
+                    output.OutputKind == EFrameOutputKind.OpenXREyeSubmit);
         }
 
         RenderOutputDag graph = _outputGraphPlanner.Graph;
@@ -732,14 +762,85 @@ internal sealed class FramePlanBuilder
             }
             if (rank == int.MaxValue)
             {
-                throw new InvalidOperationException(
-                    "A compiled output request has no executable DAG terminal.");
+                if (slot.OutputDecisions[outputIndex].Execute)
+                {
+                    throw new InvalidOperationException(
+                        "An admitted output request has no executable DAG terminal.");
+                }
             }
 
             slot.OutputExecutionRanks[outputIndex] = rank;
         }
 
         return executionNodeCount;
+    }
+
+    private static RenderOutputSchedulingDecision WithActualXrReservation(
+        in RenderOutputSchedulingDecision decision,
+        bool reserveXrPath)
+    {
+        ERenderOutputPolicyReason reason = decision.Reason;
+        if (decision.Execute &&
+            decision.Disposition == ERenderOutputWorkDisposition.FreshRender)
+        {
+            if (reserveXrPath && reason == ERenderOutputPolicyReason.None)
+                reason = ERenderOutputPolicyReason.XrCriticalPathReserved;
+            else if (!reserveXrPath && reason == ERenderOutputPolicyReason.XrCriticalPathReserved)
+                reason = ERenderOutputPolicyReason.None;
+        }
+
+        return decision with
+        {
+            Reason = reason,
+            XrCriticalPathReserved = reserveXrPath,
+        };
+    }
+
+    private static void ApplyOutputAdmission(
+        Slot slot,
+        FrameOperationStream operations,
+        int outputCount,
+        EVrOutputViewKind? openXrViewKind)
+    {
+        if (operations.Count == 0)
+            return;
+
+        EnsureCapacity(ref slot.OperationOrderScratch, operations.Count);
+        int retainedCount = 0;
+        for (int operationIndex = 0; operationIndex < operations.Count; operationIndex++)
+        {
+            ref readonly FrameOpContext context = ref operations.GetContext(operationIndex);
+            EVrOutputViewKind? operationViewKind = openXrViewKind;
+            if (context.ContextKind == EVulkanFrameOpContextKind.OpenXrEye &&
+                slot.ViewSet.TryGetLocatedOpenXrViewKindByLogicalViewId(
+                    context.LogicalViewId,
+                    out EVrOutputViewKind locatedViewKind))
+            {
+                operationViewKind = locatedViewKind;
+            }
+            OutputRequest operationOutput = OutputRequest.FromContext(
+                context,
+                operationViewKind);
+            for (int outputIndex = 0; outputIndex < outputCount; outputIndex++)
+            {
+                if (!slot.Outputs[outputIndex].MatchesOutput(operationOutput))
+                    continue;
+                if (slot.OutputDue[outputIndex])
+                    slot.OperationOrderScratch[retainedCount++] = operationIndex;
+                break;
+            }
+        }
+
+        if (retainedCount != operations.Count)
+            operations.Retain(slot.OperationOrderScratch.AsSpan(0, retainedCount));
+    }
+
+    private static bool HasAdmittedOutput(Slot slot, int outputCount)
+    {
+        for (int index = 0; index < outputCount; index++)
+            if (slot.OutputDue[index])
+                return true;
+        return false;
     }
 
     private void AddExplicitOutputDependencies(

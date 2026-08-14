@@ -273,29 +273,10 @@ namespace XREngine.Rendering.Vulkan
                 }
                 else
                 {
-                    // Fence creation failed â€” fall back to QueueWaitIdle.
-                    CommandBuffers.DeviceQueueAdmissionGate.EnterReadLock();
-                    Result waitResult;
-                    try
-                    {
-                        using VulkanQueueOperationLease queueOperation = VulkanQueueOperationLease.TryEnter(
-                            CommandBuffers.OneTimeSubmitGate,
-                            DeviceContext.StateMachine,
-                            FrameTelemetry);
-                        waitResult = queueOperation.Acquired
-                            ? Api.QueueWaitIdle(submitQueue)
-                            : Result.ErrorDeviceLost;
-                    }
-                    finally
-                    {
-                        CommandBuffers.DeviceQueueAdmissionGate.ExitReadLock();
-                    }
-                    DeviceContext.ObserveNativeResult("vkQueueWaitIdle.OneTimeSubmit", waitResult);
-                    waitSucceeded = waitResult == Result.Success;
-                    if (waitSucceeded)
-                        CompleteTrackedQueue(submitQueue);
-                    if (!waitSucceeded)
-                        Debug.VulkanWarning($"[Vulkan] QueueWaitIdle fallback failed (result={waitResult}). Command buffer will not be freed.");
+                    // An accepted submission without a completion owner cannot
+                    // be recovered by idling unrelated queue work.
+                    throw new InvalidOperationException(
+                        "An accepted one-shot submission has no completion fence.");
                 }
             }
 

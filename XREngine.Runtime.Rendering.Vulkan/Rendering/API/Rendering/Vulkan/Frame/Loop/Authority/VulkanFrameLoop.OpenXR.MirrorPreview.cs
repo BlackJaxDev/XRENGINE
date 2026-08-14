@@ -433,10 +433,13 @@ internal sealed partial class VulkanFrameLoop
             EnsureOpenXrFrameDataSlotCapacity(openXrFrameDataSlotCount);
             _commandRuntime.EnsureOpenXrDescriptorFrameSlotFloor(
                 openXrFrameDataSlotCount);
-            bool frameDataSlotCompletionProven =
-                WaitForOpenXrFrameDataSlot(
+            if (!TryPrepareOpenXrFrameDataSlot(
                     recordImageIndex,
-                    "eye mirror render");
+                    "eye mirror render",
+                    out bool frameDataSlotCompletionProven))
+            {
+                return false;
+            }
             DrainRetiredResourcesFromCompletedSubmittedFrameSlots();
             ResourceRuntime.Uploads.DrainCompletedRecordedTextureUploadPublications(
                 Api!, _deviceContext, _commandRuntime, ResourceRuntime, IsDeviceLost);

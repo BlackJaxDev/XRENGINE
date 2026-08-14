@@ -152,7 +152,8 @@ internal sealed partial class VulkanFrameLoop
                     commandBuffers,
                     commandBufferCount: 1,
                     signalGraphicsTimeline: false,
-                    graphicsTimelineSignalValue: 0,
+                    minimumGraphicsTimelineSignalValue: 0,
+                    out _,
                     in diagnosticContext,
                     caller: nameof(ExecuteExplicitTargetFrame));
                 result = receipt.Result;
@@ -231,7 +232,8 @@ internal sealed partial class VulkanFrameLoop
         CommandBuffer* commandBuffers,
         uint commandBufferCount,
         bool signalGraphicsTimeline,
-        ulong graphicsTimelineSignalValue,
+        ulong minimumGraphicsTimelineSignalValue,
+        out ulong graphicsTimelineSignalValue,
         in VulkanSubmissionDiagnosticContext diagnosticContext,
         string caller)
     {
@@ -257,8 +259,9 @@ internal sealed partial class VulkanFrameLoop
         {
             signalSemaphores[signalSemaphoreCount] =
                 _commandRuntime.Synchronization._graphicsTimelineSemaphore;
-            signalValues[signalSemaphoreCount] =
-                graphicsTimelineSignalValue;
+            // The tracked graphics-timeline gateway patches this value while
+            // holding submission-order serialization.
+            signalValues[signalSemaphoreCount] = 0UL;
             signalSemaphoreCount++;
         }
         if (lease.SubmissionSignalSemaphore.Handle != 0)
@@ -302,6 +305,22 @@ internal sealed partial class VulkanFrameLoop
                 : null,
         };
 
+        if (signalGraphicsTimeline)
+        {
+            return _commandRuntime.SubmitToGraphicsTimelineTrackedWithDisposition(
+                _deviceContext.GraphicsQueue,
+                ref submitInfo,
+                lease.CompletionFence,
+                _commandRuntime.Synchronization._graphicsTimelineSemaphore,
+                minimumGraphicsTimelineSignalValue,
+                in diagnosticContext,
+                out graphicsTimelineSignalValue,
+                out _,
+                out _,
+                caller);
+        }
+
+        graphicsTimelineSignalValue = 0UL;
         return _commandRuntime.SubmitToQueueTrackedWithDisposition(
             _deviceContext.GraphicsQueue,
             ref submitInfo,

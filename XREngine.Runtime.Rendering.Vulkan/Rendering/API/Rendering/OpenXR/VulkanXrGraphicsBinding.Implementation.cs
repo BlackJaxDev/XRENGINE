@@ -1764,7 +1764,8 @@ Target:                 new RenderFrameViewTargetDescriptor(
             ulong renderFrameId = RuntimeRenderingHostServices.FrameTiming.CurrentRenderFrameId;
             FrameOutputPacingDecision stereoPacing = CreateOpenXrStereoFrameOutputPacing(
                 renderFrameId,
-                checked((int)leftImageIndex));
+                checked((int)leftImageIndex),
+                Context.CurrentRenderDeadlineMs);
 
             var renderRequest = new OpenXrEyeMirrorRenderRequest(
                 target.FrameBuffer,
@@ -1944,7 +1945,8 @@ Target:                 new RenderFrameViewTargetDescriptor(
 
     internal static FrameOutputPacingDecision CreateOpenXrStereoFrameOutputPacing(
         ulong renderFrameId,
-        int externalImageSlot)
+        int externalImageSlot,
+        double deadlineMs = 0.0)
     {
         FrameOutputPacingDecision pacing = FrameOutputPacingDecision.Due(
             EVrOutputViewKind.LeftEye,
@@ -1957,7 +1959,14 @@ Target:                 new RenderFrameViewTargetDescriptor(
         };
         return pacing with
         {
-            Request = pacing.Request.WithTarget(target),
+            Request = pacing.Request.WithTarget(target) with
+            {
+                Schedule = pacing.Request.Schedule with
+                {
+                    DeadlineMs = Math.Max(0.0, deadlineMs),
+                    HardDeadline = true,
+                },
+            },
         };
     }
 

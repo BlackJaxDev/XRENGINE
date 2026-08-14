@@ -1,12 +1,13 @@
 using System.Diagnostics;
 using Silk.NET.Vulkan;
+using VulkanSemaphore = Silk.NET.Vulkan.Semaphore;
 
 namespace XREngine.Rendering.Vulkan;
 
 /// <summary>
-/// Owns synchronous OpenXR queue submission, mapped-frame settlement, and
-/// exceptional incomplete-submit fence retirement without retaining output
-/// authority state.
+/// Owns serialized OpenXR queue submission, timeline-based mapped-frame
+/// settlement, and exceptional incomplete-submit retirement without retaining
+/// output authority state.
 /// </summary>
 internal sealed partial class VulkanCommandRuntime
 {
@@ -62,13 +63,13 @@ internal sealed partial class VulkanCommandRuntime
         return result.Succeeded;
     }
 
-    private readonly List<RetiredOpenXrSubmissionFence> _retiredOpenXrSubmissionFences = new(2);
-    private readonly object _retiredOpenXrSubmissionFencesGate = new();
+    private readonly List<RetiredOpenXrSubmissionTimeline> _retiredOpenXrSubmissions = new(2);
+    private readonly object _retiredOpenXrSubmissionsGate = new();
 
     internal unsafe VulkanOpenXrSubmissionResult SubmitAndWaitOpenXr(
         in VulkanOpenXrSubmissionInput input)
     {
-        DrainRetiredOpenXrSubmissionFences();
+        DrainRetiredOpenXrSubmissions();
         VulkanSubmissionReceipt submitReceipt =
             VulkanSubmissionReceipt.Rejected(Result.ErrorValidationFailedExt);
         EVulkanQueueSubmissionDisposition submissionDisposition =
@@ -99,21 +100,11 @@ internal sealed partial class VulkanCommandRuntime
         CommandBuffer* commandBuffers = stackalloc CommandBuffer[2];
         commandBuffers[0] = input.FirstCommandBuffer;
         commandBuffers[1] = input.SecondCommandBuffer;
-        FenceCreateInfo fenceCreateInfo = new()
-        {
-            SType = StructureType.FenceCreateInfo,
-        };
-        Result createFenceResult = Api.CreateFence(
-            DeviceContext.Device,
-            ref fenceCreateInfo,
-            null,
-            out Fence fence);
-        DeviceContext.ObserveNativeResult(
-            "vkCreateFence.OpenXR",
-            createFenceResult);
-        if (createFenceResult != Result.Success)
+        VulkanSemaphore timelineSemaphore = Synchronization._graphicsTimelineSemaphore;
+        ulong timelineValue = 0UL;
+        if (timelineSemaphore.Handle == 0)
             throw new InvalidOperationException(
-                $"Failed to create OpenXR Vulkan submit fence: {createFenceResult}.");
+                "OpenXR Vulkan submission requires the graphics completion timeline.");
 
         VulkanMappedFrameArena? mappedFrameArena = MappedFrameArena;
         ulong mappedFrameGeneration = mappedFrameArena?.Generation ?? 0UL;
@@ -127,7 +118,6 @@ internal sealed partial class VulkanCommandRuntime
         bool arenaSlotsReopened = false;
         try
         {
-            NameOpenXrSubmissionFence(fence);
             if (mappedFrameArena is not null &&
                 !TryPrepareOpenXrMappedFrameSlotsForSubmission(
                     mappedFrameArena,
@@ -161,11 +151,20 @@ internal sealed partial class VulkanCommandRuntime
             }
             frameDataSlotPrepared = frameDataArena is not null;
 
+            TimelineSemaphoreSubmitInfo timelineInfo = new()
+            {
+                SType = StructureType.TimelineSemaphoreSubmitInfo,
+                SignalSemaphoreValueCount = 1,
+                PSignalSemaphoreValues = &timelineValue,
+            };
             SubmitInfo submitInfo = new()
             {
                 SType = StructureType.SubmitInfo,
+                PNext = &timelineInfo,
                 CommandBufferCount = input.CommandBufferCount,
                 PCommandBuffers = commandBuffers,
+                SignalSemaphoreCount = 1,
+                PSignalSemaphores = &timelineSemaphore,
             };
             VulkanSubmissionDiagnosticContext diagnosticContext =
                 input.DiagnosticContext;
@@ -173,11 +172,14 @@ internal sealed partial class VulkanCommandRuntime
             using (RuntimeRenderingHostServices.Profiling.StartProfileScope(
                        "OpenXR.Vulkan.QueueSubmit"))
             {
-                submitReceipt = SubmitToQueueTrackedWithDisposition(
+                submitReceipt = SubmitToGraphicsTimelineTrackedWithDisposition(
                     DeviceContext.GraphicsQueue,
                     ref submitInfo,
-                    fence,
+                    default,
+                    timelineSemaphore,
+                    minimumTimelineValue: 1UL,
                     in diagnosticContext,
+                    out timelineValue,
                     out bool queueDispatchAttempted,
                     out injectedFailureStage,
                     "OpenXR.SubmitAndWait");
@@ -238,26 +240,25 @@ internal sealed partial class VulkanCommandRuntime
             long waitStart = Stopwatch.GetTimestamp();
             Result waitResult;
             using (RuntimeRenderingHostServices.Profiling.StartProfileScope(
-                       "OpenXR.Vulkan.SubmitFenceWait"))
+                       "OpenXR.Vulkan.SubmitTimelineWait"))
             using (VulkanCpuStageScope fenceWaitStage =
                    new(FrameTelemetry, EVulkanCpuStage.AuxiliaryFenceWait))
             {
-                waitResult = Api.WaitForFences(
-                    DeviceContext.Device,
-                    1,
-                    &fence,
-                    true,
+                waitResult = Synchronization.WaitForTimelineCompletion(
+                    Api,
+                    DeviceContext,
+                    ResourceRuntime.Lifetime.Tracker,
+                    timelineSemaphore,
+                    timelineValue,
                     ulong.MaxValue);
             }
             long waitEnd = Stopwatch.GetTimestamp();
-            DeviceContext.ObserveNativeResult(
-                "vkWaitForFences.OpenXR",
-                waitResult);
             if (waitResult != Result.Success)
             {
                 Debug.VulkanWarning(
-                    "[OpenXR] Vulkan eye fence wait failed: {0}",
-                    waitResult);
+                    "[OpenXR] Vulkan eye timeline completion failed. Result={0} TimelineValue={1}.",
+                    waitResult,
+                    timelineValue);
                 return new VulkanOpenXrSubmissionResult(
                     false,
                     false,
@@ -266,7 +267,7 @@ internal sealed partial class VulkanCommandRuntime
                     submitReceipt);
             }
 
-            CompleteTrackedFence(fence);
+            CompleteTrackedTimeline(timelineSemaphore, timelineValue);
             submissionDisposition = EVulkanQueueSubmissionDisposition.Completed;
             commandBuffersCompleted = true;
             if (mappedFrameArena is not null &&
@@ -277,7 +278,7 @@ internal sealed partial class VulkanCommandRuntime
                     input.CommandBufferCount))
             {
                 throw new InvalidOperationException(
-                    "OpenXR fence completed, but mapped frame-data slots could not be reopened.");
+                    "OpenXR timeline completed, but mapped frame-data slots could not be reopened.");
             }
             if (frameDataArena is not null &&
                 !frameDataArena.TryResetFrameSlot(
@@ -286,7 +287,7 @@ internal sealed partial class VulkanCommandRuntime
                     submissionCompletionProven: true))
             {
                 throw new InvalidOperationException(
-                    "OpenXR fence completed, but the canonical frame-data slot could not be reopened.");
+                    "OpenXR timeline completed, but the canonical frame-data slot could not be reopened.");
             }
             arenaSlotsReopened = true;
 
@@ -295,14 +296,15 @@ internal sealed partial class VulkanCommandRuntime
                 double submitMs = Stopwatch.GetElapsedTime(
                     submitStart,
                     submitEnd).TotalMilliseconds;
-                double fenceWaitMs = Stopwatch.GetElapsedTime(
+                double completionWaitMs = Stopwatch.GetElapsedTime(
                     waitStart,
                     waitEnd).TotalMilliseconds;
                 Debug.Vulkan(
-                    "[OpenXrVulkan] submitted commandBuffers={0} queueSubmitMs={1:F3} fenceWaitMs={2:F3}",
+                    "[OpenXrVulkan] submitted commandBuffers={0} queueSubmitMs={1:F3} timelineWaitMs={2:F3} timelineValue={3}",
                     input.CommandBufferCount,
                     submitMs,
-                    fenceWaitMs);
+                    completionWaitMs,
+                    timelineValue);
             }
 
             return new VulkanOpenXrSubmissionResult(
@@ -333,18 +335,13 @@ internal sealed partial class VulkanCommandRuntime
                     frameDataGeneration);
             }
 
-            if (fence.Handle != 0 &&
-                (!nativeSubmitAccepted ||
-                 commandBuffersCompleted && arenaSlotsReopened))
+            if (nativeSubmitAccepted &&
+                !arenaSlotsReopened &&
+                DeviceContext.IsOperational)
             {
-                Api.DestroyFence(DeviceContext.Device, fence, null);
-            }
-            else if (fence.Handle != 0 &&
-                     nativeSubmitAccepted &&
-                     DeviceContext.IsOperational)
-            {
-                RetireOpenXrSubmissionFence(
-                    fence,
+                RetireOpenXrSubmission(
+                    timelineSemaphore,
+                    timelineValue,
                     mappedFrameArena,
                     mappedFrameGeneration,
                     commandBuffers,
@@ -357,33 +354,9 @@ internal sealed partial class VulkanCommandRuntime
         }
     }
 
-    private unsafe void NameOpenXrSubmissionFence(Fence fence)
-    {
-        if (fence.Handle == 0 ||
-            DeviceContext.DebugUtils is null ||
-            !FrameTelemetry._diagnosticOptions.EnableDebugUtils)
-        {
-            return;
-        }
-
-        ReadOnlySpan<byte> name = "OpenXR.SubmitAndWaitFence\0"u8;
-        fixed (byte* namePointer = name)
-        {
-            DebugUtilsObjectNameInfoEXT nameInfo = new()
-            {
-                SType = StructureType.DebugUtilsObjectNameInfoExt,
-                ObjectType = ObjectType.Fence,
-                ObjectHandle = fence.Handle,
-                PObjectName = namePointer,
-            };
-            _ = DeviceContext.DebugUtils.SetDebugUtilsObjectName(
-                DeviceContext.Device,
-                in nameInfo);
-        }
-    }
-
-    private unsafe void RetireOpenXrSubmissionFence(
-        Fence fence,
+    private unsafe void RetireOpenXrSubmission(
+        VulkanSemaphore timelineSemaphore,
+        ulong timelineValue,
         VulkanMappedFrameArena? arena,
         ulong generation,
         CommandBuffer* commandBuffers,
@@ -412,11 +385,12 @@ internal sealed partial class VulkanCommandRuntime
             frameSlots[frameSlotCount++] = checked((uint)frameSlot);
         }
 
-        lock (_retiredOpenXrSubmissionFencesGate)
+        lock (_retiredOpenXrSubmissionsGate)
         {
-            _retiredOpenXrSubmissionFences.Add(
-                new RetiredOpenXrSubmissionFence(
-                    fence,
+            _retiredOpenXrSubmissions.Add(
+                new RetiredOpenXrSubmissionTimeline(
+                    timelineSemaphore,
+                    timelineValue,
                     completionProven,
                     arena,
                     generation,
@@ -428,63 +402,61 @@ internal sealed partial class VulkanCommandRuntime
         }
     }
 
-    private unsafe void DrainRetiredOpenXrSubmissionFences()
+    private unsafe void DrainRetiredOpenXrSubmissions()
     {
         if (!DeviceContext.IsOperational)
             return;
 
-        lock (_retiredOpenXrSubmissionFencesGate)
+        lock (_retiredOpenXrSubmissionsGate)
         {
-            for (int index = _retiredOpenXrSubmissionFences.Count - 1;
+            for (int index = _retiredOpenXrSubmissions.Count - 1;
                  index >= 0;
                  index--)
             {
-                RetiredOpenXrSubmissionFence retired =
-                    _retiredOpenXrSubmissionFences[index];
+                RetiredOpenXrSubmissionTimeline retired =
+                    _retiredOpenXrSubmissions[index];
                 if (!retired.CompletionProven)
                 {
-                    Fence pendingFence = retired.Fence;
-                    Result result = Api.GetFenceStatus(
-                        DeviceContext.Device,
-                        pendingFence);
-                    DeviceContext.ObserveNativeResult(
-                        "vkGetFenceStatus.OpenXR",
-                        result);
-                    if (result == Result.NotReady)
+                    Result result = Synchronization.QueryTimelineCompletion(
+                        Api,
+                        DeviceContext,
+                        ResourceRuntime.Lifetime.Tracker,
+                        retired.TimelineSemaphore,
+                        retired.TimelineValue,
+                        out bool completed);
+                    if (result == Result.Success && !completed)
                         continue;
                     if (result != Result.Success)
                     {
                         Debug.VulkanWarning(
-                            "[OpenXR] Deferred submission fence status failed: {0}",
+                            "[OpenXR] Deferred submission timeline query failed: {0}",
                             result);
                         continue;
                     }
 
-                    CompleteTrackedFence(pendingFence);
-                    Api.DestroyFence(DeviceContext.Device, pendingFence, null);
+                    CompleteTrackedTimeline(
+                        retired.TimelineSemaphore,
+                        retired.TimelineValue);
                     retired = retired with
                     {
-                        Fence = default,
                         CompletionProven = true,
                     };
-                    _retiredOpenXrSubmissionFences[index] = retired;
+                    _retiredOpenXrSubmissions[index] = retired;
                 }
 
                 if (!TryCompleteRetiredOpenXrMappedFrameSlots(retired))
                 {
                     Debug.VulkanWarning(
-                        "[OpenXR] Deferred submission fence completed, but its mapped frame slots could not be reopened.");
+                        "[OpenXR] Deferred submission timeline completed, but its mapped frame slots could not be reopened.");
                     continue;
                 }
-                if (retired.Fence.Handle != 0)
-                    Api.DestroyFence(DeviceContext.Device, retired.Fence, null);
-                _retiredOpenXrSubmissionFences.RemoveAt(index);
+                _retiredOpenXrSubmissions.RemoveAt(index);
             }
         }
     }
 
     private static bool TryCompleteRetiredOpenXrMappedFrameSlots(
-        RetiredOpenXrSubmissionFence retired)
+        RetiredOpenXrSubmissionTimeline retired)
     {
         if (retired.Arena is not null)
         {

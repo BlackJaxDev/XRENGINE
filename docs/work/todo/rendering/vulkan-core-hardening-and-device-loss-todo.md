@@ -26,21 +26,21 @@ Completed implementation history remains in the
 
 ### 5. Schedule Outputs And Submission Without Cross-Output Blocking
 
-> Reopened on 2026-08-12. The first closeout removed this checklist before its
-> item-level state was preserved in the completed-work sibling. The checklist is
-> restored here, and the two completed implementation criteria are also recorded
-> in the sibling history. The section remains active: the output DAG is not yet
-> the sole execution authority, OpenXR requests do not consistently carry a real
-> runtime deadline, and the Sponza camera-motion no-regression gate is still open.
+> Reopened on 2026-08-12 and implemented on 2026-08-13. The output manifest now
+> owns admission and executable ordering, acquired OpenXR paths are explicitly
+> reserved, optional-output policy is canonical and bounded, queue waits no
+> longer hold native queue leases, and modal resize consumes a per-window stale
+> presentation package. Long-duration and performance acceptance remain in the
+> companion testing tracker.
 
-- [ ] Build one deadline-aware submission DAG for uploads, shadows, desktop,
+- [x] Build one deadline-aware submission DAG for uploads, shadows, desktop,
   OpenXR eyes, mirror, probes, captures, and publication.
-- [ ] Prioritize acquired OpenXR eyes and reserve their critical path before
+- [x] Prioritize acquired OpenXR eyes and reserve their critical path before
   optional output work; make desktop/secondary acquisition nonblocking for
   XR-owned frames.
-- [ ] Add bounded, observable deferral, cadence, and stale-reuse policy for
+- [x] Add bounded, observable deferral, cadence, and stale-reuse policy for
   mirrors, probes, optional effects, and captures.
-- [ ] Narrow native queue-lock ownership and never hold it across a blocking
+- [x] Narrow native queue-lock ownership and never hold it across a blocking
   fence wait; use timeline/frame-slot completion for queue and OpenXR image
   ownership.
 - [x] During Win32 modal interactive resize, keep the already-published scene,
@@ -48,7 +48,7 @@ Completed implementation history remains in the
   presentation scaling for the changing surface. Do not rebuild or retire the
   main physical resource plan inside the drag callback; publish one catch-up
   generation after the modal loop exits.
-- [ ] Make modal resize dispatch bounded and nonblocking with respect to
+- [x] Make modal resize dispatch bounded and nonblocking with respect to
   visibility publication, GPU completion, and retirement drains. A missing or
   incompatible frame package must produce an explicit defer/stale-reuse result,
   not leave the interactive-render guard latched indefinitely.

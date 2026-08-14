@@ -45,6 +45,11 @@ public readonly record struct RenderOutputRequest(
         ERenderOutputFallbackPolicy fallback = ResolveFallback(outputKind, outputClass);
         bool hardDeadline = outputClass == ERenderOutputClass.XrCritical;
         double deadlineMs = hardDeadline && sourceRateHz > 0.0f ? 1000.0 / sourceRateHz : 0.0;
+        float resolvedDesiredRateHz = desiredRateHz > 0.0f
+            ? desiredRateHz
+            : ResolveDefaultRate(outputClass);
+        double maxCpuBudgetMs = ResolveDefaultCpuBudget(outputClass);
+        double maxGpuBudgetMs = ResolveDefaultGpuBudget(outputClass);
         uint maxContentAgeFrames = outputClass switch
         {
             ERenderOutputClass.XrCritical or ERenderOutputClass.RequiredDependency or ERenderOutputClass.Presentation => 0u,
@@ -77,10 +82,10 @@ public readonly record struct RenderOutputRequest(
             target,
             new(
                 priority,
-                desiredRateHz,
+                resolvedDesiredRateHz,
                 deadlineMs,
-                MaxCpuBudgetMs: 0.0,
-                MaxGpuBudgetMs: 0.0,
+                maxCpuBudgetMs,
+                maxGpuBudgetMs,
                 maxContentAgeFrames,
                 hardDeadline),
             ERenderOutputQualityRequirement.GpuAccelerated,
@@ -105,6 +110,36 @@ public readonly record struct RenderOutputRequest(
             EFrameOutputKind.ImGuiOverlay or EFrameOutputKind.DynamicTextOverlay or
                 EFrameOutputKind.UiPreview => ERenderOutputClass.Overlay,
             _ => ERenderOutputClass.Diagnostic,
+        };
+
+    private static float ResolveDefaultRate(ERenderOutputClass outputClass)
+        => outputClass switch
+        {
+            ERenderOutputClass.VisibleMirror => 30.0f,
+            ERenderOutputClass.BackgroundCapture => 10.0f,
+            ERenderOutputClass.Overlay => 30.0f,
+            ERenderOutputClass.Diagnostic => 5.0f,
+            _ => 0.0f,
+        };
+
+    private static double ResolveDefaultCpuBudget(ERenderOutputClass outputClass)
+        => outputClass switch
+        {
+            ERenderOutputClass.VisibleMirror => 12.0,
+            ERenderOutputClass.BackgroundCapture => 14.0,
+            ERenderOutputClass.Overlay => 12.0,
+            ERenderOutputClass.Diagnostic => 16.0,
+            _ => 0.0,
+        };
+
+    private static double ResolveDefaultGpuBudget(ERenderOutputClass outputClass)
+        => outputClass switch
+        {
+            ERenderOutputClass.VisibleMirror => 2.0,
+            ERenderOutputClass.BackgroundCapture => 4.0,
+            ERenderOutputClass.Overlay => 1.0,
+            ERenderOutputClass.Diagnostic => 2.0,
+            _ => 0.0,
         };
 
     private static ERenderOutputPriority ResolvePriority(

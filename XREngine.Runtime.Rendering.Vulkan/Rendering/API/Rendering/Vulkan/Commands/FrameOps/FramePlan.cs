@@ -11,6 +11,9 @@ internal sealed class FramePlan
     private FrameOperationStream _dynamicOverlayOperations = new();
     private FrameOperationStream _textureUploadOperations = new();
     private OutputRequest[] _outputs = Array.Empty<OutputRequest>();
+    private RenderOutputRequest[] _outputRequests = Array.Empty<RenderOutputRequest>();
+    private RenderOutputSchedulingDecision[] _outputDecisions =
+        Array.Empty<RenderOutputSchedulingDecision>();
     private RenderOutputDagNodeDescriptor[] _outputExecutionNodes =
         Array.Empty<RenderOutputDagNodeDescriptor>();
     private FramePlanOperationKey[] _operationKeys = Array.Empty<FramePlanOperationKey>();
@@ -124,6 +127,8 @@ internal sealed class FramePlan
         FrameOperationStream dynamicOverlayOperations,
         FrameOperationStream textureUploadOperations,
         OutputRequest[] outputs,
+        RenderOutputRequest[] outputRequests,
+        RenderOutputSchedulingDecision[] outputDecisions,
         int outputCount,
         RenderOutputDagNodeDescriptor[] outputExecutionNodes,
         int outputExecutionNodeCount,
@@ -157,6 +162,8 @@ internal sealed class FramePlan
             _dynamicOverlayOperationCount = dynamicOverlayOperations.Count;
             _textureUploadOperationCount = textureUploadOperations.Count;
             _outputs = outputs;
+            _outputRequests = outputRequests;
+            _outputDecisions = outputDecisions;
             _outputCount = outputCount;
             _outputExecutionNodes = outputExecutionNodes;
             _outputExecutionNodeCount = outputExecutionNodeCount;
@@ -341,6 +348,48 @@ internal sealed class FramePlan
             throw new ArgumentOutOfRangeException(nameof(index));
 
         return ref _outputs[index];
+    }
+
+    /// <summary>
+    /// Returns whether the immutable output manifest admitted native execution
+    /// for at least one output of the requested kind.
+    /// </summary>
+    internal bool HasExecutableOutput(EFrameOutputKind kind)
+    {
+        EnsureSealed();
+        for (int index = 0; index < _outputCount; index++)
+        {
+            if (_outputRequests[index].OutputKind != kind ||
+                !_outputDecisions[index].Execute)
+            {
+                continue;
+            }
+
+            ulong outputId = _outputRequests[index].OutputId;
+            for (int nodeIndex = 0; nodeIndex < _outputExecutionNodeCount; nodeIndex++)
+            {
+                if (_outputExecutionNodes[nodeIndex].StableOutputKey == outputId)
+                    return true;
+            }
+        }
+        return false;
+    }
+
+    internal bool HasAnyExecutableOutput
+    {
+        get
+        {
+            EnsureSealed();
+            return _outputExecutionNodeCount != 0;
+        }
+    }
+
+    internal ref readonly RenderOutputSchedulingDecision GetOutputDecision(int index)
+    {
+        EnsureSealed();
+        if ((uint)index >= (uint)_outputCount)
+            throw new ArgumentOutOfRangeException(nameof(index));
+        return ref _outputDecisions[index];
     }
 
     internal ref readonly RenderOutputDagNodeDescriptor GetOutputExecutionNode(int index)

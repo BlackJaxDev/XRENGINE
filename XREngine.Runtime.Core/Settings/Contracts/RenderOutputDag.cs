@@ -14,12 +14,15 @@ public sealed class RenderOutputDag
     private readonly ERenderOutputPriority[] _priorities;
     private readonly double[] _deadlinesMilliseconds;
     private readonly bool[] _xrCriticalPath;
+    private readonly bool[] _executionRoots;
+    private readonly bool[] _executable;
     private readonly int[] _criticalPathDepth;
     private int _slotCount;
     private int _activeCount;
     private int _edgeCount;
     private uint _frameIndex;
     private ERenderOutputDagCompilationFailure _buildFailure;
+    private bool _hasAdmissionDecisions;
 
     public RenderOutputDag(int nodeCapacity, int edgeCapacity)
     {
@@ -35,6 +38,8 @@ public sealed class RenderOutputDag
         _priorities = new ERenderOutputPriority[nodeCapacity];
         _deadlinesMilliseconds = new double[nodeCapacity];
         _xrCriticalPath = new bool[nodeCapacity];
+        _executionRoots = new bool[nodeCapacity];
+        _executable = new bool[nodeCapacity];
         _criticalPathDepth = new int[nodeCapacity];
     }
 
@@ -52,6 +57,8 @@ public sealed class RenderOutputDag
         Array.Clear(_active);
         Array.Clear(_deadlinesMilliseconds);
         Array.Clear(_xrCriticalPath);
+        Array.Clear(_executionRoots);
+        Array.Clear(_executable);
         Array.Clear(_criticalPathDepth);
         Array.Fill(_priorities, ERenderOutputPriority.Diagnostic);
         for (int slot = 0; slot < _slotCount; slot++)
@@ -74,6 +81,7 @@ public sealed class RenderOutputDag
         _edgeCount = 0;
         _reservedOutputKeyCount = 0;
         _buildFailure = ERenderOutputDagCompilationFailure.None;
+        _hasAdmissionDecisions = false;
     }
 
     private int _reservedOutputKeyCount;
@@ -247,6 +255,41 @@ public sealed class RenderOutputDag
     }
 
     /// <summary>
+    /// Mirrors the admission decision made by the runtime output ledger into
+    /// this frame's executable DAG. The DAG consumes this decision; it never
+    /// performs a second cadence, reuse, or forced-refresh calculation.
+    /// </summary>
+    public void ApplyAdmissionDecision(
+        int nodeIndex,
+        in RenderOutputSchedulingDecision decision)
+    {
+        ValidateActiveNode(nodeIndex);
+        _hasAdmissionDecisions = true;
+        _executionRoots[nodeIndex] = decision.Execute;
+        RenderOutputDagNodeStatus previous = _status[nodeIndex];
+        ERenderOutputNodeState state = decision.Execute
+            ? ERenderOutputNodeState.Pending
+            : decision.Disposition switch
+            {
+                ERenderOutputWorkDisposition.ReusedStale => ERenderOutputNodeState.Reused,
+                ERenderOutputWorkDisposition.Deferred => ERenderOutputNodeState.Deferred,
+                _ => ERenderOutputNodeState.Skipped,
+            };
+        bool reused = state == ERenderOutputNodeState.Reused;
+        _status[nodeIndex] = previous with
+        {
+            State = state,
+            Progress = decision.Execute ? 0.0f : previous.Progress,
+            ContentAgeFrames = decision.ContentAgeFrames,
+            AuthorizedReuse = reused,
+            HasCompletedResult = previous.HasCompletedResult,
+            Disposition = decision.Disposition,
+            PolicyReason = decision.Reason,
+            ConsecutiveDeferrals = previous.ConsecutiveDeferrals,
+        };
+    }
+
+    /// <summary>
     /// Applies one terminal output policy to the terminal and all prerequisite
     /// nodes. Acquired XR work therefore promotes uploads/publication on its
     /// reverse dependency path without changing stable graph identity.
@@ -294,6 +337,7 @@ public sealed class RenderOutputDag
         out int count,
         out ERenderOutputDagCompilationFailure failure)
     {
+        BuildExecutableClosure();
         ComputeCriticalPathDepth();
         return TryCompileOrder(destination, indegreeScratch, deadlineAware: true, out count, out failure);
     }
@@ -308,7 +352,10 @@ public sealed class RenderOutputDag
         Span<int> indegreeScratch,
         out int count,
         out ERenderOutputDagCompilationFailure failure)
-        => TryCompileOrder(destination, indegreeScratch, deadlineAware: false, out count, out failure);
+    {
+        BuildExecutableClosure();
+        return TryCompileOrder(destination, indegreeScratch, deadlineAware: false, out count, out failure);
+    }
 
     private bool TryCompileOrder(
         Span<int> destination,
@@ -321,14 +368,15 @@ public sealed class RenderOutputDag
         failure = _buildFailure;
         if (failure != ERenderOutputDagCompilationFailure.None)
             return false;
-        if (destination.Length < _activeCount || indegreeScratch.Length < _slotCount)
+        int executableCount = CountExecutableNodes();
+        if (destination.Length < executableCount || indegreeScratch.Length < _slotCount)
         {
             failure = ERenderOutputDagCompilationFailure.DestinationCapacity;
             return false;
         }
 
         for (int slot = 0; slot < _slotCount; slot++)
-            indegreeScratch[slot] = _active[slot] ? 0 : -1;
+            indegreeScratch[slot] = _executable[slot] ? 0 : -1;
 
         for (int edgeIndex = 0; edgeIndex < _edgeCount; edgeIndex++)
         {
@@ -342,10 +390,11 @@ public sealed class RenderOutputDag
                 return false;
             }
 
-            indegreeScratch[edge.Dependent]++;
+            if (_executable[edge.Prerequisite] && _executable[edge.Dependent])
+                indegreeScratch[edge.Dependent]++;
         }
 
-        while (count < _activeCount)
+        while (count < executableCount)
         {
             int selected = -1;
             for (int slot = 0; slot < _slotCount; slot++)
@@ -369,7 +418,7 @@ public sealed class RenderOutputDag
             for (int edgeIndex = 0; edgeIndex < _edgeCount; edgeIndex++)
             {
                 Edge edge = _edges[edgeIndex];
-                if (edge.Prerequisite == selected)
+                if (edge.Prerequisite == selected && _executable[edge.Dependent])
                     indegreeScratch[edge.Dependent]--;
             }
         }
@@ -429,7 +478,7 @@ public sealed class RenderOutputDag
     {
         Array.Clear(_criticalPathDepth, 0, _slotCount);
         for (int slot = 0; slot < _slotCount; slot++)
-            if (_active[slot] && _xrCriticalPath[slot])
+            if (_executable[slot] && _xrCriticalPath[slot])
                 _criticalPathDepth[slot] = 1;
 
         for (int pass = 0; pass < _activeCount; pass++)
@@ -438,6 +487,8 @@ public sealed class RenderOutputDag
             for (int edgeIndex = 0; edgeIndex < _edgeCount; edgeIndex++)
             {
                 Edge edge = _edges[edgeIndex];
+                if (!_executable[edge.Prerequisite] || !_executable[edge.Dependent])
+                    continue;
                 int dependentDepth = _criticalPathDepth[edge.Dependent];
                 if (dependentDepth == 0 || _criticalPathDepth[edge.Prerequisite] >= dependentDepth + 1)
                     continue;
@@ -447,6 +498,45 @@ public sealed class RenderOutputDag
             if (!changed)
                 break;
         }
+    }
+
+    private void BuildExecutableClosure()
+    {
+        Array.Clear(_executable, 0, _slotCount);
+        if (!_hasAdmissionDecisions)
+        {
+            for (int slot = 0; slot < _slotCount; slot++)
+                _executable[slot] = _active[slot];
+            return;
+        }
+
+        for (int slot = 0; slot < _slotCount; slot++)
+            _executable[slot] = _active[slot] && _executionRoots[slot];
+
+        bool changed;
+        do
+        {
+            changed = false;
+            for (int edgeIndex = 0; edgeIndex < _edgeCount; edgeIndex++)
+            {
+                Edge edge = _edges[edgeIndex];
+                if (!_executable[edge.Dependent] || _executable[edge.Prerequisite])
+                    continue;
+
+                _executable[edge.Prerequisite] = true;
+                changed = true;
+            }
+        }
+        while (changed);
+    }
+
+    private int CountExecutableNodes()
+    {
+        int count = 0;
+        for (int slot = 0; slot < _slotCount; slot++)
+            if (_executable[slot])
+                count++;
+        return count;
     }
 
     private static int CompareDeadline(double left, double right)

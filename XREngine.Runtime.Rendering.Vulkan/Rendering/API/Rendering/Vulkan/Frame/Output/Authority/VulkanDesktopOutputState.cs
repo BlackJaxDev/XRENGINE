@@ -31,6 +31,7 @@ internal sealed class VulkanDesktopOutputState
            ImageEverPresented[imageIndex];
     internal bool[]? ImageHasValidPresentedContent;
     internal uint LastPresentedImageIndex;
+    internal ulong LastPresentedFrameNumber;
     internal bool StreamlineFrameGenerationActive;
     internal bool StreamlineFrameGenerationIncludesDlss;
     internal Format ImageFormat;

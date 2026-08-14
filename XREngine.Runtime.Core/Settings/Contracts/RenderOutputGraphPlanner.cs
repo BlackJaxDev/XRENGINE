@@ -1,8 +1,9 @@
 namespace XREngine;
 
 /// <summary>
-/// Builds the persistent frame-output DAG from ordinary runtime output requests.
-/// Execution/deadline scheduling is intentionally owned by the later output scheduler.
+/// Builds the per-frame executable output DAG from runtime-admitted requests.
+/// Persistent cadence, reuse, and completion history remains owned by the
+/// runtime admission ledger.
 /// </summary>
 public sealed class RenderOutputGraphPlanner
 {
@@ -14,60 +15,54 @@ public sealed class RenderOutputGraphPlanner
 
     private readonly RenderOutputDag _graph;
     private ulong _frameId = ulong.MaxValue;
+    private uint _manifestGeneration;
 
     public RenderOutputGraphPlanner(int nodeCapacity = 256, int edgeCapacity = 512)
         => _graph = new RenderOutputDag(nodeCapacity, edgeCapacity);
 
     public RenderOutputDag Graph => _graph;
 
+    /// <summary>
+    /// Starts one immutable executable manifest. Multiple target recordings may
+    /// share a host frame id, but they must never inherit nodes from an earlier
+    /// sealed plan built during that frame.
+    /// </summary>
+    public void BeginManifest(ulong frameId)
+    {
+        _frameId = frameId;
+        _manifestGeneration++;
+        if (_manifestGeneration == 0u)
+            _manifestGeneration++;
+        _graph.BeginFrame(_manifestGeneration);
+    }
+
     /// <summary>Reserves an output before lowering the frame's complete request set.</summary>
     public bool Reserve(in RenderOutputRequest request)
         => EnsureFrame(request.FrameId) && _graph.ReserveOutputKey(request.OutputId);
 
+    /// <summary>
+    /// Lowers one already-admitted output into the executable DAG. Admission
+    /// is frozen by the runtime ledger before this boundary so Vulkan cannot
+    /// independently reinterpret cadence, reuse, or forced-refresh policy.
+    /// </summary>
     public int Plan(
         in RenderOutputRequest request,
-        bool isDue,
-        bool independentDesktopScene,
-        EFrameOutputKind xrSourceKind)
-        => Plan(
-            request,
-            isDue,
-            independentDesktopScene,
-            xrSourceKind,
-            ERenderOutputPolicyReason.None,
-            xrImagesAcquired: false,
-            out _);
-
-    public int Plan(
-        in RenderOutputRequest request,
-        bool isDue,
+        in RenderOutputSchedulingDecision decision,
         bool independentDesktopScene,
         EFrameOutputKind xrSourceKind,
-        ERenderOutputPolicyReason deferralReason,
-        bool xrImagesAcquired,
-        out RenderOutputSchedulingDecision decision)
+        bool xrImagesAcquired)
     {
         if (!EnsureFrame(request.FrameId))
-        {
-            decision = new(
-                Execute: false,
-                ERenderOutputWorkDisposition.Skipped,
-                ERenderOutputPolicyReason.DependencyUnavailable,
-                ContentAgeFrames: 0u,
-                XrCriticalPathReserved: false,
-                ForcedRefresh: false);
             return -1;
-        }
+
         ulong terminalKey = GetTerminalNodeKey(request);
         if (_graph.TryGetNodeIndex(terminalKey, out int plannedNode))
         {
-            ApplyScheduleAndAdmission(
+            ApplyScheduleAndDecision(
                 plannedNode,
                 request,
-                isDue,
-                deferralReason,
                 xrImagesAcquired,
-                out decision);
+                decision);
             return plannedNode;
         }
 
@@ -91,34 +86,20 @@ public sealed class RenderOutputGraphPlanner
 
         if (terminalNode >= 0)
         {
-            ApplyScheduleAndAdmission(
+            ApplyScheduleAndDecision(
                 terminalNode,
                 request,
-                isDue,
-                deferralReason,
                 xrImagesAcquired,
-                out decision);
-        }
-        else
-        {
-            decision = new(
-                Execute: false,
-                ERenderOutputWorkDisposition.Skipped,
-                ERenderOutputPolicyReason.DependencyUnavailable,
-                ContentAgeFrames: 0u,
-                XrCriticalPathReserved: false,
-                ForcedRefresh: false);
+                decision);
         }
         return terminalNode;
     }
 
-    private void ApplyScheduleAndAdmission(
+    private void ApplyScheduleAndDecision(
         int terminalNode,
         in RenderOutputRequest request,
-        bool isDue,
-        ERenderOutputPolicyReason deferralReason,
         bool xrImagesAcquired,
-        out RenderOutputSchedulingDecision decision)
+        in RenderOutputSchedulingDecision decision)
     {
         bool reserveXrPath = xrImagesAcquired &&
             request.OutputClass == ERenderOutputClass.XrCritical;
@@ -127,86 +108,7 @@ public sealed class RenderOutputGraphPlanner
             request.Schedule.Priority,
             request.Schedule.DeadlineMs,
             reserveXrPath);
-
-        if (isDue)
-        {
-            decision = RenderOutputSchedulingDecision.Fresh(reserveXrPath);
-            return;
-        }
-
-        RenderOutputDagNodeStatus status = _graph.GetStatus(terminalNode);
-        uint maximumDeferrals = ResolveMaximumDeferrals(request);
-        bool forceRefresh = !status.HasCompletedResult ||
-            maximumDeferrals != uint.MaxValue &&
-            status.ConsecutiveDeferrals >= maximumDeferrals;
-        if (forceRefresh)
-        {
-            decision = new(
-                Execute: true,
-                ERenderOutputWorkDisposition.FreshRender,
-                ERenderOutputPolicyReason.MaximumDeferralReached,
-                status.ContentAgeFrames,
-                reserveXrPath,
-                ForcedRefresh: true);
-            return;
-        }
-
-        if ((request.FallbackPolicy & ERenderOutputFallbackPolicy.AllowStaleReuse) != 0 &&
-            _graph.TryReuse(terminalNode))
-        {
-            status = _graph.GetStatus(terminalNode);
-            decision = new(
-                Execute: false,
-                ERenderOutputWorkDisposition.ReusedStale,
-                ERenderOutputPolicyReason.HeldLastImage,
-                status.ContentAgeFrames,
-                reserveXrPath,
-                ForcedRefresh: false);
-            return;
-        }
-
-        ERenderOutputPolicyReason reason = deferralReason == ERenderOutputPolicyReason.None
-            ? ERenderOutputPolicyReason.Cadence
-            : deferralReason;
-        if ((request.FallbackPolicy &
-             (ERenderOutputFallbackPolicy.AllowCadenceReduction |
-              ERenderOutputFallbackPolicy.AllowBudgetDeferral)) != 0)
-        {
-            _graph.SetDeferred(terminalNode, reason);
-            status = _graph.GetStatus(terminalNode);
-            decision = new(
-                Execute: false,
-                ERenderOutputWorkDisposition.Deferred,
-                reason,
-                status.ContentAgeFrames,
-                reserveXrPath,
-                ForcedRefresh: false);
-            return;
-        }
-
-        _graph.SetSkipped(terminalNode, reason);
-        decision = new(
-            Execute: false,
-            ERenderOutputWorkDisposition.Skipped,
-            reason,
-            status.ContentAgeFrames,
-            reserveXrPath,
-            ForcedRefresh: false);
-    }
-
-    private static uint ResolveMaximumDeferrals(in RenderOutputRequest request)
-    {
-        uint configured = request.Schedule.MaxContentAgeFrames;
-        if (configured != uint.MaxValue)
-            return configured;
-
-        return request.OutputClass switch
-        {
-            ERenderOutputClass.VisibleMirror => 2u,
-            ERenderOutputClass.BackgroundCapture => 8u,
-            ERenderOutputClass.Diagnostic => 4u,
-            _ => 1u,
-        };
+        _graph.ApplyAdmissionDecision(terminalNode, decision);
     }
 
     public void Complete(in RenderOutputRequest request)

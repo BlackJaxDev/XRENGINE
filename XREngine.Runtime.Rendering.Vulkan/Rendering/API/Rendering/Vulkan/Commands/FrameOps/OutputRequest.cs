@@ -25,7 +25,8 @@ internal readonly record struct OutputRequest(
     ulong DescriptorGeneration,
     ulong ContextFingerprint,
     ulong ProducerDependencySetId,
-    ulong ConsumerDependencySetId)
+    ulong ConsumerDependencySetId,
+    RenderOutputRequest SchedulingRequest)
 {
     internal static OutputRequest FromContext(
         in FrameOpContext context,
@@ -58,10 +59,13 @@ internal readonly record struct OutputRequest(
             context.OutputProducerDependencySetId == 0UL
                 ? outputId
                 : context.OutputProducerDependencySetId,
-            context.OutputConsumerDependencySetId);
+            context.OutputConsumerDependencySetId,
+            context.OutputSchedulingRequest);
     }
 
-    internal RenderOutputRequest ToGraphRequest(ulong frameId, out bool execute)
+    internal RenderOutputRequest ToGraphRequest(
+        ulong frameId,
+        out RenderOutputSchedulingDecision decision)
     {
         bool hasSchedulingSnapshot =
             RuntimeRenderingHostServices.Presentation.TryGetRenderOutputSchedulingSnapshot(
@@ -70,9 +74,10 @@ internal readonly record struct OutputRequest(
                 ViewKind,
                 frameId,
                 out RenderOutputSchedulingSnapshot scheduling);
-        execute = !hasSchedulingSnapshot || scheduling.Decision.Execute;
         RenderOutputRequest request = hasSchedulingSnapshot
             ? scheduling.Request
+            : SchedulingRequest.IsDefined
+                ? SchedulingRequest
             : RenderOutputRequest.CreateDefault(ViewKind, OutputKind, frameId);
         RenderOutputTargetDescriptor target = request.Target with
         {
@@ -84,14 +89,22 @@ internal readonly record struct OutputRequest(
             InternalHeight = InternalHeight,
             FormatCompatibilityKey = ContextFingerprint,
         };
-        return request with
+        RenderOutputRequest resolved = request with
         {
             OutputId = StableOutputId,
             ViewFamilyId = StableViewFamilyId,
             Target = target,
             ProducerDependencySetId = ProducerDependencySetId,
             ConsumerDependencySetId = ConsumerDependencySetId,
+            FrameId = frameId,
         };
+        decision = hasSchedulingSnapshot
+            ? scheduling.Decision
+            : RuntimeRenderingHostServices.Presentation.PlanRenderOutput(
+                resolved,
+                isDue: true,
+                ERenderOutputPolicyReason.None);
+        return resolved;
     }
 
     internal static int CompareDeterministically(in OutputRequest left, in OutputRequest right)

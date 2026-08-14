@@ -8,6 +8,10 @@ public enum EInteractiveResizeDispatchReason : byte
     FrameAlreadyActive,
     RenderCadenceNotDue,
     VisibilityUnavailable,
+    PresentationPackageUnavailable,
+    PresentationPackageIncompatible,
+    BackendBusy,
+    SurfaceUnavailable,
     FrameDidNotAdvance,
     Exception,
 }

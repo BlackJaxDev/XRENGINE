@@ -113,6 +113,9 @@ internal unsafe sealed class VulkanImGuiBackend : IImGuiRendererBackend, IDispos
         _outputHost.StoreDrawData(drawData);
     }
 
+    public void UpdatePlatformWindows(bool deferGpuLifecycle)
+        => _viewports?.UpdatePlatformWindows(deferGpuLifecycle);
+
     public void RenderPlatformWindows()
         => _viewports?.RenderPlatformWindows();
 

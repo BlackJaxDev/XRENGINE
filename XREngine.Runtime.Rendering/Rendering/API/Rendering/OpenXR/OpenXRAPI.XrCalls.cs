@@ -190,6 +190,33 @@ public unsafe partial class OpenXRAPI
         return (frameState.PredictedDisplayTime - nowXrTime) / 1_000_000.0;
     }
 
+    /// <summary>
+    /// Gets the remaining runtime-provided display deadline for the active
+    /// OpenXR frame, after the configured submission safety margin.
+    /// </summary>
+    internal double CurrentRenderDeadlineMs
+    {
+        get
+        {
+            if (_frameState.PredictedDisplayTime <= 0)
+                return 0.0;
+
+            double leadMs = TryGetPredictedDisplayLeadTimeMs(
+                _frameState,
+                Stopwatch.GetTimestamp());
+            if (double.IsFinite(leadMs))
+                return Math.Max(0.0, leadMs - Math.Max(0.0, OpenXrDeadlineSafetyMarginMs));
+
+            // A runtime without the Win32 time-conversion extension still
+            // supplies its predicted display period. Preserve a real
+            // runtime-derived bounded budget instead of publishing no deadline.
+            double periodMs = _frameState.PredictedDisplayPeriod / 1_000_000.0;
+            return double.IsFinite(periodMs)
+                ? Math.Max(0.0, periodMs - Math.Max(0.0, OpenXrDeadlineSafetyMarginMs))
+                : 0.0;
+        }
+    }
+
     private bool TryConvertPerformanceCounterToXrTime(long performanceCounter, out long xrTime)
     {
         xrTime = 0;

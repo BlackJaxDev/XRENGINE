@@ -35,9 +35,7 @@ namespace XREngine.Rendering.Vulkan
                 submittedCommandBuffers[submittedCommandBufferCount++] =
                     dynamicTextCommandBuffer;
             }
-            ulong signalValue = Math.Max(
-                _commandRuntime.Synchronization._graphicsTimelineValue + 1,
-                attempt.AcquireTimelineValue + 1);
+            ulong signalValue;
             long stageStartTimestamp = Stopwatch.GetTimestamp();
             VulkanSubmissionReceipt submitReceipt;
             using (RuntimeRenderingHostServices.Profiling.StartProfileScope(
@@ -45,10 +43,11 @@ namespace XREngine.Rendering.Vulkan
             {
                 submitReceipt = SubmitAcquireSemaphoreBridge(
                     attempt.AcquireSemaphore,
-                    signalValue,
+                    attempt.AcquireTimelineValue + 1UL,
                     attempt.PresentSemaphore,
                     submittedCommandBuffers,
-                    submittedCommandBufferCount);
+                    submittedCommandBufferCount,
+                    out signalValue);
             }
 
             attempt.Timing.AcquireBridgeSubmit +=
@@ -89,9 +88,6 @@ namespace XREngine.Rendering.Vulkan
             if (attempt.UploadOwnership == EVulkanDesktopUploadOwnership.Recorded)
                 attempt.TransitionUploadOwnership(
                     EVulkanDesktopUploadOwnership.SubmittedDeferredFree);
-            _commandRuntime.Synchronization._graphicsTimelineValue = Math.Max(
-                _commandRuntime.Synchronization._graphicsTimelineValue,
-                signalValue);
             SettleAcceptedDesktopRecoverySubmissionDebt(ref attempt);
             RuntimeRenderingHostServices.Scheduling
                 .MarkRenderFrameReadyForCollect(DesktopWsiOutput.Window);

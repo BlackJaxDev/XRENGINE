@@ -8,5 +8,6 @@ public interface IImGuiRendererBackend
     void MakeCurrent();
     void Update(float deltaSeconds);
     void Render();
+    void UpdatePlatformWindows(bool deferGpuLifecycle);
     void RenderPlatformWindows();
 }

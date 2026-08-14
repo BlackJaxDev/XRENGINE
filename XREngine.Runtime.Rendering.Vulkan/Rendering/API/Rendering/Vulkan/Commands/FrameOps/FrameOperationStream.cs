@@ -111,6 +111,36 @@ internal sealed class FrameOperationStream
     }
 
     /// <summary>
+    /// Retains a caller-selected subset of headers while preserving the dense,
+    /// immutable payload columns. Used by output admission before the frame plan
+    /// is sealed so deferred output work cannot reach native recording.
+    /// </summary>
+    internal void Retain(ReadOnlySpan<int> retainedIndices)
+    {
+        if (retainedIndices.Length > _count)
+            throw new ArgumentException("The retained operation count exceeds the stream.", nameof(retainedIndices));
+        if (_headerOrderScratch.Length < retainedIndices.Length)
+            Array.Resize(
+                ref _headerOrderScratch,
+                Math.Max(retainedIndices.Length, _headerOrderScratch.Length * 2));
+
+        for (int index = 0; index < retainedIndices.Length; index++)
+        {
+            int sourceIndex = retainedIndices[index];
+            if ((uint)sourceIndex >= (uint)_count)
+                throw new ArgumentOutOfRangeException(
+                    nameof(retainedIndices),
+                    "A retained operation index is outside the stream.");
+            _headerOrderScratch[index] = _headers[sourceIndex];
+        }
+
+        _headerOrderScratch.AsSpan(0, retainedIndices.Length).CopyTo(_headers);
+        if (retainedIndices.Length < _count)
+            Array.Clear(_headers, retainedIndices.Length, _count - retainedIndices.Length);
+        _count = retainedIndices.Length;
+    }
+
+    /// <summary>
     /// Copies a view's numeric headers while sharing the immutable dense payload
     /// columns. Used only after a frame plan is sealed for per-eye recording.
     /// </summary>

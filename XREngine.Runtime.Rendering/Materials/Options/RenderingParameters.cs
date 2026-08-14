@@ -34,6 +34,7 @@ namespace XREngine.Rendering.Models.Materials
         private bool _excludeFromGpuIndirect;
         private bool _excludeFromCpuOcclusion;
         private EMaterialTextureArrayPolicy _textureArrayPolicy = EMaterialTextureArrayPolicy.ArbitraryMaterialTextures;
+        private EMissingTextureFallback _missingTextureFallback = EMissingTextureFallback.DiagnosticMagenta;
 
         [Browsable(false)]
         public bool HasBlending => (BlendModesPerDrawBuffer?.Values.Any(x => x.Enabled == ERenderParamUsage.Enabled) ?? false) || BlendModeAllDrawBuffers?.Enabled == ERenderParamUsage.Enabled;
@@ -191,6 +192,19 @@ namespace XREngine.Rendering.Models.Materials
         {
             get => _textureArrayPolicy;
             set => SetField(ref _textureArrayPolicy, value);
+        }
+
+        /// <summary>
+        /// Selects the valid descriptor placeholder used for an intentionally unassigned sampled texture.
+        /// Assigned resources that are still becoming GPU-ready retain their normal readiness policy.
+        /// </summary>
+        [Category("Textures")]
+        [DisplayName("Missing Texture Fallback")]
+        [Description("Selects the placeholder sampled when a texture slot is unassigned. This does not mask assigned resources that are still uploading.")]
+        public EMissingTextureFallback MissingTextureFallback
+        {
+            get => _missingTextureFallback;
+            set => SetField(ref _missingTextureFallback, value);
         }
     }
 }

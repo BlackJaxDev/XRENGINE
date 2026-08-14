@@ -9,7 +9,12 @@ namespace XREngine.Rendering.Vulkan;
 /// </summary>
 internal unsafe sealed class VulkanFallbackTextureAuthority(
     VulkanResourceRuntime resources,
-    VulkanFallbackTextureState state)
+    VulkanFallbackTextureState state,
+    string owner = "FallbackTexture",
+    byte red = 255,
+    byte green = 0,
+    byte blue = 255,
+    byte alpha = 255)
 {
     private const uint LayerCount = 6;
     private const ImageCreateFlags CubeCompatibleFlag = (ImageCreateFlags)0x10;
@@ -25,6 +30,15 @@ internal unsafe sealed class VulkanFallbackTextureAuthority(
                 return state.Ready;
         }
     }
+
+    /// <summary>
+    /// Returns whether an unassigned descriptor can safely use this sampled-image placeholder.
+    /// Storage images and input attachments have write/render-pass contracts that require real resources.
+    /// </summary>
+    internal static bool SupportsUnassignedTextureFallback(DescriptorType descriptorType)
+        => descriptorType is DescriptorType.CombinedImageSampler or
+            DescriptorType.SampledImage or
+            DescriptorType.Sampler;
 
     internal void Configure(VulkanCommandRuntime commands)
     {
@@ -97,13 +111,13 @@ internal unsafe sealed class VulkanFallbackTextureAuthority(
         {
             CreateImageNoLock(context);
             UploadPixelsNoLock(context);
-            state.View = CreateViewNoLock(context, ImageViewType.Type2D, 1, "FallbackTexture.View2D");
+            state.View = CreateViewNoLock(context, ImageViewType.Type2D, 1, $"{owner}.View2D");
             CreateSamplerNoLock(context);
             state.Ready = state.Image.Handle != 0 && state.View.Handle != 0 && state.Sampler.Handle != 0;
         }
         catch (Exception exception)
         {
-            Debug.VulkanWarning($"[Vulkan] Failed to create fallback texture: {exception.Message}");
+            Debug.VulkanWarning($"[Vulkan] Failed to create {owner}: {exception.Message}");
             if (HasResourcesNoLock())
                 RetireResourcesNoLock();
             ClearStateNoLock();
@@ -130,9 +144,9 @@ internal unsafe sealed class VulkanFallbackTextureAuthority(
         Result result = resources.Images.CreateOwnedImage(
             context,
             ref imageInfo,
-            "FallbackTexture.Image",
+            $"{owner}.Image",
             out state.Image);
-        context.DeviceContext.ObserveNativeResult("vkCreateImage.FallbackTexture", result);
+        context.DeviceContext.ObserveNativeResult($"vkCreateImage.{owner}", result);
         if (result != Result.Success)
             throw new InvalidOperationException($"Failed to create image ({result}).");
 
@@ -143,7 +157,7 @@ internal unsafe sealed class VulkanFallbackTextureAuthority(
         resources.Images.RegisterOwnedImageAllocation(state.Image, in allocation);
         state.Memory = allocation.Memory;
         result = context.Api.BindImageMemory(context.Device, state.Image, state.Memory, allocation.Offset);
-        context.DeviceContext.ObserveNativeResult("vkBindImageMemory.FallbackTexture", result);
+        context.DeviceContext.ObserveNativeResult($"vkBindImageMemory.{owner}", result);
         if (result != Result.Success)
             throw new InvalidOperationException($"Failed to bind image memory ({result}).");
     }
@@ -156,10 +170,10 @@ internal unsafe sealed class VulkanFallbackTextureAuthority(
         for (uint layer = 0; layer < LayerCount; layer++)
         {
             int offset = (int)(layer * pixelSize);
-            pixels[offset] = 255;
-            pixels[offset + 1] = 0;
-            pixels[offset + 2] = 255;
-            pixels[offset + 3] = 255;
+            pixels[offset] = red;
+            pixels[offset + 1] = green;
+            pixels[offset + 2] = blue;
+            pixels[offset + 3] = alpha;
         }
 
         (Buffer staging, DeviceMemory stagingMemory) = resources.Buffers.CreateRaw(
@@ -167,7 +181,7 @@ internal unsafe sealed class VulkanFallbackTextureAuthority(
             uploadSize,
             BufferUsageFlags.TransferSrcBit,
             MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit,
-            owner: "FallbackTexture.Staging");
+            owner: $"{owner}.Staging");
         try
         {
             fixed (byte* pixelsPtr = pixels)
@@ -178,13 +192,13 @@ internal unsafe sealed class VulkanFallbackTextureAuthority(
                 context.DeviceContext,
                 commands,
                 resources,
-                "FallbackTexture.Upload");
+                $"{owner}.Upload");
             RecordUpload(upload.Encoder, upload.CommandBuffer, state.Image, staging);
-            upload.CompleteAndWait(state.Image, staging, "FallbackTexture.Upload");
+            upload.CompleteAndWait(state.Image, staging, $"{owner}.Upload");
         }
         finally
         {
-            resources.Buffers.Destroy(context, staging, stagingMemory, "FallbackTexture.Staging");
+            resources.Buffers.Destroy(context, staging, stagingMemory, $"{owner}.Staging");
         }
     }
 
@@ -204,10 +218,10 @@ internal unsafe sealed class VulkanFallbackTextureAuthority(
             BorderColor = BorderColor.FloatOpaqueWhite,
         };
         Result result = context.Api.CreateSampler(context.Device, ref samplerInfo, null, out state.Sampler);
-        context.DeviceContext.ObserveNativeResult("vkCreateSampler.FallbackTexture", result);
+        context.DeviceContext.ObserveNativeResult($"vkCreateSampler.{owner}", result);
         if (result != Result.Success)
             throw new InvalidOperationException($"Failed to create sampler ({result}).");
-        resources.Samplers.Register(state.Sampler, in samplerInfo, "FallbackTexture.Sampler");
+        resources.Samplers.Register(state.Sampler, in samplerInfo, $"{owner}.Sampler");
     }
 
     private ImageView GetImageViewNoLock(ImageViewType? viewType)
@@ -219,11 +233,11 @@ internal unsafe sealed class VulkanFallbackTextureAuthority(
         {
             null or ImageViewType.Type2D => state.View,
             ImageViewType.Type2DArray => GetOrCreateViewNoLock(
-                ImageViewType.Type2DArray, ref state.View2DArray, "FallbackTexture.View2DArray"),
+                ImageViewType.Type2DArray, ref state.View2DArray, $"{owner}.View2DArray"),
             ImageViewType.TypeCube => GetOrCreateViewNoLock(
-                ImageViewType.TypeCube, ref state.ViewCube, "FallbackTexture.ViewCube"),
+                ImageViewType.TypeCube, ref state.ViewCube, $"{owner}.ViewCube"),
             ImageViewType.TypeCubeArray => GetOrCreateViewNoLock(
-                ImageViewType.TypeCubeArray, ref state.ViewCubeArray, "FallbackTexture.ViewCubeArray"),
+                ImageViewType.TypeCubeArray, ref state.ViewCubeArray, $"{owner}.ViewCubeArray"),
             _ => default,
         };
     }
@@ -356,7 +370,7 @@ internal unsafe sealed class VulkanFallbackTextureAuthority(
             [state.View2DArray, state.ViewCube, state.ViewCubeArray],
             state.Sampler,
             0),
-            "FallbackTexture");
+            owner);
 
     private void ClearStateNoLock()
     {

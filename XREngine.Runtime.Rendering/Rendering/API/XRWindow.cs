@@ -1445,8 +1445,29 @@ namespace XREngine.Rendering
                 ObserveRenderOwnerThread("interactive-resize-render");
                 WarnIfNotRenderOwnerThread("InteractiveResize.Render");
 
+                ulong? presentationPackageId = null;
+                if (((IRuntimeRendererHost)_renderer).TryGetBackendCapability<IInteractiveResizePresentationBackendCapability>(out var presentationCapability) &&
+                    presentationCapability is not null)
+                {
+                    if (!presentationCapability.TryGetInteractiveResizePresentationPackage(
+                            out ulong packageId,
+                            out EInteractiveResizeDispatchReason unavailableReason))
+                    {
+                        InteractiveResizeDispatchResult unavailable = InteractiveResizeDispatchResult.Deferred(
+                            unavailableReason,
+                            packageId,
+                            System.Diagnostics.Stopwatch.GetTimestamp() - callbackStarted);
+                        InteractiveResizeDiagnostics.RecordDispatch(unavailable);
+                        InteractiveResizeDiagnostics.RecordSuppressedRender(
+                            GetInteractiveResizeDispatchReasonName(unavailable.Reason));
+                        return;
+                    }
+
+                    presentationPackageId = packageId;
+                }
+
                 InteractiveResizeDispatchResult dispatch =
-                    RuntimeRenderingHostServices.Scheduling.TryDispatchInteractiveResizeFrame();
+                    RuntimeRenderingHostServices.Scheduling.TryDispatchInteractiveResizeFrame(presentationPackageId);
                 InteractiveResizeDiagnostics.RecordDispatch(dispatch);
                 if (!dispatch.Presented)
                 {

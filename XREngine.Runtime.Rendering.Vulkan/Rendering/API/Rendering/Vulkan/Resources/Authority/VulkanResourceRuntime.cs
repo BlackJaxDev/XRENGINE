@@ -37,6 +37,14 @@ internal sealed partial class VulkanResourceRuntime
         Images = new VulkanImageResourceService(Allocations, Lifetime);
         Images.ConfigureRetirementRuntime(this);
         FallbackTexture = new VulkanFallbackTextureAuthority(this, new VulkanFallbackTextureState());
+        BlackFallbackTexture = new VulkanFallbackTextureAuthority(
+            this,
+            new VulkanFallbackTextureState(),
+            "BlackFallbackTexture",
+            red: 0,
+            green: 0,
+            blue: 0,
+            alpha: 255);
         Buffers.BindLifetime(Lifetime);
         Samplers = new VulkanSamplerResourceService(this, Descriptors, Lifetime);
         Framebuffers = new VulkanFrameBufferResourceService(this);
@@ -62,6 +70,7 @@ internal sealed partial class VulkanResourceRuntime
     internal VulkanTextureUploadService Uploads { get; }
     internal VulkanQueryAuthority Queries { get; }
     internal VulkanFallbackTextureAuthority FallbackTexture { get; }
+    internal VulkanFallbackTextureAuthority BlackFallbackTexture { get; }
     internal VulkanLifetimeAuthority Lifetime { get; }
     internal VulkanDescriptorLifetimeAuthority DescriptorLifetime { get; }
     internal VulkanSamplerResourceService Samplers { get; }
@@ -70,6 +79,12 @@ internal sealed partial class VulkanResourceRuntime
     internal VulkanPipelineManager PipelineManager { get; } = new();
     internal VulkanBackendObjectContext? BackendObjectContext;
     internal bool AllowSynchronousResourceUploads { get; private set; }
+
+    /// <summary>Resolves the placeholder authority for an intentionally unassigned sampled texture.</summary>
+    internal VulkanFallbackTextureAuthority GetMissingTextureFallback(RenderingParameters renderOptions)
+        => renderOptions.MissingTextureFallback == EMissingTextureFallback.Black
+            ? BlackFallbackTexture
+            : FallbackTexture;
     private VulkanWrapperLookupPort? _wrapperLookup;
     private VulkanBackendObjectFactory? _backendObjectFactory;
     private VulkanWrapperColdComposition? _wrapperColdComposition;

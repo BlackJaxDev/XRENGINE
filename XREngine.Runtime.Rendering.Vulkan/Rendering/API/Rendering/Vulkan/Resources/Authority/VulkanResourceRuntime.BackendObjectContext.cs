@@ -19,6 +19,7 @@ internal sealed partial class VulkanResourceRuntime
         DescriptorLifetime.PublishBackendObjectContext(context);
         Descriptors.PublishBackendObjectContext(context);
         FallbackTexture.PublishBackendObjectContext(context);
+        BlackFallbackTexture.PublishBackendObjectContext(context);
         return context;
     }
 }

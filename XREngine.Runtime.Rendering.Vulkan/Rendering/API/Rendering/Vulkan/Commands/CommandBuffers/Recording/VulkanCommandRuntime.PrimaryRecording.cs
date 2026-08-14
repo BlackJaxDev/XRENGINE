@@ -18,6 +18,9 @@ internal sealed partial class VulkanCommandRuntime
 
         if (!TryValidatePreparedPrimaryInput(in input, out string reason))
             return VulkanPrimaryCommandRecordingResult.ReplanRequired(reason);
+        if (!input.FramePlan.HasAnyExecutableOutput)
+            return VulkanPrimaryCommandRecordingResult.Deferred(
+                "the immutable output DAG deferred every output in this frame plan");
 
         Interlocked.Increment(ref _recordedPrimaryFrameCounter);
         bool gpuPipelineProfilingActive =
@@ -124,7 +127,8 @@ internal sealed partial class VulkanCommandRuntime
                     reusedFinalLayout,
                     owner.RecordedSwapchainWriteCount,
                     Volatile.Read(ref CommandBuffers.DirtyGeneration),
-                    Reason: null);
+                    Reason: null,
+                    input.FramePlan);
             }
         }
 
@@ -227,7 +231,8 @@ internal sealed partial class VulkanCommandRuntime
             context.RecordedSwapchainFinalLayout,
             context.RecordedSwapchainWriteCount,
             Volatile.Read(ref CommandBuffers.DirtyGeneration),
-            Reason: null);
+            Reason: null,
+            input.FramePlan);
     }
 
     /// <summary>

@@ -13,7 +13,8 @@ internal readonly record struct VulkanPrimaryCommandRecordingResult(
     ImageLayout SwapchainLayoutAfterCommandBuffer,
     int RecordedSwapchainWriteCount,
     long CommandBufferDirtyGeneration,
-    string? Reason)
+    string? Reason,
+    FramePlan? OutputExecutionPlan = null)
 {
     internal bool Succeeded => Disposition is EVulkanPrimaryCommandRecordingDisposition.Recorded or EVulkanPrimaryCommandRecordingDisposition.Reused;
     internal bool RequiresReplan => Disposition == EVulkanPrimaryCommandRecordingDisposition.ReplanRequired;
