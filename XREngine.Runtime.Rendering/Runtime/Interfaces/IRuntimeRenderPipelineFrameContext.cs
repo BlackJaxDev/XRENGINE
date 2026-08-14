@@ -6,6 +6,13 @@ namespace XREngine.Rendering;
 public interface IRuntimeRenderPipelineFrameContext : IRuntimeRenderPipelineDebugContext
 {
     /// <summary>
+    /// Gets the final output acquired for this frame. This remains graphics-API
+    /// neutral so desktop, presentationless, XR, and browser hosts share the
+    /// same render-pipeline contract.
+    /// </summary>
+    RenderFrameOutputDescription? FinalOutput { get; }
+
+    /// <summary>
     /// Gets the concrete pipeline host object when runtime code needs to pass it back to host-owned APIs.
     /// </summary>
     IRuntimeRenderPipelineHost? PipelineHost { get; }

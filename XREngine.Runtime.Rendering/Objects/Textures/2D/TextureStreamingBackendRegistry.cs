@@ -8,6 +8,8 @@ internal static class TextureStreamingBackendRegistry
     private static readonly object Sync = new();
     private static RegistrationEntry? s_openGl;
     private static RegistrationEntry? s_vulkan;
+    private static RegistrationEntry? s_webGl2;
+    private static RegistrationEntry? s_webGpu;
 
     public static IDisposable Register(RuntimeGraphicsApiKind api, ITextureStreamingBackendProvider provider)
     {
@@ -40,6 +42,8 @@ internal static class TextureStreamingBackendRegistry
         {
             RuntimeGraphicsApiKind.OpenGL => Volatile.Read(ref s_openGl),
             RuntimeGraphicsApiKind.Vulkan => Volatile.Read(ref s_vulkan),
+            RuntimeGraphicsApiKind.WebGL2 => Volatile.Read(ref s_webGl2),
+            RuntimeGraphicsApiKind.WebGPU => Volatile.Read(ref s_webGpu),
             _ => null,
         };
         provider = registration?.Provider;
@@ -58,6 +62,10 @@ internal static class TextureStreamingBackendRegistry
             return ref s_openGl;
         if (api == RuntimeGraphicsApiKind.Vulkan)
             return ref s_vulkan;
+        if (api == RuntimeGraphicsApiKind.WebGL2)
+            return ref s_webGl2;
+        if (api == RuntimeGraphicsApiKind.WebGPU)
+            return ref s_webGpu;
 
         throw new ArgumentOutOfRangeException(
             nameof(api),

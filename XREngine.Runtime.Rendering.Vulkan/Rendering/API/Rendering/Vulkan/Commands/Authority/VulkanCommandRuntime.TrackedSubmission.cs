@@ -131,7 +131,10 @@ internal sealed partial class VulkanCommandRuntime
                     CommandBuffers.DeviceQueueAdmissionGate.ExitReadLock();
                 }
             }
-            DeviceContext.ObserveNativeResult($"vkQueueSubmit:{caller ?? "<unknown>"}", result);
+            // Preserve first-failing API evidence without allocating an
+            // interpolated diagnostic string on every successful frame.
+            if (result == Result.ErrorDeviceLost)
+                DeviceContext.ObserveNativeResult("vkQueueSubmit", result);
             Synchronization.RecordQueueOperation(
                 DeviceContext.State,
                 "submit",

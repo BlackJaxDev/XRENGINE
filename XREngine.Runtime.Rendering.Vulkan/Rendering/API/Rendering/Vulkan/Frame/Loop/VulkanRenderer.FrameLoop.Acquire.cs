@@ -156,6 +156,13 @@ namespace XREngine.Rendering.Vulkan
             _commandRuntime.Synchronization._acquireTimelineValue = attempt.AcquireTimelineValue;
             attempt.PresentSemaphore =
                 OutputRuntime.Desktop.PresentBridgeSemaphores![attempt.ImageIndex];
+            attempt.FrameTargetLease = DesktopWsiOutput.CreateFrameTargetLease(
+                OutputRuntime,
+                attempt.ImageIndex,
+                checked((uint)attempt.FrameSlot),
+                attempt.AcquireResult,
+                attempt.AcquireSemaphore,
+                attempt.PresentSemaphore);
             attempt.AdvanceTo(EDesktopFramePhase.ImageAcquired);
             return EDesktopFrameFlow.Continue;
         }

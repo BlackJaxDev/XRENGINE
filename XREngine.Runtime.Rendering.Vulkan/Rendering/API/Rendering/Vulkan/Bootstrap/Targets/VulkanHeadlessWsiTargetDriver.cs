@@ -193,15 +193,6 @@ internal sealed unsafe class VulkanHeadlessWsiTargetDriver :
                     slot.CommandPool,
                     "HeadlessWsi.AcquireFrameTarget"),
                 "reset headless WSI command pool");
-            CommandBufferBeginInfo begin = new()
-            {
-                SType = StructureType.CommandBufferBeginInfo,
-                Flags = CommandBufferUsageFlags.OneTimeSubmitBit,
-            };
-            renderer.ThrowIfVulkanDeviceOperationNotAdmitted("vkBeginCommandBuffer.HeadlessWsi.Frame");
-            ThrowIfDeviceFailure(
-                api.BeginCommandBuffer(slot.CommandBuffer, in begin),
-                "begin headless WSI command buffer");
             commandBuffer = slot.CommandBuffer;
             return lease;
         }
@@ -210,6 +201,22 @@ internal sealed unsafe class VulkanHeadlessWsiTargetDriver :
             AbortFrameTarget(in lease, submissionAccepted: false);
             throw;
         }
+    }
+
+    public void BeginFrameRecording(
+        in VulkanFrameTargetLease lease,
+        CommandBuffer commandBuffer)
+    {
+        VulkanTargetOutputContext renderer = RequireTargetContext();
+        renderer.ThrowIfVulkanDeviceOperationNotAdmitted("HeadlessWsi.BeginFrameRecording");
+        CommandBufferBeginInfo begin = new()
+        {
+            SType = StructureType.CommandBufferBeginInfo,
+            Flags = CommandBufferUsageFlags.OneTimeSubmitBit,
+        };
+        ThrowIfDeviceFailure(
+            renderer.VulkanApi.BeginCommandBuffer(commandBuffer, in begin),
+            "begin headless WSI command buffer");
     }
 
     public void EndFrameRecording(

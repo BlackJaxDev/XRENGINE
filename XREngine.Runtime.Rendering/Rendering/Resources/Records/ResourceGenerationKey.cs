@@ -30,7 +30,9 @@ public readonly record struct ResourceGenerationKey(
     uint ReservedViewCount = 1,
     uint ReservedEyeIndex = 0,
     RenderPipelineExternalTargetKind ExternalTargetKind = RenderPipelineExternalTargetKind.None,
-    ulong SettingsRevision = 0)
+    ulong SettingsRevision = 0,
+    XREngine.Data.Rendering.EPixelInternalFormat OutputColorFormat = XREngine.Data.Rendering.EPixelInternalFormat.Rgba8,
+    XREngine.Data.Rendering.EPixelInternalFormat OutputDepthFormat = XREngine.Data.Rendering.EPixelInternalFormat.Depth24Stencil8)
 {
     /// <summary>
     /// Converts this resource generation key into a render pipeline resource profile that can be used to configure the render pipeline.
@@ -49,12 +51,14 @@ public readonly record struct ResourceGenerationKey(
             FeatureMask,
             ExternalTargetKind,
             Math.Max(1u, ReservedViewCount),
-            ReservedEyeIndex);
+            ReservedEyeIndex,
+            OutputColorFormat,
+            OutputDepthFormat);
 
     /// <summary>
     /// Returns a string representation of the resource generation key, including pipeline name, display and internal dimensions, HDR output, anti-aliasing settings, stereo rendering, feature mask, reserved view count, and reserved eye index.
     /// </summary>
     /// <returns>A string representation of the resource generation key.</returns>
     public override string ToString()
-        => $"{PipelineName} display={DisplayWidth}x{DisplayHeight} internal={InternalWidth}x{InternalHeight} hdr={OutputHDR} aa={AntiAliasingMode} msaa={MsaaSampleCount} stereo={Stereo} features=0x{FeatureMask:X} settingsRev={SettingsRevision} external={ExternalTargetKind} views={ReservedViewCount} eye={ReservedEyeIndex}";
+        => $"{PipelineName} display={DisplayWidth}x{DisplayHeight} internal={InternalWidth}x{InternalHeight} hdr={OutputHDR} aa={AntiAliasingMode} msaa={MsaaSampleCount} stereo={Stereo} features=0x{FeatureMask:X} settingsRev={SettingsRevision} external={ExternalTargetKind} views={ReservedViewCount} eye={ReservedEyeIndex} color={OutputColorFormat} depth={OutputDepthFormat}";
 }

@@ -15,6 +15,11 @@ public enum RendererBackendCapabilities
     EditorTextureInterop = 1 << 4,
     SparseTextureStreaming = 1 << 5,
     HeadlessWsiPresentation = 1 << 6,
+    BrowserCanvasPresentation = 1 << 7,
+    BrowserWorkerPresentation = 1 << 8,
+    AsyncGpuReadback = 1 << 9,
+    ExternalImageSource = 1 << 10,
+    WebXrPresentation = 1 << 11,
 
     [Obsolete("Use PresentationlessRendering or HeadlessWsiPresentation; 'headless' is not a stable execution mode.")]
     HeadlessRendering = PresentationlessRendering,

@@ -12,6 +12,8 @@ internal interface IVulkanRendererTargetDriver
     bool SupportsStreamlinePresentation { get; }
     IReadOnlyList<string> RequiredDeviceExtensions { get; }
     string[] GetRequiredInstanceExtensions();
+    /// <summary>Stops target-side frame admission before GPU teardown begins.</summary>
+    void Quiesce() { }
     void CreateInstanceResources(VulkanTargetSurfaceAuthority surfaces);
     void InitializeFinalOutput(VulkanTargetOutputContext output);
     void DestroyFinalOutput(VulkanTargetOutputContext output);

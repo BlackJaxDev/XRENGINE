@@ -2,6 +2,7 @@ using Silk.NET.Core.Native;
 using Silk.NET.Maths;
 using Silk.NET.Vulkan;
 using Silk.NET.Vulkan.Extensions.KHR;
+using Semaphore = Silk.NET.Vulkan.Semaphore;
 
 namespace XREngine.Rendering.Vulkan;
 
@@ -55,5 +56,58 @@ internal sealed unsafe class VulkanDesktopWsiTargetDriver : IVulkanRendererTarge
 
     public VulkanDesktopPresentOutcome ClassifyPresent(Result result)
         => VulkanDesktopFramePolicy.ClassifyPresent(result);
+
+    /// <summary>
+    /// Freezes the acquired desktop output into the same lease consumed by all
+    /// other Vulkan execution modes. WSI recovery remains desktop policy, but
+    /// recording and queue submission no longer query mutable swapchain state.
+    /// </summary>
+    internal VulkanFrameTargetLease CreateFrameTargetLease(
+        VulkanOutputRuntime output,
+        uint imageIndex,
+        uint frameSlotIndex,
+        Result acquireResult,
+        Semaphore acquireSemaphore,
+        Semaphore presentSemaphore)
+    {
+        VulkanDesktopOutputState desktop = output.Desktop;
+        VulkanSwapchainDepthResources? depth = output.DesktopDepthResources;
+        if (desktop.Images is null || desktop.ImageViews is null ||
+            imageIndex >= desktop.Images.Length || imageIndex >= desktop.ImageViews.Length ||
+            depth is null)
+        {
+            throw new InvalidOperationException(
+                $"Desktop WSI image {imageIndex} has no complete target generation to lease.");
+        }
+
+        VulkanRenderFrameTarget target = new(
+            desktop.Images[imageIndex],
+            desktop.ImageViews[imageIndex],
+            depth.Image,
+            depth.View,
+            desktop.Extent,
+            Layers: 1,
+            desktop.IsImageEverPresented(imageIndex)
+                ? ImageLayout.PresentSrcKhr
+                : ImageLayout.Undefined,
+            ImageLayout.PresentSrcKhr,
+            desktop.Generation,
+            frameSlotIndex);
+        return new VulkanFrameTargetLease(
+            target,
+            desktop.ImageFormat,
+            depth.Format,
+            SampleCountFlags.Count1Bit,
+            imageIndex,
+            acquireResult,
+            acquireSemaphore,
+            PipelineStageFlags.ColorAttachmentOutputBit,
+            presentSemaphore,
+            default,
+            VulkanFrameTargetCompletionKind.WsiPresent,
+            ImagesExternallyOwned: true,
+            ViewIndex: 0,
+            SupportsHiddenAreaMask: false);
+    }
 
 }

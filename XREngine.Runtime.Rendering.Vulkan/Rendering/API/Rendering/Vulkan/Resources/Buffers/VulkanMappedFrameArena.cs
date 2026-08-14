@@ -405,6 +405,17 @@ internal unsafe sealed class VulkanMappedFrameArena
         return false;
     }
 
+    internal string DescribeSubmissionPreparationRejection(uint frameSlot, ulong generation)
+    {
+        bool inRange = frameSlot < _chunks.Length;
+        Chunk? chunk = inRange ? _chunks[frameSlot] : null;
+        return $"operational={_backend.IsOperational}, requestedGeneration={generation}, " +
+            $"generation={Generation}, frameSlot={frameSlot}/{_chunks.Length}, " +
+            $"chunk={(chunk is null ? "missing" : "ready")}, " +
+            $"state={chunk?.GetState(generation).ToString() ?? "unavailable"}, " +
+            $"writerDepth={Volatile.Read(ref _writerDepth)}";
+    }
+
     /// <summary>
     /// Reopens a prepared slot when native submission is rejected before queue ownership
     /// transfers. Already-flushed bytes remain visible and later writes establish new dirtiness.

@@ -747,7 +747,9 @@ internal sealed partial class VulkanFrameLoop
                 OutputRuntime.Desktop.StreamlineFrameGenerationActive);
         authority = new VulkanPreparedPrimaryAuthority(
             target,
-            CapturePreparedRenderTargetSnapshot(in target),
+            CapturePreparedRenderTargetSnapshot(
+                in target,
+                OutputRuntime.Desktop.Generation),
             _windowPresentSource.CaptureForDescriptorSlot(
                 checked((int)imageIndex)),
             resourcePlanStamp,
@@ -833,14 +835,13 @@ internal sealed partial class VulkanFrameLoop
     }
 
     private VulkanRecordedRenderTargetSnapshot CapturePreparedRenderTargetSnapshot(
-        in SwapchainRecordingTarget target)
+        in SwapchainRecordingTarget target,
+        ulong targetGeneration)
     {
         VulkanRecordedRenderTargetSnapshot snapshot = default;
         snapshot.Initialize(
             target.Framebuffer.Handle,
-            _resourceRuntime.GetPublishedGeneration(
-                ObjectType.Framebuffer,
-                target.Framebuffer.Handle),
+            targetGeneration,
             target.Extent.Width,
             target.Extent.Height,
             viewMask: 0u,

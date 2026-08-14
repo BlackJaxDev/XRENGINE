@@ -13,7 +13,7 @@ namespace XREngine.Rendering.Vulkan;
 /// </summary>
 internal sealed partial class VulkanFrameLoop
 {
-    private const int FrameSlotCount = 2;
+    private const int DesktopFrameSlotCount = 2;
     private readonly Vk _api;
     private readonly VulkanDeviceContext _deviceContext;
     private readonly VulkanOutputRuntime _outputRuntime;
@@ -24,6 +24,8 @@ internal sealed partial class VulkanFrameLoop
     private readonly VulkanResourceGenerationTransactionService _resourceGenerationTransactions;
     private readonly VulkanFrameTelemetry _telemetry;
     private readonly IVulkanRendererTargetDriver _targetDriver;
+    private readonly int _frameSlotCount;
+    private readonly VulkanPrimaryCommandPlan[] _explicitPrimaryPlans;
     internal VulkanMeshOperationRequestQueue MeshOperationRequests { get; } = new();
     private readonly VulkanMeshRenderRequest[] _meshOperationRequestScratch =
         new VulkanMeshRenderRequest[VulkanMeshOperationRequestQueue.Capacity];
@@ -45,6 +47,10 @@ internal sealed partial class VulkanFrameLoop
     private long _lastObservedTickTimestamp;
     private long _resourceCatchUpStartedAt;
     private ulong _resourceCatchUpBlockedFrames;
+    private VulkanFrameLoopInitializationStage _initializationStage;
+    private int _cleanupInProgress;
+    private int _quiescing;
+    private int _activeFrameExecutions;
 
     internal VulkanFrameLoop(
         Vk api,
@@ -65,6 +71,19 @@ internal sealed partial class VulkanFrameLoop
         _commandRuntime = commandRuntime;
         _telemetry = telemetry;
         _targetDriver = targetDriver;
+        if (targetDriver is IVulkanExplicitFrameTargetDriver explicitTarget)
+        {
+            _frameSlotCount = checked((int)explicitTarget.OutputProperties.FrameSlotCount);
+            _explicitPrimaryPlans = new VulkanPrimaryCommandPlan[
+                _frameSlotCount];
+            for (int index = 0; index < _explicitPrimaryPlans.Length; index++)
+                _explicitPrimaryPlans[index] = new VulkanPrimaryCommandPlan();
+        }
+        else
+        {
+            _frameSlotCount = DesktopFrameSlotCount;
+            _explicitPrimaryPlans = [];
+        }
         _window = window;
         _resourcePlannerSessions = new VulkanResourcePlannerSessionService(
             framePlanner,
@@ -186,8 +205,10 @@ internal sealed partial class VulkanFrameLoop
            XREngine.Rendering.RenderDiagnosticsFlags.VkTraceSwapDraw;
     internal object RetirementGate => _retirementGate;
     internal int CurrentFrameSlot => Volatile.Read(ref _frameSlot);
+    private int FrameSlotCount => _frameSlotCount;
     internal long LastObservedTickTimestamp => Volatile.Read(ref _lastObservedTickTimestamp);
     internal bool HasObservedTick => LastObservedTickTimestamp != 0;
+    private bool IsQuiescing => Volatile.Read(ref _quiescing) != 0;
 
     internal DesktopFrameActivitySnapshot CaptureActivity()
         => _activity.Capture();
@@ -196,6 +217,12 @@ internal sealed partial class VulkanFrameLoop
     {
         lock (_retirementGate)
         {
+            if (IsQuiescing)
+            {
+                identity = default;
+                return false;
+            }
+
             int frameSlot = CurrentFrameSlot;
             ulong frameNumber = checked(AcceptedAttemptCount + 1UL);
             if (!_activity.TryEnter(frameNumber, frameSlot, out long activityPublicationToken))
@@ -205,6 +232,7 @@ internal sealed partial class VulkanFrameLoop
             }
 
             Volatile.Write(ref _acceptedAttemptCount, frameNumber);
+            _activeFrameExecutions++;
             identity = new DesktopFrameIdentity(
                 frameNumber,
                 frameSlot,
@@ -217,18 +245,64 @@ internal sealed partial class VulkanFrameLoop
     internal void Exit(in DesktopFrameIdentity identity)
     {
         lock (_retirementGate)
-            _activity.TryExit(identity.ActivityPublicationToken);
+        {
+            if (_activity.TryExit(identity.ActivityPublicationToken))
+                ExitFrameExecutionNoLock();
+        }
+    }
+
+    private bool TryEnterExplicitFrameExecution()
+    {
+        lock (_retirementGate)
+        {
+            if (IsQuiescing)
+                return false;
+
+            _activeFrameExecutions++;
+            return true;
+        }
+    }
+
+    private void ExitExplicitFrameExecution()
+    {
+        lock (_retirementGate)
+            ExitFrameExecutionNoLock();
+    }
+
+    private void ExitFrameExecutionNoLock()
+    {
+        if (_activeFrameExecutions <= 0)
+            throw new InvalidOperationException("Vulkan frame-execution ownership is unbalanced.");
+
+        _activeFrameExecutions--;
+        if (_activeFrameExecutions == 0)
+            Monitor.PulseAll(_retirementGate);
+    }
+
+    private void QuiesceFrameAdmissionAndWait()
+    {
+        lock (_retirementGate)
+        {
+            Volatile.Write(ref _quiescing, 1);
+            while (_activeFrameExecutions != 0)
+                Monitor.Wait(_retirementGate);
+        }
     }
 
     internal void AdvanceFrameSlot(int completedFrameSlot)
     {
         int nextFrameSlot = (completedFrameSlot + 1) % FrameSlotCount;
-        Volatile.Write(ref _frameSlot, nextFrameSlot);
-        _resourceRuntime.Samplers.PublishFrameSlot(nextFrameSlot);
-        _resourceRuntime.Images.PublishFrameSlot(nextFrameSlot);
-        _resourceRuntime.Buffers.PublishFrameSlot(nextFrameSlot);
-        _resourceRuntime.Descriptors.PublishFrameSlot(nextFrameSlot);
-        _resourceRuntime.PublishFramebufferRetirementFrameSlot(nextFrameSlot);
+        PublishFrameSlot(nextFrameSlot);
+    }
+
+    private void PublishFrameSlot(int frameSlot)
+    {
+        Volatile.Write(ref _frameSlot, frameSlot);
+        _resourceRuntime.Samplers.PublishFrameSlot(frameSlot);
+        _resourceRuntime.Images.PublishFrameSlot(frameSlot);
+        _resourceRuntime.Buffers.PublishFrameSlot(frameSlot);
+        _resourceRuntime.Descriptors.PublishFrameSlot(frameSlot);
+        _resourceRuntime.PublishFramebufferRetirementFrameSlot(frameSlot);
     }
 
     internal void RecordObservedTick(long timestamp)
@@ -449,6 +523,9 @@ internal sealed partial class VulkanFrameLoop
     internal void Render(double delta)
     {
         _ = delta;
+        if (IsQuiescing)
+            return;
+
         if (!TryEnter(out DesktopFrameIdentity desktopFrameIdentity))
         {
             ReportReentrantDesktopFrame();

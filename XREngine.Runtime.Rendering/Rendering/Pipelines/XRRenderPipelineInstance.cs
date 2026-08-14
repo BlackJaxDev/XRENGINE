@@ -91,6 +91,8 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
     public EAntiAliasingMode? EffectiveAntiAliasingModeThisFrame { get; private set; }
     public uint? EffectiveMsaaSampleCountThisFrame { get; private set; }
     public float? EffectiveTsrRenderScaleThisFrame { get; private set; }
+    /// <summary>Gets the backend-neutral final output captured for the current or most recent frame.</summary>
+    public RenderFrameOutputDescription? FinalOutput { get; private set; }
 
     public XRRenderPipelineInstance(RenderPipeline pipeline) : this()
     {
@@ -146,7 +148,9 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
 
     internal bool TryGetLastResourceFeatureMask(XRViewport? viewport, out ulong featureMask)
     {
-        RenderPipelineExternalTargetKind outputKind = viewport?.RendersToExternalSwapchainTarget == true
+        RenderPipelineExternalTargetKind outputKind = FinalOutput is not null
+            ? RenderPipelineExternalTargetKind.PresentationTarget
+            : viewport?.RendersToExternalSwapchainTarget == true
             ? RenderPipelineExternalTargetKind.ExternalSwapchain
             : RenderState.OutputFBO is not null
                 ? RenderPipelineExternalTargetKind.CallerProvidedFrameBuffer
@@ -204,6 +208,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
     IRuntimeRenderCamera? IRuntimeRenderPipelineFrameContext.LastSceneCamera => LastSceneCamera;
     IRuntimeRenderCamera? IRuntimeRenderPipelineFrameContext.LastRenderingCamera => LastRenderingCamera;
     IRuntimeViewportHost? IRuntimeRenderPipelineFrameContext.LastWindowViewport => LastWindowViewport;
+    RenderFrameOutputDescription? IRuntimeRenderPipelineFrameContext.FinalOutput => FinalOutput;
 
     public string DebugName
         => _pipeline?.DebugName ?? _pipeline?.GetType().Name ?? "UnknownPipeline";
@@ -541,6 +546,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         LastSceneCamera = camera;
         LastRenderingCamera = camera ?? stereoRightEyeCamera;
         LastWindowViewport = viewport;
+        FinalOutput = AbstractRenderer.Current?.CurrentFrameOutput;
         XRCamera? effectiveAntiAliasingCamera = camera ?? stereoRightEyeCamera;
         EAntiAliasingMode effectiveAntiAliasingMode =
             effectiveAntiAliasingCamera?.AntiAliasingModeOverride
@@ -550,7 +556,9 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             ?? frameTiming.DefaultOutputHDR;
         EffectiveAntiAliasingModeThisFrame = effectiveAntiAliasingMode;
         EffectiveMsaaSampleCountThisFrame = Math.Max(1u,
-            effectiveAntiAliasingCamera?.MsaaSampleCountOverride ?? frameTiming.DefaultMsaaSampleCount);
+            FinalOutput?.Properties.SampleCount ??
+            effectiveAntiAliasingCamera?.MsaaSampleCountOverride ??
+            frameTiming.DefaultMsaaSampleCount);
         EffectiveTsrRenderScaleThisFrame = effectiveAntiAliasingMode == EAntiAliasingMode.Tsr
             ? Math.Clamp(
                 effectiveAntiAliasingCamera?.TsrRenderScaleOverride ?? frameTiming.DefaultTsrRenderScale,
@@ -760,13 +768,21 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
     /// <returns>True if resource generation is ensured; false otherwise.</returns>
     private bool EnsureResourceGenerationForCurrentFrame(XRViewport? viewport)
     {
-        if (Pipeline is null || viewport is null)
+        if (Pipeline is null)
         {
             DrainRetiredGenerations();
             return true;
         }
 
-        if (ShouldDeferResourceGenerationForInteractiveWindowResize(viewport) &&
+        RenderFrameOutputDescription? frameOutput = FinalOutput;
+        if (viewport is null && frameOutput is null)
+        {
+            DrainRetiredGenerations();
+            return true;
+        }
+
+        if (viewport is not null &&
+            ShouldDeferResourceGenerationForInteractiveWindowResize(viewport) &&
             ActiveGeneration is not null)
         {
             DiscardPendingGeneration("InteractiveResize");
@@ -779,7 +795,9 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         // catch-up generation is prepared after WM_EXITSIZEMOVE.
         DrainRetiredGenerations();
 
-        var dimensions = ResolvePipelineResourceDimensions(viewport);
+        var dimensions = frameOutput is not null
+            ? ResolvePipelineResourceDimensions(frameOutput.Value)
+            : ResolvePipelineResourceDimensions(viewport!);
         ResourceGenerationKey key = BuildResourceGenerationKey(
             dimensions.DisplayWidth,
             dimensions.DisplayHeight,
@@ -787,7 +805,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             dimensions.InternalHeight,
             viewport);
 
-        if (viewport.RendersToExternalSwapchainTarget)
+        if (viewport?.RendersToExternalSwapchainTarget == true)
             return EnsureExternalSwapchainResourceGenerationForCurrentFrame(viewport, key);
 
         if (ActiveGeneration is null && PendingGeneration is null)
@@ -919,6 +937,14 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         return Pipeline?.UsesDisplayResolutionForManagedResources == true
             ? (dimensions.DisplayWidth, dimensions.DisplayHeight, dimensions.DisplayWidth, dimensions.DisplayHeight)
             : dimensions;
+    }
+
+    private (int DisplayWidth, int DisplayHeight, int InternalWidth, int InternalHeight) ResolvePipelineResourceDimensions(
+        in RenderFrameOutputDescription output)
+    {
+        int width = checked((int)output.Properties.Width);
+        int height = checked((int)output.Properties.Height);
+        return (width, height, width, height);
     }
 
     /// <summary>
@@ -1343,7 +1369,9 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             settings.ReservedViewCount,
             settings.ReservedEyeIndex,
             settings.ExternalTargetKind,
-            settings.Revision);
+            settings.Revision,
+            settings.OutputColorFormat,
+            settings.OutputDepthFormat);
     }
 
     private ResourceGenerationSettingsSnapshot CaptureResourceGenerationSettingsSnapshot(
@@ -1366,7 +1394,9 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
                 ?? viewportCamera?.MsaaSampleCountOverride
                 ?? RuntimeRenderingHostServices.FrameTiming.DefaultMsaaSampleCount);
         ulong featureMask = pipeline?.BuildResourceFeatureMaskForGenerationKey(this, viewport) ?? 0UL;
-        RenderPipelineExternalTargetKind externalTargetKind = viewport?.RendersToExternalSwapchainTarget == true
+        RenderPipelineExternalTargetKind externalTargetKind = FinalOutput is not null
+            ? RenderPipelineExternalTargetKind.PresentationTarget
+            : viewport?.RendersToExternalSwapchainTarget == true
             ? RenderPipelineExternalTargetKind.ExternalSwapchain
             : RenderState.OutputFBO is not null
                 ? RenderPipelineExternalTargetKind.CallerProvidedFrameBuffer
@@ -1378,10 +1408,13 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             msaaSamples,
             stereo,
             featureMask,
-            stereo ? 2u : 1u,
-            0u,
+            FinalOutput?.Properties.Layers ?? (stereo ? 2u : 1u),
+            FinalOutput?.ViewIndex ?? 0u,
             externalTargetKind,
-            0UL);
+            0UL,
+            FinalOutput?.Properties.ColorFormat ??
+                (outputHdr ? EPixelInternalFormat.Rgba16f : EPixelInternalFormat.Rgba8),
+            FinalOutput?.Properties.DepthFormat ?? EPixelInternalFormat.Depth24Stencil8);
 
         lock (_resourceSettingsSnapshotLock)
         {

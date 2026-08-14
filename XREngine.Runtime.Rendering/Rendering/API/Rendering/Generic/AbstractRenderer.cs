@@ -76,6 +76,8 @@ namespace XREngine.Rendering
         private static AbstractRenderer? _threadCurrent;
         [ThreadStatic]
         private static bool _hasThreadCurrentOverride;
+        [ThreadStatic]
+        private static RenderFrameOutputDescription? _currentFrameOutput;
 
         /// <summary>
         /// Use this to retrieve the currently rendering window renderer.
@@ -89,6 +91,35 @@ namespace XREngine.Rendering
                 _hasThreadCurrentOverride = value is not null;
                 _globalCurrent = value;
             }
+        }
+
+        /// <summary>
+        /// Gets the immutable final-output description active on this render
+        /// thread, or <see langword="null"/> outside lease-backed frame work.
+        /// </summary>
+        public RenderFrameOutputDescription? CurrentFrameOutput => _currentFrameOutput;
+
+        /// <summary>
+        /// Publishes one acquired output to render-pipeline execution without
+        /// exposing backend-native lease state.
+        /// </summary>
+        internal FrameOutputScope PushFrameOutput(in RenderFrameOutputDescription output)
+        {
+            output.Validate();
+            return new FrameOutputScope(output);
+        }
+
+        internal readonly ref struct FrameOutputScope
+        {
+            private readonly RenderFrameOutputDescription? _previous;
+
+            internal FrameOutputScope(in RenderFrameOutputDescription output)
+            {
+                _previous = _currentFrameOutput;
+                _currentFrameOutput = output;
+            }
+
+            public void Dispose() => _currentFrameOutput = _previous;
         }
 
         internal static IDisposable PushThreadCurrent(AbstractRenderer? renderer)

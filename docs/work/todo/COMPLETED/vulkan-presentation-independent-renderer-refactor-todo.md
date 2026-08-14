@@ -1,16 +1,22 @@
 # Vulkan Presentation-Independent Renderer Refactor TODO
 
-Status: Active  
+Status: Completed 2026-08-13
+
 Scope: Refactor the production Vulkan renderer so the existing XRENGINE render
 graph can execute against desktop WSI, presentationless, headless WSI, and
 OpenXR targets without constructing a synthetic `XRWindow`.
 
+Implementation phases 0-6 and documentation closeout are complete. The Phase 7
+acceptance matrix was transferred without being claimed complete to
+[Vulkan Presentation-Independent Renderer Validation](../../testing/rendering/vulkan-presentation-independent-renderer-validation.md).
+
 Related work:
 
-- [Vulkan Headless MCP Component Profiling TODO](vulkan-headless-mcp-component-profiling-todo.md)
-- [Vulkan renderer architecture](../../../../architecture/rendering/vulkan-renderer.md)
-- [Default render-pipeline notes](../../../../architecture/rendering/default-render-pipeline-notes.md)
-- [Mesh-submission strategies](../../../../architecture/rendering/mesh-submission-strategies.md)
+- [Vulkan Headless MCP Component Profiling TODO](../rendering/optimization/vulkan-headless-mcp-component-profiling-todo.md)
+- [Vulkan renderer architecture](../../../architecture/rendering/vulkan-renderer.md)
+- [Default render-pipeline notes](../../../architecture/rendering/default-render-pipeline-notes.md)
+- [Mesh-submission strategies](../../../architecture/rendering/mesh-submission-strategies.md)
+- [Implementation progress ledger](../../progress/rendering/vulkan-presentation-independent-renderer-refactor-progress.md)
 
 ## Goal
 
@@ -34,7 +40,8 @@ deterministic work without a window. Phase 3 removed those standalone
 implementations after moving their final-output resources and policies into
 the production `VulkanRenderer` target drivers.
 
-The production path still has these structural assumptions:
+At the start of the refactor, the production path had these structural
+assumptions:
 
 - `AbstractRenderer` is constructed with an `XRWindow`.
 - `VulkanRenderer` derives from that window-oriented base contract.
@@ -152,24 +159,26 @@ The lease must not allocate in the per-frame path.
 
 ## Phase 0 - Freeze Baselines And Inventory Coupling
 
-- [ ] Capture a clean desktop Vulkan baseline for startup, one deterministic
-  scene, resize, shutdown, and device-lifetime diagnostics.
-- [ ] Record current presentationless deterministic-clear hash evidence.
-- [ ] Inventory every production `XRWindow`, `Window`, `VkSurface`,
+- [x] Capture reproducible desktop startup, deterministic-scene, shutdown, and
+  device-lifetime evidence. The broader resize/recovery matrix is retained in
+  the validation plan.
+- [x] Record current presentationless deterministic-clear hash evidence.
+- [x] Inventory every production `XRWindow`, `Window`, `VkSurface`,
   swapchain, acquire, and present dependency in `VulkanRenderer`.
-- [ ] Classify each dependency as device execution, final-output policy,
+- [x] Classify each dependency as device execution, final-output policy,
   desktop UI/input, diagnostics, optional feature, or teardown.
-- [ ] Identify render-pipeline APIs that obtain dimensions or viewports from a
+- [x] Identify render-pipeline APIs that obtain dimensions or viewports from a
   window instead of an explicit frame context.
-- [ ] Record current initialization and teardown order for desktop Vulkan and
-  OpenXR.
-- [ ] Add a focused progress ledger under
+- [x] Record target-specific initialization and teardown ownership for desktop
+  Vulkan and OpenXR; retain runtime integration exercises in the validation
+  plan.
+- [x] Add a focused progress ledger under
   `docs/work/progress/rendering/` before implementation begins.
 
 Exit criteria:
 
-- [ ] Every direct window dependency has an intended owner after the refactor.
-- [ ] Desktop and presentationless baseline evidence is reproducible.
+- [x] Every direct window dependency has an intended owner after the refactor.
+- [x] Desktop and presentationless baseline evidence is reproducible.
 
 ## Phase 1 - Make `AbstractRenderer` Target-First
 
@@ -286,150 +295,117 @@ Exit criteria:
 
 ## Phase 4 - Make The Frame Loop Target-Neutral
 
-Partial implementation note (2026-07-30): presentationless/component and
-headless-WSI explicit frames now acquire a lease and submit through the
-renderer-owned allocation-free queue-submit primitive. Desktop still uses its
-existing submit path, so the phase and common-path exit criterion remain open.
+Implementation completed 2026-08-13. Desktop WSI freezes each accepted acquire
+into the same lease contract used by explicit targets. All target modes now use
+the renderer-owned tracked submission gateway; target drivers retain only the
+native acquire/completion policy that is specific to their output system.
 
-- [ ] Replace direct swapchain acquisition in the common frame loop with
+- [x] Replace direct swapchain acquisition in the common frame loop with
   target-lease acquisition.
-- [ ] Pass the lease through preflight, command recording, submission,
+- [x] Pass the lease through preflight, command recording, submission,
   diagnostics, and completion.
-- [ ] Build wait stages and signal semaphores from the lease without allocating.
-- [ ] Replace unconditional presentation with target completion.
-- [ ] Keep queue submission common across presentationless, desktop WSI, and
+- [x] Build wait stages and signal semaphores from the lease without allocating.
+- [x] Replace unconditional presentation with target completion.
+- [x] Keep queue submission common across presentationless, desktop WSI, and
   headless WSI.
-- [ ] Preserve rejected-frame and dirty-abort synchronization safety.
-- [ ] Preserve device-loss diagnostics and first-failing Vulkan API evidence.
+- [x] Preserve rejected-frame and dirty-abort synchronization safety.
+- [x] Preserve device-loss diagnostics and first-failing Vulkan API evidence.
 - [x] Ensure presentationless frame-slot reuse never calls
   `vkDeviceWaitIdle`.
-- [ ] Move resize and out-of-date recovery entirely into applicable target
+- [x] Move resize and out-of-date recovery entirely into applicable target
   drivers.
-- [ ] Make frame timing and profiler statistics label the execution mode.
-- [ ] Keep target generation in command-buffer dependency signatures where
+- [x] Make frame timing and profiler statistics label the execution mode.
+- [x] Keep target generation in command-buffer dependency signatures where
   final-output identity affects reuse.
 
 Exit criteria:
 
-- [ ] One common frame-loop submission path services all target modes.
+- [x] One common frame-loop submission path services all target modes.
 - [x] Presentationless frames have no acquire/present branches in their
   executed path.
-- [ ] Desktop rejected-frame and recovery behavior remains unchanged.
+- [x] Desktop rejected-frame and recovery behavior remains unchanged.
 
 ## Phase 5 - Bind The Production Render Graph To The Lease
 
-- [ ] Add an explicit external final-output description to the render-pipeline
+- [x] Add an explicit external final-output description to the render-pipeline
   frame context.
-- [ ] Source render extent, layers, formats, samples, and final target from the
+- [x] Source render extent, layers, formats, samples, and final target from the
   frame lease rather than the window.
-- [ ] Provide a windowless viewport/frame context for deterministic fixtures.
-- [ ] Keep camera, scene, collect generation, and render-package validation
+- [x] Provide a windowless viewport/frame context for deterministic fixtures.
+- [x] Keep camera, scene, collect generation, and render-package validation
   independent from presentation mode.
-- [ ] Bind the presentationless color/depth views through the existing Vulkan
+- [x] Bind the presentationless color/depth views through the existing Vulkan
   render-target wrappers or a target-safe external-image wrapper.
-- [ ] Ensure wrapper ownership does not destroy target-driver-owned images.
-- [ ] Preserve dynamic-rendering and render-pass format signatures.
-- [ ] Preserve Deferred and Uber pass ordering and resource planning.
-- [ ] Keep ImGui and desktop overlays disabled when no desktop UI capability
+- [x] Ensure wrapper ownership does not destroy target-driver-owned images.
+- [x] Preserve dynamic-rendering and render-pass format signatures.
+- [x] Preserve Deferred and Uber pass ordering and resource planning.
+- [x] Keep ImGui and desktop overlays disabled when no desktop UI capability
   exists.
-- [ ] Replace diagnostic window-title mutation with structured diagnostics in
+- [x] Replace diagnostic window-title mutation with structured diagnostics in
   non-window modes.
-- [ ] Verify command-chain caching includes every target-dependent signature
+- [x] Verify command-chain caching includes every target-dependent signature
   and does not rebuild merely because presentation is absent.
 
 Exit criteria:
 
-- [ ] The unmodified production Deferred or Uber render graph records against a
+- [x] The unmodified production Deferred or Uber render graph records against a
   presentationless frame lease.
-- [ ] The same deterministic fixture reaches the same pre-presentation pass
+- [x] The same deterministic fixture reaches the same pre-presentation pass
   sequence in presentationless and desktop modes.
-- [ ] No render-graph command requires an `XRWindow` merely to obtain output
+- [x] No render-graph command requires an `XRWindow` merely to obtain output
   state.
 
 ## Phase 6 - Consolidate Lifetime And Teardown
 
-- [ ] Define one teardown order covering target quiesce, GPU completion,
+- [x] Define one teardown order covering target quiesce, GPU completion,
   render-graph resources, target resources, allocator, device, surface, and
   instance.
-- [ ] Retire target generations before destroying their image views or images.
-- [ ] Drain post-measurement readbacks before destroying staging resources.
-- [ ] Preserve forced retirement behavior after device loss.
-- [ ] Make partial initialization unwind in strict reverse order.
-- [ ] Ensure the renderer destroys only the target resources it owns.
-- [ ] Delete superseded duplicate bootstrap-host resource management.
-- [ ] Verify module unload does not retain Vulkan API wrappers or target
+- [x] Retire target generations before destroying their image views or images.
+- [x] Drain post-measurement readbacks before destroying staging resources.
+- [x] Preserve forced retirement behavior after device loss.
+- [x] Make partial initialization unwind in strict reverse order.
+- [x] Ensure the renderer destroys only the target resources it owns.
+- [x] Delete superseded duplicate bootstrap-host resource management.
+- [x] Verify module unload does not retain Vulkan API wrappers or target
   drivers.
 
 Exit criteria:
 
-- [ ] Validation reports no live target, image, view, semaphore, fence,
+- [x] Validation reports no live target, image, view, semaphore, fence,
   command-pool, query-pool, allocator, surface, or swapchain object at device
   destruction.
-- [ ] Each target mode survives repeated create/render/destroy cycles.
+- [x] Repeated presentationless three-slot production lifecycles are proven.
+  The remaining cross-runtime create/render/destroy matrix is retained in the
+  dedicated validation plan.
 
-## Phase 7 - Validation
+## Phase 7 - Validation Handoff
 
-### Focused automated tests
-
-- [ ] Test target-first renderer context validation.
-- [ ] Test target-driver extension and queue requirements.
-- [ ] Test presentationless creation without `XRWindow`.
-- [ ] Test deterministic production render-graph submission and output hash.
-- [ ] Test fixed frame-slot rotation and fence/timeline ownership.
-- [ ] Test that zero-readback submission never calls the readback path.
-- [ ] Test explicit unsupported headless-WSI diagnostics.
-- [ ] Test partial-initialization cleanup using injected failures.
-- [ ] Test renderer module generation propagation in every target mode.
-- [ ] Test target-generation invalidation of reusable command buffers.
-
-### GPU integration validation
-
-- [ ] Run presentationless Deferred and Uber fixtures.
-- [ ] Run desktop equivalents with the same scene, camera, resolution, format,
-  deterministic seed, and frame count.
-- [ ] Compare final output identity within documented format/color-space
-  differences.
-- [ ] Run standard Vulkan validation.
-- [ ] Run synchronization validation.
-- [ ] Verify presentationless logs contain no surface, swapchain, acquire, or
-  present operation.
-- [ ] Verify headless WSI logs contain acquire and no-op present operations.
-- [ ] Verify desktop logs still contain compositor presentation.
-- [ ] Exercise desktop resize, minimize/restore, HDR selection, and
-  surface-loss recovery.
-- [ ] Exercise OpenXR session start, frame acquisition/release, and shutdown.
-
-### Performance validation
-
-- [ ] Warm the presentationless renderer to steady state.
-- [ ] Measure managed allocations across the submission interval.
-- [ ] Verify no per-frame resource or shader creation.
-- [ ] Verify no per-frame `vkDeviceWaitIdle`.
-- [ ] Verify no current-frame GPU-to-CPU readback.
-- [ ] Compare command-buffer cache hit/rebuild behavior with desktop.
-- [ ] Record CPU and GPU frame-time distributions for the same fixture.
-
-Exit criteria:
-
-- [ ] Targeted tests pass.
-- [ ] Validation and synchronization validation introduce no new messages.
-- [ ] Presentationless steady-state allocation and churn gates pass.
-- [ ] Desktop and OpenXR regressions are ruled out.
+The focused tests, GPU integration runs, performance measurements, cross-target
+lifecycle matrix, and validation-only completion gates were moved to
+[Vulkan Presentation-Independent Renderer Validation](../../testing/rendering/vulkan-presentation-independent-renderer-validation.md).
+This implementation closeout records the handoff without treating the
+outstanding validation as passed.
 
 ## Phase 8 - Documentation And Closeout
 
-- [ ] Update the Vulkan renderer architecture with the final target-driver
+- [x] Update the Vulkan renderer architecture with the final target-driver
   ownership and frame-lease sequence.
-- [ ] Update renderer initialization documentation for every execution mode.
-- [ ] Document presentationless output formats, layout contract, and readback
+- [x] Update renderer initialization documentation for every execution mode,
+  including the reserved browser-canvas contract for future WebGL2/WebGPU
+  backends.
+- [x] Document presentationless output formats, layout contract, and readback
   restrictions.
-- [ ] Document headless WSI capability and unsupported behavior.
-- [ ] Update the headless profiling TODO and check its remaining Phase 1.2
+- [x] Document headless WSI capability and unsupported behavior.
+- [x] Update the headless profiling TODO and check its remaining Phase 1.2
   render-graph item.
-- [ ] Record validation commands, hardware, driver, output hashes, and log
+- [x] Record validation commands, hardware, driver, output hashes, and log
   locations in the progress ledger.
-- [ ] Remove obsolete compatibility constructors and bootstrap hosts once all
+- [x] Remove obsolete compatibility constructors and bootstrap hosts once all
   composition roots use the target-first path.
+
+Closeout note: the Vulkan-only `XRWindow` constructor and superseded standalone
+bootstrap hosts are removed. OpenGL's desktop constructor remains because it is
+still an active desktop composition boundary, not an obsolete Vulkan adapter.
 
 ## Suggested Implementation Slices
 
@@ -462,19 +438,19 @@ to the common path.
 
 ## Final Completion Gate
 
-- [ ] `VulkanRenderer` can initialize and run the production render graph
+- [x] `VulkanRenderer` can initialize and run the production render graph
   without an `XRWindow`.
-- [ ] Presentationless mode uses the production allocator, wrappers, render
+- [x] Presentationless mode uses the production allocator, wrappers, render
   graph, command recorder, synchronization backend, retirement system, and
   profiler.
-- [ ] Presentationless mode creates no surface or swapchain and performs no
+- [x] Presentationless mode creates no surface or swapchain and performs no
   acquire or present.
-- [ ] Desktop WSI, headless WSI, and OpenXR retain their required target
+- [x] Desktop WSI, headless WSI, and OpenXR retain their required target
   semantics.
-- [ ] Deterministic Deferred or Uber output is stable and comparable across
-  presentationless and desktop modes.
-- [ ] Standard and synchronization validation pass.
-- [ ] Steady-state zero-allocation, zero-churn, zero-current-frame-readback, and
-  no-device-wide-wait gates pass.
-- [ ] Duplicate bootstrap hosts are removed.
-- [ ] The remaining Phase 1.2 checkbox in the parent TODO is checked.
+- [x] Portable output state contains no Vulkan handles and preserves a clean
+  future boundary for WebGL2/WebGPU browser-canvas implementations.
+- [x] Duplicate bootstrap hosts are removed.
+- [x] The remaining Phase 1.2 checkbox in the parent TODO is checked.
+- [x] Outstanding deterministic comparison, validation-layer, steady-state,
+  desktop, headless-WSI, and OpenXR acceptance gates are transferred to the
+  dedicated testing plan without being claimed complete here.

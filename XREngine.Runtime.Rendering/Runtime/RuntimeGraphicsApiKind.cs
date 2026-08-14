@@ -7,5 +7,7 @@ public enum RuntimeGraphicsApiKind
 {
     Unknown = 0,
     OpenGL,
-    Vulkan
+    Vulkan,
+    WebGL2,
+    WebGPU,
 }

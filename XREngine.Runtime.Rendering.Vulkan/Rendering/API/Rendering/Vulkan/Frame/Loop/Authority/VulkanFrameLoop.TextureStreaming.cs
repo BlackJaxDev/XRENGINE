@@ -66,8 +66,9 @@ internal sealed partial class VulkanFrameLoop : IVulkanTextureUploadScheduler
         if (canceledUploads > 0)
         {
             Debug.Vulkan(
-                "[Vulkan] Canceled {0} pending imported texture upload frame op(s) during renderer shutdown.",
-                canceledUploads);
+                "[Vulkan] Canceled {0} pending imported texture upload frame op(s). Reason={1}",
+                canceledUploads,
+                reason);
         }
     }
 

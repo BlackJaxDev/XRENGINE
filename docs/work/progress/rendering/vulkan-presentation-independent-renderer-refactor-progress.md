@@ -1,9 +1,16 @@
 # Vulkan Presentation-Independent Renderer Refactor Progress
 
-Status: Active  
-Started: 2026-07-30  
+Status: Implementation Complete; validation transferred
+
+Started: 2026-07-30
+
+Completed: 2026-08-13
+
 Execution plan:
-[Vulkan Presentation-Independent Renderer Refactor TODO](../../todo/rendering/optimization/vulkan-presentation-independent-renderer-refactor-todo.md)
+[Completed Vulkan Presentation-Independent Renderer Refactor](../../todo/COMPLETED/vulkan-presentation-independent-renderer-refactor-todo.md)
+
+Remaining validation:
+[Vulkan Presentation-Independent Renderer Validation](../../testing/rendering/vulkan-presentation-independent-renderer-validation.md)
 
 ## Objective
 
@@ -16,15 +23,15 @@ constructing a synthetic `XRWindow`.
 
 | Phase | Status | Notes |
 |---|---|---|
-| Phase 0 - Baselines and coupling inventory | Not started | Baseline capture remains required before target-driver extraction |
-| Phase 1 - Target-first `AbstractRenderer` | Complete | Stable host context, explicit desktop capability, compatibility constructors, and tests landed |
+| Phase 0 - Baselines and coupling inventory | Complete | Coupling inventory and reproducible desktop/presentationless evidence recorded in this ledger |
+| Phase 1 - Target-first `AbstractRenderer` | Complete | Stable host context, explicit desktop capability, migration adapters, and tests landed |
 | Phase 2 - Vulkan device core and target policy | Complete | Target-selected extensions, queues, lifecycle hooks, and shared production device core |
 | Phase 3 - Target drivers | Complete | Production presentationless image ring, headless WSI, desktop policy ownership, and OpenXR lease adapter |
-| Phase 4 - Target-neutral frame loop | Partial | Explicit presentationless/component and headless-WSI frames share the lease-driven renderer submit primitive; desktop integration remains |
-| Phase 5 - Production render-graph binding | Not started | |
-| Phase 6 - Lifetime and teardown | Not started | |
-| Phase 7 - Validation | Not started | |
-| Phase 8 - Documentation and closeout | Not started | |
+| Phase 4 - Target-neutral frame loop | Complete | Desktop and explicit targets freeze acquired output into one lease and use the common tracked submit gateway |
+| Phase 5 - Production render-graph binding | Complete | Portable frame-output state drives windowless production graph recording against borrowed target views |
+| Phase 6 - Lifetime and teardown | Complete | Quiescing, staged reverse unwind, ordered retirement/readback drain, and idempotent cleanup implemented |
+| Phase 7 - Validation | Transferred | Remaining validation matrix moved to the dedicated testing plan without claiming completion |
+| Phase 8 - Documentation and closeout | Complete | Architecture, initialization, output contracts, parent workstream, and closeout links updated |
 
 ## Phase 1 Work Log
 
@@ -175,15 +182,93 @@ Implemented:
 - Confirmed that presentationless execution contains no
   `vkAcquireNextImageKHR`, `vkQueuePresentKHR`, or `vkDeviceWaitIdle` branch.
 
-Remaining:
+### 2026-08-13 - Target-neutral production submission completed
 
-- Populate and thread a desktop WSI lease through preflight, recording,
-  submission, diagnostics, completion, and dirty-abort recovery.
-- Make the desktop path call `SubmitFrameTargetLease` and remove its duplicate
-  submit assembly.
-- Thread target generation into the command-recording dependency signature.
-- Finish mode-labelled lifecycle statistics and validate desktop recovery
-  behavior before checking the Phase 4 exit criteria.
+Implemented:
+
+- Desktop WSI now freezes every accepted acquired image, view, extent, layout,
+  target generation, and synchronization dependency into
+  `VulkanFrameTargetLease`, matching the explicit-target contract.
+- Desktop and explicit targets submit through `SubmitFrameTargetLease`, which
+  stack-allocates the bounded wait/signal sets and routes the result through
+  the sole tracked queue-submit gateway. Device-loss disposition and the first
+  failing native operation remain attached to the real submission.
+- Command-recording policy now carries the lease-required final layout instead
+  of assuming `PresentSrcKHR`. Target generation participates in prepared
+  render-target identity and reusable-primary dependency validation.
+- Frame-slot counts are derived from the selected target. Three-slot explicit
+  targets no longer index desktop-sized retirement or arena state.
+- Removed a diagnostic string allocation from the successful queue-submit hot
+  path; detailed native-operation text is constructed only for device loss.
+
+## Phase 5 Work Log
+
+### 2026-08-13 - Production render graph bound to portable frame output
+
+Implemented:
+
+- Added `RenderFrameOutputDescription`, a backend-neutral, frame-scoped value
+  carrying output properties, target generation, slot, view, execution mode,
+  and host capabilities. Native Vulkan handles remain exclusively in the
+  backend lease.
+- Added an allocation-free renderer scope that publishes the acquired output
+  to `IRuntimeRenderPipelineFrameContext.FinalOutput` while ordinary viewport
+  and pipeline code builds the frame.
+- Render-pipeline resource planning now sources display/internal extent,
+  layers, samples, output formats, external-target kind, and view identity from
+  the frame output. Color/depth formats participate in generation keys so
+  canvas or target reconfiguration cannot reuse incompatible resources.
+- Added the lease-backed production entry point on
+  `VulkanExplicitTargetRendererHost`. It runs the ordinary Deferred/Uber graph,
+  records with the production primary-command runtime, submits through the
+  common gateway, and completes or aborts the target lease.
+- Explicit target views are borrowed by command recording; target drivers
+  retain destruction authority. Desktop ImGui composition is absent when the
+  output lacks `DesktopOverlays`, while engine-owned render-graph UI remains
+  ordinary portable primary-command work.
+
+## Phase 6 Work Log
+
+### 2026-08-13 - Lifetime and teardown consolidated
+
+Implemented:
+
+- Added explicit initialization stages. Failed initialization invokes the same
+  cleanup path and unwinds only the stages that were reached, preserving both
+  initialization and cleanup failures when necessary.
+- Cleanup publishes quiescing before target shutdown, rejects new frame
+  admission, drains active frame owners, optionally establishes GPU completion, retires target
+  generations, drains readbacks before staging, and preserves forced
+  retirement after device loss.
+- Logical-device resources, target final output, allocator, device, target
+  instance resources, and Vulkan instance are destroyed in a single ordered
+  path. Cleanup is idempotent and continues collecting failures instead of
+  abandoning later ownership boundaries.
+- Output-service references and renderer-owned wrappers are detached after
+  native destruction. Repeated presentationless production host lifecycles
+  complete without retaining target-driver or Vulkan wrapper state.
+
+## Phase 8 Work Log
+
+### 2026-08-13 - Documentation and closeout completed
+
+Implemented:
+
+- Updated Vulkan architecture and renderer initialization documentation for
+  desktop WSI, presentationless, component, headless WSI, OpenXR, and the
+  reserved future browser-canvas contract.
+- Documented fixed-output format/layout/readback rules and explicit unsupported
+  headless-WSI behavior.
+- Removed the obsolete Vulkan `XRWindow` compatibility constructor after all
+  Vulkan composition roots were confirmed to use `RendererHostContext`.
+  OpenGL's active desktop constructor remains.
+- Checked the headless profiling workstream's Phase 1.2 production render-graph
+  item and linked its remaining acceptance work to the dedicated validation
+  plan.
+- Moved the Phase 7 validation matrix to
+  [Vulkan Presentation-Independent Renderer Validation](../../testing/rendering/vulkan-presentation-independent-renderer-validation.md)
+  without claiming unrun gates as complete, then retired the implementation
+  TODO to `docs/work/todo/COMPLETED/`.
 
 ## Validation Evidence
 
@@ -272,6 +357,44 @@ Phase 4 partial-slice validation on 2026-07-30:
   - Skipped: 0
 - Existing Magick.NET advisory warnings remain unrelated.
 
+Phases 4-6 implementation validation on 2026-08-13:
+
+- `dotnet build .\XREngine.Runtime.Rendering\XREngine.Runtime.Rendering.csproj --no-restore --no-dependencies`
+  - Passed with zero warnings and zero errors.
+- `dotnet build .\XREngine.Runtime.Rendering.Vulkan\XREngine.Runtime.Rendering.Vulkan.csproj --no-restore --no-dependencies`
+  - Passed with zero warnings and zero errors.
+- `dotnet build .\XREngine.RenderBench\XREngine.RenderBench.csproj --no-restore`
+  - Passed with zero warnings and zero errors.
+- Presentationless RenderBench deterministic-clear run, 64x64, three frame
+  slots, six warmup, three stability, and six capture frames:
+  - NVIDIA GeForce RTX 4070 Laptop GPU.
+  - Six submissions and six command buffers; all stability gates passed.
+  - Capture-thread and fixture-worker allocations: 0 bytes.
+  - Output SHA-256:
+    `DEF598687A136FABA64832EF05E1E7DFAC2B0E0A703DA047C2E9556107726318`.
+  - Evidence:
+    `Build/_AgentValidation/20260813-180927-vulkan-presentation-refactor/reports/presentationless-smoke-5/`.
+- A disposable production-graph harness ran the unmodified
+  `DefaultRenderPipeline` through `SubmitProductionFrame` with a windowless
+  viewport and three-slot presentationless target:
+  - Four frames per renderer lifecycle and three complete create/render/destroy
+    lifecycles.
+  - Every lifecycle produced
+    `62FB561C59D0CEA247FC588F3311EE665375F35D8675B186E2792CB7DFCFF88C`.
+- An isolated desktop Vulkan editor session built and ran successfully. Two
+  viewport readbacks from different camera positions completed on queue slots
+  0 and 1 and produced visibly distinct images. The session emitted no Vulkan
+  validation, device-loss, fatal, or unhandled-exception diagnostics; the only
+  warning was the unrelated optional Steam Audio fallback.
+- `rdc doctor` passed with RenderDoc 1.44 and a registered Vulkan layer.
+  Presentationless execution has no WSI frame boundary, so external automatic
+  capture did not produce an `.rdc`; the deterministic hash, allocation gates,
+  desktop readbacks, and renderer logs remain the validation evidence for this
+  slice.
+- Per the repository feature-first testing policy, no tests were added,
+  modified, or run before explicit user clearance. Phase 7 retains the focused
+  automated and remaining cross-target integration matrix.
+
 ## Decisions
 
 - The renderer-owned context is distinct from the transient backend factory
@@ -295,14 +418,20 @@ Phase 4 partial-slice validation on 2026-07-30:
   `XR_KHR_vulkan_enable2`/runtime-requirements path.
 - Fixed-output runtime hosts use a single thin adapter over the production
   renderer; target drivers own all native final-output resources and policy.
+- Generic pipeline code consumes `RenderFrameOutputDescription`; native image,
+  synchronization, JavaScript, and backend handle identities stay inside the
+  concrete renderer. This is also the future WebGL2/WebGPU canvas boundary.
+- Resource-generation identity includes target class, dimensions, views,
+  samples, and color/depth formats. Presentation absence alone is not a cache
+  invalidation reason.
 
 ## Open Risks
 
-- Direct compatibility `XRWindow` usage remains in Vulkan and OpenGL and must
-  be classified/moved behind target drivers in later phases.
-- Phase 4 still needs to thread `VulkanFrameTargetLease` through the common
-  production frame loop. Phase 3 provides the target-owned resources and
-  acquisition/completion policy without prematurely rewriting that loop.
+- Direct compatibility `XRWindow` usage remains in desktop-only Vulkan and
+  OpenGL services; portable final-output state no longer depends on it.
 - Phase 0 desktop/OpenXR baselines remain outstanding because the user
   requested Phase 1 directly.
+- Phase 7 still needs the full headless-WSI/OpenXR runtime matrix, injected
+  partial-initialization failure coverage, synchronization validation, and
+  repeated lifecycle coverage for every platform-available target mode.
 - Existing unrelated worktree changes must remain untouched.

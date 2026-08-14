@@ -119,26 +119,6 @@ internal sealed unsafe class VulkanPresentationlessTargetDriver :
 
         try
         {
-            CommandBufferBeginInfo begin = new()
-            {
-                SType = StructureType.CommandBufferBeginInfo,
-                Flags = CommandBufferUsageFlags.OneTimeSubmitBit,
-            };
-            renderer.ThrowIfVulkanDeviceOperationNotAdmitted("vkBeginCommandBuffer.Presentationless.Frame");
-            ThrowIfDeviceFailure(
-                api.BeginCommandBuffer(slot.CommandBuffer, in begin),
-                "begin presentationless command buffer");
-            api.CmdResetQueryPool(
-                slot.CommandBuffer,
-                slot.TimestampQueryPool,
-                0,
-                2);
-            api.CmdWriteTimestamp(
-                slot.CommandBuffer,
-                PipelineStageFlags.TopOfPipeBit,
-                slot.TimestampQueryPool,
-                0);
-
             commandBuffer = slot.CommandBuffer;
             VulkanRenderFrameTarget target = new(
                 slot.ColorImage,
@@ -174,6 +154,30 @@ internal sealed unsafe class VulkanPresentationlessTargetDriver :
             RestoreFrameSlotFence(slotIndex);
             throw;
         }
+    }
+
+    public void BeginFrameRecording(
+        in VulkanFrameTargetLease lease,
+        CommandBuffer commandBuffer)
+    {
+        VulkanTargetOutputContext renderer = RequireTargetContext();
+        renderer.ThrowIfVulkanDeviceOperationNotAdmitted("Presentationless.BeginFrameRecording");
+        int slotIndex = ResolveSlotIndex(in lease);
+        VulkanPresentationlessFrameSlot slot = _slots[slotIndex];
+        CommandBufferBeginInfo begin = new()
+        {
+            SType = StructureType.CommandBufferBeginInfo,
+            Flags = CommandBufferUsageFlags.OneTimeSubmitBit,
+        };
+        ThrowIfDeviceFailure(
+            renderer.VulkanApi.BeginCommandBuffer(commandBuffer, in begin),
+            "begin presentationless command buffer");
+        renderer.VulkanApi.CmdResetQueryPool(commandBuffer, slot.TimestampQueryPool, 0, 2);
+        renderer.VulkanApi.CmdWriteTimestamp(
+            commandBuffer,
+            PipelineStageFlags.TopOfPipeBit,
+            slot.TimestampQueryPool,
+            0);
     }
 
     public void EndFrameRecording(

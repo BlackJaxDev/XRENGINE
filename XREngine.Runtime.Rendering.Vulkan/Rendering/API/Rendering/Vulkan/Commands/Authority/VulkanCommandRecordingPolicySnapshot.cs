@@ -1,3 +1,5 @@
+using Silk.NET.Vulkan;
+
 namespace XREngine.Rendering.Vulkan;
 
 /// <summary>
@@ -11,4 +13,5 @@ internal readonly record struct VulkanCommandRecordingPolicySnapshot(
     bool IsExternalSwapchainTarget,
     bool PreserveSwapchainForOverlay,
     bool TransitionSwapchainToPresent,
-    bool PreferKhrDynamicRendering = false);
+    bool PreferKhrDynamicRendering = false,
+    ImageLayout FinalTargetLayout = ImageLayout.PresentSrcKhr);

@@ -67,6 +67,22 @@ internal sealed partial class VulkanFrameLoop
         Action<Vk, CommandBuffer, VulkanRenderFrameTarget> record)
     {
         ArgumentNullException.ThrowIfNull(record);
+        if (!TryEnterExplicitFrameExecution())
+            throw new ObjectDisposedException(nameof(VulkanFrameLoop));
+
+        try
+        {
+            ExecuteExplicitTargetFrameCore(record);
+        }
+        finally
+        {
+            ExitExplicitFrameExecution();
+        }
+    }
+
+    private unsafe void ExecuteExplicitTargetFrameCore(
+        Action<Vk, CommandBuffer, VulkanRenderFrameTarget> record)
+    {
         IVulkanExplicitFrameTargetDriver target = RequireExplicitFrameTarget();
         VulkanFrameTargetLease lease = default;
         bool acquired = false;
@@ -104,6 +120,7 @@ internal sealed partial class VulkanFrameLoop
                 EVulkanFrameWaitReason.Driver);
 
             long recordStart = Stopwatch.GetTimestamp();
+            target.BeginFrameRecording(in lease, commandBuffer);
             record(Api, commandBuffer, lease.Target);
             target.EndFrameRecording(in lease, commandBuffer);
             frameTrace.RecordStage(
@@ -124,13 +141,21 @@ internal sealed partial class VulkanFrameLoop
             using (VulkanCpuStageScope cpuStage =
                    new(_frameTelemetry, EVulkanCpuStage.Submission))
             {
-                result = SubmitFrameTargetLease(
+                VulkanSubmissionDiagnosticContext diagnosticContext =
+                    CreateFrameTargetSubmissionDiagnosticContext(
+                        in lease,
+                        frameNumber,
+                        commandBuffer,
+                        FrameSubmissionKind);
+                VulkanSubmissionReceipt receipt = SubmitFrameTargetLease(
                     in lease,
                     commandBuffers,
                     commandBufferCount: 1,
                     signalGraphicsTimeline: false,
                     graphicsTimelineSignalValue: 0,
+                    in diagnosticContext,
                     caller: nameof(ExecuteExplicitTargetFrame));
+                result = receipt.Result;
                 if (result == Result.Success)
                 {
                     // Queue acceptance transfers output ownership immediately. Publish it before
@@ -201,12 +226,13 @@ internal sealed partial class VulkanFrameLoop
     /// Builds binary and optional timeline semaphore arrays on the stack and
     /// submits one frame-target lease without managed allocation.
     /// </summary>
-    private unsafe Result SubmitFrameTargetLease(
+    private unsafe VulkanSubmissionReceipt SubmitFrameTargetLease(
         in VulkanFrameTargetLease lease,
         CommandBuffer* commandBuffers,
         uint commandBufferCount,
         bool signalGraphicsTimeline,
         ulong graphicsTimelineSignalValue,
+        in VulkanSubmissionDiagnosticContext diagnosticContext,
         string caller)
     {
         Semaphore* waitSemaphores = stackalloc Semaphore[1];
@@ -276,13 +302,36 @@ internal sealed partial class VulkanFrameLoop
                 : null,
         };
 
-        return _commandRuntime.SubmitToQueueTracked(
-            Api,
-            _deviceContext,
-            _telemetry,
+        return _commandRuntime.SubmitToQueueTrackedWithDisposition(
             _deviceContext.GraphicsQueue,
             ref submitInfo,
             lease.CompletionFence,
+            in diagnosticContext,
+            out _,
+            out _,
             caller);
     }
+
+    private VulkanSubmissionDiagnosticContext CreateFrameTargetSubmissionDiagnosticContext(
+        in VulkanFrameTargetLease lease,
+        ulong frameNumber,
+        CommandBuffer firstCommandBuffer,
+        string submissionKind)
+        => new()
+        {
+            SubmissionKind = submissionKind,
+            FrameOpKind = "FrameTarget",
+            OutputTargetName = FrameExecutionLabel,
+            OutputWidth = lease.Target.Extent.Width,
+            OutputHeight = lease.Target.Extent.Height,
+            InternalWidth = lease.Target.Extent.Width,
+            InternalHeight = lease.Target.Extent.Height,
+            FrameId = frameNumber,
+            FrameSlot = checked((int)lease.Target.FrameSlotIndex),
+            SwapchainImageIndex = lease.ImageIndex,
+            ResourceGeneration = lease.Target.TargetGeneration,
+            CommandBufferCount = 1,
+            FirstCommandBufferHandle = unchecked((ulong)firstCommandBuffer.Handle),
+            FenceHandle = unchecked((ulong)lease.CompletionFence.Handle),
+        };
 }

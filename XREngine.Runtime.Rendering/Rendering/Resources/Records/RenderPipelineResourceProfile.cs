@@ -27,7 +27,9 @@ public readonly record struct RenderPipelineResourceProfile(
     ulong FeatureMask = 0,
     RenderPipelineExternalTargetKind ExternalTargetKind = RenderPipelineExternalTargetKind.None,
     uint ViewCount = 1,
-    uint ViewIndex = 0)
+    uint ViewIndex = 0,
+    XREngine.Data.Rendering.EPixelInternalFormat OutputColorFormat = XREngine.Data.Rendering.EPixelInternalFormat.Rgba8,
+    XREngine.Data.Rendering.EPixelInternalFormat OutputDepthFormat = XREngine.Data.Rendering.EPixelInternalFormat.Depth24Stencil8)
 {
     /// <summary>
     /// Gets an empty render pipeline resource profile with default values for all properties.
