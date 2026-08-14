@@ -404,10 +404,10 @@ internal sealed class FramePlanBuilder
         for (int index = 0; index < operationCount; index++)
         {
             indegree[index] = 0;
-            ref readonly FrameOpResourceUseList uses =
-                ref operations.GetResourceUses(index);
+            ReadOnlySpan<FrameOpResourceUse> uses =
+                operations.GetResourceUses(index);
             int dependencyCount = 0;
-            for (int useIndex = 0; useIndex < uses.Count; useIndex++)
+            for (int useIndex = 0; useIndex < uses.Length; useIndex++)
             {
                 FrameOpResourceUse use = uses[useIndex];
                 ResourceVersionKey key = new(use.ResourceId, use.Version);
@@ -446,7 +446,7 @@ internal sealed class FramePlanBuilder
             // Publish writes only after every access in this operation has
             // resolved against the preceding stream. A read/write use must
             // depend on the prior producer, never on itself.
-            for (int useIndex = 0; useIndex < uses.Count; useIndex++)
+            for (int useIndex = 0; useIndex < uses.Length; useIndex++)
             {
                 FrameOpResourceUse use = uses[useIndex];
                 if ((use.Access & EFrameOpResourceAccess.Write) != 0)

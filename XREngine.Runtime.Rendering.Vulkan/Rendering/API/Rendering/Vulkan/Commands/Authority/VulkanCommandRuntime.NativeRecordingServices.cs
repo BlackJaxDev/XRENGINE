@@ -964,12 +964,43 @@ internal sealed partial class VulkanCommandRuntime
 
     private bool HasCurrentSecondaryDescriptorPayloadRequirements(CommandBuffer secondary)
     {
-        if (secondary.Handle == 0)
-            return false;
+        lock (ResourceRuntime.Lifetime.Tracker.SyncRoot)
+        lock (Synchronization._vulkanImageLayoutLock)
+            return HasCurrentSecondaryDescriptorPayloadRequirementsUnderLock(secondary);
+    }
 
+    private bool HaveCurrentSecondaryDescriptorPayloadRequirements(
+        CommandBuffer[] secondaryBuffers,
+        int secondaryCount,
+        out int invalidIndex)
+    {
+        invalidIndex = -1;
+        int count = Math.Min(secondaryCount, secondaryBuffers.Length);
         lock (ResourceRuntime.Lifetime.Tracker.SyncRoot)
         lock (Synchronization._vulkanImageLayoutLock)
         {
+            for (int index = 0; index < count; index++)
+            {
+                if (HasCurrentSecondaryDescriptorPayloadRequirementsUnderLock(
+                        secondaryBuffers[index]))
+                {
+                    continue;
+                }
+
+                invalidIndex = index;
+                return false;
+            }
+
+            return true;
+        }
+    }
+
+    private bool HasCurrentSecondaryDescriptorPayloadRequirementsUnderLock(
+        CommandBuffer secondary)
+    {
+        if (secondary.Handle == 0)
+            return false;
+
             bool hasRecordedState =
                 Synchronization._recordedImageLayoutsByCommandBuffer.TryGetValue(
                     unchecked((ulong)secondary.Handle),
@@ -1028,7 +1059,6 @@ internal sealed partial class VulkanCommandRuntime
                 }
             }
             return true;
-        }
     }
 
     private void TransitionSecondaryDescriptorImagesForExecution(
@@ -1044,11 +1074,11 @@ internal sealed partial class VulkanCommandRuntime
         CommandBuffer primary,
         CommandBuffer[] secondaryBuffers,
         int secondaryCount)
-    {
-        int count = Math.Min(secondaryCount, secondaryBuffers.Length);
-        for (int index = 0; index < count; index++)
-            TransitionSecondaryDescriptorImagesForExecution(primary, secondaryBuffers[index]);
-    }
+        => TransitionSecondaryDescriptorImagesForExecution(
+            PrimaryCommandEncoder,
+            FrameTelemetry,
+            primary,
+            secondaryBuffers.AsSpan(0, Math.Min(secondaryCount, secondaryBuffers.Length)));
 
     private unsafe void CmdExecuteCommandsTracked(
         CommandBuffer primary,
@@ -1058,19 +1088,18 @@ internal sealed partial class VulkanCommandRuntime
         if (commandBufferCount == 0 || secondaryCommandBuffers is null)
             return;
 
-        for (uint index = 0; index < commandBufferCount; index++)
-        {
-            CommandBuffer secondary = secondaryCommandBuffers[index];
-            PrimaryCommandEncoder.Track(
-                primary,
-                ObjectType.CommandBuffer,
-                unchecked((ulong)secondary.Handle));
-            // A secondary is never submitted directly, so its final image states
-            // become globally visible only through the primary that executes it.
-            // Without this merge every re-record sees the same missing entry
-            // state and the supposedly reusable secondary is rejected forever.
-            MergeSecondaryImageStatesForExecution(primary, secondary, FrameTelemetry);
-        }
+        ReadOnlySpan<CommandBuffer> secondaries = new(
+            secondaryCommandBuffers,
+            checked((int)commandBufferCount));
+        PrimaryCommandEncoder.TrackCommandBuffers(primary, secondaries);
+        // A secondary is never submitted directly, so its final image states
+        // become globally visible only through the primary that executes it.
+        // Publish one ordered batch instead of repeatedly locking and rebuilding
+        // the primary journal for every reusable secondary.
+        MergeSecondaryImageStatesForExecution(
+            primary,
+            secondaries,
+            FrameTelemetry);
         Api.CmdExecuteCommands(primary, commandBufferCount, secondaryCommandBuffers);
         InvalidatePrimaryBindStateAfterSecondaryExecution(primary);
         RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanExecuteSecondaryCommandBuffers(commandBufferCount);

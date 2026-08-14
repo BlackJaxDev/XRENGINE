@@ -3,14 +3,18 @@ using System;
 namespace XREngine.Rendering.Vulkan;
 
 /// <summary>
-/// Allocation-free immutable-by-publication snapshot of the exact native target
-/// inherited by a recorded packet.
+/// Immutable-by-publication snapshot of the exact native target inherited by a
+/// recorded packet. Copies share the bounded exact-count attachment array after
+/// all <see cref="SetAttachment"/> calls complete.
 /// </summary>
 internal struct VulkanRecordedRenderTargetSnapshot : IEquatable<VulkanRecordedRenderTargetSnapshot>
 {
     public const int MaxAttachmentCount = 16;
+    private const int InlineAttachmentCapacity = 2;
 
-    private VulkanNativeAttachmentIdentityBuffer _attachments;
+    private VulkanNativeAttachmentIdentity _firstAttachment;
+    private VulkanNativeAttachmentIdentity _secondAttachment;
+    private VulkanNativeAttachmentIdentity[]? _overflowAttachments;
 
     public ulong FramebufferHandle { get; private set; }
     public ulong FramebufferGeneration { get; private set; }
@@ -39,6 +43,15 @@ internal struct VulkanRecordedRenderTargetSnapshot : IEquatable<VulkanRecordedRe
             attachmentCount > 0 &&
             attachmentCount <= MaxAttachmentCount &&
             (framebufferHandle == 0UL || framebufferGeneration != 0UL);
+        if (!IsComplete || attachmentCount <= InlineAttachmentCapacity)
+            return;
+
+        if (_overflowAttachments is null ||
+            _overflowAttachments.Length < attachmentCount)
+        {
+            _overflowAttachments = new VulkanNativeAttachmentIdentity[
+                Math.Min(MaxAttachmentCount, Math.Max(attachmentCount, 4))];
+        }
     }
 
     public void SetAttachment(int index, in VulkanNativeAttachmentIdentity attachment)
@@ -46,7 +59,12 @@ internal struct VulkanRecordedRenderTargetSnapshot : IEquatable<VulkanRecordedRe
         if ((uint)index >= (uint)AttachmentCount || index >= MaxAttachmentCount)
             throw new ArgumentOutOfRangeException(nameof(index));
 
-        _attachments[index] = attachment;
+        if (AttachmentCount > InlineAttachmentCapacity)
+            _overflowAttachments![index] = attachment;
+        else if (index == 0)
+            _firstAttachment = attachment;
+        else
+            _secondAttachment = attachment;
         IsComplete &= attachment.IsComplete;
     }
 
@@ -55,7 +73,10 @@ internal struct VulkanRecordedRenderTargetSnapshot : IEquatable<VulkanRecordedRe
         if ((uint)index >= (uint)AttachmentCount || index >= MaxAttachmentCount)
             throw new ArgumentOutOfRangeException(nameof(index));
 
-        return _attachments[index];
+        if (AttachmentCount > InlineAttachmentCapacity)
+            return _overflowAttachments![index];
+
+        return index == 0 ? _firstAttachment : _secondAttachment;
     }
 
     public readonly bool Equals(VulkanRecordedRenderTargetSnapshot other)
@@ -73,7 +94,7 @@ internal struct VulkanRecordedRenderTargetSnapshot : IEquatable<VulkanRecordedRe
 
         for (int i = 0; i < AttachmentCount; i++)
         {
-            if (_attachments[i] != other._attachments[i])
+            if (GetAttachment(i) != other.GetAttachment(i))
                 return false;
         }
 
@@ -104,8 +125,8 @@ internal struct VulkanRecordedRenderTargetSnapshot : IEquatable<VulkanRecordedRe
 
         for (int i = 0; i < AttachmentCount; i++)
         {
-            VulkanNativeAttachmentIdentity current = _attachments[i];
-            VulkanNativeAttachmentIdentity expected = other._attachments[i];
+            VulkanNativeAttachmentIdentity current = GetAttachment(i);
+            VulkanNativeAttachmentIdentity expected = other.GetAttachment(i);
             if (current != expected)
             {
                 return $"Attachment[{i}] " +
@@ -131,7 +152,7 @@ internal struct VulkanRecordedRenderTargetSnapshot : IEquatable<VulkanRecordedRe
         hash.Add(AttachmentCount);
         hash.Add(IsComplete);
         for (int i = 0; i < AttachmentCount; i++)
-            hash.Add(_attachments[i]);
+            hash.Add(GetAttachment(i));
         return hash.ToHashCode();
     }
 

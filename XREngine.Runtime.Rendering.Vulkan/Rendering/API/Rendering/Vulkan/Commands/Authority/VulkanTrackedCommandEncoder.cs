@@ -100,6 +100,47 @@ internal readonly unsafe struct VulkanTrackedCommandEncoder(VulkanCommandRuntime
     }
 
     /// <summary>
+    /// Records the secondary command buffers executed by one primary command in
+    /// a single tracking transaction. Primary assembly can execute hundreds of
+    /// reusable secondaries, so taking the same batch monitor once per handle is
+    /// avoidable serialization on the render thread.
+    /// </summary>
+    internal void TrackCommandBuffers(
+        CommandBuffer commandBuffer,
+        ReadOnlySpan<CommandBuffer> secondaryCommandBuffers)
+    {
+        ulong commandBufferHandle = unchecked((ulong)commandBuffer.Handle);
+        if (commandBufferHandle == 0 || secondaryCommandBuffers.IsEmpty ||
+            !Runtime.CommandBuffers.TrackingBatches.TryGetValue(
+                commandBufferHandle,
+                out VulkanCommandBufferTrackingBatch? batch))
+        {
+            return;
+        }
+
+        lock (batch)
+        {
+            if (batch.QueuedSubmissionCount != 0)
+            {
+                throw new InvalidOperationException(
+                    $"Command buffer 0x{commandBufferHandle:X} cannot record dependencies while queued.");
+            }
+
+            foreach (CommandBuffer secondary in secondaryCommandBuffers)
+            {
+                ulong secondaryHandle = unchecked((ulong)secondary.Handle);
+                if (secondaryHandle != 0)
+                {
+                    batch.RecordDependency(
+                        new VulkanResourceLifetimeKey(
+                            ObjectType.CommandBuffer,
+                            secondaryHandle));
+                }
+            }
+        }
+    }
+
+    /// <summary>
     /// Publishes a recorded image-access delta for the current command-buffer
     /// generation. The synchronization authority consumes the delta when the
     /// encoder ends the recording.

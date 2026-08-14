@@ -26,6 +26,7 @@ internal unsafe class VkFrameBuffer(
     private Extent2D[]? _attachmentExtents;
     private AttachmentBuildInfo[] _attachmentBuildScratch = [];
     private readonly List<CachedFrameBufferState> _cachedFrameBufferStates = [];
+    private VulkanRecordedRenderTargetSnapshot _recordedRenderTargetSnapshot;
 
     public override VkObjectType Type { get; } = VkObjectType.Framebuffer;
     public override bool IsGenerated => IsActive;
@@ -82,6 +83,41 @@ internal unsafe class VkFrameBuffer(
             : BackendContext.GetResourceGeneration(
                 ObjectType.Framebuffer,
                 _frameBuffer.Handle);
+        Span<VulkanNativeAttachmentIdentity> attachments =
+            stackalloc VulkanNativeAttachmentIdentity[
+                VulkanRecordedRenderTargetSnapshot.MaxAttachmentCount];
+        for (int i = 0; i < _attachmentViews.Length; i++)
+        {
+            AttachmentTargetInfo targetInfo = _attachmentTargets[i];
+            if (!TryResolveRecordedAttachmentImage(targetInfo.Target, out Image image))
+            {
+                snapshot = default;
+                return false;
+            }
+
+            ImageView view = _attachmentViews[i];
+            attachments[i] = new VulkanNativeAttachmentIdentity(
+                image.Handle,
+                BackendContext.GetResourceGeneration(ObjectType.Image, image.Handle),
+                view.Handle,
+                BackendContext.GetResourceGeneration(ObjectType.ImageView, view.Handle),
+                _attachmentSignature[i].ReferenceLayout);
+        }
+
+        if (RecordedRenderTargetSnapshotMatches(
+                in _recordedRenderTargetSnapshot,
+                _frameBuffer.Handle,
+                framebufferGeneration,
+                FramebufferWidth,
+                FramebufferHeight,
+                MultiviewViewMask,
+                attachments[.._attachmentViews.Length]))
+        {
+            snapshot = _recordedRenderTargetSnapshot;
+            return true;
+        }
+
+        snapshot = default;
         snapshot.Initialize(
             _frameBuffer.Handle,
             framebufferGeneration,
@@ -89,24 +125,39 @@ internal unsafe class VkFrameBuffer(
             FramebufferHeight,
             MultiviewViewMask,
             _attachmentViews.Length);
+        for (int index = 0; index < _attachmentViews.Length; index++)
+            snapshot.SetAttachment(index, attachments[index]);
 
-        for (int i = 0; i < _attachmentViews.Length; i++)
+        if (snapshot.IsComplete)
+            _recordedRenderTargetSnapshot = snapshot;
+        return snapshot.IsComplete;
+    }
+
+    private static bool RecordedRenderTargetSnapshotMatches(
+        in VulkanRecordedRenderTargetSnapshot snapshot,
+        ulong framebufferHandle,
+        ulong framebufferGeneration,
+        uint width,
+        uint height,
+        uint viewMask,
+        ReadOnlySpan<VulkanNativeAttachmentIdentity> attachments)
+    {
+        if (!snapshot.IsComplete ||
+            snapshot.FramebufferHandle != framebufferHandle ||
+            snapshot.FramebufferGeneration != framebufferGeneration ||
+            snapshot.Width != width ||
+            snapshot.Height != height ||
+            snapshot.ViewMask != viewMask ||
+            snapshot.AttachmentCount != attachments.Length)
         {
-            AttachmentTargetInfo targetInfo = _attachmentTargets[i];
-            if (!TryResolveRecordedAttachmentImage(targetInfo.Target, out Image image))
-                return false;
-
-            ImageView view = _attachmentViews[i];
-            VulkanNativeAttachmentIdentity identity = new(
-                image.Handle,
-                BackendContext.GetResourceGeneration(ObjectType.Image, image.Handle),
-                view.Handle,
-                BackendContext.GetResourceGeneration(ObjectType.ImageView, view.Handle),
-                _attachmentSignature[i].ReferenceLayout);
-            snapshot.SetAttachment(i, identity);
+            return false;
         }
 
-        return snapshot.IsComplete;
+        for (int index = 0; index < attachments.Length; index++)
+            if (snapshot.GetAttachment(index) != attachments[index])
+                return false;
+
+        return true;
     }
 
     private bool TryResolveRecordedAttachmentImage(

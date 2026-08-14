@@ -23,11 +23,6 @@ internal abstract record FrameOp(int PassIndex, XRFrameBuffer? Target, FrameOpCo
         internal set => _context = value;
     }
     internal ref readonly FrameOpContext ContextReference => ref _context;
-    internal FrameOpResourceUseList ResourceUses
-    {
-        get => _resourceUses;
-        private set => _resourceUses = value;
-    }
     internal ref readonly FrameOpResourceUseList ResourceUsesReference
         => ref _resourceUses;
     public abstract EVulkanPrimaryPlanNodeKind Kind { get; }
@@ -49,8 +44,7 @@ internal abstract record FrameOp(int PassIndex, XRFrameBuffer? Target, FrameOpCo
         where T : FrameOp
     {
         reusable = null;
-        if (context.OperationWorkspace is null ||
-            RuntimeRenderingHostServices.FrameTiming.CurrentRenderPipelineContext is null)
+        if (context.OperationWorkspace is null)
             return false;
 
         ulong frameId = RuntimeRenderingHostServices.FrameTiming.CurrentRenderFrameId;
@@ -59,9 +53,6 @@ internal abstract record FrameOp(int PassIndex, XRFrameBuffer? Target, FrameOpCo
 
         return context.OperationWorkspace.TryRent(frameId, out reusable);
     }
-
-    internal void SetResourceUses(in FrameOpResourceUseList resourceUses)
-        => ResourceUses = resourceUses;
 
     internal ref FrameOpResourceUseList BeginResourceUseUpdate()
     {

@@ -441,9 +441,18 @@ internal sealed unsafe partial class VulkanDescriptorManager
                 ? []
                 : new uint[state.ReflectedImageBindings.Count];
             state.ReflectedImageBindings.CopyTo(reflectedBindings);
+            ulong descriptorSetLifetimeGeneration =
+                tracker.ResourceLifetimes.TryGetValue(
+                    new VulkanResourceLifetimeKey(
+                        ObjectType.DescriptorSet,
+                        descriptorSetHandle),
+                    out VulkanResourceLifetimeRecord? descriptorSetLifetime)
+                    ? descriptorSetLifetime.Generation
+                    : 0UL;
             tracker.PublishedDescriptorSets[descriptorSetHandle] = new VulkanPublishedDescriptorSetSnapshot(
                 state.Generation,
                 state.ImagePayloadGeneration,
+                descriptorSetLifetimeGeneration,
                 publishedReferences,
                 images,
                 reflectedBindings,

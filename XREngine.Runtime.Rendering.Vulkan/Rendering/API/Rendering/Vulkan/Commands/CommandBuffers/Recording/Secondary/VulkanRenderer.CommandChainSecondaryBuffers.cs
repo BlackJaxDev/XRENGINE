@@ -208,49 +208,7 @@ internal sealed partial class VulkanCommandRuntime
         => $"CommandChain.{suffix} image={imageIndex} frameSlot={chain.Key.FrameSlot} pass={chain.Key.PassIndex} target={chain.Key.TargetIdentity} view={chain.Key.ViewKey.Kind}:{chain.Key.ViewKey.ViewIndex} ordinal={chain.Key.ChainOrdinal}";
 
     internal void MarkCommandChainSecondaryCommandBufferRecorded(CommandChain chain)
-    {
-        VulkanRecordedCommandArtifact artifact = chain.RecordedArtifact;
-        ulong handle = unchecked((ulong)artifact.NativeBuffer.Handle);
-        if (handle == 0)
-        {
-            artifact.MarkFailed();
-            return;
-        }
-
-        lock (ResourceRuntime.Lifetime.Tracker.SyncRoot)
-        {
-            IReadOnlyList<KeyValuePair<VulkanResourceLifetimeKey, ulong>> dependencies =
-                Array.Empty<KeyValuePair<VulkanResourceLifetimeKey, ulong>>();
-            ulong recordingGeneration = artifact.RecordingGeneration;
-            int queuedSubmissionCount = 0;
-            if (ResourceRuntime.Lifetime.Tracker.CommandBufferLifetimes.TryGetValue(
-                    handle,
-                    out VulkanCommandBufferLifetimeRecord? lifetime))
-            {
-                dependencies = lifetime.TouchedDependencies;
-                recordingGeneration = lifetime.RecordingGeneration;
-                queuedSubmissionCount = lifetime.QueuedSubmissionCount;
-            }
-
-            int recordedPrimaryReferenceCount = 0;
-            if (ResourceRuntime.Lifetime.Tracker.ResourceLifetimes.TryGetValue(
-                    ResourceKey(ObjectType.CommandBuffer, handle),
-                    out VulkanResourceLifetimeRecord? resource))
-            {
-                recordedPrimaryReferenceCount =
-                    resource.Pins.RecordedReferenceCount;
-            }
-
-            ref readonly CommandRecordingDependencySignature dependencySignature =
-                ref chain.DependencySignatureReference;
-            artifact.PublishExecutable(
-                in dependencySignature,
-                dependencies,
-                recordingGeneration,
-                queuedSubmissionCount,
-                recordedPrimaryReferenceCount);
-        }
-    }
+        => _ = TryPublishCommandChainSecondaryArtifact(chain, ResourceRuntime);
 
     internal void MarkCommandChainSecondaryRecording(
         CommandChain chain,

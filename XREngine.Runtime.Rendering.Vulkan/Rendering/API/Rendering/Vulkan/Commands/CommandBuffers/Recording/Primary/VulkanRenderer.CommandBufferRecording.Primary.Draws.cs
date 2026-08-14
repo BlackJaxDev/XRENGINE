@@ -287,6 +287,9 @@ namespace XREngine.Rendering.Vulkan
 
         internal int CountContiguousMeshCommandChainRun(scoped ref PrimaryCommandBufferRecordingState recordingState, int startIndex, in MeshDrawPayload firstDraw, int passIndex)
         {
+            using var profileScope =
+                RuntimeRenderingHostServices.Profiling.StartProfileScope(
+                    "Vulkan.RecordPrimary.CountScheduledMeshRun");
             bool partitionByScheduledMembership =
                 recordingState.ScheduledCommandChainKeysByOpIndex is not null &&
                 recordingState.ScheduledCommandChainCache is not null;

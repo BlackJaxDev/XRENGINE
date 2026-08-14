@@ -48,6 +48,82 @@ internal sealed partial class VulkanCommandRuntime
         }
     }
 
+    /// <summary>
+    /// Publishes a reusable secondary only when its native lifetime exists and
+    /// its bind-state generation matches a complete image journal for the exact
+    /// recording that produced the artifact. The lifetime authority uses an
+    /// independent per-buffer reset generation, which is captured rather than
+    /// compared numerically with the bind-state generation.
+    /// Lifetime tracking is always acquired before the image-layout journal;
+    /// no caller may acquire these locks in the inverse order.
+    /// </summary>
+    private bool TryPublishCommandChainSecondaryArtifact(
+        CommandChain chain,
+        VulkanResourceRuntime resources)
+    {
+        VulkanRecordedCommandArtifact artifact = chain.RecordedArtifact;
+        ulong handle = unchecked((ulong)artifact.NativeBuffer.Handle);
+        // Artifact/journal generations are issued by the command bind-state
+        // authority. Command-buffer lifetime generations are a separate,
+        // per-buffer reset domain; comparing their numeric values caused every
+        // valid worker secondary to be rejected after publication hardening.
+        ulong journalRecordingGeneration = artifact.RecordingGeneration;
+        if (handle == 0 || journalRecordingGeneration == 0)
+            return FailCommandChainSecondaryArtifactPublication(chain);
+
+        // Keep lifetime and journal observations atomic with publication. In
+        // particular, do not retain a dependency snapshot after its journal
+        // was removed or reset for another recording generation.
+        lock (resources.Lifetime.Tracker.SyncRoot)
+        {
+            if (!resources.Lifetime.Tracker.CommandBufferLifetimes.TryGetValue(
+                    handle,
+                    out VulkanCommandBufferLifetimeRecord? lifetime) ||
+                lifetime.RecordingGeneration == 0)
+            {
+                return FailCommandChainSecondaryArtifactPublication(chain);
+            }
+
+            lock (Synchronization._vulkanImageLayoutLock)
+            {
+                if (!Synchronization._recordedImageLayoutsByCommandBuffer.TryGetValue(
+                        handle,
+                        out VulkanRecordedImageLayoutState? recorded) ||
+                    recorded.RecordingGeneration != journalRecordingGeneration ||
+                    recorded.EntryStateIncomplete)
+                {
+                    return FailCommandChainSecondaryArtifactPublication(chain);
+                }
+
+                int recordedPrimaryReferenceCount = 0;
+                if (resources.Lifetime.Tracker.ResourceLifetimes.TryGetValue(
+                        new VulkanResourceLifetimeKey(ObjectType.CommandBuffer, handle),
+                        out VulkanResourceLifetimeRecord? resource))
+                {
+                    recordedPrimaryReferenceCount = resource.Pins.RecordedReferenceCount;
+                }
+
+                ref readonly CommandRecordingDependencySignature dependencySignature =
+                    ref chain.DependencySignatureReference;
+                artifact.PublishExecutable(
+                    in dependencySignature,
+                    lifetime.TouchedDependencies,
+                    lifetime.RecordingGeneration,
+                    lifetime.QueuedSubmissionCount,
+                    recordedPrimaryReferenceCount);
+                return true;
+            }
+        }
+    }
+
+    private static bool FailCommandChainSecondaryArtifactPublication(CommandChain chain)
+    {
+        chain.RecordedArtifact.MarkFailed();
+        chain.State = CommandChainState.NotReady;
+        chain.DirtyReason |= CommandChainDirtyReason.SecondaryCommandBufferInvalid;
+        return false;
+    }
+
     private static VulkanImageEntryStateMismatch
         CreateMissingCommandChainImageEntryStateFailure(
             EVulkanPrimaryEntryStateMismatch reason)

@@ -36,12 +36,23 @@ namespace XREngine.Rendering.Vulkan
             using VulkanMeshFrameDataManifestRecordingScope frameDataManifestScope = new(frameDataManifest);
             using VulkanCpuStageScope primaryCommandEncodingStage =
                 new(_frameTelemetry, EVulkanCpuStage.PrimaryCommandEncoding);
-            PreparePrimaryCommandEncoding(ref recordingState);
-            InitializePrimaryCommandEncodingState(ref recordingState);
+            using (VulkanCpuStageScope encodingSetupStage =
+                   new(_frameTelemetry, EVulkanCpuStage.PrimaryEncodingSetup))
+            {
+                PreparePrimaryCommandEncoding(ref recordingState);
+                InitializePrimaryCommandEncodingState(ref recordingState);
+            }
 
             try
             {
-                if (!RecordPrimaryOperations(ref recordingState))
+                bool primaryOperationsRecorded;
+                using (VulkanCpuStageScope operationLoopStage =
+                       new(_frameTelemetry, EVulkanCpuStage.PrimaryOperationLoop))
+                {
+                    primaryOperationsRecorded =
+                        RecordPrimaryOperations(ref recordingState);
+                }
+                if (!primaryOperationsRecorded)
                 {
                     _ = EndCommandBufferTracked(
                         recordingState.CommandBuffer,
@@ -51,10 +62,18 @@ namespace XREngine.Rendering.Vulkan
                     return false;
                 }
 
-                FinalizePrimaryCommandRecording(ref recordingState);
+                using (VulkanCpuStageScope finalizationStage =
+                       new(_frameTelemetry, EVulkanCpuStage.PrimaryFinalization))
+                {
+                    FinalizePrimaryCommandRecording(ref recordingState);
+                }
 
-                if (!EndPrimaryCommandBuffer(ref recordingState))
-                    return false;
+                using (VulkanCpuStageScope endCommandBufferStage =
+                       new(_frameTelemetry, EVulkanCpuStage.PrimaryEndCommandBuffer))
+                {
+                    if (!EndPrimaryCommandBuffer(ref recordingState))
+                        return false;
+                }
             }
             catch (VulkanPlanPreconditionException exception)
             {

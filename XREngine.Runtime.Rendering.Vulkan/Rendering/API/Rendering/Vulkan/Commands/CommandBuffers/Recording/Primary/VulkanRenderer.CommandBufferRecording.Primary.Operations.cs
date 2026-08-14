@@ -23,14 +23,39 @@ internal sealed partial class VulkanCommandRuntime
             {
                 if (!header.RequiresPrimaryRecordingContext)
                 {
-                    operationIndex = RecordTypedPrimaryOperation(ref recordingState, in primaryNode, in header, operationIndex);
+                    using (VulkanCpuStageScope dispatchStage =
+                           new(
+                               _frameTelemetry,
+                               header.OpCode == EVulkanPrimaryPlanNodeKind.MeshDraw
+                                   ? EVulkanCpuStage.PrimaryMeshOperation
+                                   : EVulkanCpuStage.PrimaryNonMeshOperation))
+                    {
+                        operationIndex = RecordTypedPrimaryOperation(ref recordingState, in primaryNode, in header, operationIndex);
+                    }
+                    if (recordingState.CommandChainPublicationDeferred)
+                        return false;
                     continue;
                 }
 
-                if (!TryPreparePrimaryOperation(ref recordingState, in primaryNode, in header, operationIndex, out int passIndex))
-                    continue;
+                int passIndex;
+                using (VulkanCpuStageScope preparationStage =
+                       new(_frameTelemetry, EVulkanCpuStage.PrimaryOperationPreparation))
+                {
+                    if (!TryPreparePrimaryOperation(ref recordingState, in primaryNode, in header, operationIndex, out passIndex))
+                        continue;
+                }
 
-                operationIndex = RecordTypedPrimaryOperation(ref recordingState, in primaryNode, in header, operationIndex, passIndex);
+                using (VulkanCpuStageScope dispatchStage =
+                       new(
+                           _frameTelemetry,
+                           header.OpCode == EVulkanPrimaryPlanNodeKind.MeshDraw
+                               ? EVulkanCpuStage.PrimaryMeshOperation
+                               : EVulkanCpuStage.PrimaryNonMeshOperation))
+                {
+                    operationIndex = RecordTypedPrimaryOperation(ref recordingState, in primaryNode, in header, operationIndex, passIndex);
+                }
+                if (recordingState.CommandChainPublicationDeferred)
+                    return false;
             }
             catch (Exception exception)
             {

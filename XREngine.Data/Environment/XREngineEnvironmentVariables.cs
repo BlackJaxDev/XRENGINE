@@ -248,6 +248,7 @@ public static class XREngineEnvironmentVariables
     public const string VulkanCommandBufferLabels = "XRE_VULKAN_COMMAND_BUFFER_LABELS";
     public const string VulkanCommandChains = "XRE_VULKAN_COMMAND_CHAINS";
     public const string VulkanCommandChainsSingleThread = "XRE_VULKAN_COMMAND_CHAINS_SINGLE_THREAD";
+    public const string VulkanCommandChainWorkerCount = "XRE_VULKAN_COMMAND_CHAIN_WORKER_COUNT";
     public const string VulkanCommandChainValidate = "XRE_VULKAN_COMMAND_CHAIN_VALIDATE";
     public const string VulkanCommandChainTrace = "XRE_VULKAN_COMMAND_CHAIN_TRACE";
     public const string VulkanDisableParallelChainRecording = "XRE_VULKAN_DISABLE_PARALLEL_CHAIN_RECORDING";

@@ -49,6 +49,13 @@ namespace XREngine.Rendering.Vulkan
         public int[] MeshDrawUniformSlotsByOpIndex;
         public bool[]
             ScheduledCommandChainFrameDataRefreshedByOpIndex;
+        public bool[] CommandChainRecordingAdmittedByOpIndex;
+        public bool ProgressiveCommandChainPublicationPending;
+        public bool CanProgressivelyDeferCommandChainPublication;
+        public bool CommandChainPublicationDeferred;
+        public int ProgressiveCommandChainAdmittedJobs;
+        public int ProgressiveCommandChainAdmittedOperations;
+        public int ProgressiveCommandChainDeferredJobs;
         public HashSet<nint> ExecutedCommandChainSecondaryHandles;
         public VulkanPrimarySecondaryArtifactSequence ExecutedCommandChainSecondaryArtifactSequence;
         public Dictionary<VulkanMeshFrameDataRendererFamilyKey, int> MeshDrawSlotsByRendererFamily;
@@ -57,6 +64,7 @@ namespace XREngine.Rendering.Vulkan
         public HashSet<int> PipelineDeferredOperationIndices;
         public FrameOpContext InitialContext;
         public CommandChainKey[]? ScheduledCommandChainKeysByOpIndex;
+        public CommandChain?[]? ScheduledCommandChainsByOpIndex;
         public Dictionary<CommandChainKey, CommandChain>? ScheduledCommandChainCache;
         public int MeshSecondaryFallbackEndIndex;
         public int SwapchainPresentTransitions;

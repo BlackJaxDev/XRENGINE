@@ -109,12 +109,12 @@ from a stale caller or transport.
 `start_agent_run` accepts `text_verbosity` as `low`, `medium`, or `high`; it
 defaults to `medium`. The broker sends this as the Responses API `text.verbosity`
 control and preserves `reasoning_effort` separately. Start, get, and list
-responses retain both requested controls and the requested `max_output_tokens`
-hard budget. That budget covers visible output and reasoning tokens, so the
-broker never automatically raises it or retries an incomplete response with a
-larger budget. When a response ends incomplete because `max_output_tokens` was
-reached, start a new explicitly authorized bounded run with a higher budget or
-with lower reasoning effort/text verbosity.
+responses retain both requested controls and the resolved `max_output_tokens`
+hard budget. When that field is omitted, Luna and Terra use 4,096 combined
+visible-output/reasoning tokens; Sol uses 16,384, or 32,768 for `xhigh`/`max`.
+An explicit value is never raised, and an incomplete response is never retried
+with a larger budget. When an explicit cap ends in `max_output_tokens`, start a
+new authorized run with a higher cap or lower reasoning effort/text verbosity.
 
 ## One-Time Installation
 
@@ -310,9 +310,9 @@ A reasoning-only request has no editor session or tool policy entries:
   "budget": {
     "max_turns": 3,
     "max_tool_calls": 0,
-    "max_output_tokens": 4096,
+    "max_output_tokens": 32768,
     "max_tool_result_bytes": 262144,
-    "max_elapsed_seconds": 120,
+    "max_elapsed_seconds": 600,
     "max_retries": 1,
     "max_concurrency": 1
   }
@@ -363,9 +363,9 @@ An editor-aware request names the session and exact tool policy:
   "budget": {
     "max_turns": 3,
     "max_tool_calls": 6,
-    "max_output_tokens": 2000,
+    "max_output_tokens": 16384,
     "max_tool_result_bytes": 262144,
-    "max_elapsed_seconds": 120,
+    "max_elapsed_seconds": 300,
     "max_retries": 1,
     "max_concurrency": 1
   }
@@ -407,9 +407,11 @@ Each worker is billed to the API project associated with the configured key,
 independently of ChatGPT/Codex product billing. Configure API project budgets,
 usage alerts, and model access before relying on standing automatic runs. The
 broker reports token usage but intentionally does not embed volatile price
-estimates. Omitted run budgets default to 3 turns, 8 tool calls, 4,096 output
-tokens, 120 seconds, 1 retry, and per-run concurrency 1; the process default is
-at most 4 concurrent runs.
+estimates. Omitted run budgets default to 3 turns, 8 tool calls, 1 retry, and
+per-run concurrency 1. Luna and Terra receive 4,096 combined output/reasoning
+tokens and 120 seconds. Sol receives 16,384 tokens and 300 seconds, or 32,768
+tokens and 600 seconds at `xhigh`/`max`. The process default is at most 4
+concurrent runs. Explicit output-token and elapsed-time limits remain hard caps.
 
 Requests and editor evidence selected for the run leave the machine for OpenAI
 processing. The editor MCP endpoint remains loopback-only. Responses use

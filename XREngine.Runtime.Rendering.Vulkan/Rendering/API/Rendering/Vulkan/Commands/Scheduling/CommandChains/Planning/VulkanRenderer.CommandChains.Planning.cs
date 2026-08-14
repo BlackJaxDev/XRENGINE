@@ -263,7 +263,10 @@ internal sealed partial class VulkanCommandRuntime
                     TimeSpan.FromSeconds(1),
                     "[Vulkan.CommandChains] Secondary dependency changed key={0}: {1}",
                     key,
-                    DescribeCommandChainDirtyReason(chain, packet));
+                    DescribeCommandChainDirtyReason(
+                        chain,
+                        packet,
+                        sharedResourceVersionSignature));
             }
             if (CommandChainBenchmarkForceRerecord)
                 dirtyReason |= CommandChainDirtyReason.BenchmarkForced;
@@ -364,7 +367,10 @@ internal sealed partial class VulkanCommandRuntime
                 chain.FrameDataRefreshTouchedDescriptors = false;
                 chainsRecorded++;
                 if (traceCommandChains || CommandChainValidationEnabled)
-                    firstStructuralDirtyReason ??= DescribeCommandChainDirtyReason(chain, packet);
+                    firstStructuralDirtyReason ??= DescribeCommandChainDirtyReason(
+                        chain,
+                        packet,
+                        sharedResourceVersionSignature);
                 if ((chain.DirtyReason & CommandChainDirtyReason.DescriptorGeneration) != 0 &&
                     (chain.DirtyReason & CommandChainDirtyReason.Structure) == 0 &&
                     (traceCommandChains || CommandChainValidationEnabled))

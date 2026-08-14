@@ -169,7 +169,10 @@ internal sealed partial class VulkanCommandRuntime
         return hash.ToHash();
     }
 
-    private static string DescribeCommandChainDirtyReason(CommandChain chain, RenderPacket packet)
+    private static string DescribeCommandChainDirtyReason(
+        CommandChain chain,
+        RenderPacket packet,
+        ulong currentSharedResourceVersionSignature = 0UL)
     {
         ulong currentInstanceCountSignature = ComputePacketInstanceCountSignature(packet);
         StringBuilder details = new();
@@ -183,6 +186,14 @@ internal sealed partial class VulkanCommandRuntime
         AppendIfChanged(details, "physical-image-signature", chain.PhysicalImageSignature, packet.ResourcePlanSnapshot.PhysicalImageSignature);
         AppendIfChanged(details, "framebuffer-signature", chain.FramebufferSignature, packet.ResourcePlanSnapshot.FramebufferSignature);
         AppendIfChanged(details, "pipeline-generation", chain.PipelineGeneration, packet.ResourcePlanSnapshot.PipelineGeneration);
+        if (currentSharedResourceVersionSignature != 0UL)
+        {
+            AppendIfChanged(
+                details,
+                "shared-resource-version",
+                chain.ResourceVersionSignature,
+                currentSharedResourceVersionSignature);
+        }
         if (!packet.RecordedPacketKey.IsComplete)
         {
             AppendDetail(details, "packet-key-complete", bool.FalseString);

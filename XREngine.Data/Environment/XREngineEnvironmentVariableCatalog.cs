@@ -323,6 +323,7 @@ public static class XREngineEnvironmentVariableCatalog
             fieldName.Contains("WorldMode", StringComparison.Ordinal) ||
             fieldName.Contains("WorldSettingsPath", StringComparison.Ordinal) ||
             fieldName.Contains("JobWorker", StringComparison.Ordinal) ||
+            fieldName is nameof(XREngineEnvironmentVariables.VulkanCommandChainWorkerCount) ||
             fieldName.Contains("GcLatency", StringComparison.Ordinal) ||
             fieldName.Contains("MemoryProfile", StringComparison.Ordinal))
         {

@@ -2,11 +2,12 @@
 
 ## Status
 
-Open as of 2026-08-12. The native FPS-overlay continuity defect is fixed in the
+Open as of 2026-08-13. The native FPS-overlay continuity defect is fixed in the
 sampled recovery path, and camera-motion stalls are materially shorter, but the
 strict unlit-Sponza no-regression gate is not met. Phase 5 also still has five
-open architectural criteria. This document is the handoff boundary for the
-attempted fixes and the next investigation pass.
+open architectural criteria. This document is the durable handoff boundary for
+the attempted fixes, measurements, rejected hypotheses, and next architectural
+decision; conversational context is not required to resume the investigation.
 
 The Phase 5 checklist was accidentally removed during an earlier closeout. It
 is restored in
@@ -76,6 +77,140 @@ handling, and 3.9341 ms packet construction, with 673 scheduled/reused chains
 and no newly recorded chains. Detailed diagnostics add overhead and are not a
 clean performance capture.
 
+### 2026-08-13 render-thread/worker localization
+
+The isolated `vulkan-structural-ledger` session measured the same explicit
+camera path from `(60, 15, 60)` to `(-20, 5, -20)` over ten seconds. A warmed,
+stationary frame was 4.554 ms whole-frame time, with 2.297 ms command recording
+and 0.478 ms in the primary-recording CPU stage. During 60 sampled moving-camera
+frames, the distribution was:
+
+| Stage | p50 | p95 | Maximum |
+| --- | ---: | ---: | ---: |
+| Whole frame | 32.192 ms | 77.728 ms | 98.417 ms |
+| Frame-op preparation | 8.153 ms | 17.362 ms | 48.123 ms |
+| Primary prewarm | 2.011 ms | 14.225 ms | 21.934 ms |
+| Primary command encoding | 0 ms | 31.520 ms | 40.922 ms |
+| Primary operation loop | 0 ms | 30.710 ms | 39.899 ms |
+| Primary mesh operations | 0 ms | 29.066 ms | 37.915 ms |
+| Secondary recording | 0.001 ms | 4.558 ms | 19.812 ms |
+| Worker command recording | 0 ms | 4.546 ms | 19.800 ms |
+| Render-thread worker wait | 0 ms | 1.163 ms | 3.343 ms |
+
+The final sampled frame was 16.188 ms with 373 reused chains and no newly
+recorded chains. Vulkan validation remained at zero errors. This narrows the
+remaining regression: worker utilization is sometimes substantial, but the
+render thread usually waits very little. The large cost is the serial producer
+work performed before workers receive an immutable recording packet, followed
+by mesh-heavy primary operation dispatch when the command topology changes.
+Increasing worker count alone cannot remove either cost.
+
+The latest progressive structural-preparation ledger reduced this observed
+path's maximum from the prior 200+ ms range to 98.417 ms by spreading cold
+renderer/descriptor preparation across rejected replacement frames while
+continuing to present the last complete scene. It is not a completion result:
+the p95 remains far above budget, and the user has not yet confirmed that the
+interactive freeze/frame-rate regression is resolved in their normal editor
+workflow.
+
+After the new per-operation telemetry scopes were gated behind explicit detail
+profiling, the same 60-sample path measured 20.952 ms p50, 74.275 ms p95, and
+98.111 ms maximum whole-frame time. Primary encoding still reached 48.364 ms,
+while worker active span and render-thread wait peaked at 8.203 and 8.241 ms.
+The probes contributed some cost, but removing them did not remove the
+regression; the measured primary/preparation work is real.
+
+A following immutable-cohort reuse change removed a duplicated O(operation
+count) refresh-plan build on primary-cache misses. The targeted CPU frame dump
+changed from two `Vulkan.FrameDataManifest.BuildRefreshCohort` calls totaling
+6.223 ms to one 2.642 ms call, and the profiled render-thread slice fell from
+11.535 ms to 7.360 ms. A stationary frame in the new session was 3.469 ms.
+The next full traversal was noisy (22.344 ms p50, 79.388 ms p95, 103.978 ms
+maximum), so the exact local saving is proven but an end-to-end Sponza
+improvement is not yet claimed from a single pass.
+
+Twelve targeted CPU-frame captures during that traversal separated the
+remaining cost into three different producers:
+
+- One 32.935 ms frame spent 11.465 ms of render-thread self time in
+  `Vulkan.PrepareFrameOps.MaterializeQueuedMeshes`, followed by 3.102 ms sealing
+  the frame plan and 2.472 ms building the now-single refresh cohort. This is
+  serial mutable mesh preparation performed before an immutable worker packet
+  exists.
+- One 20.241 ms frame spent 16.543 ms in
+  `Vulkan.RecordPrimary.MainOpLoop`, including 13.878 ms of un-nested primary
+  work. Its six scheduled-secondary runs totaled only about 2.56 ms. This cost
+  therefore cannot be removed merely by adding more secondary workers; the
+  primary is still assembling and validating too much changing topology.
+- A separate 52.693 ms CPU dump was initially misread as showing 26.020 ms of
+  `VisibleCollection` work. That scope actually covered the whole
+  collect/swap loop and was mostly `WaitForRender`; an adjacent complete dump
+  measured actual collection at about 2.8 ms. The root issue was orphaned
+  profiler-child attribution, not a 26 ms visible-collection producer.
+
+In the same clean session, recording-worker active span peaked at 0.943 ms and
+render-thread worker wait at 1.280 ms. Aggregate worker CPU time is not a wall
+clock stall and must not be interpreted as one. The first useful offload target
+is mesh materialization after it is split into immutable structural preparation
+and narrow current-frame publication. The primary-side remedy is coarser stable
+cohorts plus indirect/count buffers, not moving the complete primary to a worker
+and waiting for it elsewhere.
+
+### Pre-Phase-5 hardening acceptance record
+
+All comparable captures used the explicit camera traversal `(60, 15, 60)` to
+`(-20, 5, -20)`, a ten-second Release `CleanProfile` interval, and no
+screenshots in the measured interval. Percentiles below are p50/p95/p99/max in
+milliseconds. This is a pre-Phase-5 hardening record, not evidence that the
+Phase 5 architecture is complete.
+
+| Capture | Samples and outcome | Whole | Collection | Vulkan | Record | Preparation | Primary |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Exact Phase-4 baseline `09cac87d4133e0fdcfb0838c3c329ffd52780036` | 1,058; zero deferrals/errors | 4.213/20.635/107.351/176.798 | .234/1.497/2.05/6.815 | 1.93/16.155/102.036/172.243 | 1.472/14.371/100.564/170.931 | .824/5.094/6.359/10.57 | .301/12.335/85.269/139.672 |
+| Pre-hardening current | 794; 9 deferred, zero errors | 7.159/38.738/79.738/590.507 | .327/1.479/2.065/11.89 | 2.721/28.786/55.146/82.156 | 2.023/28.069/53.567/80.849 | 1.186/6.138/7.519/9.608 | .435/19.293/43.431/70.99 |
+| Integrated hardened, before auto threshold | 1,397; 44 deferred, 1,353 complete, zero errors | 3.558/23.404/39.485/70.452 | .155/1.139/1.309/5.53 | 1.359/17.974/34.562/65.572 | 1.013/17.774/33.861/64.623 | .593/5.203/5.871/8.188 | .208/13.502/27.2/53.742 |
+| Fresh final default, session `20260813-162936-renderloop-hardening-final`, 23:33:30.904Z–23:33:40.904Z | 1,209; 1,162 complete, 47 deferred, zero validation errors | 4.174/27.128/42.008/72.628 | .195/1.346/1.825/6.573 | 1.671/23.19/36.456/63.925 | 1.247/23.06/35.371/62.605 | .683/5.768/6.491/12.721 | .231/17.569/29.372/51.797 |
+
+The pre-hardening 590.507 ms whole-frame outlier was 557 ms of render-thread
+jobs outside Vulkan, not Vulkan recording. In the final default capture,
+outside-Vulkan time was 1.849/4.86/9.22/21.369 ms. Worker active/wait was zero,
+dynamic-text recording was nonzero on every frame, and distinct coherent final
+auto captures confirm that the sampled endpoints were not stale repeats.
+
+The hardening result has p50 parity with the exact Phase-4 baseline and greatly
+improves p99/max, but p95 remains 6.493 ms worse. Strict no-regression and
+perceived-smoothness acceptance therefore remain open.
+
+The remaining primary tail is now localized more precisely. The worst completed
+replacement frame in the final-default trace contained 831 mesh draws but 719
+reused secondary command buffers. It issued those buffers in seven
+`vkCmdExecuteCommands` batches. Primary command encoding took 29.582 ms and the
+primary operation loop took 28.895 ms while persistent-worker activity was zero.
+The cost is therefore render-thread classification, refresh/validation, and
+assembly of hundreds of tiny reusable artifacts, not slow worker recording.
+
+Outcome correlation also corrected an important interpretation error. The 47
+`Deferred` samples are terminal Vulkan-frame outcomes, not output-budget
+deferrals: acquire completed, CPU/GPU budget-deferral counters were zero, and
+the command-record stage itself returned. Their p95 primary time was 34.227 ms
+versus 8.661 ms for completed samples. Current capture data does not include the
+terminal `EDesktopFrameReason` or primary-recording disposition, so it cannot
+yet distinguish primary publication rejection from the later submission-source
+validation recovery path.
+
+#### Worker admission matrix
+
+| Explicit worker override | Samples | Whole p50/p95/p99/max (ms) | Result |
+| --- | ---: | ---: | --- |
+| 0 | 1,930 | 2.681/16.797/30.823/50.816 | Best result; no workers. |
+| 1 | — | 3.844/25.542/45.729/75.8 | Worse than serial. |
+| 4 | — | 3.543/21.01/33.394/101.621 | Better than one, but not serial. |
+| 8, repeat | — | 3.639/21.33/35.573/75.642 | No advantage over the bounded policy. |
+
+The default therefore caps workers at four and dispatches graphics batches only
+when they contain at least 32 eligible operations. Explicit overrides from zero
+through eight remain available for diagnosis and hardware-specific comparison.
+
 Current evidence points to cold command-chain artifact materialization in each
 swapchain/frame slot plus expensive compatibility/resource validation. Several
 small post-process chains repeatedly report `ResourcePlan` invalidation despite
@@ -110,9 +245,41 @@ is excluded from performance conclusions. Framebuffer readback added periodic
   camera-motion sample both reported zero missing dynamic overlays.
 - Keep queue-drain cohorts and materialization scratch storage preallocated and
   bound cold materialization work rather than allocating it on every frame.
+- Bound progressive command-chain publication by both chain count and actual
+  operation count. The earlier chain-only limit admitted large chains containing
+  hundreds of draw preparations and therefore did not bound CPU work.
+- Remove the duplicate frame-data prewarm performed again inside scheduled
+  secondary preparation after the authoritative pre-record pass has already
+  published and validated the exact draw slot.
+- Prewarm conservative, invariant descriptor allocations during already-bounded
+  cold materialization; do not perform this extra work for warmed materialized
+  draws.
+- Add a bounded structural-preparation ledger keyed by preparation/resource/
+  arena/frame-slot/draw-slot identity. Successful structural work survives a
+  rejected replacement frame, but every frame that is actually recorded still
+  performs its complete current-frame dynamic-data refresh atomically.
+- Split mesh preparation into retained structural work and mandatory narrow
+  current-frame publication. Structural work may carry across rejected
+  replacement attempts; current-frame data is never published partially.
+- Unify secondary-artifact publication so an artifact is eligible only while a
+  live command-buffer lifetime exists and its complete image journal matches
+  the artifact's bind-state generation. Lifetime and bind-state generations
+  are independent domains and are never compared numerically.
+- Classify the new per-operation telemetry scopes as opt-in fine-grained probes
+  so default aggregate profiling does not add a stopwatch/aggregation pair to
+  every mesh operation.
+- Retain profiler children until their parent completes, subject to a bounded
+  cap, so delayed/overlapping scopes cannot be orphaned into a misleading
+  parent or aggregate bucket.
+- Reuse the immutable frame-data refresh cohort already published for the
+  primary-reuse probe when fresh recording consumes the same sealed frame-plan
+  generation, render-frame ID, and image slot. An intervening registration
+  invalidates the cohort and retains the original rebuild path.
 - Reject partial persistent-worker batches after the first timeout, quarantine
   artifacts while abandoned workers remain active, and guard primary recording
   before reuse, serial fallback, or artifact migration.
+- Start the exact admitted worker count at startup and apply cost-aware graphics
+  admission rather than paying worker setup/synchronization for small batches.
 
 ### Implemented Phase 5 items
 
@@ -132,9 +299,86 @@ is excluded from performance conclusions. Framebuffer readback added periodic
 - The current detailed frame-data/reuse diagnostics identify broad
   `ResourcePlan` invalidation but do not yet expose the exact resource identity
   responsible for every false invalidation.
-- The local agent broker is outside the renderer runtime path. Its bounded,
-  read-only evidence run completed within its configured budget; no broker
-  budgeting change is indicated by this regression.
+- A simple non-resumable two-millisecond cap on primary frame-data prewarm was
+  reverted immediately because it could reject every replacement attempt and
+  replay a stale scene forever. Any deadline mechanism must retain completed
+  structural work across attempts and must never submit partially refreshed
+  current-frame data.
+- Moving vertex-input construction earlier did not improve the measured cold
+  path and was reverted.
+- Enforcing `MinMeshDrawsPerRenderPacket` by retaining every sub-ten-draw mesh
+  island inline was implemented with explicit fresh-primary and binding-owner
+  accounting, built successfully, and then reverted after live A/B validation.
+  It reduced the active Sponza schedule to two secondaries, but the 657-sample
+  camera interval reported primary p95 51.933 ms, record p95 55.558 ms, and 82
+  deferred frames. That capture accidentally retained ImGui and is unsuitable
+  for whole-frame promotion, but the directly measured primary regression is
+  sufficient to reject wholesale inline fallback. The reusable granularity
+  must be improved without encoding hundreds of draws into every fresh primary.
+- The local agent broker is outside the renderer runtime path, but its default
+  Sol budget was independently defective. Route-aware defaults now provide
+  16,384 output tokens/300 seconds for ordinary Sol and 32,768/600 seconds for
+  Sol xhigh/max. A fresh Codex task or app restart is required to load the new
+  broker process; an explicit 32,768-token/600-second Sol run completed where
+  the old 4,096-token default failed.
+
+## Command Recording Architecture Decision
+
+Do not move the complete primary command buffer to another thread. The render
+thread currently needs its result immediately, so that merely relocates the
+same critical-path wait while complicating layout, lifetime, and submission
+authority. Keep barriers, dynamic-rendering scopes, primary assembly, final
+layout publication, and queue submission render-owned.
+
+The intended improvement is a producer/consumer architecture:
+
+1. Collection publishes immutable visibility, material, transform, and output
+   snapshots; it does not mutate `VkMeshRenderer` recording state.
+2. Planning workers partition visible work into stable camera-independent
+   pipeline/material/pass cohorts and prepare immutable frame execution packets.
+3. Command workers own their Vulkan command pools and publish fully ended,
+   immutable per-frame-slot secondary artifacts through a bounded
+   `Free -> Writing -> Ready -> InUse -> Retiring` ring.
+4. The render thread patches frame-dynamic buffers, resolves required image
+   layouts, executes ready cohort secondaries from a small stable primary, and
+   submits. A missing optional artifact yields/reuses by explicit deadline
+   policy; it never causes an unbounded worker wait.
+5. Visibility/LOD/count changes should primarily update indirect/count/draw-data
+   buffers rather than rebuilding command topology. The existing Vulkan
+   `CmdDrawIndexedIndirectCount` path is the bridge: first feed it from current
+   CPU culling, then optionally move culling/compaction to the GPU. The current
+   unit-testing configuration explicitly has `GPURenderDispatch` disabled, so
+   enabling that existing path blindly is not a valid regression fix.
+
+Before `TryPrewarmFrameDataForRecording` can safely run on workers, it must be
+split. It currently mixes immutable resource preparation with current-frame
+uniform callbacks, active-program mutation, descriptor allocation/publication,
+frame-source descriptor refresh, and vertex-input state. Blind parallelization
+would serialize on `_recordDrawSync` or introduce renderer/descriptor races.
+The next implementation boundary is therefore an immutable structural packet
+plus a narrow frame-dynamic publication step, not another layer of general
+thread-pool dispatch.
+
+## Current Wrap-Up Boundary
+
+The retained code is the final-default hardening state measured above; the
+sub-threshold-inline experiment is not retained. The coherent completed work is:
+
+- exact Phase-4/current Sponza baselines and corrected profiler attribution;
+- structural versus current-frame mesh preparation, with current-frame refresh
+  remaining atomic on every submitted replacement;
+- unified secondary-artifact lifetime/journal publication and timeout
+  quarantine, including rejection of partial worker batches;
+- bounded startup worker capacity and cost-aware admission; the ordinary
+  Sponza path remains serial because 1/4/8-worker A/B runs all lost to serial;
+- profiler descendant retention so overlapping child scopes are not published
+  as false roots; and
+- current dynamic-text overlay recording during last-complete-scene recovery.
+
+Four of the six pre-Phase-5 hardening gates are complete. Camera-motion p95 and
+normal-UI final-present overlay continuity remain open. Phase 5 stays paused at
+this boundary; only modal generation freeze and persistent safe-packet workers
+are checked in the active Phase 5 checklist and copied to completed history.
 
 ## Phase 5 Wrap-Up State
 
@@ -148,39 +392,83 @@ is excluded from performance conclusions. Framebuffer readback added periodic
 | Bounded, nonblocking modal dispatch with typed terminal result | Open: typed outcomes and watchdog breadcrumbs exist, but the callback can still enter the normal full render dispatch and inherit blocking work. |
 | Persistent safe-packet workers with serial fallback | Complete; copied to the completed-work sibling. Deterministic timeout fault injection remains a validation task. |
 
+## Pre-Phase-5 Hardening Gates
+
+| Gate | State | Evidence / remaining condition |
+| --- | --- | --- |
+| Exact Phase-4 baseline | Complete | Exact baseline commit and matched ten-second traversal are recorded above. |
+| Timing attribution | Complete | The apparent 26.020 ms visible-collection result was corrected to orphaned profiler attribution; adjacent collection was about 2.8 ms. |
+| Worker policy | Complete | Default cap is four, graphics admission requires at least 32 eligible operations, and explicit 0-8 overrides were compared. |
+| Artifact lifetime safety | Complete | Secondary publication requires a live command-buffer lifetime plus a complete image journal matching the artifact bind-state generation; timeout cancellation quarantines unsafe artifacts. |
+| Camera-motion live gate | Partial | p50 parity and p99/max improvement are established, but p95 remains 6.493 ms worse than baseline. |
+| Native overlay gate | Partial | Telemetry confirms dynamic text records every sampled frame and coherent captures are distinct; normal final-present visual continuity still requires user/normal-UI validation. |
+
 ## Validation Evidence
 
 - `dotnet build XREngine.Runtime.Rendering.Vulkan/XREngine.Runtime.Rendering.Vulkan.csproj --no-restore --disable-build-servers`
   passed with zero warnings and zero errors during implementation.
 - The latest isolated session was `vulkan-phase5-request-scope`; logs are under
   `Build/_AgentValidation/00000000-000000-shared/mcp-sessions/20260812-155638-vulkan-phase5-request-scope/logs/`.
+- The newest isolated measurement session is `vulkan-structural-ledger`; logs
+  and artifacts are under
+  `Build/_AgentValidation/00000000-000000-shared/mcp-sessions/20260813-145328-vulkan-structural-ledger/`.
+- Post-instrumentation and single-cohort runs are under the named sessions
+  `vulkan-offload-gated` (`20260813-150414`) and `vulkan-cohort-once`
+  (`20260813-151333`). The latter contains the CPU dump proving that the refresh
+  cohort is built once.
+- Two fresh readbacks from opposite ends of the measured camera path are under
+  that session's `artifacts/mcp-captures/` directory. They are retained only as
+  disposable evidence that the requested camera positions publish distinct
+  scene views.
+- The final default fresh run is
+  `20260813-162936-renderloop-hardening-final`; its exact measured interval was
+  `2026-08-13T23:33:30.904Z` through `2026-08-13T23:33:40.904Z`.
 - A coherent close-wall readback is
   `Build/_AgentValidation/20260812-122100-vulkan-phase5/mcp-captures/Screenshot_20260812_165816_121_905d99af43ee4e40a6e66e82bc98c498.png`.
-- The latest sampled path had zero validation errors, zero deferred frames, and
-  zero missing dynamic overlays. It still had 200+ ms CPU-stage spikes.
+- The final default interval had zero validation errors, 47 bounded deferrals,
+  and nonzero dynamic-text recording on every frame; its whole-frame maximum
+  was 72.628 ms rather than the earlier 200+ ms CPU-stage spikes.
+- The rejected singleton-inline experiment is preserved only as disposable
+  evidence under named session `20260813-165204-renderloop-packet-threshold`.
+  Its Vulkan build passed with zero warnings/errors and the session stopped
+  cleanly; because ImGui remained enabled, it is not a clean whole-frame
+  comparison. Its direct primary/recording measurements are recorded above.
 - RenderDoc tooling passed `rdc doctor`. A GPU capture was not required to
   localize the observed freeze because queue/GPU-facing time stayed small while
   CPU-stage telemetry isolated preparation and recording.
 
 ## Next Steps
 
-1. Extend command-chain invalidation diagnostics with the exact changed
-   resource identity/signature, then eliminate the false/broad `ResourcePlan`
-   invalidation on stable post-process chains.
-2. Make compatible command-chain artifacts reusable across frame slots, or
-   incrementally materialize each slot under an explicit CPU deadline. Never
-   rebuild hundreds of secondaries synchronously on camera motion.
-3. Preserve the last complete scene plus the current dynamic overlay whenever a
-   cold replacement topology misses its budget.
-4. Make one frozen per-frame scheduling manifest the sole authority for output
+1. Use the existing `MeshSecondaryFallbackEndIndex` (currently reset but not
+   consumed) to suppress repeated `CountContiguousMeshCommandChainRun` and
+   secondary-preflight retries after the first failed attempt for one contiguous
+   island. Verify render-scope re-entry before the inline fallback draw. This is
+   the smallest next fix for the suspected O(N-squared) primary loop.
+2. Add allocation-free numeric capture fields for terminal
+   `EDesktopFrameReason`, primary-recording disposition, and the exact deferred
+   recovery site. Re-run the same traversal and group primary p95 by terminal
+   reason before changing deadline policy.
+3. Add fixed-bin packet-size telemetry (1, 2-4, 5-9, 10-16, 17+) and use it to
+   design coarser reusable cohorts. Do not repeat the rejected all-inline policy;
+   evaluate safely mixing programs/descriptors within bounded exact-identity
+   capacity, then move visibility/LOD/count churn toward the existing indirect-
+   count topology so it updates buffers instead of command topology.
+4. Extend command-chain invalidation diagnostics with the exact changed
+   resource identity/signature, then eliminate false/broad `ResourcePlan`
+   invalidation on stable post-process/cohort artifacts.
+5. Validate normal-UI final-present native-overlay continuity with the user;
+   sampled recovery telemetry alone is not the final visual acceptance gate.
+6. Resume the remaining Phase 5 work only after the preceding hardening gates
+   pass. Make one frozen per-frame scheduling manifest the sole authority for output
    admission, ordering, submit, present, and terminal completion. Carry one
    canonical output ID and real deadline from the host through Vulkan/OpenXR.
-5. Finish XR-owned frame-slot/image/ImGui nonblocking behavior and the remaining
+7. Finish XR-owned frame-slot/image/ImGui nonblocking behavior and the remaining
    main-device queue/device-idle gateway audit.
-6. Split modal callback publication from full render dispatch so the callback
+8. Split modal callback publication from full render dispatch so the callback
    returns a typed stale/defer result within a fixed budget; then run the Win32
    drag-duration and guard-liveness soak.
-7. Re-run a deterministic Sponza traversal after the invalidation fix: capture
+9. Re-run a deterministic Sponza traversal after each p95/topology change:
+   capture
    at least ten warmed samples plus cold-view transitions, verify visual camera
    movement, native-overlay continuity, profiler stages, and Vulkan logs.
 

@@ -6,6 +6,8 @@ namespace XREngine.Rendering.Vulkan;
 internal sealed partial class CommandBufferRecordingScratch
 {
             internal const int MaxAdmittedPipelinePreparationSignatures = 16384;
+            internal const int MaxAdmittedFrameDataPreparationSignatures =
+                16384;
             public VulkanRenderScopeController RenderScope { get; } = new();
             public Dictionary<int, VulkanSecondaryRecordingBucket> SecondaryBucketByStart { get; } = new();
             public List<VulkanSecondaryRecordingBucket> SecondaryRecordingBuckets { get; } = new(32);
@@ -20,6 +22,8 @@ internal sealed partial class CommandBufferRecordingScratch
             public HashSet<int> PipelineOptionalDeferredRequirementIndices { get; } = [];
             public HashSet<ulong> AdmittedPipelinePreparationSignatures { get; } =
                 new(MaxAdmittedPipelinePreparationSignatures);
+            public HashSet<ulong> AdmittedFrameDataPreparationSignatures { get; } =
+                new(MaxAdmittedFrameDataPreparationSignatures);
             public ulong PipelineDeferredManifestIdentity { get; set; }
             public int PipelinePrewarmRequirementCursor { get; set; }
             public bool PipelinePrewarmInitialScanComplete { get; set; }
@@ -64,6 +68,7 @@ internal sealed partial class CommandBufferRecordingScratch
             public Dictionary<XRFrameBuffer, FboAttachmentLayoutScratch> FboAttachmentLayouts { get; } =
                 new(ReferenceEqualityComparer.Instance);
             public CommandChainKey[] ScheduledCommandChainKeysByOpIndex { get; set; } = [];
+            public CommandChain?[] ScheduledCommandChainsByOpIndex { get; set; } = [];
             public List<KeyValuePair<int, int>> SwapchainWriterCountSort { get; } = new();
             public Dictionary<VulkanTrackedImageSubresource, VulkanImageAccessState> SecondaryDescriptorImageRequirementMap { get; } =
                 new(64);
@@ -93,6 +98,8 @@ internal sealed partial class CommandBufferRecordingScratch
             private int[] _primaryMeshDrawUniformSlotsByOpIndex = [];
             private bool[]
                 _primaryScheduledCommandChainFrameDataRefreshedByOpIndex = [];
+            private bool[]
+                _primaryCommandChainRecordingAdmittedByOpIndex = [];
             private VulkanReusableFrameDataRefreshRequest[]
                 _primaryReusableFrameDataRefreshRequests = [];
             private VulkanReusableFrameDataRefreshRequest[]
@@ -421,6 +428,31 @@ internal sealed partial class CommandBufferRecordingScratch
                     0,
                     opCount);
                 return _primaryScheduledCommandChainFrameDataRefreshedByOpIndex;
+            }
+
+            public bool[] PreparePrimaryCommandChainRecordingAdmissionFlags(
+                int opCount)
+            {
+                if (_primaryCommandChainRecordingAdmittedByOpIndex.Length <
+                    opCount)
+                {
+                    int capacity = Math.Max(
+                        opCount,
+                        Math.Max(
+                            4,
+                            _primaryCommandChainRecordingAdmittedByOpIndex
+                                .Length * 2));
+                    Array.Resize(
+                        ref _primaryCommandChainRecordingAdmittedByOpIndex,
+                        capacity);
+                }
+
+                Array.Fill(
+                    _primaryCommandChainRecordingAdmittedByOpIndex,
+                    true,
+                    0,
+                    opCount);
+                return _primaryCommandChainRecordingAdmittedByOpIndex;
             }
 
             private static void EnsureReusableFrameDataRefreshRequestCapacity(
