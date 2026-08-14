@@ -13,11 +13,14 @@ Internet-facing editor bridge.
 | Project | Owns | Must not own |
 |---|---|---|
 | `XREngine.AgentOrchestration` | Provider-neutral run contracts, prompt packet, budgets, bounded tool loop, Responses transport/SSE parsing, HTTP MCP client | ImGui state, editor globals, process/session lifecycle |
-| `Tools/LocalAgentBroker` | Stdio MCP host, exact model catalog/routing advice, run registry, named-session resolution, leases, trace policy | Editor implementation, shell/Git execution, API-key persistence |
+| `Tools/LocalAgentBroker` | Stdio MCP host, exact model catalog/routing advice, run registry, named-session resolution, leases, trace policy, durable history publishing | Editor implementation, shell/Git execution, API-key persistence |
+| `Tools/LocalAgentBroker.Shared` | Tray/history contracts, checkout-local paths, atomic record and settings storage | MCP transport, API calls, Windows UI |
+| `Tools/LocalAgentBroker.Tray` | Windows notifications and notification icon, running-task menu, live prompt/response viewer, idle exit, history cleanup | API keys, provider calls, broker process ownership |
 | `XREngine.Editor` | ImGui messages/segments, preferences, local tools, viewport presentation, in-process MCP startup | A second OpenAI function loop |
 
 `XREngine.Editor` references the shared orchestration project. The broker
-references only that project. No NuGet package was added for this feature.
+and tray companion share only provider-neutral contracts and the file-backed
+history project. No NuGet package was added for this feature.
 
 ## Run Contract
 
@@ -147,6 +150,25 @@ route-aware. Luna and Terra retain 4,096 tokens and 120 seconds. Sol receives
 generic budget before returning evidence. The server resolves each value only
 when its corresponding budget property is absent; every explicit limit remains
 a hard authorization boundary and is never increased or retried automatically.
+
+Broker server version `0.7.0` adds the Windows tray companion. Once the first
+run is accepted, the broker writes its prompt record and starts the published
+tray executable if that checkout does not already own a tray instance. Multiple
+stdio broker processes share the same checkout-local record directory and a
+named mutex prevents duplicate tray processes. The tray discovers updates by
+polling atomic JSON snapshots; it never connects to the API or broker stdio
+transport, so closing or restarting it cannot interrupt a worker.
+
+History snapshots live under
+`Build/_AgentValidation/00000000-000000-shared/local-agent-broker-ui/runs/`.
+They include the provider prompt, optional system instructions, incremental or
+terminal response text, concise run metadata, usage, and failures. Initial
+inline image data, editor tool arguments/results, API keys, headers, and raw
+provider payloads are excluded. Writes are coalesced during streaming and
+flushed immediately at terminal state. The tray's `settings.json` supports a
+nullable idle-exit duration and a nullable terminal-record retention duration;
+null means never. It also stores whether new-prompt Windows notifications are
+enabled; they default to enabled. Cleanup never removes queued or running records.
 
 The supported exact model IDs are `gpt-5.6-luna`, `gpt-5.6-terra`, and
 `gpt-5.6-sol`. Route advice implements the repository policy but has no launch

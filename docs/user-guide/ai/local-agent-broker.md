@@ -81,6 +81,30 @@ The fixed MCP surface contains five orchestration tools:
 The broker itself does not start or stop the editor. The named session manager
 owns editor process lifecycle and validates PID ownership.
 
+### Tray And Prompt History
+
+On Windows, accepting the first prompt starts one notification-area companion
+for this checkout. Its menu lists every queued or running task across all local
+broker processes. Click a task to open its prompt and watch response text update
+while it streams. Double-click the tray icon, or choose **Open prompt history**,
+to browse and search all retained prompts and responses.
+
+Each newly accepted prompt also shows a Windows notification containing its
+objective. Clicking the notification opens that prompt in the history viewer.
+Notifications are enabled by default and can be disabled in **Settings**.
+
+Closing the history window hides it back to the tray and does not cancel runs.
+Choose **Exit** from the tray menu to close only the companion; the next
+accepted prompt starts it again. The **Settings** dialog controls prompt
+notifications and provides two independent lifecycle policies:
+
+- auto-close after a chosen number of minutes with no queued or running prompts,
+  or never; and
+- auto-delete terminal prompt records after a chosen number of hours, or never.
+
+Both policies default to never. Active records are never auto-deleted. A
+terminal record can also be deleted directly from the history window.
+
 ### Run Status And Progress Contract
 
 `get_agent_run` is the authoritative snapshot for one run; `list_agent_runs`
@@ -124,7 +148,7 @@ From the repository root, publish and smoke-test the broker:
 powershell -NoProfile -ExecutionPolicy Bypass -File Tools/Setup-LocalAgentBroker.ps1
 ```
 
-This publishes the BCL-only app to an immutable directory under
+This publishes the broker and Windows tray companion to an immutable directory under
 `Build/_AgentValidation/00000000-000000-shared/agent-tools/LocalAgentBroker-<timestamp>`, atomically updates
 `Build/_AgentValidation/00000000-000000-shared/agent-tools/LocalAgentBroker.current`, and performs an MCP
 initialize/list-tools test. Versioned deployment avoids overwriting DLLs held
@@ -132,7 +156,9 @@ by a broker process that is already running. It does not contact the OpenAI API.
 An already-running Codex task remains attached to its existing stdio process;
 restart that task or Codex after setup before expecting it to use the new
 deployment. Killing the child process alone closes the old transport and does
-not hot-rebind it.
+not hot-rebind it. If a tray companion from an older deployment is already
+running, choose **Exit** from its menu; the next prompt starts the newly
+published version.
 
 Alternatively, the opt-in agent-tool bootstrap includes the same setup:
 
@@ -432,6 +458,14 @@ Tracing is off by default. `metadata` traces contain run/model IDs, budgets,
 counts, timing, usage, and redacted failures. They exclude prompts, editor tool
 arguments/results, API keys, and authorization headers.
 
+The tray history is separate from metadata tracing and intentionally retains
+the prompt and streamed/final response so the user can inspect prior work. It
+is stored only in the ignored checkout-local directory
+`Build/_AgentValidation/00000000-000000-shared/local-agent-broker-ui/`.
+The record omits inline image data, editor tool arguments/results, credentials,
+headers, and raw provider payloads. Use the tray retention setting or delete a
+selected terminal record when that local content should no longer be kept.
+
 ## Process Configuration
 
 Set these variables before starting Codex. Windows user-scoped API-key values
@@ -466,6 +500,10 @@ named by `XRE_LOCAL_AGENT_BROKER_EDITOR_AUTH_ENV`.
 - **Protocol smoke test fails:** run
   `powershell -NoProfile -ExecutionPolicy Bypass -File Tools/Test-LocalAgentBrokerMcp.ps1`.
   This test does not make a paid API request.
+- **Tray icon does not appear:** rerun setup, restart the Codex task so its
+  broker uses the new deployment, and confirm the published deployment contains
+  `tray/XREngine.LocalAgentBroker.Tray.exe`. The tray starts only after a prompt
+  is accepted; exiting it does not cancel active broker runs.
 - **API key is not set:** on Windows, set the configured variable in the user or
   process environment; on other systems ensure Codex inherits it. Restart Codex
   only when changing broker setup/configuration or when an older broker process

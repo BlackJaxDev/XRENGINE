@@ -29,4 +29,6 @@
   <Project Path="XREngine.VRClient/XREngine.VRClient.csproj" />
   <Project Path="XREngine/XREngine.csproj" />
   <Project Path="Tools/LocalAgentBroker/LocalAgentBroker.csproj" />
+  <Project Path="Tools/LocalAgentBroker.Shared/LocalAgentBroker.Shared.csproj" />
+  <Project Path="Tools/LocalAgentBroker.Tray/LocalAgentBroker.Tray.csproj" />
 </Solution>
