@@ -21,6 +21,18 @@ namespace XREngine.Rendering.Vulkan
             _ = attempt.CompletePhase(
                 EVulkanFrameStage.SubmitPrepare,
                 EDesktopFrameFlow.Continue);
+            if (attempt.OutputExecutionPlan is not { } outputPlan ||
+                (!outputPlan.HasExecutableOutput(EFrameOutputKind.DesktopScene) &&
+                 !outputPlan.HasExecutableOutput(EFrameOutputKind.EditorScenePanel)))
+            {
+                const string reason =
+                    "immutable output DAG did not admit desktop submission";
+                SettleRejectedDesktopCommandArtifacts(ref attempt, reason);
+                return HandleDesktopRecordingDeferred(
+                    ref attempt,
+                    reason,
+                    recoveryOverlaySnapshot: null);
+            }
             if (!TryValidatePresentationSourceForSubmission(
                     attempt.PresentationSource,
                     attempt.SceneCommandBuffer,
@@ -39,11 +51,6 @@ namespace XREngine.Rendering.Vulkan
 
             ThrowIfDesktopFrameFaultInjected(
                 EVulkanDesktopFrameFaultPoint.Submission);
-            _commandRuntime.Synchronization._graphicsTimelineValue = Math.Max(
-                _commandRuntime.Synchronization._graphicsTimelineValue + 1,
-                attempt.AcquireTimelineValue + 1);
-            attempt.GraphicsSignalValue = _commandRuntime.Synchronization._graphicsTimelineValue;
-
             CommandBuffer* commandBuffers =
                 stackalloc CommandBuffer[
                     (int)DesktopSubmitCommandBufferCapacity];
@@ -206,7 +213,9 @@ namespace XREngine.Rendering.Vulkan
                             commandBuffers,
                             commandBufferCount,
                             signalGraphicsTimeline: true,
-                            attempt.GraphicsSignalValue,
+                            minimumGraphicsTimelineSignalValue:
+                                attempt.AcquireTimelineValue + 1UL,
+                            out attempt.GraphicsSignalValue,
                             in diagnosticContext,
                             caller: "RenderFrameCallback");
                         submitResult = submitReceipt.Result;

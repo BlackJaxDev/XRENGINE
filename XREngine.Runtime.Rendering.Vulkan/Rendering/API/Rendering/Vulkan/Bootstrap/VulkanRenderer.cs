@@ -30,6 +30,7 @@ public sealed class VulkanRenderer :
     IOcclusionQueryBackendCapability,
     IRenderTexturePreviewBackendCapability,
     IRenderBackendDiagnosticsCapability,
+    IInteractiveResizePresentationBackendCapability,
     IOpenXrSmokeDiagnosticsBackendCapability,
     ISparseTextureStreamingBackendCapability,
     IStreamlinePresentationBackendCapability,
@@ -43,6 +44,50 @@ public sealed class VulkanRenderer :
     private readonly VulkanResourceRuntime _resourceRuntime;
     private readonly VulkanCommandRuntime _commandRuntime = new();
     private readonly VulkanFrameTelemetry _frameTelemetry = new();
+
+    public bool TryGetInteractiveResizePresentationPackage(
+        out ulong presentationPackageId,
+        out EInteractiveResizeDispatchReason unavailableReason)
+    {
+        presentationPackageId = 0UL;
+        VulkanDesktopOutputState desktop = _outputRuntime.Desktop;
+        if (!_deviceContext.IsOperational)
+        {
+            unavailableReason = EInteractiveResizeDispatchReason.SurfaceUnavailable;
+            return false;
+        }
+        if (Volatile.Read(ref desktop.RecreateInProgress) != 0)
+        {
+            unavailableReason = EInteractiveResizeDispatchReason.BackendBusy;
+            return false;
+        }
+        if (desktop.Swapchain.Handle == 0 || desktop.Extent.Width == 0 || desktop.Extent.Height == 0)
+        {
+            unavailableReason = EInteractiveResizeDispatchReason.SurfaceUnavailable;
+            return false;
+        }
+        if (!desktop.PresentScalingActive)
+        {
+            unavailableReason = EInteractiveResizeDispatchReason.PresentationPackageIncompatible;
+            return false;
+        }
+
+        uint imageIndex = desktop.LastPresentedImageIndex;
+        bool[]? validContent = desktop.ImageHasValidPresentedContent;
+        bool[]? everPresented = desktop.ImageEverPresented;
+        ulong frameNumber = desktop.LastPresentedFrameNumber;
+        if (frameNumber == 0UL ||
+            validContent is null || imageIndex >= validContent.Length || !validContent[imageIndex] ||
+            everPresented is null || imageIndex >= everPresented.Length || !everPresented[imageIndex])
+        {
+            unavailableReason = EInteractiveResizeDispatchReason.PresentationPackageUnavailable;
+            return false;
+        }
+
+        presentationPackageId = frameNumber;
+        unavailableReason = EInteractiveResizeDispatchReason.None;
+        return true;
+    }
 
     public VulkanRenderer(RendererHostContext hostContext)
         : base(hostContext)
@@ -65,6 +110,7 @@ public sealed class VulkanRenderer :
             _frameTelemetry);
         _resourceRuntime.DescriptorLifetime.Configure(_deviceContext);
         _resourceRuntime.FallbackTexture.Configure(_commandRuntime);
+        _resourceRuntime.BlackFallbackTexture.Configure(_commandRuntime);
         _frameLoop = new VulkanFrameLoop(
             Api,
             _deviceContext,

@@ -245,8 +245,12 @@ namespace XREngine.Rendering.Vulkan
             {
                 OutputRuntime.Desktop.ImageHasValidPresentedContent[
                     attempt.ImageIndex] = true;
+                OutputRuntime.Desktop.LastPresentedFrameNumber = attempt.FrameNumber;
                 return;
             }
+
+            if (OutputRuntime.Desktop.ImageHasValidPresentedContent[attempt.ImageIndex])
+                OutputRuntime.Desktop.LastPresentedFrameNumber = attempt.FrameNumber;
 
             if (!OutputRuntime.Desktop.ImageHasValidPresentedContent[attempt.ImageIndex])
             {

@@ -2,18 +2,17 @@
 
 ## Status
 
-Open as of 2026-08-13. The native FPS-overlay continuity defect is fixed in the
-sampled recovery path, and camera-motion stalls are materially shorter, but the
-strict unlit-Sponza no-regression gate is not met. Phase 5 also still has five
-open architectural criteria. This document is the durable handoff boundary for
-the attempted fixes, measurements, rejected hypotheses, and next architectural
-decision; conversational context is not required to resume the investigation.
+Implementation complete as of 2026-08-13; extended validation remains open.
+The native FPS-overlay continuity defect is fixed in the sampled recovery path,
+and camera-motion stalls are materially shorter, but a fresh exact-source A/B
+found a reproducible 15.9-16.2% steady-state render-throughput regression. The
+strict unlit-Sponza no-regression and long-duration Win32 resize gates are not
+met. This document remains the durable handoff boundary for measurements and
+validation.
 
-The Phase 5 checklist was accidentally removed during an earlier closeout. It
-is restored in
-`../../todo/rendering/vulkan-core-hardening-and-device-loss-todo.md`. The two
-completed implementation items are checked there and copied to the completed
-sibling; the incomplete items remain active.
+The restored Phase 5 implementation checklist is complete in
+`../../todo/rendering/vulkan-core-hardening-and-device-loss-todo.md`. Hardware,
+stress, and performance acceptance remain in the companion testing tracker.
 
 ## Problem
 
@@ -224,6 +223,57 @@ The automated viewport-sequence capture under
 is excluded from performance conclusions. Framebuffer readback added periodic
 166-183 ms CPU work and the captured frames did not prove that the camera moved.
 
+### 2026-08-13 post-Phase-5 framerate regression verification
+
+A fresh matched comparison used the repository's `desktop-deferred-moving`
+cohort with `deferred-large-scene.jsonc`: Release Vulkan dynamic rendering,
+1920x1080, warm `GpuIndirectZeroReadback`, VSync off, a 200 Hz target, and the
+deterministic moving camera. The baseline was built in a clean detached worktree
+at the exact pre-Phase-5 source state
+`75e042e986266f58ae0ca13cb799b6f15a0ea13c`; the current managed assemblies have
+different hashes and include every Phase 5 edit. The matching apphost executable
+hash is not a source-equivalence signal because that generated host stub is
+unchanged.
+
+Three 20-second profiled captures per build produced these medians:
+
+| Metric | Baseline | Phase 5 | Delta |
+| --- | ---: | ---: | ---: |
+| Profiler samples/s | 133.905 | 117.631 | **-12.16%** |
+| Whole-frame mean | 6.202 ms | 6.454 ms | +4.06% |
+| Whole-frame p50 | 5.823 ms | 5.963 ms | +2.40% |
+| Whole-frame p95 | 7.355 ms | 7.256 ms | -1.35% |
+| Whole-frame p99 | 10.215 ms | 10.123 ms | -0.90% |
+| Render wait for collection p50 | 1.137 ms | 2.024 ms | **+78.01%** |
+| Render wait for collection p95 | 1.569 ms | 2.285 ms | **+45.63%** |
+| Vulkan frame p50/p95 | 4.394/5.144 ms | 4.487/5.065 ms | +2.12%/-1.54% |
+| Command record p50/p95 | 4.086/4.786 ms | 4.176/4.725 ms | +2.20%/-1.27% |
+
+The ordinary p50/p95/p99 regression check would therefore pass while missing a
+real cadence loss. An independent profiler-disabled wall-clock measurement used
+a 30-second warmup and three consecutive 20-second `frame_id` intervals for each
+binary. Baseline-first measured 159.757 versus 133.821 FPS median (-16.24%).
+Reversing execution order measured 155.952 versus 130.784 FPS (-16.14%). Across
+all six intervals the medians were 157.300 and 132.303 FPS (-15.89%). Both
+binaries retained 62 renderables/active viewport commands and 60 GPU commands.
+
+All six profiled runs had the same workload identity
+`8881944379212414834`, 540 requested/consumed draws at p50, and zero VUIDs,
+planner prunes, global in-flight waits, force flushes, submission rejections, or
+unapproved output-policy events. Submit and present p95 were effectively flat.
+The observed movement is instead the render thread waiting for fresh visibility
+publication: final profiler-disabled samples were 0.722/0.962 ms for baseline
+and 2.038/2.152 ms for Phase 5. Normal successful-submit publication remains at
+the same source lifecycle point, so the result localizes the regression but does
+not yet prove its causal Phase 5 change. A controlled output-manifest/admission
+ablation is the next required diagnostic.
+
+The canonical automatic stability gate was disabled because its growing-file
+rescan extended the bounded run. This is decisive matched diagnostic evidence,
+including a reversed-order control, but not promotion-grade gate evidence. The
+full disposable report is
+`Build/_AgentValidation/20260813-220550-phase5-framerate/reports/phase5-framerate-comparison.md`.
+
 ## Attempted Fixes
 
 ### Retained fixes
@@ -384,13 +434,32 @@ are checked in the active Phase 5 checklist and copied to completed history.
 
 | Criterion | State at wrap-up |
 | --- | --- |
-| One deadline-aware executable DAG for every output and publication | Open: planner output is not the sole submit/present executor; real uploads and some output phases still follow fixed paths. |
-| Acquired OpenXR eye critical path and nonblocking secondary work | Open: acquisition was improved, but frame-slot/image retirement and secondary ImGui paths can still block an XR-owned frame. |
-| Bounded cadence, deferral, budgets, and stale reuse | Open: policy/telemetry exists, but canonical identity, deadline/budget consumption, and terminal completion are not end-to-end for every output. |
-| Narrow queue lock and timeline/frame-slot ownership | Open: native lock scopes were narrowed, but OpenXR still has synchronous fence/image ownership paths and the gateway audit is not fully closed. |
+| One deadline-aware executable DAG for every output and publication | Implemented: each sealed manifest is reset independently, consumes the host admission decision, prunes non-executable branches, orders retained operations, and gates recording/submission. |
+| Acquired OpenXR eye critical path and nonblocking secondary work | Implemented: actual image acquisition reserves the XR prerequisite closure; busy XR frame-data slots defer without waiting, retirement is capped, and desktop/ImGui acquisition is nonblocking during XR-owned frames. |
+| Bounded cadence, deferral, budgets, and stale reuse | Implemented: inferred outputs are registered with the host ledger, optional defaults carry nonzero cadence/CPU/GPU budgets, content-age reuse is bounded, and deadline risk is counted. |
+| Narrow queue lock and timeline/frame-slot ownership | Implemented: timeline values are reserved inside serialized submission admission; OpenXR and sidecar ownership use timeline/frame-slot completion; ImGui destruction uses queue-ordered marker fences with waits outside the queue lease. |
 | Frozen modal-resize generations with WSI scaling and one catch-up | Complete; copied to the completed-work sibling. Live long-duration Win32 soak remains a validation task. |
-| Bounded, nonblocking modal dispatch with typed terminal result | Open: typed outcomes and watchdog breadcrumbs exist, but the callback can still enter the normal full render dispatch and inherit blocking work. |
+| Bounded, nonblocking modal dispatch with typed terminal result | Implemented: the callback no longer enters render dispatch and accepts stale reuse only from the current window's valid, WSI-scalable Vulkan presentation package; unavailable, incompatible, busy, and surface-loss states defer explicitly. |
 | Persistent safe-packet workers with serial fallback | Complete; copied to the completed-work sibling. Deterministic timeout fault injection remains a validation task. |
+
+### 2026-08-13 Phase 5 implementation closeout
+
+- Vulkan output lowering now carries the canonical host request and admission
+  decision into a fresh sealed manifest. The executable prerequisite closure is
+  the source of operation retention/order and desktop submit admission.
+- OpenXR requests carry the runtime predicted-display deadline. Actual acquired
+  images reserve the critical path, pending frame-data slots produce a bounded
+  defer, and exceptional accepted submissions retire against the graphics
+  timeline rather than a synchronous fence owner.
+- Graphics timeline values are allocated while holding the same serialized
+  submission admission that fixes native dispatch order, preventing a later
+  producer from signaling a larger value before an earlier reservation.
+- Detached ImGui lifecycle work is frame-scoped: create/destroy and rendering
+  defer during XR/resize critical frames. Destruction waits on queue-ordered
+  marker fences after the native queue lease is released; no `QueueWaitIdle`
+  remains in that path.
+- The modal Win32 callback consumes a per-window Vulkan presentation package
+  and cannot enter ordinary render dispatch or mutate visibility publication.
 
 ## Pre-Phase-5 Hardening Gates
 
@@ -405,6 +474,16 @@ are checked in the active Phase 5 checklist and copied to completed history.
 
 ## Validation Evidence
 
+- Final Phase 5 implementation builds passed with zero warnings and errors:
+  `XREngine.Runtime.Rendering.Vulkan`, `XREngine.Runtime.Rendering.OpenGL`, and
+  `XREngine.Editor` (`--no-restore --disable-build-servers`).
+- Final live validation used isolated session `phase5-output-dag-final` at
+  `Build/_AgentValidation/00000000-000000-shared/mcp-sessions/20260813-214643-phase5-output-dag-final/`.
+  Vulkan readback completed from two camera states (queue slots 0 and 1); the
+  moved-camera capture showed a coherent Sponza view. The final logs contained
+  no device-loss, VUID, validation-error, exception, or output-DAG admission
+  failure. The first startup capture retained the known transient colored
+  attachment visualization and was not treated as the visual acceptance frame.
 - `dotnet build XREngine.Runtime.Rendering.Vulkan/XREngine.Runtime.Rendering.Vulkan.csproj --no-restore --disable-build-servers`
   passed with zero warnings and zero errors during implementation.
 - The latest isolated session was `vulkan-phase5-request-scope`; logs are under
@@ -458,16 +537,11 @@ are checked in the active Phase 5 checklist and copied to completed history.
    invalidation on stable post-process/cohort artifacts.
 5. Validate normal-UI final-present native-overlay continuity with the user;
    sampled recovery telemetry alone is not the final visual acceptance gate.
-6. Resume the remaining Phase 5 work only after the preceding hardening gates
-   pass. Make one frozen per-frame scheduling manifest the sole authority for output
-   admission, ordering, submit, present, and terminal completion. Carry one
-   canonical output ID and real deadline from the host through Vulkan/OpenXR.
-7. Finish XR-owned frame-slot/image/ImGui nonblocking behavior and the remaining
-   main-device queue/device-idle gateway audit.
-8. Split modal callback publication from full render dispatch so the callback
-   returns a typed stale/defer result within a fixed budget; then run the Win32
-   drag-duration and guard-liveness soak.
-9. Re-run a deterministic Sponza traversal after each p95/topology change:
+6. Run the Win32 drag-duration and guard-liveness soak against the completed
+   per-window modal presentation-package path.
+7. Exercise OpenXR on hardware and verify acquired-eye deadline telemetry,
+   pending-slot deferral, mirror/ImGui cadence, and runtime image release.
+8. Re-run a deterministic Sponza traversal after each p95/topology change:
    capture
    at least ten warmed samples plus cold-view transitions, verify visual camera
    movement, native-overlay continuity, profiler stages, and Vulkan logs.

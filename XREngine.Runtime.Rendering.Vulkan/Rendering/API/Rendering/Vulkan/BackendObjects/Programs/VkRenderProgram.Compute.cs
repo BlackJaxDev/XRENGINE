@@ -1141,16 +1141,28 @@ internal unsafe partial class VkRenderProgram
 
         if (!snapshot.Samplers.TryGetValue(binding.Binding, out XRTexture? texture))
         {
-            if (binding.Requirement == EVulkanDescriptorBindingRequirement.Required)
-                return false;
-
             // Fallback for shaders that only bind a single sampler but use non-zero binding in source.
             texture = snapshot.Samplers.Count == 1 ? snapshot.Samplers.Values.First() : null;
-            if (texture is null)
-                return false;
+            if (texture is not null)
+            {
+                WarnComputeOnce($"Image binding {binding.Binding} ('{binding.Name}') not found in snapshot; using only available sampler '{texture.Name ?? "<unnamed>"}' as fallback.");
+                RecordComputeDescriptorFallback(binding);
+            }
+        }
 
-            WarnComputeOnce($"Image binding {binding.Binding} ('{binding.Name}') not found in snapshot; using only available sampler '{texture.Name ?? "<unnamed>"}' as fallback.");
-            RecordComputeDescriptorFallback(binding);
+        if (texture is null)
+        {
+            imageInfo = BackendContext.Resources.FallbackTexture.GetImageInfo(
+                binding.DescriptorType,
+                binding.ExpectedImageViewType);
+            if (imageInfo.ImageView.Handle != 0)
+            {
+                RecordComputeDescriptorFallback(binding);
+                return true;
+            }
+
+            RecordComputeDescriptorFailure(binding, "missing sampled texture and placeholder unavailable", skippedDispatch: false);
+            return false;
         }
 
         bool includeSampler = binding.DescriptorType is DescriptorType.CombinedImageSampler or DescriptorType.Sampler;

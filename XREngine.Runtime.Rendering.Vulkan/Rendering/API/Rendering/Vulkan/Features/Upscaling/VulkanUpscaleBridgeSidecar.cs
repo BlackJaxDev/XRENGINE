@@ -39,6 +39,7 @@ internal sealed unsafe partial class VulkanUpscaleBridgeSidecar : IDisposable
     // gateway must therefore remain isolated from the main renderer's command
     // authority while preserving the same narrow no-wait lease contract.
     private readonly object _graphicsQueueOperationGate = new();
+    private readonly object _frameSlotLifecycleGate = new();
     private readonly VulkanDeviceStateMachine _deviceState = new();
     private readonly VulkanFrameTelemetry _telemetry = new();
     private VulkanUpscaleBridgeDeviceLossRecord? _firstDeviceLoss;
@@ -129,12 +130,14 @@ internal sealed unsafe partial class VulkanUpscaleBridgeSidecar : IDisposable
     /// <exception cref="InvalidOperationException">Thrown if the Vulkan upscale bridge device is not operational or if waiting for the frame slot fails.</exception>
     public void WaitForFrameSlotAvailability(VulkanUpscaleBridgeFrameSlot slot)
     {
-        if (_disposed)
-            throw new ObjectDisposedException(nameof(VulkanUpscaleBridgeSidecar));
+        lock (_frameSlotLifecycleGate)
+        {
+            if (_disposed)
+                throw new ObjectDisposedException(nameof(VulkanUpscaleBridgeSidecar));
 
-        ThrowIfDeviceOperationNotAdmitted("VulkanUpscaleBridge.WaitForFrameSlotAvailability");
-
-        WaitForFrameSlotCompletion(slot, "availability");
+            ThrowIfDeviceOperationNotAdmitted("VulkanUpscaleBridge.WaitForFrameSlotAvailability");
+            WaitForFrameSlotCompletion(slot, "availability");
+        }
     }
 
     /// <summary>
@@ -146,10 +149,13 @@ internal sealed unsafe partial class VulkanUpscaleBridgeSidecar : IDisposable
     /// <returns>An array of Vulkan upscale bridge frame slots.</returns>
     public VulkanUpscaleBridgeFrameSlot[] CreateFrameSlots(IOpenGlVendorUpscaleBackendCapability renderer, VulkanUpscaleBridgeFrameResources frameResources, string viewportTag)
     {
-        ThrowIfDeviceOperationNotAdmitted("VulkanUpscaleBridge.CreateFrameSlots");
-        VulkanUpscaleBridgeFrameSlot[] slots = PrepareFrameSlots(renderer, frameResources, viewportTag);
-        Volatile.Write(ref _ownedSlots, slots);
-        return slots;
+        lock (_frameSlotLifecycleGate)
+        {
+            ThrowIfDeviceOperationNotAdmitted("VulkanUpscaleBridge.CreateFrameSlots");
+            VulkanUpscaleBridgeFrameSlot[] slots = PrepareFrameSlots(renderer, frameResources, viewportTag);
+            Volatile.Write(ref _ownedSlots, slots);
+            return slots;
+        }
     }
 
     /// <summary>
@@ -190,18 +196,17 @@ internal sealed unsafe partial class VulkanUpscaleBridgeSidecar : IDisposable
     /// <exception cref="InvalidOperationException">Thrown if the Vulkan upscale bridge sidecar device is unavailable.</exception>
     public VulkanUpscaleBridgeFrameSlot[] RecreateFrameSlots(IOpenGlVendorUpscaleBackendCapability renderer, VulkanUpscaleBridgeFrameResources frameResources, string viewportTag)
     {
+        lock (_frameSlotLifecycleGate)
+            return RecreateFrameSlotsCore(renderer, frameResources, viewportTag);
+    }
+
+    private VulkanUpscaleBridgeFrameSlot[] RecreateFrameSlotsCore(IOpenGlVendorUpscaleBackendCapability renderer, VulkanUpscaleBridgeFrameResources frameResources, string viewportTag)
+    {
         if (_disposed)
             throw new ObjectDisposedException(nameof(VulkanUpscaleBridgeSidecar));
 
         if (_device.Handle == 0)
             throw new InvalidOperationException("The Vulkan upscale bridge sidecar device is unavailable.");
-
-        using VulkanQueueOperationLease lease = VulkanQueueOperationLease.TryEnter(
-            _graphicsQueueOperationGate,
-            _deviceState,
-            _telemetry);
-        if (!lease.Acquired)
-            throw new InvalidOperationException($"The Vulkan upscale bridge device is {_deviceState.State}.");
 
         // Prepare the full replacement first. Any failure here leaves the currently
         // published generation and its vendor sessions untouched.
@@ -251,6 +256,12 @@ internal sealed unsafe partial class VulkanUpscaleBridgeSidecar : IDisposable
     /// <exception cref="ObjectDisposedException">Thrown if the Vulkan upscale bridge sidecar has been disposed.</exception>
     /// <exception cref="InvalidOperationException">Thrown if the Vulkan upscale bridge sidecar device is unavailable or if command buffer submission fails.</exception>
     public void SubmitNoOpHandoff(VulkanUpscaleBridgeFrameSlot slot)
+    {
+        lock (_frameSlotLifecycleGate)
+            SubmitNoOpHandoffCore(slot);
+    }
+
+    private void SubmitNoOpHandoffCore(VulkanUpscaleBridgeFrameSlot slot)
     {
         if (_disposed)
             throw new ObjectDisposedException(nameof(VulkanUpscaleBridgeSidecar));
@@ -306,6 +317,12 @@ internal sealed unsafe partial class VulkanUpscaleBridgeSidecar : IDisposable
     /// <exception cref="ObjectDisposedException">Thrown if the Vulkan upscale bridge sidecar has been disposed.</exception>
     /// <exception cref="InvalidOperationException">Thrown if the Vulkan upscale bridge sidecar device is unavailable or if command buffer submission fails.</exception>
     public void SubmitPassthroughBlit(VulkanUpscaleBridgeFrameSlot slot)
+    {
+        lock (_frameSlotLifecycleGate)
+            SubmitPassthroughBlitCore(slot);
+    }
+
+    private void SubmitPassthroughBlitCore(VulkanUpscaleBridgeFrameSlot slot)
     {
         if (_disposed)
             throw new ObjectDisposedException(nameof(VulkanUpscaleBridgeSidecar));
@@ -422,6 +439,15 @@ internal sealed unsafe partial class VulkanUpscaleBridgeSidecar : IDisposable
     /// <exception cref="ObjectDisposedException">Thrown if the Vulkan upscale bridge sidecar has been disposed.</exception>
     /// <exception cref="InvalidOperationException">Thrown if the Vulkan upscale bridge sidecar device is unavailable or if command buffer submission fails.</exception>
     public bool SubmitVendorUpscale(
+        VulkanUpscaleBridgeFrameSlot slot,
+        in VulkanUpscaleBridgeDispatchParameters parameters,
+        out string failureReason)
+    {
+        lock (_frameSlotLifecycleGate)
+            return SubmitVendorUpscaleCore(slot, in parameters, out failureReason);
+    }
+
+    private bool SubmitVendorUpscaleCore(
         VulkanUpscaleBridgeFrameSlot slot,
         in VulkanUpscaleBridgeDispatchParameters parameters,
         out string failureReason)
@@ -778,7 +804,7 @@ internal sealed unsafe partial class VulkanUpscaleBridgeSidecar : IDisposable
 
         _disposed = true;
 
-        lock (_graphicsQueueOperationGate)
+        lock (_frameSlotLifecycleGate)
         {
             _deviceState.Dispose();
             if (_device.Handle != 0)

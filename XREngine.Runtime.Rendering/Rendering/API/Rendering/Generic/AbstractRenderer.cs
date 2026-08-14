@@ -594,17 +594,26 @@ namespace XREngine.Rendering
                         RecordImGuiCpuPhase(profilingActive, frameId, "ImGui.Backend.Render", phaseStart);
 
                         phaseStart = BeginImGuiCpuPhase(profilingActive);
-                        // Detached platform windows own blocking fence/acquire
-                        // paths. During a Win32 modal drag they keep their last
-                        // published images while the primary viewport uses WSI
-                        // scaling, so the callback stays bounded.
+                        // Dear ImGui requires UpdatePlatformWindows after every
+                        // completed frame when multi-viewports are enabled. Keep
+                        // that lifecycle step separate from the potentially
+                        // blocking detached-window render/present work.
                         bool xrOwnsCurrentOutput = viewport?.CurrentFrameOutputRequest.OutputKind is
                             EFrameOutputKind.OpenXREyeSubmit or EFrameOutputKind.OpenVRSubmit;
                         bool xrAuxiliaryCadenceDue = !RuntimeRenderingHostServices.Presentation.IsOpenXRActive ||
                             (frameId & 7UL) == 0UL;
-                        if (!allowResizeFrame && !xrOwnsCurrentOutput && xrAuxiliaryCadenceDue)
+                        bool deferPlatformGpuLifecycle = allowResizeFrame ||
+                            xrOwnsCurrentOutput ||
+                            !xrAuxiliaryCadenceDue;
+                        using (profilingActive ? profiler.StartScope("ImGui.PlatformWindows.Update") : default)
+                            backend.UpdatePlatformWindows(deferPlatformGpuLifecycle);
+
+                        // During a Win32 modal drag or XR-critical frame,
+                        // detached platform windows keep their last published
+                        // images and defer all GPU/WSI lifecycle work.
+                        if (!deferPlatformGpuLifecycle)
                         {
-                            using (profilingActive ? profiler.StartScope("ImGui.PlatformWindows") : default)
+                            using (profilingActive ? profiler.StartScope("ImGui.PlatformWindows.Render") : default)
                                 backend.RenderPlatformWindows();
                         }
                         RecordImGuiCpuPhase(profilingActive, frameId, "ImGui.PlatformWindows", phaseStart);

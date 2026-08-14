@@ -32,6 +32,7 @@ internal sealed unsafe class VulkanImGuiMultiViewportController : IRendererImGui
         private int _monitorCapacity;
         private bool _installed;
         private bool _disposed;
+        private bool _deferGpuLifecycle;
 
         private VulkanImGuiMultiViewportController(IVulkanImGuiOutputHost outputHost, nint context)
         {
@@ -138,6 +139,36 @@ internal sealed unsafe class VulkanImGuiMultiViewportController : IRendererImGui
             io.MouseHoveredViewport = viewportId;
         }
 
+        public void UpdatePlatformWindows(bool deferGpuLifecycle)
+        {
+            if (!_installed || _disposed)
+                return;
+
+            MakeCurrent();
+            if ((ImGui.GetIO().ConfigFlags & ImGuiConfigFlags.ViewportsEnable) == 0)
+                return;
+
+            try
+            {
+                // Runtime-close cleanup destroys WSI resources and may wait for
+                // queue completion. Retain those resources until an ordinary
+                // desktop frame owns the optional-output budget.
+                _deferGpuLifecycle = deferGpuLifecycle;
+                if (!deferGpuLifecycle)
+                    DisposePendingPlatformWindows();
+                UpdatePlatformMonitors();
+                ImGui.UpdatePlatformWindows();
+            }
+            catch (Exception ex)
+            {
+                LogCallbackException(nameof(UpdatePlatformWindows), ex);
+            }
+            finally
+            {
+                _deferGpuLifecycle = false;
+            }
+        }
+
         public void RenderPlatformWindows()
         {
             if (!_installed || _disposed)
@@ -149,9 +180,6 @@ internal sealed unsafe class VulkanImGuiMultiViewportController : IRendererImGui
 
             try
             {
-                DisposePendingPlatformWindows();
-                UpdatePlatformMonitors();
-                ImGui.UpdatePlatformWindows();
                 ImGui.RenderPlatformWindowsDefault();
             }
             catch (Exception ex)
@@ -173,6 +201,8 @@ internal sealed unsafe class VulkanImGuiMultiViewportController : IRendererImGui
                 try
                 {
                     window.RenderPending();
+                    if (window.RendererReady)
+                        ShowPlatformWindow(window.Window);
                 }
                 catch (Exception ex)
                 {
@@ -481,8 +511,11 @@ internal sealed unsafe class VulkanImGuiMultiViewportController : IRendererImGui
                 if (GetPlatformWindow(viewport) is not { } window)
                     return;
 
-                window.CreateRendererResources();
                 viewport.RendererUserData = window.Handle;
+                if (_deferGpuLifecycle)
+                    return;
+
+                window.CreateRendererResources();
 
                 // Restored INI viewports do not consistently receive a later
                 // Platform_ShowWindow callback. Reveal the window only after its
@@ -502,7 +535,9 @@ internal sealed unsafe class VulkanImGuiMultiViewportController : IRendererImGui
             try
             {
                 ImGuiViewportPtr viewport = new(nativeViewport);
-                GetPlatformWindow(viewport)?.DestroyRendererResources();
+                // PlatformDestroyWindow queues the complete native/renderer
+                // bundle for completion-safe retirement. Destroying here would
+                // synchronously wait for queues inside ImGui.UpdatePlatformWindows.
                 viewport.RendererUserData = nint.Zero;
             }
             catch (Exception ex)

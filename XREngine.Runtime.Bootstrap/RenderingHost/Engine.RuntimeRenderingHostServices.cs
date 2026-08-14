@@ -417,8 +417,8 @@ internal sealed class EngineRuntimeRenderingHostServices :
         Engine.Time.Timer.RenderFrame -= renderFrame;
     }
 
-    public InteractiveResizeDispatchResult TryDispatchInteractiveResizeFrame()
-        => Engine.Time.Timer.TryDispatchInteractiveResizeFrame();
+    public InteractiveResizeDispatchResult TryDispatchInteractiveResizeFrame(ulong? presentationPackageId = null)
+        => Engine.Time.Timer.TryDispatchInteractiveResizeFrame(presentationPackageId);
 
     public void SubscribePlayModeTransitions(Action callback)
     {
@@ -1637,12 +1637,16 @@ internal sealed class EngineRuntimeRenderingHostServices :
         }
 
         RenderOutputSchedulingDecision decision;
+        bool deadlineRisk = request.Schedule.DeadlineMs > 0.0 &&
+            RuntimeEngine.Rendering.Stats.FrameOutputs.LastWholeFrameMs > request.Schedule.DeadlineMs;
         lock (_renderOutputGraphLock)
         {
             decision = _renderOutputAdmissionLedger.Plan(
                 request,
                 admittedDue,
                 admittedReason);
+            if (deadlineRisk && decision.Execute)
+                decision = decision with { Reason = ERenderOutputPolicyReason.DeadlineRisk };
             int snapshotIndex = FindRenderOutputSchedulingSnapshot(request.OutputId);
             if (snapshotIndex < 0)
             {
@@ -1658,7 +1662,7 @@ internal sealed class EngineRuntimeRenderingHostServices :
             CpuBudgetDeferrals: decision.Reason == ERenderOutputPolicyReason.CpuBudget ? 1 : 0,
             GpuBudgetDeferrals: decision.Reason == ERenderOutputPolicyReason.GpuBudget ? 1 : 0,
             StaleResultReuses: decision.Disposition == ERenderOutputWorkDisposition.ReusedStale ? 1 : 0,
-            MissedDeadlines: decision.Reason == ERenderOutputPolicyReason.DeadlineRisk ? 1 : 0));
+            MissedDeadlines: deadlineRisk ? 1 : 0));
         return decision;
     }
 

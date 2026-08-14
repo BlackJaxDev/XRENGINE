@@ -65,6 +65,7 @@ internal sealed unsafe class VulkanImGuiPlatformWindow : VulkanImGuiPlatformWind
         public uint ViewportId { get; }
         public bool Focused { get; private set; }
         public bool IsDisposed => _disposeStarted;
+        public bool RendererReady => _rendererReady;
         public nint Handle => GCHandle.ToIntPtr(_handle);
 
         public void SetPosition(Vector2D<int> position)
@@ -356,9 +357,10 @@ internal sealed unsafe class VulkanImGuiPlatformWindow : VulkanImGuiPlatformWind
             Fence frameFence = _frameFences[frameSlot];
             if (_frameFenceSubmitted[frameSlot])
             {
-                ThrowIfFailed(
-                    _outputHost.WaitForPlatformFence(frameFence),
-                    "wait for detached-window frame fence");
+                Result waitResult = _outputHost.WaitForPlatformFence(frameFence);
+                if (waitResult is Result.NotReady or Result.Timeout)
+                    return;
+                ThrowIfFailed(waitResult, "wait for detached-window frame fence");
                 _frameFenceSubmitted[frameSlot] = false;
             }
 

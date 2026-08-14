@@ -232,6 +232,7 @@ internal sealed partial class VulkanFrameLoop
 
         RunCleanupStep("auto-exposure compute resources", _resourceRuntime.DestroyAutoExposureComputeResources, failures);
         RunCleanupStep("fallback texture", _resourceRuntime.FallbackTexture.RetireAll, failures);
+        RunCleanupStep("black fallback texture", _resourceRuntime.BlackFallbackTexture.RetireAll, failures);
         if (_imguiOutputPipelineService is not null &&
             _imguiFontAtlasResources is not null &&
             _imguiDrawBufferResources is not null)

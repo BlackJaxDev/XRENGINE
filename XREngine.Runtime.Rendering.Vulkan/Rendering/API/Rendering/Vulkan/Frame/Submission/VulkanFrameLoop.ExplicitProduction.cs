@@ -114,10 +114,7 @@ internal sealed partial class VulkanFrameLoop
                     $"but target '{FrameExecutionLabel}' requires {lease.Target.RequiredFinalColorLayout}.");
             }
 
-            _commandRuntime.Synchronization._graphicsTimelineValue = Math.Max(
-                _commandRuntime.Synchronization._graphicsTimelineValue + 1,
-                1UL);
-            ulong graphicsSignalValue = _commandRuntime.Synchronization._graphicsTimelineValue;
+            ulong graphicsSignalValue;
             mappedFrameSlotPrepared = mappedFrameArena is null ||
                 mappedFrameArena.TryPrepareFrameSlotForSubmission(frameSlot, mappedFrameGeneration);
             frameDataSlotPrepared = frameDataArena is null ||
@@ -147,7 +144,8 @@ internal sealed partial class VulkanFrameLoop
                     &submittedCommandBuffer,
                     commandBufferCount: 1,
                     signalGraphicsTimeline: true,
-                    graphicsSignalValue,
+                    minimumGraphicsTimelineSignalValue: 1UL,
+                    out graphicsSignalValue,
                     in diagnosticContext,
                     caller: nameof(ExecuteExplicitProductionFrame));
             }

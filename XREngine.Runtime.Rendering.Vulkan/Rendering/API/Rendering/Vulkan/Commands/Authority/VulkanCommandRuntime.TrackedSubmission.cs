@@ -190,6 +190,67 @@ internal sealed partial class VulkanCommandRuntime
             submissionAccepted,
             lifetimePinsTransferred,
             publicationSucceeded);
+    }
+    }
+
+    /// <summary>
+    /// Reserves and patches the graphics timeline value under the same
+    /// submission-state serialization that determines native queue order.
+    /// Producers must not pre-reserve timeline values because another producer
+    /// could otherwise submit a later value first.
+    /// </summary>
+    internal unsafe VulkanSubmissionReceipt SubmitToGraphicsTimelineTrackedWithDisposition(
+        Queue queue,
+        ref SubmitInfo submitInfo,
+        Fence fence,
+        Semaphore graphicsTimelineSemaphore,
+        ulong minimumTimelineValue,
+        in VulkanSubmissionDiagnosticContext diagnosticContext,
+        out ulong timelineValue,
+        out bool queueDispatchAttempted,
+        out EOpenXrStrictSpsFaultInjectionStage injectedFailureStage,
+        [CallerMemberName] string? caller = null)
+    {
+        TimelineSemaphoreSubmitInfo* timeline = FindTrackedTimelineInfo(submitInfo.PNext);
+        if (timeline is null || timeline->PSignalSemaphoreValues is null ||
+            submitInfo.PSignalSemaphores is null)
+        {
+            throw new InvalidOperationException(
+                "A graphics timeline submission requires writable timeline signal metadata.");
+        }
+
+        int graphicsSignalIndex = -1;
+        uint signalCount = Math.Min(
+            timeline->SignalSemaphoreValueCount,
+            submitInfo.SignalSemaphoreCount);
+        for (int index = 0; index < signalCount; index++)
+        {
+            if (submitInfo.PSignalSemaphores[index].Handle != graphicsTimelineSemaphore.Handle)
+                continue;
+
+            graphicsSignalIndex = index;
+            break;
+        }
+        if (graphicsSignalIndex < 0)
+            throw new InvalidOperationException(
+                "The submission does not signal the configured graphics timeline semaphore.");
+
+        lock (CommandBuffers.SubmissionStateGate)
+        {
+            timelineValue = Synchronization.ReserveGraphicsTimelineValue(minimumTimelineValue);
+            timeline->PSignalSemaphoreValues[graphicsSignalIndex] = timelineValue;
+            VulkanSubmissionDiagnosticContext submittedDiagnostics = diagnosticContext with
+            {
+                SignalTimelineValue = timelineValue,
+            };
+            return SubmitToQueueTrackedWithDisposition(
+                queue,
+                ref submitInfo,
+                fence,
+                in submittedDiagnostics,
+                out queueDispatchAttempted,
+                out injectedFailureStage,
+                caller);
         }
     }
 

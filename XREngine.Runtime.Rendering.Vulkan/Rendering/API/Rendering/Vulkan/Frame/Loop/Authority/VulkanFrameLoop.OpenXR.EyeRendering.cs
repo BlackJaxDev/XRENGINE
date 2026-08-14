@@ -328,10 +328,13 @@ internal sealed partial class VulkanFrameLoop
                 EnsureOpenXrFrameDataSlotCapacity(openXrFrameDataSlotCount);
                 _commandRuntime.EnsureOpenXrDescriptorFrameSlotFloor(
                     openXrFrameDataSlotCount);
-                bool frameDataSlotCompletionProven =
-                    WaitForOpenXrFrameDataSlot(
+                if (!TryPrepareOpenXrFrameDataSlot(
                         recordImageIndex,
-                        "eye swapchain render");
+                        "eye swapchain render",
+                        out bool frameDataSlotCompletionProven))
+                {
+                    return false;
+                }
                 DrainRetiredResourcesFromCompletedSubmittedFrameSlots();
                 ResourceRuntime.Uploads.DrainCompletedRecordedTextureUploadPublications(
                     Api!, _deviceContext, _commandRuntime, ResourceRuntime, IsDeviceLost);
@@ -815,7 +818,8 @@ internal sealed partial class VulkanFrameLoop
                 Array.Empty<FrameOp>(),
                 new VulkanFramePlanRenderGraphAuthority(
                     firstEye.ResourcePlanStamp.PlanningSnapshot.RenderGraphPlan,
-                    publishedPlannerState.FrameOpResourcePlannerSwitchingState));
+                    publishedPlannerState.FrameOpResourcePlannerSwitchingState),
+                openXrImagesAcquired: true);
             return true;
         }
         catch (Exception ex)
@@ -899,7 +903,8 @@ internal sealed partial class VulkanFrameLoop
                 Array.Empty<FrameOp>(),
                 new VulkanFramePlanRenderGraphAuthority(
                     eye.ResourcePlanStamp.PlanningSnapshot.RenderGraphPlan,
-                    publishedPlannerState.FrameOpResourcePlannerSwitchingState));
+                    publishedPlannerState.FrameOpResourcePlannerSwitchingState),
+                openXrImagesAcquired: true);
             return true;
         }
         catch (Exception ex)

@@ -2437,12 +2437,27 @@ descriptor, barrier, or native command code.
   scratch buffers, descriptor builders, and unsafe helpers immediately after
   their final consumer moves to the canonical layout.
 
-## Phase 5 Partial Completed Implementation - 2026-08-12
+## Phase 5 Completed Implementation - 2026-08-12 through 2026-08-13
 
-Phase 5 remains open. The first closeout removed the section before preserving
-its item-level state, so the active checklist has been restored in the
-[current todo](vulkan-core-hardening-and-device-loss-todo.md). Only the two
-criteria below are complete; the other five criteria remain unchecked there.
+The first closeout removed the section before preserving its item-level state.
+The checklist was restored in the [current todo](vulkan-core-hardening-and-device-loss-todo.md)
+and its five remaining implementation criteria were completed on 2026-08-13.
+
+- [x] Build one deadline-aware executable manifest for uploads, shadows,
+  desktop, OpenXR eyes, mirrors, probes, captures, and publication. Host
+  admission is consumed once, non-executable branches are pruned, and retained
+  operations plus submission are gated by the immutable DAG node order.
+- [x] Reserve the actually acquired OpenXR eye prerequisite closure ahead of
+  auxiliary work. Pending XR frame-data slots now defer without a CPU wait,
+  retirement is capped per frame, and desktop/ImGui acquisition is nonblocking
+  during XR-owned frames.
+- [x] Apply canonical bounded cadence, CPU/GPU budget, content-age, forced
+  refresh, stale-reuse, and deadline-risk telemetry to inferred and explicitly
+  registered optional outputs.
+- [x] Reserve graphics timeline values inside serialized submission admission;
+  replace OpenXR fence ownership with timeline receipts; keep sidecar waits
+  outside its native queue lease; and replace ImGui `QueueWaitIdle` destruction
+  with queue-ordered completion markers whose fence waits occur after submit.
 
 - [x] During Win32 modal interactive resize, keep the already-published scene,
   shadow, UI, and presentation generations frozen independently and use WSI
@@ -2464,12 +2479,18 @@ criteria below are complete; the other five criteria remain unchecked there.
   - Timeout cancellation rejects the partial batch. Workers that outlive the
     grace interval quarantine primary recording and their artifacts until the
     last worker exits, preventing serial/reuse races with worker-owned state.
+- [x] Make modal resize dispatch bounded and nonblocking. It no longer enters
+  normal render dispatch or visibility publication, and accepts stale reuse
+  only from the current window's valid WSI-scalable Vulkan presentation
+  package; unavailable, incompatible, busy, and lost-surface states defer with
+  typed reasons.
 
-The focused Vulkan project build passed with zero warnings and errors. Live
-Win32 modal-resize soak and deterministic worker-timeout fault injection remain
-in the companion validation backlog; they are validation gates, not claims that
-the remaining Phase 5 scheduling work is complete. The implementation and
-camera-motion evidence are tracked in
+The Vulkan, OpenGL, and editor builds passed with zero warnings and errors. A
+final isolated Vulkan Sponza session rendered coherent moved-camera output with
+no device loss, VUID, validation error, exception, or output-DAG admission
+failure. Live OpenXR hardware, long-duration Win32 modal-resize, deterministic
+worker-timeout, and repeated camera-performance acceptance remain in the
+companion validation backlog. The implementation and camera-motion evidence are tracked in
 `../../investigations/rendering/vulkan-phase5-output-scheduling-validation.md`.
 
 ## Continuing Work

@@ -839,9 +839,11 @@ namespace XREngine.Rendering.Vulkan
             if (!TryResolveBoundTexture(program, binding, arrayIndex, out XRTexture? texture) ||
                 texture is null)
             {
-                imageInfo = BackendContext.Resources.FallbackTexture.GetImageInfo(
-                    binding.DescriptorType,
-                    binding.ExpectedImageViewType);
+                imageInfo = VulkanFallbackTextureAuthority.SupportsUnassignedTextureFallback(binding.DescriptorType)
+                    ? BackendContext.Resources
+                        .GetMissingTextureFallback(Data.RenderOptions)
+                        .GetImageInfo(binding.DescriptorType, binding.ExpectedImageViewType)
+                    : default;
             }
             else if (!TryCreateTextureDescriptor(binding, texture, binding.DescriptorType, out imageInfo))
             {
@@ -1292,20 +1294,22 @@ namespace XREngine.Rendering.Vulkan
             imageInfo = default;
             if (!TryResolveBoundTexture(program, binding, arrayIndex, out XRTexture? texture) || texture is null)
             {
-                if (binding.Requirement == EVulkanDescriptorBindingRequirement.Required)
+                if (!VulkanFallbackTextureAuthority.SupportsUnassignedTextureFallback(descriptorType))
                 {
-                    RecordDescriptorFailure(binding, "required material texture is missing");
+                    RecordDescriptorFailure(binding, "unassigned material descriptor requires a concrete storage or input-attachment resource");
                     return false;
                 }
 
-                imageInfo = BackendContext.Resources.FallbackTexture.GetImageInfo(descriptorType, binding.ExpectedImageViewType);
+                imageInfo = BackendContext.Resources
+                    .GetMissingTextureFallback(Data.RenderOptions)
+                    .GetImageInfo(descriptorType, binding.ExpectedImageViewType);
                 if (imageInfo.ImageView.Handle != 0)
                 {
                     RecordDescriptorFallback(binding);
                     return true;
                 }
 
-                WarnOnce($"No texture available for material descriptor binding '{binding.Name}'.");
+                WarnOnce($"No fallback texture is available for unassigned material descriptor binding '{binding.Name}'.");
                 RecordDescriptorFailure(binding, "missing material texture and placeholder unavailable");
                 return false;
             }

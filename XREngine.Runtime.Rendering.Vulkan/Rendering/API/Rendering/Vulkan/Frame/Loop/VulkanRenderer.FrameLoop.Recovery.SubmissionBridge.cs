@@ -5,18 +5,28 @@ namespace XREngine.Rendering.Vulkan
 {
     internal sealed partial class VulkanFrameLoop
     {
-        private unsafe VulkanSubmissionReceipt SubmitAcquireSemaphoreBridge(Semaphore acquireSemaphore, ulong signalTimelineValue)
-            => SubmitAcquireSemaphoreBridge(acquireSemaphore, signalTimelineValue, default, null, 0);
+        private unsafe VulkanSubmissionReceipt SubmitAcquireSemaphoreBridge(
+            Semaphore acquireSemaphore,
+            ulong minimumTimelineValue,
+            out ulong signalTimelineValue)
+            => SubmitAcquireSemaphoreBridge(
+                acquireSemaphore,
+                minimumTimelineValue,
+                default,
+                null,
+                0,
+                out signalTimelineValue);
 
         private unsafe VulkanSubmissionReceipt SubmitAcquireSemaphoreBridge(
             Semaphore acquireSemaphore,
-            ulong signalTimelineValue,
+            ulong minimumTimelineValue,
             Semaphore signalPresentSemaphore,
             CommandBuffer* commandBuffers,
-            uint commandBufferCount)
+            uint commandBufferCount,
+            out ulong signalTimelineValue)
         {
             uint signalSemaphoreCount = signalPresentSemaphore.Handle != 0 ? 2u : 1u;
-            ulong* signalValues = stackalloc ulong[2] { signalTimelineValue, 0UL };
+            ulong* signalValues = stackalloc ulong[2] { 0UL, 0UL };
             ulong* waitValues = stackalloc ulong[1] { 0UL };
             Semaphore* waitSemaphores = stackalloc Semaphore[1] { acquireSemaphore };
             Semaphore* signalSemaphores = stackalloc Semaphore[2] { _commandRuntime.Synchronization._graphicsTimelineSemaphore, signalPresentSemaphore };
@@ -49,13 +59,15 @@ namespace XREngine.Rendering.Vulkan
                 SubmissionKind = "DesktopAcquireRecovery",
                 FrameOpKind = "Recovery",
                 OutputTargetName = "Swapchain",
-                SignalTimelineValue = signalTimelineValue,
             };
-            return _commandRuntime.SubmitToQueueTrackedWithDisposition(
+            return _commandRuntime.SubmitToGraphicsTimelineTrackedWithDisposition(
                 _deviceContext.GraphicsQueue,
                 ref submit,
                 default,
+                _commandRuntime.Synchronization._graphicsTimelineSemaphore,
+                minimumTimelineValue,
                 in diagnosticContext,
+                out signalTimelineValue,
                 out _,
                 out _,
                 nameof(SubmitAcquireSemaphoreBridge));

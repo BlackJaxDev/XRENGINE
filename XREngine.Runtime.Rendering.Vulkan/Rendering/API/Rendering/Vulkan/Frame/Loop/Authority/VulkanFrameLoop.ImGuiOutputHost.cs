@@ -197,9 +197,9 @@ internal sealed partial class VulkanFrameLoop : IVulkanImGuiOutputHost
     {
         if (!_deviceContext.IsReady || !_deviceContext.IsOperational)
             return;
-        _ = WaitForImGuiPlatformQueueIdle(_deviceContext.GraphicsQueue, "ImGuiViewportDestroy.Graphics");
+        _ = WaitForImGuiPlatformQueueCompletion(_deviceContext.GraphicsQueue, "ImGuiViewportDestroy.Graphics");
         if (_deviceContext.PresentQueue.Handle != _deviceContext.GraphicsQueue.Handle)
-            _ = WaitForImGuiPlatformQueueIdle(_deviceContext.PresentQueue, "ImGuiViewportDestroy.Present");
+            _ = WaitForImGuiPlatformQueueCompletion(_deviceContext.PresentQueue, "ImGuiViewportDestroy.Present");
     }
 
     void IVulkanImGuiOutputHost.DestroyPlatformCommandResources(
@@ -246,34 +246,55 @@ internal sealed partial class VulkanFrameLoop : IVulkanImGuiOutputHost
             fence,
             "ImGuiViewport");
 
-    private Result WaitForImGuiPlatformQueueIdle(Queue queue, string operation)
+    private unsafe Result WaitForImGuiPlatformQueueCompletion(Queue queue, string operation)
     {
         if (!TargetOutputSession.TryAdmitVulkanDeviceOperation(operation, out _))
             return Result.ErrorDeviceLost;
-        ReaderWriterLockSlim admissionGate =
-            _commandRuntime.CommandBuffers.DeviceQueueAdmissionGate;
-        admissionGate.EnterReadLock();
-        Result result;
+
+        FenceCreateInfo fenceInfo = new() { SType = StructureType.FenceCreateInfo };
+        Result result = Api.CreateFence(
+            _deviceContext.Device,
+            in fenceInfo,
+            null,
+            out Fence completionFence);
+        if (result != Result.Success)
+            return result;
+
         try
         {
-            using VulkanQueueOperationLease queueOperation = VulkanQueueOperationLease.TryEnter(
-                _commandRuntime.CommandBuffers.OneTimeSubmitGate,
-                _deviceContext.StateMachine,
-                _telemetry);
-            if (!queueOperation.Acquired)
-                return Result.ErrorDeviceLost;
-            result = Api.QueueWaitIdle(queue);
+            SubmitInfo markerSubmit = new() { SType = StructureType.SubmitInfo };
+            result = _commandRuntime.SubmitToQueueTracked(
+                Api,
+                _deviceContext,
+                _telemetry,
+                queue,
+                ref markerSubmit,
+                completionFence,
+                operation);
+            if (result != Result.Success)
+                return result;
+
+            // The native queue lease ended with QueueSubmit. Waiting for the
+            // queue-ordered completion marker must never hold that lease.
+            result = Api.WaitForFences(
+                _deviceContext.Device,
+                1,
+                in completionFence,
+                true,
+                ulong.MaxValue);
+            _deviceContext.ObserveNativeResult(operation, result);
+            if (result == Result.Success)
+            {
+                TargetOutputSession.NotifyVulkanFenceCompleted(completionFence);
+                _commandRuntime.CompleteTrackedQueue(queue);
+            }
+            return result;
         }
         finally
         {
-            admissionGate.ExitReadLock();
+            if (_deviceContext.IsReady)
+                Api.DestroyFence(_deviceContext.Device, completionFence, null);
         }
-        _deviceContext.ObserveNativeResult(operation, result);
-        _commandRuntime.Synchronization.RecordQueueOperation(
-            _deviceContext.State, "wait-idle", queue, result, 0, operation);
-        if (result == Result.Success)
-            _commandRuntime.CompleteTrackedQueue(queue);
-        return result;
     }
 
     private Result PresentImGuiPlatformViewport(ref PresentInfoKHR presentInfo)

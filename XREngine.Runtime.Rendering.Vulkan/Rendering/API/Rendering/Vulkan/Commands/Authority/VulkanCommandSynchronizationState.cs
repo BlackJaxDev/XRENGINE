@@ -25,6 +25,7 @@ internal sealed unsafe class VulkanCommandSynchronizationState
     internal ulong[]? _desktopImageTimelineValues;
     internal ulong _acquireTimelineValue;
     internal ulong _graphicsTimelineValue;
+    private readonly object _graphicsTimelineReservationGate = new();
     internal readonly VulkanSynchronizationThreadWorkspace _synchronizationThreadWorkspace = new();
     internal EVulkanSynchronizationBackend _activeSynchronizationBackend = EVulkanSynchronizationBackend.Legacy;
     internal readonly object _vulkanImageLayoutLock = new();
@@ -41,6 +42,23 @@ internal sealed unsafe class VulkanCommandSynchronizationState
     internal readonly object _submissionMarkerLock = new();
     internal readonly Dictionary<nint, List<VulkanTimelineGpuFence>> _submissionMarkersByCommandBuffer = [];
     internal readonly Stack<VulkanTimelineGpuFence> _timelineGpuFencePool = [];
+
+    /// <summary>
+    /// Reserves the next graphics timeline value across desktop, explicit-target,
+    /// recovery, and OpenXR producers. Failed submissions may leave gaps; no
+    /// consumer waits for a value until its native submission is accepted.
+    /// </summary>
+    internal ulong ReserveGraphicsTimelineValue(ulong minimumValue = 1UL)
+    {
+        lock (_graphicsTimelineReservationGate)
+        {
+            ulong next = _graphicsTimelineValue == ulong.MaxValue
+                ? throw new InvalidOperationException("Vulkan graphics timeline value exhausted.")
+                : _graphicsTimelineValue + 1UL;
+            _graphicsTimelineValue = Math.Max(next, minimumValue);
+            return _graphicsTimelineValue;
+        }
+    }
 
     /// <summary>
     /// Debug-only assertion that fires when <c>AllCommandsBit</c> is used in a barrier.

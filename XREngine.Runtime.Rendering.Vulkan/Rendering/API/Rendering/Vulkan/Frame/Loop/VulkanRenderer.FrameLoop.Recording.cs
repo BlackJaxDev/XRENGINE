@@ -76,6 +76,8 @@ namespace XREngine.Rendering.Vulkan
                             recordingResult.SwapchainLayoutAfterCommandBuffer;
                         attempt.SceneCommandBufferDirtyGeneration =
                             recordingResult.CommandBufferDirtyGeneration;
+                        attempt.OutputExecutionPlan =
+                            recordingResult.OutputExecutionPlan;
                         _lastEnsureCommandBufferRecordedPrimary =
                             recordingResult.Disposition ==
                             EVulkanPrimaryCommandRecordingDisposition.Recorded;

@@ -87,16 +87,17 @@ internal unsafe partial class VkMeshRenderer
 
 		if (texture is null)
 		{
-			if (requiresReadyDescriptor)
+			if (!VulkanFallbackTextureAuthority.SupportsUnassignedTextureFallback(descriptorType))
 			{
-				WarnOnce($"Required texture for descriptor binding '{binding.Name}' is unavailable. Deferring the draw.");
-				RecordDescriptorFailure(binding, "required texture unavailable");
+				RecordDescriptorFailure(binding, "unassigned descriptor requires a concrete storage or input-attachment resource");
 				return false;
 			}
 
-			// Use a 1Ã—1 magenta placeholder to satisfy the descriptor binding
-			// instead of failing the entire descriptor set write.
-			imageInfo = BackendContext.Resources.FallbackTexture.GetImageInfo(descriptorType, binding.ExpectedImageViewType);
+			// An unassigned slot has no pending resource whose readiness can improve.
+			// Always bind the material's valid placeholder instead of deferring the draw.
+			imageInfo = BackendContext.Resources
+				.GetMissingTextureFallback(material.RenderOptions)
+				.GetImageInfo(descriptorType, binding.ExpectedImageViewType);
 			if (imageInfo.ImageView.Handle != 0)
 			{
 				LogPostProcessDescriptor(binding, arrayIndex, null, imageInfo, "placeholder-missing-texture");
@@ -106,7 +107,7 @@ internal unsafe partial class VkMeshRenderer
 				return true;
 			}
 
-			WarnOnce($"No texture available for descriptor binding '{binding.Name}' (set {binding.Set}, binding {binding.Binding}).");
+			WarnOnce($"No fallback texture is available for unassigned descriptor binding '{binding.Name}' (set {binding.Set}, binding {binding.Binding}).");
 			RecordDescriptorFailure(binding, "missing texture and placeholder unavailable");
 			return false;
 		}

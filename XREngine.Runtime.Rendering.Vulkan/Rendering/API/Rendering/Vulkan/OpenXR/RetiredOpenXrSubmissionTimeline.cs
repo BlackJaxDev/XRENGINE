@@ -1,12 +1,15 @@
 using Silk.NET.Vulkan;
+using Semaphore = Silk.NET.Vulkan.Semaphore;
 
 namespace XREngine.Rendering.Vulkan;
 
 /// <summary>
-/// Captures the frame-owned resources retained until an OpenXR submission fence completes.
+/// Captures frame-owned resources retained until an OpenXR graphics-timeline
+/// submission completes.
 /// </summary>
-internal sealed record RetiredOpenXrSubmissionFence(
-    Fence Fence,
+internal sealed record RetiredOpenXrSubmissionTimeline(
+    Semaphore TimelineSemaphore,
+    ulong TimelineValue,
     bool CompletionProven,
     VulkanMappedFrameArena? Arena,
     ulong Generation,

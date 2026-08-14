@@ -1785,6 +1785,18 @@ namespace XREngine.Rendering
                     ? request.ViewFamilyId
                     : MixFrameOutputIdentity(request.ViewFamilyId, _frameOutputIdentity),
             };
+            if (pacing.OutputKind == EFrameOutputKind.OpenXREyeSubmit &&
+                RuntimeEngine.VRState.OpenXRApi is { } openXrApi)
+            {
+                request = request with
+                {
+                    Schedule = request.Schedule with
+                    {
+                        DeadlineMs = openXrApi.CurrentRenderDeadlineMs,
+                        HardDeadline = true,
+                    },
+                };
+            }
             return request.WithTarget(request.Target with
             {
                 StableTargetId = outputId,

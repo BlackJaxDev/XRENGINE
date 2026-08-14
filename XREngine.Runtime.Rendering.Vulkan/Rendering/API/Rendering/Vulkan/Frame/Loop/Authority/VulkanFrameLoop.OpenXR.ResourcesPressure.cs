@@ -255,39 +255,40 @@ internal sealed partial class VulkanFrameLoop
                 drainableSlots[i] = true;
             }
 
+        const int retirementBudgetPerType = 32;
         for (int i = 0; i < frameSlotCount; i++)
                 if (drainableSlots[i])
-                    DrainRetiredCommandBuffers(i, int.MaxValue);
+                    DrainRetiredCommandBuffers(i, retirementBudgetPerType);
             for (int i = 0; i < frameSlotCount; i++)
             if (drainableSlots[i])
-                DrainRetiredCommandPools(i, int.MaxValue);
+                DrainRetiredCommandPools(i, retirementBudgetPerType);
             for (int i = 0; i < frameSlotCount; i++)
             if (drainableSlots[i])
-                DrainRetiredDescriptorSets(i, int.MaxValue);
+                DrainRetiredDescriptorSets(i, retirementBudgetPerType);
             for (int i = 0; i < frameSlotCount; i++)
             if (drainableSlots[i])
-                DrainRetiredDescriptorPools(i, int.MaxValue);
+                DrainRetiredDescriptorPools(i, retirementBudgetPerType);
             for (int i = 0; i < frameSlotCount; i++)
             if (drainableSlots[i])
-                DrainRetiredPipelines(i, int.MaxValue);
+                DrainRetiredPipelines(i, retirementBudgetPerType);
             for (int i = 0; i < frameSlotCount; i++)
             if (drainableSlots[i])
-                ResourceRuntime.DrainRetiredPipelineLayouts(Api!, _deviceContext.Device, i, int.MaxValue);
+                ResourceRuntime.DrainRetiredPipelineLayouts(Api!, _deviceContext.Device, i, retirementBudgetPerType);
             for (int i = 0; i < frameSlotCount; i++)
             if (drainableSlots[i])
-                ResourceRuntime.DrainRetiredDescriptorSetLayouts(Api!, _deviceContext.Device, i, int.MaxValue);
+                ResourceRuntime.DrainRetiredDescriptorSetLayouts(Api!, _deviceContext.Device, i, retirementBudgetPerType);
             for (int i = 0; i < frameSlotCount; i++)
             if (drainableSlots[i])
-                DrainRetiredQueryPools(i, int.MaxValue);
+                DrainRetiredQueryPools(i, retirementBudgetPerType);
             for (int i = 0; i < frameSlotCount; i++)
             if (drainableSlots[i])
-                DrainRetiredBufferViews(i, int.MaxValue);
+                DrainRetiredBufferViews(i, retirementBudgetPerType);
             for (int i = 0; i < frameSlotCount; i++)
             if (drainableSlots[i])
-                DrainRetiredFramebuffers(i, int.MaxValue);
+                DrainRetiredFramebuffers(i, retirementBudgetPerType);
             for (int i = 0; i < frameSlotCount; i++)
             if (drainableSlots[i])
-                DrainRetiredBuffers(i, int.MaxValue);
+                DrainRetiredBuffers(i, retirementBudgetPerType);
             for (int pass = 0; pass < frameSlotCount; pass++)
             for (int i = 0; i < frameSlotCount; i++)
                 if (drainableSlots[i])
@@ -295,7 +296,7 @@ internal sealed partial class VulkanFrameLoop
                         Api!,
                         _deviceContext.Device,
                         i,
-                        int.MaxValue);
+                        retirementBudgetPerType);
 
             ResourceRuntime.Uploads.DrainCompletedRecordedTextureUploadPublications(
                 Api!, _deviceContext, _commandRuntime, ResourceRuntime, IsDeviceLost);
@@ -305,8 +306,12 @@ internal sealed partial class VulkanFrameLoop
             ArrayPool<bool>.Shared.Return(rentedDrainableSlots);
         }
     }
-    private bool WaitForOpenXrFrameDataSlot(uint frameDataImageIndex, string reason)
+    private bool TryPrepareOpenXrFrameDataSlot(
+        uint frameDataImageIndex,
+        string reason,
+        out bool completionProven)
     {
+        completionProven = false;
         ulong value;
         Silk.NET.Vulkan.Semaphore timelineSemaphore;
         using (VulkanDesktopFrameRetirementScope retirement =
@@ -317,26 +322,27 @@ internal sealed partial class VulkanFrameLoop
             if (timelineSemaphore.Handle == 0 ||
                 frameDataImageIndex >= timelineValues.Length)
             {
-                return false;
+                return true;
             }
 
             value = timelineValues[(int)frameDataImageIndex];
             if (value == 0)
-                return false;
-            if (HasTimelineValueCompleted(timelineSemaphore, value))
                 return true;
+            if (HasTimelineValueCompleted(timelineSemaphore, value))
+            {
+                completionProven = true;
+                return true;
+            }
         }
 
-        Debug.VulkanEvery(
-            $"OpenXR.Vulkan.WaitFrameDataSlot.{GetHashCode()}.{frameDataImageIndex}.{reason}",
+        Debug.VulkanWarningEvery(
+            $"OpenXR.Vulkan.DeferFrameDataSlot.{GetHashCode()}.{frameDataImageIndex}.{reason}",
             TimeSpan.FromSeconds(1),
-            "[OpenXR] Vulkan waiting for frame-data slot {0} before {1}; pending timeline value {2}.",
+            "[OpenXR] Deferring {1}: frame-data slot {0} still owns pending timeline value {2}.",
             frameDataImageIndex,
             reason,
             value);
-
-        WaitForTimelineValue(timelineSemaphore, value);
-        return true;
+        return false;
     }
 
 
