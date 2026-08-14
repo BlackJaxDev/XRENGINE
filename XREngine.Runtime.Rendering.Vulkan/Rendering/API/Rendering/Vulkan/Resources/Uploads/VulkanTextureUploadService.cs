@@ -32,6 +32,9 @@ internal sealed partial class VulkanTextureUploadService
     private readonly object _transferQueueSync = new();
     private int _prepDrainScheduled;
     private int _transferDrainScheduled;
+    private int _preparationRetirementStarted;
+    private int _activePreparationDrainCount;
+    private readonly ManualResetEventSlim _preparationDrainsIdle = new(initialState: true);
     private int _renderThreadPrepCompatLogged;
     private int _workerPrepCompatLogged;
     private int _transferQueueCompatLogged;
@@ -232,7 +235,8 @@ internal sealed partial class VulkanTextureUploadService
         long currentStreamingGeneration,
         out VulkanImportedTextureUploadResult immediateResult)
     {
-        if (!ShouldAcceptResult(request, currentStreamingGeneration))
+        if (Volatile.Read(ref _preparationRetirementStarted) != 0 ||
+            !ShouldAcceptResult(request, currentStreamingGeneration))
         {
             immediateResult = RejectStaleOrCanceledResult(request, currentStreamingGeneration);
             return false;
@@ -257,7 +261,8 @@ internal sealed partial class VulkanTextureUploadService
         Action<Exception>? onError,
         CancellationToken cancellationToken)
     {
-        if (!context.IsDeviceOperational)
+        if (!context.IsDeviceOperational ||
+            Volatile.Read(ref _preparationRetirementStarted) != 0)
         {
             onCanceled?.Invoke();
             return false;
@@ -313,27 +318,41 @@ internal sealed partial class VulkanTextureUploadService
                     0.0);
                 if (immediateResult == VulkanImportedTextureUploadPrepResult.Deferred)
                 {
-                    QueueUploadPreparation(context, job);
-                    return true;
+                    return QueueUploadPreparation(context, job);
                 }
 
                 return immediateResult == VulkanImportedTextureUploadPrepResult.Completed;
             }
         }
 
-        QueueUploadPreparation(context, job);
-        return true;
+        return QueueUploadPreparation(context, job);
     }
 
-    private void QueueUploadPreparation(VulkanTextureUploadSchedulingContext context, VulkanImportedTextureUploadJob job)
+    private bool QueueUploadPreparation(VulkanTextureUploadSchedulingContext context, VulkanImportedTextureUploadJob job)
     {
-        int depth;
-        double oldestWaitMilliseconds;
+        int depth = 0;
+        double oldestWaitMilliseconds = 0.0;
+        bool rejectedForRetirement;
         lock (_prepQueueSync)
         {
-            _pendingPrepJobs.Add(job);
-            depth = _pendingPrepJobs.Count;
-            oldestWaitMilliseconds = GetOldestQueueWaitMillisecondsNoLock();
+            rejectedForRetirement = Volatile.Read(ref _preparationRetirementStarted) != 0;
+            if (!rejectedForRetirement)
+            {
+                _pendingPrepJobs.Add(job);
+                depth = _pendingPrepJobs.Count;
+                oldestWaitMilliseconds = GetOldestQueueWaitMillisecondsNoLock();
+            }
+        }
+
+        if (rejectedForRetirement)
+        {
+            RecordState(
+                job.Request,
+                VulkanTextureUploadGenerationState.Canceled,
+                "Vulkan upload preparation admission closed for renderer retirement");
+            Interlocked.Increment(ref s_canceledStaleUploads);
+            job.OnCanceled?.Invoke();
+            return false;
         }
 
         Volatile.Write(ref s_pendingVulkanPrepPackages, depth);
@@ -343,6 +362,7 @@ internal sealed partial class VulkanTextureUploadService
             $"queued Vulkan upload prep depth={depth} oldestWaitMs={oldestWaitMilliseconds:F3}");
         RenderWorkBudgetCoordinator.RecordTextureQueue(depth, oldestWaitMilliseconds);
         EnsurePrepDrainScheduled(context);
+        return true;
     }
 
 }

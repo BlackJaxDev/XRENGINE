@@ -163,7 +163,7 @@ internal sealed partial class VulkanFrameLoop : IVulkanImGuiOutputHost
     Result IVulkanImGuiOutputHost.PresentPlatformViewport(ref PresentInfoKHR presentInfo)
         => PresentImGuiPlatformViewport(ref presentInfo);
 
-    void IVulkanImGuiOutputHost.RecordPlatformViewport(
+    bool IVulkanImGuiOutputHost.RecordPlatformViewport(
         CommandBuffer commandBuffer,
         uint imageIndex,
         int frameSlot,
@@ -189,11 +189,8 @@ internal sealed partial class VulkanFrameLoop : IVulkanImGuiOutputHost
             _outputRuntime._imguiTextureRegistry.DescriptorSets,
             true,
             snapshot);
-        if (!_imguiPlatformViewportRecorder.TryRecord(
-                encoder, _telemetry, ImGuiDrawBufferResources, in input, out _))
-        {
-            throw new InvalidOperationException("Failed to record detached ImGui viewport command buffer.");
-        }
+        return _imguiPlatformViewportRecorder.TryRecord(
+            encoder, _telemetry, ImGuiDrawBufferResources, in input, out _);
     }
 
     void IVulkanImGuiOutputHost.WaitForPlatformQueuesIdle()

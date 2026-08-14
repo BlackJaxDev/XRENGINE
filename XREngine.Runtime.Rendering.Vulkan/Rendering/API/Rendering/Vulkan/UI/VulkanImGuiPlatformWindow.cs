@@ -387,7 +387,14 @@ internal sealed unsafe class VulkanImGuiPlatformWindow : VulkanImGuiPlatformWind
             CommandBuffer commandBuffer = _commandBuffers[frameSlot];
             try
             {
-                RecordCommandBuffer(commandBuffer, imageIndex, frameSlot, snapshot);
+                if (!RecordCommandBuffer(commandBuffer, imageIndex, frameSlot, snapshot))
+                {
+                    // The dependency generation changed after image acquisition.
+                    // Rebuild on the next platform-window tick without submitting
+                    // a command buffer whose tracking publication was discarded.
+                    _resizeRequested = true;
+                    return;
+                }
             }
             catch
             {
@@ -444,7 +451,7 @@ internal sealed unsafe class VulkanImGuiPlatformWindow : VulkanImGuiPlatformWind
             _frameSlot = (frameSlot + 1) % FramesInFlight;
         }
 
-        private void RecordCommandBuffer(
+        private bool RecordCommandBuffer(
             CommandBuffer commandBuffer,
             uint imageIndex,
             int frameSlot,

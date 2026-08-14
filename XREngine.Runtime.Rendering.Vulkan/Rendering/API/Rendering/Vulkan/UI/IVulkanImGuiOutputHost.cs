@@ -45,7 +45,7 @@ internal unsafe interface IVulkanImGuiOutputHost
     Result ResetPlatformFence(Fence fence);
     Result SubmitPlatformDraw(ref SubmitInfo submitInfo, Fence fence);
     Result PresentPlatformViewport(ref PresentInfoKHR presentInfo);
-    void RecordPlatformViewport(
+    bool RecordPlatformViewport(
         CommandBuffer commandBuffer,
         uint imageIndex,
         int frameSlot,
