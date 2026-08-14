@@ -27,59 +27,80 @@ internal sealed partial class VulkanTextureUploadService
 
     private bool DrainQueuedUploadPreparation(VulkanTextureUploadSchedulingContext context)
     {
-        if (!context.IsDeviceOperational)
+        if (Interlocked.Increment(ref _activePreparationDrainCount) == 1)
+            _preparationDrainsIdle.Reset();
+        try
         {
-            CancelQueuedPreparation("Vulkan device was lost before upload preparation");
-            Interlocked.Exchange(ref _prepDrainScheduled, 0);
-            return true;
+            if (Volatile.Read(ref _preparationRetirementStarted) != 0)
+            {
+                Interlocked.Exchange(ref _prepDrainScheduled, 0);
+                return true;
+            }
+            if (!context.IsDeviceOperational)
+            {
+                CancelQueuedPreparation("Vulkan device was lost before upload preparation");
+                Interlocked.Exchange(ref _prepDrainScheduled, 0);
+                return true;
+            }
+
+            double prepBudgetMilliseconds = ResolvePrepBudgetMilliseconds();
+            long drainStart = TextureRuntimeDiagnostics.StartTiming();
+            int preparedThisDrain = 0;
+
+            while (TryDequeueBestPrepJob(out VulkanImportedTextureUploadJob job))
+            {
+                if (Volatile.Read(ref _preparationRetirementStarted) != 0)
+                {
+                    RequeueUploadPreparation(job);
+                    Interlocked.Exchange(ref _prepDrainScheduled, 0);
+                    return true;
+                }
+                if (!job.ShouldAccept())
+                {
+                    RecordState(job.Request, VulkanTextureUploadGenerationState.Canceled, "request became stale before Vulkan upload prep");
+                    job.OnCanceled?.Invoke();
+                    continue;
+                }
+
+                if (!CanPrepareJobThisFrame(job, preparedThisDrain, drainStart, prepBudgetMilliseconds))
+                {
+                    RequeueUploadPreparation(job);
+                    RecordState(
+                        job.Request,
+                        VulkanTextureUploadGenerationState.PrepDeferred,
+                        $"budget deferred prep budgetMs={prepBudgetMilliseconds:F3} queueWaitMs={job.QueueWaitMilliseconds:F3}");
+                    return false;
+                }
+
+                VulkanImportedTextureUploadPrepResult prepResult = TryPrepareAndEnqueueImportedTextureUpload(
+                    context,
+                    job,
+                    drainStart,
+                    prepBudgetMilliseconds);
+                if (prepResult == VulkanImportedTextureUploadPrepResult.Deferred)
+                {
+                    RequeueUploadPreparation(job);
+                    RecordState(
+                        job.Request,
+                        VulkanTextureUploadGenerationState.PrepDeferred,
+                        $"budget deferred prep budgetMs={prepBudgetMilliseconds:F3} queueWaitMs={job.QueueWaitMilliseconds:F3}");
+                    return false;
+                }
+
+                if (prepResult == VulkanImportedTextureUploadPrepResult.Completed)
+                    preparedThisDrain++;
+
+                if (ShouldYieldAfterPreparation(preparedThisDrain, drainStart, prepBudgetMilliseconds))
+                    return HasQueuedPrepWorkOrCompleteDrain();
+            }
+
+            return HasQueuedPrepWorkOrCompleteDrain();
         }
-
-        double prepBudgetMilliseconds = ResolvePrepBudgetMilliseconds();
-        long drainStart = TextureRuntimeDiagnostics.StartTiming();
-        int preparedThisDrain = 0;
-
-        while (TryDequeueBestPrepJob(out VulkanImportedTextureUploadJob job))
+        finally
         {
-            if (!job.ShouldAccept())
-            {
-                RecordState(job.Request, VulkanTextureUploadGenerationState.Canceled, "request became stale before Vulkan upload prep");
-                job.OnCanceled?.Invoke();
-                continue;
-            }
-
-            if (!CanPrepareJobThisFrame(job, preparedThisDrain, drainStart, prepBudgetMilliseconds))
-            {
-                RequeueUploadPreparation(job);
-                RecordState(
-                    job.Request,
-                    VulkanTextureUploadGenerationState.PrepDeferred,
-                    $"budget deferred prep budgetMs={prepBudgetMilliseconds:F3} queueWaitMs={job.QueueWaitMilliseconds:F3}");
-                return false;
-            }
-
-            VulkanImportedTextureUploadPrepResult prepResult = TryPrepareAndEnqueueImportedTextureUpload(
-                context,
-                job,
-                drainStart,
-                prepBudgetMilliseconds);
-            if (prepResult == VulkanImportedTextureUploadPrepResult.Deferred)
-            {
-                RequeueUploadPreparation(job);
-                RecordState(
-                    job.Request,
-                    VulkanTextureUploadGenerationState.PrepDeferred,
-                    $"budget deferred prep budgetMs={prepBudgetMilliseconds:F3} queueWaitMs={job.QueueWaitMilliseconds:F3}");
-                return false;
-            }
-
-            if (prepResult == VulkanImportedTextureUploadPrepResult.Completed)
-                preparedThisDrain++;
-
-            if (ShouldYieldAfterPreparation(preparedThisDrain, drainStart, prepBudgetMilliseconds))
-                return HasQueuedPrepWorkOrCompleteDrain();
+            if (Interlocked.Decrement(ref _activePreparationDrainCount) == 0)
+                _preparationDrainsIdle.Set();
         }
-
-        return HasQueuedPrepWorkOrCompleteDrain();
     }
 
     private VulkanImportedTextureUploadPrepResult TryPrepareAndEnqueueImportedTextureUpload(

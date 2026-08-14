@@ -49,6 +49,29 @@ internal sealed class VulkanReadbackTaskTracker
         }
     }
 
+    /// <summary>
+    /// Waits for every registered CPU readback task and fails retirement if the
+    /// boundary cannot be proven. The best-effort variant remains appropriate
+    /// only after teardown has already committed to cleanup.
+    /// </summary>
+    public void WaitForPendingTasksOrThrow(TimeSpan timeout)
+    {
+        Task[] pending;
+        lock (_sync)
+        {
+            if (_pendingTasks.Count == 0)
+                return;
+
+            pending = [.. _pendingTasks];
+        }
+
+        if (!Task.WaitAll(pending, timeout))
+        {
+            throw new TimeoutException(
+                $"Timed out waiting for {pending.Length} Vulkan readback task(s) during backend retirement.");
+        }
+    }
+
     private void Remove(Task completed)
     {
         lock (_sync)

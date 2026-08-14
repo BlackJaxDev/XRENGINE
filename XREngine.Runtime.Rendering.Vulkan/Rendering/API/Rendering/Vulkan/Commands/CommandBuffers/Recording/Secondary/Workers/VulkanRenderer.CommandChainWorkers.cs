@@ -642,6 +642,24 @@ internal sealed partial class VulkanCommandRuntime
         }
     }
 
+    /// <summary>
+    /// Establishes a strict CPU-side command-recording boundary before the
+    /// renderer waits for device idle. Unlike ordinary recovery cancellation,
+    /// retirement cannot continue with a quarantined worker still accessing
+    /// native command pools.
+    /// </summary>
+    internal void QuiesceCommandChainRecordingWorkersForRetirement()
+    {
+        RequestCommandChainRecordingWorkerCancellation();
+        if (!_commandChainRecordingWorkersIdle.Wait(
+                TimeSpan.FromMilliseconds(CommandChainWorkerWaitTimeoutMilliseconds)))
+        {
+            Interlocked.Exchange(ref _commandChainRecordingWorkersFaulted, 1);
+            throw new InvalidOperationException(
+                "Vulkan command-chain workers did not become idle before backend retirement.");
+        }
+    }
+
     private void DestroyCommandChainRecordingWorkers()
     {
         lock (_commandChainRecordingWorkersLock)

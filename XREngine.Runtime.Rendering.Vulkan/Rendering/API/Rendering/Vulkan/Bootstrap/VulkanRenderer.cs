@@ -108,15 +108,22 @@ public sealed class VulkanRenderer :
 
     public override void Initialize() => _frameLoop.Initialize();
 
+    /// <summary>
+    /// Stops every Vulkan submission producer before XRWindow establishes the
+    /// device-idle boundary used by reverse-order teardown.
+    /// </summary>
+    protected override void OnBackendRetirementBeginning()
+        => _frameLoop.BeginBackendRetirement();
+
     public override void CleanUp()
     {
-        try { _frameLoop.CleanUp(waitForGpu: true); }
+        try { _frameLoop.CleanUp(waitForGpu: true, gpuIdleAlreadyEstablished: false); }
         finally { DisposeNativeApi(); }
     }
 
     public override void CleanUpAfterGpuIdle()
     {
-        try { _frameLoop.CleanUp(waitForGpu: false); }
+        try { _frameLoop.CleanUp(waitForGpu: false, gpuIdleAlreadyEstablished: true); }
         finally { DisposeNativeApi(); }
     }
 

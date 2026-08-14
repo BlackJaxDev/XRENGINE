@@ -150,6 +150,18 @@ internal sealed partial class VulkanFrameLoop
                     $"{planningSnapshot.RenderGraphPlan.Revision}.";
                 continue;
             }
+            if (!TryPrepareFrameOperationTargets(
+                    staticOperations,
+                    allowSynchronousResourceUploads,
+                    out string targetPreparationFailure) ||
+                !TryPrepareFrameOperationTargets(
+                    dynamicUiOperations,
+                    allowSynchronousResourceUploads,
+                    out targetPreparationFailure))
+            {
+                replanReason = targetPreparationFailure;
+                continue;
+            }
             if (!TryFreezeNativeBarrierBindings(
                     in planningSnapshot,
                     in plannerState,
@@ -264,6 +276,42 @@ internal sealed partial class VulkanFrameLoop
 
         return VulkanPrimaryCommandRecordingResult.Deferred(
             $"primary command recording exceeded the two-attempt replan limit: {replanReason}");
+    }
+
+    /// <summary>
+    /// Materializes framebuffer wrappers during resource preparation. Command
+    /// recording is lookup-only, so clear-only and newly rebuilt shadow targets
+    /// must not be the first consumers to request their backend identity.
+    /// </summary>
+    private bool TryPrepareFrameOperationTargets(
+        FrameOp[] operations,
+        bool allowSynchronousResourceUploads,
+        out string reason)
+    {
+        for (int index = 0; index < operations.Length; index++)
+        {
+            XRFrameBuffer? target = operations[index].Target;
+            if (target is null)
+                continue;
+
+            VkFrameBuffer? wrapper = _resourceRuntime.CreateAPIRenderObject(target) as VkFrameBuffer;
+            if (wrapper is null)
+            {
+                reason = $"Failed to create the Vulkan framebuffer wrapper for target '{target.GetDescribingName()}'.";
+                return false;
+            }
+
+            if (!wrapper.IsGenerated && allowSynchronousResourceUploads)
+                wrapper.Generate();
+            if (!wrapper.IsGenerated)
+            {
+                reason = $"Vulkan framebuffer target '{target.GetDescribingName()}' is not ready for command recording.";
+                return false;
+            }
+        }
+
+        reason = string.Empty;
+        return true;
     }
 
     /// <summary>

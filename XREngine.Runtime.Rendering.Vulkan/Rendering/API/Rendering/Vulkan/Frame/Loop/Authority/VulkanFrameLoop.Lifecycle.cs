@@ -9,6 +9,24 @@ namespace XREngine.Rendering.Vulkan;
 /// <summary>Owns native Vulkan startup and shutdown ordering for one frame-loop generation.</summary>
 internal sealed partial class VulkanFrameLoop
 {
+    /// <summary>
+    /// Quiesces all producers that can record, submit, or publish native work.
+    /// XRWindow invokes this before waiting for GPU idle and destroying wrappers,
+    /// so no later submission can invalidate that completion boundary.
+    /// </summary>
+    internal void BeginBackendRetirement()
+    {
+        _targetDriver.Quiesce();
+        VulkanTextureStreamingBackendProvider.Instance.UnbindScheduler(this);
+        QuiesceFrameAdmissionAndWait();
+        _commandRuntime.QuiesceCommandChainRecordingWorkersForRetirement();
+        _resourceRuntime.Uploads.QuiescePreparationForRetirement(
+            "Vulkan renderer retirement before GPU idle",
+            TimeSpan.FromSeconds(6));
+        _resourceRuntime.PipelineManager.DrainPipelineCompileQueueForShutdown();
+        _commandRuntime.CommandBuffers.ReadbackTasks.WaitForPendingTasksOrThrow(TimeSpan.FromSeconds(6));
+    }
+
     internal void Initialize()
     {
         if (_initializationStage is not VulkanFrameLoopInitializationStage.None)
@@ -85,7 +103,7 @@ internal sealed partial class VulkanFrameLoop
         {
             try
             {
-                CleanUp(waitForGpu: false);
+                CleanUp(waitForGpu: false, gpuIdleAlreadyEstablished: false);
             }
             catch (Exception cleanupFailure)
             {
@@ -100,7 +118,7 @@ internal sealed partial class VulkanFrameLoop
         }
     }
 
-    internal void CleanUp(bool waitForGpu)
+    internal void CleanUp(bool waitForGpu, bool gpuIdleAlreadyEstablished)
     {
         VulkanFrameLoopInitializationStage stage = _initializationStage;
         if (stage is VulkanFrameLoopInitializationStage.None or VulkanFrameLoopInitializationStage.CleanedUp)
@@ -119,8 +137,9 @@ internal sealed partial class VulkanFrameLoop
             bool hasLogicalDevice =
                 stage >= VulkanFrameLoopInitializationStage.LogicalDevice &&
                 _deviceContext.Device.Handle != 0;
+            bool gpuIdleEstablished = hasLogicalDevice && gpuIdleAlreadyEstablished;
             if (hasLogicalDevice && waitForGpu)
-                RunCleanupStep("GPU completion", WaitForDeviceIdle, failures);
+                gpuIdleEstablished = RunCleanupStep("GPU completion", WaitForDeviceIdle, failures);
 
             if (hasLogicalDevice &&
                 stage >= VulkanFrameLoopInitializationStage.DesktopSwapchain &&
@@ -134,7 +153,13 @@ internal sealed partial class VulkanFrameLoop
                     failures);
             }
 
-            forceRetirementDrain = hasLogicalDevice && !_deviceContext.StateMachine.IsOperational;
+            // Once device-wide completion is known, recorded pins no longer
+            // represent in-flight native use. Keep forced retirement active for
+            // the complete reverse-order teardown so every destruction path uses
+            // the same completion contract. A non-operational device is likewise
+            // no longer capable of advancing marker-driven retirement.
+            forceRetirementDrain = hasLogicalDevice &&
+                (gpuIdleEstablished || !_deviceContext.StateMachine.IsOperational);
             if (forceRetirementDrain)
                 _resourceRuntime.BeginForcedRetirementDrain();
 
@@ -295,7 +320,7 @@ internal sealed partial class VulkanFrameLoop
     private void EnterInitializationStage(VulkanFrameLoopInitializationStage stage)
         => _initializationStage = stage;
 
-    private static void RunCleanupStep(
+    private static bool RunCleanupStep(
         string name,
         Action action,
         List<Exception> failures)
@@ -303,12 +328,14 @@ internal sealed partial class VulkanFrameLoop
         try
         {
             action();
+            return true;
         }
         catch (Exception exception)
         {
             failures.Add(new InvalidOperationException(
                 $"Vulkan cleanup step '{name}' failed.",
                 exception));
+            return false;
         }
     }
 

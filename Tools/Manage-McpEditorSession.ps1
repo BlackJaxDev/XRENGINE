@@ -624,12 +624,13 @@ function Invoke-SessionRetentionCleanup([string]$ProtectedSessionName) {
         foreach ($session in $sessionsToRemove) {
             Remove-RebuildableSessionDirectory $session.Root
         }
-        $orderedSessions = if ($removeCount -lt $orderedSessions.Count) {
-            @($orderedSessions | Select-Object -First ($orderedSessions.Count - $removeCount))
-        }
-        else {
-            @()
-        }
+        # Wrap the conditional itself so PowerShell cannot unwrap a one-item
+        # retained-session array into a scalar PSCustomObject.
+        $orderedSessions = @(
+            if ($removeCount -lt $orderedSessions.Count) {
+                $orderedSessions | Select-Object -First ($orderedSessions.Count - $removeCount)
+            }
+        )
 
         for ($index = 0; $index -lt $orderedSessions.Count; $index++) {
             $session = $orderedSessions[$index]

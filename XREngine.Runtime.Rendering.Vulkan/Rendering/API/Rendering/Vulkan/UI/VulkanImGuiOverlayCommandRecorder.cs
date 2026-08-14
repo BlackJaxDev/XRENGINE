@@ -69,10 +69,24 @@ internal sealed unsafe class VulkanImGuiOverlayCommandRecorder
                 input.ClearSwapchain ? AttachmentLoadOp.Clear : AttachmentLoadOp.Load,
                 clear: input.ClearSwapchain);
 
-            if (encoder.End(input.OverlayCommandBuffer) != Result.Success)
-                throw new InvalidOperationException("Failed to end ImGui overlay command buffer.");
-
+            bool published = encoder.TryEnd(
+                input.OverlayCommandBuffer,
+                cacheVariant: true,
+                out Result endResult,
+                out string publicationFailure);
             trackingStarted = false;
+            if (endResult != Result.Success)
+                throw new InvalidOperationException("Failed to end ImGui overlay command buffer.");
+            if (!published)
+            {
+                Debug.VulkanWarningEvery(
+                    "Vulkan.ImGui.CommandPublicationRetirement",
+                    TimeSpan.FromSeconds(5),
+                    "[Vulkan.ImGui] Discarded an overlay command buffer because a dependency retired during recording: {0}",
+                    publicationFailure);
+                return false;
+            }
+
             overlayCommandBuffer = input.OverlayCommandBuffer;
             return true;
         }

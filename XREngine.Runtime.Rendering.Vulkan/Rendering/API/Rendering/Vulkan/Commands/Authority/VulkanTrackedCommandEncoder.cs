@@ -44,10 +44,27 @@ internal readonly unsafe struct VulkanTrackedCommandEncoder(VulkanCommandRuntime
 
     internal Result End(CommandBuffer commandBuffer, bool cacheVariant = true)
     {
-        Result result = Api.EndCommandBuffer(commandBuffer);
+        bool published = TryEnd(commandBuffer, cacheVariant, out Result result, out string reason);
+        if (result == Result.Success && !published)
+            throw new InvalidOperationException($"Vulkan command-buffer tracking publication failed: {reason}");
+        return result;
+    }
+
+    /// <summary>
+    /// Ends native recording and attempts to publish the frozen dependency batch.
+    /// A successful native end whose dependencies crossed a retirement boundary is
+    /// recoverable for output paths that can discard and rebuild the command buffer.
+    /// </summary>
+    internal bool TryEnd(
+        CommandBuffer commandBuffer,
+        bool cacheVariant,
+        out Result result,
+        out string reason)
+    {
+        result = Api.EndCommandBuffer(commandBuffer);
         ulong handle = unchecked((ulong)commandBuffer.Handle);
         bool published = result != Result.Success;
-        string reason = string.Empty;
+        reason = string.Empty;
         if (result == Result.Success && handle != 0 &&
             Runtime.CommandBuffers.TrackingBatches.TryGetValue(handle, out VulkanCommandBufferTrackingBatch? batch))
         {
@@ -64,15 +81,13 @@ internal readonly unsafe struct VulkanTrackedCommandEncoder(VulkanCommandRuntime
         if (result == Result.Success && published)
         {
             Runtime.ResourceRuntime.CompleteCommandBufferRecording(commandBuffer, cacheVariant);
-            return result;
+            return true;
         }
 
         Runtime.ResourceRuntime.AbandonCommandBufferRecording(commandBuffer);
         if (handle != 0)
             Runtime.CommandBuffers.TrackingBatches.TryRemove(handle, out _);
-        if (result == Result.Success)
-            throw new InvalidOperationException($"Vulkan command-buffer tracking publication failed: {reason}");
-        return result;
+        return false;
     }
 
     internal void Abandon(CommandBuffer commandBuffer)

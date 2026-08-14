@@ -2244,16 +2244,21 @@ internal sealed partial class VulkanResourceRuntime
                 return;
             }
 
-            if (!Lifetime.Tracker.IsRetirementReadyNoLock(
-                    resource.RetirementTicket) ||
-                !resource.Pins.IsRetirementReady(
-                    Lifetime.Tracker.CompletedGraphicsSequence,
-                    Lifetime.Tracker.CompletedTransferSequence,
-                    Lifetime.Tracker.CompletedOtherSequence))
+            bool forced = Lifetime.Tracker.ForcedRetirementDrainDepth > 0;
+            if (!forced &&
+                (!Lifetime.Tracker.IsRetirementReadyNoLock(
+                     resource.RetirementTicket) ||
+                 !resource.Pins.IsRetirementReady(
+                     Lifetime.Tracker.CompletedGraphicsSequence,
+                     Lifetime.Tracker.CompletedTransferSequence,
+                     Lifetime.Tracker.CompletedOtherSequence)))
             {
                 throw new InvalidOperationException(
                     $"Attempted to destroy {key} generation {resource.Generation} before its GPU completion point was reached.");
             }
+
+            if (forced)
+                Interlocked.Increment(ref Lifetime.Tracker.ForcedResourceDestructionCount);
 
             resource.State = EVulkanResourceLifetimeState.Destroyed;
             Lifetime.Tracker.ResourceCommandBufferDependencies.Remove(key);
