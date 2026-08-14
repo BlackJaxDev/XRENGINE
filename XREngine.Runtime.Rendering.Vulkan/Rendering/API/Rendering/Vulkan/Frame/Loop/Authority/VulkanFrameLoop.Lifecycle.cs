@@ -1,4 +1,5 @@
 using Silk.NET.Vulkan;
+using System.Runtime.ExceptionServices;
 using XREngine.Rendering.API.Rendering.OpenXR;
 using XREngine.Rendering.DLSS;
 using XREngine.Rendering.Vulkan.DeviceBootstrap;
@@ -10,153 +11,304 @@ internal sealed partial class VulkanFrameLoop
 {
     internal void Initialize()
     {
-        VulkanIndirectCommandLayoutContract.ValidateRuntimeLayout();
-
-        if (_targetDriver.SupportsStreamlinePresentation)
-            _outputRuntime.PrepareStreamlineVulkanRequirements(
-                isSecondaryGpuContext: false,
-                _telemetry._diagnosticOptions.RenderDocFriendly);
-
-        InitializeDeviceBootstrap();
-        CreateTargetInstanceResources(Api, _window);
-        AttachOutputServices(Api);
-        SelectPhysicalDevice();
-        if (_targetDriver.SupportsStreamlinePresentation)
-            _outputRuntime.ValidateStreamlineSelectedPhysicalDevice((nint)_deviceContext.PhysicalDevice.Handle);
-
-        CreateLogicalDevice();
-        _resourceRuntime.InitializeMemoryAllocator(
-            Api,
-            _deviceContext,
-            RuntimeEngine.Rendering.Settings.VulkanRobustnessSettings.AllocatorBackend,
-            _deviceContext.SupportsBufferDeviceAddress);
-        VulkanTextureStreamingBackendProvider.Instance.BindScheduler(this);
-        VulkanCanonicalImmutableSamplerService.Initialize(_resourceRuntime, Api, _deviceContext);
-        _commandRuntime.CreateCommandPool();
-
-        VulkanRootDescriptorLayoutService.Create(_resourceRuntime, Api, _deviceContext.Device);
-        InitializeTargetFinalOutput();
-        if (_targetDriver is VulkanDesktopWsiTargetDriver)
-            CreateInitialDesktopSwapchainGeneration();
-
-        CreateSyncObjects();
-        CreateFrameTimingResources();
-        _commandRuntime.InitializeSynchronizationBackend(_deviceContext.SupportsSynchronization2);
-        _resourceRuntime.InitializeMappedFrameArena(_deviceContext, FrameSlotCount);
-        _resourceRuntime.InitializeFrameDataArenas(_deviceContext, FrameSlotCount);
-        ReserveOpenXrFrameDataSlotsIfRequired("initialization");
-        int deferredProgramLinkCount = _resourceRuntime.PipelineManager.FlushPendingDeviceReadyProgramLinks();
-        if (deferredProgramLinkCount > 0)
+        if (_initializationStage is not VulkanFrameLoopInitializationStage.None)
         {
-            Debug.Vulkan(
-                $"Deferred {deferredProgramLinkCount} Vulkan program link(s) until first use after logical device creation.");
+            throw new InvalidOperationException(
+                $"The Vulkan frame loop cannot initialize from lifecycle stage '{_initializationStage}'.");
+        }
+
+        try
+        {
+            VulkanIndirectCommandLayoutContract.ValidateRuntimeLayout();
+
+            if (_targetDriver.SupportsStreamlinePresentation)
+                _outputRuntime.PrepareStreamlineVulkanRequirements(
+                    isSecondaryGpuContext: false,
+                    _telemetry._diagnosticOptions.RenderDocFriendly);
+
+            EnterInitializationStage(VulkanFrameLoopInitializationStage.Instance);
+            InitializeDeviceBootstrap();
+            EnterInitializationStage(VulkanFrameLoopInitializationStage.TargetInstanceResources);
+            CreateTargetInstanceResources(Api, _window);
+            EnterInitializationStage(VulkanFrameLoopInitializationStage.OutputServices);
+            AttachOutputServices(Api);
+            EnterInitializationStage(VulkanFrameLoopInitializationStage.PhysicalDevice);
+            SelectPhysicalDevice();
+            if (_targetDriver.SupportsStreamlinePresentation)
+                _outputRuntime.ValidateStreamlineSelectedPhysicalDevice((nint)_deviceContext.PhysicalDevice.Handle);
+
+            EnterInitializationStage(VulkanFrameLoopInitializationStage.LogicalDevice);
+            CreateLogicalDevice();
+            EnterInitializationStage(VulkanFrameLoopInitializationStage.MemoryAllocator);
+            _resourceRuntime.InitializeMemoryAllocator(
+                Api,
+                _deviceContext,
+                RuntimeEngine.Rendering.Settings.VulkanRobustnessSettings.AllocatorBackend,
+                _deviceContext.SupportsBufferDeviceAddress);
+            EnterInitializationStage(VulkanFrameLoopInitializationStage.StreamingScheduler);
+            VulkanTextureStreamingBackendProvider.Instance.BindScheduler(this);
+            EnterInitializationStage(VulkanFrameLoopInitializationStage.CanonicalSampler);
+            VulkanCanonicalImmutableSamplerService.Initialize(_resourceRuntime, Api, _deviceContext);
+            EnterInitializationStage(VulkanFrameLoopInitializationStage.CommandPool);
+            _commandRuntime.CreateCommandPool();
+
+            EnterInitializationStage(VulkanFrameLoopInitializationStage.RootDescriptorLayout);
+            VulkanRootDescriptorLayoutService.Create(_resourceRuntime, Api, _deviceContext.Device);
+            EnterInitializationStage(VulkanFrameLoopInitializationStage.TargetFinalOutput);
+            InitializeTargetFinalOutput();
+            if (_targetDriver is VulkanDesktopWsiTargetDriver)
+            {
+                EnterInitializationStage(VulkanFrameLoopInitializationStage.DesktopSwapchain);
+                CreateInitialDesktopSwapchainGeneration();
+            }
+
+            EnterInitializationStage(VulkanFrameLoopInitializationStage.SynchronizationObjects);
+            CreateSyncObjects();
+            EnterInitializationStage(VulkanFrameLoopInitializationStage.FrameTiming);
+            CreateFrameTimingResources();
+            EnterInitializationStage(VulkanFrameLoopInitializationStage.SynchronizationBackend);
+            _commandRuntime.InitializeSynchronizationBackend(_deviceContext.SupportsSynchronization2);
+            EnterInitializationStage(VulkanFrameLoopInitializationStage.MappedFrameArena);
+            _resourceRuntime.InitializeMappedFrameArena(_deviceContext, FrameSlotCount);
+            EnterInitializationStage(VulkanFrameLoopInitializationStage.FrameDataArenas);
+            _resourceRuntime.InitializeFrameDataArenas(_deviceContext, FrameSlotCount);
+            ReserveOpenXrFrameDataSlotsIfRequired("initialization");
+            int deferredProgramLinkCount = _resourceRuntime.PipelineManager.FlushPendingDeviceReadyProgramLinks();
+            if (deferredProgramLinkCount > 0)
+            {
+                Debug.Vulkan(
+                    $"Deferred {deferredProgramLinkCount} Vulkan program link(s) until first use after logical device creation.");
+            }
+            EnterInitializationStage(VulkanFrameLoopInitializationStage.Initialized);
+        }
+        catch (Exception initializationFailure)
+        {
+            try
+            {
+                CleanUp(waitForGpu: false);
+            }
+            catch (Exception cleanupFailure)
+            {
+                throw new AggregateException(
+                    "Vulkan initialization failed and reverse-order cleanup also reported failures.",
+                    initializationFailure,
+                    cleanupFailure);
+            }
+
+            ExceptionDispatchInfo.Capture(initializationFailure).Throw();
+            throw;
         }
     }
 
     internal void CleanUp(bool waitForGpu)
     {
-        if (_deviceContext.Device.Handle != 0)
-        {
-            if (waitForGpu)
-                WaitForDeviceIdle();
+        VulkanFrameLoopInitializationStage stage = _initializationStage;
+        if (stage is VulkanFrameLoopInitializationStage.None or VulkanFrameLoopInitializationStage.CleanedUp)
+            return;
+        if (Interlocked.CompareExchange(ref _cleanupInProgress, 1, 0) != 0)
+            return;
 
-            // Swapchain generations use nonblocking queue-marker fences during normal
-            // rendering. The caller establishes the teardown-only GPU-idle boundary.
-            DrainRetiredDesktopSwapchainGenerations(force: true);
-        }
-
-        bool forceRetirementDrain = !_deviceContext.StateMachine.IsOperational;
-        if (forceRetirementDrain)
-            _resourceRuntime.BeginForcedRetirementDrain();
-
+        QuiesceFrameAdmissionAndWait();
+        List<Exception> failures = [];
+        bool forceRetirementDrain = false;
         try
         {
-            VulkanTextureStreamingBackendProvider.Instance.UnbindScheduler(this);
-            _resourceRuntime.Uploads.CancelAllQueuedWork(_commandRuntime, "Vulkan renderer shutdown");
-            CancelPendingImportedTextureUploadFrameOps("Vulkan renderer shutdown");
-            _commandRuntime.CancelRecordedTextureUploadPublications("Vulkan renderer shutdown");
-            _resourceRuntime.PipelineManager.DrainPipelineCompileQueueForShutdown();
-            DrainScreenshotReadbacksForShutdown();
-            _commandRuntime.CommandBuffers.ReadbackTasks.WaitForPendingTasks(TimeSpan.FromSeconds(6));
-            DisposeScreenshotReadbacks();
-            DisposeGpuRenderStatsReadbacks();
-            _commandRuntime.DestroyComputeTransientResources();
-            _resourceRuntime.RetireComputeDescriptorCachesForShutdown();
-            DestroyDanglingWrappers();
-            _resourceRuntime.Queries.DisposeArenas();
-            _resourceRuntime.DestroyRemainingTrackedMeshUniformBuffers();
+            if (stage >= VulkanFrameLoopInitializationStage.TargetInstanceResources)
+                RunCleanupStep("target quiesce", _targetDriver.Quiesce, failures);
 
-            // Drain all deferred-deletion queues now that the GPU is idle.
-            ForceFlushAllRetiredResources();
+            bool hasLogicalDevice =
+                stage >= VulkanFrameLoopInitializationStage.LogicalDevice &&
+                _deviceContext.Device.Handle != 0;
+            if (hasLogicalDevice && waitForGpu)
+                RunCleanupStep("GPU completion", WaitForDeviceIdle, failures);
 
-            _resourceRuntime.DestroyAutoExposureComputeResources();
-            _resourceRuntime.FallbackTexture.RetireAll();
-            DisposeImGuiResources();
-            _outputRuntime.RequestImGuiFrameMarkerReset();
-            DestroyOpenXrRenderingResources();
-            DestroyFrameOpResourcePlannerStates();
-            if (_targetDriver is VulkanDesktopWsiTargetDriver)
-                DestroyDesktopSwapchainGenerationForShutdown();
-            DestroyTargetFinalOutput();
-            // FBO render passes are NOT destroyed during swapchain recreation
-            // (they are swapchain-independent). Clean them up here at full shutdown.
-            _resourceRuntime.Framebuffers.DestroyRenderPasses(Api, _deviceContext.Device);
-            VulkanRootDescriptorLayoutService.Destroy(
-                _resourceRuntime,
-                Api,
-                _deviceContext.Device,
-                _commandRuntime,
-                CurrentFrameSlot);
-            DestroyRetainedAutoExposureHistory("renderer shutdown");
-            VulkanResourceAllocator resourceAllocator = CaptureResourcePlannerRuntimeState().ResourceAllocator;
-            resourceAllocator.DestroyPhysicalImages(BackendObjectContext);
-            resourceAllocator.DestroyPhysicalBuffers(BackendObjectContext);
-            _resourceRuntime.Allocations.Staging.Destroy(BackendObjectContext);
-            _resourceRuntime.DestroyFrameDataArenas();
-            _resourceRuntime.DestroyMappedFrameArena();
+            if (hasLogicalDevice &&
+                stage >= VulkanFrameLoopInitializationStage.DesktopSwapchain &&
+                _desktopSwapchainService is not null)
+            {
+                // Normal retirement is marker-driven. Teardown establishes the
+                // only device-wide completion boundary and may force the drain.
+                RunCleanupStep(
+                    "retired desktop target generations",
+                    () => DrainRetiredDesktopSwapchainGenerations(force: true),
+                    failures);
+            }
 
-            // Teardown paths above may create or retain late-bound GPU resources.
-            // Sweep wrappers and deferred queues before disposing the allocator so
-            // final destruction can still free through the correct allocation path.
-            DestroyDanglingWrappers();
-            _resourceRuntime.DestroyRemainingTrackedMeshUniformBuffers();
-            ForceFlushAllRetiredResources();
-            _resourceRuntime.Images.DestroyRemaining(Api, _deviceContext.Device);
-            _resourceRuntime.DestroyRemainingTrackedPipelineLayouts(Api, _deviceContext.Device);
-            _resourceRuntime.DestroyRemainingTrackedAllocations(BackendObjectContext);
+            forceRetirementDrain = hasLogicalDevice && !_deviceContext.StateMachine.IsOperational;
+            if (forceRetirementDrain)
+                _resourceRuntime.BeginForcedRetirementDrain();
 
-            if (_resourceRuntime.Allocations.Buffers.MemoryAllocator is VulkanBlockAllocator blockAllocator)
-                blockAllocator.DestroyAllBlocks(Api, _deviceContext.Device);
-            _resourceRuntime.Allocations.Buffers.MemoryAllocator?.Dispose();
-            _resourceRuntime.Allocations.Buffers.MemoryAllocator = null;
-            _commandRuntime.Synchronization._activeSynchronizationBackend = EVulkanSynchronizationBackend.Legacy;
-            DestroyFrameTimingResources();
+            if (stage >= VulkanFrameLoopInitializationStage.StreamingScheduler)
+            {
+                RunCleanupStep(
+                    "texture streaming scheduler",
+                    () => VulkanTextureStreamingBackendProvider.Instance.UnbindScheduler(this),
+                    failures);
+            }
 
-            DestroySyncObjects();
-            _commandRuntime.DestroyCommandPool();
+            if (hasLogicalDevice)
+                CleanUpLogicalDeviceResources(stage, failures);
 
-            // Flush once more before destroying the logical device to catch any
-            // handles retired by sync/command-pool teardown.
-            ForceFlushAllRetiredResources();
-            _resourceRuntime.Images.DestroyRemaining(Api, _deviceContext.Device);
-            _resourceRuntime.DestroyRemainingDescriptorSetLayouts(
-                Api,
-                _deviceContext.Device,
-                CurrentFrameSlot);
-            _resourceRuntime.PipelineManager.DestroySharedGraphicsPipelines();
-            _resourceRuntime.DestroyRemainingTrackedPipelineLayouts(Api, _deviceContext.Device);
-            _resourceRuntime.PipelineManager.DestroySharedGraphicsPipelineLibraries();
-
-            DestroyLogicalDevice();
-            DestroyTargetInstanceResources(Api, _window);
-            _deviceContext.DestroyInstance(
-                Api,
-                _deviceContext.FirstNativeDeviceFault?.Operation);
+            if (stage >= VulkanFrameLoopInitializationStage.OutputServices)
+                RunCleanupStep("output service detachment", DetachOutputServices, failures);
+            if (stage >= VulkanFrameLoopInitializationStage.TargetInstanceResources)
+            {
+                RunCleanupStep(
+                    "target instance resources",
+                    () => DestroyTargetInstanceResources(Api, _window),
+                    failures);
+            }
+            if (stage >= VulkanFrameLoopInitializationStage.Instance)
+            {
+                RunCleanupStep(
+                    "Vulkan instance",
+                    () => _deviceContext.DestroyInstance(
+                        Api,
+                        _deviceContext.FirstNativeDeviceFault?.Operation),
+                    failures);
+            }
         }
         finally
         {
             if (forceRetirementDrain)
                 _resourceRuntime.EndForcedRetirementDrain();
+            _initializationStage = VulkanFrameLoopInitializationStage.CleanedUp;
+            Volatile.Write(ref _cleanupInProgress, 0);
+        }
+
+        if (failures.Count > 0)
+            throw new AggregateException("Vulkan reverse-order teardown reported failures.", failures);
+    }
+
+    private void CleanUpLogicalDeviceResources(
+        VulkanFrameLoopInitializationStage stage,
+        List<Exception> failures)
+    {
+        const string shutdownReason = "Vulkan renderer shutdown";
+        RunCleanupStep("queued texture uploads", () => _resourceRuntime.Uploads.CancelAllQueuedWork(_commandRuntime, shutdownReason), failures);
+        RunCleanupStep("imported texture upload frame operations", () => CancelPendingImportedTextureUploadFrameOps(shutdownReason), failures);
+        RunCleanupStep("recorded texture upload publications", () => _commandRuntime.CancelRecordedTextureUploadPublications(shutdownReason), failures);
+        RunCleanupStep("pipeline compile queue", _resourceRuntime.PipelineManager.DrainPipelineCompileQueueForShutdown, failures);
+        if (_readbackOutputResourceService is not null)
+            RunCleanupStep("post-measurement screenshot readbacks", DrainScreenshotReadbacksForShutdown, failures);
+        RunCleanupStep(
+            "readback worker tasks",
+            () => _commandRuntime.CommandBuffers.ReadbackTasks.WaitForPendingTasks(TimeSpan.FromSeconds(6)),
+            failures);
+        if (_readbackOutputResourceService is not null)
+            RunCleanupStep("screenshot readback resources", DisposeScreenshotReadbacks, failures);
+        RunCleanupStep("GPU render statistics readbacks", DisposeGpuRenderStatsReadbacks, failures);
+        RunCleanupStep("compute transient resources", _commandRuntime.DestroyComputeTransientResources, failures);
+        RunCleanupStep("compute descriptor caches", () => _ = _resourceRuntime.RetireComputeDescriptorCachesForShutdown(), failures);
+        RunCleanupStep("dangling Vulkan wrappers", DestroyDanglingWrappers, failures);
+        RunCleanupStep("query arenas", _resourceRuntime.Queries.DisposeArenas, failures);
+        RunCleanupStep("mesh uniform buffers", _resourceRuntime.DestroyRemainingTrackedMeshUniformBuffers, failures);
+        RunCleanupStep("initial retirement drain", ForceFlushAllRetiredResources, failures);
+
+        RunCleanupStep("auto-exposure compute resources", _resourceRuntime.DestroyAutoExposureComputeResources, failures);
+        RunCleanupStep("fallback texture", _resourceRuntime.FallbackTexture.RetireAll, failures);
+        if (_imguiOutputPipelineService is not null &&
+            _imguiFontAtlasResources is not null &&
+            _imguiDrawBufferResources is not null)
+        {
+            RunCleanupStep("ImGui resources", DisposeImGuiResources, failures);
+        }
+        _outputRuntime.RequestImGuiFrameMarkerReset();
+        if (_openXrOutputResourceService is not null)
+            RunCleanupStep("OpenXR rendering resources", DestroyOpenXrRenderingResources, failures);
+        RunCleanupStep("render-graph planner states", DestroyFrameOpResourcePlannerStates, failures);
+        RunCleanupStep("auto-exposure history", () => DestroyRetainedAutoExposureHistory("renderer shutdown"), failures);
+
+        VulkanResourceAllocator resourceAllocator = CaptureResourcePlannerRuntimeState().ResourceAllocator;
+        RunCleanupStep("render-graph physical images", () => resourceAllocator.DestroyPhysicalImages(BackendObjectContext), failures);
+        RunCleanupStep("render-graph physical buffers", () => resourceAllocator.DestroyPhysicalBuffers(BackendObjectContext), failures);
+        RunCleanupStep("staging resources", () => _resourceRuntime.Allocations.Staging.Destroy(BackendObjectContext), failures);
+
+        if (stage >= VulkanFrameLoopInitializationStage.FrameDataArenas)
+            RunCleanupStep("frame-data arenas", _resourceRuntime.DestroyFrameDataArenas, failures);
+        if (stage >= VulkanFrameLoopInitializationStage.MappedFrameArena)
+            RunCleanupStep("mapped frame arena", _resourceRuntime.DestroyMappedFrameArena, failures);
+        if (stage >= VulkanFrameLoopInitializationStage.SynchronizationBackend)
+            _commandRuntime.Synchronization._activeSynchronizationBackend = EVulkanSynchronizationBackend.Legacy;
+        if (stage >= VulkanFrameLoopInitializationStage.FrameTiming)
+            RunCleanupStep("frame timing resources", DestroyFrameTimingResources, failures);
+        if (stage >= VulkanFrameLoopInitializationStage.SynchronizationObjects)
+            RunCleanupStep("synchronization objects", DestroySyncObjects, failures);
+
+        if (stage >= VulkanFrameLoopInitializationStage.DesktopSwapchain &&
+            _targetDriver is VulkanDesktopWsiTargetDriver &&
+            _desktopSwapchainService is not null)
+        {
+            RunCleanupStep("desktop target generation", DestroyDesktopSwapchainGenerationForShutdown, failures);
+        }
+        if (stage >= VulkanFrameLoopInitializationStage.TargetFinalOutput &&
+            _targetOutputSession is not null)
+            RunCleanupStep("target final output", DestroyTargetFinalOutput, failures);
+
+        RunCleanupStep(
+            "framebuffer render passes",
+            () => _resourceRuntime.Framebuffers.DestroyRenderPasses(Api, _deviceContext.Device),
+            failures);
+        if (stage >= VulkanFrameLoopInitializationStage.RootDescriptorLayout)
+        {
+            RunCleanupStep(
+                "root descriptor layout",
+                () => VulkanRootDescriptorLayoutService.Destroy(
+                    _resourceRuntime,
+                    Api,
+                    _deviceContext.Device,
+                    _commandRuntime,
+                    CurrentFrameSlot),
+                failures);
+        }
+
+        RunCleanupStep("late dangling Vulkan wrappers", DestroyDanglingWrappers, failures);
+        RunCleanupStep("late mesh uniform buffers", _resourceRuntime.DestroyRemainingTrackedMeshUniformBuffers, failures);
+        RunCleanupStep("late retirement drain", ForceFlushAllRetiredResources, failures);
+        RunCleanupStep("remaining images", () => _resourceRuntime.Images.DestroyRemaining(Api, _deviceContext.Device), failures);
+        RunCleanupStep("tracked pipeline layouts", () => _resourceRuntime.DestroyRemainingTrackedPipelineLayouts(Api, _deviceContext.Device), failures);
+        RunCleanupStep("tracked allocations", () => _resourceRuntime.DestroyRemainingTrackedAllocations(BackendObjectContext), failures);
+
+        if (stage >= VulkanFrameLoopInitializationStage.CommandPool)
+            RunCleanupStep("command pool", _commandRuntime.DestroyCommandPool, failures);
+        RunCleanupStep("final retirement drain", ForceFlushAllRetiredResources, failures);
+        RunCleanupStep("final image sweep", () => _resourceRuntime.Images.DestroyRemaining(Api, _deviceContext.Device), failures);
+        RunCleanupStep(
+            "descriptor set layouts",
+            () => _resourceRuntime.DestroyRemainingDescriptorSetLayouts(Api, _deviceContext.Device, CurrentFrameSlot),
+            failures);
+        RunCleanupStep("shared graphics pipelines", () => _ = _resourceRuntime.PipelineManager.DestroySharedGraphicsPipelines(), failures);
+        RunCleanupStep("final tracked pipeline layouts", () => _resourceRuntime.DestroyRemainingTrackedPipelineLayouts(Api, _deviceContext.Device), failures);
+        RunCleanupStep("shared graphics pipeline libraries", () => _ = _resourceRuntime.PipelineManager.DestroySharedGraphicsPipelineLibraries(), failures);
+
+        if (stage >= VulkanFrameLoopInitializationStage.MemoryAllocator)
+        {
+            if (_resourceRuntime.Allocations.Buffers.MemoryAllocator is VulkanBlockAllocator blockAllocator)
+                RunCleanupStep("allocator blocks", () => blockAllocator.DestroyAllBlocks(Api, _deviceContext.Device), failures);
+            RunCleanupStep("memory allocator", () => _resourceRuntime.Allocations.Buffers.MemoryAllocator?.Dispose(), failures);
+            _resourceRuntime.Allocations.Buffers.MemoryAllocator = null;
+        }
+        if (stage >= VulkanFrameLoopInitializationStage.LogicalDevice)
+            RunCleanupStep("logical device", DestroyLogicalDevice, failures);
+    }
+
+    private void EnterInitializationStage(VulkanFrameLoopInitializationStage stage)
+        => _initializationStage = stage;
+
+    private static void RunCleanupStep(
+        string name,
+        Action action,
+        List<Exception> failures)
+    {
+        try
+        {
+            action();
+        }
+        catch (Exception exception)
+        {
+            failures.Add(new InvalidOperationException(
+                $"Vulkan cleanup step '{name}' failed.",
+                exception));
         }
     }
 

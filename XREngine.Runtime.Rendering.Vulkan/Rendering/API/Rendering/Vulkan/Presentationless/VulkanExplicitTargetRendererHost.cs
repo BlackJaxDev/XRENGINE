@@ -146,6 +146,21 @@ public sealed unsafe class VulkanExplicitTargetRendererHost : IRuntimeRendererHo
         _renderer.SubmitExplicitTargetFrame(record);
     }
 
+    /// <summary>
+    /// Runs ordinary viewport/render-pipeline work against an acquired
+    /// presentation-independent output. The callback should invoke the same
+    /// <see cref="XRViewport.Render(XRFrameBuffer?, IRuntimeRenderWorld?, XRCamera?, bool, XRMaterial?)"/>
+    /// path used by a desktop viewport; the host then records and submits the
+    /// resulting production frame operations.
+    /// </summary>
+    public void SubmitProductionFrame(
+        Action<RenderFrameOutputDescription> buildFrame)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        ArgumentNullException.ThrowIfNull(buildFrame);
+        _renderer.SubmitExplicitProductionFrame(buildFrame);
+    }
+
     /// <summary>Reads the last completed color output after the measured interval.</summary>
     public byte[] ReadbackLastSubmittedColor(
         int maxByteCount,

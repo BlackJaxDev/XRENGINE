@@ -111,17 +111,7 @@ internal sealed partial class VulkanFrameLoop
     }
 
     internal void InitializeTargetFinalOutput()
-    {
-        try
-        {
-            _targetDriver.InitializeFinalOutput(TargetOutputSession);
-        }
-        catch
-        {
-            _targetOutputSession = null;
-            throw;
-        }
-    }
+        => _targetDriver.InitializeFinalOutput(TargetOutputSession);
 
     internal void DestroyTargetFinalOutput()
     {
@@ -136,6 +126,20 @@ internal sealed partial class VulkanFrameLoop
         {
             _targetOutputSession = null;
         }
+    }
+
+    internal void DetachOutputServices()
+    {
+        _readbackOutputResourceService = null;
+        _openXrOutputResourceService = null;
+        _desktopSwapchainService = null;
+        _imguiTextureRegistryService = null;
+        _imguiTextureOutputResources = null;
+        _imguiOutputPipelineService = null;
+        _imguiDrawBufferResources = null;
+        _imguiFontAtlasResources = null;
+        _imguiOverlayAdmission = null;
+        _targetOutputSession = null;
     }
 
     internal void CreateTargetInstanceResources(Vk api, Silk.NET.Windowing.IWindow? window)

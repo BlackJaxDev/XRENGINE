@@ -2,7 +2,6 @@ using System;
 using System.Diagnostics;
 using Silk.NET.Vulkan;
 using XREngine.Rendering.DLSS;
-using Semaphore = Silk.NET.Vulkan.Semaphore;
 
 namespace XREngine.Rendering.Vulkan
 {
@@ -45,21 +44,6 @@ namespace XREngine.Rendering.Vulkan
                 attempt.AcquireTimelineValue + 1);
             attempt.GraphicsSignalValue = _commandRuntime.Synchronization._graphicsTimelineValue;
 
-            ulong* waitTimelineValues = stackalloc ulong[1] { 0UL };
-            ulong* signalTimelineValues = stackalloc ulong[2]
-            {
-                attempt.GraphicsSignalValue,
-                0UL,
-            };
-            Semaphore* waitSemaphores = stackalloc Semaphore[1]
-            {
-                attempt.AcquireSemaphore,
-            };
-            PipelineStageFlags* waitStages =
-                stackalloc PipelineStageFlags[1]
-                {
-                    PipelineStageFlags.ColorAttachmentOutputBit,
-                };
             CommandBuffer* commandBuffers =
                 stackalloc CommandBuffer[
                     (int)DesktopSubmitCommandBufferCapacity];
@@ -93,32 +77,6 @@ namespace XREngine.Rendering.Vulkan
                     ref commandBufferCount,
                     attempt.DynamicTextOverlayCommandBuffer);
             }
-
-            Semaphore* signalSemaphores = stackalloc Semaphore[2]
-            {
-                _commandRuntime.Synchronization._graphicsTimelineSemaphore,
-                attempt.PresentSemaphore,
-            };
-            TimelineSemaphoreSubmitInfo timelineSubmitInfo = new()
-            {
-                SType = StructureType.TimelineSemaphoreSubmitInfo,
-                WaitSemaphoreValueCount = 1,
-                PWaitSemaphoreValues = waitTimelineValues,
-                SignalSemaphoreValueCount = 2,
-                PSignalSemaphoreValues = signalTimelineValues,
-            };
-            SubmitInfo submitInfo = new()
-            {
-                SType = StructureType.SubmitInfo,
-                PNext = &timelineSubmitInfo,
-                WaitSemaphoreCount = 1,
-                PWaitSemaphores = waitSemaphores,
-                PWaitDstStageMask = waitStages,
-                CommandBufferCount = commandBufferCount,
-                PCommandBuffers = commandBuffers,
-                SignalSemaphoreCount = 2,
-                PSignalSemaphores = signalSemaphores,
-            };
 
             VulkanMappedFrameArena? mappedFrameArena = MappedFrameArena;
             ulong mappedFrameGeneration = mappedFrameArena?.Generation ?? 0UL;
@@ -243,14 +201,14 @@ namespace XREngine.Rendering.Vulkan
                         _ = attempt.CompletePhase(
                             EVulkanFrameStage.QueueSubmit,
                             EDesktopFrameFlow.Continue);
-                        submitReceipt = _commandRuntime.SubmitToQueueTrackedWithDisposition(
-                            _deviceContext.GraphicsQueue,
-                            ref submitInfo,
-                            default,
+                        submitReceipt = SubmitFrameTargetLease(
+                            in attempt.FrameTargetLease,
+                            commandBuffers,
+                            commandBufferCount,
+                            signalGraphicsTimeline: true,
+                            attempt.GraphicsSignalValue,
                             in diagnosticContext,
-                            out _,
-                            out _,
-                            "RenderFrameCallback");
+                            caller: "RenderFrameCallback");
                         submitResult = submitReceipt.Result;
                         if (submitReceipt.SubmissionAccepted)
                         {

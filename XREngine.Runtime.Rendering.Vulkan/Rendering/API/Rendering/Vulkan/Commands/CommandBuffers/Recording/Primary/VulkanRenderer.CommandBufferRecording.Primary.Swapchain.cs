@@ -137,7 +137,7 @@ namespace XREngine.Rendering.Vulkan
             {
                 SType = StructureType.ImageMemoryBarrier,
                 SrcAccessMask = AccessFlags.ColorAttachmentWriteBit,
-                DstAccessMask = 0,
+                DstAccessMask = ResolveSwapchainLayoutAccess(recordingState.SwapchainFinalTargetLayout),
                 OldLayout = ImageLayout.ColorAttachmentOptimal,
                 NewLayout = recordingState.SwapchainFinalTargetLayout,
                 SrcQueueFamilyIndex = Vk.QueueFamilyIgnored,
@@ -156,7 +156,7 @@ namespace XREngine.Rendering.Vulkan
             CmdPipelineBarrierTracked(
                 recordingState.CommandBuffer,
                 PipelineStageFlags.ColorAttachmentOutputBit,
-                PipelineStageFlags.BottomOfPipeBit,
+                ResolveSwapchainLayoutStage(recordingState.SwapchainFinalTargetLayout),
                 0,
                 0,
                 null,
@@ -230,9 +230,10 @@ namespace XREngine.Rendering.Vulkan
             }
 
             ImageLayout oldLayout = ResolveCurrentSwapchainColorLayout(ref recordingState);
-            if (oldLayout == ImageLayout.PresentSrcKhr)
+            ImageLayout finalLayout = recordingState.SwapchainFinalTargetLayout;
+            if (oldLayout == finalLayout)
             {
-                recordingState.SwapchainFinalLayout = ImageLayout.PresentSrcKhr;
+                recordingState.SwapchainFinalLayout = finalLayout;
                 return;
             }
 
@@ -240,9 +241,9 @@ namespace XREngine.Rendering.Vulkan
             {
                 SType = StructureType.ImageMemoryBarrier,
                 SrcAccessMask = ResolveSwapchainLayoutAccess(oldLayout),
-                DstAccessMask = 0,
+                DstAccessMask = ResolveSwapchainLayoutAccess(finalLayout),
                 OldLayout = oldLayout,
-                NewLayout = ImageLayout.PresentSrcKhr,
+                NewLayout = finalLayout,
                 SrcQueueFamilyIndex = Vk.QueueFamilyIgnored,
                 DstQueueFamilyIndex = Vk.QueueFamilyIgnored,
                 Image = recordingState.SwapchainTarget.Image,
@@ -259,7 +260,7 @@ namespace XREngine.Rendering.Vulkan
             CmdPipelineBarrierTracked(
                 recordingState.CommandBuffer,
                 ResolveSwapchainLayoutStage(oldLayout),
-                PipelineStageFlags.BottomOfPipeBit,
+                ResolveSwapchainLayoutStage(finalLayout),
                 0,
                 0,
                 null,
@@ -267,7 +268,7 @@ namespace XREngine.Rendering.Vulkan
                 null,
                 1,
                 &presentBarrier);
-            recordingState.SwapchainFinalLayout = ImageLayout.PresentSrcKhr;
+            recordingState.SwapchainFinalLayout = finalLayout;
         }
 
         private bool TryRefreshUnwrittenSwapchainFromLastWindowPresentSource(scoped ref PrimaryCommandBufferRecordingState recordingState)

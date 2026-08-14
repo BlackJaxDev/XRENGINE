@@ -11,4 +11,9 @@ public enum RenderPipelineExternalTargetKind
     Window,
     CallerProvidedFrameBuffer,
     ExternalSwapchain,
+    /// <summary>
+    /// A renderer presentation target acquired through the frame-output
+    /// contract, including presentationless, WSI, XR, and browser canvases.
+    /// </summary>
+    PresentationTarget,
 }

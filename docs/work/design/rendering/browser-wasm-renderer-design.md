@@ -191,6 +191,38 @@ WebXrPresentation       // reserved until a later phase
 Fine-grained limits and optional features remain renderer-instance capabilities
 after a context, adapter, and device exist.
 
+### Landed Portable Prerequisites (2026-08-13)
+
+The Vulkan presentation-independent refactor landed the shared contracts that
+the browser modules should reuse:
+
+- `RuntimeGraphicsApiKind.WebGL2` and `.WebGPU`, matching
+  `RendererBackendId.WebGL2` and `.WebGPU`;
+- `RenderExecutionMode.BrowserCanvas`;
+- the coarse browser, worker, async-readback, external-image, and reserved
+  WebXR module capabilities listed above; and
+- `RenderFrameOutputDescription`, an immutable backend-neutral acquired-output
+  value exposed by `IRuntimeRenderPipelineFrameContext.FinalOutput`.
+
+The AOT-safe texture-streaming provider registry accepts both browser backend
+identities, and generic GPU-profiler fallback labels distinguish WebGL2 from
+WebGPU. Neither identity is treated as desktop OpenGL or Vulkan.
+
+`RenderFrameOutputDescription` carries dimensions, layers, formats, samples,
+target generation, frame slot, view index, execution mode, and portable output
+capabilities. It intentionally carries no Vulkan handles and must likewise
+carry no `JSObject`, WebGL object, WebGPU object, or JavaScript handle-table
+entry. A future `BrowserCanvasRenderTarget` should project its acquired canvas
+output into this value while its concrete renderer keeps API objects and packet
+executor handles private.
+
+Render-pipeline resource keys now include the output target class and
+color/depth formats as well as dimensions, views, and samples. Canvas resize,
+device/context recovery, swapchain reconfiguration, and format changes can
+therefore publish a new target generation without adding browser conditions to
+the generic render graph. Browser implementation, portable project extraction,
+canvas hosting, JavaScript interop, and command packets remain future work.
+
 Browser static composition should register only the browser modules included in
 the published app. It should not use collectible assembly loading or reflection
 discovery. Trimming and AOT roots should be generated or explicit.

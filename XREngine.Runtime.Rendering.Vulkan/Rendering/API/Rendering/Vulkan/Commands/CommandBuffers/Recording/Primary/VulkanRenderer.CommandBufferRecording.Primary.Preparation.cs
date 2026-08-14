@@ -1120,7 +1120,7 @@ namespace XREngine.Rendering.Vulkan
             recordingState.UsedSwapchainDynamicRendering = false;
             recordingState.SwapchainInColorAttachmentLayout = false;
             recordingState.SwapchainFinalTargetLayout = recordingState.TransitionSwapchainToPresent
-                ? ImageLayout.PresentSrcKhr
+                ? recordingState.Policy.FinalTargetLayout
                 : ImageLayout.ColorAttachmentOptimal;
             recordingState.SwapchainFinalLayout = recordingState.InitialSwapchainColorLayout;
 

@@ -35,27 +35,23 @@ public sealed class VulkanRenderer :
     IStreamlinePresentationBackendCapability,
     IPhysicsChainComputeBackendFactoryCapability
 {
-    private const int MAX_FRAMES_IN_FLIGHT = 2;
+    private const int DesktopFramesInFlight = 2;
     private readonly VulkanDeviceContext _deviceContext;
     private readonly VulkanOutputRuntime _outputRuntime;
     private readonly VulkanFrameLoop _frameLoop;
     private readonly VulkanFramePlanner _framePlanner = new();
-    private readonly VulkanResourceRuntime _resourceRuntime = new(MAX_FRAMES_IN_FLIGHT);
+    private readonly VulkanResourceRuntime _resourceRuntime;
     private readonly VulkanCommandRuntime _commandRuntime = new();
     private readonly VulkanFrameTelemetry _frameTelemetry = new();
-
-    public VulkanRenderer(
-        XRWindow window,
-        bool shouldLinkWindow = true,
-        long backendGeneration = 0)
-        : this(RendererHostContext.CreateDesktop(window, shouldLinkWindow, backendGeneration))
-    {
-    }
 
     public VulkanRenderer(RendererHostContext hostContext)
         : base(hostContext)
     {
         IVulkanRendererTargetDriver targetDriver = VulkanRendererTargetDriverFactory.Create(hostContext);
+        int frameSlotCount = targetDriver is IVulkanExplicitFrameTargetDriver explicitTarget
+            ? checked((int)explicitTarget.OutputProperties.FrameSlotCount)
+            : DesktopFramesInFlight;
+        _resourceRuntime = new VulkanResourceRuntime(frameSlotCount);
         _outputRuntime = new VulkanOutputRuntime(VulkanTargetPolicySnapshot.Capture(targetDriver));
         _deviceContext = new VulkanDeviceContext(
             new VulkanDeviceContextConfiguration(
@@ -453,6 +449,29 @@ public sealed class VulkanRenderer :
     /// <summary>Records and submits one frame through an explicit presentation target.</summary>
     internal void SubmitExplicitTargetFrame(Action<Vk, CommandBuffer, VulkanRenderFrameTarget> record)
         => _frameLoop.ExecuteExplicitTargetFrame(record);
+
+    /// <summary>
+    /// Acquires an explicit target, lets an ordinary viewport/render pipeline
+    /// enqueue its production work, then records and submits that work through
+    /// the common Vulkan frame-target path.
+    /// </summary>
+    internal void SubmitExplicitProductionFrame(
+        Action<RenderFrameOutputDescription> buildFrame)
+    {
+        AbstractRenderer? previous = Current;
+        bool previousActive = Active;
+        Current = this;
+        Active = true;
+        try
+        {
+            _frameLoop.ExecuteExplicitProductionFrame(buildFrame);
+        }
+        finally
+        {
+            Active = previousActive;
+            Current = previous;
+        }
+    }
 
     /// <summary>Reads the last completed explicit-target color output.</summary>
     internal byte[] ReadbackExplicitTargetColor(int maxByteCount, ImageLayout sourceLayout)

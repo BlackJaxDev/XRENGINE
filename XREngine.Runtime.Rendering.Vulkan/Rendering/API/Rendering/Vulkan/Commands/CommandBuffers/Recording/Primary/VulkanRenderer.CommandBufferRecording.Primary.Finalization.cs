@@ -292,7 +292,7 @@ namespace XREngine.Rendering.Vulkan
                     Debug.VulkanWarningEvery(
                         $"Vulkan.DynamicRendering.PresentTransitions.{GetHashCode()}",
                         TimeSpan.FromSeconds(1),
-                        "[Vulkan] Dynamic-rendering swapchain transitioned to PresentSrcKhr {0} times this command buffer; expected {1}.",
+                        "[Vulkan] Dynamic-rendering output transitioned to its required final layout {0} times this command buffer; expected {1}.",
                         recordingState.SwapchainPresentTransitions,
                         expectedPresentTransitions);
                 }

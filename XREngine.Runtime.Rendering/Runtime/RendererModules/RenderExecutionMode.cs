@@ -11,4 +11,6 @@ public enum RenderExecutionMode
     HeadlessWsi,
     DesktopWsi,
     OpenXr,
+    /// <summary>Browser-owned HTML canvas or offscreen-canvas presentation.</summary>
+    BrowserCanvas,
 }

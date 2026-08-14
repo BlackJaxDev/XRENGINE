@@ -1,6 +1,6 @@
 # Vulkan Headless MCP Component Profiling TODO
 
-Last Updated: 2026-08-12
+Last Updated: 2026-08-13
 Owner: Rendering / Vulkan / Profiling / MCP
 Status: In Progress
 
@@ -23,6 +23,8 @@ Related architecture and implementation:
 - [Vulkan Primary And Secondary Command Recording](../../../../architecture/rendering/vulkan-command-recording.md)
 - [Vulkan Primary Command-Buffer Reuse](../../../../architecture/rendering/vulkan-primary-command-buffer-reuse.md)
 - [Vulkan Command Recording Architecture Optimization TODO](vulkan-command-recording-architecture-optimization-todo.md)
+- [Completed Vulkan Presentation-Independent Renderer Refactor](../../COMPLETED/vulkan-presentation-independent-renderer-refactor-todo.md)
+- [Vulkan Presentation-Independent Renderer Validation](../../../testing/rendering/vulkan-presentation-independent-renderer-validation.md)
 - [Remote Profiler](../../../../developer-guides/diagnostics/profiler.md)
 - `Tools/Manage-McpEditorSession.ps1`
 - `Tools/Measure-GameLoopRenderPipeline.ps1`
@@ -72,11 +74,10 @@ Existing strengths:
 
 Current gaps:
 
-- Presentation-independent Vulkan bootstrap hosts now own their device,
-  frame-slot, output, query, and synchronization resources, but the existing
-  `VulkanRenderer` render-graph implementation still derives from the
-  window-oriented `AbstractRenderer` and has not yet been hosted by those
-  targets.
+- The production `VulkanRenderer` now runs its normal render graph against
+  target leases for desktop WSI, presentationless, headless WSI, and OpenXR.
+  The remaining cross-target correctness, synchronization, performance, and
+  regression matrix is tracked in the dedicated validation document above.
 - The optional headless-WSI path is driver-gated by
   `VK_EXT_headless_surface`; unsupported drivers report the limitation and
   retain the presentationless lane.
@@ -219,9 +220,11 @@ Acceptance criteria:
   allocator without creating a native window or `VkSurfaceKHR`.
 - [x] Allocate engine-owned offscreen color/depth images and image views for
   each required output/frame slot.
-- [ ] Run the normal render graph and Vulkan command recording against those
-  outputs. Track the production-renderer refactor in
-  [Vulkan Presentation-Independent Renderer Refactor TODO](vulkan-presentation-independent-renderer-refactor-todo.md).
+- [x] Run the normal render graph and Vulkan command recording against those
+  outputs. The implementation is recorded in the
+  [completed presentation-independent renderer refactor](../../COMPLETED/vulkan-presentation-independent-renderer-refactor-todo.md),
+  with remaining acceptance work in the
+  [validation plan](../../../testing/rendering/vulkan-presentation-independent-renderer-validation.md).
 - [x] Submit to the real Vulkan queue and retain normal resource-lifetime and
   retirement rules.
 - [x] Replace acquire/present with explicit frame-slot ownership and completion
@@ -290,11 +293,13 @@ Acceptance criteria:
 - [x] The managed executable, effective-configuration, and workload hashes are
   recorded in every result.
 
-Implementation note (2026-08-12): Phase 2 deliberately establishes the
-dedicated process with the target-submit control fixture. Production Deferred,
-Uber, and component fixtures remain owned by Phase 4 and still depend on the
-unchecked Phase 1.2 normal-render-graph integration item above. A RenderBench
-control result must not be labeled as production render-graph evidence.
+Implementation note (updated 2026-08-13): Phase 2 deliberately established the
+dedicated process with the target-submit control fixture. Phase 1.2 production
+render-graph integration is now complete, including a windowless
+`DefaultRenderPipeline` run through the production submission gateway. Deferred,
+Uber, component, and cross-target statistical acceptance remain validation
+work; a synthetic RenderBench control result must not be labeled as production
+render-graph evidence.
 
 ## Phase 3 - Runtime MCP Control Plane
 

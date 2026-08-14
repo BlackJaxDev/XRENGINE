@@ -658,7 +658,7 @@ internal sealed partial class VulkanFrameLoop
         => ResolveOpenXrDesktopFrameDataSlotCount(desktopSwapchainImageCount) + OpenXrEyeResourcePlannerStateCount;
 
     private static int ResolveOpenXrDesktopFrameDataSlotCount(int desktopSwapchainImageCount)
-        => Math.Max(Math.Max(desktopSwapchainImageCount, FrameSlotCount), 1);
+        => Math.Max(Math.Max(desktopSwapchainImageCount, DesktopFrameSlotCount), 1);
 
     private static uint ResolveOpenXrRecordImageIndex(
         int resourcePlannerStateIndex,
