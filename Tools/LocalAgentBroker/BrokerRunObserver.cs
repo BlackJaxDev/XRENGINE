@@ -5,7 +5,9 @@ namespace XREngine.LocalAgentBroker;
 /// <summary>
 /// Projects orchestration events into the synchronized run registry.
 /// </summary>
-internal sealed class BrokerRunObserver(BrokerRunRecord record) : IAgentRunObserver
+internal sealed class BrokerRunObserver(
+    BrokerRunRecord record,
+    BrokerHistoryPublisher historyPublisher) : IAgentRunObserver
 {
     public ValueTask OnEventAsync(AgentRunEvent runEvent, CancellationToken cancellationToken)
     {
@@ -29,6 +31,7 @@ internal sealed class BrokerRunObserver(BrokerRunRecord record) : IAgentRunObser
         {
             record.RecordRetry();
         }
+        historyPublisher.QueueUpdate(record);
         return ValueTask.CompletedTask;
     }
 }

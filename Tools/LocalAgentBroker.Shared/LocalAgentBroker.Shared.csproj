@@ -1,19 +1,16 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <OutputType>Exe</OutputType>
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <AssemblyName>XREngine.LocalAgentBroker</AssemblyName>
-    <RootNamespace>XREngine.LocalAgentBroker</RootNamespace>
+    <AssemblyName>XREngine.LocalAgentBroker.Shared</AssemblyName>
+    <RootNamespace>XREngine.LocalAgentBroker.Shared</RootNamespace>
     <IsPackable>false</IsPackable>
-    <XREngineIncludeSharedExecutableDependencies>false</XREngineIncludeSharedExecutableDependencies>
   </PropertyGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\..\XREngine.AgentOrchestration\XREngine.AgentOrchestration.csproj" />
-    <ProjectReference Include="..\LocalAgentBroker.Shared\LocalAgentBroker.Shared.csproj" />
   </ItemGroup>
 
 </Project>

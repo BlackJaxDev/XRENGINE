@@ -7,6 +7,7 @@ $ErrorActionPreference = "Stop"
 
 $repoRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
 $projectPath = Join-Path $repoRoot "Tools\LocalAgentBroker\LocalAgentBroker.csproj"
+$trayProjectPath = Join-Path $repoRoot "Tools\LocalAgentBroker.Tray\LocalAgentBroker.Tray.csproj"
 $agentToolsRoot = [System.IO.Path]::GetFullPath((Join-Path $repoRoot "Build\_AgentValidation\00000000-000000-shared\agent-tools"))
 $deploymentName = "LocalAgentBroker-$(Get-Date -Format 'yyyyMMddHHmmssfff')"
 $outputPath = [System.IO.Path]::GetFullPath((Join-Path $agentToolsRoot $deploymentName))
@@ -28,6 +29,15 @@ dotnet publish $projectPath `
     --nologo
 if ($LASTEXITCODE -ne 0) {
     throw "Local agent broker publish failed with exit code $LASTEXITCODE."
+}
+
+Write-Host "Publishing the local agent broker tray companion..."
+dotnet publish $trayProjectPath `
+    --configuration Release `
+    --output (Join-Path $outputPath "tray") `
+    --nologo
+if ($LASTEXITCODE -ne 0) {
+    throw "Local agent broker tray publish failed with exit code $LASTEXITCODE."
 }
 
 New-Item -ItemType Directory -Force $agentToolsRoot | Out-Null
