@@ -23,6 +23,8 @@ namespace XREngine.Rendering.Vulkan
         // compile the newly visible variants.
         private static readonly long PrimaryPipelinePrewarmSliceTicks =
             Math.Max(1L, Stopwatch.Frequency / 500L);
+        private static readonly long PrimaryFrameDataColdPreparationSliceTicks =
+            Math.Max(1L, Stopwatch.Frequency / 250L);
 
         private static void CapturePrimaryCommandBufferRecordingContext(
             scoped in VulkanCommandRecordingContext context,
@@ -77,6 +79,7 @@ namespace XREngine.Rendering.Vulkan
                 recordingState.RecordingScratch.SecondaryRecordingBuckets;
             recordingState.SecondaryBucketByStart = null;
             recordingState.ScheduledCommandChainKeysByOpIndex = null;
+            recordingState.ScheduledCommandChainsByOpIndex = null;
             recordingState.ScheduledCommandChainCache = null;
             recordingState.MeshSecondaryFallbackEndIndex = 0;
             // Schedule before resource prewarm so clean secondary chains can
@@ -94,12 +97,135 @@ namespace XREngine.Rendering.Vulkan
                 recordingState.RecordingScratch
                     .PreparePrimaryScheduledCommandChainFrameDataRefreshFlags(
                         recordingState.Ops.Length);
+            recordingState.CommandChainRecordingAdmittedByOpIndex =
+                recordingState.RecordingScratch
+                    .PreparePrimaryCommandChainRecordingAdmissionFlags(
+                        recordingState.Ops.Length);
+            PrepareProgressiveCommandChainRecordingAdmission(
+                ref recordingState);
             recordingState.ExecutedCommandChainSecondaryHandles = recordingState.RecordingScratch.ExecutedCommandChainSecondaryHandles;
             recordingState.ExecutedCommandChainSecondaryHandles.Clear();
             recordingState.ExecutedCommandChainSecondaryArtifactSequence =
                 recordingState.RecordingScratch.ExecutedCommandChainSecondaryArtifactSequence;
             recordingState.ExecutedCommandChainSecondaryArtifactSequence.Clear();
         }
+
+        /// <summary>
+        /// Selects a bounded cold-secondary slice before frame-data prewarm. A
+        /// completed desktop presentation source lets the frame loop replay the
+        /// last coherent scene while the selected artifacts become reusable.
+        /// OpenXR/external targets and diagnostic force-record modes retain the
+        /// immediate all-required-work contract.
+        /// </summary>
+        private void PrepareProgressiveCommandChainRecordingAdmission(
+            scoped ref PrimaryCommandBufferRecordingState recordingState)
+        {
+            recordingState.ProgressiveCommandChainPublicationPending = false;
+            recordingState.CanProgressivelyDeferCommandChainPublication = false;
+            recordingState.CommandChainPublicationDeferred = false;
+            recordingState.ProgressiveCommandChainAdmittedJobs = 0;
+            recordingState.ProgressiveCommandChainAdmittedOperations = 0;
+            recordingState.ProgressiveCommandChainDeferredJobs = 0;
+
+            if (recordingState.Policy.IsExternalSwapchainTarget ||
+                !recordingState.PresentationSource.HasLogicalSource ||
+                recordingState.ScheduledCommandChainsByOpIndex is null ||
+                CommandChainBenchmarkForceRerecord ||
+                CommandChainValidationEnabled ||
+                CommandChainTraceEnabled)
+            {
+                return;
+            }
+
+            if (!ResourceRuntime.TryValidatePresentationSourceForReplay(
+                    recordingState.PresentationSource,
+                    out _))
+            {
+                return;
+            }
+
+            recordingState.CanProgressivelyDeferCommandChainPublication = true;
+            int dirtyChainCount = 0;
+            int dirtyOperationCount = 0;
+            for (int opIndex = 0;
+                 opIndex < recordingState.Ops.Length;
+                 opIndex++)
+            {
+                CommandChain? chain =
+                    recordingState.ScheduledCommandChainsByOpIndex[opIndex];
+                if (chain is null ||
+                    chain.Key.DynamicOverlay ||
+                    chain.SourceStartIndex != opIndex ||
+                    !CommandChainNeedsColdPublication(chain))
+                {
+                    continue;
+                }
+
+                dirtyChainCount++;
+                dirtyOperationCount += chain.SourceCount;
+            }
+
+            if (dirtyChainCount <= MaxProgressiveDesktopCommandChainRecordJobs &&
+                dirtyOperationCount <=
+                    MaxProgressiveDesktopCommandChainRecordOperations)
+                return;
+
+            int admitted = 0;
+            int admittedOperations = 0;
+            int deferred = 0;
+            for (int opIndex = 0;
+                 opIndex < recordingState.Ops.Length;
+                 opIndex++)
+            {
+                CommandChain? chain =
+                    recordingState.ScheduledCommandChainsByOpIndex[opIndex];
+                if (chain is null ||
+                    chain.Key.DynamicOverlay ||
+                    chain.SourceStartIndex != opIndex ||
+                    !CommandChainNeedsColdPublication(chain))
+                {
+                    continue;
+                }
+
+                bool admit = admitted <
+                        MaxProgressiveDesktopCommandChainRecordJobs &&
+                    (admitted == 0 ||
+                     admittedOperations + chain.SourceCount <=
+                        MaxProgressiveDesktopCommandChainRecordOperations);
+                if (admit)
+                {
+                    admitted++;
+                    admittedOperations += chain.SourceCount;
+                }
+                else
+                    deferred++;
+
+                int endIndex = Math.Min(
+                    recordingState.Ops.Length,
+                    chain.SourceStartIndex + chain.SourceCount);
+                for (int chainOpIndex = chain.SourceStartIndex;
+                     chainOpIndex < endIndex;
+                     chainOpIndex++)
+                {
+                    recordingState.CommandChainRecordingAdmittedByOpIndex[
+                        chainOpIndex] = admit;
+                }
+            }
+
+            recordingState.ProgressiveCommandChainPublicationPending =
+                deferred > 0;
+            recordingState.ProgressiveCommandChainAdmittedJobs = admitted;
+            recordingState.ProgressiveCommandChainAdmittedOperations =
+                admittedOperations;
+            recordingState.ProgressiveCommandChainDeferredJobs = deferred;
+        }
+
+        private static bool CommandChainNeedsColdPublication(CommandChain chain)
+            => chain.SecondaryCommandBuffer.Handle == 0 ||
+               !chain.SecondaryCommandBufferExecutable ||
+               chain.State is CommandChainState.Recorded or
+                   CommandChainState.NotReady ||
+               chain.FrameDataRefreshTouchedDescriptors;
 
         private bool TryPreparePrimaryFrameData(
             scoped ref PrimaryCommandBufferRecordingState recordingState,
@@ -113,10 +239,11 @@ namespace XREngine.Rendering.Vulkan
 
             EMeshSubmissionStrategy submissionStrategy =
                 RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy();
-            ulong frameStructuralSignature =
-                recordingState.FramePlan?.StaticOperationSignature
+            FramePlan framePlan = recordingState.FramePlan
                 ?? throw new VulkanPlanPreconditionException(
                     "Primary pipeline preparation requires a sealed frame plan.");
+            ulong frameStructuralSignature =
+                framePlan.StaticOperationSignature;
             VulkanPipelineVariantManifest pipelineVariantManifest =
                 ResourceRuntime.PipelineManager.GetOrBuildVariantManifest(
                     recordingState.RenderGraphPlan.CompiledGraph.Plan,
@@ -139,23 +266,38 @@ namespace XREngine.Rendering.Vulkan
             // through recording.
             Dictionary<VkMeshRenderer, int> meshDrawSlotsByRenderer =
                 recordingScratch.MeshDrawSlotsByRenderer;
-            meshDrawSlotsByRenderer.Clear();
-            meshDrawSlotsByRenderer.EnsureCapacity(
-                Math.Max(1, recordingScratch.RecordMeshDrawSlotCapacityHint));
+            bool reusePublishedRefreshCohort =
+                recordingScratch.IsReusableFrameDataRefreshCohortCurrent(
+                    framePlan.Generation,
+                    framePlan.RenderFrameId,
+                    recordingState.FrameDataImageIndex);
+            Dictionary<VulkanMeshFrameDataRendererFamilyKey, int>
+                meshFrameDataFamilyBases = reusePublishedRefreshCohort
+                    ? recordingScratch.ReusableMeshFrameDataFamilyBases
+                    : recordingScratch.PrimaryMeshFrameDataFamilyBases;
+            if (!reusePublishedRefreshCohort)
+            {
+                meshDrawSlotsByRenderer.Clear();
+                meshDrawSlotsByRenderer.EnsureCapacity(
+                    Math.Max(
+                        1,
+                        recordingScratch.RecordMeshDrawSlotCapacityHint));
+            }
             ulong frameDataGeneration = MappedFrameArena?.Generation ?? 0UL;
             using (VulkanCpuStageScope cpuStage = new(_frameTelemetry, EVulkanCpuStage.PrimaryFrameDataManifest))
             {
                 frameDataManifest.Begin(
                     frameDataGeneration,
                     recordingScratch.RecordMeshDrawSlotCapacityHint);
-                if (!TryRegisterFrameWideMeshFrameDataRequirements(
+                if (!reusePublishedRefreshCohort &&
+                    !TryRegisterFrameWideMeshFrameDataRequirements(
                         recordingState.Ops,
                         FrameOperationSequence.Empty,
                         recordingState.CommandBufferImageSlot,
                         sealAfterRegister: true,
                         meshDrawSlotsByRenderer,
                         recordingScratch,
-                        recordingScratch.PrimaryMeshFrameDataFamilyBases,
+                        meshFrameDataFamilyBases,
                         0UL,
                         0UL,
                         out _,
@@ -179,12 +321,28 @@ namespace XREngine.Rendering.Vulkan
             recordingState.MeshDrawSlotsByRendererFamily =
                 recordingScratch.PrimaryMeshDrawSlotsByRendererFamily;
             recordingState.MeshFrameDataFamilyBases =
-                recordingScratch.PrimaryMeshFrameDataFamilyBases;
+                meshFrameDataFamilyBases;
             recordingState.MeshDrawSlotsByRendererFamily.Clear();
             PrepareScheduledCommandChainFrameDataRefresh(
                 ref recordingState);
 
-            using (VulkanCpuStageScope cpuStage = new(_frameTelemetry, EVulkanCpuStage.PrimaryPrewarm))
+            if (!TryAdmitPrimaryFrameDataStructures(
+                    ref recordingState,
+                    pipelineVariantManifest,
+                    frameDataManifest))
+            {
+                return false;
+            }
+
+            int frameDataPrewarmProcessed = 0;
+            int frameDataPrewarmUnmapped = 0;
+            int frameDataPrewarmPipelineDeferred = 0;
+            int frameDataPrewarmPublicationDeferred = 0;
+            int frameDataPrewarmReusableRefreshes = 0;
+            long frameDataPrewarmStart = Stopwatch.GetTimestamp();
+            using (VulkanCpuStageScope cpuStage = new(
+                       _frameTelemetry,
+                       EVulkanCpuStage.PrimaryPrewarm))
             {
                 for (int requirementIndex = 0;
                      requirementIndex < pipelineVariantManifest.Requirements.Count;
@@ -204,10 +362,21 @@ namespace XREngine.Rendering.Vulkan
                         _ => default,
                     };
                     VkMeshRenderer? meshRenderer = pendingDraw.Renderer;
-                    if (meshRenderer is null ||
-                        recordingState.PipelineDeferredOperationIndices.Contains(
+                    if (meshRenderer is null)
+                    {
+                        frameDataPrewarmUnmapped++;
+                        continue;
+                    }
+                    if (recordingState.PipelineDeferredOperationIndices.Contains(
                             opIndex))
                     {
+                        frameDataPrewarmPipelineDeferred++;
+                        continue;
+                    }
+                    if (!recordingState
+                            .CommandChainRecordingAdmittedByOpIndex[opIndex])
+                    {
+                        frameDataPrewarmPublicationDeferred++;
                         continue;
                     }
                     FrameOpContext operationContext = recordingState.Ops.GetContext(opIndex);
@@ -232,6 +401,7 @@ namespace XREngine.Rendering.Vulkan
                                 opIndex];
                     if (frameDataAlreadyRefreshed)
                     {
+                        frameDataPrewarmReusableRefreshes++;
                         // The reusable-chain refresh already published the exact
                         // draw slot and validated its descriptor/pipeline identity.
                         // Entering a planner readback scope for every draw here is
@@ -240,6 +410,7 @@ namespace XREngine.Rendering.Vulkan
                         continue;
                     }
 
+                    frameDataPrewarmProcessed++;
                     using var pipelineScope = RuntimeEngine.Rendering.State.PushRenderingPipelineOverride(
                         operationContext.PipelineInstance);
                     if (!meshRenderer.TryPrewarmFrameDataForRecording(
@@ -261,11 +432,31 @@ namespace XREngine.Rendering.Vulkan
                             $"mesh '{meshRenderer.Mesh?.Name ?? "<unnamed mesh>"}', slot {drawSlot}: {prewarmReason}";
                         return false;
                     }
+
                 }
                 recordingScratch.RecordMeshDrawSlotCapacityHint = Math.Max(
                     recordingScratch.RecordMeshDrawSlotCapacityHint,
                     recordingState.MeshDrawSlotsByRendererFamily.Count);
                 recordingState.MeshDrawSlotsByRendererFamily.Clear();
+            }
+            TimeSpan frameDataPrewarmElapsed =
+                Stopwatch.GetElapsedTime(frameDataPrewarmStart);
+            if (frameDataPrewarmElapsed >= TimeSpan.FromMilliseconds(20))
+            {
+                Debug.VulkanWarningEvery(
+                    $"Vulkan.PrimaryFrameDataPrewarm.Slow.{GetHashCode()}",
+                    TimeSpan.FromSeconds(1),
+                    "[Vulkan] Slow primary frame-data preparation: elapsedMs={0:F3} requirements={1} processed={2} reusableRefreshes={3} publicationDeferred={4} pipelineDeferred={5} unmapped={6} admittedColdJobs={7} admittedColdOps={8} deferredColdJobs={9}.",
+                    frameDataPrewarmElapsed.TotalMilliseconds,
+                    pipelineVariantManifest.Requirements.Count,
+                    frameDataPrewarmProcessed,
+                    frameDataPrewarmReusableRefreshes,
+                    frameDataPrewarmPublicationDeferred,
+                    frameDataPrewarmPipelineDeferred,
+                    frameDataPrewarmUnmapped,
+                    recordingState.ProgressiveCommandChainAdmittedJobs,
+                    recordingState.ProgressiveCommandChainAdmittedOperations,
+                    recordingState.ProgressiveCommandChainDeferredJobs);
             }
 
             if (!frameDataManifest.TrySeal(
@@ -278,6 +469,150 @@ namespace XREngine.Rendering.Vulkan
                 return false;
             }
             return true;
+        }
+
+        /// <summary>
+        /// Converges cold renderer program/buffer/vertex-input state under a
+        /// bounded desktop slice before the current frame performs its complete
+        /// dynamic-data publication. Successful preparation signatures persist
+        /// across rejected frames; no partially refreshed frame is recorded or
+        /// submitted.
+        /// </summary>
+        private bool TryAdmitPrimaryFrameDataStructures(
+            scoped ref PrimaryCommandBufferRecordingState recordingState,
+            VulkanPipelineVariantManifest pipelineVariantManifest,
+            VulkanMeshFrameDataReservationManifest frameDataManifest)
+        {
+            if (!recordingState.CanProgressivelyDeferCommandChainPublication)
+                return true;
+
+            HashSet<ulong> admittedSignatures = recordingState.RecordingScratch
+                .AdmittedFrameDataPreparationSignatures;
+            long sliceStart = Stopwatch.GetTimestamp();
+            int newlyPrepared = 0;
+            for (int requirementIndex = 0;
+                 requirementIndex < pipelineVariantManifest.Requirements.Count;
+                 requirementIndex++)
+            {
+                VulkanPipelineVariantRequirement requirement =
+                    pipelineVariantManifest.Requirements[requirementIndex];
+                int opIndex = requirement.OpIndex;
+                ref readonly FrameOperationHeader operationHeader =
+                    ref recordingState.Ops.GetHeader(opIndex);
+                PendingMeshDraw pendingDraw = operationHeader.OpCode switch
+                {
+                    EVulkanPrimaryPlanNodeKind.MeshDraw =>
+                        recordingState.Ops.GetMeshDraw(opIndex).Draw,
+                    EVulkanPrimaryPlanNodeKind.IndirectDraw =>
+                        recordingState.Ops.GetIndirectDraw(opIndex).Draw,
+                    _ => default,
+                };
+                VkMeshRenderer? meshRenderer = pendingDraw.Renderer;
+                if (meshRenderer is null ||
+                    recordingState.PipelineDeferredOperationIndices.Contains(
+                        opIndex) ||
+                    !recordingState
+                        .CommandChainRecordingAdmittedByOpIndex[opIndex] ||
+                    recordingState
+                        .ScheduledCommandChainFrameDataRefreshedByOpIndex[
+                            opIndex])
+                {
+                    continue;
+                }
+
+                FrameOpContext operationContext =
+                    recordingState.Ops.GetContext(opIndex);
+                int drawSlot =
+                    recordingState.MeshDrawUniformSlotsByOpIndex[opIndex];
+                if (drawSlot < 0)
+                {
+                    drawSlot = GetFrameWideMeshDrawUniformSlot(
+                        recordingState.MeshDrawSlotsByRendererFamily,
+                        recordingState.MeshFrameDataFamilyBases,
+                        meshRenderer,
+                        recordingState.CommandBufferImageSlot,
+                        EVulkanMeshFrameDataStreamKind.Primary,
+                        operationContext,
+                        pendingDraw);
+                    recordingState.MeshDrawUniformSlotsByOpIndex[opIndex] =
+                        drawSlot;
+                }
+
+                ulong preparationSignature =
+                    ComputePrimaryFrameDataPreparationLedgerSignature(
+                        requirement.PreparationCompatibilitySignature,
+                        recordingState.ResourcePlanStamp
+                            .ResourceAllocationSignature,
+                        MappedFrameArena?.Generation ?? 0UL,
+                        recordingState.CommandBufferImageSlot,
+                        drawSlot);
+                if (admittedSignatures.Contains(preparationSignature))
+                    continue;
+
+                using var pipelineScope =
+                    RuntimeEngine.Rendering.State.PushRenderingPipelineOverride(
+                        operationContext.PipelineInstance);
+                if (!meshRenderer.TryPrepareFrameDataStructuresForRecording(
+                        pendingDraw,
+                        out string prewarmReason))
+                {
+                    recordingState.MeshDrawSlotsByRendererFamily.Clear();
+                    frameDataManifest.End();
+                    recordingState.RecordingDeferredReason =
+                        $"Mesh frame-data structural preparation deferred for " +
+                        $"mesh '{meshRenderer.Mesh?.Name ?? "<unnamed mesh>"}', " +
+                        $"slot {drawSlot}: {prewarmReason}";
+                    return false;
+                }
+
+                if (admittedSignatures.Count >= CommandBufferRecordingScratch
+                        .MaxAdmittedFrameDataPreparationSignatures)
+                {
+                    admittedSignatures.Clear();
+                }
+                admittedSignatures.Add(preparationSignature);
+                newlyPrepared++;
+
+                if (Stopwatch.GetTimestamp() - sliceStart <
+                    PrimaryFrameDataColdPreparationSliceTicks)
+                {
+                    continue;
+                }
+
+                recordingState.MeshDrawSlotsByRendererFamily.Clear();
+                frameDataManifest.End();
+                recordingState.RecordingDeferredReason =
+                    "Cold mesh frame-data structures are converging within " +
+                    "the pre-recording CPU budget.";
+                Debug.VulkanEvery(
+                    $"Vulkan.PrimaryFrameDataStructuralAdmission.{GetHashCode()}",
+                    TimeSpan.FromSeconds(1),
+                    "[Vulkan] Primary frame-data structural admission yielded after preparing {0} new signatures; cached={1} requirement={2}/{3}.",
+                    newlyPrepared,
+                    admittedSignatures.Count,
+                    requirementIndex + 1,
+                    pipelineVariantManifest.Requirements.Count);
+                return false;
+            }
+
+            return true;
+        }
+
+        private static ulong ComputePrimaryFrameDataPreparationLedgerSignature(
+            ulong requirementSignature,
+            ulong resourceAllocationSignature,
+            ulong arenaGeneration,
+            int frameDataSlot,
+            int drawSlot)
+        {
+            FrameOpSignatureHasher hash = new();
+            hash.Add(0x46525052U);
+            hash.Add(requirementSignature);
+            hash.Add(resourceAllocationSignature);
+            hash.Add(arenaGeneration);
+            hash.Add(frameDataSlot);
+            hash.Add(drawSlot);
+            return hash.ToHash();
         }
 
         private bool TryAdmitPrimaryGraphicsPipelines(

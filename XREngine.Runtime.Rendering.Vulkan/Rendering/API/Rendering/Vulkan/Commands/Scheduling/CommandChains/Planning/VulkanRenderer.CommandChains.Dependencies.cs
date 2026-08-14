@@ -141,10 +141,8 @@ internal sealed partial class VulkanCommandRuntime
         ulong samplerGeneration = 0UL;
         if (descriptorSets.Count > 0)
         {
-            ref readonly VulkanRecordedDescriptorSetIdentity firstDescriptorSet =
-                ref VulkanRecordedDescriptorSetIdentityBuffer.GetReference(
-                    in descriptorSets,
-                    0);
+            VulkanRecordedDescriptorSetIdentity firstDescriptorSet =
+                descriptorSets.Get(0);
             descriptorSetPayloadGeneration = firstDescriptorSet.PayloadGeneration;
             descriptorSetPublicationGeneration = firstDescriptorSet.PublicationGeneration;
             ref readonly VulkanRecordedDescriptorResourceIdentityBuffer resources =

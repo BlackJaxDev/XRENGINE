@@ -481,15 +481,35 @@ internal sealed partial class VulkanCommandRuntime
         IReadOnlyDictionary<CommandChainKey, CommandChain> commandChains,
         Span<CommandChainKey> keysByOpIndex,
         int staticOpCount)
+        => PopulateCommandChainsByFrameOpIndex(
+            schedule,
+            commandChains,
+            keysByOpIndex,
+            default,
+            staticOpCount);
+
+    private static void PopulateCommandChainsByFrameOpIndex(
+        CommandChainSchedule schedule,
+        IReadOnlyDictionary<CommandChainKey, CommandChain> commandChains,
+        Span<CommandChainKey> keysByOpIndex,
+        Span<CommandChain?> chainsByOpIndex,
+        int staticOpCount)
     {
         if (staticOpCount <= 0)
             return;
         if (keysByOpIndex.Length < staticOpCount)
             throw new ArgumentException("The command-chain key scratch span is smaller than the frame-op count.", nameof(keysByOpIndex));
+        if (!chainsByOpIndex.IsEmpty && chainsByOpIndex.Length < staticOpCount)
+            throw new ArgumentException("The resolved command-chain scratch span is smaller than the frame-op count.", nameof(chainsByOpIndex));
 
         keysByOpIndex = keysByOpIndex[..staticOpCount];
         CommandChainKey unmappedKey = new(0, default, 0, 0, 0UL, false, -1);
         keysByOpIndex.Fill(unmappedKey);
+        if (!chainsByOpIndex.IsEmpty)
+        {
+            chainsByOpIndex = chainsByOpIndex[..staticOpCount];
+            chainsByOpIndex.Clear();
+        }
         ReadOnlySpan<RenderPassChainGroup> groups = schedule.Groups.Span;
         for (int groupIndex = 0; groupIndex < groups.Length; groupIndex++)
         {
@@ -510,7 +530,11 @@ internal sealed partial class VulkanCommandRuntime
 
                 int endIndex = Math.Min(staticOpCount, chain.SourceStartIndex + chain.SourceCount);
                 for (int opIndex = chain.SourceStartIndex; opIndex < endIndex; opIndex++)
+                {
                     keysByOpIndex[opIndex] = key;
+                    if (!chainsByOpIndex.IsEmpty)
+                        chainsByOpIndex[opIndex] = chain;
+                }
             }
         }
 

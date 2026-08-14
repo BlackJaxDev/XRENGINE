@@ -188,10 +188,7 @@ internal readonly record struct RecordedPacketKey(
         hash.Add(descriptorSets.IsComplete);
         for (int i = 0; i < descriptorSets.Count; i++)
         {
-            ref readonly VulkanRecordedDescriptorSetIdentity set =
-                ref VulkanRecordedDescriptorSetIdentityBuffer.GetReference(
-                    in descriptorSets,
-                    i);
+            VulkanRecordedDescriptorSetIdentity set = descriptorSets.Get(i);
             hash.Add(set.SetIndex); hash.Add(set.DescriptorSetHandle);
             hash.Add(set.DescriptorSetLifetimeGeneration); hash.Add(set.PayloadGeneration);
             ref readonly VulkanRecordedDescriptorResourceIdentityBuffer resources =

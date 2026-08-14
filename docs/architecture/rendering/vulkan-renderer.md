@@ -452,6 +452,7 @@ Additional diagnostic flags are:
 |---|---|
 | `XRE_VULKAN_COMMAND_CHAINS_SINGLE_THREAD=1` | Forces deterministic single-thread chain processing for bisection. |
 | `XRE_VULKAN_DISABLE_PARALLEL_CHAIN_RECORDING=1` | Keeps command-chain lowering enabled while disabling worker dispatch. |
+| `XRE_VULKAN_COMMAND_CHAIN_WORKER_COUNT=0..8` | Startup-only persistent worker capacity. Auto mode caps the domain at four workers and dispatches graphics packets only when at least 32 eligible operations can amortize the handoff; smaller packets stay serial. Any explicit `1..8` value bypasses that cost heuristic for controlled comparison, while `0` forces serial recording. The single-thread and disable flags take precedence. |
 | `XRE_VULKAN_COMMAND_CHAIN_VALIDATE=1` | Enables expensive schedule, view-specialization, queue-schedule, and signature checks. |
 | `XRE_VULKAN_COMMAND_CHAIN_TRACE=1` | Emits throttled first-dirty-reason and schedule diagnostics. |
 | `XRE_VULKAN_COMMAND_CHAIN_MESH_SECONDARY_NOOP=1` | Diagnostic mode that records secondary mesh chains without draw payloads. |

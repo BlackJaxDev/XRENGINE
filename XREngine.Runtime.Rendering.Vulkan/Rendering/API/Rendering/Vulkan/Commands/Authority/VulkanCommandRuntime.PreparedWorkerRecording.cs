@@ -194,7 +194,13 @@ internal sealed partial class VulkanCommandRuntime
         // descriptor key in DependencySignature, permanently making the newly
         // recorded secondary disagree with its own current chain state.
         PublishPreparedCommandChainAuthority(chain, preparedChain.Authority);
-        PublishRecordedSecondary(chain, ResourceRuntime);
+        if (System.Threading.Volatile.Read(ref batch.CancelRequested) != 0)
+        {
+            FailCommandChainSecondaryArtifactPublication(chain);
+            return;
+        }
+
+        _ = TryPublishCommandChainSecondaryArtifact(chain, ResourceRuntime);
     }
 
     private static ref readonly VkPreparedMeshDraw GetPreparedCommandChainDraw(
@@ -219,42 +225,6 @@ internal sealed partial class VulkanCommandRuntime
         for (int index = 0; index < count; index++)
             hash.Add(draws[startIndex + index].UniformSlot);
         return hash.ToHash();
-    }
-
-    private static void PublishRecordedSecondary(CommandChain chain, VulkanResourceRuntime resources)
-    {
-        VulkanRecordedCommandArtifact artifact = chain.RecordedArtifact;
-        ulong handle = unchecked((ulong)artifact.NativeBuffer.Handle);
-        if (handle == 0)
-        {
-            artifact.MarkFailed();
-            return;
-        }
-
-        lock (resources.Lifetime.Tracker.SyncRoot)
-        {
-            IReadOnlyList<KeyValuePair<VulkanResourceLifetimeKey, ulong>> dependencies = Array.Empty<KeyValuePair<VulkanResourceLifetimeKey, ulong>>();
-            ulong generation = artifact.RecordingGeneration;
-            int queuedSubmissionCount = 0;
-            if (resources.Lifetime.Tracker.CommandBufferLifetimes.TryGetValue(handle, out VulkanCommandBufferLifetimeRecord? lifetime))
-            {
-                dependencies = lifetime.TouchedDependencies;
-                generation = lifetime.RecordingGeneration;
-                queuedSubmissionCount = lifetime.QueuedSubmissionCount;
-            }
-
-            int recordedReferences = 0;
-            if (resources.Lifetime.Tracker.ResourceLifetimes.TryGetValue(new VulkanResourceLifetimeKey(ObjectType.CommandBuffer, handle), out VulkanResourceLifetimeRecord? resource))
-                recordedReferences = resource.Pins.RecordedReferenceCount;
-            ref readonly CommandRecordingDependencySignature dependencySignature =
-                ref chain.DependencySignatureReference;
-            artifact.PublishExecutable(
-                in dependencySignature,
-                dependencies,
-                generation,
-                queuedSubmissionCount,
-                recordedReferences);
-        }
     }
 
 }

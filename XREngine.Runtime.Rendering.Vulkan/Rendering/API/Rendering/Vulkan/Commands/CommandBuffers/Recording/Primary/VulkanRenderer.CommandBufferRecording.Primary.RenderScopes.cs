@@ -145,16 +145,17 @@ namespace XREngine.Rendering.Vulkan
             bool preferKhrDynamicRendering)
         {
             ReadOnlySpan<DynamicRenderingAttachmentPlan> colorPlans = plan.ColorAttachments;
-            RenderingAttachmentInfo[] colorAttachmentsArray = new RenderingAttachmentInfo[Math.Max(colorPlans.Length, 1)];
-            uint[] colorAttachmentLocationsArray = new uint[Math.Max(colorPlans.Length, 1)];
-            uint[] colorInputAttachmentIndicesArray = new uint[Math.Max(colorPlans.Length, 1)];
-            uint[] depthInputAttachmentIndexArray = new uint[1];
-            uint[] stencilInputAttachmentIndexArray = new uint[1];
-            fixed (RenderingAttachmentInfo* colorAttachments = colorAttachmentsArray)
-            fixed (uint* colorAttachmentLocations = colorAttachmentLocationsArray)
-            fixed (uint* colorInputAttachmentIndices = colorInputAttachmentIndicesArray)
-            fixed (uint* depthInputAttachmentIndex = depthInputAttachmentIndexArray)
-            fixed (uint* stencilInputAttachmentIndex = stencilInputAttachmentIndexArray)
+            Span<RenderingAttachmentInfo> colorAttachmentsScratch =
+                stackalloc RenderingAttachmentInfo[Math.Max(colorPlans.Length, 1)];
+            Span<uint> colorAttachmentLocationsScratch =
+                stackalloc uint[Math.Max(colorPlans.Length, 1)];
+            Span<uint> colorInputAttachmentIndicesScratch =
+                stackalloc uint[Math.Max(colorPlans.Length, 1)];
+            uint depthInputAttachmentIndex = 0;
+            uint stencilInputAttachmentIndex = 0;
+            fixed (RenderingAttachmentInfo* colorAttachments = colorAttachmentsScratch)
+            fixed (uint* colorAttachmentLocations = colorAttachmentLocationsScratch)
+            fixed (uint* colorInputAttachmentIndices = colorInputAttachmentIndicesScratch)
             {
             for (int i = 0; i < colorPlans.Length; i++)
                 colorAttachments[i] = colorPlans[i].ToRenderingAttachmentInfo();
@@ -198,8 +199,8 @@ namespace XREngine.Rendering.Vulkan
                     &localReadInputIndices,
                     colorAttachmentLocations,
                     colorInputAttachmentIndices,
-                    depthInputAttachmentIndex,
-                    stencilInputAttachmentIndex))
+                    &depthInputAttachmentIndex,
+                    &stencilInputAttachmentIndex))
                 {
                     renderingInfo.PNext = localReadPNext;
                 }
@@ -449,17 +450,14 @@ namespace XREngine.Rendering.Vulkan
                 };
 
                 const uint attachmentCount = 2;
-                ClearValue[] clearValuesArray = new ClearValue[(int)attachmentCount];
-                fixed (ClearValue* clearValues = clearValuesArray)
-                {
-                    WriteFrozenClearValues(clearValues, attachmentCount, in recordingState.ClearState);
-                    renderPassInfo.ClearValueCount = attachmentCount;
-                    renderPassInfo.PClearValues = clearValues;
-                    CmdBeginRenderPassTracked(
-                        recordingState.CommandBuffer,
-                        &renderPassInfo,
-                        secondaryContents ? SubpassContents.SecondaryCommandBuffers : SubpassContents.Inline);
-                }
+                ClearValue* clearValues = stackalloc ClearValue[(int)attachmentCount];
+                WriteFrozenClearValues(clearValues, attachmentCount, in recordingState.ClearState);
+                renderPassInfo.ClearValueCount = attachmentCount;
+                renderPassInfo.PClearValues = clearValues;
+                CmdBeginRenderPassTracked(
+                    recordingState.CommandBuffer,
+                    &renderPassInfo,
+                    secondaryContents ? SubpassContents.SecondaryCommandBuffers : SubpassContents.Inline);
 
                 recordingState.RenderScope.Activate(
                     null,
@@ -585,11 +583,12 @@ namespace XREngine.Rendering.Vulkan
                     fboSignature,
                     beginRendering: true);
                 uint dynamicAttachmentCountFbo = Math.Max((uint)fboSignature.Length, 1u);
-                ClearValue[] dynamicClearValuesFboArray = new ClearValue[checked((int)dynamicAttachmentCountFbo)];
+                Span<ClearValue> dynamicClearValuesFbo =
+                    stackalloc ClearValue[checked((int)dynamicAttachmentCountFbo)];
                 VulkanCommandClearStateSnapshot clearState = recordingState.ClearState;
                 ColorF4 clearColor = clearState.ClearColor;
-                fixed (ClearValue* dynamicClearValuesFbo = dynamicClearValuesFboArray)
-                    vkFrameBuffer.WriteClearValues(dynamicClearValuesFbo, dynamicAttachmentCountFbo, fboSignature, in clearColor, clearState.ClearDepth, clearState.ClearStencil);
+                fixed (ClearValue* dynamicClearValuesFboPointer = dynamicClearValuesFbo)
+                    vkFrameBuffer.WriteClearValues(dynamicClearValuesFboPointer, dynamicAttachmentCountFbo, fboSignature, in clearColor, clearState.ClearDepth, clearState.ClearStencil);
 
                 int colorAttachmentCount = 0;
                 for (int i = 0; i < fboSignature.Length; i++)
@@ -598,10 +597,14 @@ namespace XREngine.Rendering.Vulkan
                         colorAttachmentCount++;
                 }
 
-                DynamicRenderingAttachmentPlan[] colorAttachmentPlans = new DynamicRenderingAttachmentPlan[Math.Max(colorAttachmentCount, 1)];
-                uint[] colorAttachmentSourceIndices = new uint[Math.Max(colorAttachmentCount, 1)];
-                DynamicRenderingAttachmentPlan[] resolveAttachmentPlans = new DynamicRenderingAttachmentPlan[Math.Max(fboSignature.Length, 1)];
-                uint[] resolveAttachmentSourceIndices = new uint[Math.Max(fboSignature.Length, 1)];
+                Span<DynamicRenderingAttachmentPlan> colorAttachmentPlans =
+                    stackalloc DynamicRenderingAttachmentPlan[Math.Max(colorAttachmentCount, 1)];
+                Span<uint> colorAttachmentSourceIndices =
+                    stackalloc uint[Math.Max(colorAttachmentCount, 1)];
+                Span<DynamicRenderingAttachmentPlan> resolveAttachmentPlans =
+                    stackalloc DynamicRenderingAttachmentPlan[Math.Max(fboSignature.Length, 1)];
+                Span<uint> resolveAttachmentSourceIndices =
+                    stackalloc uint[Math.Max(fboSignature.Length, 1)];
                 int colorAttachmentIndex = 0;
                 int resolveAttachmentCount = 0;
                 DynamicRenderingAttachmentPlan depthAttachmentPlan = default;
@@ -644,7 +647,7 @@ namespace XREngine.Rendering.Vulkan
                         signature.FinalLayout,
                         signature.LoadOp,
                         signature.StoreOp,
-                        dynamicClearValuesFboArray[i]);
+                        dynamicClearValuesFbo[i]);
 
                     if (signature.Role == AttachmentRole.Color)
                     {
@@ -682,7 +685,7 @@ namespace XREngine.Rendering.Vulkan
                             signature.FinalLayout,
                             signature.StencilLoadOp,
                             signature.StencilStoreOp,
-                            dynamicClearValuesFboArray[i]);
+                            dynamicClearValuesFbo[i]);
                         hasStencilAttachment = true;
                     }
                 }
@@ -840,10 +843,11 @@ namespace XREngine.Rendering.Vulkan
             };
 
             uint attachmentCountFbo = Math.Max(vkFrameBuffer.AttachmentCount, 1u);
-            ClearValue[] clearValuesFboArray = new ClearValue[checked((int)attachmentCountFbo)];
+            Span<ClearValue> clearValuesFboScratch =
+                stackalloc ClearValue[checked((int)attachmentCountFbo)];
             VulkanCommandClearStateSnapshot legacyClearState = recordingState.ClearState;
             ColorF4 legacyClearColor = legacyClearState.ClearColor;
-            fixed (ClearValue* clearValuesFbo = clearValuesFboArray)
+            fixed (ClearValue* clearValuesFbo = clearValuesFboScratch)
             {
                 vkFrameBuffer.WriteClearValues(clearValuesFbo, attachmentCountFbo, fboSignature, in legacyClearColor, legacyClearState.ClearDepth, legacyClearState.ClearStencil);
                 fboPassInfo.ClearValueCount = attachmentCountFbo;

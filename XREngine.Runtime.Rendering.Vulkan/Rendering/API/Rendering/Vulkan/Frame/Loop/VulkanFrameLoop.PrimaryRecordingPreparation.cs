@@ -285,6 +285,30 @@ internal sealed partial class VulkanFrameLoop
         int coldRequestCount = 0;
         int resumeRequestIndex = -1;
         int startRequestIndex = _meshOperationPreparationCursor % requestCount;
+        ResourcePlannerRuntimeState plannerState =
+            PublishedResourcePlannerRuntimeState;
+        FrameOpContext? activeFrameOpContext =
+            plannerState.LastActiveFrameOpContext;
+        int descriptorViewFamilyIdentity =
+            activeFrameOpContext is not { } activeContext
+                ? 0
+                : activeContext.OutputTargetIdentity != 0
+                    ? activeContext.OutputTargetIdentity
+                    : activeContext.ViewportIdentity;
+        VulkanMeshMaterializationSnapshot materializationSnapshot = new(
+            activeFrameOpContext,
+            descriptorViewFamilyIdentity,
+            _resourceRuntime.ShouldAvoidSynchronousImageAllocationForOpenXr(
+                _deviceContext.Api,
+                _deviceContext,
+                RuntimeRenderingHostServices.Presentation,
+                RuntimeRenderingHostServices.FrameTiming,
+                out _),
+            _telemetry);
+        XRRenderPipelineInstance? scopedPipeline = null;
+        XRCamera? scopedCamera = null;
+        IDisposable? pipelineScope = null;
+        IDisposable? cameraScope = null;
         try
         {
             for (int scanIndex = 0;
@@ -300,6 +324,23 @@ internal sealed partial class VulkanFrameLoop
                 XRRenderPipelineInstance? pipeline = request.Pipeline;
                 if (pipeline is null)
                     continue;
+
+                XRCamera? camera = pipeline.LastRenderingCamera ??
+                    pipeline.LastSceneCamera;
+                if (!ReferenceEquals(scopedPipeline, pipeline) ||
+                    !ReferenceEquals(scopedCamera, camera))
+                {
+                    cameraScope?.Dispose();
+                    cameraScope = null;
+                    pipelineScope?.Dispose();
+                    pipelineScope =
+                        RuntimeRenderingHostServices.Diagnostics
+                            .PushRenderingPipeline(pipeline);
+                    cameraScope =
+                        pipeline.RenderState.PushRenderingCamera(camera);
+                    scopedPipeline = pipeline;
+                    scopedCamera = camera;
+                }
 
                 bool dynamicUiOverlay = IsQueuedDynamicUiOverlayRequest(
                     in request);
@@ -328,6 +369,8 @@ internal sealed partial class VulkanFrameLoop
                 bool materialized = TryMaterializeQueuedMeshRenderRequest(
                     in request,
                     pipeline,
+                    in materializationSnapshot,
+                    prewarmDescriptorAllocation: !previouslyMaterialized,
                     out VulkanMeshOperationRequest operationRequest);
                 if (!resourcesReady)
                 {
@@ -366,6 +409,8 @@ internal sealed partial class VulkanFrameLoop
         }
         finally
         {
+            cameraScope?.Dispose();
+            pipelineScope?.Dispose();
             _meshOperationRequestScratch.AsSpan(0, requestCount).Clear();
         }
 
@@ -394,6 +439,8 @@ internal sealed partial class VulkanFrameLoop
     private bool TryMaterializeQueuedMeshRenderRequest(
         in VulkanMeshRenderRequest request,
         XRRenderPipelineInstance pipeline,
+        in VulkanMeshMaterializationSnapshot materializationSnapshot,
+        bool prewarmDescriptorAllocation,
         out VulkanMeshOperationRequest operationRequest)
     {
         FrameOpContext requestContext =
@@ -410,27 +457,11 @@ internal sealed partial class VulkanFrameLoop
             IsPrewarmingExternalSwapchainTarget =
                 IsPrewarmingOpenXrExternalSwapchainTarget,
         };
-        VulkanMeshMaterializationSnapshot materializationSnapshot = new(
-            PublishedResourcePlannerRuntimeState.LastActiveFrameOpContext,
-            ResolveQueuedMeshDescriptorViewFamilyIdentity(),
-            _resourceRuntime.ShouldAvoidSynchronousImageAllocationForOpenXr(
-                _deviceContext.Api,
-                _deviceContext,
-                RuntimeRenderingHostServices.Presentation,
-                RuntimeRenderingHostServices.FrameTiming,
-                out _),
-            _telemetry);
-        using IDisposable? pipelineScope =
-            RuntimeRenderingHostServices.Diagnostics
-                .PushRenderingPipeline(pipeline);
-        using IDisposable? cameraScope =
-            pipeline.RenderState.PushRenderingCamera(
-                pipeline.LastRenderingCamera ??
-                pipeline.LastSceneCamera);
         return request.Renderer.TryMaterializeQueuedRenderRequest(
             in request,
             in producer,
             in materializationSnapshot,
+            prewarmDescriptorAllocation,
             out operationRequest);
     }
 
@@ -451,14 +482,6 @@ internal sealed partial class VulkanFrameLoop
                    meshRenderer.Mesh?.Name,
                    "UIBatchTextQuadMesh",
                    StringComparison.Ordinal);
-    }
-
-    private int ResolveQueuedMeshDescriptorViewFamilyIdentity()
-    {
-        FrameOpContext? context = PublishedResourcePlannerRuntimeState.LastActiveFrameOpContext;
-        return context is not { } active
-            ? 0
-            : active.OutputTargetIdentity != 0 ? active.OutputTargetIdentity : active.ViewportIdentity;
     }
 
     private void EnqueueQueuedMeshDraw(in VulkanMeshOperationRequest request)

@@ -17,6 +17,7 @@ internal sealed partial class VulkanCommandRuntime
 {
     internal const string CommandChainsEnvVar = XREngineEnvironmentVariables.VulkanCommandChains;
     internal const string CommandChainsSingleThreadEnvVar = XREngineEnvironmentVariables.VulkanCommandChainsSingleThread;
+    internal const string CommandChainWorkerCountEnvVar = XREngineEnvironmentVariables.VulkanCommandChainWorkerCount;
     internal const string CommandChainValidateEnvVar = XREngineEnvironmentVariables.VulkanCommandChainValidate;
     internal const string CommandChainTraceEnvVar = XREngineEnvironmentVariables.VulkanCommandChainTrace;
     internal const string DisableParallelChainRecordingEnvVar = XREngineEnvironmentVariables.VulkanDisableParallelChainRecording;
@@ -70,6 +71,16 @@ internal sealed partial class VulkanCommandRuntime
     // dependency publication O(casters) and were substantially slower in motion.
     internal const int MaxShadowMeshDrawsPerRenderPacket = 16;
     private const int ShadowCommandChainBucketCount = 8;
+    // Cold secondary publication is retained work, not an all-or-nothing frame
+    // dependency. Once a desktop presentation source exists, bound the number
+    // of new artifacts placed on one frame's critical path and let rejected-
+    // frame recovery keep presenting the last complete scene. The Sponza
+    // working set is roughly 700 chains, but a chain can contain many draws.
+    // Bound both artifacts and the actual draw-preparation work: the old
+    // 32-chain-only limit admitted 144 cold Sponza draws and spent more than
+    // 200 ms preparing their frame data before workers could start.
+    private const int MaxProgressiveDesktopCommandChainRecordJobs = 16;
+    private const int MaxProgressiveDesktopCommandChainRecordOperations = 16;
 
     /// <summary>
     /// Assigns a shadow caster to a stable runtime bucket. Membership changes can

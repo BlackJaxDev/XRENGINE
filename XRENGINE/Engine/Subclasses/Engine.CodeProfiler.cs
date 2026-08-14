@@ -184,6 +184,9 @@ namespace XREngine
             private readonly Dictionary<int, ThreadBuildState> _threadBuildStates = [];
             private readonly List<ProfilerThreadSnapshot> _threadSnapshotsBuffer = new(8);
             private readonly Dictionary<int, List<BuiltTimer>> _accumulatedRoots = [];
+            // Counts completed descendants that are waiting for their still-active parent.
+            // The stats thread owns this state, so it needs no interlocked access.
+            private int _pendingCompletedCount;
             private readonly Dictionary<(string Name, ProfilerScopeKind ScopeKind), long> _lastSlowScopeLogTicks = [];
             private readonly string[] _renderThreadScopeNames = new string[RenderThreadScopeStackCapacity];
             private readonly ProfilerScopeKind[] _renderThreadScopeKinds = new ProfilerScopeKind[RenderThreadScopeStackCapacity];
@@ -634,6 +637,7 @@ namespace XREngine
                     state.PendingCompleted.Clear();
                     state.ChildScratch.Clear();
                 }
+                _pendingCompletedCount = 0;
                 foreach (var roots in _accumulatedRoots.Values)
                     roots.Clear();
                 _threadFrameHistory.Clear();
@@ -737,7 +741,10 @@ namespace XREngine
                 built.ScopeKind = completedEvent.ScopeKind;
 
                 while (state.PendingCompleted.Count > 0 && state.PendingCompleted.Peek().Depth > completedEvent.Depth)
+                {
                     state.ChildScratch.Add(state.PendingCompleted.Pop());
+                    _pendingCompletedCount--;
+                }
 
                 for (int i = state.ChildScratch.Count - 1; i >= 0; i--)
                     built.Children.Add(state.ChildScratch[i]);
@@ -755,8 +762,37 @@ namespace XREngine
                 }
                 else
                 {
-                    state.PendingCompleted.Push(built);
+                    RetainPendingCompleted(state, built);
                 }
+            }
+
+            /// <summary>
+            /// Retains a completed descendant until the matching parent completion arrives.
+            /// Snapshot publication must not consume this state: an active parent can span many
+            /// snapshot epochs. The existing overflow limit also bounds retained reconstruction
+            /// state when a producer leaves a parent scope open indefinitely.
+            /// </summary>
+            private void RetainPendingCompleted(ThreadBuildState state, BuiltTimer built)
+            {
+                if (_pendingCompletedCount >= MaxOverflowQueueSize)
+                {
+                    state.ReturnBuiltRecursive(built);
+                    LogPendingCompletedOverflow();
+                    return;
+                }
+
+                state.PendingCompleted.Push(built);
+                _pendingCompletedCount++;
+            }
+
+            private void LogPendingCompletedOverflow()
+            {
+                long nowTicks = Environment.TickCount64;
+                if (nowTicks - _lastOverflowWarningTicks < 10_000)
+                    return;
+
+                _lastOverflowWarningTicks = nowTicks;
+                Debug.LogWarning($"Profiler pending completed scopes exceeded capacity ({MaxOverflowQueueSize}); discarding descendants whose parent has not completed.");
             }
 
             private void LogSlowScopeByKind(in CompletedScopeEvent completedEvent)
@@ -807,24 +843,6 @@ namespace XREngine
 
             private void BuildFrameSnapshot(long frameTicks)
             {
-                // Flush orphaned PendingCompleted entries as roots to prevent unbounded accumulation
-                // from mismatched scope depths (e.g., a Start() without a corresponding Dispose())
-                foreach (var kvp in _threadBuildStates)
-                {
-                    var buildState = kvp.Value;
-                    if (buildState.PendingCompleted.Count == 0)
-                        continue;
-
-                    if (!_accumulatedRoots.TryGetValue(kvp.Key, out var orphanRoots))
-                    {
-                        orphanRoots = new List<BuiltTimer>(32);
-                        _accumulatedRoots[kvp.Key] = orphanRoots;
-                    }
-
-                    while (buildState.PendingCompleted.Count > 0)
-                        orphanRoots.Add(buildState.PendingCompleted.Pop());
-                }
-
                 _threadSnapshotsBuffer.Clear();
 
                 foreach (var kvp in _accumulatedRoots)
@@ -1584,6 +1602,12 @@ namespace XREngine
             {
             }
 
+            /// <summary>
+            /// Gets the snapshot assembled from completed root scopes during the most recent
+            /// snapshot epoch. A completed descendant whose parent is still active is intentionally
+            /// not published until its parent completes, so <see langword="false"/> does not imply
+            /// that no profiling scopes are currently active.
+            /// </summary>
             public bool TryGetSnapshot(out ProfilerFrameSnapshot? frameSnapshot, out Dictionary<int, float[]> history)
             {
                 frameSnapshot = _readySnapshot;

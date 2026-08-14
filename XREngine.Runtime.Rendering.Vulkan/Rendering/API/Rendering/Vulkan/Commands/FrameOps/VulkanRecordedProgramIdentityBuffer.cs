@@ -1,28 +1,45 @@
 using System;
-using System.Runtime.CompilerServices;
 
 namespace XREngine.Rendering.Vulkan;
 
 /// <summary>
-/// Bounded allocation-free collection of every native program/pipeline use in
-/// a packet. Overflow or a missing physical pipeline disables reuse.
+/// Bounded collection of every native program/pipeline use in a packet. Copies
+/// share the exact-count backing array after publication; builders must finish
+/// every <see cref="Set"/> call before the buffer enters a recorded packet key.
+/// Overflow or a missing physical pipeline disables reuse.
 /// </summary>
 internal struct VulkanRecordedProgramIdentityBuffer : IEquatable<VulkanRecordedProgramIdentityBuffer>
 {
-    // Shadow packets may intentionally span multiple material programs. Keep
-    // enough exact native identities for the bounded shadow packet while still
-    // retaining an allocation-free value key.
+    // Shadow packets may intentionally span multiple material programs.
     public const int Capacity = 32;
 
-    private VulkanRecordedProgramIdentityInlineArray _identities;
+    private VulkanRecordedProgramIdentity _firstIdentity;
+    private VulkanRecordedProgramIdentity[]? _overflowIdentities;
 
     public int Count { get; private set; }
     public bool IsComplete { get; private set; }
 
     public void Initialize(int count)
     {
+        int previousCount = Count;
         Count = count;
         IsComplete = count is > 0 and <= Capacity;
+        if (!IsComplete || count == 1)
+            return;
+
+        if (_overflowIdentities is null)
+        {
+            _overflowIdentities = new VulkanRecordedProgramIdentity[
+                Math.Min(Capacity, Math.Max(count, 4))];
+            if (previousCount == 1)
+                _overflowIdentities[0] = _firstIdentity;
+        }
+        else if (_overflowIdentities.Length < count)
+        {
+            Array.Resize(
+                ref _overflowIdentities,
+                Math.Min(Capacity, Math.Max(count, _overflowIdentities.Length * 2)));
+        }
     }
 
     public void Invalidate()
@@ -36,7 +53,10 @@ internal struct VulkanRecordedProgramIdentityBuffer : IEquatable<VulkanRecordedP
         if ((uint)index >= (uint)Count || index >= Capacity)
             throw new ArgumentOutOfRangeException(nameof(index));
 
-        _identities[index] = identity;
+        if (Count == 1)
+            _firstIdentity = identity;
+        else
+            _overflowIdentities![index] = identity;
         IsComplete &= identity.IsComplete;
     }
 
@@ -45,7 +65,9 @@ internal struct VulkanRecordedProgramIdentityBuffer : IEquatable<VulkanRecordedP
         if ((uint)index >= (uint)Count || index >= Capacity)
             throw new ArgumentOutOfRangeException(nameof(index));
 
-        return _identities[index];
+        return Count == 1
+            ? _firstIdentity
+            : _overflowIdentities![index];
     }
 
     public readonly bool Equals(VulkanRecordedProgramIdentityBuffer other)
@@ -54,7 +76,7 @@ internal struct VulkanRecordedProgramIdentityBuffer : IEquatable<VulkanRecordedP
             return false;
 
         for (int i = 0; i < Count; i++)
-            if (_identities[i] != other._identities[i])
+            if (Get(i) != other.Get(i))
                 return false;
 
         return true;
@@ -69,7 +91,7 @@ internal struct VulkanRecordedProgramIdentityBuffer : IEquatable<VulkanRecordedP
         hash.Add(Count);
         hash.Add(IsComplete);
         for (int i = 0; i < Count; i++)
-            hash.Add(_identities[i]);
+            hash.Add(Get(i));
         return hash.ToHashCode();
     }
 }

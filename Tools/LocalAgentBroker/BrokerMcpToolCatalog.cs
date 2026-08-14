@@ -128,9 +128,17 @@ internal static class BrokerMcpToolCatalog
                 {
                     ["max_turns"] = IntegerSchema(1, 32, 3),
                     ["max_tool_calls"] = IntegerSchema(0, 256, 8),
-                    ["max_output_tokens"] = IntegerSchema(16, 128_000, 4_096),
+                    ["max_output_tokens"] = IntegerSchema(
+                        16,
+                        128_000,
+                        defaultValue: null,
+                        description: "Hard combined visible-output and reasoning-token budget. When omitted, Luna/Terra use 4096; Sol uses 16384, or 32768 at xhigh/max reasoning. An explicit value is never raised."),
                     ["max_tool_result_bytes"] = IntegerSchema(1_024, 4_194_304, 262_144),
-                    ["max_elapsed_seconds"] = IntegerSchema(1, 3_600, 120),
+                    ["max_elapsed_seconds"] = IntegerSchema(
+                        1,
+                        3_600,
+                        defaultValue: null,
+                        description: "Whole-run elapsed-time budget. When omitted, Luna/Terra use 120 seconds; Sol uses 300 seconds, or 600 seconds at xhigh/max reasoning. An explicit value is never raised."),
                     ["max_retries"] = IntegerSchema(0, 5, 1),
                     ["max_concurrency"] = IntegerSchema(1, 8, 1),
                 },
@@ -168,12 +176,22 @@ internal static class BrokerMcpToolCatalog
     private static JsonObject BooleanSchema(bool defaultValue)
         => new() { ["type"] = "boolean", ["default"] = defaultValue };
 
-    private static JsonObject IntegerSchema(int minimum, int maximum, int defaultValue)
-        => new()
+    private static JsonObject IntegerSchema(
+        int minimum,
+        int maximum,
+        int? defaultValue,
+        string? description = null)
+    {
+        JsonObject schema = new()
         {
             ["type"] = "integer",
             ["minimum"] = minimum,
             ["maximum"] = maximum,
-            ["default"] = defaultValue,
         };
+        if (defaultValue.HasValue)
+            schema["default"] = defaultValue.Value;
+        if (!string.IsNullOrWhiteSpace(description))
+            schema["description"] = description;
+        return schema;
+    }
 }

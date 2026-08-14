@@ -1,28 +1,71 @@
 using System;
-using System.Runtime.CompilerServices;
 
 namespace XREngine.Rendering.Vulkan;
 
-/// <summary>Bounded, allocation-free descriptor identity storage. Overflow makes reuse unavailable.</summary>
+/// <summary>
+/// Bounded descriptor-set identity storage. Copies intentionally share the
+/// exact-count backing array after publication; overflow makes reuse unavailable.
+/// </summary>
 internal struct VulkanRecordedDescriptorSetIdentityBuffer : IEquatable<VulkanRecordedDescriptorSetIdentityBuffer>
 {
     public const int Capacity = 16;
-    private VulkanRecordedDescriptorSetIdentityInlineArray _items;
+    private VulkanRecordedDescriptorSetIdentity _firstIdentity;
+    private VulkanRecordedDescriptorSetIdentity[]? _overflowIdentities;
+
     public int Count { get; private set; }
     public bool IsComplete { get; private set; }
-    public void Initialize(int count) { Count = count; IsComplete = count is >= 0 and <= Capacity; }
-    public void Invalidate() { Count = 0; IsComplete = false; }
-    public void Set(int index, in VulkanRecordedDescriptorSetIdentity value) { if ((uint)index >= (uint)Count || index >= Capacity) throw new ArgumentOutOfRangeException(nameof(index)); _items[index] = value; IsComplete &= value.IsComplete; }
-    public readonly VulkanRecordedDescriptorSetIdentity Get(int index) => (uint)index < (uint)Count && index < Capacity ? _items[index] : throw new ArgumentOutOfRangeException(nameof(index));
-    internal static ref readonly VulkanRecordedDescriptorSetIdentity GetReference(
-        in VulkanRecordedDescriptorSetIdentityBuffer buffer,
-        int index)
+
+    public void Initialize(int count)
     {
-        if ((uint)index >= (uint)buffer.Count || index >= Capacity)
+        int previousCount = Count;
+        Count = count;
+        IsComplete = count is >= 0 and <= Capacity;
+        if (!IsComplete || count <= 1)
+            return;
+
+        if (_overflowIdentities is null)
+        {
+            _overflowIdentities = new VulkanRecordedDescriptorSetIdentity[
+                Math.Min(Capacity, Math.Max(count, 4))];
+            if (previousCount == 1)
+                _overflowIdentities[0] = _firstIdentity;
+        }
+        else if (_overflowIdentities.Length < count)
+        {
+            Array.Resize(
+                ref _overflowIdentities,
+                Math.Min(Capacity, Math.Max(count, _overflowIdentities.Length * 2)));
+        }
+    }
+
+    public void Invalidate()
+    {
+        Count = 0;
+        IsComplete = false;
+    }
+
+    public void Set(int index, in VulkanRecordedDescriptorSetIdentity value)
+    {
+        if ((uint)index >= (uint)Count || index >= Capacity)
             throw new ArgumentOutOfRangeException(nameof(index));
 
-        return ref buffer._items[index];
+        if (Count == 1)
+            _firstIdentity = value;
+        else
+            _overflowIdentities![index] = value;
+        IsComplete &= value.IsComplete;
     }
+
+    public readonly VulkanRecordedDescriptorSetIdentity Get(int index)
+    {
+        if ((uint)index >= (uint)Count || index >= Capacity)
+            throw new ArgumentOutOfRangeException(nameof(index));
+
+        return Count == 1
+            ? _firstIdentity
+            : _overflowIdentities![index];
+    }
+
     internal readonly string DescribeFirstIncompleteIdentity()
     {
         if (Count is < 0 or > Capacity)
@@ -30,8 +73,7 @@ internal struct VulkanRecordedDescriptorSetIdentityBuffer : IEquatable<VulkanRec
 
         for (int index = 0; index < Count; index++)
         {
-            ref readonly VulkanRecordedDescriptorSetIdentity identity =
-                ref _items[index];
+            VulkanRecordedDescriptorSetIdentity identity = Get(index);
             if (identity.DescriptorSetHandle == 0UL)
                 return $"item={index} set={identity.SetIndex} missing handle";
             if (identity.DescriptorSetLifetimeGeneration == 0UL)
@@ -50,8 +92,8 @@ internal struct VulkanRecordedDescriptorSetIdentityBuffer : IEquatable<VulkanRec
 
         return $"count={Count} marked incomplete without an incomplete item";
     }
-    public readonly bool Equals(in VulkanRecordedDescriptorSetIdentityBuffer other) { if (Count != other.Count || IsComplete != other.IsComplete) return false; for (int i = 0; i < Count; i++) if (!_items[i].Matches(in other._items[i])) return false; return true; }
+    public readonly bool Equals(in VulkanRecordedDescriptorSetIdentityBuffer other) { if (Count != other.Count || IsComplete != other.IsComplete) return false; for (int i = 0; i < Count; i++) { VulkanRecordedDescriptorSetIdentity identity = Get(i); VulkanRecordedDescriptorSetIdentity otherIdentity = other.Get(i); if (!identity.Matches(in otherIdentity)) return false; } return true; }
     public readonly bool Equals(VulkanRecordedDescriptorSetIdentityBuffer other) => Equals(in other);
     public override readonly bool Equals(object? obj) => obj is VulkanRecordedDescriptorSetIdentityBuffer other && Equals(in other);
-    public override readonly int GetHashCode() { HashCode hash = new(); hash.Add(Count); hash.Add(IsComplete); for (int i = 0; i < Count; i++) hash.Add(_items[i]); return hash.ToHashCode(); }
+    public override readonly int GetHashCode() { HashCode hash = new(); hash.Add(Count); hash.Add(IsComplete); for (int i = 0; i < Count; i++) hash.Add(Get(i)); return hash.ToHashCode(); }
 }

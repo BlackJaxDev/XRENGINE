@@ -375,6 +375,7 @@ internal unsafe partial class VkMeshRenderer
 		bool depthStencilReadOnly,
 		string pipelineName,
 		int drawUniformSlot,
+		bool frameDataAlreadyPrewarmed,
 		out VulkanPreparedMeshDrawState recordingState,
 		out string reason)
 	{
@@ -394,6 +395,7 @@ internal unsafe partial class VkMeshRenderer
 				depthStencilReadOnly,
 				pipelineName,
 				drawUniformSlot,
+				frameDataAlreadyPrewarmed,
 				out recordingState,
 				out reason);
 		}
@@ -413,13 +415,15 @@ internal unsafe partial class VkMeshRenderer
 		bool depthStencilReadOnly,
 		string pipelineName,
 		int drawUniformSlot,
+		bool frameDataAlreadyPrewarmed,
 		out VulkanPreparedMeshDrawState recordingState,
 		out string reason)
 	{
 		recordingState = default;
 		ArgumentNullException.ThrowIfNull(preparedFrame);
 		frameIndex = Math.Max(frameIndex, 0);
-		if (!TryPrewarmFrameDataForRecordingNoLock(
+		if (!frameDataAlreadyPrewarmed &&
+			!TryPrewarmFrameDataForRecordingNoLock(
 				draw,
 				drawUniformSlot,
 				frameIndex,
@@ -1841,6 +1845,20 @@ internal unsafe partial class VkMeshRenderer
 	}
 
 	/// <summary>
+	/// Prepares only cold, draw-invariant renderer state for a later primary-frame
+	/// publication. This deliberately excludes render-data callbacks, scoped
+	/// bindings, descriptor allocation/writes, and frame-source descriptors: those
+	/// are current-frame state and must be published atomically by the recorder.
+	/// </summary>
+	internal bool TryPrepareFrameDataStructuresForRecording(
+		in PendingMeshDraw draw,
+		out string reason)
+	{
+		lock (_recordDrawSync)
+			return TryPrepareFrameDataStructuresForRecordingNoLock(draw, out reason);
+	}
+
+	/// <summary>
 	/// Transitions the native images published by the exact descriptor allocation
 	/// that this draw will bind. A logical texture can rotate to a newer physical
 	/// generation after submission, so re-resolving the texture is not sufficient.
@@ -2011,6 +2029,69 @@ internal unsafe partial class VkMeshRenderer
 			return false;
 		}
 
+		return true;
+	}
+
+	private bool TryPrepareFrameDataStructuresForRecordingNoLock(
+		in PendingMeshDraw draw,
+		out string reason)
+	{
+		reason = "Ready";
+		XRMaterial material = draw.MaterialOverride ?? ResolveMaterial(null, draw.Instances);
+
+		if (!IsActive)
+			Generate();
+
+		if (!IsActive)
+		{
+			reason = "inactive";
+			return false;
+		}
+
+		if (Data is null)
+		{
+			reason = "mesh data missing";
+			return false;
+		}
+
+		if (ReferenceEquals(material, null))
+		{
+			reason = "material missing";
+			return false;
+		}
+
+		if (!ReferenceEquals(_lastPreparedMaterial, material))
+		{
+			_pipelineDirty = true;
+			_descriptorDirty = true;
+			_lastPreparedMaterial = material;
+		}
+
+		if (draw.PreparedProgram is { } preparedProgram)
+		{
+			if (!ActivateCapturedProgram(material, preparedProgram, draw.PreparedProgramIdentity, draw.PreparedProgramLinkGeneration))
+			{
+				reason = "program pending";
+				return false;
+			}
+		}
+		else if (!EnsureProgram(material))
+		{
+			reason = "program pending";
+			return false;
+		}
+
+		EnsureRuntimeDeformationBuffersCurrent();
+		bool usesShaderGeneratedVertices = ProgramUsesShaderGeneratedVertices();
+		EnsureBuffers(usesShaderGeneratedVertices);
+
+		if (!AreCachedBuffersReadyForRendering(out string bufferDetail, usesShaderGeneratedVertices))
+		{
+			reason = $"buffers not ready: {bufferDetail}";
+			return false;
+		}
+
+		BuildVertexInputState();
 		return true;
 	}
 

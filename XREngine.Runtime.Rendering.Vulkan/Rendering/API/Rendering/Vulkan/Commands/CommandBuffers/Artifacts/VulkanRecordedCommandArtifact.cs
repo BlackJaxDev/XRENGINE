@@ -11,9 +11,8 @@ internal sealed class VulkanRecordedCommandArtifact(
     int frameSlot,
     VulkanCommandChainState? mutationAuthority = null)
 {
-    private readonly HashSet<VulkanRecordedResourceReference> _referencedResources =
-        new(64);
     private CommandRecordingDependencySignature _dependencyIdentity;
+    private int _referencedResourceCount;
 
     internal CommandBuffer NativeBuffer { get; private set; }
     internal CommandBufferLevel Level { get; } = level;
@@ -37,7 +36,7 @@ internal sealed class VulkanRecordedCommandArtifact(
     internal int QueuedSubmissionCount { get; private set; }
     internal int RecordedPrimaryReferenceCount { get; private set; }
     internal ulong ReferencedResourceIdentity { get; private set; }
-    internal int ReferencedResourceCount => _referencedResources.Count;
+    internal int ReferencedResourceCount => _referencedResourceCount;
     internal bool HasInheritance { get; private set; }
     internal VulkanRecordedCommandInheritance Inheritance { get; private set; }
     internal bool IsExecutable =>
@@ -223,9 +222,13 @@ internal sealed class VulkanRecordedCommandArtifact(
     private void PublishReferencedResources(
         IReadOnlyList<KeyValuePair<VulkanResourceLifetimeKey, ulong>> dependencies)
     {
-        _referencedResources.Clear();
         ulong xorIdentity = 0;
         ulong sumIdentity = 0;
+        // Command-buffer lifetime records publish a snapshot of their dependency
+        // dictionary, so every key is already unique. Keeping a second HashSet on
+        // every command-chain artifact allocated thousands of 64-entry tables while
+        // entering a new Sponza view, even though the artifact retains only this
+        // aggregate identity.
         for (int i = 0; i < dependencies.Count; i++)
         {
             KeyValuePair<VulkanResourceLifetimeKey, ulong> dependency =
@@ -234,7 +237,6 @@ internal sealed class VulkanRecordedCommandArtifact(
                 dependency.Key.Type,
                 dependency.Key.Handle,
                 dependency.Value);
-            _referencedResources.Add(reference);
 
             FrameOpSignatureHasher itemIdentity = new();
             itemIdentity.Add((int)reference.Type);
@@ -246,7 +248,8 @@ internal sealed class VulkanRecordedCommandArtifact(
         }
 
         FrameOpSignatureHasher identity = new();
-        identity.Add(_referencedResources.Count);
+        _referencedResourceCount = dependencies.Count;
+        identity.Add(_referencedResourceCount);
         identity.Add(xorIdentity);
         identity.Add(sumIdentity);
         ReferencedResourceIdentity = identity.ToHash();
@@ -254,7 +257,7 @@ internal sealed class VulkanRecordedCommandArtifact(
 
     private void ClearPublishedRecording()
     {
-        _referencedResources.Clear();
+        _referencedResourceCount = 0;
         ReferencedResourceIdentity = 0;
         HasInheritance = false;
         Inheritance = default;

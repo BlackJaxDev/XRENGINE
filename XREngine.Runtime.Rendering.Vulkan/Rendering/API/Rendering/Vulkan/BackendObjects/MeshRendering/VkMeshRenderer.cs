@@ -430,6 +430,7 @@ internal unsafe partial class VkMeshRenderer(
         in VulkanMeshRenderRequest request,
         in VulkanMeshProducerSnapshot producer,
         in VulkanMeshMaterializationSnapshot materializationSnapshot,
+        bool prewarmDescriptorAllocation,
         out VulkanMeshOperationRequest operationRequest)
     {
         _materializationSnapshot = materializationSnapshot;
@@ -681,6 +682,21 @@ internal unsafe partial class VkMeshRenderer(
                         CaptureProgramBindingSnapshot(
                             effectiveMaterial,
                             shadowUniformState);
+                }
+
+                if (prewarmDescriptorAllocation &&
+                    !TryPrewarmInvariantDescriptorAllocationForDrawEnqueue(
+                        effectiveMaterial,
+                        programBindingSnapshot,
+                        out string descriptorPrewarmReason))
+                {
+                    CommandOperations.MarkCommandBuffersDirtyForLegacyMeshState();
+                    _ = SetPrepareResult(
+                        false,
+                        "DescriptorsPending",
+                        descriptorPrewarmReason,
+                        out _);
+                    return false;
                 }
 
                 // Resource preparation, program selection, and binding capture are

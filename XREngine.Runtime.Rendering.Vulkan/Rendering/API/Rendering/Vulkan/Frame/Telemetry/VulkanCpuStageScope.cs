@@ -84,6 +84,9 @@ internal readonly ref struct VulkanCpuStageScope
 
     private static bool IsFineGrainedHotPathStage(EVulkanCpuStage stage)
         => stage is
+            EVulkanCpuStage.PrimaryOperationPreparation or
+            EVulkanCpuStage.PrimaryMeshOperation or
+            EVulkanCpuStage.PrimaryNonMeshOperation or
             EVulkanCpuStage.ContextPassTransitions or
             EVulkanCpuStage.BarrierPlanningEmission or
             EVulkanCpuStage.OpDispatch or

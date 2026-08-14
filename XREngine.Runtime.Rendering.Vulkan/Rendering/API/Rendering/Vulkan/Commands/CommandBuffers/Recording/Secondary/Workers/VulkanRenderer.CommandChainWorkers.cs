@@ -1,5 +1,6 @@
 using System;
 using System.Diagnostics;
+using System.Globalization;
 using System.Numerics;
 using System.Threading;
 using Silk.NET.Vulkan;
@@ -12,11 +13,23 @@ internal sealed partial class VulkanCommandRuntime
     // that can prove useful concurrency; the closeout cohorts own any
     // hardware-specific threshold tuning above this correctness floor.
     private const int MinParallelCommandChainRecordJobs = 2;
+    // A bounded Sponza replacement batch with 16 prepared mesh operations was
+    // consistently faster inline than through the worker handoff. Dispatch only
+    // when the immutable graphics packet contains enough encoding work to repay
+    // queue, wake, merge, and render-thread wait overhead. Explicit worker-count
+    // experiments intentionally bypass this production heuristic.
+    private const int MinParallelCommandChainRecordOperations = 32;
+    private const int DefaultMaxCommandChainRecordingWorkerCount = 4;
+    private const int MaxCommandChainRecordingWorkerCount = 8;
     // Non-graphics packets are normally one dispatch, barrier, transfer, or
     // query operation. Keep tiny cohorts on the render thread because waking
     // persistent workers costs more than encoding two or three such packets.
     private const int MinParallelNonGraphicsRecordJobs = 4;
     private const int CommandChainWorkerWaitTimeoutMilliseconds = 2_000;
+    // This is intentionally a launch-only setting. Worker-owned command pools and
+    // cached secondary buffers cannot safely migrate between capacities at runtime.
+    private static readonly int? s_configuredCommandChainRecordingWorkerCount =
+        ResolveConfiguredCommandChainRecordingWorkerCount();
     private object _commandChainRecordingWorkersLock => _commandRuntime.Workers.Gate;
     private ManualResetEventSlim _commandChainRecordingWorkersIdle => _commandRuntime.Workers.Idle;
     private CountdownEvent _commandChainRecordingWorkerCountdown => _commandRuntime.Workers.Countdown;
@@ -48,7 +61,48 @@ internal sealed partial class VulkanCommandRuntime
             return 1;
 
         int usableProcessors = Math.Max(1, processorCount - 1);
-        return Math.Clamp(independentChainCount, 1, Math.Min(usableProcessors, 8));
+        return Math.Clamp(independentChainCount, 1, Math.Min(usableProcessors, MaxCommandChainRecordingWorkerCount));
+    }
+
+    private static int ResolveEffectiveCommandChainRecordingWorkerCount(
+        int independentChainCount,
+        int processorCount,
+        bool singleThread,
+        bool parallelDisabled)
+    {
+        if (singleThread || parallelDisabled ||
+            s_configuredCommandChainRecordingWorkerCount == 0)
+        {
+            return 0;
+        }
+
+        if (s_configuredCommandChainRecordingWorkerCount.HasValue)
+            return s_configuredCommandChainRecordingWorkerCount.Value;
+
+        // Preserve one stable default ownership domain for the process lifetime.
+        // The dirty subset changes from frame to frame; sizing the domain from
+        // independentChainCount would migrate a chain between worker-owned pools
+        // or make the second eligible batch fail after the first capacity was
+        // instantiated. ActiveWorkerMask still wakes only workers that own work.
+        return Math.Clamp(
+            Math.Max(processorCount - 1, 1),
+            1,
+            DefaultMaxCommandChainRecordingWorkerCount);
+    }
+
+    private static int? ResolveConfiguredCommandChainRecordingWorkerCount()
+    {
+        string? rawValue = XREnvironment.GetLaunchValue(CommandChainWorkerCountEnvVar);
+        if (string.IsNullOrWhiteSpace(rawValue))
+            return null;
+
+        return int.TryParse(
+                rawValue,
+                NumberStyles.Integer,
+                CultureInfo.InvariantCulture,
+                out int configuredCount)
+            ? Math.Clamp(configuredCount, 0, MaxCommandChainRecordingWorkerCount)
+            : null;
     }
 
     internal static EVulkanCommandChainWorkerEligibility EvaluateParallelCommandChainRecording(
@@ -70,6 +124,46 @@ internal sealed partial class VulkanCommandRuntime
         }
 
         return EVulkanCommandChainWorkerEligibility.Eligible;
+    }
+
+    private static EVulkanCommandChainWorkerEligibility EvaluateConfiguredParallelCommandChainRecording(
+        int independentChainCount,
+        int independentOperationCount,
+        bool applyGraphicsCostThreshold,
+        int processorCount,
+        bool singleThread,
+        bool parallelDisabled,
+        bool workerDomainFaulted)
+    {
+        if (workerDomainFaulted)
+            return EVulkanCommandChainWorkerEligibility.WorkerQuarantined;
+
+        if (singleThread ||
+            parallelDisabled ||
+            s_configuredCommandChainRecordingWorkerCount == 0 ||
+            independentChainCount < MinParallelCommandChainRecordJobs)
+        {
+            return EVulkanCommandChainWorkerEligibility.TooLittleIndependentWork;
+        }
+
+        // An explicit capacity is a controlled diagnostic experiment. In
+        // particular, one worker verifies worker-owned state and wait behavior
+        // without pretending it provides CPU parallelism.
+        if (s_configuredCommandChainRecordingWorkerCount.HasValue)
+            return EVulkanCommandChainWorkerEligibility.Eligible;
+
+        if (applyGraphicsCostThreshold &&
+            independentOperationCount < MinParallelCommandChainRecordOperations)
+        {
+            return EVulkanCommandChainWorkerEligibility.TooLittleIndependentWork;
+        }
+
+        return EvaluateParallelCommandChainRecording(
+            independentChainCount,
+            processorCount,
+            singleThread,
+            parallelDisabled,
+            workerDomainFaulted);
     }
 
     private static EVulkanCommandChainWorkerEligibility EvaluateCommandChainWorkerEncodability(
@@ -110,7 +204,7 @@ internal sealed partial class VulkanCommandRuntime
         if (encodability != EVulkanCommandChainWorkerEligibility.Eligible)
             return new VulkanCommandChainWorkerEligibilityResult(encodability);
 
-        if (workerCount <= 1)
+        if (workerCount <= 0)
         {
             return new VulkanCommandChainWorkerEligibilityResult(
                 EVulkanCommandChainWorkerEligibility.TooLittleIndependentWork);
@@ -150,6 +244,8 @@ internal sealed partial class VulkanCommandRuntime
 
     private EVulkanCommandChainWorkerEligibility PrepareCommandChainRecordingWorkers(
         int recordJobCount,
+        int recordOperationCount,
+        bool applyGraphicsCostThreshold,
         uint frameDataImageIndex,
         out CommandChainRecordingWorkerState[] workers,
         out int workerCount,
@@ -168,14 +264,16 @@ internal sealed partial class VulkanCommandRuntime
                 "Vulkan command recording is quarantined until the abandoned persistent workers exit.");
         }
 
-        int requestedWorkerCount = ResolveCommandChainRecordingWorkerCount(
+        int requestedWorkerCount = ResolveEffectiveCommandChainRecordingWorkerCount(
             recordJobCount,
             Environment.ProcessorCount,
             CommandChainsSingleThread,
             ParallelCommandChainRecordingDisabled);
         EVulkanCommandChainWorkerEligibility eligibility =
-            EvaluateParallelCommandChainRecording(
+            EvaluateConfiguredParallelCommandChainRecording(
             recordJobCount,
+            recordOperationCount,
+            applyGraphicsCostThreshold,
             Environment.ProcessorCount,
             CommandChainsSingleThread,
             ParallelCommandChainRecordingDisabled,
@@ -196,9 +294,10 @@ internal sealed partial class VulkanCommandRuntime
                 Debug.VulkanWarningEvery(
                     $"Vulkan.CommandChainWorkers.Rejected.{GetHashCode()}",
                     TimeSpan.FromSeconds(2),
-                    "[Vulkan.CommandChainWorkers] Serial fallback reason={0} jobs={1} processors={2} singleThread={3} disabled={4} faulted={5} indexedFrameSlot={6} frameDataImageIndex={7}.",
+                    "[Vulkan.CommandChainWorkers] Serial fallback reason={0} jobs={1} operations={2} processors={3} singleThread={4} disabled={5} faulted={6} indexedFrameSlot={7} frameDataImageIndex={8}.",
                     eligibility,
                     recordJobCount,
+                    recordOperationCount,
                     Environment.ProcessorCount,
                     CommandChainsSingleThread,
                     ParallelCommandChainRecordingDisabled,
@@ -210,10 +309,9 @@ internal sealed partial class VulkanCommandRuntime
             return eligibility;
         }
 
-        workers = EnsureCommandChainRecordingWorkers(Math.Max(requestedWorkerCount, 2));
-        // EnsureCommandChainRecordingWorkers creates the fixed bounded worker
-        // capacity on first use. Hash against that capacity for the lifetime of
-        // the pools so a changing dirty subset cannot migrate a chain.
+        workers = EnsureCommandChainRecordingWorkers(requestedWorkerCount);
+        // Hash against the fixed instantiated capacity for the lifetime of the
+        // pools so a changing dirty subset cannot migrate a chain.
         workerCount = workers.Length;
         int frameSlotCount = ResolveIndexedCommandChainCacheCount();
         EnsureCommandChainWorkerFrameSlotPools(workers, frameSlotCount);
@@ -227,7 +325,7 @@ internal sealed partial class VulkanCommandRuntime
         CommandChainRecordingWorkerState[] workers,
         int workerCount)
     {
-        if (batch.JobCount <= 0 || workerCount <= 1 || batch.ActiveWorkerMask == 0)
+        if (batch.JobCount <= 0 || workerCount <= 0 || batch.ActiveWorkerMask == 0)
             return default;
 
         long dispatchStart = Stopwatch.GetTimestamp();
@@ -358,12 +456,14 @@ internal sealed partial class VulkanCommandRuntime
         EVulkanCommandChainWorkerEligibility eligibility =
             PrepareCommandChainRecordingWorkers(
                 entryCount,
+                entryCount,
+                false,
                 imageIndex,
                 out workers,
                 out workerCount,
                 out _);
         return eligibility == EVulkanCommandChainWorkerEligibility.Eligible &&
-               workerCount > 1;
+               workerCount > 0;
     }
 
     private void ThrowIfAbandonedRecordingWorkersRemainActive()
@@ -478,14 +578,16 @@ internal sealed partial class VulkanCommandRuntime
     {
         lock (_commandChainRecordingWorkersLock)
         {
-            if (_commandChainRecordingWorkers is { Length: var existingCount } && existingCount >= workerCount)
+            if (_commandChainRecordingWorkers is { Length: var existingCount } && existingCount == workerCount)
                 return _commandChainRecordingWorkers;
 
             if (_commandChainRecordingWorkers is not null)
                 throw new InvalidOperationException("Vulkan command-chain worker capacity cannot grow while worker-owned command pools are live.");
 
-            int capacity = Math.Clamp(Math.Max(Environment.ProcessorCount - 1, 1), 1, 8);
-            CommandChainRecordingWorkerState[] workers = new CommandChainRecordingWorkerState[capacity];
+            if (workerCount is <= 0 or > MaxCommandChainRecordingWorkerCount)
+                throw new ArgumentOutOfRangeException(nameof(workerCount));
+
+            CommandChainRecordingWorkerState[] workers = new CommandChainRecordingWorkerState[workerCount];
             for (int i = 0; i < workers.Length; i++)
             {
                 CommandChainRecordingWorkerState worker = new(_commandRuntime, i);

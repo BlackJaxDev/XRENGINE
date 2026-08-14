@@ -62,6 +62,16 @@ public enum EVulkanCpuStage
     CommandChainCapacityPlanning,
     CommandChainDependencyAggregation,
     CommandChainRecordedKeyCapture,
+    ScheduledSecondaryRun,
+    ScheduledSecondaryPreflight,
+    ScheduledSecondaryClassification,
+    PrimaryEncodingSetup,
+    PrimaryOperationLoop,
+    PrimaryOperationPreparation,
+    PrimaryMeshOperation,
+    PrimaryNonMeshOperation,
+    PrimaryFinalization,
+    PrimaryEndCommandBuffer,
     Count,
 }
 

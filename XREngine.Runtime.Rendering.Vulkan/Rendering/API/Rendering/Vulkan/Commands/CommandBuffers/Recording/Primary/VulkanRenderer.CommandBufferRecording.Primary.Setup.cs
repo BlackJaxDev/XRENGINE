@@ -86,11 +86,18 @@ namespace XREngine.Rendering.Vulkan
                         int capacity = Math.Max(recordingState.Ops.Length, Math.Max(recordingState.RecordingScratch.ScheduledCommandChainKeysByOpIndex.Length * 2, 16));
                         recordingState.RecordingScratch.ScheduledCommandChainKeysByOpIndex = new CommandChainKey[capacity];
                     }
+                    if (recordingState.RecordingScratch.ScheduledCommandChainsByOpIndex.Length < recordingState.Ops.Length)
+                    {
+                        int capacity = Math.Max(recordingState.Ops.Length, Math.Max(recordingState.RecordingScratch.ScheduledCommandChainsByOpIndex.Length * 2, 16));
+                        recordingState.RecordingScratch.ScheduledCommandChainsByOpIndex = new CommandChain?[capacity];
+                    }
                     recordingState.ScheduledCommandChainKeysByOpIndex = recordingState.RecordingScratch.ScheduledCommandChainKeysByOpIndex;
-                    PopulateCommandChainKeysByFrameOpIndex(
+                    recordingState.ScheduledCommandChainsByOpIndex = recordingState.RecordingScratch.ScheduledCommandChainsByOpIndex;
+                    PopulateCommandChainsByFrameOpIndex(
                         recordingState.CommandChainSchedule,
                         recordingState.ScheduledCommandChainCache,
                         recordingState.ScheduledCommandChainKeysByOpIndex.AsSpan(),
+                        recordingState.ScheduledCommandChainsByOpIndex.AsSpan(),
                         recordingState.Ops.Length);
                 }
             }

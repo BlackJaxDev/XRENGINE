@@ -1235,6 +1235,16 @@ public static partial class Engine
             AppendVulkanCpuStageFields(s_lineBuilder, "command_chain_capacity_planning", EVulkanCpuStage.CommandChainCapacityPlanning, ref first);
             AppendVulkanCpuStageFields(s_lineBuilder, "command_chain_dependency_aggregation", EVulkanCpuStage.CommandChainDependencyAggregation, ref first);
             AppendVulkanCpuStageFields(s_lineBuilder, "command_chain_recorded_key_capture", EVulkanCpuStage.CommandChainRecordedKeyCapture, ref first);
+            AppendVulkanCpuStageFields(s_lineBuilder, "scheduled_secondary_run", EVulkanCpuStage.ScheduledSecondaryRun, ref first);
+            AppendVulkanCpuStageFields(s_lineBuilder, "scheduled_secondary_preflight", EVulkanCpuStage.ScheduledSecondaryPreflight, ref first);
+            AppendVulkanCpuStageFields(s_lineBuilder, "scheduled_secondary_classification", EVulkanCpuStage.ScheduledSecondaryClassification, ref first);
+            AppendVulkanCpuStageFields(s_lineBuilder, "primary_encoding_setup", EVulkanCpuStage.PrimaryEncodingSetup, ref first);
+            AppendVulkanCpuStageFields(s_lineBuilder, "primary_operation_loop", EVulkanCpuStage.PrimaryOperationLoop, ref first);
+            AppendVulkanCpuStageFields(s_lineBuilder, "primary_operation_preparation", EVulkanCpuStage.PrimaryOperationPreparation, ref first);
+            AppendVulkanCpuStageFields(s_lineBuilder, "primary_mesh_operation", EVulkanCpuStage.PrimaryMeshOperation, ref first);
+            AppendVulkanCpuStageFields(s_lineBuilder, "primary_non_mesh_operation", EVulkanCpuStage.PrimaryNonMeshOperation, ref first);
+            AppendVulkanCpuStageFields(s_lineBuilder, "primary_finalization", EVulkanCpuStage.PrimaryFinalization, ref first);
+            AppendVulkanCpuStageFields(s_lineBuilder, "primary_end_command_buffer", EVulkanCpuStage.PrimaryEndCommandBuffer, ref first);
             AppendVulkanCpuStageFields(s_lineBuilder, "primary_frame_data_manifest", EVulkanCpuStage.PrimaryFrameDataManifest, ref first);
             AppendVulkanCpuStageFields(s_lineBuilder, "primary_prewarm", EVulkanCpuStage.PrimaryPrewarm, ref first);
             AppendVulkanCpuStageFields(s_lineBuilder, "primary_command_encoding", EVulkanCpuStage.PrimaryCommandEncoding, ref first);

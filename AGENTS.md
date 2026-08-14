@@ -103,11 +103,15 @@ Call `start_agent_run` only when all of these conditions are true:
   criteria, constraints, tool policy, and narrow turn, tool-call,
   tool-result-byte, output-token, elapsed-time, retry, and concurrency budgets.
 
-Automatic runs default to at most 3 turns, 8 editor tool calls, 4,096 output
-tokens, 120 seconds, 1 retry, and per-run concurrency 1. Raise an individual
-limit only when the objective requires it and the expected validation benefit
-justifies the additional cost. Global broker concurrency remains bounded by
-`XRE_LOCAL_AGENT_BROKER_MAX_CONCURRENCY`.
+Automatic runs default to at most 3 turns, 8 editor tool calls, 1 retry, and
+per-run concurrency 1. Luna and Terra default to 4,096 combined
+output/reasoning tokens and 120 seconds. Sol defaults to 16,384 tokens and 300
+seconds, or 32,768 tokens and 600 seconds at `xhigh`/`max`, because its deeper
+reasoning can otherwise consume either generic budget before producing visible
+evidence. Explicit token and elapsed-time limits are never raised. Raise any
+other individual limit only when the objective requires it and the expected
+validation benefit justifies the additional cost. Global broker concurrency
+remains bounded by `XRE_LOCAL_AGENT_BROKER_MAX_CONCURRENCY`.
 
 #### Required Coordinator Workflow
 

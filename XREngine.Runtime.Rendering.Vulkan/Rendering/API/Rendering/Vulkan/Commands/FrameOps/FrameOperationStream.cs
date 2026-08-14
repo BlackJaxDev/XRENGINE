@@ -12,9 +12,10 @@ internal sealed class FrameOperationStream
     private FrameOperationHeader[] _headers = new FrameOperationHeader[64];
     private FrameOperationHeader[] _headerOrderScratch = new FrameOperationHeader[64];
     private FrameOpContext[] _contexts = new FrameOpContext[64];
-    private FrameOpResourceUseList[] _resourceUses = new FrameOpResourceUseList[64];
+    private FrameOpResourceUse[] _resourceUses = new FrameOpResourceUse[256];
     private XRFrameBuffer?[] _targets = new XRFrameBuffer?[64];
     private int _count;
+    private int _resourceUseCount;
 
     internal static FrameOperationStream Empty { get; } = new();
     internal int Count => _count;
@@ -31,10 +32,10 @@ internal sealed class FrameOperationStream
         {
             Array.Clear(_headers, 0, _count);
             Array.Clear(_contexts, 0, _count);
-            Array.Clear(_resourceUses, 0, _count);
             Array.Clear(_targets, 0, _count);
         }
         _count = 0;
+        _resourceUseCount = 0;
     }
 
     internal void CopySourceOrderTo(Span<int> destination)
@@ -54,12 +55,16 @@ internal sealed class FrameOperationStream
         Reset();
         EnsureCapacity(source.Count);
         Span<int> payloadCounts = stackalloc int[KindCount];
+        int resourceUseCount = 0;
         for (int index = 0; index < source.Count; index++)
         {
-            int kind = (int)source.GetAuthoringOperation(index).Kind;
+            FrameOp operation = source.GetAuthoringOperation(index);
+            int kind = (int)operation.Kind;
             if ((uint)kind >= KindCount) throw new InvalidOperationException("Frame operation has an unsupported opcode.");
             payloadCounts[kind]++;
+            resourceUseCount += operation.ResourceUsesReference.Count;
         }
+        EnsureResourceUseCapacity(resourceUseCount);
         for (int kind = 0; kind < KindCount; kind++) _payloads.EnsureCapacity((EVulkanPrimaryPlanNodeKind)kind, payloadCounts[kind]);
 
         payloadCounts.Clear();
@@ -70,9 +75,17 @@ internal sealed class FrameOperationStream
             int payloadIndex = payloadCounts[(int)kind]++;
             StorePayload(kind, payloadIndex, operation);
             bool preserveSubmissionOrder = operation is MeshDrawOp meshDraw && meshDraw.PreserveSubmissionOrder;
-            _headers[sourceIndex] = new FrameOperationHeader(kind, payloadIndex, operation.PassIndex, operation.ContextReference.OutputTargetIdentity, sourceIndex, sourceIndex, sourceIndex, operation.RequiresPrimaryRecordingContext, preserveSubmissionOrder);
+            ref readonly FrameOpResourceUseList operationResourceUses =
+                ref operation.ResourceUsesReference;
+            int resourceUseOffset = _resourceUseCount;
+            int operationResourceUseCount = operationResourceUses.Count;
+            operationResourceUses.CopyTo(
+                _resourceUses.AsSpan(
+                    resourceUseOffset,
+                    operationResourceUseCount));
+            _resourceUseCount += operationResourceUseCount;
+            _headers[sourceIndex] = new FrameOperationHeader(kind, payloadIndex, operation.PassIndex, operation.ContextReference.OutputTargetIdentity, sourceIndex, resourceUseOffset, operationResourceUseCount, sourceIndex, operation.RequiresPrimaryRecordingContext, preserveSubmissionOrder);
             _contexts[sourceIndex] = operation.ContextReference;
-            _resourceUses[sourceIndex] = operation.ResourceUsesReference;
             _targets[sourceIndex] = operation.Target;
         }
         _count = source.Count;
@@ -113,19 +126,34 @@ internal sealed class FrameOperationStream
 
         FrameOperationStream slice = new(_payloads);
         slice.EnsureCapacity(matchCount);
+        int matchingResourceUseCount = 0;
+        for (int sourceIndex = 0; sourceIndex < _count; sourceIndex++)
+        {
+            ref readonly FrameOperationHeader header = ref _headers[sourceIndex];
+            if (_contexts[header.ContextIndex].LogicalViewId == logicalViewId)
+                matchingResourceUseCount += header.ResourceUseCount;
+        }
+        slice.EnsureResourceUseCapacity(matchingResourceUseCount);
         for (int sourceIndex = 0, destinationIndex = 0; sourceIndex < _count; sourceIndex++)
         {
             ref readonly FrameOperationHeader header = ref _headers[sourceIndex];
             if (_contexts[header.ContextIndex].LogicalViewId != logicalViewId)
                 continue;
 
+            int destinationResourceUseOffset = slice._resourceUseCount;
+            _resourceUses.AsSpan(
+                header.ResourceUseOffset,
+                header.ResourceUseCount).CopyTo(
+                    slice._resourceUses.AsSpan(
+                        destinationResourceUseOffset,
+                        header.ResourceUseCount));
+            slice._resourceUseCount += header.ResourceUseCount;
             slice._headers[destinationIndex] = header with
             {
                 ContextIndex = destinationIndex,
-                ResourceUseIndex = destinationIndex,
+                ResourceUseOffset = destinationResourceUseOffset,
             };
             slice._contexts[destinationIndex] = _contexts[header.ContextIndex];
-            slice._resourceUses[destinationIndex] = _resourceUses[header.ResourceUseIndex];
             slice._targets[destinationIndex] = _targets[header.ContextIndex];
             destinationIndex++;
         }
@@ -139,7 +167,13 @@ internal sealed class FrameOperationStream
         return ref _headers[index];
     }
     internal ref readonly FrameOpContext GetContext(int index) => ref _contexts[GetHeader(index).ContextIndex];
-    internal ref readonly FrameOpResourceUseList GetResourceUses(int index) => ref _resourceUses[GetHeader(index).ResourceUseIndex];
+    internal ReadOnlySpan<FrameOpResourceUse> GetResourceUses(int index)
+    {
+        ref readonly FrameOperationHeader header = ref GetHeader(index);
+        return _resourceUses.AsSpan(
+            header.ResourceUseOffset,
+            header.ResourceUseCount);
+    }
     internal XRFrameBuffer? GetTarget(int index) => _targets[GetHeader(index).ContextIndex];
 
     internal bool TryGetMeshDraw(int index, out MeshDrawPayload payload)
@@ -213,7 +247,14 @@ internal sealed class FrameOperationStream
     {
         if (_headers.Length < required) Array.Resize(ref _headers, Math.Max(required, _headers.Length * 2));
         if (_contexts.Length < required) Array.Resize(ref _contexts, Math.Max(required, _contexts.Length * 2));
-        if (_resourceUses.Length < required) Array.Resize(ref _resourceUses, Math.Max(required, _resourceUses.Length * 2));
         if (_targets.Length < required) Array.Resize(ref _targets, Math.Max(required, _targets.Length * 2));
+    }
+
+    private void EnsureResourceUseCapacity(int required)
+    {
+        if (_resourceUses.Length < required)
+            Array.Resize(
+                ref _resourceUses,
+                Math.Max(required, _resourceUses.Length * 2));
     }
 }

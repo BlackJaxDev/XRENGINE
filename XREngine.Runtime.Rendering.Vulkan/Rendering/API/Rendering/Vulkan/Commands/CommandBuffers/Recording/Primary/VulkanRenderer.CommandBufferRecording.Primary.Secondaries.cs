@@ -799,8 +799,8 @@ namespace XREngine.Rendering.Vulkan
             chain = null!;
             key = default;
             if (recordingState.ScheduledCommandChainKeysByOpIndex is null ||
-                recordingState.ScheduledCommandChainCache is null ||
-                (uint)opIndex >= (uint)recordingState.ScheduledCommandChainKeysByOpIndex.Length)
+                recordingState.ScheduledCommandChainsByOpIndex is null ||
+                (uint)opIndex >= (uint)recordingState.Ops.Length)
             {
                 return false;
             }
@@ -809,7 +809,8 @@ namespace XREngine.Rendering.Vulkan
             if (key.ChainOrdinal == -1)
                 return false;
 
-            if (!recordingState.ScheduledCommandChainCache.TryGetValue(key, out CommandChain? scheduledChain))
+            CommandChain? scheduledChain = recordingState.ScheduledCommandChainsByOpIndex[opIndex];
+            if (scheduledChain is null)
                 return false;
 
             if (scheduledChain.SourceStartIndex < 0 ||
@@ -862,6 +863,11 @@ namespace XREngine.Rendering.Vulkan
 
         internal unsafe bool TryExecuteScheduledMeshCommandChainSecondaryRun(scoped ref PrimaryCommandBufferRecordingState recordingState, int startIndex, int runCount, int passIndex)
         {
+            using VulkanCpuStageScope scheduledRunStage =
+                new(_frameTelemetry, EVulkanCpuStage.ScheduledSecondaryRun);
+            using var scheduledRunProfileScope =
+                RuntimeRenderingHostServices.Profiling.StartProfileScope(
+                    "Vulkan.RecordPrimary.ScheduledSecondaryRun");
             XRFrameBuffer? firstTarget = recordingState.Ops.GetTarget(startIndex);
             FrameOpContext firstContext = recordingState.Ops.GetContext(startIndex);
             // An explicit schedule may be supplied for an external OpenXR
@@ -881,15 +887,21 @@ namespace XREngine.Rendering.Vulkan
             // Query-bracket contents are intentionally absent from the command-chain
             // schedule. Preflight the complete run before closing the current render
             // scope so an unscheduled draw cannot terminate rendering as a side effect.
-            for (int i = 0; i < runCount; i++)
+            using (VulkanCpuStageScope preparationStage =
+                   new(_frameTelemetry, EVulkanCpuStage.ScheduledSecondaryPreflight))
+            using (RuntimeRenderingHostServices.Profiling.StartProfileScope(
+                       "Vulkan.RecordPrimary.ScheduledSecondaryRun.Preflight"))
             {
-                int opIndex = startIndex + i;
-                if (recordingState.Ops.GetHeader(opIndex).OpCode != EVulkanPrimaryPlanNodeKind.MeshDraw ||
-                    recordingState.Ops.GetHeader(opIndex).PassIndex != passIndex ||
-                    recordingState.Ops.GetTarget(opIndex) != firstTarget ||
-                    !TryGetScheduledCommandChainForOp(ref recordingState, opIndex, out _, out _))
+                for (int i = 0; i < runCount; i++)
                 {
-                    return false;
+                    int opIndex = startIndex + i;
+                    if (recordingState.Ops.GetHeader(opIndex).OpCode != EVulkanPrimaryPlanNodeKind.MeshDraw ||
+                        recordingState.Ops.GetHeader(opIndex).PassIndex != passIndex ||
+                        recordingState.Ops.GetTarget(opIndex) != firstTarget ||
+                        !TryGetScheduledCommandChainForOp(ref recordingState, opIndex, out _, out _))
+                    {
+                        return false;
+                    }
                 }
             }
 
@@ -913,23 +925,33 @@ namespace XREngine.Rendering.Vulkan
             }
 
             VulkanCommandChainRecordingBatch batch = _commandChainRecordingBatch;
-            batch.EnsureCapacity(runCount, runCount);
-            FramePlan? framePlan = recordingState.FramePlan;
-            batch.PreparedFrame.Begin(
-                framePlan?.FrameSlot ?? recordingState.CommandBufferImageSlot,
-                VulkanFrameCounter);
-            if (framePlan is not null)
-                batch.PreparedFrame.AttachFramePlan(framePlan);
-            batch.PreparedFrame.AddPrimaryPlan(recordingState.PrimaryCommandPlan);
+            using (RuntimeRenderingHostServices.Profiling.StartProfileScope(
+                       "Vulkan.RecordPrimary.ScheduledSecondaryRun.BatchSetup"))
+            {
+                batch.EnsureCapacity(runCount, runCount);
+                FramePlan? framePlan = recordingState.FramePlan;
+                batch.PreparedFrame.Begin(
+                    framePlan?.FrameSlot ?? recordingState.CommandBufferImageSlot,
+                    VulkanFrameCounter);
+                if (framePlan is not null)
+                    batch.PreparedFrame.AttachFramePlan(framePlan);
+                batch.PreparedFrame.AddPrimaryPlan(recordingState.PrimaryCommandPlan);
+            }
             VulkanCommandChainRecordingEntry[] entries = batch.Entries;
             VulkanCommandChainRecordingDraw[] draws = batch.Draws;
             CommandBuffer[] executionBuffers = batch.ExecutionBuffers;
-            Array.Clear(entries, 0, runCount);
-            Array.Clear(draws, 0, runCount);
-            Array.Clear(executionBuffers, 0, runCount);
+            using (RuntimeRenderingHostServices.Profiling.StartProfileScope(
+                       "Vulkan.RecordPrimary.ScheduledSecondaryRun.ClearScratch"))
+            {
+                Array.Clear(entries, 0, runCount);
+                Array.Clear(draws, 0, runCount);
+                Array.Clear(executionBuffers, 0, runCount);
+            }
             int secondaryCount = 0;
             int scheduledOpCount = 0;
             int recordJobCount = 0;
+            int recordOperationCount = 0;
+            int deferredRecordJobCount = 0;
             bool meshLabelActive = false;
 
             if (_deviceContext.CanRecordCommandBufferDebugLabels)
@@ -937,43 +959,56 @@ namespace XREngine.Rendering.Vulkan
 
             try
             {
-                if (!TryCollectScheduledMeshCommandChainUniformSlots(
-                        ref recordingState,
-                        startIndex,
-                        runCount,
-                        passIndex,
-                        draws))
+                using (RuntimeRenderingHostServices.Profiling.StartProfileScope(
+                           "Vulkan.RecordPrimary.ScheduledSecondaryRun.UniformSlots"))
                 {
-                    return false;
+                    if (!TryCollectScheduledMeshCommandChainUniformSlots(
+                            ref recordingState,
+                            startIndex,
+                            runCount,
+                            passIndex,
+                            draws))
+                    {
+                        return false;
+                    }
                 }
 
-                for (int i = 0; i < runCount; i++)
+                using (RuntimeRenderingHostServices.Profiling.StartProfileScope(
+                           "Vulkan.RecordPrimary.ScheduledSecondaryRun.CollectChains"))
                 {
-                    int opIndex = startIndex + i;
-                    _ = TryGetScheduledCommandChainForOp(
-                        ref recordingState,
-                        opIndex,
-                        out CommandChain chain,
-                        out _);
-                    if (opIndex != chain.SourceStartIndex)
-                        continue;
+                    for (int i = 0; i < runCount; i++)
+                    {
+                        int opIndex = startIndex + i;
+                        _ = TryGetScheduledCommandChainForOp(
+                            ref recordingState,
+                            opIndex,
+                            out CommandChain chain,
+                            out _);
+                        if (opIndex != chain.SourceStartIndex)
+                            continue;
 
-                    if (chain.SourceCount > runCount - i)
-                        return false;
+                        if (chain.SourceCount > runCount - i)
+                            return false;
 
-                    ref VulkanCommandChainRecordingEntry entry = ref entries[secondaryCount++];
-                    entry.ColdDataIndex = batch.AddCommandChainColdData(chain);
-                    entry.PreparedChainIndex = -1;
-                    entry.WorkerIndex = -1;
+                        ref VulkanCommandChainRecordingEntry entry = ref entries[secondaryCount++];
+                        entry.ColdDataIndex = batch.AddCommandChainColdData(chain);
+                        entry.PreparedChainIndex = -1;
+                        entry.WorkerIndex = -1;
+                    }
                 }
 
                 if (secondaryCount == 0)
                     return false;
 
                 int preparedMeshDrawCount = 0;
-                for (int chainIndex = 0; chainIndex < secondaryCount; chainIndex++)
+                using (VulkanCpuStageScope classificationStage =
+                       new(_frameTelemetry, EVulkanCpuStage.ScheduledSecondaryClassification))
+                using (RuntimeRenderingHostServices.Profiling.StartProfileScope(
+                           "Vulkan.RecordPrimary.ScheduledSecondaryRun.ClassifyAndRefresh"))
                 {
-                    CommandChain chain = batch.GetCommandChainColdData(entries[chainIndex].ColdDataIndex);
+                    for (int chainIndex = 0; chainIndex < secondaryCount; chainIndex++)
+                    {
+                        CommandChain chain = batch.GetCommandChainColdData(entries[chainIndex].ColdDataIndex);
 
                     ulong currentUniformSlotSignature = ComputeCommandChainUniformSlotSignature(
                         draws,
@@ -1086,14 +1121,6 @@ namespace XREngine.Rendering.Vulkan
                         }
                     }
 
-                    if (!needsRecording &&
-                        !HasCurrentSecondaryDescriptorPayloadRequirements(
-                            chain.SecondaryCommandBuffer))
-                    {
-                        MarkCommandChainSecondaryCommandBufferInvalid(chain);
-                        needsRecording = true;
-                    }
-
                     if (needsRecording)
                     {
                         if (chain.State is CommandChainState.Reused or
@@ -1103,8 +1130,38 @@ namespace XREngine.Rendering.Vulkan
                             chain.DirtyReason |= CommandChainDirtyReason.ResourcePlan;
                         }
 
-                        entries[chainIndex].NeedsRecording = true;
-                        recordJobCount++;
+                        bool admitted =
+                            recordingState
+                                .CommandChainRecordingAdmittedByOpIndex[
+                                    chain.SourceStartIndex];
+                        if (admitted &&
+                            recordingState.CanProgressivelyDeferCommandChainPublication &&
+                            (recordJobCount >=
+                                MaxProgressiveDesktopCommandChainRecordJobs ||
+                             (recordJobCount > 0 &&
+                              recordOperationCount + chain.SourceCount >
+                                MaxProgressiveDesktopCommandChainRecordOperations)))
+                        {
+                            admitted = false;
+                            int chainEndIndex = Math.Min(
+                                recordingState.Ops.Length,
+                                chain.SourceStartIndex + chain.SourceCount);
+                            for (int chainOpIndex = chain.SourceStartIndex;
+                                 chainOpIndex < chainEndIndex;
+                                 chainOpIndex++)
+                            {
+                                recordingState.CommandChainRecordingAdmittedByOpIndex[
+                                    chainOpIndex] = false;
+                            }
+                        }
+                        entries[chainIndex].NeedsRecording = admitted;
+                        if (admitted)
+                        {
+                            recordJobCount++;
+                            recordOperationCount += chain.SourceCount;
+                        }
+                        else
+                            deferredRecordJobCount++;
                     }
                     else
                     {
@@ -1116,7 +1173,8 @@ namespace XREngine.Rendering.Vulkan
                         entries[chainIndex].SecondaryBuffer = reusable;
                     }
 
-                    scheduledOpCount += chain.SourceCount;
+                        scheduledOpCount += chain.SourceCount;
+                    }
                 }
 
                 if (secondaryCount == 0 || scheduledOpCount != runCount)
@@ -1124,6 +1182,20 @@ namespace XREngine.Rendering.Vulkan
 
                 batch.EntryCount = secondaryCount;
                 batch.DrawCount = runCount;
+
+                if (recordJobCount == 0 && deferredRecordJobCount > 0)
+                {
+                    recordingState.ProgressiveCommandChainDeferredJobs =
+                        Math.Max(
+                            recordingState.ProgressiveCommandChainDeferredJobs,
+                            deferredRecordJobCount);
+                    DeferProgressiveCommandChainPublication(
+                        ref recordingState,
+                        recordedJobs: 0,
+                        recordedOperations: 0,
+                        deferredRecordJobCount);
+                    return true;
+                }
 
                 if (recordJobCount == 0)
                 {
@@ -1151,16 +1223,19 @@ namespace XREngine.Rendering.Vulkan
                             return false;
                         }
 
-                        if (!HasCurrentSecondaryDescriptorPayloadRequirements(
-                                chain.SecondaryCommandBuffer))
-                        {
-                            MarkCommandChainSecondaryCommandBufferInvalid(chain);
-                            return false;
-                        }
-
                     }
 
                     PopulateScheduledMeshCommandChainExecutionBuffers(entries, executionBuffers, secondaryCount);
+                    if (!HaveCurrentSecondaryDescriptorPayloadRequirements(
+                            executionBuffers,
+                            secondaryCount,
+                            out int invalidDescriptorPayloadIndex))
+                    {
+                        MarkCommandChainSecondaryCommandBufferInvalid(
+                            batch.GetCommandChainColdData(
+                                entries[invalidDescriptorPayloadIndex].ColdDataIndex));
+                        return false;
+                    }
                     TransitionSecondaryDescriptorImagesForExecution(
                         recordingState.CommandBuffer,
                         executionBuffers,
@@ -1295,6 +1370,7 @@ namespace XREngine.Rendering.Vulkan
                 batch.Error = null;
 
                 int workerEligibleJobCount = 0;
+                int workerEligibleOperationCount = 0;
                 for (int entryIndex = 0; entryIndex < secondaryCount; entryIndex++)
                 {
                     ref VulkanCommandChainRecordingEntry entry = ref entries[entryIndex];
@@ -1305,12 +1381,19 @@ namespace XREngine.Rendering.Vulkan
                         EVulkanCommandChainWorkerEligibility.Eligible)
                     {
                         workerEligibleJobCount++;
+                        long operationCount =
+                            (long)workerEligibleOperationCount + chain.SourceCount;
+                        workerEligibleOperationCount = operationCount >= int.MaxValue
+                            ? int.MaxValue
+                            : (int)operationCount;
                     }
                 }
 
                 EVulkanCommandChainWorkerEligibility workerDomainEligibility =
                     PrepareCommandChainRecordingWorkers(
                     workerEligibleJobCount,
+                    workerEligibleOperationCount,
+                    true,
                     recordingState.FrameDataImageIndex,
                     out CommandChainRecordingWorkerState[] workers,
                     out int workerCount,
@@ -1377,7 +1460,13 @@ namespace XREngine.Rendering.Vulkan
                     inheritedRenderingFlags);
                 for (int chainIndex = 0; chainIndex < secondaryCount; chainIndex++)
                 {
-                    CommandChain chain = batch.GetCommandChainColdData(entries[chainIndex].ColdDataIndex);
+                    ref VulkanCommandChainRecordingEntry entry =
+                        ref entries[chainIndex];
+                    if (!entry.NeedsRecording)
+                        continue;
+
+                    CommandChain chain =
+                        batch.GetCommandChainColdData(entry.ColdDataIndex);
                     RenderPacket? packet = chain.PacketSnapshot;
                     if (packet is null)
                     {
@@ -1393,7 +1482,7 @@ namespace XREngine.Rendering.Vulkan
                         publishedAuthority.PreparedKey.Matches(in chainPreparedKey)
                             ? publishedAuthority
                             : new VulkanPreparedCommandChainAuthority(chain.PreparedKey);
-                    int preparedChainIndex =
+                    entry.PreparedChainIndex =
                         batch.PreparedFrame.AddCommandChain(
                             new VulkanPreparedCommandChain(
                                 chain.Key,
@@ -1406,12 +1495,6 @@ namespace XREngine.Rendering.Vulkan
                                 preparedInheritance,
                                 chain.RecordedArtifact.CreateReference(),
                                 chain.WorkerEligibility));
-                    if (preparedChainIndex != chainIndex)
-                    {
-                        throw new VulkanPlanPreconditionException(
-                            "Prepared Vulkan command chains lost schedule ordering.");
-                    }
-                    entries[chainIndex].PreparedChainIndex = preparedChainIndex;
                 }
 
                 batch.PreparedFrame.Freeze();
@@ -1455,6 +1538,16 @@ namespace XREngine.Rendering.Vulkan
                 }
                 batch.PreparedWorkerContext.Reset();
 
+                if (deferredRecordJobCount > 0)
+                {
+                    DeferProgressiveCommandChainPublication(
+                        ref recordingState,
+                        recordJobCount,
+                        recordOperationCount,
+                        deferredRecordJobCount);
+                    return true;
+                }
+
                 using (VulkanCpuStageScope mergeStage =
                        new(_frameTelemetry, EVulkanCpuStage.SecondaryMerge))
                 {
@@ -1473,27 +1566,34 @@ namespace XREngine.Rendering.Vulkan
                                 inheritedSamples,
                                 inheritedLocalReadSignature,
                                 inheritedRenderingFlags);
-                        bool descriptorPayloadRequirementsCurrent =
-                            inheritanceMatches &&
-                            HasCurrentSecondaryDescriptorPayloadRequirements(
-                                chain.SecondaryCommandBuffer);
-                        if (inheritanceMatches && descriptorPayloadRequirementsCurrent)
-                        {
+                        if (inheritanceMatches)
                             continue;
-                        }
 
                         MarkCommandChainSecondaryCommandBufferInvalid(chain);
                         LogCommandChainSecondaryInheritanceMismatch(
                             "scheduled-mesh",
                             firstTarget,
                             passIndex,
-                            !inheritanceMatches
-                                ? $"secondary command buffer 0x{entries[i].SecondaryBuffer.Handle:X} did not publish the resolved inheritance before execution"
-                                : $"secondary command buffer 0x{entries[i].SecondaryBuffer.Handle:X} did not publish current descriptor-payload image requirements before execution");
+                            $"secondary command buffer 0x{entries[i].SecondaryBuffer.Handle:X} did not publish the resolved inheritance before execution");
                         return false;
                     }
 
                     PopulateScheduledMeshCommandChainExecutionBuffers(entries, executionBuffers, secondaryCount);
+                    if (!HaveCurrentSecondaryDescriptorPayloadRequirements(
+                            executionBuffers,
+                            secondaryCount,
+                            out int invalidDescriptorPayloadIndex))
+                    {
+                        MarkCommandChainSecondaryCommandBufferInvalid(
+                            batch.GetCommandChainColdData(
+                                entries[invalidDescriptorPayloadIndex].ColdDataIndex));
+                        LogCommandChainSecondaryInheritanceMismatch(
+                            "scheduled-mesh",
+                            firstTarget,
+                            passIndex,
+                            $"secondary command buffer 0x{executionBuffers[invalidDescriptorPayloadIndex].Handle:X} did not publish current descriptor-payload image requirements before execution");
+                        return false;
+                    }
                     batch.ExecutionMergeBytes = secondaryCount * VulkanCommandChainRecordingEntry.SizeInBytes;
                     TransitionSecondaryDescriptorImagesForExecution(
                         recordingState.CommandBuffer,
@@ -1558,6 +1658,29 @@ namespace XREngine.Rendering.Vulkan
                 if (meshLabelActive)
                     _deviceContext.CmdEndLabel(recordingState.CommandBuffer);
             }
+        }
+
+        private void DeferProgressiveCommandChainPublication(
+            scoped ref PrimaryCommandBufferRecordingState recordingState,
+            int recordedJobs,
+            int recordedOperations,
+            int deferredJobs)
+        {
+            recordingState.ProgressiveCommandChainPublicationPending = true;
+            recordingState.CommandChainPublicationDeferred = true;
+            recordingState.ProgressiveCommandChainAdmittedJobs = recordedJobs;
+            recordingState.ProgressiveCommandChainAdmittedOperations =
+                recordedOperations;
+            recordingState.ProgressiveCommandChainDeferredJobs = deferredJobs;
+            recordingState.RecordingDeferredReason =
+                $"progressive command-chain publication recorded {recordedJobs} cold artifacts ({recordedOperations} operations) and deferred {deferredJobs}; presenting the last complete scene";
+            Debug.VulkanEvery(
+                $"Vulkan.CommandChains.ProgressivePublication.{GetHashCode()}",
+                TimeSpan.FromSeconds(1),
+                "[Vulkan.CommandChains] Progressive desktop publication recorded={0} operations={1} deferred={2}; the current frame will replay the last complete scene.",
+                recordedJobs,
+                recordedOperations,
+                deferredJobs);
         }
 
         private bool TryCollectScheduledMeshCommandChainUniformSlots(
@@ -1792,56 +1915,87 @@ namespace XREngine.Rendering.Vulkan
             if (!result.IsComplete)
                 return result;
 
-            lock (ResourceRuntime.Lifetime.Tracker.SyncRoot)
+            for (int i = 0; i < count; i++)
             {
-                for (int i = 0; i < count; i++)
+                DescriptorSet set = descriptorSets is null
+                    ? bindings[i].DescriptorSet
+                    : descriptorSets[i];
+                uint setIndex = descriptorSets is null
+                    ? bindings[i].SetIndex
+                    : unchecked((uint)i);
+                VulkanResourceLifetimeTracker tracker =
+                    ResourceRuntime.Lifetime.Tracker;
+                if (set.Handle == 0 ||
+                    !tracker.PublishedDescriptorSets.TryGetValue(
+                        set.Handle,
+                        out VulkanPublishedDescriptorSetSnapshot? published) ||
+                    published.DescriptorSetLifetimeGeneration == 0UL)
                 {
-                    DescriptorSet set = descriptorSets is null ? bindings[i].DescriptorSet : descriptorSets[i];
-                    uint setIndex = descriptorSets is null ? bindings[i].SetIndex : unchecked((uint)i);
-                    if (set.Handle == 0 ||
-                        !ResourceRuntime.Lifetime.Tracker.PublishedDescriptorSets.TryGetValue(set.Handle, out VulkanPublishedDescriptorSetSnapshot? published) ||
-                        !ResourceRuntime.Lifetime.Tracker.ResourceLifetimes.TryGetValue(ResourceKey(ObjectType.DescriptorSet, set.Handle), out VulkanResourceLifetimeRecord? lifetime))
-                    { result.Invalidate(); return result; }
-
-                    VulkanRecordedDescriptorResourceIdentityBuffer resources = default;
-                    int required = published.References.Length + published.ImageReferences.Length;
-                    foreach (VulkanResourceLifetimeKey key in published.References)
-                        if (key.Type == ObjectType.ImageView &&
-                            ResourceRuntime.Lifetime.Tracker.ImageViewBackingImages.ContainsKey(key.Handle))
-                            required++;
-                    resources.Initialize(required);
-                    if (!resources.IsComplete) { result.Invalidate(); return result; }
-                    int resourceIndex = 0;
-                    foreach (VulkanResourceLifetimeKey key in published.References)
-                    {
-                        if (!ResourceRuntime.Lifetime.Tracker.ResourceLifetimes.TryGetValue(key, out VulkanResourceLifetimeRecord? resource)) { result.Invalidate(); return result; }
-                        resources.Set(resourceIndex++, new(key.Type, key.Handle, resource.Generation, ImageLayout.Undefined));
-                        if (key.Type == ObjectType.ImageView &&
-                            ResourceRuntime.Lifetime.Tracker.ImageViewBackingImages.TryGetValue(key.Handle, out ulong backingImageHandle))
-                        {
-                            VulkanResourceLifetimeKey backingKey = ResourceKey(ObjectType.Image, backingImageHandle);
-                            if (backingImageHandle == 0 || !ResourceRuntime.Lifetime.Tracker.ResourceLifetimes.TryGetValue(backingKey, out VulkanResourceLifetimeRecord? backing)) { result.Invalidate(); return result; }
-                            resources.Set(resourceIndex++, new(ObjectType.Image, backingImageHandle, backing.Generation, ImageLayout.Undefined));
-                        }
-                    }
-                    foreach (VulkanPublishedDescriptorImageReference image in published.ImageReferences)
-                    {
-                        ulong viewHandle = image.Reference.View.Handle;
-                        if (!ResourceRuntime.Lifetime.Tracker.ResourceLifetimes.TryGetValue(ResourceKey(ObjectType.ImageView, viewHandle), out VulkanResourceLifetimeRecord? view)) { result.Invalidate(); return result; }
-                        resources.Set(resourceIndex++, new(ObjectType.ImageView, viewHandle, view.Generation, image.Reference.Layout));
-                    }
-                    result.Set(i, new(setIndex, set.Handle, lifetime.Generation, published.Generation, published.Generation, resources));
+                    result.Invalidate();
+                    return result;
                 }
+
+                VulkanRecordedDescriptorResourceIdentityBuffer resources =
+                    published.GetOrCreateRecordedResources(tracker);
+                if (!resources.IsComplete)
+                {
+                    result.Invalidate();
+                    return result;
+                }
+
+                result.Set(
+                    i,
+                    new VulkanRecordedDescriptorSetIdentity(
+                        setIndex,
+                        set.Handle,
+                        published.DescriptorSetLifetimeGeneration,
+                        published.Generation,
+                        published.Generation,
+                        resources));
             }
             return result;
         }
 
         private static bool AppendRecordedDescriptorSetIdentities(ref VulkanRecordedDescriptorSetIdentityBuffer destination, in VulkanRecordedDescriptorSetIdentityBuffer source)
         {
-            int prior = destination.Count;
-            if (prior + source.Count > VulkanRecordedDescriptorSetIdentityBuffer.Capacity) { destination.Invalidate(); return false; }
-            destination.Initialize(prior + source.Count);
-            for (int i = 0; i < source.Count; i++) destination.Set(prior + i, source.Get(i));
+            if (!destination.IsComplete || !source.IsComplete)
+            {
+                destination.Invalidate();
+                return false;
+            }
+
+            for (int sourceIndex = 0; sourceIndex < source.Count; sourceIndex++)
+            {
+                VulkanRecordedDescriptorSetIdentity candidate =
+                    source.Get(sourceIndex);
+                bool duplicate = false;
+                for (int destinationIndex = 0;
+                     destinationIndex < destination.Count;
+                     destinationIndex++)
+                {
+                    VulkanRecordedDescriptorSetIdentity existing =
+                        destination.Get(destinationIndex);
+                    if (!existing.Matches(in candidate))
+                        continue;
+
+                    duplicate = true;
+                    break;
+                }
+
+                if (duplicate)
+                    continue;
+
+                int nextCount = destination.Count + 1;
+                if (nextCount > VulkanRecordedDescriptorSetIdentityBuffer.Capacity)
+                {
+                    destination.Invalidate();
+                    return false;
+                }
+
+                destination.Initialize(nextCount);
+                destination.Set(nextCount - 1, candidate);
+            }
+
             return destination.IsComplete;
         }
 
@@ -1909,6 +2063,7 @@ namespace XREngine.Rendering.Vulkan
                             context.PipelineInstance?.DebugName ??
                                 "<no pipeline>",
                             draws[relativeIndex].UniformSlot,
+                            frameDataAlreadyPrewarmed: true,
                             out VulkanPreparedMeshDrawState preparedState,
                             out string preparedStateReason))
                     {
@@ -1946,17 +2101,9 @@ namespace XREngine.Rendering.Vulkan
                         return false;
                     }
 
-                    int preparedIndex;
-                    try
-                    {
-                        preparedIndex = batch.PreparedFrame.SetMeshDraw(
-                            relativeIndex,
-                            preparedDraw);
-                    }
-                    catch
-                    {
-                        throw;
-                    }
+                    int preparedIndex = batch.PreparedFrame.SetMeshDraw(
+                        relativeIndex,
+                        preparedDraw);
 
                     preparedMeshDrawCount++;
                     draw.Draw.Renderer.TryTransitionPreparedDescriptorImagesForSampling(

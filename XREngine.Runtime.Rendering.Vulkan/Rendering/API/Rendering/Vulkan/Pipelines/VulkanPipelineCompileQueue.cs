@@ -123,12 +123,13 @@ internal sealed unsafe partial class VulkanPipelineManager
             }
 
             int workerCount = EnsureVulkanPipelineCompileWorkerCount();
-            // Do not materialize a backlog of native vkCreate* calls. A driver
-            // compile is not cancellable, and shutdown must keep the device alive
-            // until every started call returns. Limiting capacity to the active
-            // worker count bounds teardown latency and lets rejected variants retry
-            // after the current compile publishes.
-            int capacity = workerCount;
+            // Keep a small bounded backlog so one visibility scan can publish a
+            // useful cohort of cold variants. Capacity equal to the worker count
+            // made a dense view reject and rediscover hundreds of variants on
+            // successive frames; that repeated preparation dwarfed the actual
+            // sub-millisecond driver compiles. The bound still limits teardown,
+            // because native creation remains non-cancellable once started.
+            int capacity = Math.Clamp(workerCount * 8, 8, 64);
             int activeJobCount = CountActiveVulkanGraphicsPipelineCompileJobs();
             int totalJobCount = _vulkanGraphicsPipelineCompileJobs.Count;
             if (activeJobCount >= capacity)

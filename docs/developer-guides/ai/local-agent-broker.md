@@ -140,6 +140,14 @@ incomplete response with `max_output_tokens`, the terminal failure advises a
 later explicitly authorized run to use a higher output budget or lower
 reasoning/verbosity rather than spending beyond the original authorization.
 
+Broker server version `0.6.1` makes both omitted failure-prone budgets
+route-aware. Luna and Terra retain 4,096 tokens and 120 seconds. Sol receives
+16,384 tokens and 300 seconds, or 32,768 tokens and 600 seconds at
+`xhigh`/`max`, so its internal reasoning does not routinely exhaust either
+generic budget before returning evidence. The server resolves each value only
+when its corresponding budget property is absent; every explicit limit remains
+a hard authorization boundary and is never increased or retried automatically.
+
 The supported exact model IDs are `gpt-5.6-luna`, `gpt-5.6-terra`, and
 `gpt-5.6-sol`. Route advice implements the repository policy but has no launch
 side effect. Both the requested and provider-reported model must match the same

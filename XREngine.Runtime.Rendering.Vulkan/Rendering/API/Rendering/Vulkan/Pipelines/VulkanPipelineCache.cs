@@ -194,14 +194,9 @@ internal sealed unsafe partial class VulkanPipelineManager
                 cacheOutcome,
                 backgroundCompile,
                 elapsedMs);
-            if (backgroundCompile)
-            {
-                Debug.Vulkan(
-                    "[Vulkan] Background graphics pipeline cache probe completed (outcome={0}, elapsedMs={1:F2}, persistedBytes={2}).",
-                    cacheOutcome,
-                    elapsedMs,
-                    _pipelineCacheInitialDataBytes);
-            }
+            // Slow worker compiles are reported by CreateGraphicsPipelineOnWorker.
+            // Logging every successful cache probe made dense cold views serialize
+            // hundreds of sub-millisecond messages on the render diagnostics path.
         }
         return result;
     }

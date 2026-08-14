@@ -335,6 +335,78 @@ internal unsafe partial class VkMeshRenderer
 		return true;
 	}
 
+	/// <summary>
+	/// Materializes draw-slot-invariant descriptor allocations while the frame
+	/// loop is still inside its bounded mesh-resource preparation phase. Dynamic
+	/// frame-source descriptors and draw-slot-dependent layouts stay in the
+	/// authoritative command-recording phase.
+	/// </summary>
+	private bool TryPrewarmInvariantDescriptorAllocationForDrawEnqueue(
+		XRMaterial material,
+		ComputeDispatchSnapshot? bindingSnapshot,
+		out string reason)
+	{
+		reason = "descriptor allocation deferred until command recording";
+		if (_program is null)
+			return false;
+
+		IReadOnlyList<DescriptorBindingInfo> bindings =
+			_program.DescriptorBindings;
+		int setCount = _program.DescriptorSetLayouts.Count;
+		if (setCount == 0 || bindings.Count == 0)
+			return true;
+
+		uint activeSetMask = ComputeActiveDescriptorSetMask(
+			bindings,
+			setCount);
+		bool usesSharedMaterialTier = false;
+		if (BackendContext.Resources.Descriptors.Heap.ActiveBackend !=
+				EVulkanDescriptorBackend.DescriptorHeap &&
+			(activeSetMask &
+			 (1u << (int)VulkanMeshRenderingConventions.DescriptorSetMaterial)) != 0 &&
+			_program.DescriptorSetUsesUpdateAfterBind(
+				VulkanMeshRenderingConventions.DescriptorSetMaterial) &&
+			WrapperLookup.GetOrCreate(material, generateNow: true) is
+				VkMaterial materialObject &&
+			materialObject.TryGetMaterialDescriptorSet(
+				_program,
+				frameIndex: 0,
+				out _,
+				out _))
+		{
+			usesSharedMaterialTier = true;
+		}
+
+		if (!AreDescriptorBindingsDrawSlotInvariant(
+				bindings,
+				usesSharedMaterialTier,
+				BackendContext.Resources.Descriptors.Heap.ActiveBackend ==
+					EVulkanDescriptorBackend.DescriptorHeap) ||
+			SnapshotHasFrameSourceSampler(
+				bindingSnapshot,
+				RuntimeEngine.Rendering.State.CurrentRenderingPipeline) ||
+			DescriptorBindingsHaveFrameSourceSampler(
+				material,
+				bindings,
+				bindingSnapshot))
+		{
+			return true;
+		}
+
+		if (EnsureDescriptorSets(
+				material,
+				drawUniformSlot: 0,
+				frameIndex: 0,
+				bindingSnapshot))
+		{
+			reason = "descriptor allocation prewarmed";
+			return true;
+		}
+
+		reason = _lastDescriptorPreparationFailure;
+		return false;
+	}
+
 	private bool FailDescriptorPreparation(string reason)
 	{
 		_lastDescriptorPreparationFailure = reason;
