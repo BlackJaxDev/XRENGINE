@@ -94,6 +94,19 @@ internal sealed class VulkanCommandBufferTrackingBatch
         ImageAccessDeltas.Add(delta);
     }
 
+    /// <summary>
+    /// Advances the command-local lookup index after an executed secondary has
+    /// already merged its immutable journal directly into the primary journal.
+    /// No delta is appended because the merged journal is itself the submission
+    /// publication source.
+    /// </summary>
+    public void RecordExecutedSecondaryImageAccess(in VulkanImageAccessRangeDelta delta)
+    {
+        ImageAccessWriteCount++;
+        LayoutVersion++;
+        LatestImageAccessStates.Record(delta.ImageHandle, delta.Range, delta.State);
+    }
+
     public void RecordQueueOwnershipTransfer(in VulkanQueueOwnershipTransferRequirement requirement)
     {
         LayoutVersion++;

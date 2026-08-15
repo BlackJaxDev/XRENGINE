@@ -1324,18 +1324,66 @@ internal sealed partial class VulkanCommandRuntime
             imageBarriers);
     }
 
-    /// <summary>Single synchronization2 ABI boundary for frozen render-graph barrier ranges.</summary>
-    internal void CmdPipelineBarrier2Tracked(CommandBuffer commandBuffer, in DependencyInfo dependencyInfo)
+    /// <summary>
+    /// Single synchronization2 ABI boundary for frozen render-graph barrier ranges.
+    /// Publishes the same lifetime and command-local image state as the legacy
+    /// tracked barrier path before later commands consult that state.
+    /// </summary>
+    internal unsafe void CmdPipelineBarrier2Tracked(
+        CommandBuffer commandBuffer,
+        in DependencyInfo dependencyInfo)
     {
-        if (DeviceContext.InstanceApiVersion >= Vk.Version13)
+        for (uint index = 0; index < dependencyInfo.BufferMemoryBarrierCount; index++)
         {
-            Api.CmdPipelineBarrier2(commandBuffer, in dependencyInfo);
-            return;
+            PrimaryCommandEncoder.Track(
+                commandBuffer,
+                ObjectType.Buffer,
+                dependencyInfo.PBufferMemoryBarriers[index].Buffer.Handle);
+        }
+        for (uint index = 0; index < dependencyInfo.ImageMemoryBarrierCount; index++)
+        {
+            PrimaryCommandEncoder.Track(
+                commandBuffer,
+                ObjectType.Image,
+                dependencyInfo.PImageMemoryBarriers[index].Image.Handle);
         }
 
-        if (DeviceContext.ExtensionFunctions.KhrSynchronization2 is not { } synchronization2)
-            throw new InvalidOperationException("VK_KHR_synchronization2 command extension is unavailable.");
-        synchronization2.CmdPipelineBarrier2(commandBuffer, in dependencyInfo);
+        if (DeviceContext.InstanceApiVersion >= Vk.Version13)
+            Api.CmdPipelineBarrier2(commandBuffer, in dependencyInfo);
+        else
+        {
+            if (DeviceContext.ExtensionFunctions.KhrSynchronization2 is not { } synchronization2)
+                throw new InvalidOperationException("VK_KHR_synchronization2 command extension is unavailable.");
+            synchronization2.CmdPipelineBarrier2(commandBuffer, in dependencyInfo);
+        }
+
+        // Synchronization2 used to bypass the tracked encoder entirely. The
+        // native barrier was recorded, but the command-local lookup retained the
+        // preceding layout. Descriptor preparation, dynamic-rendering attachment
+        // setup, and blit setup could therefore record a duplicate transition in
+        // the same primary command buffer with an invalid oldLayout.
+        for (uint index = 0; index < dependencyInfo.ImageMemoryBarrierCount; index++)
+        {
+            ref ImageMemoryBarrier2 barrier =
+                ref dependencyInfo.PImageMemoryBarriers[index];
+            VulkanImageAccessState next =
+                VulkanCommandSynchronizationState.ResolveVulkanImageAccessState(
+                    barrier.NewLayout,
+                    barrier.SubresourceRange.AspectMask) with
+                {
+                    StageMask = barrier.DstStageMask,
+                    AccessMask = barrier.DstAccessMask,
+                    QueueFamilyIndex = barrier.DstQueueFamilyIndex,
+                    ResourceGeneration = ResourceRuntime.GetPublishedGeneration(
+                        ObjectType.Image,
+                        barrier.Image.Handle),
+                };
+            PrimaryCommandEncoder.RecordImageAccess(
+                commandBuffer,
+                barrier.Image,
+                in barrier.SubresourceRange,
+                in next);
+        }
     }
 
     internal unsafe void CmdCopyBufferTracked(

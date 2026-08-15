@@ -39,6 +39,7 @@ internal readonly record struct PendingMeshDraw(
     EMeshBillboardMode BillboardMode,
     uint TransformId,
     VulkanMeshDrawViewSnapshot? ViewSnapshot,
+    LayeredShadowCasterRelevance ShadowCasterRelevance,
     VkRenderProgram? PreparedProgram,
     string? PreparedProgramIdentity,
     ulong PreparedProgramLinkGeneration,
@@ -101,6 +102,8 @@ internal readonly record struct PendingMeshDraw(
     internal Vector3 CameraRight => ViewSnapshot?.CameraRight ?? Vector3.UnitX;
     internal int RenderAreaWidth => ViewSnapshot?.RenderAreaWidth ?? 0;
     internal int RenderAreaHeight => ViewSnapshot?.RenderAreaHeight ?? 0;
+    internal int DescriptorViewFamilyIdentity
+        => ViewSnapshot?.DescriptorViewFamilyIdentity ?? 0;
     internal LayeredShadowUniformState ShadowUniformState
         => ViewSnapshot?.ShadowUniformState ?? default;
 
@@ -135,35 +138,4 @@ internal readonly record struct PendingMeshDraw(
         init;
     }
 
-    /// <summary>
-    /// Captures the stable CPU-direct dynamic record written into the completed frame slot.
-    /// Binding identity remains in the immutable recording snapshot; these values may change
-    /// every frame without invalidating compatible recorded ranges.
-    /// </summary>
-    public VulkanCpuDirectDynamicData CaptureDynamicData(
-        uint viewId,
-        uint passMask,
-        uint skinningId = 0u,
-        uint blendshapeId = 0u,
-        uint editorId = 0u)
-    {
-        XRMaterial? material = MaterialOverride ?? Renderer.MeshRenderer.Material;
-        uint flags = (uint)BillboardMode & 0xFFu;
-        if (IsStereoPass)
-            flags |= 1u << 8;
-        if (UseUnjitteredProjection)
-            flags |= 1u << 9;
-
-        return new VulkanCpuDirectDynamicData(
-            ModelMatrix,
-            PreviousModelMatrix,
-            material is null ? 0u : unchecked((uint)material.GetHashCode()),
-            skinningId,
-            blendshapeId,
-            editorId,
-            flags,
-            passMask,
-            viewId,
-            TransformId);
-    }
 }

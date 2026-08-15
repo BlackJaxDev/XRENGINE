@@ -252,6 +252,8 @@ internal readonly record struct VulkanAutoUniformPublicationSnapshot(
         hash.Add(draw.Scissor.Extent.Width);
         hash.Add(draw.Scissor.Extent.Height);
         hash.Add(unchecked((uint)draw.ShadowUniformState.GetHashCode()));
+        hash.Add(draw.ShadowCasterRelevance.DirectionalCascadeTargetMask);
+        hash.Add(draw.ShadowCasterRelevance.PointLightShadowFaceMask);
         return hash.ToHash();
     }
 

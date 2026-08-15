@@ -677,7 +677,18 @@ namespace XREngine.Components.Lights
                     EnsureCascadeShadowResources();
                     break;
                 case nameof(CascadeShadowRenderMode):
-                    ClearCascadeAtlasSlots();
+                    // The selected writer does not change the mathematical atlas
+                    // contents. Dropping the published slots here leaves the atlas
+                    // manager free to reuse its unchanged content hash without a
+                    // redraw, so receivers can remain unbound until camera motion.
+                    // Preserve resident samples and rebuild only the command/caster
+                    // cache the next time a refresh is actually requested.
+                    InvalidateDirectionalCascadeAtlasVisibleSetCache(
+                        ShadowRequestSource.Desktop,
+                        MaxCascadeRenderCount);
+                    InvalidateDirectionalCascadeAtlasVisibleSetCache(
+                        ShadowRequestSource.Hmd,
+                        MaxCascadeRenderCount);
                     break;
                 case nameof(EnableCascadedShadows):
                     ClearDirectionalAtlasSlots();

@@ -619,9 +619,14 @@ internal unsafe partial class VkMeshRenderer
 	/// MeshRenderer.Material > pipeline invalid material > fallback.
 	/// </summary>
 	private XRMaterial ResolveMaterial(XRMaterial? localOverride, uint instances)
+		=> ResolveMaterialSelection(localOverride, instances).Material;
+
+	private ResolvedMeshRenderMaterial ResolveMaterialSelection(
+		XRMaterial? localOverride,
+		uint instances)
 		=> MeshRenderMaterialResolver.Resolve(
 			MeshRenderer,
 			localOverride,
 			instances,
-			RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.InvalidMaterial).Material;
+			RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.InvalidMaterial);
 }

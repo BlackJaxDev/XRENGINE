@@ -1484,7 +1484,7 @@ namespace XREngine.Scene
             out int shadowRecordIndex)
         {
             ShadowRequestKey key = light.CreateShadowRequestKey(EShadowProjectionType.SpotPrimary, 0, EShadowMapEncoding.Depth);
-            if (ShadowAtlas.PublishedFrameData.TryGetAllocationIndex(key, out shadowRecordIndex, out allocation))
+            if (ShadowAtlas.TryGetPublishedAllocationIndex(key, out shadowRecordIndex, out allocation))
                 return true;
 
             allocation = default;
@@ -1499,7 +1499,7 @@ namespace XREngine.Scene
             out int shadowRecordIndex)
         {
             ShadowRequestKey key = light.CreateShadowRequestKey(EShadowProjectionType.PointFace, faceIndex, EShadowMapEncoding.Depth);
-            if (ShadowAtlas.PublishedFrameData.TryGetAllocationIndex(key, out shadowRecordIndex, out allocation))
+            if (ShadowAtlas.TryGetPublishedAllocationIndex(key, out shadowRecordIndex, out allocation))
                 return true;
 
             allocation = default;
@@ -1544,7 +1544,7 @@ namespace XREngine.Scene
         {
             EShadowMapEncoding encoding = light.ResolveShadowMapFormat(preferredStorageFormat: null).Encoding;
             ShadowRequestKey key = light.CreateShadowRequestKey(EShadowProjectionType.DirectionalCascade, cascadeIndex, encoding, source: source);
-            if (ShadowAtlas.PublishedFrameData.TryGetAllocationIndex(key, out shadowRecordIndex, out allocation))
+            if (ShadowAtlas.TryGetPublishedAllocationIndex(key, out shadowRecordIndex, out allocation))
                 return true;
 
             allocation = default;
@@ -1559,7 +1559,7 @@ namespace XREngine.Scene
         {
             EShadowMapEncoding encoding = light.ResolveShadowMapFormat(preferredStorageFormat: null).Encoding;
             ShadowRequestKey key = light.CreateShadowRequestKey(EShadowProjectionType.DirectionalPrimary, 0, encoding);
-            if (ShadowAtlas.PublishedFrameData.TryGetAllocationIndex(key, out shadowRecordIndex, out allocation))
+            if (ShadowAtlas.TryGetPublishedAllocationIndex(key, out shadowRecordIndex, out allocation))
                 return true;
 
             allocation = default;

@@ -17,6 +17,7 @@ public sealed partial class ShadowAtlasManager
         public long ResidentBytes { get; private set; }
         public int LargestFreeRect { get; private set; }
         public long FreeTexelCount { get; private set; }
+        public ulong StorageRevision { get; private set; }
 
         public void BeginFrame()
         {
@@ -191,6 +192,9 @@ public sealed partial class ShadowAtlasManager
 
         public void ResetResources()
         {
+            bool hadResources = _pages.Count > 0 ||
+                _textureArray is not null ||
+                _rasterDepthTextureArray is not null;
             for (int i = 0; i < _pages.Count; i++)
                 _pages[i].FrameBuffer.Destroy();
 
@@ -205,6 +209,8 @@ public sealed partial class ShadowAtlasManager
             LargestFreeRect = 0;
             FreeTexelCount = 0L;
             LastFailureReason = SkipReason.None;
+            if (hadResources)
+                AdvanceStorageRevision();
         }
 
         private bool CanCreatePage(ShadowAtlasManagerSettings settings, long currentTotalResidentBytes, out SkipReason skipReason)
@@ -322,6 +328,7 @@ public sealed partial class ShadowAtlasManager
             oldDepth?.Destroy();
             _allocatedLayerCount = layerCapacity;
             ResidentBytes = checked(GetLayerBytes(settings.PageSize) * _allocatedLayerCount);
+            AdvanceStorageRevision();
         }
 
         private bool UsesDepthOnlyPages
@@ -340,13 +347,18 @@ public sealed partial class ShadowAtlasManager
 
         private static int CalculateLayerCapacity(ShadowAtlasManagerSettings settings, int requiredLayers)
         {
-            int maxLayers = GetPageLimit(settings);
-            int capacity = 1;
-            requiredLayers = Math.Clamp(requiredLayers, 1, maxLayers);
-            while (capacity < requiredLayers && capacity < maxLayers)
-                capacity <<= 1;
+            _ = requiredLayers;
+            // Allocate the configured backing array once. Growing a live array
+            // recreated its image/view and discarded every resident tile, while
+            // published allocations continued to advertise those tiles as valid.
+            return GetPageLimit(settings);
+        }
 
-            return Math.Min(capacity, maxLayers);
+        private void AdvanceStorageRevision()
+        {
+            unchecked { StorageRevision++; }
+            if (StorageRevision == 0u)
+                StorageRevision = 1u;
         }
 
         private static ShadowAtlasPageDescriptor CreateDescriptor(EShadowAtlasKind atlasKind, EShadowMapEncoding encoding, int pageIndex, uint pageSize)

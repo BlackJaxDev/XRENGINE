@@ -376,10 +376,6 @@ internal unsafe partial class VkMeshRenderer
 	/// </summary>
 	private void UpdateEngineUniformBuffersForDraw(int frameIndex, int drawUniformSlot, in PendingMeshDraw draw)
 	{
-		// Capture value-only CPU-direct state in the same bounded frame/timeline slot as
-		// the UBOs. A later pass-aware capture refines the conservative pass bit.
-		TryCaptureCpuDirectDynamicData(frameIndex, drawUniformSlot, draw, passMask: 1u);
-
 		if (_engineUniformBuffers.Count == 0)
 			return;
 
@@ -706,40 +702,6 @@ internal unsafe partial class VkMeshRenderer
 			mappedMemoryWrite.Dispose();
 			mappedWrite.Dispose();
 		}
-	}
-
-	private bool TryCaptureCpuDirectDynamicData(
-		int frameIndex,
-		int drawSlot,
-		in PendingMeshDraw draw,
-		uint passMask,
-		uint viewId = 0u)
-	{
-		VulkanMappedFrameArena? arena = BackendContext.Resources.MappedFrameArena;
-		if (arena is null)
-			return false;
-
-		uint size = checked((uint)VulkanCpuDirectDynamicData.Stride);
-		if (!arena.TryReserve(
-				this,
-				"$CpuDirectDynamicData",
-				isAutoUniform: false,
-				drawSlot,
-				size,
-				out VulkanMappedFrameReservation reservation) ||
-			!arena.TryGetSlice(frameIndex, reservation, out VulkanMappedFrameSlice slice))
-		{
-			return false;
-		}
-
-		uint stableRendererId = unchecked((uint)BindingId);
-		VulkanCpuDirectDynamicData dynamicData = draw.CaptureDynamicData(
-			viewId,
-			passMask,
-			Mesh?.HasSkinning == true ? stableRendererId : 0u,
-			Mesh?.HasBlendshapes == true ? stableRendererId : 0u,
-			draw.TransformId);
-		return arena.TryWriteIfChanged(slice, dynamicData);
 	}
 
 	private bool ValidateAutoUniformPayloadParity(

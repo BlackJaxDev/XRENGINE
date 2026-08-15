@@ -9,6 +9,7 @@ public static class MeshRenderMaterialResolver
 {
     private static readonly string[] DirectionalCascadeViewProjectionMatrixUniformNames = CreateDirectionalCascadeViewProjectionMatrixUniformNames();
     private static readonly string[] PointLightViewProjectionMatrixUniformNames = CreatePointLightViewProjectionMatrixUniformNames();
+    private static readonly string[] PointLightLegacyViewProjectionMatrixUniformNames = CreatePointLightLegacyViewProjectionMatrixUniformNames();
     private static XRMaterial? s_lastResortInvalidMaterial;
 
     public static ResolvedMeshRenderMaterial Resolve(
@@ -112,14 +113,61 @@ public static class MeshRenderMaterialResolver
 
     public static uint ResolveLayeredShadowInstanceCount(XRMaterial material, uint instances)
     {
-        uint directionalInstances = ResolveDirectionalCascadeLayeredInstanceCount(material, instances);
-        return ResolvePointLightLayeredInstanceCount(material, directionalInstances);
+        LayeredShadowUniformState shadowState = LayeredShadowUniformState.CaptureFromCurrentRenderingState();
+        return ResolveLayeredShadowInstanceCount(material, instances, in shadowState);
+    }
+
+    public static uint ResolveLayeredShadowInstanceCount(
+        XRMaterial material,
+        uint instances,
+        in LayeredShadowUniformState shadowState)
+    {
+        LayeredShadowCasterRelevance casterRelevance =
+            LayeredShadowCasterRelevance.FromPassState(shadowState);
+        return ResolveLayeredShadowInstanceCount(
+            material,
+            instances,
+            shadowState,
+            casterRelevance);
+    }
+
+    public static uint ResolveLayeredShadowInstanceCount(
+        XRMaterial material,
+        uint instances,
+        in LayeredShadowUniformState shadowState,
+        in LayeredShadowCasterRelevance casterRelevance)
+    {
+        uint directionalInstances = ResolveDirectionalCascadeLayeredInstanceCount(
+            material,
+            instances,
+            shadowState,
+            casterRelevance);
+        return ResolvePointLightLayeredInstanceCount(
+            material,
+            directionalInstances,
+            shadowState,
+            casterRelevance);
     }
 
     public static void ApplyShadowUniforms(XRRenderProgram program, XRMaterial material)
         => ApplyShadowUniforms(program, material, LayeredShadowUniformState.CaptureFromCurrentRenderingState());
 
     public static void ApplyShadowUniforms(XRRenderProgram program, XRMaterial material, in LayeredShadowUniformState shadowState)
+    {
+        LayeredShadowCasterRelevance casterRelevance =
+            LayeredShadowCasterRelevance.FromPassState(shadowState);
+        ApplyShadowUniforms(
+            program,
+            material,
+            shadowState,
+            casterRelevance);
+    }
+
+    public static void ApplyShadowUniforms(
+        XRRenderProgram program,
+        XRMaterial material,
+        in LayeredShadowUniformState shadowState,
+        in LayeredShadowCasterRelevance casterRelevance)
     {
         if (!shadowState.IsShadowPass)
             return;
@@ -140,8 +188,8 @@ public static class MeshRenderMaterialResolver
             selectedMaterialHandlerCalled = true;
         }
 
-        if (IsDirectionalCascadeInstancedMaterialKind(material.DirectionalCascadeShadowMaterialKind) &&
-            shadowState.DirectionalCascadeInstancedLayeredShadowPass)
+        if (IsDirectionalCascadeLayeredMaterialKind(material.DirectionalCascadeShadowMaterialKind) &&
+            shadowState.DirectionalCascadeLayeredShadowPass)
         {
             if (shadowBindingSource is null && material.HasSettingShadowUniformHandlers)
             {
@@ -153,13 +201,19 @@ public static class MeshRenderMaterialResolver
             // cascade matrices must come from the immutable state captured with this draw.
             // Reading the light's live cascade state here can pair a reused command packet
             // with matrices from a newer camera generation and make grouped cascades flicker.
-            SetDirectionalCascadeLayeredUniforms(program, shadowState);
+            SetDirectionalCascadeLayeredUniforms(
+                program,
+                shadowState,
+                casterRelevance);
         }
 
-        if (IsPointLightInstancedMaterialKind(material.PointShadowMaterialKind) &&
-            shadowState.PointLightInstancedLayeredShadowPass)
+        if (IsPointLightLayeredMaterialKind(material.PointShadowMaterialKind) &&
+            shadowState.PointLightLayeredShadowPass)
         {
-            SetPointLightLayeredUniforms(program, shadowState);
+            SetPointLightLayeredUniforms(
+                program,
+                shadowState,
+                casterRelevance);
         }
 
         if (!selectedMaterialHandlerCalled && material.HasSettingShadowUniformHandlers)
@@ -171,8 +225,16 @@ public static class MeshRenderMaterialResolver
     public static bool IsDirectionalCascadeInstancedMaterialKind(EDirectionalCascadeShadowMaterialKind kind)
         => kind is EDirectionalCascadeShadowMaterialKind.InstancedLayered or EDirectionalCascadeShadowMaterialKind.AtlasInstancedLayered;
 
+    public static bool IsDirectionalCascadeLayeredMaterialKind(EDirectionalCascadeShadowMaterialKind kind)
+        => IsDirectionalCascadeInstancedMaterialKind(kind) ||
+           IsDirectionalCascadeGeometryMaterialKind(kind);
+
     public static bool IsPointLightInstancedMaterialKind(EPointShadowMaterialKind kind)
         => kind is EPointShadowMaterialKind.InstancedLayered or EPointShadowMaterialKind.AtlasInstancedLayered;
+
+    public static bool IsPointLightLayeredMaterialKind(EPointShadowMaterialKind kind)
+        => IsPointLightInstancedMaterialKind(kind) ||
+           IsPointLightGeometryMaterialKind(kind);
 
     public static bool UsesPointLightShadowDepthOutput(XRMaterial material)
         => UsesPointLightShadowCubemap(material) || HasPointLightShadowDepthShader(material);
@@ -189,9 +251,6 @@ public static class MeshRenderMaterialResolver
             RuntimeEngine.Rendering.State.IsDirectionalCascadeInstancedLayeredShadowPass;
 
         if (instancedLayeredOverride && CanUseDirectionalCascadeInstancedMaterial(meshRenderer, shadowSourceMaterial, instances))
-            return globalMaterialOverride;
-
-        if (CanUseSharedUberShadowFallback(globalMaterialOverride, shadowSourceMaterial))
             return globalMaterialOverride;
 
         if (IsDirectionalCascadeGeometryMaterialKind(overrideKind) &&
@@ -227,9 +286,6 @@ public static class MeshRenderMaterialResolver
             if (shadowSourceMaterial?.CanUseSharedOpaqueShadowMaterial() != false)
                 return globalMaterialOverride;
 
-            if (CanUseSharedUberShadowFallback(globalMaterialOverride, shadowSourceMaterial))
-                return globalMaterialOverride;
-
             XRMaterial? instancedVariant = shadowSourceMaterial?.GetPointShadowCasterVariant(overrideKind);
             if (instancedVariant is not null)
             {
@@ -243,9 +299,6 @@ public static class MeshRenderMaterialResolver
         {
             return globalMaterialOverride;
         }
-
-        if (CanUseSharedUberShadowFallback(globalMaterialOverride, shadowSourceMaterial))
-            return globalMaterialOverride;
 
         XRMaterial? geometryVariant = shadowSourceMaterial?.GetPointShadowCasterVariant(GetPointLightGeometryFallbackKind(overrideKind));
         if (geometryVariant is not null)
@@ -286,14 +339,6 @@ public static class MeshRenderMaterialResolver
             return false;
 
         return shadowSourceMaterial?.CanUseSharedOpaqueShadowMaterial() != false;
-    }
-
-    private static bool CanUseSharedUberShadowFallback(XRMaterial globalMaterialOverride, XRMaterial? shadowSourceMaterial)
-    {
-        if (shadowSourceMaterial is null || ReferenceEquals(shadowSourceMaterial, globalMaterialOverride))
-            return false;
-
-        return shadowSourceMaterial.TryGetUberMaterialState(out _, out _);
     }
 
     private static bool IsPointLightGeometryMaterialKind(EPointShadowMaterialKind kind)
@@ -338,45 +383,75 @@ public static class MeshRenderMaterialResolver
               globalMaterialOverride.GeometryShaders.Count > 0));
     }
 
-    private static uint ResolveDirectionalCascadeLayeredInstanceCount(XRMaterial material, uint instances)
+    private static uint ResolveDirectionalCascadeLayeredInstanceCount(
+        XRMaterial material,
+        uint instances,
+        in LayeredShadowUniformState shadowState,
+        in LayeredShadowCasterRelevance casterRelevance)
     {
         if (!IsDirectionalCascadeInstancedMaterialKind(material.DirectionalCascadeShadowMaterialKind) ||
-            !RuntimeEngine.Rendering.State.IsDirectionalCascadeInstancedLayeredShadowPass)
+            !shadowState.DirectionalCascadeInstancedLayeredShadowPass)
         {
             return instances;
         }
 
-        int layerCount = Math.Clamp(RuntimeEngine.Rendering.State.DirectionalCascadeShadowLayerCount, 0, 8);
-        if (layerCount <= 1)
+        int layerCount = Math.Clamp(shadowState.DirectionalCascadeShadowLayerCount, 0, 8);
+        if (layerCount == 0)
+            return 0u;
+
+        int layerMask = casterRelevance.DirectionalCascadeTargetMask &
+            ((1 << layerCount) - 1);
+        int relevantLayerCount = BitOperations.PopCount((uint)layerMask);
+        if (relevantLayerCount == 0)
+            return 0u;
+        if (relevantLayerCount == 1)
             return instances;
 
-        ulong expanded = (ulong)instances * (ulong)layerCount;
+        ulong expanded = (ulong)instances * (ulong)relevantLayerCount;
         return expanded > uint.MaxValue ? uint.MaxValue : (uint)expanded;
     }
 
-    private static uint ResolvePointLightLayeredInstanceCount(XRMaterial material, uint instances)
+    private static uint ResolvePointLightLayeredInstanceCount(
+        XRMaterial material,
+        uint instances,
+        in LayeredShadowUniformState shadowState,
+        in LayeredShadowCasterRelevance casterRelevance)
     {
         if (!IsPointLightInstancedMaterialKind(material.PointShadowMaterialKind) ||
-            !RuntimeEngine.Rendering.State.IsPointLightInstancedLayeredShadowPass)
+            !shadowState.PointLightInstancedLayeredShadowPass)
         {
             return instances;
         }
 
-        int faceCount = Math.Clamp(RuntimeEngine.Rendering.State.PointLightShadowFaceCount, 0, 6);
-        if (faceCount <= 1)
+        int faceCount = Math.Clamp(shadowState.PointLightShadowFaceCount, 0, 6);
+        if (faceCount == 0)
+            return 0u;
+
+        int relevantFaceMask = casterRelevance.PointLightShadowFaceMask &
+            shadowState.PointLightShadowFaceMask;
+        int relevantFaceCount = BitOperations.PopCount((uint)relevantFaceMask);
+        if (relevantFaceCount == 0)
+            return 0u;
+        if (relevantFaceCount == 1)
             return instances;
 
-        ulong expanded = (ulong)instances * (ulong)faceCount;
+        ulong expanded = (ulong)instances * (ulong)relevantFaceCount;
         return expanded > uint.MaxValue ? uint.MaxValue : (uint)expanded;
     }
 
-    private static void SetDirectionalCascadeLayeredUniforms(XRRenderProgram program, in LayeredShadowUniformState shadowState)
+    private static void SetDirectionalCascadeLayeredUniforms(
+        XRRenderProgram program,
+        in LayeredShadowUniformState shadowState,
+        in LayeredShadowCasterRelevance casterRelevance)
     {
-        if (!shadowState.DirectionalCascadeInstancedLayeredShadowPass)
+        if (!shadowState.DirectionalCascadeLayeredShadowPass)
             return;
 
         int layerCount = Math.Clamp(shadowState.DirectionalCascadeShadowLayerCount, 0, DirectionalCascadeViewProjectionMatrixUniformNames.Length);
         program.Uniform("CascadeLayerCount", layerCount);
+        program.Uniform(
+            "DirectionalCascadeTargetMask",
+            casterRelevance.DirectionalCascadeTargetMask);
         for (int i = 0; i < layerCount; i++)
         {
             if (shadowState.TryGetDirectionalCascadeShadowMatrix(i, out Matrix4x4 matrix))
@@ -384,17 +459,26 @@ public static class MeshRenderMaterialResolver
         }
     }
 
-    private static void SetPointLightLayeredUniforms(XRRenderProgram program, in LayeredShadowUniformState shadowState)
+    private static void SetPointLightLayeredUniforms(
+        XRRenderProgram program,
+        in LayeredShadowUniformState shadowState,
+        in LayeredShadowCasterRelevance casterRelevance)
     {
-        if (!shadowState.PointLightInstancedLayeredShadowPass)
+        if (!shadowState.PointLightLayeredShadowPass)
             return;
 
         int faceCount = Math.Clamp(shadowState.PointLightShadowFaceCount, 0, PointLightViewProjectionMatrixUniformNames.Length);
         program.Uniform("PointShadowFaceCount", faceCount);
+        program.Uniform(
+            "PointShadowFaceMask",
+            casterRelevance.PointLightShadowFaceMask);
         for (int i = 0; i < faceCount; i++)
         {
             if (shadowState.TryGetPointLightShadowFaceMatrix(i, out Matrix4x4 matrix))
+            {
                 program.Uniform(PointLightViewProjectionMatrixUniformNames[i], matrix);
+                program.Uniform(PointLightLegacyViewProjectionMatrixUniformNames[i], matrix);
+            }
             if (shadowState.TryGetPointLightShadowFaceIndex(i, out int faceIndex))
                 program.Uniform($"PointShadowFaceIndices[{i}]", faceIndex);
         }
@@ -413,6 +497,14 @@ public static class MeshRenderMaterialResolver
         string[] names = new string[6];
         for (int i = 0; i < names.Length; i++)
             names[i] = $"PointShadowViewProjectionMatrices[{i}]";
+        return names;
+    }
+
+    private static string[] CreatePointLightLegacyViewProjectionMatrixUniformNames()
+    {
+        string[] names = new string[6];
+        for (int i = 0; i < names.Length; i++)
+            names[i] = $"ViewProjectionMatrices[{i}]";
         return names;
     }
 

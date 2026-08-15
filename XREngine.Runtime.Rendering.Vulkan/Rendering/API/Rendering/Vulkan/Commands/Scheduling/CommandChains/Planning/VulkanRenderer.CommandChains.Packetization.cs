@@ -1461,6 +1461,8 @@ internal sealed partial class VulkanCommandRuntime
         AddViewportScissorSignature(ref hash, draw);
         hash.Add(draw.PreparedProgramIdentity); hash.Add(draw.PreparedProgram?.BindingId ?? 0u);
         hash.Add(ComputeShadowCommandChainStructuralSignature(draw.ShadowUniformState));
+        hash.Add(draw.ShadowCasterRelevance.DirectionalCascadeTargetMask);
+        hash.Add(draw.ShadowCasterRelevance.PointLightShadowFaceMask);
         return hash.ToHash();
     }
 
