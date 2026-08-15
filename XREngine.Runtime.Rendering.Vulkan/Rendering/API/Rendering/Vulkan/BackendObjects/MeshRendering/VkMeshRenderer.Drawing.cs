@@ -92,6 +92,7 @@ internal unsafe partial class VkMeshRenderer
 		int drawUniformSlot,
 		int frameDataImageIndex)
 	{
+		ActivateDrawMaterializationSnapshot(draw);
 		var material = draw.MaterialOverride ?? ResolveMaterial(null, draw.Instances);
 		string prepareReason;
 		bool preparedForRecord;
@@ -422,6 +423,8 @@ internal unsafe partial class VkMeshRenderer
 		recordingState = default;
 		ArgumentNullException.ThrowIfNull(preparedFrame);
 		frameIndex = Math.Max(frameIndex, 0);
+		ActivateDrawMaterializationSnapshot(draw);
+		XRMaterial material = draw.MaterialOverride ?? ResolveMaterial(null, draw.Instances);
 		if (!frameDataAlreadyPrewarmed &&
 			!TryPrewarmFrameDataForRecordingNoLock(
 				draw,
@@ -431,8 +434,16 @@ internal unsafe partial class VkMeshRenderer
 		{
 			return false;
 		}
-
-		XRMaterial material = draw.MaterialOverride ?? ResolveMaterial(null, draw.Instances);
+		if (frameDataAlreadyPrewarmed &&
+			!TryReactivatePrewarmedDrawForRecordingNoLock(
+				draw,
+				material,
+				drawUniformSlot,
+				frameIndex,
+				out reason))
+		{
+			return false;
+		}
 		if (_program is not { } program)
 		{
 			reason = "program missing after mesh draw preparation";
@@ -605,12 +616,6 @@ internal unsafe partial class VkMeshRenderer
 			{
 				return false;
 			}
-			TryCaptureCpuDirectDynamicData(
-				frameIndex,
-				drawUniformSlot,
-				draw,
-				ResolvePassMask(passIndex));
-
 			DescriptorSet[]? descriptorSets = null;
 			DescriptorHeapPushDataPayload? descriptorHeapPushData = null;
 			int preparedDescriptorHeapPushDwordCount = 0;
@@ -1292,6 +1297,7 @@ internal unsafe partial class VkMeshRenderer
 	{
 		recordingState = default;
 		reason = "Ready";
+		ActivateDrawMaterializationSnapshot(draw);
 
         var material = draw.MaterialOverride ?? ResolveMaterial(null, draw.Instances);
         bool preparedForRecord = draw.PreparedProgram is { } preparedProgram
@@ -1347,7 +1353,6 @@ internal unsafe partial class VkMeshRenderer
 				int descriptorSlotIndex = ResolveDescriptorFrameIndex(frameIndex, _descriptorSets.Length);
 				UpdateEngineUniformBuffersForDraw(frameIndex, drawUniformSlot, draw);
 				UpdateAutoUniformBuffersForDraw(frameIndex, drawUniformSlot, material, draw);
-				TryCaptureCpuDirectDynamicData(frameIndex, drawUniformSlot, draw, ResolvePassMask(passIndex));
 
 				descriptorSets = _descriptorSets[descriptorSlotIndex];
 				if (descriptorSets.Length == 0)
@@ -1541,7 +1546,11 @@ internal unsafe partial class VkMeshRenderer
 		_program?.ClearBindings();
 		CommandOperations.SetMaterialUniforms(material, programData, _program, draw.ShadowUniformState);
 		MeshRenderer.OnSettingUniforms(programData, programData);
-		MeshRenderMaterialResolver.ApplyShadowUniforms(programData, material, draw.ShadowUniformState);
+		MeshRenderMaterialResolver.ApplyShadowUniforms(
+			programData,
+			material,
+			draw.ShadowUniformState,
+			draw.ShadowCasterRelevance);
 	}
 
 	private static bool IsTriangleClassTopology(PrimitiveTopology topology)
@@ -1603,7 +1612,6 @@ internal unsafe partial class VkMeshRenderer
 		string programName = _program.Data?.Name ?? "UnnamedProgram";
 		string materialName = material.Name ?? "UnnamedMaterial";
 		int imageIndex = Math.Max(frameDataImageIndex, 0);
-		TryCaptureCpuDirectDynamicData(imageIndex, drawUniformSlot, draw, ResolvePassMask(passIndex));
 
 		bool requiresDescriptors = _program.DescriptorSetLayouts.Count > 0 && _program.DescriptorBindings.Count > 0;
 		if (!requiresDescriptors)
@@ -1658,7 +1666,6 @@ internal unsafe partial class VkMeshRenderer
 
 		UpdateEngineUniformBuffersForDraw(imageIndex, drawUniformSlot, draw);
 		UpdateAutoUniformBuffersForDraw(imageIndex, drawUniformSlot, material, draw);
-		TryCaptureCpuDirectDynamicData(imageIndex, drawUniformSlot, draw, ResolvePassMask(passIndex));
 
 		DescriptorSet[] sets = _descriptorSets[descriptorSlotIndex];
 		if (sets.Length == 0)
@@ -1708,9 +1715,6 @@ internal unsafe partial class VkMeshRenderer
 			imageIndex,
 			drawUniformSlot);
 	}
-
-	private static uint ResolvePassMask(int passIndex)
-		=> (uint)passIndex < 32u ? 1u << passIndex : 1u;
 
 	private bool BindMeshDescriptorSets(
 		CommandBuffer commandBuffer,
@@ -1946,6 +1950,7 @@ internal unsafe partial class VkMeshRenderer
 		out string reason)
 	{
 		reason = "Ready";
+		ActivateDrawMaterializationSnapshot(draw);
 		XRMaterial material = draw.MaterialOverride ?? ResolveMaterial(null, draw.Instances);
 
 		if (!IsActive)
@@ -2032,11 +2037,91 @@ internal unsafe partial class VkMeshRenderer
 		return true;
 	}
 
+	/// <summary>
+	/// Re-selects the exact program and descriptor allocation for a draw after
+	/// the frame-wide prewarm pass. A mesh renderer can participate in scene,
+	/// directional, point, and spot passes in one frame, so its mutable active
+	/// program/allocation cannot stand in for an earlier operation.
+	/// </summary>
+	private bool TryReactivatePrewarmedDrawForRecordingNoLock(
+		in PendingMeshDraw draw,
+		XRMaterial material,
+		int drawUniformSlot,
+		int frameIndex,
+		out string reason)
+	{
+		reason = "Ready";
+		if (draw.PreparedProgram is { } preparedProgram)
+		{
+			if (!ActivateCapturedProgram(
+					material,
+					preparedProgram,
+					draw.PreparedProgramIdentity,
+					draw.PreparedProgramLinkGeneration))
+			{
+				reason = "captured program pending after frame-wide prewarm";
+				return false;
+			}
+		}
+		else if (!EnsureProgram(material))
+		{
+			reason = "program pending after frame-wide prewarm";
+			return false;
+		}
+
+		ApplyScopedProgramBindingsForPreparation(material);
+		if (draw.ProgramBindingSnapshot is { } programBindingSnapshot)
+			_program?.ApplyBindingSnapshot(programBindingSnapshot);
+
+		if (!EnsureDescriptorSets(
+				material,
+				drawUniformSlot,
+				frameIndex,
+				draw.ProgramBindingSnapshot))
+		{
+			reason =
+				$"descriptor allocation did not reactivate for captured program ({_lastDescriptorPreparationFailure})";
+			return false;
+		}
+
+		if (!TryRefreshFrameSourceDescriptorSetsForDraw(
+				frameIndex,
+				drawUniformSlot,
+				material,
+				draw.ProgramBindingSnapshot,
+				default,
+				out string frameSourceReason))
+		{
+			reason =
+				$"frame-source descriptors did not reactivate for captured program: {frameSourceReason}";
+			return false;
+		}
+
+		return true;
+	}
+
+	private void ActivateDrawMaterializationSnapshot(in PendingMeshDraw draw)
+	{
+		int descriptorViewFamilyIdentity =
+			draw.DescriptorViewFamilyIdentity;
+		if (_materializationSnapshot.DescriptorViewFamilyIdentity ==
+			descriptorViewFamilyIdentity)
+		{
+			return;
+		}
+
+		_materializationSnapshot = _materializationSnapshot with
+		{
+			DescriptorViewFamilyIdentity = descriptorViewFamilyIdentity,
+		};
+	}
+
 	private bool TryPrepareFrameDataStructuresForRecordingNoLock(
 		in PendingMeshDraw draw,
 		out string reason)
 	{
 		reason = "Ready";
+		ActivateDrawMaterializationSnapshot(draw);
 		XRMaterial material = draw.MaterialOverride ?? ResolveMaterial(null, draw.Instances);
 
 		if (!IsActive)

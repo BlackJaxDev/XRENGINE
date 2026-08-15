@@ -364,13 +364,21 @@ public sealed partial class XRRenderPipelineInstance
             return new BoundingRectangle(0, 0, (int)target.Width, (int)target.Height);
         }
 
-        private int _directionalCascadeLayeredShadowPassDepth;
+        private const byte DirectionalLayeredShadowScopeKind = 1;
+        private const byte PointLayeredShadowScopeKind = 2;
+        private const int MaxLayeredShadowScopeDepth = 8;
+        private readonly LayeredShadowUniformState[] _layeredShadowScopeSnapshots =
+            new LayeredShadowUniformState[MaxLayeredShadowScopeDepth];
+        private readonly byte[] _layeredShadowScopeKinds =
+            new byte[MaxLayeredShadowScopeDepth];
+        private int _layeredShadowScopeDepth;
+
         public StateObject PushDirectionalCascadeLayeredShadowPass(
             bool instancedLayered,
             ReadOnlySpan<Matrix4x4> cascadeMatrices,
             bool atlasGrouped = false)
         {
-            _directionalCascadeLayeredShadowPassDepth++;
+            PushLayeredShadowScope(DirectionalLayeredShadowScopeKind);
             DirectionalCascadeLayeredShadowPass = true;
             DirectionalCascadeInstancedLayeredShadowPass = instancedLayered;
             DirectionalCascadeAtlasGroupedShadowPass = atlasGrouped;
@@ -398,28 +406,15 @@ public sealed partial class XRRenderPipelineInstance
         }
 
         private void PopDirectionalCascadeLayeredShadowPass()
-        {
-            _directionalCascadeLayeredShadowPassDepth--;
-            if (_directionalCascadeLayeredShadowPassDepth > 0)
-                return;
+            => PopLayeredShadowScope(DirectionalLayeredShadowScopeKind);
 
-            _directionalCascadeLayeredShadowPassDepth = 0;
-            DirectionalCascadeLayeredShadowPass = false;
-            DirectionalCascadeInstancedLayeredShadowPass = false;
-            DirectionalCascadeAtlasGroupedShadowPass = false;
-            DirectionalCascadeShadowLayerCount = 0;
-            Array.Clear(_directionalCascadeShadowMatrices);
-            IncrementScopedBindingRevision();
-        }
-
-        private int _pointLightLayeredShadowPassDepth;
         public StateObject PushPointLightLayeredShadowPass(
             bool instancedLayered,
             ReadOnlySpan<Matrix4x4> faceMatrices,
             ReadOnlySpan<int> faceIndices = default,
             bool atlasGrouped = false)
         {
-            _pointLightLayeredShadowPassDepth++;
+            PushLayeredShadowScope(PointLayeredShadowScopeKind);
             PointLightLayeredShadowPass = true;
             PointLightInstancedLayeredShadowPass = instancedLayered;
             PointLightAtlasGroupedShadowPass = atlasGrouped;
@@ -458,19 +453,94 @@ public sealed partial class XRRenderPipelineInstance
         }
 
         private void PopPointLightLayeredShadowPass()
-        {
-            _pointLightLayeredShadowPassDepth--;
-            if (_pointLightLayeredShadowPassDepth > 0)
-                return;
+            => PopLayeredShadowScope(PointLayeredShadowScopeKind);
 
-            _pointLightLayeredShadowPassDepth = 0;
-            PointLightLayeredShadowPass = false;
-            PointLightInstancedLayeredShadowPass = false;
-            PointLightAtlasGroupedShadowPass = false;
-            PointLightShadowFaceCount = 0;
+        private void PushLayeredShadowScope(byte scopeKind)
+        {
+            if ((uint)_layeredShadowScopeDepth >= (uint)_layeredShadowScopeSnapshots.Length)
+            {
+                throw new InvalidOperationException(
+                    $"Layered shadow pass nesting exceeds the supported depth of {MaxLayeredShadowScopeDepth}.");
+            }
+
+            int snapshotIndex = _layeredShadowScopeDepth++;
+            _layeredShadowScopeSnapshots[snapshotIndex] =
+                LayeredShadowUniformState.CaptureFromRenderingState(this);
+            _layeredShadowScopeKinds[snapshotIndex] = scopeKind;
+        }
+
+        private void PopLayeredShadowScope(byte expectedScopeKind)
+        {
+            if (_layeredShadowScopeDepth <= 0)
+                throw new InvalidOperationException("Layered shadow pass scope stack underflow.");
+
+            int snapshotIndex = _layeredShadowScopeDepth - 1;
+            byte actualScopeKind = _layeredShadowScopeKinds[snapshotIndex];
+            if (actualScopeKind != expectedScopeKind)
+            {
+                throw new InvalidOperationException(
+                    "Layered shadow pass scopes must be disposed in last-in, first-out order.");
+            }
+
+            LayeredShadowUniformState snapshot =
+                _layeredShadowScopeSnapshots[snapshotIndex];
+            _layeredShadowScopeSnapshots[snapshotIndex] = default;
+            _layeredShadowScopeKinds[snapshotIndex] = 0;
+            _layeredShadowScopeDepth = snapshotIndex;
+
+            RestoreLayeredShadowScope(snapshot);
+            IncrementScopedBindingRevision();
+        }
+
+        private void RestoreLayeredShadowScope(
+            in LayeredShadowUniformState snapshot)
+        {
+            DirectionalCascadeLayeredShadowPass =
+                snapshot.DirectionalCascadeLayeredShadowPass;
+            DirectionalCascadeInstancedLayeredShadowPass =
+                snapshot.DirectionalCascadeInstancedLayeredShadowPass;
+            DirectionalCascadeAtlasGroupedShadowPass =
+                snapshot.DirectionalCascadeAtlasGroupedShadowPass;
+            DirectionalCascadeShadowLayerCount = Math.Clamp(
+                snapshot.DirectionalCascadeShadowLayerCount,
+                0,
+                _directionalCascadeShadowMatrices.Length);
+            Array.Clear(_directionalCascadeShadowMatrices);
+            for (int i = 0; i < DirectionalCascadeShadowLayerCount; i++)
+            {
+                if (snapshot.TryGetDirectionalCascadeShadowMatrix(
+                        i,
+                        out Matrix4x4 matrix))
+                {
+                    _directionalCascadeShadowMatrices[i] = matrix;
+                }
+            }
+
+            PointLightLayeredShadowPass = snapshot.PointLightLayeredShadowPass;
+            PointLightInstancedLayeredShadowPass =
+                snapshot.PointLightInstancedLayeredShadowPass;
+            PointLightAtlasGroupedShadowPass =
+                snapshot.PointLightAtlasGroupedShadowPass;
+            PointLightShadowFaceCount = Math.Clamp(
+                snapshot.PointLightShadowFaceCount,
+                0,
+                _pointLightShadowFaceMatrices.Length);
             Array.Clear(_pointLightShadowFaceMatrices);
             Array.Clear(_pointLightShadowFaceIndices);
-            IncrementScopedBindingRevision();
+            for (int i = 0; i < PointLightShadowFaceCount; i++)
+            {
+                if (snapshot.TryGetPointLightShadowFaceMatrix(
+                        i,
+                        out Matrix4x4 matrix))
+                {
+                    _pointLightShadowFaceMatrices[i] = matrix;
+                }
+
+                _pointLightShadowFaceIndices[i] =
+                    snapshot.TryGetPointLightShadowFaceIndex(i, out int faceIndex)
+                        ? faceIndex
+                        : i;
+            }
         }
 
         public XRCamera? RenderingCamera

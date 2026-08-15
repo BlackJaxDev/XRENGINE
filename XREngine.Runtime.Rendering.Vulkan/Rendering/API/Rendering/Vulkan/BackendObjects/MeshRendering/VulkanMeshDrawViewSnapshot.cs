@@ -11,6 +11,8 @@ namespace XREngine.Rendering.Vulkan;
 /// </summary>
 internal sealed class VulkanMeshDrawViewSnapshot
 {
+    private static long s_nextPacketId;
+
     [ThreadStatic]
     private static VulkanMeshDrawViewSnapshot? s_cachedSnapshot;
     [ThreadStatic]
@@ -34,6 +36,8 @@ internal sealed class VulkanMeshDrawViewSnapshot
     [ThreadStatic]
     private static int s_cachedRenderAreaHeight;
     [ThreadStatic]
+    private static int s_cachedDescriptorViewFamilyIdentity;
+    [ThreadStatic]
     private static bool s_cachedIsStereoPass;
     [ThreadStatic]
     private static bool s_cachedUseUnjitteredProjection;
@@ -42,13 +46,24 @@ internal sealed class VulkanMeshDrawViewSnapshot
     [ThreadStatic]
     private static bool s_cachedDirectionalLayeredShadowPass;
     [ThreadStatic]
+    private static bool s_cachedDirectionalInstancedLayeredShadowPass;
+    [ThreadStatic]
+    private static bool s_cachedDirectionalAtlasGroupedShadowPass;
+    [ThreadStatic]
     private static int s_cachedDirectionalShadowLayerCount;
     [ThreadStatic]
     private static bool s_cachedPointLayeredShadowPass;
     [ThreadStatic]
+    private static bool s_cachedPointInstancedLayeredShadowPass;
+    [ThreadStatic]
+    private static bool s_cachedPointAtlasGroupedShadowPass;
+    [ThreadStatic]
     private static int s_cachedPointShadowFaceCount;
 
     private VulkanMeshDrawViewSnapshot(
+        ulong packetId,
+        ulong renderFrameId,
+        ulong scopedBindingRevision,
         XRCamera? camera,
         XRCamera? rightEyeCamera,
         bool isStereoPass,
@@ -79,8 +94,12 @@ internal sealed class VulkanMeshDrawViewSnapshot
         Vector3 cameraRight,
         int renderAreaWidth,
         int renderAreaHeight,
+        int descriptorViewFamilyIdentity,
         in LayeredShadowUniformState shadowUniformState)
     {
+        PacketId = packetId;
+        RenderFrameId = renderFrameId;
+        ScopedBindingRevision = scopedBindingRevision;
         Camera = camera;
         RightEyeCamera = rightEyeCamera;
         IsStereoPass = isStereoPass;
@@ -115,9 +134,13 @@ internal sealed class VulkanMeshDrawViewSnapshot
         CameraRight = cameraRight;
         RenderAreaWidth = renderAreaWidth;
         RenderAreaHeight = renderAreaHeight;
+        DescriptorViewFamilyIdentity = descriptorViewFamilyIdentity;
         ShadowUniformState = shadowUniformState;
     }
 
+    internal ulong PacketId { get; }
+    internal ulong RenderFrameId { get; }
+    internal ulong ScopedBindingRevision { get; }
     internal XRCamera? Camera { get; }
     internal XRCamera? RightEyeCamera { get; }
     internal bool IsStereoPass { get; }
@@ -148,6 +171,7 @@ internal sealed class VulkanMeshDrawViewSnapshot
     internal Vector3 CameraRight { get; }
     internal int RenderAreaWidth { get; }
     internal int RenderAreaHeight { get; }
+    internal int DescriptorViewFamilyIdentity { get; }
     internal LayeredShadowUniformState ShadowUniformState { get; }
 
     /// <summary>
@@ -173,6 +197,10 @@ internal sealed class VulkanMeshDrawViewSnapshot
         var renderArea = RuntimeEngine.Rendering.State.RenderArea;
         int renderAreaWidth = renderArea.Width;
         int renderAreaHeight = renderArea.Height;
+        int descriptorViewFamilyIdentity =
+            producer.Context.OutputTargetIdentity != 0
+                ? producer.Context.OutputTargetIdentity
+                : producer.Context.ViewportIdentity;
         if (renderAreaWidth <= 0 || renderAreaHeight <= 0)
         {
             if (target is not null)
@@ -199,17 +227,28 @@ internal sealed class VulkanMeshDrawViewSnapshot
             s_cachedPassIndex == passIndex &&
             s_cachedRenderAreaWidth == renderAreaWidth &&
             s_cachedRenderAreaHeight == renderAreaHeight &&
+            s_cachedDescriptorViewFamilyIdentity ==
+                descriptorViewFamilyIdentity &&
             s_cachedIsStereoPass == isStereoPass &&
             s_cachedUseUnjitteredProjection ==
                 useUnjitteredProjection &&
             s_cachedIsShadowPass == shadowUniformState.IsShadowPass &&
             s_cachedDirectionalLayeredShadowPass ==
+                shadowUniformState.DirectionalCascadeLayeredShadowPass &&
+            s_cachedDirectionalInstancedLayeredShadowPass ==
                 shadowUniformState
                     .DirectionalCascadeInstancedLayeredShadowPass &&
+            s_cachedDirectionalAtlasGroupedShadowPass ==
+                shadowUniformState
+                    .DirectionalCascadeAtlasGroupedShadowPass &&
             s_cachedDirectionalShadowLayerCount ==
                 shadowUniformState.DirectionalCascadeShadowLayerCount &&
             s_cachedPointLayeredShadowPass ==
+                shadowUniformState.PointLightLayeredShadowPass &&
+            s_cachedPointInstancedLayeredShadowPass ==
                 shadowUniformState.PointLightInstancedLayeredShadowPass &&
+            s_cachedPointAtlasGroupedShadowPass ==
+                shadowUniformState.PointLightAtlasGroupedShadowPass &&
             s_cachedPointShadowFaceCount ==
                 shadowUniformState.PointLightShadowFaceCount)
         {
@@ -300,6 +339,9 @@ internal sealed class VulkanMeshDrawViewSnapshot
         // shared by every draw, replacing hundreds of multi-kilobyte copies.
         // Frame-slot ownership or pooling can remove this final bounded allocation.
         VulkanMeshDrawViewSnapshot snapshot = new(
+            NextPacketId(),
+            renderFrameId,
+            scopedBindingRevision,
             camera,
             rightEyeCamera,
             isStereoPass,
@@ -330,6 +372,7 @@ internal sealed class VulkanMeshDrawViewSnapshot
             camera?.Transform.RenderRight ?? Vector3.UnitX,
             renderAreaWidth,
             renderAreaHeight,
+            descriptorViewFamilyIdentity,
             shadowUniformState);
         s_cachedSnapshot = snapshot;
         s_cachedRenderFrameId = renderFrameId;
@@ -343,17 +386,37 @@ internal sealed class VulkanMeshDrawViewSnapshot
         s_cachedPassIndex = passIndex;
         s_cachedRenderAreaWidth = renderAreaWidth;
         s_cachedRenderAreaHeight = renderAreaHeight;
+        s_cachedDescriptorViewFamilyIdentity =
+            descriptorViewFamilyIdentity;
         s_cachedIsStereoPass = isStereoPass;
         s_cachedUseUnjitteredProjection = useUnjitteredProjection;
         s_cachedIsShadowPass = shadowUniformState.IsShadowPass;
         s_cachedDirectionalLayeredShadowPass = shadowUniformState
+            .DirectionalCascadeLayeredShadowPass;
+        s_cachedDirectionalInstancedLayeredShadowPass = shadowUniformState
             .DirectionalCascadeInstancedLayeredShadowPass;
+        s_cachedDirectionalAtlasGroupedShadowPass = shadowUniformState
+            .DirectionalCascadeAtlasGroupedShadowPass;
         s_cachedDirectionalShadowLayerCount =
             shadowUniformState.DirectionalCascadeShadowLayerCount;
         s_cachedPointLayeredShadowPass =
+            shadowUniformState.PointLightLayeredShadowPass;
+        s_cachedPointInstancedLayeredShadowPass =
             shadowUniformState.PointLightInstancedLayeredShadowPass;
+        s_cachedPointAtlasGroupedShadowPass =
+            shadowUniformState.PointLightAtlasGroupedShadowPass;
         s_cachedPointShadowFaceCount =
             shadowUniformState.PointLightShadowFaceCount;
         return snapshot;
+    }
+
+    private static ulong NextPacketId()
+    {
+        long next = Interlocked.Increment(ref s_nextPacketId);
+        if (next > 0)
+            return unchecked((ulong)next);
+
+        Interlocked.Exchange(ref s_nextPacketId, 1);
+        return 1UL;
     }
 }

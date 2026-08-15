@@ -11,6 +11,7 @@ layout (location = 20) in vec3 InFragPosLocal[];
 uniform int PointShadowFaceCount;
 uniform mat4 PointShadowViewProjectionMatrices[6];
 uniform int PointShadowFaceIndices[6];
+uniform int PointShadowFaceMask;
 
 layout (location = 0) out vec3 FragPos;
 layout (location = 1) out vec3 FragNorm;
@@ -23,6 +24,10 @@ void main()
     int faceCount = clamp(PointShadowFaceCount, 0, 6);
     for (int faceSlot = 0; faceSlot < faceCount; ++faceSlot)
     {
+        int face = clamp(PointShadowFaceIndices[faceSlot], 0, 5);
+        if ((PointShadowFaceMask & (1 << face)) == 0)
+            continue;
+
         gl_ViewportIndex = faceSlot;
         for (int i = 0; i < 3; ++i)
         {

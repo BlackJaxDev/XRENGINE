@@ -201,9 +201,22 @@ internal sealed partial class VulkanCommandRuntime
                 unchecked((ulong)primary.Handle),
                 out VulkanCommandBufferTrackingBatch? primaryBatch))
         {
-            _ = FlushImageAccessBatch(primary, primaryBatch, telemetry);
+            lock (primaryBatch)
+            {
+                _ = FlushImageAccessBatch(primary, primaryBatch, telemetry);
+                MergeSecondaryImageStateCore(primary, secondary, primaryBatch);
+            }
+            return;
         }
 
+        MergeSecondaryImageStateCore(primary, secondary, null);
+    }
+
+    private void MergeSecondaryImageStateCore(
+        CommandBuffer primary,
+        CommandBuffer secondary,
+        VulkanCommandBufferTrackingBatch? primaryBatch)
+    {
         lock (Synchronization._vulkanImageLayoutLock)
         {
             if (!Synchronization._recordedImageLayoutsByCommandBuffer.TryGetValue(
@@ -223,7 +236,7 @@ internal sealed partial class VulkanCommandRuntime
             {
                 return;
             }
-            MergeSecondaryImageState(primaryState, secondaryState);
+            MergeSecondaryImageState(primaryState, secondaryState, primaryBatch);
             primaryState.RefreshTouchedSubresources();
         }
     }
@@ -246,9 +259,25 @@ internal sealed partial class VulkanCommandRuntime
                 unchecked((ulong)primary.Handle),
                 out VulkanCommandBufferTrackingBatch? primaryBatch))
         {
-            _ = FlushImageAccessBatch(primary, primaryBatch, telemetry);
+            // Match command-finalization's batch -> image-journal lock order.
+            // Resource retirement may inspect this recording concurrently, so
+            // the secondary merge cannot mutate the batch lookup index unlocked.
+            lock (primaryBatch)
+            {
+                _ = FlushImageAccessBatch(primary, primaryBatch, telemetry);
+                MergeSecondaryImageStatesCore(primary, secondaries, primaryBatch);
+            }
+            return;
         }
 
+        MergeSecondaryImageStatesCore(primary, secondaries, null);
+    }
+
+    private void MergeSecondaryImageStatesCore(
+        CommandBuffer primary,
+        ReadOnlySpan<CommandBuffer> secondaries,
+        VulkanCommandBufferTrackingBatch? primaryBatch)
+    {
         lock (Synchronization._vulkanImageLayoutLock)
         {
             if (!Synchronization._recordedImageLayoutsByCommandBuffer.TryGetValue(
@@ -276,7 +305,7 @@ internal sealed partial class VulkanCommandRuntime
                     continue;
                 }
 
-                MergeSecondaryImageState(primaryState, secondaryState);
+                MergeSecondaryImageState(primaryState, secondaryState, primaryBatch);
                 merged = true;
             }
 
@@ -287,7 +316,8 @@ internal sealed partial class VulkanCommandRuntime
 
     private static void MergeSecondaryImageState(
         VulkanRecordedImageLayoutState primaryState,
-        VulkanRecordedImageLayoutState secondaryState)
+        VulkanRecordedImageLayoutState secondaryState,
+        VulkanCommandBufferTrackingBatch? primaryBatch)
     {
         if (secondaryState.EntryStateIncomplete)
         {
@@ -308,6 +338,22 @@ internal sealed partial class VulkanCommandRuntime
                  secondaryState.TouchedSubresources)
         {
             primaryState.Subresources[pair.Key] = pair.Value;
+            if (primaryBatch is not null)
+            {
+                ImageSubresourceRange range = new()
+                {
+                    AspectMask = pair.Key.Aspect,
+                    BaseMipLevel = pair.Key.MipLevel,
+                    LevelCount = 1,
+                    BaseArrayLayer = pair.Key.ArrayLayer,
+                    LayerCount = 1,
+                };
+                primaryBatch.RecordExecutedSecondaryImageAccess(
+                    new VulkanImageAccessRangeDelta(
+                        pair.Key.ImageHandle,
+                        range,
+                        pair.Value));
+            }
         }
         primaryState.QueueOwnershipTransfers.AddRange(
             secondaryState.QueueOwnershipTransfers);

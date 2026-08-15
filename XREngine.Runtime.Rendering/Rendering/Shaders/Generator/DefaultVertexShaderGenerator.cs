@@ -412,12 +412,14 @@ namespace XREngine.Rendering.Shaders.Generator
             if (UseDirectionalCascadeInstancedLayering)
             {
                 Line("uniform int CascadeLayerCount;");
+                Line("uniform int DirectionalCascadeTargetMask;");
                 Line("uniform mat4 CascadeViewProjectionMatrices[8];");
             }
             if (UsePointLightInstancedLayering)
             {
                 Line("uniform int PointShadowFaceCount;");
                 Line("uniform int PointShadowFaceIndices[6];");
+                Line("uniform int PointShadowFaceMask;");
                 Line("uniform mat4 PointShadowViewProjectionMatrices[6];");
             }
         }
@@ -1285,7 +1287,17 @@ namespace XREngine.Rendering.Shaders.Generator
         private void AssignDirectionalCascadeLayeredPosition(string localInputPositionName)
         {
             Line("int xreCascadeLayerCount = clamp(CascadeLayerCount, 1, 8);");
-            Line("int xreCascadeLayer = gl_InstanceID % xreCascadeLayerCount;");
+            Line("int xreCascadeAvailableMask = DirectionalCascadeTargetMask & ((1 << xreCascadeLayerCount) - 1);");
+            Line("int xreCascadeRelevantCount = max(bitCount(xreCascadeAvailableMask), 1);");
+            Line("int xreCascadeRelevantSlot = gl_InstanceID % xreCascadeRelevantCount;");
+            Line("int xreCascadeLayer = 0;");
+            Line("for (int xreLayerCandidate = 0; xreLayerCandidate < xreCascadeLayerCount; ++xreLayerCandidate)");
+            using (OpenBracketState())
+            {
+                Line("if ((xreCascadeAvailableMask & (1 << xreLayerCandidate)) == 0) continue;");
+                Line("if (xreCascadeRelevantSlot == 0) { xreCascadeLayer = xreLayerCandidate; break; }");
+                Line("--xreCascadeRelevantSlot;");
+            }
             Line($"vec3 xreCascadeWorldPos = ({EEngineUniform.ModelMatrix} * {localInputPositionName}).xyz;");
             Line("gl_Position = CascadeViewProjectionMatrices[xreCascadeLayer] * vec4(xreCascadeWorldPos, 1.0f);");
             if (UseDirectionalCascadeAtlasInstancedLayering)
@@ -1297,7 +1309,18 @@ namespace XREngine.Rendering.Shaders.Generator
         private void AssignPointLightLayeredPosition(string localInputPositionName)
         {
             Line("int xrePointShadowFaceCount = clamp(PointShadowFaceCount, 1, 6);");
-            Line("int xrePointShadowSlot = gl_InstanceID % xrePointShadowFaceCount;");
+            Line("int xrePointShadowAvailableMask = PointShadowFaceMask & 0x3F;");
+            Line("int xrePointShadowRelevantCount = max(bitCount(xrePointShadowAvailableMask), 1);");
+            Line("int xrePointShadowRelevantSlot = gl_InstanceID % xrePointShadowRelevantCount;");
+            Line("int xrePointShadowSlot = 0;");
+            Line("for (int xrePointSlotCandidate = 0; xrePointSlotCandidate < xrePointShadowFaceCount; ++xrePointSlotCandidate)");
+            using (OpenBracketState())
+            {
+                Line("int xrePointFaceCandidate = clamp(PointShadowFaceIndices[xrePointSlotCandidate], 0, 5);");
+                Line("if ((xrePointShadowAvailableMask & (1 << xrePointFaceCandidate)) == 0) continue;");
+                Line("if (xrePointShadowRelevantSlot == 0) { xrePointShadowSlot = xrePointSlotCandidate; break; }");
+                Line("--xrePointShadowRelevantSlot;");
+            }
             Line("int xrePointShadowFace = clamp(PointShadowFaceIndices[xrePointShadowSlot], 0, 5);");
             Line($"vec3 xrePointShadowWorldPos = ({EEngineUniform.ModelMatrix} * {localInputPositionName}).xyz;");
             Line("gl_Position = PointShadowViewProjectionMatrices[xrePointShadowSlot] * vec4(xrePointShadowWorldPos, 1.0f);");

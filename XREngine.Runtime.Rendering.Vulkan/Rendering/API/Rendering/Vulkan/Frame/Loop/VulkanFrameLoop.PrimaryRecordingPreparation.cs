@@ -505,10 +505,20 @@ internal sealed partial class VulkanFrameLoop
             IsPrewarmingExternalSwapchainTarget =
                 IsPrewarmingOpenXrExternalSwapchainTarget,
         };
+        int descriptorViewFamilyIdentity =
+            requestContext.OutputTargetIdentity != 0
+                ? requestContext.OutputTargetIdentity
+                : requestContext.ViewportIdentity;
+        VulkanMeshMaterializationSnapshot requestMaterializationSnapshot =
+            materializationSnapshot with
+            {
+                ActiveFrameOpContext = requestContext,
+                DescriptorViewFamilyIdentity = descriptorViewFamilyIdentity,
+            };
         return request.Renderer.TryMaterializeQueuedRenderRequest(
             in request,
             in producer,
-            in materializationSnapshot,
+            in requestMaterializationSnapshot,
             prewarmDescriptorAllocation,
             out operationRequest);
     }
@@ -517,7 +527,7 @@ internal sealed partial class VulkanFrameLoop
         in VulkanMeshRenderRequest request)
     {
         XRMeshRenderer meshRenderer = request.Renderer.MeshRenderer;
-        XRMaterial? material = request.MaterialOverride ?? meshRenderer.Material;
+        XRMaterial material = request.ResolvedMaterial.Material;
         return string.Equals(
                    material?.Name,
                    "UIBatchTextMaterial",

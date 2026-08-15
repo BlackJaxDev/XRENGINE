@@ -66,16 +66,14 @@ internal sealed partial class VulkanDescriptorManager
         if (sampler.Handle == 0 || !IsLiveSampler(sampler))
             return false;
 
-        ImageLayout layout = source.TrackedImageLayout;
-        if (layout == ImageLayout.Undefined)
-            layout = (source.DescriptorAspect & (ImageAspectFlags.DepthBit | ImageAspectFlags.StencilBit)) != 0
-                ? ImageLayout.DepthStencilReadOnlyOptimal
-                : ImageLayout.ShaderReadOnlyOptimal;
         imageInfo = new DescriptorImageInfo
         {
-            ImageLayout = (source.DescriptorUsage & ImageUsageFlags.StorageBit) != 0
-                ? ImageLayout.General
-                : layout,
+            // A descriptor publishes the layout that must be active when it is
+            // consumed, not the source's transient layout at publication time.
+            // Streaming can republish while the image is still an attachment or
+            // transfer destination; baking that state into a sampled descriptor
+            // makes the later read-only transition disagree with the descriptor.
+            ImageLayout = ResolveDescriptorImageLayout(source, DescriptorType.CombinedImageSampler),
             ImageView = view,
             Sampler = sampler,
         };

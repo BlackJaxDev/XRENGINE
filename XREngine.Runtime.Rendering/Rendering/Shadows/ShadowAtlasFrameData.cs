@@ -22,7 +22,15 @@ public sealed class ShadowAtlasFrameData
     private int _pageCount;
 
     public ulong FrameId { get; private set; }
-    public ulong Generation { get; private set; }
+    /// <summary>
+    /// Overall publication generation. Kept as the compatibility-facing name
+    /// for consumers that do not need to distinguish the reason for a change.
+    /// </summary>
+    public ulong Generation => PublicationGeneration;
+    public ulong LayoutGeneration { get; private set; }
+    public ulong ContentGeneration { get; private set; }
+    public ulong StorageGeneration { get; private set; }
+    public ulong PublicationGeneration { get; private set; }
     public ShadowAtlasMetrics Metrics { get; private set; }
     public ShadowAtlasSolveDiagnostics SolveDiagnostics { get; private set; }
     public int AllocationCount => _allocationCount;
@@ -190,7 +198,10 @@ public sealed class ShadowAtlasFrameData
 
     internal void SetData(
         ulong frameId,
-        ulong generation,
+        ulong layoutGeneration,
+        ulong contentGeneration,
+        ulong storageGeneration,
+        ulong publicationGeneration,
         IReadOnlyList<ShadowAtlasAllocation> allocations,
         IReadOnlyList<ShadowAtlasGroupedDirectionalCascadeAllocation> directionalCascadeGroups,
         IReadOnlyList<ShadowAtlasGroupedPointFaceAllocation> pointFaceGroups,
@@ -245,7 +256,10 @@ public sealed class ShadowAtlasFrameData
         _directionalLightDiagnosticCount = directionalLightDiagnostics.Count;
         _pageCount = pages.Count;
         FrameId = frameId;
-        Generation = generation;
+        LayoutGeneration = layoutGeneration;
+        ContentGeneration = contentGeneration;
+        StorageGeneration = storageGeneration;
+        PublicationGeneration = publicationGeneration;
         Metrics = metrics;
         SolveDiagnostics = solveDiagnostics;
     }

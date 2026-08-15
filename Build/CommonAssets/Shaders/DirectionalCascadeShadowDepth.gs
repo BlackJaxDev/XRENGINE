@@ -12,6 +12,7 @@ layout (location = 20) in vec3 InFragPosLocal[];
 layout (location = 22) in float InFragViewIndex[];
 
 uniform int CascadeLayerCount;
+uniform int DirectionalCascadeTargetMask;
 uniform mat4 CascadeViewProjectionMatrices[8];
 
 layout (location = 0) out vec3 FragPos;
@@ -28,6 +29,9 @@ void main()
     int layerCount = clamp(CascadeLayerCount, 0, 8);
     for (int layer = 0; layer < layerCount; ++layer)
     {
+        if ((DirectionalCascadeTargetMask & (1 << layer)) == 0)
+            continue;
+
         gl_Layer = layer;
         for (int i = 0; i < 3; ++i)
         {

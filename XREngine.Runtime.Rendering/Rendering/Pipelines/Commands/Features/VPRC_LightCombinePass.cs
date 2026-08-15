@@ -127,7 +127,10 @@ namespace XREngine.Rendering.Pipelines.Commands
             DirectionalLightComponent.DirectionalCascadeStaleAgeBindingState
                 CascadeStaleAges,
             Lights3DCollection? Lights,
-            ulong ShadowAtlasGeneration,
+            ulong ShadowAtlasLayoutGeneration,
+            ulong ShadowAtlasContentGeneration,
+            ulong ShadowAtlasStorageGeneration,
+            ulong ShadowAtlasPublicationGeneration,
             XRMaterialFrameBuffer? ShadowMap,
             XRTexture2DArray? CascadeReceiverTexture,
             XRTexture2DArray DummyShadowMapArray,
@@ -555,7 +558,10 @@ namespace XREngine.Rendering.Pipelines.Commands
                 cascadeRenderedContentRevision,
                 cascadeStaleAges,
                 lights,
-                lights?.ShadowAtlas.PublishedFrameData.Generation ?? 0UL,
+                lights?.ShadowAtlas.LayoutGeneration ?? 0UL,
+                lights?.ShadowAtlas.ContentGeneration ?? 0UL,
+                lights?.ShadowAtlas.StorageGeneration ?? 0UL,
+                lights?.ShadowAtlas.PublicationGeneration ?? 0UL,
                 light?.ShadowMap,
                 cascadeReceiverTexture,
                 DummyShadowMapArray,
@@ -813,7 +819,8 @@ namespace XREngine.Rendering.Pipelines.Commands
             XRTexture2DArray? atlasTexture = null;
             bool resident = IsShadowAtlasAllocationSampleable(allocation) &&
                 allocation.Key.Encoding == shadowFormat.Encoding &&
-                lights.ShadowAtlas.TryGetPageTexture(allocation.AtlasKind, shadowFormat.Encoding, allocation.PageIndex, out atlasTexture);
+                lights.ShadowAtlas.TryGetPageTexture(allocation.AtlasKind, shadowFormat.Encoding, allocation.PageIndex, out atlasTexture) &&
+                IsTextureReadyForShadowSampling(atlasTexture);
 
             float nearPlane = spotLight.ShadowCamera?.NearZ ?? 0.1f;
             float farPlane = spotLight.ShadowCamera?.FarZ ?? MathF.Max(nearPlane + 0.001f, spotLight.Distance);
@@ -856,6 +863,8 @@ namespace XREngine.Rendering.Pipelines.Commands
             {
                 ShadowMapFormatSelection shadowFormat = pointLight.ResolveShadowMapFormat(preferredStorageFormat: pointLight.ShadowMapStorageFormat);
                 lights!.ShadowAtlas.TryGetPageTexture(EShadowAtlasKind.Point, shadowFormat.Encoding, 0, out atlasTexture);
+                if (!IsTextureReadyForShadowSampling(atlasTexture))
+                    atlasTexture = null;
                 int atlasLayerCount = atlasTexture is not null ? checked((int)Math.Max(1u, atlasTexture.Depth)) : 0;
                 for (int faceIndex = 0; faceIndex < PointLightComponent.ShadowFaceCount; faceIndex++)
                 {
@@ -893,11 +902,11 @@ namespace XREngine.Rendering.Pipelines.Commands
 
             materialProgram.Sampler(PointShadowAtlasName, hasSampleableFace && atlasTexture is not null ? atlasTexture : DummyShadowMapArray, pointAtlasUnit);
 
-            materialProgram.Uniform("PointShadowAtlasPathEnabled", requested);
+            materialProgram.Uniform("PointShadowAtlasPathEnabled", hasSampleableFace);
             materialProgram.Uniform("PointShadowAtlasPacked0", pointShadowAtlasPacked0);
             materialProgram.Uniform("PointShadowAtlasUvScaleBias", pointShadowAtlasUvScaleBias);
             materialProgram.Uniform("PointShadowAtlasDepthParams", pointShadowAtlasDepthParams);
-            return requested;
+            return hasSampleableFace;
         }
 
         private static void BindDisabledPointAtlas(

@@ -3627,21 +3627,6 @@ namespace XREngine.Components.Lights
             if (requestedMode == EDirectionalCascadeShadowRenderMode.Sequential)
                 return CreateSequentialCascadeShadowRenderPlan(state, requestedMode, DirectionalCascadeShadowBackend.AtlasPage, cascadeCount, DirectionalCascadeShadowFallbackReason.SequentialRequested);
 
-            if (RuntimeRenderingHostServices.FrameTiming.CurrentRenderBackend == RuntimeGraphicsApiKind.Vulkan)
-            {
-                // Vulkan keeps the atomic atlas allocation, but records one culled
-                // command set per cascade. Replaying the union caster set into every
-                // indexed viewport multiplies shadow work by the cascade count and
-                // exposes indexed dynamic state to unrelated frame-graph passes when
-                // a grouped recording is rejected and retried.
-                return CreateSequentialCascadeShadowRenderPlan(
-                    state,
-                    requestedMode,
-                    DirectionalCascadeShadowBackend.AtlasPage,
-                    cascadeCount,
-                    DirectionalCascadeShadowFallbackReason.VulkanCascadeAtlasGroupedRenderingDisabled);
-            }
-
             if (!hasGroupedAtlasAllocation)
                 return CreateSequentialCascadeShadowRenderPlan(state, requestedMode, DirectionalCascadeShadowBackend.AtlasPage, cascadeCount, DirectionalCascadeShadowFallbackReason.MissingGroupedAtlasAllocation);
 
@@ -4095,13 +4080,6 @@ namespace XREngine.Components.Lights
 
         private bool SupportsDirectionalCascadeAtlasGroupedRendering(int cascadeCount)
         {
-            // Atlas allocation remains grouped on Vulkan so every cascade generation
-            // is published atomically. Rendering is deliberately per cascade: the
-            // grouped path duplicates a union caster set across all tiles and mutates
-            // indexed viewport/scissor state across deferred command recording.
-            if (RuntimeRenderingHostServices.FrameTiming.CurrentRenderBackend == RuntimeGraphicsApiKind.Vulkan)
-                return false;
-
             if (cascadeCount <= 1 ||
                 _cascadeShadowRenderMode == EDirectionalCascadeShadowRenderMode.Sequential ||
                 !RuntimeEngine.Rendering.State.SupportsOpenGLViewportScissorArray ||

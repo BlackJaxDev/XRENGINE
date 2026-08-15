@@ -398,6 +398,62 @@ namespace XREngine.Components.Capture.Lights.Types
         public ShadowRequestDiagnostic ShadowAtlasDiagnostic => _shadowAtlasDiagnostic;
 
         /// <summary>
+        /// Number of atlas requests represented by the latest diagnostic publication.
+        /// Exposed separately so remote inspector clients do not need to serialize the
+        /// composite diagnostic record on the render hot path.
+        /// </summary>
+        [Browsable(false)]
+        public int ShadowAtlasRequestCount => _shadowAtlasDiagnostic.RequestCount;
+
+        /// <summary>
+        /// Number of resident atlas allocations represented by the latest diagnostic publication.
+        /// </summary>
+        [Browsable(false)]
+        public int ShadowAtlasResidentCount => _shadowAtlasDiagnostic.ResidentCount;
+
+        /// <summary>
+        /// Atlas page selected by the latest diagnostic publication, or a negative value when unavailable.
+        /// </summary>
+        [Browsable(false)]
+        public int ShadowAtlasPageIndex => _shadowAtlasDiagnostic.AtlasPageIndex;
+
+        /// <summary>
+        /// Shadow metadata record selected by the latest diagnostic publication.
+        /// </summary>
+        [Browsable(false)]
+        public int ShadowAtlasRecordIndex => _shadowAtlasDiagnostic.ShadowRecordIndex;
+
+        /// <summary>
+        /// Most recent frame on which this light's reported atlas tile content was recorded.
+        /// </summary>
+        [Browsable(false)]
+        public ulong ShadowAtlasLastRenderedFrame => _shadowAtlasDiagnostic.LastRenderedFrame;
+
+        /// <summary>
+        /// Atlas planning frame represented by the latest diagnostic publication.
+        /// </summary>
+        [Browsable(false)]
+        public ulong ShadowAtlasLastFrameId => _shadowAtlasDiagnostic.LastFrameId;
+
+        /// <summary>
+        /// Latest atlas allocation or scheduling skip reason.
+        /// </summary>
+        [Browsable(false)]
+        public SkipReason ShadowAtlasLastSkipReason => _shadowAtlasDiagnostic.LastSkipReason;
+
+        /// <summary>
+        /// Fallback currently reported for this light's atlas request.
+        /// </summary>
+        [Browsable(false)]
+        public ShadowFallbackMode ShadowAtlasActiveFallback => _shadowAtlasDiagnostic.ActiveFallback;
+
+        /// <summary>
+        /// True when the latest diagnostic publication contains at least one resident allocation.
+        /// </summary>
+        [Browsable(false)]
+        public bool ShadowAtlasIsResident => _shadowAtlasDiagnostic.ResidentCount > 0;
+
+        /// <summary>
         /// Sets the latest atlas allocation diagnostics for this light's shadow request.
         /// </summary>
         /// <param name="diagnostic">The diagnostic information to set for the shadow atlas allocation.</param>
@@ -698,7 +754,10 @@ namespace XREngine.Components.Capture.Lights.Types
         {
             int width = allocation.InnerPixelRect.Width > 0 ? allocation.InnerPixelRect.Width : (int)allocation.Resolution;
             int height = allocation.InnerPixelRect.Height > 0 ? allocation.InnerPixelRect.Height : (int)allocation.Resolution;
-            return (uint)Math.Max(1, Math.Max(width, height));
+            // Atlas UVs map [0,1] between the centers of the first and last
+            // rendered texels. The local distance of one texel is therefore
+            // one over the number of center-to-center intervals.
+            return (uint)Math.Max(1, Math.Max(width, height) - 1);
         }
 
         private uint _shadowMapResolutionWidth = 1024u;
