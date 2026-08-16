@@ -11,7 +11,7 @@ public sealed class VulkanUniformBufferGenerationCacheTests
     [Test]
     public void RecordedButNotSubmittedLease_ReleasesOnAbandon()
     {
-        VulkanRenderer.VulkanFrameDataGenerationLease lease = default;
+        VulkanFrameDataGenerationLease lease = default;
 
         lease.TryAcquireRecording(generation: 7, commandBufferQueued: false).ShouldBeTrue();
         lease.HasRecordingOwner.ShouldBeTrue();
@@ -24,11 +24,11 @@ public sealed class VulkanUniformBufferGenerationCacheTests
     [Test]
     public void SuccessfulSubmission_TransfersToExactTimelineAndSurvivesCacheEviction()
     {
-        VulkanRenderer.VulkanFrameDataGenerationLease lease = default;
+        VulkanFrameDataGenerationLease lease = default;
         lease.TryAcquireRecording(generation: 11, commandBufferQueued: false).ShouldBeTrue();
 
         lease.TryTransferToSubmission(
-            VulkanRenderer.EVulkanLifetimeQueueDomain.Graphics,
+            EVulkanLifetimeQueueDomain.Graphics,
             queueSequence: 42).ShouldBeTrue();
         lease.EvictCachedVariant();
 
@@ -47,7 +47,7 @@ public sealed class VulkanUniformBufferGenerationCacheTests
     [Test]
     public void CompletedSecondaryRecording_ReleasesRecordingOwnerWithoutSubmission()
     {
-        VulkanRenderer.VulkanFrameDataGenerationLease lease = default;
+        VulkanFrameDataGenerationLease lease = default;
         lease.TryAcquireRecording(generation: 13, commandBufferQueued: false).ShouldBeTrue();
 
         lease.CompleteRecording(cacheVariant: true);
@@ -63,7 +63,7 @@ public sealed class VulkanUniformBufferGenerationCacheTests
     [Test]
     public void RejectedSubmission_KeepsOnlyCachedVariantUntilEviction()
     {
-        VulkanRenderer.VulkanFrameDataGenerationLease lease = default;
+        VulkanFrameDataGenerationLease lease = default;
         lease.TryAcquireRecording(generation: 3, commandBufferQueued: false).ShouldBeTrue();
 
         lease.CompleteRecording(cacheVariant: true);
@@ -78,7 +78,7 @@ public sealed class VulkanUniformBufferGenerationCacheTests
     [Test]
     public void GenerationCannotChangeWhileAnyExactOwnerRemains()
     {
-        VulkanRenderer.VulkanFrameDataGenerationLease lease = default;
+        VulkanFrameDataGenerationLease lease = default;
         lease.TryAcquireRecording(generation: 1, commandBufferQueued: false).ShouldBeTrue();
         lease.TryAcquireRecording(generation: 2, commandBufferQueued: false).ShouldBeFalse();
 
@@ -101,7 +101,7 @@ public sealed class VulkanUniformBufferGenerationCacheTests
             int requiredDrawSlots = (i & 1) == 0 ? 3 : 12;
             requiredDrawSlots.ShouldBeOneOf(3, 12);
             ulong generation = (ulong)(i + 1);
-            VulkanRenderer.VulkanFrameDataGenerationLease lease = default;
+            VulkanFrameDataGenerationLease lease = default;
 
             lease.TryAcquireRecording(generation, commandBufferQueued: false).ShouldBeTrue();
             liveGenerations++;
@@ -109,7 +109,7 @@ public sealed class VulkanUniformBufferGenerationCacheTests
 
             queueSequence++;
             lease.TryTransferToSubmission(
-                VulkanRenderer.EVulkanLifetimeQueueDomain.Graphics,
+                EVulkanLifetimeQueueDomain.Graphics,
                 queueSequence).ShouldBeTrue();
             lease.EvictCachedVariant();
             lease.ObserveQueueCompletion(queueSequence, 0, 0);
@@ -245,7 +245,7 @@ public sealed class VulkanUniformBufferGenerationCacheTests
     {
         var renderer = (VkMeshRenderer)RuntimeHelpers.GetUninitializedObject(
             typeof(VkMeshRenderer));
-        VulkanRenderer.VulkanMeshFrameDataReservationManifest manifest = new();
+        VulkanMeshFrameDataReservationManifest manifest = new();
 
         manifest.Begin(generation: 4, capacityHint: 1);
         manifest.TryReserve(renderer, requiredDrawSlots: 3).ShouldBeTrue();
@@ -265,7 +265,7 @@ public sealed class VulkanUniformBufferGenerationCacheTests
             typeof(VkMeshRenderer));
         var spsRenderer = (VkMeshRenderer)RuntimeHelpers.GetUninitializedObject(
             typeof(VkMeshRenderer));
-        VulkanRenderer.VulkanMeshFrameDataReservationManifest manifest = new();
+        VulkanMeshFrameDataReservationManifest manifest = new();
 
         manifest.Begin(generation: 1, capacityHint: 2);
         manifest.TryReserve(desktopRenderer, requiredDrawSlots: 3).ShouldBeTrue();
@@ -322,7 +322,7 @@ public sealed class VulkanUniformBufferGenerationCacheTests
         };
         var familyBases = new Dictionary<VulkanMeshFrameDataRendererFamilyKey, int>(
             VulkanMeshFrameDataRendererFamilyKeyComparer.Instance);
-        VulkanRenderer.VulkanFrameWideMeshFrameDataReservationManifest manifest = new();
+        VulkanFrameWideMeshFrameDataReservationManifest manifest = new();
 
         manifest.TryRegister(
                 100,
@@ -406,7 +406,7 @@ public sealed class VulkanUniformBufferGenerationCacheTests
         };
         var familyBases = new Dictionary<VulkanMeshFrameDataRendererFamilyKey, int>(
             VulkanMeshFrameDataRendererFamilyKeyComparer.Instance);
-        VulkanRenderer.VulkanFrameWideMeshFrameDataReservationManifest manifest = new();
+        VulkanFrameWideMeshFrameDataReservationManifest manifest = new();
 
         manifest.TryRegister(
                 100,
@@ -463,7 +463,7 @@ public sealed class VulkanUniformBufferGenerationCacheTests
         };
         var familyBases = new Dictionary<VulkanMeshFrameDataRendererFamilyKey, int>(
             VulkanMeshFrameDataRendererFamilyKeyComparer.Instance);
-        VulkanRenderer.VulkanFrameWideMeshFrameDataReservationManifest manifest = new();
+        VulkanFrameWideMeshFrameDataReservationManifest manifest = new();
 
         manifest.TryRegister(
                 100,
@@ -513,7 +513,7 @@ public sealed class VulkanUniformBufferGenerationCacheTests
         }
         familyStrides.Add(family, 1);
 
-        VulkanRenderer.VulkanFrameWideMeshFrameDataReservationManifest manifest = new();
+        VulkanFrameWideMeshFrameDataReservationManifest manifest = new();
         manifest.TryRegister(
                 100,
                 requirements,
@@ -560,7 +560,7 @@ public sealed class VulkanUniformBufferGenerationCacheTests
         };
         var familyBases = new Dictionary<VulkanMeshFrameDataRendererFamilyKey, int>(
             VulkanMeshFrameDataRendererFamilyKeyComparer.Instance);
-        VulkanRenderer.VulkanFrameWideMeshFrameDataReservationManifest manifest = new();
+        VulkanFrameWideMeshFrameDataReservationManifest manifest = new();
 
         manifest.TryRegister(
                 100,
@@ -628,7 +628,7 @@ public sealed class VulkanUniformBufferGenerationCacheTests
         };
         var familyBases = new Dictionary<VulkanMeshFrameDataRendererFamilyKey, int>(
             VulkanMeshFrameDataRendererFamilyKeyComparer.Instance);
-        VulkanRenderer.VulkanFrameWideMeshFrameDataReservationManifest manifest = new();
+        VulkanFrameWideMeshFrameDataReservationManifest manifest = new();
 
         manifest.TryRegister(
                 100,
@@ -727,7 +727,7 @@ public sealed class VulkanUniformBufferGenerationCacheTests
         };
         var familyBases = new Dictionary<VulkanMeshFrameDataRendererFamilyKey, int>(
             VulkanMeshFrameDataRendererFamilyKeyComparer.Instance);
-        VulkanRenderer.VulkanFrameWideMeshFrameDataReservationManifest manifest = new();
+        VulkanFrameWideMeshFrameDataReservationManifest manifest = new();
 
         manifest.TryRegister(
                 100,

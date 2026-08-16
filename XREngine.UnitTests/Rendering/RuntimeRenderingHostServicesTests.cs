@@ -1085,8 +1085,11 @@ public sealed class RuntimeRenderingHostServicesTests
         {
         }
 
-        public bool TryDispatchInteractiveResizeFrame()
-            => false;
+        public InteractiveResizeDispatchResult TryDispatchInteractiveResizeFrame(
+            ulong? presentationPackageId = null)
+            => InteractiveResizeDispatchResult.Deferred(
+                EInteractiveResizeDispatchReason.RuntimeStopped,
+                presentationPackageId ?? 0UL);
 
         public void SubscribePlayModeTransitions(Action callback)
         {

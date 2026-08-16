@@ -84,11 +84,11 @@ public sealed class VulkanStrictSpsBoundaryCaptureTests
             array: false,
             multisample: false);
 
-        var leftRange = VulkanRenderer.ResolveDescriptorTextureBlitLayerRange(
+        var leftRange = VulkanCommandRuntime.ResolveDescriptorTextureBlitLayerRange(
             leftView,
             layerIndex: 0,
             descriptorArrayLayers: 1u);
-        var rightRange = VulkanRenderer.ResolveDescriptorTextureBlitLayerRange(
+        var rightRange = VulkanCommandRuntime.ResolveDescriptorTextureBlitLayerRange(
             rightView,
             layerIndex: 0,
             descriptorArrayLayers: 1u);
@@ -108,9 +108,9 @@ public sealed class VulkanStrictSpsBoundaryCaptureTests
         stagingState.Access.ShouldBe(
             AccessFlags.ColorAttachmentReadBit | AccessFlags.ColorAttachmentWriteBit);
 
-        VulkanRenderer.ResolveReadbackRestoreLayout(
+        VulkanReadbackLayoutPolicy.ResolveRestore(
                 stagingState.Layout,
-                ImageUsageFlags.ColorAttachmentBit | ImageUsageFlags.SampledBit,
+                ImageUsageFlags.SampledBit,
                 depthOrStencil: false)
             .ShouldBe(ImageLayout.ColorAttachmentOptimal);
     }
@@ -118,16 +118,26 @@ public sealed class VulkanStrictSpsBoundaryCaptureTests
     [Test]
     public void ReadbackRestore_UsesUsageFallbackOnlyWhenPreTransferLayoutIsUnknown()
     {
-        VulkanRenderer.ResolveReadbackRestoreLayout(
+        VulkanReadbackLayoutPolicy.ResolveRestore(
                 ImageLayout.Undefined,
                 ImageUsageFlags.SampledBit,
                 depthOrStencil: false)
             .ShouldBe(ImageLayout.ShaderReadOnlyOptimal);
-        VulkanRenderer.ResolveReadbackRestoreLayout(
+        VulkanReadbackLayoutPolicy.ResolveRestore(
                 ImageLayout.Undefined,
-                ImageUsageFlags.StorageBit,
+                ImageUsageFlags.SampledBit,
+                depthOrStencil: true)
+            .ShouldBe(ImageLayout.DepthStencilReadOnlyOptimal);
+        VulkanReadbackLayoutPolicy.ResolveRestore(
+                ImageLayout.Undefined,
+                ImageUsageFlags.StorageBit | ImageUsageFlags.SampledBit,
                 depthOrStencil: false)
             .ShouldBe(ImageLayout.General);
+        VulkanReadbackLayoutPolicy.ResolveRestore(
+                ImageLayout.Undefined,
+                ImageUsageFlags.ColorAttachmentBit,
+                depthOrStencil: true)
+            .ShouldBe(ImageLayout.DepthStencilAttachmentOptimal);
     }
 
     private static XRTexture2DArray CreateStereoArray()

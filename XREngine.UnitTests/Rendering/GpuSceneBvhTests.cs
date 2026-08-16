@@ -446,54 +446,53 @@ public class GpuSceneBvhTests
     #region GPU Command Structure Tests
 
     [Test]
-    public void GPUIndirectRenderCommand_StructLayout_CorrectSize()
+    public void DrawMetadata_StructLayout_CorrectSize()
     {
-        // Verify the compact GPU command compatibility structure has expected size (80 bytes / 20 lanes).
-        int expectedSize = 80;
-        int actualSize = System.Runtime.InteropServices.Marshal.SizeOf<GPUIndirectRenderCommand>();
+        int expectedSize = GPUSceneLayoutContract.DrawMetadataSize;
+        int actualSize = System.Runtime.InteropServices.Marshal.SizeOf<DrawMetadata>();
         
         actualSize.ShouldBe(expectedSize);
     }
 
     [Test]
-    public void GPUIndirectRenderCommand_SetBoundingSphere_StoresCorrectly()
+    public void BoundsGpu_BoundingSphere_StoresCorrectly()
     {
-        var cmd = new GPUIndirectRenderCommand();
+        var bounds = new BoundsGpu();
         var center = new Vector3(1f, 2f, 3f);
         float radius = 5f;
 
-        cmd.SetBoundingSphere(center, radius);
+        bounds.BoundingSphere = new Vector4(center, radius);
 
-        cmd.BoundingSphere.X.ShouldBe(1f);
-        cmd.BoundingSphere.Y.ShouldBe(2f);
-        cmd.BoundingSphere.Z.ShouldBe(3f);
-        cmd.BoundingSphere.W.ShouldBe(5f);
+        bounds.BoundingSphere.X.ShouldBe(1f);
+        bounds.BoundingSphere.Y.ShouldBe(2f);
+        bounds.BoundingSphere.Z.ShouldBe(3f);
+        bounds.BoundingSphere.W.ShouldBe(5f);
     }
 
     [Test]
-    public void GPUIndirectRenderCommand_Flags_CanSetMultipleFlags()
+    public void DrawMetadata_Flags_CanSetMultipleFlags()
     {
-        var cmd = new GPUIndirectRenderCommand
+        var metadata = new DrawMetadata
         {
             Flags = (uint)(GPUIndirectRenderFlags.Transparent | GPUIndirectRenderFlags.CastShadow)
         };
 
-        ((GPUIndirectRenderFlags)cmd.Flags).HasFlag(GPUIndirectRenderFlags.Transparent).ShouldBeTrue();
-        ((GPUIndirectRenderFlags)cmd.Flags).HasFlag(GPUIndirectRenderFlags.CastShadow).ShouldBeTrue();
-        ((GPUIndirectRenderFlags)cmd.Flags).HasFlag(GPUIndirectRenderFlags.Skinned).ShouldBeFalse();
+        ((GPUIndirectRenderFlags)metadata.Flags).HasFlag(GPUIndirectRenderFlags.Transparent).ShouldBeTrue();
+        ((GPUIndirectRenderFlags)metadata.Flags).HasFlag(GPUIndirectRenderFlags.CastShadow).ShouldBeTrue();
+        ((GPUIndirectRenderFlags)metadata.Flags).HasFlag(GPUIndirectRenderFlags.Skinned).ShouldBeFalse();
     }
 
     [Test]
-    public void GPUIndirectRenderCommand_DefaultValues_AreZeroInitialized()
+    public void DrawMetadata_DefaultValues_AreZeroInitialized()
     {
-        var cmd = new GPUIndirectRenderCommand();
+        var metadata = new DrawMetadata();
 
-        cmd.MeshID.ShouldBe(0u);
-        cmd.MaterialID.ShouldBe(0u);
-        cmd.InstanceCount.ShouldBe(0u);
-        cmd.Flags.ShouldBe(0u);
-        cmd.TransformID.ShouldBe(0u);
-        cmd.BoundsID.ShouldBe(0u);
+        metadata.MeshID.ShouldBe(0u);
+        metadata.MaterialID.ShouldBe(0u);
+        metadata.InstanceCount.ShouldBe(0u);
+        metadata.Flags.ShouldBe(0u);
+        metadata.TransformID.ShouldBe(0u);
+        metadata.BoundsID.ShouldBe(0u);
     }
 
     #endregion

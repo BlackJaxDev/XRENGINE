@@ -496,7 +496,7 @@ public sealed class RenderPipelineResourceLifecycleTests
 
         VulkanResourceAllocator allocator = new();
         allocator.UpdatePlan(planner.CurrentPlan);
-        allocator.RebuildPhysicalPlan(null!, null, planner);
+        allocator.RebuildPhysicalPlan(null!, false, null, planner);
 
         VulkanPhysicalImageGroup group = allocator.EnumeratePhysicalGroups().Single();
         group.Format.ShouldBe(Format.D24UnormS8Uint);
@@ -546,7 +546,7 @@ public sealed class RenderPipelineResourceLifecycleTests
 
         VulkanResourceAllocator allocator = new();
         allocator.UpdatePlan(planner.CurrentPlan);
-        allocator.RebuildPhysicalPlan(null!, attachmentOnlyMetadata.Build(), planner);
+        allocator.RebuildPhysicalPlan(null!, false, attachmentOnlyMetadata.Build(), planner);
 
         VulkanPhysicalImageGroup group = allocator.EnumeratePhysicalGroups().Single();
         group.Usage.HasFlag(ImageUsageFlags.ColorAttachmentBit).ShouldBeTrue();
@@ -559,7 +559,7 @@ public sealed class RenderPipelineResourceLifecycleTests
         VulkanResourcePlanner activePlanner = CreateSingleTexturePlanner("SharedColor", EPixelFormat.Rgba);
         VulkanResourceAllocator activeAllocator = new();
         activeAllocator.UpdatePlan(activePlanner.CurrentPlan);
-        activeAllocator.RebuildPhysicalPlan(null!, null, activePlanner);
+        activeAllocator.RebuildPhysicalPlan(null!, false, null, activePlanner);
         VulkanPhysicalImageGroup activeGroup = activeAllocator.EnumeratePhysicalGroups().Single();
         typeof(VulkanPhysicalImageGroup).GetField("_allocated", BindingFlags.Instance | BindingFlags.NonPublic)!
             .SetValue(activeGroup, true);
@@ -567,7 +567,7 @@ public sealed class RenderPipelineResourceLifecycleTests
         VulkanResourcePlanner pendingPlanner = CreateSingleTexturePlanner("SharedColor", EPixelFormat.Bgra);
         VulkanResourceAllocator pendingAllocator = new();
         pendingAllocator.UpdatePlan(pendingPlanner.CurrentPlan);
-        pendingAllocator.RebuildPhysicalPlan(null!, null, pendingPlanner);
+        pendingAllocator.RebuildPhysicalPlan(null!, false, null, pendingPlanner);
 
         pendingAllocator.ReuseCompatiblePhysicalImagesFrom(activeAllocator, out _).ShouldBe(1);
         activeGroup.LogicalResources.Single().Descriptor.PixelFormat.ShouldBe(EPixelFormat.Rgba);
@@ -614,7 +614,7 @@ public sealed class RenderPipelineResourceLifecycleTests
 
         VulkanResourceAllocator allocator = new();
         allocator.UpdatePlan(resourcePlanner.CurrentPlan);
-        allocator.RebuildPhysicalPlan(null!, null, resourcePlanner);
+        allocator.RebuildPhysicalPlan(null!, false, null, resourcePlanner);
 
         RenderPassMetadataCollection metadata = new();
         metadata.ForPass(100, "PostProcess", ERenderGraphPassStage.Graphics)
@@ -658,7 +658,7 @@ public sealed class RenderPipelineResourceLifecycleTests
         resourcePlanner.Sync(registry);
         VulkanResourceAllocator allocator = new();
         allocator.UpdatePlan(resourcePlanner.CurrentPlan);
-        allocator.RebuildPhysicalPlan(null!, null, resourcePlanner);
+        allocator.RebuildPhysicalPlan(null!, false, null, resourcePlanner);
 
         RenderPassMetadataCollection metadata = new();
         metadata.ForPass(100, "InvalidDepthFeedback", ERenderGraphPassStage.Graphics)
@@ -2245,7 +2245,7 @@ public sealed class RenderPipelineResourceLifecycleTests
     {
         Extent2D externalExtent = new(896u, 1007u);
 
-        var dimensions = VulkanRenderer.ResolveExternalFrameOpResourceDimensions(
+        var dimensions = VulkanFramePlanner.ResolveExternalFrameOpResourceDimensions(
             externalExtent,
             pipelineInternalWidth: 600u,
             pipelineInternalHeight: 674u,
@@ -2265,7 +2265,7 @@ public sealed class RenderPipelineResourceLifecycleTests
     {
         Extent2D externalExtent = new(896u, 1007u);
 
-        var dimensions = VulkanRenderer.ResolveExternalFrameOpResourceDimensions(
+        var dimensions = VulkanFramePlanner.ResolveExternalFrameOpResourceDimensions(
             externalExtent,
             pipelineInternalWidth: null,
             pipelineInternalHeight: null,

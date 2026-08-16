@@ -19,20 +19,20 @@ public sealed class VulkanCoreHardeningPhase5Tests
         ImageLayout layout,
         ImageAspectFlags aspect,
         int expected)
-        => ((int)VulkanRenderer.ResolveVulkanImageAccessIntent(layout, aspect)).ShouldBe(expected);
+        => ((int)VulkanCommandSynchronizationState.ResolveVulkanImageAccessIntent(layout, aspect)).ShouldBe(expected);
 
     [Test]
     public void AccessStateMapping_ProvidesReviewedSync2AndDescriptorState()
     {
-        VulkanRenderer.VulkanImageAccessState sampled = VulkanRenderer.ResolveVulkanImageAccessState(
+        VulkanImageAccessState sampled = VulkanCommandSynchronizationState.ResolveVulkanImageAccessState(
             ImageLayout.ShaderReadOnlyOptimal,
             ImageAspectFlags.ColorBit,
             queueFamilyIndex: 3,
             serial: 17);
-        VulkanRenderer.VulkanImageAccessState depth = VulkanRenderer.ResolveVulkanImageAccessState(
+        VulkanImageAccessState depth = VulkanCommandSynchronizationState.ResolveVulkanImageAccessState(
             ImageLayout.DepthStencilReadOnlyOptimal,
             ImageAspectFlags.DepthBit);
-        VulkanRenderer.VulkanImageAccessState transfer = VulkanRenderer.ResolveVulkanImageAccessState(
+        VulkanImageAccessState transfer = VulkanCommandSynchronizationState.ResolveVulkanImageAccessState(
             ImageLayout.TransferDstOptimal,
             ImageAspectFlags.ColorBit);
 

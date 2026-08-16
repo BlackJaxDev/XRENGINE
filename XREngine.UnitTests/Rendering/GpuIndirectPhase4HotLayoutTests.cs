@@ -75,13 +75,13 @@ public sealed class GpuIndirectPhase4HotLayoutTests
     }
 
     [Test]
-    public void Phase4_ColdPayloadMigration_SourceContracts_ArePresent()
+    public void DrawMetadataAndBoundsStreams_SourceContracts_ArePresent()
     {
         string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Commands/GPUIndirectRenderCommand.cs");
 
-        source.ShouldContain("public struct GPUIndirectRenderCommandCold");
-        source.ShouldContain("public GPUIndirectRenderCommandCold ToCold()");
-        source.ShouldContain("public static GPUIndirectRenderCommand FromHotCold");
+        source.ShouldContain("public struct DrawMetadata");
+        source.ShouldContain("public struct BoundsGpu");
+        source.ShouldContain("public struct TransformGpu");
     }
 
     [Test]
@@ -137,22 +137,22 @@ public sealed class GpuIndirectPhase4HotLayoutTests
     }
 
     [Test]
-    public void Phase4_CommandLayouts_MatchCurrentGpuAbi()
+    public void DrawMetadataAndBoundsLayouts_MatchCurrentGpuAbi()
     {
-        int fullBytes = Marshal.SizeOf<GPUIndirectRenderCommand>();
-        int hotBytes = Marshal.SizeOf<GPUIndirectRenderCommandHot>();
+        int metadataBytes = Marshal.SizeOf<DrawMetadata>();
+        int boundsBytes = Marshal.SizeOf<BoundsGpu>();
 
-        fullBytes.ShouldBe(80);
-        hotBytes.ShouldBe(80);
+        metadataBytes.ShouldBe(GPUSceneLayoutContract.DrawMetadataSize);
+        boundsBytes.ShouldBe(GPUSceneLayoutContract.BoundsGpuSize);
 
         int[] commandCounts = [1_000, 10_000, 100_000];
         foreach (int count in commandCounts)
         {
-            long aosBytes = (long)count * fullBytes * 2L;
-            long hotBytesTotal = (long)count * hotBytes * 2L;
+            long metadataStreamBytes = (long)count * metadataBytes * 2L;
+            long boundsStreamBytes = (long)count * boundsBytes * 2L;
 
-            TestContext.WriteLine($"Phase4 bandwidth model count={count}: AoS={aosBytes} bytes Hot={hotBytesTotal} bytes");
-            hotBytesTotal.ShouldBe(aosBytes);
+            TestContext.WriteLine($"GPU scene stream model count={count}: metadata={metadataStreamBytes} bytes bounds={boundsStreamBytes} bytes");
+            boundsStreamBytes.ShouldBe(metadataStreamBytes);
         }
     }
 

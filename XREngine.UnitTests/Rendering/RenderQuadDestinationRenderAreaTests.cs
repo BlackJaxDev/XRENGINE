@@ -92,7 +92,7 @@ public sealed class RenderQuadDestinationRenderAreaTests
             (fullRes, EFrameBufferAttachment.ColorAttachment0, 1, -1),
             (halfRes, EFrameBufferAttachment.ColorAttachment1, 0, -1));
 
-        Extent2D extent = VulkanRenderer.ResolveFrameBufferDrawExtent(fbo);
+        Extent2D extent = VulkanCommandRuntime.ResolveFrameBufferDrawExtent(fbo);
 
         extent.Width.ShouldBe(256u);
         extent.Height.ShouldBe(128u);

@@ -27,12 +27,12 @@ public sealed class GpuIndirectPhase9ValidationTests
     [TestCase("VulkanCount", "VulkanNoCount", "Stereo", "ShippingFast")]
     public void GoldenScene_ParityMatrix_StaysEquivalent(string leftBackend, string rightBackend, string viewMode, string profile)
     {
-        GPUIndirectRenderCommand[] commands =
+        DrawMetadata[] commands =
         [
-            new GPUIndirectRenderCommand { MeshID = 100, MaterialID = 200, RenderPass = 0 },
-            new GPUIndirectRenderCommand { MeshID = 101, MaterialID = 201, RenderPass = 0 },
-            new GPUIndirectRenderCommand { MeshID = 102, MaterialID = 202, RenderPass = 1 },
-            new GPUIndirectRenderCommand { MeshID = 103, MaterialID = 203, RenderPass = 1 },
+            new DrawMetadata { MeshID = 100, MaterialID = 200, RenderPass = 0 },
+            new DrawMetadata { MeshID = 101, MaterialID = 201, RenderPass = 0 },
+            new DrawMetadata { MeshID = 102, MaterialID = 202, RenderPass = 1 },
+            new DrawMetadata { MeshID = 103, MaterialID = 203, RenderPass = 1 },
         ];
 
         GoldenCounters expected = new(

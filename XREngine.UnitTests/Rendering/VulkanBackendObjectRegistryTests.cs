@@ -85,17 +85,18 @@ public sealed class VulkanBackendObjectRegistryTests
         VulkanDeviceContext firstDevice = CreateDeviceContext(11, 101, createdThroughOpenXr: false);
         VulkanDeviceContext secondDevice = CreateDeviceContext(22, 202, createdThroughOpenXr: true);
 
-        VulkanBackendObjectContext firstContext =
-            new(null!, firstDevice, new VulkanBackendObjectRegistry(), new(), new(), new());
-        VulkanBackendObjectContext secondContext =
-            new(null!, secondDevice, new VulkanBackendObjectRegistry(), new(), new(), new());
+        VulkanResourceRuntime firstResources = new(1);
+        VulkanResourceRuntime secondResources = new(1);
+        VulkanBackendObjectContext firstContext = new(null!, firstDevice, firstResources);
+        VulkanBackendObjectContext secondContext = new(null!, secondDevice, secondResources);
 
         firstContext.Device.Handle.ShouldBe((nint)101);
         secondContext.Device.Handle.ShouldBe((nint)202);
         firstContext.PhysicalDevice.Handle.ShouldBe((nint)11);
         secondContext.PhysicalDevice.Handle.ShouldBe((nint)22);
-        firstContext.Registry.ShouldNotBeSameAs(secondContext.Registry);
-        firstContext.BindingAllocator.ShouldNotBeSameAs(secondContext.BindingAllocator);
+        firstResources.BackendObjects.ShouldNotBeSameAs(secondResources.BackendObjects);
+        firstResources.BackendObjects.BindingAllocator.ShouldNotBeSameAs(
+            secondResources.BackendObjects.BindingAllocator);
     }
 
     private static VulkanDeviceContext CreateDeviceContext(
@@ -128,6 +129,7 @@ public sealed class VulkanBackendObjectRegistryTests
         };
         VulkanDeviceContext context = new();
         context.AttachInstance(
+            null!,
             new Instance((nint)0x301),
             [],
             Vk.Version13,

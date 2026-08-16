@@ -38,6 +38,7 @@ public sealed class VulkanDeviceContextCapabilityTests
             CreateQueueFamilies()));
 
         context.AttachInstance(
+            null!,
             new Instance((nint)0x51),
             ["VK_EXT_debug_utils"],
             Vk.Version13,
@@ -48,6 +49,7 @@ public sealed class VulkanDeviceContextCapabilityTests
         context.EnabledInstanceExtensions.ShouldContain("VK_EXT_debug_utils");
         context.InstanceApiVersion.ShouldBe(Vk.Version13);
         Should.Throw<InvalidOperationException>(() => context.AttachInstance(
+            null!,
             new Instance((nint)0x52),
             [],
             Vk.Version13,
@@ -66,7 +68,8 @@ public sealed class VulkanDeviceContextCapabilityTests
             ["VK_KHR_required", "VK_EXT_optional"],
             configuration);
 
-        context.SupportsRequiredDeviceExtensions(context.AvailableDeviceExtensions).ShouldBeTrue();
+        context.ValidateEnabledDeviceExtensions(context.AvailableDeviceExtensions)
+            .ShouldContain("VK_KHR_required");
         Should.Throw<InvalidOperationException>(() =>
             context.ValidateEnabledDeviceExtensions(["VK_EXT_optional"]));
         context.ValidateEnabledDeviceExtensions(["VK_KHR_required"])
@@ -207,6 +210,7 @@ public sealed class VulkanDeviceContextCapabilityTests
     {
         VulkanDeviceContext context = new(configuration);
         context.AttachInstance(
+            null!,
             new Instance((nint)0x51),
             [],
             Vk.Version13,

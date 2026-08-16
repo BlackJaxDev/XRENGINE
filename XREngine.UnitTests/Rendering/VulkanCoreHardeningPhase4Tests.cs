@@ -12,28 +12,28 @@ public sealed class VulkanCoreHardeningPhase4Tests
     [Test]
     public void RetirementTicketMerge_PreservesStrongestCompletionPoint()
     {
-        VulkanRenderer.VulkanRetirementTicket first = new(
+        VulkanRetirementTicket first = new(
             GraphicsSequence: 4,
             TransferSequence: 8,
             OtherSequence: 2,
             EnqueuedTimestamp: 200,
             ResourceGeneration: 7,
             ExternalOwnershipPending: false,
-            PinSet: VulkanRenderer.VulkanRetirementPinSet.Single(
-                new VulkanRenderer.VulkanResourceLifetimeKey(ObjectType.Buffer, 0xA),
+            PinSet: VulkanRetirementPinSet.Single(
+                new VulkanResourceLifetimeKey(ObjectType.Buffer, 0xA),
                 7));
-        VulkanRenderer.VulkanRetirementTicket second = new(
+        VulkanRetirementTicket second = new(
             GraphicsSequence: 9,
             TransferSequence: 3,
             OtherSequence: 5,
             EnqueuedTimestamp: 100,
             ResourceGeneration: 11,
             ExternalOwnershipPending: true,
-            PinSet: VulkanRenderer.VulkanRetirementPinSet.Single(
-                new VulkanRenderer.VulkanResourceLifetimeKey(ObjectType.ImageView, 0xB),
+            PinSet: VulkanRetirementPinSet.Single(
+                new VulkanResourceLifetimeKey(ObjectType.ImageView, 0xB),
                 11));
 
-        VulkanRenderer.VulkanRetirementTicket merged = first.Merge(second);
+        VulkanRetirementTicket merged = first.Merge(second);
 
         merged.GraphicsSequence.ShouldBe(9UL);
         merged.TransferSequence.ShouldBe(8UL);
@@ -67,50 +67,47 @@ public sealed class VulkanCoreHardeningPhase4Tests
     [Test]
     public void LifetimeState_SeparatesCpuRecordedSubmittedExternalAndRetirementOwnership()
     {
-        VulkanRenderer.EVulkanResourceLifetimeState values =
-            VulkanRenderer.EVulkanResourceLifetimeState.CpuOwned |
-            VulkanRenderer.EVulkanResourceLifetimeState.Recorded |
-            VulkanRenderer.EVulkanResourceLifetimeState.Submitted |
-            VulkanRenderer.EVulkanResourceLifetimeState.Completed |
-            VulkanRenderer.EVulkanResourceLifetimeState.External |
-            VulkanRenderer.EVulkanResourceLifetimeState.PendingRetirement |
-            VulkanRenderer.EVulkanResourceLifetimeState.Destroyed |
-            VulkanRenderer.EVulkanResourceLifetimeState.Queued;
+        EVulkanResourceLifetimeState values =
+            EVulkanResourceLifetimeState.CpuOwned |
+            EVulkanResourceLifetimeState.Recorded |
+            EVulkanResourceLifetimeState.Submitted |
+            EVulkanResourceLifetimeState.Completed |
+            EVulkanResourceLifetimeState.External |
+            EVulkanResourceLifetimeState.PendingRetirement |
+            EVulkanResourceLifetimeState.Destroyed |
+            EVulkanResourceLifetimeState.Queued;
 
-        Enum.GetValues<VulkanRenderer.EVulkanResourceLifetimeState>()
-            .Where(static value => value != VulkanRenderer.EVulkanResourceLifetimeState.None)
+        Enum.GetValues<EVulkanResourceLifetimeState>()
+            .Where(static value => value != EVulkanResourceLifetimeState.None)
             .ShouldAllBe(value => values.HasFlag(value));
     }
 
     [Test]
     public void LifetimeRejectionDiagnostic_NamesEveryRequiredRaceIdentity()
     {
-        VulkanRenderer.VulkanRetirementTicket ticket = new(
+        VulkanRetirementTicket ticket = new(
             GraphicsSequence: 13,
             TransferSequence: 2,
             OtherSequence: 0,
             EnqueuedTimestamp: 100,
             ResourceGeneration: 41,
             ExternalOwnershipPending: false);
-        string text = VulkanRenderer.DescribeVulkanLifetimeRejection(
-            new VulkanRenderer.VulkanResourceLifetimeKey(ObjectType.Buffer, 0xCAFE),
+        VulkanLifetimeRejectionDiagnostic diagnostic = new(
+            new VulkanResourceLifetimeKey(ObjectType.Buffer, 0xCAFE),
             "StrictStereo.UniformBuffer",
-            oldGeneration: 40,
-            newGeneration: 41,
-            output: "OpenXR.TrueSinglePassStereo",
-            commandBufferHandle: 0xBEEF,
-            in ticket,
-            state: VulkanRenderer.EVulkanResourceLifetimeState.PendingRetirement,
-            reason: "recorded dependency is pending retirement");
-        text.ShouldContain("resource=Buffer:0xCAFE");
-        text.ShouldContain("owner=StrictStereo.UniformBuffer");
-        text.ShouldContain("oldGeneration=40");
-        text.ShouldContain("newGeneration=41");
-        text.ShouldContain("output=OpenXR.TrueSinglePassStereo");
-        text.ShouldContain("commandBuffer=0xBEEF");
-        text.ShouldContain("retirementTicket=gfx:13/transfer:2/other:0/generation:41");
-        text.ShouldContain("state=PendingRetirement");
-        text.ShouldContain("reason=recorded dependency is pending retirement");
+            OldGeneration: 40,
+            NewGeneration: 41,
+            Output: "OpenXR.TrueSinglePassStereo",
+            CommandBufferHandle: 0xBEEF,
+            ticket,
+            EVulkanResourceLifetimeState.PendingRetirement,
+            "recorded dependency is pending retirement");
+
+        diagnostic.ToString().ShouldBe(
+            "resource=Buffer:0xCAFE owner=StrictStereo.UniformBuffer oldGeneration=40 newGeneration=41 " +
+            "output=OpenXR.TrueSinglePassStereo commandBuffer=0xBEEF " +
+            "retirementTicket=gfx:13/transfer:2/other:0/generation:41/external:False/pins:0 " +
+            "state=PendingRetirement reason=recorded dependency is pending retirement");
     }
 
     [Test]

@@ -383,6 +383,7 @@ public sealed class ImportedTextureStreamingContractTests
         VulkanImportedTextureUploadStagingResource invalidCopy = new(
             default,
             default,
+            default,
             new BufferImageCopy
             {
                 ImageSubresource = new ImageSubresourceLayers
@@ -411,6 +412,7 @@ public sealed class ImportedTextureStreamingContractTests
         BufferImageCopy validCopyRegion = invalidCopy.CopyRegion;
         validCopyRegion.ImageExtent = new Extent3D(64u, 64u, 1u);
         VulkanImportedTextureUploadStagingResource validBaseCopy = new(
+            default,
             default,
             default,
             validCopyRegion,
