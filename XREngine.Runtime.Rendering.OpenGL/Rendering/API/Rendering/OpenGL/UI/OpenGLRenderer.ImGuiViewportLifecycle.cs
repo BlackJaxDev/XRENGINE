@@ -473,7 +473,7 @@ namespace XREngine.Rendering.OpenGL
                     PlatformWindow window = new(this, viewport);
                     viewport.PlatformUserData = window.Handle;
                     viewport.PlatformHandle = window.Window.Handle;
-                    viewport.PlatformHandleRaw = window.Window.Handle;
+                    viewport.PlatformHandleRaw = ImGuiPlatformWindowBehavior.GetPlatformHandleRaw(window.Window);
                     _platformWindows[viewport.ID] = window;
                 }
                 catch (Exception ex)
@@ -508,7 +508,12 @@ namespace XREngine.Rendering.OpenGL
             {
                 try
                 {
-                    if (GetPlatformWindow(new ImGuiViewportPtr(nativeViewport)) is { } window)
+                    var viewport = new ImGuiViewportPtr(nativeViewport);
+                    if (GetPlatformWindow(viewport) is not { } window)
+                        return;
+
+                    window.UpdateViewportFlags(viewport.Flags);
+                    if (!ImGuiPlatformWindowBehavior.TryShowWithoutActivation(window.Window, viewport.Flags))
                         window.Window.IsVisible = true;
                 }
                 catch (Exception ex)
@@ -776,6 +781,7 @@ namespace XREngine.Rendering.OpenGL
                     if (GetPlatformWindow(viewport) is not { } window)
                         return;
 
+                    window.UpdateViewportFlags(viewport.Flags);
                     window.Window.DoEvents();
                     if (window.Window.IsClosing)
                         viewport.PlatformRequestClose = true;
@@ -855,6 +861,7 @@ namespace XREngine.Rendering.OpenGL
                 {
                     _owner = owner;
                     ViewportId = viewport.ID;
+                    ViewportFlags = viewport.Flags;
                     _handle = GCHandle.Alloc(this);
 
                     var options = WindowOptions.Default;
@@ -875,6 +882,7 @@ namespace XREngine.Rendering.OpenGL
                     Window.FocusChanged += OnFocusChanged;
                     Window.Closing += OnClosing;
                     Window.Initialize();
+                    ImGuiPlatformWindowBehavior.ConfigureNativeWindow(Window, viewport.Flags);
                     SetClientScreenPosition(Window, ToWindowPosition(viewport.Pos));
                     Window.MakeCurrent();
                     Window.GLContext?.SwapInterval(0);
@@ -882,9 +890,20 @@ namespace XREngine.Rendering.OpenGL
 
                 public IWindow Window { get; }
                 public uint ViewportId { get; }
+                public ImGuiViewportFlags ViewportFlags { get; private set; }
+                public bool AcceptsInputs => !ImGuiPlatformWindowBehavior.IsInputTransparent(ViewportFlags);
                 public bool Focused { get; private set; }
                 public bool IsDisposed => _disposeStarted;
                 public nint Handle => GCHandle.ToIntPtr(_handle);
+
+                public void UpdateViewportFlags(ImGuiViewportFlags flags)
+                {
+                    if (ViewportFlags == flags)
+                        return;
+
+                    ViewportFlags = flags;
+                    ImGuiPlatformWindowBehavior.ConfigureNativeWindow(Window, flags);
+                }
 
                 public bool BeginDispose()
                 {
@@ -897,6 +916,7 @@ namespace XREngine.Rendering.OpenGL
                     Window.FocusChanged -= OnFocusChanged;
                     Window.Closing -= OnClosing;
                     DetachInputHandlers();
+                    ImGuiPlatformWindowBehavior.ReleaseNativeWindow(Window);
 
                     try
                     {

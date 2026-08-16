@@ -36,6 +36,7 @@ internal unsafe interface IVulkanImGuiOutputHost
         int frameCount,
         int imageCount,
         uint viewportId);
+    VulkanImGuiDrawBufferResources CreatePlatformDrawBufferResources();
     PresentModeKHR[] GetPlatformPresentModes(SurfaceKHR surface);
     Result WaitForPlatformFence(Fence fence);
     Result AcquirePlatformImage(
@@ -46,6 +47,7 @@ internal unsafe interface IVulkanImGuiOutputHost
     Result SubmitPlatformDraw(ref SubmitInfo submitInfo, Fence fence);
     Result PresentPlatformViewport(ref PresentInfoKHR presentInfo);
     bool RecordPlatformViewport(
+        VulkanImGuiDrawBufferResources drawBuffers,
         CommandBuffer commandBuffer,
         uint imageIndex,
         int frameSlot,

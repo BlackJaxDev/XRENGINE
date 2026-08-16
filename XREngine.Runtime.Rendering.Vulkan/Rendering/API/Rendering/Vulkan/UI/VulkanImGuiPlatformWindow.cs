@@ -7,6 +7,7 @@ using Silk.NET.Vulkan.Extensions.KHR;
 using Silk.NET.Windowing;
 using System.Numerics;
 using System.Runtime.InteropServices;
+using XREngine.Rendering.UI;
 using Semaphore = Silk.NET.Vulkan.Semaphore;
 
 namespace XREngine.Rendering.Vulkan;
@@ -20,6 +21,7 @@ internal sealed unsafe class VulkanImGuiPlatformWindow : VulkanImGuiPlatformWind
         private readonly IVulkanImGuiOutputHost _outputHost;
         private readonly GCHandle _handle;
         private readonly VulkanImGuiDrawDataCache _drawData = new();
+        private readonly VulkanImGuiDrawBufferResources _drawBuffers;
         private IInputContext? _input;
         private IMouse? _mouse;
         private readonly List<IKeyboard> _keyboards = [];
@@ -36,7 +38,9 @@ internal sealed unsafe class VulkanImGuiPlatformWindow : VulkanImGuiPlatformWind
             _owner = owner;
             _outputHost = outputHost;
             ViewportId = viewport.ID;
+            ViewportFlags = viewport.Flags;
             _handle = GCHandle.Alloc(this);
+            _drawBuffers = outputHost.CreatePlatformDrawBufferResources();
 
             WindowOptions options = WindowOptions.Default;
             options.API = outputHost.MainWindow.API;
@@ -55,6 +59,7 @@ internal sealed unsafe class VulkanImGuiPlatformWindow : VulkanImGuiPlatformWind
             Window.FocusChanged += OnFocusChanged;
             Window.Closing += OnClosing;
             Window.Initialize();
+            ImGuiPlatformWindowBehavior.ConfigureNativeWindow(Window, viewport.Flags);
             VulkanImGuiMultiViewportController.SetClientScreenPosition(Window, ToWindowPosition(viewport.Pos));
             _lastPosition = VulkanImGuiMultiViewportController.GetClientScreenPosition(Window);
             _lastSize = Window.Size;
@@ -63,6 +68,8 @@ internal sealed unsafe class VulkanImGuiPlatformWindow : VulkanImGuiPlatformWind
 
         public IWindow Window { get; }
         public uint ViewportId { get; }
+        public ImGuiViewportFlags ViewportFlags { get; private set; }
+        public bool AcceptsInputs => !ImGuiPlatformWindowBehavior.IsInputTransparent(ViewportFlags);
         public bool Focused { get; private set; }
         public bool IsDisposed => _disposeStarted;
         public bool RendererReady => _rendererReady;
@@ -83,6 +90,7 @@ internal sealed unsafe class VulkanImGuiPlatformWindow : VulkanImGuiPlatformWind
 
         public void ProcessEvents(ImGuiViewportPtr viewport)
         {
+            UpdateViewportFlags(viewport.Flags);
             Window.DoEvents();
             if (Window.IsClosing)
                 viewport.PlatformRequestClose = true;
@@ -101,6 +109,15 @@ internal sealed unsafe class VulkanImGuiPlatformWindow : VulkanImGuiPlatformWind
                 viewport.PlatformRequestResize = true;
                 RequestRendererResize();
             }
+        }
+
+        public void UpdateViewportFlags(ImGuiViewportFlags flags)
+        {
+            if (ViewportFlags == flags)
+                return;
+
+            ViewportFlags = flags;
+            ImGuiPlatformWindowBehavior.ConfigureNativeWindow(Window, flags);
         }
 
         public void CaptureDrawData(ImDrawDataPtr drawData)
@@ -164,6 +181,7 @@ internal sealed unsafe class VulkanImGuiPlatformWindow : VulkanImGuiPlatformWind
             Window.FocusChanged -= OnFocusChanged;
             Window.Closing -= OnClosing;
             DetachInputHandlers();
+            ImGuiPlatformWindowBehavior.ReleaseNativeWindow(Window);
 
             try
             {
@@ -195,6 +213,7 @@ internal sealed unsafe class VulkanImGuiPlatformWindow : VulkanImGuiPlatformWind
 
             _disposed = true;
             DestroyRendererResources();
+            _drawBuffers.RetireAll();
             try
             {
                 (Window as IDisposable)?.Dispose();
@@ -219,6 +238,7 @@ internal sealed unsafe class VulkanImGuiPlatformWindow : VulkanImGuiPlatformWind
 
             _disposed = true;
             DestroyRendererResources();
+            _drawBuffers.RetireAll();
             if (_handle.IsAllocated)
                 _handle.Free();
             VulkanImGuiMultiViewportController.PreserveAbandonedWindow(Window, _input);
@@ -459,6 +479,7 @@ internal sealed unsafe class VulkanImGuiPlatformWindow : VulkanImGuiPlatformWind
             int frameSlot,
             VulkanImGuiFrameSnapshot snapshot)
             => _outputHost.RecordPlatformViewport(
+                _drawBuffers,
                 commandBuffer,
                 imageIndex,
                 frameSlot,

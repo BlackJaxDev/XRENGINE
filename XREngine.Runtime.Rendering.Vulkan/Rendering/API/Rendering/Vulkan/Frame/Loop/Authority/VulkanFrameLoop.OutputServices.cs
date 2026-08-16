@@ -68,7 +68,7 @@ internal sealed partial class VulkanFrameLoop
             _commandRuntime,
             _deviceContext,
             target);
-        VulkanImGuiDrawBufferResources drawBuffers = new(_outputRuntime, _resourceRuntime, target);
+        VulkanImGuiDrawBufferResources drawBuffers = new(_resourceRuntime, target);
         VulkanImGuiOutputPipelineService pipeline = new(_outputRuntime, _resourceRuntime, _deviceContext);
         VulkanImGuiTextureOutputResources textureOutput = new(_deviceContext, _resourceRuntime);
         VulkanImGuiTextureRegistryService textureRegistry = new(

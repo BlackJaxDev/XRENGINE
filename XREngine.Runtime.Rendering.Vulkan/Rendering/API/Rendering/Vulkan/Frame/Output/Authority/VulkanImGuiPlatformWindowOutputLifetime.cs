@@ -25,7 +25,6 @@ internal abstract class VulkanImGuiPlatformWindowOutputLifetime
     protected bool[] _frameFenceSubmitted = [];
     protected Semaphore[] _imageAvailableSemaphores = [];
     protected Semaphore[] _renderFinishedSemaphores = [];
-    protected VulkanImGuiDrawBufferSet[] _drawBuffers = [];
     protected int _frameSlot;
     protected bool _rendererReady;
     protected bool _resizeRequested;

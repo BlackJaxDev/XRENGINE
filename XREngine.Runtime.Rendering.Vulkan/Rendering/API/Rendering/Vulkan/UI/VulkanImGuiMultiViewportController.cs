@@ -202,7 +202,7 @@ internal sealed unsafe class VulkanImGuiMultiViewportController : IRendererImGui
                 {
                     window.RenderPending();
                     if (window.RendererReady)
-                        ShowPlatformWindow(window.Window);
+                        ShowPlatformWindow(window, window.ViewportFlags);
                 }
                 catch (Exception ex)
                 {
@@ -261,7 +261,7 @@ internal sealed unsafe class VulkanImGuiMultiViewportController : IRendererImGui
         {
             ImGuiViewportPtr mainViewport = ImGui.GetMainViewport();
             mainViewport.PlatformHandle = _mainWindow.Handle;
-            mainViewport.PlatformHandleRaw = _mainWindow.Handle;
+            mainViewport.PlatformHandleRaw = ImGuiPlatformWindowBehavior.GetPlatformHandleRaw(_mainWindow);
             Vector2D<int> clientPosition = GetClientScreenPosition(_mainWindow);
             mainViewport.Pos = new Vector2(clientPosition.X, clientPosition.Y);
             mainViewport.DpiScale = GetWindowDpiScale(_mainWindow);
@@ -304,7 +304,7 @@ internal sealed unsafe class VulkanImGuiMultiViewportController : IRendererImGui
                 _platformWindows.Add(viewport.ID, window);
                 viewport.PlatformUserData = window.Handle;
                 viewport.PlatformHandle = window.Window.Handle;
-                viewport.PlatformHandleRaw = window.Window.Handle;
+                viewport.PlatformHandleRaw = ImGuiPlatformWindowBehavior.GetPlatformHandleRaw(window.Window);
             }
             catch (Exception ex)
             {
@@ -339,8 +339,9 @@ internal sealed unsafe class VulkanImGuiMultiViewportController : IRendererImGui
         {
             try
             {
-                if (GetPlatformWindow(new ImGuiViewportPtr(nativeViewport)) is { } window)
-                    ShowPlatformWindow(window.Window);
+                var viewport = new ImGuiViewportPtr(nativeViewport);
+                if (GetPlatformWindow(viewport) is { } window)
+                    ShowPlatformWindow(window, viewport.Flags);
             }
             catch (Exception ex)
             {
@@ -521,7 +522,7 @@ internal sealed unsafe class VulkanImGuiMultiViewportController : IRendererImGui
                 // Platform_ShowWindow callback. Reveal the window only after its
                 // swapchain is ready so saved detached layouts neither stay hidden
                 // nor flash an uninitialized surface.
-                ShowPlatformWindow(window.Window);
+                ShowPlatformWindow(window, viewport.Flags);
             }
             catch (Exception ex)
             {
@@ -625,6 +626,7 @@ internal sealed unsafe class VulkanImGuiMultiViewportController : IRendererImGui
             foreach (VulkanImGuiPlatformWindow window in _platformWindows.Values)
             {
                 if (!window.IsDisposed &&
+                    window.AcceptsInputs &&
                     TryGetWindowScreenRect(window.Window, out NativeRect rect) &&
                     rect.Contains(screenPosition))
                 {
@@ -837,10 +839,11 @@ internal sealed unsafe class VulkanImGuiMultiViewportController : IRendererImGui
 
         internal static Vector2D<int> GetClientScreenPosition(IWindow window)
         {
-            if (OperatingSystem.IsWindows() && window.Handle != nint.Zero)
+            if (OperatingSystem.IsWindows())
             {
                 NativePoint point = default;
-                if (ClientToScreen(window.Handle, ref point))
+                nint windowHandle = ImGuiPlatformWindowBehavior.GetPlatformHandleRaw(window);
+                if (windowHandle != nint.Zero && ClientToScreen(windowHandle, ref point))
                     return new Vector2D<int>(point.X, point.Y);
             }
 
@@ -854,25 +857,22 @@ internal sealed unsafe class VulkanImGuiMultiViewportController : IRendererImGui
             window.Position = targetClientPosition - clientOffset;
         }
 
-        private static void ShowPlatformWindow(IWindow window)
+        private static void ShowPlatformWindow(VulkanImGuiPlatformWindow platformWindow, ImGuiViewportFlags flags)
         {
-            window.IsVisible = true;
-
-            // GLFW's Vulkan window visibility setter can leave a restored window
-            // native-hidden on Windows. Preserve ImGui's no-focus-on-appearing
-            // behavior while making the platform callback authoritative.
-            if (OperatingSystem.IsWindows() &&
-                window.Handle != nint.Zero &&
-                !IsWindowVisible(window.Handle))
-            {
-                _ = ShowWindowNative(window.Handle, ShowWindowWithoutActivation);
-            }
+            platformWindow.UpdateViewportFlags(flags);
+            IWindow window = platformWindow.Window;
+            if (!ImGuiPlatformWindowBehavior.TryShowWithoutActivation(window, flags))
+                window.IsVisible = true;
         }
 
         private static bool TryGetWindowScreenRect(IWindow window, out NativeRect rect)
         {
-            if (OperatingSystem.IsWindows() && window.Handle != nint.Zero && GetWindowRect(window.Handle, out rect))
-                return true;
+            if (OperatingSystem.IsWindows())
+            {
+                nint windowHandle = ImGuiPlatformWindowBehavior.GetPlatformHandleRaw(window);
+                if (windowHandle != nint.Zero && GetWindowRect(windowHandle, out rect))
+                    return true;
+            }
 
             Vector2D<int> position = GetClientScreenPosition(window);
             Vector2D<int> size = window.Size;
@@ -1026,17 +1026,11 @@ internal sealed unsafe class VulkanImGuiMultiViewportController : IRendererImGui
         [DllImport("user32.dll", SetLastError = true)]
         private static extern bool GetWindowRect(nint hWnd, out NativeRect rect);
         [DllImport("user32.dll", SetLastError = true)]
-        private static extern bool IsWindowVisible(nint hWnd);
-        [DllImport("user32.dll", EntryPoint = "ShowWindow", SetLastError = true)]
-        private static extern bool ShowWindowNative(nint hWnd, int command);
-        [DllImport("user32.dll", SetLastError = true)]
         private static extern bool EnumDisplayMonitors(nint hdc, nint clipRect, nint callback, nint data);
         [DllImport("user32.dll", CharSet = CharSet.Auto, SetLastError = true)]
         private static extern bool GetMonitorInfo(nint monitor, ref NativeMonitorInfo monitorInfo);
         [DllImport("shcore.dll")]
         private static extern int GetDpiForMonitor(nint monitor, MonitorDpiType dpiType, out uint dpiX, out uint dpiY);
-
-        private const int ShowWindowWithoutActivation = 4;
 
         internal static void PreserveAbandonedWindow(IWindow window, IInputContext? input)
         {
