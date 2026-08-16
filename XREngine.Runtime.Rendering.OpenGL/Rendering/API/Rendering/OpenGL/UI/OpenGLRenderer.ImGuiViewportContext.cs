@@ -21,7 +21,7 @@ namespace XREngine.Rendering.OpenGL
             {
                 ImGuiViewportPtr mainViewport = ImGui.GetMainViewport();
                 mainViewport.PlatformHandle = _mainWindow.Handle;
-                mainViewport.PlatformHandleRaw = _mainWindow.Handle;
+                mainViewport.PlatformHandleRaw = ImGuiPlatformWindowBehavior.GetPlatformHandleRaw(_mainWindow);
                 Vector2D<int> clientPosition = GetClientScreenPosition(_mainWindow);
                 mainViewport.Pos = new Vector2(clientPosition.X, clientPosition.Y);
                 mainViewport.DpiScale = GetWindowDpiScale(_mainWindow);
@@ -54,7 +54,7 @@ namespace XREngine.Rendering.OpenGL
             {
                 foreach (PlatformWindow window in _platformWindows.Values)
                 {
-                    if (window.IsDisposed)
+                    if (window.IsDisposed || !window.AcceptsInputs)
                         continue;
 
                     if (TryGetWindowScreenRect(window.Window, out NativeRect rect) && rect.Contains(screenPosition))
@@ -284,10 +284,11 @@ namespace XREngine.Rendering.OpenGL
 
             private static Vector2D<int> GetClientScreenPosition(IWindow window)
             {
-                if (OperatingSystem.IsWindows() && window.Handle != nint.Zero)
+                if (OperatingSystem.IsWindows())
                 {
                     var point = new NativePoint();
-                    if (ClientToScreen(window.Handle, ref point))
+                    nint windowHandle = ImGuiPlatformWindowBehavior.GetPlatformHandleRaw(window);
+                    if (windowHandle != nint.Zero && ClientToScreen(windowHandle, ref point))
                         return new Vector2D<int>(point.X, point.Y);
                 }
 
@@ -296,8 +297,12 @@ namespace XREngine.Rendering.OpenGL
 
             private static bool TryGetWindowScreenRect(IWindow window, out NativeRect rect)
             {
-                if (OperatingSystem.IsWindows() && window.Handle != nint.Zero && GetWindowRect(window.Handle, out rect))
-                    return true;
+                if (OperatingSystem.IsWindows())
+                {
+                    nint windowHandle = ImGuiPlatformWindowBehavior.GetPlatformHandleRaw(window);
+                    if (windowHandle != nint.Zero && GetWindowRect(windowHandle, out rect))
+                        return true;
+                }
 
                 Vector2D<int> position = GetClientScreenPosition(window);
                 Vector2D<int> size = window.Size;

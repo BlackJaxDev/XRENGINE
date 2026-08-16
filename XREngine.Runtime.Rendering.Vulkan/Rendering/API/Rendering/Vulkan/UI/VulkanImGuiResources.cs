@@ -3,7 +3,7 @@ using Silk.NET.Vulkan;
 namespace XREngine.Rendering.Vulkan;
 
 /// <summary>
-/// Owns Vulkan handles and reusable draw buffers for the ImGui backend.
+/// Owns shared Vulkan handles for the ImGui backend.
 /// </summary>
 internal sealed class VulkanImGuiResources
 {
@@ -23,6 +23,5 @@ internal sealed class VulkanImGuiResources
     internal Sampler FontSampler;
     internal bool FontReady;
 
-    internal VulkanImGuiDrawBufferSet[] DrawBuffers = [];
     internal CommandBuffer[]? OverlayCommandBuffers;
 }

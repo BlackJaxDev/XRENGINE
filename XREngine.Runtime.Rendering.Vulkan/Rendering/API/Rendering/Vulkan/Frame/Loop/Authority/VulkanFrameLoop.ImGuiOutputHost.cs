@@ -104,6 +104,9 @@ internal sealed partial class VulkanFrameLoop : IVulkanImGuiOutputHost
             imageCount,
             viewportId);
 
+    VulkanImGuiDrawBufferResources IVulkanImGuiOutputHost.CreatePlatformDrawBufferResources()
+        => new(_resourceRuntime, TargetOutputSession);
+
     unsafe PresentModeKHR[] IVulkanImGuiOutputHost.GetPlatformPresentModes(SurfaceKHR surface)
     {
         KhrSurface surfaceApi = _outputRuntime.SurfaceApi!;
@@ -164,6 +167,7 @@ internal sealed partial class VulkanFrameLoop : IVulkanImGuiOutputHost
         => PresentImGuiPlatformViewport(ref presentInfo);
 
     bool IVulkanImGuiOutputHost.RecordPlatformViewport(
+        VulkanImGuiDrawBufferResources drawBuffers,
         CommandBuffer commandBuffer,
         uint imageIndex,
         int frameSlot,
@@ -190,7 +194,7 @@ internal sealed partial class VulkanFrameLoop : IVulkanImGuiOutputHost
             true,
             snapshot);
         return _imguiPlatformViewportRecorder.TryRecord(
-            encoder, _telemetry, ImGuiDrawBufferResources, in input, out _);
+            encoder, _telemetry, drawBuffers, in input, out _);
     }
 
     void IVulkanImGuiOutputHost.WaitForPlatformQueuesIdle()

@@ -6,23 +6,24 @@ using Buffer = Silk.NET.Vulkan.Buffer;
 namespace XREngine.Rendering.Vulkan;
 
 /// <summary>
-/// Owns the per-swapchain-image host-visible ImGui vertex and index buffers.
+/// Owns the per-slot host-visible ImGui vertex and index buffers for one output.
 /// Buffer replacement is retired through <see cref="VulkanBufferResourceService"/>
 /// instead of reaching back into the renderer.
+/// A resource instance must not be shared by independent WSI outputs: detached
+/// viewport frame-slot indices are local and can overlap desktop image indices.
 /// </summary>
 internal unsafe sealed class VulkanImGuiDrawBufferResources(
-    VulkanOutputRuntime outputRuntime,
     VulkanResourceRuntime resourceRuntime,
     VulkanTargetOutputContext target)
 {
-    private readonly VulkanOutputRuntime _outputRuntime = outputRuntime;
     private readonly VulkanResourceRuntime _resourceRuntime = resourceRuntime;
     private readonly VulkanTargetOutputContext _target = target;
+    private VulkanImGuiDrawBufferSet[] _drawBuffers = [];
 
     internal ref VulkanImGuiDrawBufferSet Ensure(uint imageIndex, ulong vertexBytes, ulong indexBytes)
     {
         int slot = EnsureSlot(imageIndex);
-        ref VulkanImGuiDrawBufferSet buffers = ref _outputRuntime._imguiResources.DrawBuffers[slot];
+        ref VulkanImGuiDrawBufferSet buffers = ref _drawBuffers[slot];
         VulkanTargetOutputContext target = _target;
         EnsureBuffer(
             target,
@@ -69,7 +70,7 @@ internal unsafe sealed class VulkanImGuiDrawBufferResources(
     /// <summary>Queues every generation-owned draw buffer for exact retirement.</summary>
     internal void RetireAll()
     {
-        VulkanImGuiDrawBufferSet[] buffers = _outputRuntime._imguiResources.DrawBuffers;
+        VulkanImGuiDrawBufferSet[] buffers = _drawBuffers;
         for (int index = 0; index < buffers.Length; index++)
         {
             ref VulkanImGuiDrawBufferSet set = ref buffers[index];
@@ -78,18 +79,16 @@ internal unsafe sealed class VulkanImGuiDrawBufferResources(
             if (set.IndexBuffer.Handle != 0)
                 _resourceRuntime.Buffers.Retire(set.IndexBuffer, set.IndexBufferMemory, "ImGui.Draw.IndexBuffer");
         }
-        _outputRuntime._imguiResources.DrawBuffers = [];
+        _drawBuffers = [];
     }
 
     private int EnsureSlot(uint imageIndex)
     {
-        int required = Math.Max(
-            _resourceRuntime.Lifetime.Retirement.Buffers.Length,
-            _outputRuntime.Desktop.Images?.Length ?? 0);
-        required = Math.Max(required, checked((int)imageIndex + 1));
-        if (_outputRuntime._imguiResources.DrawBuffers.Length < required)
-            Array.Resize(ref _outputRuntime._imguiResources.DrawBuffers, required);
-        return checked((int)imageIndex);
+        int slot = checked((int)imageIndex);
+        int required = checked(slot + 1);
+        if (_drawBuffers.Length < required)
+            Array.Resize(ref _drawBuffers, required);
+        return slot;
     }
 
     private void EnsureBuffer(
