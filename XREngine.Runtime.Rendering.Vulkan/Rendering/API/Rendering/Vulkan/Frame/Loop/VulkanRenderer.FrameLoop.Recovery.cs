@@ -332,6 +332,12 @@ namespace XREngine.Rendering.Vulkan
             CommandBuffer recoveryDynamicTextSecondaryCommandBuffer = default,
             int recoveryDynamicTextOperationCount = 0)
         {
+            // Recovery submits an abort/replay primary, never the rejected scene
+            // primary. Terminalize its deferred submission receipts before any
+            // recovery branch can return or recreate the swapchain.
+            _commandRuntime.FailSubmissionMarkersForCommandBuffer(
+                attempt.SceneCommandBuffer);
+
             RejectedDesktopFramePolicyDecision policy =
                 ResolveRejectedDesktopRecoveryPolicy(
                     ref attempt,

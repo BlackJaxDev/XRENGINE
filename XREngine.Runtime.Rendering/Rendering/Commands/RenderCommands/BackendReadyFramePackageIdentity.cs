@@ -16,9 +16,23 @@ public readonly record struct BackendReadyFramePackageIdentity(
     int InternalWidth,
     int InternalHeight)
 {
+    /// <summary>
+    /// Identifies a package that predates explicit identity publication and
+    /// therefore retains the historical validation-bypass behavior.
+    /// </summary>
+    public const long UnspecifiedCollectGeneration = long.MinValue;
+
+    /// <summary>
+    /// Identifies a package whose collected command membership is intentionally
+    /// retained until its owner explicitly publishes a replacement. Shadow
+    /// viewports use this because atlas content hashes, rather than the global
+    /// visibility generation, decide when their cached caster set is rebuilt.
+    /// </summary>
+    public const long RetainedCollectGeneration = -1L;
+
     public static BackendReadyFramePackageIdentity Unspecified => new(
         0UL,
-        -1L,
+        UnspecifiedCollectGeneration,
         0UL,
         0,
         0,

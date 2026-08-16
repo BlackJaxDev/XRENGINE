@@ -672,6 +672,15 @@ internal sealed partial class VulkanCommandRuntime
         }
     }
 
+    /// <summary>
+    /// Releases submission-marker ownership when a recorded command buffer will
+    /// not be submitted. Removing the backend references before the producer
+    /// disposes its fences prevents a later command-buffer reset from touching a
+    /// pooled fence that has already been reused for another frame.
+    /// </summary>
+    internal void FailSubmissionMarkersForCommandBuffer(CommandBuffer commandBuffer)
+        => ResetSubmissionMarkersForCommandBuffer(commandBuffer);
+
     private void BeginFrameTimingQueries(CommandBuffer commandBuffer, int frameSlot)
     {
         if (!FrameTelemetry._frameTimingGpuEnabled ||

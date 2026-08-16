@@ -1,6 +1,7 @@
 using XREngine.Extensions;
 using System.Numerics;
 using XREngine.Components;
+using XREngine.Components.Lights;
 using XREngine.Data.Core;
 using XREngine.Data.Geometry;
 using XREngine.Data.Profiling;
@@ -1156,9 +1157,12 @@ namespace XREngine.Rendering
         {
             int descriptorGeneration =
                 _renderPipeline.ActiveGeneration?.Registry.DescriptorRevision ?? 0;
+            long collectGeneration = _renderPipeline.AssignedPipeline is ShadowRenderPipeline
+                ? BackendReadyFramePackageIdentity.RetainedCollectGeneration
+                : RuntimeRenderingHostServices.FrameTiming.RequestedCollectGeneration;
             BackendReadyFramePackageIdentity identity = new(
                 RuntimeRenderingHostServices.FrameTiming.CollectFrameId,
-                RuntimeRenderingHostServices.FrameTiming.RequestedCollectGeneration,
+                collectGeneration,
                 _renderPipeline.AssignedPipeline?.CommandGeneration ?? 0UL,
                 _renderPipeline.ResourceGeneration,
                 descriptorGeneration,
