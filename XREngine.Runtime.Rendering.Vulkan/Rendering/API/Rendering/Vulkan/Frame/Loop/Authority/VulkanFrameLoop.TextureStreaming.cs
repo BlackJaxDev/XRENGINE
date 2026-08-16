@@ -47,6 +47,8 @@ internal sealed partial class VulkanFrameLoop : IVulkanTextureUploadScheduler
         FrameOp[] pendingOps = _commandRuntime.DrainFrameOperations(
             _framePlanner.Operations,
             excludeTextureUploads: false);
+        VulkanCommandSynchronizationState.FailUnsubmittedSubmissionMarkers(
+            pendingOps);
         int canceledUploads = 0;
         for (int i = 0; i < pendingOps.Length; i++)
         {

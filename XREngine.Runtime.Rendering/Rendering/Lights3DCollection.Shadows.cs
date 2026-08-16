@@ -429,9 +429,13 @@ namespace XREngine.Scene
         {
             if (viewport is null ||
                 !ViewportTargetsWorld(viewport, World) ||
-                viewport.Suppress3DSceneRendering ||
                 viewport.ActiveCamera is not XRCamera camera)
                 return;
+
+            // A render-on-demand viewport still consumes its cached 3D result while scene rendering is
+            // suppressed. Keep its camera in the atlas relevance inputs so point lights do not expand
+            // back to all six full-resolution faces, and so spot-light priority remains stable between
+            // invalidations. Camera motion invalidates the viewport and refreshes these inputs normally.
 
             for (int i = 0; i < cameras.Count; i++)
                 if (ReferenceEquals(cameras[i], camera))

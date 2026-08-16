@@ -16,10 +16,11 @@ public static class BackendReadyFramePackageValidator
         }
 
         BackendReadyFramePackageIdentity identity = package.Identity;
-        if (identity.CollectGeneration < 0L)
+        if (identity.CollectGeneration == BackendReadyFramePackageIdentity.UnspecifiedCollectGeneration)
             return BackendReadyFramePackageValidationResult.Success;
 
-        if (identity.CollectGeneration != context.ConsumedCollectGeneration)
+        if (identity.CollectGeneration != BackendReadyFramePackageIdentity.RetainedCollectGeneration &&
+            identity.CollectGeneration != context.ConsumedCollectGeneration)
         {
             return BackendReadyFramePackageValidationResult.Reject(
                 EBackendReadyFramePackageValidationFailure.CollectGenerationMismatch);

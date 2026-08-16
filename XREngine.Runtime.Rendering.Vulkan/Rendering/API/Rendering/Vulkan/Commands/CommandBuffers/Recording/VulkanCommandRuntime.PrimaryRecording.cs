@@ -11,6 +11,23 @@ internal sealed partial class VulkanCommandRuntime
     internal VulkanPrimaryCommandRecordingResult RecordPrimary(
         in VulkanPreparedPrimaryCommandInput input)
     {
+        try
+        {
+            VulkanPrimaryCommandRecordingResult result = RecordPrimaryCore(in input);
+            if (!result.Succeeded)
+                FailSubmissionMarkersForCommandBuffer(input.PrimaryCommandBuffer);
+            return result;
+        }
+        catch
+        {
+            FailSubmissionMarkersForCommandBuffer(input.PrimaryCommandBuffer);
+            throw;
+        }
+    }
+
+    private VulkanPrimaryCommandRecordingResult RecordPrimaryCore(
+        in VulkanPreparedPrimaryCommandInput input)
+    {
         // A timed-out worker may still own a command-chain artifact or its
         // recording arena. Quarantine the entire primary-recording surface,
         // including reuse and direct-secondary paths, until that worker exits.

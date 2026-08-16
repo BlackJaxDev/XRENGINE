@@ -14,19 +14,72 @@ internal sealed class VulkanTimelineGpuFence : XRGpuFence
     private ulong _semaphore;
     private ulong _value;
     private int _state;
+    private int _disposePendingBackendResolution;
+
+    public override EGpuFenceSubmissionStatus SubmissionStatus
+        => Volatile.Read(ref _state) switch
+        {
+            1 => EGpuFenceSubmissionStatus.Submitted,
+            2 => EGpuFenceSubmissionStatus.Failed,
+            _ => EGpuFenceSubmissionStatus.AwaitingSubmission,
+        };
 
     internal void Reset(Vk api, VulkanDeviceContext device, VulkanCommandRuntime runtime, VulkanResourceRuntime resources)
     {
         ResetForReuse();
         _api = api; _device = device; _runtime = runtime; _resources = resources;
-        _semaphore = 0; _value = 0; Volatile.Write(ref _state, 0);
+        _semaphore = 0; _value = 0;
+        Volatile.Write(ref _disposePendingBackendResolution, 0);
+        Volatile.Write(ref _state, 0);
     }
     internal void Bind(ulong semaphore, ulong value)
     {
-        if (semaphore == 0 || value == 0) { Fail(); return; }
-        _semaphore = semaphore; _value = value; Volatile.Write(ref _state, 1);
+        VulkanCommandRuntime? runtime = _runtime;
+        if (runtime is null)
+        {
+            Volatile.Write(ref _state, 2);
+            return;
+        }
+
+        lock (runtime.Synchronization._submissionMarkerLock)
+        {
+            if (Volatile.Read(ref _disposePendingBackendResolution) != 0)
+            {
+                ReturnToPoolNoLock(runtime);
+                return;
+            }
+
+            if (semaphore == 0 || value == 0)
+            {
+                Volatile.Write(ref _state, 2);
+                return;
+            }
+
+            _semaphore = semaphore;
+            _value = value;
+            Volatile.Write(ref _state, 1);
+        }
     }
-    internal void Fail() => Volatile.Write(ref _state, 2);
+    internal void Fail()
+    {
+        VulkanCommandRuntime? runtime = _runtime;
+        if (runtime is null)
+        {
+            Volatile.Write(ref _state, 2);
+            return;
+        }
+
+        lock (runtime.Synchronization._submissionMarkerLock)
+        {
+            if (Volatile.Read(ref _disposePendingBackendResolution) != 0)
+            {
+                ReturnToPoolNoLock(runtime);
+                return;
+            }
+
+            Volatile.Write(ref _state, 2);
+        }
+    }
     protected override unsafe EGpuFenceStatus PollCore()
     {
         if (Volatile.Read(ref _state) == 2) return EGpuFenceStatus.Failed;
@@ -40,9 +93,37 @@ internal sealed class VulkanTimelineGpuFence : XRGpuFence
     protected override void DisposeCore()
     {
         VulkanCommandRuntime? runtime = _runtime;
-        bool reusable = Volatile.Read(ref _state) != 0;
-        _api = null; _device = null; _runtime = null; _resources = null; _semaphore = 0; _value = 0; Fail();
-        if (reusable && runtime is not null)
-            lock (runtime.Synchronization._submissionMarkerLock) runtime.Synchronization._timelineGpuFencePool.Push(this);
+        if (runtime is null)
+        {
+            _api = null; _device = null; _resources = null; _semaphore = 0; _value = 0;
+            Volatile.Write(ref _state, 2);
+            return;
+        }
+
+        lock (runtime.Synchronization._submissionMarkerLock)
+        {
+            bool awaitingBackendResolution = Volatile.Read(ref _state) == 0;
+            _api = null; _device = null; _resources = null; _semaphore = 0; _value = 0;
+            Volatile.Write(ref _state, 2);
+            if (awaitingBackendResolution)
+            {
+                // The command stream still owns a reference to this marker. Keep
+                // the runtime backlink until Bind/Fail releases that reference,
+                // then return the object to the pool without making it reusable
+                // while the backend can still touch it.
+                Volatile.Write(ref _disposePendingBackendResolution, 1);
+                return;
+            }
+
+            ReturnToPoolNoLock(runtime);
+        }
+    }
+
+    private void ReturnToPoolNoLock(VulkanCommandRuntime runtime)
+    {
+        _api = null; _device = null; _runtime = null; _resources = null; _semaphore = 0; _value = 0;
+        Volatile.Write(ref _state, 2);
+        Volatile.Write(ref _disposePendingBackendResolution, 0);
+        runtime.Synchronization._timelineGpuFencePool.Push(this);
     }
 }

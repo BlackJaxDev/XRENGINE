@@ -44,6 +44,7 @@ internal sealed partial class VulkanFrameLoop
         ulong frameDataGeneration = 0;
         bool mappedFrameSlotPrepared = false;
         bool frameDataSlotPrepared = false;
+        CommandBuffer commandBuffer = default;
         ulong frameNumber = unchecked((ulong)OutputRuntime.NextExplicitTargetFrameNumber());
 
         try
@@ -53,7 +54,7 @@ internal sealed partial class VulkanFrameLoop
 
             _telemetry.PublishDescriptorTableGeneration(_resourceRuntime.DescriptorTableGeneration);
             _resourceRuntime.Descriptors.Heap.BeginFrame(frameNumber);
-            lease = target.AcquireFrameTarget(out CommandBuffer commandBuffer);
+            lease = target.AcquireFrameTarget(out commandBuffer);
             acquired = true;
             if (!lease.IsValid)
                 throw new InvalidOperationException($"Vulkan target '{FrameExecutionLabel}' returned an invalid frame-target lease.");
@@ -149,6 +150,7 @@ internal sealed partial class VulkanFrameLoop
                     in diagnosticContext,
                     caller: nameof(ExecuteExplicitProductionFrame));
             }
+            submitted = receipt.SubmissionAccepted;
             if (!receipt.SubmissionAccepted)
             {
                 if (receipt.Result == Result.ErrorDeviceLost)
@@ -157,7 +159,6 @@ internal sealed partial class VulkanFrameLoop
                     $"Vulkan {FrameExecutionLabel} production submission failed ({receipt.Result}).");
             }
 
-            submitted = true;
             target.NotifyFrameSubmitted(in lease);
             ResourceRuntime.Uploads.PublicationState.QueueRecordedForTimeline(
                 graphicsSignalValue,
@@ -176,6 +177,7 @@ internal sealed partial class VulkanFrameLoop
         {
             if (!submitted)
             {
+                _commandRuntime.FailSubmissionMarkersForCommandBuffer(commandBuffer);
                 CancelPendingImportedTextureUploadFrameOps(
                     $"{FrameExecutionLabel} production frame aborted before submission");
                 ResourceRuntime.Uploads.CancelRecordedSubmitBatch(
@@ -210,123 +212,165 @@ internal sealed partial class VulkanFrameLoop
         // ordinary portable work. Record it serially into the target primary so
         // browser and presentationless hosts do not lose engine-owned UI.
         FrameOp[] staticOperations = drainedOperations;
-        if (!meshMaterializationComplete)
-            staticOperations = [];
-        _commandRuntime.NormalizePrimaryPlanPassIndicesForPublication(staticOperations);
-
-        VulkanComputePreparationResult computePreparation =
-            _commandRuntime.PrepareComputeProgramsForFramePlan(staticOperations);
-        if (!computePreparation.Succeeded)
-            return VulkanPrimaryCommandRecordingResult.Deferred(computePreparation.FormatFailure());
-
-        ResourcePlannerRuntimeState plannerState = PublishedResourcePlannerRuntimeState;
-        VulkanFramePlanningSnapshot planningSnapshot = _framePlanner.CaptureSnapshot();
-        if (planningSnapshot.RenderGraphPlan.Revision != plannerState.ResourcePlannerRevision)
+        bool submissionMarkersTransferred = false;
+        try
         {
-            return VulkanPrimaryCommandRecordingResult.Deferred(
-                $"Planner publication changed before explicit-target recording. " +
-                $"Planner={plannerState.ResourcePlannerRevision} Graph={planningSnapshot.RenderGraphPlan.Revision}.");
-        }
-        if (!TryFreezeNativeBarrierBindings(
-                in planningSnapshot,
-                in plannerState,
-                _resourceRuntime.AllowSynchronousResourceUploads,
-                out VulkanFramePlanningSnapshot frozenPlanningSnapshot,
-                out string freezeFailure))
-        {
-            return VulkanPrimaryCommandRecordingResult.Deferred(freezeFailure);
-        }
+            if (!meshMaterializationComplete)
+            {
+                VulkanCommandSynchronizationState.FailUnsubmittedSubmissionMarkers(
+                    staticOperations);
+                staticOperations = [];
+            }
+            _commandRuntime.NormalizePrimaryPlanPassIndicesForPublication(staticOperations);
 
-        SwapchainRecordingTarget recordingTarget = new(
-            lease.Target.ColorImage,
-            lease.Target.ColorView,
-            lease.ColorFormat,
-            lease.Target.Extent,
-            lease.Target.DepthImage,
-            lease.Target.DepthView,
-            lease.DepthFormat,
-            VulkanFixedOutputFormatResolver.DepthAspect(lease.DepthFormat),
-            lease.Target.InitialColorLayout,
-            ImageEverPresentedAtRecordStart:
-                lease.Target.InitialColorLayout != ImageLayout.Undefined);
-        VulkanPreparedResourcePlanStamp resourcePlanStamp = new(
-            frozenPlanningSnapshot,
-            plannerState.ResourcePlannerRevision,
-            plannerState.ResourcePlannerSignature,
-            plannerState.ResourceAllocationSignature);
-        VulkanCommandRecordingPolicySnapshot policy = new(
-            UseDynamicRendering: true,
-            AllowSynchronousResourceUploads: _resourceRuntime.AllowSynchronousResourceUploads,
-            FreshSerialRecording: true,
-            IsExternalSwapchainTarget: lease.ImagesExternallyOwned,
-            PreserveSwapchainForOverlay: false,
-            TransitionSwapchainToPresent: true,
-            PreferKhrDynamicRendering: false,
-            FinalTargetLayout: lease.Target.RequiredFinalColorLayout);
-        VulkanPreparedPrimaryAuthority authority = new(
-            recordingTarget,
-            CapturePreparedRenderTargetSnapshot(
-                in recordingTarget,
-                lease.Target.TargetGeneration),
-            default,
-            resourcePlanStamp,
-            new VulkanCommandClearStateSnapshot(
-                _commandRuntime.StateTracker.ClearColor,
-                _commandRuntime.StateTracker.ClearDepth,
-                _commandRuntime.StateTracker.ClearStencil,
-                RenderDiagnosticsFlags.VkForceSwapchainMagenta),
-            policy,
-            lease.Target.InitialColorLayout);
+            VulkanComputePreparationResult computePreparation =
+                _commandRuntime.PrepareComputeProgramsForFramePlan(staticOperations);
+            if (!computePreparation.Succeeded)
+            {
+                VulkanCommandSynchronizationState.FailUnsubmittedSubmissionMarkers(
+                    staticOperations);
+                return VulkanPrimaryCommandRecordingResult.Deferred(computePreparation.FormatFailure());
+            }
 
-        FramePlan framePlan = _framePlanner.FramePlanBuilder.BuildAndSeal(
-            checked((int)lease.Target.FrameSlotIndex),
-            plannerState.ResourcePlannerRevision,
-            staticOperationSignature: 0UL,
-            dynamicOverlaySignature: 0UL,
-            staticOperations,
-            dynamicOverlayOperations: [],
-            new VulkanFramePlanRenderGraphAuthority(
-                frozenPlanningSnapshot.RenderGraphPlan,
-                plannerState.FrameOpResourcePlannerSwitchingState),
-            textureUploadOperations: textureUploadOperations);
-        FrameOperationSequence preparedOperations = framePlan.GetNativeStaticOperationsForRecording();
-        computePreparation = _commandRuntime.PrepareComputeFrameOpsForRecording(
-            lease.Target.FrameSlotIndex,
-            preparedOperations);
-        if (!computePreparation.Succeeded)
-            return VulkanPrimaryCommandRecordingResult.Deferred(computePreparation.FormatFailure());
+            ResourcePlannerRuntimeState plannerState = PublishedResourcePlannerRuntimeState;
+            VulkanFramePlanningSnapshot planningSnapshot = _framePlanner.CaptureSnapshot();
+            if (planningSnapshot.RenderGraphPlan.Revision != plannerState.ResourcePlannerRevision)
+            {
+                VulkanCommandSynchronizationState.FailUnsubmittedSubmissionMarkers(
+                    staticOperations);
+                return VulkanPrimaryCommandRecordingResult.Deferred(
+                    $"Planner publication changed before explicit-target recording. " +
+                    $"Planner={plannerState.ResourcePlannerRevision} Graph={planningSnapshot.RenderGraphPlan.Revision}.");
+            }
+            if (!TryFreezeNativeBarrierBindings(
+                    in planningSnapshot,
+                    in plannerState,
+                    _resourceRuntime.AllowSynchronousResourceUploads,
+                    out VulkanFramePlanningSnapshot frozenPlanningSnapshot,
+                    out string freezeFailure))
+            {
+                VulkanCommandSynchronizationState.FailUnsubmittedSubmissionMarkers(
+                    staticOperations);
+                return VulkanPrimaryCommandRecordingResult.Deferred(freezeFailure);
+            }
 
-        primaryPlan.Build(
-            preparedOperations.Stream,
-            framePlan.StaticOperationSignature,
-            new VulkanPrimaryPlanTerminalContext(
+            SwapchainRecordingTarget recordingTarget = new(
+                lease.Target.ColorImage,
+                lease.Target.ColorView,
+                lease.ColorFormat,
+                lease.Target.Extent,
+                lease.Target.DepthImage,
+                lease.Target.DepthView,
+                lease.DepthFormat,
+                VulkanFixedOutputFormatResolver.DepthAspect(lease.DepthFormat),
+                lease.Target.InitialColorLayout,
+                ImageEverPresentedAtRecordStart:
+                    lease.Target.InitialColorLayout != ImageLayout.Undefined);
+            VulkanPreparedResourcePlanStamp resourcePlanStamp = new(
+                frozenPlanningSnapshot,
+                plannerState.ResourcePlannerRevision,
+                plannerState.ResourcePlannerSignature,
+                plannerState.ResourceAllocationSignature);
+            VulkanCommandRecordingPolicySnapshot policy = new(
+                UseDynamicRendering: true,
+                AllowSynchronousResourceUploads: _resourceRuntime.AllowSynchronousResourceUploads,
+                FreshSerialRecording: true,
+                IsExternalSwapchainTarget: lease.ImagesExternallyOwned,
                 PreserveSwapchainForOverlay: false,
                 TransitionSwapchainToPresent: true,
-                ReleaseExternalImageOwnership:
-                    lease.CompletionKind == VulkanFrameTargetCompletionKind.OpenXrRuntimeRelease),
-            framePlan: framePlan);
-        VulkanPreparedPrimaryCommandInput input = PreparePrimaryCommandInput(
-            lease.Target.FrameSlotIndex,
-            primaryCommandBuffer,
-            dynamicUiSecondaryCommandBuffer: default,
-            framePlan,
-            primaryPlan,
-            in authority) with
-        {
-            FrameDataImageIndexOverride = lease.Target.FrameSlotIndex,
-            ExcludeDesktopSwapchainBarriers = true,
-        };
-        VulkanPrimaryCommandRecordingResult result = _commandRuntime.RecordPrimary(in input);
-        if (!meshMaterializationComplete && result.Succeeded)
-        {
-            return result with
-            {
-                Disposition = EVulkanPrimaryCommandRecordingDisposition.Deferred,
-                CommandBuffer = default,
-                Reason = deferredReason,
-            };
-        }
+                PreferKhrDynamicRendering: false,
+                FinalTargetLayout: lease.Target.RequiredFinalColorLayout);
+            VulkanPreparedPrimaryAuthority authority = new(
+                recordingTarget,
+                CapturePreparedRenderTargetSnapshot(
+                    in recordingTarget,
+                    lease.Target.TargetGeneration),
+                default,
+                resourcePlanStamp,
+                new VulkanCommandClearStateSnapshot(
+                    _commandRuntime.StateTracker.ClearColor,
+                    _commandRuntime.StateTracker.ClearDepth,
+                    _commandRuntime.StateTracker.ClearStencil,
+                    RenderDiagnosticsFlags.VkForceSwapchainMagenta),
+                policy,
+                lease.Target.InitialColorLayout);
 
-        return result;
+            FramePlan framePlan = _framePlanner.FramePlanBuilder.BuildAndSeal(
+                checked((int)lease.Target.FrameSlotIndex),
+                plannerState.ResourcePlannerRevision,
+                staticOperationSignature: 0UL,
+                dynamicOverlaySignature: 0UL,
+                staticOperations,
+                dynamicOverlayOperations: [],
+                new VulkanFramePlanRenderGraphAuthority(
+                    frozenPlanningSnapshot.RenderGraphPlan,
+                    plannerState.FrameOpResourcePlannerSwitchingState),
+                textureUploadOperations: textureUploadOperations);
+            FrameOperationSequence preparedOperations = framePlan.GetNativeStaticOperationsForRecording();
+            computePreparation = _commandRuntime.PrepareComputeFrameOpsForRecording(
+                lease.Target.FrameSlotIndex,
+                preparedOperations);
+            if (!computePreparation.Succeeded)
+            {
+                VulkanCommandSynchronizationState.FailUnsubmittedSubmissionMarkers(
+                    staticOperations);
+                return VulkanPrimaryCommandRecordingResult.Deferred(computePreparation.FormatFailure());
+            }
+
+            primaryPlan.Build(
+                preparedOperations.Stream,
+                framePlan.StaticOperationSignature,
+                new VulkanPrimaryPlanTerminalContext(
+                    PreserveSwapchainForOverlay: false,
+                    TransitionSwapchainToPresent: true,
+                    ReleaseExternalImageOwnership:
+                        lease.CompletionKind == VulkanFrameTargetCompletionKind.OpenXrRuntimeRelease),
+                framePlan: framePlan);
+            VulkanPreparedPrimaryCommandInput input = PreparePrimaryCommandInput(
+                lease.Target.FrameSlotIndex,
+                primaryCommandBuffer,
+                dynamicUiSecondaryCommandBuffer: default,
+                framePlan,
+                primaryPlan,
+                in authority) with
+            {
+                FrameDataImageIndexOverride = lease.Target.FrameSlotIndex,
+                ExcludeDesktopSwapchainBarriers = true,
+            };
+            VulkanPrimaryCommandRecordingResult result = _commandRuntime.RecordPrimary(in input);
+            if (!meshMaterializationComplete && result.Succeeded)
+            {
+                _commandRuntime.FailSubmissionMarkersForCommandBuffer(
+                    input.PrimaryCommandBuffer);
+                VulkanCommandSynchronizationState.FailUnsubmittedSubmissionMarkers(
+                    staticOperations);
+                return result with
+                {
+                    Disposition = EVulkanPrimaryCommandRecordingDisposition.Deferred,
+                    CommandBuffer = default,
+                    Reason = deferredReason,
+                };
+            }
+
+            if (!result.Succeeded)
+            {
+                VulkanCommandSynchronizationState.FailUnsubmittedSubmissionMarkers(
+                    staticOperations);
+            }
+
+            submissionMarkersTransferred =
+                result.Succeeded && result.CommandBuffer.Handle != 0;
+            return result;
+        }
+        finally
+        {
+            if (!submissionMarkersTransferred)
+            {
+                _commandRuntime.FailSubmissionMarkersForCommandBuffer(
+                    primaryCommandBuffer);
+                VulkanCommandSynchronizationState.FailUnsubmittedSubmissionMarkers(
+                    staticOperations);
+            }
+        }
     }
 }

@@ -1,7 +1,8 @@
 # Vulkan shadow mapping regression: layered rendering, atlases, and CPU-direct pacing
 
 **Date:** 2026-08-14
-**Status:** Analysis phases 0-6 complete; approved implementation source work complete; standalone shadows and the generic Vulkan startup-layout baseline validated; layered/atlas correctness, RenderDoc, and warmed pacing validation in progress
+**Last updated:** 2026-08-15
+**Status:** Analysis phases 0-6 and the approved implementation are complete. The requested standalone/layered/atlas route matrix, physical atlas writers, camera/light freshness, and a warmed Vulkan `CpuDirect` pacing probe are validated. A sustained production-mode p99/GPU benchmark, a post-fix authoritative non-atlas RenderDoc equivalence capture, and tests remain pending.
 **Scope:** Directional, point, and spot shadows on ordinary desktop Vulkan, especially the CPU-direct mesh-submission path
 **Related tracker:** [Directional light inspector shadow investigation](directional-light-inspector-shadow-2026-08-03.md)
 
@@ -44,6 +45,35 @@ This session also disproved the validation-clean expectation of checkpoint 5. It
 **Implementation checkpoint 7:** Fresh-process controls proved the 20 startup reports were generic Vulkan recording defects rather than shadow-atlas defects. The identical 10 `oldLayout-01197` plus 10 `vkCmdDraw-None-09600` reports reproduced with all lights disabled. Disabling primary command-buffer reuse did not change the result, and disabling both primary reuse and parallel command-chain recording did not change it. A recording/target/descriptor trace then showed a repeated sequence in one primary command buffer: a synchronization2 render-graph pass barrier performed the required transition, but the following descriptor, dynamic-rendering attachment, or blit helper selected the pre-barrier layout and emitted the same transition again. Representative pairs were HDR color-attachment to shader-read, bloom mip shader-read to color-attachment, HDR/depth to transfer-source, post-process color-attachment to shader-read, and TSR history shader-read to transfer-destination. The validation layer's reported current layouts exactly matched the first pass barriers, ruling out secondary execution order as the immediate cause.
 
 The root cause was the `CmdPipelineBarrier2Tracked` ABI boundary: unlike the legacy tracked pipeline-barrier path, it called Vulkan directly without tracking buffer/image dependencies or publishing each image barrier's destination state to the command-local lookup index. It now mirrors the legacy contract after recording the core/KHR synchronization2 command. The targeted Vulkan renderer build completed with zero warnings and zero errors. A fresh isolated lights-off session (`vk-shadow-impl-sync2b-20260814`, PID 36748) then reached MCP readiness and rendered the full scene with zero `VUID-VkImageMemoryBarrier-oldLayout-01197`, zero `VUID-vkCmdDraw-None-09600`, and zero `[ERROR]` records in its raw `log_vulkan.log`. Evidence is under `Build/_AgentValidation/00000000-000000-shared/mcp-sessions/20260814-205200-vk-shadow-impl-sync2b-20260814/`. The session was stopped normally through its named manager. This closes the generic startup-layout baseline; it does not by itself prove atlas subresource contents or layered target coverage. No unit test was added or run.
+
+**Implementation checkpoint 8:** The completed route matrix was exercised on 2026-08-15 with desktop Vulkan, forced `CpuDirect`, dynamic rendering, and all three light types. With atlases disabled, directional and point `Sequential`, `InstancedLayered`, and `GeometryShader` requests all reached the intended live writer contract; sequential modes reported only the explicit `SequentialRequested` reason, while the layered modes reported no fallback. Directional retained four active cascades. Point sequential/layered controls rendered the requested relevant face mask, and a forced full-relevance control reached `0x3F`. Spot used its single standalone shadow framebuffer and current frustum relevance. With atlases enabled, directional sequential selected `SequentialVulkanCascadeAtlas`, while instanced and geometry selected `AtlasPage`; all kept four resident cascades. Point sequential explicitly selected `AtlasUsesSequentialTiles`, while point instanced and geometry remained grouped with no fallback and six residents in the forced full-relevance control. Spot retained one resident tile with no fallback. Runtime settings were then restored to directional `Auto`, point `InstancedLayered`, all atlases enabled, and the original light transforms.
+
+The final RenderDoc captures establish physical atlas contents rather than inferring success from component counters. `vulkan-shadow-package-steady.rdc` contains real directional depth in the D24 atlas resource (resource 1027). The point writer capture contains current instanced-layered viewport/layer output with the expected face matrices and logical face selection; the point R16 atlas is resource 11072, not 11056. Its decoded 4096-by-4096 surface contained 2,601 distinct values and 1,459,500 positive interior samples in the inspected state. The centered spot capture contains 170 real writer draws and 4,166,931 intermediate R16 samples; the spot atlas is resource 11056. The similarly named `vulkan-shadow-sequential-non-atlas.rdc` copied only a UI/presentation interval and is invalid as post-fix standalone-writer evidence; do not use it for layered-versus-sequential GPU equivalence. This leaves that exact comparison pending even though standalone route/liveness and receiver response passed.
+
+**Implementation checkpoint 9:** Render-on-demand exposed a separate cached-package defect after the writers were fixed. Shadow viewports intentionally retain their caster package until their content owner publishes a replacement, but `BackendReadyFramePackageValidator` compared that package to the global collect generation and rejected it on every later frame. Shadow-pipeline packages now use a dedicated retained collect-generation sentinel that bypasses only that one comparison; command, resource, descriptor, render-graph, and viewport identities are still validated. A final review separated this sentinel from the historical fully `Unspecified` identity so old callers retain their complete bypass semantics. Suppressed render-on-demand viewports are now treated as cached shadow consumers: directional cascades are retained rather than cleared/rebuilt, and their cameras remain in local-light atlas relevance so a point light does not expand back to six full-resolution faces or destabilize spot priority between viewport invalidations.
+
+The retention probe held each light across an idle suppressed interval without a rewrite or residency change: directional relevance/residency stayed `4/4` with `LastRenderedFrame=310`, point stayed mask `43`, residency `4`, and `LastRenderedFrame=546`, and spot stayed relevant with residency `1` and `LastRenderedFrame=546`. Camera movement changed the live pipeline resources (`Albedo`, `HDRSceneTex`, `FinalPostProcessOutputTexture`, and `TsrOutputTexture`) even when the immediate MCP viewport screenshot repeated stale presentation data. Therefore the screenshot helper is not accepted as a frame-freshness oracle; resource generations/hashes, light diagnostics, raw logs, and RenderDoc are the evidence for this checkpoint.
+
+**Implementation checkpoint 10:** The manager previously marked atlas content rendered when the CPU render call returned, even if Vulkan later abandoned the containing frame before submission. Atlas writers now receive a submission receipt placed after their command-stream work. `XRGpuFence` distinguishes `AwaitingSubmission`, `Submitted`, and `Failed` from GPU execution completion; Vulkan binds the receipt to the accepted graphics timeline submission and explicitly fails it when the frame operations are dropped. The manager keeps a bounded, preallocated 32-cohort receipt queue, preallocates candidate storage for the largest supported grouped writer (eight directional cascades; point lights use six faces), tracks the newest submission per tile, retries only a latest failed writer, and never treats an older failure as authoritative over a newer accepted write. Awaiting receipts remain pending rather than being hot-looped. Fence disposal also retains backend ownership until an awaiting marker is resolved, preventing one pooled-fence leak per abandoned receipt.
+
+The first receipt revision incorrectly treated `AwaitingSubmission` as failure on the next render callback. It caused repeated directional/point rewrites and reduced a validation-heavy stress sample to approximately 13.8 Hz with an 89 ms p95. Replacing it with the bounded cohort queue exposed the deeper ownership defect: cold mesh/program preparation drained and discarded static frame operations without terminalizing their markers, eventually filling all 32 receipt slots. Both desktop-primary and explicit-target preparation now fail markers on every deferred, dropped, and exceptional exit after draining operations; the shared pending-frame-op cancellation path also terminalizes non-upload markers before discarding the drained queue. A final caller-level audit additionally covered successful primaries abandoned by explicit-target final-layout/frame-data checks or desktop rejection recovery before queue submission. `RecordPrimary` also removes registered command-buffer marker ownership on failed recording, exception, or a successfully recorded frame that is subsequently discarded. This prevents a stale command-buffer registry entry from touching the same fence after it has returned to the pool and been rented by a newer frame.
+
+The final isolated session `vk-shadow-retention-20260815` used forced `CpuDirect`, standard Vulkan validation, command-buffer labels, directional shadow auditing, and all atlas lights. Cold materialization produced 16 explicit failed receipts between 16:25:31 and 16:25:46; these are now observable retries rather than falsely accepted content. No rejection recurred after warm-up, no receipt was missing, and the 32-cohort capacity warning never fired. A deterministic point-light motion sequence produced the final nonzero atlas summary at render frame 8003 (`scheduled=4`, `failed=0`, `deferred=0`, `2.69 ms`), committed point content at frame 8026, and returned to a clean idle state. At the final snapshot, directional was `Auto -> InstancedLayered`, resident `4`, last rendered `267`; point was `InstancedLayered`, mask `43`, resident `4`, last rendered `8026`; and spot was resident `1`, last rendered `449`. All four directional current/rendered matrix and content hashes matched, with zero stale-sampled or mixed-generation-prevented events.
+
+The warmed profiler snapshot reported a 7.68 ms whole frame, 8.25 ms p95, and 121.6 Hz desktop output under validation, with `FramePackagesRejected=0`, Vulkan outcome `Completed`, no dropped frame operations, no descriptor binding/skipped-draw failures, and no validation errors. The shutdown-flushed session logs contained zero VUIDs, error/fatal lines, unresolved-receipt warnings, or missing-receipt warnings. Cold first-use grouped work still included 52-108 ms directional and a 131.6 ms point entry while shaders/resources compiled; that is a general prewarm/first-use hitch and is not represented as solved steady-state pacing. The final sentinel-separation, receipt-capacity, and marker-abandonment refinements were source-reviewed and rebuilt after this live session; they do not alter its successful warm path, but their abandonment branches have build evidence only.
+
+**Implementation validation disposition:**
+
+| Requirement | Disposition | Evidence/limit |
+|---|---|---|
+| Sequential directional, point, and spot route/liveness | Pass | Live standalone writer/receiver response and stable framebuffer/mask diagnostics; the final copied non-atlas `.rdc` is invalid, so authoritative post-fix GPU equivalence remains pending. |
+| Directional and point instanced-layered and geometry route selection | Pass | Requested/effective route matrix, exact fallback reasons, resident target counts, immutable matrices/indices/masks, and point RenderDoc layered output. |
+| Directional, point, and spot atlas physical writes | Pass | D24 directional and decoded R16 point/spot RenderDoc resources plus real writer draws. |
+| Atlas freshness under camera/light motion and render-on-demand | Pass | Current resource/hash changes, stable suppressed residency, matching cascade provenance, point motion refresh, and clean post-motion idle. |
+| Vulkan layouts, descriptors, and frame abandonment | Pass for the exercised desktop path | Raw final log has zero VUID/error records; receipts distinguish accepted and abandoned frames. OpenXR-specific shadow validation was not part of this desktop investigation. |
+| Warm CPU-direct pacing | Pass for the targeted validation probe | 8.25 ms p95/121.6 Hz after motion; no rewrite/rejection storm. This is not a sustained production-mode p99 or GPU-timestamp benchmark. |
+| Cold first-use pacing | Partial | Retries are correct and bounded, but shader/resource compilation still causes first-use hitches up to 131.6 ms in the validation session. |
+| Automated regression tests | Pending explicit clearance | No test was added or run, following the repository testing policy for an integration that first required live validation. |
 
 ## Problem statement
 
@@ -353,7 +383,9 @@ This is not one failure. The second source pass found independent defects in rou
 
    In addition, the atlas budget is non-preemptive: it admits the first entry regardless of elapsed time and allows critical directional work to bypass the time limit, so one atomic multi-cascade fallback can exceed the configured budget by tens of milliseconds. These mechanisms explain plausible CPU time and cadence. The saved route-switch session does not isolate their steady-state p50/p95/p99 contribution, and the unused dynamic record cannot explain incorrect pixels because no shader/binding consumer was found.
 
-## Evidence and confidence ledger
+## Pre-implementation evidence and confidence ledger
+
+This ledger preserves the evidence and open gates at the end of analysis. Checkpoints 1-10 and the implementation validation disposition above supersede its future-tense repair column; do not interpret that column as the current implementation state.
 
 | Finding | Confidence | What is still required |
 |---|---:|---|
@@ -397,9 +429,9 @@ This is not one failure. The second source pass found independent defects in rou
 | Main CPU-direct descriptor path attempts unused `$CpuDirectDynamicData` capture three times per draw | Confirmed in source; no runtime consumer found | Remove/gate or wire it, then measure attempts, changed copies, dirty/flush bytes, and CPU time |
 | Route transitions caused large pipeline/descriptor growth, while one unchanged 20-frame window was stable | Confirmed in saved snapshots; steady-motion leak not established | Segment warmed configurations and measure creation/reuse/invalidation counts with timestamps |
 
-## Current route matrix
+## Pre-implementation route matrix (historical)
 
-"Producer status" means whether the depth-writing route appears structurally viable. Phase 2 receiver evidence is included where captured, but it does not certify correctness while the producer contents are invalid.
+This table records the broken baseline used to design the fixes. The completed requested/effective route matrix is in implementation checkpoint 8. "Producer status" here means whether the pre-fix depth-writing route appeared structurally viable. Phase 2 receiver evidence is included where captured, but it did not certify correctness while the producer contents were invalid.
 
 | Light | Storage | Sequential | Instanced layered | Geometry shader | Current assessment |
 |---|---|---|---|---|---|
@@ -1127,7 +1159,9 @@ Terminal state must distinguish `Rendered`, `Unsupported`, `Failed`, `DeferredBu
 - The steady CPU-direct path performs no unconsumed `$CpuDirectDynamicData` writes; any retained diagnostic payload is gated, counted, and justified by a consumer.
 - CPU-direct p95/p99 remain bounded relative to lights-off and nonshadowed-light controls; thresholds must be set from the later warmed controlled benchmark because the saved Phase 0 route-switch samples are not a baseline.
 
-## Recommended implementation order after approval
+## Implementation order and disposition
+
+The following was the approved implementation order. Source contracts 1-3, 5-7, and 9-11 are complete. Item 4 is complete for the current same-graphics-queue contract: CPU recording, backend submission acceptance/failure, and GPU execution completion are distinct, while receivers may consume a write in the same ordered submission without pretending that CPU recording is GPU completion. Item 8 passed route/liveness and point-layered capture checks, but the exact post-fix standalone-versus-layered RenderDoc equivalence capture remains pending. Item 12 remains intentionally blocked on explicit test clearance. The sustained production p99/GPU benchmark is also a validation follow-up rather than a missing source contract.
 
 1. Before/at `OnRenderRequested`, freeze one frame-owned shared pass snapshot plus a small per-caster envelope containing the resolved material/reason, selected route/material kind, complete layered/atlas state, enqueue-time view/transform data, matrices/indices/derived face mask, original and expanded instance counts, native producer-subresource identity, target mask, and joinable packet generation. Build the compatibility signature and every later draw/program publication from that same logical packet; never re-resolve from cleared live state or a mutable last-camera/target owner, and do not copy the large matrix payload or allocate per draw.
 2. Isolate and fix the dynamic-rendering/secondary-command image-layout failures, comparing primary reuse enabled and disabled, before treating later screenshots or captures as synchronization-clean.
@@ -1254,9 +1288,41 @@ Phase 6 work-amplification audit:
 - noted that the isolated failed point-group executor was only 0.03-0.19 ms in its throttled samples; it is a correctness/retry defect but does not explain the largest saved recording spike by itself
 - did not produce warmed p50/p95/p99 or GPU timings; GPU pipeline profiling was disabled and the saved route-switch session is not a benchmark
 
+Final implementation and route validation:
+
+- evidence root: `Build/_AgentValidation/20260814-110450-vulkan-shadow-phase0/`
+- completed the requested standalone and atlas route matrix for directional, point, and spot lights on desktop Vulkan `CpuDirect`; explicit sequential fallbacks are reported as policy rather than silently substituting another route
+- authoritative atlas capture: `renderdoc/vulkan-shadow-package-steady.rdc`; directional D24, point R16 (resource 11072), and spot R16 (resource 11056) contain non-clear shadow data
+- layered point writer capture: `renderdoc/vulkan-shadow-point-writer.rdc`; the instanced writer emits the expected logical layers/viewports with current face matrices
+- centered spot captures: `renderdoc/vulkan-shadow-spot-centered-steady.rdc` and `renderdoc/vulkan-shadow-spot-writer.rdc`; the writer contains real scene draws and non-clear R16 depth values
+- invalid evidence: `renderdoc/vulkan-shadow-sequential-non-atlas.rdc` contains only a copied UI/presentation interval and must not be cited as post-fix standalone GPU equivalence
+- MCP camera screenshots can return a stale presentation image; camera freshness was instead established from changing `Albedo`, `HDRSceneTex`, `FinalPostProcessOutputTexture`, and `TsrOutputTexture` resources
+- corrected an earlier resource-labeling mistake: resource 11056 is the spot atlas and resource 11072 is the point atlas
+
+Final retained-package and submission-receipt validation:
+
+- session: `vk-shadow-retention-20260815`
+- session root: `Build/_AgentValidation/00000000-000000-shared/mcp-sessions/20260815-153711-vk-shadow-retention-20260815/`
+- final log directory: `logs/XREngine.Editor_debug/windows_x64/xrengine_2026-08-15_16-25-23_pid20244/`
+- forced `CpuDirect`, standard Vulkan validation, command-buffer labels, directional shadow audit, and all three atlas lights
+- recorded 16 explicit cold-preparation receipt failures ending at 16:25:46; no later rejection, unresolved-receipt warning, missing-receipt warning, queue-capacity warning, VUID, descriptor failure, dropped operation, or error/fatal log line occurred
+- after deterministic point-light motion, the last nonzero atlas summary was frame 8003 with four scheduled requests, no failure/defer, and 2.69 ms elapsed; point content committed at frame 8026 and remained clean
+- final light state: directional four residents/last rendered 267, point mask 43/four residents/last rendered 8026, spot one resident/last rendered 449
+- final profiler sample: 7.68 ms whole frame, 8.25 ms p95, 121.6 Hz desktop output, completed Vulkan frame, and zero rejected frame packages
+- cold first-use grouped entries reached 52-108 ms directional and 131.6 ms point under validation; shader/resource prewarming remains a separate first-use pacing task if zero cold hitch is required
+- `Manage-McpEditorSession.ps1 Stop` wrote `State=Stopped` but left PID 20244 alive because of its current ownership/timestamp handling. The exact manifest PID, editor path, and UTC start time were validated before that one process was force-stopped. This tooling issue did not affect renderer evidence and was not changed in this task.
+- the final `Unspecified`/retained sentinel separation, eight-cascade receipt capacity, queued-operation cancellation, and desktop/explicit post-record abandonment cleanup were added after the live run, then source-reviewed and built; their failure branches have build evidence only
+- no unit test was added or run under the repository's feature-validation sequencing policy
+
 Relevant source areas:
 
 - `XREngine.Runtime.Rendering/Rendering/Shadows/ShadowAtlasManager.cs`
+- `XREngine.Runtime.Rendering/Rendering/Shadows/ShadowAtlasManager.SubmissionReceipts.cs`
+- `XREngine.Runtime.Rendering/Rendering/XRViewport.cs`
+- `XREngine.Runtime.Rendering/Rendering/API/Rendering/Generic/XRGpuFence.cs`
+- `XREngine.Runtime.Rendering/Rendering/API/Rendering/Generic/EGpuFenceSubmissionStatus.cs`
+- `XREngine.Runtime.Rendering/Rendering/Commands/RenderCommands/BackendReadyFramePackageIdentity.cs`
+- `XREngine.Runtime.Rendering/Rendering/Commands/RenderCommands/BackendReadyFramePackageValidator.cs`
 - `XREngine.Runtime.Rendering/Rendering/Shadows/ShadowAtlasManager.ShadowAtlasEncodingState.cs`
 - `XREngine.Runtime.Rendering/Rendering/Shadows/ShadowAtlasRenderPlan.cs`
 - `XREngine.Runtime.Rendering/Rendering/Shadows/ShadowAtlasTypes.cs`
@@ -1284,7 +1350,6 @@ Relevant source areas:
 - `XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.ProgramBindingArtifacts.cs`
 - `XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Uniforms.cs`
 - `XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.cs`
-- `XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VulkanCpuDirectDynamicData.cs`
 - `XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VulkanMeshRenderRequest.cs`
 - `XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VulkanMeshProducerSnapshot.cs`
 - `XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VulkanMeshDrawViewSnapshot.cs`
@@ -1294,10 +1359,15 @@ Relevant source areas:
 - `XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Shaders/VulkanAutoUniformBindingSchema.cs`
 - `XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Framebuffers/VkFrameBuffer.cs`
 - `XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/Authority/VulkanCommandRuntime.NativeRecordingServices.cs`
+- `XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/Authority/VulkanTimelineGpuFence.cs`
 - `XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/Synchronization/VulkanRenderer.BarrierEmission.cs`
 - `XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/Recording/Primary/VulkanRenderer.CommandBufferRecording.Primary.Operations.cs`
 - `XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/Scheduling/CommandChains/Planning/VulkanRenderer.CommandChains.Packetization.cs`
 - `XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/Loop/VulkanFrameLoop.PrimaryRecordingPreparation.cs`
+- `XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/Loop/Authority/VulkanFrameLoop.TextureStreaming.cs`
+- `XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/Loop/VulkanRenderer.FrameLoop.Recording.cs`
+- `XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/Loop/VulkanRenderer.FrameLoop.Recovery.cs`
+- `XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/Submission/VulkanFrameLoop.ExplicitProduction.cs`
 - `Build/CommonAssets/Shaders/DirectionalCascadeShadowDepth.gs`
 - `Build/CommonAssets/Shaders/DirectionalCascadeAtlasShadowDepth.gs`
 - `Build/CommonAssets/Shaders/PointLightShadowDepth.gs`
@@ -1309,10 +1379,15 @@ Relevant source areas:
 
 ## Current stopping point
 
-Analysis phases 0-6 are complete and implementation is in progress. The enqueue-time CPU-direct material/view/instance/target packet is frozen, geometry and instanced layered variants restore the same immutable state, sequential point faces have stable physical framebuffer identities, and post-prewarm recording reactivates the exact captured program/layout/descriptors. The follow-up isolated Vulkan CPU-direct session validates stable standalone directional, point, and spot recording and receiver changes with no descriptor-layout, pending-command-buffer, or device-loss failures across thousands of frames. The earlier command-buffer/device-loss sequence was downstream of the descriptor-layout mismatch and did not recur once exact draw reactivation was added; no independent frame-slot completion defect is currently proven. Startup image-layout VUIDs remain an independent Vulkan synchronization issue.
+Analysis phases 0-6 and the approved implementation are complete for the ordinary desktop Vulkan `CpuDirect` scope. The enqueue-time material/view/instance/target packet is immutable; geometry and instanced layered variants consume the same state and per-caster target masks; sequential point faces own stable native subresources; atlas generations and receiver identities distinguish layout/content/storage/sampleability; grouped point ownership and failure accounting are exact; synchronization2 image state is tracked; render-on-demand retains valid shadow packages and relevance inputs; and atlas CPU completion is no longer accepted when the containing Vulkan frame is abandoned.
 
-The first shared implementation gate is capture-confirmed and source-complete: CPU-direct enqueue must carry one already-resolved shadow packet and use it for the compatibility signature, material/program preparation, expanded instance count, uniform restore, pass generation, and recording. Geometry kinds must consume the same state; legacy point GS also needs its matrix alias and exact derived face mask. The point sequential route additionally must freeze each face's native attachment identity before later `_perFaceFbo` mutation and make the complete cube view shader-readable before sampling. The point-atlas scheduler must resolve one effective route, own/suppress exact group member keys, preserve unrelated interleaved requests, distinguish failure from budget deferral, and collect one immutable grouped caster packet.
+The exercised warm path is validation-clean and stable after camera/light motion. The final targeted sample recovered to 121.6 Hz with an 8.25 ms p95, no rewrite/rejection storm, no stale directional provenance, no descriptor failures, and no VUID/error records. RenderDoc proves physical directional, point, and spot atlas contents and point layered target routing. The final defensive review refinements—split legacy/retained identity sentinels, eight-cascade receipt capacity, and exception-safe cleanup of queued or recorded markers on every audited desktop/explicit abandonment path—build cleanly but were not followed by another engine run.
 
-The next implementation gate is atlas freshness and scheduling: expose separate layout, content-publication, storage, and overall publication generations; publish same-frame recorded content to receivers without waiting for the next planning reconciliation; carry point/spot sampleability and actual image/view identity into deferred binding publication; keep atlas storage identity stable; fix exact point-group ownership and duplicate suppression; and distinguish render failure from budget deferral. CPU-recorded readiness may be consumed in the same ordered command stream, but it must not be mislabeled GPU fence completion. Core Vulkan layout/synchronization failures still must be resolved before same-submission atlas safety is accepted.
+Remaining work is validation/tooling rather than a known shadow implementation defect:
 
-The remaining Phase 6 work is runtime validation, not further source diagnosis: after the correctness contracts and minimal counters exist, perform the warmed route matrix and establish p50/p95/p99/worst-frame CPU and GPU baselines. Do not treat the saved cold route-switch numbers as thresholds, and do not treat Phase 2 or implementation checkpoint 2 as a correct-lighting verdict. After the packet/descriptor, frame-slot completion, producer-generation, and descriptor-transition repairs, repeat the sequential writer/receiver captures and require intended shader/state, distinct point faces, correct encoding, directional overlap, spot range, a shader-readable complete view, matching producer/receiver generations, and known-lit/known-shadowed pixels before enabling or comparing layered and atlas routes.
+- capture a valid post-fix non-atlas sequential frame and compare directional/point layered and geometry subresources against it at controlled pixels;
+- run a sustained production-mode lights-off/nonshadowed/sequential/layered/all-atlas benchmark with p50/p95/p99/worst CPU and GPU timestamps;
+- decide whether first-use shader/resource prewarming is required to eliminate the observed cold 52-132 ms validation hitches;
+- validate the same contracts separately for OpenXR if that backend enters scope;
+- after explicit test clearance, add the backend/path regression matrix and deterministic tests;
+- repair the named-session manager's false `Stopped` result in its own tooling task.

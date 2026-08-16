@@ -415,6 +415,7 @@ public sealed partial class ShadowAtlasManager
         _pendingSkippedAllocations.Capacity = Math.Max(_pendingSkippedAllocations.Capacity, _settings.MaxRequestsPerFrame);
         _completionDrainScratch.Capacity = Math.Max(_completionDrainScratch.Capacity, _settings.MaxRequestsPerFrame);
         EnsureCompletionCapacity(_settings.MaxRequestsPerFrame + 1);
+        EnsureSubmissionTrackingCapacity(_settings.MaxRequestsPerFrame);
         _directionalAtlasLightDiagnostics.Capacity = Math.Max(_directionalAtlasLightDiagnostics.Capacity, Math.Min(8, _settings.MaxRequestsPerFrame));
         _directionalAtlasLightDiagnosticIndexByLightId.EnsureCapacity(Math.Min(8, _settings.MaxRequestsPerFrame));
         _directionalAtlasRenderEvents.Capacity = Math.Max(_directionalAtlasRenderEvents.Capacity, Math.Min(16, _settings.MaxRequestsPerFrame));
@@ -1917,9 +1918,27 @@ public sealed partial class ShadowAtlasManager
     public int RenderScheduledTiles(bool collectVisibleNow = false)
     {
         AssertRenderThread();
+        if (!BeginSubmissionTracking())
+            return 0;
+
         int renderPlanIndex = Volatile.Read(ref _publishedRenderPlanIndex);
         lock (_renderPlanLocks[renderPlanIndex])
         {
+            try
+            {
+                return RenderScheduledTilesCore(renderPlanIndex, collectVisibleNow);
+            }
+            finally
+            {
+                EndSubmissionTracking();
+            }
+        }
+    }
+
+    private int RenderScheduledTilesCore(
+        int renderPlanIndex,
+        bool collectVisibleNow)
+    {
         long frameStart = Stopwatch.GetTimestamp();
         int budget = Math.Max(0, _settings.MaxTilesRenderedPerFrame);
         long startTimestamp = _settings.MaxRenderMilliseconds > 0.0f
@@ -1947,8 +1966,9 @@ public sealed partial class ShadowAtlasManager
             int tileCost = GetPlanEntryTileCost(entry);
             int budgetCost = GetPlanEntryBudgetCost(entry, tileCost);
             bool criticalDirectionalRefresh = entry.BudgetClass == ShadowAtlasRenderBudgetClass.CriticalBypass;
+            bool submissionRetry = RequiresSubmissionRetry(plan, entry);
 
-            if (!entry.RequiresRender)
+            if (!entry.RequiresRender && !submissionRetry)
             {
                 LogDirectionalRequestRenderState(request, allocation, "SkippedClean", requiresRender: false);
                 skippedClean++;
@@ -2083,7 +2103,6 @@ public sealed partial class ShadowAtlasManager
             budget);
 
         return scheduled;
-        }
     }
 
     private void LogDirectionalCascadeGroupBudgetDeferral(
@@ -3046,6 +3065,7 @@ public sealed partial class ShadowAtlasManager
             request,
             allocation,
             recordIndex);
+        TrackSubmissionCandidate(completion.Key);
         PublishRenderedCompletionOverlay(completion);
         CommitRenderedTileToLightSlot(completion);
         EnqueueTileCompletion(completion);
@@ -3625,6 +3645,7 @@ public sealed partial class ShadowAtlasManager
                 member.Request,
                 member.Allocation,
                 member.RecordIndex);
+            TrackSubmissionCandidate(completion.Key);
             PublishRenderedCompletionOverlay(completion);
             EnqueueTileCompletion(completion);
         }
@@ -4670,6 +4691,7 @@ public sealed partial class ShadowAtlasManager
 
     private void ResetResources()
     {
+        ResetSubmissionTracking();
         for (int i = 0; i < _encodingStates.Length; i++)
             _encodingStates[i].ResetResources();
 

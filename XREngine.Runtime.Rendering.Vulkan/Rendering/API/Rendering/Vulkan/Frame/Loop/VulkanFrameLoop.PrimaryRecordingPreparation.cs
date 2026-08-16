@@ -90,6 +90,8 @@ internal sealed partial class VulkanFrameLoop
                     // No subset of a scene is publishable. Dynamic text remains
                     // eligible for a recovery secondary and texture uploads remain
                     // eligible for the recovery submit while cold resources converge.
+                    VulkanCommandSynchronizationState.FailUnsubmittedSubmissionMarkers(
+                        staticOperations);
                     staticOperations = [];
                 }
             }
@@ -103,179 +105,219 @@ internal sealed partial class VulkanFrameLoop
                     dynamicUiOperations);
             }
         }
-        bool preserveSwapchainForOverlay =
-            preserveSwapchainForImGuiOverlay || dynamicUiOperations.Length > 0;
-
-        _ = attempt.CompletePhase(
-            EVulkanFrameStage.ResourcePrepare,
-            EDesktopFrameFlow.Continue);
-        VulkanComputePreparationResult computePreparation =
-            _commandRuntime.PrepareComputeProgramsForFramePlan(
-                staticOperations);
-        if (computePreparation.Succeeded)
+        bool submissionMarkersTransferred = false;
+        try
         {
-            computePreparation = _commandRuntime.PrepareComputeProgramsForFramePlan(
-                dynamicUiOperations);
-        }
-        if (!computePreparation.Succeeded)
-            return VulkanPrimaryCommandRecordingResult.Deferred(
-                computePreparation.FormatFailure());
+            bool preserveSwapchainForOverlay =
+                preserveSwapchainForImGuiOverlay || dynamicUiOperations.Length > 0;
 
-        bool freshSerialRecording =
-            RuntimeRenderingHostServices.Settings.VulkanCommandRecordingMode ==
-            EVulkanCommandRecordingMode.FreshSerial;
-        bool allowSynchronousResourceUploads =
-            _resourceRuntime.AllowSynchronousResourceUploads;
-        VulkanPrimaryCommandPlan primaryPlan = primaryPlans[imageIndex];
-        string replanReason = string.Empty;
-        for (int replanAttempt = 0; replanAttempt < 2; replanAttempt++)
-        {
-            ResourcePlannerRuntimeState plannerState =
-                PublishedResourcePlannerRuntimeState;
-            planningSnapshot = _framePlanner.CaptureSnapshot();
-            if (!TryBindPreparedStreamlineUiImage(
-                    imageIndex,
-                    staticOperations,
-                    out string streamlinePreparationFailure))
-            {
-                replanReason = streamlinePreparationFailure;
-                continue;
-            }
-            if (planningSnapshot.RenderGraphPlan.Revision !=
-                plannerState.ResourcePlannerRevision)
-            {
-                replanReason =
-                    $"Planner publication changed while preparing resource revision " +
-                    $"{plannerState.ResourcePlannerRevision}; captured graph revision " +
-                    $"{planningSnapshot.RenderGraphPlan.Revision}.";
-                continue;
-            }
-            if (!TryPrepareFrameOperationTargets(
-                    staticOperations,
-                    allowSynchronousResourceUploads,
-                    out string targetPreparationFailure) ||
-                !TryPrepareFrameOperationTargets(
-                    dynamicUiOperations,
-                    allowSynchronousResourceUploads,
-                    out targetPreparationFailure))
-            {
-                replanReason = targetPreparationFailure;
-                continue;
-            }
-            if (!TryFreezeNativeBarrierBindings(
-                    in planningSnapshot,
-                    in plannerState,
-                    allowSynchronousResourceUploads,
-                    out VulkanFramePlanningSnapshot frozenPlanningSnapshot,
-                    out string resourcePreparationFailure))
-            {
-                replanReason = resourcePreparationFailure;
-                continue;
-            }
-
-            if (!TryCapturePreparedPrimaryAuthority(
-                    imageIndex,
-                    in plannerState,
-                    in frozenPlanningSnapshot,
-                    preserveSwapchainForOverlay,
-                    transitionSwapchainToPresent: true,
-                    allowSynchronousResourceUploads,
-                    freshSerialRecording,
-                    _commandRuntime.StateTracker.ClearColor,
-                    out VulkanPreparedPrimaryAuthority authority,
-                    out string authorityFailure))
-            {
-                replanReason = authorityFailure;
-                continue;
-            }
-
-            FramePlan framePlan;
-            using (VulkanCpuStageScope packetConstructionStage = new(
-                       _telemetry,
-                       EVulkanCpuStage.PacketConstruction))
-            {
-                using (RuntimeRenderingHostServices.Profiling.StartProfileScope(
-                           "Vulkan.BuildFramePlan.Seal"))
-                {
-                    framePlan = _framePlanner.FramePlanBuilder.BuildAndSeal(
-                        CurrentFrameSlot,
-                        plannerState.ResourcePlannerRevision,
-                        staticOperationSignature: 0UL,
-                        dynamicOverlaySignature: 0UL,
-                        staticOperations,
-                        dynamicUiOperations,
-                        new VulkanFramePlanRenderGraphAuthority(
-                            frozenPlanningSnapshot.RenderGraphPlan,
-                            plannerState.FrameOpResourcePlannerSwitchingState),
-                        textureUploadOperations: textureUploadOperations);
-                }
-            }
-            FrameOperationSequence preparedOperations =
-                framePlan.GetNativeStaticOperationsForRecording();
-            computePreparation = _commandRuntime.PrepareComputeFrameOpsForRecording(
-                imageIndex,
-                preparedOperations);
+            _ = attempt.CompletePhase(
+                EVulkanFrameStage.ResourcePrepare,
+                EDesktopFrameFlow.Continue);
+            VulkanComputePreparationResult computePreparation =
+                _commandRuntime.PrepareComputeProgramsForFramePlan(
+                    staticOperations);
             if (computePreparation.Succeeded)
             {
-                computePreparation = _commandRuntime.PrepareComputeFrameOpsForRecording(
-                    imageIndex,
-                    framePlan.GetNativeDynamicOverlayOperationsForRecording());
+                computePreparation = _commandRuntime.PrepareComputeProgramsForFramePlan(
+                    dynamicUiOperations);
             }
             if (!computePreparation.Succeeded)
+            {
+                FailPreparedSubmissionMarkers(staticOperations, dynamicUiOperations);
                 return VulkanPrimaryCommandRecordingResult.Deferred(
                     computePreparation.FormatFailure());
-
-            _ = attempt.CompletePhase(
-                EVulkanFrameStage.WorkSchedule,
-                EDesktopFrameFlow.Continue);
-            primaryPlan.Build(
-                preparedOperations.Stream,
-                framePlan.StaticOperationSignature,
-                new VulkanPrimaryPlanTerminalContext(
-                    preserveSwapchainForOverlay,
-                    TransitionSwapchainToPresent: true,
-                    ReleaseExternalImageOwnership: false),
-                framePlan: framePlan);
-
-            VulkanPreparedPrimaryCommandInput input =
-                PreparePrimaryCommandInput(
-                    imageIndex,
-                    primaryBuffers[imageIndex],
-                    dynamicUiBuffers[imageIndex],
-                    framePlan,
-                    primaryPlan,
-                    in authority);
-
-            _ = attempt.CompletePhase(
-                EVulkanFrameStage.CommandRecord,
-                EDesktopFrameFlow.Continue);
-            VulkanPrimaryCommandRecordingResult result;
-            using (VulkanCpuStageScope primaryRecordingStage = new(
-                       _telemetry,
-                       EVulkanCpuStage.PrimaryRecording))
-            {
-                result = _commandRuntime.RecordPrimary(in input);
             }
-            if (!result.RequiresReplan)
-            {
-                if (meshMaterializationComplete)
-                    return result;
 
-                return result with
+            bool freshSerialRecording =
+                RuntimeRenderingHostServices.Settings.VulkanCommandRecordingMode ==
+                EVulkanCommandRecordingMode.FreshSerial;
+            bool allowSynchronousResourceUploads =
+                _resourceRuntime.AllowSynchronousResourceUploads;
+            VulkanPrimaryCommandPlan primaryPlan = primaryPlans[imageIndex];
+            string replanReason = string.Empty;
+            for (int replanAttempt = 0; replanAttempt < 2; replanAttempt++)
+            {
+                ResourcePlannerRuntimeState plannerState =
+                    PublishedResourcePlannerRuntimeState;
+                planningSnapshot = _framePlanner.CaptureSnapshot();
+                if (!TryBindPreparedStreamlineUiImage(
+                        imageIndex,
+                        staticOperations,
+                        out string streamlinePreparationFailure))
                 {
-                    Disposition = EVulkanPrimaryCommandRecordingDisposition.Deferred,
-                    CommandBuffer = default,
-                    SwapchainLayoutAfterCommandBuffer = ImageLayout.Undefined,
-                    RecordedSwapchainWriteCount = 0,
-                    Reason = meshMaterializationDeferredReason,
-                };
-            }
-            replanReason = result.Reason ??
-                "primary command recording requested a fresh plan";
-        }
+                    replanReason = streamlinePreparationFailure;
+                    continue;
+                }
+                if (planningSnapshot.RenderGraphPlan.Revision !=
+                    plannerState.ResourcePlannerRevision)
+                {
+                    replanReason =
+                        $"Planner publication changed while preparing resource revision " +
+                        $"{plannerState.ResourcePlannerRevision}; captured graph revision " +
+                        $"{planningSnapshot.RenderGraphPlan.Revision}.";
+                    continue;
+                }
+                if (!TryPrepareFrameOperationTargets(
+                        staticOperations,
+                        allowSynchronousResourceUploads,
+                        out string targetPreparationFailure) ||
+                    !TryPrepareFrameOperationTargets(
+                        dynamicUiOperations,
+                        allowSynchronousResourceUploads,
+                        out targetPreparationFailure))
+                {
+                    replanReason = targetPreparationFailure;
+                    continue;
+                }
+                if (!TryFreezeNativeBarrierBindings(
+                        in planningSnapshot,
+                        in plannerState,
+                        allowSynchronousResourceUploads,
+                        out VulkanFramePlanningSnapshot frozenPlanningSnapshot,
+                        out string resourcePreparationFailure))
+                {
+                    replanReason = resourcePreparationFailure;
+                    continue;
+                }
 
-        return VulkanPrimaryCommandRecordingResult.Deferred(
-            $"primary command recording exceeded the two-attempt replan limit: {replanReason}");
+                if (!TryCapturePreparedPrimaryAuthority(
+                        imageIndex,
+                        in plannerState,
+                        in frozenPlanningSnapshot,
+                        preserveSwapchainForOverlay,
+                        transitionSwapchainToPresent: true,
+                        allowSynchronousResourceUploads,
+                        freshSerialRecording,
+                        _commandRuntime.StateTracker.ClearColor,
+                        out VulkanPreparedPrimaryAuthority authority,
+                        out string authorityFailure))
+                {
+                    replanReason = authorityFailure;
+                    continue;
+                }
+
+                FramePlan framePlan;
+                using (VulkanCpuStageScope packetConstructionStage = new(
+                           _telemetry,
+                           EVulkanCpuStage.PacketConstruction))
+                {
+                    using (RuntimeRenderingHostServices.Profiling.StartProfileScope(
+                               "Vulkan.BuildFramePlan.Seal"))
+                    {
+                        framePlan = _framePlanner.FramePlanBuilder.BuildAndSeal(
+                            CurrentFrameSlot,
+                            plannerState.ResourcePlannerRevision,
+                            staticOperationSignature: 0UL,
+                            dynamicOverlaySignature: 0UL,
+                            staticOperations,
+                            dynamicUiOperations,
+                            new VulkanFramePlanRenderGraphAuthority(
+                                frozenPlanningSnapshot.RenderGraphPlan,
+                                plannerState.FrameOpResourcePlannerSwitchingState),
+                            textureUploadOperations: textureUploadOperations);
+                    }
+                }
+                FrameOperationSequence preparedOperations =
+                    framePlan.GetNativeStaticOperationsForRecording();
+                computePreparation = _commandRuntime.PrepareComputeFrameOpsForRecording(
+                    imageIndex,
+                    preparedOperations);
+                if (computePreparation.Succeeded)
+                {
+                    computePreparation = _commandRuntime.PrepareComputeFrameOpsForRecording(
+                        imageIndex,
+                        framePlan.GetNativeDynamicOverlayOperationsForRecording());
+                }
+                if (!computePreparation.Succeeded)
+                {
+                    FailPreparedSubmissionMarkers(staticOperations, dynamicUiOperations);
+                    return VulkanPrimaryCommandRecordingResult.Deferred(
+                        computePreparation.FormatFailure());
+                }
+
+                _ = attempt.CompletePhase(
+                    EVulkanFrameStage.WorkSchedule,
+                    EDesktopFrameFlow.Continue);
+                primaryPlan.Build(
+                    preparedOperations.Stream,
+                    framePlan.StaticOperationSignature,
+                    new VulkanPrimaryPlanTerminalContext(
+                        preserveSwapchainForOverlay,
+                        TransitionSwapchainToPresent: true,
+                        ReleaseExternalImageOwnership: false),
+                    framePlan: framePlan);
+
+                VulkanPreparedPrimaryCommandInput input =
+                    PreparePrimaryCommandInput(
+                        imageIndex,
+                        primaryBuffers[imageIndex],
+                        dynamicUiBuffers[imageIndex],
+                        framePlan,
+                        primaryPlan,
+                        in authority);
+
+                _ = attempt.CompletePhase(
+                    EVulkanFrameStage.CommandRecord,
+                    EDesktopFrameFlow.Continue);
+                VulkanPrimaryCommandRecordingResult result;
+                using (VulkanCpuStageScope primaryRecordingStage = new(
+                           _telemetry,
+                           EVulkanCpuStage.PrimaryRecording))
+                {
+                    result = _commandRuntime.RecordPrimary(in input);
+                }
+                if (!result.RequiresReplan)
+                {
+                    if (result.Succeeded && !meshMaterializationComplete)
+                        _commandRuntime.FailSubmissionMarkersForCommandBuffer(
+                            input.PrimaryCommandBuffer);
+                    if (!result.Succeeded || !meshMaterializationComplete)
+                        FailPreparedSubmissionMarkers(staticOperations, dynamicUiOperations);
+
+                    if (meshMaterializationComplete)
+                    {
+                        submissionMarkersTransferred =
+                            result.Succeeded && result.CommandBuffer.Handle != 0;
+                        return result;
+                    }
+
+                    return result with
+                    {
+                        Disposition = EVulkanPrimaryCommandRecordingDisposition.Deferred,
+                        CommandBuffer = default,
+                        SwapchainLayoutAfterCommandBuffer = ImageLayout.Undefined,
+                        RecordedSwapchainWriteCount = 0,
+                        Reason = meshMaterializationDeferredReason,
+                    };
+                }
+                replanReason = result.Reason ??
+                    "primary command recording requested a fresh plan";
+            }
+
+            FailPreparedSubmissionMarkers(staticOperations, dynamicUiOperations);
+            return VulkanPrimaryCommandRecordingResult.Deferred(
+                $"primary command recording exceeded the two-attempt replan limit: {replanReason}");
+        }
+        finally
+        {
+            if (!submissionMarkersTransferred)
+            {
+                _commandRuntime.FailSubmissionMarkersForCommandBuffer(
+                    primaryBuffers[imageIndex]);
+                FailPreparedSubmissionMarkers(staticOperations, dynamicUiOperations);
+            }
+        }
+    }
+
+    private static void FailPreparedSubmissionMarkers(
+        ReadOnlySpan<FrameOp> staticOperations,
+        ReadOnlySpan<FrameOp> dynamicUiOperations)
+    {
+        VulkanCommandSynchronizationState.FailUnsubmittedSubmissionMarkers(
+            staticOperations);
+        VulkanCommandSynchronizationState.FailUnsubmittedSubmissionMarkers(
+            dynamicUiOperations);
     }
 
     /// <summary>

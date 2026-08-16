@@ -617,6 +617,8 @@ namespace XREngine.Rendering.Vulkan
             EDesktopFrameReason reason,
             Exception exception)
         {
+            _commandRuntime.FailSubmissionMarkersForCommandBuffer(
+                attempt.SceneCommandBuffer);
             ReleaseUnsubmittedDesktopUpload(ref attempt, operation);
             _ = ConsumeDesktopAcquireForRecovery(ref attempt, operation);
             Debug.VulkanWarningEvery(

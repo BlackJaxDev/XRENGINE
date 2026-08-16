@@ -20,6 +20,14 @@ public abstract class XRGpuFence : IDisposable
 
     public bool IsDisposed => _disposed;
 
+    /// <summary>
+    /// Reports whether the command stream containing this fence reached backend submission.
+    /// Immediate command-stream backends accept a fence when it is created; deferred backends
+    /// override this property so producers can distinguish queued work from abandoned work.
+    /// </summary>
+    public virtual EGpuFenceSubmissionStatus SubmissionStatus
+        => EGpuFenceSubmissionStatus.Submitted;
+
     public EGpuFenceStatus Poll()
     {
         if (_disposed)
