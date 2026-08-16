@@ -239,46 +239,28 @@ public class GpuIndirectRenderDispatchTests
     #region Command Buffer Layout Tests (Matching Shader)
 
     /// <summary>
-    /// Compact GPUIndirectRenderCommand compatibility layout:
-    /// 00-03: BoundingSphere, 04: MeshID, 05: SubmeshID, 06: MaterialID,
-    /// 07: InstanceCount, 08: RenderPass, 09: RenderIdentityID, 10: RenderDistance,
-    /// 11: LayerMask, 12: LODLevel, 13: Flags, 14: LogicalMeshID,
-    /// 15: TransformID, 16: SkinID, 17: StateClassID, 18: BoundsID, 19: DrawID.
+    /// DrawMetadata is the 16-uint cull-control stream; BoundsGpu owns spatial data.
     /// </summary>
     [Test]
     public void CommandBuffer_FieldOffsets_MatchShaderLayout()
     {
-        int boundingSphereStart = 0;
-        int meshIdOffset = 4;
-        int materialIdOffset = 6;
-        int instanceCountOffset = 7;
-        int renderPassOffset = 8;
-        int renderDistanceOffset = 10;
-        int layerMaskOffset = 11;
-        int flagsOffset = 13;
-        int transformIdOffset = 15;
-        int drawIdOffset = 19;
-
-        boundingSphereStart.ShouldBe(0);
-        meshIdOffset.ShouldBe(4);
-        materialIdOffset.ShouldBe(6);
-        instanceCountOffset.ShouldBe(7);
-        renderPassOffset.ShouldBe(8);
-        renderDistanceOffset.ShouldBe(10);
-        layerMaskOffset.ShouldBe(11);
-        flagsOffset.ShouldBe(13);
-        transformIdOffset.ShouldBe(15);
-        drawIdOffset.ShouldBe(19);
+        Marshal.OffsetOf<DrawMetadata>(nameof(DrawMetadata.DrawID)).ToInt32().ShouldBe(0);
+        Marshal.OffsetOf<DrawMetadata>(nameof(DrawMetadata.MeshID)).ToInt32().ShouldBe(4);
+        Marshal.OffsetOf<DrawMetadata>(nameof(DrawMetadata.MaterialID)).ToInt32().ShouldBe(12);
+        Marshal.OffsetOf<DrawMetadata>(nameof(DrawMetadata.TransformID)).ToInt32().ShouldBe(16);
+        Marshal.OffsetOf<DrawMetadata>(nameof(DrawMetadata.Flags)).ToInt32().ShouldBe(32);
+        Marshal.OffsetOf<DrawMetadata>(nameof(DrawMetadata.RenderPass)).ToInt32().ShouldBe(48);
+        Marshal.OffsetOf<DrawMetadata>(nameof(DrawMetadata.BoundsID)).ToInt32().ShouldBe(60);
     }
 
     [Test]
-    public void CommandBuffer_TotalSize_Is80Bytes()
+    public void DrawMetadataBuffer_TotalSize_Is64Bytes()
     {
-        const int COMMAND_FLOATS = 20;
-        const int FLOAT_SIZE = 4;
+        const int metadataUInts = 16;
+        const int uintSize = 4;
 
-        int totalBytes = COMMAND_FLOATS * FLOAT_SIZE;
-        totalBytes.ShouldBe(80);
+        int totalBytes = metadataUInts * uintSize;
+        totalBytes.ShouldBe(GPUSceneLayoutContract.DrawMetadataSize);
     }
 
     #endregion
@@ -439,10 +421,9 @@ public class GpuIndirectRenderDispatchTests
     }
 
     [Test]
-    public void CulledCommandBuffer_CommandFloatCount_Is20Lanes()
+    public void DrawMetadataBuffer_Has16UIntLanes()
     {
-        // Each command is 80 bytes = 20 lanes; matrices live in TransformBuffer.
-        GPUScene.CommandFloatCount.ShouldBe(20);
+        (GPUSceneLayoutContract.DrawMetadataSize / sizeof(uint)).ShouldBe(16);
     }
 
     [Test]

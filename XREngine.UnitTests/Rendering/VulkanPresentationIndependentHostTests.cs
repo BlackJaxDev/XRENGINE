@@ -68,8 +68,7 @@ public sealed unsafe class VulkanPresentationIndependentHostTests
 
         QueueFamilyIndices indices = VulkanQueueFamilySelector.Select(
             families,
-            physicalDevice: default,
-            presentationSupportProbe: null);
+            VulkanOutputDeviceProbeFacts.Presentationless);
 
         indices.IsComplete(requirePresentQueue: false).ShouldBeTrue();
         indices.GraphicsFamilyIndex.ShouldBe(0u);
@@ -81,26 +80,15 @@ public sealed unsafe class VulkanPresentationIndependentHostTests
     }
 
     [Test]
-    public void QueueSelection_PropagatesPresentationQueryFailure()
+    public void OutputRuntime_PropagatesPresentationQueryFailureBeforeQueueSelection()
     {
-        QueueFamilyProperties[] families =
-        [
-            new() { QueueFlags = QueueFlags.GraphicsBit, QueueCount = 1 },
-        ];
-        VulkanPresentationSupportProbe failingProbe =
-            (PhysicalDevice _, uint _, out bool supported) =>
-            {
-                supported = false;
-                return Result.ErrorSurfaceLostKhr;
-            };
+        string source = SourceContractWorkspace.ReadFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/Output/Authority/VulkanOutputRuntime.DeviceSelection.cs");
 
-        InvalidOperationException exception = Should.Throw<InvalidOperationException>(() =>
-            VulkanQueueFamilySelector.Select(
-                families,
-                new PhysicalDevice((nint)0x101),
-                failingProbe));
-
-        exception.Message.ShouldContain(nameof(Result.ErrorSurfaceLostKhr));
+        source.ShouldContain("GetPhysicalDeviceSurfaceSupport(");
+        source.ShouldContain("if (result != Result.Success)");
+        source.ShouldContain("Vulkan presentation support query failed");
+        source.ShouldContain("new VulkanOutputDeviceProbeFacts(");
     }
 
     [Test]
@@ -123,7 +111,9 @@ public sealed unsafe class VulkanPresentationIndependentHostTests
             renderer.GraphicsQueue.Handle.ShouldNotBe(0);
             renderer.PresentQueue.Handle.ShouldBe(0);
             renderer.HasInitializedMemoryAllocator.ShouldBeTrue();
-            renderer.BackendObjectRegistry.ShouldNotBeNull();
+            SourceContractWorkspace.ReadFile(
+                "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Resources/Authority/VulkanResourceRuntime.cs")
+                .ShouldContain("BackendObjects = new VulkanBackendObjectRegistry()");
             renderer.EnabledInstanceExtensions.ShouldNotContain("VK_KHR_surface");
             renderer.EnabledDeviceExtensions.ShouldNotContain("VK_KHR_swapchain");
         }

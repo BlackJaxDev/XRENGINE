@@ -55,9 +55,6 @@ public sealed class VulkanStablePacketAndDescriptorTests
     [Test]
     public void FrameDataArena_HasExplicitBoundsAndMonotonicRecreation()
     {
-        VulkanRenderer.MappedFrameArenaInitialCapacity.ShouldBe(
-            32UL * 1024UL * 1024UL);
-
         string arena = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Resources/Buffers/VulkanMappedFrameArena.cs");
         arena.ShouldContain("private const int MaxFrameSlots = 8;");
@@ -154,7 +151,7 @@ public sealed class VulkanStablePacketAndDescriptorTests
             ref samplerNames,
             ref namedSamplers,
             ref images);
-        snapshot.PublishBindingLayoutSignatures();
+        PublishBindingLayoutSignaturesForTest(snapshot);
 
         snapshot.TryGetRuntimeUniformPublication(
                 "MaterialValue",
@@ -175,7 +172,7 @@ public sealed class VulkanStablePacketAndDescriptorTests
         AutoUniformBlockInfo block = new(
             "DrawData",
             "drawData",
-            Set: VulkanRenderer.DescriptorSetMaterial,
+            Set: VulkanMeshRenderingConventions.DescriptorSetMaterial,
             Binding: 4,
             Size: 160,
             Members:
@@ -203,7 +200,7 @@ public sealed class VulkanStablePacketAndDescriptorTests
             ],
             ShaderType: EShaderType.Vertex);
         DescriptorBindingInfo descriptor = new(
-            Set: VulkanRenderer.DescriptorSetMaterial,
+            Set: VulkanMeshRenderingConventions.DescriptorSetMaterial,
             Binding: 5,
             DescriptorType.CombinedImageSampler,
             ShaderStageFlags.FragmentBit,
@@ -283,7 +280,7 @@ public sealed class VulkanStablePacketAndDescriptorTests
                 new AutoUniformBlockInfo(
                     $"FrequencyBlock{index}",
                     instanceName,
-                    VulkanRenderer.DescriptorSetGlobals,
+                    VulkanDescriptorManager.GlobalsSetIndex,
                     binding,
                     Size: 16,
                     Members:
@@ -297,7 +294,7 @@ public sealed class VulkanStablePacketAndDescriptorTests
                     EShaderType.Fragment,
                     frequencies[index]));
             descriptorBindings[index] = new DescriptorBindingInfo(
-                VulkanRenderer.DescriptorSetGlobals,
+                VulkanDescriptorManager.GlobalsSetIndex,
                 binding,
                 DescriptorType.UniformBuffer,
                 ShaderStageFlags.FragmentBit,
@@ -445,14 +442,14 @@ public sealed class VulkanStablePacketAndDescriptorTests
     public void DescriptorOwnership_SharesOnlyDrawSlotInvariantBindingTables()
     {
         DescriptorBindingInfo dynamicUniform = new(
-            VulkanRenderer.DescriptorSetGlobals,
+            VulkanDescriptorManager.GlobalsSetIndex,
             Binding: 64,
             DescriptorType.UniformBufferDynamic,
             ShaderStageFlags.FragmentBit,
             Count: 1,
             Name: "FrameData");
         DescriptorBindingInfo sampledImage = new(
-            VulkanRenderer.DescriptorSetMaterial,
+            VulkanMeshRenderingConventions.DescriptorSetMaterial,
             Binding: 0,
             DescriptorType.CombinedImageSampler,
             ShaderStageFlags.FragmentBit,
@@ -492,7 +489,7 @@ public sealed class VulkanStablePacketAndDescriptorTests
 
         DescriptorBindingInfo fixedMaterialUniform = dynamicUniform with
         {
-            Set = VulkanRenderer.DescriptorSetMaterial,
+            Set = VulkanMeshRenderingConventions.DescriptorSetMaterial,
             DescriptorType = DescriptorType.UniformBuffer,
         };
         VkMeshRenderer.AreDescriptorBindingsDrawSlotInvariant(
@@ -827,7 +824,7 @@ public sealed class VulkanStablePacketAndDescriptorTests
         AutoUniformBlockInfo block = new(
             "AutoData",
             "autoData",
-            Set: VulkanRenderer.DescriptorSetGlobals,
+            Set: VulkanDescriptorManager.GlobalsSetIndex,
             Binding: 0,
             Size: 64,
             Members:
@@ -972,9 +969,6 @@ public sealed class VulkanStablePacketAndDescriptorTests
     [Test]
     public void PreparedFrameDataPayloadHandle_ValidatesFrozenRangeAndOwnerGenerations()
     {
-        VkMeshRenderer owner =
-            (VkMeshRenderer)RuntimeHelpers.GetUninitializedObject(
-                typeof(VkMeshRenderer));
         VulkanAutoUniformPublicationSnapshot publication = new()
         {
             FrameGeneration = 11,
@@ -985,11 +979,10 @@ public sealed class VulkanStablePacketAndDescriptorTests
             RuntimeCallbackGeneration = 17,
         };
         VulkanPreparedFrameDataPayloadHandle handle = new(
-            owner,
             new Silk.NET.Vulkan.Buffer(23),
             Offset: 256,
             Range: 160,
-            DescriptorSet: VulkanRenderer.DescriptorSetMaterial,
+            DescriptorSet: VulkanMeshRenderingConventions.DescriptorSetMaterial,
             DescriptorBinding: 4,
             FrameIndex: 2,
             DrawUniformSlot: 7,
@@ -1000,8 +993,8 @@ public sealed class VulkanStablePacketAndDescriptorTests
             publication,
             MaterialGeneration: 14);
 
-        handle.IsValidFor(owner, 2, 7, 19).ShouldBeTrue();
-        handle.IsValidFor(owner, 1, 7, 19).ShouldBeFalse();
+        handle.IsValidFor(2, 7, 19).ShouldBeTrue();
+        handle.IsValidFor(1, 7, 19).ShouldBeFalse();
         handle.ReferencesFrequency(EVulkanBindingFrequency.View).ShouldBeTrue();
         handle.ReferencesFrequency(EVulkanBindingFrequency.Frame).ShouldBeFalse();
         handle.GetContentGeneration(EVulkanBindingFrequency.View).ShouldBe(12UL);
@@ -1035,7 +1028,7 @@ public sealed class VulkanStablePacketAndDescriptorTests
             TransitionSwapchainToPresent: true,
             ReleaseExternalImageOwnership: true);
 
-        plan.Build(operations, terminalContext: terminalContext);
+        plan.Build(LowerOperations(operations), terminalContext: terminalContext);
         ulong firstIdentity = plan.Identity;
 
         plan.OperationCount.ShouldBe(2);
@@ -1056,7 +1049,7 @@ public sealed class VulkanStablePacketAndDescriptorTests
             EVulkanPrimaryPlanAction.EndRendering);
         plan.GetNode(2).Kind.ShouldBe(
             EVulkanPrimaryPlanNodeKind.EndRendering);
-        plan.GetNode(2).Operation.ShouldBeNull();
+        plan.GetNode(2).OperationIndex.ShouldBe(-1);
         plan.GetNode(2).Actions.ShouldBe(
             EVulkanPrimaryPlanAction.EndRendering);
         plan.GetNode(3).Kind.ShouldBe(
@@ -1071,16 +1064,13 @@ public sealed class VulkanStablePacketAndDescriptorTests
             EVulkanPrimaryPlanAction.PreparePresent).ShouldBeTrue();
         plan.HasTerminalAction(
             EVulkanPrimaryPlanAction.ReleaseExternalImageOwnership).ShouldBeTrue();
-        plan.IsEquivalentToDirectOperations(operations).ShouldBeTrue();
-        plan.EmittedCommandSignature.ShouldBe(
-            plan.DirectRecorderCommandSignature);
+        plan.IsFrozen.ShouldBeTrue();
 
-        plan.Build(operations, terminalContext: terminalContext);
+        plan.Build(LowerOperations(operations), terminalContext: terminalContext);
         plan.Identity.ShouldBe(firstIdentity);
-        plan.Build([barrier, clear], terminalContext: terminalContext);
+        plan.Build(LowerOperations([barrier, clear]), terminalContext: terminalContext);
         plan.Identity.ShouldNotBe(firstIdentity);
-        plan.IsEquivalentToDirectOperations([barrier, clear]).ShouldBeTrue();
-        plan.IsEquivalentToDirectOperations(operations).ShouldBeFalse();
+        plan.IsFrozen.ShouldBeTrue();
     }
 
     [Test]
@@ -1133,7 +1123,7 @@ public sealed class VulkanStablePacketAndDescriptorTests
     }
 
     [Test]
-    public void PrimaryPlan_EmissionAndDependencySignatureMatchesDirectRecorder()
+    public void PrimaryPlan_MapsTheSealedLoweredStreamAndChangesIdentityForChangedEmission()
     {
         FrameOpContext context = new(3, 4, null, null, null);
         FrameOp[] operations =
@@ -1155,32 +1145,26 @@ public sealed class VulkanStablePacketAndDescriptorTests
                 context),
         ];
         VulkanPrimaryCommandPlan plan = new();
-        plan.Build(operations, operationSignature: 0xA55AUL);
-        CommandRecordingDependencySignature dependencies = new(
-            OutputPassAttachment: 1,
-            RenderArea: 2,
-            ViewMask: 3,
-            QueueFamily: 4,
-            DynamicRenderingInheritance: 5,
-            PipelineGeneration: 6,
-            PipelineLayoutGeneration: 7,
-            MeshBindingIdentity: 8,
-            IndexBufferBindingIdentity: 9,
-            VertexBufferBindingIdentity: 10,
-            BufferAllocationGeneration: 11,
-            ImageAllocationGeneration: 12,
-            ImageViewGeneration: 13,
-            SamplerAllocationGeneration: 14,
-            DescriptorLayoutGeneration: 15,
-            DescriptorSetGeneration: 16,
-            ResourcePlanGeneration: 17,
-            ExternalTargetVariant: 18,
-            FrameSlotVariant: 19,
-            DescriptorPublicationGeneration: 20,
-            DataPublicationGeneration: 21,
-            VolatileSuffixGeneration: 22);
+        plan.Build(LowerOperations(operations), operationSignature: 0xA55AUL);
+        plan.Identity.ShouldNotBe(0UL);
+        plan.IsFrozen.ShouldBeTrue();
+        plan.OperationCount.ShouldBe(operations.Length);
+        plan.Count.ShouldBe(operations.Length + 1);
+        plan.GetNode(0).Kind.ShouldBe(EVulkanPrimaryPlanNodeKind.Clear);
+        plan.GetNode(0).OperationIndex.ShouldBe(0);
+        plan.GetNode(1).Kind.ShouldBe(EVulkanPrimaryPlanNodeKind.MemoryBarrier);
+        plan.GetNode(1).OperationIndex.ShouldBe(1);
+        plan.GetNode(2).Kind.ShouldBe(EVulkanPrimaryPlanNodeKind.EndRendering);
+        plan.GetNode(2).OperationIndex.ShouldBe(-1);
 
-        plan.HasEquivalentEmissionAndDependencies(dependencies).ShouldBeTrue();
+        ulong firstIdentity = plan.Identity;
+        FrameOp[] changedOperations =
+        [
+            operations[0],
+            new MemoryBarrierOp(PassIndex: 7, EMemoryBarrierMask.All, context),
+        ];
+        plan.Build(LowerOperations(changedOperations), operationSignature: 0xA55AUL);
+        plan.Identity.ShouldNotBe(firstIdentity);
     }
 
     [Test]
@@ -1208,15 +1192,15 @@ public sealed class VulkanStablePacketAndDescriptorTests
                 default,
                 DepthStencilReadOnly: false,
                 SampleCountFlags.Count1Bit));
-        List<KeyValuePair<VulkanRenderer.VulkanResourceLifetimeKey, ulong>> dependencies =
+        List<KeyValuePair<VulkanResourceLifetimeKey, ulong>> dependencies =
         [
             new(
-                new VulkanRenderer.VulkanResourceLifetimeKey(
+                new VulkanResourceLifetimeKey(
                     ObjectType.Buffer,
                     0x303),
                 11),
             new(
-                new VulkanRenderer.VulkanResourceLifetimeKey(
+                new VulkanResourceLifetimeKey(
                     ObjectType.ImageView,
                     0x404),
                 13),
@@ -1272,17 +1256,17 @@ public sealed class VulkanStablePacketAndDescriptorTests
         CommandRecordingDependencySignature dependency = default;
         artifact.PublishExecutable(
             dependency,
-            Array.Empty<KeyValuePair<VulkanRenderer.VulkanResourceLifetimeKey, ulong>>(),
+            Array.Empty<KeyValuePair<VulkanResourceLifetimeKey, ulong>>(),
             recordingGeneration: 3,
             queuedSubmissionCount: 0,
             recordedPrimaryReferenceCount: 0);
 
-        artifact.TryValidateSharedDependency(
+        artifact.TryValidateCommandChainSecondaryDependency(
             dependency with { DataPublicationGeneration = 1 },
             out CommandRecordingDependencyMismatch dataMismatch).ShouldBeTrue();
         dataMismatch.InvalidationClass.ShouldBe(
             CommandRecordingInvalidationClass.DataOnly);
-        artifact.TryValidateSharedDependency(
+        artifact.TryValidateCommandChainSecondaryDependency(
             dependency with { PipelineGeneration = 1 },
             out CommandRecordingDependencyMismatch structuralMismatch).ShouldBeFalse();
         structuralMismatch.Field.ShouldBe(
@@ -1295,10 +1279,10 @@ public sealed class VulkanStablePacketAndDescriptorTests
         VulkanRecordedCommandArtifact artifact = new(
             CommandBufferLevel.Secondary,
             frameSlot: 1);
-        List<KeyValuePair<VulkanRenderer.VulkanResourceLifetimeKey, ulong>> dependencies =
+        List<KeyValuePair<VulkanResourceLifetimeKey, ulong>> dependencies =
         [
             new(
-                new VulkanRenderer.VulkanResourceLifetimeKey(
+                new VulkanResourceLifetimeKey(
                     ObjectType.Image,
                     0x303),
                 5),
@@ -1306,7 +1290,7 @@ public sealed class VulkanStablePacketAndDescriptorTests
 
         static VulkanRecordedCommandArtifactRetirement CycleArtifact(
             VulkanRecordedCommandArtifact artifact,
-            IReadOnlyList<KeyValuePair<VulkanRenderer.VulkanResourceLifetimeKey, ulong>> dependencies,
+            IReadOnlyList<KeyValuePair<VulkanResourceLifetimeKey, ulong>> dependencies,
             ulong generation)
         {
             artifact.AssignNativeBuffer(
@@ -1393,7 +1377,7 @@ public sealed class VulkanStablePacketAndDescriptorTests
 
         artifact.PublishExecutable(
             default,
-            Array.Empty<KeyValuePair<VulkanRenderer.VulkanResourceLifetimeKey, ulong>>(),
+            Array.Empty<KeyValuePair<VulkanResourceLifetimeKey, ulong>>(),
             recordingGeneration: 1,
             queuedSubmissionCount: 0,
             recordedPrimaryReferenceCount: 1);
@@ -1448,7 +1432,7 @@ public sealed class VulkanStablePacketAndDescriptorTests
         AutoUniformBlockInfo block = new(
             "AutoData",
             "autoData",
-            Set: VulkanRenderer.DescriptorSetGlobals,
+            Set: VulkanDescriptorManager.GlobalsSetIndex,
             Binding: 0,
             Size: 160,
             Members:
@@ -1549,7 +1533,7 @@ public sealed class VulkanStablePacketAndDescriptorTests
         AutoUniformBlockInfo block = new(
             "AutoData",
             "autoData",
-            Set: VulkanRenderer.DescriptorSetGlobals,
+            Set: VulkanDescriptorManager.GlobalsSetIndex,
             Binding: 0,
             Size: 128,
             Members:
@@ -1714,9 +1698,9 @@ public sealed class VulkanStablePacketAndDescriptorTests
             new Dictionary<string, VulkanComputeBufferBinding>(
                 StringComparer.Ordinal));
 
-        first.PublishBindingLayoutSignatures();
-        equal.PublishBindingLayoutSignatures();
-        changed.PublishBindingLayoutSignatures();
+        PublishBindingLayoutSignaturesForTest(first);
+        PublishBindingLayoutSignaturesForTest(equal);
+        PublishBindingLayoutSignaturesForTest(changed);
 
         first.RuntimeUniformNameSignature.ShouldBe(
             equal.RuntimeUniformNameSignature);
@@ -1766,7 +1750,7 @@ public sealed class VulkanStablePacketAndDescriptorTests
             ref samplerNamesByUnit,
             ref samplersByName,
             ref images);
-        snapshot.PublishBindingLayoutSignatures();
+        PublishBindingLayoutSignaturesForTest(snapshot);
 
         snapshot.IsMutableLegacyUniform("CallbackValue").ShouldBeTrue();
         snapshot.IsMutableLegacyUniform("VertexCallback").ShouldBeTrue();
@@ -1790,14 +1774,14 @@ public sealed class VulkanStablePacketAndDescriptorTests
         snapshot.Uniforms["MaterialValue"] = new ProgramUniformValue(
             EShaderVarType._float,
             7.0f);
-        snapshot.PublishBindingLayoutSignatures();
+        PublishBindingLayoutSignaturesForTest(snapshot);
         snapshot.MutableLegacyUniformNameSignature.ShouldBe(nameSignature);
         snapshot.MutableLegacyUniformValueSignature.ShouldBe(valueSignature);
 
         snapshot.Uniforms["CallbackValue"] = new ProgramUniformValue(
             EShaderVarType._float,
             8.0f);
-        snapshot.PublishBindingLayoutSignatures();
+        PublishBindingLayoutSignaturesForTest(snapshot);
         snapshot.MutableLegacyUniformNameSignature.ShouldBe(nameSignature);
         snapshot.MutableLegacyUniformValueSignature.ShouldNotBe(valueSignature);
     }
@@ -1843,7 +1827,7 @@ public sealed class VulkanStablePacketAndDescriptorTests
         AutoUniformBlockInfo block = new(
             "FrameData",
             "frameData",
-            Set: VulkanRenderer.DescriptorSetGlobals,
+            Set: VulkanDescriptorManager.GlobalsSetIndex,
             Binding: 0,
             Size: 4,
             Members:
@@ -1896,7 +1880,7 @@ public sealed class VulkanStablePacketAndDescriptorTests
         AutoUniformBlockInfo block = new(
             "MaterialData",
             "materialData",
-            Set: VulkanRenderer.DescriptorSetMaterial,
+            Set: VulkanMeshRenderingConventions.DescriptorSetMaterial,
             Binding: 0,
             Size: 16,
             Members: [value],
@@ -2033,7 +2017,7 @@ public sealed class VulkanStablePacketAndDescriptorTests
         AutoUniformBlockInfo block = new(
             "UnsupportedData",
             "unsupportedData",
-            Set: VulkanRenderer.DescriptorSetGlobals,
+            Set: VulkanDescriptorManager.GlobalsSetIndex,
             Binding: 0,
             Size: 96,
             Members: [unsupported],
@@ -2071,7 +2055,7 @@ public sealed class VulkanStablePacketAndDescriptorTests
         AutoUniformBlockInfo block = new(
             "MaterialData",
             "materialData",
-            Set: VulkanRenderer.DescriptorSetMaterial,
+            Set: VulkanMeshRenderingConventions.DescriptorSetMaterial,
             Binding: 0,
             Size: 64,
             Members: [overflowing],
@@ -2092,7 +2076,7 @@ public sealed class VulkanStablePacketAndDescriptorTests
         AutoUniformBlockInfo block = new(
             "MaterialData",
             "materialData",
-            Set: VulkanRenderer.DescriptorSetMaterial,
+            Set: VulkanMeshRenderingConventions.DescriptorSetMaterial,
             Binding: 0,
             Size: 16,
             Members:
@@ -2118,9 +2102,9 @@ public sealed class VulkanStablePacketAndDescriptorTests
     [Test]
     public void StableMeshPackets_StartAtTenDrawsAndRemainBounded()
     {
-        VulkanRenderer.MinMeshDrawsPerRenderPacket.ShouldBe(10);
-        VulkanRenderer.MaxMeshDrawsPerRenderPacket.ShouldBeGreaterThanOrEqualTo(
-            VulkanRenderer.MinMeshDrawsPerRenderPacket);
+        VulkanCommandRuntime.MinMeshDrawsPerRenderPacket.ShouldBe(10);
+        VulkanCommandRuntime.MaxMeshDrawsPerRenderPacket.ShouldBeGreaterThanOrEqualTo(
+            VulkanCommandRuntime.MinMeshDrawsPerRenderPacket);
     }
 
     private static AutoUniformMember CreateAutoUniformMember(
@@ -2143,7 +2127,7 @@ public sealed class VulkanStablePacketAndDescriptorTests
     [Test]
     public void CommandChainContainers_RebuildWithoutSteadyStateAllocations()
     {
-        const int drawCount = VulkanRenderer.MaxMeshDrawsPerRenderPacket;
+        const int drawCount = VulkanCommandRuntime.MaxMeshDrawsPerRenderPacket;
         const string targetName = "SteadyTarget";
         RenderViewKey viewKey = new(1, 2, 0, RenderViewKind.Main, 0, -1);
         DrawPacket[] draws = new DrawPacket[drawCount];
@@ -2166,6 +2150,7 @@ public sealed class VulkanStablePacketAndDescriptorTests
             chainKeys[i] = new CommandChainKey(0, viewKey, 9, 10, 0, false, i);
 
         RenderPacket packet = new();
+        RenderPacketPayloadArena payloadArena = new();
         RenderPassChainGroup group = new();
         CommandChainSchedule schedule = new();
         RenderPassChainGroup[] groups = [group];
@@ -2187,21 +2172,23 @@ public sealed class VulkanStablePacketAndDescriptorTests
 
         void ResetContainers()
         {
+            payloadArena.ResetForPublication();
             packet.Reset(
+                payloadArena,
                 viewKey,
-                passIndex: 9,
-                targetIdentity: 10,
+                9,
+                10,
                 targetName,
                 RenderPacketVolatility.FrameDataOnly,
                 draws,
                 ReadOnlySpan<DispatchPacket>.Empty,
                 descriptors,
                 resources,
-                structuralSignature: 17,
-                frameDataSignature: 18,
-                sourceStartIndex: 0,
-                sourceCount: drawCount,
-                dynamicOverlay: false);
+                17,
+                18,
+                0,
+                drawCount,
+                false);
             group.Reset(9, 10, targetName, chainKeys, 17, supportsSecondaryCommandBuffers: true, dynamicOverlay: false);
             schedule.Reset(17, 13, groups);
         }
@@ -2267,17 +2254,17 @@ public sealed class VulkanStablePacketAndDescriptorTests
                 ["ScopedValue"] = default,
             };
         snapshot.Reset(first, [], [], new Dictionary<string, XRTexture>(StringComparer.Ordinal), []);
-        snapshot.PublishBindingLayoutSignatures();
+        PublishBindingLayoutSignaturesForTest(snapshot);
         ulong baseline = snapshot.RuntimeUniformNameSignature;
 
         first["ScopedValue"] = new ProgramUniformValue(EShaderVarType._float, 42.0f);
         snapshot.Reset(first, [], [], new Dictionary<string, XRTexture>(StringComparer.Ordinal), []);
-        snapshot.PublishBindingLayoutSignatures();
+        PublishBindingLayoutSignaturesForTest(snapshot);
         snapshot.RuntimeUniformNameSignature.ShouldBe(baseline);
 
         first["AnotherScopedValue"] = default;
         snapshot.Reset(first, [], [], new Dictionary<string, XRTexture>(StringComparer.Ordinal), []);
-        snapshot.PublishBindingLayoutSignatures();
+        PublishBindingLayoutSignaturesForTest(snapshot);
         snapshot.RuntimeUniformNameSignature.ShouldNotBe(baseline);
     }
 
@@ -3003,7 +2990,7 @@ public sealed class VulkanStablePacketAndDescriptorTests
     [Test]
     public void VulkanPrimaryReuse_IsEnabledAfterPublicationGenerationsAreKeyed()
     {
-        VulkanRenderer.VulkanPrimaryCommandBufferReuseSafe.ShouldBeTrue();
+        VulkanCommandRuntime.VulkanPrimaryCommandBufferReuseSafe.ShouldBeTrue();
 
         string state = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferState.cs");
@@ -3112,12 +3099,12 @@ public sealed class VulkanStablePacketAndDescriptorTests
             false,
             10);
 
-        int first = VulkanRenderer.ResolveCommandChainRecordingWorkerIndex(firstKey, workerCount: 6);
-        int afterOtherJobsDisappear = VulkanRenderer.ResolveCommandChainRecordingWorkerIndex(firstKey, workerCount: 6);
+        int first = VulkanCommandRuntime.ResolveCommandChainRecordingWorkerIndex(firstKey, workerCount: 6);
+        int afterOtherJobsDisappear = VulkanCommandRuntime.ResolveCommandChainRecordingWorkerIndex(firstKey, workerCount: 6);
 
         first.ShouldBe(afterOtherJobsDisappear);
         first.ShouldBeInRange(0, 5);
-        VulkanRenderer.ResolveCommandChainRecordingWorkerIndex(firstKey, workerCount: 1).ShouldBe(0);
+        VulkanCommandRuntime.ResolveCommandChainRecordingWorkerIndex(firstKey, workerCount: 1).ShouldBe(0);
 
         HashSet<int> workers = [];
         for (int chainOrdinal = 0; chainOrdinal < 32; chainOrdinal++)
@@ -3126,7 +3113,7 @@ public sealed class VulkanStablePacketAndDescriptorTests
             {
                 ChainOrdinal = chainOrdinal,
             };
-            workers.Add(VulkanRenderer.ResolveCommandChainRecordingWorkerIndex(
+            workers.Add(VulkanCommandRuntime.ResolveCommandChainRecordingWorkerIndex(
                 independentKey,
                 workerCount: 6));
         }
@@ -3174,23 +3161,23 @@ public sealed class VulkanStablePacketAndDescriptorTests
             new MeshDrawOp(0, null, firstDraw, differentFamilyContext),
         ];
 
-        VulkanRenderer.TryResolveCommandChainRecordingRendererFamily(
-                homogeneousOps,
+        VulkanCommandRuntime.TryResolveCommandChainRecordingRendererFamily(
+                new FrameOperationSequence(LowerOperations(homogeneousOps)),
                 chain,
                 frameDataSlot: 0,
                 EVulkanMeshFrameDataStreamKind.Primary,
                 out VulkanMeshFrameDataRendererFamilyKey rendererFamily)
             .ShouldBeTrue();
         rendererFamily.Renderer.ShouldBeSameAs(firstRenderer);
-        VulkanRenderer.TryResolveCommandChainRecordingRendererFamily(
-                mixedRendererOps,
+        VulkanCommandRuntime.TryResolveCommandChainRecordingRendererFamily(
+                new FrameOperationSequence(LowerOperations(mixedRendererOps)),
                 chain,
                 frameDataSlot: 0,
                 EVulkanMeshFrameDataStreamKind.Primary,
                 out _)
             .ShouldBeFalse();
-        VulkanRenderer.TryResolveCommandChainRecordingRendererFamily(
-                mixedFamilyOps,
+        VulkanCommandRuntime.TryResolveCommandChainRecordingRendererFamily(
+                new FrameOperationSequence(LowerOperations(mixedFamilyOps)),
                 chain,
                 frameDataSlot: 0,
                 EVulkanMeshFrameDataStreamKind.Primary,
@@ -3769,6 +3756,22 @@ public sealed class VulkanStablePacketAndDescriptorTests
 
     private static string ReadWorkspaceFile(string relativePath)
         => SourceContractWorkspace.ReadFile(relativePath);
+
+    private static FrameOperationStream LowerOperations(FrameOp[] operations)
+    {
+        FrameOperationIngress ingress = new();
+        ingress.Populate(operations);
+        FrameOperationStream stream = new();
+        stream.Lower(ingress);
+        return stream;
+    }
+
+    private static void PublishBindingLayoutSignaturesForTest(
+        ComputeDispatchSnapshot snapshot)
+        => snapshot.PublishBindingLayoutSignatures(
+            backendContext: null!,
+            wrapperLookup: new VulkanWrapperLookupPort(null!),
+            frameSourcePipeline: null);
 
     private sealed class TestBindingPublisher(
         ERenderBindingFrequency frequency,

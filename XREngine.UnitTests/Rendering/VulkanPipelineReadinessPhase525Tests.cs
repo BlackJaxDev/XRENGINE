@@ -13,7 +13,7 @@ public sealed class VulkanPipelineReadinessPhase525Tests
     public void CompiledPlanBuildsImmutablePipelineVariantManifestAcrossRequiredAxes()
     {
         string source = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Pipelines/VulkanPipelineVariantManifest.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Pipelines/VulkanPipelineVariantManifest.Contract.cs");
 
         source.ShouldContain("plan.CompatibilityIdentity");
         source.ShouldContain("EMeshSubmissionStrategy SubmissionStrategy");
@@ -71,7 +71,7 @@ public sealed class VulkanPipelineReadinessPhase525Tests
     public void WarmupManifestCacheIsBoundedAndOwnsCompletionState()
     {
         string manifest = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Pipelines/VulkanPipelineVariantManifest.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Pipelines/VulkanPipelineManager.cs");
         string recording = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
 
@@ -90,13 +90,15 @@ public sealed class VulkanPipelineReadinessPhase525Tests
         metadata.ForPass(1, "Opaque");
         VulkanCompiledRenderGraphPlan plan =
             new VulkanRenderGraphCompiler().Compile(metadata.Build()).Plan;
-        VulkanRenderer.VulkanPipelineVariantManifest manifest =
-            VulkanRenderer.VulkanPipelineVariantManifest.Build(
+        VulkanPipelineVariantManifest manifest =
+            VulkanPipelineVariantManifest.Build(
                 plan,
-                [],
+                FrameOperationSequence.Empty,
                 EMeshSubmissionStrategy.CpuDirect,
                 dynamicRendering: true,
-                recordingStructuralSignature: 17UL);
+                recordingStructuralSignature: 17UL,
+                renderGraphPlanSignature: plan.CompatibilityIdentity,
+                framePlan: null);
 
         manifest.WarmupCompleted.ShouldBeFalse();
         manifest.MarkWarmupCompleted();

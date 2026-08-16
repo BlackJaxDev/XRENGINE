@@ -10,8 +10,8 @@ public class VulkanPrimaryReuseStateContractTests
     [Test]
     public void EqualEntryStates_AreReusableAndIgnoreTelemetrySerial()
     {
-        VulkanRenderer.VulkanImageAccessState expected = CreateState(serial: 7);
-        VulkanRenderer.VulkanImageAccessState actual = CreateState(serial: 99);
+        VulkanImageAccessState expected = CreateState(serial: 7);
+        VulkanImageAccessState actual = CreateState(serial: 99);
 
         VulkanImageEntryStateContract.Compare(actual, expected)
             .ShouldBe(EVulkanPrimaryEntryStateMismatch.None);
@@ -20,12 +20,12 @@ public class VulkanPrimaryReuseStateContractTests
     [Test]
     public void BroaderRecordedSourceMasks_CoverTheActualEntryState()
     {
-        VulkanRenderer.VulkanImageAccessState expected = CreateState(
+        VulkanImageAccessState expected = CreateState(
             stages: PipelineStageFlags2.VertexShaderBit |
                 PipelineStageFlags2.FragmentShaderBit,
             access: AccessFlags2.ShaderReadBit |
                 AccessFlags2.MemoryReadBit);
-        VulkanRenderer.VulkanImageAccessState actual = CreateState(
+        VulkanImageAccessState actual = CreateState(
             stages: PipelineStageFlags2.FragmentShaderBit,
             access: AccessFlags2.ShaderReadBit);
 
@@ -36,9 +36,9 @@ public class VulkanPrimaryReuseStateContractTests
     [Test]
     public void NarrowRecordedStageMask_RejectsReuse()
     {
-        VulkanRenderer.VulkanImageAccessState expected = CreateState(
+        VulkanImageAccessState expected = CreateState(
             stages: PipelineStageFlags2.FragmentShaderBit);
-        VulkanRenderer.VulkanImageAccessState actual = CreateState(
+        VulkanImageAccessState actual = CreateState(
             stages: PipelineStageFlags2.ComputeShaderBit);
 
         VulkanImageEntryStateContract.Compare(actual, expected)
@@ -48,9 +48,9 @@ public class VulkanPrimaryReuseStateContractTests
     [Test]
     public void NarrowRecordedAccessMask_RejectsReuse()
     {
-        VulkanRenderer.VulkanImageAccessState expected = CreateState(
+        VulkanImageAccessState expected = CreateState(
             access: AccessFlags2.ShaderReadBit);
-        VulkanRenderer.VulkanImageAccessState actual = CreateState(
+        VulkanImageAccessState actual = CreateState(
             access: AccessFlags2.ShaderWriteBit);
 
         VulkanImageEntryStateContract.Compare(actual, expected)
@@ -331,8 +331,8 @@ public class VulkanPrimaryReuseStateContractTests
     [Test]
     public void RecordedShaderReadLayout_CannotRetainAttachmentWriteMasks()
     {
-        VulkanRenderer.VulkanImageAccessState state =
-            VulkanRenderer.ResolveRecordedVulkanImageAccessState(
+        VulkanImageAccessState state =
+        VulkanCommandSynchronizationState.ResolveRecordedVulkanImageAccessState(
                 ImageLayout.ShaderReadOnlyOptimal,
                 ImageAspectFlags.ColorBit,
                 PipelineStageFlags.ColorAttachmentOutputBit,
@@ -355,8 +355,8 @@ public class VulkanPrimaryReuseStateContractTests
     [Test]
     public void RecordedShaderReadLayout_PreservesACompatibleFragmentReadScope()
     {
-        VulkanRenderer.VulkanImageAccessState state =
-            VulkanRenderer.ResolveRecordedVulkanImageAccessState(
+        VulkanImageAccessState state =
+        VulkanCommandSynchronizationState.ResolveRecordedVulkanImageAccessState(
                 ImageLayout.ShaderReadOnlyOptimal,
                 ImageAspectFlags.ColorBit,
                 PipelineStageFlags.FragmentShaderBit,
@@ -372,8 +372,8 @@ public class VulkanPrimaryReuseStateContractTests
     [Test]
     public void RecordedGeneralLayout_PreservesItsExplicitAccessDomain()
     {
-        VulkanRenderer.VulkanImageAccessState state =
-            VulkanRenderer.ResolveRecordedVulkanImageAccessState(
+        VulkanImageAccessState state =
+        VulkanCommandSynchronizationState.ResolveRecordedVulkanImageAccessState(
                 ImageLayout.General,
                 ImageAspectFlags.ColorBit,
                 PipelineStageFlags.TransferBit,
@@ -398,7 +398,7 @@ public class VulkanPrimaryReuseStateContractTests
             "string.Equals(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.OpenXrVulkanPrimaryReuse), \"1\"");
     }
 
-    private static VulkanRenderer.VulkanImageAccessState CreateState(
+    private static VulkanImageAccessState CreateState(
         ImageLayout layout = ImageLayout.ShaderReadOnlyOptimal,
         PipelineStageFlags2 stages = PipelineStageFlags2.FragmentShaderBit,
         AccessFlags2 access = AccessFlags2.ShaderReadBit,

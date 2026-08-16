@@ -19,10 +19,10 @@ public sealed class VulkanCoreHardeningPhase21Tests
         FrameOpContext descriptorOnlyChange = first with { DescriptorGeneration = 11 };
         FrameOpContext allocationChange = first with { ResourceGeneration = 2 };
 
-        VulkanRenderer.BuildFrameOpPlannerStateKey(first)
-            .ShouldNotBe(VulkanRenderer.BuildFrameOpPlannerStateKey(descriptorOnlyChange));
-        VulkanRenderer.BuildFrameOpPlannerStateKey(first)
-            .ShouldNotBe(VulkanRenderer.BuildFrameOpPlannerStateKey(allocationChange));
+        VulkanFramePlanner.BuildFrameOpPlannerStateKey(first)
+            .ShouldNotBe(VulkanFramePlanner.BuildFrameOpPlannerStateKey(descriptorOnlyChange));
+        VulkanFramePlanner.BuildFrameOpPlannerStateKey(first)
+            .ShouldNotBe(VulkanFramePlanner.BuildFrameOpPlannerStateKey(allocationChange));
     }
 
     [Test]
@@ -46,8 +46,8 @@ public sealed class VulkanCoreHardeningPhase21Tests
             descriptorGeneration: 10) with { ResourceRegistry = firstRegistry };
         FrameOpContext second = first with { ResourceRegistry = secondRegistry };
 
-        VulkanRenderer.BuildFrameOpPlannerStateKey(first)
-            .ShouldNotBe(VulkanRenderer.BuildFrameOpPlannerStateKey(second));
+        VulkanFramePlanner.BuildFrameOpPlannerStateKey(first)
+            .ShouldNotBe(VulkanFramePlanner.BuildFrameOpPlannerStateKey(second));
     }
 
     [Test]
@@ -82,10 +82,10 @@ public sealed class VulkanCoreHardeningPhase21Tests
             ResourceRegistrySignatureSnapshot = secondRegistry.DescriptorSignature,
         };
 
-        VulkanRenderer.BuildFrameOpPlannerStateKey(captured)
-            .ShouldBe(VulkanRenderer.BuildFrameOpPlannerStateKey(referenceChangedAfterCapture));
-        VulkanRenderer.BuildFrameOpPlannerStateKey(captured)
-            .ShouldNotBe(VulkanRenderer.BuildFrameOpPlannerStateKey(recaptured));
+        VulkanFramePlanner.BuildFrameOpPlannerStateKey(captured)
+            .ShouldBe(VulkanFramePlanner.BuildFrameOpPlannerStateKey(referenceChangedAfterCapture));
+        VulkanFramePlanner.BuildFrameOpPlannerStateKey(captured)
+            .ShouldNotBe(VulkanFramePlanner.BuildFrameOpPlannerStateKey(recaptured));
     }
 
     [Test]
@@ -118,12 +118,12 @@ public sealed class VulkanCoreHardeningPhase21Tests
             OutputTargetIdentity = captureTarget.OutputTargetIdentity + 1,
         };
 
-        VulkanRenderer.BuildFrameOpPlannerStateKey(desktop)
-            .ShouldBe(VulkanRenderer.BuildFrameOpPlannerStateKey(rotatedTarget));
-        VulkanRenderer.BuildFrameOpPlannerStateKey(desktop)
-            .ShouldNotBe(VulkanRenderer.BuildFrameOpPlannerStateKey(anotherViewport));
-        VulkanRenderer.BuildFrameOpPlannerStateKey(captureTarget)
-            .ShouldNotBe(VulkanRenderer.BuildFrameOpPlannerStateKey(rotatedCaptureTarget));
+        VulkanFramePlanner.BuildFrameOpPlannerStateKey(desktop)
+            .ShouldBe(VulkanFramePlanner.BuildFrameOpPlannerStateKey(rotatedTarget));
+        VulkanFramePlanner.BuildFrameOpPlannerStateKey(desktop)
+            .ShouldNotBe(VulkanFramePlanner.BuildFrameOpPlannerStateKey(anotherViewport));
+        VulkanFramePlanner.BuildFrameOpPlannerStateKey(captureTarget)
+            .ShouldNotBe(VulkanFramePlanner.BuildFrameOpPlannerStateKey(rotatedCaptureTarget));
     }
 
     [Test]
@@ -158,9 +158,9 @@ public sealed class VulkanCoreHardeningPhase21Tests
         };
 
         VulkanInteractiveResizePlannerContextKey mainKey =
-            VulkanRenderer.BuildInteractiveResizePlannerContextKey(main);
+            VulkanFramePlanner.BuildInteractiveResizePlannerContextKey(main);
         VulkanInteractiveResizePlannerContextKey uiPreviewKey =
-            VulkanRenderer.BuildInteractiveResizePlannerContextKey(uiPreview);
+            VulkanFramePlanner.BuildInteractiveResizePlannerContextKey(uiPreview);
         VulkanInteractiveResizePlannerExtentSnapshot mainSnapshot = new(
             main.DisplayWidth,
             main.DisplayHeight,
@@ -197,7 +197,7 @@ public sealed class VulkanCoreHardeningPhase21Tests
         capturedMain.ShouldBeFalse();
 
         FrameOpContext rotatedMainTarget = main with { OutputTargetIdentity = 999 };
-        VulkanRenderer.BuildInteractiveResizePlannerContextKey(rotatedMainTarget).ShouldBe(mainKey);
+        VulkanFramePlanner.BuildInteractiveResizePlannerContextKey(rotatedMainTarget).ShouldBe(mainKey);
 
         cache.Clear();
         cache.Count.ShouldBe(0);
@@ -234,11 +234,11 @@ public sealed class VulkanCoreHardeningPhase21Tests
             OutputFrameBufferIdentity = 903,
         };
         VulkanInteractiveResizePlannerContextKey mainKey =
-            VulkanRenderer.BuildInteractiveResizePlannerContextKey(main);
+            VulkanFramePlanner.BuildInteractiveResizePlannerContextKey(main);
         VulkanInteractiveResizePlannerContextKey uiPreviewKey =
-            VulkanRenderer.BuildInteractiveResizePlannerContextKey(uiPreview);
+            VulkanFramePlanner.BuildInteractiveResizePlannerContextKey(uiPreview);
         VulkanInteractiveResizePlannerContextKey diagnosticKey =
-            VulkanRenderer.BuildInteractiveResizePlannerContextKey(diagnostic);
+            VulkanFramePlanner.BuildInteractiveResizePlannerContextKey(diagnostic);
         VulkanInteractiveResizePlannerExtentSnapshot mainSnapshot = new(1920, 1080, 1280, 720);
         VulkanInteractiveResizePlannerExtentSnapshot uiPreviewSnapshot = new(800, 600, 800, 600);
         VulkanInteractiveResizePlannerExtentSnapshot diagnosticCandidate = new(640, 360, 640, 360);
@@ -289,12 +289,12 @@ public sealed class VulkanCoreHardeningPhase21Tests
 
         Dictionary<VulkanFrameOpPlannerStateKey, VulkanResourceAllocator> owners = [];
         foreach (FrameOpContext context in contexts)
-            owners[VulkanRenderer.BuildFrameOpPlannerStateKey(context)] = new VulkanResourceAllocator();
+            owners[VulkanFramePlanner.BuildFrameOpPlannerStateKey(context)] = new VulkanResourceAllocator();
 
         owners.Count.ShouldBe(contexts.Length);
         owners.Values.Select(static allocator => allocator.OwnershipId).Distinct().Count().ShouldBe(contexts.Length);
 
-        VulkanFrameOpPlannerStateKey captureKey = VulkanRenderer.BuildFrameOpPlannerStateKey(contexts[1]);
+        VulkanFrameOpPlannerStateKey captureKey = VulkanFramePlanner.BuildFrameOpPlannerStateKey(contexts[1]);
         VulkanResourceAllocator retiredCapture = owners[captureKey];
         owners.Remove(captureKey).ShouldBeTrue();
         retiredCapture.TryRetirePhysicalResources(null!).ShouldBeTrue();
@@ -315,13 +315,13 @@ public sealed class VulkanCoreHardeningPhase21Tests
             descriptorGeneration: 1);
 
         Dictionary<VulkanFrameOpPlannerStateKey, VulkanResourceAllocator> owners = [];
-        VulkanFrameOpPlannerStateKey mainKey = VulkanRenderer.BuildFrameOpPlannerStateKey(main);
+        VulkanFrameOpPlannerStateKey mainKey = VulkanFramePlanner.BuildFrameOpPlannerStateKey(main);
         VulkanResourceAllocator mainOwner = owners.GetValueOrDefault(mainKey) ?? new VulkanResourceAllocator();
         owners[mainKey] = mainOwner;
         VulkanResourceAllocator descriptorChangeOwner = owners.GetValueOrDefault(
-            VulkanRenderer.BuildFrameOpPlannerStateKey(descriptorChange)) ?? new VulkanResourceAllocator();
+            VulkanFramePlanner.BuildFrameOpPlannerStateKey(descriptorChange)) ?? new VulkanResourceAllocator();
         VulkanResourceAllocator captureOwner = new();
-        owners[VulkanRenderer.BuildFrameOpPlannerStateKey(capture)] = captureOwner;
+        owners[VulkanFramePlanner.BuildFrameOpPlannerStateKey(capture)] = captureOwner;
 
         descriptorChangeOwner.ShouldNotBeSameAs(mainOwner);
         captureOwner.TryRetirePhysicalResources(null!).ShouldBeTrue();
@@ -405,19 +405,15 @@ public sealed class VulkanCoreHardeningPhase21Tests
     }
 
     [Test]
-    public void CommandMarkerIdentity_RejectsAReusedHandleFromAnOlderRecording()
+    public void CommandDiagnostics_RecordAtTheNumericOpcodeBoundary()
     {
-        VulkanRenderer.CommandDiagnosticMarkerMatchesSubmittedCommand(
-            markerHandle: 0x1234,
-            markerGeneration: 8,
-            submittedHandle: 0x1234,
-            submittedGeneration: 9).ShouldBeFalse();
+        string recorder = SourceContractWorkspace.ReadVulkanSourcesContaining(
+            "private int RecordTypedPrimaryOperation",
+            "EVulkanPrimaryPlanNodeKind operationCode");
 
-        VulkanRenderer.CommandDiagnosticMarkerMatchesSubmittedCommand(
-            markerHandle: 0x1234,
-            markerGeneration: 9,
-            submittedHandle: 0x1234,
-            submittedGeneration: 9).ShouldBeTrue();
+        recorder.ShouldContain("RecordVulkanCommandDiagnosticMarker(state.CommandBuffer, header.OpCode, resolvedPass, index)");
+        recorder.ShouldContain("EVulkanPrimaryPlanNodeKind operationCode");
+        recorder.ShouldContain("The dense recorder has no authoring operation instance.");
     }
 
     [TestCase(-1, 64, 1024, 64)]

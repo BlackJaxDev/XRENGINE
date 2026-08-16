@@ -21,12 +21,12 @@ public sealed class VulkanDesktopPlanStabilityTests
             OutputTargetName = "SwapchainImage[1]",
         };
 
-        VulkanRenderer.ResolveResourcePlanOutputTargetIdentity(first)
-            .ShouldBe(VulkanRenderer.ResolveResourcePlanOutputTargetIdentity(rotated));
-        VulkanRenderer.BuildFrameOpPlannerStateKey(first)
-            .ShouldBe(VulkanRenderer.BuildFrameOpPlannerStateKey(rotated));
-        VulkanRenderer.ComputeFrameOpContextRecordingFingerprint(first)
-            .ShouldNotBe(VulkanRenderer.ComputeFrameOpContextRecordingFingerprint(rotated));
+        VulkanFramePlanner.ResolveResourcePlanOutputTargetIdentity(first)
+            .ShouldBe(VulkanFramePlanner.ResolveResourcePlanOutputTargetIdentity(rotated));
+        VulkanFramePlanner.BuildFrameOpPlannerStateKey(first)
+            .ShouldBe(VulkanFramePlanner.BuildFrameOpPlannerStateKey(rotated));
+        VulkanFramePlanner.ComputeFrameOpContextRecordingFingerprint(first)
+            .ShouldNotBe(VulkanFramePlanner.ComputeFrameOpContextRecordingFingerprint(rotated));
     }
 
     [Test]
@@ -41,22 +41,22 @@ public sealed class VulkanDesktopPlanStabilityTests
             DisplayWidth = desktop.DisplayWidth + 1u,
         };
 
-        int eyePlannerIdentity = VulkanRenderer.BuildOpenXrExternalSwapchainPlannerTargetIdentity(0u);
+        int eyePlannerIdentity = VulkanFrameLoop.BuildOpenXrExternalSwapchainPlannerTargetIdentity(0u);
         FrameOpContext eye = CreateContext(
             EVulkanFrameOpContextKind.OpenXrEye,
             eyePlannerIdentity,
             "OpenXR.LeftEye",
             outputFrameBufferIdentity: 0);
 
-        VulkanRenderer.BuildFrameOpPlannerStateKey(desktop)
-            .ShouldNotBe(VulkanRenderer.BuildFrameOpPlannerStateKey(eye));
-        VulkanRenderer.BuildFrameOpPlannerStateKey(desktop)
-            .ShouldNotBe(VulkanRenderer.BuildFrameOpPlannerStateKey(resizedDesktop));
-        VulkanRenderer.BuildFrameOpPlannerStateKey(eye)
-            .ShouldBe(VulkanRenderer.BuildFrameOpPlannerStateKey(eye));
-        VulkanRenderer.BuildOpenXrExternalSwapchainPlannerTargetIdentity(0u)
+        VulkanFramePlanner.BuildFrameOpPlannerStateKey(desktop)
+            .ShouldNotBe(VulkanFramePlanner.BuildFrameOpPlannerStateKey(eye));
+        VulkanFramePlanner.BuildFrameOpPlannerStateKey(desktop)
+            .ShouldNotBe(VulkanFramePlanner.BuildFrameOpPlannerStateKey(resizedDesktop));
+        VulkanFramePlanner.BuildFrameOpPlannerStateKey(eye)
+            .ShouldBe(VulkanFramePlanner.BuildFrameOpPlannerStateKey(eye));
+        VulkanFrameLoop.BuildOpenXrExternalSwapchainPlannerTargetIdentity(0u)
             .ShouldBe(eyePlannerIdentity);
-        VulkanRenderer.BuildOpenXrExternalSwapchainPlannerTargetIdentity(1u)
+        VulkanFrameLoop.BuildOpenXrExternalSwapchainPlannerTargetIdentity(1u)
             .ShouldNotBe(eyePlannerIdentity);
     }
 
@@ -64,8 +64,8 @@ public sealed class VulkanDesktopPlanStabilityTests
     public void AlternatingExternalTargetsReachABoundedPlannerKeySet()
     {
         HashSet<VulkanFrameOpPlannerStateKey> keys = [];
-        int leftEyeIdentity = VulkanRenderer.BuildOpenXrExternalSwapchainPlannerTargetIdentity(0u);
-        int rightEyeIdentity = VulkanRenderer.BuildOpenXrExternalSwapchainPlannerTargetIdentity(1u);
+        int leftEyeIdentity = VulkanFrameLoop.BuildOpenXrExternalSwapchainPlannerTargetIdentity(0u);
+        int rightEyeIdentity = VulkanFrameLoop.BuildOpenXrExternalSwapchainPlannerTargetIdentity(1u);
 
         for (int cycle = 0; cycle < 32; cycle++)
         {
@@ -75,21 +75,21 @@ public sealed class VulkanDesktopPlanStabilityTests
                     EVulkanFrameOpContextKind.MainViewport,
                     outputTargetIdentity: 1000 + slot,
                     outputTargetName: $"SwapchainImage[{slot}]");
-                keys.Add(VulkanRenderer.BuildFrameOpPlannerStateKey(desktop));
+                keys.Add(VulkanFramePlanner.BuildFrameOpPlannerStateKey(desktop));
 
                 FrameOpContext leftEye = CreateContext(
                     EVulkanFrameOpContextKind.OpenXrEye,
                     leftEyeIdentity,
                     $"OpenXR.Left.Image[{slot}]",
                     outputFrameBufferIdentity: 0);
-                keys.Add(VulkanRenderer.BuildFrameOpPlannerStateKey(leftEye));
+                keys.Add(VulkanFramePlanner.BuildFrameOpPlannerStateKey(leftEye));
 
                 FrameOpContext mirror = CreateContext(
                     EVulkanFrameOpContextKind.OpenXrMirror,
                     rightEyeIdentity,
                     $"OpenXR.Mirror.Image[{slot}]",
                     outputFrameBufferIdentity: 0);
-                keys.Add(VulkanRenderer.BuildFrameOpPlannerStateKey(mirror));
+                keys.Add(VulkanFramePlanner.BuildFrameOpPlannerStateKey(mirror));
             }
 
             for (int face = 0; face < 6; face++)
@@ -99,7 +99,7 @@ public sealed class VulkanDesktopPlanStabilityTests
                     outputTargetIdentity: 2000 + face,
                     outputTargetName: $"ProbeFace[{face}]",
                     outputFrameBufferIdentity: 3000 + face);
-                keys.Add(VulkanRenderer.BuildFrameOpPlannerStateKey(probeFace));
+                keys.Add(VulkanFramePlanner.BuildFrameOpPlannerStateKey(probeFace));
             }
         }
 
@@ -142,23 +142,23 @@ public sealed class VulkanDesktopPlanStabilityTests
     }
 
     [TestCase(false, false, true, true,
-        (int)VulkanRenderer.ERejectedDesktopFrameDisposition.SkipPresent,
-        (int)VulkanRenderer.ERejectedDesktopFramePolicyReason.AcquireUnavailable)]
+        (int)ERejectedDesktopFrameDisposition.SkipPresent,
+        (int)ERejectedDesktopFramePolicyReason.AcquireUnavailable)]
     [TestCase(true, true, true, true,
-        (int)VulkanRenderer.ERejectedDesktopFrameDisposition.SkipPresent,
-        (int)VulkanRenderer.ERejectedDesktopFramePolicyReason.DeviceLost)]
+        (int)ERejectedDesktopFrameDisposition.SkipPresent,
+        (int)ERejectedDesktopFramePolicyReason.DeviceLost)]
     [TestCase(true, false, false, false,
-        (int)VulkanRenderer.ERejectedDesktopFrameDisposition.SkipPresent,
-        (int)VulkanRenderer.ERejectedDesktopFramePolicyReason.ImageNeverPresented)]
+        (int)ERejectedDesktopFrameDisposition.SkipPresent,
+        (int)ERejectedDesktopFramePolicyReason.ImageNeverPresented)]
     [TestCase(true, false, false, true,
-        (int)VulkanRenderer.ERejectedDesktopFrameDisposition.SkipPresent,
-        (int)VulkanRenderer.ERejectedDesktopFramePolicyReason.ImageNeverPresented)]
+        (int)ERejectedDesktopFrameDisposition.SkipPresent,
+        (int)ERejectedDesktopFramePolicyReason.ImageNeverPresented)]
     [TestCase(true, false, true, false,
-        (int)VulkanRenderer.ERejectedDesktopFrameDisposition.SkipPresent,
-        (int)VulkanRenderer.ERejectedDesktopFramePolicyReason.NoCompletedFinalWrite)]
+        (int)ERejectedDesktopFrameDisposition.SkipPresent,
+        (int)ERejectedDesktopFramePolicyReason.NoCompletedFinalWrite)]
     [TestCase(true, false, true, true,
-        (int)VulkanRenderer.ERejectedDesktopFrameDisposition.PresentLastCompletedContent,
-        (int)VulkanRenderer.ERejectedDesktopFramePolicyReason.ReuseCompletedContent)]
+        (int)ERejectedDesktopFrameDisposition.PresentLastCompletedContent,
+        (int)ERejectedDesktopFramePolicyReason.ReuseCompletedContent)]
     public void RejectedDesktopFramePolicy_OnlyPresentsKnownGoodCompletedContent(
         bool acquireAvailable,
         bool deviceLost,
@@ -167,17 +167,17 @@ public sealed class VulkanDesktopPlanStabilityTests
         int expectedDisposition,
         int expectedReason)
     {
-        VulkanRenderer.RejectedDesktopFramePolicyDecision decision =
-            VulkanRenderer.ResolveRejectedDesktopFramePolicy(
+        RejectedDesktopFramePolicyDecision decision =
+            VulkanRejectedDesktopFramePolicy.Resolve(
                 acquireAvailable,
                 deviceLost,
                 imageWasEverPresented,
                 imageHasValidCompletedContent);
 
-        decision.Disposition.ShouldBe((VulkanRenderer.ERejectedDesktopFrameDisposition)expectedDisposition);
-        decision.Reason.ShouldBe((VulkanRenderer.ERejectedDesktopFramePolicyReason)expectedReason);
+        decision.Disposition.ShouldBe((ERejectedDesktopFrameDisposition)expectedDisposition);
+        decision.Reason.ShouldBe((ERejectedDesktopFramePolicyReason)expectedReason);
         decision.ShouldPresent.ShouldBe(
-            expectedDisposition == (int)VulkanRenderer.ERejectedDesktopFrameDisposition.PresentLastCompletedContent);
+            expectedDisposition == (int)ERejectedDesktopFrameDisposition.PresentLastCompletedContent);
     }
 
     [Test]
@@ -196,13 +196,13 @@ public sealed class VulkanDesktopPlanStabilityTests
             RenderResourceSizePolicy.Absolute(2048u, 2048u)));
 
         RenderResourceRegistry compatibleGeneration = new();
-        VulkanRenderer.AddRegistryDescriptors(compatibleGeneration, desktop, overwrite: true);
-        VulkanRenderer.AddRegistryDescriptors(compatibleGeneration, directionalShadow, overwrite: false);
+        VulkanFramePlanner.AddRegistryDescriptors(compatibleGeneration, desktop, overwrite: true);
+        VulkanFramePlanner.AddRegistryDescriptors(compatibleGeneration, directionalShadow, overwrite: false);
         int activeShadowSignature = compatibleGeneration.DescriptorSignature;
 
         // A no-shadow-work frame refreshes the structural desktop source but does not remove the
         // accumulated directional source from this compatibility generation.
-        VulkanRenderer.AddRegistryDescriptors(compatibleGeneration, desktop, overwrite: true);
+        VulkanFramePlanner.AddRegistryDescriptors(compatibleGeneration, desktop, overwrite: true);
 
         compatibleGeneration.DescriptorSignature.ShouldBe(activeShadowSignature);
         compatibleGeneration.TextureRecords.ShouldContainKey(
@@ -407,7 +407,7 @@ public sealed class VulkanDesktopPlanStabilityTests
         bool transitionToPresent,
         bool expected)
     {
-        VulkanRenderer.ShouldRefreshUnwrittenSwapchainForPresent(
+        VulkanCommandRuntime.ShouldRefreshUnwrittenSwapchainForPresent(
             touchedSwapchain,
             transitionToPresent).ShouldBe(expected);
     }
@@ -424,28 +424,45 @@ public sealed class VulkanDesktopPlanStabilityTests
         bool refreshedFromLastPresentSource,
         bool expected)
     {
-        VulkanRenderer.ShouldRecordUnwrittenSwapchainInitializationClear(
+        VulkanCommandRuntime.ShouldRecordUnwrittenSwapchainInitializationClear(
             hasRecordedSwapchainWrite,
             transitionToPresent,
             imageWasEverPresented,
             refreshedFromLastPresentSource).ShouldBe(expected);
     }
 
-    [TestCase(true, false, false, true)]
-    [TestCase(false, false, false, false)]
-    [TestCase(true, true, false, false)]
-    [TestCase(true, false, true, false)]
-    [TestCase(true, true, true, false)]
-    public void FrameOpPlannerAllocatorReuse_RequiresExclusiveKeyOwnership(
-        bool allocatorIsUsable,
-        bool preparationOwnsAllocator,
-        bool anotherKeyOwnsAllocator,
-        bool expected)
+    [Test]
+    public void FrameOpPlannerAllocatorReuse_UsesSessionAuthorityExclusiveOwnershipRule()
     {
-        VulkanRenderer.CanReuseFrameOpPlannerAllocator(
-            allocatorIsUsable,
-            preparationOwnsAllocator,
-            anotherKeyOwnsAllocator).ShouldBe(expected);
+        FrameOpResourcePlannerSwitchingState switchingState = new();
+        VulkanResourceAllocator allocator = new();
+        VulkanFrameOpPlannerStateKey ownerKey = default;
+        VulkanFrameOpPlannerStateKey otherKey = ownerKey with { ViewportIdentity = 1 };
+
+        switchingState.States.Add(ownerKey, ResourcePlannerRuntimeState.CreateEmpty() with
+        {
+            ResourceAllocator = allocator,
+        });
+        VulkanResourcePlannerSessionService.IsAllocatorExclusivelyOwnedByKey(
+            switchingState, ownerKey, allocator).ShouldBeTrue();
+
+        switchingState.States.Add(otherKey, ResourcePlannerRuntimeState.CreateEmpty() with
+        {
+            ResourceAllocator = allocator,
+        });
+        VulkanResourcePlannerSessionService.IsAllocatorExclusivelyOwnedByKey(
+            switchingState, ownerKey, allocator).ShouldBeFalse();
+
+        switchingState.States.Remove(otherKey);
+        switchingState.PreparationState = ResourcePlannerRuntimeState.CreateEmpty() with
+        {
+            ResourceAllocator = allocator,
+        };
+        switchingState.HasPreparationState = true;
+        VulkanResourcePlannerSessionService.IsAllocatorExclusivelyOwnedByKey(
+            switchingState, ownerKey, allocator).ShouldBeFalse();
+        VulkanResourcePlannerSessionService.IsAllocatorExclusivelyOwnedByKey(
+            switchingState, ownerKey, allocator: null).ShouldBeFalse();
     }
 
     [Test]

@@ -234,7 +234,7 @@ public sealed class VulkanCommandRecordingDependencyTests
     [Test]
     public void ProductionPrimaryReuseDefaultsOnAndDiagnosticOverrideIsOptional()
     {
-        VulkanRenderer.VulkanPrimaryCommandBufferReuseSafe.ShouldBeTrue();
+        VulkanCommandRuntime.VulkanPrimaryCommandBufferReuseSafe.ShouldBeTrue();
         RuntimeRenderingHostServiceDefaults.EnableVulkanPrimaryCommandBufferReuse.ShouldBeTrue();
         new XREngine.VulkanCommandRecordingSettings().PrimaryCommandBufferReuseEnabled.ShouldBeTrue();
 
@@ -253,17 +253,17 @@ public sealed class VulkanCommandRecordingDependencyTests
         new XREngine.VulkanCommandRecordingSettings().Mode
             .ShouldBe(EVulkanCommandRecordingMode.Auto);
 
-        VulkanRenderer.ResolveCommandChainsRequested(EVulkanCommandRecordingMode.Auto, null)
+        VulkanCommandRuntime.ResolveCommandChainsRequested(EVulkanCommandRecordingMode.Auto, null)
             .ShouldBeTrue();
-        VulkanRenderer.ResolveCommandChainsRequested(EVulkanCommandRecordingMode.Hybrid, null)
+        VulkanCommandRuntime.ResolveCommandChainsRequested(EVulkanCommandRecordingMode.Hybrid, null)
             .ShouldBeTrue();
-        VulkanRenderer.ResolveCommandChainsRequested(EVulkanCommandRecordingMode.Inline, null)
+        VulkanCommandRuntime.ResolveCommandChainsRequested(EVulkanCommandRecordingMode.Inline, null)
             .ShouldBeFalse();
-        VulkanRenderer.ResolveCommandChainsRequested((EVulkanCommandRecordingMode)int.MaxValue, null)
+        VulkanCommandRuntime.ResolveCommandChainsRequested((EVulkanCommandRecordingMode)int.MaxValue, null)
             .ShouldBeFalse();
-        VulkanRenderer.ResolveCommandChainsRequested(EVulkanCommandRecordingMode.Auto, false)
+        VulkanCommandRuntime.ResolveCommandChainsRequested(EVulkanCommandRecordingMode.Auto, false)
             .ShouldBeFalse();
-        VulkanRenderer.ResolveCommandChainsRequested(EVulkanCommandRecordingMode.Inline, true)
+        VulkanCommandRuntime.ResolveCommandChainsRequested(EVulkanCommandRecordingMode.Inline, true)
             .ShouldBeTrue();
     }
 
@@ -405,10 +405,10 @@ public sealed class VulkanCommandRecordingDependencyTests
         int[] same = [4, 8, 12, 16];
         int[] reordered = [8, 4, 12, 16];
 
-        VulkanRenderer.ComputeCommandChainUniformSlotSignature(baseline, 0, baseline.Length)
-            .ShouldBe(VulkanRenderer.ComputeCommandChainUniformSlotSignature(same, 0, same.Length));
-        VulkanRenderer.ComputeCommandChainUniformSlotSignature(baseline, 0, baseline.Length)
-            .ShouldNotBe(VulkanRenderer.ComputeCommandChainUniformSlotSignature(reordered, 0, reordered.Length));
+        VulkanCommandRuntime.ComputeCommandChainUniformSlotSignature(baseline, 0, baseline.Length)
+            .ShouldBe(VulkanCommandRuntime.ComputeCommandChainUniformSlotSignature(same, 0, same.Length));
+        VulkanCommandRuntime.ComputeCommandChainUniformSlotSignature(baseline, 0, baseline.Length)
+            .ShouldNotBe(VulkanCommandRuntime.ComputeCommandChainUniformSlotSignature(reordered, 0, reordered.Length));
     }
 
     [Test]
@@ -464,7 +464,7 @@ public sealed class VulkanCommandRecordingDependencyTests
 
     [Test]
     public void PrimaryReuseCapability_IsEnabledByDependencyValidation()
-        => VulkanRenderer.VulkanPrimaryCommandBufferReuseSafe.ShouldBeTrue();
+        => VulkanCommandRuntime.VulkanPrimaryCommandBufferReuseSafe.ShouldBeTrue();
 
     [Test]
     public void InlinePrimaryReuse_ReRecordsOnlyForOutputViewportCameraChanges()

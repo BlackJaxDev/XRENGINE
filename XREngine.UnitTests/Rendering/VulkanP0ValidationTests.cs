@@ -662,7 +662,7 @@ public sealed class VulkanP0ValidationTests
     [TestCase(ImageLayout.StencilReadOnlyOptimal)]
     [TestCase(ImageLayout.ReadOnlyOptimal)]
     public void VulkanSampledDescriptorLayout_PreservesTrackedReadableLayout(ImageLayout trackedLayout)
-        => VulkanRenderer.ResolveTrackedSampledDescriptorLayout(
+        => VulkanDescriptorManager.ResolveTrackedSampledDescriptorLayout(
                 ImageUsageFlags.SampledBit,
                 trackedLayout,
                 ImageLayout.General)
@@ -670,7 +670,7 @@ public sealed class VulkanP0ValidationTests
 
     [Test]
     public void VulkanSampledDescriptorLayout_DoesNotInferGeneralFromTransientTrackedState()
-        => VulkanRenderer.ResolveTrackedSampledDescriptorLayout(
+        => VulkanDescriptorManager.ResolveTrackedSampledDescriptorLayout(
                 ImageUsageFlags.SampledBit | ImageUsageFlags.DepthStencilAttachmentBit,
                 ImageLayout.General,
                 ImageLayout.DepthStencilReadOnlyOptimal)
@@ -678,7 +678,7 @@ public sealed class VulkanP0ValidationTests
 
     [Test]
     public void VulkanSampledDescriptorLayout_PreservesGeneralForStorageSamplingContract()
-        => VulkanRenderer.ResolveTrackedSampledDescriptorLayout(
+        => VulkanDescriptorManager.ResolveTrackedSampledDescriptorLayout(
                 ImageUsageFlags.SampledBit | ImageUsageFlags.StorageBit,
                 ImageLayout.General,
                 ImageLayout.ShaderReadOnlyOptimal)
@@ -690,7 +690,7 @@ public sealed class VulkanP0ValidationTests
     [TestCase(ImageLayout.TransferSrcOptimal)]
     [TestCase(ImageLayout.TransferDstOptimal)]
     public void VulkanSampledDescriptorLayout_FallsBackWhenTrackedLayoutIsNotReadable(ImageLayout trackedLayout)
-        => VulkanRenderer.ResolveTrackedSampledDescriptorLayout(
+        => VulkanDescriptorManager.ResolveTrackedSampledDescriptorLayout(
                 ImageUsageFlags.SampledBit,
                 trackedLayout,
                 ImageLayout.DepthStencilReadOnlyOptimal)

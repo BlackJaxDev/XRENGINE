@@ -24,18 +24,18 @@ internal sealed class VulkanStrictSpsFailureBoundaryTests
         EOpenXrStrictSpsFaultInjectionStage boundary,
         bool expected)
     {
-        VulkanRenderer.IsOpenXrStrictSpsFaultBoundary(requested, boundary)
+        VulkanFrameLoop.IsOpenXrStrictSpsFaultBoundary(requested, boundary)
             .ShouldBe(expected);
     }
 
-    [TestCase(VulkanRenderer.EVulkanQueueSubmissionDisposition.NotSubmitted, true)]
-    [TestCase(VulkanRenderer.EVulkanQueueSubmissionDisposition.Completed, true)]
-    [TestCase(VulkanRenderer.EVulkanQueueSubmissionDisposition.SubmittedIncomplete, false)]
+    [TestCase(EVulkanQueueSubmissionDisposition.NotSubmitted, true)]
+    [TestCase(EVulkanQueueSubmissionDisposition.Completed, true)]
+    [TestCase(EVulkanQueueSubmissionDisposition.SubmittedIncomplete, false)]
     public void TemporaryPublishCommandBuffer_IsFreedUnlessQueueOwnsIncompleteWork(
-        VulkanRenderer.EVulkanQueueSubmissionDisposition disposition,
+        EVulkanQueueSubmissionDisposition disposition,
         bool expectedFree)
     {
-        VulkanRenderer.ShouldFreeTemporaryOpenXrCommandBuffer(disposition)
+        VulkanFrameLoop.ShouldFreeTemporaryOpenXrCommandBuffer(disposition)
             .ShouldBe(expectedFree);
     }
 

@@ -10,7 +10,7 @@ public sealed class VulkanLogicalDeviceExtensionSelectionTests
     [Test]
     public void NormalizeDeviceExtensionSelection_PrefersKhrAndRemovesDuplicates()
     {
-        string[] normalized = VulkanRenderer.NormalizeDeviceExtensionSelection(
+        string[] normalized = VulkanDeviceContext.NormalizeDeviceExtensionSelection(
             [
                 "VK_KHR_swapchain",
                 "VK_KHR_buffer_device_address",
@@ -29,7 +29,7 @@ public sealed class VulkanLogicalDeviceExtensionSelectionTests
     [Test]
     public void NormalizeDeviceExtensionSelection_UsesCoreInsteadOfLegacyExtOnVulkan12()
     {
-        string[] normalized = VulkanRenderer.NormalizeDeviceExtensionSelection(
+        string[] normalized = VulkanDeviceContext.NormalizeDeviceExtensionSelection(
             [
                 "VK_KHR_swapchain",
                 "VK_EXT_buffer_device_address",
@@ -42,7 +42,7 @@ public sealed class VulkanLogicalDeviceExtensionSelectionTests
     [Test]
     public void NormalizeDeviceExtensionSelection_RetainsLegacyExtBeforeVulkan12WhenNoKhrPathExists()
     {
-        string[] normalized = VulkanRenderer.NormalizeDeviceExtensionSelection(
+        string[] normalized = VulkanDeviceContext.NormalizeDeviceExtensionSelection(
             [
                 "VK_KHR_swapchain",
                 "VK_EXT_buffer_device_address",
@@ -57,26 +57,28 @@ public sealed class VulkanLogicalDeviceExtensionSelectionTests
     }
 
     [Test]
-    public void GranularOpenXrStreamlineFeatureChain_AcceptsRepresentedPromotedFeatures()
+    public void OpenXrStreamlineFeatureRequirements_ArePassedThroughTypedBootstrapFacts()
     {
-        bool accepted = VulkanRenderer.TryUseGranularOpenXrStreamlineFeatureChain(
-            ["timelineSemaphore", "descriptorIndexing", "bufferDeviceAddress"],
-            ["dynamicRendering", "synchronization2", "maintenance4", "pipelineCreationCacheControl", "privateData"],
-            out string failureReason);
+        string source = ReadLogicalDeviceBootstrapSource();
 
-        accepted.ShouldBeTrue(failureReason);
-        failureReason.ShouldBeEmpty();
+        source.ShouldContain("StreamlineRequirementSet(");
+        source.ShouldContain("string[] RequiredFeatures12");
+        source.ShouldContain("string[] RequiredFeatures13");
+        source.ShouldContain("_outputRuntime._streamlineRequiredFeatures12");
+        source.ShouldContain("_outputRuntime._streamlineRequiredFeatures13");
     }
 
     [Test]
-    public void GranularOpenXrStreamlineFeatureChain_RejectsUnrepresentedPromotedFeatures()
+    public void OpenXrStreamlineFeatureRequirements_UseTheGranularFeatureChainAtTheBootstrapBoundary()
     {
-        bool accepted = VulkanRenderer.TryUseGranularOpenXrStreamlineFeatureChain(
-            ["shaderFloat16"],
-            [],
-            out string failureReason);
+        string source = ReadLogicalDeviceBootstrapSource();
 
-        accepted.ShouldBeFalse();
-        failureReason.ShouldContain("shaderFloat16");
+        source.ShouldContain("useGranularOpenXrStreamlineFeatureChain");
+        source.ShouldContain("TryUseGranularOpenXrStreamlineFeatureChain(");
+        source.ShouldContain("throw new InvalidOperationException(granularFeatureFailure)");
     }
+
+    private static string ReadLogicalDeviceBootstrapSource()
+        => SourceContractWorkspace.ReadFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Bootstrap/Device/VulkanDeviceContext.LogicalDeviceBootstrap.cs");
 }

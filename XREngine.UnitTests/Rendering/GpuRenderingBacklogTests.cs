@@ -68,40 +68,36 @@ public class GpuRenderingBacklogTests
     [Test]
     public void GPUScene_UpdateCommand_TransformChange_UpdatesCullingBounds()
     {
-        var method = typeof(GPUScene).GetMethod("SetWorldSpaceBoundingSphere", BindingFlags.NonPublic | BindingFlags.Static);
+        var method = typeof(GPUScene).GetMethod("ComputeWorldBoundsGpu", BindingFlags.NonPublic | BindingFlags.Static);
         method.ShouldNotBeNull();
 
-        GPUIndirectRenderCommand command = default;
         var localBounds = new AABB(new Vector3(-1f, -1f, -1f), new Vector3(1f, 1f, 1f));
         Matrix4x4 model = Matrix4x4.CreateScale(2f, 3f, 4f) * Matrix4x4.CreateTranslation(10f, 20f, 30f);
 
-        object?[] args = [command, localBounds, model];
-        method!.Invoke(null, args);
-        command = (GPUIndirectRenderCommand)args[0]!;
+        object?[] args = [localBounds, model, 1u];
+        BoundsGpu bounds = (BoundsGpu)method!.Invoke(null, args)!;
 
-        command.BoundingSphere.X.ShouldBe(10f, 0.0001f);
-        command.BoundingSphere.Y.ShouldBe(20f, 0.0001f);
-        command.BoundingSphere.Z.ShouldBe(30f, 0.0001f);
+        bounds.BoundingSphere.X.ShouldBe(10f, 0.0001f);
+        bounds.BoundingSphere.Y.ShouldBe(20f, 0.0001f);
+        bounds.BoundingSphere.Z.ShouldBe(30f, 0.0001f);
 
         float expectedRadius = MathF.Sqrt(3f) * 4f;
-        command.BoundingSphere.W.ShouldBe(expectedRadius, 0.0001f);
+        bounds.BoundingSphere.W.ShouldBe(expectedRadius, 0.0001f);
     }
 
     [Test]
     public void GPUScene_UpdateCommand_RotatedAffineTransform_MatchesExpectedBoundingSphere()
     {
-        var method = typeof(GPUScene).GetMethod("SetWorldSpaceBoundingSphere", BindingFlags.NonPublic | BindingFlags.Static);
+        var method = typeof(GPUScene).GetMethod("ComputeWorldBoundsGpu", BindingFlags.NonPublic | BindingFlags.Static);
         method.ShouldNotBeNull();
 
-        GPUIndirectRenderCommand command = default;
         var localBounds = new AABB(new Vector3(-2f, -1f, -3f), new Vector3(2f, 1f, 3f));
         Matrix4x4 model = Matrix4x4.CreateScale(1.5f, 2.5f, 0.75f)
             * Matrix4x4.CreateFromQuaternion(Quaternion.Normalize(Quaternion.CreateFromYawPitchRoll(0.35f, -0.2f, 0.15f)))
             * Matrix4x4.CreateTranslation(7f, -4f, 11f);
 
-        object?[] args = [command, localBounds, model];
-        method!.Invoke(null, args);
-        command = (GPUIndirectRenderCommand)args[0]!;
+        object?[] args = [localBounds, model, 1u];
+        BoundsGpu bounds = (BoundsGpu)method!.Invoke(null, args)!;
 
         Vector3 expectedCenter = Vector3.Transform(localBounds.Center, model);
         Vector3 xAxis = new(model.M11, model.M12, model.M13);
@@ -109,10 +105,10 @@ public class GpuRenderingBacklogTests
         Vector3 zAxis = new(model.M31, model.M32, model.M33);
         float expectedRadius = localBounds.HalfExtents.Length() * MathF.Max(xAxis.Length(), MathF.Max(yAxis.Length(), zAxis.Length()));
 
-        command.BoundingSphere.X.ShouldBe(expectedCenter.X, 0.0001f);
-        command.BoundingSphere.Y.ShouldBe(expectedCenter.Y, 0.0001f);
-        command.BoundingSphere.Z.ShouldBe(expectedCenter.Z, 0.0001f);
-        command.BoundingSphere.W.ShouldBe(expectedRadius, 0.0001f);
+        bounds.BoundingSphere.X.ShouldBe(expectedCenter.X, 0.0001f);
+        bounds.BoundingSphere.Y.ShouldBe(expectedCenter.Y, 0.0001f);
+        bounds.BoundingSphere.Z.ShouldBe(expectedCenter.Z, 0.0001f);
+        bounds.BoundingSphere.W.ShouldBe(expectedRadius, 0.0001f);
     }
 
     [Test]
@@ -342,10 +338,10 @@ public class GpuRenderingBacklogTests
     [Test]
     public void Occlusion_OpenGL_Vulkan_Parity_BasicScene()
     {
-        GPUIndirectRenderCommand[] commands =
+        DrawMetadata[] commands =
         [
-            new GPUIndirectRenderCommand { MeshID = 1, MaterialID = 10, RenderPass = 0 },
-            new GPUIndirectRenderCommand { MeshID = 2, MaterialID = 11, RenderPass = 0 },
+            new DrawMetadata { MeshID = 1, MaterialID = 10, RenderPass = 0 },
+            new DrawMetadata { MeshID = 2, MaterialID = 11, RenderPass = 0 },
         ];
 
         GpuBackendParitySnapshot gl = GpuBackendParity.BuildSnapshot("OpenGL", 2, 2, commands, maxSamples: 2);
@@ -357,11 +353,11 @@ public class GpuRenderingBacklogTests
     [Test]
     public void IndirectPipeline_OpenGL_Vulkan_Parity_BasicScene()
     {
-        GPUIndirectRenderCommand[] commands =
+        DrawMetadata[] commands =
         [
-            new GPUIndirectRenderCommand { MeshID = 101, MaterialID = 201, RenderPass = 1 },
-            new GPUIndirectRenderCommand { MeshID = 102, MaterialID = 202, RenderPass = 1 },
-            new GPUIndirectRenderCommand { MeshID = 103, MaterialID = 203, RenderPass = 1 },
+            new DrawMetadata { MeshID = 101, MaterialID = 201, RenderPass = 1 },
+            new DrawMetadata { MeshID = 102, MaterialID = 202, RenderPass = 1 },
+            new DrawMetadata { MeshID = 103, MaterialID = 203, RenderPass = 1 },
         ];
 
         GpuBackendParitySnapshot gl = GpuBackendParity.BuildSnapshot("OpenGL", 3, 3, commands, maxSamples: 3);
@@ -373,12 +369,12 @@ public class GpuRenderingBacklogTests
     [Test]
     public void IndirectPipeline_OpenGL_Vulkan_Parity_MultiPass()
     {
-        GPUIndirectRenderCommand[] commands =
+        DrawMetadata[] commands =
         [
-            new GPUIndirectRenderCommand { MeshID = 501, MaterialID = 11, RenderPass = 0 },
-            new GPUIndirectRenderCommand { MeshID = 502, MaterialID = 12, RenderPass = 1 },
-            new GPUIndirectRenderCommand { MeshID = 503, MaterialID = 13, RenderPass = 2 },
-            new GPUIndirectRenderCommand { MeshID = 504, MaterialID = 14, RenderPass = 2 },
+            new DrawMetadata { MeshID = 501, MaterialID = 11, RenderPass = 0 },
+            new DrawMetadata { MeshID = 502, MaterialID = 12, RenderPass = 1 },
+            new DrawMetadata { MeshID = 503, MaterialID = 13, RenderPass = 2 },
+            new DrawMetadata { MeshID = 504, MaterialID = 14, RenderPass = 2 },
         ];
 
         GpuBackendParitySnapshot gl = GpuBackendParity.BuildSnapshot("OpenGL", 4, 4, commands, maxSamples: 4);
@@ -715,10 +711,10 @@ public class GpuRenderingBacklogTests
     [Test]
     public void VR_OpenGL_Multiview_And_NVFallback_UseSameVisibleSet()
     {
-        GPUIndirectRenderCommand[] commands =
+        DrawMetadata[] commands =
         [
-            new GPUIndirectRenderCommand { MeshID = 1001, MaterialID = 2001, RenderPass = 0 },
-            new GPUIndirectRenderCommand { MeshID = 1002, MaterialID = 2002, RenderPass = 0 },
+            new DrawMetadata { MeshID = 1001, MaterialID = 2001, RenderPass = 0 },
+            new DrawMetadata { MeshID = 1002, MaterialID = 2002, RenderPass = 0 },
         ];
 
         GpuBackendParitySnapshot ovr = GpuBackendParity.BuildSnapshot("OpenGL-OVR", 2, 2, commands, maxSamples: 2);

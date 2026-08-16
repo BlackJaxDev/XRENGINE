@@ -27,8 +27,13 @@ public sealed class VulkanCpuDirectDynamicDataTests
     }
 
     [Test]
-    public void CpuDirectDynamicRecord_HasStableShaderFacingStride()
-        => VulkanCpuDirectDynamicData.Stride.ShouldBe(160);
+    public void VulkanFrameDataProfiling_ExposesCurrentRecordingAndPublicationStages()
+    {
+        Enum.GetValues<EVulkanCpuStage>().ShouldContain(EVulkanCpuStage.FrameDataRefresh);
+        Enum.GetValues<EVulkanCpuStage>().ShouldContain(EVulkanCpuStage.FrameDataManifest);
+        Enum.GetValues<EVulkanCpuStage>().ShouldContain(EVulkanCpuStage.FrameDataDescriptorValidation);
+        Enum.GetValues<EVulkanCpuStage>().ShouldContain(EVulkanCpuStage.CommandChainPacketLowering);
+    }
 
     [Test]
     public void DefaultOpaquePassesUseStateBucketingWhileOrderedPassesRemainUnchanged()
@@ -51,21 +56,18 @@ public sealed class VulkanCpuDirectDynamicDataTests
     }
 
     [Test]
-    public void CpuDirectDynamicDataUsesMappedFrameSlotsAndTracksChangedByteRanges()
+    public void VulkanFrameDataArena_TracksMappedReservationsAndPublishesProfilerGauges()
     {
         string arena = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Resources/Buffers/VulkanMappedFrameArena.cs");
-        string uniforms = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Uniforms.cs");
-        string dynamicData = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VulkanCpuDirectDynamicData.cs");
+        string profileCapture = ReadWorkspaceFile("XREngine/Engine/Engine.ProfileCapture.cs");
 
         arena.ShouldContain("internal bool TryReserve(");
         arena.ShouldContain("internal bool TryWriteIfChanged<T>");
         arena.ShouldContain("chunk.DirtyRange.Include(slice.Offset, slice.Length)");
-        uniforms.ShouldContain("private bool TryCaptureCpuDirectDynamicData(");
-        uniforms.ShouldContain("arena.TryWriteIfChanged(slice, dynamicData)");
-        dynamicData.ShouldContain("uint TransformId)");
+        arena.ShouldContain("RecordVulkanMeshFrameDataGauges(");
+        profileCapture.ShouldContain("vulkan_mesh_frame_data_reservations");
+        profileCapture.ShouldContain("vulkan_mesh_frame_data_recording_leases");
     }
 
     [Test]
