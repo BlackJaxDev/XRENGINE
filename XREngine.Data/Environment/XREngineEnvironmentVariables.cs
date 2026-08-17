@@ -125,6 +125,8 @@ public static class XREngineEnvironmentVariables
     public const string ProfileLights = "XRE_PROFILE_LIGHTS";
     public const string ProfileViewport = "XRE_PROFILE_VIEWPORT";
     public const string ProfileRenderScale = "XRE_PROFILE_RENDER_SCALE";
+    public const string ProfileWindowWidth = "XRE_PROFILE_WINDOW_WIDTH";
+    public const string ProfileWindowHeight = "XRE_PROFILE_WINDOW_HEIGHT";
     public const string ShaderCacheMode = "XRE_SHADER_CACHE_MODE";
     public const string TextureCacheMode = "XRE_TEXTURE_CACHE_MODE";
     public const string TextureStreamingCacheWarmupEnabled = "XRE_TEXTURE_STREAMING_CACHE_WARMUP_ENABLED";
@@ -133,6 +135,8 @@ public static class XREngineEnvironmentVariables
     public const string ProfilePhase = "XRE_PROFILE_PHASE";
     public const string ProfileWarmupSeconds = "XRE_PROFILE_WARMUP_SEC";
     public const string ProfileCaptureSeconds = "XRE_PROFILE_CAPTURE_SEC";
+    public const string ProfileSampleIntervalFrames = "XRE_PROFILE_SAMPLE_INTERVAL_FRAMES";
+    public const string ProfileVulkanGpuDrivenProfile = "XRE_PROFILE_VULKAN_GPU_DRIVEN_PROFILE";
     public const string GpuDeviceId = "XRE_GPU_DEVICE_ID";
     public const string GpuDriver = "XRE_GPU_DRIVER";
     public const string GpuTimestampDense = "XRE_GPU_TIMESTAMP_DENSE";

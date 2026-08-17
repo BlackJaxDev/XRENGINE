@@ -83,6 +83,31 @@ internal static class VulkanFrameOperationSemantics
         return op;
     }
 
+    /// <summary>
+    /// Lowers a prepared mesh directly into current-frame dependency data.
+    /// Retained cohorts never carry these uses across frames because descriptor
+    /// and attachment identities can be frame-local even when draw structure is
+    /// unchanged.
+    /// </summary>
+    internal static void LowerMeshDrawResourceUse(
+        XRFrameBuffer? target,
+        in PendingMeshDraw draw,
+        in FrameOpContext context,
+        ref FrameOpResourceUseList uses)
+    {
+        uses.Clear();
+        AddFrameBufferUses(
+            ref uses,
+            target ?? context.OutputFrameBuffer,
+            context.ResourceGeneration,
+            EFrameOpResourceAccess.Write);
+        if (draw.ProgramBindingSnapshot is { } bindings)
+            AddDescriptorReadUses(
+                ref uses,
+                bindings,
+                context.ResourceGeneration);
+    }
+
     private static XRFrameBuffer? GetOutputFrameBuffer(FrameOp op)
         => op switch
         {
@@ -302,7 +327,7 @@ internal static class VulkanFrameOperationSemantics
         return result == 0UL ? 1UL : result;
     }
 
-    private static void PublishFrameOpDrawStats(FrameOp op)
+    internal static void PublishFrameOpDrawStats(FrameOp op)
     {
         if (op.PassIndex == int.MinValue)
             return;
@@ -310,7 +335,8 @@ internal static class VulkanFrameOperationSemantics
         switch (op)
         {
             case MeshDrawOp meshDraw:
-                PublishFrameDrawStats(meshDraw.Draw.Renderer.EstimateFrameDrawStats(meshDraw.Draw));
+                PendingMeshDraw draw = meshDraw.Draw;
+                PublishMeshDrawStats(meshDraw.PassIndex, in draw);
                 break;
             case IndirectDrawOp indirectDraw:
                 PublishFrameDrawStats(new VulkanFrameDrawStats(
@@ -325,6 +351,14 @@ internal static class VulkanFrameOperationSemantics
                     TrianglesRendered: 0));
                 break;
         }
+    }
+
+    internal static void PublishMeshDrawStats(
+        int passIndex,
+        in PendingMeshDraw draw)
+    {
+        if (passIndex != int.MinValue)
+            PublishFrameDrawStats(draw.Renderer.EstimateFrameDrawStats(draw));
     }
 
     private static void PublishFrameDrawStats(VulkanFrameDrawStats stats)

@@ -205,7 +205,12 @@ internal sealed partial class VulkanFrameLoop
                 "Lease-backed production output currently requires Vulkan dynamic rendering; no legacy framebuffer belongs to an explicit target.");
         }
 
-        bool meshMaterializationComplete = DrainQueuedMeshRenderRequests(out string deferredReason);
+        // Direct prepared ingress is desktop-only until explicit targets define
+        // their own final-context and UI partition policy.
+        _preparedMeshIngress.Clear();
+        bool meshMaterializationComplete = DrainQueuedMeshRenderRequests(
+            allowPreparedCohort: false,
+            out string deferredReason);
         FrameOp[] drainedOperations = _framePlanner.Operations.DrainForPrimary(out FrameOp[] textureUploadOperations);
         VulkanSwapchainContextCoalescer.Coalesce(drainedOperations);
         // Explicit targets have no desktop ImGui overlay, but render-graph UI is

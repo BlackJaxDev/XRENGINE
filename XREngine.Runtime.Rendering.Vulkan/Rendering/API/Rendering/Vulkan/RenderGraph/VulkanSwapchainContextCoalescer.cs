@@ -18,6 +18,11 @@ internal static class VulkanSwapchainContextCoalescer
     };
 
     public static void Coalesce(FrameOp[] operations)
+        => Coalesce(operations, preparedMeshIngress: null);
+
+    internal static void Coalesce(
+        FrameOp[] operations,
+        VulkanPreparedMeshIngress? preparedMeshIngress)
     {
         FrameOpContext? canonicalContext = null;
         for (int index = 0; index < operations.Length; index++)
@@ -34,6 +39,29 @@ internal static class VulkanSwapchainContextCoalescer
 
             if (!FrameOpContextCompatibility.AreRecordingCompatible(operation.Context, canonicalContext.Value))
                 operation.Context = canonicalContext.Value;
+        }
+
+        if (preparedMeshIngress is null)
+            return;
+        for (int index = 0; index < preparedMeshIngress.Count; index++)
+        {
+            ref readonly VulkanPreparedMeshIngressEntry entry =
+                ref preparedMeshIngress.GetEntry(index);
+            if (entry.Target is not null)
+                continue;
+
+            if (canonicalContext is null)
+            {
+                canonicalContext = entry.Context;
+                continue;
+            }
+
+            if (!FrameOpContextCompatibility.AreRecordingCompatible(
+                    entry.Context,
+                    canonicalContext.Value))
+            {
+                preparedMeshIngress.SetContext(index, canonicalContext.Value);
+            }
         }
     }
 }

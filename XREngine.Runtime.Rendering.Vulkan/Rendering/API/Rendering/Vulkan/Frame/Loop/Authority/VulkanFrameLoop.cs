@@ -29,6 +29,29 @@ internal sealed partial class VulkanFrameLoop
     internal VulkanMeshOperationRequestQueue MeshOperationRequests { get; } = new();
     private readonly VulkanMeshRenderRequest[] _meshOperationRequestScratch =
         new VulkanMeshRenderRequest[VulkanMeshOperationRequestQueue.Capacity];
+    private readonly VulkanMeshOperationRequest[] _meshOperationMaterializationScratch =
+        new VulkanMeshOperationRequest[VulkanMeshOperationRequestQueue.Capacity];
+    private readonly VulkanPreparedMeshOperationCohortEntry[] _meshOperationCohortEntryScratch =
+        new VulkanPreparedMeshOperationCohortEntry[VulkanMeshOperationRequestQueue.Capacity];
+    private readonly VulkanPreparedMeshOperationCohort _preparedMeshOperationCohort = new();
+    private readonly VulkanPreparedMeshIngress _preparedMeshIngress = new();
+    private FrameOpResourceUseList _preparedMeshIngressResourceUseScratch;
+    private long _preparedMeshOperationCohortHits;
+    private long _preparedMeshOperationCohortBuilds;
+    private long _preparedMeshOperationFullMaterializations;
+    private long _preparedMeshOperationReusedOperations;
+    private long _preparedMeshOperationLegacyHoleMaterializations;
+
+    internal long PreparedMeshOperationCohortHits
+        => Volatile.Read(ref _preparedMeshOperationCohortHits);
+    internal long PreparedMeshOperationCohortBuilds
+        => Volatile.Read(ref _preparedMeshOperationCohortBuilds);
+    internal long PreparedMeshOperationFullMaterializations
+        => Volatile.Read(ref _preparedMeshOperationFullMaterializations);
+    internal long PreparedMeshOperationReusedOperations
+        => Volatile.Read(ref _preparedMeshOperationReusedOperations);
+    internal long PreparedMeshOperationLegacyHoleMaterializations
+        => Volatile.Read(ref _preparedMeshOperationLegacyHoleMaterializations);
     // Visibility sorting is allowed to reorder the request cohort every frame.
     // Key warm preparation by the captured compatibility identity rather than by
     // its transient queue index, otherwise camera motion repeatedly classifies

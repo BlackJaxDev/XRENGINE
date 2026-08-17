@@ -49,10 +49,12 @@ internal sealed partial class VulkanFrameLoop
                    _telemetry,
                    EVulkanCpuStage.FrameOpPreparation))
         {
+            _preparedMeshIngress.Clear();
             using (RuntimeRenderingHostServices.Profiling.StartProfileScope(
                        "Vulkan.PrepareFrameOps.MaterializeQueuedMeshes"))
             {
                 meshMaterializationComplete = DrainQueuedMeshRenderRequests(
+                    allowPreparedCohort: true,
                     out meshMaterializationDeferredReason);
             }
 
@@ -60,8 +62,13 @@ internal sealed partial class VulkanFrameLoop
             using (RuntimeRenderingHostServices.Profiling.StartProfileScope(
                        "Vulkan.PrepareFrameOps.Drain"))
             {
-                drainedOperations = _framePlanner.Operations.DrainForPrimary(
-                    out textureUploadOperations);
+                using (VulkanCpuStageScope drainStage = new(
+                           _telemetry,
+                           EVulkanCpuStage.FrameOpDrain))
+                {
+                    drainedOperations = _framePlanner.Operations.DrainForPrimary(
+                        out textureUploadOperations);
+                }
             }
 
             using (RuntimeRenderingHostServices.Profiling.StartProfileScope(
@@ -75,16 +82,64 @@ internal sealed partial class VulkanFrameLoop
             using (RuntimeRenderingHostServices.Profiling.StartProfileScope(
                        "Vulkan.PrepareFrameOps.CoalesceContexts"))
             {
-                VulkanSwapchainContextCoalescer.Coalesce(sortedOperations);
+                VulkanSwapchainContextCoalescer.Coalesce(
+                    sortedOperations,
+                    _preparedMeshIngress);
+            }
+
+            using (RuntimeRenderingHostServices.Profiling.StartProfileScope(
+                       "Vulkan.PrepareFrameOps.FinalizePreparedMeshIngress"))
+            {
+                using VulkanCpuStageScope resourceUseLoweringStage = new(
+                    _telemetry,
+                    EVulkanCpuStage.FrameOpResourceUseLowering,
+                    meshMaterializationComplete);
+                bool ingressFinalized = true;
+                if (meshMaterializationComplete)
+                {
+                    try
+                    {
+                        ingressFinalized = _preparedMeshIngress.TryFinalize(
+                            ref _preparedMeshIngressResourceUseScratch);
+                    }
+                    catch (InvalidOperationException ex)
+                    {
+                        ingressFinalized = false;
+                        Debug.VulkanWarningEvery(
+                            "Vulkan.PreparedMeshIngress.Finalization",
+                            TimeSpan.FromSeconds(2),
+                            "[Vulkan] Prepared mesh ingress finalization failed: {0}",
+                            ex.Message);
+                    }
+                }
+
+                if (meshMaterializationComplete && !ingressFinalized)
+                {
+                    _preparedMeshOperationCohort.Invalidate();
+                    _preparedMeshIngress.Clear();
+                    meshMaterializationComplete = false;
+                    meshMaterializationDeferredReason =
+                        "Prepared mesh ingress exceeded its dependency budget or could not resolve a final pass.";
+                }
+                else if (meshMaterializationComplete &&
+                         _preparedMeshIngress.IsCohortHit)
+                {
+                    PublishPreparedMeshIngressCohortHit();
+                }
             }
 
             using (RuntimeRenderingHostServices.Profiling.StartProfileScope(
                        "Vulkan.PrepareFrameOps.SplitUi"))
             {
-                SplitPreparedDynamicUiOperations(
-                    sortedOperations,
-                    out staticOperations,
-                    out dynamicUiOperations);
+                using (VulkanCpuStageScope splitStage = new(
+                           _telemetry,
+                           EVulkanCpuStage.FrameOpSplit))
+                {
+                    SplitPreparedDynamicUiOperations(
+                        sortedOperations,
+                        out staticOperations,
+                        out dynamicUiOperations);
+                }
                 if (!meshMaterializationComplete)
                 {
                     // No subset of a scene is publishable. Dynamic text remains
@@ -109,7 +164,9 @@ internal sealed partial class VulkanFrameLoop
         try
         {
             bool preserveSwapchainForOverlay =
-                preserveSwapchainForImGuiOverlay || dynamicUiOperations.Length > 0;
+                preserveSwapchainForImGuiOverlay ||
+                dynamicUiOperations.Length > 0 ||
+                _preparedMeshIngress.HasDynamicUiEntries;
 
             _ = attempt.CompletePhase(
                 EVulkanFrameStage.ResourcePrepare,
@@ -165,6 +222,10 @@ internal sealed partial class VulkanFrameLoop
                     !TryPrepareFrameOperationTargets(
                         dynamicUiOperations,
                         allowSynchronousResourceUploads,
+                        out targetPreparationFailure) ||
+                    !TryPreparePreparedMeshIngressTargets(
+                        _preparedMeshIngress,
+                        allowSynchronousResourceUploads,
                         out targetPreparationFailure))
                 {
                     replanReason = targetPreparationFailure;
@@ -205,17 +266,23 @@ internal sealed partial class VulkanFrameLoop
                     using (RuntimeRenderingHostServices.Profiling.StartProfileScope(
                                "Vulkan.BuildFramePlan.Seal"))
                     {
-                        framePlan = _framePlanner.FramePlanBuilder.BuildAndSeal(
-                            CurrentFrameSlot,
-                            plannerState.ResourcePlannerRevision,
-                            staticOperationSignature: 0UL,
-                            dynamicOverlaySignature: 0UL,
-                            staticOperations,
-                            dynamicUiOperations,
-                            new VulkanFramePlanRenderGraphAuthority(
-                                frozenPlanningSnapshot.RenderGraphPlan,
-                                plannerState.FrameOpResourcePlannerSwitchingState),
-                            textureUploadOperations: textureUploadOperations);
+                        using (VulkanCpuStageScope planStage = new(
+                                   _telemetry,
+                                   EVulkanCpuStage.FrameOpPlan))
+                        {
+                            framePlan = _framePlanner.FramePlanBuilder.BuildAndSeal(
+                                CurrentFrameSlot,
+                                plannerState.ResourcePlannerRevision,
+                                staticOperationSignature: 0UL,
+                                dynamicOverlaySignature: 0UL,
+                                staticOperations,
+                                dynamicUiOperations,
+                                new VulkanFramePlanRenderGraphAuthority(
+                                    frozenPlanningSnapshot.RenderGraphPlan,
+                                    plannerState.FrameOpResourcePlannerSwitchingState),
+                                textureUploadOperations: textureUploadOperations,
+                                preparedMeshIngress: _preparedMeshIngress);
+                        }
                     }
                 }
                 FrameOperationSequence preparedOperations =
@@ -301,6 +368,7 @@ internal sealed partial class VulkanFrameLoop
         }
         finally
         {
+            _preparedMeshIngress.Clear();
             if (!submissionMarkersTransferred)
             {
                 _commandRuntime.FailSubmissionMarkersForCommandBuffer(
@@ -335,21 +403,59 @@ internal sealed partial class VulkanFrameLoop
             XRFrameBuffer? target = operations[index].Target;
             if (target is null)
                 continue;
-
-            VkFrameBuffer? wrapper = _resourceRuntime.CreateAPIRenderObject(target) as VkFrameBuffer;
-            if (wrapper is null)
-            {
-                reason = $"Failed to create the Vulkan framebuffer wrapper for target '{target.GetDescribingName()}'.";
+            if (!TryPrepareFrameOperationTarget(
+                    target,
+                    allowSynchronousResourceUploads,
+                    out reason))
                 return false;
-            }
+        }
 
-            if (!wrapper.IsGenerated && allowSynchronousResourceUploads)
-                wrapper.Generate();
-            if (!wrapper.IsGenerated)
-            {
-                reason = $"Vulkan framebuffer target '{target.GetDescribingName()}' is not ready for command recording.";
+        reason = string.Empty;
+        return true;
+    }
+
+    private bool TryPreparePreparedMeshIngressTargets(
+        VulkanPreparedMeshIngress ingress,
+        bool allowSynchronousResourceUploads,
+        out string reason)
+    {
+        for (int index = 0; index < ingress.Count; index++)
+        {
+            XRFrameBuffer? target = ingress.GetEntry(index).Target;
+            if (target is null)
+                continue;
+            if (!TryPrepareFrameOperationTarget(
+                    target,
+                    allowSynchronousResourceUploads,
+                    out reason))
                 return false;
-            }
+        }
+
+        reason = string.Empty;
+        return true;
+    }
+
+    private bool TryPrepareFrameOperationTarget(
+        XRFrameBuffer target,
+        bool allowSynchronousResourceUploads,
+        out string reason)
+    {
+        VkFrameBuffer? wrapper =
+            _resourceRuntime.CreateAPIRenderObject(target) as VkFrameBuffer;
+        if (wrapper is null)
+        {
+            reason =
+                $"Failed to create the Vulkan framebuffer wrapper for target '{target.GetDescribingName()}'.";
+            return false;
+        }
+
+        if (!wrapper.IsGenerated && allowSynchronousResourceUploads)
+            wrapper.Generate();
+        if (!wrapper.IsGenerated)
+        {
+            reason =
+                $"Vulkan framebuffer target '{target.GetDescribingName()}' is not ready for command recording.";
+            return false;
         }
 
         reason = string.Empty;
@@ -360,13 +466,23 @@ internal sealed partial class VulkanFrameLoop
     /// Converts wrapper-owned render events into prepared mesh operations at the only
     /// point where frame, output, command, and planner state are jointly authoritative.
     /// </summary>
-    private bool DrainQueuedMeshRenderRequests(out string deferredReason)
+    private bool DrainQueuedMeshRenderRequests(
+        bool allowPreparedCohort,
+        out string deferredReason)
     {
         deferredReason = string.Empty;
-        int requestCount = MeshOperationRequests.DrainTo(
-            _meshOperationRequestScratch);
+        int requestCount;
+        using (VulkanCpuStageScope rawRequestDrainStage = new(
+                   _telemetry,
+                   EVulkanCpuStage.RawMeshRequestDrain))
+        {
+            requestCount = MeshOperationRequests.DrainTo(
+                _meshOperationRequestScratch);
+        }
         if (requestCount == 0)
             return true;
+
+        NormalizeQueuedMeshRenderRequests(requestCount);
 
         long coldPreparationTicks = 0;
         int deferredRequestCount = 0;
@@ -375,6 +491,9 @@ internal sealed partial class VulkanFrameLoop
         int warmRequestCount = 0;
         int coldRequestCount = 0;
         int resumeRequestIndex = -1;
+        int reusableCohortEntryCount = 0;
+        int cohortResourceUseCount = 0;
+        bool cohortMaterializationComplete = true;
         int startRequestIndex = _meshOperationPreparationCursor % requestCount;
         ResourcePlannerRuntimeState plannerState =
             PublishedResourcePlannerRuntimeState;
@@ -396,6 +515,30 @@ internal sealed partial class VulkanFrameLoop
                 RuntimeRenderingHostServices.FrameTiming,
                 out _),
             _telemetry);
+        bool preparedCohortMatched = false;
+        bool stagedPreparedCohort = false;
+        if (allowPreparedCohort)
+        {
+            using VulkanCpuStageScope cohortStage = new(
+                _telemetry,
+                EVulkanCpuStage.FrameOpCohort);
+            stagedPreparedCohort = TryStagePreparedMeshOperationCohort(
+                requestCount,
+                in materializationSnapshot,
+                out preparedCohortMatched,
+                out deferredReason);
+        }
+        if (stagedPreparedCohort)
+        {
+            _meshOperationRequestScratch.AsSpan(0, requestCount).Clear();
+            return true;
+        }
+
+        if (allowPreparedCohort && preparedCohortMatched)
+        {
+            _meshOperationRequestScratch.AsSpan(0, requestCount).Clear();
+            return false;
+        }
         XRRenderPipelineInstance? scopedPipeline = null;
         XRCamera? scopedCamera = null;
         IDisposable? pipelineScope = null;
@@ -419,12 +562,16 @@ internal sealed partial class VulkanFrameLoop
                         preparationSignature))
                 {
                     quarantinedRequestCount++;
+                    cohortMaterializationComplete = false;
                     continue;
                 }
 
                 XRRenderPipelineInstance? pipeline = request.Pipeline;
                 if (pipeline is null)
+                {
+                    cohortMaterializationComplete = false;
                     continue;
+                }
 
                 XRCamera? camera = pipeline.LastRenderingCamera ??
                     pipeline.LastSceneCamera;
@@ -459,6 +606,7 @@ internal sealed partial class VulkanFrameLoop
                     coldPreparationTicks >= ColdMeshPreparationSliceTicks)
                 {
                     deferredRequestCount++;
+                    cohortMaterializationComplete = false;
                     if (resumeRequestIndex < 0)
                         resumeRequestIndex = requestIndex;
                     continue;
@@ -484,12 +632,15 @@ internal sealed partial class VulkanFrameLoop
                     _meshOperationWarmPreparationSignatures.Remove(
                         request.PreparationCompatibilitySignature);
                     unavailableRequestCount++;
+                    cohortMaterializationComplete = false;
                     if (resumeRequestIndex < 0)
                         resumeRequestIndex = requestIndex;
                     continue;
                 }
 
-                if (!EnqueueQueuedMeshDraw(in operationRequest))
+                if (!EnqueueQueuedMeshDraw(
+                        in operationRequest,
+                        out MeshDrawOp? enqueuedOperation))
                 {
                     _meshOperationWarmPreparationSignatures.Remove(
                         preparationSignature);
@@ -508,8 +659,26 @@ internal sealed partial class VulkanFrameLoop
                     }
 
                     quarantinedRequestCount++;
+                    cohortMaterializationComplete = false;
                     continue;
                 }
+
+                bool reusable = IsPreparedMeshOperationCohortEligible(
+                        in request,
+                        in operationRequest);
+                if (reusable && enqueuedOperation!.PreserveSubmissionOrder)
+                    reusable = false;
+                _meshOperationMaterializationScratch[requestIndex] =
+                    operationRequest;
+                _meshOperationCohortEntryScratch[requestIndex] =
+                    CreatePreparedMeshOperationCohortEntry(
+                        in request,
+                        reusable);
+                cohortResourceUseCount = checked(
+                    cohortResourceUseCount +
+                    enqueuedOperation!.ResourceUsesReference.Count);
+                if (reusable)
+                    reusableCohortEntryCount++;
 
                 if (preparationSignature != 0)
                 {
@@ -533,7 +702,6 @@ internal sealed partial class VulkanFrameLoop
         {
             cameraScope?.Dispose();
             pipelineScope?.Dispose();
-            _meshOperationRequestScratch.AsSpan(0, requestCount).Clear();
         }
 
         // A stable visible cohort can contain hundreds of cold requests. Resume at
@@ -542,6 +710,38 @@ internal sealed partial class VulkanFrameLoop
         _meshOperationPreparationCursor = resumeRequestIndex >= 0
             ? resumeRequestIndex
             : 0;
+
+        if (allowPreparedCohort &&
+            cohortMaterializationComplete &&
+            reusableCohortEntryCount > 0 &&
+            cohortResourceUseCount <= _preparedMeshIngress.ResourceUseCapacity &&
+            deferredRequestCount == 0 &&
+            unavailableRequestCount == 0 &&
+            quarantinedRequestCount == 0)
+        {
+            _preparedMeshOperationCohort.Publish(
+                _meshOperationCohortEntryScratch.AsSpan(0, requestCount),
+                _meshOperationMaterializationScratch.AsSpan(0, requestCount));
+            Interlocked.Increment(ref _preparedMeshOperationCohortBuilds);
+            RuntimeEngine.Rendering.Stats.Vulkan
+                .RecordVulkanPreparedMeshOperationCohort(
+                    hit: false,
+                    built: true,
+                    fullyMaterialized: false);
+        }
+        else
+        {
+            _preparedMeshOperationCohort.Invalidate();
+        }
+        _meshOperationMaterializationScratch.AsSpan(0, requestCount).Clear();
+        _meshOperationCohortEntryScratch.AsSpan(0, requestCount).Clear();
+        _meshOperationRequestScratch.AsSpan(0, requestCount).Clear();
+        Interlocked.Increment(ref _preparedMeshOperationFullMaterializations);
+        RuntimeEngine.Rendering.Stats.Vulkan
+            .RecordVulkanPreparedMeshOperationCohort(
+                hit: false,
+                built: false,
+                fullyMaterialized: true);
 
         if (quarantinedRequestCount > 0)
         {
@@ -567,20 +767,420 @@ internal sealed partial class VulkanFrameLoop
         return false;
     }
 
-    private bool TryMaterializeQueuedMeshRenderRequest(
-        in VulkanMeshRenderRequest request,
-        XRRenderPipelineInstance pipeline,
-        in VulkanMeshMaterializationSnapshot materializationSnapshot,
-        bool prewarmDescriptorAllocation,
-        out VulkanMeshOperationRequest operationRequest)
+    /// <summary>
+    /// Captures frame-loop-owned context and output facts exactly once per raw
+    /// request cohort. Later matching, cache publication, and legacy fallback
+    /// consume these normalized values rather than independently sampling output
+    /// state at different points in the frame.
+    /// </summary>
+    private void NormalizeQueuedMeshRenderRequests(int requestCount)
     {
-        FrameOpContext requestContext =
-            request.Context.PipelineInstance is not null
-                ? request.Context
-                : CreateFrameOpContext(
-                    pipeline,
-                    pipeline.LastWindowViewport);
-        VulkanMeshProducerSnapshot producer = request.Producer with
+        for (int index = 0; index < requestCount; index++)
+        {
+            ref VulkanMeshRenderRequest request =
+                ref _meshOperationRequestScratch[index];
+            XRRenderPipelineInstance? pipeline = request.Pipeline;
+            if (pipeline is null)
+                continue;
+
+            FrameOpContext context = CreateQueuedMeshRequestContext(
+                in request,
+                pipeline);
+            VulkanMeshProducerSnapshot producer = CreateQueuedMeshProducer(
+                in request,
+                in context);
+            request = request with
+            {
+                Context = context,
+                Producer = producer,
+            };
+        }
+    }
+
+    private bool TryStagePreparedMeshOperationCohort(
+        int requestCount,
+        in VulkanMeshMaterializationSnapshot materializationSnapshot,
+        out bool cacheMatched,
+        out string deferredReason)
+    {
+        cacheMatched = false;
+        deferredReason = string.Empty;
+        if (!_preparedMeshOperationCohort.IsValid ||
+            _preparedMeshOperationCohort.Count != requestCount ||
+            _frameOperationQueue.CurrentThread.RenderQueryBracketDepth != 0)
+        {
+            return false;
+        }
+
+        for (int index = 0; index < requestCount; index++)
+        {
+            ref readonly VulkanMeshRenderRequest current =
+                ref _meshOperationRequestScratch[index];
+            ref readonly VulkanPreparedMeshOperationCohortEntry cached =
+                ref _preparedMeshOperationCohort.GetEntry(index);
+            ref readonly VulkanMeshOperationRequest template =
+                ref _preparedMeshOperationCohort.GetOperation(index);
+            if (!IsPreparedMeshOperationCohortMatch(
+                    in current,
+                    in cached,
+                    in template))
+                return false;
+        }
+        cacheMatched = true;
+        _preparedMeshIngress.Clear();
+
+        XRRenderPipelineInstance? scopedPipeline = null;
+        XRCamera? scopedCamera = null;
+        IDisposable? pipelineScope = null;
+        IDisposable? cameraScope = null;
+        int reusedOperationCount = 0;
+        int legacyHoleMaterializationCount = 0;
+        bool ingressPublished = false;
+        try
+        {
+            // A retained immutable artifact is only a candidate. Reacquire it
+            // from the exact program-owned cache under the current render scope
+            // before invoking any legacy-hole callbacks.
+            using (VulkanCpuStageScope bindingValidationStage = new(
+                       _telemetry,
+                       EVulkanCpuStage.PreparedMeshBindingValidation))
+            {
+                for (int index = 0; index < requestCount; index++)
+                {
+                    ref readonly VulkanPreparedMeshOperationCohortEntry cachedEntry =
+                        ref _preparedMeshOperationCohort.GetEntry(index);
+                    if (!cachedEntry.IsReusable)
+                        continue;
+
+                    VulkanMeshOperationRequest template =
+                        _preparedMeshOperationCohort.GetOperation(index);
+                    ComputeDispatchSnapshot? cachedBindings =
+                        template.Draw.ProgramBindingSnapshot;
+                    if (cachedBindings is null)
+                        continue;
+
+                    ref readonly VulkanMeshRenderRequest request =
+                        ref _meshOperationRequestScratch[index];
+                    XRRenderPipelineInstance pipeline = request.Pipeline!;
+                    XRCamera? camera = pipeline.LastRenderingCamera ??
+                        pipeline.LastSceneCamera;
+                    if (!ReferenceEquals(scopedPipeline, pipeline) ||
+                        !ReferenceEquals(scopedCamera, camera))
+                    {
+                        cameraScope?.Dispose();
+                        pipelineScope?.Dispose();
+                        pipelineScope = RuntimeRenderingHostServices.Diagnostics
+                            .PushRenderingPipeline(pipeline);
+                        cameraScope = pipeline.RenderState.PushRenderingCamera(camera);
+                        scopedPipeline = pipeline;
+                        scopedCamera = camera;
+                    }
+
+                    LayeredShadowUniformState shadowUniformState =
+                        request.ViewSnapshot.ShadowUniformState;
+                    if (template.Draw.PreparedProgram is not { } expectedProgram ||
+                        !request.Renderer.TryGetCurrentPersistentProgramBindingArtifact(
+                            request.ResolvedMaterial.Material,
+                            expectedProgram,
+                            in shadowUniformState,
+                            out ComputeDispatchSnapshot? currentBindings) ||
+                        currentBindings is null ||
+                        !currentBindings.IsImmutableBindingArtifact ||
+                        currentBindings.HasMutableFrameSourceSamplerBindings ||
+                        !ReferenceEquals(currentBindings, cachedBindings))
+                    {
+                        _preparedMeshOperationCohort.Invalidate();
+                        cacheMatched = false;
+                        return false;
+                    }
+                }
+            }
+
+            for (int index = 0; index < requestCount; index++)
+            {
+                ref readonly VulkanMeshRenderRequest request =
+                    ref _meshOperationRequestScratch[index];
+                ref readonly VulkanPreparedMeshOperationCohortEntry cachedEntry =
+                    ref _preparedMeshOperationCohort.GetEntry(index);
+                XRRenderPipelineInstance pipeline = request.Pipeline!;
+                XRCamera? camera = pipeline.LastRenderingCamera ??
+                    pipeline.LastSceneCamera;
+                if (!ReferenceEquals(scopedPipeline, pipeline) ||
+                    !ReferenceEquals(scopedCamera, camera))
+                {
+                    cameraScope?.Dispose();
+                    pipelineScope?.Dispose();
+                    pipelineScope = RuntimeRenderingHostServices.Diagnostics
+                        .PushRenderingPipeline(pipeline);
+                    cameraScope = pipeline.RenderState.PushRenderingCamera(camera);
+                    scopedPipeline = pipeline;
+                    scopedCamera = camera;
+                }
+
+                VulkanMeshOperationRequest template =
+                    _preparedMeshOperationCohort.GetOperation(index);
+                VulkanMeshOperationRequest operation;
+                if (!cachedEntry.IsReusable)
+                {
+                    bool previouslyMaterialized =
+                        request.PreparationCompatibilitySignature != 0 &&
+                        _meshOperationWarmPreparationSignatures.Contains(
+                            request.PreparationCompatibilitySignature);
+                    bool holeMaterialized;
+                    using (VulkanCpuStageScope holeMaterializationStage = new(
+                               _telemetry,
+                               EVulkanCpuStage.PreparedMeshHoleMaterialization))
+                    {
+                        holeMaterialized = TryMaterializeQueuedMeshRenderRequest(
+                            in request,
+                            pipeline,
+                            in materializationSnapshot,
+                            prewarmDescriptorAllocation: !previouslyMaterialized,
+                            out operation);
+                    }
+                    if (!holeMaterialized)
+                    {
+                        _preparedMeshOperationCohort.Invalidate();
+                        deferredReason = "Prepared mesh-operation cohort legacy hole could not be materialized.";
+                        return false;
+                    }
+
+                    legacyHoleMaterializationCount++;
+                }
+                else
+                {
+                    PendingMeshDraw draw = template.Draw with
+                    {
+                        ModelMatrix = request.ModelMatrix,
+                        PreviousModelMatrix = request.PreviousModelMatrix,
+                        MaterialOverride = request.ResolvedMaterial.Material,
+                        Instances = request.ExpandedInstances,
+                        BillboardMode = request.BillboardMode,
+                        TransformId = request.TransformId,
+                        ViewSnapshot = request.ViewSnapshot,
+                        ShadowCasterRelevance = request.ShadowCasterRelevance,
+                    };
+                    draw = draw with
+                    {
+                        AutoUniformPublication =
+                            VulkanAutoUniformPublicationSnapshot.Capture(
+                                draw,
+                                pipeline),
+                    };
+                    operation = template with
+                    {
+                        Draw = draw,
+                        ProducerSnapshot = request.Producer,
+                    };
+                    reusedOperationCount++;
+                }
+
+                if (!TryStagePreparedMeshOperation(in operation))
+                {
+                    _preparedMeshOperationCohort.Invalidate();
+                    deferredReason =
+                        "Prepared mesh-operation cohort could not be lowered into the current frame ingress.";
+                    return false;
+                }
+            }
+
+            _preparedMeshIngress.MarkCohortHit(
+                reusedOperationCount,
+                legacyHoleMaterializationCount);
+            ingressPublished = true;
+        }
+        finally
+        {
+            if (!ingressPublished)
+                _preparedMeshIngress.Clear();
+            cameraScope?.Dispose();
+            pipelineScope?.Dispose();
+        }
+
+        return true;
+    }
+
+    private void PublishPreparedMeshIngressCohortHit()
+    {
+        int reusedOperationCount = _preparedMeshIngress.ReusedOperationCount;
+        int legacyHoleMaterializationCount =
+            _preparedMeshIngress.LegacyHoleMaterializationCount;
+        _preparedMeshIngress.PublishDrawStats();
+        if (reusedOperationCount > 0)
+        {
+            Interlocked.Add(
+                ref _preparedMeshOperationReusedOperations,
+                reusedOperationCount);
+        }
+        if (legacyHoleMaterializationCount > 0)
+        {
+            Interlocked.Add(
+                ref _preparedMeshOperationLegacyHoleMaterializations,
+                legacyHoleMaterializationCount);
+        }
+        Interlocked.Increment(ref _preparedMeshOperationCohortHits);
+        RuntimeEngine.Rendering.Stats.Vulkan
+            .RecordVulkanPreparedMeshOperationCohort(
+                hit: true,
+                built: false,
+                fullyMaterialized: false,
+                reusedOperationCount,
+                legacyHoleMaterializationCount);
+    }
+
+    private bool IsPreparedMeshOperationCohortEligible(
+        in VulkanMeshRenderRequest request,
+        in VulkanMeshOperationRequest operation)
+    {
+        XRMaterial material = request.ResolvedMaterial.Material;
+        VkRenderProgram? program = operation.Draw.PreparedProgram;
+        ComputeDispatchSnapshot? bindings =
+            operation.Draw.ProgramBindingSnapshot;
+        bool reusableBindings = bindings is null ||
+            (bindings.IsImmutableBindingArtifact &&
+             !bindings.HasMutableFrameSourceSamplerBindings);
+        return request.Pipeline is not null &&
+               request.Renderer.IsActive &&
+               request.Renderer.BackendContext.IsDeviceOperational &&
+               ReferenceEquals(
+                   request.Renderer.BackendContext.Resources,
+                   _resourceRuntime) &&
+               request.DeferredBindings.IsEmpty &&
+               !request.ResolvedMaterial.IsShadowVariant &&
+               request.RenderOptionsOverride is null &&
+               !request.Context.PreserveSubmissionOrderBlock &&
+               !request.ViewSnapshot.ShadowUniformState.IsShadowPass &&
+               !request.Producer.IsExternalSwapchainTarget &&
+               !request.Producer.IsPrewarmingExternalSwapchainTarget &&
+               request.Producer.IndexedViewportScissors.Count <= 1 &&
+               operation.Draw.IndexedViewports is null &&
+               operation.Draw.IndexedScissors is null &&
+               !request.Renderer.MeshRenderer.HasRenderDataPreparation &&
+               !request.Renderer.MeshRenderer.HasSettingUniformsHandlers &&
+               !material.HasSettingUniformsHandlers &&
+               material.BindingPublishers.Count == 0 &&
+               request.Renderer.MeshRenderer.BindingPublishers.Count == 0 &&
+               RuntimeEngine.Rendering.State.RenderingPipelineState
+                   ?.HasActiveScopedBindings != true &&
+               program is { IsActive: true, IsLinked: true } &&
+               operation.Draw.PreparedProgramLinkGeneration != 0 &&
+               reusableBindings;
+    }
+
+    private bool IsPreparedMeshOperationCohortMatch(
+        in VulkanMeshRenderRequest current,
+        in VulkanPreparedMeshOperationCohortEntry cached,
+        in VulkanMeshOperationRequest template)
+    {
+        if ((cached.IsReusable &&
+             !IsPreparedMeshOperationCohortEligible(in current, in template)) ||
+            !ReferenceEquals(current.Renderer, cached.Renderer) ||
+            current.PassIndex != cached.PassIndex ||
+            !ReferenceEquals(current.Pipeline, cached.Pipeline) ||
+            !ReferenceEquals(current.ResolvedMaterial.Material, cached.Material) ||
+            current.PreparationCompatibilitySignature !=
+                cached.PreparationCompatibilitySignature ||
+            !ReferenceEquals(current.MaterialOverride, cached.MaterialOverride) ||
+            !ReferenceEquals(current.RenderOptionsOverride,
+                cached.RenderOptionsOverride) ||
+            current.ForceNoStereo != cached.ForceNoStereo)
+        {
+            return false;
+        }
+
+        XRMaterial material = current.ResolvedMaterial.Material;
+        FrameOpContext context = current.Context;
+        VulkanMeshProducerSnapshot producer = current.Producer;
+        PendingMeshDraw draw = template.Draw;
+        VkRenderProgram? program = draw.PreparedProgram;
+        bool reusableDrawMatches = !cached.IsReusable ||
+            (ReferenceEquals(draw.Renderer, current.Renderer) &&
+             ReferenceEquals(draw.MaterialOverride, material) &&
+             program is not null &&
+             program.LinkGeneration == draw.PreparedProgramLinkGeneration);
+        return reusableDrawMatches &&
+               ReferenceEquals(producer.Target, cached.Target) &&
+               producer.TargetExtent.Equals(cached.TargetExtent) &&
+               producer.Viewport.Equals(cached.Viewport) &&
+               producer.Scissor.Equals(cached.Scissor) &&
+               producer.IndexedViewportScissors == cached.IndexedViewportScissors &&
+               producer.FixedFunctionState == cached.FixedFunctionState &&
+               context.PipelineIdentity == cached.PipelineIdentity &&
+               context.ViewportIdentity == cached.ViewportIdentity &&
+               context.OutputTargetIdentity == cached.OutputTargetIdentity &&
+               context.OutputFrameBufferIdentity == cached.OutputFrameBufferIdentity &&
+               context.RecordingFingerprint == cached.RecordingFingerprint &&
+               context.ResourceGeneration == cached.ResourceGeneration &&
+               context.DescriptorGeneration == cached.DescriptorGeneration &&
+               context.InternalWidth == cached.InternalWidth &&
+               context.InternalHeight == cached.InternalHeight &&
+               context.StereoEnabled == cached.StereoEnabled &&
+               context.MultiviewEnabled == cached.MultiviewEnabled &&
+               material.BindingLayoutVersion ==
+                   cached.MaterialBindingLayoutVersion &&
+               material.BindingValueVersion ==
+                   cached.MaterialBindingValueVersion &&
+               material.BindingResourceVersion ==
+                   cached.MaterialBindingResourceVersion &&
+               material.ShaderStateRevision ==
+                   cached.MaterialShaderStateRevision &&
+               material.UberStateRevision ==
+                   cached.MaterialUberStateRevision;
+    }
+
+    private static VulkanPreparedMeshOperationCohortEntry
+        CreatePreparedMeshOperationCohortEntry(
+            in VulkanMeshRenderRequest request,
+            bool isReusable)
+    {
+        XRMaterial material = request.ResolvedMaterial.Material;
+        VulkanMeshProducerSnapshot producer = request.Producer;
+        FrameOpContext context = request.Context;
+        return new VulkanPreparedMeshOperationCohortEntry(
+            isReusable,
+            request.Renderer,
+            request.PassIndex,
+            request.Pipeline,
+            material,
+            request.MaterialOverride,
+            request.RenderOptionsOverride,
+            request.PreparationCompatibilitySignature,
+            request.ForceNoStereo,
+            producer.Target,
+            producer.TargetExtent,
+            producer.Viewport,
+            producer.Scissor,
+            producer.IndexedViewportScissors,
+            producer.FixedFunctionState,
+            context.PipelineIdentity,
+            context.ViewportIdentity,
+            context.OutputTargetIdentity,
+            context.OutputFrameBufferIdentity,
+            context.RecordingFingerprint,
+            context.ResourceGeneration,
+            context.DescriptorGeneration,
+            context.InternalWidth,
+            context.InternalHeight,
+            context.StereoEnabled,
+            context.MultiviewEnabled,
+            material.BindingLayoutVersion,
+            material.BindingValueVersion,
+            material.BindingResourceVersion,
+            material.ShaderStateRevision,
+            material.UberStateRevision);
+    }
+
+    private FrameOpContext CreateQueuedMeshRequestContext(
+        in VulkanMeshRenderRequest request,
+        XRRenderPipelineInstance pipeline)
+        => request.Context.PipelineInstance is not null
+            ? request.Context
+            : CreateFrameOpContext(pipeline, pipeline.LastWindowViewport);
+
+    private VulkanMeshProducerSnapshot CreateQueuedMeshProducer(
+        in VulkanMeshRenderRequest request,
+        in FrameOpContext requestContext)
+        => request.Producer with
         {
             Context = requestContext,
             IsExternalSwapchainTarget =
@@ -588,6 +1188,16 @@ internal sealed partial class VulkanFrameLoop
             IsPrewarmingExternalSwapchainTarget =
                 IsPrewarmingOpenXrExternalSwapchainTarget,
         };
+
+    private bool TryMaterializeQueuedMeshRenderRequest(
+        in VulkanMeshRenderRequest request,
+        XRRenderPipelineInstance pipeline,
+        in VulkanMeshMaterializationSnapshot materializationSnapshot,
+        bool prewarmDescriptorAllocation,
+        out VulkanMeshOperationRequest operationRequest)
+    {
+        FrameOpContext requestContext = request.Context;
+        VulkanMeshProducerSnapshot producer = request.Producer;
         int descriptorViewFamilyIdentity =
             requestContext.OutputTargetIdentity != 0
                 ? requestContext.OutputTargetIdentity
@@ -608,25 +1218,15 @@ internal sealed partial class VulkanFrameLoop
 
     private static bool IsQueuedDynamicUiOverlayRequest(
         in VulkanMeshRenderRequest request)
-    {
-        XRMeshRenderer meshRenderer = request.Renderer.MeshRenderer;
-        XRMaterial material = request.ResolvedMaterial.Material;
-        return string.Equals(
-                   material?.Name,
-                   "UIBatchTextMaterial",
-                   StringComparison.Ordinal) ||
-               string.Equals(
-                   meshRenderer.Name,
-                   "UIBatchTextRenderer",
-                   StringComparison.Ordinal) ||
-               string.Equals(
-                   meshRenderer.Mesh?.Name,
-                   "UIBatchTextQuadMesh",
-                   StringComparison.Ordinal);
-    }
+        => IsNamedDynamicUiOverlayOperation(
+            request.Renderer.MeshRenderer,
+            request.ResolvedMaterial.Material);
 
-    private bool EnqueueQueuedMeshDraw(in VulkanMeshOperationRequest request)
+    private bool EnqueueQueuedMeshDraw(
+        in VulkanMeshOperationRequest request,
+        out MeshDrawOp? operation)
     {
+        operation = null;
         int passIndex = VulkanCommandRuntime.EnsureValidPassIndex(
             request.PassIndex,
             nameof(MeshDrawOp),
@@ -634,7 +1234,7 @@ internal sealed partial class VulkanFrameLoop
         if (passIndex == int.MinValue)
             return false;
 
-        MeshDrawOp operation = MeshDrawOp.Rent(
+        operation = MeshDrawOp.Rent(
             passIndex,
             request.ExplicitTarget ?? request.ProducerSnapshot.Target,
             request.Draw,
@@ -645,6 +1245,37 @@ internal sealed partial class VulkanFrameLoop
             operation,
             passIndex,
             out _);
+    }
+
+    private bool TryStagePreparedMeshOperation(
+        in VulkanMeshOperationRequest request)
+    {
+        int passIndex = VulkanCommandRuntime.EnsureValidPassIndex(
+            request.PassIndex,
+            nameof(MeshDrawOp),
+            request.Context.PassMetadata);
+        if (passIndex == int.MinValue)
+            return false;
+
+        XRFrameBuffer? target =
+            request.ExplicitTarget ?? request.ProducerSnapshot.Target;
+        PendingMeshDraw draw = request.Draw;
+        FrameOpContext context = request.Context;
+        bool preserveSubmissionOrder =
+            _frameOperationQueue.CurrentThread.RenderQueryBracketDepth > 0 ||
+            context.PreserveSubmissionOrderBlock;
+        // Cold authoring operations are classified after context coalescing.
+        // Only the name-owned UI batch contract is invariant across that boundary;
+        // generic UI-pipeline draws remain static until both paths share capture-time
+        // classification metadata.
+        bool dynamicUi = IsNamedDynamicUiOverlayOperation(in draw);
+        return _preparedMeshIngress.TryAppend(
+            passIndex,
+            target,
+            in draw,
+            in context,
+            preserveSubmissionOrder,
+            dynamicUi);
     }
 
     /// <summary>
@@ -750,20 +1381,52 @@ internal sealed partial class VulkanFrameLoop
     {
         if (operation is not MeshDrawOp drawOperation)
             return false;
-        XRMeshRenderer meshRenderer = drawOperation.Draw.Renderer.MeshRenderer;
-        XRMaterial? material = drawOperation.Draw.MaterialOverride ??
-            meshRenderer.Material;
-        if (string.Equals(material?.Name, "UIBatchTextMaterial", StringComparison.Ordinal) ||
-            string.Equals(meshRenderer.Name, "UIBatchTextRenderer", StringComparison.Ordinal) ||
-            string.Equals(meshRenderer.Mesh?.Name, "UIBatchTextQuadMesh", StringComparison.Ordinal))
-        {
-            return true;
-        }
-
-        return drawOperation.Target is null &&
-            drawOperation.PassIndex == (int)EDefaultRenderPass.OnTopForward &&
-            drawOperation.Context.PipelineInstance?.Pipeline is UserInterfaceRenderPipeline;
+        PendingMeshDraw draw = drawOperation.Draw;
+        FrameOpContext context = drawOperation.Context;
+        return IsPreparedDynamicUiOverlayOperation(
+            drawOperation.Target,
+            drawOperation.PassIndex,
+            in draw,
+            in context);
     }
+
+    private static bool IsPreparedDynamicUiOverlayOperation(
+        XRFrameBuffer? target,
+        int passIndex,
+        in PendingMeshDraw draw,
+        in FrameOpContext context)
+    {
+        if (IsNamedDynamicUiOverlayOperation(in draw))
+            return true;
+
+        return target is null &&
+            passIndex == (int)EDefaultRenderPass.OnTopForward &&
+            context.PipelineInstance?.Pipeline is UserInterfaceRenderPipeline;
+    }
+
+    private static bool IsNamedDynamicUiOverlayOperation(
+        in PendingMeshDraw draw)
+    {
+        XRMeshRenderer meshRenderer = draw.Renderer.MeshRenderer;
+        XRMaterial? material = draw.MaterialOverride ?? meshRenderer.Material;
+        return IsNamedDynamicUiOverlayOperation(meshRenderer, material);
+    }
+
+    private static bool IsNamedDynamicUiOverlayOperation(
+        XRMeshRenderer meshRenderer,
+        XRMaterial? material)
+        => string.Equals(
+               material?.Name,
+               "UIBatchTextMaterial",
+               StringComparison.Ordinal) ||
+           string.Equals(
+               meshRenderer.Name,
+               "UIBatchTextRenderer",
+               StringComparison.Ordinal) ||
+           string.Equals(
+               meshRenderer.Mesh?.Name,
+               "UIBatchTextQuadMesh",
+               StringComparison.Ordinal);
 
     /// <summary>
     /// Captures the command-visible output and planning state before primary
