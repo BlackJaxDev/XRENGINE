@@ -344,6 +344,17 @@ pwsh Tools/Measure-GameLoopRenderPipeline.ps1 `
   -GpuClockPolicy "Pinned manually in vendor control panel"
 ```
 
+For cross-machine renderer evidence, also fix the camera and output rather than
+using a descriptive camera label alone. Specify all six `-CameraPosition*` and
+`-CameraLookAt*` values together, plus `-WindowWidth`, `-WindowHeight`,
+`-ProfileViewport`, and `-RenderScale`. The harness positions the camera through
+MCP before warmup and rejects a partial pose. `-SampleIntervalFrames` controls
+the frame-stride of the NDJSON stream (the first completed frame is always
+written), so long captures do not turn profiler serialization into the measured
+workload. `-VulkanGpuDrivenProfile ShippingFast`, `DevParity`, or `Diagnostics`
+freezes the effective GPU-driven feature profile independently of saved user
+settings. Every value is copied into the summary and capture manifest.
+
 Use `-CacheMode Cold` for startup/cache-miss measurements; the harness clears
 OpenGL shader-program caches only in cold mode unless
 `-NoClearCachesBetweenVariants` is supplied. Use `-CacheMode Warm` for steady

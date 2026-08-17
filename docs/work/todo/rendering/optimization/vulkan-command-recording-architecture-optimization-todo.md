@@ -1,6 +1,6 @@
 # Vulkan Command Recording Architecture Optimization TODO
 
-Last Updated: 2026-08-01
+Last Updated: 2026-08-17
 Owner: Rendering / Vulkan Command Buffers
 Status: In Progress; Pre-06 Implementation Detail; Acceptance Owned By The Combined 03-05 Gate
 
@@ -33,6 +33,13 @@ Measured blocker:
 Related data-path plan:
 
 - [CPU Direct Fast Path](cpu-direct-fast-path-todo.md)
+
+Canonical final resident/task-pool architecture:
+
+- [Vulkan Resident Draw Stream And Render Task Pool](vulkan-resident-draw-stream-and-render-task-pool-todo.md)
+  owns the post-bridge per-template residency, centralized configurable worker
+  budget, pooled render task graph, stable bins, indirect-count/GPU-culling
+  path, native template leases, and deletion gates for the exact cohort cache.
 
 ## Goal
 
@@ -73,6 +80,57 @@ The measured native present call was only 0.113 ms.
 The architecture must therefore optimize data construction and publication,
 not command-recording worker utilization. Command-buffer reuse currently avoids
 native encoding but still performs a full visible-draw refresh.
+
+## 2026-08-17 prepared-cohort/ingress bridge
+
+The first backend-side architectural bridge is implemented and live-validated:
+
+- retain one bounded, exact, fully materialized mesh cohort on the Vulkan render
+  thread while still draining current raw requests every frame;
+- patch only current transforms, view/shadow relevance, instances,
+  billboarding, producer/context data, and auto-uniform publication on reusable
+  entries;
+- materialize unsafe callback, publisher, shadow, external-target,
+  order-preserving, and mutable-snapshot entries as explicit holes;
+- append the completed current-frame transaction directly to the numeric
+  `FrameOperationStream`, bypassing `MeshDrawOp` rental, queue/drain, and
+  object-to-stream lowering;
+- finalize pass identity and relower descriptor/attachment dependencies only
+  after swapchain-context coalescing;
+- revalidate retained binding candidates through the exact captured program's
+  material/program/publisher/engine/pipeline generation cache;
+- disable the direct path for explicit/OpenXR production until that path owns a
+  compatible partition/target/overlay contract; and
+- preflight fixed ingress/resource-use capacity so overflow falls back before a
+  hit can suppress scene content.
+
+In the final dense Sponza Debug/MCP cohort, a stable hit reused 566 of 625 mesh
+operations and materialized 59 safety holes. Twelve samples reported a 13.111 ms
+median frame-op-preparation stage versus the earlier dense-view 19--25 ms range.
+The reported GPU command-buffer median was 3.767 ms, while the whole-frame
+median was 21.951 ms. Camera changes produced one intentional cold build and
+then stable hits with correct output. There were zero reported Vulkan errors,
+skipped draws, and dropped frame operations. The performance session did not
+enable the Khronos validation layer, so the validation-enabled acceptance item
+below remains open.
+
+This is deliberately not the final cache granularity. An exact ordered cohort
+is invalidated by one visibility/order change and still performs O(visible
+draws) matching plus hole work. The next architecture slice must replace the
+whole-cohort recipe with:
+
+1. a persistent immutable draw template per
+   mesh/submesh/material/pass/program-generation;
+2. compact SoA current-frame records containing template ID plus dynamic
+   object/instance/view data;
+3. stable numeric pipeline/material/geometry bins;
+4. once-per-owner frame/view/pass/material publication and dirty object ranges;
+5. bindless/indexed immutable binding tables plus dynamic offsets where the
+   capability and measurements justify them;
+6. multi-draw indirect or indirect-count submission per compatible bin, with
+   GPU culling/generation as a later measured extension; and
+7. a small number of coarse primary/secondary recording jobs with per-thread,
+   per-frame-slot pools, never one tiny secondary per draw.
 
 ## 2026-07-30 Implementation Progress
 
@@ -713,6 +771,33 @@ The proposals were checked against current authoritative Vulkan documentation:
   recommends per-frame/per-thread resource pools, warns that many small
   secondaries can cost more than they save, and finds pool reset generally
   cheaper than frequent allocation/free or individual command-buffer reset.
+- The [Vulkan profiling guide](https://docs.vulkan.org/guide/latest/profiling.html)
+  identifies command recording, descriptor updates, state changes, and small
+  queue submissions as the main CPU-side explicit-API costs; it recommends
+  pipeline sorting, descriptor indexing/buffers, batched submission, and real
+  CPU/GPU timeline instrumentation.
+- The Khronos
+  [descriptor-management sample](https://docs.vulkan.org/samples/latest/samples/performance/descriptor_management/README.html)
+  demonstrates descriptor caching and dynamic-buffer reuse, while the
+  [descriptor-indexing sample](https://docs.vulkan.org/samples/latest/samples/extensions/descriptor_indexing/README.html)
+  demonstrates binding a large resource array once and selecting resources in
+  the shader rather than rebinding per mesh.
+- The Khronos
+  [multi-draw-indirect sample](https://docs.vulkan.org/samples/latest/samples/performance/multi_draw_indirect/README.html)
+  demonstrates compact GPU-generated draw streams and one multi-draw command,
+  which is the intended eventual bin-consumer shape rather than a cache entry
+  per native draw call.
+- NVIDIA's [Vulkan dos and don'ts](https://developer.nvidia.com/blog/vulkan-dos-donts/)
+  likewise recommends a task graph for command/resource/descriptor/pipeline
+  preparation, few coarse command buffers/submissions, dynamic data buffers or
+  push constants, fewer descriptor sets, and measured command-buffer reuse.
+- AMD's [RDNA performance guide](https://gpuopen.com/learn/rdna-performance-guide/)
+  warns that too many small command buffers can lose more than parallel
+  recording gains and recommends per-thread/per-frame allocators, sufficiently
+  coarse work, and minimal submissions. AMD's
+  [Vulkan and DOOM](https://gpuopen.com/learn/vulkan-and-doom/) describes the
+  complementary high-draw-count pattern: parallel command recording, pooled
+  allocation, and descriptor tables indexed from compact draw data.
 - The specification's
   [command-buffer chapter](https://docs.vulkan.org/spec/latest/chapters/cmdbuffers.html)
   defines primary/secondary lifecycle coupling, pending-state restrictions,

@@ -1,9 +1,10 @@
 # Vulkan desktop camera motion, stale frames, and CPU scaling
 
 Opened: 2026-08-10
-Last updated: 2026-08-11
-Status: desktop input/cadence correctness is implemented and live-validated;
-user acceptance and regression-test authorization are pending
+Last updated: 2026-08-17
+Status: desktop input/cadence correctness and the render-thread prepared-cohort
+bridge are implemented and live-validated; the persistent template/bin
+migration, user acceptance, and regression-test authorization are pending
 
 This is the canonical incident guide for Vulkan desktop symptoms where camera
 input appears to gate rendering, the FPS overlay disagrees with visible motion,
@@ -32,11 +33,21 @@ validation interval advanced 176 rendered frames in 3.134 seconds (56.1 Hz),
 while the profiler reported 56.5 Hz.
 
 Full Sponza still exposes a separate CPU scaling limit. Command buffers are
-reused correctly, but the producer path rematerializes the current visible draw
-stream and refresh cohort. In the final Debug run that work cost roughly
-10--13 ms per frame. The remaining architectural work belongs to the
+reused correctly, but the producer/consumer boundary historically rematerialized
+the current visible draw stream and refresh cohort before reuse could be proved.
+The 2026-08-17 bridge retains an exact render-thread prepared cohort, patches
+current dynamic draw data, and appends it directly to the numeric operation
+stream. In the final Debug run, 566 of 625 mesh requests reused the retained
+recipe and 59 conservative holes were materialized normally. Frame-op
+preparation fell from the earlier dense-view 19--25 ms range to a warmed median
+of 13.111 ms, but this remains well above the final CPU budget. The remaining
+architectural work belongs to the
 [command-recording optimization TODO](../../todo/rendering/optimization/vulkan-command-recording-architecture-optimization-todo.md),
 not to another input or presentation workaround.
+
+The previously observed approximately 140 FPS view is not a dense-scene result:
+it was looking out at a wall with very few meshes visible and is excluded from
+all Sponza-center comparisons.
 
 ## Reproduction matrix
 
@@ -89,6 +100,8 @@ both directional lights were disabled, and render-on-demand was disabled.
 | Camera visibility changes rerecord hundreds of otherwise stable chains | Commit `16047d7e4` applied the whole-frame resource-version signature, including the visible operation stream, to every chain. | Schedule identity keeps the complete signature; per-chain shared-resource invalidation uses resource-allocation generation plus exact packet/descriptor/prepared dependency checks. |
 | A dense pass renders only partially or falls back halfway through | A contiguous mesh run mixed scheduled and inline operations but was treated as one reusable run. | Split runs whenever scheduled membership changes. |
 | Stable reuse still pays to seal the entire frame plan | Reuse was attempted only after `FramePlan.BuildAndSeal`. Dynamic UI also rejected an unsealed operation before checking for an exact reusable secondary. | Resolve exact schedule identity, project current operations through the recorded order, prepare the current cohort, and attempt primary reuse before sealing. Exact dynamic-UI reuse is checked before the sealed-operation requirement. |
+| Stable command reuse still reconstructs hundreds of mesh operations | Native command artifacts were cached after per-visible-draw materialization, `MeshDrawOp` rental/queueing, resource-use lowering, and object-to-numeric-stream conversion. | Retain a bounded exact prepared cohort on the render thread, always drain current raw requests, patch current dynamic data, materialize unsafe holes, and append the completed transaction directly to `FrameOperationStream`. |
+| A retained cohort can use stale bindings or an incomplete resource DAG | A renderer's active-program slot is not authoritative for every captured material/program variant, and resource uses lowered before swapchain-context coalescing can describe the wrong framebuffer/resource generation. | Revalidate immutable artifacts through the exact captured program's generation-owned cache; finalize pass identity and relower descriptor/attachment uses only after context coalescing. Snapshot/callback/explicit-target cases without the required lifetime contract remain holes or use the legacy path. |
 | Viewport becomes black after maximize/resize although the skybox draw exists | Pass sorting mixed ranks from different render graphs, allowing `Background` to run before a later ForwardPass clear/light-combine blit erased it. | Sort from each operation context's complete pipeline metadata and declare the light-combine-to-`Background` dependency explicitly. |
 | Resize/minimize recovery strands mapped data | Swapchain recreation discarded the strongest completion value from retired images. | Seed replacement-image completion authority from the strongest retired completion value. |
 | Full-resolution work inherits an internal-resolution viewport/scissor after secondaries | State cached on the primary survived `vkCmdExecuteCommands`, although most primary bind/dynamic state becomes undefined across secondary execution. | Invalidate the primary bind-state cache after every secondary execution batch. See the historical July camera-motion investigation. |
@@ -115,7 +128,7 @@ The incident-specific rules most likely to regress are:
 - Volatile ImGui, dynamic text, profiler, streaming, and debug work remains
   isolated from stable scene artifacts.
 
-## Current dense-scene result
+## 2026-08-11 dense-scene result
 
 The final `vk-sponza-no-dir-final-20260811` session used Debug Vulkan, full
 deferred Sponza, and no directional lights.
@@ -142,6 +155,51 @@ Nested stages are attribution, not additive totals. Packet construction fell
 from roughly 2.5--3.2 ms before early exact reuse to about 0.5 ms. The remaining
 dominant cost is producer/materialization work needed to rebuild the current raw
 draw stream and refresh cohort. It is not native primary or secondary encoding.
+
+## 2026-08-17 prepared-cohort result
+
+The final `sponza-package-v10-0817` session used the same Debug Vulkan,
+directional-light-off Sponza configuration and the actual dense center view at
+camera position `(-11, 6, 0)` looking toward `(-28, 3, 0)`.
+
+- The current producer still emitted all 625 raw mesh requests every frame.
+- A stable hit reused 566 prepared recipes and rematerialized 59 explicit safety
+  holes. The holes cover callbacks, mutable publishers/snapshots, shadows,
+  external targets, order-preserving scopes, and other inputs without a proven
+  cross-frame ownership contract.
+- Across 48 observed stable hits, the counters advanced by exactly 27,168
+  reused operations and 2,832 hole materializations. Cohort builds and full
+  materializations did not advance.
+- Vulkan runtime error count, skipped draws, and dropped frame operations were
+  zero. The Khronos validation layer was not enabled for this performance
+  session, so the required validation-enabled acceptance cohort remains open.
+
+Twelve warmed samples over rendered frames 3301--3349 had these medians:
+
+| Stage | Median | Observed range |
+| --- | ---: | ---: |
+| Whole frame | 21.951 ms | 20.801--23.773 ms |
+| Scene command-buffer lifecycle | 20.152 ms | 19.165--21.826 ms |
+| Frame-op preparation | 13.111 ms | 12.260--14.839 ms |
+| Packet construction | 2.812 ms | 2.613--4.810 ms |
+| Frame-data manifest | 2.814 ms | 2.563--3.091 ms |
+| Primary handling | 3.302 ms | 3.051--3.712 ms |
+| Reported GPU command-buffer time | 3.767 ms | 3.104--4.087 ms |
+
+Nested stages are attribution, not additive totals. This instrumented Debug/MCP
+cohort confirms that current CPU preparation, not native command encoding, is
+the largest remaining local cost. It is not a 200 Hz result: a 5 ms total frame
+budget cannot accommodate a 13 ms preparation stage.
+
+An immediate move to `(-20, 8, 0)` looking toward `(-50, 6, 0)`, followed by a
+return to the dense center pose, caused one intentional full materialization and
+one cohort build per distinct view. Both resulting screenshots contained the
+correct camera-dependent geometry. This rules out stale replay and reproduces
+the expected limitation of an exact whole-cohort key: a membership/order change
+invalidates the whole cohort. The cohort is therefore a safe bridge, not the
+final granularity. The target architecture is persistent per-draw templates,
+compact current-frame instance records, numeric pipeline/material bins, and
+multi-draw/indirect submission where supported.
 
 ## Do not repeat these experiments
 
@@ -196,14 +254,25 @@ Final live artifacts:
   `Build/_AgentValidation/vulkan-phase42-43-final-20260810/20260811-descriptor-reuse-scaling/mcp-captures/Screenshot_20260811_151138_810_fa8d573ea3a94fb6a4b1cc07f9e3fb17.png`;
 - final session logs:
   `Build/_AgentValidation/mcp-sessions/vk-sponza-no-dir-final-20260811/logs/`.
+- 2026-08-17 dense center after a camera move and return:
+  `Build/_AgentValidation/20260817-101407-sponza-center-fps/mcp-captures/after-package-v10-dense-return/Screenshot_20260817_123039_084_1b11a6cd5d924c6cb7ab4dde61113fbe.png`;
+- 2026-08-17 alternate interior pose:
+  `Build/_AgentValidation/20260817-101407-sponza-center-fps/mcp-captures/after-package-v10-second-pose/Screenshot_20260817_123016_283_63681a4504bf4020be1104a214d63c68.png`;
+- 2026-08-17 final session logs:
+  `Build/_AgentValidation/00000000-000000-shared/mcp-sessions/20260817-122536-sponza-package-v10-0817/logs/`.
 
 The images show materially different scene views while the primary and all
 scheduled secondaries remain reusable. The final log contains no Vulkan VUID,
 validation error, descriptor/binding failure, primary-reuse rejection,
 dynamic-UI unsealed-operation rejection, device loss, or fatal exception.
+The 2026-08-17 performance session did not request the Khronos validation layer;
+its zero runtime error/VUID count is not a substitute for the separate
+validation-enabled acceptance gate.
 
-The Vulkan leaf and editor builds pass with warnings treated as errors. No
-regression tests were added or run before user acceptance, per repository policy.
+The Vulkan leaf build passes with zero warnings and errors. The isolated editor
+build passes with zero errors and the nine pre-existing OscCore submodule
+warnings. No regression tests were added or run before user acceptance, per
+repository policy.
 
 ## Related ownership
 

@@ -239,6 +239,35 @@ function Get-ProcessStartTimeUtc($Process) {
     }
 }
 
+function ConvertTo-UtcDateTime($Value) {
+    if ($null -eq $Value) {
+        return $null
+    }
+
+    # ConvertFrom-Json materializes ISO-8601 timestamps as DateTime values. Casting
+    # those values back to string loses the original UTC designator and fractional
+    # seconds under Windows PowerShell's current culture, which can make a process
+    # owned by this session look seven hours newer or older than its manifest.
+    if ($Value -is [DateTimeOffset]) {
+        return ([DateTimeOffset]$Value).UtcDateTime
+    }
+
+    if ($Value -is [DateTime]) {
+        $dateTime = [DateTime]$Value
+        if ($dateTime.Kind -eq [DateTimeKind]::Unspecified) {
+            return [DateTime]::SpecifyKind($dateTime, [DateTimeKind]::Utc)
+        }
+
+        return $dateTime.ToUniversalTime()
+    }
+
+    return [DateTimeOffset]::Parse(
+        [string]$Value,
+        [System.Globalization.CultureInfo]::InvariantCulture,
+        [System.Globalization.DateTimeStyles]::AssumeUniversal -bor
+            [System.Globalization.DateTimeStyles]::AdjustToUniversal).UtcDateTime
+}
+
 function Get-OwnedEditorProcess($Manifest) {
     if ($null -eq $Manifest -or $null -eq $Manifest.processId) {
         return $null
@@ -255,10 +284,7 @@ function Get-OwnedEditorProcess($Manifest) {
     }
 
     if (-not [string]::IsNullOrWhiteSpace([string]$Manifest.processStartTimeUtc)) {
-        $expectedStart = [DateTime]::Parse(
-            [string]$Manifest.processStartTimeUtc,
-            [System.Globalization.CultureInfo]::InvariantCulture,
-            [System.Globalization.DateTimeStyles]::RoundtripKind).ToUniversalTime()
+        $expectedStart = ConvertTo-UtcDateTime $Manifest.processStartTimeUtc
         $actualStart = Get-ProcessStartTimeUtc $process
         if ($null -eq $actualStart -or [Math]::Abs(($actualStart - $expectedStart).TotalSeconds) -gt 2) {
             return $null
@@ -303,10 +329,7 @@ function Test-LauncherAlive($Manifest) {
     }
 
     if (-not [string]::IsNullOrWhiteSpace([string]$Manifest.launcherProcessStartTimeUtc)) {
-        $expectedStart = [DateTime]::Parse(
-            [string]$Manifest.launcherProcessStartTimeUtc,
-            [System.Globalization.CultureInfo]::InvariantCulture,
-            [System.Globalization.DateTimeStyles]::RoundtripKind).ToUniversalTime()
+        $expectedStart = ConvertTo-UtcDateTime $Manifest.launcherProcessStartTimeUtc
         $actualStart = Get-ProcessStartTimeUtc $launcher
         return $null -ne $actualStart -and [Math]::Abs(($actualStart - $expectedStart).TotalSeconds) -le 2
     }

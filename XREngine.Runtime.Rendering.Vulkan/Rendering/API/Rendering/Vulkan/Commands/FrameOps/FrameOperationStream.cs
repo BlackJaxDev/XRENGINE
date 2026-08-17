@@ -16,6 +16,7 @@ internal sealed class FrameOperationStream
     private XRFrameBuffer?[] _targets = new XRFrameBuffer?[64];
     private int _count;
     private int _resourceUseCount;
+    private int _meshPayloadCount;
 
     internal static FrameOperationStream Empty { get; } = new();
     internal int Count => _count;
@@ -36,6 +37,7 @@ internal sealed class FrameOperationStream
         }
         _count = 0;
         _resourceUseCount = 0;
+        _meshPayloadCount = 0;
     }
 
     internal void CopySourceOrderTo(Span<int> destination)
@@ -67,6 +69,7 @@ internal sealed class FrameOperationStream
         EnsureResourceUseCapacity(resourceUseCount);
         for (int kind = 0; kind < KindCount; kind++) _payloads.EnsureCapacity((EVulkanPrimaryPlanNodeKind)kind, payloadCounts[kind]);
 
+        int meshPayloadCount = payloadCounts[(int)EVulkanPrimaryPlanNodeKind.MeshDraw];
         payloadCounts.Clear();
         for (int sourceIndex = 0; sourceIndex < source.Count; sourceIndex++)
         {
@@ -89,7 +92,75 @@ internal sealed class FrameOperationStream
             _targets[sourceIndex] = operation.Target;
         }
         _count = source.Count;
+        _meshPayloadCount = meshPayloadCount;
         source.Clear();
+    }
+
+    /// <summary>
+    /// Appends one prepared mesh partition without creating authoring
+    /// <see cref="FrameOp"/> objects. Static and dynamic UI entries retain their
+    /// independent streams while preserving cohort order within each partition.
+    /// </summary>
+    internal void AppendPreparedMeshIngress(
+        VulkanPreparedMeshIngress ingress,
+        bool dynamicUi)
+    {
+        if (ingress.Count == 0)
+            return;
+
+        int appendCount = 0;
+        int appendResourceUseCount = 0;
+        for (int index = 0; index < ingress.Count; index++)
+        {
+            ref readonly VulkanPreparedMeshIngressEntry entry =
+                ref ingress.GetEntry(index);
+            if (entry.IsDynamicUi != dynamicUi)
+                continue;
+            appendCount++;
+            appendResourceUseCount += entry.ResourceUseCount;
+        }
+        if (appendCount == 0)
+            return;
+
+        int operationStart = _count;
+        int meshPayloadStart = _meshPayloadCount;
+        EnsureCapacity(operationStart + appendCount);
+        _payloads.EnsureCapacity(
+            EVulkanPrimaryPlanNodeKind.MeshDraw,
+            meshPayloadStart + appendCount);
+        EnsureResourceUseCapacity(_resourceUseCount + appendResourceUseCount);
+        int appendIndex = 0;
+        for (int index = 0; index < ingress.Count; index++)
+        {
+            ref readonly VulkanPreparedMeshIngressEntry entry =
+                ref ingress.GetEntry(index);
+            if (entry.IsDynamicUi != dynamicUi)
+                continue;
+
+            int operationIndex = operationStart + appendIndex;
+            int payloadIndex = meshPayloadStart + appendIndex;
+            _payloads.MeshDraws[payloadIndex] = new(
+                entry.Draw.CreateSealedCopy());
+            int resourceOffset = _resourceUseCount;
+            ingress.GetResourceUses(in entry).CopyTo(_resourceUses.AsSpan(resourceOffset));
+            _resourceUseCount += entry.ResourceUseCount;
+            _contexts[operationIndex] = entry.Context;
+            _targets[operationIndex] = entry.Target;
+            _headers[operationIndex] = new(
+                EVulkanPrimaryPlanNodeKind.MeshDraw,
+                payloadIndex,
+                entry.PassIndex,
+                entry.Context.OutputTargetIdentity,
+                operationIndex,
+                resourceOffset,
+                entry.ResourceUseCount,
+                operationIndex,
+                true,
+                entry.PreserveSubmissionOrder);
+            appendIndex++;
+        }
+        _count += appendCount;
+        _meshPayloadCount += appendCount;
     }
 
     /// <summary>Applies a compiled order to numeric headers without rebuilding payloads.</summary>

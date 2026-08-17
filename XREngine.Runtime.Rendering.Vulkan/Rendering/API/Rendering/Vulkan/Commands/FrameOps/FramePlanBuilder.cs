@@ -72,7 +72,8 @@ internal sealed class FramePlanBuilder
         in VulkanFramePlanRenderGraphAuthority renderGraphAuthority,
         uint? openXrViewIndex = null,
         bool openXrImagesAcquired = false,
-        FrameOp[]? textureUploadOperations = null)
+        FrameOp[]? textureUploadOperations = null,
+        VulkanPreparedMeshIngress? preparedMeshIngress = null)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(frameSlot);
         ArgumentNullException.ThrowIfNull(operations);
@@ -93,7 +94,18 @@ internal sealed class FramePlanBuilder
         // including output ordering and resource-DAG compilation, consumes
         // numeric headers and dense typed payload streams only.
         slot.Operations.Lower(slot.StaticIngress);
+        // Stable prepared cohorts are appended after ordinary operations in
+        // exact cohort order, without renting MeshDrawOp instances.
+        // Callers may supply null for legacy/cache-miss planning.
+        if (preparedMeshIngress is not null)
+            slot.Operations.AppendPreparedMeshIngress(
+                preparedMeshIngress,
+                dynamicUi: false);
         slot.DynamicOverlayOperations.Lower(slot.DynamicIngress);
+        if (preparedMeshIngress is not null)
+            slot.DynamicOverlayOperations.AppendPreparedMeshIngress(
+                preparedMeshIngress,
+                dynamicUi: true);
         slot.TextureUploadOperations.Lower(slot.TextureUploadIngress);
         // Ordering is deliberately inside the sealed numeric boundary. No DAG,
         // metadata, worker, or recording stage can observe an authoring FrameOp.

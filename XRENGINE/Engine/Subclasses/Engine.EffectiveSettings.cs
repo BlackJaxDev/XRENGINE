@@ -99,10 +99,22 @@ namespace XREngine
             /// Resolved from: Project Override > Engine Default.
             /// </summary>
             public static EVulkanGpuDrivenProfile VulkanGpuDrivenProfile
-                => OverrideableSettingExtensions.ResolveValueCascade(
-                    RuntimeEngine.Rendering.Settings.VulkanGpuDrivenProfile,
-                    GameSettings?.VulkanGpuDrivenProfileOverride,
-                    null);
+            {
+                get
+                {
+#if !XRE_PUBLISHED
+                    if (ProfileCapture.VulkanGpuDrivenProfileOverride is
+                        { } profileOverride)
+                    {
+                        return profileOverride;
+                    }
+#endif
+                    return OverrideableSettingExtensions.ResolveValueCascade(
+                        RuntimeEngine.Rendering.Settings.VulkanGpuDrivenProfile,
+                        GameSettings?.VulkanGpuDrivenProfileOverride,
+                        null);
+                }
+            }
 
             /// <summary>
             /// Gets whether Vulkan descriptor indexing should be enabled when supported.

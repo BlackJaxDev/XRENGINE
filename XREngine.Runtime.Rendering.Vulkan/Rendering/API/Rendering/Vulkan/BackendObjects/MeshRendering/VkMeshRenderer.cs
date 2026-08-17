@@ -1165,6 +1165,7 @@ internal unsafe partial class VkMeshRenderer(
                     CanUsePersistentProgramBindingArtifact(
                         material,
                         programData,
+                        program,
                         shadowUniformState,
                         materialBindingPublishers,
                         meshBindingPublishers,

@@ -119,6 +119,8 @@ public static partial class Engine
         private static long s_startTicks;
         private static long s_lastFlushTicks;
         private static int s_sampleCount;
+        private static int s_snapshotCount;
+        private static int s_sampleIntervalFrames;
         private static bool s_manifestWritten;
         private static bool s_shutdown;
         private static RunMetadata? s_metadata;
@@ -127,6 +129,7 @@ public static partial class Engine
         internal static EOutputVerbosity? OutputVerbosityOverride { get; private set; }
         internal static bool? GpuIndirectDebugLoggingOverride { get; private set; }
         internal static bool? GpuIndirectValidationLoggingOverride { get; private set; }
+        internal static EVulkanGpuDrivenProfile? VulkanGpuDrivenProfileOverride { get; private set; }
 
         public static bool IsRuntimeCaptureActive
         {
@@ -173,6 +176,12 @@ public static partial class Engine
         public static void ApplyPerformanceProfileContract()
         {
             string profileMode = ResolvePerformanceProfileMode();
+            VulkanGpuDrivenProfileOverride = Enum.TryParse(
+                Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.ProfileVulkanGpuDrivenProfile),
+                ignoreCase: true,
+                out EVulkanGpuDrivenProfile requestedGpuDrivenProfile)
+                    ? requestedGpuDrivenProfile
+                    : null;
             if (!IsCleanPerformanceProfile(profileMode))
             {
                 OutputVerbosityOverride = null;
@@ -357,11 +366,16 @@ public static partial class Engine
                     s_lastFlushTicks = nowTicks;
                 }
 
-                AppendSampleLineNoLock(metadata, nowTicks);
-                s_sampleCount++;
+                int sampleIntervalFrames = GetSampleIntervalFramesNoLock();
+                int snapshotCount = ++s_snapshotCount;
+                if (snapshotCount == 1 || snapshotCount % sampleIntervalFrames == 0)
+                {
+                    AppendSampleLineNoLock(metadata, nowTicks);
+                    s_sampleCount++;
 
-                if (ShouldFlushNoLock(nowTicks))
-                    FlushSamplesNoLock();
+                    if (ShouldFlushNoLock(nowTicks))
+                        FlushSamplesNoLock();
+                }
 
                 if (s_runtimeCaptureEnabled && nowTicks >= s_runtimeCaptureEndTicks)
                     completedRuntimeCapture = CompleteRuntimeCaptureStateNoLock();
@@ -580,12 +594,14 @@ public static partial class Engine
                 XrRuntime: CaptureString(() => RuntimeEngine.VRState.ActiveRuntime.ToString()),
                 XrRuntimeManifest: Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.XrRuntimeJson) ?? string.Empty,
                 ActiveRenderFeatures: activeRenderFeatures,
+                VulkanGpuDrivenProfile: CaptureString(() => Engine.EffectiveSettings.VulkanGpuDrivenProfile.ToString()),
                 GpuClockPolicy: Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.GpuClockPolicy) ?? string.Empty,
                 TargetRefreshHz: targetRefreshHz,
                 XrFrameBudgetMs: xrFrameBudgetMs,
                 BenchmarkPhase: Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.ProfilePhase) ?? string.Empty,
                 WarmupSeconds: TryParsePositiveDouble(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.ProfileWarmupSeconds)),
                 CaptureSeconds: TryParsePositiveDouble(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.ProfileCaptureSeconds)),
+                SampleIntervalFrames: GetSampleIntervalFramesNoLock(),
                 BenchmarkEnvironmentValid: string.IsNullOrWhiteSpace(benchmarkErrors),
                 BenchmarkEnvironmentErrors: benchmarkErrors,
                 GpuTimestampDenseMode: IsEnvFlagEnabled(XREngineEnvironmentVariables.GpuTimestampDense),
@@ -614,7 +630,9 @@ public static partial class Engine
                 capture_file = FrameStatsFileName,
                 schema = "xrengine.profile_capture.render_stats.v5",
                 schema_version = ProfileCaptureSchemaVersion,
-                fields_note = "One JSON object per completed render frame. CPU frame timings are wall-clock thread loop durations; GPU pipeline timings are backend timestamp-query snapshots when ready.",
+                fields_note = metadata.SampleIntervalFrames == 1
+                    ? "One JSON object per completed render frame. CPU frame timings are wall-clock thread loop durations; GPU pipeline timings are backend timestamp-query snapshots when ready."
+                    : $"One JSON object for the first completed render frame and then every {metadata.SampleIntervalFrames} completed render frames. CPU frame timings are wall-clock thread loop durations; GPU pipeline timings are backend timestamp-query snapshots when ready.",
                 run = metadata,
             };
 
@@ -1210,6 +1228,11 @@ public static partial class Engine
             AppendNumberField(s_lineBuilder, "vulkan_unique_visible_materials", RuntimeEngine.Rendering.Stats.Vulkan.VulkanUniqueVisibleMaterials, ref first);
             AppendNumberField(s_lineBuilder, "vulkan_prepared_mesh_draws", RuntimeEngine.Rendering.Stats.Vulkan.VulkanPreparedMeshDraws, ref first);
             AppendNumberField(s_lineBuilder, "vulkan_recorded_command_artifact_retirements", RuntimeEngine.Rendering.Stats.Vulkan.VulkanRecordedCommandArtifactRetirements, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_prepared_mesh_operation_cohort_hits", RuntimeEngine.Rendering.Stats.Vulkan.VulkanPreparedMeshOperationCohortHits, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_prepared_mesh_operation_cohort_builds", RuntimeEngine.Rendering.Stats.Vulkan.VulkanPreparedMeshOperationCohortBuilds, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_prepared_mesh_operation_full_materializations", RuntimeEngine.Rendering.Stats.Vulkan.VulkanPreparedMeshOperationFullMaterializations, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_prepared_mesh_operation_reuses", RuntimeEngine.Rendering.Stats.Vulkan.VulkanPreparedMeshOperationReuses, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_prepared_mesh_operation_legacy_hole_materializations", RuntimeEngine.Rendering.Stats.Vulkan.VulkanPreparedMeshOperationLegacyHoleMaterializations, ref first);
             AppendVulkanCpuStageFields(s_lineBuilder, "frame_op_preparation", EVulkanCpuStage.FrameOpPreparation, ref first);
             AppendVulkanCpuStageFields(s_lineBuilder, "resource_planning", EVulkanCpuStage.ResourcePlanning, ref first);
             AppendVulkanCpuStageFields(s_lineBuilder, "frame_data_refresh", EVulkanCpuStage.FrameDataRefresh, ref first);
@@ -1254,9 +1277,13 @@ public static partial class Engine
             AppendVulkanCpuStageFields(s_lineBuilder, "command_dirty_propagation", EVulkanCpuStage.CommandDirtyPropagation, ref first);
             AppendVulkanCpuStageFields(s_lineBuilder, "command_cache_scanning", EVulkanCpuStage.CommandCacheScanning, ref first);
             AppendVulkanCpuStageFields(s_lineBuilder, "frame_op_drain", EVulkanCpuStage.FrameOpDrain, ref first);
+            AppendVulkanCpuStageFields(s_lineBuilder, "raw_mesh_request_drain", EVulkanCpuStage.RawMeshRequestDrain, ref first);
             AppendVulkanCpuStageFields(s_lineBuilder, "frame_op_scheduling", EVulkanCpuStage.FrameOpScheduling, ref first);
             AppendVulkanCpuStageFields(s_lineBuilder, "frame_op_sort", EVulkanCpuStage.FrameOpSort, ref first);
             AppendVulkanCpuStageFields(s_lineBuilder, "frame_op_cohort", EVulkanCpuStage.FrameOpCohort, ref first);
+            AppendVulkanCpuStageFields(s_lineBuilder, "prepared_mesh_binding_validation", EVulkanCpuStage.PreparedMeshBindingValidation, ref first);
+            AppendVulkanCpuStageFields(s_lineBuilder, "prepared_mesh_hole_materialization", EVulkanCpuStage.PreparedMeshHoleMaterialization, ref first);
+            AppendVulkanCpuStageFields(s_lineBuilder, "frame_op_resource_use_lowering", EVulkanCpuStage.FrameOpResourceUseLowering, ref first);
             AppendVulkanCpuStageFields(s_lineBuilder, "frame_op_split", EVulkanCpuStage.FrameOpSplit, ref first);
             AppendVulkanCpuStageFields(s_lineBuilder, "frame_op_signature", EVulkanCpuStage.FrameOpSignature, ref first);
             AppendVulkanCpuStageFields(s_lineBuilder, "frame_op_plan", EVulkanCpuStage.FrameOpPlan, ref first);
@@ -1417,6 +1444,8 @@ public static partial class Engine
             s_startTicks = 0L;
             s_lastFlushTicks = 0L;
             s_sampleCount = 0;
+            s_snapshotCount = 0;
+            s_sampleIntervalFrames = 0;
             s_manifestWritten = false;
             s_metadata = null;
             s_sampleBuffer.Clear();
@@ -1429,6 +1458,18 @@ public static partial class Engine
             => string.IsNullOrWhiteSpace(s_outputDirectory)
                 ? Debug.EnsureLogRunDirectory()
                 : s_outputDirectory!;
+
+        private static int GetSampleIntervalFramesNoLock()
+        {
+            if (s_sampleIntervalFrames > 0)
+                return s_sampleIntervalFrames;
+
+            string? value = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.ProfileSampleIntervalFrames);
+            s_sampleIntervalFrames = int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out int intervalFrames)
+                ? Math.Clamp(intervalFrames, 1, 10_000)
+                : 1;
+            return s_sampleIntervalFrames;
+        }
 
         private static bool TryCreateRuntimeCaptureDirectory(string label, out string outputDirectory, out string? error)
         {
@@ -2570,12 +2611,14 @@ public static partial class Engine
             string XrRuntime,
             string XrRuntimeManifest,
             ActiveRenderFeaturesMetadata ActiveRenderFeatures,
+            string VulkanGpuDrivenProfile,
             string GpuClockPolicy,
             double? TargetRefreshHz,
             double? XrFrameBudgetMs,
             string BenchmarkPhase,
             double? WarmupSeconds,
             double? CaptureSeconds,
+            int SampleIntervalFrames,
             bool BenchmarkEnvironmentValid,
             string BenchmarkEnvironmentErrors,
             bool GpuTimestampDenseMode,

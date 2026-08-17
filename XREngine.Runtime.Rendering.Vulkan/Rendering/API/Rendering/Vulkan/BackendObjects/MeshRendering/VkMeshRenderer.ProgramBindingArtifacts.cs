@@ -103,6 +103,88 @@ internal unsafe partial class VkMeshRenderer
         return true;
     }
 
+    /// <summary>
+    /// Revalidates a retained draw artifact against the program-owned cache and
+    /// every mutable owner generation. The expected program is supplied by the
+    /// captured draw because one mesh renderer can alternate among several
+    /// material/program variants; its active-program slot is not an ownership
+    /// oracle for an older retained draw.
+    /// </summary>
+    internal bool TryGetCurrentPersistentProgramBindingArtifact(
+        XRMaterial material,
+        VkRenderProgram expectedProgram,
+        in LayeredShadowUniformState shadowUniformState,
+        out ComputeDispatchSnapshot? artifact)
+    {
+        artifact = null;
+        if (!expectedProgram.IsActive ||
+            !expectedProgram.IsLinked ||
+            !_recordDrawSync.TryEnter())
+        {
+            return false;
+        }
+
+        try
+        {
+            if (expectedProgram.Data is not { } programData)
+                return false;
+
+            if (TryReuseFastPersistentProgramBindingArtifact(
+                    material,
+                    programData,
+                    expectedProgram,
+                    in shadowUniformState,
+                    out artifact))
+            {
+                return true;
+            }
+
+            IRenderBindingPublisher[] materialPublishers =
+                material.BindingPublishers.CaptureSnapshot();
+            IRenderBindingPublisher[] meshPublishers =
+                MeshRenderer.BindingPublishers.CaptureSnapshot();
+            if (!TryComputeTypedBindingPublisherSignature(
+                    materialPublishers,
+                    meshPublishers,
+                    out ulong typedPublisherSignature,
+                    out _) ||
+                !CanUsePersistentProgramBindingArtifact(
+                    material,
+                    programData,
+                    expectedProgram,
+                    in shadowUniformState,
+                    materialPublishers,
+                    meshPublishers,
+                    out EUniformRequirements engineRequirements,
+                    out ComputeDispatchSnapshot? engineBindingSnapshot,
+                    out _))
+            {
+                artifact = null;
+                return false;
+            }
+
+            PersistentProgramBindingArtifactGeneration generation =
+                CreatePersistentProgramBindingArtifactGeneration(
+                    material,
+                    expectedProgram,
+                    typedPublisherSignature,
+                    engineRequirements,
+                    engineBindingSnapshot);
+            PersistentProgramBindingArtifactSlotKey slot =
+                new(material, MeshRenderer);
+            return expectedProgram.TryGetPersistentProgramBindingArtifact(
+                in slot,
+                in generation,
+                materialPublishers,
+                meshPublishers,
+                out artifact);
+        }
+        finally
+        {
+            _recordDrawSync.Exit();
+        }
+    }
+
     private void PublishFastPersistentProgramBindingArtifact(
         XRMaterial material,
         VkRenderProgram program,
@@ -131,6 +213,7 @@ internal unsafe partial class VkMeshRenderer
     private bool CanUsePersistentProgramBindingArtifact(
         XRMaterial material,
         XRRenderProgram programData,
+        VkRenderProgram program,
         in LayeredShadowUniformState shadowUniformState,
         IRenderBindingPublisher[] materialBindingPublishers,
         IRenderBindingPublisher[] meshBindingPublishers,
@@ -185,7 +268,7 @@ internal unsafe partial class VkMeshRenderer
         {
             Lights3DCollection? lights =
                 RuntimeEngine.Rendering.State.RenderingWorld?.Lights;
-            if (lights is null || _program is null)
+            if (lights is null)
             {
                 fallbackReason = EVulkanProgramBindingArtifactFallbackReason
                     .MissingLightingOwner;
@@ -196,7 +279,7 @@ internal unsafe partial class VkMeshRenderer
                 CommandOperations.GetForwardLightingBindingSnapshotForArtifact(
                     lights,
                     programData,
-                    _program);
+                    program);
             if (engineBindingSnapshot is null)
             {
                 fallbackReason = EVulkanProgramBindingArtifactFallbackReason

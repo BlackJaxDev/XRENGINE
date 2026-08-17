@@ -78,6 +78,11 @@ namespace XREngine
                     private static long _vulkanStageDrawTicks;
                     private static long _vulkanFrameGpuCommandBufferTicks;
                     private static long _vulkanRecordCommandBufferAllocatedBytes;
+                    private static long _vulkanPreparedMeshOperationCohortHits;
+                    private static long _vulkanPreparedMeshOperationCohortBuilds;
+                    private static long _vulkanPreparedMeshOperationFullMaterializations;
+                    private static long _vulkanPreparedMeshOperationReuses;
+                    private static long _vulkanPreparedMeshOperationLegacyHoleMaterializations;
                     private static int _vulkanCommandBufferDecisionReasonMask;
                     private static long _vulkanCommandBufferDecisionVisibilityGeneration;
                     private static long _vulkanCommandBufferDecisionStructuralSignature;
@@ -611,6 +616,16 @@ namespace XREngine
                     public static double VulkanFrameWaitSwapchainImageMs => LatestVulkanFrameTelemetry.Detail.WaitSwapchainImage.TotalMilliseconds;
                     public static double VulkanFrameResetDynamicUniformRingMs => LatestVulkanFrameTelemetry.Detail.ResetDynamicUniformRing.TotalMilliseconds;
                     public static long VulkanRecordCommandBufferAllocatedBytes => _lastFrameVulkanRecordCommandBufferAllocatedBytes;
+                    public static long VulkanPreparedMeshOperationCohortHits
+                        => Volatile.Read(ref _vulkanPreparedMeshOperationCohortHits);
+                    public static long VulkanPreparedMeshOperationCohortBuilds
+                        => Volatile.Read(ref _vulkanPreparedMeshOperationCohortBuilds);
+                    public static long VulkanPreparedMeshOperationFullMaterializations
+                        => Volatile.Read(ref _vulkanPreparedMeshOperationFullMaterializations);
+                    public static long VulkanPreparedMeshOperationReuses
+                        => Volatile.Read(ref _vulkanPreparedMeshOperationReuses);
+                    public static long VulkanPreparedMeshOperationLegacyHoleMaterializations
+                        => Volatile.Read(ref _vulkanPreparedMeshOperationLegacyHoleMaterializations);
                     public static EVulkanCommandBufferDecisionReason VulkanCommandBufferDecisionReasonMask
                         => (EVulkanCommandBufferDecisionReason)_lastFrameVulkanCommandBufferDecisionReasonMask;
                     public static long VulkanCommandBufferDecisionVisibilityGeneration => _lastFrameVulkanCommandBufferDecisionVisibilityGeneration;
@@ -1310,6 +1325,41 @@ namespace XREngine
                         AddNonNegative(ref _vulkanFrameOpUniquePassCount, uniquePassCount);
                         AddNonNegative(ref _vulkanFrameOpUniqueContextCount, uniqueContextCount);
                         AddNonNegative(ref _vulkanFrameOpUniqueTargetCount, uniqueTargetCount);
+                    }
+
+                    /// <summary>
+                    /// Records one render-thread prepared mesh-operation cohort event.
+                    /// These counters are process-cumulative so a live profiler query can
+                    /// prove that stable frames are reusing structural draw templates.
+                    /// </summary>
+                    public static void RecordVulkanPreparedMeshOperationCohort(
+                        bool hit,
+                        bool built,
+                        bool fullyMaterialized,
+                        int reusedOperationCount = 0,
+                        int legacyHoleMaterializationCount = 0)
+                    {
+                        if (!EnableTracking)
+                            return;
+
+                        if (hit)
+                            Interlocked.Increment(ref _vulkanPreparedMeshOperationCohortHits);
+                        if (built)
+                            Interlocked.Increment(ref _vulkanPreparedMeshOperationCohortBuilds);
+                        if (fullyMaterialized)
+                            Interlocked.Increment(ref _vulkanPreparedMeshOperationFullMaterializations);
+                        if (reusedOperationCount > 0)
+                        {
+                            Interlocked.Add(
+                                ref _vulkanPreparedMeshOperationReuses,
+                                reusedOperationCount);
+                        }
+                        if (legacyHoleMaterializationCount > 0)
+                        {
+                            Interlocked.Add(
+                                ref _vulkanPreparedMeshOperationLegacyHoleMaterializations,
+                                legacyHoleMaterializationCount);
+                        }
                     }
 
                     public static void RecordVulkanCommandBufferCacheOutcome(
