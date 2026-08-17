@@ -54,7 +54,7 @@ internal sealed partial class VulkanCommandRuntime
                   "<unnamed shader>"
                 : "<none>";
             return
-                $"{Environment.NewLine}[Vulkan]   Context: pass={draw.PassIndex} target='{targetName}' pipe={draw.Context.PipelineIdentity}({pipelineLabel}) vp={draw.Context.ViewportIdentity} mesh='{meshRenderer.Mesh?.Name ?? "<unnamed mesh>"}' material='{material?.Name ?? "<unnamed material>"}' fragment='{fragmentShaderName}' instances={draw.Draw.Instances} stereo={draw.Draw.IsStereoPass} unjittered={draw.Draw.UseUnjitteredProjection}";
+                $"{Environment.NewLine}[Vulkan]   Context: pass={draw.PassIndex} target='{targetName}' pipe={draw.Context.PipelineIdentity}({pipelineLabel}) vp={draw.Context.ViewportIdentity} renderer='{meshRenderer.Name ?? "<unnamed renderer>"}' mesh='{meshRenderer.Mesh?.Name ?? "<unnamed mesh>"}' material='{material?.Name ?? "<unnamed material>"}' fragment='{fragmentShaderName}' instances={draw.Draw.Instances} stereo={draw.Draw.IsStereoPass} unjittered={draw.Draw.UseUnjitteredProjection}";
         }
 
         if (operation is IndirectDrawOp indirect)
@@ -64,6 +64,23 @@ internal sealed partial class VulkanCommandRuntime
             return $"{Environment.NewLine}[Vulkan]   Context: pass={meshTask.PassIndex} target='{targetName}' pipe={meshTask.Context.PipelineIdentity}({pipelineLabel}) vp={meshTask.Context.ViewportIdentity} maxDrawCount={meshTask.MaxDrawCount} stride={meshTask.Stride}";
 
         return $"{Environment.NewLine}[Vulkan]   Context: pass={operation.PassIndex} target='{targetName}' pipe={operation.Context.PipelineIdentity}({pipelineLabel}) vp={operation.Context.ViewportIdentity}";
+    }
+
+    private static string BuildFrameOpBindingCounts(FrameOp operation)
+    {
+        ComputeDispatchSnapshot? snapshot = operation switch
+        {
+            MeshDrawOp draw => draw.Draw.ProgramBindingSnapshot,
+            IndirectDrawOp indirect => indirect.Draw.ProgramBindingSnapshot,
+            ComputeDispatchOp compute => compute.Snapshot,
+            ComputeDispatchIndirectOp computeIndirect => computeIndirect.Snapshot,
+            _ => null,
+        };
+        if (snapshot is null)
+            return $"{Environment.NewLine}[Vulkan]   Bindings: uniqueResources={operation.ResourceUsesReference.Count} descriptorSnapshot=<none>";
+
+        return
+            $"{Environment.NewLine}[Vulkan]   Bindings: uniqueResources={operation.ResourceUsesReference.Count} samplersByUnit={snapshot.Samplers.Count} samplersByName={snapshot.SamplersByName.Count} images={snapshot.Images.Count} buffersByBinding={snapshot.Buffers.Count} buffersByName={snapshot.BuffersByName.Count}";
     }
 
     private static bool IsUiBatchTextDrawOp(FrameOp operation)

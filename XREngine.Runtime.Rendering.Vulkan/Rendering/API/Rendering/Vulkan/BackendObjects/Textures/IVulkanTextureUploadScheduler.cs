@@ -5,6 +5,10 @@ internal interface IVulkanTextureUploadScheduler
 {
     bool IsSynchronizedUploadAvailable { get; }
 
+    /// <summary>
+    /// Attempts to queue an imported texture upload. A rejected request returns
+    /// <see langword="false"/> after invoking exactly one terminal callback.
+    /// </summary>
     bool TryScheduleImportedTextureUpload(
         XRTexture2D target,
         TextureStreamingResidentData residentData,

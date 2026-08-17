@@ -58,6 +58,7 @@ internal sealed partial class VulkanTextureUploadService
                 if (!job.ShouldAccept())
                 {
                     RecordState(job.Request, VulkanTextureUploadGenerationState.Canceled, "request became stale before Vulkan upload prep");
+                    Interlocked.Increment(ref s_canceledStaleUploads);
                     job.OnCanceled?.Invoke();
                     continue;
                 }

@@ -191,7 +191,39 @@ internal sealed class VulkanDenseTextureResidencyBackend : ITextureResidencyBack
         Task loadTask = Task.Run(async () =>
         {
             bool decodeActivated = false;
+            bool decodeGateHeld = false;
+            int residentDataPackageQueued = 0;
+            bool uploadHandoffOwned = false;
             string cancellationPhase = "before decode/cache read";
+
+            void ReleaseDecodeGate()
+            {
+                if (!decodeGateHeld)
+                    return;
+
+                decodeGateHeld = false;
+                DecodeGate.Release();
+            }
+
+            void CompleteDecodeActivity()
+            {
+                if (!decodeActivated)
+                    return;
+
+                decodeActivated = false;
+                int remaining = Interlocked.Decrement(ref s_activeDecodeCount);
+                if (remaining < 0)
+                    Interlocked.Exchange(ref s_activeDecodeCount, 0);
+            }
+
+            void ConsumeResidentDataPackage()
+            {
+                if (Interlocked.Exchange(ref residentDataPackageQueued, 0) == 0)
+                    return;
+
+                VulkanTextureUploadService.RecordResidentDataPackageConsumed();
+            }
+
             try
             {
                 if (cancellationToken.IsCancellationRequested)
@@ -200,15 +232,26 @@ internal sealed class VulkanDenseTextureResidencyBackend : ITextureResidencyBack
                     return;
                 }
 
-                await DecodeGate.WaitAsync(priority, cancellationToken).ConfigureAwait(false);
-                MarkDecodeDequeued();
+                if (!await DecodeGate.WaitAsync(priority, cancellationToken).ConfigureAwait(false))
+                {
+                    ReportCanceled(cancellationPhase);
+                    return;
+                }
+
+                decodeGateHeld = true;
                 Interlocked.Increment(ref s_activeDecodeCount);
                 decodeActivated = true;
+                MarkDecodeDequeued();
 
                 TextureStreamingResidentData residentData;
                 try
                 {
-                    cancellationToken.ThrowIfCancellationRequested();
+                    if (cancellationToken.IsCancellationRequested)
+                    {
+                        ReportCanceled(cancellationPhase);
+                        return;
+                    }
+
                     cancellationPhase = "during decode/cache read";
                     if (TextureStreamingResidentDataReuseCache.TryGet(source, maxResidentDimension, includeMipChain, out residentData))
                     {
@@ -229,47 +272,54 @@ internal sealed class VulkanDenseTextureResidencyBackend : ITextureResidencyBack
                 }
                 finally
                 {
-                    if (decodeActivated)
-                    {
-                        Interlocked.Decrement(ref s_activeDecodeCount);
-                        DecodeGate.Release();
-                    }
+                    ReleaseDecodeGate();
                 }
+
+                VulkanTextureUploadService.RecordResidentDataPackageQueued();
+                Volatile.Write(ref residentDataPackageQueued, 1);
+                CompleteDecodeActivity();
 
                 void ScheduleUploadOnRenderThread()
                 {
-                    if (cancellationToken.IsCancellationRequested
-                        || (shouldAcceptResult is not null && !shouldAcceptResult()))
+                    try
                     {
-                        ReportCanceled(cancellationPhase);
-                        return;
+                        if (cancellationToken.IsCancellationRequested
+                            || (shouldAcceptResult is not null && !shouldAcceptResult()))
+                        {
+                            ReportCanceled(cancellationPhase);
+                            return;
+                        }
+
+                        cancellationPhase = "after CPU prep";
+                        onPrepared?.Invoke(residentData);
+
+                        if (cancellationToken.IsCancellationRequested
+                            || (shouldAcceptResult is not null && !shouldAcceptResult()))
+                        {
+                            ReportCanceled(cancellationPhase);
+                            return;
+                        }
+
+                        cancellationPhase = "during synchronized Vulkan upload";
+                        ScheduleVulkanSynchronizedUpload(
+                            target,
+                            residentData,
+                            includeMipChain,
+                            maxResidentDimension,
+                            streamingGeneration,
+                            priority,
+                            shouldAcceptResult,
+                            cancellationToken,
+                            onFinished,
+                            onError,
+                            onCanceled,
+                            onProgress,
+                            ReportCanceled);
                     }
-
-                    cancellationPhase = "after CPU prep";
-                    onPrepared?.Invoke(residentData);
-
-                    if (cancellationToken.IsCancellationRequested
-                        || (shouldAcceptResult is not null && !shouldAcceptResult()))
+                    finally
                     {
-                        ReportCanceled(cancellationPhase);
-                        return;
+                        ConsumeResidentDataPackage();
                     }
-
-                    cancellationPhase = "during synchronized Vulkan upload";
-                    ScheduleVulkanSynchronizedUpload(
-                        target,
-                        residentData,
-                        includeMipChain,
-                        maxResidentDimension,
-                        streamingGeneration,
-                        priority,
-                        shouldAcceptResult,
-                        cancellationToken,
-                        onFinished,
-                        onError,
-                        onCanceled,
-                        onProgress,
-                        ReportCanceled);
                 }
 
                 bool ScheduleUploadBudgeted()
@@ -277,20 +327,22 @@ internal sealed class VulkanDenseTextureResidencyBackend : ITextureResidencyBack
                     if (!TryEnterRenderThreadScheduleBudget())
                         return false;
 
-                    VulkanTextureUploadService.RecordResidentDataPackageConsumed();
                     ScheduleUploadOnRenderThread();
                     return true;
                 }
 
                 if (RuntimeRenderingHostServices.FrameTiming.IsRenderThread && TryEnterRenderThreadScheduleBudget())
+                {
                     ScheduleUploadOnRenderThread();
+                    uploadHandoffOwned = true;
+                }
                 else
                 {
-                    VulkanTextureUploadService.RecordResidentDataPackageQueued();
                     RuntimeRenderingHostServices.Scheduling.EnqueueRenderThreadCoroutine(
                         ScheduleUploadBudgeted,
                         $"TextureStreaming.ScheduleVulkanUpload[{target.Name}]",
                         RenderThreadJobKind.TextureUpload);
+                    uploadHandoffOwned = true;
                 }
             }
             catch (OperationCanceledException)
@@ -303,6 +355,10 @@ internal sealed class VulkanDenseTextureResidencyBackend : ITextureResidencyBack
             }
             finally
             {
+                ReleaseDecodeGate();
+                CompleteDecodeActivity();
+                if (!uploadHandoffOwned)
+                    ConsumeResidentDataPackage();
                 MarkDecodeDequeued();
             }
         });
@@ -354,15 +410,20 @@ internal sealed class VulkanDenseTextureResidencyBackend : ITextureResidencyBack
 
         long uploadBytes = XRTexture2D.CalculateResidentUploadBytes(residentData);
         Interlocked.Increment(ref s_activeGpuUploadCount);
+        int terminalCompletionClaimed = 0;
 
-        void CompleteUploadCounter()
+        bool TryCompleteUpload()
         {
+            if (Interlocked.Exchange(ref terminalCompletionClaimed, 1) != 0)
+                return false;
+
             int remaining = Interlocked.Decrement(ref s_activeGpuUploadCount);
             if (remaining < 0)
                 Interlocked.Exchange(ref s_activeGpuUploadCount, 0);
+            return true;
         }
 
-        bool queued = VulkanTextureStreamingBackendProvider.Instance.TryScheduleSynchronizedUpload(
+        bool handled = VulkanTextureStreamingBackendProvider.Instance.TryScheduleSynchronizedUpload(
             target,
             residentData,
             includeMipChain,
@@ -373,27 +434,36 @@ internal sealed class VulkanDenseTextureResidencyBackend : ITextureResidencyBack
             cancellationToken,
             tex =>
             {
-                CompleteUploadCounter();
+                if (!TryCompleteUpload())
+                    return;
+
                 onProgress?.Invoke(1.0f);
                 onFinished?.Invoke(tex);
             },
             ex =>
             {
-                CompleteUploadCounter();
+                if (!TryCompleteUpload())
+                    return;
+
                 onError?.Invoke(ex);
             },
             () =>
             {
-                CompleteUploadCounter();
+                if (!TryCompleteUpload())
+                    return;
+
                 onCanceled?.Invoke();
             });
 
-        if (!queued)
+        if (!handled)
         {
-            CompleteUploadCounter();
-            reportCanceled("synchronized Vulkan upload queue rejected request");
+            if (TryCompleteUpload())
+                reportCanceled("synchronized Vulkan upload provider did not handle request");
             return;
         }
+
+        if (Volatile.Read(ref terminalCompletionClaimed) != 0)
+            return;
 
         RecordUploadBytes(uploadBytes);
         onProgress?.Invoke(0.5f);

@@ -17,6 +17,9 @@ internal sealed class OpenGlTextureStreamingBackendProvider : ITextureStreamingB
     public ITextureResidencyBackend SparseBackend => _sparseBackend;
     public bool IsSynchronizedUploadAvailable => false;
 
+    public TextureStreamingBackendActivity GetActivity()
+        => TextureStreamingBackendActivity.Capture(_defaultBackend, _sparseBackend);
+
     public bool IsDenseBackend(ITextureResidencyBackend backend) => false;
     public string GetDisplayName(ITextureResidencyBackend backend) => backend.Name;
 
@@ -28,8 +31,15 @@ internal sealed class OpenGlTextureStreamingBackendProvider : ITextureStreamingB
 
     public bool TryDescribeBlockingOpenXrEyeUploadWork(out string reason)
     {
-        reason = string.Empty;
-        return false;
+        int activeGpuUploads = GetActivity().ActiveGpuUploadCount;
+        if (activeGpuUploads <= 0)
+        {
+            reason = string.Empty;
+            return false;
+        }
+
+        reason = $"OpenGL texture uploads have render-blocking work (activeGpuUploads={activeGpuUploads})";
+        return true;
     }
 
     public void AppendProfilerSummary(StringBuilder builder)

@@ -35,12 +35,6 @@ internal struct FrameOpResourceUseList
             _items[index] = current with { Access = current.Access | access };
             return;
         }
-        if (Count >= FrameOpResourceUseBuffer.Capacity)
-        {
-            throw new InvalidOperationException(
-                $"Frame-operation resource-use capacity of {FrameOpResourceUseBuffer.Capacity} was exceeded.");
-        }
-
         EnsureCapacity(Count + 1);
         _items![Count++] = new(resourceId, version, access);
     }
@@ -61,9 +55,9 @@ internal struct FrameOpResourceUseList
             return;
 
         int current = _items?.Length ?? 0;
-        int capacity = Math.Min(
-            FrameOpResourceUseBuffer.Capacity,
-            Math.Max(required, current == 0 ? InitialCapacity : current * 2));
+        int capacity = Math.Max(
+            required,
+            current == 0 ? InitialCapacity : checked(current * 2));
         Array.Resize(ref _items, capacity);
     }
 }

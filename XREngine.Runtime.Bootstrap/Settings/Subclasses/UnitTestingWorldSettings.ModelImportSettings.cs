@@ -9,6 +9,11 @@ public partial class UnitTestingWorldSettings
     {
         public bool Enabled { get; set; } = true;
         public UnitTestModelImportKind Kind { get; set; } = UnitTestModelImportKind.Static;
+        /// <summary>
+        /// Selects the generic model material factory. Unity prefabs use their source-aware
+        /// material converter instead; recognized Poiyomi materials are always converted to
+        /// XRENGINE's forward-plus Uber shader.
+        /// </summary>
         public ModelImportMaterialMode MaterialMode { get; set; } = ModelImportMaterialMode.Deferred;
         /// <summary>
         /// When true and <see cref="MaterialMode"/> is <see cref="ModelImportMaterialMode.Deferred"/>,
@@ -25,6 +30,12 @@ public partial class UnitTestingWorldSettings
         /// </summary>
         public ModelImportBackendPreference ImporterBackend { get; set; } = ModelImportBackendPreference.PreferNativeThenAssimp;
         public string Path { get; set; } = string.Empty;
+        /// <summary>
+        /// Optional Unity project root (or its Assets directory) for <c>.prefab</c> imports.
+        /// When omitted, the importer locates the owning project from the prefab path.
+        /// Relative paths are resolved from the process working directory.
+        /// </summary>
+        public string? UnityProjectRoot { get; set; }
         public PostProcessSteps ImportFlags { get; set; } = PostProcessSteps.None;
         public float Scale { get; set; } = 1.0f;
         public bool ZUp { get; set; } = false;

@@ -17,6 +17,12 @@ internal sealed class VulkanTextureStreamingBackendProvider : ITextureStreamingB
     public ITextureResidencyBackend SparseBackend => _backend;
     public bool IsSynchronizedUploadAvailable => VulkanTextureUploadService.IsSynchronizedImportedTextureStreamingAvailable;
 
+    public TextureStreamingBackendActivity GetActivity()
+        => TextureStreamingBackendActivity.Capture(
+            _backend,
+            _backend,
+            VulkanTextureUploadService.HasActiveUploadWork);
+
     internal void BindScheduler(IVulkanTextureUploadScheduler scheduler)
     {
         ArgumentNullException.ThrowIfNull(scheduler);
@@ -70,7 +76,7 @@ internal sealed class VulkanTextureStreamingBackendProvider : ITextureStreamingB
             return true;
         }
 
-        return scheduler.TryScheduleImportedTextureUpload(
+        _ = scheduler.TryScheduleImportedTextureUpload(
             target,
             residentData,
             includeMipChain,
@@ -82,5 +88,6 @@ internal sealed class VulkanTextureStreamingBackendProvider : ITextureStreamingB
             onCanceled,
             onError,
             cancellationToken);
+        return true;
     }
 }

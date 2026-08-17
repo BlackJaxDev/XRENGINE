@@ -54,6 +54,15 @@ internal sealed partial class VulkanTextureUploadService
     public static bool IsSynchronizedImportedTextureStreamingAvailable
         => Volatile.Read(ref s_synchronizedImportedTextureStreamingAvailable) != 0;
 
+    internal static bool HasActiveUploadWork
+        => HasActiveUploadWorkCore(
+            Volatile.Read(ref s_pendingResidentDataPackages),
+            Volatile.Read(ref s_pendingVulkanPrepPackages),
+            Volatile.Read(ref s_activePrepPackages),
+            Volatile.Read(ref s_pendingTransferSubmissions),
+            Volatile.Read(ref s_pendingDescriptorPublications),
+            Volatile.Read(ref s_transferQueueBytesInFlight));
+
     internal static bool TryDescribeActiveUploadWork(out string reason)
     {
         int pendingResidentData = Volatile.Read(ref s_pendingResidentDataPackages);
@@ -63,12 +72,13 @@ internal sealed partial class VulkanTextureUploadService
         int pendingPublications = Volatile.Read(ref s_pendingDescriptorPublications);
         long transferBytesInFlight = Volatile.Read(ref s_transferQueueBytesInFlight);
 
-        if (pendingResidentData <= 0 &&
-            pendingPrep <= 0 &&
-            activePrep <= 0 &&
-            pendingTransfers <= 0 &&
-            pendingPublications <= 0 &&
-            transferBytesInFlight <= 0)
+        if (!HasActiveUploadWorkCore(
+                pendingResidentData,
+                pendingPrep,
+                activePrep,
+                pendingTransfers,
+                pendingPublications,
+                transferBytesInFlight))
         {
             reason = string.Empty;
             return false;
@@ -264,6 +274,7 @@ internal sealed partial class VulkanTextureUploadService
         if (!context.IsDeviceOperational ||
             Volatile.Read(ref _preparationRetirementStarted) != 0)
         {
+            Interlocked.Increment(ref s_canceledStaleUploads);
             onCanceled?.Invoke();
             return false;
         }
@@ -364,5 +375,19 @@ internal sealed partial class VulkanTextureUploadService
         EnsurePrepDrainScheduled(context);
         return true;
     }
+
+    private static bool HasActiveUploadWorkCore(
+        int pendingResidentData,
+        int pendingPrep,
+        int activePrep,
+        int pendingTransfers,
+        int pendingPublications,
+        long transferBytesInFlight)
+        => pendingResidentData > 0
+            || pendingPrep > 0
+            || activePrep > 0
+            || pendingTransfers > 0
+            || pendingPublications > 0
+            || transferBytesInFlight > 0;
 
 }

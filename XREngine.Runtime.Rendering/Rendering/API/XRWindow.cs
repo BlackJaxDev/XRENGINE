@@ -2296,17 +2296,18 @@ namespace XREngine.Rendering
             {
                 try
                 {
-                    await Task.Delay(TimeSpan.FromSeconds(5), probe.CancellationSource.Token);
-
                     while (!probe.CancellationSource.IsCancellationRequested)
                     {
-                        Debug.RenderingWarning($"[XRWindow] Window.Initialize still running after {probe.Elapsed.TotalMilliseconds:F0} ms. stage={DescribeWindowInitializationStage(Volatile.Read(ref probe.Stage))} title='{probe.Title}' api={probe.API} nativeTitleBar={probe.UseNativeTitleBar}");
+                        // Cancellation is the normal successful exit for this watchdog. Suppress the
+                        // canceled delay's await exception so debugger first-chance tracing does not
+                        // report an expected window-initialization handoff as a runtime fault.
+                        await Task.Delay(TimeSpan.FromSeconds(5), probe.CancellationSource.Token)
+                            .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+                        if (probe.CancellationSource.IsCancellationRequested)
+                            return;
 
-                        await Task.Delay(TimeSpan.FromSeconds(5), probe.CancellationSource.Token);
+                        Debug.RenderingWarning($"[XRWindow] Window.Initialize still running after {probe.Elapsed.TotalMilliseconds:F0} ms. stage={DescribeWindowInitializationStage(Volatile.Read(ref probe.Stage))} title='{probe.Title}' api={probe.API} nativeTitleBar={probe.UseNativeTitleBar}");
                     }
-                }
-                catch (OperationCanceledException)
-                {
                 }
                 catch (Exception ex)
                 {
