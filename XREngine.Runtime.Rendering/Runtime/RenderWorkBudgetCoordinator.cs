@@ -160,7 +160,7 @@ internal static class RenderWorkBudgetCoordinator
         builder.Append("RenderWorkStartupBoostActive: ").Append(snapshot.StartupBoostActive).AppendLine();
         XRBufferWriteTelemetry.AppendProfilerSummary(builder);
         if (TextureStreamingBackendRegistry.TryGet(
-                RuntimeGraphicsApiKind.Vulkan,
+                RuntimeRenderingHostServices.FrameTiming.CurrentRenderBackend,
                 out ITextureStreamingBackendProvider? textureStreaming)
             && textureStreaming is not null)
         {

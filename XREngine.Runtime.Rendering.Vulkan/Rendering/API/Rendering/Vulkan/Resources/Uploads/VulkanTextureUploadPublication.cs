@@ -100,34 +100,40 @@ internal sealed partial class VulkanTextureUploadService
             $"publicationToken={upload.PublicationToken}");
 
         Interlocked.Increment(ref s_pendingDescriptorPublications);
-        long publicationStart = TextureRuntimeDiagnostics.StartTiming();
-        upload.Texture.PublishSynchronizedImportedTextureUpload(upload);
-        upload.MarkPublished();
-        RetireTextureUploadStagingResources(resourceRuntime, upload);
-        double publicationMilliseconds = TextureRuntimeDiagnostics.ElapsedMilliseconds(publicationStart);
-        Volatile.Write(ref s_lastPublicationMilliseconds, publicationMilliseconds);
-        int pending = Interlocked.Decrement(ref s_pendingDescriptorPublications);
-        if (pending < 0)
-            Interlocked.Exchange(ref s_pendingDescriptorPublications, 0);
+        try
+        {
+            long publicationStart = TextureRuntimeDiagnostics.StartTiming();
+            upload.Texture.PublishSynchronizedImportedTextureUpload(upload);
+            upload.MarkPublished();
+            RetireTextureUploadStagingResources(resourceRuntime, upload);
+            double publicationMilliseconds = TextureRuntimeDiagnostics.ElapsedMilliseconds(publicationStart);
+            Volatile.Write(ref s_lastPublicationMilliseconds, publicationMilliseconds);
 
-        TextureRuntimeDiagnostics.LogVulkanImportedTextureUploadLatency(
-            RuntimeRenderingHostServices.FrameTiming.LastRenderTimestampTicks,
-            request.TextureName,
-            request.SourcePath,
-            request.StreamingGeneration,
-            upload.PublicationToken,
-            $"{uploadSource}DescriptorPublication",
-            publicationMilliseconds);
+            TextureRuntimeDiagnostics.LogVulkanImportedTextureUploadLatency(
+                RuntimeRenderingHostServices.FrameTiming.LastRenderTimestampTicks,
+                request.TextureName,
+                request.SourcePath,
+                request.StreamingGeneration,
+                upload.PublicationToken,
+                $"{uploadSource}DescriptorPublication",
+                publicationMilliseconds);
 
-        RecordState(
-            request,
-            VulkanTextureUploadGenerationState.Published,
-            $"publicationToken={upload.PublicationToken}");
-        RecordState(
-            request,
-            VulkanTextureUploadGenerationState.Retired,
-            "old texture and staging resources enqueued for frame-slot retirement");
-        InvokeTextureUploadFinished(upload);
+            RecordState(
+                request,
+                VulkanTextureUploadGenerationState.Published,
+                $"publicationToken={upload.PublicationToken}");
+            RecordState(
+                request,
+                VulkanTextureUploadGenerationState.Retired,
+                "old texture and staging resources enqueued for frame-slot retirement");
+            InvokeTextureUploadFinished(upload);
+        }
+        finally
+        {
+            int pending = Interlocked.Decrement(ref s_pendingDescriptorPublications);
+            if (pending < 0)
+                Interlocked.Exchange(ref s_pendingDescriptorPublications, 0);
+        }
     }
 
     private void PublishCompletedRecordedTextureUpload(
@@ -143,6 +149,7 @@ internal sealed partial class VulkanTextureUploadService
                 request,
                 VulkanTextureUploadGenerationState.Canceled,
                 $"request became stale before {uploadSource} descriptor publication");
+            Interlocked.Increment(ref s_canceledStaleUploads);
             InvokeTextureUploadCanceled(upload);
             return;
         }

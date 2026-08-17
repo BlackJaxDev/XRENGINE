@@ -173,15 +173,25 @@ internal sealed class GLTieredTextureResidencyBackend : ITextureResidencyBackend
                     return;
                 }
 
-                await DecodeGate.WaitAsync(priority, cancellationToken).ConfigureAwait(false);
-                Interlocked.Decrement(ref s_queuedDecodeCount);
+                if (!await DecodeGate.WaitAsync(priority, cancellationToken).ConfigureAwait(false))
+                {
+                    ReportCanceled(cancellationPhase);
+                    return;
+                }
+
                 Interlocked.Increment(ref s_activeDecodeCount);
+                Interlocked.Decrement(ref s_queuedDecodeCount);
                 decodeActivated = true;
 
                 TextureStreamingResidentData residentData;
                 try
                 {
-                    cancellationToken.ThrowIfCancellationRequested();
+                    if (cancellationToken.IsCancellationRequested)
+                    {
+                        ReportCanceled(cancellationPhase);
+                        return;
+                    }
+
                     cancellationPhase = "during decode/cache read";
                     if (TextureStreamingResidentDataReuseCache.TryGet(source, maxResidentDimension, includeMipChain, out residentData))
                     {
@@ -363,10 +373,12 @@ internal sealed class GLTieredTextureResidencyBackend : ITextureResidencyBackend
         }
 
         long uploadBytes = XRTexture2D.CalculateResidentUploadBytes(residentData);
-        RecordUploadBytes(uploadBytes);
-        onProgress?.Invoke(0.5f);
+        int terminalCompletionClaimed = 0;
 
-        bool queued = provider.TryScheduleSynchronizedUpload(
+        bool TryClaimTerminalCompletion()
+            => Interlocked.Exchange(ref terminalCompletionClaimed, 1) == 0;
+
+        bool handled = provider.TryScheduleSynchronizedUpload(
             target,
             residentData,
             includeMipChain,
@@ -377,14 +389,35 @@ internal sealed class GLTieredTextureResidencyBackend : ITextureResidencyBackend
             cancellationToken,
             tex =>
             {
+                if (!TryClaimTerminalCompletion())
+                    return;
+
                 onProgress?.Invoke(1.0f);
                 onFinished?.Invoke(tex);
             },
-            onError,
-            onCanceled);
+            ex =>
+            {
+                if (TryClaimTerminalCompletion())
+                    onError?.Invoke(ex);
+            },
+            () =>
+            {
+                if (TryClaimTerminalCompletion())
+                    onCanceled?.Invoke();
+            });
 
-        if (!queued)
-            reportCanceled("synchronized Vulkan upload queue rejected request");
+        if (!handled)
+        {
+            if (TryClaimTerminalCompletion())
+                reportCanceled("synchronized Vulkan upload provider did not handle request");
+            return true;
+        }
+
+        if (Volatile.Read(ref terminalCompletionClaimed) != 0)
+            return true;
+
+        RecordUploadBytes(uploadBytes);
+        onProgress?.Invoke(0.5f);
 
         _ = source;
         return true;
@@ -625,15 +658,25 @@ internal sealed class GLSparseTextureResidencyBackend : ITextureResidencyBackend
                 // of rejecting work after it has been queued: rejection caused the
                 // same visible texture to be resubmitted every frame and could
                 // starve an avatar's entire material set indefinitely.
-                await DecodeGate.WaitAsync(priority, cancellationToken).ConfigureAwait(false);
-                Interlocked.Decrement(ref s_queuedDecodeCount);
+                if (!await DecodeGate.WaitAsync(priority, cancellationToken).ConfigureAwait(false))
+                {
+                    ReportCanceled(cancellationPhase);
+                    return;
+                }
+
                 Interlocked.Increment(ref s_activeDecodeCount);
+                Interlocked.Decrement(ref s_queuedDecodeCount);
                 decodeActivated = true;
 
                 TextureStreamingResidentData residentData;
                 try
                 {
-                    cancellationToken.ThrowIfCancellationRequested();
+                    if (cancellationToken.IsCancellationRequested)
+                    {
+                        ReportCanceled(cancellationPhase);
+                        return;
+                    }
+
                     cancellationPhase = "during decode/cache read";
                     const bool cacheIncludeMipChain = true;
                     if (TextureStreamingResidentDataReuseCache.TryGet(source, maxResidentDimension, cacheIncludeMipChain, out residentData))

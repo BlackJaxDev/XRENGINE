@@ -379,6 +379,21 @@ namespace XREngine.Rendering.Vulkan
                         frameDataPrewarmPublicationDeferred++;
                         continue;
                     }
+                    bool frameDataAlreadyRefreshed =
+                        recordingState
+                            .ScheduledCommandChainFrameDataRefreshedByOpIndex[
+                                opIndex];
+                    if (frameDataAlreadyRefreshed)
+                    {
+                        frameDataPrewarmReusableRefreshes++;
+                        // PrepareScheduledCommandChainFrameDataRefresh already
+                        // published the exact draw slot. Avoid resolving that slot
+                        // again through the renderer-family dictionaries; this was
+                        // the dominant cost when a newly visible avatar produced a
+                        // large reusable draw cohort.
+                        continue;
+                    }
+
                     FrameOpContext operationContext = recordingState.Ops.GetContext(opIndex);
 
                     int drawSlot =
@@ -395,21 +410,6 @@ namespace XREngine.Rendering.Vulkan
                             pendingDraw);
                     }
                     recordingState.MeshDrawUniformSlotsByOpIndex[opIndex] = drawSlot;
-                    bool frameDataAlreadyRefreshed =
-                        recordingState
-                            .ScheduledCommandChainFrameDataRefreshedByOpIndex[
-                                opIndex];
-                    if (frameDataAlreadyRefreshed)
-                    {
-                        frameDataPrewarmReusableRefreshes++;
-                        // The reusable-chain refresh already published the exact
-                        // draw slot and validated its descriptor/pipeline identity.
-                        // Entering a planner readback scope for every draw here is
-                        // otherwise especially costly for four CSM cohorts, even
-                        // though the body performs no additional work.
-                        continue;
-                    }
-
                     frameDataPrewarmProcessed++;
                     using var pipelineScope = RuntimeEngine.Rendering.State.PushRenderingPipelineOverride(
                         operationContext.PipelineInstance);

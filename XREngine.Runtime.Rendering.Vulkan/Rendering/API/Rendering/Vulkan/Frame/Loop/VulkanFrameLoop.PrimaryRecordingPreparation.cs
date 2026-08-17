@@ -371,6 +371,7 @@ internal sealed partial class VulkanFrameLoop
         long coldPreparationTicks = 0;
         int deferredRequestCount = 0;
         int unavailableRequestCount = 0;
+        int quarantinedRequestCount = 0;
         int warmRequestCount = 0;
         int coldRequestCount = 0;
         int resumeRequestIndex = -1;
@@ -411,6 +412,16 @@ internal sealed partial class VulkanFrameLoop
 
                 ref readonly VulkanMeshRenderRequest request =
                     ref _meshOperationRequestScratch[requestIndex];
+                ulong preparationSignature =
+                    request.PreparationCompatibilitySignature;
+                if (preparationSignature != 0 &&
+                    _quarantinedMeshOperationSignatures.Contains(
+                        preparationSignature))
+                {
+                    quarantinedRequestCount++;
+                    continue;
+                }
+
                 XRRenderPipelineInstance? pipeline = request.Pipeline;
                 if (pipeline is null)
                     continue;
@@ -478,7 +489,29 @@ internal sealed partial class VulkanFrameLoop
                     continue;
                 }
 
-                if (request.PreparationCompatibilitySignature != 0)
+                if (!EnqueueQueuedMeshDraw(in operationRequest))
+                {
+                    _meshOperationWarmPreparationSignatures.Remove(
+                        preparationSignature);
+                    if (preparationSignature != 0)
+                    {
+                        if (_quarantinedMeshOperationSignatures.Count >=
+                                MaxWarmMeshPreparationSignatures &&
+                            !_quarantinedMeshOperationSignatures.Contains(
+                                preparationSignature))
+                        {
+                            _quarantinedMeshOperationSignatures.Clear();
+                        }
+
+                        _quarantinedMeshOperationSignatures.Add(
+                            preparationSignature);
+                    }
+
+                    quarantinedRequestCount++;
+                    continue;
+                }
+
+                if (preparationSignature != 0)
                 {
                     // Keep the hot-path cache finite and pre-sized. Reaching this
                     // bound requires several complete queue cohorts of distinct
@@ -486,15 +519,14 @@ internal sealed partial class VulkanFrameLoop
                     if (_meshOperationWarmPreparationSignatures.Count >=
                             MaxWarmMeshPreparationSignatures &&
                         !_meshOperationWarmPreparationSignatures.Contains(
-                            request.PreparationCompatibilitySignature))
+                            preparationSignature))
                     {
                         _meshOperationWarmPreparationSignatures.Clear();
                     }
 
                     _meshOperationWarmPreparationSignatures.Add(
-                        request.PreparationCompatibilitySignature);
+                        preparationSignature);
                 }
-                EnqueueQueuedMeshDraw(in operationRequest);
             }
         }
         finally
@@ -510,6 +542,15 @@ internal sealed partial class VulkanFrameLoop
         _meshOperationPreparationCursor = resumeRequestIndex >= 0
             ? resumeRequestIndex
             : 0;
+
+        if (quarantinedRequestCount > 0)
+        {
+            Debug.VulkanWarningEvery(
+                "Vulkan.MeshMaterialization.Quarantined",
+                TimeSpan.FromSeconds(2),
+                "[Vulkan] Skipped {0} quarantined mesh draw request(s); the remaining scene will continue rendering.",
+                quarantinedRequestCount);
+        }
 
         if (deferredRequestCount == 0 && unavailableRequestCount == 0)
             return true;
@@ -584,14 +625,14 @@ internal sealed partial class VulkanFrameLoop
                    StringComparison.Ordinal);
     }
 
-    private void EnqueueQueuedMeshDraw(in VulkanMeshOperationRequest request)
+    private bool EnqueueQueuedMeshDraw(in VulkanMeshOperationRequest request)
     {
         int passIndex = VulkanCommandRuntime.EnsureValidPassIndex(
             request.PassIndex,
             nameof(MeshDrawOp),
             request.Context.PassMetadata);
         if (passIndex == int.MinValue)
-            return;
+            return false;
 
         MeshDrawOp operation = MeshDrawOp.Rent(
             passIndex,
@@ -599,7 +640,11 @@ internal sealed partial class VulkanFrameLoop
             request.Draw,
             request.Context,
             _frameOperationQueue.CurrentThread.RenderQueryBracketDepth > 0);
-        _commandRuntime.EnqueueFrameOperation(_frameOperationQueue, operation, passIndex);
+        return _commandRuntime.TryEnqueueContentFrameOperation(
+            _frameOperationQueue,
+            operation,
+            passIndex,
+            out _);
     }
 
     /// <summary>

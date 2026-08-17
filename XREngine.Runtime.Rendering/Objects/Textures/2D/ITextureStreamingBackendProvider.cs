@@ -10,6 +10,7 @@ internal interface ITextureStreamingBackendProvider
 {
     ITextureResidencyBackend DefaultBackend { get; }
     ITextureResidencyBackend SparseBackend { get; }
+    TextureStreamingBackendActivity GetActivity();
     bool IsDenseBackend(ITextureResidencyBackend backend);
     string GetDisplayName(ITextureResidencyBackend backend);
     bool IsSynchronizedUploadAvailable { get; }
@@ -17,6 +18,12 @@ internal interface ITextureStreamingBackendProvider
     bool TryDescribeBlockingOpenXrEyeUploadWork(out string reason);
     void AppendProfilerSummary(StringBuilder builder);
 
+    /// <summary>
+    /// Attempts to handle a synchronized upload request. A <see langword="true"/>
+    /// result transfers terminal-callback ownership to the provider, even when it
+    /// rejects the request synchronously. A <see langword="false"/> result means the
+    /// provider did not handle the request and invoked no callback.
+    /// </summary>
     bool TryScheduleSynchronizedUpload(
         XRTexture2D target,
         TextureStreamingResidentData residentData,

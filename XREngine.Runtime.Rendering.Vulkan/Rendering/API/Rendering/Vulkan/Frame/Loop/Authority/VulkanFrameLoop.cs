@@ -37,6 +37,8 @@ internal sealed partial class VulkanFrameLoop
         VulkanMeshOperationRequestQueue.Capacity * 4;
     private readonly HashSet<ulong> _meshOperationWarmPreparationSignatures =
         new(MaxWarmMeshPreparationSignatures);
+    private readonly HashSet<ulong> _quarantinedMeshOperationSignatures =
+        new(MaxWarmMeshPreparationSignatures);
     private int _meshOperationPreparationCursor;
     private VulkanImGuiBackend? _imguiBackend;
     private readonly VulkanImGuiOverlayCommandRecorder _imguiOverlayRecorder = new();

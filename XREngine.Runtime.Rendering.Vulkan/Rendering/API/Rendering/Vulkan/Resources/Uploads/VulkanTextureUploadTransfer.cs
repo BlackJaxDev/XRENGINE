@@ -38,7 +38,9 @@ internal sealed partial class VulkanTextureUploadService
         {
             if (!context.Commands.TryPollImportedTextureTransfer(submitted, out bool complete, out string? pollFailure))
             {
-                RemoveSubmittedTransfer(submitted);
+                if (!RemoveSubmittedTransfer(submitted))
+                    continue;
+
                 submitted.Upload.Texture.ReleasePreparedImportedUploadResources(submitted.Upload);
                 RecordState(submitted.Upload.Request, VulkanTextureUploadGenerationState.Failed, pollFailure ?? "transfer upload polling failed");
                 Interlocked.Increment(ref s_failedUploads);
@@ -49,7 +51,9 @@ internal sealed partial class VulkanTextureUploadService
             if (!complete)
                 return false;
 
-            RemoveSubmittedTransfer(submitted);
+            if (!RemoveSubmittedTransfer(submitted))
+                continue;
+
             Volatile.Write(ref s_lastTransferWaitMilliseconds, TextureRuntimeDiagnostics.ElapsedMilliseconds(submitted.SubmitTimestamp));
             RecordState(
                 submitted.Upload.Request,
@@ -66,6 +70,22 @@ internal sealed partial class VulkanTextureUploadService
             }
 
             PublishCompletedImportedTextureUpload(context.Resources, submitted.Upload, "_deviceContext.TransferQueue");
+            // Completion releases staging resources and publishes descriptors. Keep
+            // that non-preemptible Vulkan work to one texture per render iteration;
+            // draining a whole completed avatar batch here previously produced
+            // triple-digit millisecond render-thread jobs.
+            return HasSubmittedTransfersOrCompleteDrain();
+        }
+
+        return HasSubmittedTransfersOrCompleteDrain();
+    }
+
+    private bool HasSubmittedTransfersOrCompleteDrain()
+    {
+        lock (_transferQueueSync)
+        {
+            if (_pendingTransferUploads.Count > 0)
+                return false;
         }
 
         Interlocked.Exchange(ref _transferDrainScheduled, 0);
@@ -91,10 +111,14 @@ internal sealed partial class VulkanTextureUploadService
         }
     }
 
-    private void RemoveSubmittedTransfer(VulkanSubmittedImportedTextureUpload submitted)
+    private bool RemoveSubmittedTransfer(VulkanSubmittedImportedTextureUpload submitted)
     {
+        bool removed;
         lock (_transferQueueSync)
-            _pendingTransferUploads.Remove(submitted);
+            removed = _pendingTransferUploads.Remove(submitted);
+
+        if (!removed)
+            return false;
 
         int pending = Interlocked.Decrement(ref s_pendingTransferSubmissions);
         if (pending < 0)
@@ -102,6 +126,7 @@ internal sealed partial class VulkanTextureUploadService
         long bytes = Interlocked.Add(ref s_transferQueueBytesInFlight, -submitted.BytesInFlight);
         if (bytes < 0)
             Interlocked.Exchange(ref s_transferQueueBytesInFlight, 0);
+        return true;
     }
 
     private void CancelSubmittedTransfers(VulkanCommandRuntime commandRuntime, string reason)

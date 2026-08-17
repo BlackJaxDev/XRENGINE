@@ -130,7 +130,9 @@ public partial class UnitTestingWorldSettings
     /// <summary>
     /// Startup model imports processed when the Unit Testing World boots. Each array item
     /// is a ModelImportSettings object with Enabled, Kind, MaterialMode, ImporterBackend,
-    /// Path, ImportFlags, Scale, ZUp, PostImportFlags, and optional YawPitchRoll/Translation objects.
+    /// Path, optional UnityProjectRoot, ImportFlags, Scale, ZUp, PostImportFlags, and optional
+    /// YawPitchRoll/Translation objects. Unity prefab entries use the Unity converter; recognized
+    /// Poiyomi materials are converted to the forward-plus Uber shader.
     /// Paths are relative to the process working directory unless absolute.
     /// </summary>
     public List<ModelImportSettings> ModelsToImport { get; set; } = [];

@@ -6,29 +6,34 @@ namespace XREngine.Rendering;
 
 internal sealed class PriorityAsyncSemaphore
 {
-    private sealed class Waiter(JobPriority priority, CancellationToken cancellationToken)
+    private sealed class Waiter(JobPriority priority)
     {
-        private int _canceled;
+        private const int Pending = 0;
+        private const int Granted = 1;
+        private const int Canceled = 2;
+
+        private int _state = Pending;
 
         public readonly JobPriority Priority = priority;
-        public readonly TaskCompletionSource Completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public readonly TaskCompletionSource<bool> Completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public CancellationTokenRegistration CancellationRegistration;
 
-        public bool IsCanceled => Volatile.Read(ref _canceled) != 0;
+        public bool IsCanceled => Volatile.Read(ref _state) == Canceled;
 
         public void Cancel()
         {
-            if (Interlocked.Exchange(ref _canceled, 1) == 0)
-                Completion.TrySetCanceled(cancellationToken);
+            if (Interlocked.CompareExchange(ref _state, Canceled, Pending) == Pending)
+                Completion.TrySetResult(false);
         }
 
         public bool TryGrant()
         {
-            if (IsCanceled)
+            if (Interlocked.CompareExchange(ref _state, Granted, Pending) != Pending)
                 return false;
 
             CancellationRegistration.Dispose();
-            return Completion.TrySetResult();
+            Completion.TrySetResult(true);
+            return true;
         }
     }
 
@@ -47,23 +52,27 @@ internal sealed class PriorityAsyncSemaphore
             _queues[i] = new Queue<Waiter>();
     }
 
-    public Task WaitAsync(JobPriority priority, CancellationToken cancellationToken)
+    /// <summary>
+    /// Waits for a permit without representing ordinary request cancellation as a thrown exception.
+    /// </summary>
+    /// <returns><see langword="true"/> when a permit was granted; otherwise, <see langword="false"/>.</returns>
+    public ValueTask<bool> WaitAsync(JobPriority priority, CancellationToken cancellationToken)
     {
         if (cancellationToken.IsCancellationRequested)
-            return Task.FromCanceled(cancellationToken);
+            return ValueTask.FromResult(false);
 
         lock (_sync)
         {
             if (_availableCount > 0 && !HasWaiters())
             {
                 _availableCount--;
-                return Task.CompletedTask;
+                return ValueTask.FromResult(true);
             }
 
-            Waiter waiter = new(NormalizePriority(priority), cancellationToken);
+            Waiter waiter = new(NormalizePriority(priority));
             waiter.CancellationRegistration = cancellationToken.Register(static state => ((Waiter)state!).Cancel(), waiter);
             _queues[(int)waiter.Priority].Enqueue(waiter);
-            return waiter.Completion.Task;
+            return new ValueTask<bool>(waiter.Completion.Task);
         }
     }
 

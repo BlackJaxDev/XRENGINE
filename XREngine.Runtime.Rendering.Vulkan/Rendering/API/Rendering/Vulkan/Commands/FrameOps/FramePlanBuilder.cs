@@ -31,6 +31,7 @@ internal sealed class FramePlanBuilder
         internal int[] OperationTopologicalOrderScratch = new int[64];
         internal int[] OperationPriorityScratch = new int[64];
         internal int[] OperationReadyHeapScratch = new int[64];
+        internal int[] ResourceProducerDependencyScratch = new int[64];
         internal int[] DependencyFirstEdgeScratch = new int[64];
         internal int[] DependencyEdgeConsumerScratch = new int[256];
         internal int[] DependencyEdgeNextScratch = new int[256];
@@ -410,6 +411,7 @@ internal sealed class FramePlanBuilder
         int[] destination = slot.OperationTopologicalOrderScratch;
         EnsureCapacity(ref slot.OperationPriorityScratch, operationCount);
         EnsureCapacity(ref slot.OperationReadyHeapScratch, operationCount);
+        EnsureCapacity(ref slot.ResourceProducerDependencyScratch, operationCount);
         EnsureCapacity(ref slot.DependencyFirstEdgeScratch, operationCount);
         int[] priorities = slot.OperationPriorityScratch;
         int[] readyHeap = slot.OperationReadyHeapScratch;
@@ -417,7 +419,9 @@ internal sealed class FramePlanBuilder
         Array.Fill(firstEdges, -1, 0, operationCount);
         slot.LastResourceWriters.Clear();
         int edgeCount = 0;
-        Span<int> dependencies = stackalloc int[FrameOpResourceUseBuffer.Capacity];
+        Span<int> dependencies = slot.ResourceProducerDependencyScratch.AsSpan(
+            0,
+            operationCount);
 
         for (int index = 0; index < operationCount; index++)
         {
