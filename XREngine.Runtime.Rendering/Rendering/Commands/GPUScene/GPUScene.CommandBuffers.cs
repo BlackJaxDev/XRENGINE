@@ -78,6 +78,11 @@ namespace XREngine.Rendering.Commands
                 CopyDrawIndexedSoABuffersToRenderSnapshot();
                 CopyDirtyStableSoABuffersToRenderSnapshot();
 
+                // This is the sole publication point for meshlet descriptor-table
+                // generations. VisualScene calls it after collect/update and before
+                // GPU pass submission, so shaders never observe a partly rebuilt set.
+                PublishMeshletBufferGenerationAtFrameBoundary();
+
                 if (commandSnapshotDirty && _updatingTransparencyMetadataBuffer is not null && _allLoadedTransparencyMetadataBuffer is not null)
                 {
                     if (_allLoadedTransparencyMetadataBuffer.ElementCount < _updatingTransparencyMetadataBuffer.ElementCount)
@@ -664,6 +669,7 @@ namespace XREngine.Rendering.Commands
         private readonly List<byte> _meshletTriangleIndices = [];
         private readonly Dictionary<uint, GpuMeshletRange> _meshletRangesByMeshId = [];
         private readonly Dictionary<uint, ulong> _meshletFreshnessByMeshId = [];
+        private readonly Dictionary<uint, long> _meshletValidationRevisionByMeshId = [];
         private DirtyRange _meshletRangeDirtyRange;
 
         /// <summary>

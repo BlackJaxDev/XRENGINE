@@ -317,7 +317,7 @@ internal sealed partial class VulkanCommandRuntime
             target,
             extent,
             StateTracker.GetViewport(extent),
-            VulkanStateTracker.GetDefaultScissor(extent),
+            StateTracker.GetScissor(extent),
             StateTracker.GetIndexedViewportScissorSnapshot(extent),
             StateTracker.CaptureFixedFunctionState(),
             IsExternalSwapchainTarget: false,

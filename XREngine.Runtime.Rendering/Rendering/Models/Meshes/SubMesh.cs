@@ -17,6 +17,10 @@ namespace XREngine.Rendering.Models
     {
         private SortedSet<SubMeshLOD> _lods = new(new LODSorter());
         private MeshOptimizerSubMeshSettings _meshOptimizer = new();
+        private string _importedEntityIdentity = string.Empty;
+        private bool _importedEntityIdentityIsStable;
+        public string ImportedEntityIdentity { get => _importedEntityIdentity; set => SetField(ref _importedEntityIdentity, value ?? string.Empty); }
+        public bool ImportedEntityIdentityIsStable { get => _importedEntityIdentityIsStable; set => SetField(ref _importedEntityIdentityIsStable, value); }
 
         [MemoryPackIgnore]
         public SortedSet<SubMeshLOD> LODs
@@ -39,8 +43,14 @@ namespace XREngine.Rendering.Models
         {
             SortedSet<SubMeshLOD> orderedLODs = new(new LODSorter());
             if (lods is not null)
+            {
+                int ordinal = 0;
                 foreach (SubMeshLOD lod in lods)
+                {
+                    EnsureStableSortKey(lod, ordinal++);
                     orderedLODs.Add(lod);
+                }
+            }
 
             SetField(ref _lods, orderedLODs, nameof(LODs));
         }
@@ -121,8 +131,12 @@ namespace XREngine.Rendering.Models
 
         public SubMesh(IEnumerable<SubMeshLOD> lods)
         {
+            int ordinal = 0;
             foreach (SubMeshLOD lod in lods)
+            {
+                EnsureStableSortKey(lod, ordinal++);
                 LODs.Add(lod);
+            }
             Bounds = CalculateBoundingBox();
             DetermineRootBone();
         }
@@ -138,6 +152,16 @@ namespace XREngine.Rendering.Models
                     bounds = bounds?.ExpandedToInclude(lod.Mesh.Bounds) ?? lod.Mesh.Bounds;
             return bounds ?? new AABB(Vector3.Zero, Vector3.Zero);
         }
+
+        private static void EnsureStableSortKey(SubMeshLOD lod, int ordinal)
+        {
+            if (!string.IsNullOrWhiteSpace(lod.StableSortKey))
+                return;
+
+            string meshName = lod.Mesh?.Name ?? string.Empty;
+            string materialName = lod.Material?.Name ?? string.Empty;
+            lod.StableSortKey = $"manual:{meshName}:{materialName}:{ordinal:D8}";
+        }
     }
 
     public class LODSorter : IComparer<SubMeshLOD>
@@ -151,7 +175,15 @@ namespace XREngine.Rendering.Models
             if (y is null)
                 return 1;
 
-            return x.MaxVisibleDistance.CompareTo(y.MaxVisibleDistance);
+            int distanceComparison = x.MaxVisibleDistance.CompareTo(y.MaxVisibleDistance);
+            if (distanceComparison != 0)
+                return distanceComparison;
+
+            int keyComparison = string.CompareOrdinal(x.StableSortKey, y.StableSortKey);
+            if (keyComparison != 0)
+                return keyComparison;
+
+            return string.CompareOrdinal(x.Mesh?.Name, y.Mesh?.Name);
         }
     }
 }

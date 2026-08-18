@@ -2,11 +2,12 @@
 
 Last Updated: 2026-08-17
 Owner: Rendering / Frame Scheduling / Vulkan
-Status: Proposed final architecture; implementation not started
+Status: Paused after Phase 0 measurements — complete the meshlet import/production prerequisite before Phase 1
 Priority: High; successor to the prepared-cohort bridge
 
 Related current architecture and evidence:
 
+- [Meshlet import cooking and production readiness prerequisite](../gpu/meshlet-import-cooking-and-production-readiness-todo.md)
 - [Vulkan command-recording optimization ledger](vulkan-command-recording-architecture-optimization-todo.md)
 - [CPU-direct rendering plan](cpu-direct-fast-path-todo.md)
 - [Mesh-submission strategy contract](../../../../architecture/rendering/mesh-submission-strategies.md)
@@ -16,6 +17,21 @@ Related current architecture and evidence:
 - [GPU meshlet zero-readback rendering design](../../../design/rendering/gpu-meshlet-zero-readback-rendering-design.md)
 - [Next-frame package handoff](../../../progress/rendering/next-frame-preparation-and-collect-visible-handoff-2026-07-29.md)
 - [Sponza camera-motion investigation](../../../investigations/rendering/vulkan-camera-motion-black-flicker-2026-08-10.md)
+
+## Implementation Hold
+
+Implementation is intentionally paused after Phase 0 measurement and source
+reconciliation. Complete the
+[meshlet import cooking and production readiness TODO](../gpu/meshlet-import-cooking-and-production-readiness-todo.md)
+before beginning Phase 1 below. The prerequisite moves LOD/meshlet generation
+into first import, persists it through normal mesh/model caches, removes
+cooking/hash/file work from rendering, introduces explicit mixed meshlet and
+traditional GPU bins, and proves real Vulkan EXT indirect-count mesh-task
+submission on supported hardware.
+
+Phase 0 evidence work in this tracker may continue when matching hardware or
+trace privileges become available, but no resident-stream implementation phase
+should begin until the prerequisite's resume gate is satisfied.
 
 ## Decision
 
@@ -1001,9 +1017,13 @@ but must not collapse back into one monolithic frame-loop class.
 
 ### Phase 0 - Freeze evidence and contracts
 
-Checkpoint (2026-08-17): laptop measurement and source-audit results are in
+Checkpoint (2026-08-17): original-laptop measurement, third-laptop checkpoint,
+and source-audit results are in
 [the Phase 0 investigation](../../../investigations/rendering/vulkan-resident-draw-stream-phase0-2026-08-17.md).
-Phase 0 remains open for the matched desktop run, elevated scheduler trace,
+The third-laptop run is recorded separately because its commit, workload
+identity, power policy, and observed workload shape do not match the accepted
+original-laptop baseline. Phase 0 remains open for a same-commit/same-workload
+machine matrix including the desktop, elevated scheduler trace,
 three-view/RenderDoc evidence, unavailable meshlet paths, and removal of the
 instrumented path's synchronous one-shot fence wait.
 

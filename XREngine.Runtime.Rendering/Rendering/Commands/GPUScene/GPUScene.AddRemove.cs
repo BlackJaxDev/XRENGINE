@@ -534,16 +534,9 @@ namespace XREngine.Rendering.Commands
 
         private void EnsureMeshletRangeCapacity(uint requiredEntries)
         {
-            XRDataBuffer buffer = MeshletRangeBuffer;
-            if (requiredEntries <= buffer.ElementCount)
-                return;
-
-            uint oldCount = buffer.ElementCount;
-            EnsureSceneBufferCapacity(buffer, requiredEntries, MinMeshDataEntries);
-            for (uint index = oldCount; index < buffer.ElementCount; index++)
-                buffer.SetDataRawAtIndex(index, default(GpuMeshletRange));
-
-            _meshletRangeDirtyRange.Mark(oldCount, buffer.ElementCount - oldCount);
+            // Capacity belongs to a coherent meshlet-buffer generation. It is sized
+            // and uploaded by SwapCommandBuffers, not resized under an in-flight draw.
+            _ = requiredEntries;
         }
 
         private void EnsureMeshletDescriptorCapacity(uint requiredEntries)
@@ -566,15 +559,8 @@ namespace XREngine.Rendering.Commands
 
         private void FlushMeshletRangeDirtyRange()
         {
-            if (!_meshletRangeDirtyRange.HasValue || _meshletRangeBuffer is null)
-                return;
-
-            uint min = _meshletRangeDirtyRange.Min;
-            uint maxExclusive = _meshletRangeDirtyRange.MaxExclusive.ClampMax(_meshletRangeBuffer.ElementCount);
-            if (min < maxExclusive)
-                PushBufferElementRange(_meshletRangeBuffer, min, maxExclusive - min);
-
-            _meshletRangeDirtyRange.Clear();
+            // See EnsureMeshletRangeCapacity: the range table is published with its
+            // descriptor/index siblings as one generation at the frame boundary.
         }
 
         public bool TryGetMeshletRange(uint meshDataId, out GpuMeshletRange range)
@@ -636,11 +622,13 @@ namespace XREngine.Rendering.Commands
             EnsureMeshletRangeCapacity(meshID + 1u);
             bool changed = !_meshletRangesByMeshId.TryGetValue(meshID, out GpuMeshletRange existing) || !existing.Equals(range);
             _meshletRangesByMeshId[meshID] = range;
+            if (range.HasMeshlets)
+                _meshletIneligibleResidentMeshIds.TryRemove(meshID, out _);
+            else
+                _meshletIneligibleResidentMeshIds.TryAdd(meshID, 0);
             if (!changed)
                 return;
-
-            MeshletRangeBuffer.SetDataRawAtIndex(meshID, range);
-            _meshletRangeDirtyRange.Mark(meshID);
+            _meshletBufferGenerationDirty = true;
         }
 
         private void SetEmptyMeshletRange(uint meshID, ulong freshnessHash)
@@ -661,11 +649,11 @@ namespace XREngine.Rendering.Commands
             bool changed = _meshletRangesByMeshId.TryGetValue(meshID, out GpuMeshletRange existing) && !existing.Equals(default(GpuMeshletRange));
             _meshletRangesByMeshId.Remove(meshID);
             _meshletFreshnessByMeshId.Remove(meshID);
+            _meshletValidationRevisionByMeshId.Remove(meshID);
+            _meshletIneligibleResidentMeshIds.TryRemove(meshID, out _);
             if (!changed)
                 return;
-
-            MeshletRangeBuffer.SetDataRawAtIndex(meshID, default(GpuMeshletRange));
-            _meshletRangeDirtyRange.Mark(meshID);
+            _meshletBufferGenerationDirty = true;
         }
 
         private void EnsureMeshletRangeForMesh(uint meshID, XRMesh mesh)
@@ -675,25 +663,29 @@ namespace XREngine.Rendering.Commands
 
             EnsureMeshletRangeCapacity(meshID + 1u);
 
+            // Meshlet payloads are derived asset data. Import/cache hydration validates
+            // their source identity and compatibility before the mesh reaches GPUScene;
+            // this render-adjacent registration path must remain O(1) and must never
+            // rehash source geometry, touch disk, or invoke the cooker.
             MeshletPayload? payload = mesh.MeshletPayload;
-            bool fresh = payload?.IsFreshForSourceMesh(mesh) == true;
-            if (IsMeshletRangeCurrent(meshID, payload, fresh))
+            bool compatible = payload?.IsValidatedFor(mesh) == true && payload.OwnerValidationToken != 0UL;
+            if (IsMeshletRangeCurrent(meshID, payload, compatible))
             {
                 RuntimeEngine.Rendering.Stats.GpuMeshlets.RecordGpuMeshletCacheHit(1);
                 return;
             }
 
-            if (!fresh || payload is not { HasMeshlets: true })
+            if (payload is not { HasMeshlets: true } || !compatible)
             {
                 if (payload is null)
                 {
                     RuntimeEngine.Rendering.Stats.GpuMeshlets.RecordGpuMeshletCacheMiss(1);
                     Debug.Meshes($"Meshlet.CacheMissing meshDataId={meshID} source='{mesh.Name ?? "<unnamed>"}' cachePath='<runtime-meshlet-payload>' commandCount={TotalCommandCount}");
                 }
-                else if (!fresh)
+                else if (!compatible)
                 {
                     RuntimeEngine.Rendering.Stats.GpuMeshlets.RecordGpuMeshletCacheStale(1);
-                    Debug.Meshes($"Meshlet.CacheStale meshDataId={meshID} source='{mesh.Name ?? "<unnamed>"}' cachePath='<runtime-meshlet-payload>' commandCount={TotalCommandCount}");
+                    Debug.MeshesWarning($"Meshlet.CacheIncompatible meshDataId={meshID} source='{mesh.Name ?? "<unnamed>"}' cachePath='<attached-payload>' commandCount={TotalCommandCount}");
                 }
                 else
                 {
@@ -701,7 +693,8 @@ namespace XREngine.Rendering.Commands
                     Debug.Meshes($"Meshlet.CacheMissing meshDataId={meshID} source='{mesh.Name ?? "<unnamed>"}' cachePath='<runtime-meshlet-payload>' reason='payload has no meshlets' commandCount={TotalCommandCount}");
                 }
 
-                SetEmptyMeshletRange(meshID, fresh && payload is not null ? payload.FreshnessHash : 0UL);
+                SetEmptyMeshletRange(meshID, payload?.FreshnessHash ?? 0UL);
+                _meshletValidationRevisionByMeshId[meshID] = payload?.ValidationRevision ?? 0L;
                 return;
             }
 
@@ -721,30 +714,18 @@ namespace XREngine.Rendering.Commands
             uint vertexIndexCount = (uint)payload.VertexIndices.Length;
             uint triangleByteCount = (uint)payload.TriangleIndices.Length;
 
-            EnsureMeshletDescriptorCapacity(meshletOffset + meshletCount);
-            EnsureMeshletVertexIndexCapacity(vertexIndexOffset + vertexIndexCount);
-            EnsureMeshletTriangleIndexCapacity(triangleByteOffset + triangleByteCount);
-
             for (int index = 0; index < payload.Meshlets.Length; index++)
             {
                 GpuMeshletDescriptor descriptor = ToGpuSceneMeshletDescriptor(payload.Meshlets[index], vertexIndexOffset, triangleByteOffset);
-                MeshletDescriptorBuffer.SetDataRawAtIndex(meshletOffset + (uint)index, descriptor);
                 _meshletDescriptors.Add(descriptor);
             }
 
-            for (int index = 0; index < payload.VertexIndices.Length; index++)
-                MeshletVertexIndexBuffer.SetDataRawAtIndex(vertexIndexOffset + (uint)index, payload.VertexIndices[index]);
             _meshletVertexIndices.AddRange(payload.VertexIndices);
 
-            for (int index = 0; index < payload.TriangleIndices.Length; index++)
-                MeshletTriangleIndexBuffer.SetDataRawAtIndex(triangleByteOffset + (uint)index, payload.TriangleIndices[index]);
             _meshletTriangleIndices.AddRange(payload.TriangleIndices);
 
-            PushBufferElementRange(MeshletDescriptorBuffer, meshletOffset, meshletCount);
-            PushBufferElementRange(MeshletVertexIndexBuffer, vertexIndexOffset, vertexIndexCount);
-            PushBufferElementRange(MeshletTriangleIndexBuffer, triangleByteOffset, triangleByteCount);
-
             _meshletFreshnessByMeshId[meshID] = payload.FreshnessHash;
+            _meshletValidationRevisionByMeshId[meshID] = payload.ValidationRevision;
             SetMeshletRange(meshID, new GpuMeshletRange
             {
                 MeshletOffset = meshletOffset,
@@ -752,6 +733,7 @@ namespace XREngine.Rendering.Commands
                 VertexIndexOffset = vertexIndexOffset,
                 TriangleIndexOffset = triangleByteOffset,
             });
+            _meshletBufferGenerationDirty = true;
             RuntimeEngine.Rendering.Stats.GpuMeshlets.RecordGpuMeshletCacheHit(1);
             RuntimeEngine.Rendering.Stats.GpuMeshlets.RecordGpuMeshletBufferBytesResident(MeshletBufferBytesResident);
             Debug.Meshes(
@@ -769,117 +751,15 @@ namespace XREngine.Rendering.Commands
             if (payload is null)
                 return existingFreshness == 0UL && !existingRange.HasMeshlets;
 
-            if (!fresh || existingFreshness != payload.FreshnessHash)
+            if (!fresh || existingFreshness != payload.FreshnessHash
+                || !_meshletValidationRevisionByMeshId.TryGetValue(meshID, out long existingRevision)
+                || existingRevision != payload.ValidationRevision)
                 return false;
 
             return payload.HasMeshlets
                 ? existingRange.MeshletCount == (uint)payload.Meshlets.Length
                 : !existingRange.HasMeshlets;
         }
-
-        public uint EnsureRuntimeMeshletPayloadsForMeshletDispatch()
-        {
-            uint repaired = 0u;
-            MeshletGenerationSettings? repairSettings = null;
-
-            using (_lock.EnterScope())
-            {
-                foreach ((uint meshID, XRMesh? mesh) in _idToMesh)
-                {
-                    if (meshID == 0u || mesh is null)
-                        continue;
-
-                    if (_activeAtlasTiers.TryGetValue(mesh, out EAtlasTier tier) && tier == EAtlasTier.Streaming)
-                    {
-                        SetEmptyMeshletRange(meshID, 0UL);
-                        continue;
-                    }
-
-                    MeshletPayload? payload = mesh.MeshletPayload;
-                    bool fresh = payload?.IsFreshForSourceMesh(mesh) == true;
-                    if (payload is not null && IsMeshletRangeCurrent(meshID, payload, fresh))
-                        continue;
-
-                    if (payload is null || !fresh)
-                    {
-                        if (_runtimeMeshletRepairFailedMeshIds.ContainsKey(meshID))
-                        {
-                            SetEmptyMeshletRange(meshID, 0UL);
-                            continue;
-                        }
-
-                        repairSettings ??= CreateRuntimeMeshletRepairSettings();
-
-                        // Disk cache: try to load a previously persisted payload
-                        // matching the same identity + settings + meshoptimizer
-                        // version. This avoids the multi-second per-submesh
-                        // meshlet rebuild on shader-pipeline toggle / restart.
-                        if (MeshletPayloadDiskCache.TryLoad(mesh, repairSettings, null, out MeshletPayload? cached) && cached is not null)
-                        {
-                            mesh.MeshletPayload = cached;
-                            payload = cached;
-                            fresh = true;
-                            repaired++;
-                            RuntimeEngine.Rendering.Stats.GpuMeshlets.RecordGpuMeshletCacheHit(1);
-
-                            if (_runtimeMeshletRepairLogBudget > 0 &&
-                                Interlocked.Decrement(ref _runtimeMeshletRepairLogBudget) >= 0)
-                            {
-                                Debug.Meshes(
-                                    $"Meshlet.RuntimePayloadCacheHit meshDataId={meshID} source='{mesh.Name ?? "<unnamed>"}' meshletCount={payload.Meshlets.Length}");
-                            }
-
-                            EnsureMeshletRangeForMesh(meshID, mesh);
-                            continue;
-                        }
-
-                        try
-                        {
-                            payload = mesh.GetOrCreateMeshletPayload(repairSettings);
-                            fresh = payload.IsFreshForSourceMesh(mesh);
-                            repaired++;
-
-                            // Persist freshly built payload for the next run.
-                            MeshletPayloadDiskCache.TryStore(mesh, repairSettings, null, payload);
-
-                            if (_runtimeMeshletRepairLogBudget > 0 &&
-                                Interlocked.Decrement(ref _runtimeMeshletRepairLogBudget) >= 0)
-                            {
-                                Debug.Meshes(
-                                    $"Meshlet.RuntimePayloadBuilt meshDataId={meshID} source='{mesh.Name ?? "<unnamed>"}' meshletCount={payload.Meshlets.Length} vertexIndexCount={payload.VertexIndices.Length} triangleByteCount={payload.TriangleIndices.Length}");
-                            }
-                        }
-                        catch (Exception ex) when (ex is DllNotFoundException or EntryPointNotFoundException or BadImageFormatException or InvalidOperationException or ArgumentException or OverflowException)
-                        {
-                            _runtimeMeshletRepairFailedMeshIds.TryAdd(meshID, 0);
-                            RuntimeEngine.Rendering.Stats.GpuMeshlets.RecordGpuMeshletCacheMiss(1);
-                            if (_runtimeMeshletRepairLogBudget > 0 &&
-                                Interlocked.Decrement(ref _runtimeMeshletRepairLogBudget) >= 0)
-                            {
-                                Debug.MeshesWarning(
-                                    $"Meshlet.RuntimePayloadBuildFailed meshDataId={meshID} source='{mesh.Name ?? "<unnamed>"}' reason='{ex.GetType().Name}: {ex.Message}'");
-                            }
-
-                            SetEmptyMeshletRange(meshID, 0UL);
-                            continue;
-                        }
-                    }
-
-                    EnsureMeshletRangeForMesh(meshID, mesh);
-                }
-
-                FlushMeshletRangeDirtyRange();
-            }
-
-            return repaired;
-        }
-
-        private static MeshletGenerationSettings CreateRuntimeMeshletRepairSettings()
-            => new()
-            {
-                Enabled = true,
-                BuildMode = MeshletBuildMode.Dense,
-            };
 
         /// <summary>
         /// Attempts to get the mesh data entry for a given mesh ID.

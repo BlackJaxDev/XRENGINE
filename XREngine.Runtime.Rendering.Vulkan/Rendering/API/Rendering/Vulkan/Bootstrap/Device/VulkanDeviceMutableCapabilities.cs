@@ -18,6 +18,7 @@ internal sealed class VulkanDeviceMutableCapabilities
     internal bool _supportsVulkanTaskShaderFeature;
     internal bool _supportsVulkanMeshShaderFeature;
     internal bool _supportsVulkanMeshTaskIndirectCount;
+    internal VulkanMeshShaderCapabilitySnapshot _meshShaderCapabilitySnapshot;
     internal bool _supportsDescriptorIndexing;
     internal bool _supportsRuntimeDescriptorArray;
     internal bool _supportsDescriptorBindingPartiallyBound;

@@ -97,20 +97,32 @@ namespace XREngine.Rendering.Commands
             // expansion gate runs. Restored in finally so the override never bleeds into other passes
             // or subsequent frames.
             EMeshSubmissionStrategy savedStrategy = MeshSubmissionStrategy;
+            EMeshPrimitivePathPreference savedPrimitivePathPreference = MeshPrimitivePathPreference;
             bool savedUseMeshletPipeline = UseMeshletPipeline;
             bool meshletDebugForced =
                 savedStrategy != EMeshSubmissionStrategy.CpuDirect &&
-                !savedStrategy.IsAnyMeshletStrategy() &&
+                savedPrimitivePathPreference == EMeshPrimitivePathPreference.TraditionalOnly &&
                 GpuBvhDebugSettings.ShouldForceMeshletForDebugDisplay(camera, RenderPass);
 
             if (meshletDebugForced)
             {
-                MeshSubmissionStrategy = ResolveMeshletDebugDisplayStrategy();
+                MeshSubmissionStrategy = ResolveMeshletDebugDisplayStrategy().ToSubmissionMode();
+                MeshPrimitivePathPreference = EMeshPrimitivePathPreference.MeshShaderPreferred;
                 UseMeshletPipeline = true;
             }
 
             try
             {
+            if (MeshPrimitivePathPreference != EMeshPrimitivePathPreference.TraditionalOnly)
+            {
+                bool meshletPipelineReady = _renderManager.TrySealMeshletMaterialTablePipeline(
+                    this,
+                    scene,
+                    RenderPass,
+                    out string? readinessFailure);
+                SealMeshletDirectPipelineReadiness(meshletPipelineReady, readinessFailure);
+            }
+
             using var renderGraphPassScope = RuntimeEngine.Rendering.State.PushRenderGraphPassIndex(RenderPass);
             ResetZeroReadbackProgramPendingState();
             bool useTwoPassGpuHiZ = TryPrepareGpuHiZTwoPass(scene, camera, out GpuHiZDepthInput twoPassDepthInput);
@@ -145,6 +157,7 @@ namespace XREngine.Rendering.Commands
                 if (meshletDebugForced)
                 {
                     MeshSubmissionStrategy = savedStrategy;
+                    MeshPrimitivePathPreference = savedPrimitivePathPreference;
                     UseMeshletPipeline = savedUseMeshletPipeline;
                 }
             }
@@ -806,7 +819,7 @@ namespace XREngine.Rendering.Commands
         {
             using var profilerScope = RuntimeEngine.Profiler.Start("GpuMeshlet.ExpandVisibleMeshlets");
 
-            if (!UseMeshletPipeline && !MeshSubmissionStrategy.IsAnyMeshletStrategy())
+            if (!UseMeshletPipeline && MeshPrimitivePathPreference == EMeshPrimitivePathPreference.TraditionalOnly)
                 return;
 
             if (_expandMeshletsComputeShader is null ||
@@ -1039,6 +1052,9 @@ namespace XREngine.Rendering.Commands
             _materialScatterComputeShader.Uniform(
                 "RejectExactTransparentMultiview",
                 RequiresExactTransparentCandidateRejection ? 1u : 0u);
+            _materialScatterComputeShader.Uniform(
+                "ExcludeMeshletResidentRows",
+                MeshletDirectPipelineReadyThisFrame && !_forceTraditionalMeshletRowsThisFrame ? 1u : 0u);
 
             scene.DrawMetadataBuffer.BindTo(_materialScatterComputeShader, GPUBatchingBindings.MaterialScatterInputCommands);
             scene.MeshDataBuffer.BindTo(_materialScatterComputeShader, GPUBatchingBindings.MaterialScatterMeshData);
@@ -1050,6 +1066,10 @@ namespace XREngine.Rendering.Commands
             _indirectOverflowFlagBuffer?.BindTo(_materialScatterComputeShader, GPUBatchingBindings.MaterialScatterOverflow);
             scene.LodTransitionBuffer.BindTo(_materialScatterComputeShader, GPUBatchingBindings.MaterialScatterLodTransitions);
             _statsBuffer?.BindTo(_materialScatterComputeShader, GPUBatchingBindings.MaterialScatterStats);
+            scene.MeshletRangeBuffer.BindTo(_materialScatterComputeShader, GPUBatchingBindings.MaterialScatterMeshletRanges);
+            _meshletExpansionOverflowFlagBuffer?.BindTo(
+                _materialScatterComputeShader,
+                GPUBatchingBindings.MaterialScatterMeshletExpansionOverflow);
             scene.AllLoadedTransparencyMetadataBuffer.BindTo(
                 _materialScatterComputeShader,
                 GPUTransparencyBindings.MaterialScatterTransparencyMetadata);
@@ -1064,6 +1084,22 @@ namespace XREngine.Rendering.Commands
             AbstractRenderer.Current?.MemoryBarrier(EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.Command);
             LogVulkanCounterDiagnostics("after-material-scatter");
             return true;
+        }
+
+        /// <summary>
+        /// Rebuilds the sealed material-tier stream without the meshlet exclusion
+        /// after direct task/mesh submission failed before it issued work.
+        /// </summary>
+        internal bool RebuildMaterialScatterForTraditionalMeshletFallback(GPUScene scene, string failureReason)
+        {
+            ForceTraditionalMeshletRowsForCurrentSubmission(failureReason);
+            bool dispatched = DispatchMaterialScatter(scene);
+            _zeroReadbackMaterialScatterPreparedThisFrame = dispatched &&
+                _materialTierIndirectDrawBuffer is not null &&
+                _materialTierDrawCountBuffer is not null &&
+                _materialSlotLookupBuffer is not null &&
+                _materialSlotIds.Count > 0;
+            return _zeroReadbackMaterialScatterPreparedThisFrame;
         }
 
         private static bool RequiresActiveMaterialBucketList(EZeroReadbackMaterialDrawPath path)
@@ -2553,11 +2589,18 @@ namespace XREngine.Rendering.Commands
                 emittedIndirectDraws: stats.Drawn,
                 consumedDraws: consumedDrawCount,
                 overflowCount: overflowCount);
-            RuntimeEngine.Rendering.Stats.GpuMeshlets.RecordGpuMeshletTaskStats(
-                stats.MeshletTaskRecordsEmitted,
-                stats.MeshletTaskRecordsFrustumCulled,
-                stats.MeshletTaskRecordsConeCulled,
-                stats.MeshletTaskRecordsHiZCulled);
+            // Vulkan production proof is published only by the completed
+            // fence-delayed readback path. This current-frame diagnostic map
+            // remains useful for non-Vulkan backends, but must not satisfy a
+            // Vulkan zero-readback acceptance gate.
+            if (AbstractRenderer.Current?.BackendId != RendererBackendId.Vulkan)
+            {
+                RuntimeEngine.Rendering.Stats.GpuMeshlets.RecordGpuMeshletTaskStats(
+                    stats.MeshletTaskRecordsEmitted,
+                    stats.MeshletTaskRecordsFrustumCulled,
+                    stats.MeshletTaskRecordsConeCulled,
+                    stats.MeshletTaskRecordsHiZCulled);
+            }
 
             if (IsDebugLoggingEnabledForPass())
             {

@@ -4,6 +4,7 @@ using SimpleScene.Util.ssBVH;
 using System;
 using System.ComponentModel;
 using System.Numerics;
+using System.Threading;
 using XREngine.Core.Files;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
@@ -97,13 +98,38 @@ public partial class XRMesh : XRAsset
     private uint _texCoordCount;
     public uint TexCoordCount { get => _texCoordCount; set => SetField(ref _texCoordCount, value); }
 
-    public int VertexCount { get; internal set; }
+    private int _vertexCount;
+    public int VertexCount
+    {
+        get => _vertexCount;
+        internal set
+        {
+            if (!SetField(ref _vertexCount, value))
+                return;
+            AdvanceGeometryRevision();
+        }
+    }
+
+    private long _geometryRevision = 1;
+    /// <summary>Monotonically advances whenever mesh geometry or topology changes.</summary>
+    [Browsable(false)]
+    [MemoryPackIgnore]
+    [YamlIgnore]
+    public long GeometryRevision => Interlocked.Read(ref _geometryRevision);
 
     [YamlIgnore]
     private Vertex[] _vertices = [];
     [Browsable(false)]
     [YamlIgnore]
-    public Vertex[] Vertices { get => _vertices; private set => SetField(ref _vertices, value); }
+    public Vertex[] Vertices
+    {
+        get => _vertices;
+        private set
+        {
+            SetField(ref _vertices, value);
+            AdvanceGeometryRevision();
+        }
+    }
 
     // Primitive index storage
     private List<int>? _points;
@@ -123,6 +149,7 @@ public partial class XRMesh : XRAsset
             InvalidateIndexBufferCache(EPrimitiveType.Points);
             InvalidateIndexBufferCache(EPrimitiveType.Patches);
             SetField(ref _points, value);
+            AdvanceGeometryRevision();
         }
     }
 
@@ -135,6 +162,7 @@ public partial class XRMesh : XRAsset
             InvalidateIndexBufferCache(EPrimitiveType.Lines);
             InvalidateIndexBufferCache(EPrimitiveType.Patches);
             SetField(ref _lines, value);
+            AdvanceGeometryRevision();
         }
     }
 
@@ -148,6 +176,7 @@ public partial class XRMesh : XRAsset
             InvalidateIndexBufferCache(EPrimitiveType.Triangles);
             InvalidateIndexBufferCache(EPrimitiveType.Patches);
             SetField(ref _triangles, value);
+            AdvanceGeometryRevision();
         }
     }
 
@@ -155,7 +184,11 @@ public partial class XRMesh : XRAsset
     public EPrimitiveType Type
     {
         get => _type;
-        set => SetField(ref _type, value);
+        set
+        {
+            SetField(ref _type, value);
+            AdvanceGeometryRevision();
+        }
     }
 
     private int _patchVertices = 3;
@@ -167,6 +200,7 @@ public partial class XRMesh : XRAsset
             int normalized = value < 1 ? 1 : value;
             InvalidateIndexBufferCache(EPrimitiveType.Patches);
             SetField(ref _patchVertices, normalized);
+            AdvanceGeometryRevision();
         }
     }
 
@@ -352,8 +386,15 @@ public partial class XRMesh : XRAsset
         get => _buffers;
         internal set
         {
-            _buffers = value ?? [];
+            BufferCollection next = value ?? [];
+            if (ReferenceEquals(_buffers, next))
+                return;
+
+            DetachGeometryBufferRevisionTracking(_buffers);
+            SetField(ref _buffers, next);
+            AttachGeometryBufferRevisionTracking(_buffers);
             OnBuffersAssigned();
+            AdvanceGeometryRevision();
         }
     }
 
@@ -375,8 +416,7 @@ public partial class XRMesh : XRAsset
     private readonly Lock _boundsLock = new();
 
     public XRMesh()
-    {
-    }
+        => AttachGeometryBufferRevisionTracking(_buffers);
 
     protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
     {
@@ -395,7 +435,10 @@ public partial class XRMesh : XRAsset
     }
 
     protected override void OnDestroying()
-        => Buffers?.DisposeOwnedBuffers();
+    {
+        DetachGeometryBufferRevisionTracking(Buffers);
+        Buffers?.DisposeOwnedBuffers();
+    }
 
     private void OnBuffersAssigned()
     {
@@ -514,4 +557,88 @@ public partial class XRMesh : XRAsset
             }
         }
     }
+
+    private readonly List<XRDataBuffer> _geometryRevisionBuffers = [];
+
+    private void AttachGeometryBufferRevisionTracking(BufferCollection buffers)
+    {
+        buffers.Added += OnGeometryBufferAdded;
+        buffers.Removed += OnGeometryBufferRemoved;
+        buffers.Set += OnGeometryBufferReplaced;
+        foreach (KeyValuePair<string, XRDataBuffer> entry in buffers)
+            TrackGeometryBuffer(entry.Key, entry.Value);
+    }
+
+    private void DetachGeometryBufferRevisionTracking(BufferCollection buffers)
+    {
+        buffers.Added -= OnGeometryBufferAdded;
+        buffers.Removed -= OnGeometryBufferRemoved;
+        buffers.Set -= OnGeometryBufferReplaced;
+        for (int index = _geometryRevisionBuffers.Count - 1; index >= 0; index--)
+        {
+            XRDataBuffer buffer = _geometryRevisionBuffers[index];
+            buffer.RevisionCommitted -= OnGeometryBufferRevisionCommitted;
+        }
+        _geometryRevisionBuffers.Clear();
+    }
+
+    private void OnGeometryBufferAdded(string key, XRDataBuffer buffer)
+    {
+        TrackGeometryBuffer(key, buffer);
+        if (IsGeometryBufferKey(key))
+            AdvanceGeometryRevision();
+    }
+
+    private void OnGeometryBufferRemoved(string key, XRDataBuffer buffer)
+    {
+        if (IsGeometryBufferKey(key))
+        {
+            UntrackGeometryBufferIfUnused(buffer);
+            AdvanceGeometryRevision();
+        }
+    }
+
+    private void OnGeometryBufferReplaced(string key, XRDataBuffer previous, XRDataBuffer current)
+    {
+        if (!IsGeometryBufferKey(key))
+            return;
+
+        UntrackGeometryBufferIfUnused(previous);
+        TrackGeometryBuffer(key, current);
+        AdvanceGeometryRevision();
+    }
+
+    private void TrackGeometryBuffer(string key, XRDataBuffer buffer)
+    {
+        if (!IsGeometryBufferKey(key) || _geometryRevisionBuffers.Contains(buffer))
+            return;
+
+        _geometryRevisionBuffers.Add(buffer);
+        buffer.RevisionCommitted += OnGeometryBufferRevisionCommitted;
+    }
+
+    private void UntrackGeometryBufferIfUnused(XRDataBuffer buffer)
+    {
+        foreach (KeyValuePair<string, XRDataBuffer> entry in Buffers)
+            if (ReferenceEquals(entry.Value, buffer) && IsGeometryBufferKey(entry.Key))
+                return;
+
+        if (_geometryRevisionBuffers.Remove(buffer))
+            buffer.RevisionCommitted -= OnGeometryBufferRevisionCommitted;
+    }
+
+    private void OnGeometryBufferRevisionCommitted(XRDataBuffer buffer, ulong revision)
+    {
+        _ = buffer;
+        _ = revision;
+        AdvanceGeometryRevision();
+    }
+
+    private static bool IsGeometryBufferKey(string key)
+        => key == ECommonBufferType.Position.ToString()
+           || key == ECommonBufferType.Normal.ToString()
+           || key == ECommonBufferType.Tangent.ToString()
+           || key == ECommonBufferType.InterleavedVertex.ToString()
+           || key.StartsWith(ECommonBufferType.Color.ToString(), StringComparison.Ordinal)
+           || key.StartsWith(ECommonBufferType.TexCoord.ToString(), StringComparison.Ordinal);
 }

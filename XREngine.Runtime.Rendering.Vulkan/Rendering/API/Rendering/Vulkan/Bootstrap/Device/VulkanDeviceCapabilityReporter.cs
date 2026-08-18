@@ -235,6 +235,7 @@ internal static class VulkanDeviceCapabilityReporter
         bool Supports(EVulkanDeviceCapability capability) => deviceContext.Capabilities.Supports(capability);
         VulkanDeviceMutableCapabilities mutable = deviceContext.MutableCapabilities;
         VulkanDeviceExtensionFunctions functions = deviceContext.ExtensionFunctions;
+        VulkanMeshShaderCapabilitySnapshot meshShaderCapability = mutable._meshShaderCapabilitySnapshot;
         bool SupportsDynamicRendering = Supports(EVulkanDeviceCapability.DynamicRendering);
         bool SupportsSynchronization2 = Supports(EVulkanDeviceCapability.Synchronization2);
         bool SupportsMaintenance4 = Supports(EVulkanDeviceCapability.Maintenance4);
@@ -253,7 +254,7 @@ internal static class VulkanDeviceCapabilityReporter
         bool SupportsVulkanFragmentShadingRateAttachment = mutable._supportsVulkanFragmentShadingRateAttachment;
         bool SupportsVulkanFragmentDensityMap = Supports(EVulkanDeviceCapability.FragmentDensityMap);
         bool SupportsVulkanFragmentDensityMapDynamic = mutable._supportsVulkanFragmentDensityMapDynamic;
-        bool SupportsVulkanMeshTaskIndirectCount = Supports(EVulkanDeviceCapability.MeshShader) && mutable._supportsVulkanMeshTaskIndirectCount && functions.ExtMeshShader is not null;
+        bool SupportsVulkanMeshTaskIndirectCount = Supports(EVulkanDeviceCapability.MeshShader) && mutable._supportsVulkanMeshTaskIndirectCount && meshShaderCapability.HasPortableMeshletProfile && functions.ExtMeshShader is not null;
         bool SupportsExternalMemoryWin32 = mutable._supportsExternalMemoryWin32 && functions.KhrExternalMemoryWin32 is not null;
         bool SupportsExternalSemaphoreWin32 = mutable._supportsExternalSemaphoreWin32 && functions.KhrExternalSemaphoreWin32 is not null;
         bool SupportsMemoryBudget = Supports(EVulkanDeviceCapability.MemoryBudget);
@@ -528,8 +529,8 @@ internal static class VulkanDeviceCapabilityReporter
             "VK_EXT_mesh_shader",
             "taskShader+meshShader",
             "MeshletDispatch",
-            $"task={deviceContext.MutableCapabilities._supportsVulkanTaskShaderFeature};mesh={deviceContext.MutableCapabilities._supportsVulkanMeshShaderFeature}",
-            SupportsVulkanMeshTaskIndirectCount ? "Mesh/task shader capability loaded; production meshlet dispatch remains profile-gated." : "Mesh/task shader path unavailable.");
+            $"advertised={meshShaderCapability.ExtensionAdvertised};requested={meshShaderCapability.ExtensionRequested};enabled={meshShaderCapability.ExtensionEnabled};taskAdvertised={meshShaderCapability.TaskShaderAdvertised};meshAdvertised={meshShaderCapability.MeshShaderAdvertised};taskEnabled={meshShaderCapability.TaskShaderEnabled};meshEnabled={meshShaderCapability.MeshShaderEnabled};queriesAdvertised={meshShaderCapability.MeshShaderQueriesAdvertised};queriesEnabled={meshShaderCapability.MeshShaderQueriesEnabled};commandsLoaded={meshShaderCapability.CommandTableLoaded};taskInvocations={meshShaderCapability.Properties.MaxTaskWorkGroupInvocations};taskPayload={meshShaderCapability.Properties.MaxTaskPayloadSize};taskShared={meshShaderCapability.Properties.MaxTaskSharedMemorySize};taskPayloadShared={meshShaderCapability.Properties.MaxTaskPayloadAndSharedMemorySize};meshInvocations={meshShaderCapability.Properties.MaxMeshWorkGroupInvocations};outputVertices={meshShaderCapability.Properties.MaxMeshOutputVertices};outputPrimitives={meshShaderCapability.Properties.MaxMeshOutputPrimitives};meshOutputMemory={meshShaderCapability.Properties.MaxMeshOutputMemorySize};meshPayloadOutputMemory={meshShaderCapability.Properties.MaxMeshPayloadAndOutputMemorySize};portableProfile={meshShaderCapability.HasPortableMeshletProfile}",
+            SupportsVulkanMeshTaskIndirectCount ? "Mesh/task shader capability loaded; production meshlet dispatch remains profile-gated." : meshShaderCapability.GetDispatchFailureReason());
 
         VulkanDeviceCapabilityReporter.LogCapability(
             "DrawIndirectCount",

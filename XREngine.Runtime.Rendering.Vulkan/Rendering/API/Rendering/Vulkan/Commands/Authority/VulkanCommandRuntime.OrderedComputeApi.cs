@@ -175,7 +175,9 @@ internal sealed partial class VulkanCommandRuntime
     /// <summary>Publishes a validated mesh-task indirect-count operation into the immutable frame stream.</summary>
     internal bool TryEnqueueMeshTaskIndirectCount(
         VulkanWrapperLookupPort wrapperLookup,
+        VulkanDescriptorManager descriptors,
         VulkanFrameOperationQueue queue,
+        XRRenderProgram program,
         XRDataBuffer indirect,
         XRDataBuffer count,
         uint maxDrawCount,
@@ -193,10 +195,16 @@ internal sealed partial class VulkanCommandRuntime
             failureReason = "VK_EXT_mesh_shader indirect-count dispatch is unavailable.";
             return false;
         }
-        if (indirect is null || count is null || maxDrawCount == 0 || stride == 0 ||
+        if (program is null || indirect is null || count is null || maxDrawCount == 0 || stride == 0 ||
             ((ulong)byteOffset & 3UL) != 0 || ((ulong)countByteOffset & 3UL) != 0)
         {
             failureReason = "Mesh-task indirect-count dispatch has invalid buffers or alignment.";
+            return false;
+        }
+        if (wrapperLookup.GetOrCreate(program, generateNow: false) is not VkRenderProgram vkProgram ||
+            !vkProgram.IsLinked || vkProgram.PipelineLayout.Handle == 0)
+        {
+            failureReason = "Mesh-task graphics program is not linked with a Vulkan pipeline layout.";
             return false;
         }
         if (!TryGetComputeBuffer(wrapperLookup, indirect, BufferUsageFlags.IndirectBufferBit, allowSynchronousUpload, out VkDataBuffer indirectOwner, out _) ||
@@ -216,8 +224,35 @@ internal sealed partial class VulkanCommandRuntime
             return false;
         }
 
+        VulkanMeshProducerSnapshot producer = CaptureIndirectProducerSnapshot(ResolveCurrentDrawTarget());
+        VulkanBindlessMaterialDescriptorBinding? bindlessMaterialTextures =
+            descriptors.CaptureGlobalMaterialTextureDescriptorBindingForNextFrameOp();
+        if (bindlessMaterialTextures is { } binding &&
+            !ReferenceEquals(binding.Program, vkProgram))
+        {
+            failureReason = "The active bindless material descriptor scope belongs to a different mesh-task program.";
+            return false;
+        }
+
+        ComputeDispatchSnapshot programBindingSnapshot =
+            vkProgram.CaptureComputeSnapshot();
+        if (!vkProgram.ValidateComputeSnapshot(
+                programBindingSnapshot,
+                out string? bindingFailure))
+        {
+            failureReason =
+                $"Mesh-task program bindings are incomplete: {bindingFailure ?? "unknown binding failure"}.";
+            return false;
+        }
+        programBindingSnapshot = programBindingSnapshot.CreateSealedCopy();
+
         queue.EnqueuePrepared(VulkanFrameOperationSemantics.Prepare(
-            new MeshTaskDispatchIndirectCountOp(passIndex, indirectOwner, countOwner, maxDrawCount, stride, byteOffset, countByteOffset, null, context),
+            // Mesh-task work is recorded later, after the render pass has moved on.
+            // Capture the material table now, while the caller's program/binding is
+            // still authoritative, exactly as traditional indirect draws do. The
+            // primary-plan admission phase resolves the exact target signature and
+            // replaces this empty pipeline before command-buffer recording begins.
+            new MeshTaskDispatchIndirectCountOp(passIndex, vkProgram, vkProgram.LinkGeneration, programBindingSnapshot, producer, default, indirectOwner, countOwner, maxDrawCount, stride, byteOffset, countByteOffset, bindlessMaterialTextures, context),
             passIndex));
         return true;
     }

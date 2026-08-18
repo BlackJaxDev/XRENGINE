@@ -1,3 +1,5 @@
+using Silk.NET.Vulkan;
+
 namespace XREngine.Rendering.Vulkan;
 
 /// <summary>
@@ -304,6 +306,45 @@ internal sealed class FrameOperationStream
     internal ref readonly MeshDrawPayload GetMeshDraw(int index) => ref _payloads.MeshDraws[RequireKind(index, EVulkanPrimaryPlanNodeKind.MeshDraw).PayloadIndex];
     internal ref readonly IndirectDrawPayload GetIndirectDraw(int index) => ref _payloads.IndirectDraws[RequireKind(index, EVulkanPrimaryPlanNodeKind.IndirectDraw).PayloadIndex];
     internal ref readonly MeshTaskDispatchIndirectCountPayload GetMeshTask(int index) => ref _payloads.MeshTasks[RequireKind(index, EVulkanPrimaryPlanNodeKind.MeshTaskDispatchIndirectCount).PayloadIndex];
+
+    /// <summary>
+    /// Replaces the concrete native pipeline of a mesh-task payload at the one
+    /// legal boundary between plan sealing and primary command recording.
+    /// Every producer-owned value is checked so this cannot retarget an
+    /// operation or mix bindings from another sealed operation.
+    /// </summary>
+    internal bool TryAssociateAdmittedMeshTaskPipeline(
+        int index,
+        VkRenderProgram program,
+        ulong programLinkGeneration,
+        ComputeDispatchSnapshot programBindingSnapshot,
+        in VulkanMeshProducerSnapshot producerSnapshot,
+        Pipeline pipeline)
+    {
+        if (pipeline.Handle == 0 ||
+            (uint)index >= (uint)_count ||
+            _headers[index].OpCode != EVulkanPrimaryPlanNodeKind.MeshTaskDispatchIndirectCount)
+        {
+            return false;
+        }
+
+        ref readonly FrameOperationHeader header = ref _headers[index];
+        MeshTaskDispatchIndirectCountPayload payload =
+            _payloads.MeshTasks[header.PayloadIndex];
+        if (!ReferenceEquals(payload.Program, program) ||
+            payload.ProgramLinkGeneration != programLinkGeneration ||
+            !ReferenceEquals(payload.ProgramBindingSnapshot, programBindingSnapshot) ||
+            !payload.ProducerSnapshot.Equals(producerSnapshot))
+        {
+            return false;
+        }
+
+        _payloads.MeshTasks[header.PayloadIndex] = payload with
+        {
+            Pipeline = pipeline,
+        };
+        return true;
+    }
     internal ref readonly ComputeDispatchPayload GetComputeDispatch(int index) => ref _payloads.ComputeDispatches[RequireKind(index, EVulkanPrimaryPlanNodeKind.ComputeDispatch).PayloadIndex];
     internal ref readonly ComputeDispatchIndirectPayload GetComputeDispatchIndirect(int index) => ref _payloads.ComputeDispatchIndirects[RequireKind(index, EVulkanPrimaryPlanNodeKind.ComputeDispatchIndirect).PayloadIndex];
     internal ref readonly BufferCopyPayload GetBufferCopy(int index) => ref _payloads.BufferCopies[RequireKind(index, EVulkanPrimaryPlanNodeKind.BufferCopy).PayloadIndex];
@@ -331,7 +372,7 @@ internal sealed class FrameOperationStream
             case EVulkanPrimaryPlanNodeKind.Query: { var p=(QueryOp)op; _payloads.Queries[i]=new(p.Query,p.Descriptor,p.Operation,p.TimestampStage,p.PointIndex,p.SourceHandles,p.ResultDestination,p.ResultDestinationOffset,p.ResultStride,p.IncludeAvailability); break; }
             case EVulkanPrimaryPlanNodeKind.MeshDraw: _payloads.MeshDraws[i]=new(((MeshDrawOp)op).Draw.CreateSealedCopy()); break;
             case EVulkanPrimaryPlanNodeKind.IndirectDraw: { var p=(IndirectDrawOp)op; _payloads.IndirectDraws[i]=new(p.IndirectBuffer,p.ParameterBuffer,p.MeshRenderer,p.Draw.CreateSealedCopy(),p.DrawCount,p.Stride,p.ByteOffset,p.CountByteOffset,p.UseCount,p.BindlessMaterialTextures,p.SecondaryRecordingContract); break; }
-            case EVulkanPrimaryPlanNodeKind.MeshTaskDispatchIndirectCount: { var p=(MeshTaskDispatchIndirectCountOp)op; _payloads.MeshTasks[i]=new(p.IndirectBuffer,p.CountBuffer,p.MaxDrawCount,p.Stride,p.ByteOffset,p.CountByteOffset,p.BindlessMaterialTextures); break; }
+            case EVulkanPrimaryPlanNodeKind.MeshTaskDispatchIndirectCount: { var p=(MeshTaskDispatchIndirectCountOp)op; _payloads.MeshTasks[i]=new(p.Program,p.ProgramLinkGeneration,p.ProgramBindingSnapshot.CreateSealedCopy(),p.ProducerSnapshot,p.Pipeline,p.IndirectBuffer,p.CountBuffer,p.MaxDrawCount,p.Stride,p.ByteOffset,p.CountByteOffset,p.BindlessMaterialTextures); break; }
             case EVulkanPrimaryPlanNodeKind.ComputeDispatch: { var p=(ComputeDispatchOp)op; _payloads.ComputeDispatches[i]=new(p.Program,p.GroupsX,p.GroupsY,p.GroupsZ,p.Snapshot.CreateSealedCopy()); break; }
             case EVulkanPrimaryPlanNodeKind.ComputeDispatchIndirect: { var p=(ComputeDispatchIndirectOp)op; _payloads.ComputeDispatchIndirects[i]=new(p.Program,p.Snapshot.CreateSealedCopy(),p.ArgumentOwner,p.ArgumentBuffer,p.ArgumentOffset,p.Label); break; }
             case EVulkanPrimaryPlanNodeKind.BufferCopy: { var p=(BufferCopyOp)op; _payloads.BufferCopies[i]=new(p.SourceOwner,p.SourceBuffer,p.SourceOffset,p.DestinationOwner,p.DestinationBuffer,p.DestinationOffset,p.ByteCount,p.Label); break; }

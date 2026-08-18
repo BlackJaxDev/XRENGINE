@@ -125,7 +125,7 @@ public partial class DefaultRenderPipeline : RenderPipeline, ISceneRenderPipelin
         => RuntimeEngine.Rendering.ResolveGpuRenderDispatchPreference(RuntimeEngine.EffectiveSettings.GPURenderDispatch);
 
     protected static EMeshSubmissionStrategy MeshSubmissionStrategy
-        => RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy();
+        => RuntimeEngine.Rendering.ResolveRequestedMeshSubmissionStrategy();
 
     internal static bool UseOpenXrVulkanDesktopStartupSafePath
         => UseOpenXrVulkanDesktopStartupSafePathForViewport(null);

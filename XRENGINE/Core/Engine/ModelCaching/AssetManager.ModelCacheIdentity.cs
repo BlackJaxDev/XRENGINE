@@ -69,6 +69,10 @@ public partial class AssetManager
                 importOptions.CookSettings,
                 out ModelCookOverrideSnapshot cookOverrides))
                 return false;
+            // The same immutable snapshot that participates in the cache variant
+            // must drive the actual cook; fingerprint-only overrides would accept
+            // a distinct policy without ever applying it to imported submeshes.
+            importOptions.CookOverrides = cookOverrides;
 
             ModelCacheSourceIdentity sourceIdentity = ModelCacheSourceIdentityResolver.Resolve(
                 normalizedSourcePath,

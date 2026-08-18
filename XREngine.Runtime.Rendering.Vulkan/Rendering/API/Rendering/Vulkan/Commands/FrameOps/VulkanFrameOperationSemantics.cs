@@ -75,6 +75,7 @@ internal static class VulkanFrameOperationSemantics
             ComputeDispatchIndirectOp computeIndirect => computeIndirect.Snapshot,
             MeshDrawOp draw => draw.Draw.ProgramBindingSnapshot,
             IndirectDrawOp draw => draw.Draw.ProgramBindingSnapshot,
+            MeshTaskDispatchIndirectCountOp meshTask => meshTask.ProgramBindingSnapshot,
             _ => null,
         };
         if (bindings is not null)

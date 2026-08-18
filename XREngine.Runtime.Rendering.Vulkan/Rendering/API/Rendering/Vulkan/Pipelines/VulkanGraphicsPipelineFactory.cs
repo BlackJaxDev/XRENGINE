@@ -78,8 +78,8 @@ internal static unsafe class VulkanGraphicsPipelineFactory
 			GraphicsPipelineCreateInfo pipelineInfo = new()
 			{
 				SType = StructureType.GraphicsPipelineCreateInfo,
-				PVertexInputState = &vertexInput,
-				PInputAssemblyState = &inputAssembly,
+				PVertexInputState = request.IsMeshShaderPipeline ? null : &vertexInput,
+				PInputAssemblyState = request.IsMeshShaderPipeline ? null : &inputAssembly,
 				PViewportState = &viewportState,
 				PRasterizationState = &rasterizer,
 				PMultisampleState = &multisampling,

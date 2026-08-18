@@ -2,7 +2,7 @@
 #extension GL_NV_mesh_shader : require
 
 layout(local_size_x = 32) in;
-layout(triangles, max_vertices = 64, max_primitives = 126) out;
+layout(triangles, max_vertices = 64, max_primitives = 124) out;
 
 const uint GROUP_SIZE = 32u;
 const uint MESHLET_TASK_PREVIOUS_LOD_FLAG = 0x80000000u;
@@ -67,7 +67,7 @@ taskNV in TaskPayload
     GpuMeshletTaskRecord Record;
     uint MeshletIndex;
     uint IsPreviousLod;
-    uint PassFlags;
+    uint TaskPassFlags;
     uint Reserved;
 } IN;
 
@@ -183,7 +183,7 @@ void EmitVertex(uint tid, uint atlasVertexIndex, in DrawMetadata draw, mat4 worl
     FragRenderIdentityId[tid] = draw.RenderIdentityID;
     FragViewIndex[tid] = float(ActiveViewIndex);
     XreFragLodTransitionRole[tid] = IN.IsPreviousLod;
-    XRE_FragMaterialId[tid] = IN.Record.MaterialID != 0u ? IN.Record.MaterialID : draw.MaterialID;
+    XRE_FragMaterialId[tid] = draw.MaterialID;
     PrevFragPos[tid] = previousWorldPosition.xyz;
     XRE_FragStateClassId[tid] = draw.StateClassID;
 }
@@ -196,10 +196,11 @@ void main()
 
     GpuMeshletDescriptor meshlet = Meshlets[meshletIndex];
     DrawMetadata draw = Draws[IN.Record.DrawID];
-    if (draw.MeshID >= uint(MeshData.length()))
+    uint selectedMeshID = IN.Record.MaterialID;
+    if (selectedMeshID >= uint(MeshData.length()))
         return;
 
-    MeshDataEntry meshData = MeshData[draw.MeshID];
+    MeshDataEntry meshData = MeshData[selectedMeshID];
     uint transformID = IN.Record.TransformID != 0u ? IN.Record.TransformID : draw.TransformID;
     mat4 world = WorldMatrices[transformID];
     mat4 previousWorld = PreviousWorldMatrices[transformID];

@@ -295,6 +295,15 @@ public static partial class EditorUnitTests
             public int InstanceCount { get; set; } = 1;
 
             /// <summary>
+            /// Enables deterministic import-time LOD generation for this model. Meshlets are
+            /// cooked for every resulting LOD before the model becomes renderable.
+            /// </summary>
+            public bool GenerateMeshletLods { get; set; }
+
+            /// <summary>Additional LOD levels requested when <see cref="GenerateMeshletLods"/> is enabled.</summary>
+            public int MeshletAdditionalLodCount { get; set; } = 2;
+
+            /// <summary>
             /// Additional post-import actions to apply after the source model has been loaded.
             /// </summary>
             public ModelPostImportFlags PostImportFlags { get; set; } = ModelPostImportFlags.None;
@@ -367,7 +376,8 @@ public static partial class EditorUnitTests
         /// <summary>
         /// Startup model imports processed when the Unit Testing World boots. Each array item
         /// is a ModelImportSettings object with Enabled, Kind, MaterialMode, ImporterBackend,
-        /// Path, optional UnityProjectRoot, ImportFlags, Scale, ZUp, PostImportFlags, and optional
+        /// Path, optional UnityProjectRoot, ImportFlags, Scale, ZUp, InstanceCount, GenerateMeshletLods,
+        /// MeshletAdditionalLodCount, PostImportFlags, and optional
         /// YawPitchRoll/Translation objects. Unity prefab entries use the Unity converter; recognized
         /// Poiyomi materials are converted to the forward-plus Uber shader.
         /// Paths are relative to the process working directory unless absolute.

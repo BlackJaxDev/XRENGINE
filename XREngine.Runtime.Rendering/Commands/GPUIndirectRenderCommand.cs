@@ -94,7 +94,12 @@ namespace XREngine.Rendering.Commands
         /// The mesh prefers the legacy CPU lane in diagnostic strategies. Strict
         /// zero-readback ignores this bit and keeps the draw GPU-resident.
         /// </summary>
-        CpuFallbackOnly = 1 << 20
+        CpuFallbackOnly = 1 << 20,
+        /// <summary>
+        /// The draw requires raster state that is not represented by the current
+        /// canonical opaque-deferred meshlet pipeline (for example front-face culling).
+        /// </summary>
+        NonCanonicalRasterState = 1 << 21
     }
 
     public enum GPUSortAlgorithm

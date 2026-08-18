@@ -26,7 +26,7 @@ internal sealed partial class VulkanFrameLoop
         bool stencilBit,
         bool linearFilter)
     {
-        FrameOpContext context = CaptureFrameOpContext();
+        FrameOpContext context = CaptureFrameOpContextForCurrentPipelineScope();
         int passIndex = RuntimeEngine.Rendering.State.CurrentRenderGraphPassIndex;
         BlitOp? operation = VulkanBlitProducer.Prepare(
             inFBO,

@@ -18,6 +18,7 @@ using XREngine.Data.Core;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
+using XREngine.Rendering.Meshlets;
 using XREngine.Rendering.Models;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Scene;
@@ -148,6 +149,15 @@ public static partial class EditorUnitTests
                 // Dependent systems such as light-probe model bounds should only see complete geometry.
                 BatchSubmeshAddsDuringAsyncImport = true,
                 TextureLoadDirSearchPaths = textureLoadDirSearchPaths,
+                CookSettings = new ModelCookSettings
+                {
+                    Meshlets = new MeshletGenerationSettings { Enabled = true },
+                    Lods = new MeshLodGenerationSettings
+                    {
+                        Enabled = model.GenerateMeshletLods,
+                        AdditionalLodCount = Math.Clamp(model.MeshletAdditionalLodCount, 1, 8),
+                    },
+                },
             };
         }
 
@@ -535,6 +545,31 @@ public static partial class EditorUnitTests
                     default:
                     {
                         importedStaticModelsRootNode ??= new SceneNode(rootNode) { Name = "Static Model Root", Layer = DefaultLayers.StaticIndex };
+                        if (TryLoadStandaloneCookedMeshes(
+                                model,
+                                resolvedPath,
+                                importedStaticModelsRootNode,
+                                out SceneNode? cookedRoot,
+                                out string? cookedLoadError))
+                        {
+                            lock (importedStaticRootsLock)
+                                importedStaticRoots.Add(cookedRoot!);
+                            Debug.Meshes($"[StaticModel] Loaded standalone cooked meshlets: {resolvedPath}");
+                            CompleteStaticImportSlot();
+                            CompleteAllModelImportSlot();
+                            break;
+                        }
+
+                        // A requested warm load must never fall through to a source parser.
+                        // The measurement harness treats this as a failed warm proof rather than
+                        // quietly converting it into a cold import.
+                        if (!string.IsNullOrWhiteSpace(cookedLoadError))
+                        {
+                            Debug.MeshesWarning($"[StaticModel] {cookedLoadError}");
+                            CompleteStaticImportSlot();
+                            CompleteAllModelImportSlot();
+                            break;
+                        }
                         ModelImporter.DelMakeMaterialAction makeMaterialAction = ResolveMakeMaterialAction(model);
                         ModelImportOptions? importOptions = CreateImportOptions(model, textureLoadDirSearchPaths);
 
@@ -558,6 +593,8 @@ public static partial class EditorUnitTests
 
                                         lock (importedStaticRootsLock)
                                             importedStaticRoots.Add(importedRoot);
+
+                                        TryPublishStandaloneCookedMeshes(model, resolvedPath, importedRoot);
 
                                         int instanceCount = Math.Clamp(model.InstanceCount, 1, 64);
                                         for (int instanceIndex = 1; instanceIndex < instanceCount; instanceIndex++)
@@ -663,6 +700,235 @@ public static partial class EditorUnitTests
 
                 spawner.ConfigurePlacementBoundsModels(modelsArray, enabled: true);
                 Debug.Lighting($"[LightProbeGrid] Wired {modelsArray.Length} imported ModelComponents as placement bounds for '{spawner.Name}'.");
+            }
+        }
+
+        private static bool TryLoadStandaloneCookedMeshes(
+            Settings.ModelImportSettings model,
+            string sourcePath,
+            SceneNode parent,
+            out SceneNode? root,
+            out string? error)
+        {
+            root = null;
+            error = null;
+            if (!string.Equals(
+                    Environment.GetEnvironmentVariable("XRE_MESHLET_STANDALONE_COOKED_CACHE_MODE"),
+                    "Load",
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            string? cacheRoot = Environment.GetEnvironmentVariable("XRE_MESHLET_STANDALONE_COOKED_CACHE_ROOT");
+            if (string.IsNullOrWhiteSpace(cacheRoot))
+            {
+                error = "Standalone cooked-mesh warm load was requested without a cache root.";
+                return false;
+            }
+
+            string cacheDirectory = GetStandaloneCookedMeshDirectory(cacheRoot, sourcePath);
+            string currentGenerationPath = Path.Combine(cacheDirectory, "current-generation.txt");
+            if (!File.Exists(currentGenerationPath))
+            {
+                error = $"Standalone cooked-mesh cache has no published generation for '{sourcePath}'.";
+                return false;
+            }
+
+            string generationName = File.ReadAllText(currentGenerationPath).Trim();
+            if (!IsStandaloneCookedMeshGenerationName(generationName))
+            {
+                error = $"Standalone cooked-mesh cache has an invalid generation pointer for '{sourcePath}'.";
+                return false;
+            }
+
+            string directory = Path.Combine(cacheDirectory, "generations", generationName);
+            string manifestPath = Path.Combine(directory, "lod-manifest.txt");
+            if (!File.Exists(manifestPath))
+            {
+                error = $"Standalone cooked-mesh cache has no LOD manifest for '{sourcePath}'.";
+                return false;
+            }
+
+            try
+            {
+                XRMaterial material = XRMaterial.CreateColorMaterialDeferred(ColorF4.Red);
+                material.Name = "Standalone Cooked Meshlet Material";
+                material.RenderOptions.CullMode = ECullMode.Back;
+                material.RenderPass = (int)EDefaultRenderPass.OpaqueDeferred;
+                Dictionary<int, List<SubMeshLOD>> lodsBySubMesh = [];
+                int hydrationCount = 0;
+                foreach (string manifestLine in File.ReadLines(manifestPath))
+                {
+                    string[] fields = manifestLine.Split('|');
+                    if (fields.Length != 4 ||
+                        !int.TryParse(fields[0], out int subMeshIndex) ||
+                        !int.TryParse(fields[1], out _) ||
+                        !float.TryParse(fields[2], System.Globalization.CultureInfo.InvariantCulture, out float maxDistance))
+                    {
+                        throw new InvalidDataException($"Cooked mesh LOD manifest '{manifestPath}' contains an invalid row.");
+                    }
+
+                    string meshPath = Path.Combine(directory, fields[3]);
+                    XRMesh? mesh = Engine.Assets.Load<XRMesh>(meshPath, bypassJobThread: true);
+                    if (mesh?.MeshletPayload is null)
+                        throw new InvalidDataException($"Cooked mesh '{meshPath}' did not contain a meshlet payload.");
+                    if (!lodsBySubMesh.TryGetValue(subMeshIndex, out List<SubMeshLOD>? lods))
+                        lodsBySubMesh.Add(subMeshIndex, lods = []);
+                    lods.Add(new SubMeshLOD(material, mesh, maxDistance));
+                    hydrationCount++;
+                }
+
+                if (lodsBySubMesh.Count == 0 || hydrationCount == 0)
+                    throw new InvalidDataException($"Cooked mesh LOD manifest '{manifestPath}' has no mesh entries.");
+
+                List<SubMesh> subMeshes = lodsBySubMesh
+                    .OrderBy(static pair => pair.Key)
+                    .Select(static pair => new SubMesh(pair.Value))
+                    .ToList();
+
+                root = new SceneNode(parent)
+                {
+                    Name = $"Standalone Cooked Meshlet Root ({Path.GetFileName(sourcePath)})",
+                    Layer = DefaultLayers.StaticIndex,
+                };
+                root.AddComponent<ModelComponent>()!.Model = new Model(subMeshes);
+                Transform transform = root.GetTransformAs<Transform>(false)!;
+                transform.DeriveLocalMatrix(CreateUnitTestImportRootMatrix(model));
+                transform.RecalculateMatrices(true, false);
+                transform.SaveBindState();
+
+                return true;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException or InvalidOperationException)
+            {
+                error = $"Standalone cooked-mesh cache load failed for '{sourcePath}': {ex.Message}";
+                return false;
+            }
+        }
+
+        private static void TryPublishStandaloneCookedMeshes(
+            Settings.ModelImportSettings model,
+            string sourcePath,
+            SceneNode importedRoot)
+        {
+            if (!string.Equals(
+                    Environment.GetEnvironmentVariable("XRE_MESHLET_STANDALONE_COOKED_CACHE_MODE"),
+                    "Publish",
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
+            string? cacheRoot = Environment.GetEnvironmentVariable("XRE_MESHLET_STANDALONE_COOKED_CACHE_ROOT");
+            if (string.IsNullOrWhiteSpace(cacheRoot))
+                return;
+
+            try
+            {
+                string cacheDirectory = GetStandaloneCookedMeshDirectory(cacheRoot, sourcePath);
+                string generationName = Guid.NewGuid().ToString("N");
+                string directory = Path.Combine(cacheDirectory, "generations", generationName);
+                Directory.CreateDirectory(directory);
+                List<SubMesh> subMeshes = [];
+                importedRoot.IterateComponents<ModelComponent>(
+                    component =>
+                    {
+                        if (component.Model is { } importedModel)
+                            subMeshes.AddRange(importedModel.Meshes);
+                    },
+                    iterateChildHierarchy: true);
+
+                List<string> manifest = [];
+                int meshCount = 0;
+                for (int subMeshIndex = 0; subMeshIndex < subMeshes.Count; subMeshIndex++)
+                {
+                    int lodIndex = 0;
+                    foreach (SubMeshLOD lod in subMeshes[subMeshIndex].LODs)
+                    {
+                        XRMesh? mesh = lod.Mesh;
+                        if (mesh?.MeshletPayload is null)
+                            throw new InvalidDataException($"Imported mesh LOD '{mesh?.Name}' has no cooked meshlet payload.");
+
+                        string fileName = $"mesh-{subMeshIndex:D4}-lod-{lodIndex:D4}.asset";
+                        string finalPath = Path.Combine(directory, fileName);
+                        string temporaryPath = finalPath + ".tmp";
+                        mesh.SerializeTo(temporaryPath, AssetManager.Serializer);
+                        File.Move(temporaryPath, finalPath, overwrite: true);
+                        manifest.Add($"{subMeshIndex}|{lodIndex}|{lod.MaxVisibleDistance.ToString("R", System.Globalization.CultureInfo.InvariantCulture)}|{fileName}");
+                        lodIndex++;
+                        meshCount++;
+                    }
+                }
+
+                if (meshCount == 0)
+                    throw new InvalidDataException($"Imported model '{sourcePath}' has no mesh LODs to publish.");
+
+                string manifestPath = Path.Combine(directory, "lod-manifest.txt");
+                string temporaryManifestPath = manifestPath + ".tmp";
+                File.WriteAllLines(temporaryManifestPath, manifest);
+                File.Move(temporaryManifestPath, manifestPath, overwrite: true);
+
+                // The generation pointer is the publication root. Publishing it last
+                // means readers observe either the old complete closure or this new
+                // complete closure, never a mixed set of LOD files after a failed cook.
+                Directory.CreateDirectory(cacheDirectory);
+                string currentGenerationPath = Path.Combine(cacheDirectory, "current-generation.txt");
+                string temporaryCurrentGenerationPath = currentGenerationPath + ".tmp";
+                File.WriteAllText(temporaryCurrentGenerationPath, generationName);
+                File.Move(temporaryCurrentGenerationPath, currentGenerationPath, overwrite: true);
+                RetireStandaloneCookedMeshGenerations(cacheDirectory, generationName);
+
+                Debug.Meshes($"[StaticModel] Published {meshCount} standalone cooked meshlet LOD(s) for '{sourcePath}' generation={generationName}.");
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException or InvalidOperationException)
+            {
+                Debug.MeshesWarning($"[StaticModel] Failed to publish standalone cooked meshlets for '{sourcePath}': {ex.Message}");
+            }
+        }
+
+        private static string GetStandaloneCookedMeshDirectory(string cacheRoot, string sourcePath)
+        {
+            string sourceIdentity = Path.GetFullPath(sourcePath).ToUpperInvariant();
+            byte[] hash = System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(sourceIdentity));
+            return Path.Combine(Path.GetFullPath(cacheRoot), "standalone-cooked-mesh", Convert.ToHexString(hash));
+        }
+
+        private static Matrix4x4 CreateUnitTestImportRootMatrix(Settings.ModelImportSettings model)
+        {
+            Matrix4x4 matrix = Matrix4x4.Identity;
+            if (model.Scale != 1.0f)
+                matrix *= Matrix4x4.CreateScale(model.Scale);
+            if (model.ZUp)
+                matrix *= Matrix4x4.CreateRotationX(XRMath.DegToRad(90.0f));
+            if (GetOptionalRootTransformMatrix(model) is { } configuredTransform)
+                matrix *= configuredTransform;
+            return matrix;
+        }
+
+        private static bool IsStandaloneCookedMeshGenerationName(string value)
+            => value.Length == 32 && value.All(static character => char.IsAsciiHexDigit(character));
+
+        private static void RetireStandaloneCookedMeshGenerations(string cacheDirectory, string currentGenerationName)
+        {
+            string generationsDirectory = Path.Combine(cacheDirectory, "generations");
+            if (!Directory.Exists(generationsDirectory))
+                return;
+
+            string fullGenerationsDirectory = Path.GetFullPath(generationsDirectory)
+                .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
+            DirectoryInfo[] retired = Directory.EnumerateDirectories(generationsDirectory)
+                .Select(static path => new DirectoryInfo(path))
+                .Where(directory => !string.Equals(directory.Name, currentGenerationName, StringComparison.OrdinalIgnoreCase))
+                .Where(directory => IsStandaloneCookedMeshGenerationName(directory.Name))
+                .OrderByDescending(static directory => directory.LastWriteTimeUtc)
+                .Skip(2)
+                .ToArray();
+            foreach (DirectoryInfo generation in retired)
+            {
+                string fullPath = Path.GetFullPath(generation.FullName);
+                if (fullPath.StartsWith(fullGenerationsDirectory, StringComparison.OrdinalIgnoreCase))
+                    generation.Delete(recursive: true);
             }
         }
 

@@ -18,7 +18,9 @@ public static class ModelBinaryChunkVersions
     public const uint Skeletons = 1;
     public const uint MorphTargets = 1;
     public const uint LodTables = 1;
-    public const uint Meshlets = 1;
+    // Version 2 records the explicit generated-data state and canonical
+    // model/submesh/LOD payload table. Version 1 was only a reserved slot.
+    public const uint Meshlets = 2;
     public const uint Materials = 1;
     public const uint TextureReferences = 1;
     public const uint AnimationReferences = 1;

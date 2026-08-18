@@ -264,6 +264,12 @@ internal sealed partial class VulkanDeviceContext
             capabilities,
             fallbacks);
         PublishCapabilities(publishedCapabilities);
+
+        VulkanMeshShaderCapabilitySnapshot meshShaderCapability =
+            MutableCapabilities._meshShaderCapabilitySnapshot;
+        RuntimeEngine.Rendering.Stats.GpuMeshlets.PublishVulkanMeshletCapability(
+            meshShaderCapability.CreateCompactLadder(),
+            meshShaderCapability.GetFailedRung());
     }
 
     private static void Include(

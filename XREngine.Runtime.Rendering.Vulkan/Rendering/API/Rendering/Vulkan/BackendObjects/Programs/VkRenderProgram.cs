@@ -99,6 +99,8 @@ internal unsafe partial class VkRenderProgram(
     public IReadOnlyList<DescriptorBindingInfo> DescriptorBindings => _programDescriptorBindings;
     public IReadOnlyDictionary<string, AutoUniformBlockInfo> AutoUniformBlocks => _autoUniformBlocks;
     internal VulkanProgramBindingSchema? BindingSchema => _bindingSchema;
+    internal VulkanProgramCreationPort MeshTaskProgramServices => ProgramCreationPort;
+    internal VulkanBackendObjectContext MeshTaskBackendContext => BackendContext;
 
     /// <summary>
     /// Exposes the concrete auto-uniform map to Vulkan hot paths so dictionary

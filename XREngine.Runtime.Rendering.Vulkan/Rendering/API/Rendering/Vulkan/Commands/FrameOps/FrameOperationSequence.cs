@@ -1,3 +1,5 @@
+using Silk.NET.Vulkan;
+
 namespace XREngine.Rendering.Vulkan;
 
 /// <summary>Stack-friendly view of a sealed numeric operation stream.</summary>
@@ -29,6 +31,8 @@ internal readonly struct FrameOperationSequence
     internal ref readonly MeshDrawPayload GetMeshDraw(int index) => ref Stream.GetMeshDraw(index);
     internal ref readonly IndirectDrawPayload GetIndirectDraw(int index) => ref Stream.GetIndirectDraw(index);
     internal ref readonly MeshTaskDispatchIndirectCountPayload GetMeshTask(int index) => ref Stream.GetMeshTask(index);
+    internal bool TryAssociateAdmittedMeshTaskPipeline(int index, VkRenderProgram program, ulong programLinkGeneration, ComputeDispatchSnapshot programBindingSnapshot, in VulkanMeshProducerSnapshot producerSnapshot, Pipeline pipeline)
+        => Stream.TryAssociateAdmittedMeshTaskPipeline(index, program, programLinkGeneration, programBindingSnapshot, in producerSnapshot, pipeline);
     internal ref readonly ComputeDispatchPayload GetComputeDispatch(int index) => ref Stream.GetComputeDispatch(index);
     internal ref readonly ComputeDispatchIndirectPayload GetComputeDispatchIndirect(int index) => ref Stream.GetComputeDispatchIndirect(index);
     internal ref readonly BufferCopyPayload GetBufferCopy(int index) => ref Stream.GetBufferCopy(index);

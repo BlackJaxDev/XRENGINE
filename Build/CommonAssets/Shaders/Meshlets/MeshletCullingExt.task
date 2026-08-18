@@ -67,6 +67,7 @@ struct GpuMeshletDescriptor
 layout(std430, binding = 5) readonly buffer MeshletDescriptorBuffer { GpuMeshletDescriptor Meshlets[]; };
 layout(std430, binding = 9) readonly buffer VisibleMeshletTaskBuffer { GpuMeshletTaskRecord meshletTasks[]; };
 layout(std430, binding = 10) readonly buffer VisibleMeshletTaskCountBuffer { uint MeshletTaskCount; };
+layout(std430, binding = 24) readonly buffer MeshletExpansionOverflowBuffer { uint MeshletExpansionOverflow; };
 layout(std430, binding = 12) readonly buffer DrawMetadataBuffer { DrawMetadata Draws[]; };
 layout(std430, binding = 19) readonly buffer TransformBuffer { mat4 WorldMatrices[]; };
 layout(std430, binding = 21) buffer MeshletStatsBuffer
@@ -100,7 +101,7 @@ struct TaskPayload
     GpuMeshletTaskRecord Record;
     uint MeshletIndex;
     uint IsPreviousLod;
-    uint PassFlags;
+    uint TaskPassFlags;
     uint Reserved;
 };
 
@@ -259,7 +260,10 @@ void main()
     uint meshletIndex = 0u;
     uint isPreviousLod = 0u;
 
-    if (taskIndex < MeshletTaskCount && taskIndex < uint(meshletTasks.length()))
+    // An expansion overflow routes the full pass through material scatter.  Do
+    // not emit a partial task stream alongside that conservative fallback.
+    if (MeshletExpansionOverflow == 0u &&
+        taskIndex < MeshletTaskCount && taskIndex < uint(meshletTasks.length()))
     {
         record = meshletTasks[taskIndex];
         meshletIndex = record.MeshletIndex & MESHLET_TASK_MESHLET_INDEX_MASK;
@@ -297,7 +301,7 @@ void main()
     OUT.Record = record;
     OUT.MeshletIndex = meshletIndex;
     OUT.IsPreviousLod = isPreviousLod;
-    OUT.PassFlags = PassFlags;
+    OUT.TaskPassFlags = PassFlags;
     OUT.Reserved = 0u;
     EmitMeshTasksEXT(visible ? 1u : 0u, 1u, 1u);
 }

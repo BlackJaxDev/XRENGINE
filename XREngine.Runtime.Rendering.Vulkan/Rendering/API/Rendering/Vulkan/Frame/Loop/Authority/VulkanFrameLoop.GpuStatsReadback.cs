@@ -67,6 +67,21 @@ internal sealed partial class VulkanFrameLoop
             publishTriangles);
     }
 
+    /// <summary>
+    /// Captures the mesh-task indirect command only after its submission fence
+    /// signals. This is intentionally diagnostics-only; normal meshlet
+    /// submission remains fully GPU-resident and does not map or wait.
+    /// </summary>
+    internal bool QueueGpuMeshletDispatchDiagnosticsReadback(XRDataBuffer dispatchIndirectBuffer)
+        => QueueGpuRenderStatsReadback(
+            dispatchIndirectBuffer,
+            0u,
+            checked(3u * (uint)sizeof(uint)),
+            3u,
+            GpuRenderStatsReadbackKind.MeshletDispatchIndirectBuffer,
+            publishDraws: false,
+            publishTriangles: false);
+
     private unsafe bool QueueGpuRenderStatsReadback(
         XRDataBuffer sourceBuffer,
         uint sourceByteOffset,
@@ -422,6 +437,17 @@ internal sealed partial class VulkanFrameLoop
                             values[(int)GpuStatsLayout.StatsRejectedDistance]);
                         WriteGpuRenderStatsTraceIfChanged(slot.SourceName, slot.SourceHandle, "stats", values);
                     }
+                    break;
+                }
+            case GpuRenderStatsReadbackKind.MeshletDispatchIndirectBuffer:
+                {
+                    // VkDrawMeshTasksIndirectCommandEXT is groupCountX/Y/Z.
+                    // The shader writes X from the emitted task-record count;
+                    // observe it only through the completed diagnostics fence.
+                    uint dispatchX = values.Length > 0 ? values[0] : 0u;
+                    RuntimeEngine.Rendering.Stats.GpuMeshlets.RecordGpuMeshletDelayedDiagnostics(
+                        dispatchX,
+                        slot.ByteCount);
                     break;
                 }
         }

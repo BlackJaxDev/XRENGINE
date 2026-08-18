@@ -8,7 +8,10 @@ namespace XREngine.Rendering.Vulkan;
 /// Owns a production Vulkan renderer whose target supports deterministic,
 /// presentation-independent frame submission.
 /// </summary>
-public sealed unsafe class VulkanExplicitTargetRendererHost : IRuntimeRendererHost, IDisposable
+public sealed unsafe class VulkanExplicitTargetRendererHost :
+    IRuntimeRendererHost,
+    IMaterialTableBackendCapability,
+    IDisposable
 {
     private readonly VulkanRenderer _renderer;
     private bool _disposed;
@@ -119,10 +122,37 @@ public sealed unsafe class VulkanExplicitTargetRendererHost : IRuntimeRendererHo
     public bool SupportsIndirectCountMeshTaskDispatch() => _renderer.SupportsIndirectCountMeshTaskDispatch();
     public bool SupportsProductionMeshletShaders() => _renderer.SupportsProductionMeshletShaders();
     public bool SupportsMeshletDispatch() => _renderer.SupportsMeshletDispatch();
+    private IMaterialTableBackendCapability MaterialTableCapability => _renderer;
+    bool IMaterialTableBackendCapability.SupportsBufferDeviceAddress
+        => MaterialTableCapability.SupportsBufferDeviceAddress;
+    bool IMaterialTableBackendCapability.SupportsBindlessMaterialTable
+        => MaterialTableCapability.SupportsBindlessMaterialTable;
+    bool IMaterialTableBackendCapability.SupportsBindlessTextureHandles
+        => MaterialTableCapability.SupportsBindlessTextureHandles;
+    string IMaterialTableBackendCapability.BindlessMaterialUnavailableReason
+        => MaterialTableCapability.BindlessMaterialUnavailableReason;
+    bool IMaterialTableBackendCapability.TryEnsureMaterialTextureTable(out string reason)
+        => MaterialTableCapability.TryEnsureMaterialTextureTable(out reason);
+    XREngine.Rendering.Materials.MaterialTextureReferenceResolution IMaterialTableBackendCapability.ResolveMaterialTextureReference(
+        XRTexture texture,
+        string semantic)
+        => MaterialTableCapability.ResolveMaterialTextureReference(texture, semantic);
+    void IMaterialTableBackendCapability.FlushMaterialTextureTableUpdates()
+        => MaterialTableCapability.FlushMaterialTextureTableUpdates();
+    void IMaterialTableBackendCapability.ReleaseMaterialTextureReference(
+        in XREngine.Rendering.Materials.GPUMaterialRetiredHandle retired)
+        => MaterialTableCapability.ReleaseMaterialTextureReference(in retired);
+    bool IMaterialTableBackendCapability.BeginGlobalMaterialTextureDescriptorScope(
+        XRRenderProgram program,
+        string consumer)
+        => MaterialTableCapability.BeginGlobalMaterialTextureDescriptorScope(program, consumer);
+    void IMaterialTableBackendCapability.EndGlobalMaterialTextureDescriptorScope(XRRenderProgram program)
+        => MaterialTableCapability.EndGlobalMaterialTextureDescriptorScope(program);
     public AdvancedRenderPipelineCapabilities GetAdvancedRenderPipelineCapabilities()
         => _renderer.GetAdvancedRenderPipelineCapabilities();
 
     public bool TryDrawMeshTasksIndirectCount(
+        XRRenderProgram program,
         XRDataBuffer indirectBuffer,
         XRDataBuffer countBuffer,
         uint maxDrawCount,
@@ -131,6 +161,7 @@ public sealed unsafe class VulkanExplicitTargetRendererHost : IRuntimeRendererHo
         nuint byteOffset = 0,
         nuint countByteOffset = 0)
         => _renderer.TryDrawMeshTasksIndirectCount(
+            program,
             indirectBuffer,
             countBuffer,
             maxDrawCount,

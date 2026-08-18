@@ -2199,7 +2199,7 @@ public sealed class ModelComponentEditor : IXRComponentEditor
                 if (ImGui.Button("Analyze Current LOD Meshlets", new Vector2(-1f, 0f)))
                 {
                     XRMesh? sourceMesh = subMesh.LODs.FirstOrDefault(static lod => lod.Mesh is not null)?.Mesh;
-                    state.LastMeshletStats = sourceMesh is null ? null : MeshOptimizerIntegration.BuildMeshlets(sourceMesh, subMesh.MeshOptimizer.Meshlets).Stats;
+                    state.LastMeshletStats = sourceMesh is null ? null : MeshOptimizerIntegration.BuildMeshletPayloadForMesh(sourceMesh, subMesh.MeshOptimizer.Meshlets).Stats;
                 }
 
                 ImGui.TreePop();

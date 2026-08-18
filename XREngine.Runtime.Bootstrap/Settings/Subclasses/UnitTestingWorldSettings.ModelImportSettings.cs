@@ -48,6 +48,17 @@ public partial class UnitTestingWorldSettings
         public int InstanceCount { get; set; } = 1;
 
         /// <summary>
+        /// Enables deterministic import-time LOD generation for this model. Meshlets are
+        /// cooked for every resulting LOD before the model becomes renderable.
+        /// </summary>
+        public bool GenerateMeshletLods { get; set; }
+
+        /// <summary>
+        /// Additional LOD levels requested when <see cref="GenerateMeshletLods"/> is enabled.
+        /// </summary>
+        public int MeshletAdditionalLodCount { get; set; } = 2;
+
+        /// <summary>
         /// Additional post-import actions to apply after the source model has been loaded.
         /// </summary>
         public ModelPostImportFlags PostImportFlags { get; set; } = ModelPostImportFlags.None;

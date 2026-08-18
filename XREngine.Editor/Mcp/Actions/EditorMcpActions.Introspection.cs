@@ -10,6 +10,7 @@ using XREngine.Components;
 using XREngine.Core.Attributes;
 using XREngine.Core.Files;
 using XREngine.Data.Core;
+using XREngine.Data.Rendering;
 using XREngine.Editor;
 using XREngine.Input;
 using XREngine.Input.Devices;
@@ -819,6 +820,7 @@ namespace XREngine.Editor.Mcp
         [Description("Get renderer capability flags (GPU, extensions, ray tracing).")]
         public static Task<McpToolResponse> GetRenderCapabilitiesAsync(McpToolContext context)
         {
+            AbstractRenderer? renderer = AbstractRenderer.Current;
             var data = new
             {
                 isNvidia = RuntimeEngine.Rendering.State.IsNVIDIA,
@@ -827,6 +829,21 @@ namespace XREngine.Editor.Mcp
                 hasNvRayTracing = RuntimeEngine.Rendering.State.HasNvRayTracing,
                 hasVulkanRayTracing = RuntimeEngine.Rendering.State.HasVulkanRayTracing,
                 hasOvrMultiView = RuntimeEngine.Rendering.State.HasOvrMultiViewExtension,
+                meshlets = new
+                {
+                    requestedStrategy = RuntimeEngine.Rendering.ResolveRequestedMeshSubmissionStrategy().ToString(),
+                    effectiveStrategy = RuntimeEngine.Rendering.LastResolvedMeshSubmissionStrategy.ToString(),
+                    backend = RuntimeEngine.Rendering.LastResolvedRendererBackend.ToString(),
+                    dialect = renderer?.MeshShaderDialect.ToString() ?? EMeshShaderDialect.None.ToString(),
+                    directTaskDispatch = renderer?.SupportsDirectMeshTaskDispatch() == true,
+                    indirectCountTaskDispatch = renderer?.SupportsIndirectCountMeshTaskDispatch() == true,
+                    productionShaders = renderer?.SupportsProductionMeshletShaders() == true,
+                    dispatchReady = renderer?.SupportsMeshletDispatch() == true,
+                    unsupportedReason = renderer?.MeshletDispatchUnsupportedReason ?? "No active renderer.",
+                    downgradeRequested = RuntimeEngine.Rendering.LastMeshletDowngradeRequested?.ToString() ?? string.Empty,
+                    downgradeResolved = RuntimeEngine.Rendering.LastMeshletDowngradeResolved?.ToString() ?? string.Empty,
+                    downgradeReason = RuntimeEngine.Rendering.LastMeshletDowngradeReason ?? string.Empty,
+                },
                 nvidiaDlss = new
                 {
                     runtimeDllsAvailable = NvidiaDlssManager.RequiredRuntimeDllsAvailable,

@@ -81,27 +81,53 @@ namespace XREngine.Rendering.Commands
 
             BoundsGpu bounds = ComputeRenderCullingBoundsGpu(renderInfo, mesh.Bounds, modelMatrix, boundsId + 1u);
 
-            uint flags = 0;
-            if (renderInfo is RenderInfo3D info3d && command is RenderCommandMesh3D)
-            {
-                if (material.IsTransparentLike())
-                    flags |= (uint)GPUIndirectRenderFlags.Transparent;
-                if (info3d.CastsShadows)
-                    flags |= (uint)GPUIndirectRenderFlags.CastShadow;
-                if (info3d.ReceivesShadows)
-                    flags |= (uint)GPUIndirectRenderFlags.ReceiveShadows;
-
-                // LayerMask is consumed by GPU culling paths (GPURenderCulling*.comp).
+            if (renderInfo is RenderInfo3D info3d)
                 metadata.LayerMask = 1u << info3d.Layer;
+
+            metadata.Flags = ComposeDrawFlags(renderInfo, command, mesh, material, modelMatrix, lodCount);
+            return (metadata, bounds);
+        }
+
+        private static uint ComposeDrawFlags(
+            RenderInfo renderInfo,
+            IRenderCommandMesh command,
+            XRMesh mesh,
+            XRMaterial material,
+            in Matrix4x4 modelMatrix,
+            uint lodCount)
+        {
+            GPUIndirectRenderFlags flags = GPUIndirectRenderFlags.None;
+            if (material.IsTransparentLike())
+                flags |= GPUIndirectRenderFlags.Transparent;
+
+            if (renderInfo is RenderInfo3D info3d)
+            {
+                if (info3d.CastsShadows)
+                    flags |= GPUIndirectRenderFlags.CastShadow;
+                if (info3d.ReceivesShadows)
+                    flags |= GPUIndirectRenderFlags.ReceiveShadows;
             }
 
-            if (lodCount > 1)
-                flags |= (uint)GPUIndirectRenderFlags.LODEnabled;
-            if (command.ForceCpuRendering || material.RenderOptions?.ExcludeFromGpuIndirect == true)
-                flags |= (uint)GPUIndirectRenderFlags.CpuFallbackOnly;
+            if (mesh.HasSkinning)
+                flags |= GPUIndirectRenderFlags.Skinned;
+            if (mesh.HasBlendshapes)
+                flags |= GPUIndirectRenderFlags.BlendShapes;
+            if (command.Instances > 1u)
+                flags |= GPUIndirectRenderFlags.Instanced;
+            if (lodCount > 1u)
+                flags |= GPUIndirectRenderFlags.LODEnabled;
 
-            metadata.Flags = flags;
-            return (metadata, bounds);
+            ECullMode cullMode = material.RenderOptions?.CullMode ?? ECullMode.Back;
+            if (cullMode == ECullMode.None)
+                flags |= GPUIndirectRenderFlags.DoubleSided;
+            if (cullMode != ECullMode.Back)
+                flags |= GPUIndirectRenderFlags.NonCanonicalRasterState;
+            if (!HasUniformPositiveScale(modelMatrix))
+                flags |= GPUIndirectRenderFlags.Dynamic;
+            if (command.ForceCpuRendering || material.RenderOptions?.ExcludeFromGpuIndirect == true)
+                flags |= GPUIndirectRenderFlags.CpuFallbackOnly;
+
+            return (uint)flags;
         }
 
         /// <summary>
@@ -205,23 +231,9 @@ namespace XREngine.Rendering.Commands
                     updated.BoundsID = index;
                     updated.StateClassID = ResolveStateClassId(material, meshCmd.RenderPass, newMaterialID);
 
-                    uint flags = 0;
                     if (renderInfo is RenderInfo3D info3d)
-                    {
-                        if (material.IsTransparentLike())
-                            flags |= (uint)GPUIndirectRenderFlags.Transparent;
-                        if (info3d.CastsShadows)
-                            flags |= (uint)GPUIndirectRenderFlags.CastShadow;
-                        if (info3d.ReceivesShadows)
-                            flags |= (uint)GPUIndirectRenderFlags.ReceiveShadows;
-
                         updated.LayerMask = 1u << info3d.Layer;
-                    }
-                    if (lodCount > 1)
-                        flags |= (uint)GPUIndirectRenderFlags.LODEnabled;
-                    if (meshCmd.ForceCpuRendering || material.RenderOptions?.ExcludeFromGpuIndirect == true)
-                        flags |= (uint)GPUIndirectRenderFlags.CpuFallbackOnly;
-                    updated.Flags = flags;
+                    updated.Flags = ComposeDrawFlags(renderInfo, meshCmd, mesh, material, modelMatrix, lodCount);
                     UpdatingTransparencyMetadataBuffer.SetDataRawAtIndex(index, GPUTransparencyMetadata.FromMaterial(material));
 
                     if (existing.LogicalMeshID != newLogicalMeshID)
@@ -281,6 +293,28 @@ namespace XREngine.Rendering.Commands
             }
 
             return anyChanged;
+        }
+
+        // Meshlet cone culling assumes a rigid or uniformly scaled transform.
+        // Mirroring and non-uniform scale stay in the conventional raster path
+        // until the task shader owns the corresponding conservative math.
+        private static bool HasUniformPositiveScale(in Matrix4x4 matrix)
+        {
+            Vector3 x = new(matrix.M11, matrix.M12, matrix.M13);
+            Vector3 y = new(matrix.M21, matrix.M22, matrix.M23);
+            Vector3 z = new(matrix.M31, matrix.M32, matrix.M33);
+            float sx = x.LengthSquared();
+            float sy = y.LengthSquared();
+            float sz = z.LengthSquared();
+            const float tolerance = 0.0001f;
+            if (sx <= tolerance || sy <= tolerance || sz <= tolerance)
+                return false;
+
+            float maxScale = Math.Max(sx, Math.Max(sy, sz));
+            if (Math.Abs(sx - sy) > maxScale * tolerance || Math.Abs(sx - sz) > maxScale * tolerance)
+                return false;
+
+            return Vector3.Dot(Vector3.Cross(x, y), z) > 0.0f;
         }
 
         private void RemoveMeshCommandIndices(IRenderCommandMesh meshCmd, List<uint> indices)

@@ -344,6 +344,10 @@ internal sealed unsafe partial class VulkanDeviceContext
         var availableExtensionSet = new HashSet<string>(
             _deviceContext.AvailableDeviceExtensions,
             StringComparer.Ordinal);
+        bool meshShaderExtensionAdvertised = availableExtensionSet.Contains(ExtMeshShader.ExtensionName);
+        bool meshShaderExtensionRequested = _deviceContext.Configuration.OptionalDeviceExtensions.Contains(
+            ExtMeshShader.ExtensionName,
+            StringComparer.Ordinal);
 
         // Build the list of extensions to enable (required + supported optional)
         var extensionsToEnable = new List<string>(
@@ -760,12 +764,13 @@ internal sealed unsafe partial class VulkanDeviceContext
             out bool depthClipControlFeatureSupported);
         bool enableDepthClipControlFeature = depthClipControlExtensionEnabled && depthClipControlFeatureSupported;
 
-        bool meshShaderExtensionEnabled = extensionsArray.Contains("VK_EXT_mesh_shader");
+        bool meshShaderExtensionEnabled = extensionsArray.Contains(ExtMeshShader.ExtensionName, StringComparer.Ordinal);
         _deviceContext.QueryMeshShaderCapabilities(
             meshShaderExtensionEnabled,
             out bool taskShaderFeatureSupported,
             out bool meshShaderFeatureSupported,
-            out bool meshShaderQueriesSupported);
+            out bool meshShaderQueriesSupported,
+            out PhysicalDeviceMeshShaderPropertiesEXT meshShaderProperties);
         bool enableMeshShaderFeature =
             meshShaderExtensionEnabled &&
             taskShaderFeatureSupported &&
@@ -1372,6 +1377,19 @@ internal sealed unsafe partial class VulkanDeviceContext
         _deviceContext.MutableCapabilities._supportsVulkanFragmentDensityMapDynamic = enableFragmentDensityMapFeature && fragmentDensityMapDynamicSupported;
         _deviceContext.MutableCapabilities._supportsVulkanTaskShaderFeature = enableMeshShaderFeature;
         _deviceContext.MutableCapabilities._supportsVulkanMeshShaderFeature = enableMeshShaderFeature;
+        _deviceContext.MutableCapabilities._meshShaderCapabilitySnapshot = new VulkanMeshShaderCapabilitySnapshot(
+            meshShaderExtensionAdvertised,
+            meshShaderExtensionRequested,
+            meshShaderExtensionEnabled,
+            taskShaderFeatureSupported,
+            meshShaderFeatureSupported,
+            meshShaderQueriesSupported,
+            enableMeshShaderFeature,
+            enableMeshShaderFeature,
+            enableMeshShaderQueries,
+            CommandTableLoaded: false,
+            NegotiatedApiVersion: _deviceContext.InstanceApiVersion,
+            Properties: meshShaderProperties);
         ResourceRuntime.Queries.MeshShaderQueriesEnabled = enableMeshShaderQueries;
         ResourceRuntime.Queries.HostResetAdvertised = hostQueryResetFeatureSupported;
         ResourceRuntime.Queries.PrimitivesGeneratedAdvertised = primitivesGeneratedFeatures.PrimitivesGeneratedQuery;
@@ -1808,6 +1826,12 @@ internal sealed unsafe partial class VulkanDeviceContext
                 _deviceContext.MutableCapabilities._supportsVulkanMeshTaskIndirectCount = false;
             }
         }
+
+        VulkanMeshShaderCapabilitySnapshot meshShaderCapability = _deviceContext.MutableCapabilities._meshShaderCapabilitySnapshot;
+        _deviceContext.MutableCapabilities._meshShaderCapabilitySnapshot = meshShaderCapability with
+        {
+            CommandTableLoaded = _extMeshShader is not null,
+        };
 
         if (enabledExtensions.Contains(ExtTransformFeedback.ExtensionName))
         {

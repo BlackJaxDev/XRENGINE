@@ -48,6 +48,10 @@ namespace XREngine.Rendering
         private const uint MeshletTriangleIndexSsboBinding = 7;
         private const uint MeshletTaskRecordSsboBinding = 9;
         private const uint MeshletTaskCountSsboBinding = 10;
+        // Binding 11 belongs to the generated fragment material table. Keep the
+        // task-stage overflow flag on a distinct slot so Vulkan descriptor-layout
+        // merging cannot alias the two readonly storage buffers.
+        private const uint MeshletExpansionOverflowSsboBinding = 24;
         private const uint MeshletAtlasPositionSsboBinding = 13;
         private const uint MeshletAtlasNormalSsboBinding = 14;
         private const uint MeshletAtlasTangentSsboBinding = 15;
@@ -474,27 +478,98 @@ namespace XREngine.Rendering
             if (camera is null || scene is null)
                 return;
 
-            bool meshletStrategy = renderPasses.MeshSubmissionStrategy.IsAnyMeshletStrategy();
+            EMeshPrimitivePathPreference primitivePreference = renderPasses.MeshPrimitivePathPreference;
+            bool meshletStrategy = primitivePreference != EMeshPrimitivePathPreference.TraditionalOnly;
+            bool meshletRequired = primitivePreference == EMeshPrimitivePathPreference.MeshShaderRequired;
+            bool traditionalGpuFallback = false;
             if (meshletStrategy)
             {
-                if (_useMeshletPipeline &&
-                    TryRenderMeshletMaterialTable(renderPasses, camera, scene, currentRenderPass))
+                RuntimeEngine.Rendering.Stats.GpuMeshlets.RecordGpuMeshletRequestedSubmission(
+                    renderPasses.MeshSubmissionStrategy.ToString(),
+                    primitivePreference.ToString());
+                if (!renderPasses.MeshletDirectPipelineReadyThisFrame)
                 {
-                    return;
-                }
+                    string readinessFailure = renderPasses.MeshletReadinessFailure
+                        ?? "The meshlet task/mesh program was not ready when this pass was sealed.";
+                    if (meshletRequired)
+                    {
+                        WarnMeshletMaterialFallback(
+                            currentRenderPass,
+                            renderPasses.MeshSubmissionStrategy,
+                            readinessFailure);
+                        RuntimeEngine.Rendering.Stats.GpuMeshlets.RecordGpuMeshletResolvedRoute(
+                            currentRenderPass.ToString(),
+                            meshlet: false,
+                            rows: 0u,
+                            taskGroups: 0u,
+                            readinessFailure);
+                        return;
+                    }
 
-                if (!_useMeshletPipeline)
-                {
-                    WarnMeshletMaterialFallback(
+                    // Preferred mesh shaders are an eligibility preference. A failure
+                    // discovered before sealing leaves all rows in the traditional
+                    // stream, so this is a planned GPU route rather than a fallback.
+                    WarnMeshletPlannedTraditionalRoute(
                         currentRenderPass,
                         renderPasses.MeshSubmissionStrategy,
-                        "Meshlet strategy reached the render manager without meshlet pipeline intent.");
+                        readinessFailure);
+                    traditionalGpuFallback = true;
+                }
+                else if (_useMeshletPipeline &&
+                    TryRenderMeshletMaterialTable(renderPasses, camera, scene, currentRenderPass))
+                {
+                    // The material scatter prepared this pass with resident meshlet
+                    // rows excluded. Continue below to submit that traditional-only
+                    // indirect stream; it contains exactly the ineligible draws.
+                }
+                else
+                {
+                    if (!_useMeshletPipeline)
+                    {
+                        WarnMeshletMaterialFallback(
+                            currentRenderPass,
+                            renderPasses.MeshSubmissionStrategy,
+                            "Meshlet strategy reached the render manager without meshlet pipeline intent.");
+                    }
+
+                    if (meshletRequired)
+                    {
+                        return;
+                    }
+
+                    traditionalGpuFallback = true;
+                    if (!renderPasses.RebuildMaterialScatterForTraditionalMeshletFallback(scene,
+                            renderPasses.MeshletReadinessFailure ?? "Meshlet task submission failed before completion."))
+                    {
+                        RuntimeEngine.Rendering.Stats.GpuFallback.RecordForbiddenGpuFallback(1);
+                        return;
+                    }
                 }
 
-                return;
+                // A meshlet request is a primitive-generation preference, not an
+                // authority to discard otherwise renderable geometry. The pass policy
+                // prepares the material scatter for meshlet strategies as well, so an
+                // ineligible pass/material/deformation can remain entirely GPU driven
+                // through the established zero-readback indirect path. Do not retry a
+                // failed meshlet submission on the CPU.
+                if (traditionalGpuFallback)
+                {
+                    RuntimeEngine.Rendering.Stats.GpuMeshlets.RecordGpuMeshletResolvedRoute(
+                        currentRenderPass.ToString(),
+                        meshlet: false,
+                        scene.TotalCommandCount,
+                        taskGroups: 0u,
+                        renderPasses.MeshletReadinessFailure ?? "Meshlet direct submission was unavailable.");
+                    XREngine.Debug.RenderingWarningEvery(
+                        $"RenderDispatch.MeshletTraditionalGpuRoute.{currentRenderPass}.{renderPasses.MeshSubmissionStrategy}",
+                        TimeSpan.FromSeconds(2),
+                        "[RenderDispatch] {0} primitive path is ineligible for pass {1}; routing the sealed pass through traditional GPU indirect zero-readback.",
+                        renderPasses.MeshSubmissionStrategy,
+                        currentRenderPass);
+                }
             }
 
-            if (renderPasses.MeshSubmissionStrategy == EMeshSubmissionStrategy.GpuIndirectZeroReadback &&
+            if ((renderPasses.MeshSubmissionStrategy == EMeshSubmissionStrategy.GpuIndirectZeroReadback || meshletStrategy || traditionalGpuFallback) &&
                 !renderPasses.ZeroReadbackMaterialScatterPreparedThisFrame)
             {
                 RuntimeEngine.Rendering.Stats.GpuFallback.RecordForbiddenGpuFallback(1);
@@ -2536,6 +2611,106 @@ namespace XREngine.Rendering
             cache.FragmentShader.Destroy();
         }
 
+        /// <summary>
+        /// Links and validates the direct meshlet program before the pass seals its
+        /// traditional material-scatter rows. This is deliberately separate from
+        /// dispatch: a failed preflight leaves every row in the traditional stream.
+        /// </summary>
+        internal bool TrySealMeshletMaterialTablePipeline(
+            GPURenderPassCollection renderPasses,
+            GPUScene scene,
+            int currentRenderPass,
+            out string? failureReason)
+        {
+            failureReason = null;
+            AbstractRenderer? renderer = AbstractRenderer.Current;
+            if (renderer is null)
+            {
+                failureReason = "No active renderer is available for meshlet dispatch.";
+                return false;
+            }
+
+            if (!renderer.SupportsMeshletDispatch())
+            {
+                failureReason = renderer.MeshletDispatchUnsupportedReason;
+                return false;
+            }
+
+            if (!scene.IsMeshletBufferGenerationReady)
+            {
+                failureReason = "The latest meshlet buffer generation has not reached the frame-boundary publication point.";
+                return false;
+            }
+
+            if (renderPasses.MeshPrimitivePathPreference == EMeshPrimitivePathPreference.MeshShaderRequired &&
+                scene.HasMeshletIneligibleResidentMeshes)
+            {
+                failureReason = "MeshShaderRequired found one or more resident meshes without an owner-validated compatible meshlet payload.";
+                return false;
+            }
+
+            if (!TryValidateMeshletDirectPassState(renderPasses, currentRenderPass, out failureReason))
+            {
+                return false;
+            }
+
+            var renderState = RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.RenderState;
+            if (ResolveActiveGpuOverrideMaterial() is not null ||
+                (renderState is not null && renderState.UseDepthNormalMaterialVariants))
+            {
+                failureReason = "Override/depth-normal material variants require the traditional zero-readback material-tier path.";
+                return false;
+            }
+
+            EZeroReadbackMaterialDrawPath drawPath = renderPasses.ZeroReadbackMaterialDrawPath;
+            bool bindlessRequested = drawPath == EZeroReadbackMaterialDrawPath.BindlessMaterialTable;
+            if (drawPath is not EZeroReadbackMaterialDrawPath.MaterialTable and
+                not EZeroReadbackMaterialDrawPath.BindlessMaterialTable)
+            {
+                failureReason = $"Meshlet production dispatch requires a material-table draw path; current path is {drawPath}.";
+                return false;
+            }
+
+            if (!renderPasses.TryGetGeneratedMaterialTableDispatchLayout(currentRenderPass, out MaterialBindingLayout layout))
+            {
+                MaterialBindingResolverResult result = MaterialBindingResolverResult.PerMaterial(
+                    $"Pass {currentRenderPass} does not expose a generated material-table layout.");
+                renderPasses.RecordMaterialBindingResolverResult(result);
+                failureReason = result.Reason;
+                return false;
+            }
+
+            EMaterialTableTextureReferenceMode textureReferenceMode = ResolveMaterialTableTextureReferenceMode(
+                bindlessRequested,
+                out _);
+            if (textureReferenceMode == EMaterialTableTextureReferenceMode.OpenGLBindlessHandleTable &&
+                renderPasses.MaterialTextureHandleBuffer is null)
+            {
+                textureReferenceMode = EMaterialTableTextureReferenceMode.None;
+            }
+
+            XRRenderProgram? program = EnsureMeshletMaterialTableProgram(
+                textureReferenceMode,
+                layout,
+                renderer.MeshShaderDialect,
+                skinned: false);
+            if (program is null)
+            {
+                failureReason = "Meshlet material-table task/mesh program could not be linked.";
+                return false;
+            }
+
+            if (!IsProgramReadyForCurrentRenderer(program))
+            {
+                renderPasses.RecordZeroReadbackProgramPending();
+                failureReason = "Meshlet material-table program or backend pipeline is still pending.";
+                return false;
+            }
+
+            renderPasses.RecordMaterialBindingResolverResult(MaterialBindingResolverResult.Compatible(layout));
+            return true;
+        }
+
         private bool TryRenderMeshletMaterialTable(
             GPURenderPassCollection renderPasses,
             XRCamera camera,
@@ -2565,6 +2740,13 @@ namespace XREngine.Rendering
                 return false;
             }
 
+            if (!scene.IsMeshletBufferGenerationReady)
+            {
+                WarnMeshletMaterialFallback(currentRenderPass, requestedStrategy,
+                    "The latest meshlet buffer generation has not reached the frame-boundary publication point.");
+                return false;
+            }
+
             if (!renderPasses.MeshletExpansionPreparedThisFrame)
             {
                 WarnMeshletMaterialFallback(currentRenderPass, requestedStrategy, "Visible meshlet task expansion was not prepared for this pass.");
@@ -2577,12 +2759,12 @@ namespace XREngine.Rendering
                 return false;
             }
 
-            if (!IsMeshletMaterialTableDirectPassSupported(currentRenderPass))
+            if (!TryValidateMeshletDirectPassState(renderPasses, currentRenderPass, out string? passFailure))
             {
                 WarnMeshletMaterialFallback(
                     currentRenderPass,
                     requestedStrategy,
-                    "The current render pass is not implemented by the direct meshlet material-table shader.");
+                    passFailure!);
                 return false;
             }
 
@@ -2595,15 +2777,6 @@ namespace XREngine.Rendering
                     currentRenderPass,
                     requestedStrategy,
                     "Override/depth-normal material variants require the traditional zero-readback material-tier path.");
-                return false;
-            }
-
-            if (scene.SkinnedCommandCount != 0u)
-            {
-                WarnMeshletMaterialFallback(
-                    currentRenderPass,
-                    requestedStrategy,
-                    "Scene-owned skinned meshlet vertex-weight buffers are not wired yet; preserving skinned meshes through the traditional zero-readback path.");
                 return false;
             }
 
@@ -2634,6 +2807,7 @@ namespace XREngine.Rendering
             XRDataBuffer? visibleTaskCountBuffer = renderPasses.VisibleMeshletTaskCountBuffer;
             XRDataBuffer? dispatchIndirectBuffer = renderPasses.MeshletDispatchIndirectBuffer;
             XRDataBuffer? dispatchCountBuffer = renderPasses.MeshletDispatchCountBuffer;
+            XRDataBuffer? expansionOverflowBuffer = renderPasses.MeshletExpansionOverflowFlagBuffer;
             XRDataBuffer? materialTableBuffer = renderPasses.MaterialTableBuffer;
             XRDataBuffer? positions = scene.AtlasPositions;
             XRDataBuffer? normals = scene.AtlasNormals;
@@ -2644,6 +2818,7 @@ namespace XREngine.Rendering
                 visibleTaskCountBuffer is null ||
                 dispatchIndirectBuffer is null ||
                 dispatchCountBuffer is null ||
+                expansionOverflowBuffer is null ||
                 materialTableBuffer is null ||
                 positions is null ||
                 normals is null ||
@@ -2699,6 +2874,10 @@ namespace XREngine.Rendering
                     textureReferenceMode == EMaterialTableTextureReferenceMode.None ? "GpuMeshletMaterialTable" : $"GpuMeshlet{textureReferenceMode}MaterialTable",
                     currentRenderPass,
                     pendingCount: 1);
+                WarnMeshletMaterialFallback(
+                    currentRenderPass,
+                    requestedStrategy,
+                    "Meshlet material-table program became pending after the pass was sealed.");
                 return false;
             }
 
@@ -2717,6 +2896,7 @@ namespace XREngine.Rendering
             inputs.MeshletTriangleIndexBuffer.BindTo(program, MeshletTriangleIndexSsboBinding);
             visibleTaskBuffer.BindTo(program, MeshletTaskRecordSsboBinding);
             visibleTaskCountBuffer.BindTo(program, MeshletTaskCountSsboBinding);
+            expansionOverflowBuffer.BindTo(program, MeshletExpansionOverflowSsboBinding);
             inputs.DrawMetadataBuffer.BindTo(program, DrawMetadataSsboBinding);
             positions.BindTo(program, MeshletAtlasPositionSsboBinding);
             normals.BindTo(program, MeshletAtlasNormalSsboBinding);
@@ -2735,7 +2915,6 @@ namespace XREngine.Rendering
             renderer.SetEngineUniforms(program, camera);
 
             bool submitted = false;
-            TimeSpan dispatchElapsed = TimeSpan.Zero;
             string failureReason = string.Empty;
             try
             {
@@ -2744,7 +2923,6 @@ namespace XREngine.Rendering
                     EMemoryBarrierMask.Command |
                     EMemoryBarrierMask.TextureFetch);
 
-                System.Diagnostics.Stopwatch dispatchStopwatch = System.Diagnostics.Stopwatch.StartNew();
                 IMaterialTableBackendCapability? materialCapability = null;
                 if (textureReferenceMode == EMaterialTableTextureReferenceMode.VulkanDescriptorIndexTable)
                     ((IRuntimeRendererHost)renderer).TryGetBackendCapability(out materialCapability);
@@ -2766,6 +2944,7 @@ namespace XREngine.Rendering
                     if (bindlessScopeActive || materialCapability is null)
                     {
                         submitted = renderer.TryDrawMeshTasksIndirectCount(
+                            program,
                             dispatchIndirectBuffer,
                             dispatchCountBuffer,
                             GPUMeshletLayout.MeshTaskIndirectCommandMaxDrawCount,
@@ -2778,9 +2957,6 @@ namespace XREngine.Rendering
                     if (bindlessScopeActive)
                         materialCapability?.EndGlobalMaterialTextureDescriptorScope(program);
                 }
-                dispatchStopwatch.Stop();
-                dispatchElapsed = dispatchStopwatch.Elapsed;
-
                 if (!submitted)
                     WarnMeshletMaterialFallback(currentRenderPass, requestedStrategy, failureReason);
             }
@@ -2792,9 +2968,30 @@ namespace XREngine.Rendering
 
             if (submitted)
             {
-                RuntimeEngine.Rendering.Stats.GpuMeshlets.RecordGpuMeshletProductionFrame(1);
+                // Vulkan records the sealed operation later on the primary command
+                // buffer. An accepted enqueue is not proof that the mesh-task draw
+                // reached vkCmdDrawMeshTasksIndirectCountEXT, so its production
+                // counters are published by that recorder instead.
+                if (renderer.BackendId != RendererBackendId.Vulkan)
+                {
+                    RuntimeEngine.Rendering.Stats.GpuMeshlets.RecordGpuMeshletProductionFrame(1);
+                    RuntimeEngine.Rendering.Stats.GpuMeshlets.RecordGpuMeshletDispatch(groups: 0u);
+                }
                 RuntimeEngine.Rendering.Stats.GpuMeshlets.RecordGpuMeshletBufferBytesResident(scene.MeshletBufferBytesResident);
-                renderPasses.CaptureMeshletInstrumentationAfterDispatch(dispatchElapsed);
+                RuntimeEngine.Rendering.Stats.GpuMeshlets.RecordGpuMeshletResolvedRoute(
+                    currentRenderPass.ToString(),
+                    meshlet: true,
+                    rows: 0u,
+                    taskGroups: 0u,
+                    renderer.BackendId == RendererBackendId.Vulkan
+                        ? "Vulkan mesh-task indirect-count dispatch enqueued for primary recording."
+                        : "OpenGL mesh task indirect-count dispatch submitted.");
+                if (renderer.BackendId == RendererBackendId.Vulkan &&
+                    RuntimeEngine.EffectiveSettings.EnableGpuIndirectDebugLogging &&
+                    dispatchIndirectBuffer is not null)
+                {
+                    renderer.QueueGpuMeshletDispatchDiagnosticsReadback(dispatchIndirectBuffer);
+                }
                 XREngine.Debug.Meshes(
                     $"Meshlet.BackendSelected pass={currentRenderPass} requested={requestedStrategy} selected={requestedStrategy} dialect={renderer.MeshShaderDialect} commandCount={scene.TotalCommandCount} meshletCount={scene.MeshletDescriptorCount} capacity={renderPasses.MaxVisibleMeshletTaskCapacity}");
             }
@@ -2874,6 +3071,55 @@ namespace XREngine.Rendering
             // that shader against incompatible framebuffers. Those passes remain
             // visibly unsupported until they own real forward output variants.
             => renderPass == (int)EDefaultRenderPass.OpaqueDeferred;
+
+        /// <summary>
+        /// The production task/mesh shaders implement exactly the single-view,
+        /// opaque deferred material-table contract.  Keep this policy at the CPU
+        /// seal point so material scatter never removes rows for an unsupported
+        /// pass variant.
+        /// </summary>
+        private static bool TryValidateMeshletDirectPassState(
+            GPURenderPassCollection renderPasses,
+            int renderPass,
+            out string? failureReason)
+        {
+            failureReason = null;
+            if (!IsMeshletMaterialTableDirectPassSupported(renderPass))
+            {
+                failureReason = "The current render pass is not implemented by the direct meshlet material-table shader.";
+                return false;
+            }
+
+            if (RuntimeEngine.Rendering.State.IsShadowPass)
+            {
+                failureReason = "Shadow rendering requires the traditional material path.";
+                return false;
+            }
+
+            if (RuntimeEngine.Rendering.State.IsSceneCapturePass || RuntimeEngine.Rendering.State.IsLightProbePass)
+            {
+                failureReason = "Scene-capture and light-probe rendering require the traditional material path.";
+                return false;
+            }
+
+            uint activeViewCount = renderPasses.ActiveViewCount == 0u ? 1u : renderPasses.ActiveViewCount;
+            if (activeViewCount != 1u)
+            {
+                failureReason = "Multiview task/mesh submission is not implemented; routing the pass traditionally.";
+                return false;
+            }
+
+            var renderState = RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.RenderState;
+            if (renderState?.UseDepthNormalMaterialVariants == true ||
+                renderState?.UseMotionVectorMaterialVariant == true ||
+                ResolveActiveGpuOverrideMaterial() is not null)
+            {
+                failureReason = "Override, depth-normal, and motion-vector material variants require the traditional material path.";
+                return false;
+            }
+
+            return true;
+        }
 
         private static uint GetMeshletPassFlags(GPURenderPassCollection renderPasses, int renderPass)
         {
@@ -2980,12 +3226,28 @@ namespace XREngine.Rendering
             XREngine.Debug.RenderingWarningEvery(
                 $"RenderDispatch.GpuMeshletMaterialFallback.{currentRenderPass}.{reason.GetHashCode()}",
                 TimeSpan.FromSeconds(2),
-                "[RenderDispatch] Meshlet.BackendUnsupported pass={0} requested={2} selected={3} reason='{1}' skipping traditional mesh fallback",
+                "[RenderDispatch] Meshlet.PostSealUnsafe pass={0} requested={2} selected=Meshlet reason='{1}'. CPU/readback fallback is prohibited; an exact traditional GPU recovery is allowed only when the sealed scatter is rebuilt.",
                 currentRenderPass,
                 reason,
-                requestedStrategy,
                 requestedStrategy);
         }
+
+        /// <summary>
+        /// Reports a mesh-shader-preferred route selected before direct submission
+        /// sealed. The conventional GPU indirect stream remains authoritative, so
+        /// this must never contribute to forbidden fallback telemetry.
+        /// </summary>
+        private static void WarnMeshletPlannedTraditionalRoute(
+            int currentRenderPass,
+            EMeshSubmissionStrategy requestedStrategy,
+            string reason)
+            => XREngine.Debug.RenderingWarningEvery(
+                $"RenderDispatch.MeshletPlannedTraditionalRoute.{currentRenderPass}.{reason.GetHashCode()}",
+                TimeSpan.FromSeconds(2),
+                "[RenderDispatch] Meshlet.PlannedTraditionalRoute pass={0} requested={2} selected=TraditionalGpu reason='{1}'. Mesh shaders were preferred, not required; using the sealed zero-readback traditional GPU route.",
+                currentRenderPass,
+                reason,
+                requestedStrategy);
 
         private XRRenderProgram? EnsureMaterialTableDrawProgram(
             XRMeshRenderer? vaoRenderer,

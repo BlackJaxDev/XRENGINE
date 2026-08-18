@@ -164,6 +164,9 @@ namespace XREngine.Rendering.Commands
         private bool _passDiagnosticReadbacksEnabled;
         private bool _passEnableZeroReadbackMaterialScatter;
         private EZeroReadbackMaterialDrawPath _passZeroReadbackMaterialDrawPath;
+        private bool _meshletDirectPipelineReadyThisFrame;
+        private bool _forceTraditionalMeshletRowsThisFrame;
+        private string? _meshletReadinessFailure;
         private int _zeroReadbackProgramPendingCountThisFrame;
         private int _forbiddenFallbackLogBudget = 8;
 
@@ -256,10 +259,13 @@ namespace XREngine.Rendering.Commands
 
         private void CapturePassPolicySnapshot()
         {
+            _meshletDirectPipelineReadyThisFrame = false;
+            _forceTraditionalMeshletRowsThisFrame = false;
+            _meshletReadinessFailure = null;
             EMeshSubmissionStrategy strategy = MeshSubmissionStrategy;
             bool instrumented = IsInstrumentedGpuStrategy(strategy);
             bool zeroReadback = strategy.IsGpuZeroReadbackStrategy();
-            bool meshlet = strategy.IsAnyMeshletStrategy();
+            bool meshlet = MeshPrimitivePathPreference != EMeshPrimitivePathPreference.TraditionalOnly;
 
             _passDebugLoggingEnabled = instrumented && RuntimeEngine.EffectiveSettings.EnableGpuIndirectDebugLogging;
             _passValidationLoggingEnabled = instrumented && RuntimeEngine.EffectiveSettings.EnableGpuIndirectValidationLogging;
@@ -685,6 +691,8 @@ namespace XREngine.Rendering.Commands
             ? _passZeroReadbackMaterialDrawPath
             : RuntimeEngine.EffectiveSettings.ZeroReadbackMaterialDrawPath;
         public EMeshSubmissionStrategy MeshSubmissionStrategy { get; set; } = EMeshSubmissionStrategy.GpuIndirectInstrumented;
+        /// <summary>Primitive generation selected independently from submission mode.</summary>
+        public EMeshPrimitivePathPreference MeshPrimitivePathPreference { get; set; } = EMeshPrimitivePathPreference.TraditionalOnly;
         public uint LodTransitionFrameCount { get; set; } = 8u;
         private uint _meshletTaskCapacityPerVisibleCommand = 128u;
         public uint MeshletTaskCapacityPerVisibleCommand
@@ -791,6 +799,25 @@ namespace XREngine.Rendering.Commands
         public bool ZeroReadbackMaterialScatterPreparedThisFrame => _zeroReadbackMaterialScatterPreparedThisFrame;
         public bool ZeroReadbackActiveBucketListPreparedThisFrame => _zeroReadbackActiveBucketListPreparedThisFrame;
         public bool MeshletExpansionPreparedThisFrame => _meshletExpansionPreparedThisFrame;
+        /// <summary>
+        /// Gets whether the direct task/mesh program and material-table pipeline
+        /// were linked and accepted before the pass's traditional rows were sealed.
+        /// </summary>
+        public bool MeshletDirectPipelineReadyThisFrame => _meshletDirectPipelineReadyThisFrame;
+        public string? MeshletReadinessFailure => _meshletReadinessFailure;
+
+        internal void SealMeshletDirectPipelineReadiness(bool ready, string? failureReason)
+        {
+            _meshletDirectPipelineReadyThisFrame = ready;
+            _meshletReadinessFailure = ready ? null : failureReason;
+        }
+
+        internal void ForceTraditionalMeshletRowsForCurrentSubmission(string failureReason)
+        {
+            _forceTraditionalMeshletRowsThisFrame = true;
+            _meshletDirectPipelineReadyThisFrame = false;
+            _meshletReadinessFailure = failureReason;
+        }
         public uint CommandCapacity => _lastMaxCommands == 0u ? GPUScene.MinCommandCount : _lastMaxCommands;
         public uint MaxIndirectDrawCapacity => Math.Max(CommandCapacity * 2u, 1u);
         public uint MaxVisibleMeshletTaskCapacity => ComputeMeshletTaskCapacity(CommandCapacity);
@@ -817,40 +844,6 @@ namespace XREngine.Rendering.Commands
                 scene.LodTransitionBuffer,
                 visibleCommandUpperBound);
             return true;
-        }
-
-        internal void CaptureMeshletInstrumentationAfterDispatch(TimeSpan dispatchElapsed)
-        {
-            if (!MeshSubmissionStrategy.IsInstrumentedMeshletStrategy() ||
-                !RuntimeEngine.EffectiveSettings.EnableGpuIndirectDebugLogging)
-            {
-                return;
-            }
-
-            uint visibleMeshlets = VisibleMeshletTaskCountBuffer is not null
-                ? ReadUIntAt(VisibleMeshletTaskCountBuffer, 0u)
-                : 0u;
-            uint dispatchedMeshlets = MeshletDispatchCountBuffer is not null
-                ? ReadUIntAt(MeshletDispatchCountBuffer, 0u)
-                : 0u;
-            uint overflowCount = MeshletExpansionOverflowFlagBuffer is not null
-                ? ReadUIntAt(MeshletExpansionOverflowFlagBuffer, 0u)
-                : 0u;
-
-            uint readbackBytes = 0u;
-            if (VisibleMeshletTaskCountBuffer is not null)
-                readbackBytes += sizeof(uint);
-            if (MeshletDispatchCountBuffer is not null)
-                readbackBytes += sizeof(uint);
-            if (MeshletExpansionOverflowFlagBuffer is not null)
-                readbackBytes += sizeof(uint);
-
-            RuntimeEngine.Rendering.Stats.GpuMeshlets.RecordGpuMeshletInstrumentation(
-                visibleMeshlets,
-                dispatchedMeshlets,
-                overflowCount,
-                dispatchElapsed,
-                readbackBytes);
         }
 
         // Returns the current scene material map (ID -> XRMaterial)

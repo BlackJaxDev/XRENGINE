@@ -194,6 +194,7 @@ internal unsafe partial class VkRenderProgram
         uint imageIndex,
         ComputeDispatchSnapshot snapshot,
         ulong reusableDescriptorBindingKey,
+        PipelineBindPoint bindPoint,
         out DescriptorPool descriptorPool,
         out DescriptorSet[] boundDescriptorSets,
         out IReadOnlyList<(Silk.NET.Vulkan.Buffer buffer, DeviceMemory memory)> tempUniformBuffers)
@@ -234,7 +235,7 @@ internal unsafe partial class VkRenderProgram
 
             recording.Commands.BindDescriptorSetsTracked(
                 recording.CommandBuffer,
-                PipelineBindPoint.Compute,
+                bindPoint,
                 _pipelineLayout,
                 0,
                 preparedDescriptorSets);
@@ -353,7 +354,7 @@ internal unsafe partial class VkRenderProgram
 
         recording.Commands.BindDescriptorSetsTracked(
             recording.CommandBuffer,
-            PipelineBindPoint.Compute,
+            bindPoint,
             _pipelineLayout,
             0,
             descriptorSets);

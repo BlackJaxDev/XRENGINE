@@ -6,10 +6,10 @@ namespace XREngine.Rendering.Vulkan;
 internal sealed partial class VulkanFrameLoop
 {
     internal void EnqueueIndirectDraw(string operationName, uint drawCount, uint stride, nuint byteOffset)
-        => _commandRuntime.EnqueueIndirectDraw(_frameOperationQueue, operationName, drawCount, stride, byteOffset, 0, false, RuntimeEngine.Rendering.State.CurrentRenderGraphPassIndex, CaptureFrameOpContext());
+        => _commandRuntime.EnqueueIndirectDraw(_frameOperationQueue, operationName, drawCount, stride, byteOffset, 0, false, RuntimeEngine.Rendering.State.CurrentRenderGraphPassIndex, CaptureFrameOpContextForCurrentPipelineScope());
 
     internal void EnqueueIndirectCountDraw(uint maxDrawCount, uint stride, nuint byteOffset, nuint countByteOffset)
-        => _commandRuntime.EnqueueIndirectCountDraw(_frameOperationQueue, maxDrawCount, stride, byteOffset, countByteOffset, RuntimeEngine.Rendering.State.CurrentRenderGraphPassIndex, CaptureFrameOpContext());
+        => _commandRuntime.EnqueueIndirectCountDraw(_frameOperationQueue, maxDrawCount, stride, byteOffset, countByteOffset, RuntimeEngine.Rendering.State.CurrentRenderGraphPassIndex, CaptureFrameOpContextForCurrentPipelineScope());
 
     internal bool TryEnqueueQueryOperation(XRRenderQuery query, ERenderQueryOperation operation)
         => query.Descriptor.Kind == ERenderQueryKind.Occlusion && _commandRuntime.TryEnqueueQueryOperation(_frameOperationQueue, RuntimeEngine.Rendering.State.CurrentRenderingPipeline is not null, _resourceRuntime.WrapperLookup.GetOrCreate(query) as VkRenderQuery, query.Descriptor, operation, RuntimeEngine.Rendering.State.CurrentRenderGraphPassIndex, CaptureFrameOpContext());

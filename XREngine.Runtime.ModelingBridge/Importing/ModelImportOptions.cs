@@ -57,6 +57,14 @@ public sealed class ModelImportOptions : IXR3rdPartyImportOptions
         get => _cookSettings;
         set => _cookSettings = value ?? new ModelCookSettings();
     }
+    public Caching.ModelCookOverrideSnapshot CookOverrides { get; set; } = Caching.ModelCookOverrideSnapshot.Empty;
+
+    /// <summary>
+    /// Defers derived meshlet cooking to a caller that performs additional model
+    /// normalization after the backend returns. Such callers must invoke
+    /// <see cref="Rendering.Models.ModelImportMeshletCooker"/> before publication.
+    /// </summary>
+    public bool DeferMeshletCookingUntilPostNormalization { get; set; }
 
     /// <summary>
     /// Optional Unity project or Assets folder selected for external .prefab conversion.

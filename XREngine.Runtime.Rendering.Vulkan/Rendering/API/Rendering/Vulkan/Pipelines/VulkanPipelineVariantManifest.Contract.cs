@@ -40,7 +40,9 @@ internal sealed class VulkanPipelineVariantManifest
         int requirementCount = 0;
         for (int opIndex = 0; opIndex < ops.Length; opIndex++)
         {
-            if (ops.GetHeader(opIndex).OpCode is EVulkanPrimaryPlanNodeKind.MeshDraw or EVulkanPrimaryPlanNodeKind.IndirectDraw)
+            if (ops.GetHeader(opIndex).OpCode is EVulkanPrimaryPlanNodeKind.MeshDraw or
+                EVulkanPrimaryPlanNodeKind.IndirectDraw or
+                EVulkanPrimaryPlanNodeKind.MeshTaskDispatchIndirectCount)
                 requirementCount++;
         }
 
@@ -55,8 +57,65 @@ internal sealed class VulkanPipelineVariantManifest
         for (int opIndex = 0; opIndex < ops.Length; opIndex++)
         {
             ref readonly FrameOperationHeader header = ref ops.GetHeader(opIndex);
-            if (header.OpCode is not (EVulkanPrimaryPlanNodeKind.MeshDraw or EVulkanPrimaryPlanNodeKind.IndirectDraw))
+            if (header.OpCode is not (EVulkanPrimaryPlanNodeKind.MeshDraw or
+                EVulkanPrimaryPlanNodeKind.IndirectDraw or
+                EVulkanPrimaryPlanNodeKind.MeshTaskDispatchIndirectCount))
                 continue;
+
+            if (header.OpCode == EVulkanPrimaryPlanNodeKind.MeshTaskDispatchIndirectCount)
+            {
+                ref readonly MeshTaskDispatchIndirectCountPayload meshTask =
+                    ref ops.GetMeshTask(opIndex);
+                int meshTaskPassIndex = header.PassIndex;
+                FrameOpContext meshTaskContext = ops.GetContext(opIndex);
+                VulkanCompiledRenderGraphPlan meshTaskPlan = plan;
+                if (framePlan is not null &&
+                    framePlan.TryResolveRenderGraphPlan(
+                        in meshTaskContext,
+                        out VulkanRenderGraphPlan meshTaskRenderGraphPlan))
+                {
+                    meshTaskPlan = meshTaskRenderGraphPlan.CompiledGraph.Plan;
+                }
+
+                RenderGraphPlanPass? meshTaskPlanPass = FindPass(
+                    meshTaskPlan.Passes,
+                    meshTaskPassIndex);
+                string meshTaskPassName = meshTaskPlanPass?.Name ??
+                    $"Pass{meshTaskPassIndex}";
+                var meshTaskPreparationHash = new VulkanStableHash64(
+                    schemaVersion: 1);
+                meshTaskPreparationHash.Add(renderGraphPlanSignature);
+                meshTaskPreparationHash.Add(meshTaskPlan.CompatibilityIdentity);
+                meshTaskPreparationHash.Add(meshTask.Program.BindingId);
+                meshTaskPreparationHash.Add(meshTask.ProgramLinkGeneration);
+                meshTaskPreparationHash.Add(meshTask.ProducerSnapshot.Target?.GetHashCode() ?? 0);
+                meshTaskPreparationHash.Add(meshTask.ProducerSnapshot.FixedFunctionState.GetHashCode());
+                meshTaskPreparationHash.Add(meshTask.ProducerSnapshot.IndexedViewportScissors.Count);
+                meshTaskPreparationHash.Add(dynamicRendering);
+
+                requirements[requirementIndex++] = new VulkanPipelineVariantRequirement(
+                    opIndex,
+                    meshTaskPassIndex,
+                    meshTaskPassName,
+                    Required: meshTaskPlanPass?.RequiresPipelineReady ?? true,
+                    submissionStrategy,
+                    Shadow: meshTaskPassName.Contains("Shadow", StringComparison.OrdinalIgnoreCase),
+                    Velocity: meshTaskPassName.Contains("Velocity", StringComparison.OrdinalIgnoreCase) || meshTaskPassName.Contains("Motion", StringComparison.OrdinalIgnoreCase),
+                    EditorId: meshTaskPassName.Contains("Editor", StringComparison.OrdinalIgnoreCase) || meshTaskPassName.Contains("Picking", StringComparison.OrdinalIgnoreCase) || meshTaskPassName.Contains("TransformId", StringComparison.OrdinalIgnoreCase),
+                    MaterialOverride: false,
+                    Stereo: meshTaskContext.StereoEnabled,
+                    Multiview: meshTaskContext.MultiviewEnabled,
+                    DynamicRendering: dynamicRendering,
+                    LegacyRenderPass: !dynamicRendering,
+                    meshTaskPreparationHash.Value);
+
+                hash.Add(opIndex);
+                hash.Add(meshTaskPassIndex);
+                hash.Add(meshTask.Program.BindingId);
+                hash.Add(meshTask.ProgramLinkGeneration);
+                hash.Add(meshTaskPlanPass?.RequiresPipelineReady ?? true);
+                continue;
+            }
 
             PendingMeshDraw draw = header.OpCode switch
             {
