@@ -1391,6 +1391,14 @@ namespace XREngine.Rendering
             => false;
 
         /// <summary>
+        /// Queues a diagnostics-only, fence-delayed readback of the GPU-written
+        /// mesh-task indirect command. The production meshlet path must never
+        /// depend on this observation.
+        /// </summary>
+        public virtual bool QueueGpuMeshletDispatchDiagnosticsReadback(XRDataBuffer dispatchIndirectBuffer)
+            => false;
+
+        /// <summary>
         /// Issue indirect multi-draws.
         /// </summary>
         public abstract void MultiDrawElementsIndirect(uint drawCount, uint stride);
@@ -1437,6 +1445,7 @@ namespace XREngine.Rendering
             => false;
 
         public virtual bool TryDrawMeshTasksIndirectCount(
+            XRRenderProgram program,
             XRDataBuffer indirectBuffer,
             XRDataBuffer countBuffer,
             uint maxDrawCount,
@@ -1445,6 +1454,11 @@ namespace XREngine.Rendering
             nuint byteOffset = 0,
             nuint countByteOffset = 0)
         {
+            if (program is null)
+            {
+                failureReason = "Mesh-task indirect dispatch requires the explicit task/mesh graphics program.";
+                return false;
+            }
             if (!ValidateMeshTasksIndirectCountArgs(
                 indirectBuffer,
                 countBuffer,
@@ -1512,15 +1526,18 @@ namespace XREngine.Rendering
                 return false;
             }
 
-            ulong indirectBytesRequired = (ulong)byteOffset + ((ulong)stride * maxDrawCount);
-            if (indirectBytesRequired > indirectBuffer.Length)
+            ulong indirectOffset = (ulong)byteOffset;
+            ulong indirectLength = indirectBuffer.Length;
+            if (indirectOffset > indirectLength ||
+                maxDrawCount > (indirectLength - indirectOffset) / stride)
             {
                 failureReason = $"Mesh-task indirect buffer is too small for maxDrawCount={maxDrawCount}, stride={stride}, offset={byteOffset}.";
                 return false;
             }
 
-            ulong countBytesRequired = (ulong)countByteOffset + sizeof(uint);
-            if (countBytesRequired > countBuffer.Length)
+            ulong countOffset = (ulong)countByteOffset;
+            ulong countLength = countBuffer.Length;
+            if (countOffset > countLength || countLength - countOffset < sizeof(uint))
             {
                 failureReason = $"Mesh-task dispatch count buffer is too small for offset={countByteOffset}.";
                 return false;

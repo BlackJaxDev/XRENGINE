@@ -81,7 +81,7 @@ public static partial class Engine
         private const string ManifestFileName = "profiler-capture-manifest.json";
         private const string SummaryFileName = "profiler-capture-summary.json";
         private const string RuntimeCaptureDirectoryName = "speed-profiles";
-        private const int ProfileCaptureSchemaVersion = 5;
+        private const int ProfileCaptureSchemaVersion = 7;
         private const int RuntimeCaptureRetentionCount = 3;
         private const int FlushIntervalMilliseconds = 1000;
         private const int MaxBufferedCharacters = 256 * 1024;
@@ -530,7 +530,7 @@ public static partial class Engine
                 RunLabel: runLabel,
                 WorldMode: Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.WorldMode) ?? string.Empty,
                 ForcedStrategy: Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.ForceMeshSubmissionStrategy) ?? string.Empty,
-                EffectiveStrategy: CaptureString(() => RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy().ToString()),
+                EffectiveStrategy: CaptureString(() => RuntimeEngine.Rendering.LastResolvedMeshSubmissionStrategy.ToString()),
                 ZeroReadbackMaterialDrawPath: CaptureString(() => Engine.EffectiveSettings.ZeroReadbackMaterialDrawPath.ToString()),
                 ZeroReadbackMaterialDrawPathEnv: Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.ZeroReadbackMaterialDrawPath) ?? string.Empty,
                 Backend: CaptureString(() => RuntimeEngine.Rendering.Stats.RendererState.ActiveRenderBackend),
@@ -628,7 +628,7 @@ public static partial class Engine
             var manifest = new
             {
                 capture_file = FrameStatsFileName,
-                schema = "xrengine.profile_capture.render_stats.v5",
+                schema = "xrengine.profile_capture.render_stats.v7",
                 schema_version = ProfileCaptureSchemaVersion,
                 fields_note = metadata.SampleIntervalFrames == 1
                     ? "One JSON object per completed render frame. CPU frame timings are wall-clock thread loop durations; GPU pipeline timings are backend timestamp-query snapshots when ready."
@@ -671,7 +671,14 @@ public static partial class Engine
             AppendStringField(s_lineBuilder, "run_label", metadata.RunLabel, ref first);
             AppendStringField(s_lineBuilder, "world_mode", metadata.WorldMode, ref first);
             AppendStringField(s_lineBuilder, "forced_strategy", metadata.ForcedStrategy, ref first);
-            AppendStringField(s_lineBuilder, "effective_strategy", metadata.EffectiveStrategy, ref first);
+            AppendStringField(s_lineBuilder, "requested_strategy", RuntimeEngine.Rendering.ResolveRequestedMeshSubmissionStrategy().ToString(), ref first);
+            AppendStringField(s_lineBuilder, "effective_strategy", RuntimeEngine.Rendering.LastResolvedMeshSubmissionStrategy.ToString(), ref first);
+            AppendStringField(s_lineBuilder, "meshlet_renderer_backend", RuntimeEngine.Rendering.LastResolvedRendererBackend.ToString(), ref first);
+            AppendStringField(s_lineBuilder, "meshlet_shader_dialect", RuntimeEngine.Rendering.LastResolvedMeshShaderDialect.ToString(), ref first);
+            AppendBoolField(s_lineBuilder, "meshlet_renderer_dispatch_ready", RuntimeEngine.Rendering.LastResolvedSupportsMeshletDispatch, ref first);
+            AppendStringField(s_lineBuilder, "meshlet_downgrade_requested", RuntimeEngine.Rendering.LastMeshletDowngradeRequested?.ToString() ?? string.Empty, ref first);
+            AppendStringField(s_lineBuilder, "meshlet_downgrade_resolved", RuntimeEngine.Rendering.LastMeshletDowngradeResolved?.ToString() ?? string.Empty, ref first);
+            AppendStringField(s_lineBuilder, "meshlet_downgrade_reason", RuntimeEngine.Rendering.LastMeshletDowngradeReason ?? string.Empty, ref first);
             AppendStringField(s_lineBuilder, "zero_readback_material_draw_path", metadata.ZeroReadbackMaterialDrawPath, ref first);
             AppendStringField(s_lineBuilder, "zero_readback_material_draw_path_env", metadata.ZeroReadbackMaterialDrawPathEnv, ref first);
             AppendStringField(s_lineBuilder, "p3_logging", metadata.P3Logging, ref first);
@@ -1019,6 +1026,37 @@ public static partial class Engine
             AppendNumberField(s_lineBuilder, "gpu_meshlet_cache_hits", RuntimeEngine.Rendering.Stats.GpuMeshlets.GpuMeshletCacheHits, ref first);
             AppendNumberField(s_lineBuilder, "gpu_meshlet_cache_misses", RuntimeEngine.Rendering.Stats.GpuMeshlets.GpuMeshletCacheMisses, ref first);
             AppendNumberField(s_lineBuilder, "gpu_meshlet_cache_stale", RuntimeEngine.Rendering.Stats.GpuMeshlets.GpuMeshletCacheStale, ref first);
+            // Lifetime meshlet cook evidence is deliberately emitted alongside every
+            // sample: cold import completes before the steady-state capture window.
+            AppendNumberField(s_lineBuilder, "meshlet_cold_import_builder_calls", RuntimeEngine.Rendering.Stats.GpuMeshlets.ColdImportBuilderCalls, ref first);
+            AppendNumberField(s_lineBuilder, "meshlet_cold_import_build_ms", RuntimeEngine.Rendering.Stats.GpuMeshlets.ColdImportBuildTime.TotalMilliseconds, ref first);
+            AppendNumberField(s_lineBuilder, "meshlet_cold_import_allocated_bytes", RuntimeEngine.Rendering.Stats.GpuMeshlets.ColdImportAllocatedBytes, ref first);
+            AppendNumberField(s_lineBuilder, "meshlet_generated_lod_count", RuntimeEngine.Rendering.Stats.GpuMeshlets.GeneratedLodCount, ref first);
+            AppendNumberField(s_lineBuilder, "meshlet_cooked_payload_count", RuntimeEngine.Rendering.Stats.GpuMeshlets.CookedPayloadCount, ref first);
+            AppendNumberField(s_lineBuilder, "meshlet_cooked_meshlet_count", RuntimeEngine.Rendering.Stats.GpuMeshlets.CookedMeshletCount, ref first);
+            AppendNumberField(s_lineBuilder, "meshlet_source_parser_calls", RuntimeEngine.Rendering.Stats.GpuMeshlets.SourceParserCalls, ref first);
+            AppendNumberField(s_lineBuilder, "meshlet_warm_payload_hydrations", RuntimeEngine.Rendering.Stats.GpuMeshlets.WarmPayloadHydrations, ref first);
+            AppendNumberField(s_lineBuilder, "meshlet_render_path_source_hash_calls", RuntimeEngine.Rendering.Stats.GpuMeshlets.RenderPathSourceHashCalls, ref first);
+            AppendNumberField(s_lineBuilder, "meshlet_render_path_disk_calls", RuntimeEngine.Rendering.Stats.GpuMeshlets.RenderPathDiskCalls, ref first);
+            AppendNumberField(s_lineBuilder, "meshlet_render_path_cooker_calls", RuntimeEngine.Rendering.Stats.GpuMeshlets.RenderPathCookerCalls, ref first);
+            AppendStringField(s_lineBuilder, "meshlet_requested_submission", RuntimeEngine.Rendering.Stats.GpuMeshlets.RequestedSubmission, ref first);
+            AppendStringField(s_lineBuilder, "meshlet_primitive_preference", RuntimeEngine.Rendering.Stats.GpuMeshlets.PrimitivePreference, ref first);
+            AppendStringField(s_lineBuilder, "meshlet_resolved_pass", RuntimeEngine.Rendering.Stats.GpuMeshlets.ResolvedPass, ref first);
+            AppendStringField(s_lineBuilder, "meshlet_resolved_route", RuntimeEngine.Rendering.Stats.GpuMeshlets.ResolvedRoute, ref first);
+            AppendStringField(s_lineBuilder, "meshlet_primary_route_reason", RuntimeEngine.Rendering.Stats.GpuMeshlets.PrimaryRouteReason, ref first);
+            AppendNumberField(s_lineBuilder, "meshlet_resolved_meshlet_rows", RuntimeEngine.Rendering.Stats.GpuMeshlets.ResolvedMeshletRows, ref first);
+            AppendNumberField(s_lineBuilder, "meshlet_resolved_task_groups", RuntimeEngine.Rendering.Stats.GpuMeshlets.ResolvedTaskGroups, ref first);
+            AppendNumberField(s_lineBuilder, "meshlet_buffer_live_bytes", RuntimeEngine.Rendering.Stats.GpuMeshlets.BufferLiveBytes, ref first);
+            AppendNumberField(s_lineBuilder, "meshlet_buffer_retired_bytes", RuntimeEngine.Rendering.Stats.GpuMeshlets.BufferRetiredBytes, ref first);
+            AppendNumberField(s_lineBuilder, "meshlet_buffer_rebuild_count", RuntimeEngine.Rendering.Stats.GpuMeshlets.BufferRebuildCount, ref first);
+            AppendNumberField(s_lineBuilder, "meshlet_buffer_retire_count", RuntimeEngine.Rendering.Stats.GpuMeshlets.BufferRetireCount, ref first);
+            AppendNumberField(s_lineBuilder, "meshlet_dispatch_calls", RuntimeEngine.Rendering.Stats.GpuMeshlets.DispatchCallCount, ref first);
+            AppendNumberField(s_lineBuilder, "meshlet_dispatch_groups", RuntimeEngine.Rendering.Stats.GpuMeshlets.DispatchGroupCount, ref first);
+            AppendNumberField(s_lineBuilder, "gpu_meshlet_delayed_dispatch_group_count", RuntimeEngine.Rendering.Stats.GpuMeshlets.DelayedDispatchGroupCount, ref first);
+            AppendNumberField(s_lineBuilder, "gpu_meshlet_diagnostic_readback_bytes", RuntimeEngine.Rendering.Stats.GpuMeshlets.DiagnosticReadbackBytes, ref first);
+            AppendNumberField(s_lineBuilder, "meshlet_mapped_bytes", RuntimeEngine.Rendering.Stats.GpuMeshlets.MappedBytes, ref first);
+            AppendStringField(s_lineBuilder, "meshlet_vulkan_capability_ladder", RuntimeEngine.Rendering.Stats.GpuMeshlets.VulkanCapabilityLadder, ref first);
+            AppendStringField(s_lineBuilder, "meshlet_vulkan_capability_failed_rung", RuntimeEngine.Rendering.Stats.GpuMeshlets.VulkanCapabilityFailedRung, ref first);
             AppendNumberField(s_lineBuilder, "fbo_bind_count", RuntimeEngine.Rendering.Stats.Vram.FBOBindCount, ref first);
             AppendNumberField(s_lineBuilder, "fbo_bandwidth_bytes", RuntimeEngine.Rendering.Stats.Vram.FBOBandwidthBytes, ref first);
             AppendNumberField(s_lineBuilder, "allocated_vram_bytes", RuntimeEngine.Rendering.Stats.Vram.AllocatedVRAMBytes, ref first);
@@ -2447,7 +2485,7 @@ public static partial class Engine
                 "renderTargetEnv=" + renderTargetModeEnv,
                 "renderTargetSetting=" + renderTargetModeSetting,
                 "renderScale=" + CaptureString(() => RuntimeEngine.Rendering.Settings.TsrRenderScale.ToString(CultureInfo.InvariantCulture)),
-                "strategy=" + CaptureString(() => RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy().ToString()),
+                "strategy=" + CaptureString(() => RuntimeEngine.Rendering.LastResolvedMeshSubmissionStrategy.ToString()),
                 "vrMode=" + CaptureString(() => RuntimeEngine.Rendering.Settings.VrViewRenderMode.ToString()),
                 "foveation=" + CaptureString(() => RuntimeEngine.Rendering.Settings.VrFoveationMode.ToString()),
                 "mirror=" + CaptureString(() => RuntimeEngine.Rendering.Settings.VrMirrorMode.ToString()),

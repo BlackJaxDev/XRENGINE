@@ -1525,7 +1525,7 @@ internal sealed partial class VulkanCommandRuntime
         BindPipelineTracked(commandBuffer, PipelineBindPoint.Compute, pipeline);
         EnsureComputeStorageImageLayoutsForDispatch(commandBuffer, operation.Snapshot);
         PushConstantsTracked(commandBuffer, operation.Program.PipelineLayout, CommonPushConstantStageFlags, 0, new ComputeDispatchPushConstants(0u, 0u, 0u, 0u));
-        if (!operation.Program.TryBuildAndBindComputeDescriptorSets(CreateProgramRecordingRequest(commandBuffer), imageIndex, operation.Snapshot, 0, out _, out DescriptorSet[] boundDescriptorSets, out IReadOnlyList<(Buffer buffer, DeviceMemory memory)> temporaryBuffers))
+        if (!operation.Program.TryBuildAndBindComputeDescriptorSets(CreateProgramRecordingRequest(commandBuffer), imageIndex, operation.Snapshot, 0, PipelineBindPoint.Compute, out _, out DescriptorSet[] boundDescriptorSets, out IReadOnlyList<(Buffer buffer, DeviceMemory memory)> temporaryBuffers))
         {
             foreach ((Buffer buffer, DeviceMemory memory) in temporaryBuffers) DestroyBuffer(buffer, memory);
             throw new InvalidOperationException($"Descriptor binding failed for indirect compute program '{operation.Program.Data.Name ?? "UnnamedProgram"}'.");
@@ -1585,11 +1585,12 @@ internal sealed partial class VulkanCommandRuntime
             0,
             new ComputeDispatchPushConstants(0u, 0u, 0u, 0u));
 
-        if (!operation.Program.TryBuildAndBindComputeDescriptorSets(
+            if (!operation.Program.TryBuildAndBindComputeDescriptorSets(
                 CreateProgramRecordingRequest(commandBuffer),
                 imageIndex,
                 operation.Snapshot,
-                0,
+                    0,
+                    PipelineBindPoint.Compute,
                 out _,
                 out DescriptorSet[] boundDescriptorSets,
                 out IReadOnlyList<(Buffer buffer, DeviceMemory memory)> temporaryBuffers))

@@ -620,7 +620,9 @@ namespace XREngine.Rendering.Vulkan
             VulkanPipelineVariantManifest pipelineVariantManifest)
         {
             if (pipelineVariantManifest.WarmupCompleted)
-                return true;
+                return TryAssociatePrimaryMeshTaskPipelines(
+                    ref recordingState,
+                    pipelineVariantManifest);
 
             CommandBufferRecordingScratch scratch =
                 recordingState.RecordingScratch;
@@ -746,8 +748,69 @@ namespace XREngine.Rendering.Vulkan
                 return false;
             }
 
+            if (!TryAssociatePrimaryMeshTaskPipelines(
+                    ref recordingState,
+                    pipelineVariantManifest))
+            {
+                return false;
+            }
+
             if (optionalRequirements.Count == 0)
                 pipelineVariantManifest.MarkWarmupCompleted();
+            return true;
+        }
+
+        /// <summary>
+        /// Re-associates the exact target-compatible pipeline with each newly
+        /// lowered mesh-task payload even when the shared variant manifest is
+        /// already warm. Unlike ordinary mesh draws, mesh-task operations are
+        /// authored with an empty pipeline and receive their immutable native
+        /// pipeline only at this pre-recording admission boundary.
+        /// </summary>
+        private bool TryAssociatePrimaryMeshTaskPipelines(
+            scoped ref PrimaryCommandBufferRecordingState recordingState,
+            VulkanPipelineVariantManifest pipelineVariantManifest)
+        {
+            int requirementIndex = 0;
+            int requirementCount = pipelineVariantManifest.Requirements.Count;
+            for (int opIndex = 0; opIndex < recordingState.Ops.Length; opIndex++)
+            {
+                if (recordingState.Ops.GetHeader(opIndex).OpCode !=
+                    EVulkanPrimaryPlanNodeKind.MeshTaskDispatchIndirectCount)
+                    continue;
+
+                while (requirementIndex < requirementCount &&
+                       pipelineVariantManifest.Requirements[requirementIndex]
+                           .OpIndex < opIndex)
+                    requirementIndex++;
+
+                if (requirementIndex >= requirementCount ||
+                    pipelineVariantManifest.Requirements[requirementIndex]
+                        .OpIndex != opIndex)
+                {
+                    recordingState.RecordingDeferredReason =
+                        "The warm pipeline manifest does not contain a directly recorded mesh-task operation.";
+                    return false;
+                }
+
+                VulkanPipelineVariantRequirement requirement =
+                    pipelineVariantManifest.Requirements[requirementIndex++];
+
+                if (TryPreparePrimaryMeshTaskPipelineRequirement(
+                        ref recordingState,
+                        in requirement,
+                        out _,
+                        out string pendingReason))
+                {
+                    recordingState.PipelineDeferredOperationIndices.Remove(opIndex);
+                    continue;
+                }
+
+                recordingState.RecordingDeferredReason =
+                    $"Mesh-task pipeline association deferred command recording: {pendingReason}";
+                return false;
+            }
+
             return true;
         }
 
@@ -768,6 +831,16 @@ namespace XREngine.Rendering.Vulkan
 
             ref readonly FrameOperationHeader operationHeader =
                 ref recordingState.Ops.GetHeader(opIndex);
+            if (operationHeader.OpCode ==
+                EVulkanPrimaryPlanNodeKind.MeshTaskDispatchIndirectCount)
+            {
+                return TryPreparePrimaryMeshTaskPipelineRequirement(
+                    ref recordingState,
+                    in requirement,
+                    out optionalDeferred,
+                    out pendingReason);
+            }
+
             PendingMeshDraw pendingDraw = operationHeader.OpCode switch
             {
                 EVulkanPrimaryPlanNodeKind.MeshDraw =>
@@ -832,6 +905,7 @@ namespace XREngine.Rendering.Vulkan
                     out RenderPass prewarmRenderPass,
                     out DynamicRenderingFormatSignature
                         prewarmDynamicRenderingFormats,
+                    out _,
                     out bool depthStencilReadOnly,
                     out string targetReason))
             {
@@ -874,6 +948,129 @@ namespace XREngine.Rendering.Vulkan
             return false;
         }
 
+        /// <summary>
+        /// Admits task/mesh pipelines from their sealed payload rather than a
+        /// renderer draw. The producer snapshot carries the intended target;
+        /// using the numeric operation target here would incorrectly select the
+        /// default swapchain target because mesh-task operations are targetless
+        /// authoring operations by design.
+        /// </summary>
+        private bool TryPreparePrimaryMeshTaskPipelineRequirement(
+            scoped ref PrimaryCommandBufferRecordingState recordingState,
+            in VulkanPipelineVariantRequirement requirement,
+            out bool optionalDeferred,
+            out string pendingReason)
+        {
+            optionalDeferred = false;
+            pendingReason = string.Empty;
+            int opIndex = requirement.OpIndex;
+            ref readonly MeshTaskDispatchIndirectCountPayload meshTask =
+                ref recordingState.Ops.GetMeshTask(opIndex);
+            if (meshTask.Program is null ||
+                meshTask.ProgramLinkGeneration != meshTask.Program.LinkGeneration)
+            {
+                optionalDeferred = !requirement.Required;
+                pendingReason = "mesh-task program generation changed after the frame plan was sealed";
+                return false;
+            }
+
+            int pipelinePassIndex = requirement.PassIndex;
+            if (pipelinePassIndex == int.MinValue)
+            {
+                pendingReason = "mesh-task pipeline admission has no valid render pass";
+                return false;
+            }
+
+            HashSet<ulong> admittedSignatures = recordingState.RecordingScratch
+                .AdmittedPipelinePreparationSignatures;
+
+            FrameOpContext operationContext = recordingState.Ops.GetContext(opIndex);
+            using var pipelineScope = RuntimeEngine.Rendering.State
+                .PushRenderingPipelineOverride(operationContext.PipelineInstance);
+            VulkanCompiledRenderGraph operationGraph =
+                recordingState.RenderGraphPlan.CompiledGraph;
+            if (recordingState.FramePlan is not null &&
+                recordingState.FramePlan.TryResolveRenderGraphPlan(
+                    in operationContext,
+                    out VulkanRenderGraphPlan operationPlan))
+            {
+                operationGraph = operationPlan.CompiledGraph;
+            }
+
+            if (!TryResolveGraphicsPipelinePrewarmTarget(
+                    meshTask.ProducerSnapshot.Target,
+                    pipelinePassIndex,
+                    operationContext,
+                    recordingState.SwapchainTarget,
+                    recordingState.Policy.UseDynamicRendering,
+                    operationGraph,
+                    out bool useDynamicRendering,
+                    out RenderPass prewarmRenderPass,
+                    out DynamicRenderingFormatSignature
+                        prewarmDynamicRenderingFormats,
+                    out SampleCountFlags rasterizationSamples,
+                    out bool depthStencilReadOnly,
+                    out string targetReason))
+            {
+                optionalDeferred = !requirement.Required;
+                pendingReason = targetReason;
+                return false;
+            }
+
+            ulong preparationSignature =
+                ComputeMeshTaskPipelinePreparationLedgerSignature(
+                    requirement.PreparationCompatibilitySignature,
+                    recordingState.ResourcePlanStamp.ResourceAllocationSignature,
+                    rasterizationSamples);
+
+            if (!VulkanMeshTaskDrawProducer.TryAdmitPrimaryPipeline(
+                    this,
+                    meshTask.Program,
+                    meshTask.ProducerSnapshot,
+                    pipelinePassIndex,
+                    operationContext.PassMetadata,
+                    prewarmRenderPass,
+                    useDynamicRendering,
+                    prewarmDynamicRenderingFormats,
+                    rasterizationSamples,
+                    depthStencilReadOnly,
+                    out Pipeline pipeline,
+                    out string pipelineReason))
+            {
+                // A required producer cannot be omitted after the graph's
+                // attachment transitions were admitted. Keep the sealed graph
+                // intact and defer before vkBeginCommandBuffer.
+                pendingReason = pipelineReason;
+                return false;
+            }
+
+            if (!recordingState.Ops.TryAssociateAdmittedMeshTaskPipeline(
+                    opIndex,
+                    meshTask.Program,
+                    meshTask.ProgramLinkGeneration,
+                    meshTask.ProgramBindingSnapshot,
+                    meshTask.ProducerSnapshot,
+                    pipeline))
+            {
+                pendingReason = "mesh-task pipeline association rejected because the sealed payload changed";
+                return false;
+            }
+
+            if (preparationSignature != 0)
+            {
+                if (admittedSignatures.Count >=
+                        CommandBufferRecordingScratch
+                            .MaxAdmittedPipelinePreparationSignatures &&
+                    !admittedSignatures.Contains(preparationSignature))
+                {
+                    admittedSignatures.Clear();
+                }
+
+                admittedSignatures.Add(preparationSignature);
+            }
+            return true;
+        }
+
         private static ulong ComputePipelinePreparationLedgerSignature(
             ulong requirementSignature,
             ulong resourceAllocationSignature)
@@ -884,6 +1081,23 @@ namespace XREngine.Rendering.Vulkan
             var hash = new VulkanStableHash64(schemaVersion: 1);
             hash.Add(requirementSignature);
             hash.Add(resourceAllocationSignature);
+            return hash.Value;
+        }
+
+        private static ulong ComputeMeshTaskPipelinePreparationLedgerSignature(
+            ulong requirementSignature,
+            ulong resourceAllocationSignature,
+            SampleCountFlags rasterizationSamples)
+        {
+            ulong baseSignature = ComputePipelinePreparationLedgerSignature(
+                requirementSignature,
+                resourceAllocationSignature);
+            if (baseSignature == 0)
+                return 0;
+
+            var hash = new VulkanStableHash64(schemaVersion: 1);
+            hash.Add(baseSignature);
+            hash.Add((uint)rasterizationSamples);
             return hash.Value;
         }
 

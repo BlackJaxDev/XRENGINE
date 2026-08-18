@@ -2,8 +2,8 @@
 
 Last Updated: 2026-08-17
 
-Status: Paused at a reproducible laptop checkpoint; desktop and privileged
-trace evidence remain open
+Status: Paused with original-laptop and third-laptop checkpoints; matched
+desktop and privileged trace evidence remain open
 
 Owner: Rendering / Frame Scheduling / Vulkan
 
@@ -12,10 +12,17 @@ Implementation plan: [Vulkan Resident Draw Stream And Render Task Pool TODO](../
 ## Outcome
 
 Phase 0 now has a deterministic Release capture contract, per-stage Vulkan CPU
-telemetry, valid dense-Sponza laptop captures for `CpuDirect`,
+telemetry, valid dense-Sponza original-laptop captures for `CpuDirect`,
 `GpuIndirectZeroReadback`, and `GpuIndirectInstrumented`, requested-versus-
 resolved evidence for both meshlet modes, and source audits for worker topology,
 GPU-scene ownership, and diagnostic readback behavior.
+
+A third-laptop checkpoint was captured on an HP OMEN 17 with an i7-13700HX and
+RTX 4070 Laptop GPU. It is intentionally not merged into the matched hardware
+table: the checkout commit and stable workload identity differ from the
+original-laptop run, and the current capture's workload shape varied materially
+between the short and long windows. The checkpoint is useful machine evidence,
+but not a hardware-only comparison.
 
 The evidence identifies two immediate architectural facts:
 
@@ -40,9 +47,15 @@ meshlet modes resolve to indirect and then terminate before a valid capture.
 - Branch: `vulkan-refactor`
 - Local run root:
   `Build/_AgentValidation/20260817-132212-vulkan-phase0/`
-- Current host: Intel Core Ultra 9 185H, 16 cores / 22 logical processors,
+- Original laptop host: Intel Core Ultra 9 185H, 16 cores / 22 logical processors,
   NVIDIA GeForce RTX 4070 Laptop GPU, NVIDIA driver 581.57, 8,188 MiB reported
   device memory, Windows 11 Pro build 26200, Performance power plan.
+- Third laptop checkpoint: HP OMEN by HP Laptop 17-cm2xxx, Intel Core i7-13700HX,
+  16 cores / 24 logical processors, 16 GB system memory, NVIDIA GeForce RTX 4070
+  Laptop GPU, NVIDIA driver 592.82, 8,188 MiB reported device memory, Windows 11
+  Home build 26200, Balanced power plan. Balanced was the only registered power
+  scheme; GPU clocks were not pinned. The GPU reported P0 at 2,175 MHz core and
+  8,001 MHz memory immediately before the run.
 - Comparison host still required: Ryzen 9 7950X3D / RTX 3090 desktop.
 - RenderDoc environment: `rdc doctor` passed the Windows, replay, RenderDoc,
   and registered Vulkan-layer checks with RenderDoc 1.41/1.44 components.
@@ -104,6 +117,101 @@ compaction rung is `WorkgroupPrefixScan64`.
 The long `CpuDirect` run contains 281 samples over 60 seconds and reports render
 p50/p95 of 10.266/14.079 ms. The short run is retained for the matched strategy
 table; the long run is the stronger O(draw) cost baseline.
+
+## Third laptop checkpoint
+
+This checkpoint was captured on 2026-08-17 at commit
+`6ff61dae1fe41ae02c6788945d4f8f52b85a52cc` on branch `vulkan-refactor`.
+The Release editor build completed with zero warnings and zero errors. Evidence
+is under
+`Build/_AgentValidation/20260817-194535-vulkan-resident-phase0-third-laptop/`;
+the short sweep is in `reports/short/summary.json`, the long CPU-direct run is
+in `reports/long-cpu/summary.json`, and the user-mode sampled-thread trace is
+`reports/cpu-direct-user-mode.nettrace` with a converted
+`reports/cpu-direct-user-mode.speedscope.json`. `rdc doctor` passed the local
+RenderDoc 1.44 replay, command-line, and registered Vulkan-layer checks.
+
+The requested contract matched the fixed central camera, 1600 x 900 window,
+0.67 render scale, desktop Vulkan dynamic rendering, VSync off, validation and
+labels off, disabled occlusion, enabled primary reuse/command chains/parallel
+recording, `MaterialTable`, and `ShippingFast`. Short captures used 5 seconds of
+minimum warmup, a 3-second stable-identity gate, and 10 seconds of capture. The
+long CPU capture used 25 seconds of minimum warmup, a 5-second stable-identity
+gate, and 60 seconds of capture.
+
+### Short strategy sweep
+
+All five requested modes completed. The meshlet requests resolved explicitly to
+indirect zero-readback and are not meshlet measurements.
+
+| Requested | Resolved | Samples | Render p50 / p95 | Vulkan frame p50 | GPU command buffer p50 | Read bytes / maps | Result |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | --- |
+| `CpuDirect` | same | 319 | 2.765 / 3.959 ms | 2.117 ms | 2.193 ms | 0 / 0 | Valid capture; only 3 GPU-scene commands at p50 |
+| `GpuIndirectZeroReadback` | same | 35 | 19.518 / 25.851 ms | 12.179 ms | 2.102 ms | 0 / 0 | Zero-readback contract passes; 125 GPU-scene commands at p50 |
+| `GpuIndirectInstrumented` | same | 79 | 11.773 / 17.298 ms | 9.553 ms | 1.937 ms | 24,964 / 316 | Diagnostic readback remains active; delayed diagnostic bytes were 14,536 |
+| `GpuMeshletZeroReadback` | `GpuIndirectZeroReadback` | 37 | 25.225 / 40.907 ms | 16.613 ms | 2.750 ms | 0 / 0 | Explicit capability downgrade; not meshlet evidence |
+| `GpuMeshletInstrumented` | `GpuIndirectZeroReadback` | 70 | 10.896 / 14.334 ms | 5.779 ms | 2.080 ms | 0 / 0 | Explicit capability downgrade; not instrumented-meshlet evidence |
+
+Every row reported stable workload identity `17674158090218751745`, zero
+capture-window fallback events, and zero forbidden fallback events. The real
+GPU paths selected `CoarseBucket` and `WorkgroupPrefixScan64`. The sweep should
+not be ranked as a strategy performance comparison: the GPU-scene command count
+was 3 for the short CPU-direct row and 125 for the GPU rows, and sequential runs
+showed large timing variance despite the identity gate passing.
+
+### Long CPU-direct window
+
+The 60-second CPU-direct capture recorded 694 samples and render p50/p95 of
+3.495/8.860 ms. Its workload shape also varied: GPU-scene command count was 83
+at p50 and 125 maximum, while prepared cohorts rebuilt 1,062 times. This makes
+it a third-machine checkpoint rather than the settled 625-draw O(draw) baseline
+captured on the original laptop.
+
+| Stage | p50 / p95 | Count evidence |
+| --- | ---: | --- |
+| Raw mesh-request drain | 0.014 / 0.023 ms | 13,860 invocations |
+| Prepared-cohort work | 1.476 / 1.838 ms | 12,792 hits and 1,062 builds |
+| Binding validation | 0.016 / 0.030 ms | 12,792 invocations |
+| Unsafe-hole materialization | 1.326 / 1.624 ms | 313,137 operations |
+| Resource-use lowering | 0.066 / 0.112 ms | 13,854 invocations |
+| Frame-plan construction | 0.137 / 0.213 ms | 13,860 invocations |
+| Primary native encoding | 0 ms p50 | 1,464 invocations; sampled clean-reuse ratio 1.0 |
+
+The capture read zero GPU bytes, mapped zero GPU buffers, and reported zero
+fallback events. It reused 963,839 prepared operations, but the nonzero cohort
+build and native-encoding counts confirm that the long window was not the same
+fully settled workload as the original-laptop baseline.
+
+### CPU and scheduler evidence
+
+The 43.5 MB user-mode `.nettrace` captured about 14.9 seconds of sampled data
+before the profiled process completed, produced 66 thread profiles in the
+Speedscope conversion, and enabled one-second `System.Runtime` counters.
+Exclusive sampled thread time was dominated by waits:
+`SemaphoreSlim.WaitCore` 82.65%, `WaitHandle.WaitOneNoCheck` 5.07%,
+`Thread.Sleep` 4.82%, and the ThreadPool IO completion poller 3.38%.
+`EngineTimer.RunCollectVisibleIteration` accounted for 1.36% exclusive sampled
+time. This trace is useful for managed ownership and wait-state inspection, but
+it does not contain kernel context switches, ready-thread delay, core migration,
+or QoS evidence.
+
+The required WPR `GeneralProfile + DotNET` capture was attempted and rejected
+with `0xc5585011` because this shell cannot enable system-performance profiling.
+`wpr -status collectors` confirmed that no recorder remained active. An
+elevated rerun is still required for the scheduler portion of the Phase 0 gate.
+
+### Comparison limits
+
+- The third-laptop checkout commit differs from the original-laptop baseline
+  commit `a2d15e430edd68ab9fe06360eb36070ac8e79805`.
+- Its stable identity `17674158090218751745` differs from the original dense
+  identity `15290802679255583872`.
+- The power plan is Balanced rather than Performance, and GPU clocks were not
+  pinned.
+- The command-count and cohort-build variation means the current stability gate
+  did not prove an equivalent settled workload. Do not attribute timing deltas
+  between the two laptops to hardware until both are rerun at one commit and one
+  accepted identity/workload signature.
 
 ## O(draw) CPU evidence
 

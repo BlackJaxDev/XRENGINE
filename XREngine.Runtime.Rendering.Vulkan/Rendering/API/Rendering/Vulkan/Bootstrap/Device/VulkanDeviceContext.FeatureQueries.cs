@@ -344,11 +344,13 @@ internal sealed partial class VulkanDeviceContext
         bool extensionEnabled,
         out bool taskShaderSupported,
         out bool meshShaderSupported,
-        out bool meshShaderQueriesSupported)
+        out bool meshShaderQueriesSupported,
+        out PhysicalDeviceMeshShaderPropertiesEXT properties)
     {
         taskShaderSupported = false;
         meshShaderSupported = false;
         meshShaderQueriesSupported = false;
+        properties = default;
         if (!extensionEnabled)
             return;
 
@@ -361,6 +363,18 @@ internal sealed partial class VulkanDeviceContext
         taskShaderSupported = features.TaskShader;
         meshShaderSupported = features.MeshShader;
         meshShaderQueriesSupported = features.MeshShaderQueries;
+
+        PhysicalDeviceMeshShaderPropertiesEXT queriedProperties = new()
+        {
+            SType = StructureType.PhysicalDeviceMeshShaderPropertiesExt,
+        };
+        PhysicalDeviceProperties2 properties2 = new()
+        {
+            SType = StructureType.PhysicalDeviceProperties2,
+            PNext = &queriedProperties,
+        };
+        Api.GetPhysicalDeviceProperties2(PhysicalDevice, &properties2);
+        properties = queriedProperties;
     }
 
     internal unsafe void QueryGraphicsPipelineLibraryCapabilities(

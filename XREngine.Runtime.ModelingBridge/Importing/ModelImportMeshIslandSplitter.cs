@@ -76,6 +76,7 @@ internal static class ModelImportMeshIslandSplitter
             GeneratedTargetIndexRatio = source.GeneratedTargetIndexRatio,
             GeneratedNormalizedError = source.GeneratedNormalizedError,
             GeneratedObjectSpaceError = source.GeneratedObjectSpaceError,
+            StableSortKey = source.StableSortKey,
         };
 
     private static string FormatIslandName(string? sourceName, int islandIndex)

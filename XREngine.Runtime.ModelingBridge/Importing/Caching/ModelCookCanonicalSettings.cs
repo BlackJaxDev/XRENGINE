@@ -15,8 +15,9 @@ public static class ModelCookCanonicalSettings
         writer.WriteString(1, "xrengine.model-cook-settings");
         writer.WriteUInt32(2, settings.PolicyVersion);
         writer.WriteUInt32(3, ModelBinaryCacheVersions.DeterministicOrdering);
-        writer.WriteString(4, MeshOptimizerIntegration.MeshOptimizerVersionKey);
-        writer.WriteInt32(5, (int)settings.RepairPolicy);
+        writer.WriteString(4, MeshletPayloadUtility.CurrentCookProvenanceKey);
+        writer.WriteString(5, MeshOptimizerIntegration.MeshOptimizerVersionKey);
+        writer.WriteInt32(6, (int)settings.RepairPolicy);
         writer.WriteBytes(10, SerializeMeshlets(MeshletGenerationSettingsSnapshot.From(settings.Meshlets)));
         writer.WriteBytes(11, SerializeLods(MeshLodGenerationSettingsSnapshot.From(settings.Lods)));
         return writer.ToArray();

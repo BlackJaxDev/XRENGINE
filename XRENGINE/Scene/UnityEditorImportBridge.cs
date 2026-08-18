@@ -1,5 +1,7 @@
 using System.Reflection;
 using System.Runtime.ExceptionServices;
+using XREngine.Rendering.Models;
+using XREngine.Rendering.Models.Caching;
 using XREngine.Scene.Prefabs;
 
 namespace XREngine.Scene;
@@ -42,6 +44,16 @@ internal sealed class UnityEditorImportBridge : IRuntimeSceneImportServices
             outputDestination,
             explicitProjectOrAssetsRoot);
 
+    public static UnityPrefabConversionResult ImportPrefabConversion(
+        string filePath,
+        string? outputDestination,
+        string? explicitProjectOrAssetsRoot,
+        ModelCookSettings cookSettings,
+        ModelCookOverrideSnapshot cookOverrides)
+        => Invoke<UnityPrefabConversionResult>(
+            Methods.Value.ImportPrefabConversionWithCooking,
+            [filePath, outputDestination, explicitProjectOrAssetsRoot, cookSettings, cookOverrides]);
+
     private static ImporterMethods ResolveMethods()
     {
         Type importerType = Type.GetType(ImporterTypeName, throwOnError: false)
@@ -58,7 +70,15 @@ internal sealed class UnityEditorImportBridge : IRuntimeSceneImportServices
                 "ImportPrefabWithManifest",
                 typeof(string),
                 typeof(string),
-                typeof(string)));
+                typeof(string)),
+            ResolveMethod(
+                importerType,
+                "ImportPrefabWithManifest",
+                typeof(string),
+                typeof(string),
+                typeof(string),
+                typeof(ModelCookSettings),
+                typeof(ModelCookOverrideSnapshot)));
     }
 
     private static MethodInfo ResolveMethod(Type importerType, string methodName)
@@ -104,5 +124,6 @@ internal sealed class UnityEditorImportBridge : IRuntimeSceneImportServices
         MethodInfo ImportScene,
         MethodInfo ImportPrefab,
         MethodInfo ImportPrefabConversion,
-        MethodInfo ImportPrefabConversionWithOptions);
+        MethodInfo ImportPrefabConversionWithOptions,
+        MethodInfo ImportPrefabConversionWithCooking);
 }

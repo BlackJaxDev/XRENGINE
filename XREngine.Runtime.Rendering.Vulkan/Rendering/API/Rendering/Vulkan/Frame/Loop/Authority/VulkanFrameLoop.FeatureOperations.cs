@@ -8,11 +8,7 @@ namespace XREngine.Rendering.Vulkan;
 internal sealed partial class VulkanFrameLoop
 {
     internal string GetMeshletDispatchUnsupportedReason()
-        => !_deviceContext.Capabilities.Supports(EVulkanDeviceCapability.MeshShader)
-            ? "VK_EXT_mesh_shader is not available on the active Vulkan device."
-            : _deviceContext.SupportsMeshTaskIndirectCount
-                ? "VK_EXT_mesh_shader indirect-count dispatch is available."
-                : "VK_EXT_mesh_shader is visible, but task/mesh shader features or vkCmdDrawMeshTasksIndirectCountEXT dispatch are unavailable.";
+        => _deviceContext.MeshletDispatchStatus;
 
     internal ERendererComputeEnqueueStatus TryDispatchComputeIndirect(XRRenderProgram program, XRDataBuffer arguments, nint byteOffset, string label)
         => _commandRuntime.TryEnqueueIndirectComputeDispatch(_resourceRuntime.WrapperLookup, _frameOperationQueue, program, arguments, byteOffset, label, RuntimeEngine.Rendering.State.CurrentRenderGraphPassIndex, CaptureFrameOpContextOrLastActive(), AllowSynchronousResourceUploads, IsDeviceLost);
@@ -26,8 +22,8 @@ internal sealed partial class VulkanFrameLoop
     internal XRGpuFence? InsertOrderedComputeFence()
         => _commandRuntime.TryEnqueueOrderedComputeFence(_frameOperationQueue, RuntimeEngine.Rendering.State.CurrentRenderGraphPassIndex, CaptureFrameOpContextOrLastActive());
 
-    internal bool TryDrawMeshTasksIndirectCount(XRDataBuffer indirect, XRDataBuffer count, uint maxDrawCount, uint stride, nuint byteOffset, nuint countByteOffset, out string failureReason)
-        => _commandRuntime.TryEnqueueMeshTaskIndirectCount(_resourceRuntime.WrapperLookup, _frameOperationQueue, indirect, count, maxDrawCount, stride, byteOffset, countByteOffset, RuntimeEngine.Rendering.State.CurrentRenderGraphPassIndex, CaptureFrameOpContext(), AllowSynchronousResourceUploads, out failureReason);
+    internal bool TryDrawMeshTasksIndirectCount(XRRenderProgram program, XRDataBuffer indirect, XRDataBuffer count, uint maxDrawCount, uint stride, nuint byteOffset, nuint countByteOffset, out string failureReason)
+        => _commandRuntime.TryEnqueueMeshTaskIndirectCount(_resourceRuntime.WrapperLookup, _resourceRuntime.Descriptors, _frameOperationQueue, program, indirect, count, maxDrawCount, stride, byteOffset, countByteOffset, RuntimeEngine.Rendering.State.CurrentRenderGraphPassIndex, CaptureFrameOpContextForCurrentPipelineScope(), AllowSynchronousResourceUploads, out failureReason);
 
     internal bool TryEnqueueDlssUpscale(int passIndex, IRuntimeVendorUpscaleSession session, XRTexture sourceColor, XRTexture depth, XRTexture motion, XRTexture outputColor, XRTexture? exposure, in VulkanUpscaleBridgeDispatchParameters parameters, out string failureReason)
         => VulkanUpscaleBridgeSidecar.TryEnqueueDlssUpscale(_resourceRuntime.WrapperLookup, _commandRuntime, _frameOperationQueue, passIndex, session, sourceColor, depth, motion, outputColor, exposure, parameters, CaptureFrameOpContext(), out failureReason);

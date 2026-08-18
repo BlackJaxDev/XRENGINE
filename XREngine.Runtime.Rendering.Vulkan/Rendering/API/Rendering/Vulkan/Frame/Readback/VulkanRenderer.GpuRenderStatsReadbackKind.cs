@@ -4,4 +4,5 @@ internal enum GpuRenderStatsReadbackKind
 {
     DrawCountBuffer,
     StatsBuffer,
+    MeshletDispatchIndirectBuffer,
 }

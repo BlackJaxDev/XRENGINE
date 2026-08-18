@@ -47,7 +47,17 @@ namespace XREngine.Rendering.Commands
         /// <summary>Reverse mapping from mesh ID to XRMesh instance.</summary>
         private readonly ConcurrentDictionary<uint, XRMesh> _idToMesh = new();
 
-        private readonly ConcurrentDictionary<uint, byte> _runtimeMeshletRepairFailedMeshIds = new();
+        // Registration records this state at the atlas boundary. Rendering reads it
+        // as an O(1) conservative gate so a pass can never dispatch mesh shaders
+        // for only a subset of its commands and silently lose the remaining draws.
+        private readonly ConcurrentDictionary<uint, byte> _meshletIneligibleResidentMeshIds = new();
+
+        /// <summary>
+        /// Gets whether any resident mesh lacks an attached, runtime-compatible
+        /// meshlet payload. A meshlet-requested pass must use traditional GPU
+        /// indirect while this is true until per-bin command partitioning exists.
+        /// </summary>
+        public bool HasMeshletIneligibleResidentMeshes => !_meshletIneligibleResidentMeshIds.IsEmpty;
 
         private readonly Dictionary<RenderableMesh, Dictionary<uint, uint>> _renderableLogicalMeshIdMap = new(System.Collections.Generic.ReferenceEqualityComparer.Instance);
         private readonly Dictionary<XRMesh, uint> _standaloneLogicalMeshIdMap = new(System.Collections.Generic.ReferenceEqualityComparer.Instance);

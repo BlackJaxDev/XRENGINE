@@ -3195,6 +3195,12 @@ namespace XREngine.Rendering
                 frameRenderer.Active = true;
                 AbstractRenderer.Current = frameRenderer;
 
+                // Publish the effective strategy and meshlet capability snapshot at the
+                // renderer-current boundary. Profile capture may observe this frame before
+                // any mesh pass resolves its strategy, so it must not report the default
+                // startup value for the first sample.
+                _ = RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy();
+
                 bool useScenePanelMode = RuntimeRenderingHostServices.Presentation.IsWindowScenePanelPresentationEnabled;
                 bool forceFullViewport = RuntimeRenderingHostServices.Presentation.ForceFullViewport;
                 if (forceFullViewport)

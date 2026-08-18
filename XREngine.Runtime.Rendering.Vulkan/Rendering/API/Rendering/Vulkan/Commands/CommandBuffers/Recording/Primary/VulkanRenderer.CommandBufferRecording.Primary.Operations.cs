@@ -71,6 +71,9 @@ internal sealed partial class VulkanCommandRuntime
     {
         int resolvedPass = passIndex == int.MinValue ? header.PassIndex : passIndex;
         VulkanPrimaryOperationRecordingInfo info = new(node.Actions, index, resolvedPass);
+        if (info.EndsRendering && state.RenderScope.IsActive)
+            EndActiveRenderPass(ref state);
+
         RecordVulkanCommandDiagnosticMarker(state.CommandBuffer, header.OpCode, resolvedPass, index);
         return header.OpCode switch
         {
@@ -209,10 +212,48 @@ internal sealed partial class VulkanCommandRuntime
 
     private int RecordMeshTaskPayload(scoped ref PrimaryCommandBufferRecordingState state, in MeshTaskDispatchIndirectCountPayload payload, in VulkanPrimaryOperationRecordingInfo info)
     {
-        if (info.BeginsRendering && !state.RenderScope.MatchesTarget(null)) { EndActiveRenderPass(ref state); BeginRenderPassForTarget(ref state, null, info.PassIndex, state.ActiveContext); }
+        XRFrameBuffer? target = state.Ops.GetTarget(info.OperationIndex);
+        // vkCmdPipelineBarrier is not legal while either a legacy render pass or a
+        // dynamic-rendering scope is active. The mesh-task command/count buffers
+        // are produced by compute or transfer work, so publish their indirect and
+        // shader reads before opening the graphics scope that consumes them.
+        if (state.RenderScope.IsActive)
+            EndActiveRenderPass(ref state);
+        EmitMeshTaskDispatchIndirectCountReadBarrier(ref state);
+        if (info.BeginsRendering)
+            BeginRenderPassForTarget(ref state, target, info.PassIndex, state.ActiveContext);
         CmdBeginLabel(state.CommandBuffer, "MeshTaskDispatchIndirectCount");
-        RecordMeshTaskDispatchIndirectCountPayload(state.CommandBuffer, in payload);
-        CmdEndLabel(state.CommandBuffer); state.ActualSwapchainWriteCount++; return info.OperationIndex;
+        RecordMeshTaskDispatchIndirectCountPayload(state.CommandBuffer, state.FrameDataImageIndex, in payload);
+        CmdEndLabel(state.CommandBuffer);
+        if (target is null)
+            state.ActualSwapchainWriteCount++;
+        return info.OperationIndex;
+    }
+
+    private unsafe void EmitMeshTaskDispatchIndirectCountReadBarrier(scoped ref PrimaryCommandBufferRecordingState state)
+    {
+        MemoryBarrier memoryBarrier = new()
+        {
+            SType = StructureType.MemoryBarrier,
+            SrcAccessMask = AccessFlags.ShaderWriteBit | AccessFlags.TransferWriteBit,
+            DstAccessMask = AccessFlags.IndirectCommandReadBit | AccessFlags.ShaderReadBit,
+        };
+
+        CmdPipelineBarrierTracked(
+            state.CommandBuffer,
+            PipelineStageFlags.ComputeShaderBit | PipelineStageFlags.TransferBit,
+            PipelineStageFlags.DrawIndirectBit |
+            PipelineStageFlags.TaskShaderBitNV |
+            PipelineStageFlags.MeshShaderBitNV,
+            DependencyFlags.None,
+            1,
+            &memoryBarrier,
+            0,
+            null,
+            0,
+            null);
+
+        RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanAdhocBarrier(emittedCount: 1, redundantCount: 0);
     }
 
     private int RecordPublishFramebufferPayload(scoped ref PrimaryCommandBufferRecordingState state, in PublishFramebufferPayload payload, in VulkanPrimaryOperationRecordingInfo info)

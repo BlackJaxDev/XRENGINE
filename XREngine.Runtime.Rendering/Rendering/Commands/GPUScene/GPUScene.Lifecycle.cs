@@ -52,7 +52,9 @@ namespace XREngine.Rendering.Commands
             _meshletTriangleIndices.Clear();
             _meshletRangesByMeshId.Clear();
             _meshletFreshnessByMeshId.Clear();
+            _meshletValidationRevisionByMeshId.Clear();
             _meshletRangeDirtyRange.Clear();
+            DestroyMeshletBufferGenerations();
 
             _lodTableBuffer?.Destroy();
             _lodTableBuffer = MakeLodTableBuffer();
@@ -152,7 +154,9 @@ namespace XREngine.Rendering.Commands
             _meshletTriangleIndices.Clear();
             _meshletRangesByMeshId.Clear();
             _meshletFreshnessByMeshId.Clear();
+            _meshletValidationRevisionByMeshId.Clear();
             _meshletRangeDirtyRange.Clear();
+            DestroyMeshletBufferGenerations();
             _lodTableBuffer?.Destroy();
             _lodTableBuffer = null;
             _lodRequestBuffer?.Destroy();
@@ -230,7 +234,7 @@ namespace XREngine.Rendering.Commands
             _stateClassRepresentativeMaterials.Clear();
             _materialStateByClass.Clear();
             _idToMesh.Clear();
-            _runtimeMeshletRepairFailedMeshIds.Clear();
+            _meshletIneligibleResidentMeshIds.Clear();
             _renderableLogicalMeshIdMap.Clear();
             _standaloneLogicalMeshIdMap.Clear();
             _logicalMeshStates.Clear();

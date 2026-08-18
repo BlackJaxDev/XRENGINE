@@ -8,6 +8,7 @@ using XREngine.Core.Files;
 using XREngine.Data;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
+using XREngine.Rendering.Meshlets;
 using XREngine.Scene.Transforms;
 using YamlDotNet.Serialization;
 using CookedBinaryReader = XREngine.Core.Files.RuntimeCookedBinaryReader;
@@ -221,9 +222,9 @@ public partial class XRMesh : ICookedBinarySerializable
 
         ReadSkinningData(reader);
         ReadBlendshapeData(reader);
-        MeshletPayload = reader.Remaining > 0
-            ? ReadMeshletPayload(reader)
-            : null;
+        MeshletPayload? cookedMeshletPayload = reader.Remaining > 0 ? ReadMeshletPayload(reader) : null;
+        if (cookedMeshletPayload is not null)
+            AttachValidatedCookedMeshletPayload(cookedMeshletPayload);
     }
 
     private void ApplyMetadata(MeshMetadata metadata)

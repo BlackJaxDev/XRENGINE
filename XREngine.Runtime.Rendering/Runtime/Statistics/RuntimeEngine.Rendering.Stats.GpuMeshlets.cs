@@ -30,6 +30,37 @@ namespace XREngine
                     private static int _gpuMeshletCacheHits;
                     private static int _gpuMeshletCacheMisses;
                     private static int _gpuMeshletCacheStale;
+                    // Import and cache telemetry is intentionally lifetime-scoped. Import may finish before
+                    // a performance capture begins, so resetting this evidence every frame would hide it.
+                    private static long _meshletColdImportBuilderCalls;
+                    private static long _meshletColdImportBuildTicks;
+                    private static long _meshletColdImportAllocatedBytes;
+                    private static long _meshletGeneratedLodCount;
+                    private static long _meshletCookedPayloadCount;
+                    private static long _meshletCookedMeshletCount;
+                    private static long _meshletSourceParserCalls;
+                    private static long _meshletWarmPayloadHydrations;
+                    private static long _meshletRenderPathSourceHashCalls;
+                    private static long _meshletRenderPathDiskCalls;
+                    private static long _meshletRenderPathCookerCalls;
+                    private static long _meshletBufferLiveBytes;
+                    private static long _meshletBufferRetiredBytes;
+                    private static long _meshletBufferRebuildCount;
+                    private static long _meshletBufferRetireCount;
+                    private static long _meshletDispatchCallCount;
+                    private static long _meshletDispatchGroupCount;
+                    private static long _meshletDelayedDispatchGroupCount;
+                    private static long _meshletDiagnosticReadbackBytes;
+                    private static long _meshletMappedBytes;
+                    private static long _meshletResolvedMeshletRows;
+                    private static long _meshletResolvedTaskGroups;
+                    private static string _meshletRequestedSubmission = string.Empty;
+                    private static string _meshletPrimitivePreference = string.Empty;
+                    private static string _meshletResolvedPass = string.Empty;
+                    private static string _meshletResolvedRoute = string.Empty;
+                    private static string _meshletPrimaryRouteReason = string.Empty;
+                    private static string _meshletVulkanCapabilityLadder = string.Empty;
+                    private static string _meshletVulkanCapabilityFailedRung = string.Empty;
                     private static int _lastFrameGpuMeshletRequestedFrames;
                     private static int _lastFrameGpuMeshletProductionFrames;
                     private static int _lastFrameGpuMeshletFallbackFrames;
@@ -67,6 +98,42 @@ namespace XREngine
                     public static int GpuMeshletCacheHits => _lastFrameGpuMeshletCacheHits;
                     public static int GpuMeshletCacheMisses => _lastFrameGpuMeshletCacheMisses;
                     public static int GpuMeshletCacheStale => _lastFrameGpuMeshletCacheStale;
+                    public static long ColdImportBuilderCalls => Volatile.Read(ref _meshletColdImportBuilderCalls);
+                    public static TimeSpan ColdImportBuildTime => TimeSpan.FromTicks(Volatile.Read(ref _meshletColdImportBuildTicks));
+                    public static long ColdImportAllocatedBytes => Volatile.Read(ref _meshletColdImportAllocatedBytes);
+                    public static long GeneratedLodCount => Volatile.Read(ref _meshletGeneratedLodCount);
+                    public static long CookedPayloadCount => Volatile.Read(ref _meshletCookedPayloadCount);
+                    public static long CookedMeshletCount => Volatile.Read(ref _meshletCookedMeshletCount);
+                    /// <summary>Number of source-model parser entries observed during this process.</summary>
+                    public static long SourceParserCalls => Volatile.Read(ref _meshletSourceParserCalls);
+                    public static long WarmPayloadHydrations => Volatile.Read(ref _meshletWarmPayloadHydrations);
+
+                    /// <summary>Captures the monotonic import/cache counters without allocations.</summary>
+                    public static MeshletImportTelemetrySnapshot CaptureImportTelemetry()
+                        => new(SourceParserCalls, ColdImportBuilderCalls, WarmPayloadHydrations);
+                    public static long RenderPathSourceHashCalls => Volatile.Read(ref _meshletRenderPathSourceHashCalls);
+                    public static long RenderPathDiskCalls => Volatile.Read(ref _meshletRenderPathDiskCalls);
+                    public static long RenderPathCookerCalls => Volatile.Read(ref _meshletRenderPathCookerCalls);
+                    public static long BufferLiveBytes => Volatile.Read(ref _meshletBufferLiveBytes);
+                    public static long BufferRetiredBytes => Volatile.Read(ref _meshletBufferRetiredBytes);
+                    public static long BufferRebuildCount => Volatile.Read(ref _meshletBufferRebuildCount);
+                    public static long BufferRetireCount => Volatile.Read(ref _meshletBufferRetireCount);
+                    public static long DispatchCallCount => Volatile.Read(ref _meshletDispatchCallCount);
+                    public static long DispatchGroupCount => Volatile.Read(ref _meshletDispatchGroupCount);
+                    public static long MappedBytes => Volatile.Read(ref _meshletMappedBytes);
+                    /// <summary>GPU-written mesh-task indirect X observed only after a diagnostics fence completed.</summary>
+                    public static long DelayedDispatchGroupCount => Volatile.Read(ref _meshletDelayedDispatchGroupCount);
+                    /// <summary>Bytes copied by delayed diagnostics; excluded from zero-readback production accounting.</summary>
+                    public static long DiagnosticReadbackBytes => Volatile.Read(ref _meshletDiagnosticReadbackBytes);
+                    public static long ResolvedMeshletRows => Volatile.Read(ref _meshletResolvedMeshletRows);
+                    public static long ResolvedTaskGroups => Volatile.Read(ref _meshletResolvedTaskGroups);
+                    public static string RequestedSubmission => Volatile.Read(ref _meshletRequestedSubmission);
+                    public static string PrimitivePreference => Volatile.Read(ref _meshletPrimitivePreference);
+                    public static string ResolvedPass => Volatile.Read(ref _meshletResolvedPass);
+                    public static string ResolvedRoute => Volatile.Read(ref _meshletResolvedRoute);
+                    public static string PrimaryRouteReason => Volatile.Read(ref _meshletPrimaryRouteReason);
+                    public static string VulkanCapabilityLadder => Volatile.Read(ref _meshletVulkanCapabilityLadder);
+                    public static string VulkanCapabilityFailedRung => Volatile.Read(ref _meshletVulkanCapabilityFailedRung);
 
                     internal static void SnapshotAndReset()
                     {
@@ -137,7 +204,13 @@ namespace XREngine
                             return;
 
                         if (emitted > 0u)
+                        {
                             Interlocked.Add(ref _gpuMeshletTaskRecordsEmitted, emitted);
+                            // The GPU stats buffer is the authoritative source
+                            // for eligible task rows; never substitute the
+                            // scene-wide command count captured at enqueue.
+                            Interlocked.Exchange(ref _meshletResolvedMeshletRows, emitted);
+                        }
                         if (frustumCulled > 0u)
                             Interlocked.Add(ref _gpuMeshletTaskRecordsFrustumCulled, frustumCulled);
                         if (coneCulled > 0u)
@@ -209,6 +282,128 @@ namespace XREngine
                             return;
 
                         Interlocked.Add(ref _gpuMeshletCacheStale, eventCount);
+                    }
+
+                    /// <summary>Records import-level cooking work. Native builder entries have their own exact counter.</summary>
+                    public static void RecordMeshletColdImport(TimeSpan buildTime, long allocatedBytes, long generatedLods, long payloads, long meshlets)
+                    {
+                        if (!EnableTracking)
+                            return;
+
+                        AddPositive(ref _meshletColdImportBuildTicks, buildTime.Ticks);
+                        AddPositive(ref _meshletColdImportAllocatedBytes, allocatedBytes);
+                        AddPositive(ref _meshletGeneratedLodCount, generatedLods);
+                        AddPositive(ref _meshletCookedPayloadCount, payloads);
+                        AddPositive(ref _meshletCookedMeshletCount, meshlets);
+                    }
+
+                    /// <summary>
+                    /// Records entry into a third-party model source parser. This deliberately lives
+                    /// at the importer boundary rather than beside meshlet construction so a warm
+                    /// cooked-mesh load can prove it did not reopen or parse the source model.
+                    /// </summary>
+                    public static void RecordMeshletSourceParserEntry()
+                    {
+                        if (EnableTracking)
+                            Interlocked.Increment(ref _meshletSourceParserCalls);
+                    }
+
+                    /// <summary>Records the actual entry to meshoptimizer's meshlet builder.</summary>
+                    public static void RecordMeshletNativeBuilderEntry()
+                    {
+                        if (EnableTracking)
+                            Interlocked.Increment(ref _meshletColdImportBuilderCalls);
+                    }
+
+                    /// <summary>Records loading an already-cooked meshlet payload without invoking the cooker.</summary>
+                    public static void RecordMeshletWarmPayloadHydration()
+                    {
+                        if (!EnableTracking)
+                            return;
+
+                        Interlocked.Increment(ref _meshletWarmPayloadHydrations);
+                    }
+
+                    /// <summary>Records prohibited source work observed from the frame-critical render path.</summary>
+                    public static void RecordGpuMeshletRenderPathProhibitedWork(long sourceHashCalls = 0, long diskCalls = 0, long cookerCalls = 0)
+                    {
+                        if (!EnableTracking)
+                            return;
+
+                        AddPositive(ref _meshletRenderPathSourceHashCalls, sourceHashCalls);
+                        AddPositive(ref _meshletRenderPathDiskCalls, diskCalls);
+                        AddPositive(ref _meshletRenderPathCookerCalls, cookerCalls);
+                    }
+
+                    public static void RecordGpuMeshletRequestedSubmission(string requestedStrategy, string primitivePreference)
+                    {
+                        if (!EnableTracking)
+                            return;
+
+                        Volatile.Write(ref _meshletRequestedSubmission, requestedStrategy ?? string.Empty);
+                        Volatile.Write(ref _meshletPrimitivePreference, primitivePreference ?? string.Empty);
+                    }
+
+                    public static void RecordGpuMeshletResolvedRoute(string renderPass, bool meshlet, uint rows, uint taskGroups, string primaryReason)
+                    {
+                        if (!EnableTracking)
+                            return;
+
+                        Volatile.Write(ref _meshletResolvedPass, renderPass ?? string.Empty);
+                        Volatile.Write(ref _meshletResolvedRoute, meshlet ? "Meshlet" : "TraditionalGpu");
+                        Volatile.Write(ref _meshletPrimaryRouteReason, primaryReason ?? string.Empty);
+                        Interlocked.Exchange(ref _meshletResolvedMeshletRows, meshlet ? rows : 0L);
+                        Interlocked.Exchange(ref _meshletResolvedTaskGroups, meshlet ? taskGroups : 0L);
+                    }
+
+                    public static void RecordGpuMeshletBufferGeneration(long liveBytes, long retiredBytes, long rebuilds = 0, long retires = 0)
+                    {
+                        if (!EnableTracking)
+                            return;
+
+                        Interlocked.Exchange(ref _meshletBufferLiveBytes, Math.Max(0L, liveBytes));
+                        Interlocked.Exchange(ref _meshletBufferRetiredBytes, Math.Max(0L, retiredBytes));
+                        AddPositive(ref _meshletBufferRebuildCount, rebuilds);
+                        AddPositive(ref _meshletBufferRetireCount, retires);
+                    }
+
+                    public static void RecordGpuMeshletDispatch(uint groups, long mappedBytes = 0)
+                    {
+                        if (!EnableTracking)
+                            return;
+
+                        Interlocked.Increment(ref _meshletDispatchCallCount);
+                        AddPositive(ref _meshletDispatchGroupCount, groups);
+                        AddPositive(ref _meshletMappedBytes, mappedBytes);
+                    }
+
+                    /// <summary>Publishes completed, diagnostics-only mesh-task indirect evidence.</summary>
+                    public static void RecordGpuMeshletDelayedDiagnostics(uint dispatchGroupX, uint readbackBytes)
+                    {
+                        if (!EnableTracking)
+                            return;
+
+                        if (dispatchGroupX > 0u)
+                        {
+                            Interlocked.Add(ref _meshletDelayedDispatchGroupCount, dispatchGroupX);
+                            Interlocked.Exchange(ref _meshletResolvedTaskGroups, dispatchGroupX);
+                        }
+
+                        if (readbackBytes > 0u)
+                            Interlocked.Add(ref _meshletDiagnosticReadbackBytes, readbackBytes);
+                    }
+
+                    /// <summary>Publishes the Vulkan mesh-shader readiness ladder for capture and MCP diagnostics.</summary>
+                    public static void PublishVulkanMeshletCapability(string ladder, string failedRung)
+                    {
+                        Volatile.Write(ref _meshletVulkanCapabilityLadder, ladder ?? string.Empty);
+                        Volatile.Write(ref _meshletVulkanCapabilityFailedRung, failedRung ?? string.Empty);
+                    }
+
+                    private static void AddPositive(ref long target, long value)
+                    {
+                        if (value > 0L)
+                            Interlocked.Add(ref target, value);
                     }
                 }
             }

@@ -1845,13 +1845,22 @@ namespace XREngine.Rendering.Commands
             => RenderGPU(renderPass, RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy(true));
 
         public void RenderGPU(int renderPass, EMeshSubmissionStrategy meshSubmissionStrategy)
+            => RenderGPU(
+                renderPass,
+                meshSubmissionStrategy.ToSubmissionMode(),
+                meshSubmissionStrategy.ToPrimitivePathPreference());
+
+        public void RenderGPU(
+            int renderPass,
+            EMeshSubmissionStrategy meshSubmissionMode,
+            EMeshPrimitivePathPreference primitivePathPreference)
         {
             using var renderingBufferScope = EnterRenderingBufferReadScope();
 
             if (!_gpuPasses.TryGetValue(renderPass, out GPURenderPassCollection? gpuPass))
                 return;
 
-            if (!HasGpuEligibleMeshCommands(renderPass, meshSubmissionStrategy))
+            if (!HasGpuEligibleMeshCommands(renderPass, meshSubmissionMode))
                 return;
             
             IRuntimeRenderCommandExecutionState? renderState = RuntimeRenderingHostServices.FrameTiming.ActiveRenderCommandExecutionState;
@@ -1867,34 +1876,32 @@ namespace XREngine.Rendering.Commands
             if (scene is null)
                 return;
 
-            if (meshSubmissionStrategy == EMeshSubmissionStrategy.GpuIndirectInstrumented &&
+            if (meshSubmissionMode == EMeshSubmissionStrategy.GpuIndirectInstrumented &&
                 camera is XRCamera xrCamera)
             {
                 PrepareCpuSoftwareOcclusion(renderPass, xrCamera);
             }
 
-            bool meshletStrategy = meshSubmissionStrategy.IsAnyMeshletStrategy();
+            bool meshletStrategy = primitivePathPreference != EMeshPrimitivePathPreference.TraditionalOnly;
             bool previousUseMeshletPipeline = gpuPass.UseMeshletPipeline;
             if (meshletStrategy)
                 gpuPass.UseMeshletPipeline = true;
 
             try
             {
-                gpuPass.MeshSubmissionStrategy = meshSubmissionStrategy;
+                gpuPass.MeshSubmissionStrategy = meshSubmissionMode;
+                gpuPass.MeshPrimitivePathPreference = primitivePathPreference;
                 RenderFrameViewSet configuredViewSet = ConfigureGpuViewSet(gpuPass, renderState, camera);
                 gpuPass.ConfigureStableHiZViewSet(
                     configuredViewSet,
                     worldSnapshot?.FrameId ?? RuntimeEngine.Rendering.State.RenderFrameId);
-
-                if (meshletStrategy && worldSnapshot is RenderWorldSnapshot snapshot)
-                    snapshot.GpuScene.EnsureRuntimeMeshletPayloadsForMeshletDispatch();
 
                 scene.RenderGpuPass(gpuPass);
 
                 gpuPass.GetVisibleCounts(out uint draws, out uint instances, out _);
                 scene.RecordGpuVisibility(draws, instances);
 
-                bool allowPerViewReadback = meshSubmissionStrategy == EMeshSubmissionStrategy.GpuIndirectInstrumented &&
+                bool allowPerViewReadback = meshSubmissionMode == EMeshSubmissionStrategy.GpuIndirectInstrumented &&
                     RuntimeRenderingHostServices.FrameTiming.EnableGpuIndirectDebugLogging;
                 if (allowPerViewReadback && gpuPass.ActiveViewCount > 0)
                 {

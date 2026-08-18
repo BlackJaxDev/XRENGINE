@@ -126,7 +126,7 @@ bool TryReserveTaskSlot(out uint outIndex)
     }
 }
 
-void AppendTask(uint meshletIndex, uint drawID, uint transformID, uint materialID)
+void AppendTask(uint meshletIndex, uint drawID, uint transformID, uint selectedMeshID)
 {
     uint taskIndex;
     if (!TryReserveTaskSlot(taskIndex))
@@ -135,10 +135,13 @@ void AppendTask(uint meshletIndex, uint drawID, uint transformID, uint materialI
     meshletTasks[taskIndex].MeshletIndex = meshletIndex;
     meshletTasks[taskIndex].DrawID = drawID;
     meshletTasks[taskIndex].TransformID = transformID;
-    meshletTasks[taskIndex].MaterialID = materialID;
+    // The fourth word is the selected LOD mesh ID.  Material identity remains
+    // in DrawMetadata, so all mesh shader dialects fetch the exact geometry
+    // selected by the LOD stage without widening this fixed-stride record.
+    meshletTasks[taskIndex].MaterialID = selectedMeshID;
 }
 
-void ExpandMeshletRange(uint meshID, uint drawID, uint transformID, uint materialID, bool previousLod)
+void ExpandMeshletRange(uint meshID, uint drawID, uint transformID, uint selectedMeshID, bool previousLod)
 {
     if (meshID == 0u || meshID >= uint(meshletRanges.length()))
         return;
@@ -170,7 +173,7 @@ void ExpandMeshletRange(uint meshID, uint drawID, uint transformID, uint materia
         if (previousLod)
             meshletIndex |= MESHLET_TASK_PREVIOUS_LOD_FLAG;
 
-        AppendTask(meshletIndex, drawID, transformID, materialID);
+        AppendTask(meshletIndex, drawID, transformID, selectedMeshID);
     }
 }
 
@@ -192,7 +195,6 @@ void main()
     DrawMetadata meta = Draws[drawID];
     uint meshID = meta.MeshID;
     uint transformID = meta.TransformID;
-    uint materialID = meta.MaterialID;
 
     if (RejectExactTransparentMultiview != 0u)
     {
@@ -206,15 +208,28 @@ void main()
     }
 
     uint transitionBase = drawID * LOD_TRANSITION_UINTS;
-    if (transitionBase + 3u < uint(lodTransitions.length()) &&
-        (lodTransitions[transitionBase + 2u] & LOD_TRANSITION_ACTIVE) != 0u &&
-        lodTransitions[transitionBase + 0u] != 0u)
-        meshID = lodTransitions[transitionBase + 0u];
+    uint transitionFlags = transitionBase + 3u < uint(lodTransitions.length())
+        ? lodTransitions[transitionBase + 2u]
+        : 0u;
+
+    const uint MESHLET_INELIGIBLE_FLAGS =
+        (1u << 0u) | (1u << 2u) | (1u << 3u) | (1u << 4u) | (1u << 9u) |
+        (1u << 10u) | (1u << 11u) | (1u << 12u) | (1u << 16u) | (1u << 20u) |
+        (1u << 21u);
+    const uint OPAQUE_DEFERRED_STATE_CLASS = 1u;
+    // Keep this in exact lockstep with material scatter: unsupported rows stay
+    // in the conventional stream and are never appended here.
+    if (meta.SkinID != 0u ||
+        meta.InstanceCount != 1u ||
+        meta.StateClassID != OPAQUE_DEFERRED_STATE_CLASS ||
+        (meta.Flags & MESHLET_INELIGIBLE_FLAGS) != 0u ||
+        (transitionFlags & LOD_TRANSITION_ACTIVE) != 0u)
+        return;
 
     if (meshID >= uint(meshData.length()) / MESHLET_RANGE_UINTS)
         return;
 
-    ExpandMeshletRange(meshID, drawID, transformID, materialID, false);
+    ExpandMeshletRange(meshID, drawID, transformID, meshID, false);
 
     if (ExpandPreviousLodTransitions == 0)
         return;

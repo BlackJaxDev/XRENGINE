@@ -27,12 +27,14 @@ internal sealed partial class VulkanCommandRuntime
         out bool useDynamicRendering,
         out RenderPass renderPass,
         out DynamicRenderingFormatSignature dynamicRenderingFormats,
+        out SampleCountFlags rasterizationSamples,
         out bool depthStencilReadOnly,
         out string reason)
     {
         useDynamicRendering = false;
         renderPass = default;
         dynamicRenderingFormats = default;
+        rasterizationSamples = SampleCountFlags.Count1Bit;
         depthStencilReadOnly = false;
         reason = string.Empty;
 
@@ -75,6 +77,8 @@ internal sealed partial class VulkanCommandRuntime
                 trackedLayouts,
                 compiledGraph.Synchronization,
                 preserveTrackedClearLoads: false);
+        rasterizationSamples = ResolveDynamicRenderingSampleCount(
+            attachmentSignature);
         depthStencilReadOnly = VkFrameBuffer.UsesReadOnlyDepthStencil(attachmentSignature);
 
         if (useDynamicRenderingRenderTargets)

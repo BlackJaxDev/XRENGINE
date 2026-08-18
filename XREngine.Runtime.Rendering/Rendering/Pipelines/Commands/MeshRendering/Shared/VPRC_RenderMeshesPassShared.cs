@@ -147,6 +147,19 @@ public class VPRC_RenderMeshesPassShared : ViewportPopStateRenderCommand
                 return;
             }
 
+            if (ResolvePrimitivePathPreference(meshSubmissionStrategy) == EMeshPrimitivePathPreference.MeshShaderRequired)
+            {
+                string reason = renderer?.MeshletDispatchUnsupportedReason ?? "No active renderer.";
+                RuntimeEngine.Rendering.Stats.GpuFallback.RecordForbiddenGpuFallback(1);
+                XREngine.Debug.RenderingWarningEvery(
+                    $"RenderMeshesPass.MeshletRequiredUnavailable.{RenderPass}",
+                    TimeSpan.FromSeconds(2),
+                    "[RenderDispatch] MeshShaderRequired rejected pass {0} before submission. Reason={1}",
+                    RenderPass,
+                    reason);
+                return;
+            }
+
             EMeshSubmissionStrategy fallbackStrategy = ResolveSelectedMeshletSubmissionStrategy(renderer, meshSubmissionStrategy);
 
             XREngine.Debug.RenderingWarningEvery(
@@ -184,8 +197,12 @@ public class VPRC_RenderMeshesPassShared : ViewportPopStateRenderCommand
             ?? RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.LastWindowViewport;
 
     private bool IsMeshletRequested(EMeshSubmissionStrategy meshSubmissionStrategy)
-        => meshSubmissionStrategy.IsAnyMeshletStrategy() ||
-           PathIntent == EMeshRenderingPathIntent.Meshlet;
+        => ResolvePrimitivePathPreference(meshSubmissionStrategy) != EMeshPrimitivePathPreference.TraditionalOnly;
+
+    internal EMeshPrimitivePathPreference ResolvePrimitivePathPreference(EMeshSubmissionStrategy meshSubmissionStrategy)
+        => PathIntent == EMeshRenderingPathIntent.Meshlet
+            ? EMeshPrimitivePathPreference.MeshShaderRequired
+            : meshSubmissionStrategy.ToPrimitivePathPreference();
 
     private bool ShouldForceMeshletDebugDisplay(EMeshSubmissionStrategy meshSubmissionStrategy)
     {

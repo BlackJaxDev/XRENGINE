@@ -26,6 +26,7 @@ public sealed class VulkanRenderer :
     IIndirectDrawStateBackendCapability,
     IIndirectDrawSecondaryRecordingBackendCapability,
     ISceneDatabaseDeviceAddressBackendCapability,
+    IMaterialTableBackendCapability,
     IVulkanVendorUpscaleBackendCapability,
     IOcclusionQueryBackendCapability,
     IRenderTexturePreviewBackendCapability,
@@ -290,6 +291,7 @@ public sealed class VulkanRenderer :
     public override void PollGpuRenderStatsReadbacks() => _frameLoop.PollGpuRenderStatsReadbacks();
     public override bool QueueGpuRenderDrawCountReadback(XRDataBuffer drawCountBuffer, uint countByteOffset = 0, uint countElementCount = 1) => _frameLoop.QueueGpuRenderDrawCountReadback(drawCountBuffer, countByteOffset, countElementCount);
     public override bool QueueGpuRenderStatsBufferReadback(XRDataBuffer statsBuffer, bool publishDraws, bool publishTriangles) => _frameLoop.QueueGpuRenderStatsBufferReadback(statsBuffer, publishDraws, publishTriangles);
+    public override bool QueueGpuMeshletDispatchDiagnosticsReadback(XRDataBuffer dispatchIndirectBuffer) => _frameLoop.QueueGpuMeshletDispatchDiagnosticsReadback(dispatchIndirectBuffer);
     public override void CalcDotLuminanceAsync(XRTexture2D texture, Action<bool, float> callback, Vector3 luminance, bool genMipmapsNow = true) => _frameLoop.CalcDotLuminanceAsync(texture, callback, luminance, genMipmapsNow);
     public override void CalcDotLuminanceAsync(XRTexture2DArray texture, Action<bool, float> callback, Vector3 luminance, bool genMipmapsNow = true) => _frameLoop.CalcDotLuminanceAsync(texture, callback, luminance, genMipmapsNow);
     public override void CalcDotLuminanceFrontAsyncCompute(BoundingRectangle region, bool withTransparency, Vector3 luminance, Action<bool, float> callback) => _frameLoop.CalcDotLuminanceFrontAsyncCompute(region, withTransparency, luminance, callback);
@@ -384,11 +386,34 @@ public sealed class VulkanRenderer :
     public override XRGpuFence? InsertGpuFence() => _frameLoop.InsertOrderedComputeFence();
     public bool TryEnsureComputeBufferReady(XRDataBuffer buffer) => _commandRuntime.TryEnsureComputeBufferReady(_resourceRuntime.WrapperLookup, buffer, _frameLoop.AllowSynchronousResourceUploads);
     public bool TryReadMappedBuffer(XRDataBuffer buffer, Span<byte> destination) => _commandRuntime.TryReadMappedBuffer(_resourceRuntime.WrapperLookup, buffer, destination);
-    public override EMeshShaderDialect MeshShaderDialect => _deviceContext.Capabilities.Supports(EVulkanDeviceCapability.MeshShader) ? EMeshShaderDialect.VulkanEXT : EMeshShaderDialect.None;
+    public override EMeshShaderDialect MeshShaderDialect => _deviceContext.SupportsMeshTaskIndirectCount ? EMeshShaderDialect.VulkanEXT : EMeshShaderDialect.None;
     public override bool SupportsDirectMeshTaskDispatch() => false;
     public override bool SupportsIndirectCountMeshTaskDispatch() => _deviceContext.SupportsMeshTaskIndirectCount;
-    public override bool SupportsProductionMeshletShaders() => MeshShaderDialect == EMeshShaderDialect.VulkanEXT;
-    public override bool TryDrawMeshTasksIndirectCount(XRDataBuffer indirect, XRDataBuffer count, uint maxDrawCount, uint stride, out string failureReason, nuint byteOffset = 0, nuint countByteOffset = 0) => _frameLoop.TryDrawMeshTasksIndirectCount(indirect, count, maxDrawCount, stride, byteOffset, countByteOffset, out failureReason);
+    public override bool SupportsProductionMeshletShaders() => _deviceContext.SupportsMeshTaskIndirectCount;
+    public override bool TryDrawMeshTasksIndirectCount(XRRenderProgram program, XRDataBuffer indirect, XRDataBuffer count, uint maxDrawCount, uint stride, out string failureReason, nuint byteOffset = 0, nuint countByteOffset = 0)
+    {
+        if (!ValidateMeshTasksIndirectCountArgs(
+                indirect,
+                count,
+                maxDrawCount,
+                stride,
+                byteOffset,
+                countByteOffset,
+                out failureReason))
+        {
+            return false;
+        }
+
+        return _frameLoop.TryDrawMeshTasksIndirectCount(
+            program,
+            indirect,
+            count,
+            maxDrawCount,
+            stride,
+            byteOffset,
+            countByteOffset,
+            out failureReason);
+    }
     public override string MeshletDispatchUnsupportedReason => _frameLoop.GetMeshletDispatchUnsupportedReason();
     public override ERvcDescriptorBackend RvcDescriptorBackend => _commandRuntime.RvcDescriptorBackend;
     public override bool SupportsRvcMaterialResourceTable => _commandRuntime.SupportsRvcMaterialResourceTable;
@@ -420,6 +445,42 @@ public sealed class VulkanRenderer :
     public bool SupportsExternalMemoryWin32 => _deviceContext.SupportsExternalMemoryWin32;
     public bool SupportsExternalSemaphoreWin32 => _deviceContext.SupportsExternalSemaphoreWin32;
     public bool SupportsBufferDeviceAddress => _deviceContext.SupportsBufferDeviceAddress;
+    bool IMaterialTableBackendCapability.SupportsBufferDeviceAddress => SupportsBufferDeviceAddress;
+    bool IMaterialTableBackendCapability.SupportsBindlessMaterialTable
+        => _resourceRuntime.Descriptors.BindlessMaterialCapability.Tier >=
+           EVulkanBindlessMaterialCapabilityTier.DescriptorIndexingReady;
+    bool IMaterialTableBackendCapability.SupportsBindlessTextureHandles => false;
+    string IMaterialTableBackendCapability.BindlessMaterialUnavailableReason
+    {
+        get
+        {
+            VulkanBindlessMaterialCapability capability = _resourceRuntime.Descriptors.BindlessMaterialCapability;
+            return capability.Tier >= EVulkanBindlessMaterialCapabilityTier.DescriptorIndexingReady
+                ? string.Empty
+                : capability.Reason;
+        }
+    }
+    bool IMaterialTableBackendCapability.TryEnsureMaterialTextureTable(out string reason)
+        => _resourceRuntime.Descriptors.TryEnsureGlobalMaterialTextureDescriptorTable(out reason);
+    XREngine.Rendering.Materials.MaterialTextureReferenceResolution IMaterialTableBackendCapability.ResolveMaterialTextureReference(
+        XRTexture texture,
+        string semantic)
+        => _resourceRuntime.Descriptors.ResolveMaterialTextureDescriptorReference(texture, semantic);
+    void IMaterialTableBackendCapability.FlushMaterialTextureTableUpdates()
+        => _resourceRuntime.Descriptors.FlushGlobalMaterialTextureDescriptorUpdates();
+    void IMaterialTableBackendCapability.ReleaseMaterialTextureReference(
+        in XREngine.Rendering.Materials.GPUMaterialRetiredHandle retired)
+    {
+        // Vulkan descriptor slots are owned by the global table and age out by
+        // their last-used frame. A material-row retirement must not recycle a
+        // slot that can still be referenced by another row.
+    }
+    bool IMaterialTableBackendCapability.BeginGlobalMaterialTextureDescriptorScope(
+        XRRenderProgram program,
+        string consumer)
+        => _resourceRuntime.Descriptors.BeginGlobalMaterialTextureDescriptorScope(program, consumer);
+    void IMaterialTableBackendCapability.EndGlobalMaterialTextureDescriptorScope(XRRenderProgram program)
+        => _resourceRuntime.Descriptors.EndGlobalMaterialTextureDescriptorScope(program);
     public bool SupportsVulkanMeshTaskIndirectCount => _deviceContext.SupportsMeshTaskIndirectCount;
     public bool SupportsDynamicRendering => _deviceContext.SupportsDynamicRendering;
     public bool SupportsIndexTypeUint8 => _deviceContext.SupportsIndexTypeUint8;

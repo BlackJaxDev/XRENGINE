@@ -9,10 +9,27 @@ namespace XREngine.Rendering.Vulkan;
 internal sealed partial class VulkanCommandRuntime
 {
     private static bool HasMutableCommandChainFrameOps(FrameOperationStream operations)
+    {
+        // Mesh-task payloads receive their exact target-compatible graphics
+        // pipeline only during primary admission and carry frame-sealed program
+        // descriptor snapshots. Primary reuse would bypass that association and
+        // execute stale native state. Keep these cohorts fresh until mesh-task
+        // program, descriptors, producer state, and admitted-pipeline identity
+        // participate in reusable artifact refresh and compatibility checks.
+        for (int opIndex = 0; opIndex < operations.Count; opIndex++)
+        {
+            if (operations.GetHeader(opIndex).OpCode ==
+                EVulkanPrimaryPlanNodeKind.MeshTaskDispatchIndirectCount)
+            {
+                return true;
+            }
+        }
+
         // Submission markers publish no Vulkan command. Their current fence is
         // rebound to a cached primary immediately before submission, so they do
         // not require native command-buffer re-recording.
-        => false;
+        return false;
+    }
 
     private bool HasCompleteCommandChainImageEntrySnapshot(
         CommandBuffer commandBuffer,

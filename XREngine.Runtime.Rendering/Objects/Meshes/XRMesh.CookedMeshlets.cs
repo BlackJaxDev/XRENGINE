@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Immutable;
 using System.Numerics;
 using System.Text;
 using XREngine.Core.Files;
@@ -8,17 +9,20 @@ namespace XREngine.Rendering;
 
 public partial class XRMesh
 {
+    private const long MaxStandaloneMeshletPayloadBytes = 512L * 1024L * 1024L;
+
     /// <summary>
     /// Serializes a meshlet payload to a freshly allocated byte buffer using the
     /// same on-disk layout as the cooked-mesh writer. Intended for runtime disk
     /// caches that mirror the cooking format.
     /// </summary>
-    internal static byte[] SerializeMeshletPayloadToBytes(MeshletPayload payload)
+    public static byte[] SerializeMeshletPayloadToBytes(MeshletPayload payload)
     {
         ArgumentNullException.ThrowIfNull(payload);
+        payload.ValidatePortablePayload();
 
         long size = CalculateMeshletPayloadSize(payload);
-        if (size <= 0 || size > int.MaxValue)
+        if (size <= 0 || size > int.MaxValue || size > MaxStandaloneMeshletPayloadBytes)
             throw new InvalidOperationException($"MeshletPayload size out of range: {size}.");
 
         byte[] buffer = new byte[size];
@@ -32,15 +36,20 @@ public partial class XRMesh
     /// <see cref="SerializeMeshletPayloadToBytes"/>. Returns <c>null</c> when
     /// the input represents an absent payload.
     /// </summary>
-    internal static MeshletPayload? DeserializeMeshletPayloadFromBytes(byte[] buffer)
+    public static MeshletPayload? DeserializeMeshletPayloadFromBytes(byte[] buffer)
     {
         ArgumentNullException.ThrowIfNull(buffer);
 
         if (buffer.Length == 0)
             return null;
+        if (buffer.LongLength > MaxStandaloneMeshletPayloadBytes)
+            throw new InvalidDataException("The serialized meshlet payload exceeds the standalone read limit.");
 
         RuntimeCookedBinaryReader reader = new(buffer);
-        return ReadMeshletPayload(reader);
+        MeshletPayload? payload = ReadMeshletPayload(reader);
+        if (reader.Remaining != 0)
+            throw new InvalidDataException("The serialized meshlet payload contains trailing bytes.");
+        return payload;
     }
 
     internal static long CalculateMeshletPayloadSize(MeshletPayload? payload)
@@ -50,17 +59,19 @@ public partial class XRMesh
             return size;
 
         size += sizeof(int); // payload version
-        size += sizeof(byte); // generation enabled
+        size += sizeof(byte) * 2; // generation enabled + derived-data state
         size += CalculateStringSize(payload.MeshOptimizerVersionKey);
+        size += CalculateStringSize(payload.CookProvenanceKey);
+        size += sizeof(ulong); // runtime compatibility token
         size += CalculateStringSize(payload.SourceMeshIdentity);
         size += sizeof(int) * 2;
         size += sizeof(ulong) * 4;
         size += CalculateMeshletSettingsSize();
         size += CalculateLodSettingsSize();
-        size += CalculateCpuMeshletDescriptorArraySize(payload.Meshlets);
-        size += CalculateUInt32ArraySize(payload.VertexIndices);
-        size += CalculateByteArraySize(payload.TriangleIndices);
-        size += CalculateMeshletVertexArraySize(payload.Vertices);
+        size += CalculateCpuMeshletDescriptorArraySize(payload.Meshlets.ToArray());
+        size += CalculateUInt32ArraySize(payload.VertexIndices.ToArray());
+        size += CalculateByteArraySize(payload.TriangleIndices.ToArray());
+        size += CalculateMeshletVertexArraySize(payload.Vertices.ToArray());
         size += sizeof(int) * 4; // stats
         return size;
     }
@@ -76,7 +87,10 @@ public partial class XRMesh
         writer.Write((byte)1);
         writer.Write(payload.PayloadVersion);
         writer.Write(payload.GenerationEnabled ? (byte)1 : (byte)0);
+        writer.Write((byte)payload.State);
         writer.Write(payload.MeshOptimizerVersionKey);
+        writer.Write(payload.CookProvenanceKey);
+        writer.Write(payload.RuntimeCompatibilityToken);
         writer.Write(payload.SourceMeshIdentity);
         writer.Write(payload.SourceVertexCount);
         writer.Write(payload.SourceTriangleCount);
@@ -86,10 +100,10 @@ public partial class XRMesh
         writer.Write(payload.FreshnessHash);
         WriteMeshletSettings(writer, payload.MeshletSettings);
         WriteLodSettings(writer, payload.LodSettings);
-        WriteCpuMeshletDescriptors(writer, payload.Meshlets);
-        WriteUInt32Array(writer, payload.VertexIndices);
-        WriteByteArray(writer, payload.TriangleIndices);
-        WriteMeshletVertices(writer, payload.Vertices);
+        WriteCpuMeshletDescriptors(writer, payload.Meshlets.ToArray());
+        WriteUInt32Array(writer, payload.VertexIndices.ToArray());
+        WriteByteArray(writer, payload.TriangleIndices.ToArray());
+        WriteMeshletVertices(writer, payload.Vertices.ToArray());
         writer.Write(payload.Stats.MeshletCount);
         writer.Write(payload.Stats.VertexReferenceCount);
         writer.Write(payload.Stats.TriangleByteCount);
@@ -104,7 +118,14 @@ public partial class XRMesh
 
         int payloadVersion = reader.ReadInt32();
         bool generationEnabled = reader.ReadByte() != 0;
+        MeshletPayloadState state = payloadVersion >= 3
+            ? (MeshletPayloadState)reader.ReadByte()
+            : generationEnabled ? MeshletPayloadState.Present : MeshletPayloadState.Disabled;
         string meshOptimizerVersionKey = reader.ReadString();
+        string cookProvenanceKey = payloadVersion >= 2 ? reader.ReadString() : meshOptimizerVersionKey;
+        ulong runtimeCompatibilityToken = payloadVersion >= 2
+            ? reader.ReadUInt64()
+            : 0UL;
         string sourceMeshIdentity = reader.ReadString();
         int sourceVertexCount = reader.ReadInt32();
         int sourceTriangleCount = reader.ReadInt32();
@@ -124,11 +145,20 @@ public partial class XRMesh
             reader.ReadInt32(),
             reader.ReadInt32());
 
-        return new MeshletPayload
+        if (payloadVersion < 2)
+            runtimeCompatibilityToken = MeshletPayloadUtility.ComputeRuntimeCompatibilityToken(meshletSettings);
+
+        if (payloadVersion < 3 && state == MeshletPayloadState.Present && meshlets.Length == 0)
+            state = MeshletPayloadState.Empty;
+
+        MeshletPayload payload = new()
         {
             PayloadVersion = payloadVersion,
             GenerationEnabled = generationEnabled,
+            State = state,
             MeshOptimizerVersionKey = meshOptimizerVersionKey,
+            CookProvenanceKey = cookProvenanceKey,
+            RuntimeCompatibilityToken = runtimeCompatibilityToken,
             SourceMeshIdentity = sourceMeshIdentity,
             SourceVertexCount = sourceVertexCount,
             SourceTriangleCount = sourceTriangleCount,
@@ -138,12 +168,14 @@ public partial class XRMesh
             FreshnessHash = freshnessHash,
             MeshletSettings = meshletSettings,
             LodSettings = lodSettings,
-            Meshlets = meshlets,
-            VertexIndices = vertexIndices,
-            TriangleIndices = triangleIndices,
-            Vertices = vertices,
+            Meshlets = meshlets.ToImmutableArray(),
+            VertexIndices = vertexIndices.ToImmutableArray(),
+            TriangleIndices = triangleIndices.ToImmutableArray(),
+            Vertices = vertices.ToImmutableArray(),
             Stats = stats,
         };
+        payload.ValidatePortablePayload();
+        return payload;
     }
 
     private static bool TrySkipMeshletPayload(RuntimeCookedBinaryReader reader)
@@ -152,8 +184,12 @@ public partial class XRMesh
         if (!hasPayload)
             return true;
 
-        if (!TrySkipBytes(reader, sizeof(int) + sizeof(byte))
+        int payloadVersion = reader.ReadInt32();
+        if (!TrySkipBytes(reader, sizeof(byte))
+            || (payloadVersion >= 3 && !TrySkipBytes(reader, sizeof(byte)))
             || !TrySkipString(reader)
+            || (payloadVersion >= 2 && !TrySkipString(reader))
+            || (payloadVersion >= 2 && !TrySkipBytes(reader, sizeof(ulong)))
             || !TrySkipString(reader)
             || !TrySkipBytes(reader, sizeof(int) * 2L)
             || !TrySkipBytes(reader, sizeof(ulong) * 4L)
@@ -347,6 +383,8 @@ public partial class XRMesh
         if (count == 0)
             return [];
 
+        ValidateArrayCount(count, (sizeof(float) * 12) + (sizeof(uint) * 5), reader.Remaining, "meshlet descriptor");
+
         CpuMeshletDescriptor[] descriptors = new CpuMeshletDescriptor[count];
         for (int i = 0; i < count; i++)
         {
@@ -381,6 +419,8 @@ public partial class XRMesh
         if (count == 0)
             return [];
 
+        ValidateArrayCount(count, sizeof(uint), reader.Remaining, "meshlet vertex-reference");
+
         uint[] values = new uint[count];
         for (int i = 0; i < count; i++)
             values[i] = reader.ReadUInt32();
@@ -398,7 +438,10 @@ public partial class XRMesh
     private static byte[] ReadByteArray(RuntimeCookedBinaryReader reader)
     {
         int count = reader.ReadInt32();
-        return count == 0 ? [] : reader.ReadBytes(count);
+        if (count == 0)
+            return [];
+        ValidateArrayCount(count, sizeof(byte), reader.Remaining, "meshlet triangle-index");
+        return reader.ReadBytes(count);
     }
 
     private static void WriteMeshletVertices(RuntimeCookedBinaryWriter writer, MeshletVertex[]? vertices)
@@ -425,6 +468,8 @@ public partial class XRMesh
         if (count == 0)
             return [];
 
+        ValidateArrayCount(count, sizeof(float) * 16, reader.Remaining, "meshlet vertex");
+
         MeshletVertex[] vertices = new MeshletVertex[count];
         for (int i = 0; i < count; i++)
         {
@@ -439,6 +484,13 @@ public partial class XRMesh
         }
 
         return vertices;
+    }
+
+    private static void ValidateArrayCount(int count, int elementSize, long remainingBytes, string streamName)
+    {
+        long byteCount = count < 0 ? -1L : (long)count * elementSize;
+        if (count < 0 || byteCount > remainingBytes || byteCount > MaxStandaloneMeshletPayloadBytes)
+            throw new InvalidDataException($"The {streamName} stream has an invalid bounded element count.");
     }
 
     private static void WriteVector2(RuntimeCookedBinaryWriter writer, Vector2 value)

@@ -216,10 +216,17 @@ namespace XREngine.Rendering.Vulkan
                         case EVulkanPrimaryPlanNodeKind.MeshTaskDispatchIndirectCount:
                             recordingState.Metrics.DrawCount++;
                             recordingState.Metrics.MeshTaskDispatchCount++;
-                            recordingState.SwapchainWriteCount++;
-                            recordingState.SwapchainDrawWrites++;
-                            CountLogicalSwapchainWriter(ref recordingState, context);
-                            MarkSwapchainStaticWriter(ref recordingState, nameof(MeshTaskDispatchIndirectCountOp), header.OpCode.ToString(), header.PassIndex, opScanIndex, context.PipelineIdentity);
+                            if (target is null)
+                            {
+                                recordingState.SwapchainWriteCount++;
+                                recordingState.SwapchainDrawWrites++;
+                                CountLogicalSwapchainWriter(ref recordingState, context);
+                                MarkSwapchainStaticWriter(ref recordingState, nameof(MeshTaskDispatchIndirectCountOp), header.OpCode.ToString(), header.PassIndex, opScanIndex, context.PipelineIdentity);
+                            }
+                            else
+                            {
+                                recordingState.Metrics.FboOnlyDrawOps++;
+                            }
                             break;
                         case EVulkanPrimaryPlanNodeKind.Blit:
                             ref readonly BlitPayload blit = ref recordingState.Ops.GetBlit(opScanIndex);

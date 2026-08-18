@@ -11,6 +11,9 @@ param(
     [string]$UnitTestingWorldSettingsPath = '',
     [ValidateSet('Cold', 'Warm')]
     [string]$CacheMode = 'Cold',
+    # An explicit cross-process cache root for a standalone cooked XRMesh warm load.
+    # This does not claim coverage of the still-inactive broad model cache.
+    [string]$MeshletStandaloneCookedCacheRoot = '',
     [ValidateSet('FullBucketScanDiagnostic', 'ActiveBucketListReadbackDiagnostic', 'MaterialTable', 'BindlessMaterialTable', 'FullBucketScan', 'ActiveBucketList')]
     [string]$ZeroReadbackMaterialDrawPath = 'BindlessMaterialTable',
     [string]$ProfileScene = '',
@@ -147,6 +150,17 @@ if ($invalidStrategies.Count -gt 0) {
 if ($WarmupSec -lt 0 -or $CaptureSec -le 0 -or $Repetitions -le 0 -or $ShutdownGraceSec -lt 1 -or $NoSampleHangSec -lt 0 -or $RetainedRunCount -lt 1 -or $StabilityWindowSec -lt 1 -or $StabilityTimeoutSec -lt 1 -or $MinSteadyStateGpuSceneCommandCount -lt 0 -or $MinSteadyStateCommandBufferCleanReuseRatio -lt 0 -or $MinSteadyStateCommandBufferCleanReuseRatio -gt 1 -or $MaxSteadyStateVulkanLiveResources -lt 1 -or $MaxSteadyStateVulkanDescriptorSets -lt 1 -or $WindowWidth -lt 0 -or $WindowHeight -lt 0) {
     throw 'WarmupSec must be >= 0, CaptureSec/Repetitions must be > 0, ShutdownGraceSec/StabilityWindowSec/StabilityTimeoutSec must be >= 1, NoSampleHangSec and MinSteadyStateGpuSceneCommandCount must be >= 0, RetainedRunCount must be >= 1, and MinSteadyStateCommandBufferCleanReuseRatio must be between 0 and 1.'
 }
+$usesMeshletStrategy = @($Strategies | Where-Object { $_ -in @('GpuMeshletInstrumented', 'GpuMeshletZeroReadback') }).Count -gt 0
+if ($usesMeshletStrategy -and $CacheMode -eq 'Warm' -and [string]::IsNullOrWhiteSpace($MeshletStandaloneCookedCacheRoot)) {
+    throw 'Meshlet warm measurement requires -MeshletStandaloneCookedCacheRoot from its preceding cold publish run. This is a standalone cooked-XRMesh cache, not a broad model-cache claim.'
+}
+if (-not [string]::IsNullOrWhiteSpace($MeshletStandaloneCookedCacheRoot)) {
+    $MeshletStandaloneCookedCacheRoot = [System.IO.Path]::GetFullPath($(if ([System.IO.Path]::IsPathRooted($MeshletStandaloneCookedCacheRoot)) { $MeshletStandaloneCookedCacheRoot } else { Join-Path $repoRoot $MeshletStandaloneCookedCacheRoot }))
+    $repoWithSeparator = $repoRoot.TrimEnd('\') + '\'
+    if (-not $MeshletStandaloneCookedCacheRoot.StartsWith($repoWithSeparator, [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "MeshletStandaloneCookedCacheRoot must remain inside the repository: $MeshletStandaloneCookedCacheRoot"
+    }
+}
 if (($WindowWidth -eq 0) -ne ($WindowHeight -eq 0)) {
     throw 'Specify both WindowWidth and WindowHeight as positive values, or leave both at zero.'
 }
@@ -265,6 +279,48 @@ function Invoke-ProfileMcpTool {
     } while ([DateTime]::UtcNow -lt $deadline)
 
     throw "MCP tool '$Name' remained unavailable for $ReadyTimeoutSec seconds."
+}
+
+function Set-ProfileFixedCameraWhenReady {
+    param(
+        [int]$Port,
+        [System.Diagnostics.Process]$Process,
+        [hashtable]$Arguments,
+        [int]$TimeoutSec = 120
+    )
+
+    $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSec)
+    $attempt = 0
+    $lastError = 'camera operation was not attempted'
+    do {
+        if ($Process.HasExited) {
+            throw "Editor exited before its fixed camera became ready (exit=0x$([Convert]::ToString($Process.ExitCode, 16))). Last camera error: $lastError"
+        }
+
+        $attempt++
+        try {
+            # A live MCP listener can precede creation of the world viewport.
+            # Keep probing readiness rather than treating its first transient
+            # camera failure as a failed measurement run.
+            Invoke-ProfileMcpTool `
+                -Port $Port `
+                -Name 'set_editor_camera_view' `
+                -Arguments $Arguments `
+                -ReadyTimeoutSec 5 `
+                -RetryUnavailableCapabilities | Out-Null
+            Write-Host "[measure] fixed camera accepted after $attempt MCP attempt(s)." -ForegroundColor DarkGray
+            return
+        }
+        catch {
+            $lastError = $_.Exception.Message
+            if ([DateTime]::UtcNow -ge $deadline) {
+                break
+            }
+            Start-Sleep -Milliseconds 500
+        }
+    } while ([DateTime]::UtcNow -lt $deadline)
+
+    throw "Fixed camera did not become ready within ${TimeoutSec}s after $attempt MCP attempt(s). Last error: $lastError"
 }
 
 function New-SpeedProfileRunDirectory {
@@ -1015,6 +1071,8 @@ function Measure-Variant {
         'XRE_FORCE_MESH_SUBMISSION_STRATEGY',
         'XRE_ZERO_READBACK_MATERIAL_DRAW_PATH',
         'XRE_PROFILE_CACHE_MODE',
+        'XRE_MESHLET_STANDALONE_COOKED_CACHE_MODE',
+        'XRE_MESHLET_STANDALONE_COOKED_CACHE_ROOT',
         'XRE_SHADER_CACHE_MODE',
         'XRE_TEXTURE_CACHE_MODE',
         'XRE_PROFILE_SCENE',
@@ -1158,6 +1216,13 @@ function Measure-Variant {
         Set-BenchmarkEnvValue 'XRE_FORCE_MESH_SUBMISSION_STRATEGY' $Strategy -AllowedValues $validStrategies
         Set-BenchmarkEnvValue 'XRE_ZERO_READBACK_MATERIAL_DRAW_PATH' $ZeroReadbackMaterialDrawPath -AllowedValues @('FullBucketScanDiagnostic', 'ActiveBucketListReadbackDiagnostic', 'MaterialTable', 'BindlessMaterialTable', 'FullBucketScan', 'ActiveBucketList')
         Set-BenchmarkEnvValue 'XRE_PROFILE_CACHE_MODE' $CacheMode -AllowedValues @('Cold', 'Warm')
+        if (-not [string]::IsNullOrWhiteSpace($MeshletStandaloneCookedCacheRoot)) {
+            Set-BenchmarkEnvValue 'XRE_MESHLET_STANDALONE_COOKED_CACHE_ROOT' $MeshletStandaloneCookedCacheRoot
+            Set-BenchmarkEnvValue 'XRE_MESHLET_STANDALONE_COOKED_CACHE_MODE' $(if ($CacheMode -eq 'Warm') { 'Load' } else { 'Publish' }) -AllowedValues @('Publish', 'Load')
+        } else {
+            Clear-EnvValue 'XRE_MESHLET_STANDALONE_COOKED_CACHE_ROOT'
+            Clear-EnvValue 'XRE_MESHLET_STANDALONE_COOKED_CACHE_MODE'
+        }
         Set-BenchmarkEnvValue 'XRE_SHADER_CACHE_MODE' $CacheMode -AllowedValues @('Cold', 'Warm')
         Set-BenchmarkEnvValue 'XRE_TEXTURE_CACHE_MODE' $CacheMode -AllowedValues @('Cold', 'Warm')
         if ($WarmupSec -gt 0) {
@@ -1250,9 +1315,9 @@ function Measure-Variant {
         if ($hasFixedCameraPose) {
             Write-Host "[measure] $runName positioning fixed camera via MCP..."
             try {
-                Invoke-ProfileMcpTool `
+                Set-ProfileFixedCameraWhenReady `
                     -Port $mcpPort `
-                    -Name 'set_editor_camera_view' `
+                    -Process $proc `
                     -Arguments @{
                         position_x = $CameraPositionX
                         position_y = $CameraPositionY
@@ -1262,8 +1327,7 @@ function Measure-Variant {
                         look_at_z = $CameraLookAtZ
                         duration = 0.0
                     } `
-                    -ReadyTimeoutSec 120 `
-                    -RetryUnavailableCapabilities | Out-Null
+                    -TimeoutSec 120
             }
             catch {
                 if (-not $proc.HasExited) {
@@ -1444,6 +1508,31 @@ function Measure-Variant {
     $allMappedTotal = Sum-NumericProperty -Samples $allSamples -Property 'gpu_mapped_buffers'
     $allFallbackTotal = Sum-NumericProperty -Samples $allSamples -Property 'gpu_cpu_fallback_events'
     $allForbiddenFallbackTotal = Sum-NumericProperty -Samples $allSamples -Property 'forbidden_gpu_fallback_events'
+    # Meshlet cook and render-path guards are lifetime counters, so use the
+    # highest observed value rather than summing every repeated profile sample.
+    $meshletColdImportBuilderCalls = Max-NumericProperty -Samples $allSamples -Property 'meshlet_cold_import_builder_calls'
+    $meshletColdImportBuildMs = Max-NumericProperty -Samples $allSamples -Property 'meshlet_cold_import_build_ms'
+    $meshletColdImportAllocatedBytes = Max-NumericProperty -Samples $allSamples -Property 'meshlet_cold_import_allocated_bytes'
+    $meshletGeneratedLodCount = Max-NumericProperty -Samples $allSamples -Property 'meshlet_generated_lod_count'
+    $meshletCookedPayloadCount = Max-NumericProperty -Samples $allSamples -Property 'meshlet_cooked_payload_count'
+    $meshletCookedMeshletCount = Max-NumericProperty -Samples $allSamples -Property 'meshlet_cooked_meshlet_count'
+    $meshletSourceParserCalls = Max-NumericProperty -Samples $allSamples -Property 'meshlet_source_parser_calls'
+    $meshletWarmPayloadHydrations = Max-NumericProperty -Samples $allSamples -Property 'meshlet_warm_payload_hydrations'
+    $meshletRenderPathSourceHashCalls = Max-NumericProperty -Samples $allSamples -Property 'meshlet_render_path_source_hash_calls'
+    $meshletRenderPathDiskCalls = Max-NumericProperty -Samples $allSamples -Property 'meshlet_render_path_disk_calls'
+    $meshletRenderPathCookerCalls = Max-NumericProperty -Samples $allSamples -Property 'meshlet_render_path_cooker_calls'
+    $meshletDispatchCalls = Max-NumericProperty -Samples $samples -Property 'meshlet_dispatch_calls'
+    $meshletDispatchGroups = Max-NumericProperty -Samples $samples -Property 'meshlet_dispatch_groups'
+    $meshletMappedBytes = Max-NumericProperty -Samples $allSamples -Property 'meshlet_mapped_bytes'
+    $meshletCapabilityFailedRung = Get-SamplePropertyValue -Sample $lastSample -Property 'meshlet_vulkan_capability_failed_rung'
+    $meshletResolvedPass = Get-SamplePropertyValue -Sample $lastSample -Property 'meshlet_resolved_pass'
+    $meshletResolvedRoute = Get-SamplePropertyValue -Sample $lastSample -Property 'meshlet_resolved_route'
+    $meshletPrimaryRouteReason = Get-SamplePropertyValue -Sample $lastSample -Property 'meshlet_primary_route_reason'
+    $meshletResolvedRows = Max-NumericProperty -Samples $samples -Property 'meshlet_resolved_meshlet_rows'
+    $meshletResolvedTaskGroups = Max-NumericProperty -Samples $samples -Property 'meshlet_resolved_task_groups'
+    $meshletTaskRecordsEmitted = Max-NumericProperty -Samples $samples -Property 'gpu_meshlet_task_records_emitted'
+    $meshletDelayedDispatchGroups = Max-NumericProperty -Samples $samples -Property 'gpu_meshlet_delayed_dispatch_group_count'
+    $meshletDiagnosticReadbackBytes = Max-NumericProperty -Samples $samples -Property 'gpu_meshlet_diagnostic_readback_bytes'
     $vkFrame = Get-NumericStats -Samples $samples -Property 'vulkan_frame_total_ms' -PositiveOnly
     $vkWaitFrameSlot = Get-NumericStats -Samples $samples -Property 'vulkan_frame_wait_fence_ms' -PositiveOnly
     $vkSampleTimingQueries = Get-NumericStats -Samples $samples -Property 'vulkan_frame_sample_timing_queries_ms' -PositiveOnly
@@ -1695,6 +1784,17 @@ function Measure-Variant {
     if ($Strategy -eq 'GpuIndirectZeroReadback' -or $Strategy -eq 'GpuMeshletZeroReadback') {
         if ($captureReadbackTotal -ne 0 -or $captureMappedTotal -ne 0 -or $allReadbackTotal -ne 0 -or $allMappedTotal -ne 0) {
             $noteParts.Add("zero-readback violation capture(readbackBytes=$captureReadbackTotal mappedBuffers=$captureMappedTotal) all(readbackBytes=$allReadbackTotal mappedBuffers=$allMappedTotal)") | Out-Null
+        }
+    }
+    if ($Strategy -eq 'GpuMeshletZeroReadback') {
+        if ($null -eq $meshletRenderPathSourceHashCalls -or $null -eq $meshletRenderPathDiskCalls -or $null -eq $meshletRenderPathCookerCalls -or $null -eq $meshletMappedBytes) {
+            $noteParts.Add('meshlet production telemetry incomplete') | Out-Null
+        } elseif ($meshletRenderPathSourceHashCalls -ne 0 -or $meshletRenderPathDiskCalls -ne 0 -or $meshletRenderPathCookerCalls -ne 0 -or $meshletMappedBytes -ne 0) {
+            $noteParts.Add("meshlet render-path violation hash=$meshletRenderPathSourceHashCalls disk=$meshletRenderPathDiskCalls cooker=$meshletRenderPathCookerCalls mappedBytes=$meshletMappedBytes") | Out-Null
+        }
+        if ($null -eq $meshletTaskRecordsEmitted -or $null -eq $meshletDelayedDispatchGroups -or
+            $meshletTaskRecordsEmitted -le 0 -or $meshletDelayedDispatchGroups -le 0) {
+            $noteParts.Add("meshlet production work was not observed from delayed GPU diagnostics; taskRecords=$meshletTaskRecordsEmitted dispatchX=$meshletDelayedDispatchGroups diagnosticReadbackBytes=$meshletDiagnosticReadbackBytes failedRung=$meshletCapabilityFailedRung") | Out-Null
         }
     }
     if ($FailOnSteadyStateResourceChurn -and ($vkRetiredResourceCountTotal -gt 0 -or $plannerPruneTotal -gt 0 -or $globalInFlightWaitTotal -gt 0 -or $forceFlushTotal -gt 0 -or $vkDescriptorPoolCreatesTotal -gt 0 -or $vkLifetimeLiveResourcesMax -gt $MaxSteadyStateVulkanLiveResources -or $vkTrackedDescriptorSetsMax -gt $MaxSteadyStateVulkanDescriptorSets)) {
@@ -2095,6 +2195,29 @@ function Measure-Variant {
         AllGpuMappedBuffersTotal = $allMappedTotal
         AllFallbackEventsTotal = $allFallbackTotal
         AllForbiddenFallbackEventsTotal = $allForbiddenFallbackTotal
+        MeshletColdImportBuilderCalls = $meshletColdImportBuilderCalls
+        MeshletColdImportBuildMs = $meshletColdImportBuildMs
+        MeshletColdImportAllocatedBytes = $meshletColdImportAllocatedBytes
+        MeshletGeneratedLodCount = $meshletGeneratedLodCount
+        MeshletCookedPayloadCount = $meshletCookedPayloadCount
+        MeshletCookedMeshletCount = $meshletCookedMeshletCount
+        MeshletSourceParserCalls = $meshletSourceParserCalls
+        MeshletWarmPayloadHydrations = $meshletWarmPayloadHydrations
+        MeshletRenderPathSourceHashCalls = $meshletRenderPathSourceHashCalls
+        MeshletRenderPathDiskCalls = $meshletRenderPathDiskCalls
+        MeshletRenderPathCookerCalls = $meshletRenderPathCookerCalls
+        MeshletDispatchCalls = $meshletDispatchCalls
+        MeshletDispatchGroups = $meshletDispatchGroups
+        MeshletMappedBytes = $meshletMappedBytes
+        MeshletVulkanCapabilityFailedRung = $meshletCapabilityFailedRung
+        MeshletResolvedPass = $meshletResolvedPass
+        MeshletResolvedRoute = $meshletResolvedRoute
+        MeshletPrimaryRouteReason = $meshletPrimaryRouteReason
+        MeshletResolvedRows = $meshletResolvedRows
+        MeshletResolvedTaskGroups = $meshletResolvedTaskGroups
+        MeshletTaskRecordsEmitted = $meshletTaskRecordsEmitted
+        MeshletDelayedDispatchGroups = $meshletDelayedDispatchGroups
+        MeshletDiagnosticReadbackBytes = $meshletDiagnosticReadbackBytes
         LastSampleUtc = $lastSampleUtc
         LastRenderFrameId = $lastRenderFrameId
         LastCompletedFrameId = $lastCompletedFrameId
@@ -2267,4 +2390,61 @@ if ($invalidCaptureFailures.Count -gt 0) {
         "$($_.Strategy) r$($_.Repetition): stable=$($_.StabilityReady) identities=$($_.CaptureWorkloadIdentityCount) unapprovedPolicy=$($_.UnapprovedOutputPolicyEventsTotal) rejectedSubmissions=$($_.VulkanSubmissionRejectionsTotal) reason=$($_.StabilityReason)"
     }
     throw "Invalid render-pipeline performance capture: $($details -join '; ')"
+}
+
+$meshletProductionFailures = @($results | Where-Object {
+    $_.Strategy -eq 'GpuMeshletZeroReadback' -and (
+        $_.EffectiveStrategy -ine 'GpuMeshletZeroReadback' -or
+        $null -eq $_.MeshletRenderPathSourceHashCalls -or
+        $null -eq $_.MeshletRenderPathDiskCalls -or
+        $null -eq $_.MeshletRenderPathCookerCalls -or
+        $null -eq $_.MeshletMappedBytes -or
+        $null -eq $_.MeshletDispatchCalls -or
+        $null -eq $_.MeshletTaskRecordsEmitted -or
+        $null -eq $_.MeshletDelayedDispatchGroups -or
+        [double]$_.MeshletRenderPathSourceHashCalls -ne 0.0 -or
+        [double]$_.MeshletRenderPathDiskCalls -ne 0.0 -or
+        [double]$_.MeshletRenderPathCookerCalls -ne 0.0 -or
+        [double]$_.MeshletMappedBytes -ne 0.0 -or
+        # API enqueue count alone is not proof. Both values below come from a
+        # fence-delayed readback of GPU-written meshlet buffers.
+        [double]$_.MeshletTaskRecordsEmitted -le 0.0 -or
+        [double]$_.MeshletDelayedDispatchGroups -le 0.0 -or
+        [double]$_.AllGpuReadbackBytesTotal -ne 0.0 -or
+        [double]$_.AllGpuMappedBuffersTotal -ne 0.0
+    )
+})
+if ($meshletProductionFailures.Count -gt 0) {
+    $details = $meshletProductionFailures | ForEach-Object {
+        "$($_.Strategy) r$($_.Repetition): effective=$($_.EffectiveStrategy) hash=$($_.MeshletRenderPathSourceHashCalls) disk=$($_.MeshletRenderPathDiskCalls) cooker=$($_.MeshletRenderPathCookerCalls) mapped=$($_.MeshletMappedBytes) apiEnqueues=$($_.MeshletDispatchCalls) delayedTaskRecords=$($_.MeshletTaskRecordsEmitted) delayedDispatchX=$($_.MeshletDelayedDispatchGroups) diagnosticReadbackBytes=$($_.MeshletDiagnosticReadbackBytes) readback=$($_.AllGpuReadbackBytesTotal) mappedBuffers=$($_.AllGpuMappedBuffersTotal) failedRung=$($_.MeshletVulkanCapabilityFailedRung)"
+    }
+    throw "GpuMeshletZeroReadback production gate failed: $($details -join '; ')"
+}
+
+$meshletCacheEvidenceFailures = @($results | Where-Object {
+    if ($_.Strategy -notin @('GpuMeshletInstrumented', 'GpuMeshletZeroReadback')) { return $false }
+
+    if ($_.CacheMode -eq 'Cold') {
+        return $null -eq $_.MeshletSourceParserCalls -or
+            $null -eq $_.MeshletColdImportBuilderCalls -or
+            $null -eq $_.MeshletCookedPayloadCount -or
+            $null -eq $_.MeshletGeneratedLodCount -or
+            [double]$_.MeshletSourceParserCalls -le 0.0 -or
+            [double]$_.MeshletColdImportBuilderCalls -le 0.0 -or
+            [double]$_.MeshletCookedPayloadCount -le 0.0 -or
+            [double]$_.MeshletGeneratedLodCount -le 0.0
+    }
+
+    return $null -eq $_.MeshletWarmPayloadHydrations -or
+        $null -eq $_.MeshletSourceParserCalls -or
+        $null -eq $_.MeshletColdImportBuilderCalls -or
+        [double]$_.MeshletWarmPayloadHydrations -le 0.0 -or
+        [double]$_.MeshletSourceParserCalls -ne 0.0 -or
+        [double]$_.MeshletColdImportBuilderCalls -ne 0.0
+})
+if ($meshletCacheEvidenceFailures.Count -gt 0) {
+    $details = $meshletCacheEvidenceFailures | ForEach-Object {
+        "$($_.Strategy) r$($_.Repetition) $($_.CacheMode): parser=$($_.MeshletSourceParserCalls) nativeBuilder=$($_.MeshletColdImportBuilderCalls) generatedLods=$($_.MeshletGeneratedLodCount) payloads=$($_.MeshletCookedPayloadCount) warmHydrations=$($_.MeshletWarmPayloadHydrations)"
+    }
+    throw "Meshlet import-cache evidence gate failed: $($details -join '; '). Cold requires source parsing plus nonzero cook/LOD evidence; warm requires standalone cooked-mesh hydration with zero source parsing and builder calls."
 }

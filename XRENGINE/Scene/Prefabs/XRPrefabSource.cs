@@ -205,12 +205,18 @@ namespace XREngine.Scene.Prefabs
                 UnityPrefabConversionResult conversion = UnityEditorImportBridge.ImportPrefabConversion(
                     filePath,
                     FilePath,
-                    unityOptions.UnityProjectRootOverride);
+                    unityOptions.UnityProjectRootOverride,
+                    unityOptions.CookSettings,
+                    unityOptions.CookOverrides);
                 RootNode = conversion.RootNode;
                 UnityImportManifest = conversion.Manifest;
                 ProducerReport = RootNode is null
                     ? null
                     : UnityModelImportProducerAdapter.CreateReport(filePath, unityOptions, conversion.Manifest);
+                if (RootNode is not null && !conversion.MeshletCookingCompleted)
+                    throw new InvalidOperationException(
+                        $"Unity prefab conversion for '{filePath}' returned an uncooked hierarchy. " +
+                        "The Unity importer must cook the completed hierarchy before publication.");
                 return RootNode is not null;
             }
 

@@ -1,6 +1,8 @@
 using System.Buffers.Binary;
 using System.IO.Hashing;
 using XREngine.Core.Files.Caching;
+using XREngine.Rendering;
+using XREngine.Rendering.Meshlets;
 
 namespace XREngine.Rendering.Models.Caching;
 
@@ -27,6 +29,94 @@ internal static class ModelBinaryContainerReader
         Stream source,
         ModelCacheReadLimits? limits = null)
         => ReadCore(source, [], validateAllRequired: true, limits);
+
+    /// <summary>
+    /// Reads and semantically validates the optional meshlet section. A caller
+    /// must hydrate the returned payloads before registering its meshes with
+    /// GPUScene; this reader never triggers parser or meshlet-builder work.
+    /// </summary>
+    public static ModelBinaryContainerReadResult ReadMeshletSection(
+        Stream source,
+        out IReadOnlyList<ModelBinaryMeshletSectionEntry>? entries,
+        ModelCacheReadLimits? limits = null)
+    {
+        entries = null;
+        ModelBinaryContainerReadResult result = ReadSelected(
+            source,
+            [new ModelBinaryChunkKey((uint)ModelBinaryChunkType.Meshlets, 0)],
+            limits);
+        if (!result.IsSuccess)
+            return result;
+
+        try
+        {
+            ModelBinaryContainer container = result.Container!;
+            ModelBinaryChunkKey key = new((uint)ModelBinaryChunkType.Meshlets, 0);
+            if (!container.SelectedChunks.TryGetValue(key, out ReadOnlyMemory<byte> bytes))
+                throw new InvalidDataException("The requested model meshlet section was not loaded.");
+            ModelBinaryChunkEntry? entry = container.ChunkEntries.FirstOrDefault(candidate => candidate.Key == key);
+            if (entry is null)
+                throw new InvalidDataException("The model meshlet section has no matching chunk-table entry.");
+            entries = ModelBinaryMeshletSectionCodec.Deserialize(bytes.Span, entry.ElementCount, limits);
+            return result;
+        }
+        catch (InvalidDataException exception)
+        {
+            return ModelBinaryContainerReadResult.Rejected(CacheRejectReason.InvalidChunkTable, exception.Message);
+        }
+        catch (EndOfStreamException exception)
+        {
+            return ModelBinaryContainerReadResult.Rejected(CacheRejectReason.Truncated, exception.Message);
+        }
+    }
+
+    /// <summary>Reads the optional section while distinguishing absence from rejection.</summary>
+    public static ModelBinaryMeshletSectionReadResult ReadOptionalMeshletSection(
+        Stream source, ModelCacheReadLimits? limits = null)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        ModelBinaryContainerReadResult manifest = ReadManifest(source, limits);
+        if (!manifest.IsSuccess)
+            return ModelBinaryMeshletSectionReadResult.Rejected(
+                manifest.Reason,
+                manifest.Detail ?? "Model container rejected before optional meshlet lookup.");
+
+        ModelBinaryChunkKey meshletKey = new((uint)ModelBinaryChunkType.Meshlets, 0);
+        if (!manifest.Container!.ChunkEntries.Any(entry => entry.Key == meshletKey))
+            return ModelBinaryMeshletSectionReadResult.Missing;
+
+        IReadOnlyList<ModelBinaryMeshletSectionEntry>? entries;
+        ModelBinaryContainerReadResult result = ReadMeshletSection(source, out entries, limits);
+        if (!result.IsSuccess)
+            return ModelBinaryMeshletSectionReadResult.Rejected(result.Reason, result.Detail ?? "Meshlet section rejected.");
+        return entries is null
+            ? ModelBinaryMeshletSectionReadResult.Missing
+            : ModelBinaryMeshletSectionReadResult.Present(entries);
+    }
+
+    public static ModelBinaryMeshletSectionPublishResult LoadAndPublishMeshletSection(
+        Stream source,
+        Func<ModelBinaryMeshletSectionKey, XRMesh?> resolveMesh,
+        Func<ModelBinaryMeshletSectionKey, XRMesh, MeshletPayload?>? repairFromCachedCore = null,
+        Action<IReadOnlyList<ModelBinaryMeshletSectionEntry>>? republish = null,
+        bool readOnly = false,
+        ModelCacheReadLimits? limits = null,
+        IEnumerable<ModelBinaryMeshletSectionKey>? expectedKeys = null,
+        IEnumerable<ModelBinaryMeshletSectionEntry>? secondaryRepairEntries = null)
+    {
+        ModelBinaryMeshletSectionReadResult read = ReadOptionalMeshletSection(source, limits);
+        if (read.State == ModelBinaryOptionalSectionState.Rejected &&
+            (repairFromCachedCore is null || expectedKeys is null))
+            throw new InvalidDataException(read.Detail ?? "Meshlet section rejected.");
+        return ModelBinaryMeshletSectionService.LoadAndPublish(
+            read.Entries ?? [],
+            secondaryRepairEntries,
+            resolveMesh,
+            repairFromCachedCore,
+            republish,
+            readOnly,
+            expectedKeys);
+    }
 
     public static bool HasMagic(Stream source)
     {

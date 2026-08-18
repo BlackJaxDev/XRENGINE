@@ -3,7 +3,10 @@ using System.Numerics;
 using System.Text;
 using System.Text.RegularExpressions;
 using XREngine.Components;
+using XREngine.Components.Scene.Mesh;
 using XREngine.Data.Core;
+using XREngine.Rendering.Models;
+using XREngine.Rendering.Models.Caching;
 using XREngine.Scene.Prefabs;
 using XREngine.Scene.Transforms;
 using YamlDotNet.RepresentationModel;
@@ -47,14 +50,53 @@ internal static partial class UnitySceneImporter
             cancellationToken: default,
             progress: null);
 
+    /// <summary>
+    /// Converts, composes, and cooks a Unity prefab as one publication unit.
+    /// Meshlet identities are assigned after all imported and YAML-authored
+    /// hierarchy changes have completed.
+    /// </summary>
+    public static UnityPrefabConversionResult ImportPrefabWithManifest(
+        string filePath,
+        string? outputDestination,
+        string? explicitProjectOrAssetsRoot,
+        ModelCookSettings cookSettings,
+        ModelCookOverrideSnapshot cookOverrides)
+        => ImportPrefabWithManifest(
+            filePath,
+            outputDestination,
+            explicitProjectOrAssetsRoot,
+            cancellationToken: default,
+            progress: null,
+            cookSettings,
+            cookOverrides);
+
     public static UnityPrefabConversionResult ImportPrefabWithManifest(
         string filePath,
         string? outputDestination,
         string? explicitProjectOrAssetsRoot,
         CancellationToken cancellationToken,
         Action<float, string>? progress)
+        => ImportPrefabWithManifest(
+            filePath,
+            outputDestination,
+            explicitProjectOrAssetsRoot,
+            cancellationToken,
+            progress,
+            new ModelCookSettings(),
+            ModelCookOverrideSnapshot.Empty);
+
+    private static UnityPrefabConversionResult ImportPrefabWithManifest(
+        string filePath,
+        string? outputDestination,
+        string? explicitProjectOrAssetsRoot,
+        CancellationToken cancellationToken,
+        Action<float, string>? progress,
+        ModelCookSettings cookSettings,
+        ModelCookOverrideSnapshot cookOverrides)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(filePath);
+        ArgumentNullException.ThrowIfNull(cookSettings);
+        ArgumentNullException.ThrowIfNull(cookOverrides);
 
         string normalizedPath = Path.GetFullPath(filePath);
         var context = new UnityProjectImportContext(
@@ -86,6 +128,12 @@ internal static partial class UnitySceneImporter
         }
 
         context.MarkOutcome(normalizedPath, UnityImportConversionOutcome.Converted);
+        AssignFinalMeshletEntityIdentities(rootNode);
+        string meshletCookIdentity = ModelCacheSourceIdentityResolver.Resolve(
+            normalizedPath,
+            RuntimeModelImportServices.Current.ProjectAssetsRoot,
+            RuntimeModelImportServices.Current.EngineAssetsRoot).IdentityHash;
+        ModelImportMeshletCooker.CookScene(rootNode, cookSettings, meshletCookIdentity, cookOverrides);
         bool behaviorErrors = context.Diagnostics.Any(static diagnostic =>
             diagnostic.Category == UnityImportDiagnosticCategory.AvatarComponent &&
             diagnostic.Severity == UnityImportDiagnosticSeverity.Error);
@@ -98,7 +146,37 @@ internal static partial class UnitySceneImporter
         {
             RootNode = rootNode,
             Manifest = manifest,
+            MeshletCookingCompleted = true,
         };
+    }
+
+    /// <summary>
+    /// Replaces importer-local mesh identities with identities owned by the
+    /// completed Unity prefab. Renderer persistent IDs come from Unity GUID and
+    /// fileID mappings, so the cook key survives process restarts and does not
+    /// accidentally collide when the same external model is instantiated twice.
+    /// </summary>
+    private static void AssignFinalMeshletEntityIdentities(SceneNode node)
+    {
+        ModelComponent[] components = node.GetComponents<ModelComponent>().ToArray();
+        for (int componentIndex = 0; componentIndex < components.Length; componentIndex++)
+        {
+            ModelComponent component = components[componentIndex];
+            if (component.Model is not { } model)
+                continue;
+
+            string componentIdentity = component.ID.ToString("N", CultureInfo.InvariantCulture);
+            for (int subMeshIndex = 0; subMeshIndex < model.Meshes.Count; subMeshIndex++)
+            {
+                SubMesh subMesh = model.Meshes[subMeshIndex];
+                subMesh.ImportedEntityIdentity = $"unity-renderer:{componentIdentity}/submesh:{subMeshIndex}";
+                subMesh.ImportedEntityIdentityIsStable = true;
+            }
+        }
+
+        foreach (TransformBase childTransform in node.Transform.Children)
+            if (childTransform.SceneNode is SceneNode childNode)
+                AssignFinalMeshletEntityIdentities(childNode);
     }
 
     private static ImportedHierarchy ImportHierarchy(string filePath, ImportState state)

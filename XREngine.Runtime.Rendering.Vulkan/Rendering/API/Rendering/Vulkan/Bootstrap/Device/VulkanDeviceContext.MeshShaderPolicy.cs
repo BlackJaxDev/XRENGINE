@@ -7,7 +7,11 @@ internal sealed partial class VulkanDeviceContext
         => Capabilities.Supports(EVulkanDeviceCapability.MeshShader)
             && MutableCapabilities._supportsVulkanMeshShaderFeature
             && MutableCapabilities._supportsVulkanMeshTaskIndirectCount
+            && MutableCapabilities._meshShaderCapabilitySnapshot.HasPortableMeshletProfile
             && ExtensionFunctions.ExtMeshShader is not null;
+
+    internal string MeshletDispatchStatus
+        => MutableCapabilities._meshShaderCapabilitySnapshot.GetDispatchFailureReason();
 
     internal ERvcVulkanProductionFeature ResolveRvcProductionFeatures(bool multiview)
     {

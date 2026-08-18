@@ -2,21 +2,39 @@
 
 Last Updated: 2026-05-19
 Owner: Rendering
-Status: Phase 0-9 implementation tracker complete; parent Phase E4-E9 source-contract scope is complete. Phase 10 hardware/perf validation and branch merge remain open under [Production GPU-Driven Rendering Roadmap](production-rendering-pipeline-roadmap.md) Phase H.
+Status: Historical Phase 0-9 source-contract tracker complete; later import/runtime production gaps are reopened under [Meshlet Import Cooking And Production Readiness TODO](../rendering/gpu/meshlet-import-cooking-and-production-readiness-todo.md). Phase 10 hardware/perf validation and branch merge remain open under [Production GPU-Driven Rendering Roadmap](../rendering/gpu/production-rendering-pipeline-roadmap.md) Phase H.
 Target Branch: `rendering-gpu-meshlet-zero-readback`
 
 Source design:
 
-- [GPU Meshlet Zero-Readback Rendering Design](../../../design/rendering/gpu-meshlet-zero-readback-rendering-design.md)
+- [GPU Meshlet Zero-Readback Rendering Design](../../design/rendering/gpu-meshlet-zero-readback-rendering-design.md)
 
 Related docs:
 
-- [Production GPU-driven rendering roadmap](production-rendering-pipeline-roadmap.md)
-- [Zero-readback GPU-driven rendering plan](../../../design/rendering/zero-readback-gpu-driven-rendering-plan.md)
-- [Mesh submission strategies](../../../../architecture/rendering/mesh-submission-strategies.md)
-- [Frame lifecycle and dispatch paths](../../../../architecture/rendering/frame-lifecycle-and-dispatch-paths.md)
-- [Model Import Cooked Asset Cache TODO](../../assets/model-import-binary-cache-todo.md)
-- [Model Import Binary Cache Design](../../../design/assets/model-import-binary-cache-design.md)
+- [Meshlet import cooking and production readiness TODO](../rendering/gpu/meshlet-import-cooking-and-production-readiness-todo.md)
+- [Production GPU-driven rendering roadmap](../rendering/gpu/production-rendering-pipeline-roadmap.md)
+- [Zero-readback GPU-driven rendering plan](../../design/rendering/zero-readback-gpu-driven-rendering-plan.md)
+- [Mesh submission strategies](../../../architecture/rendering/mesh-submission-strategies.md)
+- [Frame lifecycle and dispatch paths](../../../architecture/rendering/frame-lifecycle-and-dispatch-paths.md)
+- [Model Import Cooked Asset Cache TODO](../assets/model-import-binary-cache-todo.md)
+- [Model Import Binary Cache Design](../../design/assets/model-import-binary-cache-design.md)
+
+## 2026-08-17 Reopened Integration Gaps
+
+A later source and runtime audit found that the historical source-contract
+completion did not close first-import cooking, warm model-cache hydration,
+render-hot-path safety, mixed-pass eligibility, or Vulkan hardware activation.
+The current path can still scan and hash every scene mesh, read/write the repair
+cache, and invoke native meshlet building before a meshlet GPU pass. The direct
+material-table path also remains limited to opaque deferred and rejects current
+skinned and override/depth-normal cases.
+
+The focused
+[Meshlet Import Cooking And Production Readiness TODO](../rendering/gpu/meshlet-import-cooking-and-production-readiness-todo.md)
+is the implementation authority for those reopened gaps. Checked items below
+remain a historical record of the branch's source-contract work and must not be
+used as evidence that first-import persistence, zero render-path cooking, pass
+coverage, or real EXT mesh-task dispatch has been validated.
 
 ## Parent Roadmap Contract
 
@@ -124,7 +142,7 @@ The production path should be:
 - [x] Ensure forced `GpuMeshletZeroReadback` or `GpuMeshletInstrumented` on unsupported hardware warns and falls back to `GpuIndirectZeroReadback` when available.
 - [x] Ensure strict no-fallback profiles skip GPU mesh submission with a visible warning if neither production meshlet nor zero-readback indirect can run.
 - [x] Add resolver tests for supported, unsupported, diagnostic-only, and strict fallback combinations.
-- [x] Update [Mesh submission strategies](../../../../architecture/rendering/mesh-submission-strategies.md) if the capability contract changes.
+- [x] Update [Mesh submission strategies](../../../architecture/rendering/mesh-submission-strategies.md) if the capability contract changes.
 
 ### Exit Criteria
 
@@ -135,7 +153,7 @@ The production path should be:
 
 **Goal:** make meshlet generation an import/cache responsibility instead of a first-render responsibility.
 
-- [x] Coordinate with [Model Import Cooked Asset Cache TODO](../../assets/model-import-binary-cache-todo.md) Phase 5 before changing runtime expectations. Done 2026-05-19: Phase 2 now provides the reusable `XRMesh.MeshletPayload` contract and cooked-XRMesh serialization layer; the broader disposable model-cache container, chunk table, and GPUScene registration remain tracked by the model-cache TODO and later meshlet phases.
+- [x] Coordinate with [Model Import Cooked Asset Cache TODO](../assets/model-import-binary-cache-todo.md) Phase 5 before changing runtime expectations. Done 2026-05-19: Phase 2 now provides the reusable `XRMesh.MeshletPayload` contract and cooked-XRMesh serialization layer; the broader disposable model-cache container, chunk table, and GPUScene registration remain tracked by the model-cache TODO and later meshlet phases.
 - [x] Define a serialized CPU meshlet descriptor distinct from the GPU descriptor. Done 2026-05-19: `CpuMeshletDescriptor` stores CPU/cache-owned bounds, meshlet offsets/counts, cone data, and packed cone bytes separately from the shader-facing `Meshlet` struct.
 - [x] Add meshlet cone axis, cutoff, and apex data, or a documented compressed equivalent, to cached payloads. Done 2026-05-19: meshoptimizer bounds now populate cone axis/cutoff, cone apex, and packed s8 cone fields on each CPU descriptor.
 - [x] Include meshoptimizer version, meshlet generation settings, LOD settings, and source mesh identity in cache freshness. Done 2026-05-19: `MeshletPayload` records the meshoptimizer/interop version key, settings snapshots, source identity, source mesh hash, settings hashes, and freshness hash.
@@ -147,7 +165,7 @@ The production path should be:
 
 ### Exit Criteria
 
-- [ ] Fresh model caches hydrate meshlet and LOD payloads without source model access. Meshlet payload hydration is implemented for cooked `XRMesh`; full model-cache `Models`/`LodTables`/`Meshlets` chunk hydration remains tracked by [Model Import Cooked Asset Cache TODO](../../assets/model-import-binary-cache-todo.md) Phases 4-7.
+- [ ] Fresh model caches hydrate meshlet and LOD payloads without source model access. Meshlet payload hydration is implemented for cooked `XRMesh`; full model-cache `Models`/`LodTables`/`Meshlets` chunk hydration remains tracked by [Model Import Cooked Asset Cache TODO](../assets/model-import-binary-cache-todo.md) Phases 4-7.
 - [x] Warm-cache render startup consumes cached meshlets instead of rebuilding them.
 
 ## Phase 3: GPUScene Meshlet Storage

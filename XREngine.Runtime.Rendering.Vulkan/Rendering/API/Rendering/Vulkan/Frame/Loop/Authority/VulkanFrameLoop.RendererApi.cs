@@ -23,7 +23,7 @@ internal sealed partial class VulkanFrameLoop
     internal void TrackWindowPresentSource(XRTexture? colorTexture, XRFrameBuffer? sourceFrameBuffer)
     {
         XRFrameBuffer? resolvedFrameBuffer = sourceFrameBuffer ?? ResolveWindowPresentFallbackFrameBuffer(colorTexture);
-        FrameOpContext context = CaptureFrameOpContext();
+        FrameOpContext context = CaptureFrameOpContextForCurrentPipelineScope();
         VkImageDescriptorSnapshot snapshot = default;
         bool snapshotReady = colorTexture is not null &&
             GetOrCreateAPIRenderObject(colorTexture) is IVkImageDescriptorSource source &&
@@ -113,7 +113,7 @@ internal sealed partial class VulkanFrameLoop
             return;
 
         _commandRuntime.ActiveState.SetClearState(color, depth, stencil);
-        FrameOpContext context = CaptureFrameOpContext();
+        FrameOpContext context = CaptureFrameOpContextForCurrentPipelineScope();
         Extent2D extent = _commandRuntime.ResolveCurrentDrawTargetExtent();
         Rect2D rect = _commandRuntime.ActiveState.GetCroppingEnabled()
             ? _commandRuntime.ActiveState.GetScissor(extent)

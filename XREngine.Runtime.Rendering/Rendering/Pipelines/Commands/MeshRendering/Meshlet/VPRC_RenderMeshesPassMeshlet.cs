@@ -32,7 +32,10 @@ internal static class VPRC_RenderMeshesPassMeshlet
         gpuPass.UseMeshletPipeline = true;
         try
         {
-            commands.RenderGPU(command.RenderPass, meshSubmissionStrategy);
+            commands.RenderGPU(
+                command.RenderPass,
+                meshSubmissionStrategy.ToSubmissionMode(),
+                command.ResolvePrimitivePathPreference(meshSubmissionStrategy));
 
             if (ShouldUseOpenGLMeshletProgramWarmupFallback(meshSubmissionStrategy, gpuPass))
             {

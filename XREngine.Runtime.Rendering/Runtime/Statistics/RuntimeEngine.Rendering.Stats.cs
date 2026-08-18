@@ -99,7 +99,7 @@ namespace XREngine
                 {
                     try
                     {
-                        return GetMeshSubmissionStrategyName(RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy());
+                        return GetMeshSubmissionStrategyName(RuntimeEngine.Rendering.LastResolvedMeshSubmissionStrategy);
                     }
                     catch
                     {

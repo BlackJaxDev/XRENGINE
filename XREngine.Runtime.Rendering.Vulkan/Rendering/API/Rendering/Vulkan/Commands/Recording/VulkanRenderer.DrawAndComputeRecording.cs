@@ -297,10 +297,10 @@ namespace XREngine.Rendering.Vulkan
 
         internal unsafe void RecordMeshTaskDispatchIndirectCountOp(CommandBuffer commandBuffer, MeshTaskDispatchIndirectCountOp op)
         {
-            if (!DeviceContext.Capabilities.Supports(EVulkanDeviceCapability.MeshShader) ||
+            if (!DeviceContext.SupportsMeshTaskIndirectCount ||
                 DeviceContext.ExtensionFunctions.ExtMeshShader is not { } meshShader)
             {
-                Debug.VulkanWarning("RecordMeshTaskDispatchIndirectCountOp: VK_EXT_mesh_shader indirect-count dispatch is unavailable.");
+                Debug.VulkanWarning("RecordMeshTaskDispatchIndirectCountOp: {0}", DeviceContext.MeshletDispatchStatus);
                 return;
             }
 
@@ -329,13 +329,17 @@ namespace XREngine.Rendering.Vulkan
             {
                 SType = StructureType.MemoryBarrier,
                 SrcAccessMask = AccessFlags.ShaderWriteBit | AccessFlags.TransferWriteBit,
-                DstAccessMask = AccessFlags.IndirectCommandReadBit,
+                // The compute expansion writes both the indirect/count pair and
+                // the task-record stream consumed by the EXT task shader.
+                DstAccessMask = AccessFlags.IndirectCommandReadBit | AccessFlags.ShaderReadBit,
             };
 
             CmdPipelineBarrierTracked(
                 commandBuffer,
                 PipelineStageFlags.ComputeShaderBit | PipelineStageFlags.TransferBit,
-                PipelineStageFlags.DrawIndirectBit,
+                PipelineStageFlags.DrawIndirectBit |
+                PipelineStageFlags.TaskShaderBitNV |
+                PipelineStageFlags.MeshShaderBitNV,
                 DependencyFlags.None,
                 1,
                 &memoryBarrier,
@@ -364,6 +368,8 @@ namespace XREngine.Rendering.Vulkan
                 op.MaxDrawCount,
                 op.Stride);
 
+            RecordGpuMeshletDispatchEmission();
+
             RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanIndirectSubmission(
                 usedCountPath: true,
                 usedLoopFallback: false,
@@ -371,18 +377,72 @@ namespace XREngine.Rendering.Vulkan
                 submittedDraws: op.MaxDrawCount);
         }
 
-        internal unsafe void RecordMeshTaskDispatchIndirectCountPayload(CommandBuffer commandBuffer, in MeshTaskDispatchIndirectCountPayload op)
+        internal unsafe void RecordMeshTaskDispatchIndirectCountPayload(CommandBuffer commandBuffer, uint imageIndex, in MeshTaskDispatchIndirectCountPayload op)
         {
-            if (!DeviceContext.Capabilities.Supports(EVulkanDeviceCapability.MeshShader) || DeviceContext.ExtensionFunctions.ExtMeshShader is not { } meshShader)
+            if (!DeviceContext.SupportsMeshTaskIndirectCount || DeviceContext.ExtensionFunctions.ExtMeshShader is not { } meshShader)
                 return;
+            string? bindingFailure = null;
+            if (!op.Program.IsLinked || op.Program.LinkGeneration != op.ProgramLinkGeneration ||
+                op.Program.PipelineLayout.Handle == 0 ||
+                !op.Program.ValidateComputeSnapshot(op.ProgramBindingSnapshot, out bindingFailure))
+            {
+                throw new VulkanPlanPreconditionException(
+                    $"Prepared mesh-task graphics state became invalid before recording: {bindingFailure ?? "program link or layout changed"}.");
+            }
+            if (op.Pipeline.Handle == 0)
+                throw new VulkanPlanPreconditionException("Prepared mesh-task graphics pipeline became unavailable before recording.");
+            BindPipelineTracked(commandBuffer, PipelineBindPoint.Graphics, op.Pipeline);
+            if (op.ProducerSnapshot.IndexedViewportScissors.Count > 0)
+                SetViewportScissorTracked(commandBuffer, op.ProducerSnapshot.IndexedViewportScissors.Viewports!, op.ProducerSnapshot.IndexedViewportScissors.Scissors!, op.ProducerSnapshot.IndexedViewportScissors.Count);
+            else
+                SetViewportScissorTracked(commandBuffer, op.ProducerSnapshot.Viewport, op.ProducerSnapshot.Scissor);
+            if (!op.Program.TryBuildAndBindComputeDescriptorSets(
+                    CreateProgramRecordingRequest(commandBuffer),
+                    imageIndex,
+                    op.ProgramBindingSnapshot,
+                    0,
+                    PipelineBindPoint.Graphics,
+                    out _,
+                    out _,
+                    out var meshTaskTemporaryBuffers))
+            {
+                foreach ((Silk.NET.Vulkan.Buffer buffer, DeviceMemory memory) in meshTaskTemporaryBuffers)
+                    DestroyBuffer(buffer, memory);
+                throw new VulkanPlanPreconditionException("Prepared mesh-task graphics descriptors became unavailable before recording.");
+            }
+            RegisterComputeTransientUniformBuffers(imageIndex, meshTaskTemporaryBuffers);
             Silk.NET.Vulkan.Buffer indirect = RequirePreparedBuffer(op.IndirectBuffer, "mesh-task indirect command");
             Silk.NET.Vulkan.Buffer count = RequirePreparedBuffer(op.CountBuffer, "mesh-task indirect count");
-            if (op.MaxDrawCount == 0u || (op.BindlessMaterialTextures is { } binding && !TryBindPreparedGlobalMaterialTextureDescriptorSet(commandBuffer, binding.Program, binding.Consumer))) return;
-            MemoryBarrier barrier = new() { SType = StructureType.MemoryBarrier, SrcAccessMask = AccessFlags.ShaderWriteBit | AccessFlags.TransferWriteBit, DstAccessMask = AccessFlags.IndirectCommandReadBit };
-            CmdPipelineBarrierTracked(commandBuffer, PipelineStageFlags.ComputeShaderBit | PipelineStageFlags.TransferBit, PipelineStageFlags.DrawIndirectBit, DependencyFlags.None, 1, &barrier, 0, null, 0, null);
+            if (op.BindlessMaterialTextures is { } binding &&
+                !ReferenceEquals(binding.Program, op.Program))
+            {
+                throw new VulkanPlanPreconditionException(
+                    "The sealed mesh-task material descriptor scope belongs to a different program.");
+            }
+            if (op.MaxDrawCount == 0u ||
+                (op.BindlessMaterialTextures is { } materialBinding &&
+                 !TryBindPreparedGlobalMaterialTextureDescriptorSet(
+                     commandBuffer,
+                     materialBinding.Program,
+                     materialBinding.Consumer)))
+            {
+                return;
+            }
             TrackVulkanCommandBufferResource(commandBuffer, ObjectType.Buffer, indirect.Handle, "MeshTaskIndirect.Commands"); TrackVulkanCommandBufferResource(commandBuffer, ObjectType.Buffer, count.Handle, "MeshTaskIndirect.Count");
             meshShader.CmdDrawMeshTasksIndirectCount(commandBuffer, indirect, (ulong)op.ByteOffset, count, (ulong)op.CountByteOffset, op.MaxDrawCount, op.Stride);
+            RecordGpuMeshletDispatchEmission();
             RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanIndirectSubmission(true, false, 1, op.MaxDrawCount);
+        }
+
+        /// <summary>
+        /// Publishes meshlet-production evidence only after the Vulkan command has
+        /// been emitted. Enqueue and plan admission can still fail before this point.
+        /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static void RecordGpuMeshletDispatchEmission()
+        {
+            RuntimeEngine.Rendering.Stats.GpuMeshlets.RecordGpuMeshletProductionFrame(1);
+            RuntimeEngine.Rendering.Stats.GpuMeshlets.RecordGpuMeshletDispatch(groups: 0u);
         }
 
         internal void RecordComputeDispatchPayload(
@@ -398,7 +458,7 @@ namespace XREngine.Rendering.Vulkan
             BindPipelineTracked(commandBuffer, PipelineBindPoint.Compute, pipeline);
             EnsureComputeStorageImageLayoutsForDispatch(commandBuffer, payload.Snapshot);
             PushConstantsTracked(commandBuffer, payload.Program.PipelineLayout, CommonPushConstantStageFlags, 0, new ComputeDispatchPushConstants(payload.GroupsX, payload.GroupsY, payload.GroupsZ, 0u));
-            if (!payload.Program.TryBuildAndBindComputeDescriptorSets(CreateProgramRecordingRequest(commandBuffer), imageIndex, payload.Snapshot, reusableDescriptorKey, out _, out DescriptorSet[] boundDescriptorSets, out var tempBuffers))
+            if (!payload.Program.TryBuildAndBindComputeDescriptorSets(CreateProgramRecordingRequest(commandBuffer), imageIndex, payload.Snapshot, reusableDescriptorKey, PipelineBindPoint.Compute, out _, out DescriptorSet[] boundDescriptorSets, out var tempBuffers))
             {
                 foreach ((Silk.NET.Vulkan.Buffer buffer, DeviceMemory memory) in tempBuffers) DestroyBuffer(buffer, memory);
                 throw new VulkanPlanPreconditionException($"Prepared compute descriptors became unavailable while recording '{payload.Program.Data.Name ?? "UnnamedProgram"}'.");

@@ -30,7 +30,8 @@ internal sealed class VulkanGraphicsPipelineBuildRequest(
     DynamicRenderingFormatSignature dynamicRenderingFormats,
     PipelineShaderStageCreateInfo[] graphicsStages,
     PipelineShaderStageCreateInfo[] preRasterStages,
-    PipelineShaderStageCreateInfo[] fragmentStages)
+    PipelineShaderStageCreateInfo[] fragmentStages,
+    bool isMeshShaderPipeline = false)
 {
         public long OwnerId { get; } = ownerId;
         public VkRenderProgram Program { get; } = program;
@@ -57,4 +58,6 @@ internal sealed class VulkanGraphicsPipelineBuildRequest(
         public PipelineShaderStageCreateInfo[] GraphicsStages { get; } = graphicsStages;
         public PipelineShaderStageCreateInfo[] PreRasterStages { get; } = preRasterStages;
         public PipelineShaderStageCreateInfo[] FragmentStages { get; } = fragmentStages;
+        /// <summary>Task/mesh pipelines have no vertex-input or input-assembly state.</summary>
+        public bool IsMeshShaderPipeline { get; } = isMeshShaderPipeline;
 }

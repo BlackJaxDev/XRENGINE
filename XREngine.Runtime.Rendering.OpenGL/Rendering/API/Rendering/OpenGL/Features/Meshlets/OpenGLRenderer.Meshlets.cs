@@ -27,6 +27,7 @@ public unsafe partial class OpenGLRenderer
         => MeshShaderDialect == EMeshShaderDialect.OpenGLEXT;
 
     public override bool TryDrawMeshTasksIndirectCount(
+        XRRenderProgram program,
         XRDataBuffer indirectBuffer,
         XRDataBuffer countBuffer,
         uint maxDrawCount,
