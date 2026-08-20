@@ -491,6 +491,8 @@ namespace XREngine.Rendering
                 {
                     string readinessFailure = renderPasses.MeshletReadinessFailure
                         ?? "The meshlet task/mesh program was not ready when this pass was sealed.";
+                    if (currentRenderPass == (int)EDefaultRenderPass.OpaqueDeferred)
+                        RuntimeEngine.Rendering.Stats.GpuMeshlets.RecordGpuMeshletEligiblePassPreSealReason(readinessFailure);
                     if (meshletRequired)
                     {
                         WarnMeshletMaterialFallback(
@@ -2987,7 +2989,9 @@ namespace XREngine.Rendering
                         ? "Vulkan mesh-task indirect-count dispatch enqueued for primary recording."
                         : "OpenGL mesh task indirect-count dispatch submitted.");
                 if (renderer.BackendId == RendererBackendId.Vulkan &&
-                    RuntimeEngine.EffectiveSettings.EnableGpuIndirectDebugLogging &&
+                    (RuntimeEngine.EffectiveSettings.EnableGpuIndirectDebugLogging ||
+                     (VulkanFeatureProfile.IsActive &&
+                      VulkanFeatureProfile.ActiveProfile == EVulkanGpuDrivenProfile.Diagnostics)) &&
                     dispatchIndirectBuffer is not null)
                 {
                     renderer.QueueGpuMeshletDispatchDiagnosticsReadback(dispatchIndirectBuffer);
@@ -3096,9 +3100,9 @@ namespace XREngine.Rendering
                 return false;
             }
 
-            if (RuntimeEngine.Rendering.State.IsSceneCapturePass || RuntimeEngine.Rendering.State.IsLightProbePass)
+            if (RuntimeEngine.Rendering.State.IsLightProbePass)
             {
-                failureReason = "Scene-capture and light-probe rendering require the traditional material path.";
+                failureReason = "Light-probe rendering requires the traditional material path.";
                 return false;
             }
 
@@ -3223,6 +3227,7 @@ namespace XREngine.Rendering
         {
             RuntimeEngine.Rendering.Stats.GpuFallback.RecordForbiddenGpuFallback(1);
             RuntimeEngine.Rendering.Stats.GpuMeshlets.RecordGpuMeshletFallback(1);
+            RuntimeEngine.Rendering.Stats.GpuMeshlets.RecordGpuMeshletPostSealFailure(currentRenderPass, reason);
             XREngine.Debug.RenderingWarningEvery(
                 $"RenderDispatch.GpuMeshletMaterialFallback.{currentRenderPass}.{reason.GetHashCode()}",
                 TimeSpan.FromSeconds(2),

@@ -299,11 +299,15 @@ namespace XREngine.Rendering.Commands
                 && fallbackRequested
                 && (!VulkanFeatureProfile.IsActive || VulkanFeatureProfile.ActiveProfile == EVulkanGpuDrivenProfile.Diagnostics);
 
-            _passDiagnosticReadbacksEnabled = instrumented
-                && (_passDebugLoggingEnabled
-                    || _passValidationLoggingEnabled
-                    || !_passDisableCpuReadbackCount
-                    || _passEnableCpuBatching);
+            bool meshletDiagnosticsProfile = meshlet &&
+                VulkanFeatureProfile.IsActive &&
+                VulkanFeatureProfile.ActiveProfile == EVulkanGpuDrivenProfile.Diagnostics;
+            _passDiagnosticReadbacksEnabled = meshletDiagnosticsProfile ||
+                (instrumented &&
+                    (_passDebugLoggingEnabled
+                        || _passValidationLoggingEnabled
+                        || !_passDisableCpuReadbackCount
+                        || _passEnableCpuBatching));
 
             _passPolicySnapshotValid = true;
 

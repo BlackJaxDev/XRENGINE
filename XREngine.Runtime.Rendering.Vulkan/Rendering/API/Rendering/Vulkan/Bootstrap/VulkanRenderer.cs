@@ -31,6 +31,7 @@ public sealed class VulkanRenderer :
     IOcclusionQueryBackendCapability,
     IRenderTexturePreviewBackendCapability,
     IRenderBackendDiagnosticsCapability,
+    IRenderProgramBackendCapability,
     IInteractiveResizePresentationBackendCapability,
     IOpenXrSmokeDiagnosticsBackendCapability,
     ISparseTextureStreamingBackendCapability,
@@ -356,6 +357,17 @@ public sealed class VulkanRenderer :
     protected override IImGuiRendererBackend? GetImGuiBackend(XRViewport? viewport) => SupportsImGui ? _frameLoop.GetOrCreateImGuiBackend(XRWindow, ResetImGuiFrameMarker) : null;
     public bool TryGetTexturePreviewHandle(XRTexture texture, in RenderTexturePreviewOptions options, out nint handle, out bool requiresVerticalFlip, out string? failureReason) => _frameLoop.TryGetTexturePreviewHandle(texture, in options, out handle, out requiresVerticalFlip, out failureReason);
     public IReadOnlyList<RenderBackendDiagnosticError> GetTrackedErrors() => Array.Empty<RenderBackendDiagnosticError>();
+    bool IRenderProgramBackendCapability.IsProgramReady(XRRenderProgram program)
+        => GetOrCreateAPIRenderObject(program) is VkRenderProgram { IsLinked: true };
+    string IRenderProgramBackendCapability.DescribeProgramReadiness(XRRenderProgram program)
+        => GetOrCreateAPIRenderObject(program) is VkRenderProgram backendProgram
+            ? $"linked={backendProgram.IsLinked};stage={program.ShaderMetadata.Backend.Stage};generation={backendProgram.LinkGeneration}"
+            : "missing-wrapper";
+    void IRenderProgramBackendCapability.LogBackendErrors(string context)
+    {
+        // Vulkan validation and shader diagnostics are published asynchronously;
+        // unlike OpenGL there is no thread-local error queue to drain here.
+    }
     object IRenderBackendDiagnosticsCapability.GetLiveImageAllocationDiagnostics(int limit) => _resourceRuntime.GetLiveImageAllocationDiagnostics(limit);
     object IRenderBackendDiagnosticsCapability.GetLastFrameOperationTraceDiagnostics(int limit, string? targetContains) => _commandRuntime.GetLastFrameOpTraceDiagnostics(limit, targetContains);
     object IRenderBackendDiagnosticsCapability.GetFinalPresentationLedgerDiagnostics(int limit) => _frameLoop.GetFinalPresentationLedgerDiagnostics(limit);

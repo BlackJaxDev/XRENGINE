@@ -1044,6 +1044,9 @@ public static partial class Engine
             AppendStringField(s_lineBuilder, "meshlet_resolved_pass", RuntimeEngine.Rendering.Stats.GpuMeshlets.ResolvedPass, ref first);
             AppendStringField(s_lineBuilder, "meshlet_resolved_route", RuntimeEngine.Rendering.Stats.GpuMeshlets.ResolvedRoute, ref first);
             AppendStringField(s_lineBuilder, "meshlet_primary_route_reason", RuntimeEngine.Rendering.Stats.GpuMeshlets.PrimaryRouteReason, ref first);
+            AppendStringField(s_lineBuilder, "meshlet_last_post_seal_failure_pass", RuntimeEngine.Rendering.Stats.GpuMeshlets.LastPostSealFailurePass, ref first);
+            AppendStringField(s_lineBuilder, "meshlet_last_post_seal_failure_reason", RuntimeEngine.Rendering.Stats.GpuMeshlets.LastPostSealFailureReason, ref first);
+            AppendStringField(s_lineBuilder, "meshlet_eligible_pass_pre_seal_reason", RuntimeEngine.Rendering.Stats.GpuMeshlets.EligiblePassPreSealReason, ref first);
             AppendNumberField(s_lineBuilder, "meshlet_resolved_meshlet_rows", RuntimeEngine.Rendering.Stats.GpuMeshlets.ResolvedMeshletRows, ref first);
             AppendNumberField(s_lineBuilder, "meshlet_resolved_task_groups", RuntimeEngine.Rendering.Stats.GpuMeshlets.ResolvedTaskGroups, ref first);
             AppendNumberField(s_lineBuilder, "meshlet_buffer_live_bytes", RuntimeEngine.Rendering.Stats.GpuMeshlets.BufferLiveBytes, ref first);

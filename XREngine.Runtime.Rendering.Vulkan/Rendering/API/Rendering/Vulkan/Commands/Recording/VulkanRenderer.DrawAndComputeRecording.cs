@@ -391,6 +391,19 @@ namespace XREngine.Rendering.Vulkan
             }
             if (op.Pipeline.Handle == 0)
                 throw new VulkanPlanPreconditionException("Prepared mesh-task graphics pipeline became unavailable before recording.");
+            if (op.BindlessMaterialTextures is { } capturedMaterialBinding)
+            {
+                if (!ReferenceEquals(capturedMaterialBinding.Program, op.Program))
+                {
+                    throw new VulkanPlanPreconditionException(
+                        "The sealed mesh-task material descriptor scope belongs to a different program.");
+                }
+            }
+            else if (op.Program.HasGlobalTextureArrayOnlySet)
+            {
+                throw new VulkanPlanPreconditionException(
+                    "The mesh-task program requires the shared global material descriptor set, but no sealed binding was captured.");
+            }
             BindPipelineTracked(commandBuffer, PipelineBindPoint.Graphics, op.Pipeline);
             if (op.ProducerSnapshot.IndexedViewportScissors.Count > 0)
                 SetViewportScissorTracked(commandBuffer, op.ProducerSnapshot.IndexedViewportScissors.Viewports!, op.ProducerSnapshot.IndexedViewportScissors.Scissors!, op.ProducerSnapshot.IndexedViewportScissors.Count);
@@ -404,7 +417,8 @@ namespace XREngine.Rendering.Vulkan
                     PipelineBindPoint.Graphics,
                     out _,
                     out _,
-                    out var meshTaskTemporaryBuffers))
+                    out var meshTaskTemporaryBuffers,
+                    excludeGlobalTextureArray: op.BindlessMaterialTextures is not null))
             {
                 foreach ((Silk.NET.Vulkan.Buffer buffer, DeviceMemory memory) in meshTaskTemporaryBuffers)
                     DestroyBuffer(buffer, memory);
@@ -413,12 +427,6 @@ namespace XREngine.Rendering.Vulkan
             RegisterComputeTransientUniformBuffers(imageIndex, meshTaskTemporaryBuffers);
             Silk.NET.Vulkan.Buffer indirect = RequirePreparedBuffer(op.IndirectBuffer, "mesh-task indirect command");
             Silk.NET.Vulkan.Buffer count = RequirePreparedBuffer(op.CountBuffer, "mesh-task indirect count");
-            if (op.BindlessMaterialTextures is { } binding &&
-                !ReferenceEquals(binding.Program, op.Program))
-            {
-                throw new VulkanPlanPreconditionException(
-                    "The sealed mesh-task material descriptor scope belongs to a different program.");
-            }
             if (op.MaxDrawCount == 0u ||
                 (op.BindlessMaterialTextures is { } materialBinding &&
                  !TryBindPreparedGlobalMaterialTextureDescriptorSet(

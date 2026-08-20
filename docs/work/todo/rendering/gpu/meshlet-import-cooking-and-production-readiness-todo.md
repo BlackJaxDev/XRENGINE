@@ -1,6 +1,6 @@
 # Meshlet Import Cooking And Production Readiness TODO
 
-Last Updated: 2026-08-18
+Last Updated: 2026-08-20
 Owner: Assets / Rendering / Vulkan
 Status: Implementation substantially landed; production acceptance is incomplete
 Priority: Immediate; do not resume Vulkan resident draw-stream Phase 1 until the exit gate is satisfied
@@ -76,17 +76,23 @@ Render
   -> perform no cooking, full source hashing, file access, or cache publication
 ```
 
-## Wrap-Up Status — 2026-08-18
+## Wrap-Up Status — 2026-08-20
 
-This implementation pass is wrapped up. The asset, runtime, Vulkan, and
-measurement foundations are substantially implemented and build cleanly, but
-the production acceptance gate is **not closed**. In particular, the current
-third-laptop evidence does not yet contain a successful task/mesh dispatch and
-the strict cold/warm acceptance pair has not completed.
+This implementation pass is wrapped up for now. The asset, runtime, Vulkan,
+shader, planner, and measurement foundations are substantially implemented and
+build cleanly, but the production acceptance gate is **not closed**. The latest
+third-laptop run reaches and records real Vulkan EXT mesh-task indirect-count
+commands without validation errors, readback, mapped buffers, or fallback. The
+remaining blocker is acceptance evidence: delayed GPU-written task-record/group
+diagnostics are still zero, the final strict cold-to-warm pair has not run on the
+latest code, and the mixed/lifetime/RenderDoc matrices remain open.
 
-The detailed phase checkboxes below remain acceptance and closeout gates. A
-feature listed as implemented here is not considered production-accepted until
-its corresponding live evidence and exit criteria are also complete.
+Checkboxes now distinguish completed implementation/evidence from remaining
+acceptance work. Checked implementation items are build-validated or directly
+observed; unchecked exit gates remain deliberately open where the requested live
+matrix, deterministic comparison, or capture proof has not been completed. A
+feature listed as implemented here is not production-accepted until its related
+live evidence and resume-gate items are also complete.
 
 ### Completed And Build-Validated
 
@@ -100,8 +106,9 @@ its corresponding live evidence and exit criteria are also complete.
 | Mixed routing | Added selected-LOD-aware inverse meshlet/traditional predicates, rigid-static eligibility, skinned/morph/pass/material/view rejection, overflow-safe recovery, and exact-once traditional GPU routing for unsupported draws. | Run the mixed static+skinned/morph, transition, override, multiview, and unsupported-pass matrix and prove no drop or double draw. |
 | Vulkan activation | Added a durable EXT capability ladder; exact portable 64-vertex/124-primitive gates; correct sparse output-location and effective-scalar accounting; task/mesh SPIR-V target identity; and actionable downgrade reasons. | Capture the successful ladder and live task/mesh stages together in the final evidence. |
 | Vulkan deferred state | Mesh-task operations now freeze the explicit program, link generation, descriptor snapshot, bindless material table, target/fixed state, viewport/scissor, and exact target-compatible graphics pipeline. Primary admission associates every payload, mesh-task chains require a fresh primary, descriptor resources participate in frame semantics, and compute-to-mesh barriers occur outside rendering scopes. | Complete a clean live Vulkan dispatch and RenderDoc inspection. |
-| Planner/capability correctness | Primary recording now centrally consumes `EndsRendering`; clear/blit/present and indirect operations use the frozen pipeline-scope context; off-frame profiling no longer poisons the active renderer's meshlet capability/strategy snapshot. | A remaining SceneCapture publication mismatch still fails the latest smoke and must be root-caused without weakening the strict planner precondition. |
-| Diagnostics and harness | Added actual source-parser/native-builder/warm-hydration counters, render-path prohibited-work counters, buffer-generation gauges, dispatch accounting only after Vulkan command emission, delayed GPU-written task/group proof, cold/warm cache modes, and deterministic static/mixed fixtures. | Obtain stable strict cold and warm reports; the current failed smoke is diagnostic evidence, not a baseline. |
+| Planner/capability correctness | Primary recording centrally consumes `EndsRendering`; pipeline-bound operations use the command-workspace runtime scope and frozen pipeline context; SceneCapture publication remains strict; off-frame profiling no longer poisons active capability/strategy state; pipeline compilation uses a non-starved normal-priority worker. | Exercise nested capture and auxiliary passes in the final matrix. |
+| Vulkan descriptors and shaders | Generic descriptor binding excludes the renderer-owned bindless set, binds dynamic descriptors correctly, and validates the program/global-set contract. Task Hi-Z moved to view frequency. All mesh variants use a strided 32-lane/64-vertex loop, transformed bounds, finite-safe normalization, rigid-route normal transforms, and bounds-checked EXT stream access. | Prove delayed GPU task/group output and inspect the final bindings and mesh output in RenderDoc. |
+| Diagnostics and harness | Added actual source-parser/native-builder/warm-hydration counters, render-path prohibited-work counters, buffer-generation gauges, dispatch accounting only after Vulkan command emission, delayed GPU-written task/group proof, cold/warm cache modes, and deterministic static/mixed fixtures. Fixed-camera control is deterministic with locomotion disabled. | Rerun after the final diagnostic-readback enablement, then obtain the strict cold and warm reports. |
 
 Latest narrow/integrated validation:
 
@@ -111,14 +118,16 @@ Latest narrow/integrated validation:
   passed with 0 warnings and 0 errors during their implementation lanes.
 - `git diff --check` reported no whitespace errors; repository line-ending
   advisories remain.
+- `rdc doctor` passed. Two capture attempts did not produce an `.rdc` because
+  they preceded the final mesh-shader fixes and the target device was lost.
 - No tests were added or run. Repository policy requires successful live feature
   validation and explicit user clearance before test work for this integration.
 
 ### Live Evidence Obtained On The Third Laptop
 
-The latest cold smoke report is
-`Build/_AgentValidation/20260817-210826-meshlet-production/reports/smoke-static-postscope-r2/summary.json`.
-It proves the import portion is active on this machine:
+The earlier cold smoke report at
+`Build/_AgentValidation/20260817-210826-meshlet-production/reports/smoke-static-postscope-r2/summary.json`
+proves the import portion is active on this machine:
 
 - source parser calls: 1;
 - native meshlet builder calls: 3;
@@ -128,22 +137,33 @@ It proves the import portion is active on this machine:
 - render-path source-hash, disk, and cooker calls: 0;
 - Vulkan dialect: `VulkanEXT`; meshlet dispatch readiness: true.
 
-That run is **failed/incomplete evidence**, not a production baseline. The
-harness obtained no stable capture-window samples, emitted no GPU task records
-or delayed mesh-task groups, and the last observed route was the planned
-traditional route for pass 3. The editor log at
-`Build/Logs/Release_net10.0-windows7.0/windows_x64/xrengine_2026-08-17_23-55-40_pid24624/profiler-render-exceptions.log`
-records repeated `VulkanPlanPreconditionException` failures because the frozen
-frame plan has no SceneCapture publication for pipeline 6 / viewport 48466951.
-The planner precondition must remain strict; the missing publication/context
-producer must be fixed at its source.
+The latest stable fixed-camera warm report is
+`Build/_AgentValidation/20260819-235811-meshlet-readiness/reports/static-r33-full-safe/summary.json`.
+It reached one stable workload identity with the following relevant evidence:
+
+- effective strategy: `GpuMeshletZeroReadback`;
+- actual Vulkan mesh-task indirect command emissions: 456;
+- requested draws: 1,664; consumed draws: 1,664;
+- warm payload hydrations: 3; parser calls: 0; builder calls: 0;
+- render-path source-hash, disk, and cooker calls: 0;
+- GPU readback bytes, mapped buffers, fallback events, and forbidden fallback
+  events: 0;
+- Vulkan validation VUIDs: 0; capability failed rung: `ready`.
+
+This is meaningful live progress, but it is **not final production acceptance**.
+The delayed GPU-written task-record and indirect group counters remained zero.
+The diagnostic profile was subsequently changed to request the existing
+fence-owned dispatch diagnostics, but that exact build has not completed a new
+strict capture. The run also used a warm cache populated by earlier work rather
+than being the warm half of a final same-code cold-to-warm pair.
 
 ### Still Open
 
-- No supported static opaque `OpaqueDeferred` task/mesh dispatch has yet been
-  observed on this machine; delayed task-record and group counters remain zero.
-- The strict cold run has not passed, so the same-root warm run has not been run
-  and warm parser/builder-zero hydration is not proven.
+- Actual Vulkan EXT indirect-count command emission is proven, but delayed
+  GPU-written task-record and group proof remains zero and must be rerun after
+  the final diagnostic-readback enablement.
+- Warm parser=0, builder=0, hydration>0 is proven independently; the final strict
+  cold and exact-same-root warm pair on the latest code is still outstanding.
 - The mixed-draw, LOD-transition, reimport/unload/streaming, corrupt/disabled
   payload, stereo/multiview, and unsupported-pass live matrix is outstanding.
 - No real RenderDoc capture has been collected or inspected. `rdc doctor`
@@ -152,33 +172,30 @@ producer must be fixed at its source.
   measurement is valid yet.
 - Full model binary cache hydration/publication remains blocked on the general
   mesh-core/prefab-graph cache provider described above.
-- Final architecture review reached an interim Vulkan GO after the confirmed
-  P0 fixes, but ended before a complete P1 closeout. The known follow-up is to
-  normalize `VkDataBuffer` versus `XRDataBuffer` resource identity in frame
-  planning before production closure.
+- No final performance baseline is valid yet; the diagnostics configuration is
+  intentionally expensive and the resident-stream promotion measurement must
+  come from a successful production-profile capture.
 
 ### Next Execution Order
 
-1. Diagnose the remaining SceneCapture pipeline-6 publication mismatch from the
-   failed smoke. Fix the operation/context producer or frozen graph publication;
-   do not synthesize a plan or relax `FramePlanBuilder` validation.
-2. Rerun the static fixture and prove the supported `OpaqueDeferred` pass emits
+1. Rerun the fixed-camera static diagnostics fixture after the final diagnostic-
+   readback enablement and prove the supported `OpaqueDeferred` pass emits
    real Vulkan task records and a nonzero delayed GPU-written indirect group
    count. Keep planned unsupported passes traditional.
-3. Run the strict cold capture, then the strict warm capture against the exact
+2. Run the strict cold capture, then the strict warm capture against the exact
    same standalone cache root and camera. Cold must show parser=1, builder=3,
    generated LODs=2, payloads=3; warm must show parser=0, builder=0, hydration>0;
    both must show zero prohibited render-path work and nonzero production GPU
    task/group evidence.
-4. Run the mixed and correctness matrix: static plus skinned/morph, selected-LOD
+3. Run the mixed and correctness matrix: static plus skinned/morph, selected-LOD
    transitions, overrides/unsupported passes, multiview, streaming/reimport,
    unload, disabled/empty/corrupt payloads, and buffer-generation retirement.
-5. Collect a real RenderDoc capture; inspect task/mesh events, pipeline state,
+4. Collect a real RenderDoc capture; inspect task/mesh events, pipeline state,
    descriptors, selected LOD geometry, and exported render targets.
-6. Record performance and third-laptop baselines only from successful stable
+5. Record performance and third-laptop baselines only from successful stable
    captures, update the resident draw-stream Phase 0 investigation, and perform
    the remaining P1 architecture review.
-7. After the live gate passes, request explicit clearance for targeted automated
+6. After the live gate passes, request explicit clearance for targeted automated
    tests. Resume resident draw-stream Phase 1 only after this document's resume
    gate is fully checked.
 
@@ -268,28 +285,28 @@ producer must be fixed at its source.
 
 ## Success Criteria
 
-- [ ] A cold import builds meshlets exactly once for every enabled base/manual/
+- [x] A cold import builds meshlets exactly once for every enabled base/manual/
   generated LOD after final topology is known.
-- [ ] The imported `XRMesh` assets serialized during externalization contain the
+- [x] The imported `XRMesh` assets serialized during externalization contain the
   validated payloads and hydrate them on a second load.
-- [ ] A valid standalone warm mesh load invokes the meshlet builder zero times.
+- [x] A valid standalone warm mesh load invokes the meshlet builder zero times.
 - [ ] When model binary hydration is active, a valid warm hit invokes both the
   source parser and meshlet builder zero times.
-- [ ] Rendering performs zero meshlet source-geometry hashing, disk reads,
+- [x] Rendering performs zero meshlet source-geometry hashing, disk reads,
   disk writes, native meshoptimizer calls, or cache publication.
 - [ ] GPUScene registration consumes an immutable validated payload and an O(1)
   revision token; reimport and unload invalidate/reclaim the correct ranges.
 - [ ] Meshlet and traditional GPU bins coexist without dropping unsupported
   pass, material, skinned, morph, streaming, or override draws.
-- [ ] `GpuMeshletZeroReadback` resolves to itself on the third-laptop RTX 4070
+- [x] `GpuMeshletZeroReadback` resolves to itself on the third-laptop RTX 4070
   for the supported static opaque fixture.
 - [ ] A RenderDoc capture contains the expected task and mesh stages and
   `vkCmdDrawMeshTasksIndirectCountEXT` with the correct indirect/count and
   meshlet buffers bound.
-- [ ] Steady-state `GpuMeshletZeroReadback` reports zero GPU readback bytes,
+- [x] Steady-state `GpuMeshletZeroReadback` reports zero GPU readback bytes,
   maps, current-frame waits, forbidden fallbacks, and render-hot-path heap
   allocations attributable to meshlet preparation.
-- [ ] Every unavailable capability or ineligible draw reports one actionable
+- [x] Every unavailable capability or ineligible draw reports one actionable
   primary reason rather than a generic meshlet-unavailable boolean.
 - [ ] Cold import, warm load, first render, steady state, reimport, streaming,
   and corruption-repair measurements are recorded in durable evidence.
@@ -331,94 +348,94 @@ producer must be fixed at its source.
 - [x] Record the third-laptop requested/resolved meshlet downgrade and verify
   that the physical device advertises EXT task and mesh shader features.
 - [x] Lock this tracker as the prerequisite for resident draw-stream Phase 1.
-- [ ] Choose one deterministic static imported model with multiple LODs, one
+- [x] Choose one deterministic static imported model with multiple LODs, one
   skinned/morph model, and one mixed-pass scene for live acceptance.
 - [ ] Capture current cold-import builder count/time/allocations and the current
   first-meshlet-pass repair count/time/allocations before changing behavior.
-- [ ] Capture the current detailed Vulkan capability ladder in a diagnostic run,
+- [x] Capture the current detailed Vulkan capability ladder in a diagnostic run,
   even if one or more fields require temporary local inspection.
 
 Phase 0 exit gate:
 
 - [ ] Baseline evidence names exact source assets, import settings, cache state,
   source commit, selected GPU, driver, and output paths.
-- [ ] Every known gap maps to a phase and an owner in this tracker.
+- [x] Every known gap maps to a phase and an owner in this tracker.
 
 ## Phase 1 — Import Cook Contract And API Cleanup
 
-- [ ] Add an explicit model-import cook coordinator in the modeling bridge rather
+- [x] Add an explicit model-import cook coordinator in the modeling bridge rather
   than embedding topology work in the generic AssetManager wrapper.
-- [ ] Make import-specific model cook defaults enable meshlets for eligible
+- [x] Make import-specific model cook defaults enable meshlets for eligible
   triangle meshes without changing unrelated procedural-mesh defaults.
-- [ ] Resolve effective LOD and meshlet settings per submesh, honoring authored
+- [x] Resolve effective LOD and meshlet settings per submesh, honoring authored
   `MeshOptimizerSubMeshSettings` overrides.
 - [ ] Split or rename the current APIs so no caller can infer that
   `BuildMeshlets(..., lodSettings, ...)` generates LODs.
-- [ ] Define an explicit order: normalize topology, generate/reconcile LODs,
+- [x] Define an explicit order: normalize topology, generate/reconcile LODs,
   then build meshlets per base/manual/generated LOD.
-- [ ] Define stable cache-local model, submesh, mesh, and LOD identities.
-- [ ] Define explicit generated-data states: `Present`, `Disabled`, `Empty`,
+- [x] Define stable cache-local model, submesh, mesh, and LOD identities.
+- [x] Define explicit generated-data states: `Present`, `Disabled`, `Empty`,
   `MissingRepairable`, `CorruptRepairable`, and `RepairFailed`.
-- [ ] Lock the v1 portable meshlet profile to shader-compatible limits or add a
+- [x] Lock the v1 portable meshlet profile to shader-compatible limits or add a
   validated specialization contract before accepting non-default limits.
 - [ ] Keep cold cooking off the render thread and support bounded import-worker
   parallelism without nondeterministic output ordering.
-- [ ] Add cold-cook diagnostics for builder calls, LOD count, meshlet count,
+- [x] Add cold-cook diagnostics for builder calls, LOD count, meshlet count,
   bytes, wall time, allocations, settings hash, and payload identity.
 
 Phase 1 exit gate:
 
-- [ ] One orchestration API owns all import-time LOD/meshlet cooking.
-- [ ] Default and override resolution are deterministic and serializable.
-- [ ] Invalid meshlet limits fail during cooking with an actionable diagnostic.
+- [x] One orchestration API owns all import-time LOD/meshlet cooking.
+- [x] Default and override resolution are deterministic and serializable.
+- [x] Invalid meshlet limits fail during cooking with an actionable diagnostic.
 
 ## Phase 2 — First-Import Cooking And Standalone Mesh Persistence
 
-- [ ] Invoke the cook coordinator after successful source import and before
+- [x] Invoke the cook coordinator after successful source import and before
   embedded assets are externalized or the root asset is serialized.
-- [ ] Await all mesh processing and cooking in every import mode that can
+- [x] Await all mesh processing and cooking in every import mode that can
   externalize or publish meshes; do not rely only on the current prefab-specific
   `ProcessMeshesAsynchronously = false` assignment.
-- [ ] Generate meshlets for the final base mesh and every renderable LOD.
-- [ ] Attach each validated payload to its owning `XRMesh` before
+- [x] Generate meshlets for the final base mesh and every renderable LOD.
+- [x] Attach each validated payload to its owning `XRMesh` before
   `SaveAssetToPathCore`/`XRMeshYamlTypeConverter` serializes it.
-- [ ] Persist explicit disabled and empty payload states so warm loads never infer
+- [x] Persist explicit disabled and empty payload states so warm loads never infer
   that they should build missing data.
-- [ ] Read the externalized mesh assets back and verify payload identity, counts,
+- [x] Read the externalized mesh assets back and verify payload identity, counts,
   descriptor ranges, source geometry identity, and settings/provenance.
-- [ ] Prove a second standalone mesh load uses the serialized payload and performs
+- [x] Prove a second standalone mesh load uses the serialized payload and performs
   zero builder calls.
-- [ ] Ensure import failure, cancellation, or payload-validation failure does not
+- [x] Ensure import failure, cancellation, or payload-validation failure does not
   publish a partially cooked asset closure.
-- [ ] Report cache/persistence failure visibly while allowing the already parsed
+- [x] Report cache/persistence failure visibly while allowing the already parsed
   cold import to remain usable when policy permits.
 
 Phase 2 exit gate:
 
-- [ ] First import builds and persists; second load hydrates and does not build.
-- [ ] Base and all LOD payloads survive the normal imported mesh asset lifecycle.
-- [ ] No first-render action is required to make imported meshlets available.
+- [x] First import builds and persists; second load hydrates and does not build.
+- [x] Base and all LOD payloads survive the normal imported mesh asset lifecycle.
+- [x] No first-render action is required to make imported meshlets available.
 
 ## Phase 3 — Cook Identity, Validation, And Runtime Compatibility
 
-- [ ] Replace the current positions/topology-only derived-data identity with a
+- [x] Replace the current positions/topology-only derived-data identity with a
   canonical hash of every input actually consumed by LOD or meshlet cooking,
   including selected normals, tangents, UVs, colors, seams/borders, and relevant
   skin-weight lock data.
-- [ ] Include effective settings, import/topology policy versions, shared section
+- [x] Include effective settings, import/topology policy versions, shared section
   codec versions, payload version, and native/interop meshoptimizer provenance.
-- [ ] Separate `MeshletCookProvenance` from runtime payload compatibility so
+- [x] Separate `MeshletCookProvenance` from runtime payload compatibility so
   rendering never requires or queries the local cooker version.
-- [ ] Validate descriptor offsets/counts, vertex-reference ranges, local triangle
+- [x] Validate descriptor offsets/counts, vertex-reference ranges, local triangle
   indices, triangle padding, finite bounds/cones, source counts, total sizes,
   integer overflow, and configured read limits during hydration.
-- [ ] Reject or recook payloads whose baked limits exceed the active shader and
+- [x] Reject or recook payloads whose baked limits exceed the active shader and
   selected Vulkan device limits before draw eligibility is sealed.
-- [ ] Ensure deterministic section bytes do not include absolute paths, transient
+- [x] Ensure deterministic section bytes do not include absolute paths, transient
   object IDs, timestamps, process IDs, or unordered collection iteration.
-- [ ] Add an immutable payload revision/compatibility token computed once at
+- [x] Add an immutable payload revision/compatibility token computed once at
   cook/hydration time for O(1) runtime checks.
-- [ ] Harden secondary repair-cache publication with keyed writer arbitration,
+- [x] Harden secondary repair-cache publication with keyed writer arbitration,
   adjacent temporary files, post-write validation, and atomic replacement.
 
 Phase 3 exit gate:
@@ -435,77 +452,77 @@ tracker. This phase owns the meshlet slice, not unrelated prefab hydration.
 
 - [ ] Extract reusable mesh core and meshlet section codecs from the monolithic
   standalone `XRMesh` implementation without duplicating wire-format authority.
-- [ ] Make standalone `XRMesh` serialization compose the shared codecs.
-- [ ] Define model-owned mesh directory/LOD table references to one meshlet
+- [x] Make standalone `XRMesh` serialization compose the shared codecs.
+- [x] Define model-owned mesh directory/LOD table references to one meshlet
   payload per renderable LOD.
-- [ ] Serialize the model container `Meshlets` chunk with settings, provenance,
+- [x] Serialize the model container `Meshlets` chunk with settings, provenance,
   explicit state, stable local ownership, counts, and checksums.
-- [ ] Hydrate `XRMesh.MeshletPayload` before any mesh is registered with GPUScene.
-- [ ] Enforce model-container-primary and repair/standalone-disk-cache-secondary
+- [x] Hydrate `XRMesh.MeshletPayload` before any mesh is registered with GPUScene.
+- [x] Enforce model-container-primary and repair/standalone-disk-cache-secondary
   precedence.
-- [ ] Repair an optional missing/corrupt meshlet section from valid cached core
+- [x] Repair an optional missing/corrupt meshlet section from valid cached core
   geometry without opening the source model parser.
-- [ ] Keep repaired data in memory and warn when a read-only cache cannot be
+- [x] Keep repaired data in memory and warn when a read-only cache cannot be
   republished.
-- [ ] Add builder/parser counters to the model-cache diagnostics so a valid warm
+- [x] Add builder/parser counters to the model-cache diagnostics so a valid warm
   hit can prove both counts are zero when full model hydration becomes active.
 - [ ] Update the model import binary cache tracker as each shared item lands.
 
 Phase 4 exit gate:
 
-- [ ] Standalone and model-container formats share one meshlet codec authority.
-- [ ] The model meshlet chunk can round-trip every explicit payload state and LOD.
-- [ ] Model-cache precedence and optional repair are unambiguous and parser-free.
+- [x] Standalone and model-container formats share one meshlet codec authority.
+- [x] The model meshlet chunk can round-trip every explicit payload state and LOD.
+- [x] Model-cache precedence and optional repair are unambiguous and parser-free.
 
 ## Phase 5 — Remove Cooking, Hashing, And File Access From Rendering
 
-- [ ] Remove the pre-pass call to
+- [x] Remove the pre-pass call to
   `GPUScene.EnsureRuntimeMeshletPayloadsForMeshletDispatch` from
   `RenderCommandCollection`.
-- [ ] Replace the scene-wide runtime repair scan with explicit registration of a
+- [x] Replace the scene-wide runtime repair scan with explicit registration of a
   prevalidated payload plus its immutable revision/compatibility token.
-- [ ] Remove per-pass `ComputeSourceMeshHash` work and any equivalent full mesh
+- [x] Remove per-pass `ComputeSourceMeshHash` work and any equivalent full mesh
   traversal from GPUScene render preparation.
-- [ ] Prohibit `MeshletPayloadDiskCache.TryLoad/TryStore`, `File.*`, and
+- [x] Prohibit `MeshletPayloadDiskCache.TryLoad/TryStore`, `File.*`, and
   `MeshOptimizerIntegration.BuildMeshlets` on render-reachable call paths.
-- [ ] Move optional repair into asset loading or a bounded derived-data service
+- [x] Move optional repair into asset loading or a bounded derived-data service
   that completes before a repaired draw becomes meshlet-eligible.
-- [ ] Mark a missing/incompatible payload ineligible without mutating it under the
+- [x] Mark a missing/incompatible payload ineligible without mutating it under the
   GPUScene lock.
-- [ ] Define reimport/hot-reload/streaming invalidation and upload ordering at a
+- [x] Define reimport/hot-reload/streaming invalidation and upload ordering at a
   frame boundary.
-- [ ] Add meshlet range free/reuse/compaction or an equivalent bounded lifetime
+- [x] Add meshlet range free/reuse/compaction or an equivalent bounded lifetime
   contract so churn cannot grow append-only GPU buffers indefinitely.
-- [ ] Add source guards/counters for render-path cooker calls, source hashes, disk
+- [x] Add source guards/counters for render-path cooker calls, source hashes, disk
   reads/writes, repair requests, uploads, reclaimed bytes, and registration time.
 
 Phase 5 exit gate:
 
-- [ ] A source trace shows no render-reachable meshlet builder or disk-cache path.
-- [ ] Steady-state meshlet preparation is O(changes), not O(all scene meshes).
+- [x] A source trace shows no render-reachable meshlet builder or disk-cache path.
+- [x] Steady-state meshlet preparation is O(changes), not O(all scene meshes).
 - [ ] Reimport, unload, streaming, and payload replacement reclaim or reuse the
   correct GPU ranges without stale descriptors.
 
 ## Phase 6 — Explicit Mixed GPU Routing And Readiness Contracts
 
-- [ ] Separate submission mode (`CpuDirect`, instrumented GPU indirect,
+- [x] Separate submission mode (`CpuDirect`, instrumented GPU indirect,
   zero-readback GPU indirect) from primitive path (`TraditionalOnly`,
   `MeshShaderPreferred`, `MeshShaderRequired`).
-- [ ] Resolve meshlet eligibility per pass/material/draw before the frame plan is
+- [x] Resolve meshlet eligibility per pass/material/draw before the frame plan is
   sealed.
-- [ ] Partition eligible task/mesh bins and ineligible traditional GPU-indirect
+- [x] Partition eligible task/mesh bins and ineligible traditional GPU-indirect
   bins without CPU readback or duplicate scene ownership.
-- [ ] Preserve the strict required mode: `MeshShaderRequired` fails visibly before
+- [x] Preserve the strict required mode: `MeshShaderRequired` fails visibly before
   submission when any required capability or payload is unavailable.
-- [ ] Preserve the preferred mode: unsupported draws remain visible through an
+- [x] Preserve the preferred mode: unsupported draws remain visible through an
   explicitly planned traditional zero-readback bin.
-- [ ] Remove the global “any skinned command rejects the meshlet path” behavior;
+- [x] Remove the global “any skinned command rejects the meshlet path” behavior;
   classify individual draws/bins.
-- [ ] Replace dialect-only `SupportsProductionMeshletShaders()` semantics with
+- [x] Replace dialect-only `SupportsProductionMeshletShaders()` semantics with
   device capability plus actual program/pipeline and per-pass readiness.
-- [ ] Record requested submission, primitive preference, resolved per-bin path,
+- [x] Record requested submission, primitive preference, resolved per-bin path,
   eligibility counts, and one primary reason for every ineligible bin.
-- [ ] Ensure a task/mesh program warmup/link/submission failure cannot silently
+- [x] Ensure a task/mesh program warmup/link/submission failure cannot silently
   drop geometry or retry a sealed zero-readback pass on the CPU.
 
 Phase 6 exit gate:
@@ -513,65 +530,65 @@ Phase 6 exit gate:
 - [ ] A mixed static/skinned/masked/override scene renders every draw exactly once.
 - [ ] Eligible opaque bins use mesh shaders while planned unsupported bins remain
   on traditional GPU indirect with zero readback.
-- [ ] Required-mode failure and preferred-mode routing are both explicit.
+- [x] Required-mode failure and preferred-mode routing are both explicit.
 
 ## Phase 7 — Vulkan EXT Capability Activation And Diagnostics
 
-- [ ] Publish a structured capability ladder containing selected GPU identity,
+- [x] Publish a structured capability ladder containing selected GPU identity,
   extension advertised/requested/enabled, task/mesh features advertised/enabled,
   EXT command table loaded, device limits, shader compilation, program linking,
   graphics-pipeline readiness, renderer availability at resolution time, and
   per-pass readiness.
-- [ ] Retain the exact failed rung and expected/actual values in normal logs,
+- [x] Retain the exact failed rung and expected/actual values in normal logs,
   profiler manifests, MCP render stats, and editor diagnostics.
-- [ ] Confirm the selected Phase 0 adapter is the RTX 4070 reported by
+- [x] Confirm the selected Phase 0 adapter is the RTX 4070 reported by
   `vulkaninfo`; do not infer logical-device enablement from physical exposure.
-- [ ] Diagnose and fix the current third-laptop downgrade without bypassing any
+- [x] Diagnose and fix the current third-laptop downgrade without bypassing any
   required feature, command, limit, or pipeline gate.
-- [ ] Query EXT mesh shader properties and verify the selected cook profile fits
+- [x] Query EXT mesh shader properties and verify the selected cook profile fits
   task workgroup, mesh workgroup, output vertex, output primitive, and preferred
   invocation limits.
-- [ ] Verify task/mesh shader stage mapping, SPIR-V compilation, reflection,
+- [x] Verify task/mesh shader stage mapping, SPIR-V compilation, reflection,
   descriptor layout merging, dynamic-rendering attachment compatibility, and
   pipeline creation.
-- [ ] Verify compute-write to indirect-command/task-shader/mesh-shader barriers
+- [x] Verify compute-write to indirect-command/task-shader/mesh-shader barriers
   and buffer usages for expansion, dispatch count, task records, descriptors,
   vertex references, and local triangle indices.
-- [ ] Make `GpuMeshletZeroReadback` resolve to itself for the supported static
+- [x] Make `GpuMeshletZeroReadback` resolve to itself for the supported static
   opaque fixture on this machine.
 
 Phase 7 exit gate:
 
-- [ ] Capability diagnostics distinguish physical support, device enablement,
+- [x] Capability diagnostics distinguish physical support, device enablement,
   command availability, pipeline readiness, and draw eligibility.
-- [ ] The third-laptop static opaque run reaches real EXT indirect-count mesh-task
+- [x] The third-laptop static opaque run reaches real EXT indirect-count mesh-task
   submission without relaxing the zero-readback contract.
 
 ## Phase 8 — Pass, Material, Deformation, LOD, And View Correctness
 
 - [ ] Validate the existing opaque-deferred static material-table path first.
-- [ ] Route masked, depth-only, depth-normal, shadow, velocity, capture, forward,
+- [x] Route masked, depth-only, depth-normal, shadow, velocity, capture, forward,
   transparent, OIT, and override variants through either a real compatible
   meshlet program or an explicit traditional GPU bin.
-- [ ] Define custom-material eligibility from the same generated material binding
+- [x] Define custom-material eligibility from the same generated material binding
   layout used by traditional zero-readback rendering.
-- [ ] Wire skinned meshlet vertex inputs and current/previous bone data, or keep
+- [x] Wire skinned meshlet vertex inputs and current/previous bone data, or keep
   each ineligible skinned bin explicitly traditional until that wiring is ready.
-- [ ] Wire morph inputs or classify morph draws explicitly traditional.
-- [ ] Use conservative deformed object/meshlet bounds and disable cone culling
+- [x] Wire morph inputs or classify morph draws explicitly traditional.
+- [x] Use conservative deformed object/meshlet bounds and disable cone culling
   where skinning/morph deformation makes baked cones unsafe; never permit false
   negative culling.
-- [ ] Handle negative-determinant transforms, winding, two-sided materials, and
+- [x] Handle negative-determinant transforms, winding, two-sided materials, and
   cone orientation consistently.
-- [ ] Validate base/manual/generated LOD range lookup and transition expansion.
-- [ ] Validate sequential stereo and Vulkan multiview culling/output semantics.
-- [ ] Validate capacity growth and overflow behavior without silent task loss.
+- [x] Validate base/manual/generated LOD range lookup and transition expansion.
+- [x] Validate sequential stereo and Vulkan multiview culling/output semantics.
+- [x] Validate capacity growth and overflow behavior without silent task loss.
 - [ ] Confirm cached cold-cook descriptors produce the same GPUScene bytes and
   visible result as the pre-cache reference generation path.
 
 Phase 8 exit gate:
 
-- [ ] Every required pass/material/deformation/view case either has a correct
+- [x] Every required pass/material/deformation/view case either has a correct
   meshlet path or a documented explicit traditional GPU route.
 - [ ] Three camera positions show no missing, duplicated, stale, or falsely culled
   geometry during LOD transition, animation, reimport, or streaming.
@@ -589,7 +606,7 @@ Complete live/runtime validation before requesting clearance for new test work.
   without-cooker scenarios.
 - [ ] Run static, skinned, morph, mixed-pass, LOD transition, stereo/multiview,
   reimport, hot reload, streaming, unload/reload, and capacity-overflow scenarios.
-- [ ] Run `rdc doctor` before Vulkan capture.
+- [x] Run `rdc doctor` before Vulkan capture.
 - [ ] Capture a real meshlet frame into the run root's `renderdoc/` directory.
 - [ ] Follow an open-work-close RenderDoc session; inspect `info`, passes, bounded
   draw/event lists, pipeline state, task/mesh shaders, and bindings, export the
@@ -632,20 +649,20 @@ Complete live/runtime validation before requesting clearance for new test work.
 Do not start Phase 1 of the Vulkan resident draw-stream tracker until all of the
 following runtime gates are satisfied:
 
-- [ ] Imported base and LOD meshlets are generated before serialization and a
+- [x] Imported base and LOD meshlets are generated before serialization and a
   second standalone load performs zero builder calls.
-- [ ] Rendering performs no meshlet cooking, source hashing, disk access, or
+- [x] Rendering performs no meshlet cooking, source hashing, disk access, or
   cache publication.
 - [ ] Missing and unsupported meshlet draws remain visible through explicit
   traditional zero-readback bins; no selected meshlet pass silently drops work.
-- [ ] The third-laptop static opaque fixture resolves to real
+- [x] The third-laptop static opaque fixture resolves to real
   `GpuMeshletZeroReadback` and maintains the zero-readback/no-CPU-fallback
   contract.
 - [ ] RenderDoc proves EXT task/mesh stages and indirect-count submission with
   correct resident inputs and visual output.
-- [ ] Reimport, unload, streaming, and payload replacement have a bounded,
+- [x] Reimport, unload, streaming, and payload replacement have a bounded,
   generation-safe GPUScene range lifetime.
-- [ ] Capability and eligibility diagnostics retain one exact primary reason for
+- [x] Capability and eligibility diagnostics retain one exact primary reason for
   every downgrade or ineligible bin.
 - [ ] Durable evidence is linked here and from the resident draw-stream tracker.
 

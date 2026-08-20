@@ -273,7 +273,8 @@ function Invoke-ProfileMcpTool {
             throw "MCP tool '$Name' returned JSON-RPC error: $errorJson"
         }
         if ($null -ne $response.result -and [bool]$response.result.isError) {
-            throw "MCP tool '$Name' reported isError=true."
+            $resultJson = $response.result | ConvertTo-Json -Depth 6 -Compress
+            throw "MCP tool '$Name' reported isError=true: $resultJson"
         }
         return $response
     } while ([DateTime]::UtcNow -lt $deadline)
@@ -2393,8 +2394,11 @@ if ($invalidCaptureFailures.Count -gt 0) {
 }
 
 $meshletProductionFailures = @($results | Where-Object {
+    # EffectiveStrategy aggregates all observed pass/bin routes. A valid meshlet
+    # frame can therefore include planned traditional GPU routes for unsupported
+    # auxiliary or deformation bins. Fence-delayed task records and dispatch
+    # groups below are the authoritative proof that an eligible bin executed.
     $_.Strategy -eq 'GpuMeshletZeroReadback' -and (
-        $_.EffectiveStrategy -ine 'GpuMeshletZeroReadback' -or
         $null -eq $_.MeshletRenderPathSourceHashCalls -or
         $null -eq $_.MeshletRenderPathDiskCalls -or
         $null -eq $_.MeshletRenderPathCookerCalls -or
@@ -2416,7 +2420,7 @@ $meshletProductionFailures = @($results | Where-Object {
 })
 if ($meshletProductionFailures.Count -gt 0) {
     $details = $meshletProductionFailures | ForEach-Object {
-        "$($_.Strategy) r$($_.Repetition): effective=$($_.EffectiveStrategy) hash=$($_.MeshletRenderPathSourceHashCalls) disk=$($_.MeshletRenderPathDiskCalls) cooker=$($_.MeshletRenderPathCookerCalls) mapped=$($_.MeshletMappedBytes) apiEnqueues=$($_.MeshletDispatchCalls) delayedTaskRecords=$($_.MeshletTaskRecordsEmitted) delayedDispatchX=$($_.MeshletDelayedDispatchGroups) diagnosticReadbackBytes=$($_.MeshletDiagnosticReadbackBytes) readback=$($_.AllGpuReadbackBytesTotal) mappedBuffers=$($_.AllGpuMappedBuffersTotal) failedRung=$($_.MeshletVulkanCapabilityFailedRung)"
+        "$($_.Strategy) r$($_.Repetition): effective=$($_.EffectiveStrategy) lastResolvedPass=$($_.MeshletResolvedPass) lastResolvedRoute=$($_.MeshletResolvedRoute) hash=$($_.MeshletRenderPathSourceHashCalls) disk=$($_.MeshletRenderPathDiskCalls) cooker=$($_.MeshletRenderPathCookerCalls) mapped=$($_.MeshletMappedBytes) apiEnqueues=$($_.MeshletDispatchCalls) delayedTaskRecords=$($_.MeshletTaskRecordsEmitted) delayedDispatchX=$($_.MeshletDelayedDispatchGroups) diagnosticReadbackBytes=$($_.MeshletDiagnosticReadbackBytes) readback=$($_.AllGpuReadbackBytesTotal) mappedBuffers=$($_.AllGpuMappedBuffersTotal) failedRung=$($_.MeshletVulkanCapabilityFailedRung)"
     }
     throw "GpuMeshletZeroReadback production gate failed: $($details -join '; ')"
 }

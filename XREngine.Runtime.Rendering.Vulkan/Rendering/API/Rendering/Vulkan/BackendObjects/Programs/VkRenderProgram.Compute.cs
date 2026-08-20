@@ -197,18 +197,58 @@ internal unsafe partial class VkRenderProgram
         PipelineBindPoint bindPoint,
         out DescriptorPool descriptorPool,
         out DescriptorSet[] boundDescriptorSets,
-        out IReadOnlyList<(Silk.NET.Vulkan.Buffer buffer, DeviceMemory memory)> tempUniformBuffers)
+        out IReadOnlyList<(Silk.NET.Vulkan.Buffer buffer, DeviceMemory memory)> tempUniformBuffers,
+        bool excludeGlobalTextureArray = false)
     {
         descriptorPool = default;
         boundDescriptorSets = Array.Empty<DescriptorSet>();
         tempUniformBuffers = Array.Empty<(Silk.NET.Vulkan.Buffer buffer, DeviceMemory memory)>();
 
-        if (_descriptorSetLayouts.Length == 0 || _programDescriptorBindings.Count == 0)
+        if (excludeGlobalTextureArray && !_canBindGlobalTextureArraySeparately)
+        {
+            RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanDescriptorBindingFailure(
+                Data.Name,
+                "descriptor-set",
+                VulkanBindlessMaterialDescriptors.TextureArrayBindingName,
+                VulkanBindlessMaterialDescriptors.TextureArraySet,
+                VulkanBindlessMaterialDescriptors.TextureArrayBinding,
+                skippedDraw: bindPoint == PipelineBindPoint.Graphics,
+                skippedDispatch: bindPoint == PipelineBindPoint.Compute,
+                "global material set cannot be separated because it is missing, shared with another binding, or followed by a non-empty set");
             return false;
+        }
+
+        DescriptorSetLayout[] descriptorLayouts =
+            excludeGlobalTextureArray
+                ? _descriptorSetLayoutsBeforeGlobalMaterial
+                : _descriptorSetLayouts;
+        uint descriptorSetLimit = checked((uint)descriptorLayouts.Length);
+        if (descriptorLayouts.Length == 0 || _programDescriptorBindings.Count == 0)
+            return false;
+
+        int dynamicOffsetCount = CountDynamicUniformOffsets(descriptorSetLimit);
+        if (dynamicOffsetCount > 64)
+        {
+            RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanDescriptorBindingFailure(
+                Data.Name,
+                "descriptor-set",
+                "<dynamic-offsets>",
+                0,
+                0,
+                skippedDraw: bindPoint == PipelineBindPoint.Graphics,
+                skippedDispatch: bindPoint == PipelineBindPoint.Compute,
+                $"descriptor binding requires {dynamicOffsetCount} dynamic offsets; the bounded limit is 64");
+            return false;
+        }
+
+        Span<uint> dynamicOffsets = stackalloc uint[dynamicOffsetCount];
+        dynamicOffsets.Clear();
 
         if (reusableDescriptorBindingKey != 0UL && BackendContext.Resources.Descriptors.Heap.ActiveBackend != EVulkanDescriptorBackend.DescriptorHeap)
         {
-            ulong preparedSchemaFingerprint = ComputeComputeDescriptorSchemaFingerprint();
+            ulong preparedSchemaFingerprint = ComputeComputeDescriptorSchemaFingerprint(
+                descriptorLayouts,
+                descriptorSetLimit);
             if (!ProgramCreationPort.TryGetPreparedComputeDescriptorSets(
                     imageIndex,
                     preparedSchemaFingerprint,
@@ -238,12 +278,18 @@ internal unsafe partial class VkRenderProgram
                 bindPoint,
                 _pipelineLayout,
                 0,
-                preparedDescriptorSets);
+                preparedDescriptorSets,
+                dynamicOffsets);
             boundDescriptorSets = preparedDescriptorSets;
             return true;
         }
 
-        if (!TryBuildComputeDescriptorScratch(imageIndex, snapshot, reusableDescriptorBindingKey, reportFailures: true))
+        if (!TryBuildComputeDescriptorScratch(
+                imageIndex,
+                snapshot,
+                reusableDescriptorBindingKey,
+                descriptorSetLimit,
+                reportFailures: true))
             return false;
         VulkanComputeDescriptorScratchBuilder scratch = _computeDescriptorScratch;
 
@@ -321,17 +367,19 @@ internal unsafe partial class VkRenderProgram
             return true;
         }
 
-        ulong schemaFingerprint = ComputeComputeDescriptorSchemaFingerprint();
+        ulong schemaFingerprint = ComputeComputeDescriptorSchemaFingerprint(
+            descriptorLayouts,
+            descriptorSetLimit);
         ulong bindingFingerprint = ComputeComputeDescriptorBindingFingerprint(pendingWriteArray.AsSpan(0, scratch.WriteCount), bufferArray.AsSpan(0, scratch.BufferCount), imageArray.AsSpan(0, scratch.ImageCount), texelArray.AsSpan(0, scratch.TexelCount));
         ulong cacheBindingFingerprint = reusableDescriptorBindingKey == 0UL ? bindingFingerprint : reusableDescriptorBindingKey;
         if (!ProgramCreationPort.TryGetOrCreateComputeDescriptorSets(
             imageIndex,
             schemaFingerprint,
             cacheBindingFingerprint,
-            _descriptorSetLayouts,
+            descriptorLayouts,
             scratch.PoolSizeArray,
             scratch.PoolSizeCount,
-            _descriptorSetsRequireUpdateAfterBind,
+            DescriptorLayoutsUseUpdateAfterBind(descriptorLayouts.Length),
             out DescriptorSet[] descriptorSets,
             out bool isNewAllocation))
         {
@@ -357,7 +405,8 @@ internal unsafe partial class VkRenderProgram
             bindPoint,
             _pipelineLayout,
             0,
-            descriptorSets);
+            descriptorSets,
+            dynamicOffsets);
 
         boundDescriptorSets = descriptorSets;
 
@@ -413,7 +462,12 @@ internal unsafe partial class VkRenderProgram
         }
     }
 
-    private bool TryBuildComputeDescriptorScratch(uint imageIndex, ComputeDispatchSnapshot snapshot, ulong bindingKey, bool reportFailures)
+    private bool TryBuildComputeDescriptorScratch(
+        uint imageIndex,
+        ComputeDispatchSnapshot snapshot,
+        ulong bindingKey,
+        uint descriptorSetLimit,
+        bool reportFailures)
     {
         VulkanComputeDescriptorScratchBuilder scratch = _computeDescriptorScratch;
         scratch.Reset();
@@ -422,11 +476,15 @@ internal unsafe partial class VkRenderProgram
         {
             DescriptorBindingInfo binding = _programDescriptorBindings[index];
             scratch.RecordScanned();
-            if (binding.Set >= _descriptorSetLayouts.Length)
+            if (binding.Set >= descriptorSetLimit)
                 continue;
             uint count = Math.Max(binding.Count, 1u);
             scratch.AddPoolSize(binding.DescriptorType, count);
-            if (binding.DescriptorType is DescriptorType.UniformBuffer or DescriptorType.StorageBuffer)
+            if (binding.DescriptorType is
+                DescriptorType.UniformBuffer or
+                DescriptorType.UniformBufferDynamic or
+                DescriptorType.StorageBuffer or
+                DescriptorType.StorageBufferDynamic)
             {
                 if (!TryResolveComputeBuffer(binding, imageIndex, snapshot, bindingKey, out DescriptorBufferInfo info))
                     unresolved = true;
@@ -514,7 +572,9 @@ internal unsafe partial class VkRenderProgram
         return true;
     }
 
-    private ulong ComputeComputeDescriptorSchemaFingerprint()
+    private ulong ComputeComputeDescriptorSchemaFingerprint(
+        IReadOnlyList<DescriptorSetLayout> descriptorLayouts,
+        uint descriptorSetLimit)
     {
         ulong hash = 1469598103934665603UL;
 
@@ -526,6 +586,8 @@ internal unsafe partial class VkRenderProgram
 
         foreach (DescriptorBindingInfo binding in _programDescriptorBindings.OrderBy(b => b.Set).ThenBy(b => b.Binding))
         {
+            if (binding.Set >= descriptorSetLimit)
+                continue;
             Mix(ref hash, binding.Set);
             Mix(ref hash, binding.Binding);
             Mix(ref hash, (ulong)binding.DescriptorType);
@@ -533,10 +595,37 @@ internal unsafe partial class VkRenderProgram
             Mix(ref hash, (ulong)binding.StageFlags);
         }
 
-        foreach (DescriptorSetLayout layout in _descriptorSetLayouts)
+        foreach (DescriptorSetLayout layout in descriptorLayouts)
             Mix(ref hash, layout.Handle);
 
         return hash;
+    }
+
+    private bool DescriptorLayoutsUseUpdateAfterBind(int descriptorLayoutCount)
+    {
+        int count = Math.Min(descriptorLayoutCount, _descriptorSetUsesUpdateAfterBind.Length);
+        for (int index = 0; index < count; index++)
+            if (_descriptorSetUsesUpdateAfterBind[index])
+                return true;
+        return false;
+    }
+
+    private int CountDynamicUniformOffsets(uint descriptorSetLimit)
+    {
+        int count = 0;
+        for (int bindingIndex = 0; bindingIndex < _programDescriptorBindings.Count; bindingIndex++)
+        {
+            DescriptorBindingInfo binding = _programDescriptorBindings[bindingIndex];
+            if (binding.Set >= descriptorSetLimit ||
+                binding.DescriptorType is not (DescriptorType.UniformBufferDynamic or DescriptorType.StorageBufferDynamic))
+            {
+                continue;
+            }
+
+            count = checked(count + checked((int)VulkanBindlessMaterialDescriptors.ResolveDescriptorCount(binding)));
+        }
+
+        return count;
     }
 
     private ulong ComputeComputeDescriptorBindingFingerprint(
@@ -674,7 +763,7 @@ internal unsafe partial class VkRenderProgram
         if (snapshot.Buffers.TryGetValue(binding.Binding, out VulkanComputeBufferBinding boundBuffer))
             return TryCreateDescriptorBufferInfo(binding, boundBuffer, out bufferInfo);
 
-        if (binding.DescriptorType == DescriptorType.UniformBuffer &&
+        if ((binding.DescriptorType is DescriptorType.UniformBuffer or DescriptorType.UniformBufferDynamic) &&
             TryGetAutoUniformBlockFuzzy(binding.Name, binding.Set, binding.Binding, out AutoUniformBlockInfo block))
         {
             if (TryGetOrUpdateComputeAutoUniformBuffer(imageIndex, binding, snapshot, block, dispatchKey, out bufferInfo))
@@ -691,7 +780,7 @@ internal unsafe partial class VkRenderProgram
         }
 
         if (binding.Requirement == EVulkanDescriptorBindingRequirement.Optional &&
-            binding.DescriptorType == DescriptorType.UniformBuffer &&
+            (binding.DescriptorType is DescriptorType.UniformBuffer or DescriptorType.UniformBufferDynamic) &&
             TryGetOrUpdateComputeFallbackUniformBuffer(imageIndex, binding, dispatchKey, out bufferInfo))
         {
             RecordComputeDescriptorFallback(binding);
@@ -892,7 +981,9 @@ internal unsafe partial class VkRenderProgram
             planner.DescriptorViewFamilyIdentity,
             out _,
             out ulong resourceSignature);
-        ulong schemaFingerprint = ComputeComputeDescriptorSchemaFingerprint();
+        ulong schemaFingerprint = ComputeComputeDescriptorSchemaFingerprint(
+            _descriptorSetLayouts,
+            checked((uint)_descriptorSetLayouts.Length));
         if (snapshot.HasPublishedBindingLayoutSignatures &&
             _reusableComputeDescriptorResourceSignatures.TryGetValue(
                 refreshKey,
@@ -907,7 +998,12 @@ internal unsafe partial class VkRenderProgram
             return true;
         }
 
-        if (!TryBuildComputeDescriptorScratch(imageIndex, snapshot, reusableDescriptorBindingKey, reportFailures: true))
+        if (!TryBuildComputeDescriptorScratch(
+                imageIndex,
+                snapshot,
+                reusableDescriptorBindingKey,
+                checked((uint)_descriptorSetLayouts.Length),
+                reportFailures: true))
             return false;
 
         VulkanComputeDescriptorScratchBuilder scratch = _computeDescriptorScratch;

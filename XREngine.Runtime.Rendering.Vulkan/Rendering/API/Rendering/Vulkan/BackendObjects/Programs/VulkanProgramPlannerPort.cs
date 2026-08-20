@@ -5,7 +5,9 @@ using XREngine.Rendering.Vulkan.RenderGraph;
 namespace XREngine.Rendering.Vulkan;
 
 /// <summary>Planner-only preparation and operation-publication services for program wrappers.</summary>
-internal sealed class VulkanProgramPlannerPort(VulkanFramePlanner framePlanner)
+internal sealed class VulkanProgramPlannerPort(
+    VulkanFramePlanner framePlanner,
+    VulkanCommandThreadWorkspace commandWorkspace)
 {
     /// <summary>
     /// The planning authority owns the callback registration.  The program
@@ -26,18 +28,18 @@ internal sealed class VulkanProgramPlannerPort(VulkanFramePlanner framePlanner)
 
     internal int ResolveDescriptorViewFamilyIdentity()
     {
-        FrameOpContext? context = framePlanner.ResourcePublications.GetPublishedGeneration().State.LastActiveFrameOpContext;
+        FrameOpContext? context = GetCurrentGeneration().State.LastActiveFrameOpContext;
         return context is not { } active ? 0 : active.OutputTargetIdentity != 0 ? active.OutputTargetIdentity : active.ViewportIdentity;
     }
 
     internal FrameOpContext CaptureFrameOpContext()
-        => framePlanner.ResourcePublications.GetPublishedGeneration().State.LastActiveFrameOpContext ?? default;
+        => GetCurrentGeneration().State.LastActiveFrameOpContext ?? default;
 
     internal void DispatchCompute(VkRenderProgram program, int x, int y, int z)
     {
         if (!program.Link(program.Data.AllowAsyncBackendCompile))
             return;
-        FrameOpContext frameContext = framePlanner.ResourcePublications.GetPublishedGeneration().State.LastActiveFrameOpContext ?? default;
+        FrameOpContext frameContext = GetCurrentGeneration().State.LastActiveFrameOpContext ?? default;
         int passIndex = RuntimeEngine.Rendering.State.CurrentRenderGraphPassIndex;
         if (passIndex == int.MinValue)
             passIndex = (int)EDefaultRenderPass.PreRender;
@@ -58,12 +60,29 @@ internal sealed class VulkanProgramPlannerPort(VulkanFramePlanner framePlanner)
     internal void EnqueueTransformFeedback(VkTransformFeedback transformFeedback, EXRTransformFeedbackOperation operation, XRDataBuffer? counterBuffer, ulong feedbackBufferOffset, ulong? feedbackBufferSize, ulong counterBufferOffset, uint counterOffset, uint vertexStride, uint instanceCount, uint firstInstance)
     {
         ArgumentNullException.ThrowIfNull(transformFeedback);
-        FrameOpContext frameContext = framePlanner.ResourcePublications.GetPublishedGeneration().State.LastActiveFrameOpContext ?? default;
+        FrameOpContext frameContext = GetCurrentGeneration().State.LastActiveFrameOpContext ?? default;
         int passIndex = RuntimeEngine.Rendering.State.CurrentRenderGraphPassIndex;
         if (passIndex == int.MinValue)
             passIndex = (int)EDefaultRenderPass.PreRender;
         VulkanFrameOperationQueue queue = framePlanner.Operations;
         using (queue.SyncRoot.EnterScope())
             queue.Pending.Add(new TransformFeedbackOp(passIndex, frameContext.OutputFrameBuffer, transformFeedback, operation, counterBuffer, feedbackBufferOffset, feedbackBufferSize, counterBufferOffset, counterOffset, vertexStride, instanceCount, firstInstance, frameContext));
+    }
+
+    /// <summary>
+    /// Selects the immutable planner generation installed for the current
+    /// command scope. Wrapper callbacks can run while a nested render-pipeline
+    /// resource scope is active, so reading only the globally published
+    /// generation can attach a stale planner key to a newly enqueued operation.
+    /// </summary>
+    private ResourcePlannerRuntimeGeneration GetCurrentGeneration()
+    {
+        if (commandWorkspace.TryGetCurrent(out VulkanCommandThreadContext context) &&
+            context.ResourcePlannerRuntimeGeneration is { } scopedGeneration)
+        {
+            return scopedGeneration;
+        }
+
+        return framePlanner.ResourcePublications.GetPublishedGeneration();
     }
 }

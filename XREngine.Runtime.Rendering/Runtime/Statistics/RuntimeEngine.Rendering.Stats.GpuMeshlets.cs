@@ -59,6 +59,9 @@ namespace XREngine
                     private static string _meshletResolvedPass = string.Empty;
                     private static string _meshletResolvedRoute = string.Empty;
                     private static string _meshletPrimaryRouteReason = string.Empty;
+                    private static string _meshletLastPostSealFailurePass = string.Empty;
+                    private static string _meshletLastPostSealFailureReason = string.Empty;
+                    private static string _meshletEligiblePassPreSealReason = string.Empty;
                     private static string _meshletVulkanCapabilityLadder = string.Empty;
                     private static string _meshletVulkanCapabilityFailedRung = string.Empty;
                     private static int _lastFrameGpuMeshletRequestedFrames;
@@ -132,6 +135,9 @@ namespace XREngine
                     public static string ResolvedPass => Volatile.Read(ref _meshletResolvedPass);
                     public static string ResolvedRoute => Volatile.Read(ref _meshletResolvedRoute);
                     public static string PrimaryRouteReason => Volatile.Read(ref _meshletPrimaryRouteReason);
+                    public static string LastPostSealFailurePass => Volatile.Read(ref _meshletLastPostSealFailurePass);
+                    public static string LastPostSealFailureReason => Volatile.Read(ref _meshletLastPostSealFailureReason);
+                    public static string EligiblePassPreSealReason => Volatile.Read(ref _meshletEligiblePassPreSealReason);
                     public static string VulkanCapabilityLadder => Volatile.Read(ref _meshletVulkanCapabilityLadder);
                     public static string VulkanCapabilityFailedRung => Volatile.Read(ref _meshletVulkanCapabilityFailedRung);
 
@@ -354,6 +360,25 @@ namespace XREngine
                         Volatile.Write(ref _meshletPrimaryRouteReason, primaryReason ?? string.Empty);
                         Interlocked.Exchange(ref _meshletResolvedMeshletRows, meshlet ? rows : 0L);
                         Interlocked.Exchange(ref _meshletResolvedTaskGroups, meshlet ? taskGroups : 0L);
+                    }
+
+                    /// <summary>
+                    /// Preserves the last unsafe failure discovered after a pass sealed for direct
+                    /// meshlet submission. Later planned traditional passes must not overwrite it.
+                    /// </summary>
+                    public static void RecordGpuMeshletPostSealFailure(int renderPass, string reason)
+                    {
+                        if (!EnableTracking)
+                            return;
+
+                        Volatile.Write(ref _meshletLastPostSealFailurePass, renderPass.ToString());
+                        Volatile.Write(ref _meshletLastPostSealFailureReason, reason ?? string.Empty);
+                    }
+
+                    public static void RecordGpuMeshletEligiblePassPreSealReason(string reason)
+                    {
+                        if (EnableTracking)
+                            Volatile.Write(ref _meshletEligiblePassPreSealReason, reason ?? string.Empty);
                     }
 
                     public static void RecordGpuMeshletBufferGeneration(long liveBytes, long retiredBytes, long rebuilds = 0, long retires = 0)

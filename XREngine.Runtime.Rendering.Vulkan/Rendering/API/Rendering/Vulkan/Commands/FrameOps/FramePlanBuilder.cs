@@ -277,7 +277,8 @@ internal sealed class FramePlanBuilder
                 throw new VulkanPlanPreconditionException(
                     $"Frame plan has no frozen render-graph publication for context " +
                     $"kind={key.ContextKind} pipe={key.PipelineIdentity} viewport={key.ViewportIdentity} " +
-                    $"resourceGeneration={key.ResourceGeneration}.");
+                    $"resourceGeneration={key.ResourceGeneration}. " +
+                    DescribeMissingPlannerPublication(slot, in key, in authority));
             }
 
             slot.StaticPlannerContextPlans[keyIndex] = plan;
@@ -292,6 +293,37 @@ internal sealed class FramePlanBuilder
         }
 
         return signature.ToHash();
+    }
+
+    private static string DescribeMissingPlannerPublication(
+        Slot slot,
+        in VulkanFrameOpPlannerStateKey missingKey,
+        in VulkanFramePlanRenderGraphAuthority authority)
+    {
+        List<string> operations = new(8);
+        for (int index = 0; index < slot.Operations.Count && operations.Count < 8; index++)
+        {
+            VulkanFrameOpPlannerStateKey operationKey =
+                VulkanFrameOpSnapshotSignatures.BuildPlannerStateKey(
+                    slot.Operations.GetContext(index));
+            if (operationKey.Equals(missingKey))
+                operations.Add($"{index}:{slot.Operations.GetHeader(index).OpCode}");
+        }
+
+        List<string> publications = new(8);
+        if (authority.SwitchingState is { } switchingState)
+        {
+            foreach (VulkanFrameOpPlannerStateKey key in switchingState.States.Keys)
+            {
+                if (publications.Count == 8)
+                    break;
+                publications.Add(
+                    $"{key.ContextKind}/p{key.PipelineIdentity}/v{key.ViewportIdentity}/g{key.ResourceGeneration}");
+            }
+        }
+
+        return $"Operations=[{string.Join(',', operations)}] " +
+            $"Publications=[{string.Join(',', publications)}].";
     }
 
     private Slot AcquireWritableSlot(int frameSlot)
