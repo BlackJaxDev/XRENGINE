@@ -127,6 +127,7 @@ namespace XREngine.Rendering.Commands
             ResetZeroReadbackProgramPendingState();
             bool useTwoPassGpuHiZ = TryPrepareGpuHiZTwoPass(scene, camera, out GpuHiZDepthInput twoPassDepthInput);
             Stopwatch resetStopwatch = Stopwatch.StartNew();
+            _meshletEvidenceSnapshotQueuedThisFrame = false;
             ResetCounters();
             resetStopwatch.Stop();
             RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanGpuDrivenStageTiming(
@@ -2453,18 +2454,48 @@ namespace XREngine.Rendering.Commands
 
         #region Diagnostics & Logging
 
+        internal bool TryQueueMeshletEvidenceSnapshot(AbstractRenderer renderer)
+        {
+            _meshletEvidenceSnapshotQueuedThisFrame = false;
+            if (!_passMeshletEvidenceReadbacksEnabled ||
+                _statsBuffer is null ||
+                _meshletDispatchIndirectBuffer is null ||
+                _meshletStatsDiagnosticsSnapshotBuffer is null ||
+                _meshletDispatchDiagnosticsSnapshotBuffer is null)
+            {
+                return false;
+            }
+
+            bool statsQueued = renderer.TryEnqueueGpuDiagnosticBufferSnapshot(
+                _statsBuffer,
+                _meshletStatsDiagnosticsSnapshotBuffer,
+                checked((nuint)GpuStatsLayout.FieldCount * sizeof(uint)),
+                "MeshletStatsDiagnosticsSnapshot");
+            bool dispatchQueued = renderer.TryEnqueueGpuDiagnosticBufferSnapshot(
+                _meshletDispatchIndirectBuffer,
+                _meshletDispatchDiagnosticsSnapshotBuffer,
+                checked((nuint)GPUMeshletLayout.MeshTaskIndirectCommandUIntCount * sizeof(uint)),
+                "MeshletDispatchDiagnosticsSnapshot");
+            _meshletEvidenceSnapshotQueuedThisFrame = statsQueued && dispatchQueued;
+            return _meshletEvidenceSnapshotQueuedThisFrame;
+        }
+
         private void QueueAsyncGpuTriangleStatsReadback()
         {
-            bool captureDiagnostics = ShouldCaptureDiagnosticReadbacksForPass() ||
+            bool captureDiagnostics = _passMeshletEvidenceReadbacksEnabled ||
+                ShouldCaptureDiagnosticReadbacksForPass() ||
                 (AbstractRenderer.Current?.BackendId == RendererBackendId.Vulkan && VulkanDelayedCounterDiagnosticsEnabled);
             if (!captureDiagnostics)
                 return;
 
             AbstractRenderer? renderer = AbstractRenderer.Current;
-            if (_statsBuffer is not null)
+            XRDataBuffer? statsReadbackSource = _passMeshletEvidenceReadbacksEnabled
+                ? (_meshletEvidenceSnapshotQueuedThisFrame ? _meshletStatsDiagnosticsSnapshotBuffer : null)
+                : _statsBuffer;
+            if (statsReadbackSource is not null)
             {
                 renderer?.QueueGpuRenderStatsBufferReadback(
-                    _statsBuffer,
+                    statsReadbackSource,
                     publishDraws: false,
                     publishTriangles: true);
             }
@@ -2754,6 +2785,8 @@ namespace XREngine.Rendering.Commands
             _meshletDispatchIndirectBuffer?.Dispose();
             _meshletDispatchCountBuffer?.Dispose();
             _meshletExpansionOverflowFlagBuffer?.Dispose();
+            _meshletStatsDiagnosticsSnapshotBuffer?.Dispose();
+            _meshletDispatchDiagnosticsSnapshotBuffer?.Dispose();
             _passFilterDebugBuffer?.Dispose();
             _materialIDsBuffer?.Dispose();
             _materialTable?.Dispose();

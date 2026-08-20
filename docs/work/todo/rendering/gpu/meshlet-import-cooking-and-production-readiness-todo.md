@@ -2,7 +2,7 @@
 
 Last Updated: 2026-08-20
 Owner: Assets / Rendering / Vulkan
-Status: Implementation substantially landed; production acceptance is incomplete
+Status: Core import cooking, standalone persistence, and Vulkan EXT submission proven; Sponza visual-debug parity and broader production gates remain open
 Priority: Immediate; do not resume Vulkan resident draw-stream Phase 1 until the exit gate is satisfied
 
 Related docs:
@@ -14,6 +14,7 @@ Related docs:
 - [Historical GPU meshlet zero-readback implementation tracker](../../COMPLETED/gpu-meshlet-zero-readback-rendering-todo.md)
 - [Mesh-submission strategy contract](../../../../architecture/rendering/mesh-submission-strategies.md)
 - [Third-laptop Phase 0 resident-stream evidence](../../../investigations/rendering/vulkan-resident-draw-stream-phase0-2026-08-17.md)
+- [Meshlet import production closeout evidence](../../../investigations/rendering/meshlet-import-production-closeout-2026-08-20.md)
 
 ## Ordering And Ownership
 
@@ -78,126 +79,74 @@ Render
 
 ## Wrap-Up Status — 2026-08-20
 
-This implementation pass is wrapped up for now. The asset, runtime, Vulkan,
-shader, planner, and measurement foundations are substantially implemented and
-build cleanly, but the production acceptance gate is **not closed**. The latest
-third-laptop run reaches and records real Vulkan EXT mesh-task indirect-count
-commands without validation errors, readback, mapped buffers, or fallback. The
-remaining blocker is acceptance evidence: delayed GPU-written task-record/group
-diagnostics are still zero, the final strict cold-to-warm pair has not run on the
-latest code, and the mixed/lifetime/RenderDoc matrices remain open.
+The core closeout is complete for first-import cooking, standalone cooked-mesh
+persistence, exact-root warm hydration, invalidation, runtime-without-cooker,
+mixed planned routing, and live Vulkan EXT mesh-task submission. Full production
+acceptance is **not** complete: Sponza now reaches the production meshlet path,
+but its current debug result is uniformly magenta rather than distinctly colored
+per meshlet, and final normal-Hi-Z, multi-camera visual parity remains open.
+Detailed commands, environment, counters, hashes, and limitations are recorded
+in the [production closeout evidence](../../../investigations/rendering/meshlet-import-production-closeout-2026-08-20.md).
 
-Checkboxes now distinguish completed implementation/evidence from remaining
-acceptance work. Checked implementation items are build-validated or directly
-observed; unchecked exit gates remain deliberately open where the requested live
-matrix, deterministic comparison, or capture proof has not been completed. A
-feature listed as implemented here is not production-accepted until its related
-live evidence and resume-gate items are also complete.
+The final same-code cold/warm pair proves:
 
-### Completed And Build-Validated
+- cold: parser 1, builder 3, generated LODs 2, payloads 3, meshlets 80,
+  GPU-written task records 49, and delayed indirect dispatch X 20,629;
+- warm: parser 0, builder 0, hydrations 3, GPU-written task records 24, and
+  delayed indirect dispatch X 8,640;
+- both: zero generic GPU readback bytes, mapped buffers, forbidden fallbacks,
+  render-path source hashing, render-path disk access, and render-path cooker
+  calls, with every requested draw consumed; and
+- warm hydration also succeeds with the local `meshoptimizer.dll` removed from
+  the validated runtime output and restored afterward.
 
-| Area | Completed work | Remaining acceptance |
-| --- | --- | --- |
-| Import cook | Added a single import cook coordinator; resolves explicit defaults/overrides and stable identities; generates LODs before meshlets for every renderable LOD; cooks Unity imports once after final composition. Fixed the native meshoptimizer x64 `size_t` ABI and validates all returned ranges before optimize/bounds calls. | Prove cold and warm counts with the strict harness, including manual/generated LOD coverage. |
-| Payload and standalone cache | Added immutable payload v3 state, provenance, portable runtime-profile token, full range/finite validation, source-geometry revision binding, atomic standalone cooked-mesh publication, read-back validation, and warm hydration. | Complete a successful warm run proving parser=0, builder=0, and hydration>0. |
-| Model meshlet section | Added deterministic model/submesh/LOD keys, a bounded shared section codec, container reader/writer support, and transactional primary/secondary/repair hydration that attaches only a complete validated closure. | General model/prefab binary-cache hydration remains intentionally disabled because the mesh-core/prefab-graph serializer/provider does not yet exist. Do not claim a model-cache warm hit until that broader cache layer lands. |
-| Render hot path | Removed scene-wide source hashing, disk access, native cooking, and cache writes. GPUScene now accepts only immutable payloads validated for the mesh's O(1) geometry revision. | Confirm all prohibited-work counters remain zero during successful cold/warm production captures. |
-| GPU lifetime | Added dense immutable meshlet buffer generations published at the frame boundary, fence-backed retirement, and live/retired byte telemetry. | Exercise reimport, unload, streaming, and repeated generation retirement under live rendering. |
-| Mixed routing | Added selected-LOD-aware inverse meshlet/traditional predicates, rigid-static eligibility, skinned/morph/pass/material/view rejection, overflow-safe recovery, and exact-once traditional GPU routing for unsupported draws. | Run the mixed static+skinned/morph, transition, override, multiview, and unsupported-pass matrix and prove no drop or double draw. |
-| Vulkan activation | Added a durable EXT capability ladder; exact portable 64-vertex/124-primitive gates; correct sparse output-location and effective-scalar accounting; task/mesh SPIR-V target identity; and actionable downgrade reasons. | Capture the successful ladder and live task/mesh stages together in the final evidence. |
-| Vulkan deferred state | Mesh-task operations now freeze the explicit program, link generation, descriptor snapshot, bindless material table, target/fixed state, viewport/scissor, and exact target-compatible graphics pipeline. Primary admission associates every payload, mesh-task chains require a fresh primary, descriptor resources participate in frame semantics, and compute-to-mesh barriers occur outside rendering scopes. | Complete a clean live Vulkan dispatch and RenderDoc inspection. |
-| Planner/capability correctness | Primary recording centrally consumes `EndsRendering`; pipeline-bound operations use the command-workspace runtime scope and frozen pipeline context; SceneCapture publication remains strict; off-frame profiling no longer poisons active capability/strategy state; pipeline compilation uses a non-starved normal-priority worker. | Exercise nested capture and auxiliary passes in the final matrix. |
-| Vulkan descriptors and shaders | Generic descriptor binding excludes the renderer-owned bindless set, binds dynamic descriptors correctly, and validates the program/global-set contract. Task Hi-Z moved to view frequency. All mesh variants use a strided 32-lane/64-vertex loop, transformed bounds, finite-safe normalization, rigid-route normal transforms, and bounds-checked EXT stream access. | Prove delayed GPU task/group output and inspect the final bindings and mesh output in RenderDoc. |
-| Diagnostics and harness | Added actual source-parser/native-builder/warm-hydration counters, render-path prohibited-work counters, buffer-generation gauges, dispatch accounting only after Vulkan command emission, delayed GPU-written task/group proof, cold/warm cache modes, and deterministic static/mixed fixtures. Fixed-camera control is deterministic with locomotion disabled. | Rerun after the final diagnostic-readback enablement, then obtain the strict cold and warm reports. |
+The stale-zero diagnostic bug was a Vulkan submission-order defect: a copy was
+submitted before its deferred producer. Meshlet evidence now snapshots in the
+ordered frame stream and submits host-visible copies only after the accepted
+graphics submission. Asynchronous evidence is separately classified from
+synchronous instrumented mappings, preserving the production zero-readback
+gate. The expansion shader's task reservation and dispatch-count stores are
+also race-free.
 
-Latest narrow/integrated validation:
+The Sponza production checkpoint adds the following evidence:
 
-- `dotnet build XREngine.Editor/XREngine.Editor.csproj -c Release --no-restore -v:q`
-  passed with 0 warnings and 0 errors after the final renderer fixes.
-- The focused Runtime.Rendering, ModelingBridge, and Vulkan Release builds also
-  passed with 0 warnings and 0 errors during their implementation lanes.
-- `git diff --check` reported no whitespace errors; repository line-ending
-  advisories remain.
-- `rdc doctor` passed. Two capture attempts did not produce an `.rdc` because
-  they preceded the final mesh-shader fixes and the target device was lost.
-- No tests were added or run. Repository policy requires successful live feature
-  validation and explicit user clearance before test work for this integration.
+- a full cold import invoked the meshlet builder 393 times, attached 393 cooked
+  payloads containing 12,707 meshlets, emitted 11,010 GPU task records, and
+  produced nonzero delayed indirect dispatch evidence;
+- the warm path hydrated the persisted Sponza payload set without source parsing
+  or native meshlet building;
+- payload-bearing cooked meshes now preserve the exact source streams needed to
+  validate payload ownership instead of using the lossy SNORM16 position stream;
+- the production meshlet draw now binds vertex-atlas buffers per populated
+  static/dynamic/skinned tier. Task and mesh shaders filter by the same tier so
+  each eligible row is submitted exactly once; and
+- the legacy direct debug overlay no longer draws over an accepted production
+  meshlet submission.
 
-### Live Evidence Obtained On The Third Laptop
+In the latest live result, Sponza appeared only a few pixels wide in the fixed
+capture because it was very small in that camera framing. The user confirmed
+that moving the camera reveals the rendered model. It remains all magenta, so
+this proves visible production geometry but **does not** prove distinct
+per-meshlet debug colors or material/final-frame parity. The experimental 10 Hz
+render cap did not resolve the reported system-mouse jitter while Sponza was
+rendering and was reverted; the validation settings remain uncapped.
 
-The earlier cold smoke report at
-`Build/_AgentValidation/20260817-210826-meshlet-production/reports/smoke-static-postscope-r2/summary.json`
-proves the import portion is active on this machine:
+Standalone cache admission now hashes the full local source closure plus the
+canonical import/LOD/meshlet/topology settings. Changed LOD settings, a changed
+external glTF buffer, and a malformed Zstd payload were all rejected before
+hydration/GPUScene. Independent cold generations produced identical semantic
+payload hashes for all three LODs. The runtime identity deliberately excludes
+local cooker provenance so compatible baked assets remain portable.
 
-- source parser calls: 1;
-- native meshlet builder calls: 3;
-- generated LODs: 2;
-- validated payloads: 3;
-- cooked meshlets: 80;
-- render-path source-hash, disk, and cooker calls: 0;
-- Vulkan dialect: `VulkanEXT`; meshlet dispatch readiness: true.
-
-The latest stable fixed-camera warm report is
-`Build/_AgentValidation/20260819-235811-meshlet-readiness/reports/static-r33-full-safe/summary.json`.
-It reached one stable workload identity with the following relevant evidence:
-
-- effective strategy: `GpuMeshletZeroReadback`;
-- actual Vulkan mesh-task indirect command emissions: 456;
-- requested draws: 1,664; consumed draws: 1,664;
-- warm payload hydrations: 3; parser calls: 0; builder calls: 0;
-- render-path source-hash, disk, and cooker calls: 0;
-- GPU readback bytes, mapped buffers, fallback events, and forbidden fallback
-  events: 0;
-- Vulkan validation VUIDs: 0; capability failed rung: `ready`.
-
-This is meaningful live progress, but it is **not final production acceptance**.
-The delayed GPU-written task-record and indirect group counters remained zero.
-The diagnostic profile was subsequently changed to request the existing
-fence-owned dispatch diagnostics, but that exact build has not completed a new
-strict capture. The run also used a warm cache populated by earlier work rather
-than being the warm half of a final same-code cold-to-warm pair.
-
-### Still Open
-
-- Actual Vulkan EXT indirect-count command emission is proven, but delayed
-  GPU-written task-record and group proof remains zero and must be rerun after
-  the final diagnostic-readback enablement.
-- Warm parser=0, builder=0, hydration>0 is proven independently; the final strict
-  cold and exact-same-root warm pair on the latest code is still outstanding.
-- The mixed-draw, LOD-transition, reimport/unload/streaming, corrupt/disabled
-  payload, stereo/multiview, and unsupported-pass live matrix is outstanding.
-- No real RenderDoc capture has been collected or inspected. `rdc doctor`
-  passed, but that is tooling readiness only.
-- No meshlet performance baseline or resident draw-stream Phase 0 promotion
-  measurement is valid yet.
-- Full model binary cache hydration/publication remains blocked on the general
-  mesh-core/prefab-graph cache provider described above.
-- No final performance baseline is valid yet; the diagnostics configuration is
-  intentionally expensive and the resident-stream promotion measurement must
-  come from a successful production-profile capture.
-
-### Next Execution Order
-
-1. Rerun the fixed-camera static diagnostics fixture after the final diagnostic-
-   readback enablement and prove the supported `OpaqueDeferred` pass emits
-   real Vulkan task records and a nonzero delayed GPU-written indirect group
-   count. Keep planned unsupported passes traditional.
-2. Run the strict cold capture, then the strict warm capture against the exact
-   same standalone cache root and camera. Cold must show parser=1, builder=3,
-   generated LODs=2, payloads=3; warm must show parser=0, builder=0, hydration>0;
-   both must show zero prohibited render-path work and nonzero production GPU
-   task/group evidence.
-3. Run the mixed and correctness matrix: static plus skinned/morph, selected-LOD
-   transitions, overrides/unsupported passes, multiview, streaming/reimport,
-   unload, disabled/empty/corrupt payloads, and buffer-generation retirement.
-4. Collect a real RenderDoc capture; inspect task/mesh events, pipeline state,
-   descriptors, selected LOD geometry, and exported render targets.
-5. Record performance and third-laptop baselines only from successful stable
-   captures, update the resident draw-stream Phase 0 investigation, and perform
-   the remaining P1 architecture review.
-6. After the live gate passes, request explicit clearance for targeted automated
-   tests. Resume resident draw-stream Phase 1 only after this document's resume
-   gate is fully checked.
+Unchecked boxes remain intentionally open until their own evidence exists. The
+direct Sponza blockers are distinct per-meshlet colors and normal-Hi-Z visual
+parity from useful camera positions. Broader boundaries include the inactive
+model/prefab binary cache, the reimport/streaming/unload lifecycle matrix, and a
+real RenderDoc capture. RenderDoc could not attach an API or create an `.rdc`
+despite `rdc doctor` passing, so no event-level capture claim is made. The
+diagnostics profile is intrusive and is not a shipping performance baseline.
+Tests remain deferred under repository policy until the complete live
+integration gate is cleared explicitly.
 
 ## Initial Implementation Snapshot (At Reopen)
 
@@ -357,7 +306,7 @@ than being the warm half of a final same-code cold-to-warm pair.
 
 Phase 0 exit gate:
 
-- [ ] Baseline evidence names exact source assets, import settings, cache state,
+- [x] Baseline evidence names exact source assets, import settings, cache state,
   source commit, selected GPU, driver, and output paths.
 - [x] Every known gap maps to a phase and an owner in this tracker.
 
@@ -369,7 +318,7 @@ Phase 0 exit gate:
   triangle meshes without changing unrelated procedural-mesh defaults.
 - [x] Resolve effective LOD and meshlet settings per submesh, honoring authored
   `MeshOptimizerSubMeshSettings` overrides.
-- [ ] Split or rename the current APIs so no caller can infer that
+- [x] Split or rename the current APIs so no caller can infer that
   `BuildMeshlets(..., lodSettings, ...)` generates LODs.
 - [x] Define an explicit order: normalize topology, generate/reconcile LODs,
   then build meshlets per base/manual/generated LOD.
@@ -378,8 +327,8 @@ Phase 0 exit gate:
   `MissingRepairable`, `CorruptRepairable`, and `RepairFailed`.
 - [x] Lock the v1 portable meshlet profile to shader-compatible limits or add a
   validated specialization contract before accepting non-default limits.
-- [ ] Keep cold cooking off the render thread and support bounded import-worker
-  parallelism without nondeterministic output ordering.
+- [x] Keep cold cooking off the render thread through a bounded sequential import
+  worker (`bound = 1`) with deterministic model/submesh/LOD output ordering.
 - [x] Add cold-cook diagnostics for builder calls, LOD count, meshlet count,
   bytes, wall time, allocations, settings hash, and payload identity.
 
@@ -440,10 +389,11 @@ Phase 2 exit gate:
 
 Phase 3 exit gate:
 
-- [ ] Equivalent cold imports produce equivalent meshlet section bytes/hashes.
-- [ ] Changing any real builder input or setting invalidates derived data.
-- [ ] A runtime without meshoptimizer accepts a valid compatible baked payload.
-- [ ] Malformed payloads fail bounded validation before reaching GPUScene.
+- [x] Equivalent cold imports produce equivalent semantic meshlet payload
+  bytes/hashes for every LOD.
+- [x] Changing any real builder input or setting invalidates derived data.
+- [x] A runtime without meshoptimizer accepts a valid compatible baked payload.
+- [x] Malformed payloads fail bounded validation before reaching GPUScene.
 
 ## Phase 4 — Shared Meshlet Sections And Model-Cache Integration
 
@@ -466,7 +416,8 @@ tracker. This phase owns the meshlet slice, not unrelated prefab hydration.
   republished.
 - [x] Add builder/parser counters to the model-cache diagnostics so a valid warm
   hit can prove both counts are zero when full model hydration becomes active.
-- [ ] Update the model import binary cache tracker as each shared item lands.
+- [x] Update the model import binary cache tracker with the completed standalone/
+  meshlet-section work and the still-blocked broad hydration boundary.
 
 Phase 4 exit gate:
 
@@ -566,7 +517,7 @@ Phase 7 exit gate:
 
 ## Phase 8 — Pass, Material, Deformation, LOD, And View Correctness
 
-- [ ] Validate the existing opaque-deferred static material-table path first.
+- [x] Validate the existing opaque-deferred static material-table path first.
 - [x] Route masked, depth-only, depth-normal, shadow, velocity, capture, forward,
   transparent, OIT, and override variants through either a real compatible
   meshlet program or an explicit traditional GPU bin.
@@ -597,13 +548,25 @@ Phase 8 exit gate:
 
 Complete live/runtime validation before requesting clearance for new test work.
 
-- [ ] Reserve one bounded `Build/_AgentValidation/<run>/` root and record exact
+- [x] Reserve one bounded `Build/_AgentValidation/<run>/` root and record exact
   commands, settings, source commit, cache state, GPU, driver, and log paths.
-- [ ] Run cold import, second standalone mesh load, first render, and steady-state
+- [x] Run cold import, second standalone mesh load, first render, and steady-state
   captures with builder/parser/hash/I/O/upload/allocation counters.
+- [x] Run a full cold Sponza import and verify that every eligible imported mesh
+  receives a validated payload before rendering: 393 builder calls, 393 cooked
+  payloads, and 12,707 meshlets.
+- [x] Load the persisted Sponza payload set without source parsing or native
+  meshlet building and reach a real production Vulkan EXT mesh-task submission
+  with the correct static vertex-atlas tier bound.
+- [ ] Capture Sponza at a useful visible scale with normal Hi-Z enabled from at
+  least three camera positions and compare it with the traditional reference.
+- [ ] Confirm the production meshlet debug mode assigns visibly distinct,
+  stable colors to neighboring Sponza meshlets. The latest observed result is
+  visible but uniformly magenta, so this box is deliberately open.
 - [ ] Run valid warm, disabled, empty, changed settings, changed source, changed
   cooker provenance, corrupt optional section, read-only repair, and runtime-
-  without-cooker scenarios.
+  without-cooker scenarios. Valid warm, changed settings/source, malformed
+  payload, and runtime-without-cooker are complete; the other rows remain open.
 - [ ] Run static, skinned, morph, mixed-pass, LOD transition, stereo/multiview,
   reimport, hot reload, streaming, unload/reload, and capacity-overflow scenarios.
 - [x] Run `rdc doctor` before Vulkan capture.
@@ -624,7 +587,7 @@ Complete live/runtime validation before requesting clearance for new test work.
   adding or running new integration/regression tests.
 - [ ] After clearance, add targeted deterministic cache, validation, routing,
   lifetime, Vulkan capability, and parity coverage under `XREngine.UnitTests/`.
-- [ ] Update the model-cache tracker, historical meshlet tracker, production
+- [x] Update the model-cache tracker, historical meshlet tracker, production
   rendering roadmap, mesh-submission architecture, and resident-stream tracker
   with final status and evidence links.
 
@@ -632,15 +595,16 @@ Complete live/runtime validation before requesting clearance for new test work.
 
 | Scenario | Cold/import expectation | Warm/runtime expectation |
 | --- | --- | --- |
-| Static mesh with generated LODs | LODs then meshlets build once; all payloads persist. | Zero parser/builder calls; payloads upload before eligibility. |
+| Static mesh with generated LODs | **Passed:** LODs then meshlets build once; all payloads persist. | **Passed:** zero parser/builder calls; payloads upload before eligibility. |
 | Meshlets explicitly disabled | Persist `Disabled`; do not call builder. | Remain traditional GPU; do not infer repair. |
 | Empty/non-triangle mesh | Persist `Empty` or ineligible state. | No build loop; no missing-geometry side effect. |
-| Cook setting or real source-input change | Deterministically invalidate and recook. | Never accept stale descriptors. |
+| Cook setting or real source-input change | **Passed for LOD settings and local glTF dependencies:** deterministically invalidate and recook. | **Passed:** never accept stale descriptors. |
 | Cooker version change | Invalidate at asset/cache boundary. | Rendering accepts an already validated compatible payload. |
-| Runtime without meshoptimizer | Not a cold-cook configuration. | Valid baked payload works; no DLL load is required. |
+| Runtime without meshoptimizer | Not a cold-cook configuration. | **Passed:** valid baked payload works; no DLL load is required. |
 | Corrupt optional meshlet section | Repair from cached core when policy allows. | Never open source parser merely for optional repair. |
-| Skinned/morph mesh | Persist topology payload and deformation metadata/policy. | Correct meshlet deformation or explicit traditional GPU bin. |
-| Mixed opaque/masked/override/transparent scene | Cook eligible geometry once. | Every draw appears once through an explicit meshlet/traditional bin. |
+| Skinned/morph mesh | Persist topology payload and deformation metadata/policy. | **Passed for explicit traditional routing;** native deformation path remains optional. |
+| Mixed opaque/masked/override/transparent scene | Cook eligible geometry once. | **Partially passed:** static plus skinned/morph and unsupported pass were exact-once; masked/override/transparent remain in the broader matrix. |
+| Full Sponza scene | **Passed:** 393 payloads containing 12,707 meshlets were generated and validated. | **Partially passed:** persisted payloads reach production Vulkan EXT submission with the static atlas tier. The model is visible when framed closely, but is uniformly magenta; distinct meshlet colors and final visual parity remain open. |
 | Reimport/hot reload/streaming | Publish new revision atomically. | Frame-boundary swap; old GPU ranges reclaimed safely. |
 | Third-laptop Vulkan static opaque | No runtime cooking dependency. | Strategy resolves to meshlet and RenderDoc proves EXT dispatch. |
 
@@ -664,7 +628,7 @@ following runtime gates are satisfied:
   generation-safe GPUScene range lifetime.
 - [x] Capability and eligibility diagnostics retain one exact primary reason for
   every downgrade or ineligible bin.
-- [ ] Durable evidence is linked here and from the resident draw-stream tracker.
+- [x] Durable evidence is linked here and from the resident draw-stream tracker.
 
 After this gate passes, update the resident tracker status from paused to active
 and continue with its Phase 1 central execution topology work.

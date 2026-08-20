@@ -12,6 +12,9 @@ namespace XREngine.Rendering.Vulkan;
 
 internal sealed partial class VulkanFrameLoop
 {
+    private readonly List<GpuRenderStatsReadbackRequest> _pendingGpuRenderStatsReadbacks = [];
+    private ulong _pendingGpuRenderStatsReadbackFrameId;
+
     private static bool IndirectTraceEnabled
         => XREnvironment.IsEnabled(
             XREngineEnvironmentVariables.VulkanIndirectTrace);
@@ -82,7 +85,7 @@ internal sealed partial class VulkanFrameLoop
             publishDraws: false,
             publishTriangles: false);
 
-    private unsafe bool QueueGpuRenderStatsReadback(
+    private bool QueueGpuRenderStatsReadback(
         XRDataBuffer sourceBuffer,
         uint sourceByteOffset,
         uint byteCount,
@@ -112,6 +115,99 @@ internal sealed partial class VulkanFrameLoop
 
         ulong requestedEnd = (ulong)sourceByteOffset + byteCount;
         if (requestedEnd > sourceBuffer.Length)
+            return false;
+
+        ulong frameId = RuntimeEngine.Rendering.State.RenderFrameId;
+        if (_pendingGpuRenderStatsReadbackFrameId != frameId)
+        {
+            _pendingGpuRenderStatsReadbacks.Clear();
+            _pendingGpuRenderStatsReadbackFrameId = frameId;
+        }
+
+        var request = new GpuRenderStatsReadbackRequest(
+            frameId,
+            sourceBuffer,
+            sourceByteOffset,
+            byteCount,
+            elementCount,
+            kind,
+            publishDraws,
+            publishTriangles);
+        if (!_pendingGpuRenderStatsReadbacks.Contains(request))
+            _pendingGpuRenderStatsReadbacks.Add(request);
+        return true;
+    }
+
+    /// <summary>
+    /// Submits diagnostics copies only after the frame that produced their source
+    /// buffers has been accepted by the graphics queue. Same-queue ordering keeps
+    /// the copies behind the meshlet expansion and dispatch commands without a CPU
+    /// wait, while coalescing prevents repeated pass visits from flooding the queue.
+    /// </summary>
+    internal void FlushPendingGpuRenderStatsReadbacks()
+    {
+        if (_pendingGpuRenderStatsReadbacks.Count == 0)
+            return;
+
+        ulong frameId = RuntimeEngine.Rendering.State.RenderFrameId;
+        if (_pendingGpuRenderStatsReadbackFrameId != frameId)
+        {
+            _pendingGpuRenderStatsReadbacks.Clear();
+            return;
+        }
+
+        try
+        {
+            for (int i = 0; i < _pendingGpuRenderStatsReadbacks.Count; i++)
+            {
+                GpuRenderStatsReadbackRequest request = _pendingGpuRenderStatsReadbacks[i];
+                _ = SubmitGpuRenderStatsReadback(
+                    request.SourceBuffer,
+                    request.FrameId,
+                    request.SourceByteOffset,
+                    request.ByteCount,
+                    request.ElementCount,
+                    request.Kind,
+                    request.PublishDraws,
+                    request.PublishTriangles);
+            }
+        }
+        catch (Exception ex)
+        {
+            Debug.VulkanWarningEvery(
+                $"Vulkan.GpuStatsReadback.Flush.{GetHashCode()}",
+                TimeSpan.FromSeconds(2),
+                "[Vulkan] Deferred GPU statistics readback submission failed: {0}",
+                ex.Message);
+        }
+        finally
+        {
+            _pendingGpuRenderStatsReadbacks.Clear();
+        }
+    }
+
+    /// <summary>
+    /// Drops diagnostics that were recorded for a submission attempt which was
+    /// not accepted. Requests must never leak into another attempt that happens
+    /// to share the same engine render-frame identifier.
+    /// </summary>
+    internal void DiscardPendingGpuRenderStatsReadbacks()
+    {
+        _pendingGpuRenderStatsReadbacks.Clear();
+        _pendingGpuRenderStatsReadbackFrameId = 0UL;
+    }
+
+    private unsafe bool SubmitGpuRenderStatsReadback(
+        XRDataBuffer sourceBuffer,
+        ulong sourceFrameId,
+        uint sourceByteOffset,
+        uint byteCount,
+        uint elementCount,
+        GpuRenderStatsReadbackKind kind,
+        bool publishDraws,
+        bool publishTriangles)
+    {
+        if (_deviceLost || !RuntimeEngine.Rendering.Stats.EnableTracking || byteCount == 0u || elementCount == 0u)
             return false;
 
         PollGpuRenderStatsReadbacks();
@@ -216,6 +312,7 @@ internal sealed partial class VulkanFrameLoop
             VulkanSubmissionDiagnosticContext diagnosticContext = new()
             {
                 SubmissionKind = "GpuStatsReadback",
+                FrameId = sourceFrameId,
                 FrameSlot = slot.ArenaSlot,
                 CommandBufferCount = 1,
                 FirstCommandBufferHandle = unchecked((ulong)readbackCommandBuffer.Handle),
@@ -254,6 +351,7 @@ internal sealed partial class VulkanFrameLoop
             slot.PublishTriangles = publishTriangles;
             slot.SourceName = sourceBuffer.AttributeName ?? sourceBuffer.Target.ToString();
             slot.SourceHandle = sourceHandle.Handle;
+            slot.SourceFrameId = sourceFrameId;
             slot.Active = true;
             return true;
         }
@@ -369,6 +467,7 @@ internal sealed partial class VulkanFrameLoop
             slot.ElementCount = 0u;
             slot.PublishDraws = false;
             slot.PublishTriangles = false;
+            slot.SourceFrameId = 0UL;
             slot.DataSlice = default;
         }
 
@@ -501,6 +600,9 @@ internal sealed partial class VulkanFrameLoop
 
     internal void DisposeGpuRenderStatsReadbacks()
     {
+        _pendingGpuRenderStatsReadbacks.Clear();
+        _pendingGpuRenderStatsReadbackFrameId = 0UL;
+
         GpuRenderStatsReadbackSlot?[] slots = OutputRuntime.Capture.GpuStatsReadbackSlots;
         for (int i = 0; i < slots.Length; ++i)
         {
@@ -523,5 +625,15 @@ internal sealed partial class VulkanFrameLoop
 
         _frameTelemetry._gpuRenderStatsTraceHashes.Clear();
     }
+
+    private readonly record struct GpuRenderStatsReadbackRequest(
+        ulong FrameId,
+        XRDataBuffer SourceBuffer,
+        uint SourceByteOffset,
+        uint ByteCount,
+        uint ElementCount,
+        GpuRenderStatsReadbackKind Kind,
+        bool PublishDraws,
+        bool PublishTriangles);
 }
 

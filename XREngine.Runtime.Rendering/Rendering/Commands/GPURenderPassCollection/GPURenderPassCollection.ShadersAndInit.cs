@@ -591,7 +591,38 @@ namespace XREngine.Rendering.Commands
                 "MeshletDispatchCount",
                 target: EBufferTarget.ParameterBuffer);
             EnsureMeshletDispatchIndirectBuffer();
+            EnsureMeshletDiagnosticsSnapshotBuffers();
             _meshletExpansionOverflowNeedsMap |= EnsureFlagBuffer(ref _meshletExpansionOverflowFlagBuffer, "MeshletExpansionOverflowFlag");
+        }
+
+        private void EnsureMeshletDiagnosticsSnapshotBuffers()
+        {
+            _meshletDispatchDiagnosticsSnapshotBuffer ??= MakeMeshletDiagnosticsSnapshotBuffer(
+                "MeshletDispatchDiagnosticsSnapshot",
+                GPUMeshletLayout.MeshTaskIndirectCommandUIntCount);
+            _meshletStatsDiagnosticsSnapshotBuffer ??= MakeMeshletDiagnosticsSnapshotBuffer(
+                "MeshletStatsDiagnosticsSnapshot",
+                GpuStatsLayout.FieldCount);
+        }
+
+        private static XRDataBuffer MakeMeshletDiagnosticsSnapshotBuffer(string name, uint uintCount)
+        {
+            XRDataBuffer buffer = new(
+                name,
+                EBufferTarget.ShaderStorageBuffer,
+                uintCount,
+                EComponentType.UInt,
+                1u,
+                false,
+                true)
+            {
+                Usage = EBufferUsage.DynamicCopy,
+                DisposeOnPush = false,
+                Resizable = false,
+                PadEndingToVec4 = false,
+            };
+            buffer.Generate();
+            return buffer;
         }
 
         private static XRDataBuffer MakeVisibleMeshletTaskBuffer(uint capacity)

@@ -11,9 +11,20 @@ namespace XREngine.Rendering.Vulkan
 
         internal VulkanDesktopFramePhaseResult SubmitDesktopFrame(
             ref VulkanFrameAttempt attempt)
-            => attempt.CompletePhase(
-                EVulkanFrameStage.QueueSubmit,
-                SubmitDesktopFrameCore(ref attempt));
+        {
+            try
+            {
+                return attempt.CompletePhase(
+                    EVulkanFrameStage.QueueSubmit,
+                    SubmitDesktopFrameCore(ref attempt));
+            }
+            finally
+            {
+                // Flush consumes accepted-attempt requests. Anything left here
+                // belongs to a rejected or abandoned recording attempt.
+                DiscardPendingGpuRenderStatsReadbacks();
+            }
+        }
 
         private unsafe EDesktopFrameFlow SubmitDesktopFrameCore(
             ref VulkanFrameAttempt attempt)
@@ -281,6 +292,7 @@ namespace XREngine.Rendering.Vulkan
                 ref attempt,
                 attempt.GraphicsSignalValue,
                 "graphics frame");
+            FlushPendingGpuRenderStatsReadbacks();
             ThrowIfDesktopFrameFaultInjected(
                 EVulkanDesktopFrameFaultPoint.PostSubmitAuxiliary);
 

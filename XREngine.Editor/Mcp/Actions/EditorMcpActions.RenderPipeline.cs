@@ -25,6 +25,40 @@ namespace XREngine.Editor.Mcp
 {
     public sealed partial class EditorMcpActions
     {
+        /// <summary>
+        /// Sets or clears the runtime meshlet-color override on a viewport camera.
+        /// </summary>
+        [XRMcp(Name = "set_meshlet_debug_display", Permission = McpPermissionLevel.Mutate, PermissionReason = "Changes the selected camera's runtime meshlet debug visualization override.")]
+        [McpThreadAffinity(McpThreadAffinity.Update)]
+        [Description("Enable or disable per-meshlet colors on a viewport camera. Omit enabled to return control to the camera post-process setting.")]
+        public static Task<McpToolResponse> SetMeshletDebugDisplayAsync(
+            McpToolContext context,
+            [McpName("enabled"), Description("True enables meshlet colors, false disables them, and null clears the runtime override.")] bool? enabled = null,
+            [McpName("camera_node_id"), Description("Optional camera node ID to target.")] string? cameraNodeId = null,
+            [McpName("window_index"), Description("Optional window index to target.")] int windowIndex = 0,
+            [McpName("viewport_index"), Description("Optional viewport index to target.")] int viewportIndex = 0)
+        {
+            XRViewport? viewport = ResolveViewport(context.WorldInstance, cameraNodeId, windowIndex, viewportIndex);
+            XRCamera? camera = viewport?.ActiveCamera;
+            if (camera is null)
+                return Task.FromResult(new McpToolResponse("No active camera found for the selected viewport.", isError: true));
+
+            camera.MeshletDebugDisplayEnabledOverride = enabled;
+            bool effective = GpuBvhDebugSettings.IsMeshletDebugDisplayEnabled(camera, viewport?.RenderPipeline);
+            return Task.FromResult(new McpToolResponse(
+                enabled.HasValue
+                    ? $"Meshlet debug display override set to {enabled.Value}."
+                    : "Meshlet debug display override cleared; the camera post-process setting is active.",
+                new
+                {
+                    requestedOverride = enabled,
+                    effective,
+                    cameraNodeId = camera.Transform.SceneNode?.ID,
+                    cameraNodeName = camera.Transform.SceneNode?.Name,
+                    pipeline = viewport?.RenderPipeline?.DebugName,
+                }));
+        }
+
         [XRMcp(Name = "list_render_pipeline_resources", Permission = McpPermissionLevel.ReadOnly)]
         [Description("List live render-pipeline textures and framebuffers for the selected viewport.")]
         public static Task<McpToolResponse> ListRenderPipelineResourcesAsync(

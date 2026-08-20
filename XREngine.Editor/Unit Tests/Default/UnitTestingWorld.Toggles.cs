@@ -141,6 +141,7 @@ public static partial class EditorUnitTests
         //Debug visualize
         public bool VisualizeOctree = false;
         public bool VisualizeQuadtree = false;
+        public bool MeshletDebugDisplay = false; //Colors production mesh-shader geometry by meshlet on the unit-test camera; unsupported passes remain on their planned traditional GPU route.
 
         //Editor UI
         public UnitTestEditorType EditorType { get; set; } = UnitTestEditorType.IMGUI; //Selects which editor UI pipeline to create for unit testing.

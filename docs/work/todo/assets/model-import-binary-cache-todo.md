@@ -1,6 +1,6 @@
 # Model Import Binary Cache TODO
 
-Last reconciled: 2026-07-29
+Last reconciled: 2026-08-20
 
 Status: Active — Phases 1–3 complete; cooked payloads, hydration, and publication pending
 
@@ -15,6 +15,15 @@ Related docs:
 - [Production rendering pipeline roadmap](../rendering/gpu/production-rendering-pipeline-roadmap.md)
 
 Runtime implementation progress: all 12 Phase 1 tasks, all 12 Phase 2 tasks, and all 11 Phase 3 tasks complete. Checked Phase 0 items record pre-implementation reconciliation.
+
+Meshlet closeout note (2026-08-20): the standalone `XRMesh` cooked payload and
+shared meshlet-section slice now have cold/warm, deterministic identity,
+changed-source/settings rejection, malformed-payload rejection, and
+runtime-without-cooker evidence in the
+[meshlet production closeout](../../investigations/rendering/meshlet-import-production-closeout-2026-08-20.md).
+This does not activate or prove the general model/prefab binary-cache warm path.
+That path remains blocked on the mesh-core/prefab-graph serializer/provider and
+must not count standalone hydrations as model-cache hits.
 
 ## Outcome
 

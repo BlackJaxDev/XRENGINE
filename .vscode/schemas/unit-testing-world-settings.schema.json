@@ -28,6 +28,10 @@
       "type": "boolean",
       "description": "Enables or disables VisualizeQuadtree."
     },
+    "MeshletDebugDisplay": {
+      "type": "boolean",
+      "description": "Colors production mesh-shader geometry by meshlet on the unit-test camera; unsupported passes remain on their planned traditional GPU route."
+    },
     "EditorType": {
       "$ref": "#/definitions/UnitTestEditorType",
       "description": "Selects which editor UI pipeline to create for unit testing.",

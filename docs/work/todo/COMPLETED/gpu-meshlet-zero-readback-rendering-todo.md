@@ -19,6 +19,19 @@ Related docs:
 - [Model Import Cooked Asset Cache TODO](../assets/model-import-binary-cache-todo.md)
 - [Model Import Binary Cache Design](../../design/assets/model-import-binary-cache-design.md)
 
+## 2026-08-20 Production Closeout Addendum
+
+The reopened core path is now live-validated for first-import LOD/meshlet
+cooking, standalone persistence, exact-root warm hydration, invalidation,
+runtime use without the native cooker, explicit mixed routing, and Vulkan EXT
+indirect-count submission with nonzero delayed GPU-written task/group evidence.
+See the [production closeout evidence](../../investigations/rendering/meshlet-import-production-closeout-2026-08-20.md).
+
+The historical checkboxes below remain unchanged. Broad model/prefab-cache
+hydration, reimport/streaming/unload lifetime coverage, RenderDoc event proof,
+stress/performance, and test clearance remain owned by the active production
+readiness tracker and parent roadmap.
+
 ## 2026-08-17 Reopened Integration Gaps
 
 A later source and runtime audit found that the historical source-contract

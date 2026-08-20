@@ -143,7 +143,7 @@ public static class MeshOptimizerIntegration
         // cache-repair callers must not infer this from payload outcomes.
         Interlocked.Increment(ref s_meshletBuildInvocationCount);
         RuntimeEngine.Rendering.Stats.GpuMeshlets.RecordMeshletNativeBuilderEntry();
-        nuint meshletCount = MeshOptimizerNative.BuildMeshlets(
+        nuint meshletCount = MeshOptimizerNative.BuildNativeMeshletClusters(
             settings.BuildMode,
             meshoptMeshlets,
             meshletVertices,
@@ -1119,7 +1119,7 @@ internal static class MeshOptimizerNative
     public static nuint BuildMeshletsBound(nuint indexCount, uint maxVertices, uint maxTriangles)
         => MeshoptBuildMeshletsBound(indexCount, (nuint)maxVertices, (nuint)maxTriangles);
 
-    public static unsafe nuint BuildMeshlets(MeshletBuildMode buildMode, MeshoptMeshlet[] meshlets, uint[] meshletVertices, byte[] meshletTriangles, uint[] indices, float[] vertexPositions, nuint vertexCount, uint maxVertices, uint minTriangles, uint maxTriangles, float coneWeight, float splitFactor, float fillWeight)
+    public static unsafe nuint BuildNativeMeshletClusters(MeshletBuildMode buildMode, MeshoptMeshlet[] meshlets, uint[] meshletVertices, byte[] meshletTriangles, uint[] indices, float[] vertexPositions, nuint vertexCount, uint maxVertices, uint minTriangles, uint maxTriangles, float coneWeight, float splitFactor, float fillWeight)
     {
         fixed (MeshoptMeshlet* meshletPtr = meshlets)
         fixed (uint* meshletVerticesPtr = meshletVertices)

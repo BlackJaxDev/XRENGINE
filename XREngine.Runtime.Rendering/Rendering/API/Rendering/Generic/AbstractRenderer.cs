@@ -1399,6 +1399,18 @@ namespace XREngine.Rendering
             => false;
 
         /// <summary>
+        /// Enqueues an ordered GPU-side copy used to preserve diagnostics from a
+        /// transient producer generation. The destination remains GPU-resident;
+        /// callers may request an asynchronous readback after frame submission.
+        /// </summary>
+        public virtual bool TryEnqueueGpuDiagnosticBufferSnapshot(
+            XRDataBuffer source,
+            XRDataBuffer destination,
+            nuint byteCount,
+            string label)
+            => false;
+
+        /// <summary>
         /// Issue indirect multi-draws.
         /// </summary>
         public abstract void MultiDrawElementsIndirect(uint drawCount, uint stride);

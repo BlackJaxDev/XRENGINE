@@ -229,6 +229,13 @@ Goal: implement the report's recommended geometry strategy — coarse object/sub
 
 Merged status from retired `gpu-rendering.md`: Phase 9A/9C and the basic Phase 9B/9D plumbing are real. The Phase E implementation path is now source-contract complete; hardware parity, stress, and soak validation remain in Phase H and the meshlet tracker Phase 10.
 
+2026-08-20 validation update: first-import cooking, standalone cooked-mesh
+persistence, exact-root warm hydration, runtime-without-cooker, core mixed
+routing, and Vulkan EXT indirect-count production submission are now proven in
+the [meshlet production closeout](../../../investigations/rendering/meshlet-import-production-closeout-2026-08-20.md).
+Broad model-cache hydration, lifecycle churn, RenderDoc event proof, and Phase H
+performance/stress remain open.
+
 - [x] **E1.** Upgrade `GPURenderLODSelect.comp` from raw distance thresholds to *projected screen-space radius* selection. Done 2026-05-19: `SubMeshLOD.MinProjectedScreenRadiusPixels` is the explicit GPU LOD threshold, `GPUScene.LODTableBuffer` lanes store minimum projected radius pixels with conservative defaults for unset thresholds, the LOD pass binds projection scale and active render-area/viewport size, and the shader selects by projected radius while preserving request/transition contracts. Tests cover source bindings, the LOD table contract, and large-near versus small-near selection.
 - [x] **E2.** `LODTableBuffer` with clean `LogicalMeshID` mapping, resident LOD mesh IDs, `RequestLODLoad`, and `ReleaseLOD`. Done before consolidation: `GPUScene.LODTableEntry`, `LODTableBuffer`, `LODRequestBuffer`, and logical mesh registration are present and covered by backlog tests.
 - [x] **E3.** Basic dithered LOD transition state for the indirect path. Done before consolidation: `LodTransitionBuffer`, `GPURenderLODSelect.comp` transition progress, previous-LOD duplicate indirect draws, and generated fragment-shader Bayer dither are wired. Meshlet transition expansion was completed under E7.

@@ -17,4 +17,5 @@ internal sealed class GpuRenderStatsReadbackSlot
     public GpuRenderStatsReadbackKind Kind;
     public string SourceName = string.Empty;
     public ulong SourceHandle;
+    public ulong SourceFrameId;
 }

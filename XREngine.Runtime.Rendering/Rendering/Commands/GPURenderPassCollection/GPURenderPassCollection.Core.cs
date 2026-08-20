@@ -162,6 +162,7 @@ namespace XREngine.Rendering.Commands
         private bool _passValidateCopyCommandAtomicBounds;
         private bool _passAllowCpuFallback;
         private bool _passDiagnosticReadbacksEnabled;
+        private bool _passMeshletEvidenceReadbacksEnabled;
         private bool _passEnableZeroReadbackMaterialScatter;
         private EZeroReadbackMaterialDrawPath _passZeroReadbackMaterialDrawPath;
         private bool _meshletDirectPipelineReadyThisFrame;
@@ -299,15 +300,14 @@ namespace XREngine.Rendering.Commands
                 && fallbackRequested
                 && (!VulkanFeatureProfile.IsActive || VulkanFeatureProfile.ActiveProfile == EVulkanGpuDrivenProfile.Diagnostics);
 
-            bool meshletDiagnosticsProfile = meshlet &&
+            _passMeshletEvidenceReadbacksEnabled = meshlet &&
                 VulkanFeatureProfile.IsActive &&
                 VulkanFeatureProfile.ActiveProfile == EVulkanGpuDrivenProfile.Diagnostics;
-            _passDiagnosticReadbacksEnabled = meshletDiagnosticsProfile ||
-                (instrumented &&
-                    (_passDebugLoggingEnabled
-                        || _passValidationLoggingEnabled
-                        || !_passDisableCpuReadbackCount
-                        || _passEnableCpuBatching));
+            _passDiagnosticReadbacksEnabled = instrumented &&
+                (_passDebugLoggingEnabled
+                    || _passValidationLoggingEnabled
+                    || !_passDisableCpuReadbackCount
+                    || _passEnableCpuBatching);
 
             _passPolicySnapshotValid = true;
 
@@ -487,7 +487,10 @@ namespace XREngine.Rendering.Commands
         private XRDataBuffer? _meshletDispatchIndirectBuffer;
         private XRDataBuffer? _meshletDispatchCountBuffer;
         private XRDataBuffer? _meshletExpansionOverflowFlagBuffer;
+        private XRDataBuffer? _meshletStatsDiagnosticsSnapshotBuffer;
+        private XRDataBuffer? _meshletDispatchDiagnosticsSnapshotBuffer;
         private bool _meshletExpansionPreparedThisFrame;
+        private bool _meshletEvidenceSnapshotQueuedThisFrame;
 
         // Synchronization & lifecycle
         private readonly Lock _lock = new();
@@ -791,6 +794,8 @@ namespace XREngine.Rendering.Commands
         public XRDataBuffer? MeshletDispatchIndirectBuffer => _meshletDispatchIndirectBuffer;
         public XRDataBuffer? MeshletDispatchCountBuffer => _meshletDispatchCountBuffer;
         public XRDataBuffer? MeshletExpansionOverflowFlagBuffer => _meshletExpansionOverflowFlagBuffer;
+        public XRDataBuffer? MeshletDispatchDiagnosticsSnapshotBuffer
+            => _meshletEvidenceSnapshotQueuedThisFrame ? _meshletDispatchDiagnosticsSnapshotBuffer : null;
         public XRDataBuffer? TruncationFlagBuffer => _truncationFlagBuffer;
         public XRDataBuffer? StatsBuffer => _statsBuffer;
         public XRDataBuffer? MaskedVisibleIndexBuffer => _maskedVisibleIndexBuffer;
