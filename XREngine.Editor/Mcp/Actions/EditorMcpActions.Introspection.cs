@@ -326,6 +326,10 @@ namespace XREngine.Editor.Mcp
                 ?? activeViewport?.ActiveCamera;
             var activeCameraTransform = activeCamera?.Transform ?? activeViewport?.CameraComponent?.Transform;
             var activeCameraNode = activeCameraTransform?.SceneNode;
+            var activeCameraPipeline = activeCamera?.RenderPipeline;
+            var activeViewportPipeline = activeViewport?.RenderPipeline;
+            var activeCameraPostProcessState = activeCamera?.GetPostProcessState(activeCameraPipeline);
+            var activeViewportPostProcessState = activeCamera?.GetPostProcessState(activeViewportPipeline);
             var viewportCameraComponent = activeViewport?.CameraComponent;
             var viewportCameraTransform = viewportCameraComponent?.Transform;
             var viewportCameraNode = viewportCameraTransform?.SceneNode;
@@ -375,6 +379,19 @@ namespace XREngine.Editor.Mcp
                 activeCameraNodeName = activeCameraNode?.Name,
                 activeCameraWorldPosition = activeCameraTransform is null ? null : ToMcpVector3(activeCameraTransform.WorldTranslation),
                 activeCameraWorldForward = activeCameraTransform is null ? null : ToMcpVector3(activeCameraTransform.WorldForward),
+                meshletDebugDisplayRequested = EditorUnitTests.Toggles.MeshletDebugDisplay,
+                activeCameraMeshletDebugDisplayOverride = activeCamera?.MeshletDebugDisplayEnabledOverride,
+                activeCameraMeshletDebugDisplayEnabled = GpuBvhDebugSettings.IsMeshletDebugDisplayEnabled(activeCamera),
+                activeViewportPipelineMeshletDebugDisplayEnabled = GpuBvhDebugSettings.IsMeshletDebugDisplayEnabled(activeCamera, activeViewportPipeline),
+                currentRenderingPipelineMeshletDebugDisplayEnabled = GpuBvhDebugSettings.IsMeshletDebugDisplayEnabled(activeCamera, pipeline?.Pipeline),
+                activeCameraPipelineDebugName = activeCameraPipeline?.DebugName,
+                activeCameraPipelineSchemaStageCount = activeCameraPipeline?.PostProcessSchema.StagesByKey.Count,
+                activeCameraPostProcessStateStageCount = activeCameraPostProcessState?.Stages.Count,
+                activeCameraGpuBvhStagePresent = activeCameraPostProcessState?.GetStage<GpuBvhDebugSettings>() is not null,
+                activeViewportPipelineDebugName = activeViewportPipeline?.DebugName,
+                activeViewportPipelineSchemaStageCount = activeViewportPipeline?.PostProcessSchema.StagesByKey.Count,
+                activeViewportPostProcessStateStageCount = activeViewportPostProcessState?.Stages.Count,
+                activeViewportGpuBvhStagePresent = activeViewportPostProcessState?.GetStage<GpuBvhDebugSettings>() is not null,
                 viewportCameraComponentId = viewportCameraComponent?.ID,
                 viewportCameraComponentName = viewportCameraComponent?.Name,
                 viewportCameraNodeId = viewportCameraNode?.ID,

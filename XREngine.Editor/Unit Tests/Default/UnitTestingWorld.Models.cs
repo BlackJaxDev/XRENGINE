@@ -20,11 +20,14 @@ using XREngine.Data.Rendering;
 using XREngine.Rendering;
 using XREngine.Rendering.Meshlets;
 using XREngine.Rendering.Models;
+using XREngine.Rendering.Models.Caching;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Scene;
 using XREngine.Scene.Prefabs;
 using XREngine.Scene.Transforms;
 using System.Diagnostics;
+using System.Security.Cryptography;
+using System.Text.Json;
 using Quaternion = System.Numerics.Quaternion;
 
 namespace XREngine.Editor;
@@ -548,6 +551,7 @@ public static partial class EditorUnitTests
                         if (TryLoadStandaloneCookedMeshes(
                                 model,
                                 resolvedPath,
+                                textureLoadDirSearchPaths,
                                 importedStaticModelsRootNode,
                                 out SceneNode? cookedRoot,
                                 out string? cookedLoadError))
@@ -594,7 +598,7 @@ public static partial class EditorUnitTests
                                         lock (importedStaticRootsLock)
                                             importedStaticRoots.Add(importedRoot);
 
-                                        TryPublishStandaloneCookedMeshes(model, resolvedPath, importedRoot);
+                                        TryPublishStandaloneCookedMeshes(model, resolvedPath, textureLoadDirSearchPaths, importedRoot);
 
                                         int instanceCount = Math.Clamp(model.InstanceCount, 1, 64);
                                         for (int instanceIndex = 1; instanceIndex < instanceCount; instanceIndex++)
@@ -706,6 +710,7 @@ public static partial class EditorUnitTests
         private static bool TryLoadStandaloneCookedMeshes(
             Settings.ModelImportSettings model,
             string sourcePath,
+            string[] textureLoadDirSearchPaths,
             SceneNode parent,
             out SceneNode? root,
             out string? error)
@@ -750,8 +755,26 @@ public static partial class EditorUnitTests
                 return false;
             }
 
+            string requestIdentityPath = Path.Combine(directory, "request-identity.txt");
+            if (!File.Exists(requestIdentityPath))
+            {
+                error = $"Standalone cooked-mesh cache has no request identity for '{sourcePath}'.";
+                return false;
+            }
+
             try
             {
+                string expectedRequestIdentity = ComputeStandaloneCookedMeshRequestIdentity(
+                    model,
+                    sourcePath,
+                    textureLoadDirSearchPaths);
+                string actualRequestIdentity = File.ReadAllText(requestIdentityPath).Trim();
+                if (!string.Equals(actualRequestIdentity, expectedRequestIdentity, StringComparison.Ordinal))
+                {
+                    throw new InvalidDataException(
+                        $"Cooked mesh request identity mismatch (expected {expectedRequestIdentity}, actual {actualRequestIdentity}).");
+                }
+
                 XRMaterial material = XRMaterial.CreateColorMaterialDeferred(ColorF4.Red);
                 material.Name = "Standalone Cooked Meshlet Material";
                 material.RenderOptions.CullMode = ECullMode.Back;
@@ -810,6 +833,7 @@ public static partial class EditorUnitTests
         private static void TryPublishStandaloneCookedMeshes(
             Settings.ModelImportSettings model,
             string sourcePath,
+            string[] textureLoadDirSearchPaths,
             SceneNode importedRoot)
         {
             if (!string.Equals(
@@ -827,6 +851,10 @@ public static partial class EditorUnitTests
             try
             {
                 string cacheDirectory = GetStandaloneCookedMeshDirectory(cacheRoot, sourcePath);
+                string requestIdentity = ComputeStandaloneCookedMeshRequestIdentity(
+                    model,
+                    sourcePath,
+                    textureLoadDirSearchPaths);
                 string generationName = Guid.NewGuid().ToString("N");
                 string directory = Path.Combine(cacheDirectory, "generations", generationName);
                 Directory.CreateDirectory(directory);
@@ -869,6 +897,11 @@ public static partial class EditorUnitTests
                 File.WriteAllLines(temporaryManifestPath, manifest);
                 File.Move(temporaryManifestPath, manifestPath, overwrite: true);
 
+                string requestIdentityPath = Path.Combine(directory, "request-identity.txt");
+                string temporaryRequestIdentityPath = requestIdentityPath + ".tmp";
+                File.WriteAllText(temporaryRequestIdentityPath, requestIdentity);
+                File.Move(temporaryRequestIdentityPath, requestIdentityPath, overwrite: true);
+
                 // The generation pointer is the publication root. Publishing it last
                 // means readers observe either the old complete closure or this new
                 // complete closure, never a mixed set of LOD files after a failed cook.
@@ -892,6 +925,101 @@ public static partial class EditorUnitTests
             string sourceIdentity = Path.GetFullPath(sourcePath).ToUpperInvariant();
             byte[] hash = System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(sourceIdentity));
             return Path.Combine(Path.GetFullPath(cacheRoot), "standalone-cooked-mesh", Convert.ToHexString(hash));
+        }
+
+        /// <summary>
+        /// Computes the semantic request admitted by the standalone cooked-mesh proof cache.
+        /// This deliberately excludes local cooker provenance so a runtime-only deployment can
+        /// hydrate an already validated payload without loading meshoptimizer.
+        /// </summary>
+        private static string ComputeStandaloneCookedMeshRequestIdentity(
+            Settings.ModelImportSettings model,
+            string sourcePath,
+            string[] textureLoadDirSearchPaths)
+        {
+            ModelImportOptions importOptions = CreateImportOptions(model, textureLoadDirSearchPaths)
+                ?? throw new InvalidOperationException("Static model import options are required for cooked-mesh identity.");
+            byte[] importSettings = ModelImportCanonicalSettings.Serialize(importOptions, sourcePath);
+            byte[] sourceHash = ComputeStandaloneSourceClosureHash(sourcePath);
+
+            ulong meshletSettingsHash = MeshletPayloadUtility.ComputeHash(
+                MeshletGenerationSettingsSnapshot.From(importOptions.CookSettings.Meshlets));
+            ulong lodSettingsHash = MeshletPayloadUtility.ComputeHash(
+                MeshLodGenerationSettingsSnapshot.From(importOptions.CookSettings.Lods));
+
+            using MemoryStream canonical = new();
+            using (BinaryWriter writer = new(canonical, System.Text.Encoding.UTF8, leaveOpen: true))
+            {
+                writer.Write(1u);
+                writer.Write(sourceHash.Length);
+                writer.Write(sourceHash);
+                writer.Write(importSettings.Length);
+                writer.Write(importSettings);
+                writer.Write(meshletSettingsHash);
+                writer.Write(lodSettingsHash);
+                writer.Write((ulong)model.PostImportFlags);
+            }
+
+            return Convert.ToHexString(SHA256.HashData(canonical.GetBuffer().AsSpan(0, checked((int)canonical.Length))));
+        }
+
+        private static byte[] ComputeStandaloneSourceClosureHash(string sourcePath)
+        {
+            using MemoryStream canonical = new();
+            using BinaryWriter writer = new(canonical, System.Text.Encoding.UTF8, leaveOpen: true);
+            WriteStandaloneDependencyDigest(writer, "source", sourcePath);
+
+            if (string.Equals(Path.GetExtension(sourcePath), ".gltf", StringComparison.OrdinalIgnoreCase))
+            {
+                using JsonDocument document = JsonDocument.Parse(File.ReadAllBytes(sourcePath));
+                HashSet<string> relativeDependencies = new(StringComparer.Ordinal);
+                CollectLocalGltfUris(document.RootElement, "buffers", relativeDependencies);
+                CollectLocalGltfUris(document.RootElement, "images", relativeDependencies);
+                string sourceDirectory = Path.GetDirectoryName(Path.GetFullPath(sourcePath))!;
+                foreach (string relativePath in relativeDependencies.Order(StringComparer.Ordinal))
+                {
+                    string dependencyPath = Path.GetFullPath(Path.Combine(
+                        sourceDirectory,
+                        Uri.UnescapeDataString(relativePath.Replace('/', Path.DirectorySeparatorChar))));
+                    WriteStandaloneDependencyDigest(writer, relativePath, dependencyPath);
+                }
+            }
+
+            writer.Flush();
+            return SHA256.HashData(canonical.GetBuffer().AsSpan(0, checked((int)canonical.Length)));
+        }
+
+        private static void CollectLocalGltfUris(
+            JsonElement root,
+            string propertyName,
+            HashSet<string> relativeDependencies)
+        {
+            if (!root.TryGetProperty(propertyName, out JsonElement entries) || entries.ValueKind != JsonValueKind.Array)
+                return;
+
+            foreach (JsonElement entry in entries.EnumerateArray())
+            {
+                if (!entry.TryGetProperty("uri", out JsonElement uriElement) || uriElement.ValueKind != JsonValueKind.String)
+                    continue;
+                string? uri = uriElement.GetString();
+                if (string.IsNullOrWhiteSpace(uri) ||
+                    uri.StartsWith("data:", StringComparison.OrdinalIgnoreCase) ||
+                    Uri.TryCreate(uri, UriKind.Absolute, out _))
+                {
+                    continue;
+                }
+
+                relativeDependencies.Add(uri.Replace('\\', '/'));
+            }
+        }
+
+        private static void WriteStandaloneDependencyDigest(BinaryWriter writer, string identity, string path)
+        {
+            writer.Write(identity);
+            using FileStream source = File.OpenRead(path);
+            byte[] digest = SHA256.HashData(source);
+            writer.Write(digest.Length);
+            writer.Write(digest);
         }
 
         private static Matrix4x4 CreateUnitTestImportRootMatrix(Settings.ModelImportSettings model)

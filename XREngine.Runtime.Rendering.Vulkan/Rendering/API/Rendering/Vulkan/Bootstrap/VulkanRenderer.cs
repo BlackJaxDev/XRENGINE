@@ -394,6 +394,8 @@ public sealed class VulkanRenderer :
     public bool SupportsOrderedComputeWork => _commandRuntime.SupportsOrderedComputeWork;
     public ERendererComputeEnqueueStatus TryDispatchComputeIndirect(XRRenderProgram program, XRDataBuffer arguments, nint byteOffset, string label) => _frameLoop.TryDispatchComputeIndirect(program, arguments, byteOffset, label);
     public ERendererComputeEnqueueStatus TryEnqueueBufferCopy(XRDataBuffer source, nint sourceOffset, XRDataBuffer destination, nint destinationOffset, nuint byteCount, string label) => _frameLoop.TryEnqueueBufferCopy(source, sourceOffset, destination, destinationOffset, byteCount, label);
+    public override bool TryEnqueueGpuDiagnosticBufferSnapshot(XRDataBuffer source, XRDataBuffer destination, nuint byteCount, string label)
+        => TryEnqueueBufferCopy(source, 0, destination, 0, byteCount, label) == ERendererComputeEnqueueStatus.Enqueued;
     public ERendererComputeEnqueueStatus TryCompleteOrderedComputePass(EMemoryBarrierMask mask, string label) => _frameLoop.TryCompleteOrderedComputePass(mask, label);
     public override XRGpuFence? InsertGpuFence() => _frameLoop.InsertOrderedComputeFence();
     public bool TryEnsureComputeBufferReady(XRDataBuffer buffer) => _commandRuntime.TryEnsureComputeBufferReady(_resourceRuntime.WrapperLookup, buffer, _frameLoop.AllowSynchronousResourceUploads);

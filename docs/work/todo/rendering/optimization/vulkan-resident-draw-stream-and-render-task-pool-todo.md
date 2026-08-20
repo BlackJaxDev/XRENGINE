@@ -1,8 +1,8 @@
 # Vulkan Resident Draw Stream And Render Task Pool TODO
 
-Last Updated: 2026-08-17
+Last Updated: 2026-08-20
 Owner: Rendering / Frame Scheduling / Vulkan
-Status: Paused after Phase 0 measurements — complete the meshlet import/production prerequisite before Phase 1
+Status: Paused after Phase 0 measurements — meshlet core accepted; remaining lifetime/RenderDoc prerequisite gates still block Phase 1
 Priority: High; successor to the prepared-cohort bridge
 
 Related current architecture and evidence:
@@ -32,6 +32,13 @@ submission on supported hardware.
 Phase 0 evidence work in this tracker may continue when matching hardware or
 trace privileges become available, but no resident-stream implementation phase
 should begin until the prerequisite's resume gate is satisfied.
+
+2026-08-20 update: the prerequisite's core cold/warm standalone and Vulkan
+production path now passes with nonzero delayed GPU-written task/dispatch
+evidence and zero generic readback/mapping/fallback counters. Phase 1 remains
+paused because broad reimport/streaming/unload lifetime validation, a real
+RenderDoc event capture, and the prerequisite's performance/resume gates remain
+open. Evidence: [meshlet import production closeout](../../../investigations/rendering/meshlet-import-production-closeout-2026-08-20.md).
 
 ## Decision
 

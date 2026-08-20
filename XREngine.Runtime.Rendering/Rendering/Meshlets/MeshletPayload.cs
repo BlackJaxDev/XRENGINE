@@ -408,7 +408,9 @@ public static class MeshletPayloadUtility
     private const int LodSettingsHashVersion = 1;
     private const int FreshnessHashVersion = 2;
     private const int TopologyPolicyVersion = 1;
-    private const int SharedMeshletCodecVersion = 3;
+    // Version 4 requires lossless source-stream persistence whenever an XRMesh
+    // carries an ownership-validated meshlet payload.
+    private const int SharedMeshletCodecVersion = 4;
 
     /// <summary>Import/cache provenance; runtime compatibility is deliberately separate.</summary>
     public static string CurrentCookProvenanceKey

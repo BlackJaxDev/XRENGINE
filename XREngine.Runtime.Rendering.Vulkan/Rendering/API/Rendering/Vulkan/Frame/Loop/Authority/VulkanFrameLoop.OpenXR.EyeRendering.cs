@@ -60,6 +60,7 @@ internal sealed partial class VulkanFrameLoop
             submitted = _commandRuntime.SubmitAndWaitOpenXrCommandBuffer(recorded.CommandBuffer, out commandBufferCompleted, diagnosticContext);
             if (submitted)
             {
+                FlushPendingGpuRenderStatsReadbacks();
                 int publishCount = eyeUploads.Count;
                 CompleteOpenXrGpuProfilerSubmission(in recorded);
                 _commandRuntime.PublishOpenXrRecordedTextureUploads(
@@ -98,6 +99,7 @@ internal sealed partial class VulkanFrameLoop
         }
         finally
         {
+            DiscardPendingGpuRenderStatsReadbacks();
             if (!submitted && !commandBufferCompleted && !IsDeviceLost)
             {
                 int cancelCount = eyeUploads.Count;
@@ -194,6 +196,7 @@ internal sealed partial class VulkanFrameLoop
 
             if (submitted)
             {
+                FlushPendingGpuRenderStatsReadbacks();
                 int publishCount = CountOpenXrEyeRecordedTextureUploads();
                 CompleteOpenXrGpuProfilerSubmission(in firstRecorded);
                 CompleteOpenXrGpuProfilerSubmission(in secondRecorded);
@@ -229,6 +232,7 @@ internal sealed partial class VulkanFrameLoop
         }
         finally
         {
+            DiscardPendingGpuRenderStatsReadbacks();
             if (!submitted && !commandBuffersCompleted && !IsDeviceLost)
             {
                 int cancelCount = CountOpenXrEyeRecordedTextureUploads();

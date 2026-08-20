@@ -106,7 +106,7 @@ bool TryReserveTaskSlot(out uint outIndex)
     uint capacity = uint(MaxMeshletTaskRecords);
     while (true)
     {
-        uint current = MeshletTaskCount;
+        uint current = atomicAdd(MeshletTaskCount, 0u);
         if (current >= capacity)
         {
             atomicExchange(MeshletExpansionOverflowFlag, 1u);
@@ -118,9 +118,8 @@ bool TryReserveTaskSlot(out uint outIndex)
         {
             outIndex = current;
             atomicMax(MeshletDispatchX, current + 1u);
-            MeshletDispatchY = 1u;
-            MeshletDispatchZ = 1u;
-            MeshletDispatchCount = 1u;
+            // Y/Z are initialized to one by the reset pass. Only X varies.
+            atomicExchange(MeshletDispatchCount, 1u);
             return true;
         }
     }

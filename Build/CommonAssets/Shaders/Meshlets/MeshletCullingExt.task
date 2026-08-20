@@ -12,6 +12,7 @@ layout(local_size_x = 1) in;
 const uint XRE_INVALID_PASS = 0xFFFFFFFFu;
 const uint MESHLET_TASK_PREVIOUS_LOD_FLAG = 0x80000000u;
 const uint MESHLET_TASK_MESHLET_INDEX_MASK = 0x7FFFFFFFu;
+const uint MESH_DATA_ATLAS_TIER_MASK = 0x3u;
 
 const uint MESHLET_PASS_DEPTH_PREPASS = 1u << 0u;
 const uint MESHLET_PASS_SHADOW_DEPTH = 1u << 1u;
@@ -41,6 +42,14 @@ struct DrawMetadata
     uint BoundsID;
 };
 
+struct MeshDataEntry
+{
+    uint IndexCount;
+    uint FirstIndex;
+    uint FirstVertex;
+    uint Flags;
+};
+
 struct GpuMeshletTaskRecord
 {
     uint MeshletIndex;
@@ -64,6 +73,7 @@ struct GpuMeshletDescriptor
     uint Reserved2;
 };
 
+layout(std430, binding = 3) readonly buffer MeshDataBuffer { MeshDataEntry MeshData[]; };
 layout(std430, binding = 5) readonly buffer MeshletDescriptorBuffer { GpuMeshletDescriptor Meshlets[]; };
 layout(std430, binding = 9) readonly buffer VisibleMeshletTaskBuffer { GpuMeshletTaskRecord meshletTasks[]; };
 layout(std430, binding = 10) readonly buffer VisibleMeshletTaskCountBuffer { uint MeshletTaskCount; };
@@ -132,6 +142,7 @@ uniform uint RequiredLayerMask;
 uniform uint AllowedStateClassMask;
 uniform uint PassFlags;
 uniform uint StatsEnabled;
+uniform uint ActiveAtlasTier;
 
 uint SafeBit(uint value)
 {
@@ -268,11 +279,14 @@ void main()
         record = meshletTasks[taskIndex];
         meshletIndex = record.MeshletIndex & MESHLET_TASK_MESHLET_INDEX_MASK;
         isPreviousLod = (record.MeshletIndex & MESHLET_TASK_PREVIOUS_LOD_FLAG) != 0u ? 1u : 0u;
-        if (StatsEnabled != 0u)
-            atomicAdd(MeshletTaskRecordsEmitted, 1u);
-
-        if (meshletIndex < uint(Meshlets.length()) && record.DrawID < uint(Draws.length()))
+        if (meshletIndex < uint(Meshlets.length()) &&
+            record.DrawID < uint(Draws.length()) &&
+            record.MaterialID < uint(MeshData.length()) &&
+            (MeshData[record.MaterialID].Flags & MESH_DATA_ATLAS_TIER_MASK) == ActiveAtlasTier)
         {
+            if (StatsEnabled != 0u)
+                atomicAdd(MeshletTaskRecordsEmitted, 1u);
+
             DrawMetadata draw = Draws[record.DrawID];
             GpuMeshletDescriptor meshlet = Meshlets[meshletIndex];
 

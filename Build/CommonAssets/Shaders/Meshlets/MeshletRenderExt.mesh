@@ -17,6 +17,7 @@ layout(triangles, max_vertices = 64, max_primitives = 124) out;
 const uint GROUP_SIZE = 32u;
 const uint MESHLET_TASK_PREVIOUS_LOD_FLAG = 0x80000000u;
 const uint MESHLET_TASK_MESHLET_INDEX_MASK = 0x7FFFFFFFu;
+const uint MESH_DATA_ATLAS_TIER_MASK = 0x3u;
 
 struct DrawMetadata
 {
@@ -111,6 +112,7 @@ uniform mat4 ViewProjectionMatrix;
 uniform mat4 PreviousViewProjectionMatrix;
 uniform uint ActiveViewIndex;
 uniform uint EnableMeshletDebugDisplay;
+uniform uint ActiveAtlasTier;
 
 vec3 LoadPosition(uint vertexIndex)
 {
@@ -230,6 +232,12 @@ void main()
     }
 
     MeshDataEntry meshData = MeshData[selectedMeshID];
+    if ((meshData.Flags & MESH_DATA_ATLAS_TIER_MASK) != ActiveAtlasTier)
+    {
+        SetMeshOutputsEXT(0u, 0u);
+        return;
+    }
+
     uint transformID = IN.Record.TransformID != 0u ? IN.Record.TransformID : draw.TransformID;
     uint vertexCount = meshlet.VertexCount;
     uint triangleCount = meshlet.TriangleCount;

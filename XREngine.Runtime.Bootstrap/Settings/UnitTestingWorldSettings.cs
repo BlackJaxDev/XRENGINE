@@ -27,6 +27,7 @@ public partial class UnitTestingWorldSettings
 
     public bool VisualizeOctree = false;
     public bool VisualizeQuadtree = false;
+    public bool MeshletDebugDisplay = false;
 
     public UnitTestEditorType EditorType { get; set; } = UnitTestEditorType.IMGUI;
     public CameraUIDrawMode CameraUIDrawSpaceOnInit { get; set; } = CameraUIDrawMode.Screen;

@@ -2644,6 +2644,9 @@ namespace XREngine.Rendering
                 return false;
             }
 
+            if (!TryValidateMeshletAtlasTierBindings(scene, out _, out failureReason))
+                return false;
+
             if (renderPasses.MeshPrimitivePathPreference == EMeshPrimitivePathPreference.MeshShaderRequired &&
                 scene.HasMeshletIneligibleResidentMeshes)
             {
@@ -2811,26 +2814,24 @@ namespace XREngine.Rendering
             XRDataBuffer? dispatchCountBuffer = renderPasses.MeshletDispatchCountBuffer;
             XRDataBuffer? expansionOverflowBuffer = renderPasses.MeshletExpansionOverflowFlagBuffer;
             XRDataBuffer? materialTableBuffer = renderPasses.MaterialTableBuffer;
-            XRDataBuffer? positions = scene.AtlasPositions;
-            XRDataBuffer? normals = scene.AtlasNormals;
-            XRDataBuffer? tangents = scene.AtlasTangents;
-            XRDataBuffer? uv0 = scene.AtlasUV0;
 
             if (visibleTaskBuffer is null ||
                 visibleTaskCountBuffer is null ||
                 dispatchIndirectBuffer is null ||
                 dispatchCountBuffer is null ||
                 expansionOverflowBuffer is null ||
-                materialTableBuffer is null ||
-                positions is null ||
-                normals is null ||
-                tangents is null ||
-                uv0 is null)
+                materialTableBuffer is null)
             {
                 WarnMeshletMaterialFallback(
                     currentRenderPass,
                     requestedStrategy,
                     "One or more meshlet material-table buffers are missing.");
+                return false;
+            }
+
+            if (!TryValidateMeshletAtlasTierBindings(scene, out int activeAtlasTierCount, out string? atlasFailure))
+            {
+                WarnMeshletMaterialFallback(currentRenderPass, requestedStrategy, atlasFailure!);
                 return false;
             }
 
@@ -2900,10 +2901,6 @@ namespace XREngine.Rendering
             visibleTaskCountBuffer.BindTo(program, MeshletTaskCountSsboBinding);
             expansionOverflowBuffer.BindTo(program, MeshletExpansionOverflowSsboBinding);
             inputs.DrawMetadataBuffer.BindTo(program, DrawMetadataSsboBinding);
-            positions.BindTo(program, MeshletAtlasPositionSsboBinding);
-            normals.BindTo(program, MeshletAtlasNormalSsboBinding);
-            tangents.BindTo(program, MeshletAtlasTangentSsboBinding);
-            uv0.BindTo(program, MeshletAtlasUv0SsboBinding);
             scene.TransformBuffer.BindTo(program, MeshletTransformSsboBinding);
             scene.PrevTransformBuffer.BindTo(program, MeshletPrevTransformSsboBinding);
             scene.MaterialStateBuffer.BindTo(program, MeshletMaterialStateSsboBinding);
@@ -2916,7 +2913,7 @@ namespace XREngine.Rendering
             program.Uniform("StatsEnabled", statsBuffer is not null ? 1u : 0u);
             renderer.SetEngineUniforms(program, camera);
 
-            bool submitted = false;
+            int submittedAtlasTierCount = 0;
             string failureReason = string.Empty;
             try
             {
@@ -2939,19 +2936,41 @@ namespace XREngine.Rendering
                         if (!bindlessScopeActive)
                         {
                             failureReason = "Vulkan global material texture descriptor table could not be bound.";
-                            submitted = false;
                         }
                     }
 
                     if (bindlessScopeActive || materialCapability is null)
                     {
-                        submitted = renderer.TryDrawMeshTasksIndirectCount(
-                            program,
-                            dispatchIndirectBuffer,
-                            dispatchCountBuffer,
-                            GPUMeshletLayout.MeshTaskIndirectCommandMaxDrawCount,
-                            GPUMeshletLayout.MeshTaskIndirectCommandStride,
-                            out failureReason);
+                        // MeshData.FirstVertex is local to its residency atlas. Submit
+                        // the same GPU-generated task stream once per populated tier;
+                        // the task shader admits only records whose MeshData.Flags
+                        // match ActiveAtlasTier, so every eligible row is emitted once.
+                        for (uint tier = 0u; tier < GPUBatchingBindings.MaterialTierCount; ++tier)
+                        {
+                            EAtlasTier atlasTier = (EAtlasTier)tier;
+                            if (scene.GetAtlasVertexCount(atlasTier) == 0)
+                                continue;
+
+                            scene.GetAtlasPositions(atlasTier)!.BindTo(program, MeshletAtlasPositionSsboBinding);
+                            scene.GetAtlasNormals(atlasTier)!.BindTo(program, MeshletAtlasNormalSsboBinding);
+                            scene.GetAtlasTangents(atlasTier)!.BindTo(program, MeshletAtlasTangentSsboBinding);
+                            scene.GetAtlasUV0(atlasTier)!.BindTo(program, MeshletAtlasUv0SsboBinding);
+                            program.Uniform("ActiveAtlasTier", tier);
+
+                            if (!renderer.TryDrawMeshTasksIndirectCount(
+                                    program,
+                                    dispatchIndirectBuffer,
+                                    dispatchCountBuffer,
+                                    GPUMeshletLayout.MeshTaskIndirectCommandMaxDrawCount,
+                                    GPUMeshletLayout.MeshTaskIndirectCommandStride,
+                                    out string tierFailure))
+                            {
+                                failureReason = $"Atlas tier {atlasTier} mesh-task submission failed: {tierFailure}";
+                                break;
+                            }
+
+                            ++submittedAtlasTierCount;
+                        }
                     }
                 }
                 finally
@@ -2959,7 +2978,7 @@ namespace XREngine.Rendering
                     if (bindlessScopeActive)
                         materialCapability?.EndGlobalMaterialTextureDescriptorScope(program);
                 }
-                if (!submitted)
+                if (submittedAtlasTierCount != activeAtlasTierCount)
                     WarnMeshletMaterialFallback(currentRenderPass, requestedStrategy, failureReason);
             }
             finally
@@ -2968,6 +2987,7 @@ namespace XREngine.Rendering
                 renderer.UnbindDrawIndirectBuffer();
             }
 
+            bool submitted = submittedAtlasTierCount == activeAtlasTierCount;
             if (submitted)
             {
                 // Vulkan records the sealed operation later on the primary command
@@ -2977,7 +2997,8 @@ namespace XREngine.Rendering
                 if (renderer.BackendId != RendererBackendId.Vulkan)
                 {
                     RuntimeEngine.Rendering.Stats.GpuMeshlets.RecordGpuMeshletProductionFrame(1);
-                    RuntimeEngine.Rendering.Stats.GpuMeshlets.RecordGpuMeshletDispatch(groups: 0u);
+                    for (int tier = 0; tier < submittedAtlasTierCount; ++tier)
+                        RuntimeEngine.Rendering.Stats.GpuMeshlets.RecordGpuMeshletDispatch(groups: 0u);
                 }
                 RuntimeEngine.Rendering.Stats.GpuMeshlets.RecordGpuMeshletBufferBytesResident(scene.MeshletBufferBytesResident);
                 RuntimeEngine.Rendering.Stats.GpuMeshlets.RecordGpuMeshletResolvedRoute(
@@ -2986,21 +3007,58 @@ namespace XREngine.Rendering
                     rows: 0u,
                     taskGroups: 0u,
                     renderer.BackendId == RendererBackendId.Vulkan
-                        ? "Vulkan mesh-task indirect-count dispatch enqueued for primary recording."
-                        : "OpenGL mesh task indirect-count dispatch submitted.");
+                        ? "Vulkan mesh-task indirect-count dispatch enqueued per populated atlas tier for primary recording."
+                        : "OpenGL mesh task indirect-count dispatch submitted per populated atlas tier.");
                 if (renderer.BackendId == RendererBackendId.Vulkan &&
                     (RuntimeEngine.EffectiveSettings.EnableGpuIndirectDebugLogging ||
                      (VulkanFeatureProfile.IsActive &&
                       VulkanFeatureProfile.ActiveProfile == EVulkanGpuDrivenProfile.Diagnostics)) &&
-                    dispatchIndirectBuffer is not null)
+                    renderPasses.TryQueueMeshletEvidenceSnapshot(renderer) &&
+                    renderPasses.MeshletDispatchDiagnosticsSnapshotBuffer is { } dispatchSnapshot)
                 {
-                    renderer.QueueGpuMeshletDispatchDiagnosticsReadback(dispatchIndirectBuffer);
+                    renderer.QueueGpuMeshletDispatchDiagnosticsReadback(dispatchSnapshot);
                 }
                 XREngine.Debug.Meshes(
-                    $"Meshlet.BackendSelected pass={currentRenderPass} requested={requestedStrategy} selected={requestedStrategy} dialect={renderer.MeshShaderDialect} commandCount={scene.TotalCommandCount} meshletCount={scene.MeshletDescriptorCount} capacity={renderPasses.MaxVisibleMeshletTaskCapacity}");
+                    $"Meshlet.BackendSelected pass={currentRenderPass} requested={requestedStrategy} selected={requestedStrategy} dialect={renderer.MeshShaderDialect} atlasTiers={submittedAtlasTierCount} commandCount={scene.TotalCommandCount} meshletCount={scene.MeshletDescriptorCount} capacity={renderPasses.MaxVisibleMeshletTaskCapacity}");
             }
 
-            return submitted;
+            // Once any tier has been accepted, retrying the sealed pass through the
+            // traditional stream could duplicate geometry. A later-tier failure is
+            // therefore a visible post-seal failure, never a fallback trigger.
+            return submitted || submittedAtlasTierCount > 0;
+        }
+
+        private static bool TryValidateMeshletAtlasTierBindings(
+            GPUScene scene,
+            out int activeAtlasTierCount,
+            out string? failureReason)
+        {
+            activeAtlasTierCount = 0;
+            failureReason = null;
+            for (uint tier = 0u; tier < GPUBatchingBindings.MaterialTierCount; ++tier)
+            {
+                EAtlasTier atlasTier = (EAtlasTier)tier;
+                if (scene.GetAtlasVertexCount(atlasTier) == 0)
+                    continue;
+
+                ++activeAtlasTierCount;
+                if (scene.GetAtlasPositions(atlasTier) is not null &&
+                    scene.GetAtlasNormals(atlasTier) is not null &&
+                    scene.GetAtlasTangents(atlasTier) is not null &&
+                    scene.GetAtlasUV0(atlasTier) is not null)
+                {
+                    continue;
+                }
+
+                failureReason = $"Meshlet atlas tier {atlasTier} has resident vertices but one or more attribute buffers are missing.";
+                return false;
+            }
+
+            if (activeAtlasTierCount != 0)
+                return true;
+
+            failureReason = "No populated atlas tier is available for meshlet geometry.";
+            return false;
         }
 
         private XRRenderProgram? EnsureMeshletMaterialTableProgram(
