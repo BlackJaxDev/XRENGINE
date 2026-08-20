@@ -320,10 +320,19 @@ internal static class VulkanFrameOperationSemantics
 
     private static ulong ComputeResourceIdentity(object resource)
     {
+        // Frame operations can refer to a data buffer through either the engine
+        // resource or its Vulkan backend wrapper. Both names designate the same
+        // underlying allocation, so they must produce one dependency identity.
+        // Without this normalization a compute producer recorded with an
+        // XRDataBuffer and a mesh-task consumer recorded with its VkDataBuffer
+        // have no resource edge despite sharing the same buffer.
+        object logicalResource = resource is VkDataBuffer vkDataBuffer
+            ? vkDataBuffer.Data
+            : resource;
         FrameOpSignatureHasher hash = new();
         hash.Add(0x46524D4F50524553UL);
-        hash.Add(RuntimeHelpers.GetHashCode(resource));
-        hash.Add(resource.GetType().GetHashCode());
+        hash.Add(RuntimeHelpers.GetHashCode(logicalResource));
+        hash.Add(logicalResource.GetType().GetHashCode());
         ulong result = hash.ToHash();
         return result == 0UL ? 1UL : result;
     }

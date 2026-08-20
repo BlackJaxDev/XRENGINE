@@ -4,9 +4,10 @@ namespace XREngine.Rendering.Vulkan;
 
 /// <summary>
 /// Runs a cold Vulkan pipeline compile without occupying a thread-pool thread.
-/// One persistent below-normal worker owns the native calls; creating a new OS
-/// thread per variant made dense cold views spend seconds scheduling sub-ms
-/// driver compiles.
+/// One persistent normal-priority worker owns the native calls; creating a new
+/// OS thread per variant made dense cold views spend seconds scheduling sub-ms
+/// driver compiles. Normal priority prevents cold import/cook work from starving
+/// admission-critical pipeline publication while render hosts remain above it.
 /// </summary>
 internal sealed class VulkanPipelineCompileTask : IDisposable
 {
@@ -26,7 +27,7 @@ internal sealed class VulkanPipelineCompileTask : IDisposable
         {
             IsBackground = true,
             Name = "XRE Vulkan Pipeline Compile",
-            Priority = ThreadPriority.BelowNormal,
+            Priority = ThreadPriority.Normal,
         };
         _worker.Start();
     }

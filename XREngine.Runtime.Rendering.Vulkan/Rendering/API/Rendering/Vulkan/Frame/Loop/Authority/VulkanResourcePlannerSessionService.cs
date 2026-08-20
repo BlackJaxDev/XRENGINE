@@ -22,11 +22,26 @@ internal sealed partial class VulkanResourcePlannerSessionService(
 
     internal PooledExternalResourcePlannerReadbackScope RentReadbackScope(
         ExternalResourcePlannerReadbackScope readbackScope)
+        => RentReadbackScope(readbackScope, default, hasRuntimeStateScope: false);
+
+    internal PooledExternalResourcePlannerReadbackScope RentReadbackScope(
+        ExternalResourcePlannerReadbackScope readbackScope,
+        RuntimeStateScope runtimeStateScope)
+        => RentReadbackScope(readbackScope, runtimeStateScope, hasRuntimeStateScope: true);
+
+    private PooledExternalResourcePlannerReadbackScope RentReadbackScope(
+        ExternalResourcePlannerReadbackScope readbackScope,
+        RuntimeStateScope runtimeStateScope,
+        bool hasRuntimeStateScope)
     {
         if (!_freeReadbackScopes.TryPop(out PooledExternalResourcePlannerReadbackScope? scope))
             scope = new PooledExternalResourcePlannerReadbackScope();
 
-        scope.Lease(readbackScope, _freeReadbackScopes);
+        scope.Lease(
+            readbackScope,
+            runtimeStateScope,
+            hasRuntimeStateScope,
+            _freeReadbackScopes);
         return scope;
     }
 
@@ -61,6 +76,25 @@ internal sealed partial class VulkanResourcePlannerSessionService(
         ResourcePlannerRuntimeState state = planner.GetPublishedResourcePlannerGeneration().State;
         state.FrameOpResourcePlannerSwitchingState ??= switchingState;
         return state;
+    }
+
+    /// <summary>
+    /// Returns the context installed by the current command-chain resource
+    /// scope. Transient render-state flags must not be used to reclassify
+    /// operations while this scope is active.
+    /// </summary>
+    internal bool TryGetScopedFrameOpContext(out FrameOpContext context)
+    {
+        VulkanCommandThreadContext threadContext = commands.ThreadWorkspace.Current;
+        if (ReferenceEquals(threadContext.ResourcePlannerRuntimeStateOwner, commands) &&
+            threadContext.ResourcePlannerRuntimeGeneration?.State.LastActiveFrameOpContext is { } active)
+        {
+            context = active;
+            return true;
+        }
+
+        context = default;
+        return false;
     }
 
     internal FrameOpResourcePlannerSwitchingState ResolveActiveSwitchingState()

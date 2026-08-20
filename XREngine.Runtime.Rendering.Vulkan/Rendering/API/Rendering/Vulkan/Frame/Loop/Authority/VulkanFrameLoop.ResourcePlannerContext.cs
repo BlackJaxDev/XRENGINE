@@ -130,15 +130,8 @@ internal sealed partial class VulkanFrameLoop
     /// </summary>
     internal FrameOpContext CaptureFrameOpContextForCurrentPipelineScope()
     {
-        XRRenderPipelineInstance? pipeline = ResolveFrameOpContextPipeline(
-            RuntimeEngine.Rendering.State.CurrentRenderingPipeline,
-            RuntimeEngine.Rendering.State.CurrentRenderGraphPassPipeline,
-            RuntimeEngine.Rendering.State.CurrentRenderGraphPassIndex);
-        if (ActiveLastActiveFrameOpContext is { } active &&
-            ReferenceEquals(active.PipelineInstance, pipeline))
-        {
+        if (_resourcePlannerSessions.TryGetScopedFrameOpContext(out FrameOpContext active))
             return active;
-        }
 
         return CaptureFrameOpContext();
     }
@@ -237,7 +230,7 @@ internal sealed partial class VulkanFrameLoop
         FrameOpContext context = CreateFrameOpContext(pipeline, viewport);
         return !VulkanFramePlanner.FrameOpContextHasPlannerResources(context)
             ? null
-            : RentExternalResourcePlannerReadbackScope(context);
+            : RentPipelineResourcePlannerScope(context);
     }
 
     internal bool TryPrepareRenderResourceGeneration(
@@ -812,4 +805,25 @@ internal sealed partial class VulkanFrameLoop
         in FrameOpContext context)
         => _resourcePlannerSessions.RentReadbackScope(
             CreateExternalResourcePlannerReadbackScope(context));
+
+    private PooledExternalResourcePlannerReadbackScope RentPipelineResourcePlannerScope(
+        in FrameOpContext context)
+    {
+        ExternalResourcePlannerReadbackScope readbackScope =
+            CreateExternalResourcePlannerReadbackScope(context);
+        try
+        {
+            ResourcePlannerRuntimeState scopedState =
+                _resourcePlannerSessions.CaptureRuntimeState();
+            scopedState.LastActiveFrameOpContext = context;
+            return _resourcePlannerSessions.RentReadbackScope(
+                readbackScope,
+                _resourcePlannerSessions.EnterRuntimeStateScope(in scopedState));
+        }
+        catch
+        {
+            readbackScope.Dispose();
+            throw;
+        }
+    }
 }

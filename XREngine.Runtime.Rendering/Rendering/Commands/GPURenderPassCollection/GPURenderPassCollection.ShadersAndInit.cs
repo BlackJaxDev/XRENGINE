@@ -582,8 +582,14 @@ namespace XREngine.Rendering.Commands
                 _visibleMeshletTaskBuffer = MakeVisibleMeshletTaskBuffer(taskCapacity);
             }
 
-            EnsureParameterBuffer(ref _visibleMeshletTaskCountBuffer, "VisibleMeshletTaskCount");
-            EnsureParameterBuffer(ref _meshletDispatchCountBuffer, "MeshletDispatchCount");
+            EnsureParameterBuffer(
+                ref _visibleMeshletTaskCountBuffer,
+                "VisibleMeshletTaskCount",
+                target: EBufferTarget.ParameterBuffer);
+            EnsureParameterBuffer(
+                ref _meshletDispatchCountBuffer,
+                "MeshletDispatchCount",
+                target: EBufferTarget.ParameterBuffer);
             EnsureMeshletDispatchIndirectBuffer();
             _meshletExpansionOverflowNeedsMap |= EnsureFlagBuffer(ref _meshletExpansionOverflowFlagBuffer, "MeshletExpansionOverflowFlag");
         }
@@ -680,7 +686,12 @@ namespace XREngine.Rendering.Commands
             return recreated;
         }
 
-        private bool EnsureParameterBuffer(ref XRDataBuffer? buffer, string name, uint elementCount = 1, uint componentCount = 1)
+        private bool EnsureParameterBuffer(
+            ref XRDataBuffer? buffer,
+            string name,
+            uint elementCount = 1,
+            uint componentCount = 1,
+            EBufferTarget target = EBufferTarget.DrawIndirectBuffer)
         {
             const EBufferMapStorageFlags requiredStorage =
                 EBufferMapStorageFlags.DynamicStorage | EBufferMapStorageFlags.Read |
@@ -692,7 +703,7 @@ namespace XREngine.Rendering.Commands
 
             if (buffer is not null)
             {
-                bool invalidLayout = buffer.Target != EBufferTarget.DrawIndirectBuffer ||
+                bool invalidLayout = buffer.Target != target ||
                     buffer.ElementCount != elementCount ||
                     buffer.ComponentType != EComponentType.UInt ||
                     buffer.ComponentCount != componentCount;
@@ -712,7 +723,7 @@ namespace XREngine.Rendering.Commands
             {
                 // Persistent+Coherent MUST be set before Generate() because OpenGL
                 // requires GL_MAP_PERSISTENT_BIT at glBufferStorage allocation time.
-                buffer = new XRDataBuffer(name, EBufferTarget.DrawIndirectBuffer, elementCount, EComponentType.UInt, componentCount, false, true)
+                buffer = new XRDataBuffer(name, target, elementCount, EComponentType.UInt, componentCount, false, true)
                 {
                     Usage = EBufferUsage.DynamicCopy,
                     DisposeOnPush = false,

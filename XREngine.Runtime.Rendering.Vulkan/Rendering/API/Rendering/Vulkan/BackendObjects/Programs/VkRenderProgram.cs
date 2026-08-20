@@ -28,6 +28,9 @@ internal unsafe partial class VkRenderProgram(
     private readonly Dictionary<EProgramStageMask, VkShader> _stageLookup = new();
     private readonly Lock _linkLock = new();
     private DescriptorSetLayout[] _descriptorSetLayouts = Array.Empty<DescriptorSetLayout>();
+    private DescriptorSetLayout[] _descriptorSetLayoutsBeforeGlobalMaterial = Array.Empty<DescriptorSetLayout>();
+    private bool _hasGlobalTextureArrayOnlySet;
+    private bool _canBindGlobalTextureArraySeparately;
     private ulong _descriptorLayoutFingerprint;
     private ulong _descriptorSchemaFingerprint;
     private PipelineLayout _pipelineLayout;
@@ -109,6 +112,8 @@ internal unsafe partial class VkRenderProgram(
     internal Dictionary<string, AutoUniformBlockInfo> AutoUniformBlockMap => _autoUniformBlocks;
     public bool DescriptorSetsRequireUpdateAfterBind => _descriptorSetsRequireUpdateAfterBind;
     public bool DescriptorSetsRequireVariableDescriptorCount => _descriptorSetsRequireVariableDescriptorCount;
+    internal bool HasGlobalTextureArrayOnlySet => _hasGlobalTextureArrayOnlySet;
+    internal bool CanBindGlobalTextureArraySeparately => _canBindGlobalTextureArraySeparately;
     public bool DescriptorSetUsesUpdateAfterBind(uint setIndex)
         => setIndex < _descriptorSetUsesUpdateAfterBind.Length && _descriptorSetUsesUpdateAfterBind[setIndex];
 

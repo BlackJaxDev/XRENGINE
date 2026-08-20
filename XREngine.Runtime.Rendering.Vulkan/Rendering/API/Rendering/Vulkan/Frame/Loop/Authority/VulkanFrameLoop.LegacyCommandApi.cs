@@ -12,10 +12,10 @@ internal sealed partial class VulkanFrameLoop
         => _commandRuntime.EnqueueIndirectCountDraw(_frameOperationQueue, maxDrawCount, stride, byteOffset, countByteOffset, RuntimeEngine.Rendering.State.CurrentRenderGraphPassIndex, CaptureFrameOpContextForCurrentPipelineScope());
 
     internal bool TryEnqueueQueryOperation(XRRenderQuery query, ERenderQueryOperation operation)
-        => query.Descriptor.Kind == ERenderQueryKind.Occlusion && _commandRuntime.TryEnqueueQueryOperation(_frameOperationQueue, RuntimeEngine.Rendering.State.CurrentRenderingPipeline is not null, _resourceRuntime.WrapperLookup.GetOrCreate(query) as VkRenderQuery, query.Descriptor, operation, RuntimeEngine.Rendering.State.CurrentRenderGraphPassIndex, CaptureFrameOpContext());
+        => query.Descriptor.Kind == ERenderQueryKind.Occlusion && _commandRuntime.TryEnqueueQueryOperation(_frameOperationQueue, RuntimeEngine.Rendering.State.CurrentRenderingPipeline is not null, _resourceRuntime.WrapperLookup.GetOrCreate(query) as VkRenderQuery, query.Descriptor, operation, RuntimeEngine.Rendering.State.CurrentRenderGraphPassIndex, CaptureFrameOpContextForCurrentPipelineScope());
 
     internal ERenderQueryReadStatus TryWriteTimestamp(XRRenderQuery query)
-        => query.Descriptor.Kind is ERenderQueryKind.Timestamp or ERenderQueryKind.ElapsedTime && _commandRuntime.TryEnqueueQueryOperation(_frameOperationQueue, RuntimeEngine.Rendering.State.CurrentRenderingPipeline is not null, _resourceRuntime.WrapperLookup.GetOrCreate(query) as VkRenderQuery, query.Descriptor, ERenderQueryOperation.WriteTimestamp, RuntimeEngine.Rendering.State.CurrentRenderGraphPassIndex, CaptureFrameOpContext()) ? ERenderQueryReadStatus.Ready : ERenderQueryReadStatus.InvalidState;
+        => query.Descriptor.Kind is ERenderQueryKind.Timestamp or ERenderQueryKind.ElapsedTime && _commandRuntime.TryEnqueueQueryOperation(_frameOperationQueue, RuntimeEngine.Rendering.State.CurrentRenderingPipeline is not null, _resourceRuntime.WrapperLookup.GetOrCreate(query) as VkRenderQuery, query.Descriptor, ERenderQueryOperation.WriteTimestamp, RuntimeEngine.Rendering.State.CurrentRenderGraphPassIndex, CaptureFrameOpContextForCurrentPipelineScope()) ? ERenderQueryReadStatus.Ready : ERenderQueryReadStatus.InvalidState;
 
     internal void PublishFrameBufferAttachmentsForSampling(XRFrameBuffer frameBuffer)
     {

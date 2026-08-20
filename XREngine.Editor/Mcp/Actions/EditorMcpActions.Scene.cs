@@ -703,7 +703,7 @@ namespace XREngine.Editor.Mcp
             if (!TryGetNodeById(context.WorldInstance, nodeId, out var node, out var error) || node is null)
                 return Task.FromResult(new McpToolResponse(error ?? "Scene node not found.", isError: true));
 
-            if (ResolveEditorCameraPawn() is not { } pawn)
+            if (ResolveEditorCameraPawn(context.WorldInstanceOrNull) is not { } pawn)
                 return Task.FromResult(new McpToolResponse("No editor camera pawn available to focus.", isError: true));
 
             pawn.FocusOnNode(node, durationSeconds);
@@ -732,7 +732,7 @@ namespace XREngine.Editor.Mcp
             [McpName("roll"), Description("Optional camera roll in degrees.")] float? roll = null,
             [McpName("duration"), Description("Optional interpolation duration in seconds.")] float durationSeconds = 0.35f)
         {
-            if (ResolveEditorCameraPawn() is not { } pawn)
+            if (ResolveEditorCameraPawn(context.WorldInstanceOrNull) is not { } pawn)
                 return Task.FromResult(new McpToolResponse("No editor camera pawn available.", isError: true));
 
             if (pawn.SceneNode?.Transform is not TransformBase cameraTransform)
@@ -799,7 +799,7 @@ namespace XREngine.Editor.Mcp
             [McpName("enabled"), Description("Whether render-on-demand should be enabled.")] bool enabled,
             [McpName("invalidate_view"), Description("Whether to force one fresh render after changing the setting.")] bool invalidateView = true)
         {
-            if (ResolveEditorCameraPawn() is not { } pawn)
+            if (ResolveEditorCameraPawn(context.WorldInstanceOrNull) is not { } pawn)
                 return Task.FromResult(new McpToolResponse("No editor camera pawn available.", isError: true));
 
             pawn.RenderOnDemand = enabled;
@@ -821,7 +821,7 @@ namespace XREngine.Editor.Mcp
         /// <summary>
         /// Resolves the editor camera controlled by the local player or hosted by an active viewport.
         /// </summary>
-        private static EditorFlyingCameraPawnComponent? ResolveEditorCameraPawn()
+        private static EditorFlyingCameraPawnComponent? ResolveEditorCameraPawn(XRWorldInstance? world)
         {
             foreach (XRViewport viewport in RuntimeEngine.EnumerateActiveViewports())
             {
@@ -831,7 +831,26 @@ namespace XREngine.Editor.Mcp
             }
 
             var player = Engine.State.MainPlayer ?? Engine.State.GetOrCreateLocalPlayer(ELocalPlayerIndex.One);
-            return player?.ControlledPawnComponent as EditorFlyingCameraPawnComponent;
+            if (player?.ControlledPawnComponent is EditorFlyingCameraPawnComponent controlledPawn)
+                return controlledPawn;
+
+            // Unit-testing and bootstrap worlds can expose their render camera before
+            // the queued local-player possession becomes observable to MCP. Resolve
+            // the exact world hierarchy as a deterministic final authority so camera
+            // positioning does not race editor/player initialization.
+            if (world is not null)
+            {
+                foreach (SceneNode root in world.RootNodes)
+                {
+                    foreach (SceneNode node in SceneNodePrefabUtility.EnumerateHierarchy(root))
+                    {
+                        if (node.GetComponent<EditorFlyingCameraPawnComponent>() is { } worldPawn)
+                            return worldPawn;
+                    }
+                }
+            }
+
+            return null;
         }
 
         /// <summary>

@@ -37,6 +37,35 @@ internal unsafe partial class VkRenderProgram
         _descriptorSetLayouts = result.Layouts;
         _programDescriptorBindings.Clear();
         _programDescriptorBindings.AddRange(result.Bindings);
+        _hasGlobalTextureArrayOnlySet =
+            VulkanBindlessMaterialDescriptors.IsGlobalTextureArrayOnlySet(_programDescriptorBindings);
+        _canBindGlobalTextureArraySeparately = _hasGlobalTextureArrayOnlySet;
+        if (_canBindGlobalTextureArraySeparately)
+        {
+            for (int bindingIndex = 0; bindingIndex < _programDescriptorBindings.Count; bindingIndex++)
+            {
+                if (_programDescriptorBindings[bindingIndex].Set > VulkanBindlessMaterialDescriptors.TextureArraySet)
+                {
+                    _canBindGlobalTextureArraySeparately = false;
+                    break;
+                }
+            }
+        }
+        if (_canBindGlobalTextureArraySeparately)
+        {
+            int ownedSetCount = Math.Min(
+                checked((int)VulkanBindlessMaterialDescriptors.TextureArraySet),
+                _descriptorSetLayouts.Length);
+            _descriptorSetLayoutsBeforeGlobalMaterial = new DescriptorSetLayout[ownedSetCount];
+            Array.Copy(
+                _descriptorSetLayouts,
+                _descriptorSetLayoutsBeforeGlobalMaterial,
+                ownedSetCount);
+        }
+        else
+        {
+            _descriptorSetLayoutsBeforeGlobalMaterial = _descriptorSetLayouts;
+        }
         _descriptorLayoutFingerprint = ComputeDescriptorLayoutFingerprint(_descriptorSetLayouts);
         _descriptorSchemaFingerprint = ComputeDescriptorSchemaFingerprint(
             _programDescriptorBindings,
@@ -253,6 +282,10 @@ internal unsafe partial class VkRenderProgram
 
             _descriptorSetLayouts = Array.Empty<DescriptorSetLayout>();
         }
+
+        _descriptorSetLayoutsBeforeGlobalMaterial = Array.Empty<DescriptorSetLayout>();
+        _hasGlobalTextureArrayOnlySet = false;
+        _canBindGlobalTextureArraySeparately = false;
 
         if (_pipelineLayout.Handle != 0)
             DestroyPipelineLayout("VkRenderProgram.DestroyLayouts");

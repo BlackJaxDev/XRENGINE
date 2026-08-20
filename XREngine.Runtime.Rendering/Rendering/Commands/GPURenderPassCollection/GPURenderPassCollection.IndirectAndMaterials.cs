@@ -180,7 +180,12 @@ namespace XREngine.Rendering.Commands
             _meshletExpansionPreparedThisFrame = false;
 
             SelectVisibleCommandLods(scene, camera);
-            ExpandVisibleMeshlets(scene);
+            // A pre-sealed traditional route owns every row and must not launch
+            // meshlet expansion. Besides being wasted work, producing task and
+            // indirect buffers for a route that cannot consume them extends
+            // their synchronization/lifetime contract into unrelated passes.
+            if (MeshletDirectPipelineReadyThisFrame)
+                ExpandVisibleMeshlets(scene);
             ClassifyTransparencyDomains(scene);
 
             if (RequiresExactTransparentCandidateRejection)

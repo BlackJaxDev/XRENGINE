@@ -57,7 +57,7 @@ internal sealed class VulkanBackendObjectFactory
             framePlanner.ResourcePublications,
             commandRuntime.ThreadWorkspace);
         composition.PublishProgramCreation(programCreation);
-        composition.PublishProgramPlanner(new(framePlanner));
+        composition.PublishProgramPlanner(new(framePlanner, commandRuntime.ThreadWorkspace));
         composition.PublishProgramCommandOperations(commandRuntime);
         composition.PublishProgramTelemetry(telemetry);
         composition.PublishResourcePublications(resourcePublications);

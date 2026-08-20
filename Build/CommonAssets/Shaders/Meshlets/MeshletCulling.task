@@ -102,7 +102,7 @@ taskNV out TaskPayload
     uint Reserved;
 } OUT;
 
-layout(binding = 0) uniform sampler2D HiZDepth;
+layout(binding = 0) uniform sampler2D HiZDepth; // XRENGINE_FREQUENCY(View)
 
 uniform vec4 FrustumPlanes[6];
 uniform mat4 ViewProjectionMatrix;
@@ -274,20 +274,23 @@ void main()
             if (AcceptsPassControls(draw))
             {
                 uint transformID = record.TransformID != 0u ? record.TransformID : draw.TransformID;
-                vec4 worldSphere = TransformSphere(meshlet, transformID);
-                bool frustumCulled = FrustumCulled(worldSphere);
-                bool coneCulled = !frustumCulled && ConeBackfaceCulled(meshlet, transformID);
-                bool hiZCulled = !frustumCulled && !coneCulled && HiZOccluded(worldSphere);
-                visible = !frustumCulled && !coneCulled && !hiZCulled;
-
-                if (StatsEnabled != 0u)
+                if (transformID < uint(WorldMatrices.length()))
                 {
-                    if (frustumCulled)
-                        atomicAdd(MeshletTaskRecordsFrustumCulled, 1u);
-                    else if (coneCulled)
-                        atomicAdd(MeshletTaskRecordsConeCulled, 1u);
-                    else if (hiZCulled)
-                        atomicAdd(MeshletTaskRecordsHiZCulled, 1u);
+                    vec4 worldSphere = TransformSphere(meshlet, transformID);
+                    bool frustumCulled = FrustumCulled(worldSphere);
+                    bool coneCulled = !frustumCulled && ConeBackfaceCulled(meshlet, transformID);
+                    bool hiZCulled = !frustumCulled && !coneCulled && HiZOccluded(worldSphere);
+                    visible = !frustumCulled && !coneCulled && !hiZCulled;
+
+                    if (StatsEnabled != 0u)
+                    {
+                        if (frustumCulled)
+                            atomicAdd(MeshletTaskRecordsFrustumCulled, 1u);
+                        else if (coneCulled)
+                            atomicAdd(MeshletTaskRecordsConeCulled, 1u);
+                        else if (hiZCulled)
+                            atomicAdd(MeshletTaskRecordsHiZCulled, 1u);
+                    }
                 }
             }
         }
