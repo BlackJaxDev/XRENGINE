@@ -53,8 +53,15 @@ internal sealed class VulkanProgramPlannerPort(
         }
         catch { return; }
         VulkanFrameOperationQueue queue = framePlanner.Operations;
-        using (queue.SyncRoot.EnterScope())
-            queue.Pending.Add(ComputeDispatchOp.Rent(passIndex, program, checked((uint)Math.Max(x, 1)), checked((uint)Math.Max(y, 1)), checked((uint)Math.Max(z, 1)), snapshot, frameContext));
+        ComputeDispatchOp operation = ComputeDispatchOp.Rent(
+            passIndex,
+            program,
+            checked((uint)Math.Max(x, 1)),
+            checked((uint)Math.Max(y, 1)),
+            checked((uint)Math.Max(z, 1)),
+            snapshot,
+            frameContext);
+        queue.EnqueuePrepared(VulkanFrameOperationSemantics.Prepare(operation, passIndex));
     }
 
     internal void EnqueueTransformFeedback(VkTransformFeedback transformFeedback, EXRTransformFeedbackOperation operation, XRDataBuffer? counterBuffer, ulong feedbackBufferOffset, ulong? feedbackBufferSize, ulong counterBufferOffset, uint counterOffset, uint vertexStride, uint instanceCount, uint firstInstance)
@@ -65,8 +72,21 @@ internal sealed class VulkanProgramPlannerPort(
         if (passIndex == int.MinValue)
             passIndex = (int)EDefaultRenderPass.PreRender;
         VulkanFrameOperationQueue queue = framePlanner.Operations;
-        using (queue.SyncRoot.EnterScope())
-            queue.Pending.Add(new TransformFeedbackOp(passIndex, frameContext.OutputFrameBuffer, transformFeedback, operation, counterBuffer, feedbackBufferOffset, feedbackBufferSize, counterBufferOffset, counterOffset, vertexStride, instanceCount, firstInstance, frameContext));
+        TransformFeedbackOp frameOperation = new(
+            passIndex,
+            frameContext.OutputFrameBuffer,
+            transformFeedback,
+            operation,
+            counterBuffer,
+            feedbackBufferOffset,
+            feedbackBufferSize,
+            counterBufferOffset,
+            counterOffset,
+            vertexStride,
+            instanceCount,
+            firstInstance,
+            frameContext);
+        queue.EnqueuePrepared(VulkanFrameOperationSemantics.Prepare(frameOperation, passIndex));
     }
 
     /// <summary>

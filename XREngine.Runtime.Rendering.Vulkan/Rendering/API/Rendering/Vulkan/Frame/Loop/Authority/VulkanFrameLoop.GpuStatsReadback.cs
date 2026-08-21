@@ -13,7 +13,16 @@ namespace XREngine.Rendering.Vulkan;
 internal sealed partial class VulkanFrameLoop
 {
     private readonly List<GpuRenderStatsReadbackRequest> _pendingGpuRenderStatsReadbacks = [];
+    // Diagnostics-only bookkeeping. Receipt objects are intentionally unique per
+    // frame so a cached primary can never masquerade as the current snapshot.
+    private readonly Dictionary<XRDataBuffer, GpuDiagnosticSnapshotReceipt> _gpuDiagnosticSnapshotReceipts =
+        new(ReferenceEqualityComparer.Instance);
     private ulong _pendingGpuRenderStatsReadbackFrameId;
+    private ulong _gpuDiagnosticSnapshotReceiptFrameId;
+    private ulong _gpuDiagnosticSnapshotDiscardGeneration;
+
+    internal ulong GpuDiagnosticSnapshotDiscardGeneration
+        => _gpuDiagnosticSnapshotDiscardGeneration;
 
     private static bool IndirectTraceEnabled
         => XREnvironment.IsEnabled(
@@ -79,8 +88,8 @@ internal sealed partial class VulkanFrameLoop
         => QueueGpuRenderStatsReadback(
             dispatchIndirectBuffer,
             0u,
-            checked(3u * (uint)sizeof(uint)),
-            3u,
+            checked(GPUMeshletLayout.MeshTaskIndirectDiagnosticsUIntCount * (uint)sizeof(uint)),
+            GPUMeshletLayout.MeshTaskIndirectDiagnosticsUIntCount,
             GpuRenderStatsReadbackKind.MeshletDispatchIndirectBuffer,
             publishDraws: false,
             publishTriangles: false);
@@ -124,6 +133,10 @@ internal sealed partial class VulkanFrameLoop
             _pendingGpuRenderStatsReadbackFrameId = frameId;
         }
 
+        GpuDiagnosticSnapshotReceipt? diagnosticReceipt = null;
+        if (_gpuDiagnosticSnapshotReceiptFrameId == frameId)
+            _gpuDiagnosticSnapshotReceipts.TryGetValue(sourceBuffer, out diagnosticReceipt);
+
         var request = new GpuRenderStatsReadbackRequest(
             frameId,
             sourceBuffer,
@@ -132,7 +145,8 @@ internal sealed partial class VulkanFrameLoop
             elementCount,
             kind,
             publishDraws,
-            publishTriangles);
+            publishTriangles,
+            diagnosticReceipt);
         if (!_pendingGpuRenderStatsReadbacks.Contains(request))
             _pendingGpuRenderStatsReadbacks.Add(request);
         return true;
@@ -161,6 +175,15 @@ internal sealed partial class VulkanFrameLoop
             for (int i = 0; i < _pendingGpuRenderStatsReadbacks.Count; i++)
             {
                 GpuRenderStatsReadbackRequest request = _pendingGpuRenderStatsReadbacks[i];
+                if (request.DiagnosticReceipt is { IsRecorded: false })
+                {
+                    Debug.VulkanWarningEvery(
+                        $"Vulkan.GpuStatsReadback.UnrecordedSnapshot.{request.DiagnosticReceipt.Sequence}",
+                        TimeSpan.FromSeconds(2),
+                        "[Vulkan] Dropped diagnostics readback because snapshot receipt {0} was not recorded into the accepted command buffer.",
+                        request.DiagnosticReceipt.Sequence);
+                    continue;
+                }
                 _ = SubmitGpuRenderStatsReadback(
                     request.SourceBuffer,
                     request.FrameId,
@@ -193,8 +216,32 @@ internal sealed partial class VulkanFrameLoop
     /// </summary>
     internal void DiscardPendingGpuRenderStatsReadbacks()
     {
+        bool discardedQueuedReadback = _pendingGpuRenderStatsReadbacks.Count > 0;
         _pendingGpuRenderStatsReadbacks.Clear();
         _pendingGpuRenderStatsReadbackFrameId = 0UL;
+        _gpuDiagnosticSnapshotReceipts.Clear();
+        _gpuDiagnosticSnapshotReceiptFrameId = 0UL;
+        if (discardedQueuedReadback)
+            _gpuDiagnosticSnapshotDiscardGeneration++;
+    }
+
+    private GpuDiagnosticSnapshotReceipt GetOrCreateGpuDiagnosticSnapshotReceipt(
+        XRDataBuffer destination)
+    {
+        ulong frameId = RuntimeEngine.Rendering.State.RenderFrameId;
+        if (_gpuDiagnosticSnapshotReceiptFrameId != frameId)
+        {
+            _gpuDiagnosticSnapshotReceipts.Clear();
+            _gpuDiagnosticSnapshotReceiptFrameId = frameId;
+        }
+
+        if (!_gpuDiagnosticSnapshotReceipts.TryGetValue(destination, out GpuDiagnosticSnapshotReceipt? receipt))
+        {
+            receipt = new GpuDiagnosticSnapshotReceipt(frameId);
+            _gpuDiagnosticSnapshotReceipts.Add(destination, receipt);
+        }
+
+        return receipt;
     }
 
     private unsafe bool SubmitGpuRenderStatsReadback(
@@ -540,13 +587,30 @@ internal sealed partial class VulkanFrameLoop
                 }
             case GpuRenderStatsReadbackKind.MeshletDispatchIndirectBuffer:
                 {
-                    // VkDrawMeshTasksIndirectCommandEXT is groupCountX/Y/Z.
-                    // The shader writes X from the emitted task-record count;
-                    // observe it only through the completed diagnostics fence.
+                    // The snapshot stores VkDrawMeshTasksIndirectCommandEXT's
+                    // groupCountX/Y/Z followed by the separate draw-count word.
+                    // Only the complete, executable command is production proof.
                     uint dispatchX = values.Length > 0 ? values[0] : 0u;
+                    uint dispatchY = values.Length > 1 ? values[1] : 0u;
+                    uint dispatchZ = values.Length > 2 ? values[2] : 0u;
+                    uint drawCount = values.Length > 3 ? values[3] : 0u;
+                    bool executable = drawCount == 1u && dispatchX > 0u && dispatchY == 1u && dispatchZ == 1u;
                     RuntimeEngine.Rendering.Stats.GpuMeshlets.RecordGpuMeshletDelayedDiagnostics(
-                        dispatchX,
+                        executable ? dispatchX : 0u,
                         slot.ByteCount);
+                    if ((dispatchX > 0u || drawCount > 0u) && !executable)
+                    {
+                        Debug.VulkanWarningEvery(
+                            $"Vulkan.MeshletDiagnostics.InvalidCommand.{slot.SourceHandle:X}",
+                            TimeSpan.FromSeconds(2),
+                            "[Vulkan] Rejected incomplete mesh-task diagnostics command X={0} Y={1} Z={2} drawCount={3}.",
+                            dispatchX,
+                            dispatchY,
+                            dispatchZ,
+                            drawCount);
+                    }
+                    if (IndirectTraceEnabled)
+                        WriteGpuRenderStatsTraceIfChanged(slot.SourceName, slot.SourceHandle, "meshlet-dispatch", values);
                     break;
                 }
         }
@@ -602,6 +666,8 @@ internal sealed partial class VulkanFrameLoop
     {
         _pendingGpuRenderStatsReadbacks.Clear();
         _pendingGpuRenderStatsReadbackFrameId = 0UL;
+        _gpuDiagnosticSnapshotReceipts.Clear();
+        _gpuDiagnosticSnapshotReceiptFrameId = 0UL;
 
         GpuRenderStatsReadbackSlot?[] slots = OutputRuntime.Capture.GpuStatsReadbackSlots;
         for (int i = 0; i < slots.Length; ++i)
@@ -634,6 +700,7 @@ internal sealed partial class VulkanFrameLoop
         uint ElementCount,
         GpuRenderStatsReadbackKind Kind,
         bool PublishDraws,
-        bool PublishTriangles);
+        bool PublishTriangles,
+        GpuDiagnosticSnapshotReceipt? DiagnosticReceipt);
 }
 

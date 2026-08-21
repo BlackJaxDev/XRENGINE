@@ -838,7 +838,10 @@ function Update-RenderStatsStabilityState {
     }
 
     $latestUtc = $State.Samples[$State.Samples.Count - 1].Utc
-    $retainAfterUtc = $latestUtc.AddSeconds(-($WindowSec + 2))
+    # Validation and cold-pipeline frames can space profiler samples several
+    # seconds apart. Retain enough history to keep the sample immediately before
+    # the requested boundary instead of continually discarding the only anchor.
+    $retainAfterUtc = $latestUtc.AddSeconds(-($WindowSec + 60))
     while ($State.Samples.Count -gt 0 -and $State.Samples[0].Utc -lt $retainAfterUtc) {
         $State.Samples.RemoveAt(0)
     }
@@ -860,9 +863,9 @@ function Test-RenderStatsStability {
     }
 
     $latestUtc = $timestamped[$timestamped.Count - 1].Utc
-    # Include one extra second so the first retained sample brackets the requested
-    # interval instead of always landing just after its exact boundary.
-    $windowStartUtc = $latestUtc.AddSeconds(-($WindowSec + 1))
+    $requestedStartUtc = $latestUtc.AddSeconds(-$WindowSec)
+    $anchor = @($timestamped | Where-Object { $_.Utc -le $requestedStartUtc } | Select-Object -Last 1)
+    $windowStartUtc = if ($anchor.Count -gt 0) { $anchor[0].Utc } else { $timestamped[0].Utc }
     $window = @($timestamped | Where-Object { $_.Utc -ge $windowStartUtc })
     $observedSec = ($latestUtc - $window[0].Utc).TotalSeconds
     if ($observedSec -lt $WindowSec -or $window.Count -lt 2) {

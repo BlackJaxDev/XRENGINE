@@ -600,6 +600,7 @@ namespace XREngine.Rendering.Vulkan
             CommandChain[] secondaryChains = batchScratch.NonGraphicsSecondaryChains;
             bool persistentWorkersReady = TryPrepareNonGraphicsRecordingWorkers(
                 count,
+                forceSerial: CommandChainWorkerRecordingQuarantined,
                 imageIndex,
                 out CommandChainRecordingWorkerState[] workers,
                 out int workerCount);

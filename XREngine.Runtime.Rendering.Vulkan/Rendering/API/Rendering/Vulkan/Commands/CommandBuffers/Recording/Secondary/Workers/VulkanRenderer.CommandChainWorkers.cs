@@ -9,6 +9,11 @@ namespace XREngine.Rendering.Vulkan;
 
 internal sealed partial class VulkanCommandRuntime
 {
+    // Production correctness quarantine. Serial recording preserves cached
+    // command-chain reuse while preventing worker-thread/worker-arena artifacts
+    // from entering a new process. Re-enable only after the isolated worker
+    // recording and lifetime validation matrix passes.
+    private const bool CommandChainWorkerRecordingQuarantined = true;
     // One chain cannot overlap. Two independent chains are the smallest batch
     // that can prove useful concurrency; the closeout cohorts own any
     // hardware-specific threshold tuning above this correctness floor.
@@ -246,6 +251,7 @@ internal sealed partial class VulkanCommandRuntime
         int recordJobCount,
         int recordOperationCount,
         bool applyGraphicsCostThreshold,
+        bool forceSerial,
         uint frameDataImageIndex,
         out CommandChainRecordingWorkerState[] workers,
         out int workerCount,
@@ -254,6 +260,11 @@ internal sealed partial class VulkanCommandRuntime
         workers = [];
         workerCount = 0;
         frameSlot = -1;
+        // Live isolation proved that a cohort containing worker-recorded
+        // command-chain artifacts can wedge the graphics queue when its first
+        // admitted primary executes. Keep command-chain recording serial, with an
+        // explicit quarantine diagnostic, until the cross-thread interaction is
+        // identified and proven safe.
         if (Volatile.Read(ref _commandChainRecordingWorkersFaulted) != 0 &&
             Volatile.Read(ref _activeCommandChainRecordingWorkerCount) != 0)
         {
@@ -269,15 +280,16 @@ internal sealed partial class VulkanCommandRuntime
             Environment.ProcessorCount,
             CommandChainsSingleThread,
             ParallelCommandChainRecordingDisabled);
-        EVulkanCommandChainWorkerEligibility eligibility =
-            EvaluateConfiguredParallelCommandChainRecording(
-            recordJobCount,
-            recordOperationCount,
-            applyGraphicsCostThreshold,
-            Environment.ProcessorCount,
-            CommandChainsSingleThread,
-            ParallelCommandChainRecordingDisabled,
-            Volatile.Read(ref _commandChainRecordingWorkersFaulted) != 0);
+        EVulkanCommandChainWorkerEligibility eligibility = forceSerial
+            ? EVulkanCommandChainWorkerEligibility.WorkerQuarantined
+            : EvaluateConfiguredParallelCommandChainRecording(
+                recordJobCount,
+                recordOperationCount,
+                applyGraphicsCostThreshold,
+                Environment.ProcessorCount,
+                CommandChainsSingleThread,
+                ParallelCommandChainRecordingDisabled,
+                Volatile.Read(ref _commandChainRecordingWorkersFaulted) != 0);
         bool hasIndexedFrameSlot = TryGetIndexedCommandChainCacheSlot(frameDataImageIndex, out frameSlot);
         if (eligibility != EVulkanCommandChainWorkerEligibility.Eligible ||
             recordJobCount <= 0 ||
@@ -441,6 +453,7 @@ internal sealed partial class VulkanCommandRuntime
 
     private bool TryPrepareNonGraphicsRecordingWorkers(
         int entryCount,
+        bool forceSerial,
         uint imageIndex,
         out CommandChainRecordingWorkerState[] workers,
         out int workerCount)
@@ -458,6 +471,7 @@ internal sealed partial class VulkanCommandRuntime
                 entryCount,
                 entryCount,
                 false,
+                forceSerial,
                 imageIndex,
                 out workers,
                 out workerCount,

@@ -14,7 +14,33 @@ internal sealed partial class VulkanFrameLoop
         => _commandRuntime.TryEnqueueIndirectComputeDispatch(_resourceRuntime.WrapperLookup, _frameOperationQueue, program, arguments, byteOffset, label, RuntimeEngine.Rendering.State.CurrentRenderGraphPassIndex, CaptureFrameOpContextOrLastActive(), AllowSynchronousResourceUploads, IsDeviceLost);
 
     internal ERendererComputeEnqueueStatus TryEnqueueBufferCopy(XRDataBuffer source, nint sourceOffset, XRDataBuffer destination, nint destinationOffset, nuint byteCount, string label)
-        => _commandRuntime.TryEnqueueBufferCopy(_resourceRuntime.WrapperLookup, _frameOperationQueue, source, sourceOffset, destination, destinationOffset, byteCount, label, RuntimeEngine.Rendering.State.CurrentRenderGraphPassIndex, CaptureFrameOpContextOrLastActive(), AllowSynchronousResourceUploads, IsDeviceLost);
+        => _commandRuntime.TryEnqueueBufferCopy(_resourceRuntime.WrapperLookup, _frameOperationQueue, source, sourceOffset, destination, destinationOffset, byteCount, label, requireGpuWriteVisibility: false, diagnosticReceipt: null, RuntimeEngine.Rendering.State.CurrentRenderGraphPassIndex, CaptureFrameOpContextOrLastActive(), AllowSynchronousResourceUploads, IsDeviceLost);
+
+    internal ERendererComputeEnqueueStatus TryEnqueueGpuDiagnosticBufferSnapshot(XRDataBuffer source, XRDataBuffer destination, nuint byteCount, string label)
+        => TryEnqueueGpuDiagnosticBufferSnapshot(source, 0, destination, 0, byteCount, label);
+
+    internal ERendererComputeEnqueueStatus TryEnqueueGpuDiagnosticBufferSnapshot(XRDataBuffer source, nuint sourceByteOffset, XRDataBuffer destination, nuint destinationByteOffset, nuint byteCount, string label)
+    {
+        GpuDiagnosticSnapshotReceipt receipt = GetOrCreateGpuDiagnosticSnapshotReceipt(destination);
+        ERendererComputeEnqueueStatus status = _commandRuntime.TryEnqueueBufferCopy(
+            _resourceRuntime.WrapperLookup,
+            _frameOperationQueue,
+            source,
+            checked((nint)sourceByteOffset),
+            destination,
+            checked((nint)destinationByteOffset),
+            byteCount,
+            label,
+            requireGpuWriteVisibility: true,
+            receipt,
+            RuntimeEngine.Rendering.State.CurrentRenderGraphPassIndex,
+            CaptureFrameOpContextForCurrentPipelineScope(),
+            AllowSynchronousResourceUploads,
+            IsDeviceLost);
+        if (status == ERendererComputeEnqueueStatus.Enqueued)
+            receipt.RegisterCopy();
+        return status;
+    }
 
     internal ERendererComputeEnqueueStatus TryCompleteOrderedComputePass(EMemoryBarrierMask mask, string label)
         => _commandRuntime.TryEnqueueOrderedComputeBarrier(_frameOperationQueue, mask, label, RuntimeEngine.Rendering.State.CurrentRenderGraphPassIndex, CaptureFrameOpContextOrLastActive(), IsDeviceLost);

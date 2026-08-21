@@ -71,6 +71,8 @@ internal sealed partial class VulkanCommandRuntime
             VkRenderProgram program;
             ComputeDispatchSnapshot? snapshot;
             ulong reusableDescriptorKey;
+            bool requiresComputePipeline;
+            bool excludeGlobalTextureArray;
             int passIndex;
             IReadOnlyCollection<RenderPassMetadata>? passMetadata;
             FrameOpContext frameContext;
@@ -87,6 +89,8 @@ internal sealed partial class VulkanCommandRuntime
                     program = dispatch.Program;
                     snapshot = dispatch.Snapshot;
                     reusableDescriptorKey = 0UL;
+                    requiresComputePipeline = true;
+                    excludeGlobalTextureArray = false;
                     passIndex = header.PassIndex;
                     passMetadata = operationContext.PassMetadata;
                     frameContext = operationContext;
@@ -97,6 +101,20 @@ internal sealed partial class VulkanCommandRuntime
                     program = indirect.Program;
                     snapshot = indirect.Snapshot;
                     reusableDescriptorKey = 0UL;
+                    requiresComputePipeline = true;
+                    excludeGlobalTextureArray = false;
+                    passIndex = header.PassIndex;
+                    passMetadata = operationContext.PassMetadata;
+                    frameContext = operationContext;
+                    break;
+                case EVulkanPrimaryPlanNodeKind.MeshTaskDispatchIndirectCount:
+                    ref readonly MeshTaskDispatchIndirectCountPayload meshTask =
+                        ref operations.GetMeshTask(operationIndex);
+                    program = meshTask.Program;
+                    snapshot = meshTask.ProgramBindingSnapshot;
+                    reusableDescriptorKey = snapshot.ComputeReusableDescriptorBindingKey();
+                    requiresComputePipeline = false;
+                    excludeGlobalTextureArray = meshTask.BindlessMaterialTextures is not null;
                     passIndex = header.PassIndex;
                     passMetadata = operationContext.PassMetadata;
                     frameContext = operationContext;
@@ -105,11 +123,15 @@ internal sealed partial class VulkanCommandRuntime
                     continue;
             }
 
-            VulkanComputePreparationResult preparation =
-                TryPrepareComputeProgram(
+            VulkanComputePreparationResult preparation = requiresComputePipeline
+                ? TryPrepareComputeProgram(
                     program,
                     passIndex,
                     passMetadata,
+                    operationIndex,
+                    operations.Length)
+                : TryPrepareMeshTaskDescriptorProgram(
+                    program,
                     operationIndex,
                     operations.Length);
             if (!preparation.Succeeded)
@@ -142,7 +164,8 @@ internal sealed partial class VulkanCommandRuntime
                 VulkanProgramPlannerRequest.From(frameContext),
                 imageIndex,
                 snapshot,
-                reusableDescriptorKey))
+                reusableDescriptorKey,
+                excludeGlobalTextureArray))
             {
                 continue;
             }
@@ -155,6 +178,21 @@ internal sealed partial class VulkanCommandRuntime
         }
 
         return VulkanComputePreparationResult.Success;
+    }
+
+    private static VulkanComputePreparationResult TryPrepareMeshTaskDescriptorProgram(
+        VkRenderProgram program,
+        int operationIndex,
+        int operationCount)
+    {
+        if (program.Link() && program.PipelineLayout.Handle != 0)
+            return VulkanComputePreparationResult.Success;
+
+        return new(
+            EVulkanComputePreparationOutcome.ProgramLinkFailed,
+            operationIndex,
+            operationCount,
+            program.Data.Name);
     }
 
     private static VulkanComputePreparationResult TryPrepareComputeProgram(

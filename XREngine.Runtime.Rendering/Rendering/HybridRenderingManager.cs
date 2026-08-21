@@ -2644,6 +2644,12 @@ namespace XREngine.Rendering
                 return false;
             }
 
+            if (scene.MeshletDescriptorCount == 0)
+            {
+                failureReason = "No owner-validated resident meshlet payload has published a renderable GPU range.";
+                return false;
+            }
+
             if (!TryValidateMeshletAtlasTierBindings(scene, out _, out failureReason))
                 return false;
 
@@ -2749,6 +2755,15 @@ namespace XREngine.Rendering
             {
                 WarnMeshletMaterialFallback(currentRenderPass, requestedStrategy,
                     "The latest meshlet buffer generation has not reached the frame-boundary publication point.");
+                return false;
+            }
+
+            if (scene.MeshletDescriptorCount == 0)
+            {
+                WarnMeshletMaterialFallback(
+                    currentRenderPass,
+                    requestedStrategy,
+                    "No owner-validated resident meshlet payload has published a renderable GPU range.");
                 return false;
             }
 
@@ -2915,8 +2930,22 @@ namespace XREngine.Rendering
 
             int submittedAtlasTierCount = 0;
             string failureReason = string.Empty;
+            bool submissionBatchActive = false;
+            bool submitted = false;
             try
             {
+                if (activeAtlasTierCount > 1)
+                {
+                    if (!renderer.TryBeginMeshTaskSubmissionBatch(out string batchFailure))
+                    {
+                        failureReason = batchFailure;
+                        WarnMeshletMaterialFallback(currentRenderPass, requestedStrategy, failureReason);
+                        return false;
+                    }
+
+                    submissionBatchActive = true;
+                }
+
                 renderer.MemoryBarrier(
                     EMemoryBarrierMask.ShaderStorage |
                     EMemoryBarrierMask.Command |
@@ -2980,14 +3009,22 @@ namespace XREngine.Rendering
                 }
                 if (submittedAtlasTierCount != activeAtlasTierCount)
                     WarnMeshletMaterialFallback(currentRenderPass, requestedStrategy, failureReason);
+
+                submitted = submittedAtlasTierCount == activeAtlasTierCount;
+                if (submitted && submissionBatchActive)
+                {
+                    renderer.CommitMeshTaskSubmissionBatch();
+                    submissionBatchActive = false;
+                }
             }
             finally
             {
+                if (submissionBatchActive)
+                    renderer.RollbackMeshTaskSubmissionBatch();
                 renderer.UnbindParameterBuffer();
                 renderer.UnbindDrawIndirectBuffer();
             }
 
-            bool submitted = submittedAtlasTierCount == activeAtlasTierCount;
             if (submitted)
             {
                 // Vulkan records the sealed operation later on the primary command
@@ -3012,20 +3049,13 @@ namespace XREngine.Rendering
                 if (renderer.BackendId == RendererBackendId.Vulkan &&
                     (RuntimeEngine.EffectiveSettings.EnableGpuIndirectDebugLogging ||
                      (VulkanFeatureProfile.IsActive &&
-                      VulkanFeatureProfile.ActiveProfile == EVulkanGpuDrivenProfile.Diagnostics)) &&
-                    renderPasses.TryQueueMeshletEvidenceSnapshot(renderer) &&
-                    renderPasses.MeshletDispatchDiagnosticsSnapshotBuffer is { } dispatchSnapshot)
-                {
-                    renderer.QueueGpuMeshletDispatchDiagnosticsReadback(dispatchSnapshot);
-                }
+                      VulkanFeatureProfile.ActiveProfile == EVulkanGpuDrivenProfile.Diagnostics)))
+                    renderPasses.TryQueueMeshletEvidenceSnapshot(renderer);
                 XREngine.Debug.Meshes(
                     $"Meshlet.BackendSelected pass={currentRenderPass} requested={requestedStrategy} selected={requestedStrategy} dialect={renderer.MeshShaderDialect} atlasTiers={submittedAtlasTierCount} commandCount={scene.TotalCommandCount} meshletCount={scene.MeshletDescriptorCount} capacity={renderPasses.MaxVisibleMeshletTaskCapacity}");
             }
 
-            // Once any tier has been accepted, retrying the sealed pass through the
-            // traditional stream could duplicate geometry. A later-tier failure is
-            // therefore a visible post-seal failure, never a fallback trigger.
-            return submitted || submittedAtlasTierCount > 0;
+            return submitted;
         }
 
         private static bool TryValidateMeshletAtlasTierBindings(
@@ -3234,13 +3264,11 @@ namespace XREngine.Rendering
             int hiZMaxMip = 0;
             Matrix4x4 hiZViewProjectionMatrix = viewProjectionMatrix;
             bool hiZUsesReversedZ = false;
-            bool hiZAvailable = renderPasses.ActiveViewCount <= 1u &&
-                renderPasses.ActiveOcclusionMode == EOcclusionCullingMode.GpuHiZ &&
-                renderPasses.TryGetHiZDepthPyramidForMeshlets(
-                    out hiZDepthPyramid,
-                    out hiZMaxMip,
-                    out hiZViewProjectionMatrix,
-                    out hiZUsesReversedZ);
+            // The current task-shader Hi-Z test samples only the projected sphere
+            // center and therefore cannot conservatively prove occlusion. Keep the
+            // traditional Hi-Z pipeline active, but fail this meshlet-specific
+            // optimization closed until footprint/depth bounds are implemented.
+            bool hiZAvailable = false;
 
             program.Uniform("ViewProjectionMatrix", viewProjectionMatrix);
             program.Uniform("PreviousViewProjectionMatrix", viewProjectionMatrix);
@@ -3253,7 +3281,7 @@ namespace XREngine.Rendering
             program.Uniform("HiZDepthBias", 0.0f);
             program.Uniform("HiZUsesReversedZ", hiZAvailable && hiZUsesReversedZ ? 1u : 0u);
             program.Uniform("HiZValid", hiZAvailable ? 1u : 0u);
-            program.Uniform("EnableHiZOcclusion", hiZAvailable ? 1u : 0u);
+            program.Uniform("EnableHiZOcclusion", 0u);
             program.Uniform("EnableFrustumCulling", 1u);
             program.Uniform("EnableConeCulling", 1u);
             program.Uniform("EnableMaskedConeCulling", 0u);

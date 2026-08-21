@@ -107,6 +107,21 @@ def call_mcp(port: int, method: str, params: dict[str, object] | None = None) ->
     return payload
 
 
+def raise_for_mcp_tool_error(response: dict) -> None:
+    result = response.get("result")
+    if not isinstance(result, dict) or not result.get("isError", False):
+        return
+
+    messages = []
+    content = result.get("content")
+    if isinstance(content, list):
+        for item in content:
+            if isinstance(item, dict) and isinstance(item.get("text"), str):
+                messages.append(item["text"])
+    detail = "; ".join(messages) or "MCP tool reported isError=true"
+    raise RuntimeError(detail)
+
+
 def wait_for_mcp(port: int, timeout: float = 60.0) -> None:
     deadline = time.monotonic() + timeout
     last_error: Exception | None = None
@@ -151,9 +166,26 @@ def set_fixed_camera(args: argparse.Namespace) -> dict:
                     },
                 },
             )
+            raise_for_mcp_tool_error(response)
+            continuous_render_response = call_mcp(
+                args.mcp_port,
+                "tools/call",
+                {
+                    "name": "set_editor_camera_render_on_demand",
+                    "arguments": {"enabled": False, "invalidate_view": True},
+                },
+            )
+            raise_for_mcp_tool_error(continuous_render_response)
             break
         except RuntimeError as error:
-            if "No active world instance" not in str(error):
+            detail = str(error)
+            transient_camera_state = (
+                "No active world instance" in detail
+                or "No editor camera pawn available" in detail
+                or "Editor camera transform is unavailable" in detail
+                or "requires unavailable capabilities: World" in detail
+            )
+            if not transient_camera_state:
                 raise
             if time.monotonic() >= deadline:
                 raise RuntimeError(
@@ -277,7 +309,7 @@ def main() -> int:
             camera_response = set_fixed_camera(args)
         result = run_target_control_loop(
             target_control,
-            frame=None if args.camera_position is not None else args.frame,
+            frame=args.frame,
             timeout=args.timeout,
         )
         if not result.success:

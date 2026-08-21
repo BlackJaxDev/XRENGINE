@@ -1,6 +1,7 @@
 using XREngine;
 using XREngine.Data;
 using XREngine.Data.Rendering;
+using XREngine.Data.Vectors;
 using XREngine.Rendering;
 using XREngine.Rendering.Models.Materials;
 
@@ -599,7 +600,7 @@ namespace XREngine.Rendering.Commands
         {
             _meshletDispatchDiagnosticsSnapshotBuffer ??= MakeMeshletDiagnosticsSnapshotBuffer(
                 "MeshletDispatchDiagnosticsSnapshot",
-                GPUMeshletLayout.MeshTaskIndirectCommandUIntCount);
+                GPUMeshletLayout.MeshTaskIndirectDiagnosticsUIntCount);
             _meshletStatsDiagnosticsSnapshotBuffer ??= MakeMeshletDiagnosticsSnapshotBuffer(
                 "MeshletStatsDiagnosticsSnapshot",
                 GpuStatsLayout.FieldCount);
@@ -622,6 +623,8 @@ namespace XREngine.Rendering.Commands
                 PadEndingToVec4 = false,
             };
             buffer.Generate();
+            buffer.SetDataRaw(new uint[uintCount], checked((int)uintCount));
+            buffer.PushSubData();
             return buffer;
         }
 
@@ -672,6 +675,11 @@ namespace XREngine.Rendering.Commands
                 PadEndingToVec4 = false,
             };
             _meshletDispatchIndirectBuffer.Generate();
+            // VkDrawMeshTasksIndirectCommandEXT requires all three group counts.
+            // Initialize a valid no-op command so an untouched allocation can
+            // never be interpreted as GPU-produced dispatch evidence.
+            _meshletDispatchIndirectBuffer.Set(0u, new UVector3(0u, 1u, 1u));
+            _meshletDispatchIndirectBuffer.PushSubData();
         }
 
         private bool EnsureIndirectDrawBuffer(uint capacity)

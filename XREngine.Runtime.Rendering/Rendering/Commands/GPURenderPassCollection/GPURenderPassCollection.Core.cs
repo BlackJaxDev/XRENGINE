@@ -491,6 +491,8 @@ namespace XREngine.Rendering.Commands
         private XRDataBuffer? _meshletDispatchDiagnosticsSnapshotBuffer;
         private bool _meshletExpansionPreparedThisFrame;
         private bool _meshletEvidenceSnapshotQueuedThisFrame;
+        private ulong _meshletEvidenceSnapshotFrameId;
+        private ulong _meshletEvidenceSnapshotDiscardGeneration;
 
         // Synchronization & lifecycle
         private readonly Lock _lock = new();
@@ -530,7 +532,9 @@ namespace XREngine.Rendering.Commands
         {
             uint visibleCommandCapacity = Math.Max(commandCapacity, 1u);
             ulong taskCapacity = (ulong)visibleCommandCapacity * Math.Max(_meshletTaskCapacityPerVisibleCommand, 1u) * 2ul;
-            return (uint)Math.Min(Math.Max(taskCapacity, 1ul), MaxMeshletTaskCapacityHardLimit);
+            uint backendLimit = AbstractRenderer.Current?.MaxMeshTaskDispatchGroupsX ?? uint.MaxValue;
+            ulong boundedCapacity = Math.Min(MaxMeshletTaskCapacityHardLimit, backendLimit);
+            return (uint)Math.Min(Math.Max(taskCapacity, 1ul), Math.Max(boundedCapacity, 1ul));
         }
 
         private GPUSortAlgorithm _sortAlgorithm = GPUSortAlgorithm.Bitonic;

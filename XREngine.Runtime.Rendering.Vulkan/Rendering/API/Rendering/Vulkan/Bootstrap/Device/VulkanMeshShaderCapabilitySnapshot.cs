@@ -57,6 +57,9 @@ internal readonly unsafe record struct VulkanMeshShaderCapabilitySnapshot(
         }
     }
 
+    internal uint MaxTaskDispatchGroupsX
+        => Math.Min(MaxTaskWorkGroupCountX, Properties.MaxTaskWorkGroupTotalCount);
+
     private uint MaxMeshWorkGroupCountX
     {
         get

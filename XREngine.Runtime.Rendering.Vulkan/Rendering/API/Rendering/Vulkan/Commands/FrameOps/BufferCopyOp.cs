@@ -12,6 +12,8 @@ internal sealed record BufferCopyOp(
     Buffer DestinationBuffer,
     ulong DestinationOffset,
     ulong ByteCount,
+    bool RequireGpuWriteVisibility,
+    GpuDiagnosticSnapshotReceipt? DiagnosticReceipt,
     string Label,
     FrameOpContext Context) 
     : FrameOp(PassIndex, null, Context)

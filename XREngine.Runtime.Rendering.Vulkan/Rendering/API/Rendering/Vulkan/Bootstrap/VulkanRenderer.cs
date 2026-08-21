@@ -293,6 +293,7 @@ public sealed class VulkanRenderer :
     public override bool QueueGpuRenderDrawCountReadback(XRDataBuffer drawCountBuffer, uint countByteOffset = 0, uint countElementCount = 1) => _frameLoop.QueueGpuRenderDrawCountReadback(drawCountBuffer, countByteOffset, countElementCount);
     public override bool QueueGpuRenderStatsBufferReadback(XRDataBuffer statsBuffer, bool publishDraws, bool publishTriangles) => _frameLoop.QueueGpuRenderStatsBufferReadback(statsBuffer, publishDraws, publishTriangles);
     public override bool QueueGpuMeshletDispatchDiagnosticsReadback(XRDataBuffer dispatchIndirectBuffer) => _frameLoop.QueueGpuMeshletDispatchDiagnosticsReadback(dispatchIndirectBuffer);
+    public override ulong GpuDiagnosticSnapshotDiscardGeneration => _frameLoop.GpuDiagnosticSnapshotDiscardGeneration;
     public override void CalcDotLuminanceAsync(XRTexture2D texture, Action<bool, float> callback, Vector3 luminance, bool genMipmapsNow = true) => _frameLoop.CalcDotLuminanceAsync(texture, callback, luminance, genMipmapsNow);
     public override void CalcDotLuminanceAsync(XRTexture2DArray texture, Action<bool, float> callback, Vector3 luminance, bool genMipmapsNow = true) => _frameLoop.CalcDotLuminanceAsync(texture, callback, luminance, genMipmapsNow);
     public override void CalcDotLuminanceFrontAsyncCompute(BoundingRectangle region, bool withTransparency, Vector3 luminance, Action<bool, float> callback) => _frameLoop.CalcDotLuminanceFrontAsyncCompute(region, withTransparency, luminance, callback);
@@ -312,6 +313,19 @@ public sealed class VulkanRenderer :
     public bool TryBeginOrderedComputeBatch() => _frameLoop.TryBeginOrderedComputeBatch();
     public void CommitOrderedComputeBatch() => _frameLoop.CommitOrderedComputeBatch();
     public void RollbackOrderedComputeBatch() => _frameLoop.RollbackOrderedComputeBatch();
+    public override bool TryBeginMeshTaskSubmissionBatch(out string failureReason)
+    {
+        if (_frameLoop.TryBeginOrderedComputeBatch())
+        {
+            failureReason = string.Empty;
+            return true;
+        }
+
+        failureReason = "Another ordered Vulkan frame-operation batch is already active on this recording thread.";
+        return false;
+    }
+    public override void CommitMeshTaskSubmissionBatch() => _frameLoop.CommitOrderedComputeBatch();
+    public override void RollbackMeshTaskSubmissionBatch() => _frameLoop.RollbackOrderedComputeBatch();
 
     public override void MemoryBarrier(EMemoryBarrierMask mask) => _frameLoop.EnqueueMemoryBarrier(mask);
     public override void PublishFrameBufferAttachmentsForSampling(XRFrameBuffer frameBuffer) => _frameLoop.PublishFrameBufferAttachmentsForSampling(frameBuffer);
@@ -395,7 +409,9 @@ public sealed class VulkanRenderer :
     public ERendererComputeEnqueueStatus TryDispatchComputeIndirect(XRRenderProgram program, XRDataBuffer arguments, nint byteOffset, string label) => _frameLoop.TryDispatchComputeIndirect(program, arguments, byteOffset, label);
     public ERendererComputeEnqueueStatus TryEnqueueBufferCopy(XRDataBuffer source, nint sourceOffset, XRDataBuffer destination, nint destinationOffset, nuint byteCount, string label) => _frameLoop.TryEnqueueBufferCopy(source, sourceOffset, destination, destinationOffset, byteCount, label);
     public override bool TryEnqueueGpuDiagnosticBufferSnapshot(XRDataBuffer source, XRDataBuffer destination, nuint byteCount, string label)
-        => TryEnqueueBufferCopy(source, 0, destination, 0, byteCount, label) == ERendererComputeEnqueueStatus.Enqueued;
+        => _frameLoop.TryEnqueueGpuDiagnosticBufferSnapshot(source, destination, byteCount, label) == ERendererComputeEnqueueStatus.Enqueued;
+    public override bool TryEnqueueGpuDiagnosticBufferSnapshot(XRDataBuffer source, nuint sourceByteOffset, XRDataBuffer destination, nuint destinationByteOffset, nuint byteCount, string label)
+        => _frameLoop.TryEnqueueGpuDiagnosticBufferSnapshot(source, sourceByteOffset, destination, destinationByteOffset, byteCount, label) == ERendererComputeEnqueueStatus.Enqueued;
     public ERendererComputeEnqueueStatus TryCompleteOrderedComputePass(EMemoryBarrierMask mask, string label) => _frameLoop.TryCompleteOrderedComputePass(mask, label);
     public override XRGpuFence? InsertGpuFence() => _frameLoop.InsertOrderedComputeFence();
     public bool TryEnsureComputeBufferReady(XRDataBuffer buffer) => _commandRuntime.TryEnsureComputeBufferReady(_resourceRuntime.WrapperLookup, buffer, _frameLoop.AllowSynchronousResourceUploads);
@@ -404,6 +420,8 @@ public sealed class VulkanRenderer :
     public override bool SupportsDirectMeshTaskDispatch() => false;
     public override bool SupportsIndirectCountMeshTaskDispatch() => _deviceContext.SupportsMeshTaskIndirectCount;
     public override bool SupportsProductionMeshletShaders() => _deviceContext.SupportsMeshTaskIndirectCount;
+    public override uint MaxMeshTaskDispatchGroupsX
+        => _deviceContext.MutableCapabilities._meshShaderCapabilitySnapshot.MaxTaskDispatchGroupsX;
     public override bool TryDrawMeshTasksIndirectCount(XRRenderProgram program, XRDataBuffer indirect, XRDataBuffer count, uint maxDrawCount, uint stride, out string failureReason, nuint byteOffset = 0, nuint countByteOffset = 0)
     {
         if (!ValidateMeshTasksIndirectCountArgs(

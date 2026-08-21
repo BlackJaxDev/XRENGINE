@@ -996,7 +996,6 @@ internal sealed partial class VulkanCommandRuntime
         if (header.OpCode is not (
                 EVulkanPrimaryPlanNodeKind.MeshDraw or
                 EVulkanPrimaryPlanNodeKind.IndirectDraw or
-                EVulkanPrimaryPlanNodeKind.MeshTaskDispatchIndirectCount or
                 EVulkanPrimaryPlanNodeKind.ComputeDispatch or
                 EVulkanPrimaryPlanNodeKind.ComputeDispatchIndirect or
                 EVulkanPrimaryPlanNodeKind.BufferCopy or

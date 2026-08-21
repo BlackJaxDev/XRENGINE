@@ -636,6 +636,8 @@ internal static class VulkanFrameOperationSemantics
                     hash.Add(copy.DestinationBuffer.Handle);
                     hash.Add(copy.DestinationOffset);
                     hash.Add(copy.ByteCount);
+                    hash.Add(copy.RequireGpuWriteVisibility);
+                    hash.Add(copy.DiagnosticReceipt?.Sequence ?? 0UL);
                     break;
                 case EVulkanPrimaryPlanNodeKind.SubmissionMarker:
                     // The fence object is CPU-side submission state and is rebound
