@@ -5,13 +5,16 @@ internal sealed partial class VulkanDeviceContext
 {
     internal bool SupportsMeshTaskIndirectCount
         => Capabilities.Supports(EVulkanDeviceCapability.MeshShader)
+            && Capabilities.Supports(EVulkanDeviceCapability.DrawIndirectCount)
             && MutableCapabilities._supportsVulkanMeshShaderFeature
             && MutableCapabilities._supportsVulkanMeshTaskIndirectCount
             && MutableCapabilities._meshShaderCapabilitySnapshot.HasPortableMeshletProfile
             && ExtensionFunctions.ExtMeshShader is not null;
 
     internal string MeshletDispatchStatus
-        => MutableCapabilities._meshShaderCapabilitySnapshot.GetDispatchFailureReason();
+        => !Capabilities.Supports(EVulkanDeviceCapability.DrawIndirectCount)
+            ? "Vulkan drawIndirectCount was not enabled for the logical device; EXT mesh-task indirect-count submission is unavailable."
+            : MutableCapabilities._meshShaderCapabilitySnapshot.GetDispatchFailureReason();
 
     internal ERvcVulkanProductionFeature ResolveRvcProductionFeatures(bool multiview)
     {

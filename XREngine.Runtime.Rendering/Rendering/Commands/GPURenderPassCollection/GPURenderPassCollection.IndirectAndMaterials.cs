@@ -127,7 +127,12 @@ namespace XREngine.Rendering.Commands
             ResetZeroReadbackProgramPendingState();
             bool useTwoPassGpuHiZ = TryPrepareGpuHiZTwoPass(scene, camera, out GpuHiZDepthInput twoPassDepthInput);
             Stopwatch resetStopwatch = Stopwatch.StartNew();
-            _meshletEvidenceSnapshotQueuedThisFrame = false;
+            ulong renderFrameId = RuntimeEngine.Rendering.State.RenderFrameId;
+            if (_meshletEvidenceSnapshotFrameId != renderFrameId)
+            {
+                _meshletEvidenceSnapshotFrameId = renderFrameId;
+                _meshletEvidenceSnapshotQueuedThisFrame = false;
+            }
             ResetCounters();
             resetStopwatch.Stop();
             RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanGpuDrivenStageTiming(
@@ -856,7 +861,9 @@ namespace XREngine.Rendering.Commands
             }
 
             _expandMeshletsComputeShader.Uniform("InputCommandCount", (int)dispatchCommands);
-            _expandMeshletsComputeShader.Uniform("MaxMeshletTaskRecords", (int)_visibleMeshletTaskBuffer.ElementCount);
+            uint backendTaskLimit = AbstractRenderer.Current?.MaxMeshTaskDispatchGroupsX ?? uint.MaxValue;
+            uint taskRecordCapacity = Math.Min(_visibleMeshletTaskBuffer.ElementCount, backendTaskLimit);
+            _expandMeshletsComputeShader.Uniform("MaxMeshletTaskRecords", checked((int)taskRecordCapacity));
             _expandMeshletsComputeShader.Uniform("ExpandPreviousLodTransitions", 1);
             _expandMeshletsComputeShader.Uniform(
                 "RejectExactTransparentMultiview",
@@ -2456,10 +2463,24 @@ namespace XREngine.Rendering.Commands
 
         internal bool TryQueueMeshletEvidenceSnapshot(AbstractRenderer renderer)
         {
-            _meshletEvidenceSnapshotQueuedThisFrame = false;
+            // A frame can render the same collection through multiple viewports.
+            // Preserve the first direct meshlet submission so a later empty
+            // viewport cannot overwrite valid GPU evidence with zeros.
+            if (_meshletEvidenceSnapshotQueuedThisFrame)
+            {
+                if (_meshletEvidenceSnapshotDiscardGeneration == renderer.GpuDiagnosticSnapshotDiscardGeneration)
+                    return true;
+
+                // The backend rejected or abandoned the attempt that owned the
+                // first snapshot. Permit a same-frame retry, but keep the first
+                // accepted snapshot protected from later empty viewports.
+                _meshletEvidenceSnapshotQueuedThisFrame = false;
+            }
+
             if (!_passMeshletEvidenceReadbacksEnabled ||
                 _statsBuffer is null ||
                 _meshletDispatchIndirectBuffer is null ||
+                _meshletDispatchCountBuffer is null ||
                 _meshletStatsDiagnosticsSnapshotBuffer is null ||
                 _meshletDispatchDiagnosticsSnapshotBuffer is null)
             {
@@ -2476,26 +2497,41 @@ namespace XREngine.Rendering.Commands
                 _meshletDispatchDiagnosticsSnapshotBuffer,
                 checked((nuint)GPUMeshletLayout.MeshTaskIndirectCommandUIntCount * sizeof(uint)),
                 "MeshletDispatchDiagnosticsSnapshot");
-            _meshletEvidenceSnapshotQueuedThisFrame = statsQueued && dispatchQueued;
+            bool dispatchCountQueued = renderer.TryEnqueueGpuDiagnosticBufferSnapshot(
+                _meshletDispatchCountBuffer,
+                0,
+                _meshletDispatchDiagnosticsSnapshotBuffer,
+                checked((nuint)GPUMeshletLayout.MeshTaskIndirectCommandUIntCount * sizeof(uint)),
+                sizeof(uint),
+                "MeshletDispatchCountDiagnosticsSnapshot");
+            bool statsReadbackQueued = statsQueued && renderer.QueueGpuRenderStatsBufferReadback(
+                _meshletStatsDiagnosticsSnapshotBuffer,
+                publishDraws: false,
+                publishTriangles: true);
+            bool dispatchReadbackQueued = dispatchQueued && dispatchCountQueued && renderer.QueueGpuMeshletDispatchDiagnosticsReadback(
+                _meshletDispatchDiagnosticsSnapshotBuffer);
+            _meshletEvidenceSnapshotQueuedThisFrame = statsQueued &&
+                dispatchQueued &&
+                dispatchCountQueued &&
+                statsReadbackQueued &&
+                dispatchReadbackQueued;
+            if (_meshletEvidenceSnapshotQueuedThisFrame)
+                _meshletEvidenceSnapshotDiscardGeneration = renderer.GpuDiagnosticSnapshotDiscardGeneration;
             return _meshletEvidenceSnapshotQueuedThisFrame;
         }
 
         private void QueueAsyncGpuTriangleStatsReadback()
         {
-            bool captureDiagnostics = _passMeshletEvidenceReadbacksEnabled ||
-                ShouldCaptureDiagnosticReadbacksForPass() ||
+            bool captureDiagnostics = ShouldCaptureDiagnosticReadbacksForPass() ||
                 (AbstractRenderer.Current?.BackendId == RendererBackendId.Vulkan && VulkanDelayedCounterDiagnosticsEnabled);
             if (!captureDiagnostics)
                 return;
 
             AbstractRenderer? renderer = AbstractRenderer.Current;
-            XRDataBuffer? statsReadbackSource = _passMeshletEvidenceReadbacksEnabled
-                ? (_meshletEvidenceSnapshotQueuedThisFrame ? _meshletStatsDiagnosticsSnapshotBuffer : null)
-                : _statsBuffer;
-            if (statsReadbackSource is not null)
+            if (!_passMeshletEvidenceReadbacksEnabled && _statsBuffer is not null)
             {
                 renderer?.QueueGpuRenderStatsBufferReadback(
-                    statsReadbackSource,
+                    _statsBuffer,
                     publishDraws: false,
                     publishTriangles: true);
             }

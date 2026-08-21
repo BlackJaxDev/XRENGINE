@@ -305,6 +305,11 @@ internal sealed partial class VulkanCommandRuntime
         in BufferCopyPayload operation,
         in VulkanSecondaryRecordingBucket bucket)
     {
+        // Receipt-bearing diagnostics copies must be recorded directly into the
+        // accepted primary; a cached or unexecuted secondary is not proof.
+        if (operation.DiagnosticReceipt is not null)
+            return false;
+
         if (operation.SourceOwner is null ||
             operation.DestinationOwner is null ||
             operation.SourceBuffer.Handle == 0 ||

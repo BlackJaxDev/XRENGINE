@@ -871,14 +871,22 @@ internal unsafe partial class VkRenderProgram
         in VulkanProgramPlannerRequest planner,
         uint imageIndex,
         ComputeDispatchSnapshot snapshot,
-        ulong reusableDescriptorBindingKey)
+        ulong reusableDescriptorBindingKey,
+        bool excludeGlobalTextureArray = false)
     {
-        if (_descriptorSetLayouts.Length == 0 || _programDescriptorBindings.Count == 0)
+        if (excludeGlobalTextureArray && !_canBindGlobalTextureArraySeparately)
+            return false;
+
+        DescriptorSetLayout[] descriptorLayouts = excludeGlobalTextureArray
+            ? _descriptorSetLayoutsBeforeGlobalMaterial
+            : _descriptorSetLayouts;
+        uint descriptorSetLimit = checked((uint)descriptorLayouts.Length);
+        if (descriptorLayouts.Length == 0 || _programDescriptorBindings.Count == 0)
             return true;
 
         foreach (DescriptorBindingInfo binding in _programDescriptorBindings)
         {
-            if (binding.Set >= _descriptorSetLayouts.Length ||
+            if (binding.Set >= descriptorSetLimit ||
                 binding.DescriptorType != DescriptorType.UniformBuffer)
             {
                 continue;
@@ -930,7 +938,9 @@ internal unsafe partial class VkRenderProgram
             planner,
             imageIndex,
             snapshot,
-            reusableDescriptorBindingKey);
+            reusableDescriptorBindingKey,
+            descriptorLayouts,
+            descriptorSetLimit);
     }
     internal bool TryRefreshReusableComputeDispatchFrameData(in VulkanProgramPlannerRequest planner, uint imageIndex, ComputeDispatchSnapshot snapshot, ulong reusableDescriptorBindingKey)
     {
@@ -968,22 +978,35 @@ internal unsafe partial class VkRenderProgram
                 return false;
         }
 
-        return TryRefreshReusableComputeDescriptorSets(planner, imageIndex, snapshot, reusableDescriptorBindingKey);
+        return TryRefreshReusableComputeDescriptorSets(
+            planner,
+            imageIndex,
+            snapshot,
+            reusableDescriptorBindingKey,
+            _descriptorSetLayouts,
+            checked((uint)_descriptorSetLayouts.Length));
     }
 
-    private bool TryRefreshReusableComputeDescriptorSets(in VulkanProgramPlannerRequest planner, uint imageIndex, ComputeDispatchSnapshot snapshot, ulong reusableDescriptorBindingKey)
+    private bool TryRefreshReusableComputeDescriptorSets(
+        in VulkanProgramPlannerRequest planner,
+        uint imageIndex,
+        ComputeDispatchSnapshot snapshot,
+        ulong reusableDescriptorBindingKey,
+        DescriptorSetLayout[] descriptorLayouts,
+        uint descriptorSetLimit)
     {
         if (reusableDescriptorBindingKey == 0UL)
             return true;
 
-        (uint ImageIndex, ulong BindingKey) refreshKey = (imageIndex, reusableDescriptorBindingKey);
         snapshot.ResolvePublishedResourceSignatures(
             planner.DescriptorViewFamilyIdentity,
             out _,
             out ulong resourceSignature);
         ulong schemaFingerprint = ComputeComputeDescriptorSchemaFingerprint(
-            _descriptorSetLayouts,
-            checked((uint)_descriptorSetLayouts.Length));
+            descriptorLayouts,
+            descriptorSetLimit);
+        (uint ImageIndex, ulong SchemaFingerprint, ulong BindingKey) refreshKey =
+            (imageIndex, schemaFingerprint, reusableDescriptorBindingKey);
         if (snapshot.HasPublishedBindingLayoutSignatures &&
             _reusableComputeDescriptorResourceSignatures.TryGetValue(
                 refreshKey,
@@ -1002,7 +1025,7 @@ internal unsafe partial class VkRenderProgram
                 imageIndex,
                 snapshot,
                 reusableDescriptorBindingKey,
-                checked((uint)_descriptorSetLayouts.Length),
+                descriptorSetLimit,
                 reportFailures: true))
             return false;
 
@@ -1011,7 +1034,7 @@ internal unsafe partial class VkRenderProgram
             imageIndex,
             schemaFingerprint,
             reusableDescriptorBindingKey,
-            _descriptorSetLayouts,
+            descriptorLayouts,
             scratch.PoolSizeArray,
             scratch.PoolSizeCount,
             _descriptorSetsRequireUpdateAfterBind,

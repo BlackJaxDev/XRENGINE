@@ -584,7 +584,9 @@ namespace XREngine.Rendering.Vulkan
             hash.Add(copy.DestinationBuffer.Handle);
             hash.Add(copy.DestinationOffset);
             hash.Add(copy.ByteCount);
-            AddSignaturePart(parts, opIndex, opType, "bufferCopy", hash, $"bytes={copy.ByteCount} src=0x{copy.SourceBuffer.Handle:X}+{copy.SourceOffset} dst=0x{copy.DestinationBuffer.Handle:X}+{copy.DestinationOffset}");
+            hash.Add(copy.RequireGpuWriteVisibility);
+            hash.Add(copy.DiagnosticReceipt?.Sequence ?? 0UL);
+            AddSignaturePart(parts, opIndex, opType, "bufferCopy", hash, $"bytes={copy.ByteCount} src=0x{copy.SourceBuffer.Handle:X}+{copy.SourceOffset} dst=0x{copy.DestinationBuffer.Handle:X}+{copy.DestinationOffset} publishGpuWrites={copy.RequireGpuWriteVisibility} diagnosticReceipt={copy.DiagnosticReceipt?.Sequence ?? 0UL}");
         }
 
         private static void AddSubmissionMarkerSignaturePart(List<FrameOpSignatureDebugPart> parts, int opIndex, string opType, SubmissionMarkerOp marker)

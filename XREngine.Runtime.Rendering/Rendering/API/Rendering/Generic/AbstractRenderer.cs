@@ -1399,6 +1399,14 @@ namespace XREngine.Rendering
             => false;
 
         /// <summary>
+        /// Advances when diagnostics queued for a rejected or abandoned GPU
+        /// submission are discarded. Producers use this to retry within the same
+        /// engine render frame without overwriting an accepted snapshot.
+        /// </summary>
+        public virtual ulong GpuDiagnosticSnapshotDiscardGeneration
+            => 0UL;
+
+        /// <summary>
         /// Enqueues an ordered GPU-side copy used to preserve diagnostics from a
         /// transient producer generation. The destination remains GPU-resident;
         /// callers may request an asynchronous readback after frame submission.
@@ -1406,6 +1414,25 @@ namespace XREngine.Rendering
         public virtual bool TryEnqueueGpuDiagnosticBufferSnapshot(
             XRDataBuffer source,
             XRDataBuffer destination,
+            nuint byteCount,
+            string label)
+            => TryEnqueueGpuDiagnosticBufferSnapshot(
+                source,
+                0,
+                destination,
+                0,
+                byteCount,
+                label);
+
+        /// <summary>
+        /// Enqueues a ranged GPU-side diagnostics copy. Offsets and length are
+        /// expressed in bytes and must fit both buffers.
+        /// </summary>
+        public virtual bool TryEnqueueGpuDiagnosticBufferSnapshot(
+            XRDataBuffer source,
+            nuint sourceByteOffset,
+            XRDataBuffer destination,
+            nuint destinationByteOffset,
             nuint byteCount,
             string label)
             => false;
@@ -1455,6 +1482,30 @@ namespace XREngine.Rendering
 
         public virtual bool SupportsProductionMeshletShaders()
             => false;
+
+        /// <summary>
+        /// Maximum task workgroups that one X-only mesh-task dispatch may emit.
+        /// Backends without a negotiated task stage leave the generic limit open.
+        /// </summary>
+        public virtual uint MaxMeshTaskDispatchGroupsX
+            => uint.MaxValue;
+
+        /// <summary>
+        /// Begins an all-or-nothing batch for multiple mesh-task submissions.
+        /// Backends that cannot roll back accepted submissions fail closed so a
+        /// later tier cannot disappear after an earlier tier was accepted.
+        /// </summary>
+        public virtual bool TryBeginMeshTaskSubmissionBatch(out string failureReason)
+        {
+            failureReason = "The active renderer cannot atomically batch multiple mesh-task submissions.";
+            return false;
+        }
+
+        public virtual void CommitMeshTaskSubmissionBatch()
+            => throw new NotSupportedException("The active renderer does not support mesh-task submission batches.");
+
+        public virtual void RollbackMeshTaskSubmissionBatch()
+            => throw new NotSupportedException("The active renderer does not support mesh-task submission batches.");
 
         public virtual bool TryDrawMeshTasksIndirectCount(
             XRRenderProgram program,

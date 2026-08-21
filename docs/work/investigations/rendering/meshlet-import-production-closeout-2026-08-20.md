@@ -9,7 +9,9 @@ still-inactive broad model binary cache. It also records the still-open Sponza
 visual-debug and production-readiness boundaries; this is not a claim that the
 entire tracker is complete.
 
-- Source commit before the working changes: `cf6496b560e7229db47eb81a8d7c40fb1494c9a1`
+- Source commit before the original closeout changes: `cf6496b560e7229db47eb81a8d7c40fb1494c9a1`
+- Latest pulled base used for final integration acceptance:
+  `0af39a775db0501d9d0c70713e7b7e72ae0b1eee`
 - Branch: `vulkan-refactor`
 - GPU: NVIDIA GeForce RTX 4070 Laptop GPU (`00000000:01:00.0`)
 - Driver: `581.57`; VBIOS `95.06.31.00.a2`
@@ -20,6 +22,8 @@ entire tracker is complete.
   plus `large-production-scene.bin`, Vulkan, deferred opaque, two generated
   LODs, camera `(0,6,8)` looking at the origin.
 - Evidence root: `Build/_AgentValidation/20260820-meshlet-production-closeout/`
+- Final pulled-build acceptance root:
+  `Build/_AgentValidation/20260820-180507-meshlet-diagnostics-acceptance/`
 - Sponza evidence root:
   `Build/_AgentValidation/20260820-120000-meshlet-sponza-closeout/`
 - Sponza settings:
@@ -85,6 +89,23 @@ The fix now:
 - suppresses the legacy direct meshlet debug overlay after production meshlet
   submission is available, so it can no longer hide production-path failures.
 
+Final integration hardening additionally:
+
+- records diagnostic snapshot copies only with their ordered producer/resource
+  dependencies and accepted-recording receipt, eliminating stale or uninitialized
+  task/dispatch evidence;
+- isolates the renderer-owned bindless material array from local graphics
+  descriptor preparation while preserving dynamic-buffer descriptors;
+- makes multi-tier mesh-task enqueue atomic so any post-seal failure rolls back
+  the entire tier batch before rebuilding the full traditional GPU stream;
+- quarantines graphics and non-graphics command-chain worker recording after it
+  was isolated as the necessary trigger for deterministic Vulkan device loss;
+  serial-owned command chains and secondary reuse remain enabled; and
+- disables the current mesh-task Hi-Z test at the program uniform boundary. Its
+  center-only sphere sample is not conservative under Vulkan zero-to-one depth;
+  traditional GPU Hi-Z, meshlet frustum culling, and meshlet cone culling remain
+  available.
+
 The low-level native wrapper was also renamed from the ambiguous
 `BuildMeshlets` to `BuildNativeMeshletClusters`.
 
@@ -92,8 +113,14 @@ The low-level native wrapper was also renamed from the ambiguous
 
 | Scenario | Result | Key evidence |
 | --- | --- | --- |
-| Final cold publish | Pass | `reports/static-cold-r5-final/summary.json`: parser 1, builder 3, generated LODs 2, payloads 3, meshlets 80, delayed task records 49, delayed dispatch X 20,629. |
-| Final exact-root warm hydration | Pass | `reports/static-warm-r5-final/summary.json`: parser 0, builder 0, hydrations 3, delayed task records 24, delayed dispatch X 8,640. |
+| Final pulled-build static cold | Pass | `Build/_AgentValidation/20260820-180507-meshlet-diagnostics-acceptance/reports/final-static-cold-current-accepted/summary.json`: parser 1, builder 3, build 551.296 ms / 8,086,992 bytes, generated LODs 2, payloads 3, meshlets 80, task records 49, cumulative delayed groups 9,065, requested 1,792 = consumed 1,792, VUIDs/fallback/readback/maps 0. |
+| Final-binary static warm after conservative Hi-Z safeguard | Pass | `Build/_AgentValidation/20260820-180507-meshlet-diagnostics-acceptance/reports/final-static-warm-hiz-conservative-current/summary.json`: parser 0, builder 0, hydrations 3, task records 24, cumulative delayed groups 3,456, requested 1,408 = consumed 1,408, VUIDs/fallback/readback/maps 0. |
+| Final-binary mixed static + skinned/morph cold | Pass for planned routing | `Build/_AgentValidation/20260820-180507-meshlet-diagnostics-acceptance/reports/final-mixed-cold-hiz-conservative-current/summary.json`: parser 2, builder 4, generated LODs 2, payloads 4, task records 49, requested 1,632 = consumed 1,632, and VUIDs/fallback/readback/maps 0. Eligible opaque work used mesh tasks while skinned/morph and unsupported passes remained explicitly traditional GPU. |
+| Mixed standalone warm closure | Open | `Build/_AgentValidation/20260820-180507-meshlet-diagnostics-acceptance/reports/final-mixed-warm-hiz-conservative-current/summary.json` was stable and rendered exactly once, but correctly failed the warm-cache gate: the three static LOD payloads hydrated while the animated source parsed/built once. Broad mixed/model-cache hydration is not claimed complete. |
+| Command-chain worker quarantine | Pass as correctness containment | Fresh serial-owner runs retained command-chain secondary reuse and reached frames 180–420 with no device loss, VUID, or render exception, crossing the prior deterministic loss frames 32/43/46. Parallel worker recording remains quarantined pending an isolated lifetime/root-cause matrix. |
+| RenderDoc EXT event proof | Pass for submission and resident inputs; visual parity open | `Build/_AgentValidation/20260820-180507-meshlet-diagnostics-acceptance/renderdoc/fresh-static-meshlet-frame40.rdc`: EID 514 is `vkCmdDrawMeshTasksIndirectCountEXT` with indirect `<24,1,1>`, live task/mesh/pixel stages, and the expected resident meshlet, atlas, transform, material-table, indirect/count, and attachment bindings. High-severity assertion count was zero. |
+| Original closeout cold publish | Pass | `reports/static-cold-r5-final/summary.json`: parser 1, builder 3, generated LODs 2, payloads 3, meshlets 80, delayed task records 49, cumulative delayed dispatch groups 20,629. |
+| Original closeout exact-root warm hydration | Pass | `reports/static-warm-r5-final/summary.json`: parser 0, builder 0, hydrations 3, delayed task records 24, cumulative delayed dispatch groups 8,640. |
 | Post-review submission attribution | Pass | `reports/static-warm-r6-attribution/summary.json`: after rejected-attempt cleanup and source-frame tagging, parser 0, builder 0, hydrations 3, task records 24, delayed dispatch X 10,080, generic readback/maps/fallbacks 0, requested draws 1,760 = consumed draws 1,760. The optional MCP GPU-timing dump had no timing history, but the engine/harness counters and Vulkan command-buffer timings were captured normally. |
 | Runtime without cooker | Pass | `reports/static-warm-no-cooker-r5-final/summary.json`: `meshoptimizer.dll` was moved out of only the validated editor output and restored in `finally`; parser 0, builder 0, hydrations 3, task records 24, dispatch X 6,528. |
 | Zero-readback contract | Pass | All three final runs report generic GPU readback bytes 0, mapped buffers 0, forbidden fallbacks 0, render-path source hash/disk/cooker calls 0, and equal requested/consumed draws. Fence-delayed evidence bytes are separately classified diagnostics. |
@@ -122,11 +149,12 @@ reveals Sponza and that the whole visible model is magenta. The production route
 and geometry visibility are therefore present, while the per-meshlet color
 selection is still wrong or not reaching the inspected output.
 
-The final visual pass should use the normal Hi-Z configuration, move the camera
-close enough for Sponza to occupy a meaningful portion of the viewport, capture
-at least three views, and compare production meshlet output with the traditional
-reference. It must also show stable, visibly different colors on neighboring
-meshlets before the debug-render checkbox is checked.
+The final visual pass should first implement and validate conservative mesh-task
+Hi-Z footprint/depth-range math, then move the camera close enough for Sponza to
+occupy a meaningful portion of the viewport, capture at least three views, and
+compare production meshlet output with the traditional reference. It must also
+show stable, visibly different colors on neighboring meshlets before the
+debug-render checkbox is checked.
 
 A temporary 10 Hz render cap was tested because the user reported system-wide
 mouse jitter while Sponza rendered. It did not solve the problem and was fully
@@ -136,15 +164,22 @@ consistent with heavy GPU pressure, but no root-cause claim is made yet. The
 named validation session `meshlet-sponza-cachefix-publish` was stopped cleanly
 after the final observation.
 
-## RenderDoc Limitation
+## RenderDoc Evidence
 
-`rdc doctor` passed, including the registered Vulkan layer. Three launch paths
-were attempted (rdc trigger/keep-alive, automatic frame capture, and direct
-`renderdoccmd capture`). The editor's MCP endpoint became ready in two attempts,
-but RenderDoc reported a blank attached API and produced no capture; the
-automatic attempt stalled before Vulkan frame logging. One screenshot from the
-injected process was black. No `.rdc` exists, so task/mesh pipeline bindings are
-not claimed as capture-proven. `rdc close` confirmed no remaining session.
+`rdc doctor` passed, including the registered Vulkan layer. A later bounded
+capture succeeded and produced multiple real `.rdc` files under the final
+acceptance root. The open-work-close inspection of
+`renderdoc/fresh-static-meshlet-frame40.rdc` found EID 514 as
+`vkCmdDrawMeshTasksIndirectCountEXT` with indirect arguments `<24,1,1>`, live
+task and mesh shader stages, and the expected resident meshlet descriptors,
+vertex/triangle references, atlas buffers, mesh data, transforms, material
+table, indirect/count buffers, and attachment state. Relevant outputs were
+exported to PNG and visually inspected; `rdc assert-clean` reported zero
+high-severity findings, and `rdc close` ended the session.
+
+This proves the event, stages, and bound resident inputs. The exported final
+image is not sufficient to claim final-frame parity with the traditional path,
+so the visual-comparison gate remains open.
 
 ## Remaining Boundaries
 
@@ -154,13 +189,16 @@ not claimed as capture-proven. `rdc close` confirmed no remaining session.
 - Live reimport, hot reload, streaming, unload/reload, dense capacity overflow,
   stereo/multiview, and long-running meshlet range retirement/compaction still
   need their dedicated runtime matrix.
-- A real RenderDoc attachment/capture remains required for event-level
-  `vkCmdDrawMeshTasksIndirectCountEXT`, task/mesh stage, binding, and attachment
-  inspection.
-- Sponza still needs a close, useful camera framing under normal Hi-Z, a
+- RenderDoc/MCP still need a useful-camera final-frame comparison against the
+  traditional path; event/stage/binding proof itself is complete.
+- Sponza still needs a close, useful camera framing after conservative
+  mesh-task Hi-Z is implemented, a
   three-view comparison with the traditional path, and visibly distinct
   per-meshlet debug colors. Uniform magenta is not accepted as color-debug
   completion.
+- Parallel command-chain worker recording remains quarantined. Re-enable it only
+  after isolated graphics/non-graphics recording, ownership, lifetime, and
+  submission validation identifies and fixes the device-loss interaction.
 - The system-wide mouse jitter under the heavy Sponza workload remains a
   separate GPU-pressure/performance investigation. It is not addressed by a
   frame-rate cap, and no cap remains in the product or validation settings.

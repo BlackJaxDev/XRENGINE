@@ -60,6 +60,7 @@ namespace XREngine.Rendering.Commands
         public const uint MeshletRangeUIntCount = 4u;
         public const uint MeshletTaskRecordUIntCount = 4u;
         public const uint MeshTaskIndirectCommandUIntCount = 3u;
+        public const uint MeshTaskIndirectDiagnosticsUIntCount = MeshTaskIndirectCommandUIntCount + 1u;
         public const uint MeshTaskIndirectCommandStride = MeshTaskIndirectCommandUIntCount * sizeof(uint);
         public const uint MeshTaskIndirectCommandMaxDrawCount = 1u;
         public const uint MeshletTaskPreviousLodFlag = 0x80000000u;

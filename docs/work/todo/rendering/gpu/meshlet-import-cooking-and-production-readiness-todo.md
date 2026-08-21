@@ -2,7 +2,7 @@
 
 Last Updated: 2026-08-20
 Owner: Assets / Rendering / Vulkan
-Status: Core import cooking, standalone persistence, and Vulkan EXT submission proven; Sponza visual-debug parity and broader production gates remain open
+Status: Core import cooking, standalone persistence, mixed routing, and Vulkan EXT submission proven; broad model-cache hydration, live lifecycle stress, conservative task Hi-Z, Sponza visual parity, and parallel-worker re-enable remain open
 Priority: Immediate; do not resume Vulkan resident draw-stream Phase 1 until the exit gate is satisfied
 
 Related docs:
@@ -84,21 +84,31 @@ persistence, exact-root warm hydration, invalidation, runtime-without-cooker,
 mixed planned routing, and live Vulkan EXT mesh-task submission. Full production
 acceptance is **not** complete: Sponza now reaches the production meshlet path,
 but its current debug result is uniformly magenta rather than distinctly colored
-per meshlet, and final normal-Hi-Z, multi-camera visual parity remains open.
+per meshlet, and conservative mesh-task-Hi-Z, multi-camera visual parity remains open.
 Detailed commands, environment, counters, hashes, and limitations are recorded
 in the [production closeout evidence](../../../investigations/rendering/meshlet-import-production-closeout-2026-08-20.md).
 
-The final same-code cold/warm pair proves:
+The latest pulled implementation and final-binary acceptance prove:
 
-- cold: parser 1, builder 3, generated LODs 2, payloads 3, meshlets 80,
-  GPU-written task records 49, and delayed indirect dispatch X 20,629;
-- warm: parser 0, builder 0, hydrations 3, GPU-written task records 24, and
-  delayed indirect dispatch X 8,640;
-- both: zero generic GPU readback bytes, mapped buffers, forbidden fallbacks,
-  render-path source hashing, render-path disk access, and render-path cooker
-  calls, with every requested draw consumed; and
+- static cold: parser 1, builder 3, 551.296 ms builder time, 8,086,992 builder
+  bytes, generated LODs 2, payloads 3, meshlets 80, GPU-written task records
+  49, and 9,065 cumulative delayed task groups;
+- static warm after the final conservative Hi-Z safeguard: parser 0, builder
+  0, hydrations 3, GPU-written task records 24, and 3,456 cumulative delayed
+  task groups;
+- final mixed static plus skinned/morph cold: parser 2, builder 4, generated
+  LODs 2, payloads 4, task records 49, requested draws 1,632 = consumed draws
+  1,632, and explicit traditional routing for unsupported work;
+- all accepted runs: zero generic GPU readback bytes, mapped buffers, forbidden
+  fallbacks, render-path source hashing, render-path disk access, render-path
+  cooker calls, and Vulkan validation VUIDs; and
 - warm hydration also succeeds with the local `meshoptimizer.dll` removed from
   the validated runtime output and restored afterward.
+
+The mixed warm probe intentionally remains open as a broader cache-closure
+case: its three static LOD payloads hydrated, but the animated source still
+parsed and built once. That does not invalidate the static exact-root warm
+proof or cold mixed-routing proof, but it is not recorded as a warm-cache pass.
 
 The stale-zero diagnostic bug was a Vulkan submission-order defect: a copy was
 submitted before its deferred producer. Meshlet evidence now snapshots in the
@@ -131,6 +141,19 @@ per-meshlet debug colors or material/final-frame parity. The experimental 10 Hz
 render cap did not resolve the reported system-mouse jitter while Sponza was
 rendering and was reverted; the validation settings remain uncapped.
 
+Mesh-task Hi-Z is now disabled at the task-program uniform boundary because the
+current shader uses a center-only sphere sample and non-conservative depth
+comparison. Frustum and cone culling remain enabled, and the traditional GPU
+Hi-Z path is unchanged. Re-enable mesh-task Hi-Z only after a conservative
+screen-space footprint/depth-range implementation is validated.
+
+The latest pulled build also exposed a Vulkan device-loss regression in
+worker-recorded command-chain secondaries. Fresh serial-owned command-chain
+recording retained secondary reuse and ran hundreds of frames beyond the old
+deterministic loss points. Worker recording is therefore quarantined for both
+graphics and non-graphics chains until its isolated recording/lifetime matrix
+passes; command chains themselves remain enabled.
+
 Standalone cache admission now hashes the full local source closure plus the
 canonical import/LOD/meshlet/topology settings. Changed LOD settings, a changed
 external glTF buffer, and a malformed Zstd payload were all rejected before
@@ -139,11 +162,11 @@ payload hashes for all three LODs. The runtime identity deliberately excludes
 local cooker provenance so compatible baked assets remain portable.
 
 Unchecked boxes remain intentionally open until their own evidence exists. The
-direct Sponza blockers are distinct per-meshlet colors and normal-Hi-Z visual
-parity from useful camera positions. Broader boundaries include the inactive
-model/prefab binary cache, the reimport/streaming/unload lifecycle matrix, and a
-real RenderDoc capture. RenderDoc could not attach an API or create an `.rdc`
-despite `rdc doctor` passing, so no event-level capture claim is made. The
+direct Sponza blockers are distinct per-meshlet colors, a conservative
+mesh-task Hi-Z implementation, and useful-camera visual parity. Broader
+boundaries include the inactive model/prefab binary cache and the
+reimport/streaming/unload lifecycle matrix. RenderDoc now proves the Vulkan EXT
+event, stages, and resident inputs, but not final-frame visual parity. The
 diagnostics profile is intrusive and is not a shipping performance baseline.
 Tests remain deferred under repository policy until the complete live
 integration gate is cleared explicitly.
@@ -243,13 +266,17 @@ integration gate is cleared explicitly.
   source parser and meshlet builder zero times.
 - [x] Rendering performs zero meshlet source-geometry hashing, disk reads,
   disk writes, native meshoptimizer calls, or cache publication.
-- [ ] GPUScene registration consumes an immutable validated payload and an O(1)
-  revision token; reimport and unload invalidate/reclaim the correct ranges.
-- [ ] Meshlet and traditional GPU bins coexist without dropping unsupported
-  pass, material, skinned, morph, streaming, or override draws.
+- [x] GPUScene registration consumes an immutable validated payload and an O(1)
+  revision token.
+- [ ] Live reimport and unload validation proves that payload replacement and
+  retirement invalidate/reclaim the correct ranges.
+- [x] Static opaque meshlet bins coexist with skinned/morph and unsupported-pass
+  traditional GPU bins without drops or duplicates in the mixed fixture.
+- [ ] Masked, override, transparent, missing-payload, and streaming coexistence
+  cases complete the broader routing matrix.
 - [x] `GpuMeshletZeroReadback` resolves to itself on the third-laptop RTX 4070
   for the supported static opaque fixture.
-- [ ] A RenderDoc capture contains the expected task and mesh stages and
+- [x] A RenderDoc capture contains the expected task and mesh stages and
   `vkCmdDrawMeshTasksIndirectCountEXT` with the correct indirect/count and
   meshlet buffers bound.
 - [x] Steady-state `GpuMeshletZeroReadback` reports zero GPU readback bytes,
@@ -299,8 +326,8 @@ integration gate is cleared explicitly.
 - [x] Lock this tracker as the prerequisite for resident draw-stream Phase 1.
 - [x] Choose one deterministic static imported model with multiple LODs, one
   skinned/morph model, and one mixed-pass scene for live acceptance.
-- [ ] Capture current cold-import builder count/time/allocations and the current
-  first-meshlet-pass repair count/time/allocations before changing behavior.
+- [x] Capture the third-laptop cold-import builder count/time/allocations and
+  prove that the first meshlet pass performs zero runtime repair work.
 - [x] Capture the current detailed Vulkan capability ladder in a diagnostic run,
   even if one or more fields require temporary local inspection.
 
@@ -478,9 +505,11 @@ Phase 5 exit gate:
 
 Phase 6 exit gate:
 
-- [ ] A mixed static/skinned/masked/override scene renders every draw exactly once.
-- [ ] Eligible opaque bins use mesh shaders while planned unsupported bins remain
-  on traditional GPU indirect with zero readback.
+- [x] The mixed static plus skinned/morph fixture renders every requested draw
+  exactly once.
+- [ ] Masked and override draws complete the mixed material/state matrix.
+- [x] Eligible opaque bins use mesh shaders while planned skinned/morph and
+  unsupported-pass bins remain on traditional GPU indirect with zero readback.
 - [x] Required-mode failure and preferred-mode routing are both explicit.
 
 ## Phase 7 — Vulkan EXT Capability Activation And Diagnostics
@@ -534,7 +563,7 @@ Phase 7 exit gate:
 - [x] Validate base/manual/generated LOD range lookup and transition expansion.
 - [x] Validate sequential stereo and Vulkan multiview culling/output semantics.
 - [x] Validate capacity growth and overflow behavior without silent task loss.
-- [ ] Confirm cached cold-cook descriptors produce the same GPUScene bytes and
+- [x] Confirm cached cold-cook descriptors produce the same GPUScene bytes and
   visible result as the pre-cache reference generation path.
 
 Phase 8 exit gate:
@@ -558,8 +587,9 @@ Complete live/runtime validation before requesting clearance for new test work.
 - [x] Load the persisted Sponza payload set without source parsing or native
   meshlet building and reach a real production Vulkan EXT mesh-task submission
   with the correct static vertex-atlas tier bound.
-- [ ] Capture Sponza at a useful visible scale with normal Hi-Z enabled from at
-  least three camera positions and compare it with the traditional reference.
+- [ ] Implement conservative mesh-task Hi-Z footprint/depth-range math, then
+  capture Sponza at a useful visible scale from at least three camera positions
+  and compare it with the traditional reference.
 - [ ] Confirm the production meshlet debug mode assigns visibly distinct,
   stable colors to neighboring Sponza meshlets. The latest observed result is
   visible but uniformly magenta, so this box is deliberately open.
@@ -570,17 +600,20 @@ Complete live/runtime validation before requesting clearance for new test work.
 - [ ] Run static, skinned, morph, mixed-pass, LOD transition, stereo/multiview,
   reimport, hot reload, streaming, unload/reload, and capacity-overflow scenarios.
 - [x] Run `rdc doctor` before Vulkan capture.
-- [ ] Capture a real meshlet frame into the run root's `renderdoc/` directory.
-- [ ] Follow an open-work-close RenderDoc session; inspect `info`, passes, bounded
+- [x] Capture a real meshlet frame into the run root's `renderdoc/` directory.
+- [x] Follow an open-work-close RenderDoc session; inspect `info`, passes, bounded
   draw/event lists, pipeline state, task/mesh shaders, and bindings, export the
   relevant render targets, visually inspect the PNGs, and run `rdc close`.
-- [ ] Prove the captured event uses `vkCmdDrawMeshTasksIndirectCountEXT`, the
+- [x] Prove the captured event uses `vkCmdDrawMeshTasksIndirectCountEXT`, the
   expected task/mesh stages, GPU-written indirect/count buffers, resident meshlet
   streams, material table, transforms, and correct attachment state.
 - [ ] Compare final framebuffer and suspicious intermediate outputs against the
   traditional zero-readback reference from at least three camera positions.
 - [ ] Run steady-state zero-readback, render-hot-path allocation, buffer-residency,
   churn/compaction, and dense-scene performance measurements.
+- [ ] Diagnose the worker-recorded command-chain device-loss root cause and
+  re-enable parallel recording only after graphics/non-graphics lifetime and
+  submission validation passes; keep the current serial-owner quarantine until then.
 - [ ] Record current third-laptop results and later matched original-laptop/
   desktop evidence without combining unmatched runs.
 - [ ] After live validation succeeds, ask for explicit user clearance before
@@ -617,13 +650,18 @@ following runtime gates are satisfied:
   second standalone load performs zero builder calls.
 - [x] Rendering performs no meshlet cooking, source hashing, disk access, or
   cache publication.
-- [ ] Missing and unsupported meshlet draws remain visible through explicit
-  traditional zero-readback bins; no selected meshlet pass silently drops work.
+- [x] The static plus skinned/morph mixed fixture keeps unsupported draws visible
+  through explicit traditional zero-readback bins with exact requested/consumed
+  accounting.
+- [ ] Missing-payload, masked, override, transparent, and streaming cases prove
+  the same no-drop contract.
 - [x] The third-laptop static opaque fixture resolves to real
   `GpuMeshletZeroReadback` and maintains the zero-readback/no-CPU-fallback
   contract.
-- [ ] RenderDoc proves EXT task/mesh stages and indirect-count submission with
-  correct resident inputs and visual output.
+- [x] RenderDoc proves EXT task/mesh stages and indirect-count submission with
+  correct resident inputs.
+- [ ] RenderDoc/MCP comparison proves final visual output parity from useful
+  camera positions.
 - [x] Reimport, unload, streaming, and payload replacement have a bounded,
   generation-safe GPUScene range lifetime.
 - [x] Capability and eligibility diagnostics retain one exact primary reason for

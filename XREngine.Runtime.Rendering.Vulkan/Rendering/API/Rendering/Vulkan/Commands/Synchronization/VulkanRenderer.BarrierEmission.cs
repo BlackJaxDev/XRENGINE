@@ -1183,6 +1183,7 @@ namespace XREngine.Rendering.Vulkan
                 {
                     EVulkanPrimaryPlanNodeKind.MeshDraw => ops.GetMeshDraw(i).Draw.ProgramBindingSnapshot,
                     EVulkanPrimaryPlanNodeKind.IndirectDraw => ops.GetIndirectDraw(i).Draw.ProgramBindingSnapshot,
+                    EVulkanPrimaryPlanNodeKind.MeshTaskDispatchIndirectCount => ops.GetMeshTask(i).ProgramBindingSnapshot,
                     EVulkanPrimaryPlanNodeKind.ComputeDispatch => ops.GetComputeDispatch(i).Snapshot,
                     EVulkanPrimaryPlanNodeKind.ComputeDispatchIndirect => ops.GetComputeDispatchIndirect(i).Snapshot,
                     _ => null,

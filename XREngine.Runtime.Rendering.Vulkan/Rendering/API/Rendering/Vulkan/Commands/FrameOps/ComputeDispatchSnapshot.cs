@@ -106,6 +106,24 @@ internal sealed class ComputeDispatchSnapshot
     internal VulkanBindingFrequencyGenerations TypedPublicationGenerations
         { get; private set; }
 
+    /// <summary>
+    /// Returns a stable nonzero key for descriptor and auto-uniform storage that
+    /// may be shared only by snapshots with identical values and resources.
+    /// Mesh-task atlas-tier submissions use this key so later tier recording
+    /// cannot overwrite an earlier command's descriptor-backed uniforms.
+    /// </summary>
+    internal ulong ComputeReusableDescriptorBindingKey()
+    {
+        FrameOpSignatureHasher hash = new();
+        hash.Add(DescriptorSetLayoutSignature);
+        hash.Add(RuntimeUniformValueSignature);
+        hash.Add(PersistentEngineUniformSignature);
+        hash.Add(MutableLegacyUniformValueSignature);
+        hash.Add(PersistentEngineResourceSignature);
+        ulong value = hash.ToHash();
+        return value == 0UL ? 1UL : value;
+    }
+
     public ComputeDispatchSnapshot(
         Dictionary<string, ProgramUniformValue> uniforms,
         Dictionary<uint, XRTexture> samplers,

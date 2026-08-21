@@ -17,7 +17,7 @@ internal readonly record struct IndirectDrawPayload(VkDataBuffer IndirectBuffer,
 internal readonly record struct MeshTaskDispatchIndirectCountPayload(VkRenderProgram Program, ulong ProgramLinkGeneration, ComputeDispatchSnapshot ProgramBindingSnapshot, VulkanMeshProducerSnapshot ProducerSnapshot, Pipeline Pipeline, VkDataBuffer IndirectBuffer, VkDataBuffer CountBuffer, uint MaxDrawCount, uint Stride, nuint ByteOffset, nuint CountByteOffset, VulkanBindlessMaterialDescriptorBinding? BindlessMaterialTextures);
 internal readonly record struct ComputeDispatchPayload(VkRenderProgram Program, uint GroupsX, uint GroupsY, uint GroupsZ, ComputeDispatchSnapshot Snapshot);
 internal readonly record struct ComputeDispatchIndirectPayload(VkRenderProgram Program, ComputeDispatchSnapshot Snapshot, VkDataBuffer ArgumentOwner, Buffer ArgumentBuffer, ulong ArgumentOffset, string Label);
-internal readonly record struct BufferCopyPayload(VkDataBuffer SourceOwner, Buffer SourceBuffer, ulong SourceOffset, VkDataBuffer DestinationOwner, Buffer DestinationBuffer, ulong DestinationOffset, ulong ByteCount, string Label);
+internal readonly record struct BufferCopyPayload(VkDataBuffer SourceOwner, Buffer SourceBuffer, ulong SourceOffset, VkDataBuffer DestinationOwner, Buffer DestinationBuffer, ulong DestinationOffset, ulong ByteCount, bool RequireGpuWriteVisibility, GpuDiagnosticSnapshotReceipt? DiagnosticReceipt, string Label);
 internal readonly record struct SubmissionMarkerPayload(VulkanTimelineGpuFence Fence, string Label);
 internal readonly record struct MemoryBarrierPayload(EMemoryBarrierMask Mask);
 internal readonly record struct PublishFramebufferPayload(XRFrameBuffer FrameBuffer);

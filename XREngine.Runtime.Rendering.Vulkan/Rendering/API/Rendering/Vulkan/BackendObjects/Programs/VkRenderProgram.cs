@@ -66,7 +66,7 @@ internal unsafe partial class VkRenderProgram(
         new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, byte> _computeWarnings = new(StringComparer.Ordinal);
     private readonly Dictionary<ComputeUniformBufferKey, ComputeUniformBuffer> _computeUniformBuffers = new();
-    private readonly Dictionary<(uint ImageIndex, ulong BindingKey), ulong>
+    private readonly Dictionary<(uint ImageIndex, ulong SchemaFingerprint, ulong BindingKey), ulong>
         _reusableComputeDescriptorResourceSignatures = [];
     private Pipeline _computePipeline;
     private DescriptorHeapProgramLayout? _descriptorHeapLayout;

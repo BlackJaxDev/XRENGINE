@@ -413,7 +413,7 @@ namespace XREngine.Rendering.Vulkan
                     CreateProgramRecordingRequest(commandBuffer),
                     imageIndex,
                     op.ProgramBindingSnapshot,
-                    0,
+                    op.ProgramBindingSnapshot.ComputeReusableDescriptorBindingKey(),
                     PipelineBindPoint.Graphics,
                     out _,
                     out _,

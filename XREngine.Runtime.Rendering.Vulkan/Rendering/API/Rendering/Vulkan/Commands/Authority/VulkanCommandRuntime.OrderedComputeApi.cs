@@ -70,6 +70,8 @@ internal sealed partial class VulkanCommandRuntime
         nint destinationOffset,
         nuint byteCount,
         string label,
+        bool requireGpuWriteVisibility,
+        GpuDiagnosticSnapshotReceipt? diagnosticReceipt,
         int currentPassIndex,
         in FrameOpContext context,
         bool allowSynchronousUpload,
@@ -114,6 +116,8 @@ internal sealed partial class VulkanCommandRuntime
                 (ulong)byteCount,
                 passIndex,
                 label,
+                requireGpuWriteVisibility,
+                diagnosticReceipt,
                 context);
     }
 
@@ -300,11 +304,13 @@ internal sealed partial class VulkanCommandRuntime
     internal ERendererComputeEnqueueStatus EnqueueBufferCopy(
         VulkanFrameOperationQueue queue, VkDataBuffer sourceOwner, Buffer source, ulong sourceOffset,
         VkDataBuffer destinationOwner, Buffer destination, ulong destinationOffset, ulong byteCount,
-        int passIndex, string label, in FrameOpContext context)
+        int passIndex, string label, bool requireGpuWriteVisibility,
+        GpuDiagnosticSnapshotReceipt? diagnosticReceipt, in FrameOpContext context)
     {
         ERendererComputeEnqueueStatus status = VulkanOrderedComputeProducer.TryCreateBufferCopy(
             sourceOwner, source, sourceOffset, destinationOwner, destination, destinationOffset,
-            byteCount, passIndex, label, context, out BufferCopyOp? operation);
+            byteCount, passIndex, label, requireGpuWriteVisibility, diagnosticReceipt, context,
+            out BufferCopyOp? operation);
         if (operation is not null)
             queue.EnqueuePrepared(VulkanFrameOperationSemantics.Prepare(operation, passIndex));
         return status;

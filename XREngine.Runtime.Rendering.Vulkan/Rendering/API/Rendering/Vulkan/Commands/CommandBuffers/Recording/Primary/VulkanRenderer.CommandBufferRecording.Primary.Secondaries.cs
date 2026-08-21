@@ -1018,7 +1018,11 @@ namespace XREngine.Rendering.Vulkan
                         chain.RecordedUniformSlotSignature != currentUniformSlotSignature;
                     bool benchmarkForcedRerecord =
                         CommandChainBenchmarkForceRerecord;
+                    bool workerOwnedSecondaryRequiresMigration =
+                        CommandChainWorkerRecordingQuarantined &&
+                        chain.RecordedArtifact.WorkerArenaOwner is not null;
                     bool secondaryNeedsRecording =
+                        workerOwnedSecondaryRequiresMigration ||
                         ScheduledCommandChainSecondaryNeedsRecording(
                             chain,
                             inheritedDynamicRendering,
@@ -1035,6 +1039,8 @@ namespace XREngine.Rendering.Vulkan
                         uniformSlotMappingChanged);
                     if (benchmarkForcedRerecord)
                         chain.DirtyReason |= CommandChainDirtyReason.BenchmarkForced;
+                    if (workerOwnedSecondaryRequiresMigration)
+                        chain.DirtyReason |= CommandChainDirtyReason.SecondaryCommandBufferInvalid;
                     if (uniformSlotMappingChanged && chain.SecondaryCommandBuffer.Handle != 0)
                     {
                         // Dynamic UBO offsets are baked into the secondary.
@@ -1394,6 +1400,7 @@ namespace XREngine.Rendering.Vulkan
                     workerEligibleJobCount,
                     workerEligibleOperationCount,
                     true,
+                    forceSerial: CommandChainWorkerRecordingQuarantined,
                     recordingState.FrameDataImageIndex,
                     out CommandChainRecordingWorkerState[] workers,
                     out int workerCount,

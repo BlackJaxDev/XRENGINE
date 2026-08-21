@@ -1538,8 +1538,35 @@ internal sealed partial class VulkanCommandRuntime
 
     internal unsafe void RecordBufferCopyPayload(CommandBuffer commandBuffer, in BufferCopyPayload operation)
     {
+        if (operation.RequireGpuWriteVisibility)
+            EmitGpuWritesVisibleForTransferRead(commandBuffer);
+
         BufferCopy copy = new() { SrcOffset = operation.SourceOffset, DstOffset = operation.DestinationOffset, Size = operation.ByteCount };
         CmdCopyBufferTracked(commandBuffer, operation.SourceBuffer, operation.DestinationBuffer, 1, &copy);
+        operation.DiagnosticReceipt?.MarkRecorded();
+    }
+
+    private unsafe void EmitGpuWritesVisibleForTransferRead(CommandBuffer commandBuffer)
+    {
+        MemoryBarrier barrier = new()
+        {
+            SType = StructureType.MemoryBarrier,
+            SrcAccessMask = AccessFlags.ShaderWriteBit | AccessFlags.TransferWriteBit,
+            DstAccessMask = AccessFlags.TransferReadBit,
+        };
+        CmdPipelineBarrierTracked(
+            commandBuffer,
+            PipelineStageFlags.AllGraphicsBit |
+            PipelineStageFlags.ComputeShaderBit |
+            PipelineStageFlags.TransferBit,
+            PipelineStageFlags.TransferBit,
+            DependencyFlags.None,
+            1,
+            &barrier,
+            0,
+            null,
+            0,
+            null);
     }
 
     internal void RecordDlssUpscalePayload(CommandBuffer commandBuffer, in DlssUpscalePayload payload)

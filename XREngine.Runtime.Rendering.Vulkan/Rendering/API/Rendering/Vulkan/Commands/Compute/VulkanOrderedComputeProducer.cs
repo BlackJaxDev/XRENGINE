@@ -68,6 +68,8 @@ internal static unsafe class VulkanOrderedComputeProducer
         ulong byteCount,
         int passIndex,
         string label,
+        bool requireGpuWriteVisibility,
+        GpuDiagnosticSnapshotReceipt? diagnosticReceipt,
         in FrameOpContext context,
         out BufferCopyOp? operation)
     {
@@ -90,6 +92,8 @@ internal static unsafe class VulkanOrderedComputeProducer
             destinationBuffer,
             destinationOffset,
             byteCount,
+            requireGpuWriteVisibility,
+            diagnosticReceipt,
             label,
             context);
         return ERendererComputeEnqueueStatus.Enqueued;
