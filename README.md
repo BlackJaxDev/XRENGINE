@@ -247,10 +247,10 @@ Good starting points:
 
 ## Star History
 
-<a href="https://www.star-history.com/#BlackJaxDev/XRENGINE&type=date&legend=top-left">
+<a href="https://www.star-history.com/?repos=BlackJaxDev%2FXRENGINE&type=date&legend=bottom-right">
  <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=BlackJaxDev/XRENGINE&type=date&theme=dark&legend=top-left" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=BlackJaxDev/XRENGINE&type=date&legend=top-left" />
-   <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=BlackJaxDev/XRENGINE&type=date&legend=top-left" />
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=BlackJaxDev/XRENGINE&type=date&theme=dark&legend=bottom-right&sealed_token=D7R46mONo7gZYHY3vlR7q4Z7j1xkE3OpxGGjZBvv611QVZobmuws0Q7wJo_TqM8Tl0aeq9H6dSkip5GbJmFCMEqxOBgcYVnL_haGKPgDyWixilMoaEn5hBhKkvGZgl2NIP-304hw62PFwapo_Y8XtZWSShm2eEttfezVBr5jfgVIea9vyelQpVwCG5sT" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=BlackJaxDev/XRENGINE&type=date&legend=bottom-right&sealed_token=D7R46mONo7gZYHY3vlR7q4Z7j1xkE3OpxGGjZBvv611QVZobmuws0Q7wJo_TqM8Tl0aeq9H6dSkip5GbJmFCMEqxOBgcYVnL_haGKPgDyWixilMoaEn5hBhKkvGZgl2NIP-304hw62PFwapo_Y8XtZWSShm2eEttfezVBr5jfgVIea9vyelQpVwCG5sT" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=BlackJaxDev/XRENGINE&type=date&legend=bottom-right&sealed_token=D7R46mONo7gZYHY3vlR7q4Z7j1xkE3OpxGGjZBvv611QVZobmuws0Q7wJo_TqM8Tl0aeq9H6dSkip5GbJmFCMEqxOBgcYVnL_haGKPgDyWixilMoaEn5hBhKkvGZgl2NIP-304hw62PFwapo_Y8XtZWSShm2eEttfezVBr5jfgVIea9vyelQpVwCG5sT" />
  </picture>
 </a>
