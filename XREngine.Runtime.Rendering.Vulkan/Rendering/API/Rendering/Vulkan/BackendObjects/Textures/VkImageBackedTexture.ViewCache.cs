@@ -317,6 +317,90 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
         }
     }
 
+    /// <summary>
+    /// Returns a cached view covering exactly one storage-image mip and either
+    /// one layer or the complete layered range requested by the binding.
+    /// </summary>
+    public ImageView GetStorageDescriptorView(int mipLevel, bool layered, int layerIndex)
+    {
+        lock (_imageStateLock)
+        {
+            RefreshPhysicalGroupImageIfStaleNoLock();
+            if (_image.Handle == 0)
+            {
+                AcquireImageHandle();
+                RefreshPhysicalGroupImageIfStaleNoLock();
+            }
+
+            if (_image.Handle == 0 || !RefreshPrimaryDescriptorViewForUseNoLock())
+                return default;
+
+            AttachmentViewKey key = BuildStorageDescriptorViewKey(mipLevel, layered, layerIndex);
+            AttachmentViewKey primaryKey = NormalizeAttachmentViewKey(new AttachmentViewKey(
+                0u,
+                ResolvedMipLevels,
+                0u,
+                ResolvedArrayLayers,
+                DefaultViewType,
+                AspectFlags));
+            if (key == primaryKey)
+                return _view;
+
+            if (_attachmentViews.TryGetValue(key, out ImageView cached) &&
+                (!IsImageViewBackedByCurrentImage(cached) ||
+                 !BackendContext.Resources.Images.IsAvailableForDescriptor(cached)))
+            {
+                _attachmentViews.Remove(key);
+                cached = default;
+            }
+
+            if (cached.Handle != 0)
+                return cached;
+
+            cached = CreateView(key);
+            if (cached.Handle == 0)
+                return default;
+
+            _attachmentViews[key] = cached;
+            PublishDescriptorViewRefreshNoLock();
+            return cached;
+        }
+    }
+
+    private AttachmentViewKey BuildStorageDescriptorViewKey(int mipLevel, bool layered, int layerIndex)
+    {
+        uint baseMip = ClampAttachmentMipLevel(mipLevel);
+        uint resolvedLayers = Math.Max(ResolvedArrayLayers, 1u);
+        if (TextureImageType == ImageType.Type3D)
+            return NormalizeAttachmentViewKey(new AttachmentViewKey(
+                baseMip,
+                1u,
+                0u,
+                1u,
+                ImageViewType.Type3D,
+                AspectFlags));
+
+        if (layered)
+            return NormalizeAttachmentViewKey(new AttachmentViewKey(
+                baseMip,
+                1u,
+                0u,
+                resolvedLayers,
+                DefaultViewType,
+                AspectFlags));
+
+        ImageViewType singleLayerViewType = TextureImageType == ImageType.Type1D
+            ? ImageViewType.Type1D
+            : ImageViewType.Type2D;
+        return NormalizeAttachmentViewKey(new AttachmentViewKey(
+            baseMip,
+            1u,
+            ClampAttachmentLayerIndex(layerIndex),
+            1u,
+            singleLayerViewType,
+            AspectFlags));
+    }
+
     private bool IsImageViewBackedByCurrentImage(ImageView view)
     {
         if (view.Handle == 0 || _image.Handle == 0)

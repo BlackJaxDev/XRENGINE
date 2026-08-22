@@ -128,6 +128,8 @@ uniform float HiZMipCount;
 uniform float HiZDepthBias;
 uniform uint HiZUsesReversedZ;
 uniform uint HiZValid;
+uniform int ClipDepthRange;
+uniform int FramebufferTextureYDirection;
 uniform uint EnableHiZOcclusion;
 uniform uint EnableFrustumCulling;
 uniform uint EnableConeCulling;
@@ -143,6 +145,9 @@ uniform uint AllowedStateClassMask;
 uniform uint PassFlags;
 uniform uint StatsEnabled;
 uniform uint ActiveAtlasTier;
+
+const int HIZ_MAX_SAMPLE_TEXELS = 8;
+const int HIZ_MAX_MIP_SEARCH = 32;
 
 uint SafeBit(uint value)
 {
@@ -235,6 +240,162 @@ bool ConeBackfaceCulled(in GpuMeshletDescriptor meshlet, uint transformID)
     return dot(viewDirection, worldAxis) >= meshlet.Cone.w;
 }
 
+bool IsFiniteFloat(float value)
+{
+    return !isnan(value) && !isinf(value);
+}
+
+bool TryProjectConservativeSphereBounds(
+    in vec4 sphere,
+    out vec2 uvMin,
+    out vec2 uvMax,
+    out float nearestDepth)
+{
+    uvMin = vec2(1.0);
+    uvMax = vec2(0.0);
+    nearestDepth = HiZUsesReversedZ != 0u ? 0.0 : 1.0;
+
+    if (!IsFiniteFloat(sphere.w) || sphere.w < 0.0 ||
+        any(isnan(sphere.xyz)) || any(isinf(sphere.xyz)))
+    {
+        return false;
+    }
+
+    vec3 boundsMin = sphere.xyz - vec3(sphere.w);
+    vec3 boundsMax = sphere.xyz + vec3(sphere.w);
+    vec3 corners[8] = vec3[8](
+        vec3(boundsMin.x, boundsMin.y, boundsMin.z),
+        vec3(boundsMax.x, boundsMin.y, boundsMin.z),
+        vec3(boundsMin.x, boundsMax.y, boundsMin.z),
+        vec3(boundsMax.x, boundsMax.y, boundsMin.z),
+        vec3(boundsMin.x, boundsMin.y, boundsMax.z),
+        vec3(boundsMax.x, boundsMin.y, boundsMax.z),
+        vec3(boundsMin.x, boundsMax.y, boundsMax.z),
+        vec3(boundsMax.x, boundsMax.y, boundsMax.z));
+
+    for (int i = 0; i < 8; ++i)
+    {
+        vec4 clip = HiZViewProjectionMatrix * vec4(corners[i], 1.0);
+        if (any(isnan(clip)) || any(isinf(clip)) || clip.w <= 0.000001)
+            return false;
+
+        vec3 ndc = clip.xyz / clip.w;
+        if (any(isnan(ndc)) || any(isinf(ndc)))
+            return false;
+
+        vec2 uv = ndc.xy * 0.5 + 0.5;
+        if (FramebufferTextureYDirection == 1)
+            uv.y = 1.0 - uv.y;
+
+        // A clipped footprint cannot be proven occluded by this single-view
+        // pyramid. Keeping it visible also covers near-plane crossings.
+        if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0))))
+            return false;
+
+        float depth = ClipDepthRange == 0
+            ? ndc.z
+            : ndc.z * 0.5 + 0.5;
+        if (!IsFiniteFloat(depth) || depth < 0.0 || depth > 1.0)
+            return false;
+
+        uvMin = min(uvMin, uv);
+        uvMax = max(uvMax, uv);
+        nearestDepth = HiZUsesReversedZ != 0u
+            ? max(nearestDepth, depth)
+            : min(nearestDepth, depth);
+    }
+
+    return true;
+}
+
+bool TrySelectHiZFootprint(
+    in vec2 uvMin,
+    in vec2 uvMax,
+    out int selectedMip,
+    out ivec2 texelMin,
+    out ivec2 texelMax)
+{
+    selectedMip = 0;
+    texelMin = ivec2(0);
+    texelMax = ivec2(0);
+
+    int textureMipCount = textureQueryLevels(HiZDepth);
+    int declaredMipCount = int(floor(HiZMipCount + 0.5));
+    if (textureMipCount <= 0 || declaredMipCount <= 0 || declaredMipCount > textureMipCount)
+        return false;
+
+    ivec2 baseSize = textureSize(HiZDepth, 0);
+    ivec2 declaredSize = ivec2(floor(HiZSize + vec2(0.5)));
+    if (any(lessThanEqual(baseSize, ivec2(0))) || any(notEqual(baseSize, declaredSize)))
+        return false;
+
+    int maxMip = declaredMipCount - 1;
+    vec2 footprintPixels = max((uvMax - uvMin) * vec2(baseSize), vec2(1.0));
+    float maxFootprintDimension = max(footprintPixels.x, footprintPixels.y);
+    float targetDimension = max(
+        maxFootprintDimension / float(HIZ_MAX_SAMPLE_TEXELS - 1),
+        1.0);
+    int candidateMip = int(clamp(ceil(log2(targetDimension)), 0.0, float(maxMip)));
+
+    for (int attempt = 0; attempt < HIZ_MAX_MIP_SEARCH; ++attempt)
+    {
+        if (candidateMip > maxMip)
+            return false;
+
+        ivec2 mipSize = textureSize(HiZDepth, candidateMip);
+        if (any(lessThanEqual(mipSize, ivec2(0))))
+            return false;
+
+        ivec2 candidateMin = ivec2(floor(uvMin * vec2(mipSize)));
+        ivec2 candidateMax = ivec2(floor(uvMax * vec2(mipSize)));
+        candidateMin = clamp(candidateMin, ivec2(0), mipSize - ivec2(1));
+        candidateMax = clamp(candidateMax, ivec2(0), mipSize - ivec2(1));
+        ivec2 span = candidateMax - candidateMin + ivec2(1);
+        if (span.x <= HIZ_MAX_SAMPLE_TEXELS && span.y <= HIZ_MAX_SAMPLE_TEXELS)
+        {
+            selectedMip = candidateMip;
+            texelMin = candidateMin;
+            texelMax = candidateMax;
+            return true;
+        }
+
+        ++candidateMip;
+    }
+
+    return false;
+}
+
+bool TrySampleHiZFootprint(
+    int mip,
+    in ivec2 texelMin,
+    in ivec2 texelMax,
+    out float hiZDepth)
+{
+    hiZDepth = HiZUsesReversedZ != 0u ? 1.0 : 0.0;
+    ivec2 span = texelMax - texelMin + ivec2(1);
+    for (int y = 0; y < HIZ_MAX_SAMPLE_TEXELS; ++y)
+    {
+        if (y >= span.y)
+            break;
+
+        for (int x = 0; x < HIZ_MAX_SAMPLE_TEXELS; ++x)
+        {
+            if (x >= span.x)
+                break;
+
+            float sampleDepth = texelFetch(HiZDepth, texelMin + ivec2(x, y), mip).r;
+            if (!IsFiniteFloat(sampleDepth) || sampleDepth < 0.0 || sampleDepth > 1.0)
+                return false;
+
+            hiZDepth = HiZUsesReversedZ != 0u
+                ? min(hiZDepth, sampleDepth)
+                : max(hiZDepth, sampleDepth);
+        }
+    }
+
+    return true;
+}
+
 bool HiZOccluded(vec4 sphere)
 {
     if (EnableHiZOcclusion == 0u || HiZValid == 0u)
@@ -244,23 +405,28 @@ bool HiZOccluded(vec4 sphere)
     if (stereoActive && EnableStereoHiZ == 0u)
         return false;
 
-    vec4 clip = HiZViewProjectionMatrix * vec4(sphere.xyz, 1.0);
-    if (clip.w <= 0.0)
+    if (!IsFiniteFloat(HiZDepthBias) || HiZDepthBias < 0.0)
         return false;
 
-    vec3 ndc = clip.xyz / clip.w;
-    vec2 uv = ndc.xy * 0.5 + 0.5;
-    if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0))))
+    vec2 uvMin;
+    vec2 uvMax;
+    float nearestDepth;
+    if (!TryProjectConservativeSphereBounds(sphere, uvMin, uvMax, nearestDepth))
         return false;
 
-    float depth = ndc.z * 0.5 + 0.5;
-    float radiusPixels = max(sphere.w / max(abs(clip.w), 1e-4) * max(HiZSize.x, HiZSize.y), 1.0);
-    float mip = clamp(log2(radiusPixels), 0.0, max(HiZMipCount - 1.0, 0.0));
-    float hizDepth = textureLod(HiZDepth, uv, mip).r;
+    int mip;
+    ivec2 texelMin;
+    ivec2 texelMax;
+    if (!TrySelectHiZFootprint(uvMin, uvMax, mip, texelMin, texelMax))
+        return false;
+
+    float hiZDepth;
+    if (!TrySampleHiZFootprint(mip, texelMin, texelMax, hiZDepth))
+        return false;
 
     return HiZUsesReversedZ != 0u
-        ? depth + HiZDepthBias < hizDepth
-        : depth - HiZDepthBias > hizDepth;
+        ? nearestDepth + HiZDepthBias < hiZDepth
+        : nearestDepth - HiZDepthBias > hiZDepth;
 }
 
 void main()

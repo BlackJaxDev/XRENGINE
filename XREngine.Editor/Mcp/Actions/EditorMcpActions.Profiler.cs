@@ -4,7 +4,9 @@ using System.Linq;
 using System.Threading.Tasks;
 using XREngine;
 using XREngine.Data.Core;
+using XREngine.Data.Rendering;
 using XREngine.Rendering;
+using XREngine.Rendering.Commands;
 using XREngine.Rendering.Occlusion;
 using XREngine.Rendering.Vulkan;
 using McpCapability = XREngine.Runtime.Automation.Mcp.McpCapability;
@@ -72,6 +74,9 @@ namespace XREngine.Editor.Mcp
         public static Task<McpToolResponse> GetRenderProfilerStatsAsync(McpToolContext context)
         {
             VulkanFrameTelemetryPublication vulkanFrame = VulkanStats.LatestVulkanFrameTelemetry;
+            var gpuScene = context.WorldInstance.VisualScene.GPUCommands;
+            GpuMeshletEligibilitySnapshot meshletEligibility =
+                gpuScene.CaptureMeshletEligibilitySnapshot((int)EDefaultRenderPass.OpaqueDeferred);
             return Task.FromResult(new McpToolResponse(
                 "Retrieved render profiler stats.",
                 new
@@ -108,14 +113,52 @@ namespace XREngine.Editor.Mcp
                         status = GpuPipelineStats.GpuRenderPipelineStatusMessage,
                         frame_ms = GpuPipelineStats.GpuRenderPipelineFrameMs,
                     },
+                    submission_accounting = new
+                    {
+                        requested_draws = VulkanStats.VulkanRequestedDraws,
+                        culled_draws = VulkanStats.VulkanCulledDraws,
+                        emitted_indirect_draws = VulkanStats.VulkanEmittedIndirectDraws,
+                        consumed_draws = VulkanStats.VulkanConsumedDraws,
+                        overflow_count = VulkanStats.VulkanOverflowCount,
+                        cpu_fallback_events = RuntimeEngine.Rendering.Stats.GpuFallback.GpuCpuFallbackEvents,
+                        cpu_fallback_recovered_commands = RuntimeEngine.Rendering.Stats.GpuFallback.GpuCpuFallbackRecoveredCommands,
+                        forbidden_fallback_events = RuntimeEngine.Rendering.Stats.GpuFallback.ForbiddenGpuFallbackEvents,
+                    },
                     scene = new
                     {
                         tracked_renderables = context.WorldInstance.VisualScene.Renderables.Count,
                         gpu_commands = new
                         {
-                            total_count = context.WorldInstance.VisualScene.GPUCommands.TotalCommandCount,
-                            allocated_capacity = context.WorldInstance.VisualScene.GPUCommands.AllocatedMaxCommandCount,
-                            skinned_count = context.WorldInstance.VisualScene.GPUCommands.SkinnedCommandCount,
+                            total_count = gpuScene.TotalCommandCount,
+                            allocated_capacity = gpuScene.AllocatedMaxCommandCount,
+                            skinned_count = gpuScene.SkinnedCommandCount,
+                            meshlet_eligibility = new
+                            {
+                                total_commands = meshletEligibility.TotalCommands,
+                                active_commands = meshletEligibility.ActiveCommands,
+                                opaque_deferred_commands = meshletEligibility.PassCommands,
+                                eligible_commands = meshletEligibility.EligibleCommands,
+                                eligible_meshlets = meshletEligibility.EligibleMeshlets,
+                                missing_metadata = meshletEligibility.MissingMetadata,
+                                rejected_instance_count = meshletEligibility.RejectedInstanceCount,
+                                rejected_skin = meshletEligibility.RejectedSkin,
+                                rejected_state_class = meshletEligibility.RejectedStateClass,
+                                rejected_flags = meshletEligibility.RejectedFlags,
+                                missing_meshlet_range = meshletEligibility.MissingMeshletRange,
+                                flag_breakdown = new
+                                {
+                                    transparent = meshletEligibility.TransparentFlags,
+                                    skinned = meshletEligibility.SkinnedFlags,
+                                    dynamic_transform = meshletEligibility.DynamicTransformFlags,
+                                    double_sided = meshletEligibility.DoubleSidedFlags,
+                                    instanced = meshletEligibility.InstancedFlags,
+                                    animated = meshletEligibility.AnimatedFlags,
+                                    blend_shapes = meshletEligibility.BlendShapeFlags,
+                                    custom_shader = meshletEligibility.CustomShaderFlags,
+                                    cpu_fallback_only = meshletEligibility.CpuFallbackOnlyFlags,
+                                    non_canonical_raster_state = meshletEligibility.NonCanonicalRasterStateFlags,
+                                },
+                            },
                         },
                     },
                     gpu_driven = new
@@ -181,6 +224,13 @@ namespace XREngine.Editor.Mcp
                         dispatch_groups = RuntimeEngine.Rendering.Stats.GpuMeshlets.DispatchGroupCount,
                         mapped_bytes = RuntimeEngine.Rendering.Stats.GpuMeshlets.MappedBytes,
                         task_records_emitted = RuntimeEngine.Rendering.Stats.GpuMeshlets.GpuMeshletTaskRecordsEmitted,
+                        task_records_frustum_culled = RuntimeEngine.Rendering.Stats.GpuMeshlets.GpuMeshletTaskRecordsFrustumCulled,
+                        task_records_cone_culled = RuntimeEngine.Rendering.Stats.GpuMeshlets.GpuMeshletTaskRecordsConeCulled,
+                        task_records_hiz_culled = RuntimeEngine.Rendering.Stats.GpuMeshlets.GpuMeshletTaskRecordsHiZCulled,
+                        latest_task_records_emitted = RuntimeEngine.Rendering.Stats.GpuMeshlets.LatestGpuMeshletTaskRecordsEmitted,
+                        latest_task_records_frustum_culled = RuntimeEngine.Rendering.Stats.GpuMeshlets.LatestGpuMeshletTaskRecordsFrustumCulled,
+                        latest_task_records_cone_culled = RuntimeEngine.Rendering.Stats.GpuMeshlets.LatestGpuMeshletTaskRecordsConeCulled,
+                        latest_task_records_hiz_culled = RuntimeEngine.Rendering.Stats.GpuMeshlets.LatestGpuMeshletTaskRecordsHiZCulled,
                         delayed_dispatch_group_count = RuntimeEngine.Rendering.Stats.GpuMeshlets.DelayedDispatchGroupCount,
                         diagnostic_readback_bytes = RuntimeEngine.Rendering.Stats.GpuMeshlets.DiagnosticReadbackBytes,
                         overflow_count = RuntimeEngine.Rendering.Stats.GpuMeshlets.GpuMeshletExpansionOverflowCount,

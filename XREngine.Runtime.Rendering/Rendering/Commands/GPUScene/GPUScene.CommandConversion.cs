@@ -306,12 +306,22 @@ namespace XREngine.Rendering.Commands
             float sx = x.LengthSquared();
             float sy = y.LengthSquared();
             float sz = z.LengthSquared();
-            const float tolerance = 0.0001f;
-            if (sx <= tolerance || sy <= tolerance || sz <= tolerance)
+            const float minimumAxisLengthSquared = 1.0e-12f;
+            const float relativeTolerance = 1.0e-4f;
+            if (!float.IsFinite(sx) || !float.IsFinite(sy) || !float.IsFinite(sz) ||
+                sx <= minimumAxisLengthSquared || sy <= minimumAxisLengthSquared || sz <= minimumAxisLengthSquared)
                 return false;
 
             float maxScale = Math.Max(sx, Math.Max(sy, sz));
-            if (Math.Abs(sx - sy) > maxScale * tolerance || Math.Abs(sx - sz) > maxScale * tolerance)
+            float tolerance = maxScale * relativeTolerance;
+            if (Math.Abs(sx - sy) > tolerance || Math.Abs(sx - sz) > tolerance)
+                return false;
+
+            // Equal axis lengths alone also admit shear. Cone axes can use the model
+            // matrix directly only when its basis remains orthogonal.
+            if (Math.Abs(Vector3.Dot(x, y)) > tolerance ||
+                Math.Abs(Vector3.Dot(x, z)) > tolerance ||
+                Math.Abs(Vector3.Dot(y, z)) > tolerance)
                 return false;
 
             return Vector3.Dot(Vector3.Cross(x, y), z) > 0.0f;

@@ -977,6 +977,20 @@ namespace XREngine.Rendering
             => ERendererComputeEnqueueStatus.Unsupported;
 
         /// <summary>
+        /// Attempts to enqueue an ordered GPU-side buffer copy in the active
+        /// render command stream. Callers remain responsible for publishing any
+        /// visibility barrier required by later shader or indirect consumers.
+        /// </summary>
+        public virtual ERendererComputeEnqueueStatus TryEnqueueGpuBufferCopy(
+            XRDataBuffer source,
+            nint sourceOffset,
+            XRDataBuffer destination,
+            nint destinationOffset,
+            nuint byteCount,
+            string label)
+            => ERendererComputeEnqueueStatus.Unsupported;
+
+        /// <summary>
         /// True when images returned by <see cref="GetScreenshotAsync"/> need a CPU-side
         /// vertical flip before being written in normal top-left image-file order.
         /// This is independent from framebuffer texture UV sampling direction.

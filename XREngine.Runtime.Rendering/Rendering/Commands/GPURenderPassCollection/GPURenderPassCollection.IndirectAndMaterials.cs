@@ -117,6 +117,7 @@ namespace XREngine.Rendering.Commands
             {
                 bool meshletPipelineReady = _renderManager.TrySealMeshletMaterialTablePipeline(
                     this,
+                    camera,
                     scene,
                     RenderPass,
                     out string? readinessFailure);
@@ -132,6 +133,7 @@ namespace XREngine.Rendering.Commands
             {
                 _meshletEvidenceSnapshotFrameId = renderFrameId;
                 _meshletEvidenceSnapshotQueuedThisFrame = false;
+                _meshletEvidenceRefreshSnapshotQueuedThisFrame = false;
             }
             ResetCounters();
             resetStopwatch.Stop();
@@ -2461,20 +2463,34 @@ namespace XREngine.Rendering.Commands
 
         #region Diagnostics & Logging
 
-        internal bool TryQueueMeshletEvidenceSnapshot(AbstractRenderer renderer)
+        internal bool TryQueueMeshletEvidenceSnapshot(
+            AbstractRenderer renderer,
+            bool refreshExisting = false)
         {
             // A frame can render the same collection through multiple viewports.
             // Preserve the first direct meshlet submission so a later empty
-            // viewport cannot overwrite valid GPU evidence with zeros.
-            if (_meshletEvidenceSnapshotQueuedThisFrame)
+            // viewport cannot overwrite valid GPU evidence with zeros. A two-
+            // phase Hi-Z pass may also preserve its final producer because only
+            // that sample can contain task-level Hi-Z culls. Keep the two
+            // samples in distinct destinations so the late copy cannot erase
+            // phase-one evidence before its deferred readback executes.
+            ulong discardGeneration = renderer.GpuDiagnosticSnapshotDiscardGeneration;
+            if (_meshletEvidenceSnapshotQueuedThisFrame &&
+                _meshletEvidenceSnapshotDiscardGeneration != discardGeneration)
             {
-                if (_meshletEvidenceSnapshotDiscardGeneration == renderer.GpuDiagnosticSnapshotDiscardGeneration)
-                    return true;
-
                 // The backend rejected or abandoned the attempt that owned the
-                // first snapshot. Permit a same-frame retry, but keep the first
-                // accepted snapshot protected from later empty viewports.
+                // first snapshot. Permit a same-frame retry while keeping
+                // ordinary later empty viewports unable to replace accepted
+                // evidence.
                 _meshletEvidenceSnapshotQueuedThisFrame = false;
+                _meshletEvidenceRefreshSnapshotQueuedThisFrame = false;
+            }
+
+            bool queueRefresh = refreshExisting && _meshletEvidenceSnapshotQueuedThisFrame;
+            if (_meshletEvidenceSnapshotQueuedThisFrame &&
+                (!queueRefresh || _meshletEvidenceRefreshSnapshotQueuedThisFrame))
+            {
+                return true;
             }
 
             if (!_passMeshletEvidenceReadbacksEnabled ||
@@ -2482,42 +2498,71 @@ namespace XREngine.Rendering.Commands
                 _meshletDispatchIndirectBuffer is null ||
                 _meshletDispatchCountBuffer is null ||
                 _meshletStatsDiagnosticsSnapshotBuffer is null ||
-                _meshletDispatchDiagnosticsSnapshotBuffer is null)
+                _meshletDispatchDiagnosticsSnapshotBuffer is null ||
+                _meshletStatsDiagnosticsRefreshSnapshotBuffer is null ||
+                _meshletDispatchDiagnosticsRefreshSnapshotBuffer is null)
             {
                 return false;
             }
 
+            XRDataBuffer statsSnapshotBuffer = queueRefresh
+                ? _meshletStatsDiagnosticsRefreshSnapshotBuffer
+                : _meshletStatsDiagnosticsSnapshotBuffer;
+            XRDataBuffer dispatchSnapshotBuffer = queueRefresh
+                ? _meshletDispatchDiagnosticsRefreshSnapshotBuffer
+                : _meshletDispatchDiagnosticsSnapshotBuffer;
+            string statsSnapshotLabel = queueRefresh
+                ? "MeshletStatsDiagnosticsRefreshSnapshot"
+                : "MeshletStatsDiagnosticsSnapshot";
+            string dispatchSnapshotLabel = queueRefresh
+                ? "MeshletDispatchDiagnosticsRefreshSnapshot"
+                : "MeshletDispatchDiagnosticsSnapshot";
+            string dispatchCountSnapshotLabel = queueRefresh
+                ? "MeshletDispatchCountDiagnosticsRefreshSnapshot"
+                : "MeshletDispatchCountDiagnosticsSnapshot";
+
             bool statsQueued = renderer.TryEnqueueGpuDiagnosticBufferSnapshot(
                 _statsBuffer,
-                _meshletStatsDiagnosticsSnapshotBuffer,
+                statsSnapshotBuffer,
                 checked((nuint)GpuStatsLayout.FieldCount * sizeof(uint)),
-                "MeshletStatsDiagnosticsSnapshot");
+                statsSnapshotLabel);
             bool dispatchQueued = renderer.TryEnqueueGpuDiagnosticBufferSnapshot(
                 _meshletDispatchIndirectBuffer,
-                _meshletDispatchDiagnosticsSnapshotBuffer,
+                dispatchSnapshotBuffer,
                 checked((nuint)GPUMeshletLayout.MeshTaskIndirectCommandUIntCount * sizeof(uint)),
-                "MeshletDispatchDiagnosticsSnapshot");
+                dispatchSnapshotLabel);
             bool dispatchCountQueued = renderer.TryEnqueueGpuDiagnosticBufferSnapshot(
                 _meshletDispatchCountBuffer,
                 0,
-                _meshletDispatchDiagnosticsSnapshotBuffer,
+                dispatchSnapshotBuffer,
                 checked((nuint)GPUMeshletLayout.MeshTaskIndirectCommandUIntCount * sizeof(uint)),
                 sizeof(uint),
-                "MeshletDispatchCountDiagnosticsSnapshot");
+                dispatchCountSnapshotLabel);
             bool statsReadbackQueued = statsQueued && renderer.QueueGpuRenderStatsBufferReadback(
-                _meshletStatsDiagnosticsSnapshotBuffer,
+                statsSnapshotBuffer,
                 publishDraws: false,
                 publishTriangles: true);
             bool dispatchReadbackQueued = dispatchQueued && dispatchCountQueued && renderer.QueueGpuMeshletDispatchDiagnosticsReadback(
-                _meshletDispatchDiagnosticsSnapshotBuffer);
-            _meshletEvidenceSnapshotQueuedThisFrame = statsQueued &&
+                dispatchSnapshotBuffer);
+            bool snapshotQueued = statsQueued &&
                 dispatchQueued &&
                 dispatchCountQueued &&
                 statsReadbackQueued &&
                 dispatchReadbackQueued;
-            if (_meshletEvidenceSnapshotQueuedThisFrame)
-                _meshletEvidenceSnapshotDiscardGeneration = renderer.GpuDiagnosticSnapshotDiscardGeneration;
-            return _meshletEvidenceSnapshotQueuedThisFrame;
+            if (!snapshotQueued)
+                return false;
+
+            if (queueRefresh)
+            {
+                _meshletEvidenceRefreshSnapshotQueuedThisFrame = true;
+            }
+            else
+            {
+                _meshletEvidenceSnapshotQueuedThisFrame = true;
+                _meshletEvidenceSnapshotDiscardGeneration = discardGeneration;
+            }
+
+            return true;
         }
 
         private void QueueAsyncGpuTriangleStatsReadback()
@@ -2823,6 +2868,8 @@ namespace XREngine.Rendering.Commands
             _meshletExpansionOverflowFlagBuffer?.Dispose();
             _meshletStatsDiagnosticsSnapshotBuffer?.Dispose();
             _meshletDispatchDiagnosticsSnapshotBuffer?.Dispose();
+            _meshletStatsDiagnosticsRefreshSnapshotBuffer?.Dispose();
+            _meshletDispatchDiagnosticsRefreshSnapshotBuffer?.Dispose();
             _passFilterDebugBuffer?.Dispose();
             _materialIDsBuffer?.Dispose();
             _materialTable?.Dispose();

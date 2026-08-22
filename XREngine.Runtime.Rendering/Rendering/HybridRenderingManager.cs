@@ -71,6 +71,7 @@ namespace XREngine.Rendering
         private const uint MeshletPassTransparent = 1u << 4;
         private const uint MeshletPassVelocity = 1u << 5;
         private const uint MeshletPassStereo = 1u << 6;
+        private const float MeshletHiZDepthBias = 0.00001f;
         private const int FragLodTransitionRoleLocation = 23;
         private const string FragLodTransitionRoleName = "XreFragLodTransitionRole";
         private const string GlyphTransformsBufferName = "GlyphTransformsBuffer";
@@ -89,6 +90,7 @@ namespace XREngine.Rendering
         private const int FragMeshletDebugColorLocation = 12;
         private const string FragMeshletDebugColorName = "FragMeshletDebugColor";
         private const string MeshletDebugDisplayUniformName = "EnableMeshletDebugDisplay";
+        private const string MeshletDebugDisplayShaderDefine = "XRE_MESHLET_DEBUG_DISPLAY";
         private static readonly string[] MeshletFrustumPlaneUniformNames =
         [
             "FrustumPlanes[0]",
@@ -135,7 +137,7 @@ namespace XREngine.Rendering
         private readonly Dictionary<XRRenderProgramDescriptor, MaterialProgramCache> _pendingMaterialPrograms = [];
         private readonly Dictionary<(uint materialId, int rendererKey), XRRenderProgramDescriptor> _materialProgramUseDescriptors = [];
         private readonly Dictionary<(EMaterialTableTextureReferenceMode textureReferenceMode, bool sceneDatabaseBda, int rendererKey, string layoutHash, bool depthNormalPrePass, bool maskedDepthNormalPrePass, bool motionVectorPass, bool stereoMultiview), MaterialTableProgramCache> _materialTablePrograms = [];
-        private readonly Dictionary<(EMaterialTableTextureReferenceMode textureReferenceMode, EMeshShaderDialect dialect, bool skinned, string layoutHash), MeshletMaterialTableProgramCache> _meshletMaterialTablePrograms = [];
+        private readonly Dictionary<(EMaterialTableTextureReferenceMode textureReferenceMode, EMeshShaderDialect dialect, bool skinned, bool meshletDebugDisplay, string layoutHash), MeshletMaterialTableProgramCache> _meshletMaterialTablePrograms = [];
         private XRDataBuffer? _indirectTextTransformsBuffer;
         private XRDataBuffer? _indirectTextTexCoordsBuffer;
         private XRDataBuffer? _indirectTextRotationsBuffer;
@@ -2620,6 +2622,7 @@ namespace XREngine.Rendering
         /// </summary>
         internal bool TrySealMeshletMaterialTablePipeline(
             GPURenderPassCollection renderPasses,
+            XRCamera camera,
             GPUScene scene,
             int currentRenderPass,
             out string? failureReason)
@@ -2704,7 +2707,8 @@ namespace XREngine.Rendering
                 textureReferenceMode,
                 layout,
                 renderer.MeshShaderDialect,
-                skinned: false);
+                skinned: false,
+                meshletDebugDisplay: GpuBvhDebugSettings.IsMeshletDebugDisplayEnabled(camera));
             if (program is null)
             {
                 failureReason = "Meshlet material-table task/mesh program could not be linked.";
@@ -2875,7 +2879,13 @@ namespace XREngine.Rendering
                     $"Bindless/descriptor-indexed material-table meshlets were requested, but the active backend cannot use them. {bindlessUnavailableReason}");
             }
 
-            XRRenderProgram? program = EnsureMeshletMaterialTableProgram(textureReferenceMode, layout, renderer.MeshShaderDialect, skinned: false);
+            bool meshletDebugDisplay = GpuBvhDebugSettings.IsMeshletDebugDisplayEnabled(camera);
+            XRRenderProgram? program = EnsureMeshletMaterialTableProgram(
+                textureReferenceMode,
+                layout,
+                renderer.MeshShaderDialect,
+                skinned: false,
+                meshletDebugDisplay: meshletDebugDisplay);
             if (program is null)
             {
                 WarnMeshletMaterialFallback(
@@ -2924,7 +2934,11 @@ namespace XREngine.Rendering
             XRDataBuffer? statsBuffer = renderPasses.StatsBuffer;
             statsBuffer?.BindTo(program, MeshletStatsSsboBinding);
 
-            SetMeshletMaterialTableUniforms(program, renderPasses, camera, currentRenderPass);
+            bool meshTaskHiZEnabled = SetMeshletMaterialTableUniforms(
+                program,
+                renderPasses,
+                camera,
+                currentRenderPass);
             program.Uniform("StatsEnabled", statsBuffer is not null ? 1u : 0u);
             renderer.SetEngineUniforms(program, camera);
 
@@ -3050,7 +3064,9 @@ namespace XREngine.Rendering
                     (RuntimeEngine.EffectiveSettings.EnableGpuIndirectDebugLogging ||
                      (VulkanFeatureProfile.IsActive &&
                       VulkanFeatureProfile.ActiveProfile == EVulkanGpuDrivenProfile.Diagnostics)))
-                    renderPasses.TryQueueMeshletEvidenceSnapshot(renderer);
+                    renderPasses.TryQueueMeshletEvidenceSnapshot(
+                        renderer,
+                        refreshExisting: meshTaskHiZEnabled);
                 XREngine.Debug.Meshes(
                     $"Meshlet.BackendSelected pass={currentRenderPass} requested={requestedStrategy} selected={requestedStrategy} dialect={renderer.MeshShaderDialect} atlasTiers={submittedAtlasTierCount} commandCount={scene.TotalCommandCount} meshletCount={scene.MeshletDescriptorCount} capacity={renderPasses.MaxVisibleMeshletTaskCapacity}");
             }
@@ -3095,10 +3111,11 @@ namespace XREngine.Rendering
             EMaterialTableTextureReferenceMode textureReferenceMode,
             MaterialBindingLayout layout,
             EMeshShaderDialect dialect,
-            bool skinned)
+            bool skinned,
+            bool meshletDebugDisplay)
         {
-            (EMaterialTableTextureReferenceMode textureReferenceMode, EMeshShaderDialect dialect, bool skinned, string layoutHash) cacheKey =
-                (textureReferenceMode, dialect, skinned, layout.LayoutHash);
+            (EMaterialTableTextureReferenceMode textureReferenceMode, EMeshShaderDialect dialect, bool skinned, bool meshletDebugDisplay, string layoutHash) cacheKey =
+                (textureReferenceMode, dialect, skinned, meshletDebugDisplay, layout.LayoutHash);
 
             if (_meshletMaterialTablePrograms.TryGetValue(cacheKey, out MeshletMaterialTableProgramCache existing))
             {
@@ -3113,8 +3130,14 @@ namespace XREngine.Rendering
             }
 
             XRShader taskShader = ShaderHelper.LoadEngineShader(taskShaderPath, EShaderType.Task);
-            XRShader meshShader = ShaderHelper.LoadEngineShader(meshShaderPath, EShaderType.Mesh);
-            XRShader fragmentShader = CreateMeshletMaterialTableFragmentShader(textureReferenceMode, layout);
+            XRShader sourceMeshShader = ShaderHelper.LoadEngineShader(meshShaderPath, EShaderType.Mesh);
+            XRShader meshShader = meshletDebugDisplay
+                ? ShaderHelper.CreateDefinedShaderVariant(sourceMeshShader, MeshletDebugDisplayShaderDefine) ?? sourceMeshShader
+                : sourceMeshShader;
+            XRShader fragmentShader = CreateMeshletMaterialTableFragmentShader(
+                textureReferenceMode,
+                layout,
+                meshletDebugDisplay);
             var shaderList = new List<XRShader> { taskShader, meshShader, fragmentShader };
             var program = new XRRenderProgram(false, false, shaderList);
             program.AllowLink();
@@ -3252,7 +3275,7 @@ namespace XREngine.Rendering
             return stateClassId < 32u ? 1u << (int)stateClassId : 0u;
         }
 
-        private static void SetMeshletMaterialTableUniforms(
+        private static bool SetMeshletMaterialTableUniforms(
             XRRenderProgram program,
             GPURenderPassCollection renderPasses,
             XRCamera camera,
@@ -3264,11 +3287,11 @@ namespace XREngine.Rendering
             int hiZMaxMip = 0;
             Matrix4x4 hiZViewProjectionMatrix = viewProjectionMatrix;
             bool hiZUsesReversedZ = false;
-            // The current task-shader Hi-Z test samples only the projected sphere
-            // center and therefore cannot conservatively prove occlusion. Keep the
-            // traditional Hi-Z pipeline active, but fail this meshlet-specific
-            // optimization closed until footprint/depth bounds are implemented.
-            bool hiZAvailable = false;
+            bool hiZAvailable = renderPasses.TryGetHiZDepthPyramidForMeshlets(
+                out hiZDepthPyramid,
+                out hiZMaxMip,
+                out hiZViewProjectionMatrix,
+                out hiZUsesReversedZ);
 
             program.Uniform("ViewProjectionMatrix", viewProjectionMatrix);
             program.Uniform("PreviousViewProjectionMatrix", viewProjectionMatrix);
@@ -3278,10 +3301,10 @@ namespace XREngine.Rendering
                 ? new Vector2((float)hiZDepthPyramid!.Mipmaps[0].Width, (float)hiZDepthPyramid.Mipmaps[0].Height)
                 : Vector2.Zero);
             program.Uniform("HiZMipCount", hiZAvailable ? hiZMaxMip + 1.0f : 0.0f);
-            program.Uniform("HiZDepthBias", 0.0f);
+            program.Uniform("HiZDepthBias", hiZAvailable ? MeshletHiZDepthBias : 0.0f);
             program.Uniform("HiZUsesReversedZ", hiZAvailable && hiZUsesReversedZ ? 1u : 0u);
             program.Uniform("HiZValid", hiZAvailable ? 1u : 0u);
-            program.Uniform("EnableHiZOcclusion", 0u);
+            program.Uniform("EnableHiZOcclusion", hiZAvailable ? 1u : 0u);
             program.Uniform("EnableFrustumCulling", 1u);
             program.Uniform("EnableConeCulling", 1u);
             program.Uniform("EnableMaskedConeCulling", 0u);
@@ -3304,6 +3327,8 @@ namespace XREngine.Rendering
             int planeCount = Math.Min(planes.Count, MeshletFrustumPlaneUniformNames.Length);
             for (int i = 0; i < planeCount; ++i)
                 program.Uniform(MeshletFrustumPlaneUniformNames[i], planes[i].AsVector4());
+
+            return hiZAvailable;
         }
 
         private static void WarnMeshletMaterialFallback(
@@ -3793,7 +3818,8 @@ namespace XREngine.Rendering
 
         private static XRShader CreateMeshletMaterialTableFragmentShader(
             EMaterialTableTextureReferenceMode textureReferenceMode,
-            MaterialBindingLayout layout)
+            MaterialBindingLayout layout,
+            bool meshletDebugDisplay)
         {
             var sb = new StringBuilder();
             sb.AppendLine("#version 460 core");
@@ -3838,8 +3864,6 @@ namespace XREngine.Rendering
             sb.AppendLine("layout(location=2) out vec4 RMSE;");
             sb.AppendLine("layout(location=3) out uint TransformId;");
             sb.AppendLine();
-            sb.AppendLine($"uniform uint {MeshletDebugDisplayUniformName};");
-            sb.AppendLine();
             MaterialBindingGlslGenerator.AppendMaterialTableDefinitions(
                 sb,
                 layout,
@@ -3871,14 +3895,14 @@ namespace XREngine.Rendering
             sb.AppendLine("void main()");
             sb.AppendLine("{");
             sb.AppendLine($"    uint renderIdentityID = {DefaultVertexShaderGenerator.FragRenderIdentityIdName};");
-            sb.AppendLine($"    if ({MeshletDebugDisplayUniformName} != 0u)");
-            sb.AppendLine("    {");
-            sb.AppendLine("        TransformId = renderIdentityID;");
-            sb.AppendLine("        Normal = XRENGINE_EncodeNormal(FragNorm);");
-            sb.AppendLine($"        AlbedoOpacity = vec4({FragMeshletDebugColorName}.rgb, 1.0);");
-            sb.AppendLine("        RMSE = vec4(1.0, 0.0, 0.0, 1.0);");
-            sb.AppendLine("        return;");
-            sb.AppendLine("    }");
+            if (meshletDebugDisplay)
+            {
+                sb.AppendLine("    TransformId = renderIdentityID;");
+                sb.AppendLine("    Normal = XRENGINE_EncodeNormal(FragNorm);");
+                sb.AppendLine($"    AlbedoOpacity = vec4({FragMeshletDebugColorName}.rgb, 1.0);");
+                sb.AppendLine("    RMSE = vec4(1.0, 0.0, 0.0, 1.0);");
+                sb.AppendLine("    return;");
+            }
             sb.AppendLine($"    MaterialStateGpu state = XRE_LoadMaterialState({FragStateClassIdName});");
             sb.AppendLine($"    uint materialId = {FragMaterialIdName} != 0u ? {FragMaterialIdName} : state.MaterialID;");
             sb.AppendLine("    MaterialEntry material;");

@@ -587,23 +587,48 @@ internal sealed class ComputeDispatchSnapshot
         XRRenderPipelineInstance? pipeline)
     {
         foreach ((uint unit, string name) in SamplerNamesByUnit)
-            if (Samplers.ContainsKey(unit) &&
-                VulkanMeshRenderingConventions.IsMutableFrameSourceSamplerName(
-                    name,
-                    pipeline))
+            if (Samplers.TryGetValue(unit, out XRTexture? texture) &&
+                IsMutableFrameSourceSamplerBinding(name, texture, pipeline))
             {
                 return true;
             }
 
-        foreach (string name in SamplersByName.Keys)
-            if (VulkanMeshRenderingConventions.IsMutableFrameSourceSamplerName(
-                    name,
-                    pipeline))
+        foreach ((string name, XRTexture texture) in SamplersByName)
+            if (IsMutableFrameSourceSamplerBinding(name, texture, pipeline))
             {
                 return true;
             }
 
         return false;
+    }
+
+    private static bool IsMutableFrameSourceSamplerBinding(
+        string name,
+        XRTexture texture,
+        XRRenderPipelineInstance? pipeline)
+    {
+        if (VulkanMeshRenderingConventions.IsMutableFrameSourceSamplerName(
+                name,
+                pipeline))
+        {
+            return true;
+        }
+
+        // A view keeps its logical identity while the viewed texture may replace
+        // its backing image (resize, physical-plan publication, or viewport
+        // rebasing). Its exact descriptor must therefore be resolved live even
+        // when snapshot publication has no pipeline instance in scope.
+        if (texture is XRTextureViewBase)
+            return true;
+
+        // Compute shader symbols are often generic (for example "depthTexture")
+        // even when the bound object is a named pipeline resource such as
+        // DepthView. Recognize the resource identity too so reusable descriptor
+        // sets observe physical image/view replacement across frames.
+        return pipeline is not null &&
+            !string.IsNullOrWhiteSpace(texture.Name) &&
+            pipeline.TryGetTexture(texture.Name, out XRTexture? pipelineTexture) &&
+            ReferenceEquals(texture, pipelineTexture);
     }
 
     private void PublishRuntimeUniformPublicationSignatures()

@@ -132,6 +132,7 @@ internal sealed partial class VulkanCommandRuntime
     private int RecordComputeDispatchPayload(scoped ref PrimaryCommandBufferRecordingState state, in ComputeDispatchPayload payload, in VulkanPrimaryOperationRecordingInfo info)
     {
         CmdBeginLabel(state.CommandBuffer, "ComputeDispatch");
+        EnsureComputeSampledImageLayoutsForDispatch(state.CommandBuffer, payload.Snapshot);
         ref readonly FrameOperationHeader header = ref state.Ops.GetHeader(info.OperationIndex);
         ref readonly FrameOpContext context = ref state.Ops.GetContext(info.OperationIndex);
         ulong descriptorKey = ComputeReusableComputeDescriptorBindingKey(
@@ -147,6 +148,7 @@ internal sealed partial class VulkanCommandRuntime
     private int RecordComputeDispatchIndirectPayload(scoped ref PrimaryCommandBufferRecordingState state, in ComputeDispatchIndirectPayload payload, in VulkanPrimaryOperationRecordingInfo info)
     {
         CmdBeginLabel(state.CommandBuffer, payload.Label);
+        EnsureComputeSampledImageLayoutsForDispatch(state.CommandBuffer, payload.Snapshot);
         RecordComputeDispatchIndirectPayload(state.CommandBuffer, state.FrameDataImageIndex, in payload);
         CmdEndLabel(state.CommandBuffer);
         return info.OperationIndex;

@@ -1826,9 +1826,33 @@ namespace XREngine.Rendering.Vulkan
             range.AspectMask = VulkanCommandRuntime.NormalizeBarrierAspectMask(viewInfo.Format, range.AspectMask);
             range.LevelCount = Math.Max(range.LevelCount, 1u);
             range.LayerCount = Math.Max(range.LayerCount, 1u);
+            TransitionDescriptorImageRangeForSampling(
+                commandBuffer,
+                viewInfo.Image,
+                range,
+                targetLayout,
+                target,
+                passIndex,
+                passMetadata,
+                imageView);
+        }
+
+        private unsafe void TransitionDescriptorImageRangeForSampling(
+            CommandBuffer commandBuffer,
+            Image image,
+            ImageSubresourceRange range,
+            ImageLayout targetLayout,
+            XRFrameBuffer? target,
+            int passIndex,
+            IReadOnlyCollection<RenderPassMetadata>? passMetadata,
+            ImageView diagnosticView = default)
+        {
+            if (image.Handle == 0 || targetLayout == ImageLayout.Undefined)
+                return;
+
             if (IsImageRangeAttachedToFrameBuffer(
                     target,
-                    viewInfo.Image,
+                    image,
                     range,
                     targetLayout,
                     passIndex,
@@ -1838,13 +1862,13 @@ namespace XREngine.Rendering.Vulkan
             VulkanImageAccessState priorState;
             if (!TryGetRecordedImageAccessState(
                     commandBuffer,
-                    viewInfo.Image,
+                    image,
                     range,
                     out priorState))
             {
                 ulong resourceGeneration = GetCurrentVulkanResourceGeneration(
                     ObjectType.Image,
-                    viewInfo.Image.Handle);
+                    image.Handle);
                 if (resourceGeneration == 0)
                     return;
 
@@ -1863,11 +1887,11 @@ namespace XREngine.Rendering.Vulkan
             if (FrameDataReuseDiagnosticsEnabled && priorState.Layout == ImageLayout.Undefined)
             {
                 Debug.VulkanEvery(
-                    $"Vulkan.DescriptorFirstUse.{viewInfo.Image.Handle}.{passIndex}",
+                    $"Vulkan.DescriptorFirstUse.{image.Handle}.{passIndex}",
                     TimeSpan.FromSeconds(2),
                     "[Vulkan.DescriptorFirstUse] Transitioning image=0x{0:X} view=0x{1:X} pass={2} target={3} layout={4}->{5} aspect={6}.",
-                    viewInfo.Image.Handle,
-                    imageView.Handle,
+                    image.Handle,
+                    diagnosticView.Handle,
                     passIndex,
                     target?.Name ?? "<swapchain>",
                     priorState.Layout,
@@ -1885,7 +1909,7 @@ namespace XREngine.Rendering.Vulkan
                 NewLayout = targetLayout,
                 SrcQueueFamilyIndex = priorState.QueueFamilyIndex,
                 DstQueueFamilyIndex = priorState.QueueFamilyIndex,
-                Image = viewInfo.Image,
+                Image = image,
                 SubresourceRange = range,
             };
 

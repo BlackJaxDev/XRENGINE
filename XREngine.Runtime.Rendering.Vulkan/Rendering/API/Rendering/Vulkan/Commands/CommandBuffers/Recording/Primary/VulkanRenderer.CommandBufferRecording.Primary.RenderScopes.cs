@@ -791,7 +791,7 @@ namespace XREngine.Rendering.Vulkan
                 if (TargetTraceEnabled)
                 {
                     Debug.Vulkan(
-                        "[VulkanTarget] begin target='{0}' targetId={1} pass={2} passName='{3}' dynamic=true framebuffer=0x{4:X} attachments={5} extent={6}x{7} layers={8} viewMask=0x{9:X} formats={10} secondary={11}",
+                        "[VulkanTarget] begin target='{0}' targetId={1} pass={2} passName='{3}' dynamic=true framebuffer=0x{4:X} attachments={5} extent={6}x{7} layers={8} viewMask=0x{9:X} formats={10} secondary={11} reentered={12} signature={13}",
                         fboName,
                         target.GetHashCode(),
                         passIndex,
@@ -803,7 +803,9 @@ namespace XREngine.Rendering.Vulkan
                         scopePlan.LayerCount,
                         scopePlan.ViewMask,
                         recordingState.RenderScope.DynamicRenderingFormats,
-                        secondaryContents);
+                        secondaryContents,
+                        targetReenteredThisCommandBuffer,
+                        FormatFboAttachmentSignature(fboSignature));
                 }
                 return;
             }

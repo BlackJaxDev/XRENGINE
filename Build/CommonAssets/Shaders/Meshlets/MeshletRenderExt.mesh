@@ -262,9 +262,13 @@ void main()
     mat4 previousWorld = PreviousWorldMatrices[transformID];
 
     SetMeshOutputsEXT(vertexCount, triangleCount);
+#ifdef XRE_MESHLET_DEBUG_DISPLAY
+    vec4 meshletDebugColor = XRE_MeshletDebugColor(meshletIndex);
+#else
     vec4 meshletDebugColor = EnableMeshletDebugDisplay != 0u
         ? XRE_MeshletDebugColor(meshletIndex)
         : vec4(1.0);
+#endif
 
     uint tid = gl_LocalInvocationID.x;
     for (uint vertex = tid; vertex < vertexCount; vertex += GROUP_SIZE)

@@ -604,6 +604,12 @@ namespace XREngine.Rendering.Commands
             _meshletStatsDiagnosticsSnapshotBuffer ??= MakeMeshletDiagnosticsSnapshotBuffer(
                 "MeshletStatsDiagnosticsSnapshot",
                 GpuStatsLayout.FieldCount);
+            _meshletDispatchDiagnosticsRefreshSnapshotBuffer ??= MakeMeshletDiagnosticsSnapshotBuffer(
+                "MeshletDispatchDiagnosticsRefreshSnapshot",
+                GPUMeshletLayout.MeshTaskIndirectDiagnosticsUIntCount);
+            _meshletStatsDiagnosticsRefreshSnapshotBuffer ??= MakeMeshletDiagnosticsSnapshotBuffer(
+                "MeshletStatsDiagnosticsRefreshSnapshot",
+                GpuStatsLayout.FieldCount);
         }
 
         private static XRDataBuffer MakeMeshletDiagnosticsSnapshotBuffer(string name, uint uintCount)
