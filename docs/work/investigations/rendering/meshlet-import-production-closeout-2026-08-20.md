@@ -109,6 +109,16 @@ Final integration hardening additionally:
 The low-level native wrapper was also renamed from the ambiguous
 `BuildMeshlets` to `BuildNativeMeshletClusters`.
 
+Gate 1 closeout on 2026-08-21 found one additional production eligibility bug.
+`GPUScene.HasUniformPositiveScale` reused its `1e-4` relative uniformity
+tolerance as an absolute squared-axis cutoff. Sponza's valid small uniform
+import scale was therefore marked `Dynamic`, excluding all 393 opaque rows from
+meshlet expansion. The fix separates a `1e-12` degeneracy threshold from the
+relative tolerance, rejects non-finite/sheared bases explicitly, and continues
+to reject mirrored or non-uniform transforms. An on-demand, CPU-mirror-only MCP
+eligibility snapshot made the rejection exact without adding per-frame work,
+maps, or readbacks.
+
 ## Validation Results
 
 | Scenario | Result | Key evidence |
@@ -133,7 +143,7 @@ The low-level native wrapper was also renamed from the ambiguous
 | Sponza cold import | Pass | `reports/sponza-cold-baseline/summary.json`: parser 1, builder 393, payloads 393, meshlets 12,707, GPU task records 11,010, delayed dispatch X 2,113,920 across 194 accepted meshlet dispatches, and render-path source hash/disk/cooker calls 0. |
 | Sponza warm payload use | Pass for persistence/hydration | The warm live profile observed all 393 payloads hydrate with zero parser/builder calls before GPUScene registration. This was inspected through MCP rather than emitted as a standalone summary report. |
 | Sponza production submission | Pass for route and atlas binding; visual parity open | The frame plan contained an accepted `OpaqueDeferred` EXT mesh-task indirect-count operation. After tier-aware binding, `mcp-captures/RenderPipeline_AlbedoOpacity_20260820_150004.png` contains the production result. The user confirmed that the apparent few-pixel result is the very small Sponza in that framing and that moving the camera reveals it. |
-| Sponza per-meshlet colors | Open | The visible Sponza is uniformly magenta, not distinctly colored by meshlet. This does not satisfy the requested debug-render proof. |
+| Sponza per-meshlet colors | Pass | `Build/_AgentValidation/20260821-104532-meshlet-closeout/mcp-captures/` contains close-camera viewport and `AlbedoOpacity` pairs from two consecutive frames, a nearby view, and a warm DevParity restart. Neighboring production meshlets are clearly different colors. The accepted normal-profile frame had 393 eligible commands / 12,707 meshlets, one EXT indirect-count mesh-task op, exact 3,960 requested/emitted/consumed draws, and zero overflow/fallback/prohibited work/maps/readbacks/descriptor failures/VUIDs. |
 | Culling isolation | Hi-Z/cone/frustum ruled out as the tiny-framing cause | Separate bounded runs disabled Hi-Z, cone culling, and frustum culling; each retained the same small center result. Temporary shader isolation edits were reverted. |
 | Release build | Pass | `dotnet build XREngine.Editor/XREngine.Editor.csproj -c Release --no-restore`: 0 warnings, 0 errors. `git diff --check`: no whitespace errors (line-ending advisories only). |
 
@@ -142,19 +152,16 @@ and explicit user clearance before test work for this integration.
 
 ## Current Sponza Visual Checkpoint
 
-The latest Sponza image must not be described as collapsed geometry. At the
-fixed `(-20,5,-20)` camera looking toward `(-20,5,0)`, the model occupies only a
-few pixels. The user verified in the live editor that moving the camera closer
-reveals Sponza and that the whole visible model is magenta. The production route
-and geometry visibility are therefore present, while the per-meshlet color
-selection is still wrong or not reaching the inspected output.
+The production debug-color gate is complete. At camera
+`(-20.08,0.055,0.0)` looking at `(-19.80,0.055,0.0)`, Sponza fills a useful
+part of the viewport and both the G-buffer and final output show stable,
+distinct colors across neighboring meshlets. The same palette is visible in a
+consecutive frame and after a warm DevParity restart; a nearby offset view
+changes the image normally while retaining per-meshlet coloring.
 
-The final visual pass should first implement and validate conservative mesh-task
-Hi-Z footprint/depth-range math, then move the camera close enough for Sponza to
-occupy a meaningful portion of the viewport, capture at least three views, and
-compare production meshlet output with the traditional reference. It must also
-show stable, visibly different colors on neighboring meshlets before the
-debug-render checkbox is checked.
+The next visual pass is conservative mesh-task Hi-Z footprint/depth-range math,
+followed by three fixed debug-off production/reference comparisons. Material and
+final-frame parity are not inferred from the debug-color image.
 
 A temporary 10 Hz render cap was tested because the user reported system-wide
 mouse jitter while Sponza rendered. It did not solve the problem and was fully
@@ -163,6 +170,49 @@ disabled. The cold baseline's roughly 126 ms Vulkan command-buffer time is
 consistent with heavy GPU pressure, but no root-cause claim is made yet. The
 named validation session `meshlet-sponza-cachefix-publish` was stopped cleanly
 after the final observation.
+
+## Conservative Hi-Z Checkpoint — 2026-08-21
+
+Gate 2 is in progress and remains unchecked. Both mesh-task shader variants now
+contain conservative full-footprint projection and clip/depth policy handling,
+and the hardcoded task-Hi-Z suppression has been removed in the working slice.
+The implementation has not yet earned production acceptance.
+
+The controlled vertical two-grid fixture at camera `(-1.25,1.25,0)` with
+identity rotation rendered while the camera was moving, then became black after
+temporal motion settled. Ordered GPU probes showed a normal-Z nearest depth of
+approximately `0.9799`, a sampled conservative Hi-Z value of `0`, selected mip
+`5`, and a populated-center mask of `0x3F`: mips `0..5` contained depth while
+mips `6..9` were zero. Temporal phase one kept both draws visible during motion;
+after settling it submitted no phase-one draws and the zero Hi-Z sample falsely
+culled both.
+
+The bounded trace session `meshlet-closeout-hiz-trace` recorded every Hi-Z
+reduction with the expected state: source/destination mips `0->1` through
+`8->9`, destination sizes `480x270`, `240x135`, `120x67`, `60x33`, `30x16`,
+`15x8`, `7x4`, `3x2`, and `1x1`, with corresponding dispatch groups. This
+ruled out omitted dispatches, mutable snapshot reuse, and stale per-dispatch
+uniforms. The session was stopped cleanly; its log is under
+`Build/_AgentValidation/00000000-000000-shared/mcp-sessions/20260821-165515-meshlet-closeout-hiz-trace/logs/`.
+
+The remaining root cause is a Vulkan layout-range defect for a texture sampled
+from one mip while the next mip is bound as storage. The full sampled view spans
+mixed per-mip layouts; the old range lookup therefore failed and the transition
+fell back to `Undefined` for the entire pyramid, invalidating already-generated
+source contents. The current unvalidated fix transitions an aliased compute
+image per mip/layer before changing only the storage destination to `General`.
+It compiled in the targeted Vulkan project with zero warnings/errors, but the
+post-fix live run was intentionally deferred at the user's wrap-up request.
+
+Temporary GPU counter probes and the temporary `VulkanHiZDispatch` trace were
+removed. The post-cleanup targeted Vulkan build passed with zero warnings and
+zero errors. Direct GLSL syntax validation also passed for the two occlusion
+compute shaders and both task variants; the engine-managed loose-uniform Vulkan
+rewrite still requires the next live editor run for end-to-end shader proof.
+No MCP editor or RenderDoc session is active. Resume with the exact five-step
+Gate 2 checklist in the closeout work guide; do not check its boxes or begin
+Sponza parity until stable-camera visibility and nonzero controlled Hi-Z culls
+are both proven.
 
 ## RenderDoc Evidence
 
@@ -181,6 +231,14 @@ This proves the event, stages, and bound resident inputs. The exported final
 image is not sufficient to claim final-frame parity with the traditional path,
 so the visual-comparison gate remains open.
 
+Two 2026-08-21 Sponza capture attempts under the current evidence root produced
+no `.rdc` and were cleaned up. The first queued absolute frame 600 after the
+editor had already passed it. The launcher now has an explicit `--trigger`
+mode; that retry still could not complete one RenderDoc-instrumented Sponza
+frame inside 120 seconds. Both exact injected PIDs were terminated in `finally`,
+ports 5471/5472 closed, and no partial capture was retained. This is recorded as
+GPU-pressure evidence, not as a RenderDoc visual-parity pass.
+
 ## Remaining Boundaries
 
 - Broad model/prefab binary-cache hydration remains disabled until its
@@ -191,11 +249,9 @@ so the visual-comparison gate remains open.
   need their dedicated runtime matrix.
 - RenderDoc/MCP still need a useful-camera final-frame comparison against the
   traditional path; event/stage/binding proof itself is complete.
-- Sponza still needs a close, useful camera framing after conservative
-  mesh-task Hi-Z is implemented, a
-  three-view comparison with the traditional path, and visibly distinct
-  per-meshlet debug colors. Uniform magenta is not accepted as color-debug
-  completion.
+- Sponza still needs conservative mesh-task Hi-Z and a debug-off three-view
+  comparison with the traditional path. Close-camera per-meshlet debug colors
+  are complete and must not be reopened without contradictory evidence.
 - Parallel command-chain worker recording remains quarantined. Re-enable it only
   after isolated graphics/non-graphics recording, ownership, lifetime, and
   submission validation identifies and fixes the device-loss interaction.

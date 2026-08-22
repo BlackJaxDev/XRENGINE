@@ -1,12 +1,13 @@
 # Meshlet Import Cooking And Production Readiness TODO
 
-Last Updated: 2026-08-20
+Last Updated: 2026-08-21
 Owner: Assets / Rendering / Vulkan
-Status: Core import cooking, standalone persistence, mixed routing, and Vulkan EXT submission proven; broad model-cache hydration, live lifecycle stress, conservative task Hi-Z, Sponza visual parity, and parallel-worker re-enable remain open
+Status: Core import cooking, standalone persistence, mixed routing, Vulkan EXT submission, and production Sponza meshlet debug colors proven; broad model-cache hydration, live lifecycle stress, conservative task Hi-Z, final Sponza parity, and parallel-worker re-enable remain open
 Priority: Immediate; do not resume Vulkan resident draw-stream Phase 1 until the exit gate is satisfied
 
 Related docs:
 
+- [Current meshlet production closeout work guide](meshlet-production-closeout-work-guide.md)
 - [Vulkan resident draw stream and render task pool TODO](../optimization/vulkan-resident-draw-stream-and-render-task-pool-todo.md)
 - [Model import binary cache TODO](../../assets/model-import-binary-cache-todo.md)
 - [Model import binary cache design](../../../design/assets/model-import-binary-cache-design.md)
@@ -21,6 +22,11 @@ Related docs:
 Implement this tracker now. Do not begin Phase 1 implementation in the Vulkan
 resident draw-stream and render-task-pool tracker until the exit gate in this
 document is satisfied.
+
+Use the [closeout work guide](meshlet-production-closeout-work-guide.md) as the
+current execution order and acceptance protocol. This tracker retains the full
+requirements history; the guide prevents completed work from being re-debugged
+and keeps the remaining gates serialized.
 
 This tracker is the implementation authority for the meshlet-specific work that
 was found incomplete after the historical meshlet tracker was marked complete:
@@ -82,11 +88,18 @@ Render
 The core closeout is complete for first-import cooking, standalone cooked-mesh
 persistence, exact-root warm hydration, invalidation, runtime-without-cooker,
 mixed planned routing, and live Vulkan EXT mesh-task submission. Full production
-acceptance is **not** complete: Sponza now reaches the production meshlet path,
-but its current debug result is uniformly magenta rather than distinctly colored
-per meshlet, and conservative mesh-task-Hi-Z, multi-camera visual parity remains open.
+acceptance is **not** complete: Sponza now reaches the production meshlet path
+and shows stable, distinctly colored production meshlets. Conservative
+mesh-task Hi-Z and debug-off multi-camera material/final-frame parity remain open.
 Detailed commands, environment, counters, hashes, and limitations are recorded
 in the [production closeout evidence](../../../investigations/rendering/meshlet-import-production-closeout-2026-08-20.md).
+
+The 2026-08-21 Gate 2 checkpoint has conservative task-shader math implemented
+and a candidate Vulkan per-mip layout fix compiled, but not live-accepted. The
+controlled fixture still last showed a stable-camera black frame because the
+Hi-Z pyramid became zero above mip 5. Resume from the exact ordered checklist in
+the closeout work guide; no conservative-Hi-Z or downstream visual box is
+checked on the strength of the unvalidated fix.
 
 The latest pulled implementation and final-binary acceptance prove:
 
@@ -131,15 +144,21 @@ The Sponza production checkpoint adds the following evidence:
   static/dynamic/skinned tier. Task and mesh shaders filter by the same tier so
   each eligible row is submitted exactly once; and
 - the legacy direct debug overlay no longer draws over an accepted production
-  meshlet submission.
+  meshlet submission; and
+- the small-scale transform eligibility bug is fixed, making all 393 opaque
+  Sponza commands and 12,707 cooked meshlets eligible for production expansion.
 
-In the latest live result, Sponza appeared only a few pixels wide in the fixed
-capture because it was very small in that camera framing. The user confirmed
-that moving the camera reveals the rendered model. It remains all magenta, so
-this proves visible production geometry but **does not** prove distinct
-per-meshlet debug colors or material/final-frame parity. The experimental 10 Hz
-render cap did not resolve the reported system-mouse jitter while Sponza was
-rendering and was reverted; the validation settings remain uncapped.
+The 2026-08-21 close-camera acceptance at `(-20.08, 0.055, 0.0)` looking at
+`(-19.80, 0.055, 0.0)` shows clearly different neighboring meshlet colors in
+both `AlbedoOpacity` and the final viewport. A consecutive frame, a nearby view,
+and a warm DevParity restart retain the same deterministic palette. The accepted
+frame reports one EXT indirect-count mesh-task operation and exact
+`requested=3960`, `emitted=3960`, `consumed=3960` accounting, with zero
+overflow, CPU/forbidden fallback, render-path hash/disk/cooker work,
+maps/readbacks, descriptor failures, and VUIDs. Material/final-frame parity with
+debug colors disabled remains open. The experimental 10 Hz render cap did not
+resolve the reported system-mouse jitter and remains reverted; validation stays
+uncapped.
 
 Mesh-task Hi-Z is now disabled at the task-program uniform boundary because the
 current shader uses a center-only sphere sample and non-conservative depth
@@ -162,8 +181,8 @@ payload hashes for all three LODs. The runtime identity deliberately excludes
 local cooker provenance so compatible baked assets remain portable.
 
 Unchecked boxes remain intentionally open until their own evidence exists. The
-direct Sponza blockers are distinct per-meshlet colors, a conservative
-mesh-task Hi-Z implementation, and useful-camera visual parity. Broader
+direct Sponza blockers are a conservative mesh-task Hi-Z implementation and
+debug-off useful-camera material/final-frame parity. Broader
 boundaries include the inactive model/prefab binary cache and the
 reimport/streaming/unload lifecycle matrix. RenderDoc now proves the Vulkan EXT
 event, stages, and resident inputs, but not final-frame visual parity. The
@@ -590,9 +609,11 @@ Complete live/runtime validation before requesting clearance for new test work.
 - [ ] Implement conservative mesh-task Hi-Z footprint/depth-range math, then
   capture Sponza at a useful visible scale from at least three camera positions
   and compare it with the traditional reference.
-- [ ] Confirm the production meshlet debug mode assigns visibly distinct,
-  stable colors to neighboring Sponza meshlets. The latest observed result is
-  visible but uniformly magenta, so this box is deliberately open.
+- [x] Confirm the production meshlet debug mode assigns visibly distinct,
+  stable colors to neighboring Sponza meshlets. Accepted 2026-08-21 in both
+  `AlbedoOpacity` and the final viewport across consecutive frames, a nearby
+  view, and a warm DevParity restart; exact evidence is recorded in the
+  closeout guide and production-closeout investigation.
 - [ ] Run valid warm, disabled, empty, changed settings, changed source, changed
   cooker provenance, corrupt optional section, read-only repair, and runtime-
   without-cooker scenarios. Valid warm, changed settings/source, malformed
@@ -637,7 +658,7 @@ Complete live/runtime validation before requesting clearance for new test work.
 | Corrupt optional meshlet section | Repair from cached core when policy allows. | Never open source parser merely for optional repair. |
 | Skinned/morph mesh | Persist topology payload and deformation metadata/policy. | **Passed for explicit traditional routing;** native deformation path remains optional. |
 | Mixed opaque/masked/override/transparent scene | Cook eligible geometry once. | **Partially passed:** static plus skinned/morph and unsupported pass were exact-once; masked/override/transparent remain in the broader matrix. |
-| Full Sponza scene | **Passed:** 393 payloads containing 12,707 meshlets were generated and validated. | **Partially passed:** persisted payloads reach production Vulkan EXT submission with the static atlas tier. The model is visible when framed closely, but is uniformly magenta; distinct meshlet colors and final visual parity remain open. |
+| Full Sponza scene | **Passed:** 393 payloads containing 12,707 meshlets were generated and validated. | **Partially passed:** persisted payloads reach production Vulkan EXT submission with the static atlas tier, and close-camera production debug output has stable distinct per-meshlet colors. Conservative task Hi-Z and debug-off final visual parity remain open. |
 | Reimport/hot reload/streaming | Publish new revision atomically. | Frame-boundary swap; old GPU ranges reclaimed safely. |
 | Third-laptop Vulkan static opaque | No runtime cooking dependency. | Strategy resolves to meshlet and RenderDoc proves EXT dispatch. |
 

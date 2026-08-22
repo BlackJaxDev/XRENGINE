@@ -742,7 +742,11 @@ namespace XREngine.Rendering.Commands
                 HiZStageStats.Record("BuildPyramid.PerPass", (Stopwatch.GetTimestamp() - _bpStart2) * 1000.0 / Stopwatch.Frequency);
             }
 
-            _hiZDepthPyramidReadyForMeshlets = _hiZDepthPyramid is not null;
+            // A dirty temporal state may still build a pyramid for later frames,
+            // but mesh tasks in this frame must not consume depth that can omit a
+            // moved camera or newly changed scene.
+            _hiZDepthPyramidReadyForMeshlets =
+                _hiZDepthPyramid is not null && !invalidateTemporalHiZ;
             _hiZDepthPyramidViewProjection = depthInput.ViewProjection;
             _hiZDepthPyramidUsesReversedZ = isReverseZ;
             PublishStableHiZHistories(scene);
@@ -927,14 +931,19 @@ namespace XREngine.Rendering.Commands
             if (sceneChanged)
                 _gpuHiZLastSceneCommandCount = scene.TotalCommandCount;
 
-            bool cameraChanged = HasSignificantCameraChange(
+            _ = HasSignificantCameraChange(
                 camera,
                 ref _gpuHiZHasCameraState,
                 ref _gpuHiZLastCameraPosition,
                 ref _gpuHiZLastProjection,
-                out _);
+                out bool cameraMoved);
 
-            return sceneChanged || cameraChanged;
+            // Visibility history belongs to an exact view. Even sub-jump camera
+            // motion can reveal work that the prior view marked occluded, so the
+            // two-pass early list must be conservatively reseeded whenever the
+            // view moves. The larger jump result remains useful to CPU temporal
+            // policies, but is too permissive for GPU visibility reuse.
+            return sceneChanged || cameraMoved;
         }
 
         private static bool TryResolveGpuHiZDepthInput(
@@ -1204,6 +1213,8 @@ namespace XREngine.Rendering.Commands
             _hiZOcclusionProgram.Uniform("TwoPassPhase", 0);
             _hiZOcclusionProgram.Uniform("ActiveViewCount", (int)_activeViewCount);
             _hiZOcclusionProgram.Uniform("CurrentRenderPass", RenderPass);
+            _hiZOcclusionProgram.Uniform("ForcePhaseOneVisible", 0u);
+            SetHiZOcclusionClipSpaceUniforms(_hiZOcclusionProgram);
 
             // Bind pyramid and buffers
             _hiZOcclusionProgram.Sampler("HiZDepth", _hiZDepthPyramid, 0);

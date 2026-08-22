@@ -20,6 +20,10 @@ namespace XREngine
                     private static long _gpuMeshletTaskRecordsFrustumCulled;
                     private static long _gpuMeshletTaskRecordsConeCulled;
                     private static long _gpuMeshletTaskRecordsHiZCulled;
+                    private static long _latestGpuMeshletTaskRecordsEmitted;
+                    private static long _latestGpuMeshletTaskRecordsFrustumCulled;
+                    private static long _latestGpuMeshletTaskRecordsConeCulled;
+                    private static long _latestGpuMeshletTaskRecordsHiZCulled;
                     private static long _gpuMeshletExpansionOverflowCount;
                     private static long _gpuMeshletBufferBytesResident;
                     private static long _gpuMeshletLastVisibleMeshletCount;
@@ -91,6 +95,11 @@ namespace XREngine
                     public static long GpuMeshletTaskRecordsFrustumCulled => _lastFrameGpuMeshletTaskRecordsFrustumCulled;
                     public static long GpuMeshletTaskRecordsConeCulled => _lastFrameGpuMeshletTaskRecordsConeCulled;
                     public static long GpuMeshletTaskRecordsHiZCulled => _lastFrameGpuMeshletTaskRecordsHiZCulled;
+                    /// <summary>Latest delayed GPU task sample containing at least one emitted task record.</summary>
+                    public static long LatestGpuMeshletTaskRecordsEmitted => Volatile.Read(ref _latestGpuMeshletTaskRecordsEmitted);
+                    public static long LatestGpuMeshletTaskRecordsFrustumCulled => Volatile.Read(ref _latestGpuMeshletTaskRecordsFrustumCulled);
+                    public static long LatestGpuMeshletTaskRecordsConeCulled => Volatile.Read(ref _latestGpuMeshletTaskRecordsConeCulled);
+                    public static long LatestGpuMeshletTaskRecordsHiZCulled => Volatile.Read(ref _latestGpuMeshletTaskRecordsHiZCulled);
                     public static long GpuMeshletExpansionOverflowCount => _lastFrameGpuMeshletExpansionOverflowCount;
                     public static long GpuMeshletBufferBytesResident => _lastFrameGpuMeshletBufferBytesResident;
                     public static long LastVisibleMeshletCount => _lastFrameGpuMeshletLastVisibleMeshletCount;
@@ -212,6 +221,14 @@ namespace XREngine
                         if (emitted > 0u)
                         {
                             Interlocked.Add(ref _gpuMeshletTaskRecordsEmitted, emitted);
+                            // Delayed evidence can land between profiler-frame
+                            // snapshots. Keep the latest positive GPU sample
+                            // stable for diagnostics without changing the
+                            // per-frame counters or scheduling another readback.
+                            Interlocked.Exchange(ref _latestGpuMeshletTaskRecordsEmitted, emitted);
+                            Interlocked.Exchange(ref _latestGpuMeshletTaskRecordsFrustumCulled, frustumCulled);
+                            Interlocked.Exchange(ref _latestGpuMeshletTaskRecordsConeCulled, coneCulled);
+                            Interlocked.Exchange(ref _latestGpuMeshletTaskRecordsHiZCulled, hiZCulled);
                             // The GPU stats buffer is the authoritative source
                             // for eligible task rows; never substitute the
                             // scene-wide command count captured at enqueue.

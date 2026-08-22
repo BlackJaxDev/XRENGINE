@@ -677,6 +677,20 @@ namespace XREngine.Rendering.Vulkan
                         RecordSecondaryAt(i);
                 }
 
+                if (!HaveCurrentSecondaryDescriptorPayloadRequirements(
+                        secondaryBuffers,
+                        count,
+                        out int invalidDescriptorPayloadIndex))
+                {
+                    MarkCommandChainSecondaryCommandBufferInvalid(
+                        secondaryChains[invalidDescriptorPayloadIndex]);
+                    return false;
+                }
+                TransitionSecondaryDescriptorImagesForExecution(
+                    primaryCommandBuffer,
+                    secondaryBuffers,
+                    count);
+
                 fixed (CommandBuffer* secondaryPtr = secondaryBuffers)
                     CmdExecuteCommandsTracked(primaryCommandBuffer, (uint)count, secondaryPtr);
                 for (int i = 0; i < count; i++)
@@ -807,7 +821,29 @@ namespace XREngine.Rendering.Vulkan
             if (header.OpCode is EVulkanPrimaryPlanNodeKind.ComputeDispatch or
                 EVulkanPrimaryPlanNodeKind.ComputeDispatchIndirect)
             {
-                chain.PreparedComputePayload = recordingScratch.PreparedComputePayload;
+                VulkanPreparedComputePayload preparedCompute =
+                    recordingScratch.PreparedComputePayload ??
+                    throw new VulkanPlanPreconditionException(
+                        "A recorded compute secondary did not publish its descriptor sets.");
+                ref readonly FrameOpContext context = ref operations.GetContext(sourceIndex);
+                for (int descriptorIndex = 0;
+                     descriptorIndex < preparedCompute.DescriptorSets.Length;
+                     descriptorIndex++)
+                {
+                    DescriptorSet descriptorSet = preparedCompute.DescriptorSets[descriptorIndex];
+                    if (!CaptureSecondaryDescriptorSetImageRequirements(
+                            secondary,
+                            descriptorSet,
+                            target: null,
+                            header.PassIndex,
+                            context.PassMetadata,
+                            out string descriptorRequirementFailure))
+                    {
+                        throw new VulkanPlanPreconditionException(
+                            $"Compute secondary 0x{secondary.Handle:X} could not publish descriptor image requirements: {descriptorRequirementFailure}.");
+                    }
+                }
+                chain.PreparedComputePayload = preparedCompute;
             }
 
             if (EndCommandBufferTracked(secondary) != Result.Success)

@@ -16,6 +16,9 @@ internal sealed partial class VulkanFrameLoop
     internal ERendererComputeEnqueueStatus TryEnqueueBufferCopy(XRDataBuffer source, nint sourceOffset, XRDataBuffer destination, nint destinationOffset, nuint byteCount, string label)
         => _commandRuntime.TryEnqueueBufferCopy(_resourceRuntime.WrapperLookup, _frameOperationQueue, source, sourceOffset, destination, destinationOffset, byteCount, label, requireGpuWriteVisibility: false, diagnosticReceipt: null, RuntimeEngine.Rendering.State.CurrentRenderGraphPassIndex, CaptureFrameOpContextOrLastActive(), AllowSynchronousResourceUploads, IsDeviceLost);
 
+    internal ERendererComputeEnqueueStatus TryEnqueueGpuBufferCopy(XRDataBuffer source, nint sourceOffset, XRDataBuffer destination, nint destinationOffset, nuint byteCount, string label)
+        => _commandRuntime.TryEnqueueBufferCopy(_resourceRuntime.WrapperLookup, _frameOperationQueue, source, sourceOffset, destination, destinationOffset, byteCount, label, requireGpuWriteVisibility: true, diagnosticReceipt: null, RuntimeEngine.Rendering.State.CurrentRenderGraphPassIndex, CaptureFrameOpContextOrLastActive(), AllowSynchronousResourceUploads, IsDeviceLost);
+
     internal ERendererComputeEnqueueStatus TryEnqueueGpuDiagnosticBufferSnapshot(XRDataBuffer source, XRDataBuffer destination, nuint byteCount, string label)
         => TryEnqueueGpuDiagnosticBufferSnapshot(source, 0, destination, 0, byteCount, label);
 

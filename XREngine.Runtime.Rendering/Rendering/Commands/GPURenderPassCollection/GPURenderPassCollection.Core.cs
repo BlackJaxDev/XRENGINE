@@ -489,8 +489,11 @@ namespace XREngine.Rendering.Commands
         private XRDataBuffer? _meshletExpansionOverflowFlagBuffer;
         private XRDataBuffer? _meshletStatsDiagnosticsSnapshotBuffer;
         private XRDataBuffer? _meshletDispatchDiagnosticsSnapshotBuffer;
+        private XRDataBuffer? _meshletStatsDiagnosticsRefreshSnapshotBuffer;
+        private XRDataBuffer? _meshletDispatchDiagnosticsRefreshSnapshotBuffer;
         private bool _meshletExpansionPreparedThisFrame;
         private bool _meshletEvidenceSnapshotQueuedThisFrame;
+        private bool _meshletEvidenceRefreshSnapshotQueuedThisFrame;
         private ulong _meshletEvidenceSnapshotFrameId;
         private ulong _meshletEvidenceSnapshotDiscardGeneration;
 

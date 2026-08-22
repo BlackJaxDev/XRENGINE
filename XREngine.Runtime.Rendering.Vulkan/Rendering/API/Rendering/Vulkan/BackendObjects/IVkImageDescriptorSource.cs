@@ -99,4 +99,19 @@ internal interface IVkImageDescriptorSource
     /// </summary>
     ImageView GetDescriptorView(ImageViewType viewType)
         => viewType == DescriptorViewType ? DescriptorView : default;
+
+    /// <summary>
+    /// Returns a view for the exact mip/layer range captured by an image binding.
+    /// Storage-image descriptors must not use a view spanning multiple mip levels.
+    /// </summary>
+    ImageView GetStorageDescriptorView(int mipLevel, bool layered, int layerIndex)
+    {
+        if (mipLevel > 0)
+            return default;
+
+        if (layered || (DescriptorArrayLayers <= 1u && layerIndex <= 0))
+            return DescriptorView;
+
+        return default;
+    }
 }

@@ -76,6 +76,7 @@ layout(std430, binding = 15) buffer PerViewDrawCountBuffer { uint PerViewDrawCou
 uniform int MaxOutputCommands;
 uniform int ActiveViewCount;
 uniform int CurrentRenderPass;
+uniform uint ForceVisible;
 
 #define FLAG_TRANSPARENT (1u << 0u)
 
@@ -170,7 +171,10 @@ void main()
     if (instanceCount == 0u)
         return;
 
-    if (!WasPreviouslyVisible(drawId, draw.RenderIdentityID))
+    // Camera/scene discontinuities invalidate the prior frame's visibility.
+    // Seed the new view with every candidate so stale depth cannot lock work
+    // out of both phases indefinitely.
+    if (ForceVisible == 0u && !WasPreviouslyVisible(drawId, draw.RenderIdentityID))
         return;
 
     uint outputIndex = atomicAdd(OutCount, 1u);

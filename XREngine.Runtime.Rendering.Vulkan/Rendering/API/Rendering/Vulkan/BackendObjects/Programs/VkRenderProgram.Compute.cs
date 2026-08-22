@@ -1253,7 +1253,7 @@ internal unsafe partial class VkRenderProgram
             if (!snapshot.Images.TryGetValue(binding.Binding, out ProgramImageBinding imageBinding))
                 return false;
 
-            if (!TryResolveTextureDescriptor(binding, imageBinding.Texture, includeSampler: false, requiresSampledUsage: false, requiresStorageUsage: true, ImageLayout.General, out imageInfo))
+            if (!TryResolveTextureDescriptor(binding, imageBinding.Texture, includeSampler: false, requiresSampledUsage: false, requiresStorageUsage: true, ImageLayout.General, imageBinding, out imageInfo))
                 return false;
 
             return true;
@@ -1287,7 +1287,7 @@ internal unsafe partial class VkRenderProgram
 
         bool includeSampler = binding.DescriptorType is DescriptorType.CombinedImageSampler or DescriptorType.Sampler;
         bool requiresSampledUsage = binding.DescriptorType is DescriptorType.CombinedImageSampler or DescriptorType.Sampler or DescriptorType.SampledImage;
-        return TryResolveTextureDescriptor(binding, texture, includeSampler, requiresSampledUsage, requiresStorageUsage: false, ImageLayout.ShaderReadOnlyOptimal, out imageInfo);
+        return TryResolveTextureDescriptor(binding, texture, includeSampler, requiresSampledUsage, requiresStorageUsage: false, ImageLayout.ShaderReadOnlyOptimal, storageImageBinding: null, out imageInfo);
     }
 
     private bool TryResolveComputeTexelBuffer(DescriptorBindingInfo binding, ComputeDispatchSnapshot snapshot, out BufferView texelView)
@@ -1310,7 +1310,15 @@ internal unsafe partial class VkRenderProgram
         return TryResolveTexelBufferDescriptor(texture, out texelView);
     }
 
-    private bool TryResolveTextureDescriptor(DescriptorBindingInfo binding, XRTexture texture, bool includeSampler, bool requiresSampledUsage, bool requiresStorageUsage, ImageLayout layout, out DescriptorImageInfo imageInfo)
+    private bool TryResolveTextureDescriptor(
+        DescriptorBindingInfo binding,
+        XRTexture texture,
+        bool includeSampler,
+        bool requiresSampledUsage,
+        bool requiresStorageUsage,
+        ImageLayout layout,
+        ProgramImageBinding? storageImageBinding,
+        out DescriptorImageInfo imageInfo)
     {
         imageInfo = default;
         if (texture is null)
@@ -1352,7 +1360,22 @@ internal unsafe partial class VkRenderProgram
             return false;
         }
 
-        ImageView descriptorView = source.DescriptorView;
+        ImageView descriptorView = storageImageBinding is { } imageBinding
+            ? source.GetStorageDescriptorView(imageBinding.Level, imageBinding.Layered, imageBinding.Layer)
+            : source.DescriptorView;
+        if (descriptorView.Handle == 0)
+        {
+            Debug.VulkanWarningEvery(
+                $"Vulkan.Descriptor.StorageSubresourceViewUnavailable.{GetHashCode()}",
+                TimeSpan.FromSeconds(1),
+                "[Vulkan] Skipping storage descriptor bind for texture '{0}' because mip {1}, layered={2}, layer={3} has no compatible Vulkan image view.",
+                texture.Name ?? texture.GetDescribingName(),
+                storageImageBinding?.Level ?? 0,
+                storageImageBinding?.Layered ?? false,
+                storageImageBinding?.Layer ?? 0);
+            return false;
+        }
+
         ImageAspectFlags descriptorAspect = source.DescriptorAspect;
         if (IsCombinedDepthStencilFormat(source.DescriptorFormat) &&
             (descriptorAspect & (ImageAspectFlags.DepthBit | ImageAspectFlags.StencilBit)) == (ImageAspectFlags.DepthBit | ImageAspectFlags.StencilBit))

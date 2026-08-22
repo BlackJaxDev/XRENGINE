@@ -477,6 +477,100 @@ namespace XREngine.Rendering.Vulkan
             Api!.CmdDispatch(commandBuffer, payload.GroupsX, payload.GroupsY, payload.GroupsZ);
         }
 
+        /// <summary>
+        /// Establishes the exact sampled-image layouts required by an inline
+        /// primary compute dispatch. Compute work executes outside a rendering
+        /// scope, so an image that was just used as an attachment must not be
+        /// treated as an overlapping active attachment here.
+        /// </summary>
+        private void EnsureComputeSampledImageLayoutsForDispatch(
+            CommandBuffer commandBuffer,
+            ComputeDispatchSnapshot snapshot)
+        {
+            foreach (XRTexture texture in snapshot.Samplers.Values)
+                TransitionComputeDescriptorTextureForSampling(
+                    commandBuffer,
+                    texture,
+                    snapshot);
+
+            foreach (XRTexture texture in snapshot.SamplersByName.Values)
+                TransitionComputeDescriptorTextureForSampling(
+                    commandBuffer,
+                    texture,
+                    snapshot);
+        }
+
+        /// <summary>
+        /// Transitions a compute sampler without collapsing mixed per-mip state
+        /// when the same image is also bound for storage. Reduction chains read
+        /// one completed mip while writing the next; treating their full sampled
+        /// view as one layout range can fall back to an Undefined old layout and
+        /// discard already-produced mip contents.
+        /// </summary>
+        private void TransitionComputeDescriptorTextureForSampling(
+            CommandBuffer commandBuffer,
+            XRTexture texture,
+            ComputeDispatchSnapshot snapshot)
+        {
+            if (ResourceRuntime.BackendObjects.Get(texture) is not IVkImageDescriptorSource source ||
+                source.DescriptorImage.Handle == 0 ||
+                !ComputeSnapshotWritesImage(snapshot, source.DescriptorImage))
+            {
+                TransitionDescriptorTextureForSampling(
+                    commandBuffer,
+                    texture,
+                    target: null,
+                    passIndex: 0,
+                    passMetadata: null);
+                return;
+            }
+
+            ImageLayout targetLayout = ResourceRuntime.Descriptors.ResolveDescriptorImageLayout(
+                source,
+                DescriptorType.CombinedImageSampler);
+            ImageAspectFlags aspect = NormalizeBarrierAspectMask(
+                source.DescriptorFormat,
+                source.DescriptorAspect);
+            uint mipLevels = Math.Max(source.DescriptorMipLevels, 1u);
+            uint arrayLayers = Math.Max(source.DescriptorArrayLayers, 1u);
+            for (uint mipLevel = 0; mipLevel < mipLevels; mipLevel++)
+            for (uint arrayLayer = 0; arrayLayer < arrayLayers; arrayLayer++)
+            {
+                ImageSubresourceRange range = new()
+                {
+                    AspectMask = aspect,
+                    BaseMipLevel = mipLevel,
+                    LevelCount = 1u,
+                    BaseArrayLayer = arrayLayer,
+                    LayerCount = 1u,
+                };
+                TransitionDescriptorImageRangeForSampling(
+                    commandBuffer,
+                    source.DescriptorImage,
+                    range,
+                    targetLayout,
+                    target: null,
+                    passIndex: 0,
+                    passMetadata: null);
+            }
+        }
+
+        private bool ComputeSnapshotWritesImage(
+            ComputeDispatchSnapshot snapshot,
+            Image sampledImage)
+        {
+            foreach (ProgramImageBinding binding in snapshot.Images.Values)
+            {
+                if (ResourceRuntime.BackendObjects.Get(binding.Texture) is IVkImageDescriptorSource storageSource &&
+                    storageSource.DescriptorImage.Handle == sampledImage.Handle)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
         private unsafe void EnsureComputeStorageImageLayoutsForDispatch(CommandBuffer commandBuffer, ComputeDispatchSnapshot snapshot)
         {
             foreach (ProgramImageBinding binding in snapshot.Images.Values)
