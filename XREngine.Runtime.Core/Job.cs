@@ -29,7 +29,9 @@ namespace XREngine
     {
         private const int StateCreated = 0;
         private const int StateRunning = 1;
-        private const int StateCompleted = 2;
+        private const int StateCompleting = 2;
+        private const int StateFaulting = 3;
+        private const int StateCompleted = 4;
 
         private readonly object _lifecycleLock = new();
         private readonly Guid _id = Guid.NewGuid();
@@ -42,6 +44,15 @@ namespace XREngine
         private float _progress;
         private Exception? _exception;
         private CancellationTokenSource? _cts;
+        private TaskCompletionSource<bool>? _shutdownCancellationCompletion;
+        private Task? _shutdownFinalizationTask;
+        private TaskCompletionSource<bool>? _terminalNotificationCompletion;
+        private Exception? _terminalNotificationException;
+        private int _pendingContextNotifications;
+        private int _terminalCallbackState;
+        private int _shutdownCancellationState;
+        private int _shutdownCancellationTrackingClaim;
+        private int _shutdownManagerFinalizationClaim;
         private CancellationTokenRegistration _externalCancellation;
         private bool _hasExternalCancellation;
         private int _starvationLogged;
@@ -70,13 +81,16 @@ namespace XREngine
         public bool IsCompleted => Volatile.Read(ref _state) == StateCompleted;
         public bool IsFaulted => Volatile.Read(ref _isFaulted) == 1;
         public bool IsCanceled => Volatile.Read(ref _isCanceled) == 1;
-        public bool IsCancellationRequested => CancellationToken.IsCancellationRequested;
+        public bool IsCancellationRequested
+            => Volatile.Read(ref _isCanceled) != 0 || CancellationToken.IsCancellationRequested;
         public Exception? Exception => _exception;
         public object? Result { get; private set; }
         public object? Payload { get; private set; }
         public SynchronizationContext? CallbackContext { get; set; }
         public CancellationToken CancellationToken => _cts?.Token ?? CancellationToken.None;
         internal Task? PendingTask => _pendingTask;
+        internal Task TerminalNotificationTask
+            => _terminalNotificationCompletion?.Task ?? Task.CompletedTask;
         public JobHandle Handle { get; internal set; }
         internal bool StarvationWarningEmitted => _starvationLogged == 1;
 
@@ -102,24 +116,42 @@ namespace XREngine
         }
 
         internal bool TryStart()
+            => TryStartCore(createExecutionStack: true);
+
+        internal bool TryStartForShutdownRejection()
+            => TryStartCore(createExecutionStack: false);
+
+        private bool TryStartCore(bool createExecutionStack)
         {
             if (Interlocked.CompareExchange(ref _state, StateRunning, StateCreated) != StateCreated)
                 return false;
 
+            Stack<IEnumerator>? executionStack = createExecutionStack ? new Stack<IEnumerator>() : null;
+            CancellationTokenSource cancellationSource;
+            bool cancelBeforeFactory;
             lock (_lifecycleLock)
             {
                 _cts?.Dispose();
-                _cts = new CancellationTokenSource();
+                cancellationSource = new CancellationTokenSource();
+                _cts = cancellationSource;
                 if (_hasExternalCancellation)
                 {
                     _externalCancellation.Dispose();
                     _externalCancellation = default;
                     _hasExternalCancellation = false;
                 }
-                _executionStack = new Stack<IEnumerator>();
-                var routine = Process() ?? throw new InvalidOperationException("Job routine cannot be null.");
-                _executionStack.Push(routine.GetEnumerator());
+                _executionStack = executionStack;
                 _pendingTask = null;
+                _shutdownCancellationCompletion = null;
+                _shutdownFinalizationTask = null;
+                _terminalNotificationCompletion =
+                    new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+                _terminalNotificationException = null;
+                Volatile.Write(ref _pendingContextNotifications, 0);
+                Volatile.Write(ref _terminalCallbackState, 0);
+                Volatile.Write(ref _shutdownCancellationState, 0);
+                Volatile.Write(ref _shutdownCancellationTrackingClaim, 0);
+                Volatile.Write(ref _shutdownManagerFinalizationClaim, 0);
                 _completionSource = null;
                 Handle = default;
                 Volatile.Write(ref _usesQueueSlot, 0);
@@ -131,9 +163,68 @@ namespace XREngine
                 _exception = null;
                 Volatile.Write(ref _progress, 0f);
                 Volatile.Write(ref _isFaulted, 0);
-                Volatile.Write(ref _isCanceled, 0);
+
+                // Jobs are single-use. Preserve a cancellation requested before or
+                // concurrently with startup, and reflect it into the newly-owned CTS.
+                // A later Cancel() observes this source and cancels it directly.
+                cancelBeforeFactory = Volatile.Read(ref _isCanceled) != 0;
             }
+
+            try
+            {
+                // Cancellation can invoke arbitrary user registrations. Never run
+                // those callbacks while holding the lifecycle lock, and include
+                // callback faults in the same terminal startup-failure path.
+                if (cancelBeforeFactory)
+                    cancellationSource.Cancel();
+
+                if (!createExecutionStack)
+                    return true;
+
+                // Process() and GetEnumerator() are user-extensible. Initialize all
+                // lifecycle and notification tracking before invoking either, and do
+                // not hold the lifecycle lock while arbitrary factory code runs.
+                IEnumerable routine = Process() ??
+                    throw new InvalidOperationException("Job routine cannot be null.");
+                IEnumerator enumerator = routine.GetEnumerator() ??
+                    throw new InvalidOperationException("Job routine enumerator cannot be null.");
+
+                lock (_lifecycleLock)
+                    executionStack!.Push(enumerator);
+            }
+            catch (Exception exception)
+            {
+                MarkStartFaulted(exception);
+                throw;
+            }
+
             return true;
+        }
+
+        private void MarkStartFaulted(Exception exception)
+        {
+            Exception terminalException = exception;
+            try
+            {
+                CleanupExecutionState();
+            }
+            catch (Exception cleanupException)
+            {
+                terminalException = new AggregateException(
+                    "Job startup and terminal cleanup both faulted.",
+                    exception,
+                    cleanupException);
+            }
+
+            _exception = terminalException;
+            Interlocked.Exchange(ref _isFaulted, 1);
+            Interlocked.Exchange(ref _state, StateCompleted);
+
+            // Startup failed synchronously before manager ownership/publication. No
+            // terminal user callback is dispatched, but any progress notification
+            // posted by the eager factory still owns terminal tracking until it runs.
+            Volatile.Write(ref _terminalCallbackState, 1);
+            TryCompleteTerminalNotification();
         }
 
         internal bool TryClearQueueSlot()
@@ -151,6 +242,230 @@ namespace XREngine
             catch (ObjectDisposedException)
             {
             }
+        }
+
+        /// <summary>
+        /// Requests cancellation without running token callbacks on the shutdown
+        /// caller. The owning execution path must still reach terminal cleanup.
+        /// </summary>
+        internal Task RequestCancellationForShutdown()
+        {
+            TaskCompletionSource<bool> completion;
+            CancellationTokenSource? source = null;
+            bool initiate = false;
+            lock (_lifecycleLock)
+            {
+                completion = _shutdownCancellationCompletion ??=
+                    new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+                if (Volatile.Read(ref _shutdownCancellationState) == 0)
+                {
+                    Volatile.Write(ref _shutdownCancellationState, 1);
+                    source = _cts;
+                    initiate = true;
+                }
+            }
+
+            Volatile.Write(ref _isCanceled, 1);
+            if (!initiate)
+                return completion.Task;
+
+            try
+            {
+                if (source is null)
+                {
+                    QueueShutdownCancellationCompletion(completion, exception: null);
+                    return completion.Task;
+                }
+
+                Task cancellation = source.CancelAsync();
+                QueueShutdownCancellationObservation(cancellation, completion);
+            }
+            catch (ObjectDisposedException)
+            {
+                QueueShutdownCancellationCompletion(completion, exception: null);
+            }
+            catch (Exception exception)
+            {
+                QueueShutdownCancellationCompletion(completion, exception);
+            }
+
+            return completion.Task;
+        }
+
+        /// <summary>
+        /// Asynchronously settles shutdown-canceled work. The cancellation
+        /// completion source runs continuations asynchronously, so a token
+        /// callback cannot re-enter and wait on its own cancellation operation.
+        /// Call only from the manager's owned queue pump or an inactive job's
+        /// execution/pending-task continuation, never the lifecycle caller.
+        /// </summary>
+        internal Task CompleteCancellationForShutdownAsync()
+        {
+            Task cancellation = RequestCancellationForShutdown();
+            TaskCompletionSource<bool> completion;
+            lock (_lifecycleLock)
+            {
+                if (_shutdownFinalizationTask is not null)
+                    return _shutdownFinalizationTask;
+
+                completion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+                _shutdownFinalizationTask = completion.Task;
+            }
+
+            _ = CompleteCancellationForShutdownCoreAsync(cancellation, completion);
+            return completion.Task;
+        }
+
+        internal bool TryClaimShutdownCancellationTracking()
+            => Interlocked.CompareExchange(ref _shutdownCancellationTrackingClaim, 1, 0) == 0;
+
+        internal bool TryClaimShutdownManagerFinalization()
+            => Interlocked.CompareExchange(ref _shutdownManagerFinalizationClaim, 1, 0) == 0;
+
+        private async Task CompleteCancellationForShutdownCoreAsync(
+            Task cancellation,
+            TaskCompletionSource<bool> completion)
+        {
+            try
+            {
+                await cancellation.ConfigureAwait(false);
+            }
+            catch (Exception exception)
+            {
+                LogShutdownCancellationFault(exception);
+            }
+
+            try
+            {
+                Task terminalNotification;
+                int previousState = Interlocked.CompareExchange(
+                    ref _state,
+                    StateCompleted,
+                    StateRunning);
+                if (previousState != StateRunning)
+                {
+                    // A fault owner publishes its payload before StateCompleted and
+                    // owns the terminal notification. Shutdown must observe that
+                    // publication instead of replacing it with cancellation.
+                    terminalNotification = TerminalNotificationTask;
+                }
+                else
+                {
+                    try
+                    {
+                        CleanupExecutionState();
+                    }
+                    catch
+                    {
+                        // Terminal shutdown cannot make the job executable again. A
+                        // registration-disposal race is contained by the manager's
+                        // tracked finalizer and must not strand the completion handle.
+                    }
+
+                    terminalNotification = InvokeCanceled();
+                    _completionSource?.TrySetCanceled(new CancellationToken(canceled: true));
+                }
+
+                try
+                {
+                    await terminalNotification.ConfigureAwait(false);
+                }
+                catch (Exception exception)
+                {
+                    LogShutdownCancellationFault(exception);
+                }
+
+                // A concurrent fault owner may have deferred CTS disposal while
+                // CancelAsync was active. Terminal notification implies that owner
+                // has published StateCompleted, so shutdown can now release the
+                // remaining cancellation resources safely.
+                try
+                {
+                    lock (_lifecycleLock)
+                        DisposeCancellationResourcesUnderLock();
+                }
+                catch (Exception exception)
+                {
+                    LogShutdownCancellationFault(exception);
+                }
+            }
+            finally
+            {
+                completion.TrySetResult(true);
+            }
+        }
+
+        private void QueueShutdownCancellationObservation(
+            Task cancellation,
+            TaskCompletionSource<bool> completion)
+        {
+            try
+            {
+                _ = cancellation.ContinueWith(
+                    completed =>
+                    {
+                        Exception? exception = completed.IsFaulted
+                            ? completed.Exception?.GetBaseException()
+                            : completed.IsCanceled
+                                ? new TaskCanceledException(completed)
+                                : null;
+                        FinishShutdownCancellationRequest(completion, exception);
+                    },
+                    CancellationToken.None,
+                    TaskContinuationOptions.DenyChildAttach,
+                    TaskScheduler.Default);
+            }
+            catch (Exception dispatchException)
+            {
+                Environment.FailFast(
+                    "Unable to dispatch shutdown cancellation observation without running cleanup on the lifecycle caller.",
+                    dispatchException);
+            }
+        }
+
+        private void QueueShutdownCancellationCompletion(
+            TaskCompletionSource<bool> completion,
+            Exception? exception)
+        {
+            try
+            {
+                _ = Task.Factory.StartNew(
+                    () => FinishShutdownCancellationRequest(completion, exception),
+                    CancellationToken.None,
+                    TaskCreationOptions.DenyChildAttach,
+                    TaskScheduler.Default);
+            }
+            catch (Exception dispatchException)
+            {
+                Environment.FailFast(
+                    "Unable to dispatch shutdown cancellation completion without running cleanup on the lifecycle caller.",
+                    dispatchException);
+            }
+        }
+
+        private void FinishShutdownCancellationRequest(
+            TaskCompletionSource<bool> completion,
+            Exception? exception)
+        {
+            if (exception is not null)
+                LogShutdownCancellationFault(exception);
+
+            Volatile.Write(ref _shutdownCancellationState, 2);
+            int state = Volatile.Read(ref _state);
+            if (state is StateCompleting or StateFaulting or StateCompleted)
+            {
+                try
+                {
+                    lock (_lifecycleLock)
+                        DisposeCancellationResourcesUnderLock();
+                }
+                catch (Exception cleanupException)
+                {
+                    LogShutdownCancellationFault(cleanupException);
+                }
+            }
+
+            completion.TrySetResult(true);
         }
 
         internal void LinkCancellationToken(CancellationToken token)
@@ -327,13 +642,33 @@ namespace XREngine
 
         private JobStepResult CompleteInternal(bool setCompletion = true)
         {
-            if (Interlocked.Exchange(ref _state, StateCompleted) == StateCompleted)
+            if (Interlocked.CompareExchange(ref _state, StateCompleting, StateRunning) != StateRunning)
                 return JobStepResult.Completed;
 
-            CleanupExecutionState();
+            try
+            {
+                CleanupExecutionState();
+            }
+            catch (Exception cleanupException)
+            {
+                _exception = cleanupException;
+                Interlocked.Exchange(ref _isFaulted, 1);
+                Volatile.Write(ref _state, StateCompleted);
+                _ = InvokeFaulted(cleanupException);
+                _completionSource?.TrySetException(cleanupException);
+                return JobStepResult.Completed;
+            }
 
-            UpdateProgress(1f);
-            InvokeCompletion();
+            try
+            {
+                UpdateProgress(1f);
+            }
+            catch (Exception notificationException)
+            {
+                LogTerminalNotificationFault("final progress", notificationException);
+            }
+            Volatile.Write(ref _state, StateCompleted);
+            _ = InvokeCompletion();
             if (setCompletion)
                 _completionSource?.TrySetResult(true);
             return JobStepResult.Completed;
@@ -346,8 +681,62 @@ namespace XREngine
                 _executionStack?.Clear();
                 _executionStack = null;
                 _pendingTask = null;
+
+                if (Volatile.Read(ref _shutdownCancellationState) != 1)
+                    DisposeCancellationResourcesUnderLock();
+            }
+        }
+
+        private JobStepResult CancelInternal()
+        {
+            Interlocked.Exchange(ref _isCanceled, 1);
+            if (Volatile.Read(ref _shutdownCancellationState) == 0)
+            {
+                try
+                {
+                    _cts?.Cancel();
+                }
+                catch (ObjectDisposedException)
+                {
+                }
+            }
+            else
+            {
+                Task? cancellation;
+                lock (_lifecycleLock)
+                    cancellation = _shutdownCancellationCompletion?.Task;
+
+                if (cancellation is { IsCompleted: false })
+                {
+                    _pendingTask = cancellation;
+                    return JobStepResult.Waiting;
+                }
             }
 
+            if (Interlocked.CompareExchange(ref _state, StateCompleted, StateRunning) != StateRunning)
+                return JobStepResult.Completed;
+
+            try
+            {
+                CleanupExecutionState();
+            }
+            catch (Exception cleanupException)
+            {
+                LogTerminalNotificationFault("cancellation cleanup", cleanupException);
+            }
+            try
+            {
+                _ = InvokeCanceled();
+            }
+            finally
+            {
+                _completionSource?.TrySetCanceled(CancellationToken);
+            }
+            return JobStepResult.Completed;
+        }
+
+        private void DisposeCancellationResourcesUnderLock()
+        {
             if (_hasExternalCancellation)
             {
                 _externalCancellation.Dispose();
@@ -359,37 +748,42 @@ namespace XREngine
             _cts = null;
         }
 
-        private JobStepResult CancelInternal()
+        private void LogShutdownCancellationFault(Exception exception)
         {
-            Interlocked.Exchange(ref _isCanceled, 1);
             try
             {
-                _cts?.Cancel();
+                JobManager.LogMessage?.Invoke(
+                    $"Job '{GetProfilerLabel()}' [{Id}] shutdown cancellation callback faulted: {exception}");
             }
-            catch (ObjectDisposedException)
+            catch
             {
+                // Diagnostics must not compromise terminal ownership cleanup.
             }
-
-            if (Interlocked.Exchange(ref _state, StateCompleted) == StateCompleted)
-                return JobStepResult.Completed;
-
-            CleanupExecutionState();
-            InvokeCanceled();
-            _completionSource?.TrySetCanceled(CancellationToken);
-            return JobStepResult.Completed;
         }
 
         private JobStepResult FailInternal(Exception exception)
         {
-            _exception = exception;
-            Interlocked.Exchange(ref _isFaulted, 1);
-
-            if (Interlocked.Exchange(ref _state, StateCompleted) == StateCompleted)
+            if (Interlocked.CompareExchange(ref _state, StateFaulting, StateRunning) != StateRunning)
                 return JobStepResult.Completed;
 
-            CleanupExecutionState();
-            InvokeFaulted(exception);
-            _completionSource?.TrySetException(exception);
+            Exception terminalException = exception;
+            try
+            {
+                CleanupExecutionState();
+            }
+            catch (Exception cleanupException)
+            {
+                terminalException = new AggregateException(
+                    "Job execution and terminal cleanup both faulted.",
+                    exception,
+                    cleanupException);
+            }
+
+            _exception = terminalException;
+            Interlocked.Exchange(ref _isFaulted, 1);
+            Volatile.Write(ref _state, StateCompleted);
+            _ = InvokeFaulted(terminalException);
+            _completionSource?.TrySetException(terminalException);
             return JobStepResult.Completed;
         }
 
@@ -403,55 +797,147 @@ namespace XREngine
             if (setPayload)
                 Payload = payload;
 
-            var context = CallbackContext;
+            Action<Job, float>? progressChanged = ProgressChanged;
+            Action<Job, float, object?>? progressWithPayload = ProgressWithPayload;
+            if (progressChanged is null && progressWithPayload is null)
+                return;
+
+            SynchronizationContext? context = CallbackContext;
             if (context != null)
             {
-                context.Post(_ =>
+                Interlocked.Increment(ref _pendingContextNotifications);
+                int completionClaimed = 0;
+
+                void CompletePendingNotification()
                 {
-                    ProgressChanged?.Invoke(this, clamped);
-                    ProgressWithPayload?.Invoke(this, clamped, Payload);
-                }, null);
+                    if (Interlocked.Exchange(ref completionClaimed, 1) != 0)
+                        return;
+
+                    Interlocked.Decrement(ref _pendingContextNotifications);
+                    TryCompleteTerminalNotification();
+                }
+
+                try
+                {
+                    context.Post(_ =>
+                    {
+                        try
+                        {
+                            progressChanged?.Invoke(this, clamped);
+                            progressWithPayload?.Invoke(this, clamped, Payload);
+                        }
+                        finally
+                        {
+                            CompletePendingNotification();
+                        }
+                    }, null);
+                }
+                catch
+                {
+                    // A custom SynchronizationContext may dispatch inline and then
+                    // throw. Claim completion exactly once across both paths.
+                    CompletePendingNotification();
+                    throw;
+                }
                 return;
             }
 
-            ProgressChanged?.Invoke(this, clamped);
-            ProgressWithPayload?.Invoke(this, clamped, Payload);
+            progressChanged?.Invoke(this, clamped);
+            progressWithPayload?.Invoke(this, clamped, Payload);
         }
 
-        private void InvokeCompletion()
+        private Task InvokeCompletion()
+            => DispatchTerminalNotification(
+                Completed is { } completed ? () => completed(this) : null,
+                "completion");
+
+        private Task InvokeCanceled()
+            => DispatchTerminalNotification(
+                Canceled is { } canceled ? () => canceled(this) : null,
+                "cancellation");
+
+        private Task InvokeFaulted(Exception exception)
+            => DispatchTerminalNotification(
+                Faulted is { } faulted ? () => faulted(this, exception) : null,
+                "fault");
+
+        private Task DispatchTerminalNotification(Action? callback, string kind)
         {
-            var context = CallbackContext;
-            if (context != null)
+            TaskCompletionSource<bool>? completion = _terminalNotificationCompletion;
+            if (completion is null)
+                return Task.CompletedTask;
+
+            SynchronizationContext? context = CallbackContext;
+            if (context is null || callback is null)
             {
-                context.Post(_ => Completed?.Invoke(this), null);
-                return;
+                CompleteTerminalNotification(callback, kind);
+                return completion.Task;
             }
 
-            Completed?.Invoke(this);
+            try
+            {
+                context.Post(
+                    _ => CompleteTerminalNotification(callback, kind),
+                    null);
+            }
+            catch (Exception exception)
+            {
+                LogTerminalNotificationFault(kind, exception);
+                _terminalNotificationException = exception;
+                Volatile.Write(ref _terminalCallbackState, 2);
+                TryCompleteTerminalNotification();
+            }
+
+            return completion.Task;
         }
 
-        private void InvokeCanceled()
+        private void CompleteTerminalNotification(
+            Action? callback,
+            string kind)
         {
-            var context = CallbackContext;
-            if (context != null)
+            try
             {
-                context.Post(_ => Canceled?.Invoke(this), null);
-                return;
+                callback?.Invoke();
+                Volatile.Write(ref _terminalCallbackState, 1);
+            }
+            catch (Exception exception)
+            {
+                LogTerminalNotificationFault(kind, exception);
+                _terminalNotificationException = exception;
+                Volatile.Write(ref _terminalCallbackState, 2);
             }
 
-            Canceled?.Invoke(this);
+            TryCompleteTerminalNotification();
         }
 
-        private void InvokeFaulted(Exception exception)
+        private void TryCompleteTerminalNotification()
         {
-            var context = CallbackContext;
-            if (context != null)
-            {
-                context.Post(_ => Faulted?.Invoke(this, exception), null);
+            if (Volatile.Read(ref _terminalCallbackState) == 0 ||
+                Volatile.Read(ref _pendingContextNotifications) != 0)
                 return;
-            }
 
-            Faulted?.Invoke(this, exception);
+            TaskCompletionSource<bool>? completion = _terminalNotificationCompletion;
+            if (completion is null)
+                return;
+
+            Exception? exception = _terminalNotificationException;
+            if (exception is null)
+                completion.TrySetResult(true);
+            else
+                completion.TrySetException(exception);
+        }
+
+        private void LogTerminalNotificationFault(string kind, Exception exception)
+        {
+            try
+            {
+                JobManager.LogMessage?.Invoke(
+                    $"Job '{GetProfilerLabel()}' [{Id}] {kind} notification faulted: {exception}");
+            }
+            catch
+            {
+                // Diagnostics must not compromise terminal ownership cleanup.
+            }
         }
     }
 }

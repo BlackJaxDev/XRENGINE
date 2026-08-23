@@ -1998,6 +1998,15 @@ public partial class DefaultRenderPipeline : RenderPipeline, ISceneRenderPipelin
         Chain(metadata, EDefaultRenderPass.TransparentForward, EDefaultRenderPass.DepthPeelingForward);
         Chain(metadata, EDefaultRenderPass.OnTopForward, EDefaultRenderPass.TransparentForward);
         Chain(metadata, EDefaultRenderPass.PostRender, EDefaultRenderPass.OnTopForward);
+
+        if (metadata.TryGetPassIndex(LateOnTopForwardPassName, out int lateOnTopPassIndex) &&
+            metadata.TryGetPassIndex(VPRC_BuildAccelerationStructure.RenderGraphPassName, out int accelerationStructurePassIndex))
+        {
+            // The authored late overlay is a second execution of the OnTopForward mesh bucket.
+            // Give it a command-local graph identity so the core pass chain cannot hold it until
+            // after final presentation, and anchor it after the preceding scene/BVH work.
+            metadata.ForPass(lateOnTopPassIndex).DependsOn(accelerationStructurePassIndex);
+        }
     }
     private ViewportRenderCommandContainer CreateFinalBlitCommands(string sourceFboName, bool bypassVendorUpscale)
     {

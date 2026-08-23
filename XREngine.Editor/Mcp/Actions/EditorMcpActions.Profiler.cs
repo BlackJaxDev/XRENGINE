@@ -74,6 +74,7 @@ namespace XREngine.Editor.Mcp
         public static Task<McpToolResponse> GetRenderProfilerStatsAsync(McpToolContext context)
         {
             VulkanFrameTelemetryPublication vulkanFrame = VulkanStats.LatestVulkanFrameTelemetry;
+            RvcFrameProfileSnapshot rvcFrameProfile = RuntimeEngine.Rendering.Stats.Rvc.FrameProfile;
             var gpuScene = context.WorldInstance.VisualScene.GPUCommands;
             GpuMeshletEligibilitySnapshot meshletEligibility =
                 gpuScene.CaptureMeshletEligibilitySnapshot((int)EDefaultRenderPass.OpaqueDeferred);
@@ -158,6 +159,14 @@ namespace XREngine.Editor.Mcp
                                     cpu_fallback_only = meshletEligibility.CpuFallbackOnlyFlags,
                                     non_canonical_raster_state = meshletEligibility.NonCanonicalRasterStateFlags,
                                 },
+                                state_class_breakdown = new
+                                {
+                                    opaque_forward = meshletEligibility.OpaqueForwardStateClassCommands,
+                                    alpha_tested = meshletEligibility.AlphaTestedStateClassCommands,
+                                    transparent = meshletEligibility.TransparentStateClassCommands,
+                                    custom = meshletEligibility.CustomStateClassCommands,
+                                },
+                                material_override_commands = meshletEligibility.MaterialOverrideCommands,
                             },
                         },
                     },
@@ -233,6 +242,8 @@ namespace XREngine.Editor.Mcp
                         latest_task_records_hiz_culled = RuntimeEngine.Rendering.Stats.GpuMeshlets.LatestGpuMeshletTaskRecordsHiZCulled,
                         delayed_dispatch_group_count = RuntimeEngine.Rendering.Stats.GpuMeshlets.DelayedDispatchGroupCount,
                         diagnostic_readback_bytes = RuntimeEngine.Rendering.Stats.GpuMeshlets.DiagnosticReadbackBytes,
+                        stereo_hiz_left_eye_bypass_submissions = RuntimeEngine.Rendering.Stats.GpuMeshlets.StereoHiZLeftEyeBypassSubmissions,
+                        stereo_hiz_right_eye_bypass_submissions = RuntimeEngine.Rendering.Stats.GpuMeshlets.StereoHiZRightEyeBypassSubmissions,
                         overflow_count = RuntimeEngine.Rendering.Stats.GpuMeshlets.GpuMeshletExpansionOverflowCount,
                         readback_bytes = RuntimeEngine.Rendering.Stats.GpuMeshlets.LastReadbackBytes,
                         vulkan_capability_ladder = RuntimeEngine.Rendering.Stats.GpuMeshlets.VulkanCapabilityLadder,
@@ -247,6 +258,7 @@ namespace XREngine.Editor.Mcp
                         downgrade_reason = RuntimeEngine.Rendering.LastMeshletDowngradeReason ?? string.Empty,
                     },
                     frame_outputs = BuildFrameOutputManifest(RuntimeEngine.Rendering.Stats.FrameOutputs.LastManifest),
+                    rvc_frame_profile = BuildRvcFrameProfile(rvcFrameProfile),
                     occlusion = new
                     {
                         effective_mode = OcclusionTelemetry.LastEffectiveMode.ToString(),
@@ -924,6 +936,61 @@ namespace XREngine.Editor.Mcp
                 outputs = outputData,
             };
         }
+
+        private static object BuildRvcFrameProfile(in RvcFrameProfileSnapshot snapshot)
+        {
+            int viewCount = Math.Clamp(snapshot.ViewCount, 0, 4);
+            object[] views = new object[viewCount];
+            for (int index = 0; index < viewCount; index++)
+            {
+                RvcFrameViewDiagnostics view = snapshot.GetView(index);
+                RvcFrameViewProjectionDiagnostics projection = snapshot.GetProjection(index);
+                views[index] = new
+                {
+                    view_id = view.ViewId,
+                    view_kind = view.ViewKind.ToString(),
+                    runtime_width = view.RuntimeWidth,
+                    runtime_height = view.RuntimeHeight,
+                    horizontal_fov_degrees = view.HorizontalFovDegrees,
+                    vertical_fov_degrees = view.VerticalFovDegrees,
+                    runtime_view_index = projection.RuntimeViewIndex,
+                    view_matrix = Matrix(projection.ViewMatrix),
+                    projection_matrix = Matrix(projection.ProjectionMatrix),
+                    view_projection_matrix = Matrix(projection.ViewProjectionMatrix),
+                };
+            }
+
+            return new
+            {
+                frame_id = snapshot.FrameId,
+                predicted_display_time = snapshot.PredictedDisplayTime,
+                view_count = viewCount,
+                fallback_reason = snapshot.FallbackReason.ToString(),
+                diagnostic = snapshot.Diagnostic,
+                views,
+            };
+        }
+
+        private static object Matrix(System.Numerics.Matrix4x4 value)
+            => new
+            {
+                m11 = value.M11,
+                m12 = value.M12,
+                m13 = value.M13,
+                m14 = value.M14,
+                m21 = value.M21,
+                m22 = value.M22,
+                m23 = value.M23,
+                m24 = value.M24,
+                m31 = value.M31,
+                m32 = value.M32,
+                m33 = value.M33,
+                m34 = value.M34,
+                m41 = value.M41,
+                m42 = value.M42,
+                m43 = value.M43,
+                m44 = value.M44,
+            };
 
         private static object VulkanCpuStage(EVulkanCpuStage stage)
         {

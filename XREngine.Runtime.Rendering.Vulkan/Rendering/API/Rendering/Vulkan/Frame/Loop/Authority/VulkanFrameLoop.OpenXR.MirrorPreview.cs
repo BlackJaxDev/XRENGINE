@@ -425,7 +425,8 @@ internal sealed partial class VulkanFrameLoop
                     request.OpenXrViewIndex,
                     request.ViewBatchStructuralIdentity),
                 ResolveOpenXrExternalSwapchainTargetName(request.OpenXrViewIndex),
-                EVulkanFrameOpContextKind.OpenXrMirror)
+                EVulkanFrameOpContextKind.OpenXrMirror,
+                openXrViewIndex: request.OpenXrViewIndex)
             : null;
 
         try

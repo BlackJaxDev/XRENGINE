@@ -123,7 +123,9 @@ namespace XREngine
 #endif
                 EnsureMemoryPolicyConfigured(startupSettings);
                 ValidateGpuRenderingStartupConfiguration();
+                ResolveExecutionTopology();
                 ConfigureJobManager(GameSettings);
+                ValidateInstalledWorkScheduler();
 
                 BeforeCreateWindows?.Invoke(startupSettings, state);
 
@@ -240,6 +242,18 @@ namespace XREngine
                 return;
             }
 
+            bool schedulerStopped = WorkScheduler?.Shutdown(waitForWorkers: true)
+                ?? (_jobs?.Shutdown(waitForWorkers: true) ?? true);
+            if (!schedulerStopped)
+            {
+                Interlocked.Exchange(ref _abandonProcessExitCleanup, 1);
+                Debug.RenderingWarning(
+                    "[Shutdown] Skipping process-exit resource cleanup because the bounded work-scheduler " +
+                    "quiesce failed. Executor and backend ownership remains retained until process exit.");
+                WindowPumpHost.Stop();
+                return;
+            }
+
             // Finalize profiler output before tearing down subsystems it reads from.
 #if !XRE_PUBLISHED
             ProfileCapture.Shutdown();
@@ -251,7 +265,6 @@ namespace XREngine
             // TODO: Implement clean shutdown where each window disposes of its own allocated assets
             RuntimeEngine.Rendering.SecondaryContext.Dispose();
             WindowPumpHost.Stop();
-            Jobs.Shutdown(waitForWorkers: false);
             Assets.Dispose();
         }
 

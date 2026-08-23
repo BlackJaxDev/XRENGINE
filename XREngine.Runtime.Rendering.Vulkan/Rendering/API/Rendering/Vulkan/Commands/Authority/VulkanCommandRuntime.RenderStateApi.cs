@@ -51,27 +51,27 @@ internal sealed partial class VulkanCommandRuntime
         };
 
     internal void SetColorMask(bool red, bool green, bool blue, bool alpha)
-        => StateTracker.SetColorMask(red, green, blue, alpha);
+        => ActiveState.SetColorMask(red, green, blue, alpha);
 
     internal void SetClearColor(ColorF4 color)
-        => StateTracker.SetClearColor(color);
+        => ActiveState.SetClearColor(color);
 
     internal void SetScissor(BoundingRectangle region)
-        => StateTracker.SetScissor(region);
+        => ActiveState.SetScissor(region);
 
     internal void SetViewport(BoundingRectangle region)
-        => StateTracker.SetViewport(region);
+        => ActiveState.SetViewport(region);
 
     internal void ClearViewport()
-        => StateTracker.ClearViewport();
+        => ActiveState.ClearViewport();
 
     internal void SetIndexedViewportScissors(
         ReadOnlySpan<BoundingRectangle> viewports,
         ReadOnlySpan<BoundingRectangle> scissors)
-        => StateTracker.SetIndexedViewportScissors(viewports, scissors);
+        => ActiveState.SetIndexedViewportScissors(viewports, scissors);
 
     internal void ClearIndexedViewportScissors()
-        => StateTracker.ClearIndexedViewportScissors();
+        => ActiveState.ClearIndexedViewportScissors();
 
     internal bool TrySetIndexedViewportScissors(
         ReadOnlySpan<BoundingRectangle> viewports,
@@ -85,13 +85,13 @@ internal sealed partial class VulkanCommandRuntime
             return false;
         }
 
-        StateTracker.SetIndexedViewportScissors(viewports[..count], scissors[..count]);
+        ActiveState.SetIndexedViewportScissors(viewports[..count], scissors[..count]);
         return true;
     }
 
     internal void ClearIndexedViewportScissorsIfAny(int count)
     {
         if (count > 0)
-            StateTracker.ClearIndexedViewportScissors();
+            ActiveState.ClearIndexedViewportScissors();
     }
 }

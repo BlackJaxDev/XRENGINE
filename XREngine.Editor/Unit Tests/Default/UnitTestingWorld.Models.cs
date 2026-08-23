@@ -288,7 +288,9 @@ public static partial class EditorUnitTests
                     ? XRMaterial.CreateColorMaterialDeferred(ColorF4.Red)
                     : XRMaterial.CreateUnlitColorMaterialForward(ColorF4.Red);
                 material.Name = $"UnitBox Shared Material {materialIndex + 1}";
-                material.RenderOptions.CullMode = ECullMode.None;
+                material.RenderOptions.CullMode = Toggles.UnitBoxDoubleSided
+                    ? ECullMode.None
+                    : ECullMode.Back;
                 material.RenderPass = Toggles.UnitBoxDeferredMaterial
                     ? (int)EDefaultRenderPass.OpaqueDeferred
                     : (int)EDefaultRenderPass.OpaqueForward;
@@ -589,6 +591,7 @@ public static partial class EditorUnitTests
                                     else
                                     {
                                         SceneNode importedRoot = result.RootNode;
+                                        ApplySourceMaterialOverrides(importedRoot, model);
                                         if (HasPostImportFlag(model, ModelPostImportFlags.GenerateCoacdCollidersPerSubmesh))
                                         {
                                             bool combineCoacdColliders = HasPostImportFlag(model, ModelPostImportFlags.PutAllCoacdCollidersIntoOneStaticRigidBodyComponent);
@@ -658,6 +661,20 @@ public static partial class EditorUnitTests
                 ScheduleModelImport(modelsToSchedule[nextModelIndex++]);
                 return nextModelIndex >= modelsToSchedule.Count;
             });
+        }
+
+        private static void ApplySourceMaterialOverrides(
+            SceneNode importedRoot,
+            Settings.ModelImportSettings model)
+        {
+            if (!model.UseSourceMaterialAsOverride)
+                return;
+
+            importedRoot.IterateComponents<ModelComponent>(component =>
+            {
+                foreach (RenderableMesh renderable in component.Meshes)
+                    renderable.MaterialOverride = renderable.CurrentLODRenderer?.Material;
+            }, iterateChildHierarchy: true);
         }
 
         private static void QueueLightProbeSpawnerModelBoundsWiring(SceneNode rootNode, object importedStaticRootsLock, List<SceneNode> importedStaticRoots)

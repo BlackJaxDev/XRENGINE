@@ -28,6 +28,7 @@ public static class XREngineEnvironmentVariableCatalog
         nameof(XREngineEnvironmentVariables.ModelRenderDiagFilter),
         nameof(XREngineEnvironmentVariables.ModelDrawDiagFilter),
         nameof(XREngineEnvironmentVariables.OutputSourceFbo),
+        nameof(XREngineEnvironmentVariables.RenderWorkerQos),
         nameof(XREngineEnvironmentVariables.VulkanDiagnosticFlags),
         nameof(XREngineEnvironmentVariables.VulkanLoaderLayersDisable),
         nameof(XREngineEnvironmentVariables.VulkanExternalValidationAllowlist),
@@ -218,7 +219,8 @@ public static class XREngineEnvironmentVariableCatalog
                    fieldName.Contains("Strategy", StringComparison.Ordinal) ||
                    fieldName.Contains("Policy", StringComparison.Ordinal) ||
                    fieldName.Contains("Backend", StringComparison.Ordinal) ||
-                   fieldName.Contains("Preset", StringComparison.Ordinal)
+                   fieldName.Contains("Preset", StringComparison.Ordinal) ||
+                   fieldName.EndsWith("Qos", StringComparison.Ordinal)
                 ? RuntimeEnvironmentValueKind.Enum
                 : RuntimeEnvironmentValueKind.Text;
 
@@ -242,6 +244,7 @@ public static class XREngineEnvironmentVariableCatalog
             fieldName.EndsWith("Bytes", StringComparison.Ordinal) ||
             fieldName.EndsWith("Cap", StringComparison.Ordinal) ||
             fieldName.EndsWith("Limit", StringComparison.Ordinal) ||
+            fieldName.EndsWith("Threads", StringComparison.Ordinal) ||
             fieldName.EndsWith("Workers", StringComparison.Ordinal) ||
             fieldName.EndsWith("Count", StringComparison.Ordinal))
         {
@@ -323,6 +326,10 @@ public static class XREngineEnvironmentVariableCatalog
             fieldName.Contains("WorldMode", StringComparison.Ordinal) ||
             fieldName.Contains("WorldSettingsPath", StringComparison.Ordinal) ||
             fieldName.Contains("JobWorker", StringComparison.Ordinal) ||
+            fieldName.Contains("WorkerThread", StringComparison.Ordinal) ||
+            fieldName is nameof(XREngineEnvironmentVariables.ReservedForegroundThreads) or
+                nameof(XREngineEnvironmentVariables.AllowCpuOversubscription) or
+                nameof(XREngineEnvironmentVariables.RenderWorkerQos) ||
             fieldName is nameof(XREngineEnvironmentVariables.VulkanCommandChainWorkerCount) ||
             fieldName.Contains("GcLatency", StringComparison.Ordinal) ||
             fieldName.Contains("MemoryProfile", StringComparison.Ordinal))

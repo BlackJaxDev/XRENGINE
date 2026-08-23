@@ -79,6 +79,7 @@ internal sealed partial class VulkanCommandRuntime
         if (owner is not null &&
             VulkanPrimaryCommandBufferReuseEnabled &&
             CommandChainsEnabledForCurrentRecording &&
+            !CommandChainBenchmarkForceRerecord &&
             input.LogicalViewId == 0 &&
             input.CommandChainSchedule is not null &&
             !input.CommandChainSchedule.RequiresFreshPrimary &&
@@ -108,7 +109,7 @@ internal sealed partial class VulkanCommandRuntime
                     input.FramePlan.Generation,
                     input.FramePlan.RenderFrameId,
                     input.FrameDataImageIndexOverride ?? input.ImageIndex,
-                    input.FramePlan.StaticOperationSignature,
+                    input.RecordingStaticOperationSignature,
                     frameOpContextFingerprint,
                     frameOpContextId,
                     input.FramePlan.DynamicOverlaySignature,
@@ -190,6 +191,7 @@ internal sealed partial class VulkanCommandRuntime
             input.ExcludeDesktopSwapchainBarriers,
             input.ResourcePlanStamp.PlanningSnapshot.RenderGraphPlan,
             input.FramePlan,
+            input.RecordingStaticOperationSignature,
             input.RecordingTarget,
             input.PresentationSource,
             input.Policy,
@@ -391,7 +393,7 @@ internal sealed partial class VulkanCommandRuntime
         owner.DirtyReason = context.FrameOpsRequireRerecord
             ? "recorded frame omitted transient operations and requires completion"
             : null;
-        owner.FrameOpsSignature = input.FramePlan.StaticOperationSignature;
+        owner.FrameOpsSignature = input.RecordingStaticOperationSignature;
         owner.DynamicUiSignature = input.FramePlan.DynamicOverlaySignature;
         owner.DynamicUiOpCount = input.FramePlan.DynamicOverlayOperationCount;
         owner.PreserveSwapchainForOverlay = input.Policy.PreserveSwapchainForOverlay;
@@ -425,7 +427,7 @@ internal sealed partial class VulkanCommandRuntime
         FrameOperationSequence staticOperations = operations;
         CommandBufferGenerationDomains generations = CaptureCommandBufferGenerationDomains(
             input.ImageIndex,
-            input.FramePlan.StaticOperationSignature,
+            input.RecordingStaticOperationSignature,
             staticOperations,
             dynamicUiOperations,
             input.FramePlan.DynamicOverlaySignature,

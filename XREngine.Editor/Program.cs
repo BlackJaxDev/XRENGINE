@@ -1128,7 +1128,13 @@ internal partial class Program
             EngineDebug.Log(ELogCategory.Networking, $"UDP multicast port overridden to {udpMulticastPort} via XRE_UDP_MULTICAST_PORT.");
         }
 
-        if (unitTestSettings.VRPawn && (!unitTestSettings.SceneOnlyVRPawn || unitTestSettings.PreviewVRStereoViews))
+        bool groupedVrSettingsSpecified = unitTestSettings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.VR));
+        bool runtimeVrRequested = groupedVrSettingsSpecified
+            ? unitTestSettings.VR.Mode is UnitTestingVrLaunchMode.MonadoOpenXR
+                or UnitTestingVrLaunchMode.OpenVR
+                or UnitTestingVrLaunchMode.OpenXR
+            : unitTestSettings.VRPawn && (!unitTestSettings.SceneOnlyVRPawn || unitTestSettings.PreviewVRStereoViews);
+        if (unitTestSettings.VRPawn && runtimeVrRequested)
         {
             settings.RunVRInPlace = true;
             EditorVR.ApplyOpenVRSettings(settings);

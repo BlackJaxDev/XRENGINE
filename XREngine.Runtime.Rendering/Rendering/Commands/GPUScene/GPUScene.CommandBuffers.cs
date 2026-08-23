@@ -81,6 +81,7 @@ namespace XREngine.Rendering.Commands
                 // This is the sole publication point for meshlet descriptor-table
                 // generations. VisualScene calls it after collect/update and before
                 // GPU pass submission, so shaders never observe a partly rebuilt set.
+                ApplyPendingMeshletPayloadChangesAtFrameBoundary();
                 PublishMeshletBufferGenerationAtFrameBoundary();
 
                 if (commandSnapshotDirty && _updatingTransparencyMetadataBuffer is not null && _allLoadedTransparencyMetadataBuffer is not null)

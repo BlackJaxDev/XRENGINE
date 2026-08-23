@@ -69,13 +69,24 @@ internal sealed partial class VulkanCommandRuntime
         lock (CommandBuffers.SubmissionStateGate)
         {
         DeviceContext.RecordSubmissionDiagnostics(diagnosticContext);
-        if (!ValidateOrderedCommandBufferImageStateContracts(queue, ref submitInfo, out _) ||
-            !TryAcquireSubmissionLifetimePins(
+        bool imageStateValid = ValidateOrderedCommandBufferImageStateContracts(
+            queue,
+            ref submitInfo,
+            out string submissionValidationFailure);
+        bool lifetimePinsValid = imageStateValid &&
+            TryAcquireSubmissionLifetimePins(
                 ref submitInfo,
                 in diagnosticContext,
-                out _,
-                out injectedFailureStage))
+                out submissionValidationFailure,
+                out injectedFailureStage);
+        if (!imageStateValid || !lifetimePinsValid)
         {
+            Debug.VulkanWarningEvery(
+                $"Vulkan.SubmitGateway.ValidationRejected.{caller}",
+                TimeSpan.FromSeconds(1),
+                "[Vulkan] Tracked submission rejected before vkQueueSubmit. caller={0} reason={1}",
+                caller ?? "<unknown>",
+                submissionValidationFailure);
             ResolveSubmissionMarkers(ref submitInfo, false);
             Synchronization.RecordQueueOperation(
                 DeviceContext.State,
@@ -328,7 +339,12 @@ internal sealed partial class VulkanCommandRuntime
                     if (mismatch != EVulkanPrimaryEntryStateMismatch.None)
                     {
                         failureReason =
-                            $"command buffer 0x{handle:X} image 0x{entry.Key.ImageHandle:X} entry state mismatch: {mismatch}.";
+                            $"command buffer 0x{handle:X} image 0x{entry.Key.ImageHandle:X} entry state mismatch: {mismatch}; " +
+                            $"actualLayout={actual.Layout} expectedLayout={entry.Value.Layout} " +
+                            $"actualStage={actual.StageMask} expectedStage={entry.Value.StageMask} " +
+                            $"actualAccess={actual.AccessMask} expectedAccess={entry.Value.AccessMask} " +
+                            $"actualGeneration={actual.ResourceGeneration} expectedGeneration={entry.Value.ResourceGeneration} " +
+                            $"actualOwnership={actual.ExternalOwnership} expectedOwnership={entry.Value.ExternalOwnership}.";
                         return false;
                     }
                 }

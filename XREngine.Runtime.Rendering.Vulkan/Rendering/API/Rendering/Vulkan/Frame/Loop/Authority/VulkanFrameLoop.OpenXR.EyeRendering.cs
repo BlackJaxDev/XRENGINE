@@ -401,10 +401,11 @@ internal sealed partial class VulkanFrameLoop
                     OpenXrEyeFrameOpEmission emission = new(
                         request.OpenXrViewIndex,
                         request.ResourcePlannerStateIndex);
-                    ops = CaptureFrameOpsExcludingTextureUploads(
-                        request.FrameOpEmitter,
-                        in emission,
-                        out _);
+                    ops = CloneFrameOpsForPreparedOpenXrEye(
+                        CaptureFrameOpsExcludingTextureUploads(
+                            request.FrameOpEmitter,
+                            in emission,
+                            out _));
                 }
                 drainedFrameOps = true;
                 ops = VulkanCommandRuntime.FilterDiagnosticSkippedFrameOps(ops);
@@ -472,6 +473,17 @@ internal sealed partial class VulkanFrameLoop
                     {
                         return false;
                     }
+
+                    int reconciledImageGroupCount =
+                        _commandRuntime.ReconcileResourcePlannerImageLayouts(
+                            plannerState.ResourceAllocator);
+                    if (_commandRuntime.IsOpenXrTraceEnabled)
+                    {
+                        Debug.Vulkan(
+                            "[OpenXrVulkan] reconciled eye={0} submittedPlannerImageGroups={1}",
+                            targetContext.OpenXrViewIndex,
+                            reconciledImageGroupCount);
+                    }
                     plannerRevision = plannerState.ResourcePlannerRevision;
                     frameOpsSignature = 0UL;
                 }
@@ -484,8 +496,9 @@ internal sealed partial class VulkanFrameLoop
                 prepared = new OpenXrPreparedEyeCommandBufferInput(
                     frameContext,
                     targetContext,
-                    CloneFrameOpsForPreparedOpenXrEye(ops),
+                    ops,
                     plannerContext,
+                    plannerState,
                     new VulkanPreparedResourcePlanStamp(
                         planningSnapshot,
                         plannerState.ResourcePlannerRevision,
@@ -587,7 +600,28 @@ internal sealed partial class VulkanFrameLoop
 
         FrameOperationSequence nativeOperations =
             framePlan.GetNativeStaticOperationsForLogicalView(logicalViewId);
-        ulong frameOpsSignature = framePlan.StaticOperationSignature;
+        VulkanComputePreparationResult computePreparation =
+            _commandRuntime.PrepareComputeFrameOpsForRecording(
+                targetContext.FrameDataSlotIndex,
+                nativeOperations);
+        if (!computePreparation.Succeeded)
+        {
+            Debug.VulkanWarningEvery(
+                $"OpenXR.Vulkan.EyeComputePreparationFailed.{GetHashCode()}.{targetContext.OpenXrViewIndex}",
+                TimeSpan.FromSeconds(1),
+                "[OpenXR] Deferring eye {0} command recording because sealed compute resources are not ready: {1}",
+                targetContext.OpenXrViewIndex,
+                computePreparation.FormatFailure());
+            return false;
+        }
+
+        // The paired plan owns both eyes, while native recording consumes only
+        // this logical-view slice. Cache and pipeline identities must describe
+        // the exact sliced ordinal space or one eye can reuse the other eye's
+        // manifest with incompatible operation indices.
+        ulong frameOpsSignature =
+            VulkanFrameOperationSemantics.ComputeFrameOpsSignature(
+                nativeOperations);
         CommandChainSchedule? commandChainSchedule =
             RuntimeEngine.EffectiveSettings.GpuOcclusionCullingMode == EOcclusionCullingMode.CpuQueryAsync
                 ? null
@@ -619,7 +653,7 @@ internal sealed partial class VulkanFrameLoop
                 in targetContext);
         owner.PrimaryCommandPlan.Build(
             nativeOperations.Stream,
-            framePlan.StaticOperationSignature,
+            frameOpsSignature,
             new VulkanPrimaryPlanTerminalContext(
                 PreserveSwapchainForOverlay: false,
                 TransitionSwapchainToPresent: false,
@@ -667,9 +701,11 @@ internal sealed partial class VulkanFrameLoop
             CommandChainSchedule: commandChainSchedule,
             ExcludeDesktopSwapchainBarriers: true,
             LogicalViewOperationsOverride: nativeOperations.Stream,
-            LogicalViewId: logicalViewId);
+            LogicalViewId: logicalViewId,
+            RecordingStaticOperationSignatureOverride: frameOpsSignature);
         frozen = new OpenXrPreparedEyeRecordWorkerInput(
             commandInput,
+            prepared.PlannerState,
             prepared.FrameContext,
             targetContext.OpenXrViewIndex,
             targetContext.OpenXrImageIndex,
@@ -807,8 +843,8 @@ internal sealed partial class VulkanFrameLoop
             return false;
 
         FrameOp[] combined = new FrameOp[firstEye.Ops.Length + secondEye.Ops.Length];
-        CopyTargetNeutralLogicalOperations(firstEye.Ops, combined, 0);
-        CopyTargetNeutralLogicalOperations(secondEye.Ops, combined, firstEye.Ops.Length);
+        CopyLogicalOperationsWithoutNativeTargets(firstEye.Ops, combined, 0);
+        CopyLogicalOperationsWithoutNativeTargets(secondEye.Ops, combined, firstEye.Ops.Length);
         ResourcePlannerRuntimeState publishedPlannerState =
             PublishedResourcePlannerRuntimeState;
         try
@@ -852,7 +888,7 @@ internal sealed partial class VulkanFrameLoop
         return logicalViewId;
     }
 
-    private static void CopyTargetNeutralLogicalOperations(
+    private static void CopyLogicalOperationsWithoutNativeTargets(
         FrameOp[] source,
         FrameOp[] destination,
         int destinationIndex)
@@ -862,8 +898,9 @@ internal sealed partial class VulkanFrameLoop
             FrameOp operation = source[index];
             FrameOpContext context = operation.Context with
             {
-                OutputTargetIdentity = 0,
-                OutputTargetName = null,
+                // OutputTargetIdentity names the stable per-view resource-plan owner;
+                // it deliberately excludes the acquired runtime image. Retaining it
+                // is required to resolve the exact frozen left/right planner plans.
                 OutputFrameBufferIdentity = 0,
                 OutputFrameBufferName = null,
                 OutputFrameBuffer = null,

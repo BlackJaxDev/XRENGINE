@@ -57,6 +57,32 @@ public class VPRC_RenderMeshesPassShared : ViewportPopStateRenderCommand
         set => SetField(ref _renderPass, value);
     }
 
+    private string? _renderGraphPassName;
+    /// <summary>
+    /// Optional render-graph scheduling pass for this command. The mesh collection is
+    /// still selected by <see cref="RenderPass"/>, while emitted backend operations use
+    /// this command-local synthetic pass so authored command-chain order is preserved.
+    /// </summary>
+    public string? RenderGraphPassName
+    {
+        get => _renderGraphPassName;
+        set
+        {
+            if (SetField(ref _renderGraphPassName, value))
+                _resolvedRenderGraphPassIndex = int.MinValue;
+        }
+    }
+
+    private int _resolvedRenderGraphPassIndex = int.MinValue;
+
+    /// <summary>
+    /// Returns the pass index that backend operations emitted by this command should use.
+    /// </summary>
+    internal int ResolveRenderGraphPassIndex()
+        => _resolvedRenderGraphPassIndex != int.MinValue
+            ? _resolvedRenderGraphPassIndex
+            : RenderPass;
+
     private EMeshRenderingPathIntent _pathIntent = EMeshRenderingPathIntent.Traditional;
     public EMeshRenderingPathIntent PathIntent
     {
@@ -275,14 +301,19 @@ public class VPRC_RenderMeshesPassShared : ViewportPopStateRenderCommand
             _ => $"RenderMeshesTraditional_{RenderPass}_{MeshSubmissionStrategy}",
         };
 
-        var builder = context.Metadata.ForPass(RenderPass, passName, ERenderGraphPassStage.Graphics);
+        bool usesSyntheticSchedulingPass = !string.IsNullOrWhiteSpace(RenderGraphPassName);
+        var builder = usesSyntheticSchedulingPass
+            ? context.GetOrCreateSyntheticPass(RenderGraphPassName!, ERenderGraphPassStage.Graphics)
+            : context.Metadata.ForPass(RenderPass, passName, ERenderGraphPassStage.Graphics);
+        _resolvedRenderGraphPassIndex = builder.PassIndex;
         builder
             .UseEngineDescriptors()
             .UseMaterialDescriptors();
 
         if (context.CurrentRenderTarget is { } target)
         {
-            builder.WithName($"{passName}_{target.Name}");
+            if (!usesSyntheticSchedulingPass)
+                builder.WithName($"{passName}_{target.Name}");
             var colorLoad = target.ConsumeColorLoadOp();
             var depthLoad = target.ConsumeDepthLoadOp();
             var stencilLoad = target.ConsumeStencilLoadOp();

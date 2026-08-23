@@ -26,4 +26,9 @@ public readonly record struct GpuMeshletEligibilitySnapshot(
     uint BlendShapeFlags,
     uint CustomShaderFlags,
     uint CpuFallbackOnlyFlags,
-    uint NonCanonicalRasterStateFlags);
+    uint NonCanonicalRasterStateFlags,
+    uint OpaqueForwardStateClassCommands,
+    uint AlphaTestedStateClassCommands,
+    uint TransparentStateClassCommands,
+    uint CustomStateClassCommands,
+    uint MaterialOverrideCommands);

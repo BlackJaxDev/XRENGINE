@@ -43,6 +43,9 @@ namespace XREngine
         /// <returns>The deserialized asset, or <c>null</c> if deserialization fails.</returns>
         private static T? DeserializeAssetFile<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicMethods)] T>(string filePath) where T : XRAsset, new()
         {
+            if (typeof(T) == typeof(XRTexture2D) && LooksLikeBinaryTextureCache(filePath))
+                return (T)(XRAsset)DeserializeBinaryTextureAssetFile(filePath);
+
             EnsureYamlAssetRuntimeSupported(filePath);
             using var t = Engine.Profiler.Start($"AssetManager.DeserializeAsset {filePath}");
             AssetLoadProgressContext.ReportStage(AssetLoadProgressStage.OpeningFile, "Opening asset file...", 0.12f);
@@ -209,6 +212,9 @@ namespace XREngine
         /// <returns>The deserialized asset, or <c>null</c> if deserialization fails.</returns>
         public static XRAsset? DeserializeAssetFile(string filePath, Type type)
         {
+            if (type == typeof(XRTexture2D) && LooksLikeBinaryTextureCache(filePath))
+                return DeserializeBinaryTextureAssetFile(filePath);
+
             EnsureYamlAssetRuntimeSupported(filePath);
             using var t = Engine.Profiler.Start($"AssetManager.DeserializeAsset {filePath}");
             if ((type.IsAbstract || type.IsInterface) && TryResolveConcreteAssetTypeFromHeader(filePath, type, out Type concreteType))
@@ -231,6 +237,12 @@ namespace XREngine
         /// <returns>The deserialized asset, or <c>null</c> if deserialization fails.</returns>
         private static async Task<T?> DeserializeAssetFileAsync<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicMethods)] T>(string filePath) where T : XRAsset, new()
         {
+            if (typeof(T) == typeof(XRTexture2D) && LooksLikeBinaryTextureCache(filePath))
+            {
+                return await Task.Run(() => (T)(XRAsset)DeserializeBinaryTextureAssetFile(filePath))
+                    .ConfigureAwait(false);
+            }
+
             EnsureYamlAssetRuntimeSupported(filePath);
             using var t = Engine.Profiler.Start($"AssetManager.DeserializeAssetAsync {filePath}");
             return await Task.Run(() =>
@@ -251,6 +263,12 @@ namespace XREngine
         /// <returns>The deserialized asset, or <c>null</c> if deserialization fails.</returns>
         public static async Task<XRAsset?> DeserializeAssetFileAsync(string filePath, Type type)
         {
+            if (type == typeof(XRTexture2D) && LooksLikeBinaryTextureCache(filePath))
+            {
+                return await Task.Run<XRAsset?>(() => DeserializeBinaryTextureAssetFile(filePath))
+                    .ConfigureAwait(false);
+            }
+
             EnsureYamlAssetRuntimeSupported(filePath);
             using var t = Engine.Profiler.Start($"AssetManager.DeserializeAssetAsync {filePath}");
             return await Task.Run(() =>
@@ -1604,9 +1622,8 @@ namespace XREngine
         }
 
         /// <summary>
-        /// Peeks the first byte of <paramref name="cachePath"/> to detect whether it is a raw binary
-        /// XRTS payload (any byte &lt;= <see cref="RuntimeCookedBinaryTypeMarker.CustomObject"/>) versus a
-        /// legacy YAML-wrapped file (UTF-8 BOM 0xEF or printable ASCII '_', 'I', etc., all &gt; 25).
+        /// Peeks the first byte of <paramref name="cachePath"/> to detect a raw binary
+        /// XRTS payload while excluding whitespace that can legally precede YAML content.
         /// </summary>
         private static bool LooksLikeBinaryTextureCache(string cachePath)
         {
@@ -1616,7 +1633,8 @@ namespace XREngine
                 int first = fs.ReadByte();
                 if (first < 0)
                     return false;
-                return first <= (byte)RuntimeCookedBinaryTypeMarker.CustomObject;
+                return first <= (byte)RuntimeCookedBinaryTypeMarker.CustomObject
+                    && first is not (byte)'\t' and not (byte)'\n' and not (byte)'\r';
             }
             catch
             {
@@ -1625,8 +1643,8 @@ namespace XREngine
         }
 
         /// <summary>
-        /// Attempts to load a binary XRTS texture cache file directly via the cooked-binary
-        /// deserializer, bypassing the expensive UTF-8 decode + YAML parse path. Returns
+        /// Attempts to load a binary XRTS texture cache file directly via the texture streaming
+        /// decoder, bypassing the expensive UTF-8 decode + YAML parse path. Returns
         /// <c>null</c> if the file is not a binary cache, is stale, or fails to deserialize.
         /// </summary>
         private static XRTexture2D? TryReadTextureBinaryCacheFile(string cachePath, string originalPath, DateTime sourceTimestampUtc)
@@ -1640,9 +1658,7 @@ namespace XREngine
 
             try
             {
-                byte[] bytes = File.ReadAllBytes(cachePath);
-                if (RuntimeCookedBinarySerializer.Deserialize(typeof(XRTexture2D), bytes) is not XRTexture2D deserialized)
-                    return null;
+                XRTexture2D deserialized = DeserializeBinaryTextureAssetFile(cachePath);
 
                 deserialized.OriginalPath = originalPath;
                 deserialized.OriginalLastWriteTimeUtc = cacheMtimeUtc;
@@ -1653,6 +1669,19 @@ namespace XREngine
                 Debug.LogWarning($"Failed to deserialize binary texture cache '{cachePath}'. {ex.Message}");
                 return null;
             }
+        }
+
+        private static XRTexture2D DeserializeBinaryTextureAssetFile(string filePath)
+        {
+            byte[] bytes = File.ReadAllBytes(filePath);
+            if (!XRTexture2D.TryDeserializeTextureStreamingPayload(bytes, out XRTexture2D? texture))
+            {
+                throw new InvalidDataException(
+                    $"Texture asset '{filePath}' begins with a binary marker but is not a valid XRTexture2D streaming payload.");
+            }
+
+            texture.FilePath = Path.GetFullPath(filePath);
+            return texture;
         }
 
         private static bool TryPrepareTextureStreamingCacheAsset(string cachePath, XRAsset asset, out XRAsset cacheAsset)

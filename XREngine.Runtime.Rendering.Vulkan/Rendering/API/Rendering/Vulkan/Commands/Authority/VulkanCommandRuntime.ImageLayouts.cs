@@ -317,6 +317,105 @@ internal sealed partial class VulkanCommandRuntime
             ClearTrackedImageLayoutsNoLock(imageHandle);
     }
 
+    /// <summary>
+    /// Restores resource-planner layout hints from the submitted command-authority
+    /// ledger before a new recording begins. Recording mutates physical-group layout
+    /// hints speculatively, so an unsubmitted or rejected attempt must not become the
+    /// old-layout authority for the next frame.
+    /// </summary>
+    internal int ReconcileResourcePlannerImageLayouts(
+        VulkanResourceAllocator? allocator)
+    {
+        if (allocator is null || allocator.IsRetired)
+            return 0;
+
+        int reconciledGroupCount = 0;
+        foreach (VulkanPhysicalImageGroup group in allocator.EnumeratePhysicalGroups())
+        {
+            if (!group.IsAllocated || group.Image.Handle == 0)
+                continue;
+
+            uint mipLevels = Math.Max(group.MipLevels, 1u);
+            uint arrayLayers = Math.Max(group.Template.Layers, 1u);
+            ImageAspectFlags aspectMask = NormalizeBarrierAspectMask(
+                group.Format,
+                ImageAspectFlags.None);
+            ImageSubresourceRange wholeRange = new()
+            {
+                AspectMask = aspectMask,
+                BaseMipLevel = 0,
+                LevelCount = mipLevels,
+                BaseArrayLayer = 0,
+                LayerCount = arrayLayers,
+            };
+            if (Synchronization.TryGetSubmittedImageLayout(
+                    group.Image,
+                    in wholeRange,
+                    out ImageLayout wholeLayout))
+            {
+                group.LastKnownLayout = wholeLayout;
+                reconciledGroupCount++;
+                continue;
+            }
+
+            // Mip chains can legitimately end a submission in mixed layouts. Only
+            // replace the speculative snapshot when every native subresource has a
+            // submitted state; otherwise retain the prior hint and let recording
+            // defer rather than inventing a partial authority.
+            bool complete = true;
+            for (uint mipLevel = 0; mipLevel < mipLevels && complete; mipLevel++)
+            for (uint arrayLayer = 0; arrayLayer < arrayLayers; arrayLayer++)
+            {
+                ImageSubresourceRange subresourceRange = new()
+                {
+                    AspectMask = aspectMask,
+                    BaseMipLevel = mipLevel,
+                    LevelCount = 1,
+                    BaseArrayLayer = arrayLayer,
+                    LayerCount = 1,
+                };
+                if (!Synchronization.TryGetSubmittedImageLayout(
+                        group.Image,
+                        in subresourceRange,
+                        out _))
+                {
+                    complete = false;
+                    break;
+                }
+            }
+
+            if (!complete)
+                continue;
+
+            for (uint mipLevel = 0; mipLevel < mipLevels; mipLevel++)
+            for (uint arrayLayer = 0; arrayLayer < arrayLayers; arrayLayer++)
+            {
+                ImageSubresourceRange subresourceRange = new()
+                {
+                    AspectMask = aspectMask,
+                    BaseMipLevel = mipLevel,
+                    LevelCount = 1,
+                    BaseArrayLayer = arrayLayer,
+                    LayerCount = 1,
+                };
+                _ = Synchronization.TryGetSubmittedImageLayout(
+                    group.Image,
+                    in subresourceRange,
+                    out ImageLayout subresourceLayout);
+                group.UpdateKnownLayout(
+                    subresourceLayout,
+                    mipLevel,
+                    1,
+                    arrayLayer,
+                    1);
+            }
+
+            reconciledGroupCount++;
+        }
+
+        return reconciledGroupCount;
+    }
+
     private void ClearTrackedImageLayoutsNoLock(ulong imageHandle)
     {
         RemoveImageKeys(Synchronization._trackedImageSubresourceStates, imageHandle);

@@ -9,11 +9,6 @@ namespace XREngine.Rendering.Vulkan;
 
 internal sealed partial class VulkanCommandRuntime
 {
-    // Production correctness quarantine. Serial recording preserves cached
-    // command-chain reuse while preventing worker-thread/worker-arena artifacts
-    // from entering a new process. Re-enable only after the isolated worker
-    // recording and lifetime validation matrix passes.
-    private const bool CommandChainWorkerRecordingQuarantined = true;
     // One chain cannot overlap. Two independent chains are the smallest batch
     // that can prove useful concurrency; the closeout cohorts own any
     // hardware-specific threshold tuning above this correctness floor.
@@ -567,9 +562,14 @@ internal sealed partial class VulkanCommandRuntime
 
         _commandChainRecordingWorkersIdle.Set();
         Volatile.Write(ref _activeCommandChainRecordingWorkerCount, 0);
+        TimeSpan activeSpan = Stopwatch.GetElapsedTime(waitStarted);
         RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanCommandChainWorkerMetrics(
             queuedChains: count,
-            waitForWorkersTime: Stopwatch.GetElapsedTime(waitStarted));
+            workersStarted: activeWorkerCount,
+            workersCompleted: completed ? activeWorkerCount : 0,
+            peakConcurrentWorkers: activeWorkerCount,
+            workerActiveSpan: activeSpan,
+            waitForWorkersTime: activeSpan);
         Exception? workerError = batch.Error;
         batch.ClearReferences();
         if (timedOut)

@@ -288,7 +288,13 @@ namespace XREngine.Rendering.Commands
 
         private void VerifyBufferLengths(GPUScene scene, uint max)
         {
-            if (max == _lastMaxCommands)
+            uint residentMeshletCount = checked((uint)Math.Max(scene.MeshletDescriptorCount, 0));
+            uint requiredMeshletTaskCapacity = ComputeMeshletTaskCapacity(max, residentMeshletCount);
+            bool commandCapacityChanged = max != _lastMaxCommands;
+            bool meshletTaskCapacityChanged =
+                _visibleMeshletTaskBuffer is null ||
+                _visibleMeshletTaskBuffer.ElementCount != requiredMeshletTaskCapacity;
+            if (!commandCapacityChanged && !meshletTaskCapacityChanged)
                 return;
 
             _lastMaxCommands = max;
@@ -297,7 +303,9 @@ namespace XREngine.Rendering.Commands
             if (remapNeeded || !_buffersMapped)
                 MapBuffers();
 
-            Dbg($"Capacity change -> RegenerateBuffers newMax={max}", "Buffers");
+            Dbg(
+                $"Capacity change -> RegenerateBuffers commands={max} meshlets={residentMeshletCount} taskRecords={requiredMeshletTaskCapacity}",
+                "Buffers");
         }
 
         private void Initialize(GPUScene scene, uint max)
@@ -521,7 +529,9 @@ namespace XREngine.Rendering.Commands
             EnsureGpuDrivenBatchingBuffers(capacity);
             EnsureTransparencyDomainBuffers(capacity);
             EnsureViewSetBuffers(capacity);
-            EnsureMeshletExpansionBuffers(capacity);
+            EnsureMeshletExpansionBuffers(
+                capacity,
+                checked((uint)Math.Max(gpuScene.MeshletDescriptorCount, 0)));
             _statsNeedsMap |= EnsureStatsBuffer();
 
             // Phase 3: occlusion ping-pong buffer (same compact visible draw-ID layout).
@@ -570,9 +580,9 @@ namespace XREngine.Rendering.Commands
             return anyRemapPending;
         }
 
-        private void EnsureMeshletExpansionBuffers(uint commandCapacity)
+        private void EnsureMeshletExpansionBuffers(uint commandCapacity, uint residentMeshletCount)
         {
-            uint taskCapacity = ComputeMeshletTaskCapacity(commandCapacity);
+            uint taskCapacity = ComputeMeshletTaskCapacity(commandCapacity, residentMeshletCount);
 
             if (_visibleMeshletTaskBuffer is null ||
                 _visibleMeshletTaskBuffer.ElementCount != taskCapacity ||

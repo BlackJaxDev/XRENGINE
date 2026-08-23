@@ -1,8 +1,8 @@
 # Vulkan Resident Draw Stream And Render Task Pool TODO
 
-Last Updated: 2026-08-20
+Last Updated: 2026-08-22
 Owner: Rendering / Frame Scheduling / Vulkan
-Status: Paused after Phase 0 measurements — meshlet core accepted; remaining lifetime/RenderDoc prerequisite gates still block Phase 1
+Status: Phase 1B scheduler and pooled batches complete; remaining Phase 1 allocation/topology accounting exits open
 Priority: High; successor to the prepared-cohort bridge
 
 Related current architecture and evidence:
@@ -18,27 +18,81 @@ Related current architecture and evidence:
 - [Next-frame package handoff](../../../progress/rendering/next-frame-preparation-and-collect-visible-handoff-2026-07-29.md)
 - [Sponza camera-motion investigation](../../../investigations/rendering/vulkan-camera-motion-black-flicker-2026-08-10.md)
 
-## Implementation Hold
+## Meshlet Prerequisite Status — Cleared
 
-Implementation is intentionally paused after Phase 0 measurement and source
-reconciliation. Complete the
+The meshlet prerequisite hold was cleared on 2026-08-22. The
 [meshlet import cooking and production readiness TODO](../gpu/meshlet-import-cooking-and-production-readiness-todo.md)
-before beginning Phase 1 below. The prerequisite moves LOD/meshlet generation
+is complete, so Phase 1 below may begin under this tracker's own acceptance
+rules. The prerequisite moves LOD/meshlet generation
 into first import, persists it through normal mesh/model caches, removes
 cooking/hash/file work from rendering, introduces explicit mixed meshlet and
 traditional GPU bins, and proves real Vulkan EXT indirect-count mesh-task
 submission on supported hardware.
 
-Phase 0 evidence work in this tracker may continue when matching hardware or
-trace privileges become available, but no resident-stream implementation phase
-should begin until the prerequisite's resume gate is satisfied.
+Phase 0 evidence work may still be extended when matching hardware or trace
+privileges become available, but it is no longer a meshlet prerequisite hold.
 
-2026-08-20 update: the prerequisite's core cold/warm standalone and Vulkan
+Historical 2026-08-20 update: the prerequisite's core cold/warm standalone and Vulkan
 production path now passes with nonzero delayed GPU-written task/dispatch
-evidence and zero generic readback/mapping/fallback counters. Phase 1 remains
-paused because broad reimport/streaming/unload lifetime validation, a real
+evidence and zero generic readback/mapping/fallback counters. At that checkpoint
+Phase 1 remained paused because broad reimport/streaming/unload lifetime validation, a real
 RenderDoc event capture, and the prerequisite's performance/resume gates remain
 open. Evidence: [meshlet import production closeout](../../../investigations/rendering/meshlet-import-production-closeout-2026-08-20.md).
+
+2026-08-22 closeout: those remaining prerequisite rows passed. Gates 3–7 add
+three-view final parity and RenderDoc attribution, exact mixed/cache/lifetime
+matrices, generation-safe reload/replacement, a 16-cell parallel command-worker
+matrix, uncapped ShippingFast characterization, 86/86 focused Release tests,
+and a final uncapped Vulkan meshlet smoke with zero generic readback, mappings,
+CPU/forbidden fallback, or VUIDs. Broad model/prefab binary-cache hydration
+remains explicitly conditional and does not block this resident-stream lane.
+Phase 1 is now unblocked; no Phase 1 implementation is claimed by this update.
+
+2026-08-22 Phase 1A checkpoint: the immutable process-wide
+`EngineExecutionTopology`, startup settings cascade, environment overrides,
+source diagnostics, and explicit oversubscription rejection are implemented.
+The default 32-processor topology resolves to four foreground reservations, 16
+general workers, and zero reserved render workers at that checkpoint. That
+slice deliberately left all Vulkan command-chain workers, OpenXR eye workers,
+command-pool ownership,
+recording order, submission, and presentation unchanged. Five accepted matched
+Release Vulkan meshlet runs retained 680 samples, consumed 36,720/36,720
+selected draws and 55,458/55,458 draws across all outputs, and reported zero
+readback bytes, mappings, fallback, forbidden fallback, buffer churn, and
+VUIDs. The five-run median frame p50/p95 was 9.986/11.518 ms versus the prior
+single-run 11.112/12.356 ms baseline. Evidence:
+[Phase 1A execution-topology investigation](../../../investigations/rendering/vulkan-resident-draw-stream-phase1a-execution-topology-2026-08-22.md).
+Phase 1B must introduce the shared scheduler and pooled batch primitive before
+any backend worker migration is attempted.
+
+Post-review confirmation: the temporary `RuntimeEngine.Jobs` pool remains lazy
+but is now bound to the immutable topology's general count/cap and queue limits
+before first use. UI cascade columns, environment metadata, and requested versus
+effective diagnostics were also corrected. The final-code matched Vulkan smoke
+consumed 6,642/6,642 selected and 10,044/10,044 all-output draws with zero
+readback, mapping, fallback, forbidden fallback, VUID, rebuild, or retirement
+counters; the focused Release regression set passed 104/104.
+
+2026-08-22 Phase 1B checkpoint: one process-wide `EngineWorkScheduler` now owns
+persistent general and renderer-neutral render domains. `Engine.Jobs` and
+`RuntimeEngine.Jobs` share the same general lanes; render lane 0 participates,
+lanes `1..R` are stable persistent workers, and pooled generation-checked
+batches support dependencies, lane affinity, bounded queues, work stealing,
+cancellation, fault quarantine, and bounded teardown. Runtime rendering receives
+the domain through `IRuntimeRenderWorkServices`; startup proves a non-native
+four-item preparation batch plus a completed, array-backed diagnostic decode.
+Vulkan/OpenXR recording workers remain unchanged. Signal-only idle worker waits
+removed an observed periodic-wake regression; two accepted Sponza repetitions
+then measured 6.959–7.154 ms render p50 with exact draw consumption and clean
+strict counters. The final Release build had zero warnings; focused scheduler
+tests passed 49/49 and the broader relevant Vulkan/meshlet set passed 136/136.
+A matched Sponza CPU-direct/GPU-meshlet run hydrated 75/75 cooked LOD payloads
+in each mode. The final-source GPU rerun consumed 9,882/9,882 selected and
+13,392/13,392 all-output draws, recorded two production frames and two mesh-task
+frame ops, and reported zero generic/all-output readback bytes, mappings,
+fallback, forbidden fallback, capture-time meshlet-buffer churn, or VUIDs.
+Evidence:
+[Phase 1B scheduler investigation](../../../investigations/rendering/vulkan-resident-draw-stream-phase1b-scheduler-2026-08-22.md).
 
 ## Decision
 
@@ -1075,34 +1129,48 @@ Exit gate:
 
 ### Phase 1 - Central execution topology and pooled batch primitive
 
-- [ ] Implement `EngineExecutionTopology` and fail visibly on an invalid
+- [x] Implement `EngineExecutionTopology` and fail visibly on an invalid
   explicit oversubscribed configuration.
-- [ ] Implement persistent general and render domains in one
+- [x] Implement persistent general and render domains in one
   `EngineWorkScheduler`.
-- [ ] Add stable lane IDs, pooled batch/item arrays, dependency counters,
+- [x] Add stable lane IDs, pooled batch/item arrays, dependency counters,
   bounded queues, render-thread participation, cancellation, fault, and
   teardown contracts.
-- [ ] Add lane-local backend attachment registration without a dependency from
+- [x] Add lane-local backend attachment registration without a dependency from
   Runtime.Core to Vulkan.
-- [ ] Install `IRuntimeRenderWorkServices` and route one non-native preparation
+- [x] Install `IRuntimeRenderWorkServices` and route one non-native preparation
   batch through it as a smoke path.
-- [ ] Route one already-completed synthetic diagnostic decode batch through the
+- [x] Route one already-completed synthetic diagnostic decode batch through the
   general/telemetry domain; prove that pending GPU completion can never occupy
   a worker item.
-- [ ] Make both `Engine.Jobs` and the temporary `RuntimeEngine.Jobs` facade use
+- [x] Make both `Engine.Jobs` and the temporary `RuntimeEngine.Jobs` facade use
   the same scheduler-owned general lanes; no second `JobManager` worker array
   may remain.
-- [ ] Keep Vulkan recording on the existing worker implementation during this
+- [x] Keep Vulkan recording on the existing worker implementation during this
   phase; do not change two concurrency systems at once.
 
 Exit gate:
 
 - [ ] Pooled batches allocate zero managed bytes after warmup.
-- [ ] `0`, `1`, `2`, `4`, `8`, and auto worker modes execute deterministic
+- [x] `0`, `1`, `2`, `4`, `8`, and auto worker modes execute deterministic
   output and clean shutdown.
-- [ ] Tiny batches select inline execution; large synthetic batches prove real
+- [x] Tiny batches select inline execution; large synthetic batches prove real
   overlap and bounded waits.
 - [ ] The resolved total thread topology never silently exceeds its budget.
+
+Remaining Phase 1 exit evidence is intentionally narrow: the warmed one-item
+lane-0 path is allocation-free, but an end-to-end allocation proof across
+multi-item, dependency, worker, cancellation, and merge paths is not yet
+recorded. The immutable topology owns the new general/render domains, but
+legacy Vulkan/OpenXR/compiler workers plus lazy deferred/remote job loops are
+not yet fully included in `DedicatedBackgroundThreadCount`. Neither broader
+claim is checked by Phase 1B.
+
+The checked bounded-wait evidence covers scheduler-controlled waits after an
+executor returns control. `IRenderWorkExecutor` callbacks are explicitly
+nonblocking bounded CPU work and may never wait for GPU/task/fence completion;
+arbitrary synchronous lane-0 code cannot be preempted safely. Quarantine failure
+poisons the domain and retains ownership rather than permitting pooled reuse.
 
 ### Phase 2 - Canonical advanced GPUScene deltas and dual publication
 

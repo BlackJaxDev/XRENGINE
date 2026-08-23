@@ -24,7 +24,7 @@ internal sealed partial class VulkanFrameLoop
             wantDepth,
             wantStencil,
             isSource,
-            PublishedResourcePlannerRuntimeState.ResourceAllocator,
+            CaptureResourcePlannerRuntimeState().ResourceAllocator,
             default,
             OutputRuntime.Desktop.Images,
             OutputRuntime.Desktop.ImageFormat,
@@ -49,7 +49,7 @@ internal sealed partial class VulkanFrameLoop
             layout,
             stage,
             access,
-            PublishedResourcePlannerRuntimeState.ResourceAllocator,
+            CaptureResourcePlannerRuntimeState().ResourceAllocator,
             out info);
 
     internal bool TryResolveLiveBlitImage(in BlitImageInfo info, out BlitImageInfo resolved)
@@ -66,7 +66,7 @@ internal sealed partial class VulkanFrameLoop
             mipLevel,
             layerIndex,
             aspectMask,
-            PublishedResourcePlannerRuntimeState.ResourceAllocator,
+            CaptureResourcePlannerRuntimeState().ResourceAllocator,
             out info);
 
     internal BlitImageInfo ResolveSwapchainBlitImage(

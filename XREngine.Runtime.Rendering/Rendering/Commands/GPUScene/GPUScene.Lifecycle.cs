@@ -36,6 +36,7 @@ namespace XREngine.Rendering.Commands
         public void Initialize()
         {
             GPUSceneLayoutContract.ValidateRuntimeLayout();
+            UnsubscribeAllMeshletPayloadChanges();
 
             _meshDataBuffer?.Destroy();
             _meshDataBuffer = MakeMeshDataBuffer();
@@ -116,6 +117,8 @@ namespace XREngine.Rendering.Commands
         /// </summary>
         public void Destroy()
         {
+            UnsubscribeAllMeshletPayloadChanges();
+
             static void DestroyTierBuffers(AtlasTierState state)
             {
                 state.Positions?.Destroy();

@@ -1,3 +1,5 @@
+using System.Threading;
+
 namespace XREngine.Rendering.Vulkan;
 
 /// <summary>
@@ -15,11 +17,25 @@ internal sealed class VulkanMeshOperationRequestQueue
     internal const int Capacity = 4096;
     private readonly VulkanMeshRenderRequest[] _entries = new VulkanMeshRenderRequest[Capacity];
     private readonly object _gate = new();
+    private readonly ThreadLocal<ThreadCaptureState> _threadCapture =
+        new(static () => new ThreadCaptureState(), trackAllValues: false);
     private int _head;
     private int _count;
 
     internal bool TryEnqueue(in VulkanMeshRenderRequest request)
     {
+        ThreadCaptureState capture = _threadCapture.Value
+            ?? throw new InvalidOperationException(
+                "The Vulkan mesh-operation request queue capture state is unavailable.");
+        if (capture.Destination is { } destination)
+        {
+            if (capture.Count == destination.Length)
+                return false;
+
+            destination[capture.Count++] = request;
+            return true;
+        }
+
         lock (_gate)
         {
             if (_count == Capacity)
@@ -32,6 +48,86 @@ internal sealed class VulkanMeshOperationRequestQueue
             _count++;
             return true;
         }
+    }
+
+    /// <summary>
+    /// Captures requests emitted by <paramref name="emitRequests"/> on the calling
+    /// thread directly into caller-owned storage. Other producer threads continue
+    /// publishing to the shared queue.
+    /// </summary>
+    internal int CaptureTo(
+        Action emitRequests,
+        VulkanMeshRenderRequest[] destination)
+    {
+        ArgumentNullException.ThrowIfNull(emitRequests);
+        ArgumentNullException.ThrowIfNull(destination);
+
+        ThreadCaptureState capture = BeginThreadCapture(destination);
+        bool completed = false;
+        try
+        {
+            emitRequests();
+            completed = true;
+            return capture.Count;
+        }
+        finally
+        {
+            EndThreadCapture(capture, clearCapturedRequests: !completed);
+        }
+    }
+
+    /// <summary>
+    /// Captures one allocation-free OpenXR eye emission into caller-owned storage.
+    /// </summary>
+    internal int CaptureTo(
+        IOpenXrEyeFrameOpEmitter emitter,
+        in OpenXrEyeFrameOpEmission emission,
+        VulkanMeshRenderRequest[] destination)
+    {
+        ArgumentNullException.ThrowIfNull(emitter);
+        ArgumentNullException.ThrowIfNull(destination);
+
+        ThreadCaptureState capture = BeginThreadCapture(destination);
+        bool completed = false;
+        try
+        {
+            emitter.Emit(in emission);
+            completed = true;
+            return capture.Count;
+        }
+        finally
+        {
+            EndThreadCapture(capture, clearCapturedRequests: !completed);
+        }
+    }
+
+    private ThreadCaptureState BeginThreadCapture(
+        VulkanMeshRenderRequest[] destination)
+    {
+        ThreadCaptureState capture = _threadCapture.Value
+            ?? throw new InvalidOperationException(
+                "The Vulkan mesh-operation request queue capture state is unavailable.");
+        if (capture.Destination is not null)
+        {
+            throw new InvalidOperationException(
+                "Nested Vulkan mesh-operation request captures are not supported on the same thread.");
+        }
+
+        capture.Destination = destination;
+        capture.Count = 0;
+        return capture;
+    }
+
+    private static void EndThreadCapture(
+        ThreadCaptureState capture,
+        bool clearCapturedRequests)
+    {
+        VulkanMeshRenderRequest[]? destination = capture.Destination;
+        int count = capture.Count;
+        capture.Destination = null;
+        capture.Count = 0;
+        if (clearCapturedRequests && destination is not null && count > 0)
+            destination.AsSpan(0, count).Clear();
     }
 
     internal bool TryDequeue(out VulkanMeshRenderRequest request)
@@ -82,5 +178,11 @@ internal sealed class VulkanMeshOperationRequestQueue
             _count -= drainCount;
             return drainCount;
         }
+    }
+
+    private sealed class ThreadCaptureState
+    {
+        internal VulkanMeshRenderRequest[]? Destination;
+        internal int Count;
     }
 }

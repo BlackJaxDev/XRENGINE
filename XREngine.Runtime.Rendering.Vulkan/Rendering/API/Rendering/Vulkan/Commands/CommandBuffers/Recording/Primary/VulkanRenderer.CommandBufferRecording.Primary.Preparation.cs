@@ -43,6 +43,8 @@ namespace XREngine.Rendering.Vulkan
             recordingState.ExcludeDesktopSwapchainBarriers = context.ExcludeDesktopSwapchainBarriers;
             recordingState.PrimaryCommandPlan = context.PrimaryCommandPlan;
             recordingState.FramePlan = context.FramePlan;
+            recordingState.RecordingStaticOperationSignature =
+                context.RecordingStaticOperationSignature;
             recordingState.SwapchainTarget = context.RecordingTarget;
             recordingState.PresentationSource = context.PresentationSource;
             recordingState.Policy = context.Policy;
@@ -243,7 +245,7 @@ namespace XREngine.Rendering.Vulkan
                 ?? throw new VulkanPlanPreconditionException(
                     "Primary pipeline preparation requires a sealed frame plan.");
             ulong frameStructuralSignature =
-                framePlan.StaticOperationSignature;
+                recordingState.RecordingStaticOperationSignature;
             VulkanPipelineVariantManifest pipelineVariantManifest =
                 ResourceRuntime.PipelineManager.GetOrBuildVariantManifest(
                     recordingState.RenderGraphPlan.CompiledGraph.Plan,

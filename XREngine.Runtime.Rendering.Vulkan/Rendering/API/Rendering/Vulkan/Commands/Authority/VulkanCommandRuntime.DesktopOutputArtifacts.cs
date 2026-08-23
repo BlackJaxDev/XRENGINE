@@ -33,6 +33,11 @@ internal sealed partial class VulkanCommandRuntime
         CommandBuffer[]? imguiOverlayCommandBuffers)
     {
         Workers.Idle.Wait();
+        // Cached chains own their secondary artifacts independently of the
+        // desktop primary buffers. Retire them while the cache is still
+        // enumerable so worker arenas can detach every artifact before their
+        // command pools are retired.
+        DestroyIndexedCommandChainCaches();
         CommandPool pool = Pools.PrimaryGraphics;
         RetireArtifacts(CommandBuffers.Buffers, "Swapchain.Primary");
         RetireArtifacts(CommandBuffers.DynamicUiSecondaries, "Swapchain.DynamicUiSecondary");
@@ -51,7 +56,6 @@ internal sealed partial class VulkanCommandRuntime
         CommandBuffers.FrameOpSignatures = null;
         CommandBuffers.PlannerRevisions = null;
         CommandBuffers.SignatureDebugParts = null;
-        CommandChains.Caches = null;
 
         void RetireArtifacts(CommandBuffer[]? artifacts, string owner)
         {

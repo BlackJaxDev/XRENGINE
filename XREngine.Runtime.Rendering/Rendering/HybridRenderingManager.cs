@@ -3236,7 +3236,10 @@ namespace XREngine.Rendering
             return true;
         }
 
-        private static uint GetMeshletPassFlags(GPURenderPassCollection renderPasses, int renderPass)
+        private static uint GetMeshletPassFlags(
+            GPURenderPassCollection renderPasses,
+            XRCamera camera,
+            int renderPass)
         {
             uint flags = renderPass switch
             {
@@ -3250,7 +3253,7 @@ namespace XREngine.Rendering
                 _ => 0u,
             };
 
-            if (renderPasses.ActiveViewCount > 1u)
+            if (renderPasses.ActiveViewCount > 1u || camera.StereoEyeLeft.HasValue)
                 flags |= MeshletPassStereo;
 
             return flags;
@@ -3292,6 +3295,7 @@ namespace XREngine.Rendering
                 out hiZMaxMip,
                 out hiZViewProjectionMatrix,
                 out hiZUsesReversedZ);
+            uint passFlags = GetMeshletPassFlags(renderPasses, camera, currentRenderPass);
 
             program.Uniform("ViewProjectionMatrix", viewProjectionMatrix);
             program.Uniform("PreviousViewProjectionMatrix", viewProjectionMatrix);
@@ -3317,7 +3321,9 @@ namespace XREngine.Rendering
             program.Uniform("RequiredRenderPassMask", 0u);
             program.Uniform("RequiredLayerMask", 0u);
             program.Uniform("AllowedStateClassMask", GetMeshletAllowedStateClassMask(currentRenderPass));
-            program.Uniform("PassFlags", GetMeshletPassFlags(renderPasses, currentRenderPass));
+            program.Uniform("PassFlags", passFlags);
+            if (camera.StereoEyeLeft is bool leftEye)
+                RuntimeEngine.Rendering.Stats.GpuMeshlets.RecordGpuMeshletStereoHiZBypass(leftEye);
             program.Uniform("EnableSkinning", 0u);
             program.Uniform(MeshletDebugDisplayUniformName, GpuBvhDebugSettings.IsMeshletDebugDisplayEnabled(camera) ? 1u : 0u);
             if (hiZAvailable)

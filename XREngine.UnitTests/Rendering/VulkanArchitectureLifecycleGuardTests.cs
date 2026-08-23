@@ -137,7 +137,8 @@ public sealed class VulkanArchitectureLifecycleGuardTests
             null,
             false,
             VulkanRenderGraphPlan.Empty,
-            null);
+            null,
+            0UL);
         recorder.Prepare(ref warmup).ShouldBeTrue();
 
         int prepared = 0;
@@ -158,7 +159,8 @@ public sealed class VulkanArchitectureLifecycleGuardTests
                 null,
                 false,
                 VulkanRenderGraphPlan.Empty,
-                null);
+                null,
+                0UL);
             if (recorder.Prepare(ref context))
                 prepared++;
         }

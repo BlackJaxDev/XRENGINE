@@ -207,8 +207,7 @@ public sealed partial class XRRenderPipelineInstance
             CapturePolicy = viewport?.CapturePolicy ?? RenderCapturePolicy.None;
             RenderFrameViewSet? capturedViews = camera is null
                 ? null
-                : stereoPass && RenderFrameViewSetPublication.TryGet(
-                    RuntimeEngine.Rendering.State.RenderFrameId,
+                : stereoPass && RenderFrameViewSetPublication.TryGetLatest(
                     out RenderFrameViewSet openXrViews)
                     ? openXrViews
                     : RenderFrameViewSetCapture.Capture(this);

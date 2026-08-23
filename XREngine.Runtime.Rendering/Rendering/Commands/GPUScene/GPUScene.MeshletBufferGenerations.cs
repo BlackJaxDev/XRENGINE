@@ -160,6 +160,13 @@ namespace XREngine.Rendering.Commands
                 sourceTriangleEnd = Math.Max(sourceTriangleEnd, (uint)triangleEnd);
             }
 
+            // Portable payloads retain four-byte terminal padding after each
+            // meshlet range. Preserve it when compacting generations so a
+            // published range remains byte-identical to its validated payload.
+            sourceTriangleEnd = checked((sourceTriangleEnd + 3u) & ~3u);
+            if (sourceTriangleEnd > (uint)_meshletTriangleIndices.Count)
+                return false;
+
             uint replacementMeshletOffset = (uint)descriptors.Count;
             uint replacementVertexOffset = (uint)vertexIndices.Count;
             uint replacementTriangleOffset = (uint)triangleIndices.Count;

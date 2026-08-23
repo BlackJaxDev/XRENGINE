@@ -2526,7 +2526,10 @@ namespace XREngine.Rendering
         /// </summary>
         public IDisposable? EnterRenderPipelineReadbackScope()
         {
-            AbstractRenderer? renderer = AbstractRenderer.Current;
+            // External captures commonly run from a post-viewport callback, after transient
+            // global render state has been cleared. The viewport's owning window remains the
+            // authoritative renderer for its planner generation, including isolated OpenXR eyes.
+            AbstractRenderer? renderer = Window?.Renderer ?? AbstractRenderer.Current;
             return renderer is not null &&
                 ((IRuntimeRendererHost)renderer).TryGetBackendCapability<IRenderPipelineReadbackBackendCapability>(out var capability) &&
                 capability is not null

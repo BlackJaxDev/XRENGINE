@@ -8,7 +8,9 @@ public partial class GPUMaterialTable
         [StructLayout(LayoutKind.Sequential)]
         private struct GPUMaterialEntryWords
         {
-            public const int WordCount = 13;
+            // XR_MaterialRecord contains vec4 fields, so std430 rounds its array
+            // stride up to four words. Keep this CPU upload struct at that stride.
+            public const int WordCount = 16;
 
             public uint AlbedoHandleIndex;
             public uint NormalHandleIndex;
@@ -23,6 +25,9 @@ public partial class GPUMaterialTable
             public uint Specular;
             public uint Emission;
             public uint AlphaCutoff;
+            public uint Padding0;
+            public uint Padding1;
+            public uint Padding2;
         }
     }
 }

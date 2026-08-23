@@ -55,6 +55,8 @@ namespace XREngine
                     private static long _meshletDispatchGroupCount;
                     private static long _meshletDelayedDispatchGroupCount;
                     private static long _meshletDiagnosticReadbackBytes;
+                    private static long _meshletStereoHiZLeftEyeBypassSubmissions;
+                    private static long _meshletStereoHiZRightEyeBypassSubmissions;
                     private static long _meshletMappedBytes;
                     private static long _meshletResolvedMeshletRows;
                     private static long _meshletResolvedTaskGroups;
@@ -137,6 +139,10 @@ namespace XREngine
                     public static long DelayedDispatchGroupCount => Volatile.Read(ref _meshletDelayedDispatchGroupCount);
                     /// <summary>Bytes copied by delayed diagnostics; excluded from zero-readback production accounting.</summary>
                     public static long DiagnosticReadbackBytes => Volatile.Read(ref _meshletDiagnosticReadbackBytes);
+                    /// <summary>Left-eye meshlet submissions configured for the conservative stereo Hi-Z bypass.</summary>
+                    public static long StereoHiZLeftEyeBypassSubmissions => Volatile.Read(ref _meshletStereoHiZLeftEyeBypassSubmissions);
+                    /// <summary>Right-eye meshlet submissions configured for the conservative stereo Hi-Z bypass.</summary>
+                    public static long StereoHiZRightEyeBypassSubmissions => Volatile.Read(ref _meshletStereoHiZRightEyeBypassSubmissions);
                     public static long ResolvedMeshletRows => Volatile.Read(ref _meshletResolvedMeshletRows);
                     public static long ResolvedTaskGroups => Volatile.Read(ref _meshletResolvedTaskGroups);
                     public static string RequestedSubmission => Volatile.Read(ref _meshletRequestedSubmission);
@@ -433,6 +439,22 @@ namespace XREngine
 
                         if (readbackBytes > 0u)
                             Interlocked.Add(ref _meshletDiagnosticReadbackBytes, readbackBytes);
+                    }
+
+                    /// <summary>
+                    /// Records a stereo-eye task submission configured to keep Hi-Z conservative until
+                    /// per-eye pyramids are promoted. These monotonic counters prove both eye paths without
+                    /// a GPU readback or a timing-sensitive eye-target capture.
+                    /// </summary>
+                    public static void RecordGpuMeshletStereoHiZBypass(bool leftEye)
+                    {
+                        if (!EnableTracking)
+                            return;
+
+                        if (leftEye)
+                            Interlocked.Increment(ref _meshletStereoHiZLeftEyeBypassSubmissions);
+                        else
+                            Interlocked.Increment(ref _meshletStereoHiZRightEyeBypassSubmissions);
                     }
 
                     /// <summary>Publishes the Vulkan mesh-shader readiness ladder for capture and MCP diagnostics.</summary>

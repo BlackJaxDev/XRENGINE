@@ -23,6 +23,11 @@ public partial class UnitTestingWorldSettings
         /// </summary>
         public bool UseForwardForTransparent { get; set; } = false;
         /// <summary>
+        /// Publishes each imported renderable's source material as an explicit
+        /// local material override without changing its visual result.
+        /// </summary>
+        public bool UseSourceMaterialAsOverride { get; set; }
+        /// <summary>
         /// Selects how this model import chooses between native format-specific importers
         /// and Assimp fallback. PreferNativeThenAssimp uses a native importer when the
         /// format has one available and falls back to Assimp otherwise. Today the native

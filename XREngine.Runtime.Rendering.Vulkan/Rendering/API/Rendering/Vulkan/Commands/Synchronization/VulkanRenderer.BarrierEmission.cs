@@ -1191,6 +1191,18 @@ namespace XREngine.Rendering.Vulkan
                 if (snapshot is null)
                     continue;
 
+                // Compute reduction chains can sample and write distinct mips of
+                // one image. Preserve their per-subresource state here instead of
+                // collapsing the full sampled view before inline recording.
+                if (header.OpCode is EVulkanPrimaryPlanNodeKind.ComputeDispatch or
+                    EVulkanPrimaryPlanNodeKind.ComputeDispatchIndirect)
+                {
+                    EnsureComputeSampledImageLayoutsForDispatch(
+                        commandBuffer,
+                        snapshot);
+                    continue;
+                }
+
                 foreach (XRTexture texture in snapshot.Samplers.Values)
                     TransitionDescriptorTextureForSampling(
                         commandBuffer,
@@ -1405,6 +1417,8 @@ namespace XREngine.Rendering.Vulkan
                 return false;
             }
 
+            ReadOnlySpan<VulkanPreparedDescriptorImagePayload> payloads = preparedFrame.GetDescriptorImagePayloads(payloadRange);
+            ReadOnlySpan<VulkanPreparedDescriptorImageRequirement> requirements = preparedFrame.GetDescriptorImageRequirements(requirementRange);
             if (!CommandBuffers.TrackingBatches.TryGetValue(secondaryHandle, out VulkanCommandBufferTrackingBatch? trackingBatch))
             {
                 failureReason = "the secondary has no recording tracking batch";
@@ -1412,10 +1426,35 @@ namespace XREngine.Rendering.Vulkan
             }
             ulong trackingGeneration;
             lock (trackingBatch)
-                trackingGeneration = trackingBatch.RecordingGeneration;
+            {
+                if (!CommandBuffers.TrackingBatches.TryGetValue(
+                        secondaryHandle,
+                        out VulkanCommandBufferTrackingBatch? currentBatch) ||
+                    !ReferenceEquals(trackingBatch, currentBatch) ||
+                    !trackingBatch.IsRecording)
+                {
+                    failureReason = "the secondary tracking batch is stale or no longer recording";
+                    return false;
+                }
 
-            ReadOnlySpan<VulkanPreparedDescriptorImagePayload> payloads = preparedFrame.GetDescriptorImagePayloads(payloadRange);
-            ReadOnlySpan<VulkanPreparedDescriptorImageRequirement> requirements = preparedFrame.GetDescriptorImageRequirements(requirementRange);
+                trackingGeneration = trackingBatch.RecordingGeneration;
+                for (int index = 0; index < payloads.Length; index++)
+                {
+                    VulkanPreparedDescriptorImagePayload payload = payloads[index];
+                    if (trackingBatch.Dependencies.Contains(
+                            new VulkanResourceLifetimeKey(
+                                ObjectType.DescriptorSet,
+                                payload.DescriptorSetHandle)))
+                    {
+                        continue;
+                    }
+
+                    failureReason =
+                        $"the current recording dependency batch does not contain descriptor set 0x{payload.DescriptorSetHandle:X}";
+                    return false;
+                }
+            }
+
             lock (ResourceRuntime.Lifetime.Tracker.SyncRoot)
             {
                 VulkanResourceLifetimeTracker tracker = ResourceRuntime.Lifetime.Tracker;
@@ -1429,8 +1468,7 @@ namespace XREngine.Rendering.Vulkan
                 for (int index = 0; index < payloads.Length; index++)
                 {
                     VulkanPreparedDescriptorImagePayload payload = payloads[index];
-                    if (!lifetime.Dependencies.ContainsKey(new VulkanResourceLifetimeKey(ObjectType.DescriptorSet, payload.DescriptorSetHandle)) ||
-                        !tracker.PublishedDescriptorSets.TryGetValue(payload.DescriptorSetHandle, out VulkanPublishedDescriptorSetSnapshot? snapshot) ||
+                    if (!tracker.PublishedDescriptorSets.TryGetValue(payload.DescriptorSetHandle, out VulkanPublishedDescriptorSetSnapshot? snapshot) ||
                         snapshot.ImagePayloadGeneration != payload.ImagePayloadGeneration)
                     {
                         failureReason = $"descriptor set 0x{payload.DescriptorSetHandle:X} publication changed after prepared-frame capture";
@@ -1509,7 +1547,27 @@ namespace XREngine.Rendering.Vulkan
             }
             ulong trackingGeneration;
             lock (trackingBatch)
+            {
+                if (!CommandBuffers.TrackingBatches.TryGetValue(
+                        secondaryHandle,
+                        out VulkanCommandBufferTrackingBatch? currentBatch) ||
+                    !ReferenceEquals(trackingBatch, currentBatch) ||
+                    !trackingBatch.IsRecording)
+                {
+                    failureReason = "the secondary tracking batch is stale or no longer recording";
+                    return false;
+                }
+
                 trackingGeneration = trackingBatch.RecordingGeneration;
+                if (!trackingBatch.Dependencies.Contains(
+                        new VulkanResourceLifetimeKey(
+                            ObjectType.DescriptorSet,
+                            descriptorSetHandle)))
+                {
+                    failureReason = "the current recording dependency batch does not contain the descriptor set";
+                    return false;
+                }
+            }
 
             lock (ResourceRuntime.Lifetime.Tracker.SyncRoot)
             {
@@ -1524,14 +1582,6 @@ namespace XREngine.Rendering.Vulkan
                 if (lifetime.Level != CommandBufferLevel.Secondary)
                 {
                     failureReason = $"the command-buffer lifetime level is {lifetime.Level}";
-                    return false;
-                }
-                if (!lifetime.Dependencies.ContainsKey(
-                        new VulkanResourceLifetimeKey(
-                            ObjectType.DescriptorSet,
-                            descriptorSetHandle)))
-                {
-                    failureReason = "the recorded dependency snapshot does not contain the descriptor set";
                     return false;
                 }
                 if (!tracker.PublishedDescriptorSets.TryGetValue(

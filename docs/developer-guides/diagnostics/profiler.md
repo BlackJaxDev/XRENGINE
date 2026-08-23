@@ -323,6 +323,18 @@ and visibility-buffer counters. Zero-readback variants should keep current-frame
 `gpu_readback_bytes` and `gpu_mapped_buffers` at zero; delayed diagnostic
 readbacks are reported separately.
 
+The game-loop harness retains meshlet requested/production frames, Vulkan
+mesh-task frame-op count, task records and frustum/cone/Hi-Z culls, resident/live/
+retired bytes, lifetime rebuild/retire counters, and capture-window rebuild/
+retire deltas. `ShippingFast` and `DevParity` production acceptance uses the
+recorded production frame plus retained Vulkan mesh-task operation because those
+profiles intentionally suppress diagnostic readback. The explicit `Diagnostics`
+profile instead requires fence-delayed task records and dispatch groups. Its MCP
+snapshot supplies the stable latest task/cull values so a low-frequency NDJSON
+sample cannot miss the single frame in which an asynchronous readback completed.
+Generic readback/map counters must remain zero in either case; delayed diagnostic
+bytes stay in their separately named fields.
+
 ### Benchmark Harness
 
 Use `Tools/Measure-GameLoopRenderPipeline.ps1` for reproducible run-to-run

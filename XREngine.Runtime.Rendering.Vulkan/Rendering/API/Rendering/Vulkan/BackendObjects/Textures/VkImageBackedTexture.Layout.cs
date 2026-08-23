@@ -46,9 +46,10 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
     }
 
     /// <summary>
-    /// Coerces <see cref="ImageLayout.ShaderReadOnlyOptimal"/> to a valid layout when the
-    /// image lacks <see cref="ImageUsageFlags.SampledBit"/>. Falls back to
-    /// <see cref="ImageLayout.General"/> (if storage) or <see cref="ImageLayout.TransferSrcOptimal"/>.
+    /// Coerces <see cref="ImageLayout.ShaderReadOnlyOptimal"/> to the stable descriptor
+    /// layout required by the image usage. Sampled/storage images remain in
+    /// <see cref="ImageLayout.General"/> so upload, descriptor publication, and later
+    /// storage dispatches all agree on one whole-image layout.
     /// </summary>
     private ImageLayout CoerceLayoutForUsage(ImageLayout requested)
     {
@@ -56,6 +57,10 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
             return requested;
 
         bool canSample = (Usage & (ImageUsageFlags.SampledBit | ImageUsageFlags.InputAttachmentBit)) != 0;
+        bool canStore = (Usage & ImageUsageFlags.StorageBit) != 0;
+        if (canSample && canStore)
+            return ImageLayout.General;
+
         bool isDepthOrStencil = (AspectFlags & (ImageAspectFlags.DepthBit | ImageAspectFlags.StencilBit)) != 0 ||
             VkFormatConversions.IsDepthStencilFormat(ResolvedFormat);
         if (canSample && isDepthOrStencil)
@@ -64,7 +69,7 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
         if (canSample)
             return requested;
 
-        if ((Usage & ImageUsageFlags.StorageBit) != 0)
+        if (canStore)
             return ImageLayout.General;
 
         return ImageLayout.TransferSrcOptimal;

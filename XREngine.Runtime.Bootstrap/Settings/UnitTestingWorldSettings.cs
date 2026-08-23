@@ -237,6 +237,12 @@ public partial class UnitTestingWorldSettings
     /// </summary>
     public bool UnitBoxDeferredMaterial { get; set; } = false;
 
+    /// <summary>
+    /// Disables face culling on unit boxes. Set false when a fixture needs a
+    /// canonical back-culled missing-meshlet-payload draw.
+    /// </summary>
+    public bool UnitBoxDoubleSided { get; set; } = true;
+
     public VolumetricFogVolumeInitSettings VolumetricFog { get; set; } = new();
 
     public AtmosphericScatteringInitSettings AtmosphericScattering { get; set; } = new();

@@ -531,10 +531,16 @@ namespace XREngine.Rendering.Commands
             return buffer;
         }
 
-        private uint ComputeMeshletTaskCapacity(uint commandCapacity)
+        private uint ComputeMeshletTaskCapacity(uint commandCapacity, uint residentMeshletCount)
         {
             uint visibleCommandCapacity = Math.Max(commandCapacity, 1u);
-            ulong taskCapacity = (ulong)visibleCommandCapacity * Math.Max(_meshletTaskCapacityPerVisibleCommand, 1u) * 2ul;
+            ulong commandCapacityEstimate =
+                (ulong)visibleCommandCapacity * Math.Max(_meshletTaskCapacityPerVisibleCommand, 1u) * 2ul;
+            // The command estimate protects repeated instances of a small mesh.
+            // The resident estimate protects a small command set containing one
+            // very dense model and reserves a second range for LOD transitions.
+            ulong residentCapacityEstimate = (ulong)residentMeshletCount * 2ul;
+            ulong taskCapacity = Math.Max(commandCapacityEstimate, residentCapacityEstimate);
             uint backendLimit = AbstractRenderer.Current?.MaxMeshTaskDispatchGroupsX ?? uint.MaxValue;
             ulong boundedCapacity = Math.Min(MaxMeshletTaskCapacityHardLimit, backendLimit);
             return (uint)Math.Min(Math.Max(taskCapacity, 1ul), Math.Max(boundedCapacity, 1ul));
@@ -595,6 +601,8 @@ namespace XREngine.Rendering.Commands
         private XRRenderProgram? _copyCount3Program;
         private XRTexture2D? _hiZDepthPyramid;
         private XRTexture2D? _hiZDepthPyramidOwned;
+        private XRTexture2D? _hiZMipSourceViewTexture;
+        private XRTexture2DView[] _hiZMipSourceViews = [];
         private int _hiZMaxMip;
 
         // Occlusion stage needs an input count that survives writing the final visible count.
@@ -836,7 +844,8 @@ namespace XREngine.Rendering.Commands
         }
         public uint CommandCapacity => _lastMaxCommands == 0u ? GPUScene.MinCommandCount : _lastMaxCommands;
         public uint MaxIndirectDrawCapacity => Math.Max(CommandCapacity * 2u, 1u);
-        public uint MaxVisibleMeshletTaskCapacity => ComputeMeshletTaskCapacity(CommandCapacity);
+        public uint MaxVisibleMeshletTaskCapacity
+            => _visibleMeshletTaskBuffer?.ElementCount ?? ComputeMeshletTaskCapacity(CommandCapacity, 0u);
 
         public bool TryGetMeshletExpansionInputs(GPUScene scene, out GpuMeshletExpansionInputs inputs)
         {

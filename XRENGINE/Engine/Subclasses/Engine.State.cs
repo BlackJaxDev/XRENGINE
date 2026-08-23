@@ -8,6 +8,8 @@ using System.Threading.Tasks;
 using XREngine.Components;
 using XREngine.Core.Files;
 using XREngine.Data.Core;
+using XREngine.Data.Rendering;
+using XREngine.Execution;
 using XREngine.Input;
 using XREngine.Native;
 using XREngine.Rendering;
@@ -45,57 +47,262 @@ namespace XREngine
         public static bool IsPlaying => PlayMode.IsPlaying;
         
         private static JobManager? _jobs;
+        private static readonly object _jobsConfigurationSync = new();
         private static bool _jobsConfigured;
         private static bool _jobsCreatedImplicitly;
+        private static int _jobsConfigurationState;
+
+        /// <summary>
+        /// Gets the immutable process execution budget resolved during startup.
+        /// Its render-lane count configures the renderer-neutral scheduler;
+        /// Vulkan recording remains on its legacy workers until migration.
+        /// </summary>
+        public static EngineExecutionTopology? ExecutionTopology { get; private set; }
+
+        /// <summary>
+        /// One process-wide owner for general and renderer-neutral render work.
+        /// Vulkan and OpenXR keep their legacy recording workers during Phase 1B.
+        /// </summary>
+        public static EngineWorkScheduler? WorkScheduler { get; private set; }
 
         public static JobManager Jobs
         {
             get
             {
-                if (_jobs != null)
+                lock (_jobsConfigurationSync)
+                {
+                    while (_jobs is null && _jobsConfigurationState == 1)
+                        Monitor.Wait(_jobsConfigurationSync);
+
+                    if (_jobs != null)
+                        return _jobs;
+
+                    ConfigureJobManagerHooks();
+
+                    // If something touches Engine.Jobs before Engine.Initialize(), we still need
+                    // a functional job system. Publication is serialized so concurrent first
+                    // access cannot create an overwritten/orphaned worker domain.
+                    _jobsCreatedImplicitly = true;
+                    _jobsConfigured = false;
+                    _jobs = new JobManager();
+                    // NOTE: Don't call Debug.LogWarning here - it can trigger circular static init.
+                    // The warning will be logged later in ConfigureJobManager if needed.
                     return _jobs;
-
-                ConfigureJobManagerHooks();
-
-                // If something touches Engine.Jobs before Engine.Initialize(), we still need
-                // a functional job system. Create the default instance, but we will avoid
-                // later recreation to keep a single instance alive.
-                _jobsCreatedImplicitly = true;
-                _jobsConfigured = false;
-                _jobs = new JobManager();
-                // NOTE: Don't call Debug.LogWarning here - it can trigger circular static init.
-                // The warning will be logged later in ConfigureJobManager if needed.
-                return _jobs;
+                }
             }
             private set => _jobs = value;
         }
 
         internal static void ConfigureJobManager(GameStartupSettings startupSettings)
         {
-            if (_jobsConfigured)
-                return;
-
-            ConfigureJobManagerHooks();
-
-            // If the job manager was created implicitly (accessed before Initialize),
-            // shut down the default instance and replace it with a properly configured one
-            // so that startup settings (worker count, queue limits, etc.) take effect.
-            if (_jobsCreatedImplicitly && _jobs != null)
+            JobManager? implicitManager;
+            lock (_jobsConfigurationSync)
             {
-                _jobs.Shutdown();
-                _jobs = null;
-                _jobsCreatedImplicitly = false;
+                while (_jobsConfigurationState == 1)
+                    Monitor.Wait(_jobsConfigurationSync);
+
+                if (_jobsConfigured)
+                    return;
+
+                _jobsConfigurationState = 1;
+                ConfigureJobManagerHooks();
+                implicitManager = _jobsCreatedImplicitly ? _jobs : null;
             }
 
-            // Use EffectiveSettings to resolve User > Project > Engine cascade
-            Jobs = new JobManager(
-                EffectiveSettings.JobWorkers,
-                EffectiveSettings.JobQueueLimit,
-                EffectiveSettings.JobQueueWarningThreshold,
-                EffectiveSettings.JobWorkerCap);
+            try
+            {
+                // Keep an implicit manager published while stopping it outside the
+                // configuration lock. A worker that resolves Engine.Jobs during its
+                // own shutdown sees the same manager instead of blocking the join or
+                // constructing a second pool.
+                if (implicitManager is not null && !implicitManager.Shutdown(waitForWorkers: true))
+                {
+                    throw new InvalidOperationException(
+                        "The implicit JobManager did not quiesce within the fatal lifecycle bound; " +
+                        "installing the process scheduler would create a second worker domain.");
+                }
 
-            _jobsConfigured = true;
+                EngineExecutionTopology topology = ExecutionTopology ?? ResolveExecutionTopology();
+
+                var scheduler = new EngineWorkScheduler(
+                    topology,
+                    EffectiveSettings.JobQueueLimit,
+                    EffectiveSettings.JobQueueWarningThreshold);
+
+                lock (_jobsConfigurationSync)
+                {
+                    WorkScheduler = scheduler;
+                    Jobs = scheduler.GeneralJobs;
+                    _jobsCreatedImplicitly = false;
+                    _jobsConfigured = true;
+                    _jobsConfigurationState = 2;
+                    Monitor.PulseAll(_jobsConfigurationSync);
+                }
+            }
+            catch
+            {
+                lock (_jobsConfigurationSync)
+                {
+                    _jobsConfigurationState = 0;
+                    Monitor.PulseAll(_jobsConfigurationSync);
+                }
+
+                throw;
+            }
         }
+
+        internal static EngineExecutionTopology ResolveExecutionTopology()
+        {
+            int generalWorkers = ReadExecutionIntegerOverride(
+                XREngineEnvironmentVariables.JobWorkers,
+                EffectiveSettings.GeneralWorkerThreadCount,
+                MapExecutionSettingSource(EffectiveSettings.GetGeneralWorkerThreadCountSource()),
+                out EEngineExecutionSettingSource generalWorkersSource);
+            int generalWorkerCap = ReadExecutionIntegerOverride(
+                XREngineEnvironmentVariables.JobWorkerCap,
+                EffectiveSettings.GeneralWorkerThreadCap,
+                MapExecutionSettingSource(EffectiveSettings.GetGeneralWorkerThreadCapSource()),
+                out EEngineExecutionSettingSource generalWorkerCapSource);
+            int renderWorkers = ReadExecutionIntegerOverride(
+                XREngineEnvironmentVariables.RenderWorkerThreads,
+                EffectiveSettings.RenderWorkerThreadCount,
+                MapExecutionSettingSource(EffectiveSettings.GetRenderWorkerThreadCountSource()),
+                out EEngineExecutionSettingSource renderWorkersSource);
+            int renderWorkerCap = ReadExecutionIntegerOverride(
+                XREngineEnvironmentVariables.RenderWorkerThreadCap,
+                EffectiveSettings.RenderWorkerThreadCap,
+                MapExecutionSettingSource(EffectiveSettings.GetRenderWorkerThreadCapSource()),
+                out EEngineExecutionSettingSource renderWorkerCapSource);
+            int foregroundReservation = ReadExecutionIntegerOverride(
+                XREngineEnvironmentVariables.ReservedForegroundThreads,
+                EffectiveSettings.ReservedForegroundThreadCount,
+                MapExecutionSettingSource(EffectiveSettings.GetReservedForegroundThreadCountSource()),
+                out EEngineExecutionSettingSource foregroundReservationSource);
+            bool allowOversubscription = ReadExecutionBooleanOverride(
+                XREngineEnvironmentVariables.AllowCpuOversubscription,
+                EffectiveSettings.AllowCpuOversubscription,
+                MapExecutionSettingSource(EffectiveSettings.GetAllowCpuOversubscriptionSource()),
+                out EEngineExecutionSettingSource allowOversubscriptionSource);
+            ERenderWorkerQos renderWorkerQos = ReadExecutionEnumOverride(
+                XREngineEnvironmentVariables.RenderWorkerQos,
+                EffectiveSettings.RenderWorkerQos,
+                MapExecutionSettingSource(EffectiveSettings.GetRenderWorkerQosSource()),
+                out EEngineExecutionSettingSource renderWorkerQosSource);
+
+            var request = new EngineExecutionTopologyRequest
+            {
+                EffectiveProcessorCount = Environment.ProcessorCount,
+                GeneralWorkerThreadCount = generalWorkers,
+                GeneralWorkerThreadCap = generalWorkerCap,
+                RenderWorkerThreadCount = renderWorkers,
+                RenderWorkerThreadCap = renderWorkerCap,
+                ReservedForegroundThreadCount = foregroundReservation,
+                DedicatedBackgroundThreadCount = 0,
+                AllowCpuOversubscription = allowOversubscription,
+                RenderWorkerQos = renderWorkerQos,
+                GeneralWorkerThreadCountSource = generalWorkersSource,
+                GeneralWorkerThreadCapSource = generalWorkerCapSource,
+                RenderWorkerThreadCountSource = renderWorkersSource,
+                RenderWorkerThreadCapSource = renderWorkerCapSource,
+                ReservedForegroundThreadCountSource = foregroundReservationSource,
+                AllowCpuOversubscriptionSource = allowOversubscriptionSource,
+                RenderWorkerQosSource = renderWorkerQosSource,
+                ForegroundThreadNames =
+                [
+                    "render/window",
+                    "update",
+                    "fixed-update",
+                    "collect-visible/swap",
+                ],
+            };
+
+            EngineExecutionTopology topology = EngineExecutionTopology.Resolve(request);
+            ExecutionTopology = topology;
+            Debug.Out(topology.CreateDiagnosticSummary());
+            return topology;
+        }
+
+        private static int ReadExecutionIntegerOverride(
+            string variableName,
+            int fallback,
+            EEngineExecutionSettingSource fallbackSource,
+            out EEngineExecutionSettingSource source)
+        {
+            string? raw = Environment.GetEnvironmentVariable(variableName);
+            if (string.IsNullOrWhiteSpace(raw))
+            {
+                source = fallbackSource;
+                return fallback;
+            }
+
+            if (!int.TryParse(raw.Trim(), out int value))
+            {
+                throw new InvalidOperationException(
+                    $"Environment variable {variableName} must be an integer; received '{raw}'.");
+            }
+
+            source = EEngineExecutionSettingSource.Environment;
+            return value;
+        }
+
+        private static bool ReadExecutionBooleanOverride(
+            string variableName,
+            bool fallback,
+            EEngineExecutionSettingSource fallbackSource,
+            out EEngineExecutionSettingSource source)
+        {
+            string? raw = Environment.GetEnvironmentVariable(variableName);
+            if (string.IsNullOrWhiteSpace(raw))
+            {
+                source = fallbackSource;
+                return fallback;
+            }
+
+            string normalized = raw.Trim();
+            bool value = normalized switch
+            {
+                "1" => true,
+                "0" => false,
+                _ when bool.TryParse(normalized, out bool parsed) => parsed,
+                _ => throw new InvalidOperationException(
+                    $"Environment variable {variableName} must be true, false, 1, or 0; received '{raw}'."),
+            };
+
+            source = EEngineExecutionSettingSource.Environment;
+            return value;
+        }
+
+        private static TEnum ReadExecutionEnumOverride<TEnum>(
+            string variableName,
+            TEnum fallback,
+            EEngineExecutionSettingSource fallbackSource,
+            out EEngineExecutionSettingSource source)
+            where TEnum : struct, Enum
+        {
+            string? raw = Environment.GetEnvironmentVariable(variableName);
+            if (string.IsNullOrWhiteSpace(raw))
+            {
+                source = fallbackSource;
+                return fallback;
+            }
+
+            if (!Enum.TryParse(raw.Trim(), ignoreCase: true, out TEnum value) || !Enum.IsDefined(value))
+            {
+                throw new InvalidOperationException(
+                    $"Environment variable {variableName} has unknown {typeof(TEnum).Name} value '{raw}'.");
+            }
+
+            source = EEngineExecutionSettingSource.Environment;
+            return value;
+        }
+
+        private static EEngineExecutionSettingSource MapExecutionSettingSource(EffectiveSettings.SettingSource source)
+            => source switch
+            {
+                EffectiveSettings.SettingSource.Project => EEngineExecutionSettingSource.Project,
+                EffectiveSettings.SettingSource.User => EEngineExecutionSettingSource.User,
+                _ => EEngineExecutionSettingSource.EngineDefault,
+            };
 
         private static void ConfigureJobManagerHooks()
         {

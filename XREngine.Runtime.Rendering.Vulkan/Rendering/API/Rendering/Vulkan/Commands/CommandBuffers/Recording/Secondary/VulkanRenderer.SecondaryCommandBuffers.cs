@@ -600,7 +600,7 @@ namespace XREngine.Rendering.Vulkan
             CommandChain[] secondaryChains = batchScratch.NonGraphicsSecondaryChains;
             bool persistentWorkersReady = TryPrepareNonGraphicsRecordingWorkers(
                 count,
-                forceSerial: CommandChainWorkerRecordingQuarantined,
+                forceSerial: false,
                 imageIndex,
                 out CommandChainRecordingWorkerState[] workers,
                 out int workerCount);
@@ -758,6 +758,8 @@ namespace XREngine.Rendering.Vulkan
                 chain.StructuralSignature == preparedSignature &&
                 chain.RecordedArtifact.IsExecutable)
             {
+                if (chain.RecordedArtifact.WorkerArenaOwner is not null)
+                    RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanCommandChainWorkerMetrics(reusedChains: 1);
                 return;
             }
 
@@ -772,11 +774,15 @@ namespace XREngine.Rendering.Vulkan
                 chain.PreparedKey.Matches(in currentKey) &&
                 chain.RecordedArtifact.IsExecutable)
             {
+                if (chain.RecordedArtifact.WorkerArenaOwner is not null)
+                    RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanCommandChainWorkerMetrics(reusedChains: 1);
                 return;
             }
 
             MarkCommandChainSecondaryCommandBufferInvalid(chain);
             Result resetResult = ResetVulkanCommandBufferTracked(secondary);
+            if (chain.RecordedArtifact.WorkerArenaOwner is not null)
+                RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanWorkerSecondaryCommandBufferReset();
             if (resetResult != Result.Success)
                 throw new InvalidOperationException(
                     $"Failed to reset Vulkan non-graphics secondary command buffer: {resetResult}.");
@@ -800,55 +806,68 @@ namespace XREngine.Rendering.Vulkan
                 PInheritanceInfo = &inheritanceInfo,
             };
 
-            ThrowIfVulkanDeviceOperationNotAdmitted(
-                "vkBeginCommandBuffer.CommandChainSecondary");
-            if (Api!.BeginCommandBuffer(secondary, ref beginInfo) != Result.Success)
-                throw new InvalidOperationException(
-                    "Failed to begin Vulkan non-graphics secondary command buffer.");
-
-            ResetCommandBufferBindState(secondary);
-            MarkCommandChainSecondaryRecording(chain, secondary);
-            CommandBufferRecordingScratch recordingScratch =
-                _commandBufferRecordingScratch.Value!;
-            recordingScratch.PreparedComputePayload = null;
-            RecordFrameOpInSecondary(
-                secondary,
-                imageIndex,
-                operations,
-                sourceIndex,
-                ResolveCommandChainInlineOperationIndex(operations.Stream, sourceIndex),
-                packet);
-            if (header.OpCode is EVulkanPrimaryPlanNodeKind.ComputeDispatch or
-                EVulkanPrimaryPlanNodeKind.ComputeDispatchIndirect)
+            bool recordingStarted = false;
+            try
             {
-                VulkanPreparedComputePayload preparedCompute =
-                    recordingScratch.PreparedComputePayload ??
-                    throw new VulkanPlanPreconditionException(
-                        "A recorded compute secondary did not publish its descriptor sets.");
-                ref readonly FrameOpContext context = ref operations.GetContext(sourceIndex);
-                for (int descriptorIndex = 0;
-                     descriptorIndex < preparedCompute.DescriptorSets.Length;
-                     descriptorIndex++)
-                {
-                    DescriptorSet descriptorSet = preparedCompute.DescriptorSets[descriptorIndex];
-                    if (!CaptureSecondaryDescriptorSetImageRequirements(
-                            secondary,
-                            descriptorSet,
-                            target: null,
-                            header.PassIndex,
-                            context.PassMetadata,
-                            out string descriptorRequirementFailure))
-                    {
-                        throw new VulkanPlanPreconditionException(
-                            $"Compute secondary 0x{secondary.Handle:X} could not publish descriptor image requirements: {descriptorRequirementFailure}.");
-                    }
-                }
-                chain.PreparedComputePayload = preparedCompute;
-            }
+                ThrowIfVulkanDeviceOperationNotAdmitted(
+                    "vkBeginCommandBuffer.CommandChainSecondary");
+                if (Api!.BeginCommandBuffer(secondary, ref beginInfo) != Result.Success)
+                    throw new InvalidOperationException(
+                        "Failed to begin Vulkan non-graphics secondary command buffer.");
 
-            if (EndCommandBufferTracked(secondary) != Result.Success)
-                throw new InvalidOperationException(
-                    "Failed to end Vulkan non-graphics secondary command buffer.");
+                ResetCommandBufferBindState(secondary);
+                recordingStarted = true;
+                MarkCommandChainSecondaryRecording(chain, secondary);
+                CommandBufferRecordingScratch recordingScratch =
+                    _commandBufferRecordingScratch.Value!;
+                recordingScratch.PreparedComputePayload = null;
+                RecordFrameOpInSecondary(
+                    secondary,
+                    imageIndex,
+                    operations,
+                    sourceIndex,
+                    ResolveCommandChainInlineOperationIndex(operations.Stream, sourceIndex),
+                    packet);
+                if (header.OpCode is EVulkanPrimaryPlanNodeKind.ComputeDispatch or
+                        EVulkanPrimaryPlanNodeKind.ComputeDispatchIndirect)
+                {
+                    VulkanPreparedComputePayload preparedCompute =
+                        recordingScratch.PreparedComputePayload ??
+                        throw new VulkanPlanPreconditionException(
+                            "A recorded compute secondary did not publish its descriptor sets.");
+                    ref readonly FrameOpContext context = ref operations.GetContext(sourceIndex);
+                    for (int descriptorIndex = 0;
+                         descriptorIndex < preparedCompute.DescriptorSets.Length;
+                         descriptorIndex++)
+                    {
+                        DescriptorSet descriptorSet = preparedCompute.DescriptorSets[descriptorIndex];
+                        if (!CaptureSecondaryDescriptorSetImageRequirements(
+                                secondary,
+                                descriptorSet,
+                                target: null,
+                                header.PassIndex,
+                                context.PassMetadata,
+                                out string descriptorRequirementFailure))
+                        {
+                            throw new VulkanPlanPreconditionException(
+                                $"Compute secondary 0x{secondary.Handle:X} could not publish descriptor image requirements: {descriptorRequirementFailure}.");
+                        }
+                    }
+                    chain.PreparedComputePayload = preparedCompute;
+                }
+
+                Result endResult = EndCommandBufferTracked(secondary);
+                recordingStarted = false;
+                if (endResult != Result.Success)
+                    throw new InvalidOperationException(
+                        "Failed to end Vulkan non-graphics secondary command buffer.");
+            }
+            catch
+            {
+                if (recordingStarted)
+                    TryAbandonCommandBufferRecording(secondary);
+                throw;
+            }
 
             chain.StructuralSignature = preparedSignature;
             if (header.OpCode is EVulkanPrimaryPlanNodeKind.ComputeDispatch or

@@ -165,6 +165,23 @@ internal sealed partial class VulkanCommandRuntime
         if (string.IsNullOrWhiteSpace(resourceName))
             resourceName = texture.GetDescribingName();
 
+        // Named render-graph resources are owned by the planner generation installed for this
+        // operation. Prefer that generation's physical image over the process-wide logical
+        // wrapper, which can currently be rebound to another viewport or OpenXR eye.
+        if (TryResolvePhysicalGroupBlitImage(
+                texture,
+                resourceName,
+                mipLevel,
+                layerIndex,
+                aspectMask,
+                stage,
+                access,
+                resourceAllocator,
+                out info))
+        {
+            return true;
+        }
+
         AbstractRenderAPIObject apiObject = ResourceRuntime.WrapperLookup.GetOrCreate(texture, true);
         if (apiObject is VkTextureView textureView)
         {

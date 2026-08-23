@@ -106,9 +106,16 @@ internal unsafe sealed class VulkanImGuiFontAtlasResources(
 
         VulkanTargetOutputContext target = _target;
         if (resources.DescriptorPool.Handle != 0)
-            target.VulkanApi.DestroyDescriptorPool(target.Device, resources.DescriptorPool, null);
+            _resourceRuntime.DescriptorLifetime.RetireDescriptorPool(resources.DescriptorPool);
         if (resources.DescriptorSetLayout.Handle != 0)
-            target.VulkanApi.DestroyDescriptorSetLayout(target.Device, resources.DescriptorSetLayout, null);
+        {
+            _resourceRuntime.DestroyDescriptorSetLayout(
+                target.VulkanApi,
+                target.Device,
+                _resourceRuntime.FramebufferRetirementFrameSlot,
+                resources.DescriptorSetLayout,
+                "ImGui.FontAtlas.DescriptorSetLayout");
+        }
 
         resources.FontImage = default;
         resources.FontImageMemory = default;
@@ -421,9 +428,16 @@ internal unsafe sealed class VulkanImGuiFontAtlasResources(
     {
         Vk api = target.VulkanApi;
         if (resources.DescriptorPool.Handle != 0)
-            api.DestroyDescriptorPool(target.Device, resources.DescriptorPool, null);
+            _resourceRuntime.DescriptorLifetime.RetireDescriptorPool(resources.DescriptorPool);
         if (resources.DescriptorSetLayout.Handle != 0)
-            api.DestroyDescriptorSetLayout(target.Device, resources.DescriptorSetLayout, null);
+        {
+            _resourceRuntime.DestroyDescriptorSetLayout(
+                api,
+                target.Device,
+                _resourceRuntime.FramebufferRetirementFrameSlot,
+                resources.DescriptorSetLayout,
+                "ImGui.FontAtlas.CreateFailure.DescriptorSetLayout");
+        }
         if (resources.FontSampler.Handle != 0)
             api.DestroySampler(target.Device, resources.FontSampler, null);
         if (resources.FontImageView.Handle != 0 && target.TryBeginDestroyImageView(resources.FontImageView, "ImGui.FontAtlas.CreateFailure"))

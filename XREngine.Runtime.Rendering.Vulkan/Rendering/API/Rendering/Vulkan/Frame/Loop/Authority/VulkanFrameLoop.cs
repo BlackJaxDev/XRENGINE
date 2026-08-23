@@ -35,6 +35,7 @@ internal sealed partial class VulkanFrameLoop
         new VulkanPreparedMeshOperationCohortEntry[VulkanMeshOperationRequestQueue.Capacity];
     private readonly VulkanPreparedMeshOperationCohort _preparedMeshOperationCohort = new();
     private readonly VulkanPreparedMeshIngress _preparedMeshIngress = new();
+    private readonly OpenXrMeshFrameOpCaptureEmitter _openXrMeshFrameOpCaptureEmitter;
     private FrameOpResourceUseList _preparedMeshIngressResourceUseScratch;
     private long _preparedMeshOperationCohortHits;
     private long _preparedMeshOperationCohortBuilds;
@@ -96,6 +97,7 @@ internal sealed partial class VulkanFrameLoop
         _commandRuntime = commandRuntime;
         _telemetry = telemetry;
         _targetDriver = targetDriver;
+        _openXrMeshFrameOpCaptureEmitter = new OpenXrMeshFrameOpCaptureEmitter(this);
         if (targetDriver is IVulkanExplicitFrameTargetDriver explicitTarget)
         {
             _frameSlotCount = checked((int)explicitTarget.OutputProperties.FrameSlotCount);
@@ -184,18 +186,17 @@ internal sealed partial class VulkanFrameLoop
     private ulong ResourcePlannerRevision
         => PublishedResourcePlannerRuntimeState.ResourcePlannerRevision;
     private ulong ActiveResourcePlannerSignature
-        => PublishedResourcePlannerRuntimeState.ResourcePlannerSignature;
+        => _resourcePlannerSessions.CaptureRuntimeState().ResourcePlannerSignature;
     private ulong ActiveResourceAllocationSignature
-        => PublishedResourcePlannerRuntimeState.ResourceAllocationSignature;
+        => _resourcePlannerSessions.CaptureRuntimeState().ResourceAllocationSignature;
     private FrameOpContext? ActiveLastActiveFrameOpContext
     {
-        get => PublishedResourcePlannerRuntimeState.LastActiveFrameOpContext;
+        get => _resourcePlannerSessions.CaptureRuntimeState().LastActiveFrameOpContext;
         set
         {
-            ResourcePlannerRuntimeState state = PublishedResourcePlannerRuntimeState;
+            ResourcePlannerRuntimeState state = _resourcePlannerSessions.CaptureRuntimeState();
             state.LastActiveFrameOpContext = value;
-            _framePlanner.PublishResourcePlannerGeneration(
-                new ResourcePlannerRuntimeGeneration(state));
+            _resourcePlannerSessions.RestoreRuntimeState(state);
         }
     }
     private VulkanDesktopWsiTargetDriver DesktopWsiOutput

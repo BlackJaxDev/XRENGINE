@@ -344,6 +344,11 @@ public static class XREngineEnvironmentVariables
     public const string UploadQueueChunkLogging = "XRE_UPLOAD_QUEUE_CHUNK_LOGGING";
     public const string ImGuiViewportDisposeNative = "XRE_IMGUI_VIEWPORT_DISPOSE_NATIVE";
 
+    public const string RenderWorkerThreads = "XRE_RENDER_WORKER_THREADS";
+    public const string RenderWorkerThreadCap = "XRE_RENDER_WORKER_THREAD_CAP";
+    public const string ReservedForegroundThreads = "XRE_RESERVED_FOREGROUND_THREADS";
+    public const string AllowCpuOversubscription = "XRE_ALLOW_CPU_OVERSUBSCRIPTION";
+    public const string RenderWorkerQos = "XRE_RENDER_WORKER_QOS";
     public const string JobWorkers = "XR_JOB_WORKERS";
     public const string JobWorkerCap = "XR_JOB_WORKER_CAP";
     public const string JobQueueLimit = "XR_JOB_QUEUE_LIMIT";

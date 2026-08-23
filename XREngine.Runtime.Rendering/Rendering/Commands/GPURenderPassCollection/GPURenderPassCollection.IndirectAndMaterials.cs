@@ -2876,6 +2876,7 @@ namespace XREngine.Rendering.Commands
             _keyIndexScratchBuffer?.Dispose();
             DisposeViewSetBuffers();
 
+            DestroyHiZMipSourceViews();
             _hiZDepthPyramidOwned?.Destroy();
             _hiZDepthPyramidOwned = null;
             _hiZDepthPyramid = null;

@@ -271,6 +271,13 @@ public static partial class EditorUnitTests
             public bool UseForwardForTransparent { get; set; } = false;
 
             /// <summary>
+            /// Publishes each imported renderable's source material as an explicit local
+            /// material override. This keeps the visual result unchanged while exercising
+            /// the local-override submission contract.
+            /// </summary>
+            public bool UseSourceMaterialAsOverride { get; set; }
+
+            /// <summary>
             /// Selects how this model import chooses between native format-specific importers
             /// and Assimp fallback. PreferNativeThenAssimp uses a native importer when the
             /// format has one available and falls back to Assimp otherwise. Today the native
@@ -494,6 +501,13 @@ public static partial class EditorUnitTests
         /// the existing forward unlit unit-box behavior.
         /// </summary>
         public bool UnitBoxDeferredMaterial { get; set; } = false;
+
+        /// <summary>
+        /// Disables face culling on unit boxes. Set false when a fixture needs the boxes to
+        /// reach the missing-meshlet-payload classification instead of the two-sided-state
+        /// classification.
+        /// </summary>
+        public bool UnitBoxDoubleSided { get; set; } = true;
 
         public EVSyncMode? VSyncOverride = EVSyncMode.Off; //When set, overrides loaded user VSync for unit-test runs. Null preserves saved user settings.
         public float RenderFPS = 0.0f;

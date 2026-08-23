@@ -425,10 +425,28 @@ internal sealed partial class VulkanFrameLoop
 
     private VulkanOpenXrRequestedDeviceFacts ResolveOpenXrRequestedDevice()
     {
-        if (!OpenXRAPI.TryGetRequestedVulkanPhysicalDevice(
+        bool querySucceeded;
+        nint requestedDevice;
+        string? failureReason;
+        if (_deviceContext.OpenXrBootstrapContext is { } openXrBootstrapContext)
+        {
+            // XR_KHR_vulkan_enable2 already owns the runtime instance that created this VkInstance.
+            // Reuse it for device selection: runtimes such as Monado allow only one live XR instance
+            // and correctly reject the old temporary second-instance query with XR_ERROR_LIMIT_REACHED.
+            querySucceeded = openXrBootstrapContext.TryGetRequestedVulkanPhysicalDevice(
                 (nint)_deviceContext.Instance.Handle,
-                out nint requestedDevice,
-                out string? failureReason))
+                out requestedDevice,
+                out failureReason);
+        }
+        else
+        {
+            querySucceeded = OpenXRAPI.TryGetRequestedVulkanPhysicalDevice(
+                (nint)_deviceContext.Instance.Handle,
+                out requestedDevice,
+                out failureReason);
+        }
+
+        if (!querySucceeded)
         {
             if (!string.IsNullOrWhiteSpace(failureReason))
             {

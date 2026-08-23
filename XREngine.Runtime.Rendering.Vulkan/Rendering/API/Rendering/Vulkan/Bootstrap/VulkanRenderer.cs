@@ -30,6 +30,7 @@ public sealed class VulkanRenderer :
     IVulkanVendorUpscaleBackendCapability,
     IOcclusionQueryBackendCapability,
     IRenderTexturePreviewBackendCapability,
+    IRenderPipelineReadbackBackendCapability,
     IRenderBackendDiagnosticsCapability,
     IRenderProgramBackendCapability,
     IInteractiveResizePresentationBackendCapability,
@@ -383,7 +384,7 @@ public sealed class VulkanRenderer :
         // unlike OpenGL there is no thread-local error queue to drain here.
     }
     object IRenderBackendDiagnosticsCapability.GetLiveImageAllocationDiagnostics(int limit) => _resourceRuntime.GetLiveImageAllocationDiagnostics(limit);
-    object IRenderBackendDiagnosticsCapability.GetLastFrameOperationTraceDiagnostics(int limit, string? targetContains) => _commandRuntime.GetLastFrameOpTraceDiagnostics(limit, targetContains);
+    object IRenderBackendDiagnosticsCapability.GetLastFrameOperationTraceDiagnostics(int limit, string? targetContains, int? pipelineIdentity) => _commandRuntime.GetLastFrameOpTraceDiagnostics(limit, targetContains, pipelineIdentity);
     object IRenderBackendDiagnosticsCapability.GetFinalPresentationLedgerDiagnostics(int limit) => _frameLoop.GetFinalPresentationLedgerDiagnostics(limit);
     object IRenderBackendDiagnosticsCapability.ConfigureFinalPresentationLedgerDiagnostics(bool enabled, bool frozen, bool clear) => _frameLoop.ConfigureFinalPresentationLedgerDiagnostics(enabled, frozen, clear);
     bool IRenderBackendDiagnosticsCapability.TryReadDepthPixelDebug(XRFrameBuffer frameBuffer, int x, int y, out object? diagnostic) => _frameLoop.TryReadDepthPixelDebug(frameBuffer, x, y, out diagnostic);

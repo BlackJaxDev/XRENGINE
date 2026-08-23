@@ -563,6 +563,38 @@ function Read-AllRenderStatsSamples {
     return $samples
 }
 
+function Read-McpRenderStatsPayload {
+    param([string]$LogDir)
+
+    if ([string]::IsNullOrWhiteSpace($LogDir)) {
+        return $null
+    }
+
+    $path = Join-Path $LogDir 'profiler-mcp-render-stats.json'
+    if (-not (Test-Path -LiteralPath $path)) {
+        return $null
+    }
+
+    try {
+        $response = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
+        foreach ($content in @($response.result.content)) {
+            if ($content.type -ne 'text' -or [string]::IsNullOrWhiteSpace([string]$content.text)) {
+                continue
+            }
+
+            $text = ([string]$content.text).Trim()
+            if ($text.StartsWith('{')) {
+                return $text | ConvertFrom-Json
+            }
+        }
+    }
+    catch {
+        Write-Warning "Unable to parse MCP render-profiler payload '$path': $($_.Exception.Message)"
+    }
+
+    return $null
+}
+
 function Select-RenderStatsSamples {
     param(
         [System.Collections.IEnumerable]$Samples,
@@ -1482,6 +1514,9 @@ function Measure-Variant {
 
     $allSamples = @(Read-AllRenderStatsSamples -LogDir $logDir)
     $samples = @(Select-RenderStatsSamples -Samples $allSamples -CaptureStartUtc $captureStartUtc -CaptureEndUtc $captureEndUtc)
+    $mcpRenderStats = Read-McpRenderStatsPayload -LogDir $logDir
+    $mcpMeshletStats = if ($null -ne $mcpRenderStats) { $mcpRenderStats.meshlets } else { $null }
+    $mcpVulkanFrameOps = if ($null -ne $mcpRenderStats) { $mcpRenderStats.vulkan.frame_ops } else { $null }
     $render = Get-NumericStats -Samples $samples -Property 'render_dispatch_ms' -PositiveOnly
     $renderOutsideVulkan = Get-NumericStats -Samples $samples -Property 'render_outside_vulkan_frame_ms'
     $update = Get-NumericStats -Samples $samples -Property 'update_ms' -PositiveOnly
@@ -1535,8 +1570,38 @@ function Measure-Variant {
     $meshletResolvedRows = Max-NumericProperty -Samples $samples -Property 'meshlet_resolved_meshlet_rows'
     $meshletResolvedTaskGroups = Max-NumericProperty -Samples $samples -Property 'meshlet_resolved_task_groups'
     $meshletTaskRecordsEmitted = Max-NumericProperty -Samples $samples -Property 'gpu_meshlet_task_records_emitted'
+    $meshletTaskRecordsFrustumCulled = Max-NumericProperty -Samples $samples -Property 'gpu_meshlet_task_records_frustum_culled'
+    $meshletTaskRecordsConeCulled = Max-NumericProperty -Samples $samples -Property 'gpu_meshlet_task_records_cone_culled'
+    $meshletTaskRecordsHiZCulled = Max-NumericProperty -Samples $samples -Property 'gpu_meshlet_task_records_hiz_culled'
     $meshletDelayedDispatchGroups = Max-NumericProperty -Samples $samples -Property 'gpu_meshlet_delayed_dispatch_group_count'
     $meshletDiagnosticReadbackBytes = Max-NumericProperty -Samples $samples -Property 'gpu_meshlet_diagnostic_readback_bytes'
+    $meshletRequestedFrames = Max-NumericProperty -Samples $samples -Property 'gpu_meshlet_requested_frames'
+    $meshletProductionFrames = Max-NumericProperty -Samples $samples -Property 'gpu_meshlet_production_frames'
+    $vulkanFrameOpMeshTaskDispatchCount = Max-NumericProperty -Samples $samples -Property 'vulkan_frame_op_mesh_task_dispatch_count'
+    $meshletBufferBytesResident = Max-NumericProperty -Samples $samples -Property 'gpu_meshlet_buffer_bytes_resident'
+    $meshletBufferLiveBytes = Max-NumericProperty -Samples $samples -Property 'meshlet_buffer_live_bytes'
+    $meshletBufferRetiredBytes = Max-NumericProperty -Samples $samples -Property 'meshlet_buffer_retired_bytes'
+    $meshletBufferRebuildCount = Max-NumericProperty -Samples $allSamples -Property 'meshlet_buffer_rebuild_count'
+    $meshletBufferRetireCount = Max-NumericProperty -Samples $allSamples -Property 'meshlet_buffer_retire_count'
+    $meshletBufferRebuildsDuringCapture = Get-MonotonicCounterDelta -Samples $samples -Property 'meshlet_buffer_rebuild_count'
+    $meshletBufferRetiresDuringCapture = Get-MonotonicCounterDelta -Samples $samples -Property 'meshlet_buffer_retire_count'
+    if ($null -ne $mcpMeshletStats) {
+        $meshletTaskRecordsEmitted = [Math]::Max([double]$meshletTaskRecordsEmitted, [double]$mcpMeshletStats.latest_task_records_emitted)
+        $meshletTaskRecordsFrustumCulled = [Math]::Max([double]$meshletTaskRecordsFrustumCulled, [double]$mcpMeshletStats.latest_task_records_frustum_culled)
+        $meshletTaskRecordsConeCulled = [Math]::Max([double]$meshletTaskRecordsConeCulled, [double]$mcpMeshletStats.latest_task_records_cone_culled)
+        $meshletTaskRecordsHiZCulled = [Math]::Max([double]$meshletTaskRecordsHiZCulled, [double]$mcpMeshletStats.latest_task_records_hiz_culled)
+        $meshletDelayedDispatchGroups = [Math]::Max([double]$meshletDelayedDispatchGroups, [double]$mcpMeshletStats.delayed_dispatch_group_count)
+        $meshletDiagnosticReadbackBytes = [Math]::Max([double]$meshletDiagnosticReadbackBytes, [double]$mcpMeshletStats.diagnostic_readback_bytes)
+        $meshletBufferLiveBytes = [Math]::Max([double]$meshletBufferLiveBytes, [double]$mcpMeshletStats.buffer_live_bytes)
+        $meshletBufferRetiredBytes = [Math]::Max([double]$meshletBufferRetiredBytes, [double]$mcpMeshletStats.buffer_retired_bytes)
+        $meshletBufferRebuildCount = [Math]::Max([double]$meshletBufferRebuildCount, [double]$mcpMeshletStats.buffer_rebuild_count)
+        $meshletBufferRetireCount = [Math]::Max([double]$meshletBufferRetireCount, [double]$mcpMeshletStats.buffer_retire_count)
+    }
+    if ($null -ne $mcpVulkanFrameOps) {
+        $vulkanFrameOpMeshTaskDispatchCount = [Math]::Max(
+            [double]$vulkanFrameOpMeshTaskDispatchCount,
+            [double]$mcpVulkanFrameOps.mesh_task_dispatch_count)
+    }
     $vkFrame = Get-NumericStats -Samples $samples -Property 'vulkan_frame_total_ms' -PositiveOnly
     $vkWaitFrameSlot = Get-NumericStats -Samples $samples -Property 'vulkan_frame_wait_fence_ms' -PositiveOnly
     $vkSampleTimingQueries = Get-NumericStats -Samples $samples -Property 'vulkan_frame_sample_timing_queries_ms' -PositiveOnly
@@ -1796,9 +1861,14 @@ function Measure-Variant {
         } elseif ($meshletRenderPathSourceHashCalls -ne 0 -or $meshletRenderPathDiskCalls -ne 0 -or $meshletRenderPathCookerCalls -ne 0 -or $meshletMappedBytes -ne 0) {
             $noteParts.Add("meshlet render-path violation hash=$meshletRenderPathSourceHashCalls disk=$meshletRenderPathDiskCalls cooker=$meshletRenderPathCookerCalls mappedBytes=$meshletMappedBytes") | Out-Null
         }
-        if ($null -eq $meshletTaskRecordsEmitted -or $null -eq $meshletDelayedDispatchGroups -or
-            $meshletTaskRecordsEmitted -le 0 -or $meshletDelayedDispatchGroups -le 0) {
-            $noteParts.Add("meshlet production work was not observed from delayed GPU diagnostics; taskRecords=$meshletTaskRecordsEmitted dispatchX=$meshletDelayedDispatchGroups diagnosticReadbackBytes=$meshletDiagnosticReadbackBytes failedRung=$meshletCapabilityFailedRung") | Out-Null
+        if ($VulkanGpuDrivenProfile -eq 'Diagnostics') {
+            if ($null -eq $meshletTaskRecordsEmitted -or $null -eq $meshletDelayedDispatchGroups -or
+                $meshletTaskRecordsEmitted -le 0 -or $meshletDelayedDispatchGroups -le 0) {
+                $noteParts.Add("meshlet production work was not observed from delayed GPU diagnostics; taskRecords=$meshletTaskRecordsEmitted dispatchX=$meshletDelayedDispatchGroups diagnosticReadbackBytes=$meshletDiagnosticReadbackBytes failedRung=$meshletCapabilityFailedRung") | Out-Null
+            }
+        } elseif ($null -eq $meshletProductionFrames -or $null -eq $vulkanFrameOpMeshTaskDispatchCount -or
+            $meshletProductionFrames -le 0 -or $vulkanFrameOpMeshTaskDispatchCount -le 0) {
+            $noteParts.Add("meshlet production work was not observed from the zero-readback recording path; productionFrames=$meshletProductionFrames frameOpDispatches=$vulkanFrameOpMeshTaskDispatchCount apiEnqueues=$meshletDispatchCalls failedRung=$meshletCapabilityFailedRung") | Out-Null
         }
     }
     if ($FailOnSteadyStateResourceChurn -and ($vkRetiredResourceCountTotal -gt 0 -or $plannerPruneTotal -gt 0 -or $globalInFlightWaitTotal -gt 0 -or $forceFlushTotal -gt 0 -or $vkDescriptorPoolCreatesTotal -gt 0 -or $vkLifetimeLiveResourcesMax -gt $MaxSteadyStateVulkanLiveResources -or $vkTrackedDescriptorSetsMax -gt $MaxSteadyStateVulkanDescriptorSets)) {
@@ -2219,9 +2289,22 @@ function Measure-Variant {
         MeshletPrimaryRouteReason = $meshletPrimaryRouteReason
         MeshletResolvedRows = $meshletResolvedRows
         MeshletResolvedTaskGroups = $meshletResolvedTaskGroups
+        MeshletRequestedFrames = $meshletRequestedFrames
+        MeshletProductionFrames = $meshletProductionFrames
+        VulkanFrameOpMeshTaskDispatchCount = $vulkanFrameOpMeshTaskDispatchCount
         MeshletTaskRecordsEmitted = $meshletTaskRecordsEmitted
+        MeshletTaskRecordsFrustumCulled = $meshletTaskRecordsFrustumCulled
+        MeshletTaskRecordsConeCulled = $meshletTaskRecordsConeCulled
+        MeshletTaskRecordsHiZCulled = $meshletTaskRecordsHiZCulled
         MeshletDelayedDispatchGroups = $meshletDelayedDispatchGroups
         MeshletDiagnosticReadbackBytes = $meshletDiagnosticReadbackBytes
+        MeshletBufferBytesResident = $meshletBufferBytesResident
+        MeshletBufferLiveBytes = $meshletBufferLiveBytes
+        MeshletBufferRetiredBytes = $meshletBufferRetiredBytes
+        MeshletBufferRebuildCount = $meshletBufferRebuildCount
+        MeshletBufferRetireCount = $meshletBufferRetireCount
+        MeshletBufferRebuildsDuringCapture = $meshletBufferRebuildsDuringCapture
+        MeshletBufferRetiresDuringCapture = $meshletBufferRetiresDuringCapture
         LastSampleUtc = $lastSampleUtc
         LastRenderFrameId = $lastRenderFrameId
         LastCompletedFrameId = $lastCompletedFrameId
@@ -2397,33 +2480,51 @@ if ($invalidCaptureFailures.Count -gt 0) {
 }
 
 $meshletProductionFailures = @($results | Where-Object {
+    if ($_.Strategy -ne 'GpuMeshletZeroReadback') {
+        return $false
+    }
+
     # EffectiveStrategy aggregates all observed pass/bin routes. A valid meshlet
     # frame can therefore include planned traditional GPU routes for unsupported
-    # auxiliary or deformation bins. Fence-delayed task records and dispatch
-    # groups below are the authoritative proof that an eligible bin executed.
-    $_.Strategy -eq 'GpuMeshletZeroReadback' -and (
+    # auxiliary or deformation bins. Shipping/DevParity deliberately suppress
+    # diagnostics readback, so their proof is the production-frame counter plus
+    # the mesh-task operation retained in the Vulkan primary frame plan. The
+    # explicit Diagnostics profile additionally requires fence-delayed GPU data.
+    $commonFailure =
         $null -eq $_.MeshletRenderPathSourceHashCalls -or
         $null -eq $_.MeshletRenderPathDiskCalls -or
         $null -eq $_.MeshletRenderPathCookerCalls -or
         $null -eq $_.MeshletMappedBytes -or
         $null -eq $_.MeshletDispatchCalls -or
-        $null -eq $_.MeshletTaskRecordsEmitted -or
-        $null -eq $_.MeshletDelayedDispatchGroups -or
         [double]$_.MeshletRenderPathSourceHashCalls -ne 0.0 -or
         [double]$_.MeshletRenderPathDiskCalls -ne 0.0 -or
         [double]$_.MeshletRenderPathCookerCalls -ne 0.0 -or
         [double]$_.MeshletMappedBytes -ne 0.0 -or
-        # API enqueue count alone is not proof. Both values below come from a
-        # fence-delayed readback of GPU-written meshlet buffers.
-        [double]$_.MeshletTaskRecordsEmitted -le 0.0 -or
-        [double]$_.MeshletDelayedDispatchGroups -le 0.0 -or
+        [double]$_.MeshletDispatchCalls -le 0.0 -or
         [double]$_.AllGpuReadbackBytesTotal -ne 0.0 -or
         [double]$_.AllGpuMappedBuffersTotal -ne 0.0
-    )
+
+    if ($commonFailure) {
+        return $true
+    }
+
+    if ($_.VulkanGpuDrivenProfile -eq 'Diagnostics') {
+        return $null -eq $_.MeshletTaskRecordsEmitted -or
+            $null -eq $_.MeshletDelayedDispatchGroups -or
+            $null -eq $_.MeshletDiagnosticReadbackBytes -or
+            [double]$_.MeshletTaskRecordsEmitted -le 0.0 -or
+            [double]$_.MeshletDelayedDispatchGroups -le 0.0 -or
+            [double]$_.MeshletDiagnosticReadbackBytes -le 0.0
+    }
+
+    return $null -eq $_.MeshletProductionFrames -or
+        $null -eq $_.VulkanFrameOpMeshTaskDispatchCount -or
+        [double]$_.MeshletProductionFrames -le 0.0 -or
+        [double]$_.VulkanFrameOpMeshTaskDispatchCount -le 0.0
 })
 if ($meshletProductionFailures.Count -gt 0) {
     $details = $meshletProductionFailures | ForEach-Object {
-        "$($_.Strategy) r$($_.Repetition): effective=$($_.EffectiveStrategy) lastResolvedPass=$($_.MeshletResolvedPass) lastResolvedRoute=$($_.MeshletResolvedRoute) hash=$($_.MeshletRenderPathSourceHashCalls) disk=$($_.MeshletRenderPathDiskCalls) cooker=$($_.MeshletRenderPathCookerCalls) mapped=$($_.MeshletMappedBytes) apiEnqueues=$($_.MeshletDispatchCalls) delayedTaskRecords=$($_.MeshletTaskRecordsEmitted) delayedDispatchX=$($_.MeshletDelayedDispatchGroups) diagnosticReadbackBytes=$($_.MeshletDiagnosticReadbackBytes) readback=$($_.AllGpuReadbackBytesTotal) mappedBuffers=$($_.AllGpuMappedBuffersTotal) failedRung=$($_.MeshletVulkanCapabilityFailedRung)"
+        "$($_.Strategy) r$($_.Repetition): profile=$($_.VulkanGpuDrivenProfile) effective=$($_.EffectiveStrategy) lastResolvedPass=$($_.MeshletResolvedPass) lastResolvedRoute=$($_.MeshletResolvedRoute) hash=$($_.MeshletRenderPathSourceHashCalls) disk=$($_.MeshletRenderPathDiskCalls) cooker=$($_.MeshletRenderPathCookerCalls) mapped=$($_.MeshletMappedBytes) apiEnqueues=$($_.MeshletDispatchCalls) productionFrames=$($_.MeshletProductionFrames) frameOpDispatches=$($_.VulkanFrameOpMeshTaskDispatchCount) delayedTaskRecords=$($_.MeshletTaskRecordsEmitted) delayedDispatchX=$($_.MeshletDelayedDispatchGroups) diagnosticReadbackBytes=$($_.MeshletDiagnosticReadbackBytes) readback=$($_.AllGpuReadbackBytesTotal) mappedBuffers=$($_.AllGpuMappedBuffersTotal) failedRung=$($_.MeshletVulkanCapabilityFailedRung)"
     }
     throw "GpuMeshletZeroReadback production gate failed: $($details -join '; ')"
 }

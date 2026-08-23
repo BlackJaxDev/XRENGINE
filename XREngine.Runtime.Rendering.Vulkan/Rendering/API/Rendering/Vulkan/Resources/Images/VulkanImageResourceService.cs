@@ -233,7 +233,26 @@ internal unsafe sealed class VulkanImageResourceService(
             memory = allocation.Memory;
             Result bind = context.Api.BindImageMemory(context.Device, image, memory, allocation.Offset);
             if (bind == Result.Success)
+            {
+                string allocationName = group.LogicalResources.Count == 1
+                    ? group.LogicalResources[0].Name
+                    : $"{group.Key} ({group.LogicalResources.Count} logical resources)";
+                context.Resources.TrackImageAllocation(
+                    context.DeviceContext,
+                    image,
+                    allocation,
+                    allocationName,
+                    "ResourcePlanner",
+                    group.ResolvedExtent.Width,
+                    group.ResolvedExtent.Height,
+                    group.ResolvedExtent.Depth,
+                    Math.Max(group.Template.Layers, 1u),
+                    group.MipLevels,
+                    group.Format,
+                    group.Usage,
+                    group.Samples);
                 return true;
+            }
 
             allocations.Images.Allocations.TryRemove(image.Handle, out _);
             DestroyUnpublishedOwnedImage(context, image, "ResourcePlanner.BindFailure");
