@@ -83,7 +83,7 @@ internal sealed class FramePlanBuilder
         Slot slot = AcquireWritableSlot(frameSlot);
         slot.Plan.Reset();
         ulong renderFrameId = RuntimeRenderingHostServices.FrameTiming.CurrentRenderFrameId;
-        TryAttachLocatedOpenXrViews(slot.ViewSet, renderFrameId);
+        TryAttachLocatedOpenXrViews(slot.ViewSet);
         EVrOutputViewKind? openXrViewKind = ResolveOpenXrViewKind(
             slot.ViewSet,
             openXrViewIndex);
@@ -112,14 +112,6 @@ internal sealed class FramePlanBuilder
         VulkanCompiledRenderGraph graph = renderGraphAuthority.FallbackPlan.CompiledGraph;
         _frameScheduler.SortLoweredOperations(slot.Operations, graph);
         _frameScheduler.SortLoweredOperations(slot.DynamicOverlayOperations, graph);
-        // The published signature is derived from the same sealed numeric
-        // streams that recording and worker scheduling consume. The ingress
-        // values remain call-site cache hints only until those paths migrate.
-        staticOperationSignature = VulkanFrameOperationSemantics.ComputeFrameOpsSignature(
-            new FrameOperationSequence(slot.Operations));
-        dynamicOverlaySignature = VulkanFrameOperationSemantics.ComputeFrameOpsSignature(
-            new FrameOperationSequence(slot.DynamicOverlayOperations));
-
         int outputCount = 0;
         int operationKeyCount = 0;
         AddPlanMetadata(slot, slot.Operations, dynamicOverlay: false, openXrViewKind, ref outputCount, ref operationKeyCount);
@@ -158,6 +150,14 @@ internal sealed class FramePlanBuilder
             outputCount,
             openXrViewKind,
             dynamicOverlay: true);
+        // Pipeline manifests and command artifacts address operations by their
+        // final sealed index. Hash only after output admission and dependency
+        // ordering so two streams cannot share a warm manifest whose indexed
+        // requirements belong to a different operation order.
+        staticOperationSignature = VulkanFrameOperationSemantics.ComputeFrameOpsSignature(
+            new FrameOperationSequence(slot.Operations));
+        dynamicOverlaySignature = VulkanFrameOperationSemantics.ComputeFrameOpsSignature(
+            new FrameOperationSequence(slot.DynamicOverlayOperations));
         operationKeyCount = RebuildOperationKeys(
             slot,
             operationCount,
@@ -317,14 +317,22 @@ internal sealed class FramePlanBuilder
             {
                 if (publications.Count == 8)
                     break;
-                publications.Add(
-                    $"{key.ContextKind}/p{key.PipelineIdentity}/v{key.ViewportIdentity}/g{key.ResourceGeneration}");
+                publications.Add(DescribePlannerKey(in key));
             }
         }
 
-        return $"Operations=[{string.Join(',', operations)}] " +
+        return $"Missing={DescribePlannerKey(in missingKey)} " +
+            $"Operations=[{string.Join(',', operations)}] " +
             $"Publications=[{string.Join(',', publications)}].";
     }
+
+    private static string DescribePlannerKey(in VulkanFrameOpPlannerStateKey key)
+        => $"{key.ContextKind}/p{key.PipelineIdentity}/v{key.ViewportIdentity}" +
+           $"/d{key.DisplayWidth}x{key.DisplayHeight}/i{key.InternalWidth}x{key.InternalHeight}" +
+           $"/fbo{key.OutputFrameBufferIdentity}/target{key.OutputTargetIdentity}" +
+           $"/view{key.LogicalViewId:X16}/registry{key.ResourceRegistrySignature}" +
+           $"/passes{key.PassMetadataSignature}/g{key.ResourceGeneration}" +
+           $"/descriptors{key.DescriptorGeneration}/queue{key.SubmissionQueueFamily}";
 
     private Slot AcquireWritableSlot(int frameSlot)
     {
@@ -617,9 +625,13 @@ internal sealed class FramePlanBuilder
         int outputCount,
         EVrOutputViewKind? openXrViewKind)
     {
-        OutputRequest request = OutputRequest.FromContext(
+        EVrOutputViewKind? operationViewKind = ResolveOperationViewKind(
+            slot,
             context,
             openXrViewKind);
+        OutputRequest request = OutputRequest.FromContext(
+            context,
+            operationViewKind);
         for (int index = 0; index < outputCount; index++)
         {
             if (slot.Outputs[index].MatchesOutput(request))
@@ -666,14 +678,10 @@ internal sealed class FramePlanBuilder
         {
             FrameOpContext context = operations.GetContext(index);
             slot.ViewSet.Add(context);
-            EVrOutputViewKind? operationViewKind = openXrViewKind;
-            if (context.ContextKind == EVulkanFrameOpContextKind.OpenXrEye &&
-                slot.ViewSet.TryGetLocatedOpenXrViewKindByLogicalViewId(
-                    context.LogicalViewId,
-                    out EVrOutputViewKind locatedViewKind))
-            {
-                operationViewKind = locatedViewKind;
-            }
+            EVrOutputViewKind? operationViewKind = ResolveOperationViewKind(
+                slot,
+                context,
+                openXrViewKind);
             AddOutput(slot, OutputRequest.FromContext(context, operationViewKind), ref outputCount);
             EnsureCapacity(ref slot.OperationKeys, operationKeyCount + 1);
             slot.OperationKeys[operationKeyCount++] = FramePlanOperationKey.FromHeader(
@@ -858,14 +866,10 @@ internal sealed class FramePlanBuilder
         for (int operationIndex = 0; operationIndex < operations.Count; operationIndex++)
         {
             ref readonly FrameOpContext context = ref operations.GetContext(operationIndex);
-            EVrOutputViewKind? operationViewKind = openXrViewKind;
-            if (context.ContextKind == EVulkanFrameOpContextKind.OpenXrEye &&
-                slot.ViewSet.TryGetLocatedOpenXrViewKindByLogicalViewId(
-                    context.LogicalViewId,
-                    out EVrOutputViewKind locatedViewKind))
-            {
-                operationViewKind = locatedViewKind;
-            }
+            EVrOutputViewKind? operationViewKind = ResolveOperationViewKind(
+                slot,
+                context,
+                openXrViewKind);
             OutputRequest operationOutput = OutputRequest.FromContext(
                 context,
                 operationViewKind);
@@ -881,6 +885,22 @@ internal sealed class FramePlanBuilder
 
         if (retainedCount != operations.Count)
             operations.Retain(slot.OperationOrderScratch.AsSpan(0, retainedCount));
+    }
+
+    private static EVrOutputViewKind? ResolveOperationViewKind(
+        Slot slot,
+        in FrameOpContext context,
+        EVrOutputViewKind? openXrViewKind)
+    {
+        if (context.ContextKind == EVulkanFrameOpContextKind.OpenXrEye &&
+            slot.ViewSet.TryGetLocatedOpenXrViewKindByLogicalViewId(
+                context.LogicalViewId,
+                out EVrOutputViewKind locatedViewKind))
+        {
+            return locatedViewKind;
+        }
+
+        return openXrViewKind;
     }
 
     private static bool HasAdmittedOutput(Slot slot, int outputCount)
@@ -935,10 +955,9 @@ internal sealed class FramePlanBuilder
         }
     }
 
-    private static void TryAttachLocatedOpenXrViews(ViewSetPlan viewSet, ulong renderFrameId)
+    private static void TryAttachLocatedOpenXrViews(ViewSetPlan viewSet)
     {
-        if (renderFrameId != 0UL &&
-            RenderFrameViewSetPublication.TryGet(renderFrameId, out RenderFrameViewSet locatedViews))
+        if (RenderFrameViewSetPublication.TryGetLatest(out RenderFrameViewSet locatedViews))
         {
             viewSet.SetLocatedOpenXrViews(locatedViews);
         }

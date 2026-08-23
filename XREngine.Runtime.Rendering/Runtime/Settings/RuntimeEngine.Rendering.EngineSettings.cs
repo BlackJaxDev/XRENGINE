@@ -29,12 +29,22 @@ public static partial class RuntimeEngine
             {
                 public EngineSettings()
                 {
-                    AttachRenderSubSettings(_openGL, _vulkan);
+                    AttachRenderSubSettings(_execution, _openGL, _vulkan);
                     TrackOverrideableSettings();
                 }
 
+                private RenderExecutionSettings _execution = new();
                 private OpenGLRenderSettings _openGL = new();
                 private VulkanRenderSettings _vulkan = new();
+
+                [Category("Execution")]
+                [DisplayName("Execution")]
+                [Description("Process-wide general and render worker budget resolved at engine startup.")]
+                public RenderExecutionSettings Execution
+                {
+                    get => _execution;
+                    set => SetField(ref _execution, value ?? new RenderExecutionSettings());
+                }
 
                 [Category("Rendering")]
                 [DisplayName("OpenGL")]
@@ -58,7 +68,7 @@ public static partial class RuntimeEngine
                 {
                     base.OnPropertyChanged(propName, prev, field);
 
-                    if (propName == nameof(OpenGL) || propName == nameof(Vulkan))
+                    if (propName == nameof(Execution) || propName == nameof(OpenGL) || propName == nameof(Vulkan))
                         RefreshRenderSubSettings(prev, field);
                 }
 
@@ -342,8 +352,6 @@ public static partial class RuntimeEngine
 
                 #region Job Manager Settings (moved from GameStartupSettings)
 
-                private int? _jobWorkers = null;
-                private int? _jobWorkerCap = null;
                 private int? _jobQueueLimit = null;
                 private int? _jobQueueWarningThreshold = null;
                 private EOutputVerbosity _outputVerbosity = EOutputVerbosity.Verbose;
@@ -356,8 +364,10 @@ public static partial class RuntimeEngine
                 [Description("Optional override for the number of job worker threads. If null, defaults are used.")]
                 public int? JobWorkers
                 {
-                    get => _jobWorkers;
-                    set => SetField(ref _jobWorkers, value);
+                    get => Execution.GeneralWorkerThreadCount == XREngine.Execution.EngineExecutionTopology.AutomaticWorkerCount
+                        ? null
+                        : Execution.GeneralWorkerThreadCount;
+                    set => Execution.GeneralWorkerThreadCount = value ?? XREngine.Execution.EngineExecutionTopology.AutomaticWorkerCount;
                 }
 
                 /// <summary>
@@ -367,8 +377,89 @@ public static partial class RuntimeEngine
                 [Description("Optional cap for the maximum number of job worker threads.")]
                 public int? JobWorkerCap
                 {
-                    get => _jobWorkerCap;
-                    set => SetField(ref _jobWorkerCap, value);
+                    get => Execution.GeneralWorkerThreadCap == XREngine.Execution.EngineExecutionTopology.DefaultGeneralWorkerCap
+                        ? null
+                        : Execution.GeneralWorkerThreadCap;
+                    set => Execution.GeneralWorkerThreadCap = value ?? XREngine.Execution.EngineExecutionTopology.DefaultGeneralWorkerCap;
+                }
+
+                /// <summary>
+                /// General-domain worker request. -1 selects the startup auto policy.
+                /// </summary>
+                [Category("Execution")]
+                [Description("General worker threads: -1 selects auto; 1..32 selects an explicit count. Requires restart.")]
+                public int GeneralWorkerThreadCount
+                {
+                    get => Execution.GeneralWorkerThreadCount;
+                    set => Execution.GeneralWorkerThreadCount = value;
+                }
+
+                /// <summary>
+                /// Upper bound for general-domain worker selection.
+                /// </summary>
+                [Category("Execution")]
+                [Description("Upper bound for general worker selection. Valid range is 1..32. Requires restart.")]
+                public int GeneralWorkerThreadCap
+                {
+                    get => Execution.GeneralWorkerThreadCap;
+                    set => Execution.GeneralWorkerThreadCap = value;
+                }
+
+                /// <summary>
+                /// Renderer-neutral render-domain worker request. Zero selects
+                /// render-thread lane 0 only. Vulkan and OpenXR recording remain
+                /// on their existing workers until migration.
+                /// </summary>
+                [Category("Execution")]
+                [Description("Renderer-neutral render workers: -1 selects auto, 0 uses lane 0 only, and 1..32 creates background lanes. Vulkan/OpenXR recording remains on its legacy workers until migration. Requires restart.")]
+                public int RenderWorkerThreadCount
+                {
+                    get => Execution.RenderWorkerThreadCount;
+                    set => Execution.RenderWorkerThreadCount = value;
+                }
+
+                /// <summary>
+                /// Upper bound for automatic render-domain worker selection.
+                /// </summary>
+                [Category("Execution")]
+                [Description("Upper bound for render worker selection. Valid range is 1..32. Requires restart.")]
+                public int RenderWorkerThreadCap
+                {
+                    get => Execution.RenderWorkerThreadCap;
+                    set => Execution.RenderWorkerThreadCap = value;
+                }
+
+                /// <summary>
+                /// Foreground engine-loop reservation. -1 selects the startup policy.
+                /// </summary>
+                [Category("Execution")]
+                [Description("Foreground engine-thread reservation: -1 selects auto; 1..32 selects an explicit count. Requires restart.")]
+                public int ReservedForegroundThreadCount
+                {
+                    get => Execution.ReservedForegroundThreadCount;
+                    set => Execution.ReservedForegroundThreadCount = value;
+                }
+
+                /// <summary>
+                /// Enables an explicitly oversubscribed diagnostic topology.
+                /// </summary>
+                [Category("Execution")]
+                [Description("Allows explicit CPU oversubscription for diagnostics. Disabled by default and requires restart.")]
+                public bool AllowCpuOversubscription
+                {
+                    get => Execution.AllowCpuOversubscription;
+                    set => Execution.AllowCpuOversubscription = value;
+                }
+
+                /// <summary>
+                /// Scheduling policy requested for renderer-neutral render-domain workers.
+                /// </summary>
+                [Category("Execution")]
+                [Description("Scheduling policy for renderer-neutral render workers. High is diagnostic until hardware validation passes. Requires restart.")]
+                public ERenderWorkerQos RenderWorkerQos
+                {
+                    get => Execution.RenderWorkerQos;
+                    set => Execution.RenderWorkerQos = value;
                 }
 
                 /// <summary>

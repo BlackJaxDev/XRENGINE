@@ -49,6 +49,24 @@ internal struct FrameOpResourceUseList
             _items.AsSpan(0, Count).CopyTo(destination);
     }
 
+    /// <summary>
+    /// Creates an operation-owned copy whose backing storage cannot be changed
+    /// when the authoring operation pool is reused later in the render frame.
+    /// </summary>
+    internal readonly FrameOpResourceUseList CreateSealedCopy()
+    {
+        if (Count == 0)
+            return default;
+
+        FrameOpResourceUse[] items = new FrameOpResourceUse[Count];
+        _items.AsSpan(0, Count).CopyTo(items);
+        return new FrameOpResourceUseList
+        {
+            _items = items,
+            Count = Count,
+        };
+    }
+
     private void EnsureCapacity(int required)
     {
         if ((_items?.Length ?? 0) >= required)

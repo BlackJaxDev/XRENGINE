@@ -1,7 +1,7 @@
 # Production GPU-Driven Rendering Roadmap
 
-Last Updated: 2026-07-28
-Status: Canonical GPU-Driven Architecture Roadmap; Vulkan Performance Promotion Delegated To Workstreams 03, 07, And 08
+Last Updated: 2026-08-22
+Status: Canonical GPU-Driven Architecture Roadmap; meshlet production closeout complete, broader Vulkan performance promotion delegated to Workstreams 03, 07, and 08
 
 Execution ownership:
 
@@ -229,12 +229,17 @@ Goal: implement the report's recommended geometry strategy — coarse object/sub
 
 Merged status from retired `gpu-rendering.md`: Phase 9A/9C and the basic Phase 9B/9D plumbing are real. The Phase E implementation path is now source-contract complete; hardware parity, stress, and soak validation remain in Phase H and the meshlet tracker Phase 10.
 
-2026-08-20 validation update: first-import cooking, standalone cooked-mesh
+2026-08-22 validation update: first-import cooking, standalone cooked-mesh
 persistence, exact-root warm hydration, runtime-without-cooker, core mixed
-routing, and Vulkan EXT indirect-count production submission are now proven in
+routing, Vulkan EXT indirect-count production submission, conservative Hi-Z,
+three-view parity, streaming/replacement lifetime, parallel command workers,
+uncapped ShippingFast characterization, and targeted Gate 7 regression coverage
+are proven in
 the [meshlet production closeout](../../../investigations/rendering/meshlet-import-production-closeout-2026-08-20.md).
-Broad model-cache hydration, lifecycle churn, RenderDoc event proof, and Phase H
-performance/stress remain open.
+All unconditional meshlet production gates are closed and resident draw-stream
+Phase 1 is unblocked. Broad model/prefab cache hydration remains a conditional
+external dependency; Phase H's larger cross-mode stress/promotion work remains
+open under this roadmap.
 
 - [x] **E1.** Upgrade `GPURenderLODSelect.comp` from raw distance thresholds to *projected screen-space radius* selection. Done 2026-05-19: `SubMeshLOD.MinProjectedScreenRadiusPixels` is the explicit GPU LOD threshold, `GPUScene.LODTableBuffer` lanes store minimum projected radius pixels with conservative defaults for unset thresholds, the LOD pass binds projection scale and active render-area/viewport size, and the shader selects by projected radius while preserving request/transition contracts. Tests cover source bindings, the LOD table contract, and large-near versus small-near selection.
 - [x] **E2.** `LODTableBuffer` with clean `LogicalMeshID` mapping, resident LOD mesh IDs, `RequestLODLoad`, and `ReleaseLOD`. Done before consolidation: `GPUScene.LODTableEntry`, `LODTableBuffer`, `LODRequestBuffer`, and logical mesh registration are present and covered by backlog tests.
@@ -244,7 +249,7 @@ performance/stress remain open.
 - [x] **E6.** Add cooked meshlet descriptor payloads and generation settings. Done 2026-05-19: `XRMesh` owns a cooked `MeshletPayload` with CPU descriptors, cone data, settings/freshness hashes, disabled-generation manifests, runtime cooked-binary round trip, warm-cache render startup reuse, and GPU layout handoff. The disposable model-cache chunk/container remains owned by [model-import-binary-cache-todo.md](../../assets/model-import-binary-cache-todo.md) Phase 5 and is no longer a blocker for renderer Phase E.
 - [x] **E7.** GPU meshlet expansion + indirect-count task dispatch. Done 2026-05-19 under the meshlet design's GPU expansion/count-dispatch phase: `GPURenderExpandMeshlets.comp`, `GpuMeshletTaskRecord`, task-count/dispatch buffers, overflow handling, previous-LOD task records, and backend indirect-count mesh-task dispatch wrappers are wired; missing meshlet ranges route through traditional zero-readback indirect rendering.
 - [x] **E8.** Production task/mesh shader integration. Done 2026-05-19 under the meshlet design's production-shader phase: production shader filenames consume task records, transform bounds through `TransformBuffer`, perform pass-gated frustum/cone/primary-view Hi-Z culling, and emit atlas-backed material-compatible mesh outputs. The old direct-dispatch NV shaders are now explicitly diagnostic files.
-- [x] **E9.** Material/pass parity and validation for `GpuMeshletZeroReadback`/`GpuMeshletInstrumented`: opaque, alpha-tested, shadow/depth, velocity, skinned, stereo, bindless/descriptor material table, fallback-only environments, and zero-readback/instrumented stats. Done 2026-05-19 at renderer/source-contract scope and refined 2026-05-20 for split strategy stats: runtime meshlet dispatch uses the shared material-table policy where supported, binds `MaterialStateBuffer`/texture handle tables, disables unsafe stereo Hi-Z, routes override/depth-normal/shadow/skinned unsupported cases through traditional zero-readback indirect with visible warnings, publishes meshlet counters/profile-capture stats, and records instrumented visible/dispatched/overflow/dispatch/readback-byte telemetry only under diagnostics. Hardware visual parity, fallback smoke, 100K/readback stress, performance, and soak validation remain tracked by Phase H plus the meshlet design's hardening/test plan.
+- [x] **E9.** Material/pass parity and validation for `GpuMeshletZeroReadback`/`GpuMeshletInstrumented`: opaque, alpha-tested, shadow/depth, velocity, skinned, stereo, bindless/descriptor material table, fallback-only environments, and zero-readback/instrumented stats. Done 2026-05-19 at renderer/source-contract scope and refined through the 2026-08-22 production closeout: runtime meshlet dispatch uses the shared material-table policy where supported, binds `MaterialStateBuffer`/texture handle tables, disables unsafe stereo Hi-Z, routes override/depth-normal/shadow/skinned unsupported cases through traditional zero-readback indirect with visible warnings, publishes meshlet counters/profile-capture stats, and records instrumented visible/dispatched/overflow/dispatch/readback-byte telemetry only under diagnostics. Three-view hardware parity, mixed/fallback routing, conservative Hi-Z, lifetime, worker, and uncapped performance characterization are accepted; Phase H retains only its broader 100K/cross-mode soak and promotion scope.
 
 Acceptance: Phase E source contracts are complete: LOD selection is projected-radius based, meshlets share the SoA scene database, production dispatch uses GPU-written counts, and unsupported material/pass/backend cases visibly fall back to zero-readback indirect. Hardware parity/performance acceptance is carried by Phase H.
 
@@ -297,6 +302,12 @@ Acceptance: dynamic tier evicts under stress without thrashing visible-frame dat
 ---
 
 ### Phase H — Production hardening (internal Phase 11, extended)
+
+The 2026-08-22 meshlet closeout is complete and linked above. Its Gate 7 suite
+passed 86/86 focused Release tests and its final uncapped Vulkan smoke retained
+zero readback/maps/fallback/VUID counters. Those results satisfy the meshlet
+prerequisite and do not silently check the larger 100K, multi-mode, cross-
+backend, or 30-minute Phase H rows below.
 
 - [ ] **H1.** 100K+ command stress under `GpuIndirectZeroReadback` + Release, zero readbacks confirmed, ≥30 minute soak.
 - [ ] **H2.** High-material-diversity stress (500+ unique materials, ≤6 state classes). Validate `glUseProgram` / `vkCmdBindPipeline` count is bounded by state-class count, not material count.

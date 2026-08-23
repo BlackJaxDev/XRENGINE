@@ -286,7 +286,8 @@ internal sealed partial class VulkanCommandRuntime
            operation.GroupsY > 0 &&
            operation.GroupsZ > 0 &&
            operation.Program is not null &&
-           operation.Snapshot is not null;
+           operation.Snapshot is not null &&
+           !ComputeSnapshotHasSampledStorageImageAlias(operation.Snapshot);
 
     private static bool IsComputeIndirectSecondaryOperationValid(
         in ComputeDispatchIndirectPayload operation,
@@ -294,7 +295,56 @@ internal sealed partial class VulkanCommandRuntime
         => operation.Program is not null &&
            operation.Snapshot is not null &&
            operation.ArgumentOwner is not null &&
-           operation.ArgumentBuffer.Handle != 0UL;
+           operation.ArgumentBuffer.Handle != 0UL &&
+           !ComputeSnapshotHasSampledStorageImageAlias(operation.Snapshot);
+
+    /// <summary>
+    /// Reduction dispatches that sample and write different mips of one image
+    /// must remain inline. Each non-graphics secondary contains one operation,
+    /// so batching those secondaries cannot express the sampled/storage layout
+    /// hand-off between consecutive dispatches on the primary image journal.
+    /// </summary>
+    private static bool ComputeSnapshotHasSampledStorageImageAlias(
+        ComputeDispatchSnapshot snapshot)
+    {
+        foreach (XRTexture sampler in snapshot.Samplers.Values)
+            if (SnapshotWritesTexture(snapshot, sampler))
+                return true;
+
+        foreach (XRTexture sampler in snapshot.SamplersByName.Values)
+            if (SnapshotWritesTexture(snapshot, sampler))
+                return true;
+
+        return false;
+
+        static bool SnapshotWritesTexture(
+            ComputeDispatchSnapshot snapshot,
+            XRTexture sampler)
+        {
+            XRTexture sampledStorage = ResolveTextureStorage(sampler);
+            foreach (ProgramImageBinding binding in snapshot.Images.Values)
+                if (ReferenceEquals(
+                        ResolveTextureStorage(binding.Texture),
+                        sampledStorage))
+                    return true;
+
+            return false;
+        }
+
+        static XRTexture ResolveTextureStorage(XRTexture texture)
+        {
+            while (texture is XRTextureViewBase view)
+            {
+                XRTexture viewedTexture = view.GetViewedTexture();
+                if (ReferenceEquals(viewedTexture, texture))
+                    break;
+
+                texture = viewedTexture;
+            }
+
+            return texture;
+        }
+    }
 
     private static bool IsExplicitFixedMemoryBarrier(
         in MemoryBarrierPayload operation,

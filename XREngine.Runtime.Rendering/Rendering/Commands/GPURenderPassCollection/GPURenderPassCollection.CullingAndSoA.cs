@@ -439,12 +439,13 @@ namespace XREngine.Rendering.Commands
             WriteUints(_culledCountBuffer, draws, instances, overflow);
         }
 
-        private void EnsurePassFilterDebugBuffer(uint sampleCount)
+        private void EnsurePassFilterDebugBuffer(uint sampleCount, bool clearContents = true)
         {
             if (sampleCount == 0)
                 return;
 
             uint requiredElements = Math.Max(sampleCount * PassFilterDebugComponentsPerSample, 1u);
+            bool recreated = false;
 
             if (_passFilterDebugBuffer is null || _passFilterDebugBuffer.ElementCount < requiredElements)
             {
@@ -458,7 +459,11 @@ namespace XREngine.Rendering.Commands
                 _passFilterDebugBuffer.StorageFlags |= EBufferMapStorageFlags.DynamicStorage | EBufferMapStorageFlags.Read;
                 _passFilterDebugBuffer.RangeFlags |= EBufferMapRangeFlags.Read;
                 _passFilterDebugBuffer.Generate();
+                recreated = true;
             }
+
+            if (!recreated && !clearContents)
+                return;
 
             for (uint i = 0; i < requiredElements; ++i)
                 _passFilterDebugBuffer!.SetDataRawAtIndex(i, 0u);
@@ -1223,15 +1228,15 @@ namespace XREngine.Rendering.Commands
                 WriteUInt(_cullingOverflowFlagBuffer, 0u);
 
             uint debugSamples = debugLoggingEnabled ? Math.Min(copyCount, PassFilterDebugMaxSamples) : 0u;
+            EnsurePassFilterDebugBuffer(Math.Max(debugSamples, 1u), clearContents: debugSamples > 0u);
+            if (_passFilterDebugBuffer is not null)
+                _copyCommandsProgram.BindBuffer(_passFilterDebugBuffer, 3);
 
             if (debugSamples > 0)
             {
-                EnsurePassFilterDebugBuffer(debugSamples);
                 _copyCommandsProgram.Uniform("DebugEnabled", 1);
                 _copyCommandsProgram.Uniform("DebugMaxSamples", (int)debugSamples);
                 _copyCommandsProgram.Uniform("DebugInstanceStride", (int)PassFilterDebugComponentsPerSample);
-                if (_passFilterDebugBuffer is not null)
-                    _copyCommandsProgram.BindBuffer(_passFilterDebugBuffer, 3);
             }
             else
             {

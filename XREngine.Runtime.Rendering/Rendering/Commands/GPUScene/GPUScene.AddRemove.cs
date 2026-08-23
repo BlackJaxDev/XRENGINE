@@ -399,7 +399,10 @@ namespace XREngine.Rendering.Commands
                 return;
 
             if (!_atlasMeshRefCounts.TryGetValue(mesh, out int count))
+            {
                 count = 0;
+                SubscribeMeshletPayloadChanges(mesh);
+            }
 
             _atlasMeshRefCounts[mesh] = count + amount;
         }
@@ -449,6 +452,7 @@ namespace XREngine.Rendering.Commands
             }
 
             _atlasMeshRefCounts.Remove(mesh);
+            UnsubscribeMeshletPayloadChanges(mesh);
 
             // Clear MeshData entry for safety (prevents stale atlas offsets from being consumed).
             EnsureMeshDataCapacity(meshID + 1);

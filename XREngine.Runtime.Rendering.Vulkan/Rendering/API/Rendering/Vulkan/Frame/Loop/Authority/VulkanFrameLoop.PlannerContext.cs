@@ -91,14 +91,24 @@ internal sealed partial class VulkanFrameLoop
 
     private FrameOp[] CaptureFrameOpsExcludingTextureUploads(Action emitFrameOps, out ulong signature)
     {
-        FrameOp[] operations = _commandRuntime.CaptureFrameOperations(
-            _framePlanner.Operations,
-            emitFrameOps,
-            excludeTextureUploads: true);
-        // The canonical signature is published from the lowered stream by
-        // FramePlanBuilder; producer arrays have no reusable command identity.
-        signature = 0UL;
-        return operations;
+        OpenXrMeshFrameOpCaptureEmitter captureEmitter =
+            _openXrMeshFrameOpCaptureEmitter;
+        captureEmitter.Bind(emitFrameOps);
+        try
+        {
+            FrameOp[] operations = _commandRuntime.CaptureFrameOperations(
+                _framePlanner.Operations,
+                captureEmitter.Action,
+                excludeTextureUploads: true);
+            // The canonical signature is published from the lowered stream by
+            // FramePlanBuilder; producer arrays have no reusable command identity.
+            signature = 0UL;
+            return operations;
+        }
+        finally
+        {
+            captureEmitter.Unbind();
+        }
     }
 
     private FrameOp[] CaptureFrameOpsExcludingTextureUploads(
@@ -106,12 +116,76 @@ internal sealed partial class VulkanFrameLoop
         in OpenXrEyeFrameOpEmission emission,
         out ulong signature)
     {
-        FrameOp[] operations = _framePlanner.Operations.Capture(
+        OpenXrMeshFrameOpCaptureEmitter captureEmitter =
+            _openXrMeshFrameOpCaptureEmitter;
+        captureEmitter.Bind(emitter);
+        try
+        {
+            FrameOp[] operations = _framePlanner.Operations.Capture(
+                captureEmitter,
+                emission,
+                excludeTextureUploads: true);
+            signature = 0UL;
+            return operations;
+        }
+        finally
+        {
+            captureEmitter.Unbind();
+        }
+    }
+
+    /// <summary>
+    /// Emits action-backed OpenXR work while redirecting deferred mesh requests
+    /// into the frame-loop scratch cohort owned by this capture.
+    /// </summary>
+    internal void EmitOpenXrFrameOpsWithCapturedMeshRequests(Action emitter)
+    {
+        int requestCount = MeshOperationRequests.CaptureTo(
             emitter,
-            emission,
-            excludeTextureUploads: true);
-        signature = 0UL;
-        return operations;
+            _meshOperationRequestScratch);
+        MaterializeCapturedOpenXrMeshRequests(requestCount);
+    }
+
+    /// <summary>
+    /// Emits one eye without allocating a delegate and materializes its deferred
+    /// mesh cohort before the external-target scope can end.
+    /// </summary>
+    internal void EmitOpenXrEyeFrameOpsWithCapturedMeshRequests(
+        IOpenXrEyeFrameOpEmitter emitter,
+        in OpenXrEyeFrameOpEmission emission)
+    {
+        int requestCount = MeshOperationRequests.CaptureTo(
+            emitter,
+            in emission,
+            _meshOperationRequestScratch);
+        MaterializeCapturedOpenXrMeshRequests(requestCount);
+    }
+
+    private void MaterializeCapturedOpenXrMeshRequests(int requestCount)
+    {
+        if (requestCount == 0)
+            return;
+
+        try
+        {
+            if (MaterializeQueuedMeshRenderRequests(
+                    requestCount,
+                    allowPreparedCohort: false,
+                    out string deferredReason))
+            {
+                return;
+            }
+
+            throw new InvalidOperationException(
+                $"OpenXR deferred mesh materialization did not complete inside its eye capture. {deferredReason}");
+        }
+        catch
+        {
+            _meshOperationRequestScratch.AsSpan(0, requestCount).Clear();
+            _meshOperationMaterializationScratch.AsSpan(0, requestCount).Clear();
+            _meshOperationCohortEntryScratch.AsSpan(0, requestCount).Clear();
+            throw;
+        }
     }
 
     private FrameOp[] DrainFrameOpsExcludingTextureUploads(

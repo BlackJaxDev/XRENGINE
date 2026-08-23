@@ -35,6 +35,27 @@ public static class RenderFrameViewSetPublication
         }
     }
 
+    /// <summary>
+    /// Resolves the most recently located immutable view set. OpenXR owns one pending
+    /// runtime frame at a time, while the desktop render-frame counter can advance more
+    /// than once during eye-resource warmup or a rejected desktop frame. Eye render and
+    /// planning therefore consume the latest publication until the next locate replaces it.
+    /// </summary>
+    public static bool TryGetLatest(out RenderFrameViewSet viewSet)
+    {
+        lock (Sync)
+        {
+            if (_hasLatest)
+            {
+                viewSet = _latest;
+                return true;
+            }
+
+            viewSet = default;
+            return false;
+        }
+    }
+
     public static void Clear()
     {
         lock (Sync)

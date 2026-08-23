@@ -9,6 +9,9 @@ internal sealed class VulkanFrameOpDiagnosticsState
     private VulkanFrameOpTraceEntry[] _traceEntries = [];
     private ulong _traceFrameId;
     private int _traceTotalCount;
+    private readonly Dictionary<int, VulkanFrameOpTraceEntry[]> _pipelineTraceEntries = [];
+    private readonly Dictionary<int, ulong> _pipelineTraceFrameIds = [];
+    private readonly Dictionary<int, int> _pipelineTraceTotalCounts = [];
     private FrameOp[] _staticSplitBuffer = [];
     private FrameOp[] _dynamicUiSplitBuffer = [];
 
@@ -19,16 +22,40 @@ internal sealed class VulkanFrameOpDiagnosticsState
             _traceEntries = entries;
             _traceFrameId = frameId;
             _traceTotalCount = totalCount;
+
+            if (entries.Length == 0)
+                return;
+
+            int pipelineIdentity = entries[0].PipelineIdentity;
+            if (_pipelineTraceTotalCounts.TryGetValue(pipelineIdentity, out int retainedCount) &&
+                retainedCount > totalCount)
+            {
+                return;
+            }
+
+            _pipelineTraceEntries[pipelineIdentity] = entries;
+            _pipelineTraceFrameIds[pipelineIdentity] = frameId;
+            _pipelineTraceTotalCounts[pipelineIdentity] = totalCount;
         }
     }
 
     internal void CaptureTraceSnapshot(
+        int? pipelineIdentity,
         out VulkanFrameOpTraceEntry[] entries,
         out ulong frameId,
         out int totalCount)
     {
         lock (_traceLock)
         {
+            if (pipelineIdentity.HasValue &&
+                _pipelineTraceEntries.TryGetValue(pipelineIdentity.Value, out VulkanFrameOpTraceEntry[]? pipelineEntries))
+            {
+                entries = pipelineEntries;
+                frameId = _pipelineTraceFrameIds[pipelineIdentity.Value];
+                totalCount = _pipelineTraceTotalCounts[pipelineIdentity.Value];
+                return;
+            }
+
             entries = _traceEntries;
             frameId = _traceFrameId;
             totalCount = _traceTotalCount;

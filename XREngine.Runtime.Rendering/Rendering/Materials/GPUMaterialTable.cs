@@ -43,6 +43,14 @@ namespace XREngine.Rendering.Materials
 
         public GPUMaterialTable(uint initialCapacity = 128, uint initialHandleCapacity = 256)
         {
+            if (MaterialEntryUIntCount != GPUMaterialEntryWords.WordCount ||
+                Marshal.SizeOf<GPUMaterialEntryWords>() != GPUMaterialEntryWords.WordCount * sizeof(uint))
+            {
+                throw new InvalidOperationException(
+                    $"GPU material row layout mismatch: layout={MaterialEntryUIntCount} words, " +
+                    $"upload={GPUMaterialEntryWords.WordCount} words/{Marshal.SizeOf<GPUMaterialEntryWords>()} bytes.");
+            }
+
             Capacity = initialCapacity;
             Buffer = new XRDataBuffer(
                 "MaterialTable",

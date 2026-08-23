@@ -245,6 +245,11 @@ namespace XREngine
 
         private OverrideableSetting<int> _jobWorkersOverride = new();
         private OverrideableSetting<int> _jobWorkerCapOverride = new();
+        private OverrideableSetting<int> _renderWorkerThreadCountOverride = new();
+        private OverrideableSetting<int> _renderWorkerThreadCapOverride = new();
+        private OverrideableSetting<int> _reservedForegroundThreadCountOverride = new();
+        private OverrideableSetting<bool> _allowCpuOversubscriptionOverride = new();
+        private OverrideableSetting<ERenderWorkerQos> _renderWorkerQosOverride = new();
         private OverrideableSetting<int> _jobQueueLimitOverride = new();
         private OverrideableSetting<int> _jobQueueWarningThresholdOverride = new();
         private OverrideableSetting<bool> _gpuRenderDispatchOverride = new();
@@ -296,6 +301,61 @@ namespace XREngine
         {
             get => _jobWorkerCapOverride;
             set => SetField(ref _jobWorkerCapOverride, value ?? new());
+        }
+
+        /// <summary>
+        /// User override for the renderer-neutral render-domain worker count.
+        /// </summary>
+        [Category("Execution Overrides")]
+        [Description("User override for renderer-neutral render workers: -1 auto, 0 lane-0 only, or 1..32 background lanes. Vulkan/OpenXR recording remains on its legacy workers until migration. Requires restart.")]
+        public OverrideableSetting<int> RenderWorkerThreadCountOverride
+        {
+            get => _renderWorkerThreadCountOverride;
+            set => SetField(ref _renderWorkerThreadCountOverride, value ?? new());
+        }
+
+        /// <summary>
+        /// User override for the automatic render-worker cap.
+        /// </summary>
+        [Category("Execution Overrides")]
+        [Description("User override for the render-worker cap. Valid range is 1..32 and requires restart.")]
+        public OverrideableSetting<int> RenderWorkerThreadCapOverride
+        {
+            get => _renderWorkerThreadCapOverride;
+            set => SetField(ref _renderWorkerThreadCapOverride, value ?? new());
+        }
+
+        /// <summary>
+        /// User override for continuously active foreground engine threads.
+        /// </summary>
+        [Category("Execution Overrides")]
+        [Description("User override for the foreground thread reservation: -1 auto or 1..32 explicit. Requires restart.")]
+        public OverrideableSetting<int> ReservedForegroundThreadCountOverride
+        {
+            get => _reservedForegroundThreadCountOverride;
+            set => SetField(ref _reservedForegroundThreadCountOverride, value ?? new());
+        }
+
+        /// <summary>
+        /// User diagnostic override permitting CPU oversubscription.
+        /// </summary>
+        [Category("Execution Overrides")]
+        [Description("User diagnostic override that permits an explicitly oversubscribed execution topology. Requires restart.")]
+        public OverrideableSetting<bool> AllowCpuOversubscriptionOverride
+        {
+            get => _allowCpuOversubscriptionOverride;
+            set => SetField(ref _allowCpuOversubscriptionOverride, value ?? new());
+        }
+
+        /// <summary>
+        /// User override for renderer-neutral render-worker scheduling policy.
+        /// </summary>
+        [Category("Execution Overrides")]
+        [Description("User override for renderer-neutral render-worker scheduling policy. High remains diagnostic and requires restart.")]
+        public OverrideableSetting<ERenderWorkerQos> RenderWorkerQosOverride
+        {
+            get => _renderWorkerQosOverride;
+            set => SetField(ref _renderWorkerQosOverride, value ?? new());
         }
 
         /// <summary>

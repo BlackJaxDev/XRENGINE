@@ -31,6 +31,7 @@ public static class RuntimeRenderingHostServices
     private static IRuntimeRenderStatisticsServices _statistics = Uninstalled;
     private static IRuntimeRenderDebugDrawingServices _debugDrawing = Uninstalled;
     private static IRuntimeRenderSchedulingServices? _scheduling;
+    private static IRuntimeRenderWorkServices? _work;
     private static IRuntimeRenderAssetServices? _assets;
     private static IRuntimeRendererFactoryServices? _factories;
     private static IRuntimeRenderPresentationServices? _presentation;
@@ -59,6 +60,7 @@ public static class RuntimeRenderingHostServices
             _debugDrawing = current is UninstalledRuntimeRenderingHostServices ? Uninstalled : current;
             bool installed = current is not UninstalledRuntimeRenderingHostServices;
             _scheduling = installed ? current : null;
+            _work = installed ? current : null;
             _assets = installed ? current : null;
             _factories = installed ? current : null;
             _presentation = installed ? current : null;
@@ -102,6 +104,12 @@ public static class RuntimeRenderingHostServices
     /// </summary>
     public static IRuntimeRenderSchedulingServices Scheduling
         => _scheduling ?? ThrowMissingCapability<IRuntimeRenderSchedulingServices>("render-thread scheduling");
+
+    /// <summary>
+    /// Required process-wide general and render-critical work scheduler.
+    /// </summary>
+    public static IRuntimeRenderWorkServices Work
+        => _work ?? ThrowMissingCapability<IRuntimeRenderWorkServices>("render work scheduling");
 
     /// <summary>
     /// Required asset and texture IO.

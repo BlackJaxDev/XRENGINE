@@ -23,6 +23,7 @@ internal ref struct VulkanCommandRecordingContext(
     bool excludeDesktopSwapchainBarriers,
     VulkanRenderGraphPlan renderGraphPlan,
     FramePlan? framePlan,
+    ulong recordingStaticOperationSignature,
     SwapchainRecordingTarget recordingTarget = default,
     VulkanPresentationSourceTuple presentationSource = default,
     VulkanCommandRecordingPolicySnapshot policy = default,
@@ -43,6 +44,8 @@ internal ref struct VulkanCommandRecordingContext(
     public readonly bool ExcludeDesktopSwapchainBarriers = excludeDesktopSwapchainBarriers;
     public readonly VulkanRenderGraphPlan RenderGraphPlan = renderGraphPlan;
     public readonly FramePlan? FramePlan = framePlan;
+    public readonly ulong RecordingStaticOperationSignature =
+        recordingStaticOperationSignature;
     public readonly SwapchainRecordingTarget RecordingTarget = recordingTarget;
     public readonly VulkanPresentationSourceTuple PresentationSource = presentationSource;
     public readonly VulkanCommandRecordingPolicySnapshot Policy = policy;

@@ -35,13 +35,20 @@ namespace XREngine.Editor.Mcp
             McpToolContext context,
             [McpName("enabled"), Description("True enables meshlet colors, false disables them, and null clears the runtime override.")] bool? enabled = null,
             [McpName("camera_node_id"), Description("Optional camera node ID to target.")] string? cameraNodeId = null,
+            [McpName("vr_eye"), Description("Optional runtime VR eye viewport to target: left or right.")] string? vrEye = null,
             [McpName("window_index"), Description("Optional window index to target.")] int windowIndex = 0,
             [McpName("viewport_index"), Description("Optional viewport index to target.")] int viewportIndex = 0)
         {
-            XRViewport? viewport = ResolveViewport(context.WorldInstance, cameraNodeId, windowIndex, viewportIndex);
+            XRViewport? viewport = ResolveViewport(
+                context.WorldInstance,
+                cameraNodeId,
+                vrEye,
+                windowIndex,
+                viewportIndex,
+                out string? viewportError);
             XRCamera? camera = viewport?.ActiveCamera;
             if (camera is null)
-                return Task.FromResult(new McpToolResponse("No active camera found for the selected viewport.", isError: true));
+                return Task.FromResult(new McpToolResponse(viewportError ?? "No active camera found for the selected viewport.", isError: true));
 
             camera.MeshletDebugDisplayEnabledOverride = enabled;
             bool effective = GpuBvhDebugSettings.IsMeshletDebugDisplayEnabled(camera, viewport?.RenderPipeline);
@@ -64,12 +71,19 @@ namespace XREngine.Editor.Mcp
         public static Task<McpToolResponse> ListRenderPipelineResourcesAsync(
             McpToolContext context,
             [McpName("camera_node_id"), Description("Optional camera node ID to target.")] string? cameraNodeId = null,
+            [McpName("vr_eye"), Description("Optional runtime VR eye viewport to target: left or right.")] string? vrEye = null,
             [McpName("window_index"), Description("Optional window index to target.")] int windowIndex = 0,
             [McpName("viewport_index"), Description("Optional viewport index to target.")] int viewportIndex = 0)
         {
-            XRViewport? viewport = ResolveViewport(context.WorldInstance, cameraNodeId, windowIndex, viewportIndex);
+            XRViewport? viewport = ResolveViewport(
+                context.WorldInstance,
+                cameraNodeId,
+                vrEye,
+                windowIndex,
+                viewportIndex,
+                out string? viewportError);
             if (viewport is null)
-                return Task.FromResult(new McpToolResponse("No viewport found.", isError: true));
+                return Task.FromResult(new McpToolResponse(viewportError ?? "No viewport found.", isError: true));
 
             XRRenderPipelineInstance instance = viewport.RenderPipelineInstance;
             RenderResourceRegistry resources = instance.Resources;
@@ -311,14 +325,15 @@ namespace XREngine.Editor.Mcp
         [Description("Return the latest Vulkan frame-op trace snapshot. Requires launching with XRE_VULKAN_FRAMEOP_TRACE=1.")]
         public static Task<McpToolResponse> GetVulkanFrameOpTraceAsync(
             [McpName("limit"), Description("Maximum entries to return.")] int limit = 128,
-            [McpName("target_contains"), Description("Optional case-insensitive filter applied to target, pass, and detail text.")] string? targetContains = null)
+            [McpName("target_contains"), Description("Optional case-insensitive filter applied to target, pass, and detail text.")] string? targetContains = null,
+            [McpName("pipeline_identity"), Description("Optional pipeline identity whose latest retained trace should be returned.")] int? pipelineIdentity = null)
         {
             if (!EditorRendererCapabilityResolver.TryGetForBackend(
                     RendererBackendId.Vulkan,
                     out IRenderBackendDiagnosticsCapability diagnostics))
                 return Task.FromResult(new McpToolResponse("The active renderer is not Vulkan.", isError: true));
 
-            object snapshot = diagnostics.GetLastFrameOperationTraceDiagnostics(limit, targetContains);
+            object snapshot = diagnostics.GetLastFrameOperationTraceDiagnostics(limit, targetContains, pipelineIdentity);
             return Task.FromResult(new McpToolResponse("Retrieved Vulkan frame-op trace diagnostics.", snapshot));
         }
 
@@ -361,6 +376,7 @@ namespace XREngine.Editor.Mcp
             McpToolContext context,
             [McpName("texture_name"), Description("Render pipeline texture resource name to capture.")] string textureName,
             [McpName("camera_node_id"), Description("Optional camera node ID to target.")] string? cameraNodeId = null,
+            [McpName("vr_eye"), Description("Optional runtime VR eye viewport to target: left or right.")] string? vrEye = null,
             [McpName("window_index"), Description("Optional window index to target.")] int windowIndex = 0,
             [McpName("viewport_index"), Description("Optional viewport index to target.")] int viewportIndex = 0,
             [McpName("output_dir"), Description("Optional directory to write the texture capture into.")] string? outputDir = null,
@@ -395,9 +411,15 @@ namespace XREngine.Editor.Mcp
                 tonemapType = parsedTonemap;
             }
 
-            XRViewport? viewport = ResolveViewport(context.WorldInstance, cameraNodeId, windowIndex, viewportIndex);
+            XRViewport? viewport = ResolveViewport(
+                context.WorldInstance,
+                cameraNodeId,
+                vrEye,
+                windowIndex,
+                viewportIndex,
+                out string? viewportError);
             if (viewport is null)
-                return new McpToolResponse("No viewport found.", isError: true);
+                return new McpToolResponse(viewportError ?? "No viewport found.", isError: true);
 
             string folder = outputDir ?? Path.Combine(Environment.CurrentDirectory, "McpCaptures", "RenderPipeline");
             string safeTextureName = SanitizeFileName(textureName);
@@ -959,6 +981,13 @@ namespace XREngine.Editor.Mcp
                 throw new InvalidOperationException($"Texture resource '{textureName}' has no live texture instance.");
 
             using IDisposable? plannerScope = viewport.EnterRenderPipelineReadbackScope();
+            if (plannerScope is null &&
+                (ReferenceEquals(viewport, RuntimeEngine.VRState.LeftEyeViewport) ||
+                 ReferenceEquals(viewport, RuntimeEngine.VRState.RightEyeViewport)))
+            {
+                throw new InvalidOperationException(
+                    "The Vulkan OpenXR eye capture could not enter its render-pipeline readback scope.");
+            }
 
             return CaptureTexture(
                 renderer,

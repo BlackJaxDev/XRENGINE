@@ -528,20 +528,35 @@ namespace XREngine.Rendering.Vulkan
             ImageLayout targetLayout = ResourceRuntime.Descriptors.ResolveDescriptorImageLayout(
                 source,
                 DescriptorType.CombinedImageSampler);
+            if (!TryGetDescriptorHeapImageViewCreateInfo(
+                    source.DescriptorView,
+                    out ImageViewCreateInfo sampledViewInfo) ||
+                sampledViewInfo.Image.Handle != source.DescriptorImage.Handle)
+            {
+                TransitionDescriptorTextureForSampling(
+                    commandBuffer,
+                    texture,
+                    target: null,
+                    passIndex: 0,
+                    passMetadata: null);
+                return;
+            }
+
+            ImageSubresourceRange sampledRange = sampledViewInfo.SubresourceRange;
             ImageAspectFlags aspect = NormalizeBarrierAspectMask(
                 source.DescriptorFormat,
-                source.DescriptorAspect);
-            uint mipLevels = Math.Max(source.DescriptorMipLevels, 1u);
-            uint arrayLayers = Math.Max(source.DescriptorArrayLayers, 1u);
-            for (uint mipLevel = 0; mipLevel < mipLevels; mipLevel++)
-            for (uint arrayLayer = 0; arrayLayer < arrayLayers; arrayLayer++)
+                sampledRange.AspectMask);
+            uint mipLevels = Math.Max(sampledRange.LevelCount, 1u);
+            uint arrayLayers = Math.Max(sampledRange.LayerCount, 1u);
+            for (uint mipOffset = 0; mipOffset < mipLevels; mipOffset++)
+            for (uint layerOffset = 0; layerOffset < arrayLayers; layerOffset++)
             {
                 ImageSubresourceRange range = new()
                 {
                     AspectMask = aspect,
-                    BaseMipLevel = mipLevel,
+                    BaseMipLevel = sampledRange.BaseMipLevel + mipOffset,
                     LevelCount = 1u,
-                    BaseArrayLayer = arrayLayer,
+                    BaseArrayLayer = sampledRange.BaseArrayLayer + layerOffset,
                     LayerCount = 1u,
                 };
                 TransitionDescriptorImageRangeForSampling(

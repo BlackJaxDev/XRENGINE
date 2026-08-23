@@ -28,6 +28,7 @@ namespace XREngine.Editor.Mcp
         /// </summary>
         /// <param name="context">The MCP tool execution context.</param>
         /// <param name="cameraNodeId">Optional: target a specific camera by its scene node GUID.</param>
+        /// <param name="vrEye">Optional: target the runtime left- or right-eye viewport directly.</param>
         /// <param name="windowIndex">Window index to capture from (default: 0).</param>
         /// <param name="viewportIndex">Viewport index within the window (default: 0).</param>
         /// <param name="outputDir">Output directory for the screenshot. Defaults to "McpCaptures" in the working directory.</param>
@@ -48,14 +49,22 @@ namespace XREngine.Editor.Mcp
         public static async Task<McpToolResponse> CaptureViewportScreenshotAsync(
             McpToolContext context,
             [McpName("camera_node_id"), Description("Optional camera node ID to target.")] string? cameraNodeId = null,
+            [McpName("vr_eye"), Description("Optional runtime VR eye viewport to target: left or right.")] string? vrEye = null,
             [McpName("window_index"), Description("Optional window index to target.")] int windowIndex = 0,
             [McpName("viewport_index"), Description("Optional viewport index to target.")] int viewportIndex = 0,
             [McpName("output_dir"), Description("Optional directory to write the screenshot into.")] string? outputDir = null,
             CancellationToken token = default)
         {
-            var viewport = ResolveViewport(context.WorldInstance, cameraNodeId, windowIndex, viewportIndex);
+            XRViewport? viewport = ResolveViewport(
+                context.WorldInstance,
+                cameraNodeId,
+                vrEye,
+                windowIndex,
+                viewportIndex,
+                out string? viewportError);
+
             if (viewport is null)
-                return new McpToolResponse("No viewport found to capture.", isError: true);
+                return new McpToolResponse(viewportError ?? "No viewport found to capture.", isError: true);
 
             string folder = outputDir ?? Path.Combine(Environment.CurrentDirectory, "McpCaptures");
             string fileName = $"Screenshot_{DateTime.Now:yyyyMMdd_HHmmss_fff}_{Guid.NewGuid():N}.png";
@@ -672,6 +681,47 @@ namespace XREngine.Editor.Mcp
                 return windowTarget.Viewports.FirstOrDefault();
 
             return windowTarget.Viewports[viewportIndex];
+        }
+
+        private static XRViewport? ResolveViewport(
+            XRWorldInstance world,
+            string? cameraNodeId,
+            string? vrEye,
+            int windowIndex,
+            int viewportIndex,
+            out string? error)
+        {
+            error = null;
+            if (string.IsNullOrWhiteSpace(vrEye))
+                return ResolveViewport(world, cameraNodeId, windowIndex, viewportIndex);
+
+            bool leftEye;
+            if (string.Equals(vrEye, "left", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(vrEye, "l", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(vrEye, "0", StringComparison.OrdinalIgnoreCase))
+            {
+                leftEye = true;
+            }
+            else if (string.Equals(vrEye, "right", StringComparison.OrdinalIgnoreCase) ||
+                     string.Equals(vrEye, "r", StringComparison.OrdinalIgnoreCase) ||
+                     string.Equals(vrEye, "1", StringComparison.OrdinalIgnoreCase))
+            {
+                leftEye = false;
+            }
+            else
+            {
+                error = "vr_eye must be 'left' or 'right'.";
+                return null;
+            }
+
+            XRViewport? viewport = leftEye
+                ? RuntimeEngine.VRState.LeftEyeViewport
+                : RuntimeEngine.VRState.RightEyeViewport;
+            if (viewport is not null)
+                return viewport;
+
+            error = $"The runtime VR {(leftEye ? "left" : "right")} eye viewport is not available.";
+            return null;
         }
     }
 }

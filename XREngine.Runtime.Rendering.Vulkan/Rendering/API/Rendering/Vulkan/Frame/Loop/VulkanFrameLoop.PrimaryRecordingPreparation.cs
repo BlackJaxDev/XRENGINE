@@ -163,6 +163,14 @@ internal sealed partial class VulkanFrameLoop
         bool submissionMarkersTransferred = false;
         try
         {
+            FrameOp[] plannerOperations = staticOperations.Length > 0
+                ? staticOperations
+                : dynamicUiOperations;
+            using IDisposable? recordingPlannerScope = plannerOperations.Length > 0
+                ? RentPipelineResourcePlannerScope(
+                    VulkanFramePlanner.SelectPrimaryPlannerContext(plannerOperations))
+                : null;
+
             bool preserveSwapchainForOverlay =
                 preserveSwapchainForImGuiOverlay ||
                 dynamicUiOperations.Length > 0 ||
@@ -196,8 +204,11 @@ internal sealed partial class VulkanFrameLoop
             for (int replanAttempt = 0; replanAttempt < 2; replanAttempt++)
             {
                 ResourcePlannerRuntimeState plannerState =
-                    PublishedResourcePlannerRuntimeState;
-                planningSnapshot = _framePlanner.CaptureSnapshot();
+                    CaptureResourcePlannerRuntimeState();
+                planningSnapshot = new VulkanFramePlanningSnapshot(
+                    plannerState.RenderGraphPlan,
+                    _framePlanner.FrozenResourcePlanRevision,
+                    _framePlanner.IsResourcePlanFrozen);
                 if (!TryBindPreparedStreamlineUiImage(
                         imageIndex,
                         staticOperations,
@@ -449,8 +460,19 @@ internal sealed partial class VulkanFrameLoop
             return false;
         }
 
-        if (!wrapper.IsGenerated && allowSynchronousResourceUploads)
+        if (wrapper.IsGenerated)
+        {
+            // The logical framebuffer is shared by desktop and OpenXR render plans,
+            // while its attachments resolve through the currently active physical
+            // resource generation. Refresh even an already-generated wrapper here so
+            // a preceding eye frame cannot leave the desktop target bound to eye-sized
+            // images. A window resize used to mask this by destroying the wrapper.
+            wrapper.EnsureCurrent();
+        }
+        else if (allowSynchronousResourceUploads)
+        {
             wrapper.Generate();
+        }
         if (!wrapper.IsGenerated)
         {
             reason =
@@ -470,7 +492,6 @@ internal sealed partial class VulkanFrameLoop
         bool allowPreparedCohort,
         out string deferredReason)
     {
-        deferredReason = string.Empty;
         int requestCount;
         using (VulkanCpuStageScope rawRequestDrainStage = new(
                    _telemetry,
@@ -479,6 +500,25 @@ internal sealed partial class VulkanFrameLoop
             requestCount = MeshOperationRequests.DrainTo(
                 _meshOperationRequestScratch);
         }
+
+        return MaterializeQueuedMeshRenderRequests(
+            requestCount,
+            allowPreparedCohort,
+            out deferredReason);
+    }
+
+    /// <summary>
+    /// Materializes the request cohort already captured in
+    /// <see cref="_meshOperationRequestScratch"/>. OpenXR uses this entry point while
+    /// its external-target and frame-operation capture scopes are still active so
+    /// eye requests cannot escape into a later desktop frame.
+    /// </summary>
+    private bool MaterializeQueuedMeshRenderRequests(
+        int requestCount,
+        bool allowPreparedCohort,
+        out string deferredReason)
+    {
+        deferredReason = string.Empty;
         if (requestCount == 0)
             return true;
 
@@ -729,7 +769,7 @@ internal sealed partial class VulkanFrameLoop
                     built: true,
                     fullyMaterialized: false);
         }
-        else
+        else if (allowPreparedCohort)
         {
             _preparedMeshOperationCohort.Invalidate();
         }

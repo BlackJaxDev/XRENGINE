@@ -27,8 +27,23 @@ namespace XREngine.Components.Scene.Mesh
         private readonly RenderCommandMesh3D _rc;
         private readonly RenderCommandMethod3D _renderBoundsCommand;
         private readonly HashSet<XRMesh> _ownedRuntimeMeshes = new(System.Collections.Generic.ReferenceEqualityComparer.Instance);
+        private XRMaterial? _materialOverride;
 
         public RenderInfo3D RenderInfo { get; }
+
+        /// <summary>
+        /// Optional material used by this renderable's primary draw command instead of the
+        /// material owned by the active LOD renderer.
+        /// </summary>
+        public XRMaterial? MaterialOverride
+        {
+            get => Volatile.Read(ref _materialOverride);
+            set
+            {
+                if (SetField(ref _materialOverride, value))
+                    _rc.MaterialOverride = value;
+            }
+        }
 
         #endregion
 
@@ -235,6 +250,8 @@ namespace XREngine.Components.Scene.Mesh
 
             rend = CurrentLODRenderer;
             skinned = (rend?.Mesh?.HasSkinning ?? false) && RuntimeEngine.Rendering.Settings.AllowSkinning;
+            XRMaterial? materialOverride = Volatile.Read(ref _materialOverride);
+            XRMaterial? mat = materialOverride ?? rend?.Material;
 
             // One-shot: construction-time palette/draw-matrix seeds can capture stale RenderMatrix
             // values. The toggle path fixes that by re-reading current transform state; do the same
@@ -272,13 +289,13 @@ namespace XREngine.Components.Scene.Mesh
             {
                 Matrix4x4 basis = GetCurrentCullingBasisMatrix(Component.Transform);
                 _rc.WorldMatrix = basis;
-                RenderInfo.LocalCullingVolume = ExpandVertexEffectLocalBounds(_bindPoseBounds, rend?.Material);
+                RenderInfo.LocalCullingVolume = ExpandVertexEffectLocalBounds(_bindPoseBounds, mat);
                 RenderInfo.CullingOffsetMatrix = basis;
             }
 
             _rc.Mesh = rend;
+            _rc.MaterialOverride = materialOverride;
 
-            var mat = rend?.Material;
             if (mat is not null)
             {
                 if (ShouldRecordImportedTextureStreamingUsage(passes.IsShadowPass, RuntimeEngine.Rendering.State.IsMainPass))
@@ -471,10 +488,10 @@ namespace XREngine.Components.Scene.Mesh
             _ownedRuntimeMeshes.Clear();
             DisposeGpuMeshBvh();
             DisposeGpuSkinnedBoundsDebugRenderer();
+            MaterialOverride = null;
 
             lock (_highlightStateLock)
             {
-                _rc.MaterialOverride = null;
                 _rc.RenderOptionsOverride = null;
                 _rc.ForceCpuRendering = false;
                 _materialOutlineCommand.Enabled = false;

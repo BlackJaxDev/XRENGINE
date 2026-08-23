@@ -167,7 +167,8 @@ internal sealed partial class VulkanFrameLoop
         uint height,
         int targetIdentity = 0,
         string? targetName = null,
-        EVulkanFrameOpContextKind contextKind = EVulkanFrameOpContextKind.OpenXrEye)
+        EVulkanFrameOpContextKind contextKind = EVulkanFrameOpContextKind.OpenXrEye,
+        uint openXrViewIndex = 0)
     {
         if (width == 0 || height == 0)
             throw new InvalidOperationException("OpenXR external swapchain render scope requires a non-zero target extent.");
@@ -177,7 +178,7 @@ internal sealed partial class VulkanFrameLoop
 
         VulkanOpenXrFrameContext frameContext = new(
             ResourcePlannerStateIndex: -1,
-            ViewIndex: 0,
+            ViewIndex: openXrViewIndex,
             ImageIndex: OpenXrExternalSwapchainTargetImageIndex,
             new Extent2D(width, height),
             targetIdentity,

@@ -217,7 +217,71 @@ internal sealed partial class VulkanFrameLoop
             throw new ArgumentNullException(nameof(pipeline));
 
         FrameOpContext context = CreateFrameOpContext(pipeline, viewport);
+        if (TryEnterOpenXrPipelineResourcePlannerReadbackScope(context, out IDisposable openXrScope))
+            return openXrScope;
+
+        if (ReferenceEquals(viewport, RuntimeEngine.VRState.LeftEyeViewport) ||
+            ReferenceEquals(viewport, RuntimeEngine.VRState.RightEyeViewport))
+        {
+            throw new InvalidOperationException(
+                "The OpenXR eye viewport has no matching rendered Vulkan resource-planner generation.");
+        }
+
         return CreateExternalResourcePlannerReadbackScope(context);
+    }
+
+    /// <summary>
+    /// Installs the exact per-eye planner generation when an external consumer reads an OpenXR
+    /// viewport's render-graph resources. Eye planners are intentionally isolated from the
+    /// desktop switching-state cache, so recreating a normal external readback scope for an eye
+    /// would allocate a fresh, unwritten image set instead of resolving the images rendered by
+    /// that eye.
+    /// </summary>
+    private bool TryEnterOpenXrPipelineResourcePlannerReadbackScope(
+        in FrameOpContext requestedContext,
+        out IDisposable scope)
+    {
+        scope = null!;
+        ResourcePlannerRuntimeState matchedState = default;
+        ulong newestContextId = 0UL;
+        bool found = false;
+        VulkanOpenXrBackend backend = OutputRuntime.OpenXrBackend;
+        lock (backend.ResourcePlannerStatesLock)
+        {
+            foreach ((VulkanOpenXrViewResourcePlannerContextKey key, ResourcePlannerRuntimeState state) in
+                     OpenXrResourcePlannerStates)
+            {
+                if (key.Purpose != EVulkanOpenXrResourcePlannerPurpose.Eye ||
+                    state.ResourceAllocator is null ||
+                    state.ResourceAllocator.IsRetired ||
+                    state.LastActiveFrameOpContext is not FrameOpContext activeContext ||
+                    activeContext.ContextKind != EVulkanFrameOpContextKind.OpenXrEye ||
+                    activeContext.PipelineIdentity != requestedContext.PipelineIdentity ||
+                    activeContext.ViewportIdentity != requestedContext.ViewportIdentity ||
+                    !ReferenceEquals(activeContext.ResourceRegistry, requestedContext.ResourceRegistry) ||
+                    activeContext.DisplayWidth != requestedContext.DisplayWidth ||
+                    activeContext.DisplayHeight != requestedContext.DisplayHeight ||
+                    activeContext.InternalWidth != requestedContext.InternalWidth ||
+                    activeContext.InternalHeight != requestedContext.InternalHeight ||
+                    activeContext.ResourceGeneration != requestedContext.ResourceGeneration ||
+                    activeContext.DescriptorGeneration != requestedContext.DescriptorGeneration ||
+                    activeContext.ResourceRegistrySignatureSnapshot != requestedContext.ResourceRegistrySignatureSnapshot ||
+                    found && activeContext.ContextId <= newestContextId)
+                {
+                    continue;
+                }
+
+                matchedState = state;
+                newestContextId = activeContext.ContextId;
+                found = true;
+            }
+        }
+
+        if (!found || matchedState.ResourceAllocator is not VulkanResourceAllocator)
+            return false;
+
+        scope = _resourcePlannerSessions.EnterRuntimeStateScope(in matchedState);
+        return true;
     }
 
     internal IDisposable? EnterRenderPipelineFrameResourceScope(
@@ -684,9 +748,7 @@ internal sealed partial class VulkanFrameLoop
         if (contextKind is EVulkanFrameOpContextKind.OpenXrEye or EVulkanFrameOpContextKind.OpenXrMirror)
         {
             uint openXrViewIndex = OutputRuntime.OpenXrBackend.CurrentThreadExecutionState.FrameContext.ViewIndex;
-            ulong frameId = RuntimeRenderingHostServices.FrameTiming.CurrentRenderFrameId;
-            if (frameId != 0UL &&
-                RenderFrameViewSetPublication.TryGet(frameId, out RenderFrameViewSet views))
+            if (RenderFrameViewSetPublication.TryGetLatest(out RenderFrameViewSet views))
             {
                 for (int index = 0; index < views.ViewCount; index++)
                 {

@@ -74,6 +74,69 @@ namespace XREngine
                     GameSettings?.JobQueueWarningThresholdOverride,
                     UserSettings?.JobQueueWarningThresholdOverride);
 
+            /// <summary>
+            /// Gets the startup general-domain worker request. -1 selects auto.
+            /// </summary>
+            public static int GeneralWorkerThreadCount
+                => OverrideableSettingExtensions.ResolveValueCascade(
+                    RuntimeEngine.Rendering.Settings.GeneralWorkerThreadCount,
+                    GameSettings?.JobWorkersOverride,
+                    UserSettings?.JobWorkersOverride);
+
+            /// <summary>
+            /// Gets the startup cap for general-domain workers.
+            /// </summary>
+            public static int GeneralWorkerThreadCap
+                => OverrideableSettingExtensions.ResolveValueCascade(
+                    RuntimeEngine.Rendering.Settings.GeneralWorkerThreadCap,
+                    GameSettings?.JobWorkerCapOverride,
+                    UserSettings?.JobWorkerCapOverride);
+
+            /// <summary>
+            /// Gets the renderer-neutral render-domain worker request. Zero selects lane 0 only.
+            /// </summary>
+            public static int RenderWorkerThreadCount
+                => OverrideableSettingExtensions.ResolveValueCascade(
+                    RuntimeEngine.Rendering.Settings.RenderWorkerThreadCount,
+                    GameSettings?.RenderWorkerThreadCountOverride,
+                    UserSettings?.RenderWorkerThreadCountOverride);
+
+            /// <summary>
+            /// Gets the startup cap for renderer-neutral render-domain workers.
+            /// </summary>
+            public static int RenderWorkerThreadCap
+                => OverrideableSettingExtensions.ResolveValueCascade(
+                    RuntimeEngine.Rendering.Settings.RenderWorkerThreadCap,
+                    GameSettings?.RenderWorkerThreadCapOverride,
+                    UserSettings?.RenderWorkerThreadCapOverride);
+
+            /// <summary>
+            /// Gets the continuously active foreground-thread reservation. -1 selects auto.
+            /// </summary>
+            public static int ReservedForegroundThreadCount
+                => OverrideableSettingExtensions.ResolveValueCascade(
+                    RuntimeEngine.Rendering.Settings.ReservedForegroundThreadCount,
+                    GameSettings?.ReservedForegroundThreadCountOverride,
+                    UserSettings?.ReservedForegroundThreadCountOverride);
+
+            /// <summary>
+            /// Gets whether an explicitly oversubscribed startup topology is permitted.
+            /// </summary>
+            public static bool AllowCpuOversubscription
+                => OverrideableSettingExtensions.ResolveValueCascade(
+                    RuntimeEngine.Rendering.Settings.AllowCpuOversubscription,
+                    GameSettings?.AllowCpuOversubscriptionOverride,
+                    UserSettings?.AllowCpuOversubscriptionOverride);
+
+            /// <summary>
+            /// Gets the scheduling policy requested for renderer-neutral render-domain workers.
+            /// </summary>
+            public static ERenderWorkerQos RenderWorkerQos
+                => OverrideableSettingExtensions.ResolveValueCascade(
+                    RuntimeEngine.Rendering.Settings.RenderWorkerQos,
+                    GameSettings?.RenderWorkerQosOverride,
+                    UserSettings?.RenderWorkerQosOverride);
+
             #endregion
 
             #region Rendering Settings
@@ -927,6 +990,38 @@ namespace XREngine
                 if (UserSettings?.JobWorkersOverride is { HasOverride: true })
                     return SettingSource.User;
                 if (GameSettings?.JobWorkersOverride is { HasOverride: true })
+                    return SettingSource.Project;
+                return SettingSource.Engine;
+            }
+
+            public static SettingSource GetGeneralWorkerThreadCountSource()
+                => GetJobWorkersSource();
+
+            public static SettingSource GetGeneralWorkerThreadCapSource()
+                => GetOverrideSource(GameSettings?.JobWorkerCapOverride, UserSettings?.JobWorkerCapOverride);
+
+            public static SettingSource GetRenderWorkerThreadCountSource()
+                => GetOverrideSource(GameSettings?.RenderWorkerThreadCountOverride, UserSettings?.RenderWorkerThreadCountOverride);
+
+            public static SettingSource GetRenderWorkerThreadCapSource()
+                => GetOverrideSource(GameSettings?.RenderWorkerThreadCapOverride, UserSettings?.RenderWorkerThreadCapOverride);
+
+            public static SettingSource GetReservedForegroundThreadCountSource()
+                => GetOverrideSource(GameSettings?.ReservedForegroundThreadCountOverride, UserSettings?.ReservedForegroundThreadCountOverride);
+
+            public static SettingSource GetAllowCpuOversubscriptionSource()
+                => GetOverrideSource(GameSettings?.AllowCpuOversubscriptionOverride, UserSettings?.AllowCpuOversubscriptionOverride);
+
+            public static SettingSource GetRenderWorkerQosSource()
+                => GetOverrideSource(GameSettings?.RenderWorkerQosOverride, UserSettings?.RenderWorkerQosOverride);
+
+            private static SettingSource GetOverrideSource<T>(
+                OverrideableSetting<T>? projectOverride,
+                OverrideableSetting<T>? userOverride)
+            {
+                if (userOverride is { HasOverride: true })
+                    return SettingSource.User;
+                if (projectOverride is { HasOverride: true })
                     return SettingSource.Project;
                 return SettingSource.Engine;
             }

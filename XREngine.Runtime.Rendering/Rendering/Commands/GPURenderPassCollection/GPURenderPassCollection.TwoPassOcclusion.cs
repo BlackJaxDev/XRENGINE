@@ -97,10 +97,21 @@ namespace XREngine.Rendering.Commands
                 return false;
             }
 
-            if (!PrepareAndSubmitPhaseOneVisibleSet(
+            bool phaseOneSubmitted;
+            EnableTemporalMeshletHiZForSubmission(camera, temporalInvalidated);
+            try
+            {
+                phaseOneSubmitted = PrepareAndSubmitPhaseOneVisibleSet(
                     scene,
                     camera,
-                    EAdvancedVisibilitySynchronizationBoundary.PreparationToEarlyRaster))
+                    EAdvancedVisibilitySynchronizationBoundary.PreparationToEarlyRaster);
+            }
+            finally
+            {
+                DisableMeshletHiZForSubmission();
+            }
+
+            if (!phaseOneSubmitted)
             {
                 return false;
             }
@@ -140,11 +151,22 @@ namespace XREngine.Rendering.Commands
             }
 
             Crumb($"HiZ.TwoPass.Phase2.BEGIN pass={RenderPass}");
-            if (!PrepareAndSubmitVisibleSet(
+            bool phaseTwoSubmitted;
+            EnableCurrentMeshletHiZForSubmission(camera);
+            try
+            {
+                phaseTwoSubmitted = PrepareAndSubmitVisibleSet(
                     scene,
                     camera,
                     "two-pass-phase2",
-                    EAdvancedVisibilitySynchronizationBoundary.LatePreparationToLateRaster))
+                    EAdvancedVisibilitySynchronizationBoundary.LatePreparationToLateRaster);
+            }
+            finally
+            {
+                DisableMeshletHiZForSubmission();
+            }
+
+            if (!phaseTwoSubmitted)
             {
                 return false;
             }

@@ -9,6 +9,7 @@ internal readonly record struct OpenXrPreparedEyeCommandBufferInput(
     OpenXrEyeRenderTargetContext TargetContext,
     FrameOp[] Ops,
     FrameOpContext PlannerContext,
+    ResourcePlannerRuntimeState PlannerState,
     VulkanPreparedResourcePlanStamp ResourcePlanStamp,
     ulong FrameOpsSignature,
     ulong PlannerRevision,

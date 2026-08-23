@@ -48,7 +48,6 @@ public static partial class RuntimeEngine
     public static UserSettings UserSettings { get; } = new();
     internal static RuntimeAssetFacade Assets { get; } = new();
     internal static RuntimeProfilerFacade Profiler { get; } = new();
-    public static JobManager Jobs { get; } = new();
     public static RuntimeVrState VRState { get; } = new();
     /// <summary>
     /// Active render windows. Runtime.Rendering owns this registry; the application host owns

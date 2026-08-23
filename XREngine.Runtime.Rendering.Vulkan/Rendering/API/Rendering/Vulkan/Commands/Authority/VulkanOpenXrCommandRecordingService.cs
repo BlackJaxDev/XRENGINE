@@ -62,12 +62,24 @@ internal sealed class VulkanOpenXrCommandRecordingService
         uploadBatch.Clear();
         try
         {
+            ResourcePlannerRuntimeState plannerState = prepared.PlannerState;
+            using VulkanPreparedResourcePlannerThreadScope plannerScope = new(
+                commandRuntime.ThreadWorkspace.Current,
+                commandRuntime,
+                in plannerState);
             VulkanPreparedPrimaryCommandInput commandInput =
                 prepared.CommandInput;
             VulkanPrimaryCommandRecordingResult result =
                 commandRuntime.RecordPrimary(in commandInput);
             if (!result.Succeeded)
             {
+                Debug.VulkanWarningEvery(
+                    $"OpenXR.Vulkan.PrimaryRecordingDeferred.{prepared.OpenXrViewIndex}",
+                    TimeSpan.FromSeconds(1),
+                    "[OpenXR] Eye {0} primary command recording deferred on worker {1}: {2}",
+                    prepared.OpenXrViewIndex,
+                    workerIndex,
+                    result.Reason ?? "<no reason>");
                 resourceRuntime.Uploads.CancelRecordedSubmitBatch(
                     deviceContext.State != EVulkanDeviceState.Healthy,
                     result.Reason ?? $"OpenXR eye worker {workerIndex} deferred command recording");

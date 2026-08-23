@@ -41,6 +41,7 @@ namespace XREngine.Rendering.Vulkan
         public CommandBufferRecordingScratch RecordingScratch;
         public VulkanPrimaryCommandPlan PrimaryCommandPlan;
         public FramePlan? FramePlan;
+        public ulong RecordingStaticOperationSignature;
         public VulkanPresentationSourceTuple PresentationSource;
         public VulkanCommandRecordingPolicySnapshot Policy;
         public VulkanPreparedResourcePlanStamp ResourcePlanStamp;

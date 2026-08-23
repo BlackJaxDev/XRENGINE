@@ -619,6 +619,10 @@
       "type": "boolean",
       "description": "Uses the deferred lit-color material for unit boxes. The default keeps the existing forward unlit unit-box behavior."
     },
+    "UnitBoxDoubleSided": {
+      "type": "boolean",
+      "description": "Disables face culling on unit boxes. Set false when a fixture needs the boxes to reach the missing-meshlet-payload classification instead of the two-sided-state classification."
+    },
     "VSyncOverride": {
       "oneOf": [
         {
@@ -1043,6 +1047,10 @@
         "UseForwardForTransparent": {
           "type": "boolean",
           "description": "When true and  is , materials whose textures have alpha channels will use forward (lit) shaders instead of deferred shaders, giving proper transparency blending for those meshes. Materials without alpha stay in the deferred pipeline."
+        },
+        "UseSourceMaterialAsOverride": {
+          "type": "boolean",
+          "description": "Publishes each imported renderable's source material as an explicit local material override. This keeps the visual result unchanged while exercising the local-override submission contract."
         },
         "ImporterBackend": {
           "$ref": "#/definitions/ModelImportBackendPreference",

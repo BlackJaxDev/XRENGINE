@@ -53,6 +53,12 @@ namespace XREngine.Rendering.Vulkan
 
         internal void DestroyCommandPool()
         {
+            // Full-device teardown can still own non-desktop command-chain
+            // caches (for example OpenXR frame slots). Stop recording and
+            // retire those artifacts before worker arenas validate that their
+            // pools no longer own recorded buffers.
+            CancelCommandChainRecordingWorkers();
+            DestroyCommandChainCaches();
             DestroyCommandChainRecordingWorkers();
 
             lock (CommandPoolsGate)

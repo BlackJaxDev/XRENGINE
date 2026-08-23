@@ -1004,6 +1004,20 @@ internal sealed partial class VulkanCommandRuntime
             return false;
         }
 
+        if (header.OpCode == EVulkanPrimaryPlanNodeKind.ComputeDispatch &&
+            ComputeSnapshotHasSampledStorageImageAlias(
+                operations.GetComputeDispatch(operationIndex).Snapshot))
+        {
+            return false;
+        }
+
+        if (header.OpCode == EVulkanPrimaryPlanNodeKind.ComputeDispatchIndirect &&
+            ComputeSnapshotHasSampledStorageImageAlias(
+                operations.GetComputeDispatchIndirect(operationIndex).Snapshot))
+        {
+            return false;
+        }
+
         if (header.OpCode != EVulkanPrimaryPlanNodeKind.MeshDraw)
             return !IsExplicitDynamicCommandRange(
                 in operations.GetContext(operationIndex),

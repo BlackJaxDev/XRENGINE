@@ -43,6 +43,11 @@ public partial class GPUScene
         uint customShaderFlags = 0u;
         uint cpuFallbackOnlyFlags = 0u;
         uint nonCanonicalRasterStateFlags = 0u;
+        uint opaqueForwardStateClassCommands = 0u;
+        uint alphaTestedStateClassCommands = 0u;
+        uint transparentStateClassCommands = 0u;
+        uint customStateClassCommands = 0u;
+        uint materialOverrideCommands = 0u;
 
         using (_lock.EnterScope())
         {
@@ -61,6 +66,28 @@ public partial class GPUScene
                     continue;
 
                 ++activeCommands;
+                switch ((EGpuMaterialStateClass)metadata.StateClassID)
+                {
+                    case EGpuMaterialStateClass.OpaqueForward:
+                        ++opaqueForwardStateClassCommands;
+                        break;
+                    case EGpuMaterialStateClass.AlphaTested:
+                        ++alphaTestedStateClassCommands;
+                        break;
+                    case EGpuMaterialStateClass.Transparent:
+                        ++transparentStateClassCommands;
+                        break;
+                    case EGpuMaterialStateClass.Custom:
+                        ++customStateClassCommands;
+                        break;
+                }
+
+                if (_commandIndexLookup.TryGetValue(commandIndex, out var commandLookup) &&
+                    commandLookup.command.MaterialOverride is not null)
+                {
+                    ++materialOverrideCommands;
+                }
+
                 if (metadata.RenderPass != unchecked((uint)renderPass) &&
                     metadata.RenderPass != uint.MaxValue)
                 {
@@ -137,7 +164,12 @@ public partial class GPUScene
             blendShapeFlags,
             customShaderFlags,
             cpuFallbackOnlyFlags,
-            nonCanonicalRasterStateFlags);
+            nonCanonicalRasterStateFlags,
+            opaqueForwardStateClassCommands,
+            alphaTestedStateClassCommands,
+            transparentStateClassCommands,
+            customStateClassCommands,
+            materialOverrideCommands);
     }
 
     private static uint HasFlag(GPUIndirectRenderFlags value, GPUIndirectRenderFlags flag)

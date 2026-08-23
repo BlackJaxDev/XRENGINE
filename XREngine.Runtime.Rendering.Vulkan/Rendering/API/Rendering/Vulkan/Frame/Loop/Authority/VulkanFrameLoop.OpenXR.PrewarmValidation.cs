@@ -40,7 +40,8 @@ internal sealed partial class VulkanFrameLoop
             extent.Width,
             extent.Height,
             BuildOpenXrExternalSwapchainPlannerTargetIdentity(prewarmViewIndex),
-            ResolveOpenXrExternalSwapchainTargetName(prewarmViewIndex));
+            ResolveOpenXrExternalSwapchainTargetName(prewarmViewIndex),
+            openXrViewIndex: prewarmViewIndex);
         using VulkanOpenXrThreadRenderStateScope renderStateScope =
             _commandRuntime.OpenXrRecording.EnterThreadRenderStateScope(
                 CreateOpenXrThreadRenderStateData(),
@@ -160,7 +161,8 @@ internal sealed partial class VulkanFrameLoop
             extent.Width,
             extent.Height,
             BuildOpenXrExternalSwapchainPlannerTargetIdentity(prewarmViewIndex),
-            ResolveOpenXrExternalSwapchainTargetName(prewarmViewIndex));
+            ResolveOpenXrExternalSwapchainTargetName(prewarmViewIndex),
+            openXrViewIndex: prewarmViewIndex);
         OutputRuntime.OpenXrBackend.ExternalSwapchainPrewarmDepth++;
         int openXrFrameDataSlotCount = ResolveOpenXrFrameDataSlotCount(OutputRuntime.Desktop.Images?.Length ?? 0);
 
@@ -286,11 +288,18 @@ internal sealed partial class VulkanFrameLoop
 
     private static FrameOp[] CloneFrameOpsForPreparedOpenXrEye(FrameOp[] ops)
     {
+        if (ops.Length == 0)
+            return ops;
+
         // CaptureFrameOpsExcludingTextureUploads uses a thread-local scratch array keyed by
-        // op count. Parallel eye recording prepares both eyes before either one records, so
-        // the second eye can otherwise overwrite the first prepared input when their op
-        // counts match.
-        return ops.Length == 0 ? ops : (FrameOp[])ops.Clone();
+        // op count, while individual authoring operations are also pooled by render-frame
+        // identity. Preparing the other eye can therefore overwrite both the array and the
+        // operation objects before the paired logical plan is sealed. Freeze every concrete
+        // operation and its resource-use storage at this boundary.
+        FrameOp[] frozen = new FrameOp[ops.Length];
+        for (int index = 0; index < ops.Length; index++)
+            frozen[index] = ops[index].CreateSealedAuthoringCopy();
+        return frozen;
     }
 
     private static void ValidateOpenXrExternalFrameOpContexts(

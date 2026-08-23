@@ -29,10 +29,10 @@ internal sealed partial class VulkanCommandRuntime
     }
 
     internal VulkanFixedFunctionStateSnapshot CaptureFixedFunctionState()
-        => StateTracker.CaptureFixedFunctionState();
+        => ActiveState.CaptureFixedFunctionState();
 
     internal void RestoreFixedFunctionState(in VulkanFixedFunctionStateSnapshot snapshot)
-        => StateTracker.RestoreFixedFunctionState(in snapshot);
+        => ActiveState.RestoreFixedFunctionState(in snapshot);
 
     internal ComputeDispatchSnapshot? GetForwardLightingBindingSnapshotForArtifact(
         Lights3DCollection lights,
@@ -204,25 +204,26 @@ internal sealed partial class VulkanCommandRuntime
     internal void ApplyRenderParameters(RenderingParameters parameters)
     {
         ArgumentNullException.ThrowIfNull(parameters);
-        StateTracker.SetColorMask(parameters.WriteRed, parameters.WriteGreen, parameters.WriteBlue, parameters.WriteAlpha);
-        StateTracker.SetCullMode(VulkanMeshRenderingConventions.ToVulkanCullMode(VulkanMeshRenderingConventions.ResolveCullMode(parameters.CullMode)));
-        StateTracker.SetFrontFace(VulkanMeshRenderingConventions.ToVulkanFrontFace(VulkanMeshRenderingConventions.ResolveWinding(parameters.Winding)));
-        StateTracker.SetAlphaToCoverageEnabled(parameters.AlphaToCoverage == ERenderParamUsage.Enabled);
+        VulkanStateTracker state = ActiveState;
+        state.SetColorMask(parameters.WriteRed, parameters.WriteGreen, parameters.WriteBlue, parameters.WriteAlpha);
+        state.SetCullMode(VulkanMeshRenderingConventions.ToVulkanCullMode(VulkanMeshRenderingConventions.ResolveCullMode(parameters.CullMode)));
+        state.SetFrontFace(VulkanMeshRenderingConventions.ToVulkanFrontFace(VulkanMeshRenderingConventions.ResolveWinding(parameters.Winding)));
+        state.SetAlphaToCoverageEnabled(parameters.AlphaToCoverage == ERenderParamUsage.Enabled);
         DepthTest depth = parameters.DepthTest;
         if (depth.Enabled == ERenderParamUsage.Enabled)
         {
-            StateTracker.SetDepthTestEnabled(true);
-            StateTracker.SetDepthWriteEnabled(depth.UpdateDepth);
-            StateTracker.SetDepthCompare(VulkanMeshRenderingConventions.ToVulkanCompareOp(RuntimeEngine.Rendering.State.MapDepthComparison(depth.Function)));
+            state.SetDepthTestEnabled(true);
+            state.SetDepthWriteEnabled(depth.UpdateDepth);
+            state.SetDepthCompare(VulkanMeshRenderingConventions.ToVulkanCompareOp(RuntimeEngine.Rendering.State.MapDepthComparison(depth.Function)));
         }
         else if (depth.Enabled == ERenderParamUsage.Disabled)
         {
-            StateTracker.SetDepthTestEnabled(false);
-            StateTracker.SetDepthWriteEnabled(false);
+            state.SetDepthTestEnabled(false);
+            state.SetDepthWriteEnabled(false);
         }
 
         BlendMode? blend = VulkanMeshRenderingConventions.ResolveBlendMode(parameters);
-        StateTracker.SetBlendState(
+        state.SetBlendState(
             blend?.Enabled == ERenderParamUsage.Enabled,
             blend is null ? BlendOp.Add : VulkanMeshRenderingConventions.ToVulkanBlendOp(blend.RgbEquation),
             blend is null ? BlendOp.Add : VulkanMeshRenderingConventions.ToVulkanBlendOp(blend.AlphaEquation),
@@ -309,17 +310,18 @@ internal sealed partial class VulkanCommandRuntime
 
     internal VulkanMeshProducerSnapshot CaptureIndirectProducerSnapshot(XRFrameBuffer? target)
     {
+        VulkanStateTracker state = ActiveState;
         Extent2D extent = target is null
-            ? StateTracker.GetCurrentTargetExtent()
+            ? state.GetCurrentTargetExtent()
             : new Extent2D(Math.Max(target.Width, 1u), Math.Max(target.Height, 1u));
         return new VulkanMeshProducerSnapshot(
             default,
             target,
             extent,
-            StateTracker.GetViewport(extent),
-            StateTracker.GetScissor(extent),
-            StateTracker.GetIndexedViewportScissorSnapshot(extent),
-            StateTracker.CaptureFixedFunctionState(),
+            state.GetViewport(extent),
+            state.GetScissor(extent),
+            state.GetIndexedViewportScissorSnapshot(extent),
+            state.CaptureFixedFunctionState(),
             IsExternalSwapchainTarget: false,
             IsPrewarmingExternalSwapchainTarget: false);
     }

@@ -278,6 +278,45 @@ public partial class XRTexture2D
             !sourceTexture.MultiSample;
     }
 
+    /// <summary>
+    /// Deserializes either a raw texture streaming body or a runtime-cooked
+    /// <see cref="XRTexture2D"/> envelope without routing binary bytes through YAML.
+    /// </summary>
+    internal static bool TryDeserializeTextureStreamingPayload(
+        ReadOnlySpan<byte> payload,
+        [NotNullWhen(true)] out XRTexture2D? texture)
+    {
+        texture = null;
+        if (!LooksLikeBinaryTextureStreamingPayload(payload))
+            return false;
+
+        try
+        {
+            CookedBinaryReader reader = new(payload);
+            if (!TryEnterTexturePayloadBody(reader))
+                return false;
+
+            XRTexture2D candidate = new();
+            ((ICookedBinarySerializable)candidate).ReadCookedBinary(reader);
+            if (reader.Remaining != 0)
+                return false;
+
+            texture = candidate;
+            return true;
+        }
+        catch (Exception ex) when (ex is EndOfStreamException
+            or InvalidCastException
+            or InvalidDataException
+            or InvalidOperationException
+            or NotSupportedException
+            or FormatException
+            or ArgumentOutOfRangeException
+            or OverflowException)
+        {
+            return false;
+        }
+    }
+
     internal static bool TryReadResidentDataFromTextureStreamingPayload(
         ReadOnlySpan<byte> payload,
         uint maxResidentDimension,
@@ -285,12 +324,9 @@ public partial class XRTexture2D
         out TextureStreamingResidentData residentData)
     {
         residentData = default;
-        if (payload.IsEmpty)
-            return false;
-
         // Reject non-binary payloads early (e.g. BOM-prefixed YAML asset bytes)
         // to avoid throwing/catching NotSupportedException as control flow.
-        if (payload[0] > (byte)RuntimeCookedBinaryTypeMarker.CustomObject)
+        if (!LooksLikeBinaryTextureStreamingPayload(payload))
             return false;
 
         try
@@ -339,14 +375,8 @@ public partial class XRTexture2D
         if (assetFileBytes.IsEmpty)
             return false;
 
-        try
-        {
-            if (TryReadResidentDataFromTextureStreamingPayload(assetFileBytes, maxResidentDimension, includeMipChain, out residentData))
-                return true;
-        }
-        catch
-        {
-        }
+        if (LooksLikeBinaryTextureStreamingPayload(assetFileBytes))
+            return TryReadResidentDataFromTextureStreamingPayload(assetFileBytes, maxResidentDimension, includeMipChain, out residentData);
 
         string assetYaml;
         try
@@ -393,8 +423,8 @@ public partial class XRTexture2D
         if (assetFileBytes.IsEmpty)
             return false;
 
-        if (TryReadTextureStreamingManifestFromTextureStreamingPayload(assetFileBytes, out manifest))
-            return true;
+        if (LooksLikeBinaryTextureStreamingPayload(assetFileBytes))
+            return TryReadTextureStreamingManifestFromTextureStreamingPayload(assetFileBytes, out manifest);
 
         string assetYaml;
         try
@@ -415,7 +445,7 @@ public partial class XRTexture2D
         out TextureStreamingSourceManifest manifest)
     {
         manifest = default;
-        if (payload.IsEmpty || payload[0] > (byte)RuntimeCookedBinaryTypeMarker.CustomObject)
+        if (!LooksLikeBinaryTextureStreamingPayload(payload))
             return false;
 
         try
@@ -586,6 +616,13 @@ public partial class XRTexture2D
         Type? payloadType = ResolveTexturePayloadType(typeName);
         return payloadType is not null && typeof(XRTexture2D).IsAssignableFrom(payloadType);
     }
+
+    private static bool LooksLikeBinaryTextureStreamingPayload(ReadOnlySpan<byte> payload)
+        => !payload.IsEmpty && IsBinaryTextureStreamingMarker(payload[0]);
+
+    private static bool IsBinaryTextureStreamingMarker(byte value)
+        => value <= (byte)RuntimeCookedBinaryTypeMarker.CustomObject
+            && value is not (byte)'\t' and not (byte)'\n' and not (byte)'\r';
 
     private static Type? ResolveTexturePayloadType(string? typeName)
     {

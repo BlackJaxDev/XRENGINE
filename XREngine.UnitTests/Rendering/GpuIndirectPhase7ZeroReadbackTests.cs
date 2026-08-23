@@ -49,9 +49,18 @@ public sealed class GpuIndirectPhase7ZeroReadbackTests
         string initSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/GPURenderPassCollection/GPURenderPassCollection.ShadersAndInit.cs");
         string passSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/GPURenderPassCollection/GPURenderPassCollection.IndirectAndMaterials.cs");
 
-        initSource.ShouldContain("#if XRE_DEBUG_BATCH_RANGE_READBACK\n            _buildGpuBatchesComputeShader");
-        passSource.ShouldContain("#if XRE_DEBUG_BATCH_RANGE_READBACK\n        private void DispatchBuildGpuBatches");
-        passSource.ShouldContain("#if XRE_DEBUG_BATCH_RANGE_READBACK\n        private List<HybridRenderingManager.DrawBatch>? ReadGpuBatchRanges()");
+        initSource.ShouldContain("#if XRE_DEBUG_BATCH_RANGE_READBACK");
+        initSource.ShouldContain("_buildGpuBatchesComputeShader = CreateDeferredComputeProgram");
+        passSource.ShouldContain("private void DispatchBuildGpuBatches(GPUScene scene)");
+        passSource.ShouldContain("private List<HybridRenderingManager.DrawBatch>? ReadGpuBatchRanges()");
+
+        string debugReadbackBlock = Slice(
+            passSource,
+            "#if XRE_DEBUG_BATCH_RANGE_READBACK\n            PopulateMaterialAggregationFlags(scene);",
+            "#else",
+            StringComparison.Ordinal);
+        debugReadbackBlock.ShouldContain("DispatchBuildGpuBatches(scene);");
+        debugReadbackBlock.ShouldContain("return ReadGpuBatchRanges();");
 
         string shippingFallback = Slice(passSource, "#else\n            // Shipping/default builds", "#endif", StringComparison.Ordinal);
         shippingFallback.ShouldNotContain("ReadGpuBatchRanges");
@@ -70,7 +79,7 @@ public sealed class GpuIndirectPhase7ZeroReadbackTests
             "AssertZeroReadbackProductionInvariantsForPass(strategy);",
             StringComparison.Ordinal);
 
-        policySnapshot.ShouldContain("bool meshlet = strategy.IsAnyMeshletStrategy();");
+        policySnapshot.ShouldContain("bool meshlet = MeshPrimitivePathPreference != EMeshPrimitivePathPreference.TraditionalOnly;");
         policySnapshot.ShouldContain("_passZeroReadbackMaterialDrawPath = EZeroReadbackMaterialDrawPath.MaterialTable;");
         policySnapshot.ShouldContain("_passEnableZeroReadbackMaterialScatter = zeroReadback || instrumented || meshlet;");
         policySnapshot.ShouldContain("_passDisableCpuReadbackCount = !instrumented;");
@@ -103,11 +112,11 @@ public sealed class GpuIndirectPhase7ZeroReadbackTests
 
         string renderGpu = Slice(
             commandCollectionSource,
-            "public void RenderGPU(int renderPass, EMeshSubmissionStrategy meshSubmissionStrategy)",
+            "public void RenderGPU(\n            int renderPass,\n            EMeshSubmissionStrategy meshSubmissionMode,",
             "public bool HasRenderingCommands",
             StringComparison.Ordinal);
 
-        renderGpu.ShouldContain("meshSubmissionStrategy == EMeshSubmissionStrategy.GpuIndirectInstrumented");
+        renderGpu.ShouldContain("meshSubmissionMode == EMeshSubmissionStrategy.GpuIndirectInstrumented");
         renderGpu.ShouldContain("PrepareCpuSoftwareOcclusion(renderPass, xrCamera);");
 
         telemetrySource.ShouldContain("GpuDepthSourceHistory");
@@ -161,10 +170,14 @@ public sealed class GpuIndirectPhase7ZeroReadbackTests
         string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/MeshRendering/Meshlet/VPRC_RenderMeshesPassMeshlet.cs");
 
         int excludedFallbackIndex = source.IndexOf("commands.RenderCPUNonMeshAndExcluded(command.RenderPass);", StringComparison.Ordinal);
-        int gpuDispatchIndex = source.IndexOf("commands.RenderGPU(command.RenderPass, meshSubmissionStrategy);", StringComparison.Ordinal);
+        int zeroReadbackFallbackIndex = source.IndexOf("commands.RenderCPUNonMeshOnly(command.RenderPass);", StringComparison.Ordinal);
+        int gpuDispatchIndex = source.IndexOf("commands.RenderGPU(", StringComparison.Ordinal);
 
         excludedFallbackIndex.ShouldBeGreaterThanOrEqualTo(0);
+        zeroReadbackFallbackIndex.ShouldBeGreaterThanOrEqualTo(0);
         excludedFallbackIndex.ShouldBeLessThan(gpuDispatchIndex);
+        zeroReadbackFallbackIndex.ShouldBeLessThan(gpuDispatchIndex);
+        source.ShouldContain("if (meshSubmissionStrategy.IsGpuZeroReadbackStrategy())");
         source.ShouldContain("gpuPass.UseMeshletPipeline = true;");
         source.ShouldContain("ShouldUseOpenGLMeshletProgramWarmupFallback");
         source.ShouldContain("RenderCPUMeshOnly(command.RenderPass);");
@@ -177,15 +190,15 @@ public sealed class GpuIndirectPhase7ZeroReadbackTests
         string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/RenderCommands/RenderCommandCollection.cs");
         string renderGpu = Slice(
             source,
-            "public void RenderGPU(int renderPass, EMeshSubmissionStrategy meshSubmissionStrategy)",
+            "public void RenderGPU(\n            int renderPass,\n            EMeshSubmissionStrategy meshSubmissionMode,",
             "public bool HasRenderingCommands",
             StringComparison.Ordinal);
 
-        renderGpu.ShouldContain("bool meshletStrategy = meshSubmissionStrategy.IsAnyMeshletStrategy();");
+        renderGpu.ShouldContain("bool meshletStrategy = primitivePathPreference != EMeshPrimitivePathPreference.TraditionalOnly;");
         renderGpu.ShouldContain("bool previousUseMeshletPipeline = gpuPass.UseMeshletPipeline;");
         renderGpu.ShouldContain("gpuPass.UseMeshletPipeline = true;");
-        renderGpu.ShouldContain("worldSnapshot is RenderWorldSnapshot snapshot");
-        renderGpu.ShouldContain("snapshot.GpuScene.EnsureRuntimeMeshletPayloadsForMeshletDispatch();");
+        renderGpu.ShouldContain("gpuPass.MeshPrimitivePathPreference = primitivePathPreference;");
+        renderGpu.ShouldContain("scene.RenderGpuPass(gpuPass);");
         renderGpu.ShouldContain("finally");
         renderGpu.ShouldContain("gpuPass.UseMeshletPipeline = previousUseMeshletPipeline;");
     }
@@ -195,7 +208,8 @@ public sealed class GpuIndirectPhase7ZeroReadbackTests
     {
         string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/Features/VPRC_ForwardDepthNormalPrePass.cs");
 
-        source.ShouldContain("EMeshSubmissionStrategy strategy = _gpuDispatch");
+        source.ShouldContain("EMeshSubmissionStrategy strategy =");
+        source.ShouldContain("RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy(_gpuDispatch);");
         source.ShouldContain("EMeshSubmissionStrategy prepassStrategy = ResolveDepthNormalSubmissionStrategy(strategy);");
         source.ShouldContain("private static EMeshSubmissionStrategy ResolveDepthNormalSubmissionStrategy");
         source.ShouldContain("strategy == EMeshSubmissionStrategy.GpuMeshletInstrumented");

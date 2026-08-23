@@ -174,6 +174,7 @@ namespace XREngine.Rendering.Commands
         private const int CpuOcclusionMaxQueriesPerFrame = 64;
 
         private bool _hiZDepthPyramidReadyForMeshlets;
+        private bool _meshletHiZSamplingEnabledForSubmission;
         private bool _hiZDepthPyramidUsesReversedZ;
         private Matrix4x4 _hiZDepthPyramidViewProjection = Matrix4x4.Identity;
 
@@ -294,7 +295,10 @@ namespace XREngine.Rendering.Commands
             _occlusionAccepted = 0u;
             _occlusionFalsePositiveRecoveries = 0u;
             _occlusionTemporalOverrides = 0u;
-            _hiZDepthPyramidReadyForMeshlets = false;
+            // The pyramid remains valid as temporal history until it is rebuilt.
+            // Submission phases opt in explicitly after validating the exact
+            // view, scene revision, and camera stability for that phase.
+            _meshletHiZSamplingEnabledForSubmission = false;
         }
 
         public bool TryGetHiZDepthPyramidForMeshlets(
@@ -303,7 +307,7 @@ namespace XREngine.Rendering.Commands
             out Matrix4x4 viewProjection,
             out bool usesReversedZ)
         {
-            if (_stableHiZDecisionCount <= 1 &&
+            if (_meshletHiZSamplingEnabledForSubmission &&
                 _hiZDepthPyramidReadyForMeshlets &&
                 _hiZDepthPyramid is not null &&
                 _hiZDepthPyramid.Mipmaps.Length != 0)
@@ -315,15 +319,54 @@ namespace XREngine.Rendering.Commands
                 return true;
             }
 
-            if (_stableHiZDecisionCount > 1)
-                _ = IsMeshletMultiviewHiZPromoted();
-
             pyramid = null!;
             maxMip = 0;
             viewProjection = Matrix4x4.Identity;
             usesReversedZ = false;
             return false;
         }
+
+        /// <summary>
+        /// Enables the completed prior-frame pyramid for the early mesh-task
+        /// draw only when its stable mono view is still exact. Any camera or
+        /// scene invalidation keeps every task visible for this phase.
+        /// </summary>
+        private void EnableTemporalMeshletHiZForSubmission(
+            XRCamera camera,
+            bool temporalInvalidated)
+        {
+            bool hiZEligible =
+                !temporalInvalidated &&
+                _hiZDepthPyramidReadyForMeshlets &&
+                _stableHiZDecisionCount == 1 &&
+                _stableHiZDecisions[0].MaySample;
+            bool? stereoEyeLeft = camera.StereoEyeLeft;
+            _meshletHiZSamplingEnabledForSubmission = !stereoEyeLeft.HasValue && hiZEligible;
+
+            if (_stableHiZDecisionCount > 1)
+                _ = IsMeshletMultiviewHiZPromoted();
+        }
+
+        /// <summary>
+        /// Enables the pyramid just built from the current early depth. Mono
+        /// rendering is conservative here even when temporal history was
+        /// invalidated; multiview remains disabled until it has explicit
+        /// per-view pyramid support.
+        /// </summary>
+        private void EnableCurrentMeshletHiZForSubmission(XRCamera camera)
+        {
+            bool hiZEligible =
+                _hiZDepthPyramidReadyForMeshlets &&
+                _stableHiZDecisionCount <= 1;
+            bool? stereoEyeLeft = camera.StereoEyeLeft;
+            _meshletHiZSamplingEnabledForSubmission = !stereoEyeLeft.HasValue && hiZEligible;
+
+            if (_stableHiZDecisionCount > 1)
+                _ = IsMeshletMultiviewHiZPromoted();
+        }
+
+        private void DisableMeshletHiZForSubmission()
+            => _meshletHiZSamplingEnabledForSubmission = false;
 
         private void RecordOcclusionFrameStats(
             uint candidatesTested,
@@ -1066,6 +1109,7 @@ namespace XREngine.Rendering.Commands
                 return;
 
             // Only destroy the per-pass owned pyramid here.
+            DestroyHiZMipSourceViews();
             _hiZDepthPyramidOwned?.Destroy();
             _hiZDepthPyramidOwned = null;
             _hiZDepthPyramid = null;
@@ -1118,6 +1162,8 @@ namespace XREngine.Rendering.Commands
             if (!needsRecreate)
                 return;
 
+            if (ReferenceEquals(_hiZMipSourceViewTexture, shared.Pyramid))
+                DestroyHiZMipSourceViews();
             shared.Pyramid?.Destroy();
             shared.Pyramid = null;
 
@@ -1153,10 +1199,67 @@ namespace XREngine.Rendering.Commands
             shared.Pyramid.PushData();
         }
 
+        /// <summary>
+        /// Builds stable one-mip sampled views for Hi-Z reduction. Sampling the
+        /// entire pyramid while writing one of its mips creates an overlapping
+        /// sampled/storage descriptor range on Vulkan and can leave tail mips
+        /// unwritten. Views are recreated only when the pyramid allocation or
+        /// mip count changes, never in the steady-state frame path.
+        /// </summary>
+        private void EnsureHiZMipSourceViews(XRTexture2D pyramid)
+        {
+            int requiredViewCount = Math.Max(_hiZMaxMip, 0);
+            if (ReferenceEquals(_hiZMipSourceViewTexture, pyramid) &&
+                _hiZMipSourceViews.Length == requiredViewCount)
+            {
+                return;
+            }
+
+            DestroyHiZMipSourceViews();
+            if (requiredViewCount == 0)
+            {
+                _hiZMipSourceViewTexture = pyramid;
+                return;
+            }
+
+            var views = new XRTexture2DView[requiredViewCount];
+            for (int sourceMip = 0; sourceMip < requiredViewCount; sourceMip++)
+            {
+                views[sourceMip] = new XRTexture2DView(
+                    pyramid,
+                    (uint)sourceMip,
+                    1u,
+                    pyramid.SizedInternalFormat,
+                    array: false,
+                    pyramid.MultiSample)
+                {
+                    Name = $"{pyramid.Name}.Mip{sourceMip}.HiZSourceView",
+                    MagFilter = ETexMagFilter.Nearest,
+                    MinFilter = ETexMinFilter.Nearest,
+                    UWrap = ETexWrapMode.ClampToEdge,
+                    VWrap = ETexWrapMode.ClampToEdge,
+                };
+            }
+
+            _hiZMipSourceViewTexture = pyramid;
+            _hiZMipSourceViews = views;
+        }
+
+        private void DestroyHiZMipSourceViews()
+        {
+            foreach (XRTexture2DView view in _hiZMipSourceViews)
+                view.Destroy();
+
+            _hiZMipSourceViews = [];
+            _hiZMipSourceViewTexture = null;
+        }
+
         private void BuildHiZPyramid(XRTexture depthSamplerTexture, bool isReverseZ)
         {
             if (_hiZDepthPyramid is null)
                 return;
+
+            EnsureHiZMipSourceViews(_hiZDepthPyramid);
 
             // Mip 0 init.
             _hiZInitProgram!.Use();
@@ -1174,13 +1277,14 @@ namespace XREngine.Rendering.Commands
             uint useMinReduction = isReverseZ ? 1u : 0u;
 
             _hiZGenProgram!.Use();
-            _hiZGenProgram.Sampler("depthTexture", _hiZDepthPyramid, 0);
             _hiZGenProgram.Uniform("UseMinReduction", useMinReduction);
 
             for (int dstMip = 1; dstMip <= _hiZMaxMip; ++dstMip)
             {
                 var mip = _hiZDepthPyramid.Mipmaps[dstMip];
-                _hiZGenProgram.Uniform("SrcMip", dstMip - 1);
+                _hiZGenProgram.Sampler("depthTexture", _hiZMipSourceViews[dstMip - 1], 0);
+                // A one-mip texture view rebases its source mip to level zero.
+                _hiZGenProgram.Uniform("SrcMip", 0);
                 _hiZGenProgram.Uniform("mipLevelSize", new IVector2((int)mip.Width, (int)mip.Height));
                 _hiZGenProgram.BindImageTexture(1u, _hiZDepthPyramid, dstMip, false, 0, XRRenderProgram.EImageAccess.WriteOnly, XRRenderProgram.EImageFormat.RGBA32F);
 

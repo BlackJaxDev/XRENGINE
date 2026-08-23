@@ -65,6 +65,13 @@ internal sealed class UninstalledRuntimeRenderingHostServices : IRuntimeRenderin
     public int OpenGLShaderCompilerThreadCount => RuntimeRenderingHostServiceDefaults.OpenGLShaderCompilerThreadCount;
     public bool OpenGLParallelShaderCompileProbeEnabled => RuntimeRenderingHostServiceDefaults.OpenGLParallelShaderCompileProbeEnabled;
     public int OpenGLParallelShaderCompileProbeTimeoutMs => RuntimeRenderingHostServiceDefaults.OpenGLParallelShaderCompileProbeTimeoutMs;
+    public int GeneralWorkerThreadCount => RuntimeRenderingHostServiceDefaults.GeneralWorkerThreadCount;
+    public int GeneralWorkerThreadCap => RuntimeRenderingHostServiceDefaults.GeneralWorkerThreadCap;
+    public int RenderWorkerThreadCount => RuntimeRenderingHostServiceDefaults.RenderWorkerThreadCount;
+    public int RenderWorkerThreadCap => RuntimeRenderingHostServiceDefaults.RenderWorkerThreadCap;
+    public int ReservedForegroundThreadCount => RuntimeRenderingHostServiceDefaults.ReservedForegroundThreadCount;
+    public bool AllowCpuOversubscription => RuntimeRenderingHostServiceDefaults.AllowCpuOversubscription;
+    public ERenderWorkerQos RenderWorkerQos => RuntimeRenderingHostServiceDefaults.RenderWorkerQos;
     public EVulkanAllocatorBackend VulkanAllocatorBackend => RuntimeRenderingHostServiceDefaults.VulkanAllocatorBackend;
     public EVulkanSynchronizationBackend VulkanSynchronizationBackend => RuntimeRenderingHostServiceDefaults.VulkanSynchronizationBackend;
     public EVulkanDescriptorUpdateBackend VulkanDescriptorUpdateBackend => RuntimeRenderingHostServiceDefaults.VulkanDescriptorUpdateBackend;

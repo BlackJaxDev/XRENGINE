@@ -10,7 +10,7 @@ internal static class VPRC_RenderMeshesPassMeshlet
 
     public static void Execute(VPRC_RenderMeshesPassShared command, EMeshSubmissionStrategy meshSubmissionStrategy)
     {
-        using var passScope = RuntimeEngine.Rendering.State.PushRenderGraphPassIndex(command.RenderPass);
+        using var passScope = RuntimeEngine.Rendering.State.PushRenderGraphPassIndex(command.ResolveRenderGraphPassIndex());
         var activeInstance = RuntimeEngine.Rendering.State.CurrentRenderingPipeline;
         if (activeInstance is null)
             return;

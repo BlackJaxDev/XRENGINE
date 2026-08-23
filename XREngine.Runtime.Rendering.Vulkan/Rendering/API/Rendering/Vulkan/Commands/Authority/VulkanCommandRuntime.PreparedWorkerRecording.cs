@@ -62,6 +62,7 @@ internal sealed partial class VulkanCommandRuntime
         Span<Format> colorAttachmentFormatSpan = formatReservation.Span;
         Span<uint> colorAttachmentLocationSpan = locationReservation.Span;
         Span<uint> colorInputAttachmentIndexSpan = inputIndexReservation.Span;
+        bool recordingStarted = false;
         fixed (Format* colorAttachmentFormats = colorAttachmentFormatSpan)
         fixed (uint* colorAttachmentLocations = colorAttachmentLocationSpan)
         fixed (uint* colorInputAttachmentIndices = colorInputAttachmentIndexSpan)
@@ -123,64 +124,77 @@ internal sealed partial class VulkanCommandRuntime
             throw new InvalidOperationException("Vulkan device is not operational for prepared worker recording.");
         if (Api.BeginCommandBuffer(secondary, ref beginInfo) != Result.Success)
             throw new InvalidOperationException("Failed to begin Vulkan worker mesh command-chain secondary command buffer.");
+        recordingStarted = true;
         }
 
-        ResetBindState(encoder, secondary);
-        chain.RecordedArtifact.BeginRecording(CommandBuffers.ResolveRecordingGeneration(secondary));
-        for (int drawIndex = 0; drawIndex < chain.SourceCount; drawIndex++)
+        try
         {
-            ref readonly VkPreparedMeshDraw preparedDraw = ref GetPreparedCommandChainDraw(batch, entry.PreparedChainIndex, drawIndex);
-            Viewport viewport = preparedDraw.Viewport;
-            Rect2D scissor = preparedDraw.Scissor;
-            uint viewportScissorCount = preparedDraw.ViewportScissorCount;
-            if (viewportScissorCount > 1 &&
-                preparedDraw.IndexedViewports.Count >= (int)viewportScissorCount &&
-                preparedDraw.IndexedScissors.Count >= (int)viewportScissorCount)
+            ResetBindState(encoder, secondary);
+            chain.RecordedArtifact.BeginRecording(CommandBuffers.ResolveRecordingGeneration(secondary));
+            for (int drawIndex = 0; drawIndex < chain.SourceCount; drawIndex++)
             {
-                encoder.SetViewportScissor(secondary,
-                    batch.PreparedFrame.GetViewports(preparedDraw.IndexedViewports),
-                    batch.PreparedFrame.GetScissors(preparedDraw.IndexedScissors), viewportScissorCount);
-            }
-            else
-            {
-                encoder.SetViewportScissor(secondary, viewport, scissor);
+                ref readonly VkPreparedMeshDraw preparedDraw = ref GetPreparedCommandChainDraw(batch, entry.PreparedChainIndex, drawIndex);
+                Viewport viewport = preparedDraw.Viewport;
+                Rect2D scissor = preparedDraw.Scissor;
+                uint viewportScissorCount = preparedDraw.ViewportScissorCount;
+                if (viewportScissorCount > 1 &&
+                    preparedDraw.IndexedViewports.Count >= (int)viewportScissorCount &&
+                    preparedDraw.IndexedScissors.Count >= (int)viewportScissorCount)
+                {
+                    encoder.SetViewportScissor(secondary,
+                        batch.PreparedFrame.GetViewports(preparedDraw.IndexedViewports),
+                        batch.PreparedFrame.GetScissors(preparedDraw.IndexedScissors), viewportScissorCount);
+                }
+                else
+                {
+                    encoder.SetViewportScissor(secondary, viewport, scissor);
+                }
+
+                if (!VkMeshRenderer.RecordPreparedMeshDrawState(secondary, preparedDraw.RecordingState, batch.PreparedFrame, encoder))
+                {
+                    chain.State = CommandChainState.NotReady;
+                    chain.DirtyReason |= CommandChainDirtyReason.PipelineGeneration;
+                    throw new InvalidOperationException(
+                        $"A prewarmed Vulkan command-chain draw became unavailable during secondary recording. " +
+                        $"sourceIndex={preparedDraw.SourceOpIndex} mesh='{batch.PreparedFrame.GetMeshDrawColdData(preparedDraw.RecordingState.ColdDataIndex).DiagnosticMeshName}' " +
+                        $"uniformSlot={preparedDraw.UniformSlot} preparedStateGeneration={batch.PreparedFrame.GetMeshDrawColdData(preparedDraw.RecordingState.ColdDataIndex).FrameDataGeneration}.");
+                }
             }
 
-            if (!VkMeshRenderer.RecordPreparedMeshDrawState(secondary, preparedDraw.RecordingState, batch.PreparedFrame, encoder))
+            // Descriptor image contracts are part of this recording generation.
+            // Freeze them while the current tracking batch is still active so an
+            // older completed generation can never satisfy publication checks.
+            for (int drawIndex = 0; drawIndex < chain.SourceCount; drawIndex++)
             {
-                chain.State = CommandChainState.NotReady;
-                chain.DirtyReason |= CommandChainDirtyReason.PipelineGeneration;
-                throw new InvalidOperationException(
-                    $"A prewarmed Vulkan command-chain draw became unavailable during secondary recording. " +
-                    $"sourceIndex={preparedDraw.SourceOpIndex} mesh='{batch.PreparedFrame.GetMeshDrawColdData(preparedDraw.RecordingState.ColdDataIndex).DiagnosticMeshName}' " +
-                    $"uniformSlot={preparedDraw.UniformSlot} preparedStateGeneration={batch.PreparedFrame.GetMeshDrawColdData(preparedDraw.RecordingState.ColdDataIndex).FrameDataGeneration}.");
+                ref readonly VkPreparedMeshDraw preparedDraw = ref GetPreparedCommandChainDraw(
+                    batch,
+                    entry.PreparedChainIndex,
+                    drawIndex);
+                VulkanPreparedMeshDrawState recordingState = preparedDraw.RecordingState;
+                if (recordingState.UsesDescriptorHeap || recordingState.DescriptorBindings.IsEmpty)
+                    continue;
+                if (!CaptureSecondaryDescriptorSetImageRequirements(
+                        secondary,
+                        batch.PreparedFrame,
+                        recordingState.DescriptorImagePayloads,
+                        recordingState.DescriptorImageRequirements,
+                        out string descriptorRequirementFailure))
+                {
+                    throw new VulkanPlanPreconditionException(
+                        $"Prepared mesh secondary 0x{secondary.Handle:X} could not publish prepared descriptor image requirements: {descriptorRequirementFailure}.");
+                }
             }
+
+            if (encoder.End(secondary) != Result.Success)
+                throw new InvalidOperationException("Failed to end Vulkan worker mesh command-chain secondary command buffer.");
+            recordingStarted = false;
         }
-
-        if (encoder.End(secondary) != Result.Success)
-            throw new InvalidOperationException("Failed to end Vulkan worker mesh command-chain secondary command buffer.");
-
-        for (int drawIndex = 0; drawIndex < chain.SourceCount; drawIndex++)
+        catch
         {
-            ref readonly VkPreparedMeshDraw preparedDraw = ref GetPreparedCommandChainDraw(
-                batch,
-                entry.PreparedChainIndex,
-                drawIndex);
-            VulkanPreparedMeshDrawState recordingState = preparedDraw.RecordingState;
-            if (recordingState.UsesDescriptorHeap || recordingState.DescriptorBindings.IsEmpty)
-            {
-                continue;
-            }
-            if (!CaptureSecondaryDescriptorSetImageRequirements(
-                    secondary,
-                    batch.PreparedFrame,
-                    recordingState.DescriptorImagePayloads,
-                    recordingState.DescriptorImageRequirements,
-                    out string descriptorRequirementFailure))
-            {
-                throw new VulkanPlanPreconditionException(
-                    $"Prepared mesh secondary 0x{secondary.Handle:X} could not publish prepared descriptor image requirements: {descriptorRequirementFailure}.");
-            }
+            if (recordingStarted)
+                encoder.Abandon(secondary);
+            FailCommandChainSecondaryArtifactPublication(chain);
+            throw;
         }
 
         chain.RecordedUniformSlotSignature = ComputeUniformSlotSignature(

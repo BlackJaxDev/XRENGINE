@@ -75,6 +75,15 @@ internal sealed partial class VulkanCommandRuntime
             EndActiveRenderPass(ref state);
 
         RecordVulkanCommandDiagnosticMarker(state.CommandBuffer, header.OpCode, resolvedPass, index);
+        if (TryRecordPlannedNonGraphicsSecondaryRange(
+                ref state,
+                in header,
+                in info,
+                out int lastSecondaryOperationIndex))
+        {
+            return lastSecondaryOperationIndex;
+        }
+
         return header.OpCode switch
         {
             EVulkanPrimaryPlanNodeKind.TextureUpload => RecordTextureUploadPayload(ref state, in state.Ops.GetTextureUpload(index), in info),
@@ -95,6 +104,75 @@ internal sealed partial class VulkanCommandRuntime
             EVulkanPrimaryPlanNodeKind.Blit => RecordBlitPayload(ref state, in state.Ops.GetBlit(index), in info),
             _ => throw new VulkanPlanPreconditionException($"Typed primary dispatch for '{header.OpCode}' has not been published."),
         };
+    }
+
+    /// <summary>
+    /// Executes a planned non-graphics secondary range. The dense frame-op
+    /// migration retained secondary buckets and plan actions, so this bridge is
+    /// the authoritative consumer that keeps those publications reachable.
+    /// </summary>
+    private bool TryRecordPlannedNonGraphicsSecondaryRange(
+        scoped ref PrimaryCommandBufferRecordingState state,
+        in FrameOperationHeader header,
+        in VulkanPrimaryOperationRecordingInfo info,
+        out int lastOperationIndex)
+    {
+        lastOperationIndex = info.OperationIndex;
+        if (!info.ExecutesSecondaryRange ||
+            header.OpCode is not (
+                EVulkanPrimaryPlanNodeKind.ComputeDispatch or
+                EVulkanPrimaryPlanNodeKind.ComputeDispatchIndirect or
+                EVulkanPrimaryPlanNodeKind.BufferCopy or
+                EVulkanPrimaryPlanNodeKind.MemoryBarrier or
+                EVulkanPrimaryPlanNodeKind.Query) ||
+            !TryGetSecondaryBucketForStart(
+                state.SecondaryBuckets,
+                state.SecondaryBucketByStart,
+                info.OperationIndex,
+                out VulkanSecondaryRecordingBucket bucket))
+        {
+            return false;
+        }
+
+        string label = header.OpCode switch
+        {
+            EVulkanPrimaryPlanNodeKind.ComputeDispatch => "ComputeDispatch",
+            EVulkanPrimaryPlanNodeKind.ComputeDispatchIndirect =>
+                state.Ops.GetComputeDispatchIndirect(info.OperationIndex).Label,
+            EVulkanPrimaryPlanNodeKind.BufferCopy =>
+                state.Ops.GetBufferCopy(info.OperationIndex).Label,
+            EVulkanPrimaryPlanNodeKind.MemoryBarrier => "MemoryBarrier",
+            EVulkanPrimaryPlanNodeKind.Query =>
+                $"Query.{state.Ops.GetQuery(info.OperationIndex).Operation}",
+            _ => throw new VulkanPlanPreconditionException(
+                $"Unsupported non-graphics secondary range kind '{header.OpCode}'."),
+        };
+
+        bool barrierPlanHasPass =
+            state.RenderGraphPlan.CompiledGraph.Plan.Execution.TryGetPassOrder(
+                info.PassIndex,
+                out _) ||
+            info.PassIndex == VulkanBarrierPlanner.SwapchainPassIndex;
+        if (!TryRecordSecondaryBucket(
+                primaryCommandBuffer: state.CommandBuffer,
+                state.FrameDataImageIndex,
+                state.ExecutedCommandChainSecondaryHandles,
+                state.Ops,
+                state.ScheduledCommandChainKeysByOpIndex,
+                state.ScheduledCommandChainCache,
+                info.OperationIndex,
+                bucket,
+                info.PassIndex,
+                barrierPlanHasPass,
+                state.RenderScope.IsActive,
+                state.ActiveInlineQuery is not null,
+                label))
+        {
+            return false;
+        }
+
+        lastOperationIndex = info.OperationIndex + bucket.Count - 1;
+        return true;
     }
 
     private int RecordTextureUploadPayload(scoped ref PrimaryCommandBufferRecordingState state, in TextureUploadPayload payload, in VulkanPrimaryOperationRecordingInfo info)

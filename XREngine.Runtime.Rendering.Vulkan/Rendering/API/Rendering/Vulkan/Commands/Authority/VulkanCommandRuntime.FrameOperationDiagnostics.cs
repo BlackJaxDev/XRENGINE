@@ -364,9 +364,11 @@ internal sealed partial class VulkanCommandRuntime
 
     internal object GetLastFrameOpTraceDiagnostics(
         int limit,
-        string? targetContains)
+        string? targetContains,
+        int? pipelineIdentity = null)
     {
         _recordingFrameOpDiagnostics.CaptureTraceSnapshot(
+            pipelineIdentity,
             out VulkanFrameOpTraceEntry[] entries,
             out ulong frameId,
             out int totalCount);
@@ -390,6 +392,7 @@ internal sealed partial class VulkanCommandRuntime
         return new
         {
             enabled = FrameOpTraceEnabled,
+            pipelineIdentity,
             frameId,
             totalCount,
             returnedCount = filtered.Count,
@@ -476,14 +479,143 @@ internal sealed partial class VulkanCommandRuntime
             EVulkanPrimaryPlanNodeKind.IndirectDraw =>
                 $"pass={header.PassIndex} pipe={context.PipelineIdentity}({pipelineLabel}) vp={context.ViewportIdentity} indirectDraws={operations.GetIndirectDraw(index).DrawCount} useCount={operations.GetIndirectDraw(index).UseCount}",
             EVulkanPrimaryPlanNodeKind.MeshTaskDispatchIndirectCount =>
-                $"pass={header.PassIndex} pipe={context.PipelineIdentity}({pipelineLabel}) vp={context.ViewportIdentity} meshTaskMaxDraws={operations.GetMeshTask(index).MaxDrawCount}",
+                BuildMeshTaskDispatchDetail(operations, index, in context, pipelineLabel),
             EVulkanPrimaryPlanNodeKind.Blit =>
                 $"pass={header.PassIndex} pipe={context.PipelineIdentity}({pipelineLabel}) vp={context.ViewportIdentity} color={operations.GetBlit(index).ColorBit} depth={operations.GetBlit(index).DepthBit} stencil={operations.GetBlit(index).StencilBit}",
             EVulkanPrimaryPlanNodeKind.Clear =>
                 $"pass={header.PassIndex} pipe={context.PipelineIdentity}({pipelineLabel}) vp={context.ViewportIdentity} clearColor={operations.GetClear(index).ClearColor} clearDepth={operations.GetClear(index).ClearDepth} clearStencil={operations.GetClear(index).ClearStencil}",
+            EVulkanPrimaryPlanNodeKind.ComputeDispatch =>
+                BuildComputeDispatchDetail(operations, index, in context, pipelineLabel),
+            EVulkanPrimaryPlanNodeKind.BufferCopy =>
+                $"pass={header.PassIndex} pipe={context.PipelineIdentity}({pipelineLabel}) vp={context.ViewportIdentity} label='{operations.GetBufferCopy(index).Label}' bytes={operations.GetBufferCopy(index).ByteCount} src=0x{operations.GetBufferCopy(index).SourceBuffer.Handle:X} dst=0x{operations.GetBufferCopy(index).DestinationBuffer.Handle:X}",
+            EVulkanPrimaryPlanNodeKind.MemoryBarrier =>
+                $"pass={header.PassIndex} pipe={context.PipelineIdentity}({pipelineLabel}) vp={context.ViewportIdentity} mask={operations.GetMemoryBarrier(index).Mask}",
             _ =>
                 $"pass={header.PassIndex} pipe={context.PipelineIdentity}({pipelineLabel}) vp={context.ViewportIdentity} op={header.OpCode}",
         };
+    }
+
+    private static string BuildMeshTaskDispatchDetail(
+        FrameOperationSequence operations,
+        int index,
+        in FrameOpContext context,
+        string pipelineLabel)
+    {
+        ref readonly MeshTaskDispatchIndirectCountPayload payload =
+            ref operations.GetMeshTask(index);
+        ComputeDispatchSnapshot snapshot = payload.ProgramBindingSnapshot;
+        StringBuilder detail = new(768);
+        detail.Append("pass=").Append(operations.GetHeader(index).PassIndex)
+            .Append(" pipe=").Append(context.PipelineIdentity).Append('(').Append(pipelineLabel).Append(')')
+            .Append(" vp=").Append(context.ViewportIdentity)
+            .Append(" program='").Append(payload.Program.Data.Name ?? "<unnamed program>")
+            .Append("' meshTaskMaxDraws=").Append(payload.MaxDrawCount)
+            .Append(" stride=").Append(payload.Stride)
+            .Append(" targetExtent=")
+            .Append(payload.ProducerSnapshot.TargetExtent.Width).Append('x')
+            .Append(payload.ProducerSnapshot.TargetExtent.Height)
+            .Append(" viewport=")
+            .Append(payload.ProducerSnapshot.Viewport.X).Append(',')
+            .Append(payload.ProducerSnapshot.Viewport.Y).Append(',')
+            .Append(payload.ProducerSnapshot.Viewport.Width).Append('x')
+            .Append(payload.ProducerSnapshot.Viewport.Height)
+            .Append(" depth=")
+            .Append(payload.ProducerSnapshot.Viewport.MinDepth).Append("..")
+            .Append(payload.ProducerSnapshot.Viewport.MaxDepth)
+            .Append(" scissor=")
+            .Append(payload.ProducerSnapshot.Scissor.Offset.X).Append(',')
+            .Append(payload.ProducerSnapshot.Scissor.Offset.Y).Append(',')
+            .Append(payload.ProducerSnapshot.Scissor.Extent.Width).Append('x')
+            .Append(payload.ProducerSnapshot.Scissor.Extent.Height)
+            .Append(" indexedViewportCount=")
+            .Append(payload.ProducerSnapshot.IndexedViewportScissors.Count)
+            .Append(" depthState=")
+            .Append(payload.ProducerSnapshot.FixedFunctionState.DepthTestEnabled)
+            .Append('/').Append(payload.ProducerSnapshot.FixedFunctionState.DepthWriteEnabled)
+            .Append('/').Append(payload.ProducerSnapshot.FixedFunctionState.DepthCompareOp)
+            .Append(" rasterState=")
+            .Append(payload.ProducerSnapshot.FixedFunctionState.CullMode)
+            .Append('/').Append(payload.ProducerSnapshot.FixedFunctionState.FrontFace);
+
+        AppendComputeUniform(detail, snapshot, "ActiveViewIndex");
+        AppendComputeUniform(detail, snapshot, "ActiveViewCount");
+        AppendComputeUniform(detail, snapshot, "ActiveAtlasTier");
+        AppendComputeUniform(detail, snapshot, "StatsEnabled");
+        AppendComputeUniform(detail, snapshot, "EnableMeshletDebugDisplay");
+        AppendComputeUniform(detail, snapshot, "CameraPosition");
+        AppendComputeUniform(detail, snapshot, "ViewProjectionMatrix");
+
+        detail.Append(" buffers=[");
+        bool first = true;
+        for (uint binding = 0; binding < 32; binding++)
+        {
+            if (!snapshot.Buffers.TryGetValue(
+                    binding,
+                    out VulkanComputeBufferBinding buffer))
+            {
+                continue;
+            }
+
+            if (!first)
+                detail.Append(',');
+            first = false;
+            detail.Append('b').Append(binding).Append('=')
+                .Append(buffer.Data.AttributeName ?? "<unnamed>")
+                .Append('@').Append(buffer.Data.ElementCount)
+                .Append('x').Append(buffer.Data.ComponentCount)
+                .Append("@0x").Append(buffer.Buffer.Handle.ToString("X"));
+        }
+        detail.Append(']');
+        return detail.ToString();
+    }
+
+    private static string BuildComputeDispatchDetail(
+        FrameOperationSequence operations,
+        int index,
+        in FrameOpContext context,
+        string pipelineLabel)
+    {
+        ref readonly ComputeDispatchPayload payload = ref operations.GetComputeDispatch(index);
+        StringBuilder detail = new(384);
+        detail.Append("pass=").Append(operations.GetHeader(index).PassIndex)
+            .Append(" pipe=").Append(context.PipelineIdentity).Append('(').Append(pipelineLabel).Append(')')
+            .Append(" vp=").Append(context.ViewportIdentity)
+            .Append(" program='").Append(payload.Program.Data.Name ?? "<unnamed program>")
+            .Append("' groups=").Append(payload.GroupsX).Append('x').Append(payload.GroupsY).Append('x').Append(payload.GroupsZ);
+
+        AppendComputeUniform(detail, payload.Snapshot, "CopyCount");
+        AppendComputeUniform(detail, payload.Snapshot, "TargetPass");
+        AppendComputeUniform(detail, payload.Snapshot, "InputCommandCount");
+        AppendComputeUniform(detail, payload.Snapshot, "ActiveViewCount");
+        AppendComputeUniform(detail, payload.Snapshot, "ExcludeMeshletResidentRows");
+
+        detail.Append(" buffers=[");
+        bool first = true;
+        for (uint binding = 0; binding < 32; binding++)
+        {
+            if (!payload.Snapshot.Buffers.TryGetValue(binding, out VulkanComputeBufferBinding buffer))
+                continue;
+
+            if (!first)
+                detail.Append(',');
+            first = false;
+            detail.Append('b').Append(binding).Append('=')
+                .Append(buffer.Data.AttributeName ?? "<unnamed>")
+                .Append("@0x").Append(buffer.Buffer.Handle.ToString("X"));
+        }
+        detail.Append(']');
+        return detail.ToString();
+    }
+
+    private static void AppendComputeUniform(
+        StringBuilder detail,
+        ComputeDispatchSnapshot snapshot,
+        string name)
+    {
+        if (!snapshot.Uniforms.TryGetValue(name, out ProgramUniformValue value))
+            return;
+
+        detail.Append(' ').Append(name).Append('=').Append(value.Value);
     }
 
 }

@@ -60,6 +60,18 @@ internal abstract record FrameOp(int PassIndex, XRFrameBuffer? Target, FrameOpCo
         return ref _resourceUses;
     }
 
+    /// <summary>
+    /// Freezes an authoring operation before work that can advance the render
+    /// frame and reuse its pooled instance. This preserves both the concrete
+    /// operation payload and its resource-use column.
+    /// </summary>
+    internal FrameOp CreateSealedAuthoringCopy()
+    {
+        FrameOp copy = (FrameOp)MemberwiseClone();
+        copy._resourceUses = _resourceUses.CreateSealedCopy();
+        return copy;
+    }
+
     protected static T RetainForCurrentFrame<T>(T created, in FrameOpContext context)
         where T : FrameOp
     {

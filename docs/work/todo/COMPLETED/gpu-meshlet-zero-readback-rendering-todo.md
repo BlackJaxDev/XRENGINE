@@ -1,8 +1,8 @@
 # GPU Meshlet Zero-Readback Rendering TODO
 
-Last Updated: 2026-05-19
+Last Updated: 2026-08-22
 Owner: Rendering
-Status: Historical Phase 0-9 source-contract tracker complete; later import/runtime production gaps are reopened under [Meshlet Import Cooking And Production Readiness TODO](../rendering/gpu/meshlet-import-cooking-and-production-readiness-todo.md). Phase 10 hardware/perf validation and branch merge remain open under [Production GPU-Driven Rendering Roadmap](../rendering/gpu/production-rendering-pipeline-roadmap.md) Phase H.
+Status: Historical Phase 0-9 source-contract tracker complete; the later meshlet import/runtime production gaps are also closed by the completed [Meshlet Import Cooking And Production Readiness TODO](../rendering/gpu/meshlet-import-cooking-and-production-readiness-todo.md). Broader cross-mode stress and promotion remain under [Production GPU-Driven Rendering Roadmap](../rendering/gpu/production-rendering-pipeline-roadmap.md) Phase H.
 Target Branch: `rendering-gpu-meshlet-zero-readback`
 
 Source design:
@@ -19,18 +19,21 @@ Related docs:
 - [Model Import Cooked Asset Cache TODO](../assets/model-import-binary-cache-todo.md)
 - [Model Import Binary Cache Design](../../design/assets/model-import-binary-cache-design.md)
 
-## 2026-08-20 Production Closeout Addendum
+## 2026-08-22 Production Closeout Addendum
 
-The reopened core path is now live-validated for first-import LOD/meshlet
+The reopened core path is now fully closed and live-validated for first-import LOD/meshlet
 cooking, standalone persistence, exact-root warm hydration, invalidation,
 runtime use without the native cooker, explicit mixed routing, and Vulkan EXT
-indirect-count submission with nonzero delayed GPU-written task/group evidence.
+indirect-count submission, conservative Hi-Z, three-view parity, generation-safe
+lifetime, parallel command workers, uncapped performance characterization, and
+targeted regression coverage.
 See the [production closeout evidence](../../investigations/rendering/meshlet-import-production-closeout-2026-08-20.md).
 
-The historical checkboxes below remain unchanged. Broad model/prefab-cache
-hydration, reimport/streaming/unload lifetime coverage, RenderDoc event proof,
-stress/performance, and test clearance remain owned by the active production
-readiness tracker and parent roadmap.
+The historical checkboxes below remain unchanged. The completed production
+readiness tracker records 86/86 focused Release tests and the final uncapped
+Vulkan smoke. Broad model/prefab-cache hydration remains a conditional external
+dependency owned by its cache tracker; larger cross-mode stress and promotion
+remain under the production roadmap rather than reopening this historical file.
 
 ## 2026-08-17 Reopened Integration Gaps
 

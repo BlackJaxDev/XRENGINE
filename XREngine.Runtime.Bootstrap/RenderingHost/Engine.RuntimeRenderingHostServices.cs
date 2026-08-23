@@ -11,6 +11,7 @@ using XREngine.Data.Rendering;
 using XREngine.Data.Trees;
 using XREngine.Data.Transforms.Rotations;
 using XREngine.Diagnostics;
+using XREngine.Execution;
 using XREngine.Components;
 using XREngine.Input;
 using XREngine.Rendering;
@@ -109,6 +110,16 @@ internal sealed class EngineRuntimeRenderingHostServices :
     public int OpenGLShaderCompilerThreadCount => RuntimeEngine.Rendering.Settings.OpenGLShaderCompilerThreadCount;
     public bool OpenGLParallelShaderCompileProbeEnabled => RuntimeEngine.Rendering.Settings.OpenGLParallelShaderCompileProbeEnabled;
     public int OpenGLParallelShaderCompileProbeTimeoutMs => RuntimeEngine.Rendering.Settings.OpenGLParallelShaderCompileProbeTimeoutMs;
+    public int GeneralWorkerThreadCount => Engine.EffectiveSettings.GeneralWorkerThreadCount;
+    public int GeneralWorkerThreadCap => Engine.EffectiveSettings.GeneralWorkerThreadCap;
+    public int RenderWorkerThreadCount => Engine.EffectiveSettings.RenderWorkerThreadCount;
+    public int RenderWorkerThreadCap => Engine.EffectiveSettings.RenderWorkerThreadCap;
+    public int ReservedForegroundThreadCount => Engine.EffectiveSettings.ReservedForegroundThreadCount;
+    public bool AllowCpuOversubscription => Engine.EffectiveSettings.AllowCpuOversubscription;
+    public ERenderWorkerQos RenderWorkerQos => Engine.EffectiveSettings.RenderWorkerQos;
+    public EngineExecutionTopology ExecutionTopology => RequireWorkScheduler().Topology;
+    public JobManager GeneralJobs => RequireWorkScheduler().GeneralJobs;
+    public RenderWorkDomain RenderWork => RequireWorkScheduler().Render;
     public EVulkanAllocatorBackend VulkanAllocatorBackend => RuntimeEngine.Rendering.Settings.VulkanRobustnessSettings.AllocatorBackend;
     public EVulkanSynchronizationBackend VulkanSynchronizationBackend => RuntimeEngine.Rendering.Settings.VulkanRobustnessSettings.SyncBackend;
     public EVulkanDescriptorUpdateBackend VulkanDescriptorUpdateBackend => RuntimeEngine.Rendering.Settings.VulkanRobustnessSettings.DescriptorUpdateBackend;
@@ -356,6 +367,19 @@ internal sealed class EngineRuntimeRenderingHostServices :
         Engine.Jobs.Schedule(job, priority, JobAffinity.Any, cancellationToken);
         return job;
     }
+
+    public CompletedDiagnosticDecodeJob ScheduleCompletedDiagnosticDecode(
+        in CompletedDiagnosticPayload payload,
+        JobPriority priority = JobPriority.Low)
+    {
+        var job = new CompletedDiagnosticDecodeJob(payload);
+        GeneralJobs.Schedule(job, priority, JobAffinity.Any);
+        return job;
+    }
+
+    private static EngineWorkScheduler RequireWorkScheduler()
+        => Engine.WorkScheduler ?? throw new InvalidOperationException(
+            "The engine execution scheduler has not been installed. Initialize the engine before submitting runtime work.");
 
     public void SubscribeViewportSwapBuffers(Action swapBuffers)
     {
