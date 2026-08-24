@@ -214,6 +214,18 @@ internal sealed partial class VulkanFrameLoop
         RunCleanupStep("imported texture upload frame operations", () => CancelPendingImportedTextureUploadFrameOps(shutdownReason), failures);
         RunCleanupStep("recorded texture upload publications", () => _commandRuntime.CancelRecordedTextureUploadPublications(shutdownReason), failures);
         RunCleanupStep("pipeline compile queue", _resourceRuntime.PipelineManager.DrainPipelineCompileQueueForShutdown, failures);
+        RunCleanupStep(
+            "resident draw templates",
+            _resourceRuntime.ResidentDrawTemplates.Clear,
+            failures);
+        RunCleanupStep(
+            "resident template frame-slot lifetimes",
+            _resourceRuntime.ResidentTemplateFrameSlotLifetimes.ReleaseAll,
+            failures);
+        RunCleanupStep(
+            "queued canonical publication leases",
+            MeshOperationRequests.ReleaseCanonicalPublicationLeases,
+            failures);
         if (_readbackOutputResourceService is not null)
             RunCleanupStep("post-measurement screenshot readbacks", DrainScreenshotReadbacksForShutdown, failures);
         RunCleanupStep(

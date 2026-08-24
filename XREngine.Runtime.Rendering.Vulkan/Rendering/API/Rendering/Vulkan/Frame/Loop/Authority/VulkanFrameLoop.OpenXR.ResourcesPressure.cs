@@ -255,6 +255,11 @@ internal sealed partial class VulkanFrameLoop
                 drainableSlots[i] = true;
             }
 
+            for (int i = 0; i < frameSlotCount; i++)
+                if (drainableSlots[i])
+                    ResourceRuntime.ResidentTemplateFrameSlotLifetimes
+                        .ReleaseFrameSlot(i);
+
         const int retirementBudgetPerType = 32;
         for (int i = 0; i < frameSlotCount; i++)
                 if (drainableSlots[i])

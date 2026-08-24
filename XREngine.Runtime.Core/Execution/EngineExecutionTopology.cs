@@ -100,7 +100,13 @@ public sealed class EngineExecutionTopology
             generalWorkerCount,
             renderWorkerCount);
 
-        if (topology.IsOversubscribed && !topology.AllowCpuOversubscription)
+        bool hasExplicitReservation =
+            request.GeneralWorkerThreadCount != AutomaticWorkerCount ||
+            request.RenderWorkerThreadCount != AutomaticWorkerCount ||
+            request.ReservedForegroundThreadCount != AutomaticWorkerCount;
+        if (topology.IsOversubscribed &&
+            !topology.AllowCpuOversubscription &&
+            hasExplicitReservation)
         {
             throw new InvalidOperationException(
                 "Execution topology oversubscribes the process CPU budget: " +

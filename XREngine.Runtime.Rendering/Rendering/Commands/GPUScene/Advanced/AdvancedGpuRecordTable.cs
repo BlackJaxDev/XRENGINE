@@ -12,9 +12,14 @@ public sealed class AdvancedGpuRecordTable<T> where T : unmanaged
     private byte[] _physicalOccupancy;
     private uint[] _slotGenerations;
     private uint[] _slotToDense;
+    private byte[] _slotTombstones;
     private uint[] _freeSlots;
     private AdvancedGpuHandleRemap[] _publishedRemaps;
+    private AdvancedGpuRecordPublicationDelta[] _publicationDeltas;
+    private uint[] _retiredSlots;
+    private ulong[] _retiredSlotPublicationGenerations;
     private uint _freeSlotCount;
+    private uint _retiredSlotCount;
     private uint _nextSlotIndex = 1u;
     private uint _count;
     private uint _physicalHighWater;
@@ -23,7 +28,10 @@ public sealed class AdvancedGpuRecordTable<T> where T : unmanaged
     private uint _lookupDirtyMin;
     private uint _lookupDirtyMaxExclusive = 1u;
     private int _publishedRemapCount;
+    private int _publicationDeltaCount;
     private ulong _publishedRemapVersion;
+    private ulong _activePublicationGeneration = 1u;
+    private ulong _acknowledgedPublicationGeneration;
     private bool _isPacked = true;
 
     public AdvancedGpuRecordTable(uint capacity)
@@ -34,8 +42,12 @@ public sealed class AdvancedGpuRecordTable<T> where T : unmanaged
         _physicalOccupancy = new byte[arrayCapacity];
         _slotGenerations = new uint[checked(arrayCapacity + 1)];
         _slotToDense = new uint[checked(arrayCapacity + 1)];
+        _slotTombstones = new byte[checked(arrayCapacity + 1)];
         _freeSlots = new uint[arrayCapacity];
         _publishedRemaps = new AdvancedGpuHandleRemap[GetRemapCapacity(arrayCapacity)];
+        _publicationDeltas = new AdvancedGpuRecordPublicationDelta[GetJournalCapacity(arrayCapacity)];
+        _retiredSlots = new uint[arrayCapacity];
+        _retiredSlotPublicationGenerations = new ulong[arrayCapacity];
         FillInvalidDenseIndices(_slotToDense, 0);
     }
 
@@ -48,6 +60,21 @@ public sealed class AdvancedGpuRecordTable<T> where T : unmanaged
     public bool IsPacked => _isPacked;
 
     public ulong PublishedRemapVersion => _publishedRemapVersion;
+
+    /// <summary>
+    /// Generation stamped on mutations appended to <see cref="PublicationDeltas"/>.
+    /// Change it only at a structural publication boundary.
+    /// </summary>
+    public ulong ActivePublicationGeneration => _activePublicationGeneration;
+
+    public ulong AcknowledgedPublicationGeneration => _acknowledgedPublicationGeneration;
+
+    /// <summary>
+    /// Allocates a retained-publication snapshot at a setup or growth boundary.
+    /// Sealing a publication into the returned object performs no allocation.
+    /// </summary>
+    public AdvancedGpuRecordTablePublicationSnapshot<T> CreatePublicationSnapshot()
+        => new(_publicationDeltas.Length, _publishedRemaps.Length);
 
     public AdvancedGpuDirtyRange DirtyRange
         => _dirtyMin == uint.MaxValue
@@ -87,10 +114,72 @@ public sealed class AdvancedGpuRecordTable<T> where T : unmanaged
     public ReadOnlySpan<AdvancedGpuHandleRemap> PublishedRemaps
         => _publishedRemaps.AsSpan(0, _publishedRemapCount);
 
+    /// <summary>
+    /// Exact mutations that have not yet been acknowledged by all consumers.
+    /// The span is backed by fixed storage and must be consumed before the next
+    /// table mutation or acknowledgement boundary.
+    /// </summary>
+    public ReadOnlySpan<AdvancedGpuRecordPublicationDelta> PublicationDeltas
+        => _publicationDeltas.AsSpan(0, _publicationDeltaCount);
+
+    /// <summary>
+    /// Alias for the unacknowledged bounded publication journal.
+    /// </summary>
+    public ReadOnlySpan<AdvancedGpuRecordPublicationDelta> PublishedDeltas
+        => PublicationDeltas;
+
+    /// <summary>
+    /// Copies this table's exact journal segment and remap batch for
+    /// <paramref name="publicationSequence"/> into a publication-ring-owned
+    /// snapshot. The snapshot remains stable after the live table mutates.
+    /// </summary>
+    public bool TrySealPublication(
+        ulong publicationSequence,
+        AdvancedGpuRecordTablePublicationSnapshot<T> snapshot)
+    {
+        ArgumentNullException.ThrowIfNull(snapshot);
+        if (publicationSequence == 0u || publicationSequence != _activePublicationGeneration)
+            return false;
+
+        int deltaStart = 0;
+        while (deltaStart < _publicationDeltaCount &&
+               _publicationDeltas[deltaStart].PublicationGeneration < publicationSequence)
+        {
+            ++deltaStart;
+        }
+
+        int deltaEnd = deltaStart;
+        while (deltaEnd < _publicationDeltaCount &&
+               _publicationDeltas[deltaEnd].PublicationGeneration == publicationSequence)
+        {
+            ++deltaEnd;
+        }
+
+        return snapshot.TryCapture(
+            publicationSequence,
+            _publicationDeltas.AsSpan(deltaStart, deltaEnd - deltaStart),
+            PublishedRemaps);
+    }
+
+    /// <summary>
+    /// Selects the generation stamped on subsequent journal entries. Growth and
+    /// reclamation remain explicit boundary operations; ordinary mutation never
+    /// allocates or changes journal capacity.
+    /// </summary>
+    public void BeginPublicationGeneration(ulong publicationGeneration)
+    {
+        if (publicationGeneration == 0u)
+            throw new ArgumentOutOfRangeException(nameof(publicationGeneration));
+        if (publicationGeneration < _activePublicationGeneration)
+            throw new ArgumentOutOfRangeException(nameof(publicationGeneration));
+
+        _activePublicationGeneration = publicationGeneration;
+    }
+
     public bool TryAdd(in T value, out AdvancedGpuHandle handle)
     {
         handle = AdvancedGpuHandle.Invalid;
-        if (_count >= Capacity)
+        if (_count >= Capacity || !CanAppendPublicationDeltas(1))
             return false;
 
         uint denseIndex = FindFreeDenseIndex();
@@ -117,6 +206,7 @@ public sealed class AdvancedGpuRecordTable<T> where T : unmanaged
         handle = new AdvancedGpuHandle(slotIndex, generation);
         _slotGenerations[slotIndex] = generation;
         _slotToDense[slotIndex] = denseIndex;
+        _slotTombstones[slotIndex] = 0;
         _records[denseIndex] = value;
         _physicalHandles[denseIndex] = handle;
         _physicalOccupancy[denseIndex] = 1;
@@ -126,13 +216,25 @@ public sealed class AdvancedGpuRecordTable<T> where T : unmanaged
 
         MarkDirty(denseIndex);
         MarkLogicalLookupDirty(slotIndex);
+        AppendPublicationDelta(new AdvancedGpuRecordPublicationDelta(
+            handle,
+            EAdvancedGpuRecordPublicationChange.Added,
+            AdvancedGpuHandleRemap.InvalidDenseIndex,
+            denseIndex,
+            _activePublicationGeneration));
         RecalculatePackedState();
         return true;
     }
 
-    public bool Remove(AdvancedGpuHandle handle)
+    /// <summary>
+    /// Internal rollback escape hatch for records created before a publication is
+    /// exposed. Production retirement must use <see cref="TryTombstone"/>.
+    /// </summary>
+    internal bool TryRemoveImmediatelyBeforePublication(AdvancedGpuHandle handle)
     {
-        if (!TryGetDenseIndex(handle, out uint denseIndex) || !CanPublishRemaps(1))
+        if (!TryGetDenseIndex(handle, out uint denseIndex) ||
+            !CanPublishRemaps(1) ||
+            !CanAppendPublicationDeltas(1))
             return false;
 
         _records[denseIndex] = default;
@@ -147,6 +249,12 @@ public sealed class AdvancedGpuRecordTable<T> where T : unmanaged
             handle,
             denseIndex,
             AdvancedGpuHandleRemap.InvalidDenseIndex));
+        AppendPublicationDelta(new AdvancedGpuRecordPublicationDelta(
+            handle,
+            EAdvancedGpuRecordPublicationChange.Tombstoned,
+            denseIndex,
+            AdvancedGpuHandleRemap.InvalidDenseIndex,
+            _activePublicationGeneration));
         MarkDirty(denseIndex);
         MarkLogicalLookupDirty(handle.Index);
         TrimPhysicalHighWater();
@@ -168,12 +276,38 @@ public sealed class AdvancedGpuRecordTable<T> where T : unmanaged
 
     public bool TryReplace(AdvancedGpuHandle handle, in T value)
     {
-        if (!TryGetDenseIndex(handle, out uint denseIndex))
+        if (!TryGetDenseIndex(handle, out uint denseIndex) ||
+            !CanAppendPublicationDeltas(1))
             return false;
 
         _records[denseIndex] = value;
         MarkDirty(denseIndex);
+        AppendPublicationDelta(new AdvancedGpuRecordPublicationDelta(
+            handle,
+            EAdvancedGpuRecordPublicationChange.Updated,
+            denseIndex,
+            denseIndex,
+            _activePublicationGeneration));
         return true;
+    }
+
+    /// <summary>
+    /// Preflights one publisher transaction against fixed row, journal, remap,
+    /// and tombstone capacities. With external mutation serialization, calls
+    /// covered by a successful preflight cannot fail for capacity.
+    /// </summary>
+    internal bool CanApply(int addCount, int replaceCount, int tombstoneCount)
+    {
+        if (addCount < 0 || replaceCount < 0 || tombstoneCount < 0)
+            return false;
+
+        int occupiedCount = checked((int)(_count + _retiredSlotCount));
+        int capacity = checked((int)Capacity);
+        int mutationCount = checked(addCount + replaceCount + tombstoneCount);
+        return addCount <= capacity - occupiedCount &&
+            tombstoneCount <= capacity - checked((int)_retiredSlotCount) &&
+            CanAppendPublicationDeltas(mutationCount) &&
+            CanPublishRemaps(tombstoneCount);
     }
 
     public bool TrySet(AdvancedGpuHandle handle, in T value)
@@ -182,12 +316,179 @@ public sealed class AdvancedGpuRecordTable<T> where T : unmanaged
     public bool IsCurrent(AdvancedGpuHandle handle)
         => TryGetDenseIndex(handle, out _);
 
+    /// <summary>
+    /// Invalidates <paramref name="handle"/> for new logical lookups immediately,
+    /// but pins its generation, dense row, physical handle, occupancy, and payload
+    /// until every consumer has acknowledged the selected publication generation.
+    /// This prevents ABA reuse and preserves the old physical row for in-flight
+    /// frame packages.
+    /// </summary>
+    public bool TryTombstone(AdvancedGpuHandle handle)
+    {
+        if (!TryGetDenseIndex(handle, out uint denseIndex) ||
+            !CanPublishRemaps(1) ||
+            !CanAppendPublicationDeltas(1) ||
+            _retiredSlotCount >= Capacity)
+            return false;
+
+        TombstoneResolvedHandle(handle, denseIndex);
+        return true;
+    }
+
+    private void TombstoneResolvedHandle(AdvancedGpuHandle handle, uint denseIndex)
+    {
+
+        _slotTombstones[handle.Index] = 1;
+        _retiredSlots[_retiredSlotCount] = handle.Index;
+        _retiredSlotPublicationGenerations[_retiredSlotCount] = _activePublicationGeneration;
+        ++_retiredSlotCount;
+        --_count;
+
+        AppendPublicationDelta(new AdvancedGpuRecordPublicationDelta(
+            handle,
+            EAdvancedGpuRecordPublicationChange.Tombstoned,
+            denseIndex,
+            AdvancedGpuHandleRemap.InvalidDenseIndex,
+            _activePublicationGeneration));
+        MarkLogicalLookupDirty(handle.Index);
+        RecalculatePackedState();
+    }
+
+    /// <summary>
+    /// Tombstones a record under an explicit publication generation. This is the
+    /// integration-friendly form for owners that publish several tables as one
+    /// coherent frame-boundary transaction.
+    /// </summary>
+    public bool TryTombstone(AdvancedGpuHandle handle, ulong publicationGeneration)
+    {
+        if (publicationGeneration == 0u ||
+            publicationGeneration < _activePublicationGeneration ||
+            !TryGetDenseIndex(handle, out uint denseIndex) ||
+            !CanPublishRemaps(1) ||
+            !CanAppendPublicationDeltas(1) ||
+            _retiredSlotCount >= Capacity)
+        {
+            return false;
+        }
+
+        _activePublicationGeneration = publicationGeneration;
+        TombstoneResolvedHandle(handle, denseIndex);
+        return true;
+    }
+
+    /// <summary>
+    /// Releases tombstoned logical slots and journal entries observed by all
+    /// consumers through <paramref name="acknowledgedPublicationGeneration"/>.
+    /// This is intentionally a publication-boundary operation.
+    /// </summary>
+    public int ReclaimAcknowledged(ulong acknowledgedPublicationGeneration)
+    {
+        if (acknowledgedPublicationGeneration <= _acknowledgedPublicationGeneration)
+            return 0;
+
+        int reclaimableCount = 0;
+        for (uint retiredIndex = 0u; retiredIndex < _retiredSlotCount; ++retiredIndex)
+        {
+            if (_retiredSlotPublicationGenerations[retiredIndex] <= acknowledgedPublicationGeneration)
+                ++reclaimableCount;
+        }
+        if (!CanPublishRemaps(reclaimableCount))
+            return 0;
+
+        // Validate all pinned rows before changing any state so a damaged table
+        // fails atomically instead of reclaiming only a prefix of the batch.
+        for (uint retiredIndex = 0u; retiredIndex < _retiredSlotCount; ++retiredIndex)
+        {
+            if (_retiredSlotPublicationGenerations[retiredIndex] > acknowledgedPublicationGeneration)
+                continue;
+
+            uint slotIndex = _retiredSlots[retiredIndex];
+            uint denseIndex = _slotToDense[slotIndex];
+            AdvancedGpuHandle retiredHandle = new(
+                slotIndex,
+                _slotGenerations[slotIndex]);
+            if (_slotTombstones[slotIndex] == 0 ||
+                denseIndex >= _physicalHighWater ||
+                _physicalHandles[denseIndex] != retiredHandle)
+            {
+                throw new InvalidOperationException(
+                    "A tombstoned GPU record lost its pinned physical row before acknowledgement.");
+            }
+        }
+
+        _acknowledgedPublicationGeneration = acknowledgedPublicationGeneration;
+        int reclaimedCount = 0;
+        uint retainedCount = 0u;
+        for (uint retiredIndex = 0u; retiredIndex < _retiredSlotCount; ++retiredIndex)
+        {
+            if (_retiredSlotPublicationGenerations[retiredIndex] <= acknowledgedPublicationGeneration)
+            {
+                uint slotIndex = _retiredSlots[retiredIndex];
+                uint denseIndex = _slotToDense[slotIndex];
+                AdvancedGpuHandle retiredHandle = new(
+                    slotIndex,
+                    _slotGenerations[slotIndex]);
+
+                _records[denseIndex] = default;
+                _physicalHandles[denseIndex] = AdvancedGpuHandle.Invalid;
+                _physicalOccupancy[denseIndex] = 0;
+                _slotToDense[slotIndex] = AdvancedGpuHandleRemap.InvalidDenseIndex;
+                _slotGenerations[slotIndex] = NextGeneration(retiredHandle.Generation);
+                _slotTombstones[slotIndex] = 0;
+                _freeSlots[_freeSlotCount++] = slotIndex;
+                AppendRemap(new AdvancedGpuHandleRemap(
+                    retiredHandle,
+                    denseIndex,
+                    AdvancedGpuHandleRemap.InvalidDenseIndex));
+                MarkDirty(denseIndex);
+                MarkLogicalLookupDirty(slotIndex);
+                ++reclaimedCount;
+                continue;
+            }
+
+            _retiredSlots[retainedCount] = _retiredSlots[retiredIndex];
+            _retiredSlotPublicationGenerations[retainedCount] =
+                _retiredSlotPublicationGenerations[retiredIndex];
+            ++retainedCount;
+        }
+        _retiredSlotCount = retainedCount;
+        TrimPhysicalHighWater();
+        RecalculatePackedState();
+
+        int firstUnacknowledgedDelta = 0;
+        while (firstUnacknowledgedDelta < _publicationDeltaCount &&
+               _publicationDeltas[firstUnacknowledgedDelta].PublicationGeneration <=
+               acknowledgedPublicationGeneration)
+        {
+            ++firstUnacknowledgedDelta;
+        }
+
+        if (firstUnacknowledgedDelta > 0)
+        {
+            int remainingDeltaCount = _publicationDeltaCount - firstUnacknowledgedDelta;
+            if (remainingDeltaCount > 0)
+            {
+                Array.Copy(
+                    _publicationDeltas,
+                    firstUnacknowledgedDelta,
+                    _publicationDeltas,
+                    0,
+                    remainingDeltaCount);
+            }
+            _publicationDeltaCount = remainingDeltaCount;
+        }
+
+        return reclaimedCount;
+    }
+
     public bool TryGetDenseIndex(AdvancedGpuHandle handle, out uint denseIndex)
     {
         denseIndex = AdvancedGpuHandleRemap.InvalidDenseIndex;
         if (!handle.IsValid || handle.Index >= (uint)_slotToDense.Length)
             return false;
         if (_slotGenerations[handle.Index] != handle.Generation)
+            return false;
+        if (_slotTombstones[handle.Index] != 0)
             return false;
 
         uint candidate = _slotToDense[handle.Index];
@@ -207,11 +508,16 @@ public sealed class AdvancedGpuRecordTable<T> where T : unmanaged
     /// </summary>
     public int Compact()
     {
+        // Tombstoned rows are pinned until acknowledgement. Compacting while one
+        // is in flight could invalidate the dense index retained by an old frame.
+        if (_retiredSlotCount != 0u)
+            return -1;
         if (_isPacked)
             return 0;
 
         uint maximumMoves = _physicalHighWater - _count;
-        if (!CanPublishRemaps(checked((int)maximumMoves)))
+        if (!CanPublishRemaps(checked((int)maximumMoves)) ||
+            !CanAppendPublicationDeltas(checked((int)maximumMoves)))
             return -1;
 
         int moveCount = 0;
@@ -241,6 +547,12 @@ public sealed class AdvancedGpuRecordTable<T> where T : unmanaged
             _physicalOccupancy[right] = 0;
 
             AppendRemap(new AdvancedGpuHandleRemap(movedHandle, right, left));
+            AppendPublicationDelta(new AdvancedGpuRecordPublicationDelta(
+                movedHandle,
+                EAdvancedGpuRecordPublicationChange.DenseRemapped,
+                right,
+                left,
+                _activePublicationGeneration));
             MarkDirty(left);
             MarkDirty(right);
             MarkLogicalLookupDirty(movedHandle.Index);
@@ -270,8 +582,12 @@ public sealed class AdvancedGpuRecordTable<T> where T : unmanaged
         Array.Resize(ref _physicalOccupancy, newCapacity);
         Array.Resize(ref _slotGenerations, checked(newCapacity + 1));
         Array.Resize(ref _slotToDense, checked(newCapacity + 1));
+        Array.Resize(ref _slotTombstones, checked(newCapacity + 1));
         Array.Resize(ref _freeSlots, newCapacity);
         Array.Resize(ref _publishedRemaps, GetRemapCapacity(newCapacity));
+        Array.Resize(ref _publicationDeltas, GetJournalCapacity(newCapacity));
+        Array.Resize(ref _retiredSlots, newCapacity);
+        Array.Resize(ref _retiredSlotPublicationGenerations, newCapacity);
         FillInvalidDenseIndices(_slotToDense, oldCapacity + 1);
         if (_physicalHighWater > 0u)
             MarkDirty(0u, _physicalHighWater);
@@ -291,6 +607,13 @@ public sealed class AdvancedGpuRecordTable<T> where T : unmanaged
 
     public void ClearPublishedRemaps()
         => _publishedRemapCount = 0;
+
+    /// <summary>
+    /// Discards only journal entries that have already been acknowledged. This
+    /// provides an explicit reset for a fully acknowledged publication batch.
+    /// </summary>
+    public void ClearAcknowledgedPublicationDeltas()
+        => ReclaimAcknowledged(_acknowledgedPublicationGeneration);
 
     /// <summary>
     /// Applies the currently published physical relocations to a dependent dense-index
@@ -341,9 +664,11 @@ public sealed class AdvancedGpuRecordTable<T> where T : unmanaged
         destination[0] = AdvancedGpuHandleLookup.Invalid;
         for (uint slotIndex = 1u; slotIndex < LogicalLookupCount; ++slotIndex)
         {
-            destination[checked((int)slotIndex)] = new AdvancedGpuHandleLookup(
-                _slotGenerations[slotIndex],
-                _slotToDense[slotIndex]);
+            destination[checked((int)slotIndex)] = _slotTombstones[slotIndex] != 0
+                ? AdvancedGpuHandleLookup.Invalid
+                : new AdvancedGpuHandleLookup(
+                    _slotGenerations[slotIndex],
+                    _slotToDense[slotIndex]);
         }
 
         return true;
@@ -368,6 +693,8 @@ public sealed class AdvancedGpuRecordTable<T> where T : unmanaged
             uint slotIndex = copiedRange.Start + relativeIndex;
             destination[checked((int)relativeIndex)] = slotIndex == 0u
                 ? AdvancedGpuHandleLookup.Invalid
+                : _slotTombstones[slotIndex] != 0
+                    ? AdvancedGpuHandleLookup.Invalid
                 : new AdvancedGpuHandleLookup(
                     _slotGenerations[slotIndex],
                     _slotToDense[slotIndex]);
@@ -428,6 +755,12 @@ public sealed class AdvancedGpuRecordTable<T> where T : unmanaged
     private bool CanPublishRemaps(int count)
         => count >= 0 && _publishedRemapCount <= _publishedRemaps.Length - count;
 
+    private bool CanAppendPublicationDeltas(int count)
+        => count >= 0 && _publicationDeltaCount <= _publicationDeltas.Length - count;
+
+    private void AppendPublicationDelta(in AdvancedGpuRecordPublicationDelta delta)
+        => _publicationDeltas[_publicationDeltaCount++] = delta;
+
     private void MarkDirty(uint index)
         => MarkDirty(index, 1u);
 
@@ -474,6 +807,15 @@ public sealed class AdvancedGpuRecordTable<T> where T : unmanaged
         if (recordCapacity > int.MaxValue / 2)
             throw new ArgumentOutOfRangeException(nameof(recordCapacity));
         return checked(recordCapacity * 2);
+    }
+
+    private static int GetJournalCapacity(int recordCapacity)
+    {
+        if (recordCapacity == 0)
+            return 0;
+        if (recordCapacity > int.MaxValue / 4)
+            throw new ArgumentOutOfRangeException(nameof(recordCapacity));
+        return checked(recordCapacity * 4);
     }
 
     private static void FillInvalidDenseIndices(uint[] indices, int startIndex)

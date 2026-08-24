@@ -39,6 +39,9 @@ namespace XREngine.Rendering.Vulkan
                 WaitForTimelineValue(_commandRuntime.Synchronization._graphicsTimelineSemaphore, slotWaitValue);
             }
 
+            ResourceRuntime.ResidentTemplateFrameSlotLifetimes.ReleaseFrameSlot(
+                attempt.FrameSlot);
+
             attempt.Timing.WaitFrameSlot +=
                 Stopwatch.GetElapsedTime(stageStartTimestamp);
 

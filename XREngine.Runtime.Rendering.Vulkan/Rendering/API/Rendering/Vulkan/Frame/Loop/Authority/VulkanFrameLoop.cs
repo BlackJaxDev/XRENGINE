@@ -34,6 +34,10 @@ internal sealed partial class VulkanFrameLoop
     private readonly VulkanPreparedMeshOperationCohortEntry[] _meshOperationCohortEntryScratch =
         new VulkanPreparedMeshOperationCohortEntry[VulkanMeshOperationRequestQueue.Capacity];
     private readonly VulkanPreparedMeshOperationCohort _preparedMeshOperationCohort = new();
+    private readonly VulkanResidentDrawTemplate?[] _residentTemplateHitScratch =
+        new VulkanResidentDrawTemplate[VulkanMeshOperationRequestQueue.Capacity];
+    private readonly VulkanResidentDrawTemplateHandle[] _residentTemplateHandleScratch =
+        new VulkanResidentDrawTemplateHandle[VulkanMeshOperationRequestQueue.Capacity];
     private readonly VulkanPreparedMeshIngress _preparedMeshIngress = new();
     private readonly OpenXrMeshFrameOpCaptureEmitter _openXrMeshFrameOpCaptureEmitter;
     private FrameOpResourceUseList _preparedMeshIngressResourceUseScratch;
@@ -77,6 +81,8 @@ internal sealed partial class VulkanFrameLoop
     private int _cleanupInProgress;
     private int _quiescing;
     private int _activeFrameExecutions;
+    private readonly bool _injectResidentTemplateDeviceLoss;
+    private int _residentTemplateDeviceLossInjected;
 
     internal VulkanFrameLoop(
         Vk api,
@@ -97,6 +103,8 @@ internal sealed partial class VulkanFrameLoop
         _commandRuntime = commandRuntime;
         _telemetry = telemetry;
         _targetDriver = targetDriver;
+        _injectResidentTemplateDeviceLoss = XREnvironment.IsEnabled(
+            XREngineEnvironmentVariables.VulkanResidentTemplateDeviceLossInject);
         _openXrMeshFrameOpCaptureEmitter = new OpenXrMeshFrameOpCaptureEmitter(this);
         if (targetDriver is IVulkanExplicitFrameTargetDriver explicitTarget)
         {

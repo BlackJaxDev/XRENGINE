@@ -1,8 +1,8 @@
 # Vulkan Resident Draw Stream And Render Task Pool TODO
 
-Last Updated: 2026-08-22
+Last Updated: 2026-08-23
 Owner: Rendering / Frame Scheduling / Vulkan
-Status: Phase 1B scheduler and pooled batches complete; remaining Phase 1 allocation/topology accounting exits open
+Status: Phase 1 implementation complete with allocation-matrix evidence pending; Phase 2 publication infrastructure implemented, material-payload and strategy parity pending
 Priority: High; successor to the prepared-cohort bridge
 
 Related current architecture and evidence:
@@ -93,6 +93,21 @@ frame ops, and reported zero generic/all-output readback bytes, mappings,
 fallback, forbidden fallback, capture-time meshlet-buffer churn, or VUIDs.
 Evidence:
 [Phase 1B scheduler investigation](../../../investigations/rendering/vulkan-resident-draw-stream-phase1b-scheduler-2026-08-22.md).
+
+2026-08-23 Phase 1/2 implementation checkpoint: retained Vulkan
+command-chain/compiler, OpenXR, deferred-job, and remote-job workers are now
+explicit topology reservations. Scheduler-owned build, dispatch, execute, and
+merge stages expose exact managed-allocation counters, including per-lane
+execution totals. The production `GPUScene` now dual-publishes a canonical
+resident database with generation-checked handles, exact bounded journals,
+tombstones, cumulative consumer acknowledgement, publication pins, dirty owner
+ranges, and compact backend-ready frame projections. Live Vulkan CPU-direct
+validation held 127 resident draws at zero topology/content deltas across
+static and camera-only frames. Add/remove/re-add advanced topology generations
+from 127 through 132 and reused logical slot 128 only after reclamation, with
+its generation advancing from 2 to 3. No publication was rejected and Vulkan
+validation emitted no VUID. Evidence:
+[Phase 2 canonical-publication investigation](../../../investigations/rendering/vulkan-resident-draw-stream-phase2-2026-08-23.md).
 
 ## Decision
 
@@ -1156,15 +1171,17 @@ Exit gate:
   output and clean shutdown.
 - [x] Tiny batches select inline execution; large synthetic batches prove real
   overlap and bounded waits.
-- [ ] The resolved total thread topology never silently exceeds its budget.
+- [x] The resolved total thread topology never silently exceeds its budget.
 
-Remaining Phase 1 exit evidence is intentionally narrow: the warmed one-item
-lane-0 path is allocation-free, but an end-to-end allocation proof across
-multi-item, dependency, worker, cancellation, and merge paths is not yet
-recorded. The immutable topology owns the new general/render domains, but
-legacy Vulkan/OpenXR/compiler workers plus lazy deferred/remote job loops are
-not yet fully included in `DedicatedBackgroundThreadCount`. Neither broader
-claim is checked by Phase 1B.
+Remaining Phase 1 evidence is now limited to rerunning the warmed allocation
+matrix after explicit clearance for test work. Production counters cover rent,
+item/dependency build, dispatch, per-lane executor work, and merge, so the
+multi-item, dependency, worker, cancellation, and merge paths can be compared
+against a snapshot without diagnostic allocations. The immutable topology now
+includes retained Vulkan/OpenXR/compiler workers plus lazy deferred/remote job
+loops in `DedicatedBackgroundThreadCount`, names every reservation, and rejects
+an explicit oversubscribed configuration rather than silently exceeding the
+budget.
 
 The checked bounded-wait evidence covers scheduler-controlled waits after an
 executor returns control. `IRenderWorkExecutor` callbacks are explicitly
@@ -1174,16 +1191,16 @@ poisons the domain and retains ownership rather than permitting pooled reuse.
 
 ### Phase 2 - Canonical advanced GPUScene deltas and dual publication
 
-- [ ] Extend `AdvancedSharedGpuSceneDatabase` and its existing record/material
+- [x] Extend `AdvancedSharedGpuSceneDatabase` and its existing record/material
   tables with the missing bounded delta, tombstone, dirty-range, remap, and
   consumer-acknowledgement contracts identified in Phase 0.
-- [ ] Preserve `AdvancedGpuHandle` as the only renderer-neutral logical handle;
+- [x] Preserve `AdvancedGpuHandle` as the only renderer-neutral logical handle;
   use typed wrappers only if they share its allocator/generation/remap storage.
-- [ ] Build backend template projections only on structural changes and publish
+- [x] Build backend template projections only on structural changes and publish
   canonical deltas through `BackendReadyFramePackage`.
-- [ ] Publish frame/view/pass, resolved strategy/downgrade, diagnostic request,
+- [x] Publish frame/view/pass, resolved strategy/downgrade, diagnostic request,
   and dirty owner ranges independently of visible draw enumeration.
-- [ ] Add compact CPU-visible and ordered-exception records.
+- [x] Add compact CPU-visible and ordered-exception records.
 - [ ] Dual-feed legacy `GPUScene`/`HybridRenderingManager` and the new package
   projection, comparing logical handles, dense remaps, membership, order, pass,
   selection, instance, material/geometry data, shadow, and dependency
@@ -1191,39 +1208,70 @@ poisons the domain and retains ownership rather than permitting pooled reuse.
 
 Exit gate:
 
-- [ ] Stable static Sponza publishes zero topology deltas.
-- [ ] Camera motion publishes view changes without template rebuilds.
+- [x] Stable static Sponza publishes zero topology deltas.
+- [x] Camera motion publishes view changes without template rebuilds.
 - [ ] Add/remove/reparent/material/mesh mutations produce bounded exact deltas
   with no ABA reuse.
 - [ ] Dual publication matches CPU direct, GPU indirect, and available meshlet
   source/output identities before the canonical database drives production.
-- [ ] A source/ownership audit finds no second renderer-neutral scene identity
+- [x] A source/ownership audit finds no second renderer-neutral scene identity
   allocator introduced by this phase.
+
+Phase 2's canonical publication infrastructure is implemented. Live CPU-direct
+Vulkan evidence covers static and camera-only stability plus add/remove
+generation-safe reclamation. Geometry rows mirror the exact legacy atlas
+offsets, but intentionally remain `Pending` until Phase 3 supplies immutable
+advanced buffer references. Material headers carry the legacy material's layout,
+shader, value, and resource revisions, but the advanced material database does
+not yet encode the real packed constant words, texture/sampler bindings,
+material-layout rows, or shading-kernel rows. Consequently the dual-feed item
+and Phase 2 as a whole remain open rather than claiming semantic material parity
+from revision hashes alone. The broader mutation row also remains open until
+reparent, material-layout/content, and mesh replacement are exercised. The
+strategy-parity row remains open until final publication diagnostics are
+captured under GPU indirect and the available meshlet path.
 
 ### Phase 3 - Vulkan template table and lifetime ownership
 
-- [ ] Implement direct-slot Vulkan template lookup and full structural equality
+- [x] Implement direct-slot Vulkan template lookup and full structural equality
   on creation, keyed by a generation-validated canonical draw plus sealed
   pass/pipeline variant.
-- [ ] Implement transactional typed native dependency acquisition and deferred
+- [x] Implement transactional typed native dependency acquisition and deferred
   release.
-- [ ] Separate data-content, resource-table, layout/topology, and recording
+- [x] Separate data-content, resource-table, layout/topology, and recording
   generations.
-- [ ] Key strategy-specific and shader-instrumented command/pipeline artifacts
+- [x] Key strategy-specific and shader-instrumented command/pipeline artifacts
   explicitly while retaining shared canonical scene/template dependencies.
-- [ ] Convert persistent program-binding artifact ownership from per-hit
+- [x] Convert persistent program-binding artifact ownership from per-hit
   reacquisition to generation-driven template invalidation after the lease
   contract is complete.
-- [ ] Exercise shader reload, material mutation, geometry streaming, eviction,
+- [x] Exercise shader reload, material mutation, geometry streaming, eviction,
   resize, device loss, and shutdown.
+  Shader reload, material mutation/restore, startup resize, meshlet geometry
+  streaming, native-generation eviction, and clean shutdown were exercised in
+  named isolated editor sessions. The one-shot
+  `XRE_VULKAN_RESIDENT_TEMPLATE_DEVICE_LOSS_INJECT=1` hook injected terminal
+  device loss only after resident publication; teardown reached the
+  device-loss force-destroy path without a Vulkan validation error, resident
+  use underflow, stale dependency release, or cleanup failure.
 
 Exit gate:
 
-- [ ] Stable frames perform zero template hash lookup, artifact reacquisition,
+- [x] Stable frames perform zero template hash lookup, artifact reacquisition,
   and structural comparison per draw.
-- [ ] No cached native handle outlives its owner generation or GPU use.
-- [ ] CPU-known capacity failure chooses a complete strategy/failure outcome
+  Producers carry the last published generation-validated resident handle into
+  the next request. Exact draw-owner deltas evict one slot; non-draw structural
+  deltas conservatively clear the table until Phase 4 reverse dependency
+  manifests can make those invalidations exact.
+- [x] No cached native handle outlives its owner generation or GPU use.
+  Desktop, explicit, and OpenXR completion authorities retire frame-slot use
+  pins only after their completion proof, and logical-device teardown releases
+  resident ownership before destroying native dependency owners.
+- [x] CPU-known capacity failure chooses a complete strategy/failure outcome
   before sealing. A sealed zero-readback pass has no readback-and-retry path.
+
+Implementation and live evidence are recorded in
+`docs/work/investigations/rendering/vulkan-resident-draw-stream-phase3-2026-08-23.md`.
 
 ### Phase 4 - Stable bins, manifests, and CPU parity scaffold
 

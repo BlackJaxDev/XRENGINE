@@ -388,7 +388,7 @@ namespace XREngine.Scene
             if (!previous.HasValue)
                 return;
 
-            ShadowAtlas.ResetAtlasKind(EShadowAtlasKind.Directional);
+            ShadowAtlas.RequestAtlasKindReset(EShadowAtlasKind.Directional);
 
             int count = DynamicDirectionalLights.Count;
             for (int i = 0; i < count; i++)

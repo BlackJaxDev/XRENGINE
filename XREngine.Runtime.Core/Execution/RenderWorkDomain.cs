@@ -31,6 +31,7 @@ public sealed class RenderWorkDomain : IDisposable
     private readonly Exception?[] _workerStartupFaults;
     private readonly int[] _managedThreadIds;
     private readonly long[] _laneExecutedItemCounts;
+    private readonly long[] _laneExecuteAllocatedBytes;
     private readonly long[] _laneWakeCounts;
     private readonly long[] _laneEmptyWakeCounts;
     private readonly ManualResetEventSlim _workerStartupSignal;
@@ -66,6 +67,14 @@ public sealed class RenderWorkDomain : IDisposable
     private long _emptyWakeCount;
     private long _queueOverflowCount;
     private long _totalWaitTicks;
+    private long _buildOperationCount;
+    private long _dispatchOperationCount;
+    private long _executeOperationCount;
+    private long _mergeOperationCount;
+    private long _buildAllocatedBytes;
+    private long _dispatchAllocatedBytes;
+    private long _executeAllocatedBytes;
+    private long _mergeAllocatedBytes;
 
     public RenderWorkDomain(
         int backgroundWorkerCount,
@@ -92,6 +101,7 @@ public sealed class RenderWorkDomain : IDisposable
         _workerStartupFaults = new Exception?[backgroundWorkerCount];
         _managedThreadIds = new int[LogicalLaneCount];
         _laneExecutedItemCounts = new long[LogicalLaneCount];
+        _laneExecuteAllocatedBytes = new long[LogicalLaneCount];
         _laneWakeCounts = new long[LogicalLaneCount];
         _laneEmptyWakeCounts = new long[LogicalLaneCount];
         _workerStartupRemaining = backgroundWorkerCount;
@@ -190,7 +200,15 @@ public sealed class RenderWorkDomain : IDisposable
         Interlocked.Read(ref _emptyWakeCount),
         Interlocked.Read(ref _queueOverflowCount),
         Volatile.Read(ref _queueHighWaterMark),
-        Interlocked.Read(ref _totalWaitTicks));
+        Interlocked.Read(ref _totalWaitTicks),
+        Interlocked.Read(ref _buildOperationCount),
+        Interlocked.Read(ref _dispatchOperationCount),
+        Interlocked.Read(ref _executeOperationCount),
+        Interlocked.Read(ref _mergeOperationCount),
+        Interlocked.Read(ref _buildAllocatedBytes),
+        Interlocked.Read(ref _dispatchAllocatedBytes),
+        Interlocked.Read(ref _executeAllocatedBytes),
+        Interlocked.Read(ref _mergeAllocatedBytes));
 
     public RenderWorkLaneSnapshot GetLaneSnapshot(int laneId)
     {
@@ -206,13 +224,17 @@ public sealed class RenderWorkDomain : IDisposable
             _migratableQueues[laneId].Capacity,
             Interlocked.Read(ref _laneExecutedItemCounts[laneId]),
             Interlocked.Read(ref _laneWakeCounts[laneId]),
-            Interlocked.Read(ref _laneEmptyWakeCounts[laneId]));
+            Interlocked.Read(ref _laneEmptyWakeCounts[laneId]),
+            Interlocked.Read(ref _laneExecuteAllocatedBytes[laneId]));
     }
 
     public RenderWorkBatchLease RentBatch(int itemCount, int dependencyCount = 0)
     {
         ThrowIfUnavailable();
-        return _batchPool.Rent(itemCount, dependencyCount);
+        long allocationBefore = GC.GetAllocatedBytesForCurrentThread();
+        RenderWorkBatchLease lease = _batchPool.Rent(itemCount, dependencyCount);
+        RecordBuildAllocation(allocationBefore);
+        return lease;
     }
 
     /// <summary>
@@ -256,13 +278,16 @@ public sealed class RenderWorkDomain : IDisposable
 
         RenderWorkBatch batch = lease.Batch;
         bool requestInline = lease.ItemCount <= _inlineItemThreshold;
+        long dispatchAllocationBefore = GC.GetAllocatedBytesForCurrentThread();
         batch.SealAndQueue(lease.Generation, executor, frameSlot, requestInline);
+        RecordDispatchAllocation(dispatchAllocationBefore);
 
         RenderWorkDomain? previousDomain = _currentDomain;
         int previousLaneId = _currentLaneId;
         _currentDomain = this;
         _currentLaneId = 0;
         long start = Stopwatch.GetTimestamp();
+        long mergeAllocationBefore = GC.GetAllocatedBytesForCurrentThread();
         long timeoutTicks = Math.Max(1L, (long)(lifecycleBound.TotalSeconds * Stopwatch.Frequency));
         try
         {
@@ -284,7 +309,9 @@ public sealed class RenderWorkDomain : IDisposable
             }
 
             batch.FinalizeFaultQuarantine(lease.Generation);
-            return batch.GetResult(lease.Generation);
+            RenderWorkBatchResult result = batch.GetResult(lease.Generation);
+            RecordMergeAllocation(mergeAllocationBefore);
+            return result;
         }
         finally
         {
@@ -491,6 +518,27 @@ public sealed class RenderWorkDomain : IDisposable
     internal void OnBatchQuarantineFailed()
         => Interlocked.Exchange(ref _poisonedState, 1);
 
+    internal void RecordBuildAllocation(long allocationBefore)
+    {
+        Interlocked.Increment(ref _buildOperationCount);
+        Interlocked.Add(ref _buildAllocatedBytes, GetAllocatedByteDelta(allocationBefore));
+    }
+
+    private void RecordDispatchAllocation(long allocationBefore)
+    {
+        Interlocked.Increment(ref _dispatchOperationCount);
+        Interlocked.Add(ref _dispatchAllocatedBytes, GetAllocatedByteDelta(allocationBefore));
+    }
+
+    internal void RecordMergeAllocation(long allocationBefore)
+    {
+        Interlocked.Increment(ref _mergeOperationCount);
+        Interlocked.Add(ref _mergeAllocatedBytes, GetAllocatedByteDelta(allocationBefore));
+    }
+
+    private static long GetAllocatedByteDelta(long allocationBefore)
+        => Math.Max(0L, GC.GetAllocatedBytesForCurrentThread() - allocationBefore);
+
     private void WorkerLoop(object? state)
     {
         int laneId = (int)state!;
@@ -539,6 +587,7 @@ public sealed class RenderWorkDomain : IDisposable
 
     private bool TryExecuteOne(int laneId)
     {
+        long executeAllocationBefore = GC.GetAllocatedBytesForCurrentThread();
         while (TryTakeClaim(laneId, out RenderWorkClaim claim, out bool stolen))
         {
             bool claimStarted = claim.Batch.TryBeginClaim(claim.Generation, claim.ItemIndex);
@@ -575,6 +624,10 @@ public sealed class RenderWorkDomain : IDisposable
             }
             finally
             {
+                long allocatedBytes = GetAllocatedByteDelta(executeAllocationBefore);
+                Interlocked.Increment(ref _executeOperationCount);
+                Interlocked.Add(ref _executeAllocatedBytes, allocatedBytes);
+                Interlocked.Add(ref _laneExecuteAllocatedBytes[laneId], allocatedBytes);
                 Interlocked.And(ref _activeLaneMask, ~(1L << laneId));
                 Interlocked.Decrement(ref _activeExecutionCount);
             }

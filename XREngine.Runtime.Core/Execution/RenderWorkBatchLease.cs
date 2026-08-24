@@ -19,10 +19,20 @@ public readonly struct RenderWorkBatchLease : IDisposable
     public bool IsValid => _batch is not null;
 
     public void SetItem(int itemIndex, in RenderWorkItem item)
-        => GetBatch().SetItem(Generation, itemIndex, item);
+    {
+        RenderWorkBatch batch = GetBatch();
+        long allocationBefore = GC.GetAllocatedBytesForCurrentThread();
+        batch.SetItem(Generation, itemIndex, item);
+        batch.Domain.RecordBuildAllocation(allocationBefore);
+    }
 
     public void SetDependent(int dependentSlot, int dependentItemIndex)
-        => GetBatch().SetDependent(Generation, dependentSlot, dependentItemIndex);
+    {
+        RenderWorkBatch batch = GetBatch();
+        long allocationBefore = GC.GetAllocatedBytesForCurrentThread();
+        batch.SetDependent(Generation, dependentSlot, dependentItemIndex);
+        batch.Domain.RecordBuildAllocation(allocationBefore);
+    }
 
     public RenderWorkBatchResult GetResult()
         => GetBatch().GetResult(Generation);
@@ -31,7 +41,14 @@ public readonly struct RenderWorkBatchLease : IDisposable
         => GetBatch().Cancel(Generation);
 
     public void Dispose()
-        => _batch?.ReleaseLease(Generation);
+    {
+        if (_batch is not { } batch)
+            return;
+
+        long allocationBefore = GC.GetAllocatedBytesForCurrentThread();
+        batch.ReleaseLease(Generation);
+        batch.Domain.RecordMergeAllocation(allocationBefore);
+    }
 
     internal RenderWorkBatch Batch => GetBatch();
 

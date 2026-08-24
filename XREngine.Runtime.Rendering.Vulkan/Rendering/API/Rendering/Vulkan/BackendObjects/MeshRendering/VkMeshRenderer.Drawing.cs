@@ -449,24 +449,69 @@ internal unsafe partial class VkMeshRenderer
 			reason = "program missing after mesh draw preparation";
 			return false;
 		}
+		if (draw.CanonicalDrawIdentitySnapshot.IsValid &&
+			!preparedFrame.TryRetainCanonicalPublication(
+				draw.CanonicalDrawIdentitySnapshot,
+				out reason))
+		{
+			return false;
+		}
+		ReleaseCanonicalPublicationBridge(
+			draw.CanonicalDrawIdentitySnapshot);
 
 		if (Mesh?.HasSkinning == true)
 			MeshRenderer.PushBoneMatricesToGPU();
 		if (Mesh?.HasBlendshapes == true)
 			MeshRenderer.PushBlendshapeWeightsToGPU();
 
-		if (!TryPrepareVertexBufferSnapshot(preparedFrame, out VulkanPreparedStreamRange vertexRange, out reason))
+		VulkanPreparedMeshPrimitive primitive0 = default;
+		VulkanPreparedMeshPrimitive primitive1 = default;
+		VulkanPreparedMeshPrimitive primitive2 = default;
+		int primitiveCount = 0;
+		bool residentHit = TryGetResidentDrawTemplate(
+			draw,
+			passIndex,
+			material,
+			context,
+			out _,
+			out VulkanResidentDrawTemplateVariantKey residentVariant,
+			out VulkanResidentDrawTemplateGenerationDomains residentGenerations,
+			out VulkanResidentDrawTemplate? residentTemplate);
+		bool residentLookupAvailable =
+			residentGenerations.LayoutTopology != 0 &&
+			residentGenerations.Recording != 0;
+		VulkanPreparedStreamRange vertexRange;
+		if (residentHit && residentTemplate is not null)
+		{
+			if (!preparedFrame.TryAdoptResidentTemplateUse(
+					residentTemplate,
+					out reason))
+			{
+				return false;
+			}
+
+			VulkanResidentDrawTemplateNativeState native = residentTemplate.NativeState;
+			vertexRange = preparedFrame.AppendVertexBuffers(
+				native.VertexBuffers,
+				native.VertexBindings);
+			primitive0 = native.Primitive0;
+			primitive1 = native.Primitive1;
+			primitive2 = native.Primitive2;
+			primitiveCount = native.PrimitiveCount;
+		}
+		else if (!TryPrepareVertexBufferSnapshot(
+			preparedFrame,
+			out vertexRange,
+			out reason))
 		{
 			return false;
 		}
 
 		{
-			VulkanPreparedMeshPrimitive primitive0 = default;
-			VulkanPreparedMeshPrimitive primitive1 = default;
-			VulkanPreparedMeshPrimitive primitive2 = default;
-			int primitiveCount = 0;
-			bool triangleOnly =
-				MeshRenderMaterialResolver.RequiresTriangleOnlyDrawsForCurrentPass();
+			if (!residentHit)
+			{
+				bool triangleOnly =
+					MeshRenderMaterialResolver.RequiresTriangleOnlyDrawsForCurrentPass();
 
 			if (!TryPrepareIndexedMeshPrimitive(
 					material,
@@ -546,7 +591,7 @@ internal unsafe partial class VkMeshRenderer
 					ref primitiveCount);
 			}
 
-			if (primitiveCount == 0)
+				if (primitiveCount == 0)
 			{
 				if (Mesh is null || Mesh.VertexCount <= 0)
 				{
@@ -596,6 +641,7 @@ internal unsafe partial class VkMeshRenderer
 					(uint)Mesh.VertexCount,
 					Indexed: false);
 				primitiveCount = 1;
+			}
 			}
 
 			UpdateEngineUniformBuffersForDraw(frameIndex, drawUniformSlot, draw);
@@ -708,6 +754,25 @@ internal unsafe partial class VkMeshRenderer
 				CreatePerDrawPushConstants(material, draw),
 				draw.Instances,
 				coldDataIndex);
+			if (!residentHit && residentLookupAvailable)
+			{
+				_ = TryPublishResidentDrawTemplate(
+					draw,
+					passIndex,
+					material,
+					renderPass,
+					useDynamicRendering,
+					context,
+					program.PipelineLayout,
+					primitive0,
+					primitive1,
+					primitive2,
+					primitiveCount,
+					preparedFrame.GetVertexBuffers(vertexRange),
+					preparedFrame.GetVertexBindings(vertexRange),
+					residentVariant,
+					residentGenerations);
+			}
 			reason = "Ready";
 			return true;
 		}

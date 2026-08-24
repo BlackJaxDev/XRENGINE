@@ -83,6 +83,14 @@ namespace XREngine
                     private static long _vulkanPreparedMeshOperationFullMaterializations;
                     private static long _vulkanPreparedMeshOperationReuses;
                     private static long _vulkanPreparedMeshOperationLegacyHoleMaterializations;
+                    private static long _vulkanResidentDrawTemplateHits;
+                    private static long _vulkanResidentDrawTemplateMisses;
+                    private static long _vulkanResidentDrawTemplateCreates;
+                    private static long _vulkanResidentDrawTemplateReplacements;
+                    private static long _vulkanResidentDrawTemplateEvictions;
+                    private static long _vulkanResidentDrawTemplateStructuralComparisons;
+                    private static long _vulkanResidentDrawTemplateDependencyRejects;
+                    private static long _vulkanResidentDrawTemplateCapacityFailures;
                     private static int _vulkanCommandBufferDecisionReasonMask;
                     private static long _vulkanCommandBufferDecisionVisibilityGeneration;
                     private static long _vulkanCommandBufferDecisionStructuralSignature;
@@ -626,6 +634,22 @@ namespace XREngine
                         => Volatile.Read(ref _vulkanPreparedMeshOperationReuses);
                     public static long VulkanPreparedMeshOperationLegacyHoleMaterializations
                         => Volatile.Read(ref _vulkanPreparedMeshOperationLegacyHoleMaterializations);
+                    public static long VulkanResidentDrawTemplateHits
+                        => Volatile.Read(ref _vulkanResidentDrawTemplateHits);
+                    public static long VulkanResidentDrawTemplateMisses
+                        => Volatile.Read(ref _vulkanResidentDrawTemplateMisses);
+                    public static long VulkanResidentDrawTemplateCreates
+                        => Volatile.Read(ref _vulkanResidentDrawTemplateCreates);
+                    public static long VulkanResidentDrawTemplateReplacements
+                        => Volatile.Read(ref _vulkanResidentDrawTemplateReplacements);
+                    public static long VulkanResidentDrawTemplateEvictions
+                        => Volatile.Read(ref _vulkanResidentDrawTemplateEvictions);
+                    public static long VulkanResidentDrawTemplateStructuralComparisons
+                        => Volatile.Read(ref _vulkanResidentDrawTemplateStructuralComparisons);
+                    public static long VulkanResidentDrawTemplateDependencyRejects
+                        => Volatile.Read(ref _vulkanResidentDrawTemplateDependencyRejects);
+                    public static long VulkanResidentDrawTemplateCapacityFailures
+                        => Volatile.Read(ref _vulkanResidentDrawTemplateCapacityFailures);
                     public static EVulkanCommandBufferDecisionReason VulkanCommandBufferDecisionReasonMask
                         => (EVulkanCommandBufferDecisionReason)_lastFrameVulkanCommandBufferDecisionReasonMask;
                     public static long VulkanCommandBufferDecisionVisibilityGeneration => _lastFrameVulkanCommandBufferDecisionVisibilityGeneration;
@@ -1360,6 +1384,29 @@ namespace XREngine
                                 ref _vulkanPreparedMeshOperationLegacyHoleMaterializations,
                                 legacyHoleMaterializationCount);
                         }
+                    }
+
+                    public static void RecordVulkanResidentDrawTemplate(
+                        bool hit = false,
+                        bool miss = false,
+                        bool created = false,
+                        bool replaced = false,
+                        bool evicted = false,
+                        bool structuralComparison = false,
+                        bool dependencyRejected = false,
+                        bool capacityFailure = false)
+                    {
+                        if (!EnableTracking)
+                            return;
+
+                        if (hit) Interlocked.Increment(ref _vulkanResidentDrawTemplateHits);
+                        if (miss) Interlocked.Increment(ref _vulkanResidentDrawTemplateMisses);
+                        if (created) Interlocked.Increment(ref _vulkanResidentDrawTemplateCreates);
+                        if (replaced) Interlocked.Increment(ref _vulkanResidentDrawTemplateReplacements);
+                        if (evicted) Interlocked.Increment(ref _vulkanResidentDrawTemplateEvictions);
+                        if (structuralComparison) Interlocked.Increment(ref _vulkanResidentDrawTemplateStructuralComparisons);
+                        if (dependencyRejected) Interlocked.Increment(ref _vulkanResidentDrawTemplateDependencyRejects);
+                        if (capacityFailure) Interlocked.Increment(ref _vulkanResidentDrawTemplateCapacityFailures);
                     }
 
                     public static void RecordVulkanCommandBufferCacheOutcome(

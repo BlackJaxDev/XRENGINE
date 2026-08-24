@@ -612,20 +612,36 @@ namespace XREngine.Rendering.Commands
         /// signatures, and resource-plan metadata on the collect-visible side.
         /// </summary>
         public void PrepareBackendReadyFramePackage(in BackendReadyFramePackageIdentity identity)
+            => PrepareBackendReadyFramePackage(identity, null, null, 0, 0);
+
+        public void PrepareBackendReadyFramePackage(
+            in BackendReadyFramePackageIdentity identity,
+            GPUScene? scene,
+            XRCamera? camera,
+            int viewportWidth,
+            int viewportHeight)
         {
             long started = System.Diagnostics.Stopwatch.GetTimestamp();
 
             using (_lock.EnterScope())
             {
                 _updatingBackendReadyIdentity = identity;
-                PrepareBackendReadyFramePackageNoLock();
+                PrepareBackendReadyFramePackageNoLock(
+                    scene,
+                    camera,
+                    viewportWidth,
+                    viewportHeight);
             }
 
             RuntimeEngine.Rendering.Stats.FrameLifecycle.RecordFramePackageProduction(
                 System.Diagnostics.Stopwatch.GetTimestamp() - started);
         }
 
-        private void PrepareBackendReadyFramePackageNoLock()
+        private void PrepareBackendReadyFramePackageNoLock(
+            GPUScene? scene = null,
+            XRCamera? camera = null,
+            int viewportWidth = 0,
+            int viewportHeight = 0)
         {
             IReadOnlyCollection<RenderPassMetadata>? passMetadata =
                 (_ownerPipeline as XRRenderPipelineInstance)?.Pipeline?.PassMetadata;
@@ -635,6 +651,11 @@ namespace XREngine.Rendering.Commands
                 _updatingRevision,
                 _updatingPasses,
                 passMetadata);
+            _updatingBackendReadyPackage.PrepareCanonicalFromScene(
+                scene,
+                camera,
+                viewportWidth,
+                viewportHeight);
         }
 
         /// <summary>

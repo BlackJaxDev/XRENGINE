@@ -1,0 +1,18 @@
+namespace XREngine.Rendering.Commands;
+
+/// <summary>
+/// Resident record table that owns a canonical dirty range.
+/// </summary>
+public enum EBackendReadyCanonicalOwner : byte
+{
+    None,
+    Scene,
+    Draw,
+    Instance,
+    Transform,
+    Deformation,
+    RenderState,
+    Material,
+    Geometry,
+    EditorIdentity,
+}

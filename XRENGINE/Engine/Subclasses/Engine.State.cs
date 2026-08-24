@@ -197,7 +197,8 @@ namespace XREngine
                 RenderWorkerThreadCount = renderWorkers,
                 RenderWorkerThreadCap = renderWorkerCap,
                 ReservedForegroundThreadCount = foregroundReservation,
-                DedicatedBackgroundThreadCount = 0,
+                DedicatedBackgroundThreadCount = GetRetainedBackgroundThreadCount(
+                    out string[] dedicatedBackgroundThreadNames),
                 AllowCpuOversubscription = allowOversubscription,
                 RenderWorkerQos = renderWorkerQos,
                 GeneralWorkerThreadCountSource = generalWorkersSource,
@@ -214,12 +215,52 @@ namespace XREngine
                     "fixed-update",
                     "collect-visible/swap",
                 ],
+                DedicatedBackgroundThreadNames = dedicatedBackgroundThreadNames,
             };
 
             EngineExecutionTopology topology = EngineExecutionTopology.Resolve(request);
             ExecutionTopology = topology;
             Debug.Out(topology.CreateDiagnosticSummary());
             return topology;
+        }
+
+        /// <summary>
+        /// Reserves CPU budget for retained legacy loops which are not owned by
+        /// <see cref="WorkScheduler"/> yet. Several are lazy, but once created
+        /// their process-lifetime capacity is fixed; excluding them would let a
+        /// later Vulkan/OpenXR workload silently oversubscribe the topology.
+        /// </summary>
+        private static int GetRetainedBackgroundThreadCount(out string[] names)
+        {
+            const int defaultVulkanCommandChainWorkers = 4;
+            const int maximumVulkanCommandChainWorkers = 8;
+            int vulkanCommandChainWorkers = defaultVulkanCommandChainWorkers;
+            string? configuredWorkers = Environment.GetEnvironmentVariable(
+                XREngineEnvironmentVariables.VulkanCommandChainWorkerCount);
+            if (!string.IsNullOrWhiteSpace(configuredWorkers) &&
+                int.TryParse(configuredWorkers.Trim(), out int parsedWorkers))
+            {
+                vulkanCommandChainWorkers = Math.Clamp(
+                    parsedWorkers,
+                    0,
+                    maximumVulkanCommandChainWorkers);
+            }
+
+            var retainedNames = new List<string>(vulkanCommandChainWorkers + 8);
+            for (int workerIndex = 0; workerIndex < vulkanCommandChainWorkers; workerIndex++)
+                retainedNames.Add($"vulkan-command-chain-record-{workerIndex}");
+
+            retainedNames.Add("vulkan-pipeline-compile");
+            retainedNames.Add("openxr-frame-pacing");
+            retainedNames.Add("openxr-collect-visible-left");
+            retainedNames.Add("openxr-collect-visible-right");
+            retainedNames.Add("openxr-vulkan-eye-record-left");
+            retainedNames.Add("openxr-vulkan-eye-record-right");
+            retainedNames.Add("job-manager-deferred-enqueue");
+            retainedNames.Add("job-manager-remote-dispatch");
+
+            names = [.. retainedNames];
+            return names.Length;
         }
 
         private static int ReadExecutionIntegerOverride(

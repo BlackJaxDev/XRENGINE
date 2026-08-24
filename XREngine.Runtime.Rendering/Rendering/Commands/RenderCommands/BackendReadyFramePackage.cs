@@ -10,7 +10,7 @@ namespace XREngine.Rendering.Commands;
 /// published only after its command membership and dependency inputs are
 /// complete. The package never owns mutable backend handles.
 /// </summary>
-public sealed class BackendReadyFramePackage
+public sealed partial class BackendReadyFramePackage
 {
     private BackendReadyRenderPass[] _passes = [];
     private BackendReadyMeshSelection[] _meshSelections = [];
@@ -156,6 +156,7 @@ public sealed class BackendReadyFramePackage
         _passMetadata = null;
         _passCount = 0;
         _meshSelectionCount = 0;
+        ResetCanonical();
         State = EBackendReadyFramePackageState.Empty;
     }
 
