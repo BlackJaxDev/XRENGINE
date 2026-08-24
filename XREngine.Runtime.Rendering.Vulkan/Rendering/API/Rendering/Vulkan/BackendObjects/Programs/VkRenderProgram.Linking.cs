@@ -22,14 +22,36 @@ internal unsafe partial class VkRenderProgram
 {
     public bool Link(bool allowAsyncShaderCompile = false)
     {
+        // Linked programs are immutable until an explicit shader/interface
+        // invalidation publishes IsLinked=false. Avoid serializing every draw
+        // and dispatch through the interface-rebuild lock in the steady state.
+        if (IsLinkConfigurationCurrent())
+            return true;
+
         lock (_linkLock)
             return LinkAfterAcquiringInterfaceLock(allowAsyncShaderCompile);
+    }
+
+    private bool IsLinkConfigurationCurrent()
+    {
+        if (!IsLinked)
+            return false;
+
+        bool current =
+            _linkedShaderConfigVersion == RuntimeEngine.Rendering.Settings.ShaderConfigVersion &&
+            _linkedUsesVulkanClipDepthRemap == RuntimeEngine.Rendering.ShouldUseVulkanShaderClipDepthRemap &&
+            _linkedVulkanClipDepthRemapStage == ResolveVulkanClipDepthRemapStage() &&
+            _linkedTransformFeedbackLayoutVersion == Data.TransformFeedbackLayoutVersion;
+
+        // Pair with the volatile publication in IsLinked so an invalidation
+        // racing this read cannot be mistaken for a current interface.
+        return current && IsLinked;
     }
 
     private bool LinkAfterAcquiringInterfaceLock(
         bool allowAsyncShaderCompile)
     {
-        if (Renderer.IsDeviceLost)
+        if (!BackendContext.IsDeviceOperational)
             return false;
 
         int shaderConfigVersion = RuntimeEngine.Rendering.Settings.ShaderConfigVersion;
@@ -47,9 +69,9 @@ internal unsafe partial class VkRenderProgram
         if (IsLinked)
             DestroyLayouts();
 
-        if (!Renderer.IsLogicalDeviceReady)
+        if (!BackendContext.IsLogicalDeviceReady)
         {
-            BackendContext.Pipelines.QueueProgramLinkUntilDeviceReady(this);
+            BackendContext.Resources.PipelineManager.QueueProgramLinkUntilDeviceReady(this);
             return false;
         }
 
@@ -173,6 +195,13 @@ internal unsafe partial class VkRenderProgram
                 Backend: "Vulkan",
                 Detail: DescribeShaderStages()));
 
+            // Publish the configuration before BuildProgramInterface publishes
+            // IsLinked=true. The lock-free Link fast path can then use that
+            // volatile flag as the completed-interface publication barrier.
+            _linkedShaderConfigVersion = shaderConfigVersion;
+            _linkedUsesVulkanClipDepthRemap = usesVulkanClipDepthRemap;
+            _linkedVulkanClipDepthRemapStage = vulkanClipDepthRemapStage;
+            _linkedTransformFeedbackLayoutVersion = Data.TransformFeedbackLayoutVersion;
             BuildProgramInterface();
         }
         catch (Exception ex)
@@ -190,10 +219,6 @@ internal unsafe partial class VkRenderProgram
             return false;
         }
 
-        _linkedShaderConfigVersion = shaderConfigVersion;
-        _linkedUsesVulkanClipDepthRemap = usesVulkanClipDepthRemap;
-        _linkedVulkanClipDepthRemapStage = vulkanClipDepthRemapStage;
-        _linkedTransformFeedbackLayoutVersion = Data.TransformFeedbackLayoutVersion;
         linkWatch.Stop();
         buildWatch.Stop();
         Data.SetShaderBackendStatus(new XRRenderProgram.ShaderProgramBackendStatus(
@@ -219,7 +244,7 @@ internal unsafe partial class VkRenderProgram
 
         if (hasRequestedCaptures)
         {
-            if (!Renderer.SupportsTransformFeedback)
+            if (!BackendContext.SupportsTransformFeedback)
             {
                 failure = "VK_EXT_transform_feedback is not enabled on the active Vulkan device.";
                 return false;
@@ -264,11 +289,11 @@ internal unsafe partial class VkRenderProgram
             if (names.Length == 0)
                 continue;
 
-            if (feedback.BindingLocation >= Renderer.TransformFeedbackProperties.MaxTransformFeedbackBuffers)
+            if (feedback.BindingLocation >= BackendContext.TransformFeedbackProperties.MaxTransformFeedbackBuffers)
             {
                 failure =
                     $"Vulkan transform feedback binding {feedback.BindingLocation} exceeds device limit " +
-                    $"{Renderer.TransformFeedbackProperties.MaxTransformFeedbackBuffers}.";
+                    $"{BackendContext.TransformFeedbackProperties.MaxTransformFeedbackBuffers}.";
                 return false;
             }
 
@@ -519,14 +544,25 @@ internal unsafe partial class VkRenderProgram
     {
         HashCode item = new();
         item.Add(name, StringComparer.Ordinal);
-        item.Add(texture?.GetHashCode() ?? 0);
-        if (texture is not null && Renderer.GetOrCreateAPIRenderObject(texture, generateNow: false) is IVkImageDescriptorSource source)
+        if (texture is not null && WrapperLookup.GetOrCreate(texture, generateNow: false) is IVkImageDescriptorSource source)
         {
             item.Add(source.IsDescriptorReady);
             item.Add(source.DescriptorGeneration);
             item.Add(source.DescriptorImage.Handle);
+            item.Add(BackendContext.GetResourceGeneration(
+                ObjectType.Image,
+                source.DescriptorImage.Handle));
             item.Add(source.DescriptorView.Handle);
+            item.Add(BackendContext.GetResourceGeneration(
+                ObjectType.ImageView,
+                source.DescriptorView.Handle));
             item.Add(source.DescriptorSampler.Handle);
+            item.Add(BackendContext.GetResourceGeneration(
+                ObjectType.Sampler,
+                source.DescriptorSampler.Handle));
+            item.Add(VulkanProgramUtilities.ResolveDescriptorImageLayout(
+                source,
+                DescriptorType.CombinedImageSampler));
             item.Add(source.DescriptorViewType);
             item.Add(source.DescriptorFormat);
             item.Add(source.DescriptorAspect);
@@ -547,7 +583,6 @@ internal unsafe partial class VkRenderProgram
     {
         HashCode item = new();
         item.Add(binding);
-        item.Add(buffer?.GetHashCode() ?? 0);
         if (buffer is null)
         {
             item.Add(0UL);
@@ -560,9 +595,13 @@ internal unsafe partial class VkRenderProgram
         item.Add((int)buffer.Target);
         item.Add(buffer.BindingIndexOverride ?? uint.MaxValue);
 
-        if (Renderer.GetOrCreateAPIRenderObject(buffer, generateNow: false) is VkDataBuffer vkBuffer)
+        if (WrapperLookup.GetOrCreate(buffer, generateNow: false) is VkDataBuffer vkBuffer)
         {
             item.Add(vkBuffer.BufferHandle?.Handle ?? 0UL);
+            item.Add(BackendContext.GetResourceGeneration(
+                ObjectType.Buffer,
+                vkBuffer.BufferHandle?.Handle ?? 0UL));
+            item.Add(0UL);
             item.Add(vkBuffer.AllocatedByteSize);
         }
         else

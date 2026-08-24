@@ -16,10 +16,20 @@ namespace XREngine
         [ThreadStatic]
         private static Job? _currentExecutingJob;
 
+        [ThreadStatic]
+        private static int _currentGeneralWorkerLaneId;
+
         /// <summary>
         /// True when executing on any JobManager worker thread (including remote dispatch worker).
         /// </summary>
         public static bool IsJobWorkerThread => _isJobWorkerThread;
+
+        /// <summary>
+        /// Stable scheduler lane for the current general worker, or <c>-1</c>
+        /// when the current thread is not executing in the general domain.
+        /// </summary>
+        public static int CurrentGeneralWorkerLaneId
+            => _isJobWorkerThread ? _currentGeneralWorkerLaneId : -1;
 
         public static Action<string>? LogMessage { get; set; }
         public static Func<string, IDisposable?>? ProfilerScopeFactory { get; set; }
@@ -42,9 +52,7 @@ namespace XREngine
         // Tuned to catch the ~hundreds-of-ms freezes that precede OS-level memory-pressure kills without spamming on normal slow frames.
         private static readonly long StallRenderThreadJobTicks = (long)(System.Diagnostics.Stopwatch.Frequency * 0.250);
         private static readonly TimeSpan RemoteWorkerIdleTimeout = TimeSpan.FromSeconds(30);
-        private static readonly TimeSpan ShutdownWorkerJoinTimeout = TimeSpan.FromSeconds(2);
         private static readonly TimeSpan ShutdownTaskWaitTimeout = TimeSpan.FromSeconds(2);
-        private const int WorkerWakePollMs = 50;
         private readonly ConcurrentQueue<Job>[] _pendingByPriority =
         [
             new(),
@@ -102,24 +110,45 @@ namespace XREngine
         private readonly int _queueWarningThreshold;
         private readonly int _maxQueueSize;
 
-        private readonly SemaphoreSlim _readySignal = new(0);
         private readonly SemaphoreSlim _remoteReadySignal = new(0);
         private readonly SemaphoreSlim _deferredReadySignal = new(0);
         private readonly ConcurrentQueue<Job> _deferredBySlot = new();
         private readonly CancellationTokenSource _cts = new();
-        private readonly Thread[] _workers;
+        private readonly int _configuredWorkerCount;
+        private Execution.EngineGeneralWorkDomain? _generalDomain;
         private readonly object _remoteWorkerLock = new();
         private Task? _remoteWorkerTask;
 
         private readonly object _deferredWorkerLock = new();
         private Task? _deferredWorkerTask;
+        private readonly ManualResetEventSlim _activeJobsEmpty = new(initialState: true);
+        private readonly ManualResetEventSlim _submissionsEmpty = new(initialState: true);
+        private readonly Queue<Job> _shutdownFinalizationQueue = new();
+        private readonly ManualResetEventSlim _shutdownFinalizationsEmpty = new(initialState: true);
+        private readonly object _shutdownFinalizationLock = new();
+        private Task? _shutdownFinalizerTask;
+        private int _shutdownFinalizationCount;
+        private int _shutdownFinalizationAdmissionClosed;
+        private int _activeSubmissionCount;
+        private readonly object _submissionSync = new();
+        private readonly object _shutdownJoinLock = new();
         private int _shutdownState;
         private int _shutdownSynchronizationDisposed;
 
-        public int WorkerCount => _workers.Length;
+        public int WorkerCount => _generalDomain?.WorkerCount ?? _configuredWorkerCount;
         public IRemoteJobTransport? RemoteTransport { get; set; }
 
         public JobManager(int? workerCount = null, int? maxQueueSize = null, int? queueWarningThreshold = null, int? workerCap = null)
+            : this(workerCount, maxQueueSize, queueWarningThreshold, workerCap, createGeneralWorkers: true)
+        {
+        }
+
+        internal JobManager(
+            int? workerCount,
+            int? maxQueueSize,
+            int? queueWarningThreshold,
+            int? workerCap,
+            bool createGeneralWorkers)
         {
             int cap = workerCap ?? ReadWorkerCapFromEnv() ?? DefaultWorkerCap;
             int reserved = Math.Max(0, DefaultReservedThreads);
@@ -127,7 +156,8 @@ namespace XREngine
             defaultWorkers = Math.Min(defaultWorkers, cap);
 
             int count = workerCount ?? ReadWorkerCountFromEnv() ?? defaultWorkers;
-            count = Math.Clamp(count, 1, cap);
+            count = Math.Clamp(count, createGeneralWorkers ? 1 : 0, cap);
+            _configuredWorkerCount = count;
 
             _maxQueueSize = maxQueueSize ?? ReadQueueLimitFromEnv() ?? DefaultQueueLimit;
             _queueWarningThreshold = queueWarningThreshold ?? ReadQueueWarningThresholdFromEnv() ?? DefaultQueueWarningThreshold;
@@ -139,16 +169,24 @@ namespace XREngine
             if (_maxQueueSize > 0)
                 _queueSlots = new SemaphoreSlim(_maxQueueSize, _maxQueueSize);
 
-            _workers = new Thread[count];
+            if (createGeneralWorkers)
+                AttachGeneralDomain(new Execution.EngineGeneralWorkDomain(this, count));
+        }
 
-            for (int i = 0; i < count; i++)
+        internal void AttachGeneralDomain(Execution.EngineGeneralWorkDomain domain)
+        {
+            ArgumentNullException.ThrowIfNull(domain);
+            if (Interlocked.CompareExchange(ref _generalDomain, domain, null) is not null)
+                throw new InvalidOperationException("The JobManager general execution domain is already installed.");
+
+            try
             {
-                _workers[i] = new Thread(WorkerLoop)
-                {
-                    IsBackground = true,
-                    Name = $"XRJobWorker-{i}"
-                };
-                _workers[i].Start();
+                domain.Start();
+            }
+            catch
+            {
+                Shutdown(waitForWorkers: true);
+                throw;
             }
         }
 
@@ -222,62 +260,127 @@ namespace XREngine
         {
             ArgumentNullException.ThrowIfNull(job);
 
-            if (!job.TryStart())
+            if (!TryEnterSubmission())
+                return RejectAfterShutdown(job, priority, affinity, renderThreadKind);
+
+            try
+            {
+                if (!job.TryStart())
+                    throw new InvalidOperationException("Job has already been scheduled or completed.");
+
+                ConfigureStartedJob(job, priority, affinity, renderThreadKind, cancellationToken);
+
+                if (Volatile.Read(ref _shutdownState) != 0)
+                {
+                    CancelQueuedJobForShutdown(job);
+                    return job.Handle;
+                }
+
+                if (_queueSlots is null)
+                {
+                    Enqueue(job, countAgainstSlots: false);
+                    return job.Handle;
+                }
+
+                bool acquired = false;
+                try
+                {
+                    acquired = _queueSlots.Wait(0);
+                }
+                catch (ObjectDisposedException)
+                {
+                    acquired = false;
+                }
+
+                if (acquired)
+                {
+                    job.UsesQueueSlot = true;
+                    Enqueue(job, countAgainstSlots: false);
+                    return job.Handle;
+                }
+
+                DeferEnqueue(job);
+                return job.Handle;
+            }
+            finally
+            {
+                ExitSubmission();
+            }
+        }
+
+        private bool TryEnterSubmission()
+        {
+            lock (_submissionSync)
+            {
+                if (Volatile.Read(ref _shutdownState) != 0)
+                    return false;
+
+                if (_activeSubmissionCount++ == 0)
+                    _submissionsEmpty.Reset();
+                return true;
+            }
+        }
+
+        private void ExitSubmission()
+        {
+            lock (_submissionSync)
+            {
+                if (--_activeSubmissionCount == 0)
+                    _submissionsEmpty.Set();
+            }
+        }
+
+        private JobHandle RejectAfterShutdown(
+            Job job,
+            JobPriority priority,
+            JobAffinity affinity,
+            RenderThreadJobKind renderThreadKind)
+        {
+            if (!job.TryStartForShutdownRejection())
                 throw new InvalidOperationException("Job has already been scheduled or completed.");
 
+            ConfigureStartedJob(job, priority, affinity, renderThreadKind, CancellationToken.None);
+            CancelQueuedJobForShutdown(job);
+            return job.Handle;
+        }
+
+        private static void ConfigureStartedJob(
+            Job job,
+            JobPriority priority,
+            JobAffinity affinity,
+            RenderThreadJobKind renderThreadKind,
+            CancellationToken cancellationToken)
+        {
             job.Priority = priority;
             job.Affinity = affinity;
             job.RenderThreadKind = affinity == JobAffinity.RenderThread
                 ? renderThreadKind
                 : RenderThreadJobKind.Unknown;
             job.LinkCancellationToken(cancellationToken);
-
-            var completionSource = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-            job.AttachCompletionSource(completionSource);
-
-            if (Volatile.Read(ref _shutdownState) != 0)
-            {
-                CancelQueuedJobForShutdown(job);
-                return job.Handle;
-            }
-
-            if (_queueSlots is null)
-            {
-                Enqueue(job, countAgainstSlots: false);
-                return job.Handle;
-            }
-
-            bool acquired = false;
-            try
-            {
-                acquired = _queueSlots.Wait(0);
-            }
-            catch (ObjectDisposedException)
-            {
-                acquired = false;
-            }
-
-            if (acquired)
-            {
-                job.UsesQueueSlot = true;
-                Enqueue(job, countAgainstSlots: false);
-                return job.Handle;
-            }
-
-            DeferEnqueue(job);
-            return job.Handle;
+            job.AttachCompletionSource(
+                new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously));
         }
 
         private void DeferEnqueue(Job job)
         {
-            if (Volatile.Read(ref _shutdownState) != 0)
+            bool rejected = false;
+            lock (_submissionSync)
+            {
+                if (Volatile.Read(ref _shutdownState) != 0)
+                    rejected = true;
+                else
+                {
+                    _deferredBySlot.Enqueue(job);
+                    EnsureDeferredWorker();
+                }
+            }
+
+            if (rejected)
             {
                 CancelQueuedJobForShutdown(job);
                 return;
             }
 
-            _deferredBySlot.Enqueue(job);
-            EnsureDeferredWorker();
             try
             {
                 _deferredReadySignal.Release();
@@ -313,14 +416,21 @@ namespace XREngine
                     while (_deferredBySlot.TryDequeue(out var job))
                     {
                         if (_cts.IsCancellationRequested)
+                        {
+                            CancelQueuedJobForShutdown(job);
                             return;
+                        }
 
-                        AcquireQueueSlot(_cts.Token);
+                        bool acquired = AcquireQueueSlot(_cts.Token);
+                        if (acquired)
+                            job.UsesQueueSlot = _queueSlots is not null;
 
-                        if (_cts.IsCancellationRequested)
+                        if (!acquired || _cts.IsCancellationRequested)
+                        {
+                            CancelQueuedJobForShutdown(job);
                             return;
+                        }
 
-                        job.UsesQueueSlot = _queueSlots != null;
                         Enqueue(job, countAgainstSlots: false);
                     }
                 }
@@ -441,64 +551,103 @@ namespace XREngine
 
         private void Enqueue(Job job, bool countAgainstSlots)
         {
-            if (Volatile.Read(ref _shutdownState) != 0)
+            if (countAgainstSlots)
+            {
+                bool acquired = AcquireQueueSlot(job.CancellationToken);
+                if (!acquired)
+                {
+                    CancelQueuedJobForShutdown(job);
+                    return;
+                }
+
+                job.UsesQueueSlot = _queueSlots is not null;
+            }
+
+            bool notifyGeneral = false;
+            bool notifyRemote = false;
+            bool rejected = false;
+            lock (_submissionSync)
+            {
+                if (Volatile.Read(ref _shutdownState) != 0)
+                    rejected = true;
+                else
+                {
+                    int bucket = Math.Clamp((int)job.Priority, 0, PriorityLevels - 1);
+                    job.MarkQueued(System.Diagnostics.Stopwatch.GetTimestamp());
+                    IncrementCounts(job.Affinity, bucket);
+
+                    switch (job.Affinity)
+                    {
+                        case JobAffinity.RenderThread:
+                            _pendingMainThreadByPriority[bucket].Enqueue(job);
+                            break;
+                        case JobAffinity.AppThread:
+                            _pendingAppThreadByPriority[bucket].Enqueue(job);
+                            break;
+                        case JobAffinity.CollectVisibleSwap:
+                            _pendingCollectVisibleSwapByPriority[bucket].Enqueue(job);
+                            break;
+                        case JobAffinity.Remote:
+                            EnsureRemoteWorker();
+                            _pendingRemoteByPriority[bucket].Enqueue(job);
+                            notifyRemote = true;
+                            break;
+                        default:
+                            _pendingByPriority[bucket].Enqueue(job);
+                            notifyGeneral = true;
+                            break;
+                    }
+                }
+            }
+
+            if (rejected)
             {
                 CancelQueuedJobForShutdown(job);
                 return;
             }
 
-            int bucket = Math.Clamp((int)job.Priority, 0, PriorityLevels - 1);
+            if (notifyGeneral)
+                _generalDomain?.NotifyWorkAvailable();
+            if (!notifyRemote)
+                return;
 
-            if (countAgainstSlots)
+            try
             {
-                AcquireQueueSlot(job.CancellationToken);
-                if (_queueSlots != null)
-                    job.UsesQueueSlot = true;
+                _remoteReadySignal.Release();
             }
-
-            job.MarkQueued(System.Diagnostics.Stopwatch.GetTimestamp());
-            IncrementCounts(job.Affinity, bucket);
-
-            switch (job.Affinity)
+            catch (ObjectDisposedException)
             {
-                case JobAffinity.RenderThread:
-                    _pendingMainThreadByPriority[bucket].Enqueue(job);
-                    break;
-                case JobAffinity.AppThread:
-                    _pendingAppThreadByPriority[bucket].Enqueue(job);
-                    break;
-                case JobAffinity.CollectVisibleSwap:
-                    _pendingCollectVisibleSwapByPriority[bucket].Enqueue(job);
-                    break;
-                case JobAffinity.Remote:
-                    EnsureRemoteWorker();
-                    _pendingRemoteByPriority[bucket].Enqueue(job);
-                    _remoteReadySignal.Release();
-                    break;
-                default:
-                    _pendingByPriority[bucket].Enqueue(job);
-                    _readySignal.Release();
-                    break;
             }
         }
 
-        private void AcquireQueueSlot(CancellationToken cancellationToken)
+        private bool AcquireQueueSlot(CancellationToken cancellationToken)
         {
             if (_queueSlots is null)
-                return;
+                return true;
 
             long lastLogTick = System.Diagnostics.Stopwatch.GetTimestamp();
 
             while (true)
             {
                 if (_cts.IsCancellationRequested)
-                    return;
+                    return false;
 
                 if (cancellationToken.IsCancellationRequested)
-                    return;
+                    return false;
 
-                if (_queueSlots.Wait(QueueAcquireWaitMs, cancellationToken))
-                    return;
+                try
+                {
+                    if (_queueSlots.Wait(QueueAcquireWaitMs, cancellationToken))
+                        return true;
+                }
+                catch (OperationCanceledException)
+                {
+                    return false;
+                }
+                catch (ObjectDisposedException)
+                {
+                    return false;
+                }
 
                 long now = System.Diagnostics.Stopwatch.GetTimestamp();
                 if (TicksToTimeSpan(now - lastLogTick) >= BackpressureLogInterval)
@@ -673,65 +822,47 @@ namespace XREngine
 
         public bool Process()
         {
-            return TryDispatchOnce();
-        }
-
-        private void WorkerLoop()
-        {
-            _isJobWorkerThread = true;
-
-            var token = _cts.Token;
-            while (!token.IsCancellationRequested)
-            {
-                if (!_readySignal.Wait(WorkerWakePollMs))
-                    continue;
-
-                if (token.IsCancellationRequested)
-                    break;
-
-                if (!TryDequeueWithAging(_pendingByPriority, JobAffinity.Any, out var job, out var bucket))
-                    continue;
-
-                RecordWait(job, bucket);
-                ExecuteJob(job);
-            }
+            return TryDispatchGeneralWork();
         }
 
         private void RemoteWorkerLoop()
         {
-            _isJobWorkerThread = true;
-            var token = _cts.Token;
-            while (!token.IsCancellationRequested)
+            WorkerLaneState previousLane = EnterGeneralWorkerLane(laneId: -1);
+            try
             {
-                bool signaled;
-                try
+                var token = _cts.Token;
+                while (!token.IsCancellationRequested)
                 {
-                    signaled = _remoteReadySignal.Wait(RemoteWorkerIdleTimeout, token);
-                }
-                catch (OperationCanceledException)
-                {
-                    break;
-                }
-
-                if (!signaled)
-                {
-                    if (IsRemoteQueueEmpty())
+                    bool signaled;
+                    try
                     {
-                        ClearRemoteWorkerTask();
-                        return;
+                        signaled = _remoteReadySignal.Wait(RemoteWorkerIdleTimeout, token);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        break;
                     }
 
-                    continue;
+                    if (!signaled)
+                    {
+                        if (IsRemoteQueueEmpty())
+                            return;
+
+                        continue;
+                    }
+
+                    if (!TryDequeueWithAging(_pendingRemoteByPriority, JobAffinity.Remote, out var job, out var bucket))
+                        continue;
+
+                    RecordWait(job, bucket);
+                    ExecuteJob(job);
                 }
-
-                if (!TryDequeueWithAging(_pendingRemoteByPriority, JobAffinity.Remote, out var job, out var bucket))
-                    continue;
-
-                RecordWait(job, bucket);
-                ExecuteJob(job);
             }
-
-            ClearRemoteWorkerTask();
+            finally
+            {
+                ClearRemoteWorkerTask();
+                RestoreWorkerLane(previousLane);
+            }
         }
 
         private bool IsRemoteQueueEmpty()
@@ -747,7 +878,8 @@ namespace XREngine
         {
             lock (_remoteWorkerLock)
             {
-                _remoteWorkerTask = null;
+                if (Volatile.Read(ref _shutdownState) == 0)
+                    _remoteWorkerTask = null;
             }
         }
 
@@ -812,10 +944,29 @@ namespace XREngine
 
         private void ExecuteJob(Job job)
         {
-            lock (_activeLock)
+            bool admitted = false;
+            lock (_submissionSync)
             {
-                if (!_active.Contains(job))
-                    _active.Add(job);
+                if (Volatile.Read(ref _shutdownState) == 0)
+                {
+                    lock (_activeLock)
+                    {
+                        if (!_active.Contains(job))
+                        {
+                            if (_active.Count == 0)
+                                _activeJobsEmpty.Reset();
+                            _active.Add(job);
+                        }
+                    }
+
+                    admitted = true;
+                }
+            }
+
+            if (!admitted)
+            {
+                CancelQueuedJobForShutdown(job);
+                return;
             }
 
             const int MaxStepsPerDispatch = 64;
@@ -835,14 +986,14 @@ namespace XREngine
                     catch (Exception ex)
                     {
                         job.Fail(ex);
-                        RemoveActive(job);
+                        ReleaseAfterTerminalNotification(job);
                         return;
                     }
 
                     switch (result)
                     {
                         case JobStepResult.Completed:
-                            RemoveActive(job);
+                            ReleaseAfterTerminalNotification(job);
                             return;
                         case JobStepResult.Waiting:
                             if (job.PendingTask is { IsCompleted: false } pending)
@@ -875,12 +1026,45 @@ namespace XREngine
 
         private void RemoveActive(Job job)
         {
+            bool removed;
             lock (_activeLock)
             {
-                _active.Remove(job);
+                removed = _active.Remove(job);
+                if (removed && _active.Count == 0 &&
+                    Volatile.Read(ref _shutdownSynchronizationDisposed) == 0)
+                {
+                    try
+                    {
+                        _activeJobsEmpty.Set();
+                    }
+                    catch (ObjectDisposedException)
+                    {
+                    }
+                }
             }
 
             ReleaseQueueSlot(job);
+        }
+
+        private void ReleaseAfterTerminalNotification(Job job)
+        {
+            Task notification = job.TerminalNotificationTask;
+            if (notification.IsCompleted)
+            {
+                ObserveShutdownOperation(notification);
+                RemoveActive(job);
+                return;
+            }
+
+            _ = notification.ContinueWith(
+                completed =>
+                {
+                    ObserveShutdownOperation(completed);
+                    RemoveActive(job);
+                },
+                CancellationToken.None,
+                TaskContinuationOptions.ExecuteSynchronously,
+                TaskScheduler.Default);
         }
 
         private void Requeue(Job job)
@@ -894,7 +1078,7 @@ namespace XREngine
             Enqueue(job, countAgainstSlots: false);
         }
 
-        private bool TryDispatchOnce()
+        internal bool TryDispatchGeneralWork()
         {
             if (!TryDequeueWithAging(_pendingByPriority, JobAffinity.Any, out var job, out var bucket))
                 return false;
@@ -902,6 +1086,22 @@ namespace XREngine
             RecordWait(job, bucket);
             ExecuteJob(job);
             return true;
+        }
+
+        internal readonly record struct WorkerLaneState(bool IsWorkerThread, int LaneId);
+
+        internal static WorkerLaneState EnterGeneralWorkerLane(int laneId)
+        {
+            var previous = new WorkerLaneState(_isJobWorkerThread, _currentGeneralWorkerLaneId);
+            _currentGeneralWorkerLaneId = laneId;
+            _isJobWorkerThread = true;
+            return previous;
+        }
+
+        internal static void RestoreWorkerLane(in WorkerLaneState previous)
+        {
+            _isJobWorkerThread = previous.IsWorkerThread;
+            _currentGeneralWorkerLaneId = previous.LaneId;
         }
 
         private int SnapshotQueuedMainThreadJobs()
@@ -1037,11 +1237,23 @@ namespace XREngine
             return int.TryParse(value, out int parsed) && parsed > 0 ? parsed : null;
         }
 
-        private sealed class RemoteDispatchJob(RemoteJobRequest request, IRemoteJobTransport transport, TaskCompletionSource<RemoteJobResponse> result) : Job
+        private sealed class RemoteDispatchJob : Job
         {
-            private readonly RemoteJobRequest _request = request;
-            private readonly IRemoteJobTransport _transport = transport;
-            private readonly TaskCompletionSource<RemoteJobResponse> _result = result;
+            private readonly RemoteJobRequest _request;
+            private readonly IRemoteJobTransport _transport;
+            private readonly TaskCompletionSource<RemoteJobResponse> _result;
+
+            internal RemoteDispatchJob(
+                RemoteJobRequest request,
+                IRemoteJobTransport transport,
+                TaskCompletionSource<RemoteJobResponse> result)
+            {
+                _request = request;
+                _transport = transport;
+                _result = result;
+                CallbackContext = null;
+                Canceled += OnCanceled;
+            }
 
             public override IEnumerable Process()
             {
@@ -1067,115 +1279,148 @@ namespace XREngine
                     }
                 });
             }
+
+            private void OnCanceled(Job job)
+                => _result.TrySetCanceled();
+
+            internal void CancelResultForShutdown()
+                => _result.TrySetCanceled();
         }
 
-        public void Shutdown(bool waitForWorkers = true)
+        public bool Shutdown(bool waitForWorkers = true)
+            => Shutdown(waitForWorkers, ShutdownTaskWaitTimeout);
+
+        internal bool Shutdown(bool waitForWorkers, TimeSpan timeout)
         {
-            if (Interlocked.Exchange(ref _shutdownState, 1) != 0)
-                return;
+            long deadline = CreateShutdownDeadline(timeout);
+            bool firstRequest;
+            lock (_submissionSync)
+                firstRequest = Interlocked.Exchange(ref _shutdownState, 1) == 0;
+            if (!firstRequest && !waitForWorkers)
+                return false;
 
-            Log($"JobManager shutdown requested. waitForWorkers={waitForWorkers}. {CreateShutdownSummary()}");
-            CancelOutstandingJobsForShutdown();
+            if (firstRequest)
+            {
+                Log($"JobManager shutdown requested. waitForWorkers={waitForWorkers}. {CreateShutdownSummary()}");
+                CancelOutstandingJobsForShutdown();
 
-            try
-            {
-                _cts.Cancel();
-            }
-            catch (ObjectDisposedException)
-            {
-            }
+                try
+                {
+                    _cts.Cancel();
+                }
+                catch (ObjectDisposedException)
+                {
+                }
 
-            try
-            {
-                _readySignal.Release(_workers.Length);
-            }
-            catch (OperationCanceledException)
-            {
-            }
-            catch (ObjectDisposedException)
-            {
-            }
+                _generalDomain?.Shutdown(waitForWorkers: false);
 
-            try
-            {
-                _remoteReadySignal.Release();
-            }
-            catch (OperationCanceledException)
-            {
-            }
-            catch (ObjectDisposedException)
-            {
-            }
+                try
+                {
+                    _remoteReadySignal.Release();
+                }
+                catch (OperationCanceledException)
+                {
+                }
+                catch (ObjectDisposedException)
+                {
+                }
 
-            try
-            {
-                _deferredReadySignal.Release();
-            }
-            catch (OperationCanceledException)
-            {
-            }
-            catch (ObjectDisposedException)
-            {
+                try
+                {
+                    _deferredReadySignal.Release();
+                }
+                catch (OperationCanceledException)
+                {
+                }
+                catch (ObjectDisposedException)
+                {
+                }
             }
 
             if (!waitForWorkers)
             {
                 Log($"JobManager fast shutdown signaled workers and is returning without joins. {CreateShutdownSummary()}");
-                return;
+                return false;
             }
 
-            List<string> timedOutWorkers = [];
-            foreach (var worker in _workers)
+            if (!Monitor.TryEnter(_shutdownJoinLock, GetShutdownRemaining(deadline)))
+                return false;
+
+            try
             {
-                if (!worker.IsAlive)
-                    continue;
+                if (Volatile.Read(ref _shutdownSynchronizationDisposed) != 0)
+                    return true;
 
-                if (!worker.Join(ShutdownWorkerJoinTimeout))
-                    timedOutWorkers.Add(worker.Name ?? $"Worker-{Array.IndexOf(_workers, worker)}");
-            }
+                bool generalWorkersStopped = _generalDomain?.Shutdown(
+                    waitForWorkers: true,
+                    GetShutdownRemaining(deadline)) ?? true;
+                bool remoteWorkerStopped = true;
+                if (_remoteWorkerTask is { IsCompleted: false } task)
+                    remoteWorkerStopped = WaitForTaskShutdown(task, GetShutdownRemaining(deadline));
 
-            bool remoteWorkerStopped = true;
-            if (_remoteWorkerTask is { IsCompleted: false } task)
-            {
-                remoteWorkerStopped = WaitForTaskShutdown(task, ShutdownTaskWaitTimeout);
-            }
+                bool deferredWorkerStopped = true;
+                if (_deferredWorkerTask is { IsCompleted: false } deferred)
+                    deferredWorkerStopped = WaitForTaskShutdown(deferred, GetShutdownRemaining(deadline));
 
-            bool deferredWorkerStopped = true;
-            if (_deferredWorkerTask is { IsCompleted: false } deferred)
-            {
-                deferredWorkerStopped = WaitForTaskShutdown(deferred, ShutdownTaskWaitTimeout);
-            }
+                bool submissionsStopped = WaitForSubmissions(GetShutdownRemaining(deadline));
+                bool activeJobsStopped = WaitForActiveJobs(GetShutdownRemaining(deadline));
 
-            bool cleanShutdown = timedOutWorkers.Count == 0 && remoteWorkerStopped && deferredWorkerStopped;
-            if (!cleanShutdown)
-            {
-                if (timedOutWorkers.Count > 0)
-                    Log($"JobManager shutdown timed out waiting for worker threads: {string.Join(", ", timedOutWorkers)}.");
-
-                if (!remoteWorkerStopped)
-                    Log("JobManager shutdown timed out waiting for the remote dispatch worker task.");
-
-                if (!deferredWorkerStopped)
-                    Log("JobManager shutdown timed out waiting for the deferred enqueue worker task.");
-
-                List<string> activeJobs = SnapshotActiveJobDescriptions();
-                if (activeJobs.Count > 0)
+                bool executionStopped = generalWorkersStopped && remoteWorkerStopped &&
+                    deferredWorkerStopped && submissionsStopped && activeJobsStopped;
+                if (!executionStopped)
                 {
-                    Log("Active jobs still running during shutdown:");
-                    foreach (string activeJob in activeJobs)
-                        Log($"  {activeJob}");
+                    if (!generalWorkersStopped)
+                        Log("JobManager shutdown timed out waiting for the shared general worker domain.");
+
+                    if (!remoteWorkerStopped)
+                        Log("JobManager shutdown timed out waiting for the remote dispatch worker task.");
+
+                    if (!deferredWorkerStopped)
+                        Log("JobManager shutdown timed out waiting for the deferred enqueue worker task.");
+
+                    if (!submissionsStopped)
+                        Log("JobManager shutdown timed out waiting for an admitted Schedule call.");
+
+                    if (!activeJobsStopped)
+                        Log("JobManager shutdown timed out waiting for active jobs or pending async continuations.");
+
+                    List<string> activeJobs = SnapshotActiveJobDescriptions();
+                    if (activeJobs.Count > 0)
+                    {
+                        Log("Active jobs still running during shutdown:");
+                        foreach (string activeJob in activeJobs)
+                            Log($"  {activeJob}");
+                    }
+
+                    Log($"JobManager shutdown proceeding without blocking indefinitely. {CreateShutdownSummary()}");
+                    return false;
                 }
 
-                Log($"JobManager shutdown proceeding without blocking indefinitely. {CreateShutdownSummary()}");
-                return;
-            }
+                // Workers are terminal and admission is closed, so a final drain
+                // releases any queue entry that raced the first cancellation pass.
+                CancelOutstandingJobsForShutdown();
+                if (!WaitForShutdownFinalizations(GetShutdownRemaining(deadline)))
+                {
+                    Log("JobManager shutdown timed out waiting for queued-job cancellation notifications.");
+                    return false;
+                }
 
-            Interlocked.Exchange(ref _shutdownSynchronizationDisposed, 1);
-            _readySignal.Dispose();
-            _remoteReadySignal.Dispose();
-            _deferredReadySignal.Dispose();
-            _cts.Dispose();
-            _queueSlots?.Dispose();
+                if (Interlocked.Exchange(ref _shutdownSynchronizationDisposed, 1) != 0)
+                    return true;
+
+                _remoteReadySignal.Dispose();
+                _deferredReadySignal.Dispose();
+                _activeJobsEmpty.Dispose();
+                _submissionsEmpty.Dispose();
+                _shutdownFinalizationsEmpty.Dispose();
+                _cts.Dispose();
+                _queueSlots?.Dispose();
+                return true;
+            }
+            finally
+            {
+                Monitor.Exit(_shutdownJoinLock);
+            }
         }
 
         private void CancelOutstandingJobsForShutdown()
@@ -1190,56 +1435,221 @@ namespace XREngine
                 if (ReferenceEquals(job, currentJob))
                     continue;
 
-                job.Cancel();
+                Task cancellation = job.RequestCancellationForShutdown();
+                if (job.TryClaimShutdownCancellationTracking())
+                    TrackShutdownOperation(cancellation);
             }
 
-            CancelQueuedJobsForShutdown(_pendingByPriority);
-            CancelQueuedJobsForShutdown(_pendingMainThreadByPriority);
-            CancelQueuedJobsForShutdown(_pendingAppThreadByPriority);
-            CancelQueuedJobsForShutdown(_pendingCollectVisibleSwapByPriority);
-            CancelQueuedJobsForShutdown(_pendingRemoteByPriority);
+            CancelQueuedJobsForShutdown(_pendingByPriority, JobAffinity.Any);
+            CancelQueuedJobsForShutdown(_pendingMainThreadByPriority, JobAffinity.RenderThread);
+            CancelQueuedJobsForShutdown(_pendingAppThreadByPriority, JobAffinity.AppThread);
+            CancelQueuedJobsForShutdown(_pendingCollectVisibleSwapByPriority, JobAffinity.CollectVisibleSwap);
+            CancelQueuedJobsForShutdown(_pendingRemoteByPriority, JobAffinity.Remote);
 
-            foreach (Job job in _deferredBySlot)
+            while (_deferredBySlot.TryDequeue(out Job? job))
                 CancelQueuedJobForShutdown(job);
         }
 
-        private void CancelQueuedJobsForShutdown(ConcurrentQueue<Job>[] queues)
+        private void CancelQueuedJobsForShutdown(ConcurrentQueue<Job>[] queues, JobAffinity affinity)
         {
-            foreach (ConcurrentQueue<Job> queue in queues)
-                foreach (Job job in queue)
+            for (int bucket = 0; bucket < queues.Length; bucket++)
+            {
+                while (queues[bucket].TryDequeue(out Job? job))
+                {
+                    DecrementCounts(affinity, bucket);
                     CancelQueuedJobForShutdown(job);
+                }
+            }
         }
 
         private void CancelQueuedJobForShutdown(Job job)
         {
-            job.Cancel();
+            bool tracked;
+            lock (_shutdownFinalizationLock)
+            {
+                tracked = Volatile.Read(ref _shutdownFinalizationAdmissionClosed) == 0 &&
+                    Volatile.Read(ref _shutdownSynchronizationDisposed) == 0;
+                if (tracked)
+                {
+                    if (_shutdownFinalizerTask is null || _shutdownFinalizerTask.IsCompleted)
+                    {
+                        try
+                        {
+                            _shutdownFinalizerTask = Task.Factory.StartNew(
+                                ShutdownFinalizationLoop,
+                                CancellationToken.None,
+                                TaskCreationOptions.LongRunning,
+                                TaskScheduler.Default);
+                        }
+                        catch (Exception dispatchException)
+                        {
+                            Environment.FailFast(
+                                "Unable to start the owned shutdown-cancellation finalizer before publishing queued work.",
+                                dispatchException);
+                        }
+                    }
 
+                    if (_shutdownFinalizationCount++ == 0)
+                        _shutdownFinalizationsEmpty.Reset();
+
+                    _shutdownFinalizationQueue.Enqueue(job);
+                }
+            }
+
+            if (!tracked)
+            {
+                try
+                {
+                    _ = Task.Run(() => BeginQueuedJobFinalization(job, tracked: false));
+                }
+                catch (Exception exception)
+                {
+                    Environment.FailFast(
+                        "Unable to dispatch terminal cancellation for a job rejected after scheduler shutdown.",
+                        exception);
+                }
+            }
+        }
+
+        private void ShutdownFinalizationLoop()
+        {
+            while (true)
+            {
+                Job? job;
+                lock (_shutdownFinalizationLock)
+                {
+                    if (_shutdownFinalizationQueue.Count == 0)
+                    {
+                        _shutdownFinalizerTask = null;
+                        return;
+                    }
+
+                    job = _shutdownFinalizationQueue.Dequeue();
+                }
+
+                BeginQueuedJobFinalization(job, tracked: true);
+            }
+        }
+
+        private void BeginQueuedJobFinalization(Job job, bool tracked)
+        {
+            Task finalization;
             try
             {
-                _ = job.Step();
+                finalization = job.CompleteCancellationForShutdownAsync();
             }
-            catch (Exception ex)
+            catch (Exception exception)
             {
-                job.Fail(ex);
+                finalization = Task.FromException(exception);
             }
 
-            ReleaseQueueSlot(job);
+            if (finalization.IsCompleted)
+            {
+                CompleteQueuedJobFinalization(finalization, job, tracked);
+                return;
+            }
+
+            _ = finalization.ContinueWith(
+                completed => CompleteQueuedJobFinalization(completed, job, tracked),
+                CancellationToken.None,
+                TaskContinuationOptions.ExecuteSynchronously,
+                TaskScheduler.Default);
+        }
+
+        private void CompleteQueuedJobFinalization(Task finalization, Job job, bool tracked)
+        {
+            try
+            {
+                ObserveShutdownOperation(finalization);
+                if (job is RemoteDispatchJob remote)
+                    remote.CancelResultForShutdown();
+            }
+            finally
+            {
+                RemoveActive(job);
+                if (tracked)
+                    CompleteTrackedShutdownOperation();
+            }
         }
 
         private void CancelActiveJobForShutdown(Job job)
         {
-            job.Cancel();
+            if (!job.TryClaimShutdownManagerFinalization())
+                return;
 
+            Task finalization = job.CompleteCancellationForShutdownAsync();
+            if (finalization.IsCompleted)
+            {
+                CompleteActiveJobFinalization(finalization, job);
+                return;
+            }
+
+            _ = finalization.ContinueWith(
+                completed => CompleteActiveJobFinalization(completed, job),
+                CancellationToken.None,
+                TaskContinuationOptions.ExecuteSynchronously,
+                TaskScheduler.Default);
+        }
+
+        private void CompleteActiveJobFinalization(Task finalization, Job job)
+        {
             try
             {
-                _ = job.Step();
+                ObserveShutdownOperation(finalization);
+                if (job is RemoteDispatchJob remote)
+                    remote.CancelResultForShutdown();
             }
-            catch (Exception ex)
+            finally
             {
-                job.Fail(ex);
+                RemoveActive(job);
+            }
+        }
+
+        private void TrackShutdownOperation(Task operation)
+        {
+            lock (_shutdownFinalizationLock)
+            {
+                if (Volatile.Read(ref _shutdownFinalizationAdmissionClosed) != 0 ||
+                    Volatile.Read(ref _shutdownSynchronizationDisposed) != 0)
+                    return;
+
+                if (_shutdownFinalizationCount++ == 0)
+                    _shutdownFinalizationsEmpty.Reset();
             }
 
-            RemoveActive(job);
+            if (operation.IsCompleted)
+            {
+                ObserveShutdownOperation(operation);
+                CompleteTrackedShutdownOperation();
+                return;
+            }
+
+            _ = operation.ContinueWith(
+                completed =>
+                {
+                    ObserveShutdownOperation(completed);
+                    CompleteTrackedShutdownOperation();
+                },
+                CancellationToken.None,
+                TaskContinuationOptions.ExecuteSynchronously,
+                TaskScheduler.Default);
+        }
+
+        private void CompleteTrackedShutdownOperation()
+        {
+            lock (_shutdownFinalizationLock)
+            {
+                if (--_shutdownFinalizationCount == 0)
+                    _shutdownFinalizationsEmpty.Set();
+            }
+        }
+
+        private static void ObserveShutdownOperation(Task operation)
+        {
+            if (!operation.IsFaulted)
+                return;
+
+            _ = operation.Exception;
         }
 
         private void ReleaseQueueSlot(Job job)
@@ -1266,6 +1676,9 @@ namespace XREngine
 
         private static bool WaitForTaskShutdown(Task task, TimeSpan timeout)
         {
+            if (timeout <= TimeSpan.Zero)
+                return task.IsCompleted;
+
             try
             {
                 return task.Wait(timeout);
@@ -1274,6 +1687,76 @@ namespace XREngine
             {
                 return task.IsCompleted;
             }
+        }
+
+        private bool WaitForActiveJobs(TimeSpan timeout)
+        {
+            if (timeout <= TimeSpan.Zero)
+                return _activeJobsEmpty.IsSet;
+
+            try
+            {
+                return _activeJobsEmpty.Wait(timeout);
+            }
+            catch (ObjectDisposedException)
+            {
+                return true;
+            }
+        }
+
+        private bool WaitForSubmissions(TimeSpan timeout)
+        {
+            if (timeout <= TimeSpan.Zero)
+                return _submissionsEmpty.IsSet;
+
+            try
+            {
+                return _submissionsEmpty.Wait(timeout);
+            }
+            catch (ObjectDisposedException)
+            {
+                return true;
+            }
+        }
+
+        private bool WaitForShutdownFinalizations(TimeSpan timeout)
+        {
+            long deadline = CreateShutdownDeadline(timeout);
+            while (true)
+            {
+                if (!_shutdownFinalizationsEmpty.Wait(GetShutdownRemaining(deadline)))
+                    return false;
+
+                lock (_shutdownFinalizationLock)
+                {
+                    if (_shutdownFinalizationCount != 0)
+                        continue;
+
+                    Volatile.Write(ref _shutdownFinalizationAdmissionClosed, 1);
+                    return true;
+                }
+            }
+        }
+
+        private static long CreateShutdownDeadline(TimeSpan timeout)
+        {
+            if (timeout <= TimeSpan.Zero)
+                return Stopwatch.GetTimestamp();
+
+            double timeoutTicks = timeout.TotalSeconds * Stopwatch.Frequency;
+            long boundedTicks = timeoutTicks >= long.MaxValue
+                ? long.MaxValue
+                : Math.Max(1L, (long)timeoutTicks);
+            long now = Stopwatch.GetTimestamp();
+            return boundedTicks >= long.MaxValue - now ? long.MaxValue : now + boundedTicks;
+        }
+
+        private static TimeSpan GetShutdownRemaining(long deadline)
+        {
+            long ticks = deadline - Stopwatch.GetTimestamp();
+            return ticks <= 0
+                ? TimeSpan.Zero
+                : TimeSpan.FromSeconds(ticks / (double)Stopwatch.Frequency);
         }
 
         private string CreateShutdownSummary()
@@ -1297,7 +1780,8 @@ namespace XREngine
                 remoteQueued += Math.Max(0, Volatile.Read(ref _pendingRemoteCounts[i]));
             }
 
-            return $"active={activeJobs}, queued(any={anyQueued}, render={renderQueued}, app={appQueued}, collect={collectQueued}, remote={remoteQueued}, deferred={_deferredBySlot.Count})";
+            return $"active={activeJobs}, submissions={Volatile.Read(ref _activeSubmissionCount)}, " +
+                $"queued(any={anyQueued}, render={renderQueued}, app={appQueued}, collect={collectQueued}, remote={remoteQueued}, deferred={_deferredBySlot.Count})";
         }
 
         private List<string> SnapshotActiveJobDescriptions()

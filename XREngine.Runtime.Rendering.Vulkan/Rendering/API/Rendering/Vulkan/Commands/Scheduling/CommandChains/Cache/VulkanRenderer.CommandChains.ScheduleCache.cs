@@ -13,7 +13,7 @@ using XREngine.Rendering.Shadows;
 
 namespace XREngine.Rendering.Vulkan;
 
-public unsafe partial class VulkanRenderer
+internal sealed partial class VulkanCommandRuntime
 {
     private CommandChainSchedule RentCommandChainSchedule(uint imageIndex)
     {
@@ -21,7 +21,7 @@ public unsafe partial class VulkanRenderer
             !CommandChainTraceEnabled &&
             TryGetIndexedCommandChainCacheSlot(imageIndex, out int slot))
         {
-            CommandChainSchedule? schedule = _commandScheduler.GetReusableSchedule(
+            CommandChainSchedule? schedule = _commandRuntime.GetReusableSchedule(
                 slot,
                 _commandBuffers?.Length ?? 0);
             if (schedule is not null)
@@ -138,31 +138,59 @@ public unsafe partial class VulkanRenderer
             CommandChainStabilityGuardEnvVar);
     }
 
-    private bool TryGetCachedCommandChainSchedule(
+    private void CacheCommandChainSchedule(
         uint imageIndex,
-        ulong fastScheduleSignature,
+        CommandChainSchedule schedule)
+    {
+        if (CommandChainValidationEnabled || CommandChainTraceEnabled)
+            return;
+
+        if (!TryGetIndexedCommandChainCacheSlot(imageIndex, out int slot))
+            return;
+
+        _commandRuntime.CacheSchedule(
+            slot,
+            _commandBuffers?.Length ?? 0,
+            schedule);
+    }
+
+    internal bool TryReuseCachedCommandChainSchedule(
+        uint imageIndex,
+        in CommandChainScheduleCacheIdentity identity,
         out CommandChainSchedule? schedule,
         out CommandChainLoweringStats stats)
     {
         schedule = null;
         stats = default;
-        if (!CanReuseCachedCommandChainSchedule(
-                CommandChainBenchmarkForceRerecord,
-                CommandChainValidationEnabled,
-                CommandChainTraceEnabled,
-                IsRenderingExternalSwapchainTarget))
+        if (!identity.IsReusable ||
+            CommandChainValidationEnabled ||
+            CommandChainTraceEnabled ||
+            !TryGetIndexedCommandChainCacheSlot(imageIndex, out int slot))
+        {
             return false;
+        }
 
-        if (!TryGetIndexedCommandChainCacheSlot(imageIndex, out int slot))
+        CommandChainSchedule? candidate = _commandRuntime.GetReusableSchedule(
+            slot,
+            _commandBuffers?.Length ?? 0);
+        long artifactMutationGeneration =
+            CommandChains.SnapshotArtifactMutationGeneration();
+        if (candidate is null ||
+            candidate.CacheIdentity != identity ||
+            candidate.ArtifactMutationGeneration != artifactMutationGeneration)
+        {
             return false;
+        }
 
-        if (!_commandScheduler.TryGetCachedSchedule(slot, fastScheduleSignature, out schedule))
-            return false;
+        // Artifact mutation is published by VulkanRecordedCommandArtifact itself,
+        // including allocation, recording, executability, invalidation, and
+        // retirement. The schedule captured the same authority clock only after
+        // its complete chain set became executable, so an equal clock proves the
+        // former O(chain-count) validation walk would observe identical artifacts.
+        int chainCount = candidate.ScheduledChainCount;
 
-        CommandChainSchedule cachedSchedule = schedule!;
-        int chainCount = CountCommandChains(cachedSchedule);
         stats = new CommandChainLoweringStats(
-            VisibilityPackets: cachedSchedule.Groups.Length,
+            VisibilityPackets: 0,
             RenderPackets: chainCount,
             ChainsScheduled: chainCount,
             ChainsRecorded: 0,
@@ -173,40 +201,31 @@ public unsafe partial class VulkanRenderer
             FirstStructuralDirtyReason: null,
             FirstDescriptorGenerationMismatch: null,
             FirstResourcePlanRevisionMismatch: null);
+        RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanCommandChainMetrics(
+            chainsScheduled: chainCount,
+            chainsReused: chainCount,
+            renderPackets: chainCount,
+            secondaryCommandBuffers: chainCount);
+        RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanCommandBufferCacheOutcome(
+            reusedClean: false,
+            recorded: false,
+            forcedDirty: false,
+            frameOpSignatureDirty: false,
+            plannerDirty: false,
+            profilerDirty: false,
+            dirtyReason: null,
+            detailReasons: EVulkanCommandBufferDecisionReason.SecondaryReused,
+            structuralSignature: candidate.StructuralSignature,
+            descriptorGeneration: identity.DescriptorVersionSignature,
+            swapchainSlot: unchecked((int)imageIndex));
+        schedule = candidate;
         return true;
-    }
-
-    private void CacheCommandChainSchedule(
-        uint imageIndex,
-        ulong fastScheduleSignature,
-        CommandChainSchedule schedule)
-    {
-        if (CommandChainValidationEnabled || CommandChainTraceEnabled)
-            return;
-
-        if (!TryGetIndexedCommandChainCacheSlot(imageIndex, out int slot))
-            return;
-
-        _commandScheduler.CacheSchedule(
-            slot,
-            _commandBuffers?.Length ?? 0,
-            fastScheduleSignature,
-            schedule);
-    }
-
-    private static int CountCommandChains(CommandChainSchedule schedule)
-    {
-        int count = 0;
-        ReadOnlySpan<RenderPassChainGroup> groups = schedule.Groups.Span;
-        for (int i = 0; i < groups.Length; i++)
-            count += groups[i].ChainKeys.Length;
-        return count;
     }
 
     private static ulong ComputeCommandChainFastScheduleSignature(
         uint imageIndex,
-        FrameOp[] staticOps,
-        FrameOp[] volatileOps,
+        FrameOperationStream staticOps,
+        FrameOperationStream volatileOps,
         ulong resourcePlanRevision)
     {
         FrameOpSignatureHasher hash = new();
@@ -225,18 +244,20 @@ public unsafe partial class VulkanRenderer
 
     private static void AddCommandChainFastScheduleSignatureParts(
         ref FrameOpSignatureHasher hash,
-        FrameOp[] ops,
+        FrameOperationStream ops,
         bool dynamicOverlay)
     {
-        hash.Add(ops.Length);
-        for (int i = 0; i < ops.Length; i++)
+        hash.Add(ops.Count);
+        for (int i = 0; i < ops.Count; i++)
         {
-            FrameOp op = ops[i];
-            RenderViewKey viewKey = BuildRenderViewKey(op, dynamicOverlay);
-            RenderPacketVolatility volatility =
-                ClassifyRenderPacketVolatility(op, dynamicOverlay);
-            hash.Add(op.PassIndex);
-            hash.Add(ResolveCommandChainTargetIdentity(op));
+            ref readonly FrameOperationHeader header = ref ops.GetHeader(i);
+            ref readonly FrameOpContext context = ref ops.GetContext(i);
+            RenderViewKey viewKey = header.OpCode == EVulkanPrimaryPlanNodeKind.MeshDraw
+                ? BuildRenderViewKey(ops.GetMeshDraw(i).Draw, header.PassIndex, in context, dynamicOverlay)
+                : BuildRenderViewKey(in context, header.PassIndex, dynamicOverlay);
+            RenderPacketVolatility volatility = ClassifyRenderPacketVolatility(header.OpCode, dynamicOverlay);
+            hash.Add(header.PassIndex);
+            hash.Add(header.TargetIdentity);
             hash.Add(dynamicOverlay);
             hash.Add(i);
             hash.Add(viewKey.PipelineIdentity);
@@ -245,10 +266,19 @@ public unsafe partial class VulkanRenderer
             hash.Add((int)viewKey.Kind);
             hash.Add(viewKey.LightIdentity);
             hash.Add(viewKey.CascadeIndex);
-            hash.Add(ComputeFrameOpStructuralSignature(op, i, volatility));
-            hash.Add(ResolvePipelineGeneration(op));
-            DescriptorBindingSnapshot descriptorSnapshot =
-                CreateDescriptorSnapshot(op);
+            hash.Add(header.OpCode == EVulkanPrimaryPlanNodeKind.MeshDraw
+                ? ComputeFrameOpStructuralSignature(ops.GetMeshDraw(i).Draw, header, in context, i, volatility)
+                : ComputeFrameOpStructuralSignature(header, in context, i, volatility));
+            DescriptorBindingSnapshot descriptorSnapshot = default;
+            if (header.OpCode == EVulkanPrimaryPlanNodeKind.MeshDraw)
+            {
+                ref readonly MeshDrawPayload mesh = ref ops.GetMeshDraw(i);
+                PendingMeshDraw draw = mesh.Draw;
+                hash.Add(ResolvePipelineGeneration(draw, in context));
+                descriptorSnapshot = CreateMeshDrawDescriptorSnapshot(draw);
+            }
+            else
+                hash.Add(ResolvePipelineGeneration(in context));
             hash.Add(descriptorSnapshot.DescriptorGeneration);
             hash.Add(descriptorSnapshot.DescriptorSetSignature);
             hash.Add(descriptorSnapshot.DescriptorSetCount);

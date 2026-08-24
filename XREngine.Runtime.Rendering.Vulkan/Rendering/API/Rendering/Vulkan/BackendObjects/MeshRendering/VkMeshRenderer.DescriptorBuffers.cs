@@ -138,7 +138,7 @@ internal unsafe partial class VkMeshRenderer
 		if (buffer is null)
 			return TryResolveFallbackDescriptorBuffer(binding, frameIndex, drawUniformSlot, out bufferInfo);
 
-		bool allowSynchronousBufferUpload = Renderer.AllowSynchronousResourceUploads;
+		bool allowSynchronousBufferUpload = BackendContext.Resources.AllowSynchronousResourceUploads;
 		if (!buffer.TryEnsureReadyForRendering(allowSynchronousBufferUpload))
 		{
 			if (IsOptionalPipelineStorageBuffer(binding))
@@ -211,10 +211,8 @@ internal unsafe partial class VkMeshRenderer
 				return false;
 			}
 		}
-
-		Renderer.TrackBufferBinding(dataBuffer);
-		bool allowSynchronousBufferUpload = Renderer.AllowSynchronousResourceUploads;
-		if (Renderer.GetOrCreateAPIRenderObject(dataBuffer, generateNow: allowSynchronousBufferUpload) is not VkDataBuffer vkBuffer)
+		bool allowSynchronousBufferUpload = BackendContext.Resources.AllowSynchronousResourceUploads;
+		if (WrapperLookup.GetOrCreate(dataBuffer, generateNow: allowSynchronousBufferUpload) is not VkDataBuffer vkBuffer)
 			return false;
 
 		buffer = vkBuffer;
@@ -266,10 +264,8 @@ internal unsafe partial class VkMeshRenderer
 
 		if (!targetMatches)
 			return false;
-
-		Renderer.TrackBufferBinding(dataBuffer);
-		bool allowSynchronousBufferUpload = Renderer.AllowSynchronousResourceUploads;
-		if (Renderer.GetOrCreateAPIRenderObject(dataBuffer, generateNow: allowSynchronousBufferUpload) is not VkDataBuffer vkBuffer)
+		bool allowSynchronousBufferUpload = BackendContext.Resources.AllowSynchronousResourceUploads;
+		if (WrapperLookup.GetOrCreate(dataBuffer, generateNow: allowSynchronousBufferUpload) is not VkDataBuffer vkBuffer)
 			return false;
 
 		buffer = vkBuffer;
@@ -335,16 +331,14 @@ internal unsafe partial class VkMeshRenderer
 					: name);
 
 	private static bool IsOptionalPipelineStorageBuffer(DescriptorBindingInfo binding)
-		=> binding.DescriptorType is DescriptorType.StorageBuffer or DescriptorType.StorageBufferDynamic &&
-		   binding.Name is ("LightProbePositions" or
-			   "LightProbeTetrahedra" or
-			   "LightProbeParameters" or
-			   "LightProbeGridCells" or
-			   "LightProbeGridIndices");
+		=> binding.Requirement == EVulkanDescriptorBindingRequirement.Optional;
 
 	private bool TryResolveFallbackDescriptorBuffer(DescriptorBindingInfo binding, int frameIndex, int drawUniformSlot, out DescriptorBufferInfo bufferInfo)
 	{
 		bufferInfo = default;
+		if (binding.Requirement != EVulkanDescriptorBindingRequirement.Optional)
+			return false;
+
 		uint requiredSize = Math.Max(FallbackDescriptorUniformSize, Math.Max(binding.Count, 1u) * 16u);
 		if (!EnsureEngineUniformBuffer(FallbackDescriptorUniformName, requiredSize))
 			return false;

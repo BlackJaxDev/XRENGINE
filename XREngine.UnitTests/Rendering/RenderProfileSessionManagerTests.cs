@@ -45,7 +45,7 @@ public sealed class RenderProfileSessionManagerTests
         executor.MeasuredFrames.ShouldBe(0);
 
         manager.Arm(sessionId);
-        manager.Start(sessionId);
+        _ = manager.Start(sessionId);
         await WaitForCompletionAsync(manager, sessionId);
 
         RenderProfileResult result = manager.GetResult(sessionId);

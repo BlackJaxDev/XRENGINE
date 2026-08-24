@@ -23,7 +23,7 @@ public interface IRenderBackendDiagnosticsCapability
     object GetLiveImageAllocationDiagnostics(int limit)
         => Array.Empty<object>();
 
-    object GetLastFrameOperationTraceDiagnostics(int limit, string? targetContains)
+    object GetLastFrameOperationTraceDiagnostics(int limit, string? targetContains, int? pipelineIdentity = null)
         => Array.Empty<object>();
 
     object GetFinalPresentationLedgerDiagnostics(int limit)

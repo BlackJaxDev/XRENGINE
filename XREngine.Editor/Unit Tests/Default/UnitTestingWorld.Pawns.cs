@@ -629,13 +629,18 @@ public static partial class EditorUnitTests
 
         private static void ConfigureCameraPostProcessing(CameraComponent cameraComponent)
         {
-            Debug.Rendering($"[UnitTestingWorld] ConfigureCameraPostProcessing Atmosphere={Toggles.InitializeAtmosphericScattering} VolumetricFog={Toggles.InitializeVolumetricFog}");
-            if (!Toggles.InitializeVolumetricFog && !Toggles.InitializeAtmosphericScattering)
+            Debug.Rendering($"[UnitTestingWorld] ConfigureCameraPostProcessing Atmosphere={Toggles.InitializeAtmosphericScattering} VolumetricFog={Toggles.InitializeVolumetricFog} MeshletDebugDisplay={Toggles.MeshletDebugDisplay}");
+            if (!Toggles.InitializeVolumetricFog &&
+                !Toggles.InitializeAtmosphericScattering &&
+                !Toggles.MeshletDebugDisplay)
                 return;
 
             var camera = cameraComponent.Camera;
             if (!camera.RenderPipeline.OverrideProtected)
                 camera.RenderPipeline.OverrideProtected = true;
+
+            if (Toggles.MeshletDebugDisplay)
+                ConfigureCameraMeshletDebugDisplay(camera);
 
             if (Toggles.InitializeAtmosphericScattering)
             {
@@ -681,6 +686,12 @@ public static partial class EditorUnitTests
                 settings.JitterStrength = Toggles.VolumetricFog.JitterStrength;
                 Debug.Rendering($"[VolumetricFog] Camera post-process configured: Enabled=true, Intensity={settings.Intensity}, MaxDistance={settings.MaxDistance}, StepSize={settings.StepSize}");
             }
+        }
+
+        private static void ConfigureCameraMeshletDebugDisplay(XRCamera camera)
+        {
+            camera.MeshletDebugDisplayEnabledOverride = true;
+            Debug.Rendering("[Meshlets] Camera meshlet debug display override enabled.");
         }
 
         public static void InitializeLocomotion(

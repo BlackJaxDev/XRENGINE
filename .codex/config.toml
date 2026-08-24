@@ -1,6 +1,7 @@
-model = "gpt-5.6-terra"
-model_reasoning_effort = "medium"
+model = "gpt-5.6-sol"
+model_reasoning_effort = "high"
 
+web_search = "live"
 [agents]
 enabled = true
 max_concurrent_threads_per_session = 4
@@ -20,3 +21,6 @@ enabled_tools = ["recommend_agent_route", "start_agent_run", "get_agent_run", "c
 required = false
 startup_timeout_sec = 30
 tool_timeout_sec = 30
+
+[sandbox_workspace_write]
+network_access = true

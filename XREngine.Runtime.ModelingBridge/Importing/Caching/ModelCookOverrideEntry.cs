@@ -17,10 +17,12 @@ public sealed class ModelCookOverrideEntry
         ArgumentNullException.ThrowIfNull(settings);
 
         EntityKey = entityKey;
+        Settings = settings;
         _canonicalSettings = ModelCookCanonicalSettings.Serialize(settings);
     }
 
     public ImportedEntityKey EntityKey { get; }
+    public MeshOptimizerSubMeshSettings Settings { get; }
     public ReadOnlyMemory<byte> CanonicalSettings => _canonicalSettings;
 
     internal ReadOnlySpan<byte> CanonicalSettingsSpan => _canonicalSettings;

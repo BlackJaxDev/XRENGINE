@@ -29,7 +29,9 @@ namespace XREngine.Components.Capture.Lights.Types
         private XRViewport[] _viewports = [];
         private XRCamera[] _shadowCameras = [];
 
-        private XRFrameBuffer? _perFaceFbo;
+        private readonly XRFrameBuffer?[] _perFaceFbos =
+            new XRFrameBuffer?[ShadowFaceCount];
+        private XRMaterialFrameBuffer? _perFaceFboShadowMap;
         private XRMaterial? _shadowAtlasMaterial;
         private XRMaterial? _pointGeometryShadowMaterial;
         private XRMaterial? _pointInstancedShadowMaterial;
@@ -326,20 +328,13 @@ namespace XREngine.Components.Capture.Lights.Types
                 return;
 
             PointShadowRenderPlan plan = CreatePointShadowRenderPlan();
-            PublishShadowRenderPlan(plan);
             bool prepareAtlasGroupedCommands = ShouldPrepareAtlasGroupedFaceCollection();
-            if (plan.IsLayered)
+            if (plan.IsLayered || prepareAtlasGroupedCommands)
             {
                 // Layered and grouped-atlas passes render all selected faces from one draw list.
                 _viewports[0].CollectVisible(
                     collectMirrors: false,
                     collectionVolumeOverride: _influenceVolume);
-            }
-            else if (prepareAtlasGroupedCommands)
-            {
-                for (int i = 0; i < ShadowFaceCount; i++)
-                    if ((faceMask & (1 << i)) != 0)
-                        _viewports[i].CollectVisible(collectMirrors: false);
             }
             else
             {
@@ -362,9 +357,8 @@ namespace XREngine.Components.Capture.Lights.Types
                 return;
 
             PointShadowRenderPlan plan = CreatePointShadowRenderPlan();
-            PublishShadowRenderPlan(plan);
             bool prepareAtlasGroupedCommands = ShouldPrepareAtlasGroupedFaceCollection();
-            if (plan.IsLayered && !prepareAtlasGroupedCommands)
+            if (plan.IsLayered || prepareAtlasGroupedCommands)
             {
                 _viewports[0].SwapBuffers();
             }
@@ -584,26 +578,63 @@ namespace XREngine.Components.Capture.Lights.Types
 
         private void RenderSequentialShadowFaces(int faceMask)
         {
-            _perFaceFbo ??= new XRFrameBuffer();
-            var mat = ShadowMap!.Material!;
-            var depthCube = (IFrameBufferAttachement)mat.Textures[0]!;
-            var shadowCube = (IFrameBufferAttachement)mat.Textures[1]!;
+            XRMaterialFrameBuffer shadowMap = ShadowMap!;
+            EnsureSequentialFaceFrameBuffers(shadowMap);
+            XRMaterial mat = shadowMap.Material!;
             int renderedMask = 0;
             for (int i = 0; i < ShadowFaceCount; i++)
             {
                 if ((faceMask & (1 << i)) == 0)
                     continue;
 
-                _perFaceFbo.SetRenderTargets(
-                    (depthCube, EFrameBufferAttachment.DepthAttachment, 0, i),
-                    (shadowCube, EFrameBufferAttachment.ColorAttachment0, 0, i));
-                _viewports[i].Render(_perFaceFbo, null, null, true, mat);
+                _viewports[i].Render(
+                    _perFaceFbos[i]!,
+                    null,
+                    null,
+                    true,
+                    mat);
                 renderedMask |= 1 << i;
             }
 
             SetField(ref _lastRenderedShadowFaceMask, renderedMask, nameof(LastRenderedShadowFaceMask));
             if (renderedMask != 0)
                 SetField(ref _lastShadowRenderFrame, RuntimeEngine.Rendering.State.RenderFrameId, nameof(LastShadowRenderFrame));
+        }
+
+        /// <summary>
+        /// Creates one stable framebuffer object per physical cube face. Vulkan
+        /// records mesh work after the viewport call returns; mutating one shared
+        /// framebuffer through layers 0-5 allowed every queued pass to observe
+        /// only the final layer. Stable owners make target identity immutable for
+        /// the lifetime of each queued face pass.
+        /// </summary>
+        private void EnsureSequentialFaceFrameBuffers(
+            XRMaterialFrameBuffer shadowMap)
+        {
+            if (ReferenceEquals(_perFaceFboShadowMap, shadowMap))
+                return;
+
+            XRMaterial material = shadowMap.Material!;
+            IFrameBufferAttachement depthCube =
+                (IFrameBufferAttachement)material.Textures[0]!;
+            IFrameBufferAttachement shadowCube =
+                (IFrameBufferAttachement)material.Textures[1]!;
+            for (int faceIndex = 0; faceIndex < ShadowFaceCount; faceIndex++)
+            {
+                XRFrameBuffer frameBuffer =
+                    _perFaceFbos[faceIndex] ??= new XRFrameBuffer();
+                frameBuffer.SetRenderTargets(
+                    (depthCube,
+                        EFrameBufferAttachment.DepthAttachment,
+                        0,
+                        faceIndex),
+                    (shadowCube,
+                        EFrameBufferAttachment.ColorAttachment0,
+                        0,
+                        faceIndex));
+            }
+
+            _perFaceFboShadowMap = shadowMap;
         }
 
         private void LogShadowRenderModeFallbackIfNeeded(in PointShadowRenderPlan plan)
@@ -630,14 +661,6 @@ namespace XREngine.Components.Capture.Lights.Types
 
         private bool ShouldPrepareAtlasGroupedFaceCollection()
         {
-            if (RuntimeRenderingHostServices.FrameTiming.CurrentRenderBackend == RuntimeGraphicsApiKind.Vulkan)
-            {
-                // Share the directional-cascade safety gate: grouped atlas rendering
-                // depends on indexed viewport/scissor state and shader viewport/layer
-                // writes, and the Vulkan path needs validation before using it.
-                return false;
-            }
-
             if (!UsesPointShadowAtlasForCurrentEncoding ||
                 _shadowRenderMode == EPointShadowRenderMode.Sequential ||
                 !RuntimeEngine.Rendering.State.SupportsOpenGLViewportScissorArray ||
@@ -703,6 +726,7 @@ namespace XREngine.Components.Capture.Lights.Types
             // with fresh textures of the new size.
             ShadowMap?.Destroy();
             ShadowMap = null;
+            _perFaceFboShadowMap = null;
 
             base.SetShadowMapResolution(max, max);
 
@@ -883,6 +907,15 @@ namespace XREngine.Components.Capture.Lights.Types
 
             EnsureShadowResources();
             SyncShadowCaptureTransforms();
+
+            // This is the actual sequential atlas writer, normally reached only
+            // after the grouped route is unavailable or fails. Collection and
+            // buffer swapping are preparation, not render passes, and must not
+            // overwrite the last effective writer published here or by the
+            // grouped path.
+            PublishShadowRenderPlan(CreateSequentialShadowRenderPlan(
+                _shadowRenderMode,
+                PointShadowRenderFallbackReason.AtlasUsesSequentialTiles));
 
             XRViewport viewport = _viewports[faceIndex];
             if (viewport.RenderPipeline is not ShadowRenderPipeline shadowPipeline)

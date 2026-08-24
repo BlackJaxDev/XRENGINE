@@ -1,6 +1,6 @@
 # Model Import Binary Cache TODO
 
-Last reconciled: 2026-07-29
+Last reconciled: 2026-08-22
 
 Status: Active — Phases 1–3 complete; cooked payloads, hydration, and publication pending
 
@@ -10,10 +10,23 @@ Related docs:
 
 - [Model import feature guide](../../../developer-guides/assets/model-import.md)
 - [Texture Streaming Cooked Cache TODO](../COMPLETED/texture-streaming-cooked-cache-todo.md)
+- [Meshlet import cooking and production readiness TODO](../rendering/gpu/meshlet-import-cooking-and-production-readiness-todo.md)
 - [GPU meshlet zero-readback rendering design](../../design/rendering/gpu-meshlet-zero-readback-rendering-design.md)
 - [Production rendering pipeline roadmap](../rendering/gpu/production-rendering-pipeline-roadmap.md)
 
 Runtime implementation progress: all 12 Phase 1 tasks, all 12 Phase 2 tasks, and all 11 Phase 3 tasks complete. Checked Phase 0 items record pre-implementation reconciliation.
+
+Meshlet closeout note (completed 2026-08-22): the standalone `XRMesh` cooked payload and
+shared meshlet-section slice now have cold/warm, deterministic identity,
+changed-source/settings rejection, malformed-payload rejection, and
+runtime-without-cooker evidence in the
+[meshlet production closeout](../../investigations/rendering/meshlet-import-production-closeout-2026-08-20.md).
+Gate 7 added targeted cache-state/payload/replacement tests, passed 86/86 focused
+Release tests, and closed the meshlet parent tracker. This model-cache tracker
+remains active for its own broader format and hydration work.
+This does not activate or prove the general model/prefab binary-cache warm path.
+That path remains blocked on the mesh-core/prefab-graph serializer/provider and
+must not count standalone hydrations as model-cache hits.
 
 ## Outcome
 

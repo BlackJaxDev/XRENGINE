@@ -10,6 +10,7 @@ using XREngine.Components;
 using XREngine.Core.Attributes;
 using XREngine.Core.Files;
 using XREngine.Data.Core;
+using XREngine.Data.Rendering;
 using XREngine.Editor;
 using XREngine.Input;
 using XREngine.Input.Devices;
@@ -325,6 +326,10 @@ namespace XREngine.Editor.Mcp
                 ?? activeViewport?.ActiveCamera;
             var activeCameraTransform = activeCamera?.Transform ?? activeViewport?.CameraComponent?.Transform;
             var activeCameraNode = activeCameraTransform?.SceneNode;
+            var activeCameraPipeline = activeCamera?.RenderPipeline;
+            var activeViewportPipeline = activeViewport?.RenderPipeline;
+            var activeCameraPostProcessState = activeCamera?.GetPostProcessState(activeCameraPipeline);
+            var activeViewportPostProcessState = activeCamera?.GetPostProcessState(activeViewportPipeline);
             var viewportCameraComponent = activeViewport?.CameraComponent;
             var viewportCameraTransform = viewportCameraComponent?.Transform;
             var viewportCameraNode = viewportCameraTransform?.SceneNode;
@@ -336,6 +341,9 @@ namespace XREngine.Editor.Mcp
             var renderArea = RuntimeEngine.Rendering.State.RenderArea;
             var activeViewportCommands = activeViewport?.RenderPipelineInstance.MeshRenderCommands;
             var renderingViewportCommands = viewport?.RenderPipelineInstance.MeshRenderCommands;
+            var activeGpuScene = activeViewport?.World?.VisualScene?.GPUCommands;
+            BackendReadyFramePackage? activeFramePackage =
+                activeViewportCommands?.RenderingBackendReadyPackage;
             var activeViewports = RuntimeEngine
                 .EnumerateActiveViewports(RuntimeEngine.EViewportEnumerationMode.IncludeVrEyeViewports)
                 .Select(BuildViewportRenderSummary)
@@ -369,11 +377,56 @@ namespace XREngine.Editor.Mcp
                 activeViewportUpdatingCommandCount = activeViewportCommands?.GetUpdatingCommandCount(),
                 activeViewportCommandsAddedCount = activeViewportCommands?.GetCommandsAddedCount(),
                 activeViewportRenderingCommandPasses = BuildRenderCommandPassSummary(activeViewportCommands),
+                canonicalResidentScene = activeGpuScene is null ? null : new
+                {
+                    publication = activeGpuScene.AdvancedScenePublication.Publication,
+                    publicationRejected = activeGpuScene.AdvancedPublicationRejected,
+                    topologyDeltaCount = activeGpuScene.AdvancedTopologyDeltaCount,
+                    contentDeltaCount = activeGpuScene.AdvancedContentDeltaCount,
+                    residentDrawCount = activeGpuScene.AdvancedSharedDatabase.Scene.Draws.Count,
+                    residentInstanceCount = activeGpuScene.AdvancedSharedDatabase.Scene.Instances.Count,
+                    residentGeometryCount = activeGpuScene.AdvancedSharedDatabase.Scene.Geometry.Records.Count,
+                    residentMaterialCount = activeGpuScene.AdvancedSharedDatabase.Materials.Materials.Count,
+                    legacyMappingCount = activeGpuScene.LegacyCanonicalDrawMappings.Length,
+                    lastLegacyMapping = GetLastLegacyCanonicalDrawMapping(activeGpuScene),
+                    dirtyOwnerRangeCount = activeGpuScene.AdvancedDirtyOwnerRanges.Length,
+                    pendingDrawDeltaCount = activeGpuScene.AdvancedSharedDatabase.Scene.Draws.PublishedDeltas.Length,
+                    minimumAcknowledgedSequence = activeGpuScene.AdvancedSharedDatabase.MinimumAcknowledgedPublicationSequence,
+                    minimumReclaimableSequence = activeGpuScene.AdvancedSharedDatabase.MinimumReclaimablePublicationSequence,
+                },
+                canonicalFramePackage = activeFramePackage is null ? null : new
+                {
+                    state = activeFramePackage.State.ToString(),
+                    scenePublication = activeFramePackage.CanonicalScenePublication,
+                    frame = activeFramePackage.CanonicalFrame,
+                    submission = activeFramePackage.SubmissionResolution,
+                    viewCount = activeFramePackage.CanonicalViews.Length,
+                    residentPassCount = activeFramePackage.CanonicalPasses.Length,
+                    dirtyOwnerRangeCount = activeFramePackage.CanonicalDirtyOwnerRanges.Length,
+                    diagnosticRequestCount = activeFramePackage.DiagnosticReadbackRequests.Length,
+                    cpuVisibleDrawCount = activeFramePackage.CpuVisibleDraws.Length,
+                    orderedExceptionCount = activeFramePackage.OrderedExceptions.Length,
+                    templateProjectionDeltaCount = activeFramePackage.TemplateProjectionDeltas.Length,
+                    legacySelectionCount = activeFramePackage.MeshSelections.Length,
+                },
                 activeCameraType = activeCamera?.GetType().FullName,
                 activeCameraNodeId = activeCameraNode?.ID,
                 activeCameraNodeName = activeCameraNode?.Name,
                 activeCameraWorldPosition = activeCameraTransform is null ? null : ToMcpVector3(activeCameraTransform.WorldTranslation),
                 activeCameraWorldForward = activeCameraTransform is null ? null : ToMcpVector3(activeCameraTransform.WorldForward),
+                meshletDebugDisplayRequested = EditorUnitTests.Toggles.MeshletDebugDisplay,
+                activeCameraMeshletDebugDisplayOverride = activeCamera?.MeshletDebugDisplayEnabledOverride,
+                activeCameraMeshletDebugDisplayEnabled = GpuBvhDebugSettings.IsMeshletDebugDisplayEnabled(activeCamera),
+                activeViewportPipelineMeshletDebugDisplayEnabled = GpuBvhDebugSettings.IsMeshletDebugDisplayEnabled(activeCamera, activeViewportPipeline),
+                currentRenderingPipelineMeshletDebugDisplayEnabled = GpuBvhDebugSettings.IsMeshletDebugDisplayEnabled(activeCamera, pipeline?.Pipeline),
+                activeCameraPipelineDebugName = activeCameraPipeline?.DebugName,
+                activeCameraPipelineSchemaStageCount = activeCameraPipeline?.PostProcessSchema.StagesByKey.Count,
+                activeCameraPostProcessStateStageCount = activeCameraPostProcessState?.Stages.Count,
+                activeCameraGpuBvhStagePresent = activeCameraPostProcessState?.GetStage<GpuBvhDebugSettings>() is not null,
+                activeViewportPipelineDebugName = activeViewportPipeline?.DebugName,
+                activeViewportPipelineSchemaStageCount = activeViewportPipeline?.PostProcessSchema.StagesByKey.Count,
+                activeViewportPostProcessStateStageCount = activeViewportPostProcessState?.Stages.Count,
+                activeViewportGpuBvhStagePresent = activeViewportPostProcessState?.GetStage<GpuBvhDebugSettings>() is not null,
                 viewportCameraComponentId = viewportCameraComponent?.ID,
                 viewportCameraComponentName = viewportCameraComponent?.Name,
                 viewportCameraNodeId = viewportCameraNode?.ID,
@@ -392,6 +445,9 @@ namespace XREngine.Editor.Mcp
                 pipelineDebugName = pipeline?.Pipeline?.DebugName,
                 pipelineType = pipeline?.Pipeline?.GetType().FullName,
                 pipelineDescriptor = pipeline?.DebugDescriptor,
+                activeResourceGeneration = pipeline?.ActiveGeneration?.Key.ToString(),
+                pendingResourceGeneration = pipeline?.PendingGeneration?.Key.ToString(),
+                lastResourceGenerationFailure = pipeline?.LastResourceGenerationFailure,
                 renderGraphPassIndex = RuntimeEngine.Rendering.State.CurrentRenderGraphPassIndex,
                 renderStateCameraType = renderState?.SceneCamera?.GetType().FullName,
                 renderStateViewportIndex = stateViewport?.Index,
@@ -409,6 +465,14 @@ namespace XREngine.Editor.Mcp
             };
 
             return Task.FromResult(new McpToolResponse("Retrieved render state.", data));
+        }
+
+        private static LegacyCanonicalDrawMapping? GetLastLegacyCanonicalDrawMapping(
+            GPUScene scene)
+        {
+            ReadOnlySpan<LegacyCanonicalDrawMapping> mappings =
+                scene.LegacyCanonicalDrawMappings;
+            return mappings.IsEmpty ? null : mappings[^1];
         }
 
         private static object BuildViewportRenderSummary(XRViewport viewport)
@@ -449,7 +513,10 @@ namespace XREngine.Editor.Mcp
                 pipelineInstanceId = viewport.RenderPipelineInstance.InstanceId,
                 pipelineDebugName = viewport.RenderPipelineInstance.DebugName,
                 pipelineType = viewport.RenderPipeline?.GetType().FullName,
-                resourceGeneration = viewport.RenderPipelineInstance.ResourceGeneration
+                resourceGeneration = viewport.RenderPipelineInstance.ResourceGeneration,
+                activeResourceGeneration = viewport.RenderPipelineInstance.ActiveGeneration?.Key.ToString(),
+                pendingResourceGeneration = viewport.RenderPipelineInstance.PendingGeneration?.Key.ToString(),
+                lastResourceGenerationFailure = viewport.RenderPipelineInstance.LastResourceGenerationFailure
             };
         }
 
@@ -813,6 +880,7 @@ namespace XREngine.Editor.Mcp
         [Description("Get renderer capability flags (GPU, extensions, ray tracing).")]
         public static Task<McpToolResponse> GetRenderCapabilitiesAsync(McpToolContext context)
         {
+            AbstractRenderer? renderer = AbstractRenderer.Current;
             var data = new
             {
                 isNvidia = RuntimeEngine.Rendering.State.IsNVIDIA,
@@ -821,6 +889,21 @@ namespace XREngine.Editor.Mcp
                 hasNvRayTracing = RuntimeEngine.Rendering.State.HasNvRayTracing,
                 hasVulkanRayTracing = RuntimeEngine.Rendering.State.HasVulkanRayTracing,
                 hasOvrMultiView = RuntimeEngine.Rendering.State.HasOvrMultiViewExtension,
+                meshlets = new
+                {
+                    requestedStrategy = RuntimeEngine.Rendering.ResolveRequestedMeshSubmissionStrategy().ToString(),
+                    effectiveStrategy = RuntimeEngine.Rendering.LastResolvedMeshSubmissionStrategy.ToString(),
+                    backend = RuntimeEngine.Rendering.LastResolvedRendererBackend.ToString(),
+                    dialect = renderer?.MeshShaderDialect.ToString() ?? EMeshShaderDialect.None.ToString(),
+                    directTaskDispatch = renderer?.SupportsDirectMeshTaskDispatch() == true,
+                    indirectCountTaskDispatch = renderer?.SupportsIndirectCountMeshTaskDispatch() == true,
+                    productionShaders = renderer?.SupportsProductionMeshletShaders() == true,
+                    dispatchReady = renderer?.SupportsMeshletDispatch() == true,
+                    unsupportedReason = renderer?.MeshletDispatchUnsupportedReason ?? "No active renderer.",
+                    downgradeRequested = RuntimeEngine.Rendering.LastMeshletDowngradeRequested?.ToString() ?? string.Empty,
+                    downgradeResolved = RuntimeEngine.Rendering.LastMeshletDowngradeResolved?.ToString() ?? string.Empty,
+                    downgradeReason = RuntimeEngine.Rendering.LastMeshletDowngradeReason ?? string.Empty,
+                },
                 nvidiaDlss = new
                 {
                     runtimeDllsAvailable = NvidiaDlssManager.RequiredRuntimeDllsAvailable,

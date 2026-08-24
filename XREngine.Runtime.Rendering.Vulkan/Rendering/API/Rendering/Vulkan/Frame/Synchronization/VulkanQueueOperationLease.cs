@@ -24,14 +24,18 @@ internal readonly struct VulkanQueueOperationLease : IDisposable
     /// <param name="gate">The synchronization object used to control access to the Vulkan queue.</param>
     /// <param name="deviceState">The state machine representing the Vulkan device's operational state.</param>
     /// <returns>A VulkanQueueOperationLease representing the acquired lease if successful; otherwise, a default lease indicating failure.</returns>
-    public static VulkanQueueOperationLease TryEnter(object gate, VulkanDeviceStateMachine deviceState)
+    public static VulkanQueueOperationLease TryEnter(
+        object gate,
+        VulkanDeviceStateMachine deviceState,
+        VulkanFrameTelemetry telemetry)
     {
         long waitStart = Stopwatch.GetTimestamp();
         Monitor.Enter(gate);
-        RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanCpuStage(
+        telemetry.RecordCpuStage(
             EVulkanCpuStage.QueueLockAcquisition,
             Stopwatch.GetElapsedTime(waitStart),
-            allocatedBytes: 0);
+            allocatedBytes: 0,
+            boundaryAllocatedBytes: 0);
         if (deviceState.IsOperational)
             return new VulkanQueueOperationLease(gate);
 

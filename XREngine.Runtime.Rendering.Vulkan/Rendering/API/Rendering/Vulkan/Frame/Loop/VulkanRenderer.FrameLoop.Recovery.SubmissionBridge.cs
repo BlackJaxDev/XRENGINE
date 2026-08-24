@@ -3,23 +3,33 @@ using Semaphore = Silk.NET.Vulkan.Semaphore;
 
 namespace XREngine.Rendering.Vulkan
 {
-    public unsafe partial class VulkanRenderer
+    internal sealed partial class VulkanFrameLoop
     {
-        private Result SubmitAcquireSemaphoreBridge(Semaphore acquireSemaphore, ulong signalTimelineValue)
-            => SubmitAcquireSemaphoreBridge(acquireSemaphore, signalTimelineValue, default, null, 0);
-
-        private Result SubmitAcquireSemaphoreBridge(
+        private unsafe VulkanSubmissionReceipt SubmitAcquireSemaphoreBridge(
             Semaphore acquireSemaphore,
-            ulong signalTimelineValue,
+            ulong minimumTimelineValue,
+            out ulong signalTimelineValue)
+            => SubmitAcquireSemaphoreBridge(
+                acquireSemaphore,
+                minimumTimelineValue,
+                default,
+                null,
+                0,
+                out signalTimelineValue);
+
+        private unsafe VulkanSubmissionReceipt SubmitAcquireSemaphoreBridge(
+            Semaphore acquireSemaphore,
+            ulong minimumTimelineValue,
             Semaphore signalPresentSemaphore,
             CommandBuffer* commandBuffers,
-            uint commandBufferCount)
+            uint commandBufferCount,
+            out ulong signalTimelineValue)
         {
             uint signalSemaphoreCount = signalPresentSemaphore.Handle != 0 ? 2u : 1u;
-            ulong* signalValues = stackalloc ulong[2] { signalTimelineValue, 0UL };
+            ulong* signalValues = stackalloc ulong[2] { 0UL, 0UL };
             ulong* waitValues = stackalloc ulong[1] { 0UL };
             Semaphore* waitSemaphores = stackalloc Semaphore[1] { acquireSemaphore };
-            Semaphore* signalSemaphores = stackalloc Semaphore[2] { _graphicsTimelineSemaphore, signalPresentSemaphore };
+            Semaphore* signalSemaphores = stackalloc Semaphore[2] { _commandRuntime.Synchronization._graphicsTimelineSemaphore, signalPresentSemaphore };
             PipelineStageFlags* waitStages = stackalloc PipelineStageFlags[1] { PipelineStageFlags.TopOfPipeBit };
 
             TimelineSemaphoreSubmitInfo timelineInfo = new()
@@ -44,11 +54,23 @@ namespace XREngine.Rendering.Vulkan
                 PSignalSemaphores = signalSemaphores,
             };
 
-            return SubmitToQueueTracked(
-                graphicsQueue,
+            VulkanSubmissionDiagnosticContext diagnosticContext = new()
+            {
+                SubmissionKind = "DesktopAcquireRecovery",
+                FrameOpKind = "Recovery",
+                OutputTargetName = "Swapchain",
+            };
+            return _commandRuntime.SubmitToGraphicsTimelineTrackedWithDisposition(
+                _deviceContext.GraphicsQueue,
                 ref submit,
                 default,
-                caller: nameof(SubmitAcquireSemaphoreBridge));
+                _commandRuntime.Synchronization._graphicsTimelineSemaphore,
+                minimumTimelineValue,
+                in diagnosticContext,
+                out signalTimelineValue,
+                out _,
+                out _,
+                nameof(SubmitAcquireSemaphoreBridge));
         }
 
     }

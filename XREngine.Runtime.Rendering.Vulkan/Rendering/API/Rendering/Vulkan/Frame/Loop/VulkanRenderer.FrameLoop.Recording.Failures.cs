@@ -2,7 +2,7 @@ using System;
 
 namespace XREngine.Rendering.Vulkan
 {
-    public unsafe partial class VulkanRenderer
+    internal sealed partial class VulkanFrameLoop
     {
         private static bool IsTransientResourceRetirementRecordingFailure(InvalidOperationException exception)
             => IsTransientResourceRetirementRecordingFailure(exception.Message);

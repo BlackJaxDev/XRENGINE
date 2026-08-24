@@ -311,10 +311,19 @@ namespace XREngine.Scene
             if (ShouldDeferAuxiliaryCaptures())
                 return;
 
+            int processedCaptureWorkItems = 0;
             while (_captureWorkQueue.TryPeek(out _))
             {
-                if (_captureBudgetStopwatch.Elapsed.TotalMilliseconds > budgetMs)
+                if (processedCaptureWorkItems > 0 &&
+                    _captureBudgetStopwatch.Elapsed.TotalMilliseconds > budgetMs)
+                {
+                    LastCaptureDeferralReason = ERenderOutputPolicyReason.CpuBudget;
+                    RuntimeEngine.Rendering.Stats.FrameOutputs.RecordWork(
+                        new FrameOutputWorkTelemetry(
+                            CpuBudgetDeferrals: 1,
+                            StaleResultReuses: PendingCaptureComponentCount > 0 ? 1 : 0));
                     break;
+                }
 
                 if (ShouldDeferAuxiliaryCaptures())
                     break;
@@ -323,6 +332,7 @@ namespace XREngine.Scene
                     break;
 
                 NoteCaptureWorkItemDequeued();
+                processedCaptureWorkItems++;
 
                 switch (item.WorkType)
                 {
@@ -378,7 +388,7 @@ namespace XREngine.Scene
             if (!previous.HasValue)
                 return;
 
-            ShadowAtlas.ResetAtlasKind(EShadowAtlasKind.Directional);
+            ShadowAtlas.RequestAtlasKindReset(EShadowAtlasKind.Directional);
 
             int count = DynamicDirectionalLights.Count;
             for (int i = 0; i < count; i++)
@@ -419,9 +429,13 @@ namespace XREngine.Scene
         {
             if (viewport is null ||
                 !ViewportTargetsWorld(viewport, World) ||
-                viewport.Suppress3DSceneRendering ||
                 viewport.ActiveCamera is not XRCamera camera)
                 return;
+
+            // A render-on-demand viewport still consumes its cached 3D result while scene rendering is
+            // suppressed. Keep its camera in the atlas relevance inputs so point lights do not expand
+            // back to all six full-resolution faces, and so spot-light priority remains stable between
+            // invalidations. Camera motion invalidates the viewport and refreshes these inputs normally.
 
             for (int i = 0; i < cameras.Count; i++)
                 if (ReferenceEquals(cameras[i], camera))
@@ -715,11 +729,9 @@ namespace XREngine.Scene
                         source,
                         faceOrCascadeIndex,
                         directionalCascadeCount,
-                        desiredResolution,
                         hasPrevious,
                         previous,
                         dirtyReason,
-                        directionalCascadeSample,
                         out forcedFreshByCadence))
                 {
                     effectiveForcedSkipReason = SkipReason.StaleTileReused;
@@ -773,11 +785,9 @@ namespace XREngine.Scene
             ShadowRequestSource source,
             int cascadeIndex,
             int activeCascadeCount,
-            uint desiredResolution,
             bool hasPrevious,
             in ShadowAtlasAllocation previous,
             ShadowDirtyReason dirtyReason,
-            in DirectionalCascadeSampleState requestSample,
             out bool forcedFresh)
         {
             forcedFresh = false;
@@ -798,54 +808,31 @@ namespace XREngine.Scene
             bool hasRenderedSample = light.TryGetRenderedDirectionalCascadeSampleState(
                 source,
                 cascadeIndex,
-                out DirectionalCascadeSampleState renderedSample);
+                out _);
             if (!hasRenderedSample)
             {
                 forcedFresh = true;
                 return false;
             }
 
-            if (IsLargeDirectionalCascadeMatrixJump(requestSample, renderedSample, desiredResolution))
-            {
-                forcedFresh = true;
-                return false;
-            }
+            // Shadow publication participates in persistent mesh binding-artifact
+            // generations. Publishing even one moving cascade invalidates those
+            // artifacts for every visible mesh. Hold the last internally coherent
+            // atlas generation while the source camera is still moving, then
+            // refresh after a short pose-stability debounce. Cascade matrices are
+            // texel-snapped and can remain byte-identical for several moving frames,
+            // so their content hash is not a valid camera-settled signal.
+            int stableSourceCameraFrames =
+                light.GetDirectionalCascadeSourceCameraStableFrameCount(source);
+            if (stableSourceCameraFrames < ResolveDirectionalCascadeSettledRefreshStableFrames(activeCascadeCount))
+                return true;
 
-            int stableRequestFrames = light.GetDirectionalCascadeStableRequestFrameCount(
-                source,
-                cascadeIndex,
-                requestSample.ContentHash);
-            if (stableRequestFrames >= ResolveDirectionalCascadeSettledRefreshStableFrames(activeCascadeCount))
-            {
-                forcedFresh = true;
-                return false;
-            }
-
-            ulong frameId = RuntimeEngine.Rendering.State.RenderFrameId;
-            ulong staleAge = frameId >= previous.LastRenderedFrame
-                ? frameId - previous.LastRenderedFrame
-                : ulong.MaxValue;
-            if (staleAge >= (ulong)maxStaleFrames)
-            {
-                // Do not publish an expired stale atlas slot that the shader must reject.
-                forcedFresh = true;
-                return false;
-            }
-
-            int interval = ResolveDirectionalCascadeRefreshInterval(activeCascadeCount, maxStaleFrames);
-            if (interval <= 1)
-                return false;
-
-            return staleAge < (ulong)interval;
+            forcedFresh = true;
+            return false;
         }
 
         private static int ResolveDirectionalCascadeSettledRefreshStableFrames(int activeCascadeCount)
-            => 1;
-
-        private static int ResolveDirectionalCascadeRefreshInterval(int activeCascadeCount, int maxStaleFrames)
-            => activeCascadeCount <= 1
-                ? 1
-                : Math.Clamp(maxStaleFrames, 1, 120);
+            => Math.Clamp(activeCascadeCount, 2, 8);
 
         private static bool IsLargeDirectionalCascadeMatrixJump(
             in DirectionalCascadeSampleState current,
@@ -1501,7 +1488,7 @@ namespace XREngine.Scene
             out int shadowRecordIndex)
         {
             ShadowRequestKey key = light.CreateShadowRequestKey(EShadowProjectionType.SpotPrimary, 0, EShadowMapEncoding.Depth);
-            if (ShadowAtlas.PublishedFrameData.TryGetAllocationIndex(key, out shadowRecordIndex, out allocation))
+            if (ShadowAtlas.TryGetPublishedAllocationIndex(key, out shadowRecordIndex, out allocation))
                 return true;
 
             allocation = default;
@@ -1516,7 +1503,7 @@ namespace XREngine.Scene
             out int shadowRecordIndex)
         {
             ShadowRequestKey key = light.CreateShadowRequestKey(EShadowProjectionType.PointFace, faceIndex, EShadowMapEncoding.Depth);
-            if (ShadowAtlas.PublishedFrameData.TryGetAllocationIndex(key, out shadowRecordIndex, out allocation))
+            if (ShadowAtlas.TryGetPublishedAllocationIndex(key, out shadowRecordIndex, out allocation))
                 return true;
 
             allocation = default;
@@ -1561,7 +1548,7 @@ namespace XREngine.Scene
         {
             EShadowMapEncoding encoding = light.ResolveShadowMapFormat(preferredStorageFormat: null).Encoding;
             ShadowRequestKey key = light.CreateShadowRequestKey(EShadowProjectionType.DirectionalCascade, cascadeIndex, encoding, source: source);
-            if (ShadowAtlas.PublishedFrameData.TryGetAllocationIndex(key, out shadowRecordIndex, out allocation))
+            if (ShadowAtlas.TryGetPublishedAllocationIndex(key, out shadowRecordIndex, out allocation))
                 return true;
 
             allocation = default;
@@ -1576,7 +1563,7 @@ namespace XREngine.Scene
         {
             EShadowMapEncoding encoding = light.ResolveShadowMapFormat(preferredStorageFormat: null).Encoding;
             ShadowRequestKey key = light.CreateShadowRequestKey(EShadowProjectionType.DirectionalPrimary, 0, encoding);
-            if (ShadowAtlas.PublishedFrameData.TryGetAllocationIndex(key, out shadowRecordIndex, out allocation))
+            if (ShadowAtlas.TryGetPublishedAllocationIndex(key, out shadowRecordIndex, out allocation))
                 return true;
 
             allocation = default;

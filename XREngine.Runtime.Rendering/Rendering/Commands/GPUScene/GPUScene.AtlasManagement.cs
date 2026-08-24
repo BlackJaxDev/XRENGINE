@@ -9,7 +9,6 @@ using System.Collections.Concurrent;
 using System.IO;
 using System.Linq;
 using System.Numerics;
-using System.Runtime.InteropServices;
 using System.Threading;
 using XREngine.Components;
 using XREngine.Components.Scene.Mesh;
@@ -635,33 +634,12 @@ namespace XREngine.Rendering.Commands
             // Grow per-attribute buffers (power-of-two growth to reduce reallocs)
             VerifyBufferLengths(state, firstVertex + vertexCount);
 
-            // Batched copy: direct memory move instead of per-element setters
-            unsafe
-            {
-                // Helper local to copy an array of structs into a target XRDataBuffer at a starting element index.
-                static void CopyArray<T>(XRDataBuffer? buffer, int startIndex, T[] src) where T : struct
-                {
-                    if (buffer is null || src.Length == 0)
-                        return;
-
-                    var spanBytes = (uint)(src.Length * Marshal.SizeOf<T>());
-                    var handle = GCHandle.Alloc(src, GCHandleType.Pinned);
-                    try
-                    {
-                        VoidPtr dst = buffer.Address + (int)(startIndex * buffer.ElementSize);
-                        Memory.Move(dst, handle.AddrOfPinnedObject(), spanBytes);
-                    }
-                    finally
-                    {
-                        handle.Free();
-                    }
-                }
-
-                CopyArray(state.Positions, firstVertex, positions);
-                CopyArray(state.Normals, firstVertex, normals);
-                CopyArray(state.Tangents, firstVertex, tangents);
-                CopyArray(state.UV0, firstVertex, uv0);
-            }
+            // The client-side atlas is unmanaged already; write the source spans
+            // directly so no managed array is pinned across the copy.
+            state.Positions?.WriteDataRaw<Vector3>(positions, checked((uint)firstVertex));
+            state.Normals?.WriteDataRaw<Vector3>(normals, checked((uint)firstVertex));
+            state.Tangents?.WriteDataRaw<Vector4>(tangents, checked((uint)firstVertex));
+            state.UV0?.WriteDataRaw<Vector2>(uv0, checked((uint)firstVertex));
 
             state.VertexCount = firstVertex + positions.Length;
             state.IndexCount = firstIndex + indexCountAdded;
@@ -754,31 +732,10 @@ namespace XREngine.Rendering.Commands
                 int firstIndex = state.IndexCount;
                 VerifyBufferLengths(state, firstVertex + maxVertexCount);
 
-                unsafe
-                {
-                    static void CopyArray<T>(XRDataBuffer? buffer, int startIndex, T[] src) where T : struct
-                    {
-                        if (buffer is null || src.Length == 0)
-                            return;
-
-                        uint spanBytes = (uint)(src.Length * Marshal.SizeOf<T>());
-                        var handle = GCHandle.Alloc(src, GCHandleType.Pinned);
-                        try
-                        {
-                            VoidPtr dst = buffer.Address + (int)(startIndex * buffer.ElementSize);
-                            Memory.Move(dst, handle.AddrOfPinnedObject(), spanBytes);
-                        }
-                        finally
-                        {
-                            handle.Free();
-                        }
-                    }
-
-                    CopyArray(state.Positions, firstVertex, positions);
-                    CopyArray(state.Normals, firstVertex, normals);
-                    CopyArray(state.Tangents, firstVertex, tangents);
-                    CopyArray(state.UV0, firstVertex, uv0);
-                }
+                state.Positions?.WriteDataRaw<Vector3>(positions, checked((uint)firstVertex));
+                state.Normals?.WriteDataRaw<Vector3>(normals, checked((uint)firstVertex));
+                state.Tangents?.WriteDataRaw<Vector4>(tangents, checked((uint)firstVertex));
+                state.UV0?.WriteDataRaw<Vector2>(uv0, checked((uint)firstVertex));
 
                 foreach (IndexTriangle triangle in triangles)
                     state.IndirectFaceIndices.Add(triangle);

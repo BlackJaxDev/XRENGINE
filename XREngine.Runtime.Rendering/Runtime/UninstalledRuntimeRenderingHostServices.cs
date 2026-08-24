@@ -14,6 +14,7 @@ using XREngine.Input;
 using XREngine.Rendering.API.Rendering.OpenXR;
 using XREngine.Rendering.Occlusion;
 using XREngine.Rendering.Shadows;
+using XREngine.Rendering.Vulkan;
 using XREngine.Scene;
 namespace XREngine.Rendering;
 
@@ -64,6 +65,13 @@ internal sealed class UninstalledRuntimeRenderingHostServices : IRuntimeRenderin
     public int OpenGLShaderCompilerThreadCount => RuntimeRenderingHostServiceDefaults.OpenGLShaderCompilerThreadCount;
     public bool OpenGLParallelShaderCompileProbeEnabled => RuntimeRenderingHostServiceDefaults.OpenGLParallelShaderCompileProbeEnabled;
     public int OpenGLParallelShaderCompileProbeTimeoutMs => RuntimeRenderingHostServiceDefaults.OpenGLParallelShaderCompileProbeTimeoutMs;
+    public int GeneralWorkerThreadCount => RuntimeRenderingHostServiceDefaults.GeneralWorkerThreadCount;
+    public int GeneralWorkerThreadCap => RuntimeRenderingHostServiceDefaults.GeneralWorkerThreadCap;
+    public int RenderWorkerThreadCount => RuntimeRenderingHostServiceDefaults.RenderWorkerThreadCount;
+    public int RenderWorkerThreadCap => RuntimeRenderingHostServiceDefaults.RenderWorkerThreadCap;
+    public int ReservedForegroundThreadCount => RuntimeRenderingHostServiceDefaults.ReservedForegroundThreadCount;
+    public bool AllowCpuOversubscription => RuntimeRenderingHostServiceDefaults.AllowCpuOversubscription;
+    public ERenderWorkerQos RenderWorkerQos => RuntimeRenderingHostServiceDefaults.RenderWorkerQos;
     public EVulkanAllocatorBackend VulkanAllocatorBackend => RuntimeRenderingHostServiceDefaults.VulkanAllocatorBackend;
     public EVulkanSynchronizationBackend VulkanSynchronizationBackend => RuntimeRenderingHostServiceDefaults.VulkanSynchronizationBackend;
     public EVulkanDescriptorUpdateBackend VulkanDescriptorUpdateBackend => RuntimeRenderingHostServiceDefaults.VulkanDescriptorUpdateBackend;
@@ -389,8 +397,10 @@ internal sealed class UninstalledRuntimeRenderingHostServices : IRuntimeRenderin
     {
     }
 
-    public bool TryDispatchInteractiveResizeFrame()
-        => false;
+    public InteractiveResizeDispatchResult TryDispatchInteractiveResizeFrame(ulong? presentationPackageId = null)
+        => InteractiveResizeDispatchResult.Deferred(
+            EInteractiveResizeDispatchReason.RuntimeStopped,
+            presentFrameId: presentationPackageId ?? 0UL);
 
     public void SubscribePlayModeTransitions(Action callback)
     {
@@ -950,27 +960,9 @@ internal sealed class UninstalledRuntimeRenderingHostServices : IRuntimeRenderin
     {
     }
 
-    public void RecordRenderVulkanFrameLifecycleTiming(
-        TimeSpan waitFence,
-        TimeSpan acquireImage,
-        TimeSpan recordCommandBuffer,
-        TimeSpan submit,
-        TimeSpan trim,
-        TimeSpan present,
-        TimeSpan total)
-    {
-    }
-
-    public void RecordRenderVulkanFrameLifecycleDetailTiming(
-        TimeSpan sampleTimingQueries,
-        TimeSpan drainRetiredResources,
-        TimeSpan acquireBridgeSubmit,
-        TimeSpan waitSwapchainImage,
-        TimeSpan resetDynamicUniformRing,
-        TimeSpan snapshotImGuiOverlay,
-        TimeSpan recordSceneCommandBuffer,
-        TimeSpan recordImGuiOverlay,
-        TimeSpan recordDynamicUiTextOverlay)
+    public void PublishRenderVulkanFrameTelemetry(
+        in VulkanFrameTelemetryPublication publication,
+        ReadOnlySpan<VulkanCpuStageTelemetry> cpuStages)
     {
     }
 
@@ -1002,10 +994,6 @@ internal sealed class UninstalledRuntimeRenderingHostServices : IRuntimeRenderin
         ulong structuralSignature,
         ulong descriptorGeneration,
         int swapchainSlot)
-    {
-    }
-
-    public void RecordRenderVulkanCpuStage(EVulkanCpuStage stage, TimeSpan elapsed, long allocatedBytes)
     {
     }
 

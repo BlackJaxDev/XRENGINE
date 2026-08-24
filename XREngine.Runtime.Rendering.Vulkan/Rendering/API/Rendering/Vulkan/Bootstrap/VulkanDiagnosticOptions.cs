@@ -374,7 +374,7 @@ internal readonly record struct VulkanDiagnosticOptions
     private static string NormalizeName(string raw)
     {
         ReadOnlySpan<char> source = raw.AsSpan().Trim();
-        Span<char> buffer = stackalloc char[source.Length];
+        char[] buffer = new char[source.Length];
         int length = 0;
         for (int i = 0; i < source.Length; i++)
         {
@@ -385,7 +385,7 @@ internal readonly record struct VulkanDiagnosticOptions
             buffer[length++] = c;
         }
 
-        return new string(buffer[..length]);
+        return new string(buffer, 0, length);
     }
 
     private static bool IsFalseToken(string raw)

@@ -66,31 +66,6 @@ namespace XREngine.Rendering.Commands
             return s;
         }
 
-        private static void SetWorldSpaceBoundingSphere(ref GPUIndirectRenderCommand cmd, in AABB localBounds, in Matrix4x4 modelMatrix)
-        {
-            Vector3 localCenter = localBounds.Center;
-            float localRadius = localBounds.HalfExtents.Length();
-
-            Vector3 worldCenter;
-            float maxScale;
-            if (AffineMatrix4x3.TryFromMatrix4x4(modelMatrix, out AffineMatrix4x3 affineModelMatrix))
-            {
-                worldCenter = affineModelMatrix.TransformPosition(localCenter);
-                maxScale = ComputeMaxAxisScale(affineModelMatrix);
-            }
-            else
-            {
-                worldCenter = Vector3.Transform(localCenter, modelMatrix);
-                maxScale = ComputeMaxAxisScale(modelMatrix);
-            }
-            float worldRadius = localRadius * maxScale;
-
-            if (float.IsNaN(worldRadius) || float.IsInfinity(worldRadius) || worldRadius < 0f)
-                worldRadius = 0f;
-
-            cmd.SetBoundingSphere(worldCenter, worldRadius);
-        }
-
         private static BoundsGpu ComputeWorldBoundsGpu(in AABB localBounds, in Matrix4x4 modelMatrix, uint version)
         {
             Vector3 localCenter = localBounds.Center;
@@ -295,17 +270,18 @@ namespace XREngine.Rendering.Commands
         /// <summary>
         /// Initializes historical command AABBs when GPU BVH ownership is enabled
         /// after commands already exist. BoundsGpu is the authoritative render
-        /// snapshot; the command sphere and configured world bounds are conservative
-        /// recovery sources for malformed entries.
+        /// snapshot and configured world bounds are the conservative recovery source
+        /// for malformed entries.
         /// </summary>
         private void BackfillCommandAabbsFromRenderSnapshot(uint commandCount)
         {
             XRDataBuffer? commandAabbs = _commandAabbBuffer;
-            XRDataBuffer? commands = _allLoadedCommandsBuffer;
-            if (commandAabbs is null || commands is null)
+            XRDataBuffer? metadataBuffer = _allLoadedDrawMetadataBuffer;
+            XRDataBuffer? boundsBuffer = _allLoadedBoundsBuffer;
+            if (commandAabbs is null || metadataBuffer is null || boundsBuffer is null)
                 return;
 
-            uint count = Math.Min(commandCount, Math.Min(commandAabbs.ElementCount, commands.ElementCount));
+            uint count = Math.Min(commandCount, Math.Min(commandAabbs.ElementCount, metadataBuffer.ElementCount));
             for (uint commandIndex = 0u; commandIndex < count; ++commandIndex)
             {
                 // The skinned-bounds reducer owns these slots and has already
@@ -314,21 +290,18 @@ namespace XREngine.Rendering.Commands
                 if (IsCommandOwnedByGpuAabb(commandIndex))
                     continue;
 
-                GPUIndirectRenderCommand command = commands.GetDataRawAtIndex<GPUIndirectRenderCommand>(commandIndex);
-                uint boundsId = command.BoundsID;
-                if (_allLoadedDrawMetadataBuffer is not null && commandIndex < _allLoadedDrawMetadataBuffer.ElementCount)
-                    boundsId = _allLoadedDrawMetadataBuffer.GetDataRawAtIndex<DrawMetadata>(commandIndex).BoundsID;
+                DrawMetadata metadata = metadataBuffer.GetDataRawAtIndex<DrawMetadata>(commandIndex);
+                uint boundsId = metadata.BoundsID;
 
                 BoundsGpu bounds = default;
                 bool hasBounds = false;
-                XRDataBuffer? boundsBuffer = _allLoadedBoundsBuffer;
-                if (boundsBuffer is not null && boundsId < boundsBuffer.ElementCount)
+                if (boundsId < boundsBuffer.ElementCount)
                 {
                     bounds = boundsBuffer.GetDataRawAtIndex<BoundsGpu>(boundsId);
                     hasBounds = bounds.BoundsVersion != 0u;
                 }
 
-                CommandWorldAabb entry = CreateBackfillCommandAabb(hasBounds, bounds, command.BoundingSphere, _bounds);
+                CommandWorldAabb entry = CreateBackfillCommandAabb(hasBounds, bounds, _bounds);
                 WriteCommandAabb(commandIndex, entry, uploadImmediately: false, forceDirty: true);
             }
 
@@ -340,7 +313,6 @@ namespace XREngine.Rendering.Commands
         private static CommandWorldAabb CreateBackfillCommandAabb(
             bool hasBounds,
             in BoundsGpu bounds,
-            in Vector4 commandSphere,
             in AABB configuredBounds)
         {
             Vector3 min = bounds.AabbMin.XYZ();
@@ -349,18 +321,6 @@ namespace XREngine.Rendering.Commands
                 min.X <= max.X && min.Y <= max.Y && min.Z <= max.Z)
             {
                 return new CommandWorldAabb { Min = new Vector4(min, 0.0f), Max = new Vector4(max, 0.0f) };
-            }
-
-            Vector3 center = commandSphere.XYZ();
-            float radius = commandSphere.W;
-            if (IsFinite(center) && float.IsFinite(radius) && radius >= 0.0f)
-            {
-                Vector3 extent = new(radius);
-                return new CommandWorldAabb
-                {
-                    Min = new Vector4(center - extent, 0.0f),
-                    Max = new Vector4(center + extent, 0.0f),
-                };
             }
 
             if (configuredBounds.IsValid && IsFinite(configuredBounds.Min) && IsFinite(configuredBounds.Max))

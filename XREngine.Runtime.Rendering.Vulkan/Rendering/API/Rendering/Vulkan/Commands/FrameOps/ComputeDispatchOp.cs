@@ -15,34 +15,7 @@ internal sealed record ComputeDispatchOp(
     public uint GroupsY { get; private set; } = GroupsY;
     public uint GroupsZ { get; private set; } = GroupsZ;
     public ComputeDispatchSnapshot Snapshot { get; private set; } = Snapshot;
-    internal int ReusableDescriptorBindingOrdinal { get; private set; } = -1;
     public override EVulkanPrimaryPlanNodeKind Kind => EVulkanPrimaryPlanNodeKind.ComputeDispatch;
-
-    internal void SetReusableDescriptorBindingOrdinal(int ordinal)
-        => ReusableDescriptorBindingOrdinal = ordinal;
-
-    internal override int RecordPrimary(
-        VulkanRenderer renderer,
-        scoped ref VulkanRenderer.PrimaryCommandBufferRecordingState recordingState,
-        in VulkanPrimaryOperationRecordingInfo recordingInfo)
-    {
-        if (TryRecordSecondaryBucket(
-                renderer,
-                ref recordingState,
-                in recordingInfo,
-                "ComputeDispatch",
-                out int lastOperationIndex))
-            return lastOperationIndex;
-
-        renderer.CmdBeginLabel(recordingState.CommandBuffer, "ComputeDispatch");
-        renderer.RecordComputeDispatchOp(
-            recordingState.CommandBuffer,
-            recordingState.FrameDataImageIndex,
-            this,
-            recordingInfo.OperationIndex);
-        renderer.CmdEndLabel(recordingState.CommandBuffer);
-        return recordingInfo.OperationIndex;
-    }
 
     internal static ComputeDispatchOp Rent(
         int passIndex,
@@ -53,7 +26,7 @@ internal sealed record ComputeDispatchOp(
         ComputeDispatchSnapshot snapshot,
         in FrameOpContext context)
     {
-        bool frameOwned = TryRentForCurrentFrame(out ComputeDispatchOp? reusable);
+        bool frameOwned = TryRentForCurrentFrame(context, out ComputeDispatchOp? reusable);
         if (reusable is null)
         {
             ComputeDispatchOp created = new(
@@ -64,7 +37,7 @@ internal sealed record ComputeDispatchOp(
                 groupsZ,
                 snapshot,
                 context);
-            return frameOwned ? RetainForCurrentFrame(created) : created;
+            return frameOwned ? RetainForCurrentFrame(created, context) : created;
         }
 
         reusable.Reset(
@@ -94,7 +67,6 @@ internal sealed record ComputeDispatchOp(
         GroupsY = groupsY;
         GroupsZ = groupsZ;
         Snapshot = snapshot;
-        ReusableDescriptorBindingOrdinal = -1;
         Context = context;
     }
 }

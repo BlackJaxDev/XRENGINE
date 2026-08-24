@@ -115,6 +115,7 @@ public partial class OpenGLRenderer : AbstractRenderer<GL>, ISparseTextureStream
         ARBParallelShaderCompile = api.TryGetExtension<ArbParallelShaderCompile>(out var ext14) ? ext14 : null;
         ARBBindlessTexture = api.TryGetExtension<ArbBindlessTexture>(out var ext15) ? ext15 : null;
         LoadMeshTaskDispatchDelegates();
+        InitializeRenderObjectCache();
     }
 
     protected override AbstractRenderAPIObject CreateAPIRenderObject(GenericRenderObject renderObject)

@@ -595,8 +595,7 @@ public sealed class AgentOrchestrator(IAgentModelClient modelClient)
     }
 
     private static bool IsRequestedModel(string requestedModel, string actualModel)
-        => string.Equals(requestedModel, actualModel, StringComparison.Ordinal)
-            || actualModel.StartsWith(requestedModel + "-", StringComparison.Ordinal);
+        => string.Equals(requestedModel, actualModel, StringComparison.Ordinal);
 
     private static bool IsVerificationTool(string toolName)
         => toolName.StartsWith("get_", StringComparison.OrdinalIgnoreCase)

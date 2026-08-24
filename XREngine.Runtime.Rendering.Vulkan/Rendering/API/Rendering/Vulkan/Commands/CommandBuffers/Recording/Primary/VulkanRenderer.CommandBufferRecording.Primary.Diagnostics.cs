@@ -15,7 +15,7 @@ using XREngine.Rendering.Resources;
 
 namespace XREngine.Rendering.Vulkan
 {
-    public unsafe partial class VulkanRenderer
+    internal sealed partial class VulkanCommandRuntime
     {
 
         private void RememberPipelineName(scoped ref PrimaryCommandBufferRecordingState recordingState, in FrameOpContext context)
@@ -29,25 +29,6 @@ namespace XREngine.Rendering.Vulkan
             }
         }
 
-        private static string DescribeFrameOpTraceDetails(FrameOp op)
-            => op switch
-            {
-                ComputeDispatchOp compute =>
-                    $" compute='{compute.Program.Data.Name ?? "<unnamed program>"}' groups={compute.GroupsX},{compute.GroupsY},{compute.GroupsZ} uniforms={compute.Snapshot.Uniforms.Count} samplers={compute.Snapshot.Samplers.Count + compute.Snapshot.SamplersByName.Count} images={compute.Snapshot.Images.Count} buffers={compute.Snapshot.Buffers.Count}",
-                ComputeDispatchIndirectOp computeIndirect =>
-                    $" computeIndirect='{computeIndirect.Program.Data.Name ?? "<unnamed program>"}' args=0x{computeIndirect.ArgumentBuffer.Handle:X}+{computeIndirect.ArgumentOffset}",
-                BufferCopyOp copy =>
-                    $" copy=0x{copy.SourceBuffer.Handle:X}+{copy.SourceOffset}->0x{copy.DestinationBuffer.Handle:X}+{copy.DestinationOffset} bytes={copy.ByteCount}",
-                SubmissionMarkerOp marker => $" marker='{marker.Label}'",
-                IndirectDrawOp indirect =>
-                    $" renderer='{indirect.MeshRenderer.MeshRenderer?.Name ?? "<unnamed renderer>"}' draws={indirect.DrawCount} stride={indirect.Stride} offset={indirect.ByteOffset} countOffset={indirect.CountByteOffset} useCount={indirect.UseCount}",
-                QueryOp query =>
-                    $" query={query.Operation} descriptor={query.Descriptor}",
-                BlitOp blit =>
-                    $" in='{blit.InFbo?.Name ?? "<swapchain>"}' out='{blit.OutFbo?.Name ?? "<swapchain>"}' color={blit.ColorBit} depth={blit.DepthBit} stencil={blit.StencilBit}",
-                _ => string.Empty
-            };
-
         private void MarkSwapchainWriterCore(scoped ref PrimaryCommandBufferRecordingState recordingState, string writerLabel, int passIndex, int opIndex, int pipelineIdentity)
         {
             recordingState.SwapchainLastWriter = writerLabel;
@@ -60,19 +41,10 @@ namespace XREngine.Rendering.Vulkan
             recordingState.SwapchainWriterOpIndexByPipeline[pipelineIdentity] = opIndex;
         }
 
-        private void MarkSwapchainFrameOpWriter(scoped ref PrimaryCommandBufferRecordingState recordingState, string writerLabel, FrameOp op, int passIndex, int opIndex, int pipelineIdentity)
-        {
-            MarkSwapchainWriterCore(ref recordingState, writerLabel, passIndex, opIndex, pipelineIdentity);
-            recordingState.SwapchainWriterOpByPipeline[pipelineIdentity] = op;
-            recordingState.SwapchainWriterDetailByPipeline.Remove(pipelineIdentity);
-            recordingState.SwapchainWriterDynamicUiDrawCountByPipeline.Remove(pipelineIdentity);
-        }
-
         private void MarkSwapchainStaticWriter(scoped ref PrimaryCommandBufferRecordingState recordingState, string writerLabel, string writerDetail, int passIndex, int opIndex, int pipelineIdentity)
         {
             MarkSwapchainWriterCore(ref recordingState, writerLabel, passIndex, opIndex, pipelineIdentity);
             recordingState.SwapchainWriterDetailByPipeline[pipelineIdentity] = writerDetail;
-            recordingState.SwapchainWriterOpByPipeline.Remove(pipelineIdentity);
             recordingState.SwapchainWriterDynamicUiDrawCountByPipeline.Remove(pipelineIdentity);
         }
 
@@ -80,7 +52,6 @@ namespace XREngine.Rendering.Vulkan
         {
             MarkSwapchainWriterCore(ref recordingState, writerLabel, passIndex, opIndex, pipelineIdentity);
             recordingState.SwapchainWriterDynamicUiDrawCountByPipeline[pipelineIdentity] = drawCount;
-            recordingState.SwapchainWriterOpByPipeline.Remove(pipelineIdentity);
             recordingState.SwapchainWriterDetailByPipeline.Remove(pipelineIdentity);
         }
 
@@ -143,7 +114,6 @@ namespace XREngine.Rendering.Vulkan
                     sortedWriters,
                     recordingState.SwapchainWriterLabelByPipeline,
                     recordingState.SwapchainWriterDetailByPipeline,
-                    recordingState.SwapchainWriterOpByPipeline,
                     recordingState.SwapchainWriterDynamicUiDrawCountByPipeline,
                     recordingState.SwapchainWriterPassByPipeline,
                     recordingState.SwapchainWriterOpIndexByPipeline,

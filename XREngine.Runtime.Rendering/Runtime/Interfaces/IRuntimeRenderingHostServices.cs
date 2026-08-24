@@ -9,6 +9,7 @@ public interface IRuntimeRenderingHostServices :
     IRuntimeRenderSettingsServices,
     IRuntimeRenderFrameTimingServices,
     IRuntimeRenderSchedulingServices,
+    IRuntimeRenderWorkServices,
     IRuntimeRenderDiagnosticsServices,
     IRuntimeRenderStatisticsServices,
     IRuntimeRenderDebugDrawingServices,

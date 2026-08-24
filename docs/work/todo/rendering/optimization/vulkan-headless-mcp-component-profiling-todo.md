@@ -1,6 +1,6 @@
 # Vulkan Headless MCP Component Profiling TODO
 
-Last Updated: 2026-07-30
+Last Updated: 2026-08-13
 Owner: Rendering / Vulkan / Profiling / MCP
 Status: In Progress
 
@@ -23,6 +23,8 @@ Related architecture and implementation:
 - [Vulkan Primary And Secondary Command Recording](../../../../architecture/rendering/vulkan-command-recording.md)
 - [Vulkan Primary Command-Buffer Reuse](../../../../architecture/rendering/vulkan-primary-command-buffer-reuse.md)
 - [Vulkan Command Recording Architecture Optimization TODO](vulkan-command-recording-architecture-optimization-todo.md)
+- [Completed Vulkan Presentation-Independent Renderer Refactor](../../COMPLETED/vulkan-presentation-independent-renderer-refactor-todo.md)
+- [Vulkan Presentation-Independent Renderer Validation](../../../testing/rendering/vulkan-presentation-independent-renderer-validation.md)
 - [Remote Profiler](../../../../developer-guides/diagnostics/profiler.md)
 - `Tools/Manage-McpEditorSession.ps1`
 - `Tools/Measure-GameLoopRenderPipeline.ps1`
@@ -72,11 +74,10 @@ Existing strengths:
 
 Current gaps:
 
-- Presentation-independent Vulkan bootstrap hosts now own their device,
-  frame-slot, output, query, and synchronization resources, but the existing
-  `VulkanRenderer` render-graph implementation still derives from the
-  window-oriented `AbstractRenderer` and has not yet been hosted by those
-  targets.
+- The production `VulkanRenderer` now runs its normal render graph against
+  target leases for desktop WSI, presentationless, headless WSI, and OpenXR.
+  The remaining cross-target correctness, synchronization, performance, and
+  regression matrix is tracked in the dedicated validation document above.
 - The optional headless-WSI path is driver-gated by
   `VK_EXT_headless_surface`; unsupported drivers report the limitation and
   retain the presentationless lane.
@@ -219,9 +220,11 @@ Acceptance criteria:
   allocator without creating a native window or `VkSurfaceKHR`.
 - [x] Allocate engine-owned offscreen color/depth images and image views for
   each required output/frame slot.
-- [ ] Run the normal render graph and Vulkan command recording against those
-  outputs. Track the production-renderer refactor in
-  [Vulkan Presentation-Independent Renderer Refactor TODO](vulkan-presentation-independent-renderer-refactor-todo.md).
+- [x] Run the normal render graph and Vulkan command recording against those
+  outputs. The implementation is recorded in the
+  [completed presentation-independent renderer refactor](../../COMPLETED/vulkan-presentation-independent-renderer-refactor-todo.md),
+  with remaining acceptance work in the
+  [validation plan](../../../testing/rendering/vulkan-presentation-independent-renderer-validation.md).
 - [x] Submit to the real Vulkan queue and retain normal resource-lifetime and
   retirement rules.
 - [x] Replace acquire/present with explicit frame-slot ownership and completion
@@ -256,153 +259,220 @@ Acceptance criteria:
 
 ## Phase 2 - Dedicated Render Benchmark Process
 
-- [ ] Add a small runtime executable, tentatively `XREngine.RenderBench`, that
+- [x] Add a small runtime executable, `XREngine.RenderBench`, that
   references the runtime/rendering modules without referencing editor UI.
-- [ ] Keep startup deterministic and expose explicit configuration for backend,
+- [x] Keep startup deterministic and expose explicit configuration for backend,
   execution mode, recipe, output directory, MCP policy, and MCP port.
-- [ ] Load only the world or synthetic fixture required by the recipe.
-- [ ] Support fixed-step time, deterministic camera/animation inputs, fixed
+- [x] Load only the world or synthetic fixture required by the recipe. Phase 2
+  supplies the allocation-free `synthetic-clear` control fixture and loads no
+  world or assets.
+- [x] Support fixed-step time, deterministic camera/animation inputs, fixed
   random seeds, and an optional frozen-world mode.
-- [ ] Disable editor preferences, editor panels, ImGui, dynamic text, input
+- [x] Disable editor preferences, editor panels, ImGui, dynamic text, input
   polling, window title updates, and unrelated editor services.
-- [ ] Keep shader/pipeline warmup, texture residency, resource retirement,
+- [x] Keep shader/pipeline warmup, texture residency, resource retirement,
   workload identity, and stability gates.
-- [ ] Add `Tools/Manage-McpRenderBenchSession.ps1` or an equivalently isolated
+- [x] Add `Tools/Manage-McpRenderBenchSession.ps1` or an equivalently isolated
   session manager rather than overloading normal editor sessions.
-- [ ] Reuse the named-session ownership rules, per-session build artifacts,
+- [x] Reuse the named-session ownership rules, per-session build artifacts,
   environment isolation, PID validation, logs, and safe shutdown behavior from
   `Manage-McpEditorSession.ps1`.
-- [ ] Store disposable evidence under
+- [x] Store disposable evidence under
   `Build/_AgentValidation/<run>/` and engine-owned logs under the normal
   session log directory.
 
 Acceptance criteria:
 
-- [ ] One command starts a named presentationless Vulkan process, waits for MCP
+- [x] One command starts a named presentationless Vulkan process, waits for MCP
   readiness, reports its endpoint and process identity, and can stop only that
   named process.
-- [ ] The process remains usable without an interactive desktop session.
-- [ ] Startup does not wait for creation of a first editor window.
-- [ ] A fixture can run for a bounded frame count and exit cleanly without MCP.
-- [ ] The executable and settings hashes are recorded in every result.
+- [x] The process remains usable without an interactive desktop session; it
+  owns no desktop window or input dependency.
+- [x] Startup does not wait for creation of a first editor window.
+- [x] A fixture can run for a bounded frame count and exit cleanly without MCP.
+- [x] The managed executable, effective-configuration, and workload hashes are
+  recorded in every result.
+
+Implementation note (updated 2026-08-13): Phase 2 deliberately established the
+dedicated process with the target-submit control fixture. Phase 1.2 production
+render-graph integration is now complete, including a windowless
+`DefaultRenderPipeline` run through the production submission gateway. Deferred,
+Uber, component, and cross-target statistical acceptance remain validation
+work; a synthetic RenderBench control result must not be labeled as production
+render-graph evidence.
 
 ## Phase 3 - Runtime MCP Control Plane
 
 ### 3.1 Decouple generic MCP services from the editor
 
-- [ ] Move or extract the transport, protocol, registry, permission, job, and
+- [x] Move or extract the transport, protocol, registry, permission, job, and
   idempotency infrastructure needed by runtime tools into an engine/runtime
   automation assembly.
-- [ ] Let the editor register its scene/editor tool bundle without making
+- [x] Let the editor register its scene/editor tool bundle without making
   runtime profiler tools depend on `XREngine.Editor`.
-- [ ] Replace the mandatory-world `McpToolContext` with explicit optional
+- [x] Replace the mandatory-world `McpToolContext` with explicit optional
   capabilities such as world, renderer, render target, profiler session,
   editor, and window.
-- [ ] Declare required capabilities per tool and return a precise missing-
+- [x] Declare required capabilities per tool and return a precise missing-
   capability error instead of rejecting every tool when no world exists.
-- [ ] Keep mutating profiler/session operations subject to the existing MCP
+- [x] Keep mutating profiler/session operations subject to the existing MCP
   permission policy and idempotency behavior.
 
 ### 3.2 Add asynchronous profiling tools
 
-- [ ] Add `list_render_profile_targets`.
-- [ ] Add `load_render_profile_recipe` and schema validation.
-- [ ] Add `prepare_render_profile`, returning a session/job ID, selected
+- [x] Add `list_render_profile_targets`.
+- [x] Add `load_render_profile_recipe` and schema validation.
+- [x] Add `prepare_render_profile`, returning a session/job ID, selected
   adapter, driver, enabled features/extensions, workload identity, and any
   unsupported requirements.
-- [ ] Add `wait_render_profile_ready`.
-- [ ] Add `arm_render_profile` with an exact engine/render frame boundary.
-- [ ] Add `start_render_profile` and `stop_render_profile`.
-- [ ] Add `get_render_profile_status` without requiring measured-frame work.
-- [ ] Add `get_render_profile_result` and artifact paths.
-- [ ] Add `run_render_profile_matrix` as a bounded asynchronous job.
-- [ ] Add cancellation and timeout behavior that leaves the renderer in a
+- [x] Add `wait_render_profile_ready`.
+- [x] Add `arm_render_profile` with an exact engine/render frame boundary.
+- [x] Add `start_render_profile` and `stop_render_profile`.
+- [x] Add `get_render_profile_status` without requiring measured-frame work.
+- [x] Add `get_render_profile_result` and artifact paths.
+- [x] Add `run_render_profile_matrix` as a bounded asynchronous job.
+- [x] Add cancellation and timeout behavior that leaves the renderer in a
   known state.
-- [ ] Preserve the existing profiler dump tools as post-capture diagnostics.
+- [x] Preserve the existing profiler dump tools as post-capture diagnostics.
 
 ### 3.3 Keep MCP outside the measured interval
 
-- [ ] Implement a state machine with at least `Created`, `Preparing`,
+- [x] Implement a state machine with at least `Created`, `Preparing`,
   `Stabilizing`, `Armed`, `Capturing`, `Draining`, `Completed`, `Failed`, and
   `Cancelled`.
-- [ ] Arm capture data before the selected frame boundary.
-- [ ] Prevent status polling, response serialization, log flushing, and network
+- [x] Arm capture data before the selected frame boundary.
+- [x] Prevent status polling, response serialization, log flushing, and network
   callbacks from executing on render workers or the render thread.
-- [ ] Buffer bounded results in preallocated storage during capture.
-- [ ] Publish MCP results only after capture and delayed GPU-query drainage.
+- [x] Buffer bounded results in preallocated storage during capture.
+- [x] Publish MCP results only after capture and delayed GPU-query drainage.
 
 Acceptance criteria:
 
-- [ ] Runtime profiler tools work in presentationless mode with no editor,
+- [x] Runtime profiler tools work in presentationless mode with no editor,
   window, or active world when the selected fixture does not require them.
-- [ ] A long matrix call returns a job ID instead of holding one RPC open.
+- [x] A long matrix call returns a job ID instead of holding one RPC open.
 - [ ] MCP-idle and MCP-disabled clean cohorts are statistically equivalent
   within the workstream-01 observer-overhead threshold.
-- [ ] No MCP work appears inside retained measured-frame CPU spans.
+- [x] No MCP work appears inside retained measured-frame CPU spans.
+
+Implementation and live validation note (2026-08-13):
+
+- `XREngine.Runtime.Automation` now owns the editor-independent MCP HTTP
+  transport, registry, capability checks, mutation authorization,
+  idempotency, profile control service, matrix jobs, and runtime profile tool
+  bundle. The editor retains its scene actions as a separately registered
+  bundle and no longer rejects profiler-only actions solely because a world is
+  absent.
+- RenderBench uses the same frame-granular Vulkan executor for direct and MCP
+  runs. `prepare_render_profile` returned in approximately 20 ms with state
+  `Preparing`; the capture worker warmed before publishing exact armed frame 5,
+  then remained parked until the serialized start response suspended MCP and
+  released it.
+- The presentationless `synthetic-clear` validation captured 60/60 CPU frames
+  and 60/60 delayed GPU query samples on an NVIDIA GeForce RTX 4070 Laptop GPU.
+  It reported zero capture-thread managed bytes, a stable output hash, and all
+  nine stability gates passing. A two-variant matrix returned a job ID and
+  completed both child sessions. Cancelling a 100,000-frame warmup returned a
+  terminal `Cancelled` session with zero captured frames.
+- A final current-binary component run armed frame 7 and captured 16/16 finite
+  delayed GPU samples with zero capture-thread allocation and all nine gates
+  passing. The two-variant matrix RPC returned its job ID in approximately
+  11 ms; transport suspension is scoped to each child capture/drain interval,
+  so the matrix remains an asynchronous status/cancellation job.
+- Disposable evidence is under
+  `Build/_AgentValidation/20260813-004740-phase3-mcp-profile/`. The remaining
+  unchecked acceptance item is a separate repeated statistical cohort, not an
+  incomplete Phase 3 control-plane implementation.
 
 ## Phase 4 - Profile Recipes And Deterministic Fixtures
 
 ### 4.1 Recipe schema
 
-- [ ] Define a versioned JSONC recipe schema.
-- [ ] Include target component, execution mode, fixture, backend, adapter,
+- [x] Define a versioned JSONC recipe schema.
+- [x] Include target component, execution mode, fixture, backend, adapter,
   resolution, render scale, formats, sample count, frame slots, warmup,
   stability window, capture frames, repetitions, and timeout.
-- [ ] Include instrumentation mode, validation mode, label policy, hardware-
+- [x] Include instrumentation mode, validation mode, label policy, hardware-
   counter policy, and CPU sampling policy.
-- [ ] Include scene, camera, lights, animation, time-step, random seed, mesh
+- [x] Include scene, camera, lights, animation, time-step, random seed, mesh
   strategy, render features, stereo mode, and output identities.
-- [ ] Include mutation policy: stable reuse, forced dirty every frame, one dirty
+- [x] Include mutation policy: stable reuse, forced dirty every frame, one dirty
   event every N frames, resource churn, descriptor churn, or pipeline churn.
-- [ ] Include worker counts, chain/draw counts, descriptor counts, barrier
+- [x] Include worker counts, chain/draw counts, descriptor counts, barrier
   counts, upload sizes, pass iteration counts, and any target-specific inputs.
-- [ ] Include declared inclusions, exclusions, expected counters, validity
+- [x] Include declared inclusions, exclusions, expected counters, validity
   requirements, and acceptance budgets.
 
 ### 4.2 Component fixtures
 
-- [ ] Add a no-op/control fixture that measures harness, frame-slot, and
+- [x] Add a no-op/control fixture that measures harness, frame-slot, and
   submission overhead.
-- [ ] Add command-chain signature and packet-lowering fixtures over immutable
+- [x] Add command-chain signature and packet-lowering fixtures over immutable
   prebuilt input.
-- [ ] Add primary command-encoding fixtures at small, medium, and large op
+- [x] Add primary command-encoding fixtures at small, medium, and large op
   counts.
-- [ ] Add secondary command-recording fixtures across multiple chain sizes and
+- [x] Add secondary command-recording fixtures across multiple chain sizes and
   worker counts.
-- [ ] Add stable-reuse and forced-dirty command-buffer fixtures.
-- [ ] Add descriptor publication/update fixtures with precreated resources and
+- [x] Add stable-reuse and forced-dirty command-buffer fixtures.
+- [x] Add descriptor publication/update fixtures with precreated resources and
   layouts.
-- [ ] Add resource-planning and image-layout/barrier fixtures with fixed
+- [x] Add resource-planning and image-layout/barrier fixtures with fixed
   dependency graphs.
-- [ ] Add queue-lock and minimal queue-submit fixtures without a per-iteration
+- [x] Add queue-lock and minimal queue-submit fixtures without a per-iteration
   device-wide wait.
-- [ ] Add upload fixtures with fixed byte counts and residency state.
-- [ ] Add one-pass GPU fixtures for shadow, depth/normal, G-buffer, lighting,
+- [x] Add upload fixtures with fixed byte counts and residency state.
+- [x] Add one-pass GPU fixtures for shadow, depth/normal, G-buffer, lighting,
   transparency, AO, bloom, TSR, and final composition where supported.
-- [ ] Add full presentationless Deferred and Uber fixtures that match the
+- [x] Add full presentationless Deferred and Uber fixtures that match the
   canonical workstream-01 workload identities as closely as the lane permits.
 
 ### 4.3 Fixture correctness
 
-- [ ] Precreate all assets and Vulkan objects not owned by the target before
+- [x] Precreate all assets and Vulkan objects not owned by the target before
   the capture interval.
-- [ ] Assert expected draw, dispatch, descriptor, barrier, submission, output,
+- [x] Assert expected draw, dispatch, descriptor, barrier, submission, output,
   and command-buffer-decision counts.
-- [ ] Produce an optional post-capture output hash or image for visual
+- [x] Produce an optional post-capture output hash or image for visual
   correctness.
-- [ ] Reject a capture when fixture identity, expected work, shader state,
+- [x] Reject a capture when fixture identity, expected work, shader state,
   output identity, or fallback state changes.
 
 Acceptance criteria:
 
-- [ ] A recipe fully reproduces a run without relying on editor-global
+- [x] A recipe fully reproduces a run without relying on editor-global
   preferences.
-- [ ] Each fixture states whether it includes managed preparation, native
+- [x] Each fixture states whether it includes managed preparation, native
   Vulkan calls, queue submission, GPU execution, or presentation.
-- [ ] Changing only worker count or mutation policy does not change the
+- [x] Changing only worker count or mutation policy does not change the
   underlying workload identity.
-- [ ] Control fixtures quantify the fixed cost that must be subtracted or
+- [x] Control fixtures quantify the fixed cost that must be subtracted or
   reported alongside component results.
+
+Implementation and live validation note (2026-08-13):
+
+- `.vscode/schemas/render-profile-recipe.schema.json` and the matching strict
+  runtime parser now cover the full Phase 4 recipe contract. `--recipe-file`
+  runs the same executor used by MCP, and four tracked JSONC examples live in
+  `docs/examples/profiling/recipes/`.
+- The catalog exposes control, signature/lowering, three primary scales,
+  persistent worker-owned secondary recording, stable/dirty reuse,
+  descriptors, dependency/barrier planning, queue submission, fixed upload,
+  nine real fullscreen Vulkan GPU-pass fixtures, and presentationless
+  Deferred/Uber pass sequences. Target listings and result manifests state
+  inclusions and exclusions; unsupported adapters/counter/sampler requirements
+  fail instead of selecting a fallback.
+- Live runs covered control, descriptor publication, fixed upload, 1-worker and
+  4-worker secondary recording, stable/dirty reuse, a one-pass GPU fixture,
+  and the nine-pass presentationless Deferred proxy. Retained captures reported
+  zero managed allocation, complete delayed GPU samples, exact work counts,
+  stable hashes, and 17/17 validity gates. Worker-count and mutation-only pairs
+  produced identical workload and output hashes.
+- PNG export was visually inspected. RenderDoc 1.44 injection and an explicit
+  capture trigger attached successfully, but this presentationless target has
+  no `vkQueuePresentKHR` boundary, so RenderDoc emitted no `.rdc`; this is the
+  documented headless-capture limitation rather than a fixture fallback.
+  Disposable evidence is under
+  `Build/_AgentValidation/20260813-045218-phase4-profile-fixtures/`.
 
 ## Phase 5 - Targeted CPU Profiling
 

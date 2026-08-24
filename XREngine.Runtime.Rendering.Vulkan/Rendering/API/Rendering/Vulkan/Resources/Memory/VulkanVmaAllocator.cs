@@ -69,30 +69,31 @@ internal sealed unsafe class VulkanVmaAllocator : IVulkanMemoryAllocator
     public VulkanMemoryAllocation AllocateForBuffer(
         Vk api, Device device, Buffer buffer, MemoryPropertyFlags requiredProperties)
     {
-        if (!TryAllocateForBuffer(api, device, buffer, requiredProperties, out VulkanMemoryAllocation allocation))
-            throw new VulkanOutOfMemoryException("Failed to allocate Vulkan buffer memory through VMA.", requiredProperties);
+        if (!TryAllocateForBuffer(api, device, buffer, requiredProperties, out VulkanMemoryAllocation allocation, out Result result))
+            throw new VulkanOutOfMemoryException($"Failed to allocate Vulkan buffer memory through VMA ({result}).", requiredProperties);
         return allocation;
     }
 
     public VulkanMemoryAllocation AllocateForImage(
         Vk api, Device device, Image image, MemoryPropertyFlags requiredProperties)
     {
-        if (!TryAllocateForImage(api, device, image, requiredProperties, out VulkanMemoryAllocation allocation))
-            throw new VulkanOutOfMemoryException("Failed to allocate Vulkan image memory through VMA.", requiredProperties);
+        if (!TryAllocateForImage(api, device, image, requiredProperties, out VulkanMemoryAllocation allocation, out Result result))
+            throw new VulkanOutOfMemoryException($"Failed to allocate Vulkan image memory through VMA ({result}).", requiredProperties);
         return allocation;
     }
 
     public bool TryAllocateForBuffer(
         Vk api, Device device, Buffer buffer,
         MemoryPropertyFlags requiredProperties,
-        out VulkanMemoryAllocation allocation)
+        out VulkanMemoryAllocation allocation,
+        out Result result)
     {
         ThrowIfDisposed();
         allocation = VulkanMemoryAllocation.Null;
 
         try
         {
-            Result result = VulkanVmaNative.AllocateForBuffer(
+            result = VulkanVmaNative.AllocateForBuffer(
                 _allocator,
                 ToUInt64(buffer.Handle),
                 (uint)requiredProperties,
@@ -109,14 +110,15 @@ internal sealed unsafe class VulkanVmaAllocator : IVulkanMemoryAllocator
     public bool TryAllocateForImage(
         Vk api, Device device, Image image,
         MemoryPropertyFlags requiredProperties,
-        out VulkanMemoryAllocation allocation)
+        out VulkanMemoryAllocation allocation,
+        out Result result)
     {
         ThrowIfDisposed();
         allocation = VulkanMemoryAllocation.Null;
 
         try
         {
-            Result result = VulkanVmaNative.AllocateForImage(
+            result = VulkanVmaNative.AllocateForImage(
                 _allocator,
                 ToUInt64(image.Handle),
                 (uint)requiredProperties,
@@ -165,17 +167,22 @@ internal sealed unsafe class VulkanVmaAllocator : IVulkanMemoryAllocator
         VulkanMemoryAllocation allocation,
         ulong offset,
         ulong length,
-        out void* mappedPtr)
+        out void* mappedPtr,
+        out Result result)
     {
         mappedPtr = null;
+        result = Result.Success;
         if (allocation.IsNull)
+        {
+            result = Result.ErrorMemoryMapFailed;
             return false;
+        }
 
         if (allocation.NativeAllocation == 0)
         {
             void* localPtr = null;
-            Result rawResult = api.MapMemory(device, allocation.Memory, allocation.Offset + offset, length, 0, &localPtr);
-            if (rawResult != Result.Success)
+            result = api.MapMemory(device, allocation.Memory, allocation.Offset + offset, length, 0, &localPtr);
+            if (result != Result.Success)
                 return false;
 
             mappedPtr = localPtr;
@@ -194,7 +201,7 @@ internal sealed unsafe class VulkanVmaAllocator : IVulkanMemoryAllocator
             {
                 ThrowIfDisposed();
 
-                Result result = VulkanVmaNative.MapMemory(_allocator, allocation.NativeAllocation, out nint allocationPtr);
+                result = VulkanVmaNative.MapMemory(_allocator, allocation.NativeAllocation, out nint allocationPtr);
                 if (result != Result.Success || allocationPtr == 0)
                 {
                     if (result == Result.Success)

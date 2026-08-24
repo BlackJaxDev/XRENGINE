@@ -32,6 +32,9 @@ internal sealed class VulkanImportedTexturePendingUpload(
     Action? onCanceled,
     Action<Exception>? onError)
 {
+    private int _preparedResourcesReleased;
+    private int _stagingResourcesReleased;
+
     public VulkanImportedTextureUploadRequest Request { get; } = request;
     public VkTexture2D Texture { get; } = texture;
     public Image Image { get; private set; } = image;
@@ -84,5 +87,13 @@ internal sealed class VulkanImportedTexturePendingUpload(
         ImageView = default;
         Sampler = default;
     }
+
+    /// <summary>Ensures failure/cancellation cleanup retires owned image and staging resources once.</summary>
+    public bool TryMarkPreparedResourcesReleased()
+        => Interlocked.Exchange(ref _preparedResourcesReleased, 1) == 0;
+
+    /// <summary>Ensures pooled staging buffers are returned or retired exactly once.</summary>
+    public bool TryMarkStagingResourcesReleased()
+        => Interlocked.Exchange(ref _stagingResourcesReleased, 1) == 0;
 }
 

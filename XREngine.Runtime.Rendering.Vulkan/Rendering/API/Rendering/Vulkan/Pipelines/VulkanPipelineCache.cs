@@ -6,7 +6,7 @@ using Silk.NET.Vulkan;
 
 namespace XREngine.Rendering.Vulkan;
 
-public unsafe partial class VulkanRenderer
+internal sealed unsafe partial class VulkanPipelineManager
 {
     private const int VulkanPipelineCacheSchemaVersion = 3;
     private const int VulkanPipelineCompileRequiredResult = 1000297000;
@@ -16,18 +16,6 @@ public unsafe partial class VulkanRenderer
     // pieces/links, while the interval guard keeps repeated disk writes bounded.
     private const int PipelineCacheAutoSaveCreateThreshold = 64;
     private const long PipelineCacheAutoSaveMinIntervalMs = 30_000;
-    private PipelineCache _pipelineCache;
-    private PipelineCache _backgroundPipelineCache;
-    private string? _pipelineCacheFilePath;
-    private int _pipelineCacheCreatesSinceSave;
-    private int _pipelineCacheInitialDataBytes;
-    private bool _supportsPipelineCreationCacheControl;
-    private long _pipelineCacheLastAutoSaveAttemptTick;
-    private int _pipelineCacheAutoSaveInFlight;
-    private long _pipelineCacheSaveGeneration;
-    private readonly object _pipelineCacheFileWriteLock = new();
-    private readonly Lock _pipelineCacheHostAccessLock = new();
-    private readonly Lock _backgroundPipelineCacheHostAccessLock = new();
 
     internal PipelineCache ActivePipelineCache
         => _pipelineCache;
@@ -43,13 +31,13 @@ public unsafe partial class VulkanRenderer
     internal bool HasPersistedVulkanPipelineCacheData
         => _pipelineCache.Handle != 0 && _pipelineCacheInitialDataBytes > 0;
 
-    private void CreateVulkanPipelineCache()
+    internal void CreatePipelineCache()
     {
-        if (device.Handle == 0)
+        if (RequireDeviceContext().Device.Handle == 0)
             return;
 
-        Api!.GetPhysicalDeviceProperties(_physicalDevice, out PhysicalDeviceProperties properties);
-        InitializeVulkanPipelinePrewarmDatabase(properties);
+        RequireApi().GetPhysicalDeviceProperties(RequireDeviceContext().PhysicalDevice, out PhysicalDeviceProperties properties);
+        InitializePipelinePrewarmDatabase(properties);
 
         string cacheDir = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
@@ -85,7 +73,7 @@ public unsafe partial class VulkanRenderer
                 PInitialData = initialDataPtr,
             };
 
-            Result result = Api.CreatePipelineCache(device, ref info, null, out _pipelineCache);
+            Result result = RequireApi().CreatePipelineCache(RequireDeviceContext().Device, ref info, null, out _pipelineCache);
             if (result != Result.Success)
             {
                 _pipelineCache = default;
@@ -93,8 +81,8 @@ public unsafe partial class VulkanRenderer
                 return;
             }
 
-            Result backgroundResult = Api.CreatePipelineCache(
-                device,
+            Result backgroundResult = RequireApi().CreatePipelineCache(
+                RequireDeviceContext().Device,
                 ref info,
                 null,
                 out _backgroundPipelineCache);
@@ -124,7 +112,7 @@ public unsafe partial class VulkanRenderer
     /// Publishes pipeline-cache entries produced by the isolated compiler cache
     /// into the foreground persistent cache after a native compile returns.
     /// </summary>
-    internal void PublishVulkanBackgroundPipelineCache(double compileMilliseconds)
+    internal void PublishBackgroundPipelineCache(double compileMilliseconds)
     {
         Result mergeResult;
         lock (_pipelineCacheHostAccessLock)
@@ -134,8 +122,8 @@ public unsafe partial class VulkanRenderer
                     return;
 
                 PipelineCache source = _backgroundPipelineCache;
-                mergeResult = Api!.MergePipelineCaches(
-                    device,
+                mergeResult = RequireApi().MergePipelineCaches(
+                    RequireDeviceContext().Device,
                     _pipelineCache,
                     1,
                     &source);
@@ -206,14 +194,9 @@ public unsafe partial class VulkanRenderer
                 cacheOutcome,
                 backgroundCompile,
                 elapsedMs);
-            if (backgroundCompile)
-            {
-                Debug.Vulkan(
-                    "[Vulkan] Background graphics pipeline cache probe completed (outcome={0}, elapsedMs={1:F2}, persistedBytes={2}).",
-                    cacheOutcome,
-                    elapsedMs,
-                    _pipelineCacheInitialDataBytes);
-            }
+            // Slow worker compiles are reported by CreateGraphicsPipelineOnWorker.
+            // Logging every successful cache probe made dense cold views serialize
+            // hundreds of sub-millisecond messages on the render diagnostics path.
         }
         return result;
     }
@@ -229,10 +212,10 @@ public unsafe partial class VulkanRenderer
         out Pipeline pipeline)
     {
         if (pipelineCache.Handle == 0)
-            return Api!.CreateGraphicsPipelines(device, pipelineCache, 1, ref pipelineInfo, null, out pipeline);
+            return RequireApi().CreateGraphicsPipelines(RequireDeviceContext().Device, pipelineCache, 1, ref pipelineInfo, null, out pipeline);
 
         lock (GetVulkanPipelineCacheHostAccessLock(pipelineCache))
-            return Api!.CreateGraphicsPipelines(device, pipelineCache, 1, ref pipelineInfo, null, out pipeline);
+            return RequireApi().CreateGraphicsPipelines(RequireDeviceContext().Device, pipelineCache, 1, ref pipelineInfo, null, out pipeline);
     }
 
     /// <summary>
@@ -244,10 +227,10 @@ public unsafe partial class VulkanRenderer
         out Pipeline pipeline)
     {
         if (pipelineCache.Handle == 0)
-            return Api!.CreateComputePipelines(device, pipelineCache, 1, ref pipelineInfo, null, out pipeline);
+            return RequireApi().CreateComputePipelines(RequireDeviceContext().Device, pipelineCache, 1, ref pipelineInfo, null, out pipeline);
 
         lock (GetVulkanPipelineCacheHostAccessLock(pipelineCache))
-            return Api!.CreateComputePipelines(device, pipelineCache, 1, ref pipelineInfo, null, out pipeline);
+            return RequireApi().CreateComputePipelines(RequireDeviceContext().Device, pipelineCache, 1, ref pipelineInfo, null, out pipeline);
     }
 
     private Lock GetVulkanPipelineCacheHostAccessLock(PipelineCache pipelineCache)
@@ -269,7 +252,7 @@ public unsafe partial class VulkanRenderer
                 if (_pipelineCache.Handle == 0)
                     return false;
                 nuint cacheSize = 0;
-                Result sizeResult = Api!.GetPipelineCacheData(device, _pipelineCache, &cacheSize, null);
+                Result sizeResult = RequireApi().GetPipelineCacheData(RequireDeviceContext().Device, _pipelineCache, &cacheSize, null);
                 if (sizeResult != Result.Success || cacheSize == 0)
                 {
                     Debug.VulkanWarning($"[Vulkan] Pipeline cache save skipped: sizeResult={sizeResult}, size={cacheSize}.");
@@ -285,7 +268,7 @@ public unsafe partial class VulkanRenderer
                 cacheBytes = new byte[(int)cacheSize];
                 fixed (byte* cachePtr = cacheBytes)
                 {
-                    Result dataResult = Api.GetPipelineCacheData(device, _pipelineCache, &cacheSize, cachePtr);
+                    Result dataResult = RequireApi().GetPipelineCacheData(RequireDeviceContext().Device, _pipelineCache, &cacheSize, cachePtr);
                     if (dataResult != Result.Success)
                     {
                         Debug.VulkanWarning($"[Vulkan] Failed to fetch pipeline cache data ({dataResult}).");
@@ -371,7 +354,7 @@ public unsafe partial class VulkanRenderer
         });
     }
 
-    internal void NotifyVulkanPipelineCreated(string kind)
+    internal void NotifyPipelineCreated(string kind)
     {
         if (_pipelineCache.Handle == 0)
             return;
@@ -390,17 +373,17 @@ public unsafe partial class VulkanRenderer
         QueueVulkanPipelineCacheAutoSave();
     }
 
-    private void DestroyVulkanPipelineCache()
+    internal void DestroyPipelineCache()
     {
-        SaveVulkanPipelinePrewarmDatabase();
+        SavePipelinePrewarmDatabase();
 
         lock (_pipelineCacheHostAccessLock)
             lock (_backgroundPipelineCacheHostAccessLock)
                 if (_pipelineCache.Handle != 0 && _backgroundPipelineCache.Handle != 0)
                 {
                     PipelineCache source = _backgroundPipelineCache;
-                    Result mergeResult = Api!.MergePipelineCaches(
-                        device,
+                    Result mergeResult = RequireApi().MergePipelineCaches(
+                        RequireDeviceContext().Device,
                         _pipelineCache,
                         1,
                         &source);
@@ -415,7 +398,7 @@ public unsafe partial class VulkanRenderer
         lock (_backgroundPipelineCacheHostAccessLock)
             if (_backgroundPipelineCache.Handle != 0)
             {
-                Api!.DestroyPipelineCache(device, _backgroundPipelineCache, null);
+                RequireApi().DestroyPipelineCache(RequireDeviceContext().Device, _backgroundPipelineCache, null);
                 _backgroundPipelineCache = default;
             }
 
@@ -424,7 +407,7 @@ public unsafe partial class VulkanRenderer
             SaveVulkanPipelineCache();
             lock (_pipelineCacheHostAccessLock)
             {
-                Api!.DestroyPipelineCache(device, _pipelineCache, null);
+                RequireApi().DestroyPipelineCache(RequireDeviceContext().Device, _pipelineCache, null);
                 _pipelineCache = default;
             }
         }

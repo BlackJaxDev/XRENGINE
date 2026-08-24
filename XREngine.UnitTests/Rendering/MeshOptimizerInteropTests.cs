@@ -29,7 +29,7 @@ public sealed class MeshOptimizerInteropTests
     public void BuildMeshlets_WithManyTinyTriangles_HandlesPaddedTriangleOffsets()
     {
         XRMesh mesh = CreateManyTinyTriangleMesh("PaddedTriangleOffsets", 240);
-        MeshletBuildResult result = MeshOptimizerIntegration.BuildMeshlets(
+        MeshletBuildResult result = MeshOptimizerIntegration.BuildMeshletPayloadForMesh(
             mesh,
             new MeshletGenerationSettings
             {
@@ -68,8 +68,9 @@ public sealed class MeshOptimizerInteropTests
         };
         const string sourceMeshIdentity = "Assets/Models/Phase2/CookedMeshletPayload";
 
-        MeshletBuildResult result = MeshOptimizerIntegration.BuildMeshlets(mesh, meshletSettings, lodSettings, sourceMeshIdentity);
+        MeshletBuildResult result = MeshOptimizerIntegration.BuildMeshletPayloadForMesh(mesh, meshletSettings, lodSettings, sourceMeshIdentity);
         MeshletPayload payload = result.Payload;
+        payload.ValidateForMesh(mesh, sourceMeshIdentity);
         mesh.MeshletPayload = payload;
 
         payload.GenerationEnabled.ShouldBeTrue();
@@ -172,14 +173,16 @@ public sealed class MeshOptimizerInteropTests
     }
 
     [Test]
-    public void Meshlets_AreRebuiltLazilyInsteadOfDuringGpuSceneSwap()
+    public void Meshlets_ArePublishedAtFrameBoundaryWithoutRuntimeRebuild()
     {
         string gpuSceneSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/GPUScene/GPUScene.CommandBuffers.cs").Replace("\r\n", "\n");
         string hybridSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/HybridRenderingManager.cs").Replace("\r\n", "\n");
 
         string swapBody = ExtractSwapCommandBuffersBody(gpuSceneSource);
-        swapBody.ShouldNotContain("RebuildMeshletsFromUpdatingCommands");
-        gpuSceneSource.ShouldNotContain("RebuildMeshletsFromUpdatingCommands");
+        swapBody.ShouldContain("ApplyPendingMeshletPayloadChangesAtFrameBoundary();");
+        swapBody.ShouldContain("PublishMeshletBufferGenerationAtFrameBoundary();");
+        swapBody.ShouldNotContain("MeshOptimizerIntegration");
+        swapBody.ShouldNotContain("BuildMeshletPayload");
         gpuSceneSource.ShouldContain("RebuildDebugMeshletCollectionFromUpdatingCommands");
         gpuSceneSource.ShouldContain("public bool RenderMeshlets(XRCamera camera, int renderPass)");
         hybridSource.ShouldContain("TryGetMeshletExpansionInputs");
@@ -201,6 +204,7 @@ public sealed class MeshOptimizerInteropTests
                 .ShouldBeTrue(failureReason);
             scene.TryGetLodTableEntry(logicalMeshId, out GPUScene.LODTableEntry lodEntry).ShouldBeTrue();
             scene.TryGetMeshletRange(lodEntry.LOD0_MeshDataID, out GPUScene.GpuMeshletRange range).ShouldBeTrue();
+            scene.SwapCommandBuffers();
 
             range.MeshletCount.ShouldBe((uint)payload.Meshlets.Length);
             scene.MeshletDescriptorCount.ShouldBe(payload.Meshlets.Length);
@@ -264,7 +268,7 @@ public sealed class MeshOptimizerInteropTests
     }
 
     [Test]
-    public void GPUScene_RuntimeMeshletRepairBuildsMissingResidentPayloadForMeshletDispatch()
+    public void GPUScene_MissingResidentPayloadRemainsTraditionalWithoutRuntimeBuild()
     {
         XRMesh mesh = CreateManyTinyTriangleMesh("RuntimeMeshletRepair", 240);
 
@@ -279,17 +283,14 @@ public sealed class MeshOptimizerInteropTests
             mesh.MeshletPayload.ShouldBeNull();
 
             MeshOptimizerIntegration.ResetMeshletBuildDiagnosticsForTests();
-            scene.EnsureRuntimeMeshletPayloadsForMeshletDispatch().ShouldBe(1u);
+            scene.SwapCommandBuffers();
 
-            MeshletPayload payload = mesh.MeshletPayload.ShouldNotBeNull();
-            payload.HasMeshlets.ShouldBeTrue();
-            MeshOptimizerIntegration.MeshletBuildInvocationCount.ShouldBe(1L);
-            scene.TryGetMeshletRange(lodEntry.LOD0_MeshDataID, out GPUScene.GpuMeshletRange repairedRange).ShouldBeTrue();
-            repairedRange.MeshletCount.ShouldBe((uint)payload.Meshlets.Length);
-            scene.HasRenderableMeshlets(lodEntry.LOD0_MeshDataID).ShouldBeTrue();
-
-            scene.EnsureRuntimeMeshletPayloadsForMeshletDispatch().ShouldBe(0u);
-            MeshOptimizerIntegration.MeshletBuildInvocationCount.ShouldBe(1L);
+            mesh.MeshletPayload.ShouldBeNull();
+            MeshOptimizerIntegration.MeshletBuildInvocationCount.ShouldBe(0L);
+            scene.TryGetMeshletRange(lodEntry.LOD0_MeshDataID, out GPUScene.GpuMeshletRange publishedRange).ShouldBeTrue();
+            publishedRange.MeshletCount.ShouldBe(0u);
+            publishedRange.RequiresTraditionalIndirectFallback.ShouldBeTrue();
+            scene.HasRenderableMeshlets(lodEntry.LOD0_MeshDataID).ShouldBeFalse();
         }
         finally
         {
@@ -390,13 +391,14 @@ public sealed class MeshOptimizerInteropTests
     {
         string lodShader = ReadWorkspaceFile("Build/CommonAssets/Shaders/Compute/Indirect/GPURenderLODSelect.comp").Replace("\r\n", "\n");
 
-        lodShader.ShouldContain("const uint COMMAND_MESH_ID = 4u;");
-        lodShader.ShouldContain("const uint COMMAND_LOD_LEVEL = 12u;");
-        lodShader.ShouldContain("const uint COMMAND_DRAW_ID = 19u;");
-        lodShader.ShouldContain("uint drawID = floatBitsToUint(culled[base + COMMAND_DRAW_ID]);");
-        lodShader.ShouldContain("culled[base + COMMAND_MESH_ID] = uintBitsToFloat(selectedMeshID);");
-        lodShader.ShouldContain("culled[base + COMMAND_LOD_LEVEL] = uintBitsToFloat(resolvedLevel);");
-        lodShader.ShouldNotContain("culled[base + COMMAND_DRAW_ID] =");
+        lodShader.ShouldContain("layout(std430, binding = 0) readonly buffer CulledCommandsBuffer { uint culled[]; };");
+        lodShader.ShouldContain("uint drawID = culled[idx];");
+        lodShader.ShouldContain("DrawMetadata draw = Draws[drawID];");
+        lodShader.ShouldContain("uint currentMeshID = draw.MeshID;");
+        lodShader.ShouldContain("lodTransitions[transitionBase + 0u] = selectedMeshID;");
+        lodShader.ShouldContain("lodTransitions[transitionBase + 1u] = resolvedLevel;");
+        lodShader.ShouldNotContain("Draws[drawID] =");
+        lodShader.ShouldNotContain("culled[idx] =");
     }
 
     [Test]
@@ -409,7 +411,6 @@ public sealed class MeshOptimizerInteropTests
         passSource.ShouldContain("public bool TryGetMeshletExpansionInputs");
         passSource.ShouldContain("_culledSceneToRenderBuffer");
         passSource.ShouldContain("_culledCountBuffer");
-        passSource.ShouldContain("_culledHotCommandBuffer");
         passSource.ShouldContain("scene.DrawMetadataBuffer");
         passSource.ShouldContain("scene.MeshDataBuffer");
         passSource.ShouldContain("scene.MeshletRangeBuffer");
@@ -433,7 +434,7 @@ public sealed class MeshOptimizerInteropTests
     {
         string shader = ReadWorkspaceFile("Build/CommonAssets/Shaders/Compute/Indirect/GPURenderExpandMeshlets.comp").Replace("\r\n", "\n");
 
-        shader.ShouldContain("layout(std430, binding = 0) readonly buffer VisibleCommandsBuffer");
+        shader.ShouldContain("layout(std430, binding = 0) readonly buffer VisibleDrawIdsBuffer");
         shader.ShouldContain("layout(std430, binding = 9) buffer VisibleMeshletTaskBuffer");
         shader.ShouldContain("layout(std430, binding = 10) buffer VisibleMeshletTaskCountBuffer");
         shader.ShouldContain("layout(std430, binding = 11) buffer MeshletDispatchIndirectBuffer");
@@ -441,27 +442,26 @@ public sealed class MeshOptimizerInteropTests
         shader.ShouldContain("layout(std430, binding = 14) buffer MeshletDispatchCountBuffer");
         shader.ShouldContain("uint observed = atomicCompSwap(MeshletTaskCount, current, current + 1u);");
         shader.ShouldContain("atomicMax(MeshletDispatchX, current + 1u);");
-        shader.ShouldContain("MeshletDispatchCount = 1u;");
+        shader.ShouldContain("atomicExchange(MeshletDispatchCount, 1u);");
         shader.ShouldContain("if (range.MeshletCount == 0u)");
         shader.ShouldContain("atomicExchange(MeshletExpansionOverflowFlag, 1u);");
         shader.ShouldContain("meshletTasks[taskIndex].MeshletIndex = meshletIndex;");
         shader.ShouldContain("meshletTasks[taskIndex].DrawID = drawID;");
         shader.ShouldContain("meshletTasks[taskIndex].TransformID = transformID;");
-        shader.ShouldContain("meshletTasks[taskIndex].MaterialID = materialID;");
+        shader.ShouldContain("meshletTasks[taskIndex].MaterialID = selectedMeshID;");
     }
 
     [Test]
-    public void GPURenderExpandMeshlets_PreservesDrawMetadataAndPreviousLodRecords()
+    public void GPURenderExpandMeshlets_UsesImmutableMetadataAndRoutesActiveLodTransitionsTraditionally()
     {
         string shader = ReadWorkspaceFile("Build/CommonAssets/Shaders/Compute/Indirect/GPURenderExpandMeshlets.comp").Replace("\r\n", "\n");
 
         shader.ShouldContain("DrawMetadata meta = Draws[drawID];");
-        shader.ShouldContain("transformID = meta.TransformID;");
-        shader.ShouldContain("materialID = meta.MaterialID;");
-        shader.ShouldContain("ExpandMeshletRange(meshID, drawID, transformID, materialID, false);");
-        shader.ShouldContain("uint previousMeshID = lodTransitions[transitionBase + 0u];");
-        shader.ShouldContain("bool transitionActive = (transitionFlags & LOD_TRANSITION_ACTIVE) != 0u && previousMeshID != 0u && transitionProgress < 1.0;");
-        shader.ShouldContain("ExpandMeshletRange(previousMeshID, drawID, transformID, materialID, true);");
+        shader.ShouldContain("uint meshID = meta.MeshID;");
+        shader.ShouldContain("uint transformID = meta.TransformID;");
+        shader.ShouldContain("(transitionFlags & LOD_TRANSITION_ACTIVE) != 0u");
+        shader.ShouldContain("ExpandMeshletRange(meshID, drawID, transformID, meshID, false);");
+        shader.ShouldNotContain("ExpandMeshletRange(previousMeshID");
         shader.ShouldContain("meshletIndex |= MESHLET_TASK_PREVIOUS_LOD_FLAG;");
     }
 
@@ -480,9 +480,12 @@ public sealed class MeshOptimizerInteropTests
         passCore.ShouldContain("public XRDataBuffer? MeshletExpansionOverflowFlagBuffer");
         passCore.ShouldContain("public bool MeshletExpansionPreparedThisFrame");
         passInit.ShouldContain("Compute/Indirect/GPURenderExpandMeshlets.comp");
-        passInit.ShouldContain("EnsureMeshletExpansionBuffers(capacity)");
+        passInit.ShouldContain("EnsureMeshletExpansionBuffers(");
+        passInit.ShouldContain("checked((uint)Math.Max(gpuScene.MeshletDescriptorCount, 0))");
         passInit.ShouldContain("EBufferTarget.DrawIndirectBuffer");
-        passIndirect.ShouldContain("SelectVisibleCommandLods(scene, camera);\n            ExpandVisibleMeshlets(scene);\n            ClassifyTransparencyDomains(scene);");
+        passIndirect.ShouldContain("SelectVisibleCommandLods(scene, camera);");
+        passIndirect.ShouldContain("if (MeshletDirectPipelineReadyThisFrame)\n                ExpandVisibleMeshlets(scene);");
+        passIndirect.ShouldContain("ClassifyTransparencyDomains(scene);");
         passIndirect.ShouldContain("TryGetMeshletExpansionInputs(scene, out GpuMeshletExpansionInputs inputs)");
         passIndirect.ShouldContain("_expandMeshletsComputeShader.DispatchCompute(dispatchGroups, 1, 1, postExpandBarrier);");
         resetShader.ShouldContain("MeshletTaskCount = 0u;");
@@ -496,10 +499,11 @@ public sealed class MeshOptimizerInteropTests
     public void MeshTaskIndirectCountDispatch_UsesBackendCountPathAndShaderGate()
     {
         string rendererSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Generic/AbstractRenderer.cs").Replace("\r\n", "\n");
-        string vulkanSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Features/Meshlets/VulkanRenderer.Meshlets.cs").Replace("\r\n", "\n");
-        string vulkanExtensions = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Bootstrap/VulkanExtensions.cs").Replace("\r\n", "\n");
-        string vulkanLogicalDevice = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Bootstrap/VulkanRenderer.LogicalDevice.cs").Replace("\r\n", "\n");
-        string vulkanCommandBuffers = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs").Replace("\r\n", "\n");
+        string vulkanSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Bootstrap/VulkanRenderer.cs").Replace("\r\n", "\n");
+        string vulkanExtensions = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Bootstrap/Device/VulkanDeviceExtensionFunctions.cs").Replace("\r\n", "\n");
+        string vulkanLogicalDevice = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Bootstrap/Device/VulkanDeviceContext.LogicalDeviceBootstrap.cs").Replace("\r\n", "\n");
+        string vulkanCommandBuffers = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/Recording/VulkanRenderer.DrawAndComputeRecording.cs").Replace("\r\n", "\n");
+        string vulkanFrameLoop = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/Loop/Authority/VulkanFrameLoop.FeatureOperations.cs").Replace("\r\n", "\n");
         string openGlSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.OpenGL/Rendering/API/Rendering/OpenGL/Features/Meshlets/OpenGLRenderer.Meshlets.cs").Replace("\r\n", "\n");
 
         rendererSource.ShouldContain("TryDrawMeshTasksIndirectCount(");
@@ -508,11 +512,14 @@ public sealed class MeshOptimizerInteropTests
         rendererSource.ShouldContain("Mesh-task indirect commands must use");
         rendererSource.ShouldContain("EBufferTarget.DrawIndirectBuffer");
 
-        vulkanExtensions.ShouldContain("private ExtMeshShader? _extMeshShader;");
+        vulkanExtensions.ShouldContain("public ExtMeshShader? ExtMeshShader { get; private set; }");
+        vulkanExtensions.ShouldContain("api.TryGetDeviceExtension(instance, device, out meshShader);");
         vulkanLogicalDevice.ShouldContain("\"VK_EXT_mesh_shader\"");
         vulkanLogicalDevice.ShouldContain("PhysicalDeviceMeshShaderFeaturesEXT");
-        vulkanLogicalDevice.ShouldContain("Api!.TryGetDeviceExtension(instance, device, out _extMeshShader)");
+        vulkanLogicalDevice.ShouldContain("LoadAndFinalizeExtensionFunctions(");
         vulkanSource.ShouldContain("SupportsVulkanMeshTaskIndirectCount");
+        vulkanSource.ShouldContain("_frameLoop.TryDrawMeshTasksIndirectCount(");
+        vulkanFrameLoop.ShouldContain("TryEnqueueMeshTaskIndirectCount(");
         vulkanCommandBuffers.ShouldContain("CmdDrawMeshTasksIndirectCount");
 
         openGlSource.ShouldContain("glMultiDrawMeshTasksIndirectCountEXT");
@@ -639,13 +646,14 @@ public sealed class MeshOptimizerInteropTests
             shader.ShouldNotContain("#extension GL_NV_mesh_shader");
             shader.ShouldContain("taskPayloadSharedEXT TaskPayload IN;");
             shader.ShouldNotContain("taskNV in");
-            shader.ShouldContain("SetMeshOutputsEXT(meshlet.VertexCount, meshlet.TriangleCount);");
+            shader.ShouldContain("SetMeshOutputsEXT(");
             shader.ShouldNotContain("gl_PrimitiveCountNV");
             shader.ShouldContain("gl_MeshVerticesEXT[tid].gl_Position = ViewProjectionMatrix * worldPosition;");
             shader.ShouldNotContain("gl_MeshVerticesNV");
-            shader.ShouldContain("gl_PrimitiveTriangleIndicesEXT[tri] = uvec3(");
+            shader.ShouldContain("gl_PrimitiveTriangleIndicesEXT[tri] =");
+            shader.ShouldContain("ReadTriIndex(baseByte + 0u)");
             shader.ShouldNotContain("gl_PrimitiveIndicesNV");
-            shader.ShouldContain("layout(triangles, max_vertices = 64, max_primitives = 126) out;");
+            shader.ShouldContain("layout(triangles, max_vertices = 64, max_primitives = 124) out;");
             // Atlas / scene bindings must match the NV variant so the runtime can share UBO/SSBO setup.
             shader.ShouldContain("layout(std430, binding = 13) readonly buffer AtlasPositionBuffer");
             shader.ShouldContain("layout(std430, binding = 14) readonly buffer AtlasNormalBuffer");
@@ -670,7 +678,8 @@ public sealed class MeshOptimizerInteropTests
         string hybridSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/HybridRenderingManager.cs").Replace("\r\n", "\n");
         string passCore = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/GPURenderPassCollection/GPURenderPassCollection.Core.cs").Replace("\r\n", "\n");
         string openGlSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.OpenGL/Rendering/API/Rendering/OpenGL/Features/Meshlets/OpenGLRenderer.Meshlets.cs").Replace("\r\n", "\n");
-        string vulkanSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Features/Meshlets/VulkanRenderer.Meshlets.cs").Replace("\r\n", "\n");
+        string vulkanSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Bootstrap/VulkanRenderer.cs").Replace("\r\n", "\n");
+        string expandShader = ReadWorkspaceFile("Build/CommonAssets/Shaders/Compute/Indirect/GPURenderExpandMeshlets.comp").Replace("\r\n", "\n");
 
         hybridSource.ShouldContain("TryRenderMeshletMaterialTable(");
         hybridSource.ShouldContain("EnsureMeshletMaterialTableProgram(");
@@ -691,24 +700,23 @@ public sealed class MeshOptimizerInteropTests
         hybridSource.ShouldContain("materialTableBuffer.BindTo(program, MaterialTableSsboBinding);");
         hybridSource.ShouldContain("materialTextureHandleBuffer?.BindTo(program, MaterialTextureHandleTableSsboBinding);");
         hybridSource.ShouldContain("WarnMeshletMaterialFallback(");
-        hybridSource.ShouldContain("skipping traditional mesh fallback");
+        hybridSource.ShouldContain("CPU/readback fallback is prohibited");
+        hybridSource.ShouldContain("RebuildMaterialScatterForTraditionalMeshletFallback");
         hybridSource.ShouldContain("renderPasses.TryGetHiZDepthPyramidForMeshlets(");
         hybridSource.ShouldContain("program.Uniform(\"HiZViewProjectionMatrix\"");
         hybridSource.ShouldContain("program.Uniform(\"HiZValid\", hiZAvailable ? 1u : 0u);");
         hybridSource.ShouldContain("program.Sampler(\"HiZDepth\", hiZDepthPyramid");
-        hybridSource.ShouldContain("scene.SkinnedCommandCount != 0u");
-        hybridSource.ShouldContain("Scene-owned skinned meshlet vertex-weight buffers are not wired yet");
+        expandShader.ShouldContain("if (meta.SkinID != 0u ||");
         hybridSource.ShouldNotContain("MeshletCollection");
         hybridSource.ShouldNotContain("Rendering.Meshlets");
 
-        passCore.ShouldContain("bool meshlet = strategy.IsAnyMeshletStrategy();");
+        passCore.ShouldContain("bool meshlet = MeshPrimitivePathPreference != EMeshPrimitivePathPreference.TraditionalOnly;");
         passCore.ShouldContain("_passEnableZeroReadbackMaterialScatter = zeroReadback || instrumented || meshlet;");
 
         openGlSource.ShouldContain("public override bool SupportsProductionMeshletShaders()");
         openGlSource.ShouldContain("=> MeshShaderDialect == EMeshShaderDialect.OpenGLEXT;");
         openGlSource.ShouldNotContain("production task/mesh shader sources are not wired yet");
-        vulkanSource.ShouldContain("public override bool SupportsProductionMeshletShaders()");
-        vulkanSource.ShouldContain("=> MeshShaderDialect == EMeshShaderDialect.VulkanEXT;");
+        vulkanSource.ShouldContain("public override bool SupportsProductionMeshletShaders() => _deviceContext.SupportsMeshTaskIndirectCount;");
         vulkanSource.ShouldNotContain("production task/mesh shader sources are not wired yet");
     }
 
@@ -739,7 +747,7 @@ public sealed class MeshOptimizerInteropTests
             shader.ShouldContain("layout(location = 24) flat out uint XRE_FragMaterialId[];");
             shader.ShouldContain("layout(location = 25) out vec3 PrevFragPos[];");
             shader.ShouldContain("layout(location = 26) flat out uint XRE_FragStateClassId[];");
-            shader.ShouldContain("XRE_FragMaterialId[tid] = IN.Record.MaterialID != 0u ? IN.Record.MaterialID : draw.MaterialID;");
+            shader.ShouldContain("XRE_FragMaterialId[tid] = draw.MaterialID;");
             shader.ShouldContain("XRE_FragStateClassId[tid] = draw.StateClassID;");
             shader.ShouldContain("PrevFragPos[tid] = previousWorldPosition.xyz;");
         }
@@ -760,23 +768,24 @@ public sealed class MeshOptimizerInteropTests
         hybridSource.ShouldContain("RecordGpuMeshletProductionFrame");
         hybridSource.ShouldContain("RecordGpuMeshletFallback");
         hybridSource.ShouldContain("Meshlet.BackendSelected");
-        hybridSource.ShouldContain("Meshlet.BackendUnsupported");
+        hybridSource.ShouldContain("Meshlet.PostSealUnsafe");
 
         passIndirect.ShouldContain("RecordGpuMeshletDispatchSkipped");
         passIndirect.ShouldContain("RecordGpuMeshletExpansionOverflow");
         passIndirect.ShouldContain("RecordGpuMeshletTaskStats");
         passIndirect.ShouldContain("Meshlet.DispatchSkipped");
         passIndirect.ShouldContain("Meshlet.ExpandOverflow");
-        passCore.ShouldContain("RecordGpuMeshletInstrumentation");
+        passIndirect.ShouldContain("TryQueueMeshletEvidenceSnapshot(");
 
         gpuSceneSource.ShouldContain("RecordGpuMeshletCacheHit");
         gpuSceneSource.ShouldContain("RecordGpuMeshletCacheMiss");
         gpuSceneSource.ShouldContain("RecordGpuMeshletCacheStale");
         gpuSceneSource.ShouldContain("Meshlet.SceneBufferUpload");
         gpuSceneSource.ShouldContain("Meshlet.CacheMissing");
-        gpuSceneSource.ShouldContain("Meshlet.CacheStale");
-        gpuSceneSource.ShouldContain("EnsureRuntimeMeshletPayloadsForMeshletDispatch");
-        gpuSceneSource.ShouldContain("Meshlet.RuntimePayloadBuilt");
+        gpuSceneSource.ShouldContain("Meshlet.CacheIncompatible");
+        gpuSceneSource.ShouldContain("SetEmptyMeshletRange(meshID");
+        gpuSceneSource.ShouldNotContain("EnsureRuntimeMeshletPayloadsForMeshletDispatch");
+        gpuSceneSource.ShouldNotContain("Meshlet.RuntimePayloadBuilt");
 
         statsSource.ShouldContain("GpuMeshletRequestedFrames");
         statsSource.ShouldContain("GpuMeshletProductionFrames");
@@ -790,7 +799,7 @@ public sealed class MeshOptimizerInteropTests
             shader.ShouldContain("layout(std430, binding = 21) buffer MeshletStatsBuffer");
             shader.ShouldContain("uniform uint StatsEnabled;");
             shader.ShouldContain("uniform mat4 HiZViewProjectionMatrix;");
-            shader.ShouldContain("HiZViewProjectionMatrix * vec4(sphere.xyz, 1.0)");
+            shader.ShouldContain("HiZViewProjectionMatrix * vec4(corners[i], 1.0)");
             shader.ShouldContain("atomicAdd(MeshletTaskRecordsEmitted, 1u);");
             shader.ShouldContain("atomicAdd(MeshletTaskRecordsFrustumCulled, 1u);");
             shader.ShouldContain("atomicAdd(MeshletTaskRecordsConeCulled, 1u);");
@@ -826,7 +835,7 @@ public sealed class MeshOptimizerInteropTests
     }
 
     [Test]
-    public void GpuMeshletSelectedPath_DoesNotFallThroughToTraditionalIndirectRendering()
+    public void GpuMeshletPreferredPath_SubmitsOnlyExcludedRowsThroughTraditionalZeroReadback()
     {
         string hybridSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/HybridRenderingManager.cs").Replace("\r\n", "\n");
         string renderBody = ExtractSourceBetween(
@@ -835,20 +844,23 @@ public sealed class MeshOptimizerInteropTests
             "private static void LogIndirectPath(");
         string meshletGuard = ExtractSourceBetween(
             renderBody,
-            "bool meshletStrategy = renderPasses.MeshSubmissionStrategy.IsAnyMeshletStrategy();",
-            "if (renderPasses.MeshSubmissionStrategy == EMeshSubmissionStrategy.GpuIndirectZeroReadback");
+            "EMeshPrimitivePathPreference primitivePreference = renderPasses.MeshPrimitivePathPreference;",
+            "if ((renderPasses.MeshSubmissionStrategy == EMeshSubmissionStrategy.GpuIndirectZeroReadback");
 
         meshletGuard.ShouldContain("TryRenderMeshletMaterialTable(");
         meshletGuard.ShouldContain("WarnMeshletMaterialFallback(");
+        meshletGuard.ShouldContain("RebuildMaterialScatterForTraditionalMeshletFallback");
+        meshletGuard.ShouldContain("Do not retry a");
+        meshletGuard.ShouldContain("failed meshlet submission on the CPU.");
         meshletGuard.ShouldContain("return;");
-        meshletGuard.ShouldNotContain("RenderZeroReadback");
-        meshletGuard.ShouldNotContain("RenderTraditional");
+        meshletGuard.ShouldNotContain("RenderCPU");
 
         string zeroReadbackScatterGuard = ExtractSourceBetween(
             renderBody,
-            "if (renderPasses.MeshSubmissionStrategy == EMeshSubmissionStrategy.GpuIndirectZeroReadback",
+            "if ((renderPasses.MeshSubmissionStrategy == EMeshSubmissionStrategy.GpuIndirectZeroReadback",
             "// Material map from scene (ID -> XRMaterial)");
-        zeroReadbackScatterGuard.ShouldNotContain("IsAnyMeshletStrategy");
+        zeroReadbackScatterGuard.ShouldContain("meshletStrategy || traditionalGpuFallback");
+        zeroReadbackScatterGuard.ShouldContain("ZeroReadbackMaterialScatterPreparedThisFrame");
     }
 
     [Test]
@@ -877,7 +889,7 @@ public sealed class MeshOptimizerInteropTests
     private static string ExtractSwapCommandBuffersBody(string source)
     {
         const string startMarker = "public void SwapCommandBuffers()";
-        const string endMarker = "private static XRDataBuffer MakeCommandsInputBuffer()";
+        const string endMarker = "private static unsafe void CopyBufferRange(";
 
         int start = source.IndexOf(startMarker, StringComparison.Ordinal);
         start.ShouldBeGreaterThanOrEqualTo(0);

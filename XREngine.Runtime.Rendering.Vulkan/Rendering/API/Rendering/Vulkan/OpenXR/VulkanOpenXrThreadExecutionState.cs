@@ -7,6 +7,7 @@ namespace XREngine.Rendering.Vulkan;
 internal sealed class VulkanOpenXrThreadExecutionState
 {
     internal VulkanOpenXrFrameContext FrameContext;
+    internal OpenXrEyeRenderTargetContext NativeTargetContext;
     internal int ExternalSwapchainDepth;
     internal int SynchronousUploadBlockDepth;
     internal VulkanOpenXrViewResourcePlannerContextKey ResourcePlannerKey;
@@ -15,6 +16,7 @@ internal sealed class VulkanOpenXrThreadExecutionState
     internal void Reset()
     {
         FrameContext = default;
+        NativeTargetContext = default;
         ExternalSwapchainDepth = 0;
         SynchronousUploadBlockDepth = 0;
         ResourcePlannerKey = default;

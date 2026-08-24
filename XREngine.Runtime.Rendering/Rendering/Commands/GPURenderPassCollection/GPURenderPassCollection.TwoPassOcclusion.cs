@@ -10,6 +10,10 @@ namespace XREngine.Rendering.Commands
     /// </summary>
     public sealed partial class GPURenderPassCollection
     {
+        private const string TwoPassCandidateCountCopyLabel = "GpuHiZ.TwoPass.CandidateCount";
+        private const string TwoPassOutputCountCopyLabel = "GpuHiZ.TwoPass.OutputCount";
+        private const string TwoPassPhaseOneCountCopyLabel = "GpuHiZ.TwoPass.PhaseOneCount";
+
         private bool TryPrepareGpuHiZTwoPass(
             GPUScene scene,
             XRCamera camera,
@@ -45,7 +49,6 @@ namespace XREngine.Rendering.Commands
                 _twoPassPhaseOneCommandBuffer is null ||
                 _twoPassPhaseOneMaterialTierIndirectDrawBuffer is null ||
                 _twoPassPhaseOneMaterialTierDrawCountBuffer is null ||
-                (IsHotCommandLayoutRequired() && _twoPassPhaseOneHotCommandBuffer is null) ||
                 _twoPassVisibilityBuffer is null ||
                 _occlusionOverflowFlagBuffer is null ||
                 _perViewDrawCountBuffer is null)
@@ -83,19 +86,32 @@ namespace XREngine.Rendering.Commands
             bool temporalInvalidated = ShouldInvalidateGpuHiZTemporalState(scene, camera);
 
             Crumb($"HiZ.TwoPass.Phase1.BEGIN pass={RenderPass} cand={candidates}");
-            if (!SnapshotTwoPassCandidateCount() ||
+            if (!CopyTwoPassCount(
+                    _culledCountBuffer!,
+                    _twoPassCandidateCountBuffer!,
+                    TwoPassCandidateCountCopyLabel) ||
                 !ClearTwoPassPhaseOutputs() ||
-                !DispatchTwoPassPhaseOne(out bool phaseOneUsesHotCommands))
+                !DispatchTwoPassPhaseOne(scene, temporalInvalidated))
             {
                 Crumb($"HiZ.TwoPass.Phase1.FAILED pass={RenderPass}");
                 return false;
             }
 
-            if (!PrepareAndSubmitPhaseOneVisibleSet(
+            bool phaseOneSubmitted;
+            EnableTemporalMeshletHiZForSubmission(camera, temporalInvalidated);
+            try
+            {
+                phaseOneSubmitted = PrepareAndSubmitPhaseOneVisibleSet(
                     scene,
                     camera,
-                    phaseOneUsesHotCommands,
-                    EAdvancedVisibilitySynchronizationBoundary.PreparationToEarlyRaster))
+                    EAdvancedVisibilitySynchronizationBoundary.PreparationToEarlyRaster);
+            }
+            finally
+            {
+                DisableMeshletHiZForSubmission();
+            }
+
+            if (!phaseOneSubmitted)
             {
                 return false;
             }
@@ -123,18 +139,34 @@ namespace XREngine.Rendering.Commands
             // argument buffers after the early draw has consumed them. The full
             // GPU reset keeps this transition zero-readback and command ordered.
             ResetCounters();
-            if (!ClearTwoPassPhaseOutputs() || !DispatchTwoPassPhaseTwo(scene, camera, depthInput.ViewProjection))
+            if (!ClearTwoPassPhaseOutputs() ||
+                !DispatchTwoPassPhaseTwo(
+                    scene,
+                    camera,
+                    depthInput.ViewProjection,
+                    temporalInvalidated))
             {
                 Crumb($"HiZ.TwoPass.Phase2.FAILED pass={RenderPass}");
                 return false;
             }
 
             Crumb($"HiZ.TwoPass.Phase2.BEGIN pass={RenderPass}");
-            if (!PrepareAndSubmitVisibleSet(
+            bool phaseTwoSubmitted;
+            EnableCurrentMeshletHiZForSubmission(camera);
+            try
+            {
+                phaseTwoSubmitted = PrepareAndSubmitVisibleSet(
                     scene,
                     camera,
                     "two-pass-phase2",
-                    EAdvancedVisibilitySynchronizationBoundary.LatePreparationToLateRaster))
+                    EAdvancedVisibilitySynchronizationBoundary.LatePreparationToLateRaster);
+            }
+            finally
+            {
+                DisableMeshletHiZForSubmission();
+            }
+
+            if (!phaseTwoSubmitted)
             {
                 return false;
             }
@@ -165,30 +197,22 @@ namespace XREngine.Rendering.Commands
         private bool PrepareAndSubmitPhaseOneVisibleSet(
             GPUScene scene,
             XRCamera camera,
-            bool useHotCommands,
             EAdvancedVisibilitySynchronizationBoundary synchronizationBoundary)
         {
             if (_twoPassPhaseOneCommandBuffer is null ||
                 _twoPassPhaseOneMaterialTierIndirectDrawBuffer is null ||
-                _twoPassPhaseOneMaterialTierDrawCountBuffer is null ||
-                (useHotCommands && _twoPassPhaseOneHotCommandBuffer is null))
+                _twoPassPhaseOneMaterialTierDrawCountBuffer is null)
             {
                 return false;
             }
 
             XRDataBuffer? candidateCommands = _culledSceneToRenderBuffer;
-            XRDataBuffer? candidateHotCommands = _culledHotCommandBuffer;
             XRDataBuffer? lateIndirectCommands = _materialTierIndirectDrawBuffer;
             XRDataBuffer? lateDrawCounts = _materialTierDrawCountBuffer;
-            bool candidateHotCommandsValid = _culledHotCommandsValid;
 
             try
             {
                 _culledSceneToRenderBuffer = _twoPassPhaseOneCommandBuffer;
-                _culledHotCommandBuffer = useHotCommands
-                    ? _twoPassPhaseOneHotCommandBuffer
-                    : candidateHotCommands;
-                _culledHotCommandsValid = useHotCommands;
                 _materialTierIndirectDrawBuffer = _twoPassPhaseOneMaterialTierIndirectDrawBuffer;
                 _materialTierDrawCountBuffer = _twoPassPhaseOneMaterialTierDrawCountBuffer;
 
@@ -201,8 +225,6 @@ namespace XREngine.Rendering.Commands
             finally
             {
                 _culledSceneToRenderBuffer = candidateCommands;
-                _culledHotCommandBuffer = candidateHotCommands;
-                _culledHotCommandsValid = candidateHotCommandsValid;
                 _materialTierIndirectDrawBuffer = lateIndirectCommands;
                 _materialTierDrawCountBuffer = lateDrawCounts;
             }
@@ -234,26 +256,6 @@ namespace XREngine.Rendering.Commands
                 countElementCount: GPUScene.VisibleCountComponents);
         }
 
-        private bool SnapshotTwoPassCandidateCount()
-        {
-            if (_copyCount3Program is null ||
-                _culledCountBuffer is null ||
-                _twoPassCandidateCountBuffer is null)
-            {
-                return false;
-            }
-
-            _copyCount3Program.Use();
-            BindStorageBuffer(_copyCount3Program, _culledCountBuffer, 0);
-            BindStorageBuffer(_copyCount3Program, _twoPassCandidateCountBuffer, 1);
-            _copyCount3Program.DispatchCompute(
-                1,
-                1,
-                1,
-                EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.Command);
-            return true;
-        }
-
         private bool ClearTwoPassPhaseOutputs()
         {
             if (_cullCountScratchBuffer is null ||
@@ -277,52 +279,33 @@ namespace XREngine.Rendering.Commands
                        EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.Command);
         }
 
-        private bool DispatchTwoPassPhaseOne(out bool useHotCommands)
+        private bool DispatchTwoPassPhaseOne(GPUScene scene, bool forceVisible)
         {
-            useHotCommands = false;
             if (_hiZPhaseOneProgram is null ||
                 _culledSceneToRenderBuffer is null ||
                 _twoPassPhaseOneCommandBuffer is null ||
                 _twoPassCandidateCountBuffer is null ||
                 _cullCountScratchBuffer is null ||
+                _culledCountBuffer is null ||
                 _occlusionOverflowFlagBuffer is null ||
                 _twoPassVisibilityBuffer is null)
             {
                 return false;
             }
 
-            useHotCommands = _culledHotCommandsValid &&
-                _culledHotCommandBuffer is not null &&
-                _twoPassPhaseOneHotCommandBuffer is not null;
-            if (IsHotCommandLayoutRequired() && !useHotCommands)
-            {
-                Debug.MeshesWarning($"{FormatDebugPrefix("Culling")} Two-pass Hi-Z phase one requires the hot-command layout, but it was not produced.");
-                return false;
-            }
-
             _hiZPhaseOneProgram.Use();
             _hiZPhaseOneProgram.Uniform("MaxOutputCommands", (int)_culledSceneToRenderBuffer.ElementCount);
-            _hiZPhaseOneProgram.Uniform("UseHotCommands", useHotCommands ? 1 : 0);
             _hiZPhaseOneProgram.Uniform("ActiveViewCount", (int)_activeViewCount);
             _hiZPhaseOneProgram.Uniform("CurrentRenderPass", RenderPass);
+            _hiZPhaseOneProgram.Uniform("ForceVisible", forceVisible ? 1u : 0u);
             _hiZPhaseOneProgram.BindBuffer(_culledSceneToRenderBuffer, 0);
             _hiZPhaseOneProgram.BindBuffer(_twoPassPhaseOneCommandBuffer, 1);
             BindStorageBuffer(_hiZPhaseOneProgram, _twoPassCandidateCountBuffer, 2);
             BindStorageBuffer(_hiZPhaseOneProgram, _cullCountScratchBuffer, 3);
             _hiZPhaseOneProgram.BindBuffer(_occlusionOverflowFlagBuffer, 4);
+            scene.CullControlBuffer.BindTo(_hiZPhaseOneProgram, 5);
             _twoPassVisibilityBuffer.BindTo(_hiZPhaseOneProgram, 6);
-            if (useHotCommands)
-            {
-                _hiZPhaseOneProgram.BindBuffer(_culledHotCommandBuffer!, 9);
-                _hiZPhaseOneProgram.BindBuffer(_twoPassPhaseOneHotCommandBuffer!, 10);
-            }
-            else
-            {
-                // Keep the declared descriptor layout complete on the cold branch.
-                // UseHotCommands is zero, so the shader does not access these aliases.
-                _hiZPhaseOneProgram.BindBuffer(_culledSceneToRenderBuffer, 9);
-                _hiZPhaseOneProgram.BindBuffer(_twoPassPhaseOneCommandBuffer, 10);
-            }
+            scene.CullBoundsBuffer.BindTo(_hiZPhaseOneProgram, 7);
             BindViewSetBuffers(_hiZPhaseOneProgram);
 
             uint groups = Math.Max(1u, (_culledSceneToRenderBuffer.ElementCount + 255u) / 256u);
@@ -331,8 +314,17 @@ namespace XREngine.Rendering.Commands
                 1,
                 1,
                 EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.Command);
-            CopyTwoPassOutputCountToPrimary();
-            CopyTwoPassCount(_cullCountScratchBuffer, _twoPassPhaseOneCountBuffer!);
+            if (!CopyTwoPassCount(
+                    _cullCountScratchBuffer,
+                    _culledCountBuffer!,
+                    TwoPassOutputCountCopyLabel) ||
+                !CopyTwoPassCount(
+                    _cullCountScratchBuffer,
+                    _twoPassPhaseOneCountBuffer!,
+                    TwoPassPhaseOneCountCopyLabel))
+            {
+                return false;
+            }
             UpdateVisibleCountersFromBuffer(_culledCountBuffer);
             return true;
         }
@@ -340,7 +332,8 @@ namespace XREngine.Rendering.Commands
         private bool DispatchTwoPassPhaseTwo(
             GPUScene scene,
             XRCamera camera,
-            in System.Numerics.Matrix4x4 viewProjection)
+            in System.Numerics.Matrix4x4 viewProjection,
+            bool forcePhaseOneVisible)
         {
             if (_hiZOcclusionProgram is null ||
                 _hiZDepthPyramid is null ||
@@ -348,18 +341,10 @@ namespace XREngine.Rendering.Commands
                 _culledSceneToRenderBuffer is null ||
                 _twoPassCandidateCountBuffer is null ||
                 _cullCountScratchBuffer is null ||
+                _culledCountBuffer is null ||
                 _occlusionOverflowFlagBuffer is null ||
                 _twoPassVisibilityBuffer is null)
             {
-                return false;
-            }
-
-            bool useHotCommands = _culledHotCommandsValid &&
-                _occlusionCulledHotBuffer is not null &&
-                _culledHotCommandBuffer is not null;
-            if (IsHotCommandLayoutRequired() && !useHotCommands)
-            {
-                Debug.MeshesWarning($"{FormatDebugPrefix("Culling")} Two-pass Hi-Z phase two requires the hot-command layout, but it was not produced.");
                 return false;
             }
 
@@ -368,32 +353,22 @@ namespace XREngine.Rendering.Commands
             _hiZOcclusionProgram.Uniform("HiZMaxMip", _hiZMaxMip);
             _hiZOcclusionProgram.Uniform("IsReversedDepth", camera.IsReversedDepth ? 1u : 0u);
             _hiZOcclusionProgram.Uniform("MaxOutputCommands", (int)_culledSceneToRenderBuffer.ElementCount);
-            _hiZOcclusionProgram.Uniform("UseHotCommands", useHotCommands ? 1 : 0);
             _hiZOcclusionProgram.Uniform("TwoPassPhase", 2);
             _hiZOcclusionProgram.Uniform("ActiveViewCount", (int)_activeViewCount);
             _hiZOcclusionProgram.Uniform("CurrentRenderPass", RenderPass);
+            _hiZOcclusionProgram.Uniform("ForcePhaseOneVisible", forcePhaseOneVisible ? 1u : 0u);
+            SetHiZOcclusionClipSpaceUniforms(_hiZOcclusionProgram);
             _hiZOcclusionProgram.Sampler("HiZDepth", _hiZDepthPyramid, 0);
             _hiZOcclusionProgram.BindBuffer(_culledSceneToRenderBuffer, 0);
             _hiZOcclusionProgram.BindBuffer(_occlusionCulledBuffer, 1);
             BindStorageBuffer(_hiZOcclusionProgram, _twoPassCandidateCountBuffer, 2);
             BindStorageBuffer(_hiZOcclusionProgram, _cullCountScratchBuffer, 3);
             _hiZOcclusionProgram.BindBuffer(_occlusionOverflowFlagBuffer, 4);
-            scene.BoundsBuffer.BindTo(_hiZOcclusionProgram, 5);
+            scene.CullBoundsBuffer.BindTo(_hiZOcclusionProgram, 5);
             _twoPassVisibilityBuffer.BindTo(_hiZOcclusionProgram, 6);
             if (_statsBuffer is not null)
                 _hiZOcclusionProgram.BindBuffer(_statsBuffer, 8);
-            if (useHotCommands)
-            {
-                _hiZOcclusionProgram.BindBuffer(_culledHotCommandBuffer!, 9);
-                _hiZOcclusionProgram.BindBuffer(_occlusionCulledHotBuffer!, 10);
-            }
-            else
-            {
-                // Keep the declared descriptor layout complete on the cold branch.
-                // UseHotCommands is zero, so the shader does not access these aliases.
-                _hiZOcclusionProgram.BindBuffer(_culledSceneToRenderBuffer, 9);
-                _hiZOcclusionProgram.BindBuffer(_occlusionCulledBuffer, 10);
-            }
+            scene.CullControlBuffer.BindTo(_hiZOcclusionProgram, 10u);
             BindViewSetBuffers(_hiZOcclusionProgram);
 
             uint groups = Math.Max(1u, (_culledSceneToRenderBuffer.ElementCount + 255u) / 256u);
@@ -402,18 +377,60 @@ namespace XREngine.Rendering.Commands
                 1,
                 1,
                 EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.Command);
-            CopyTwoPassOutputCountToPrimary();
-            _culledHotCommandsValid = useHotCommands;
+            if (!CopyTwoPassCount(
+                    _cullCountScratchBuffer,
+                    _culledCountBuffer!,
+                    TwoPassOutputCountCopyLabel))
+            {
+                return false;
+            }
             SwapCulledBufferAfterOcclusion();
             UpdateVisibleCountersFromBuffer(_culledCountBuffer);
             return true;
         }
 
-        private void CopyTwoPassOutputCountToPrimary()
-            => CopyTwoPassCount(_cullCountScratchBuffer!, _culledCountBuffer!);
-
-        private void CopyTwoPassCount(XRDataBuffer source, XRDataBuffer destination)
+        private static void SetHiZOcclusionClipSpaceUniforms(XRRenderProgram program)
         {
+            program.Uniform(
+                "ClipDepthRange",
+                (int)RuntimeEngine.Rendering.EffectiveClipDepthRange);
+            program.Uniform(
+                "FramebufferTextureYDirection",
+                (int)RenderClipSpacePolicy.FramebufferTextureYDirection(
+                    RuntimeRenderingHostServices.FrameTiming.CurrentRenderBackend));
+        }
+
+        private bool CopyTwoPassCount(
+            XRDataBuffer source,
+            XRDataBuffer destination,
+            string label)
+        {
+            const nuint byteCount = GPUScene.VisibleCountComponents * sizeof(uint);
+            if (AbstractRenderer.Current is { } renderer)
+            {
+                ERendererComputeEnqueueStatus status = renderer.TryEnqueueGpuBufferCopy(
+                    source,
+                    0,
+                    destination,
+                    0,
+                    byteCount,
+                    label);
+                if (status == ERendererComputeEnqueueStatus.Enqueued)
+                {
+                    renderer.MemoryBarrier(
+                        EMemoryBarrierMask.BufferUpdate |
+                        EMemoryBarrierMask.ShaderStorage |
+                        EMemoryBarrierMask.Command);
+                    return true;
+                }
+
+                if (status != ERendererComputeEnqueueStatus.Unsupported)
+                    return false;
+            }
+
+            if (_copyCount3Program is null)
+                return false;
+
             _copyCount3Program!.Use();
             BindStorageBuffer(_copyCount3Program, source, 0);
             BindStorageBuffer(_copyCount3Program, destination, 1);
@@ -422,6 +439,7 @@ namespace XREngine.Rendering.Commands
                 1,
                 1,
                 EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.Command);
+            return true;
         }
     }
 }

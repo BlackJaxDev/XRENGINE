@@ -7,7 +7,8 @@ $ErrorActionPreference = "Stop"
 
 $repoRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
 $projectPath = Join-Path $repoRoot "Tools\LocalAgentBroker\LocalAgentBroker.csproj"
-$agentToolsRoot = [System.IO.Path]::GetFullPath((Join-Path $repoRoot "Build\AgentTools"))
+$trayProjectPath = Join-Path $repoRoot "Tools\LocalAgentBroker.Tray\LocalAgentBroker.Tray.csproj"
+$agentToolsRoot = [System.IO.Path]::GetFullPath((Join-Path $repoRoot "Build\_AgentValidation\00000000-000000-shared\agent-tools"))
 $deploymentName = "LocalAgentBroker-$(Get-Date -Format 'yyyyMMddHHmmssfff')"
 $outputPath = [System.IO.Path]::GetFullPath((Join-Path $agentToolsRoot $deploymentName))
 $pointerPath = Join-Path $agentToolsRoot "LocalAgentBroker.current"
@@ -18,7 +19,7 @@ $requiredPrefix = $agentToolsRoot.TrimEnd(
 if (-not $outputPath.StartsWith(
         $requiredPrefix,
         [System.StringComparison]::OrdinalIgnoreCase)) {
-    throw "Refusing to publish broker output outside Build\AgentTools."
+    throw "Refusing to publish broker output outside Build\_AgentValidation\00000000-000000-shared\agent-tools."
 }
 
 Write-Host "Publishing the local agent broker..."
@@ -28,6 +29,15 @@ dotnet publish $projectPath `
     --nologo
 if ($LASTEXITCODE -ne 0) {
     throw "Local agent broker publish failed with exit code $LASTEXITCODE."
+}
+
+Write-Host "Publishing the local agent broker tray companion..."
+dotnet publish $trayProjectPath `
+    --configuration Release `
+    --output (Join-Path $outputPath "tray") `
+    --nologo
+if ($LASTEXITCODE -ne 0) {
+    throw "Local agent broker tray publish failed with exit code $LASTEXITCODE."
 }
 
 New-Item -ItemType Directory -Force $agentToolsRoot | Out-Null
@@ -55,7 +65,7 @@ $staleDeployments = @(
     Get-ChildItem -LiteralPath $agentToolsRoot -Directory -Filter "LocalAgentBroker-*" |
         Where-Object { $_.Name -ne $deploymentName } |
         Sort-Object LastWriteTimeUtc -Descending |
-        Select-Object -Skip 2
+        Select-Object -Skip 1
 )
 foreach ($staleDeployment in $staleDeployments) {
     $stalePath = [System.IO.Path]::GetFullPath($staleDeployment.FullName)

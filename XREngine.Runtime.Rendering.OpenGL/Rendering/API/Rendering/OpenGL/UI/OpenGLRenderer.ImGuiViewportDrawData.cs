@@ -17,7 +17,13 @@ namespace XREngine.Rendering.OpenGL
     {
         private sealed unsafe partial class OpenGLImGuiMultiViewportController
         {
+            public void UpdatePlatformWindows(bool deferGpuLifecycle)
+                => ProcessPlatformWindows(render: false, deferGpuLifecycle);
+
             public void RenderPlatformWindows()
+                => ProcessPlatformWindows(render: true, deferGpuLifecycle: false);
+
+            private void ProcessPlatformWindows(bool render, bool deferGpuLifecycle)
             {
                 if (!_installed || _disposed)
                     return;
@@ -30,14 +36,21 @@ namespace XREngine.Rendering.OpenGL
                 nint previousContext = ImGui.GetCurrentContext();
                 try
                 {
-                    DisposePendingPlatformWindows();
-                    UpdatePlatformMonitors();
-                    ImGui.UpdatePlatformWindows();
-                    ImGui.RenderPlatformWindowsDefault();
+                    if (render)
+                    {
+                        ImGui.RenderPlatformWindowsDefault();
+                    }
+                    else
+                    {
+                        if (!deferGpuLifecycle)
+                            DisposePendingPlatformWindows();
+                        UpdatePlatformMonitors();
+                        ImGui.UpdatePlatformWindows();
+                    }
                 }
                 catch (Exception ex)
                 {
-                    LogCallbackException(nameof(RenderPlatformWindows), ex);
+                    LogCallbackException(render ? nameof(RenderPlatformWindows) : nameof(UpdatePlatformWindows), ex);
                 }
                 finally
                 {

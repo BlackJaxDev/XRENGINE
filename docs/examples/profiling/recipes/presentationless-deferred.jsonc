@@ -1,0 +1,41 @@
+{
+  "$schema": "../../../../.vscode/schemas/render-profile-recipe.schema.json",
+  "schema_version": 1,
+  "name": "presentationless-deferred",
+  "component": "DeferredFrame",
+  "execution_mode": "presentationless",
+  "backend": "vulkan",
+  "fixture": "presentationless-deferred",
+  "width": 1920,
+  "height": 1080,
+  "render_scale": 1.0,
+  "color_format": "Rgba8",
+  "depth_format": "DepthComponent32f",
+  "sample_count": 1,
+  "frame_slots": 3,
+  "warmup_frames": 180,
+  "stability_frames": 60,
+  "capture_frames": 240,
+  "repetitions": 3,
+  "timeout_seconds": 180,
+  "scene": {
+    "scene_identity": "workstream-01:static-deferred-proxy",
+    "camera_identity": "workstream-01:fixed-camera",
+    "light_identities": ["directional:key", "point:fill"],
+    "animation_identity": "frozen",
+    "fixed_time_step_seconds": 0.016666666666666666,
+    "random_seed": 5788229,
+    "mesh_strategy": "render_command",
+    "render_features": ["shadow", "depth-normal", "gbuffer", "lighting", "transparency", "ao", "bloom", "tsr", "final-composition"],
+    "stereo_mode": "mono",
+    "output_identities": ["deferred-final-color"]
+  },
+  "mutation": { "policy": "stable_reuse" },
+  "workload": { "draw_count": 9, "barrier_count": 18, "pass_iterations": 9 },
+  "worker_counts": [1],
+  "contract": {
+    "exclusions": ["desktop presentation", "editor UI", "scene streaming", "production material diversity"],
+    "validity_requirements": ["nine pass iterations", "nine draws", "stable final output hash"]
+  },
+  "budgets": { "max_capture_thread_allocated_bytes": 0, "require_output_hash": true }
+}

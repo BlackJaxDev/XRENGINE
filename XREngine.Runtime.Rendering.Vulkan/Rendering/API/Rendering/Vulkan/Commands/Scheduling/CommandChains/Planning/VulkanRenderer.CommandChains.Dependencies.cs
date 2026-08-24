@@ -13,16 +13,44 @@ using XREngine.Rendering.Shadows;
 
 namespace XREngine.Rendering.Vulkan;
 
-public unsafe partial class VulkanRenderer
+internal sealed partial class VulkanCommandRuntime
 {
     internal static CommandChainDirtyReason EvaluateCommandChainDirtyReason(CommandChain chain, RenderPacket packet)
     {
+        ref readonly RecordedPacketKey packetRecordedKey = ref packet.RecordedPacketKey;
+        if (packetRecordedKey.IsComplete)
+            return EvaluateCommandChainDirtyReasonCore(chain, packet, in packetRecordedKey);
+
+        VulkanPreparedCommandChainAuthority? authority = chain.PreparedAuthority;
+        if (authority is null)
+            return CommandChainDirtyReason.ResourcePlan;
+
+        ref readonly VulkanPreparedCommandChainKey preparedKey = ref authority.PreparedKey;
+        ref readonly RecordedPacketKey authorityRecordedKey =
+            ref VulkanPreparedCommandChainKey.GetRecordedPacketKeyReference(in preparedKey);
+        if (!authorityRecordedKey.IsComplete ||
+            !packetRecordedKey.MatchesBindingIndependentState(in authorityRecordedKey))
+            return CommandChainDirtyReason.ResourcePlan;
+
+        return EvaluateCommandChainDirtyReasonCore(chain, packet, in authorityRecordedKey);
+    }
+
+    private static CommandChainDirtyReason EvaluateCommandChainDirtyReasonCore(
+        CommandChain chain,
+        RenderPacket packet,
+        in RecordedPacketKey currentRecordedKey)
+    {
+
         if (chain.StructuralSignature == 0)
             return CommandChainDirtyReason.Structure;
 
         CommandChainDirtyReason reason = CommandChainDirtyReason.None;
-        CommandRecordingDependencyMismatch dependencyMismatch = chain.DependencySignature.Compare(
-            BuildCommandChainDependencySignature(packet, chain.Key));
+        CommandRecordingDependencySignature currentDependency =
+            BuildCommandChainDependencySignature(packet, chain.Key, in currentRecordedKey);
+        ref readonly CommandRecordingDependencySignature recordedDependency =
+            ref chain.DependencySignatureReference;
+        CommandRecordingDependencyMismatch dependencyMismatch =
+            recordedDependency.CompareCommandChainSecondary(in currentDependency);
         if (dependencyMismatch.InvalidationClass == CommandRecordingInvalidationClass.Structural)
             reason |= CommandChainDirtyReason.Structure;
         else if (dependencyMismatch.InvalidationClass == CommandRecordingInvalidationClass.BindingIdentity)
@@ -40,8 +68,9 @@ public unsafe partial class VulkanRenderer
             reason |= CommandChainDirtyReason.Structure;
         }
 
-        if (chain.ResourcePlanRevision != packet.ResourcePlanSnapshot.Revision)
-            reason |= CommandChainDirtyReason.ResourcePlan;
+        // ResourcePlanRevision is a renderer-wide logical planning epoch. Exact
+        // packet/native resource identities are validated above and below, so a
+        // visibility-only epoch change must not force secondary re-recording.
         if (chain.PhysicalImageSignature != packet.ResourcePlanSnapshot.PhysicalImageSignature ||
             chain.FramebufferSignature != packet.ResourcePlanSnapshot.FramebufferSignature)
         {
@@ -58,6 +87,38 @@ public unsafe partial class VulkanRenderer
         RenderPacket packet,
         in CommandChainKey key)
     {
+        ref readonly RecordedPacketKey recordedKey = ref packet.RecordedPacketKey;
+        return BuildCommandChainDependencySignature(packet, key, in recordedKey);
+    }
+
+    private static CommandRecordingDependencySignature BuildCurrentCommandChainDependencySignature(
+        RenderPacket packet,
+        CommandChain chain)
+    {
+        ref readonly RecordedPacketKey packetRecordedKey = ref packet.RecordedPacketKey;
+        if (packetRecordedKey.IsComplete || chain.PreparedAuthority is not { } authority)
+            return BuildCommandChainDependencySignature(packet, chain.Key, in packetRecordedKey);
+
+        ref readonly VulkanPreparedCommandChainKey preparedKey = ref authority.PreparedKey;
+        ref readonly RecordedPacketKey authorityRecordedKey =
+            ref VulkanPreparedCommandChainKey.GetRecordedPacketKeyReference(in preparedKey);
+        return authorityRecordedKey.IsComplete &&
+            packetRecordedKey.MatchesBindingIndependentState(in authorityRecordedKey)
+                ? BuildCommandChainDependencySignature(
+                    packet,
+                    chain.Key,
+                    in authorityRecordedKey)
+                : BuildCommandChainDependencySignature(
+                    packet,
+                    chain.Key,
+                    in packetRecordedKey);
+    }
+
+    private static CommandRecordingDependencySignature BuildCommandChainDependencySignature(
+        RenderPacket packet,
+        in CommandChainKey key,
+        in RecordedPacketKey recordedKey)
+    {
         FrameOpSignatureHasher inheritanceHash = new();
         inheritanceHash.Add(key.PassIndex);
         inheritanceHash.Add(key.ViewKey.PipelineIdentity);
@@ -65,35 +126,97 @@ public unsafe partial class VulkanRenderer
         inheritanceHash.Add(key.ViewKey.ViewIndex);
         inheritanceHash.Add((int)key.ViewKey.Kind);
 
-        ulong meshBinding = MixSignature(packet.StructuralSignature, 0x4D455348UL);
-        ulong indexBinding = MixSignature(packet.StructuralSignature, 0x494E4458UL);
-        ulong vertexBinding = MixSignature(packet.StructuralSignature, 0x56455254UL);
+        VulkanNativeAttachmentIdentity firstAttachment =
+            recordedKey.RenderTarget.AttachmentCount > 0
+                ? recordedKey.RenderTarget.GetAttachment(0)
+                : default;
+        VulkanRecordedBufferIdentity firstVertexBuffer =
+            recordedKey.VertexBuffers.Count > 0
+                ? recordedKey.VertexBuffers.Get(0)
+                : default;
+        ref readonly VulkanRecordedDescriptorSetIdentityBuffer descriptorSets =
+            ref RecordedPacketKey.GetDescriptorSetsReference(in recordedKey);
+        ulong descriptorSetPayloadGeneration = 0UL;
+        ulong descriptorSetPublicationGeneration = 0UL;
+        ulong samplerGeneration = 0UL;
+        if (descriptorSets.Count > 0)
+        {
+            VulkanRecordedDescriptorSetIdentity firstDescriptorSet =
+                descriptorSets.Get(0);
+            descriptorSetPayloadGeneration = firstDescriptorSet.PayloadGeneration;
+            descriptorSetPublicationGeneration = firstDescriptorSet.PublicationGeneration;
+            ref readonly VulkanRecordedDescriptorResourceIdentityBuffer resources =
+                ref VulkanRecordedDescriptorSetIdentity.GetResourcesReference(in firstDescriptorSet);
+            for (int i = 0; i < resources.Count; i++)
+            {
+                ref readonly VulkanRecordedDescriptorResourceIdentity resource =
+                    ref VulkanRecordedDescriptorResourceIdentityBuffer.GetReference(
+                        in resources,
+                        i);
+                if (resource.Type == ObjectType.Sampler)
+                {
+                    samplerGeneration = resource.Generation;
+                    break;
+                }
+            }
+        }
         return new CommandRecordingDependencySignature(
-            OutputPassAttachment: packet.ResourcePlanSnapshot.FramebufferSignature,
-            RenderArea: 0UL,
-            ViewMask: key.ViewKey.Kind == RenderViewKind.VREye ? 0x3u : 0x1u,
-            QueueFamily: 0u,
+            OutputPassAttachment: recordedKey.RenderTarget.FramebufferHandle,
+            RenderArea: recordedKey.RenderArea,
+            ViewMask: recordedKey.RenderTarget.ViewMask,
+            QueueFamily: recordedKey.QueueFamily,
             DynamicRenderingInheritance: inheritanceHash.ToHash(),
-            PipelineGeneration: packet.ResourcePlanSnapshot.PipelineGeneration,
-            PipelineLayoutGeneration: MixSignature(packet.StructuralSignature, 0x504C4159UL),
-            MeshBindingIdentity: meshBinding,
-            IndexBufferBindingIdentity: indexBinding,
-            VertexBufferBindingIdentity: vertexBinding,
-            BufferAllocationGeneration: packet.ResourcePlanSnapshot.Revision,
-            ImageAllocationGeneration: packet.ResourcePlanSnapshot.PhysicalImageSignature,
-            ImageViewGeneration: packet.ResourcePlanSnapshot.FramebufferSignature,
+            PipelineGeneration: recordedKey.PipelineGeneration,
+            PipelineLayoutGeneration: recordedKey.PipelineLayoutGeneration,
+            MeshBindingIdentity: firstVertexBuffer.BufferHandle,
+            IndexBufferBindingIdentity: recordedKey.IndexBuffer.BufferHandle,
+            VertexBufferBindingIdentity: firstVertexBuffer.BufferHandle,
+            BufferAllocationGeneration: recordedKey.IndexBuffer.AllocationGeneration,
+            ImageAllocationGeneration: firstAttachment.ImageGeneration,
+            ImageViewGeneration: firstAttachment.ImageViewGeneration,
             // Keep immutable sampler/layout identity separate for precise diagnostics.
             // Descriptor publication is nevertheless a recording dependency because
             // ordinary vkUpdateDescriptorSets calls invalidate command buffers.
-            SamplerAllocationGeneration: packet.DescriptorSnapshot.DescriptorSetSignature,
-            DescriptorLayoutGeneration: MixSignature(packet.StructuralSignature, 0x444C4159UL),
-            DescriptorSetGeneration: packet.DescriptorSnapshot.DescriptorSetSignature,
+            SamplerAllocationGeneration: samplerGeneration,
+            DescriptorLayoutGeneration: recordedKey.PipelineLayoutGeneration,
+            DescriptorSetGeneration: descriptorSetPayloadGeneration,
             ResourcePlanGeneration: packet.ResourcePlanSnapshot.Revision,
             ExternalTargetVariant: unchecked((uint)key.TargetIdentity),
             FrameSlotVariant: key.FrameSlot,
-            DescriptorPublicationGeneration: packet.DescriptorSnapshot.DescriptorGeneration,
+            DescriptorPublicationGeneration: descriptorSetPublicationGeneration,
             DataPublicationGeneration: packet.FrameDataSignature,
-            VolatileSuffixGeneration: packet.DynamicOverlay ? packet.FrameDataSignature : 0UL);
+            VolatileSuffixGeneration: packet.DynamicOverlay ? packet.FrameDataSignature : 0UL,
+            RenderTargetSnapshot: recordedKey.RenderTarget,
+            RecordedPacketKey: recordedKey);
+    }
+
+    /// <summary>
+    /// Publishes the exact post-binding packet key only after the corresponding
+    /// secondary has been recorded successfully (or an existing artifact has
+    /// matched it exactly). The sealed pre-binding packet remains immutable.
+    /// </summary>
+    internal static void PublishPreparedCommandChainAuthority(
+        CommandChain chain,
+        VulkanPreparedCommandChainAuthority authority)
+    {
+        RenderPacket packet = chain.PacketSnapshot ??
+            throw new InvalidOperationException("A prepared command chain has no sealed packet snapshot.");
+        ref readonly VulkanPreparedCommandChainKey preparedKey = ref authority.PreparedKey;
+        ref readonly RecordedPacketKey preparedPacketKey =
+            ref VulkanPreparedCommandChainKey.GetRecordedPacketKeyReference(in preparedKey);
+        ref readonly RecordedPacketKey packetRecordedKey = ref packet.RecordedPacketKey;
+        if (!preparedPacketKey.IsComplete ||
+            !packetRecordedKey.MatchesBindingIndependentState(in preparedPacketKey))
+            throw new InvalidOperationException("Prepared command-chain authority does not match its sealed packet snapshot.");
+
+        chain.SetPreparedKey(in preparedKey);
+        chain.PreparedAuthority = authority;
+        CommandRecordingDependencySignature dependencySignature =
+            BuildCommandChainDependencySignature(
+            packet,
+            chain.Key,
+            in preparedPacketKey);
+        chain.SetDependencySignature(in dependencySignature);
     }
 
     internal static void ValidateReusableCommandChainReferences(CommandChain chain, RenderPacket packet)
@@ -133,7 +256,9 @@ public unsafe partial class VulkanRenderer
         chain.FrameDataSignature = packet.FrameDataSignature;
         // Frame-buffered uniform/storage bytes can change without invalidating a
         // command buffer as long as descriptor publication and binding identity match.
-        chain.DependencySignature = BuildCommandChainDependencySignature(packet, chain.Key);
+        CommandRecordingDependencySignature dependencySignature =
+            BuildCurrentCommandChainDependencySignature(packet, chain);
+        chain.SetDependencySignature(in dependencySignature);
         chain.FrameDataRefreshTouchedDescriptors = false;
         return true;
     }

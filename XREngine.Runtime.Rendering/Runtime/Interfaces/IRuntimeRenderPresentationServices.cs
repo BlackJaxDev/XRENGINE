@@ -92,8 +92,26 @@ public interface IRuntimeRenderPresentationServices : IRuntimeRenderFrameTimingS
             CurrentRenderFrameId,
             GetVrOutputTargetRateHz(viewKind));
 
-    /// <summary>Registers an output request in the persistent frame-output DAG.</summary>
-    void PlanRenderOutput(in RenderOutputRequest request, bool isDue) { }
+    /// <summary>
+    /// Registers an output request in the persistent frame-output DAG and
+    /// returns the bounded admission/reuse decision for this frame.
+    /// </summary>
+    RenderOutputSchedulingDecision PlanRenderOutput(
+        in RenderOutputRequest request,
+        bool isDue,
+        ERenderOutputPolicyReason deferralReason = ERenderOutputPolicyReason.None)
+        => RenderOutputSchedulingDecision.Fresh();
+
+    bool TryGetRenderOutputSchedulingSnapshot(
+        ulong outputId,
+        EFrameOutputKind outputKind,
+        EVrOutputViewKind viewKind,
+        ulong frameId,
+        out RenderOutputSchedulingSnapshot snapshot)
+    {
+        snapshot = default;
+        return false;
+    }
 
     /// <summary>
     /// Records a per-output frame manifest contribution and updates DAG completion state.

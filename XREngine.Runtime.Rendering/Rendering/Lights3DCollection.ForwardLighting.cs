@@ -1002,7 +1002,8 @@ namespace XREngine.Scene
             }
             XRTexture2DArray? pointAtlas = null;
             bool pointAtlasTextureAvailable = usePointAtlas &&
-                ShadowAtlas.TryGetPageTexture(EShadowAtlasKind.Point, pointAtlasEncoding, 0, out pointAtlas);
+                ShadowAtlas.TryGetPageTexture(EShadowAtlasKind.Point, pointAtlasEncoding, 0, out pointAtlas) &&
+                IsTextureReadyForShadowSampling(pointAtlas);
             XRTexture2DArray pointAtlasTexture = pointAtlasTextureAvailable && pointAtlas is not null ? pointAtlas : DummyShadowMapArray;
             int pointAtlasLayerCount = checked((int)Math.Max(1u, pointAtlasTexture.Depth));
             program.Sampler(PointShadowAtlasName, pointAtlasTexture, pointShadowAtlasStartUnit);
@@ -1086,7 +1087,8 @@ namespace XREngine.Scene
             }
             XRTexture2DArray? spotAtlas = null;
             bool spotAtlasTextureAvailable = useSpotAtlas &&
-                ShadowAtlas.TryGetPageTexture(EShadowAtlasKind.Spot, spotAtlasEncoding, 0, out spotAtlas);
+                ShadowAtlas.TryGetPageTexture(EShadowAtlasKind.Spot, spotAtlasEncoding, 0, out spotAtlas) &&
+                IsTextureReadyForShadowSampling(spotAtlas);
             XRTexture2DArray spotAtlasTexture = spotAtlasTextureAvailable && spotAtlas is not null ? spotAtlas : DummyShadowMapArray;
             int spotAtlasLayerCount = checked((int)Math.Max(1u, spotAtlasTexture.Depth));
             program.Sampler(SpotShadowAtlasName, spotAtlasTexture, spotShadowAtlasStartUnit);

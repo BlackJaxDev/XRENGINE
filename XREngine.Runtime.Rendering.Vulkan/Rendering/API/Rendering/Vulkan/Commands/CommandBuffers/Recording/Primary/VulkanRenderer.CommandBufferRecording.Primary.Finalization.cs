@@ -15,16 +15,16 @@ using XREngine.Rendering.Resources;
 
 namespace XREngine.Rendering.Vulkan
 {
-    public unsafe partial class VulkanRenderer
+    internal sealed partial class VulkanCommandRuntime
     {
-        private void FinalizePrimaryCommandRecording(
+        private unsafe void FinalizePrimaryCommandRecording(
             scoped ref PrimaryCommandBufferRecordingState recordingState)
         {
             using (RuntimeRenderingHostServices.Profiling.StartProfileScope("Vulkan.RecordPrimary.FinalOverlayAndDiagnostics"))
             {
                 if (recordingState.PassIndexLabelActive)
                 {
-                    CmdEndLabel(recordingState.CommandBuffer);
+                    _deviceContext.CmdEndLabel(recordingState.CommandBuffer);
                     recordingState.PassIndexLabelActive = false;
                 }
 
@@ -68,7 +68,7 @@ namespace XREngine.Rendering.Vulkan
 
                     // For presentation we want deterministic full-surface state regardless of prior per-viewport scissor.
                     // This also makes resize issues obvious (the clear should cover the entire swapchain extent).
-                    Viewport swapViewport = CreateVulkanViewport(recordingState.SwapchainRecordExtent);
+                    Viewport swapViewport = VulkanCommandRuntime.CreateVulkanViewport(recordingState.SwapchainRecordExtent);
 
                     Rect2D swapScissor = new()
                     {
@@ -127,7 +127,9 @@ namespace XREngine.Rendering.Vulkan
                 }
 
                 bool hasSceneFrameWork = recordingState.Metrics.ClearCount > 0 || recordingState.Metrics.DrawCount > 0 || recordingState.Metrics.BlitCount > 0 || recordingState.Metrics.ComputeCount > 0;
-                bool expectsSceneSwapchainWriters = recordingState.TransitionSwapchainToPresent && !IsRenderingExternalSwapchainTarget;
+                bool expectsSceneSwapchainWriters =
+                    recordingState.TransitionSwapchainToPresent &&
+                    !recordingState.Policy.IsExternalSwapchainTarget;
                 bool preservingOverlayOnlyFrame =
                     sceneActualSwapchainWritesBeforeOverlay == 0 &&
                     recordingState.SceneSwapchainWriters == 0 &&
@@ -225,7 +227,7 @@ namespace XREngine.Rendering.Vulkan
                         : "None";
                     UpdateVulkanOnScreenDiagnostic(
                         pipelineLabel,
-                        GetClearColorValue(),
+                        recordingState.ClearState.ClearColor,
                         recordingState.Metrics.DroppedDrawOps,
                         recordingState.Metrics.DroppedFrameOps,
                         swapchainWriterSummary!);
@@ -290,14 +292,14 @@ namespace XREngine.Rendering.Vulkan
                     Debug.VulkanWarningEvery(
                         $"Vulkan.DynamicRendering.PresentTransitions.{GetHashCode()}",
                         TimeSpan.FromSeconds(1),
-                        "[Vulkan] Dynamic-rendering swapchain transitioned to PresentSrcKhr {0} times this command buffer; expected {1}.",
+                        "[Vulkan] Dynamic-rendering output transitioned to its required final layout {0} times this command buffer; expected {1}.",
                         recordingState.SwapchainPresentTransitions,
                         expectedPresentTransitions);
                 }
 
                 EndFrameTimingQueries(recordingState.CommandBuffer, recordingState.CommandBufferImageSlot);
 
-                CmdEndLabel(recordingState.CommandBuffer);
+                _deviceContext.CmdEndLabel(recordingState.CommandBuffer);
 
                 if (recordingState.OpenXrTargetContext is { } externalTarget &&
                     recordingState.PrimaryCommandPlan.HasTerminalAction(
@@ -316,9 +318,9 @@ namespace XREngine.Rendering.Vulkan
         {
             using (RuntimeRenderingHostServices.Profiling.StartProfileScope("Vulkan.RecordPrimary.EndCommandBuffer"))
             {
-                Result endResult = _commandRecorder.End(
-                    this,
+                Result endResult = EndCommandBufferTracked(
                     recordingState.CommandBuffer,
+                    cacheVariant: true,
                     out string trackingFailure);
                 if (endResult != Result.Success)
                     throw new Exception("Failed to record command buffer.");
@@ -345,8 +347,8 @@ namespace XREngine.Rendering.Vulkan
                 recordingState.ActualSwapchainWriteCount;
             recordingState.RecordedSwapchainFinalLayout =
                 recordingState.SwapchainFinalLayout;
-            recordingState.QueryFrameOpsRequireRerecord =
-                recordingState.QueryFrameOpsRequireRerecordLocal;
+            recordingState.FrameOpsRequireRerecord =
+                recordingState.FrameOpsRequireRerecordLocal;
         }
 
     }

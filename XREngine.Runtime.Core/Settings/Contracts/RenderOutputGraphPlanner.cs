@@ -1,8 +1,9 @@
 namespace XREngine;
 
 /// <summary>
-/// Builds the persistent frame-output DAG from ordinary runtime output requests.
-/// Execution/deadline scheduling is intentionally owned by the later output scheduler.
+/// Builds the per-frame executable output DAG from runtime-admitted requests.
+/// Persistent cadence, reuse, and completion history remains owned by the
+/// runtime admission ledger.
 /// </summary>
 public sealed class RenderOutputGraphPlanner
 {
@@ -14,25 +15,54 @@ public sealed class RenderOutputGraphPlanner
 
     private readonly RenderOutputDag _graph;
     private ulong _frameId = ulong.MaxValue;
+    private uint _manifestGeneration;
 
     public RenderOutputGraphPlanner(int nodeCapacity = 256, int edgeCapacity = 512)
         => _graph = new RenderOutputDag(nodeCapacity, edgeCapacity);
 
     public RenderOutputDag Graph => _graph;
 
+    /// <summary>
+    /// Starts one immutable executable manifest. Multiple target recordings may
+    /// share a host frame id, but they must never inherit nodes from an earlier
+    /// sealed plan built during that frame.
+    /// </summary>
+    public void BeginManifest(ulong frameId)
+    {
+        _frameId = frameId;
+        _manifestGeneration++;
+        if (_manifestGeneration == 0u)
+            _manifestGeneration++;
+        _graph.BeginFrame(_manifestGeneration);
+    }
+
+    /// <summary>Reserves an output before lowering the frame's complete request set.</summary>
+    public bool Reserve(in RenderOutputRequest request)
+        => EnsureFrame(request.FrameId) && _graph.ReserveOutputKey(request.OutputId);
+
+    /// <summary>
+    /// Lowers one already-admitted output into the executable DAG. Admission
+    /// is frozen by the runtime ledger before this boundary so Vulkan cannot
+    /// independently reinterpret cadence, reuse, or forced-refresh policy.
+    /// </summary>
     public int Plan(
         in RenderOutputRequest request,
-        bool isDue,
+        in RenderOutputSchedulingDecision decision,
         bool independentDesktopScene,
-        EFrameOutputKind xrSourceKind)
+        EFrameOutputKind xrSourceKind,
+        bool xrImagesAcquired)
     {
         if (!EnsureFrame(request.FrameId))
             return -1;
+
         ulong terminalKey = GetTerminalNodeKey(request);
         if (_graph.TryGetNodeIndex(terminalKey, out int plannedNode))
         {
-            if (!isDue && !_graph.TryReuse(plannedNode))
-                _graph.SetSkipped(plannedNode);
+            ApplyScheduleAndDecision(
+                plannedNode,
+                request,
+                xrImagesAcquired,
+                decision);
             return plannedNode;
         }
 
@@ -40,7 +70,7 @@ public sealed class RenderOutputGraphPlanner
         int terminalNode = request.OutputKind switch
         {
             EFrameOutputKind.OpenXREyeSubmit or EFrameOutputKind.OpenVRSubmit =>
-                AddXrSceneNode(request.OutputKind, request.ViewFamilyId, publicationNode),
+                AddXrSceneNode(request, publicationNode),
             EFrameOutputKind.DesktopMirror => AddDesktopOutput(
                 request, xrSourceKind, independentDesktopScene, publicationNode),
             EFrameOutputKind.DesktopScene or EFrameOutputKind.EditorScenePanel =>
@@ -54,9 +84,31 @@ public sealed class RenderOutputGraphPlanner
             _ => AddNonSceneOutput(request, publicationNode),
         };
 
-        if (terminalNode >= 0 && !isDue && !_graph.TryReuse(terminalNode))
-            _graph.SetSkipped(terminalNode);
+        if (terminalNode >= 0)
+        {
+            ApplyScheduleAndDecision(
+                terminalNode,
+                request,
+                xrImagesAcquired,
+                decision);
+        }
         return terminalNode;
+    }
+
+    private void ApplyScheduleAndDecision(
+        int terminalNode,
+        in RenderOutputRequest request,
+        bool xrImagesAcquired,
+        in RenderOutputSchedulingDecision decision)
+    {
+        bool reserveXrPath = xrImagesAcquired &&
+            request.OutputClass == ERenderOutputClass.XrCritical;
+        _graph.ApplyScheduleToPrerequisites(
+            terminalNode,
+            request.Schedule.Priority,
+            request.Schedule.DeadlineMs,
+            reserveXrPath);
+        _graph.ApplyAdmissionDecision(terminalNode, decision);
     }
 
     public void Complete(in RenderOutputRequest request)
@@ -84,6 +136,72 @@ public sealed class RenderOutputGraphPlanner
         return false;
     }
 
+    /// <summary>
+    /// Connects two already-planned outputs through an explicit dataflow edge.
+    /// Callers must have matched the dependent consumer set to exactly one
+    /// producer set before invoking this method.
+    /// </summary>
+    public bool TryAddOutputDependency(
+        in RenderOutputRequest prerequisite,
+        in RenderOutputRequest dependent,
+        out string? failureReason)
+    {
+        failureReason = null;
+        if (prerequisite.ProducerDependencySetId == 0UL ||
+            dependent.ConsumerDependencySetId == 0UL ||
+            prerequisite.ProducerDependencySetId != dependent.ConsumerDependencySetId)
+        {
+            failureReason = "output producer/consumer dependency IDs do not match";
+            return false;
+        }
+        if (!_graph.TryGetNodeIndex(GetTerminalNodeKey(prerequisite), out int prerequisiteNode) ||
+            !_graph.TryGetNodeIndex(GetTerminalNodeKey(dependent), out int dependentNode))
+        {
+            failureReason = "output dependency references an unplanned terminal node";
+            return false;
+        }
+        if (!_graph.AddDependency(prerequisiteNode, dependentNode))
+        {
+            failureReason = "output dependency is cyclic or exceeds DAG edge capacity";
+            return false;
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Adds an engine-owned prerequisite edge, such as shadow production before
+    /// a scene output, without requiring a producer/consumer data-set contract
+    /// from the caller-facing request.
+    /// </summary>
+    public bool TryAddRequiredDependency(
+        in RenderOutputRequest prerequisite,
+        in RenderOutputRequest dependent)
+    {
+        if (!_graph.TryGetNodeIndex(GetTerminalNodeKey(prerequisite), out int prerequisiteNode) ||
+            !_graph.TryGetNodeIndex(GetTerminalNodeKey(dependent), out int dependentNode))
+        {
+            return false;
+        }
+
+        return _graph.AddDependency(prerequisiteNode, dependentNode);
+    }
+
+    public bool RefreshSchedule(
+        in RenderOutputRequest request,
+        bool xrImagesAcquired)
+    {
+        if (!_graph.TryGetNodeIndex(GetTerminalNodeKey(request), out int terminalNode))
+            return false;
+
+        _graph.ApplyScheduleToPrerequisites(
+            terminalNode,
+            request.Schedule.Priority,
+            request.Schedule.DeadlineMs,
+            xrImagesAcquired && request.OutputClass == ERenderOutputClass.XrCritical);
+        return true;
+    }
+
     private bool EnsureFrame(ulong frameId)
     {
         if (_frameId == frameId)
@@ -96,7 +214,8 @@ public sealed class RenderOutputGraphPlanner
     }
 
     private int AddPublicationNode()
-        => _graph.AddNode(new(
+    {
+        int publication = _graph.AddNode(new(
             PublicationNodeKey,
             PublicationNodeKey,
             ERenderOutputDagNodeKind.Publish,
@@ -107,6 +226,21 @@ public sealed class RenderOutputGraphPlanner
             Cacheable: false,
             Resumable: false,
             "Shared scene/material/light publication"));
+        int uploads = _graph.AddNode(new(
+            PublicationNodeKey + 1UL,
+            PublicationNodeKey,
+            ERenderOutputDagNodeKind.Upload,
+            ERenderOutputDataClass.ViewIndependent,
+            0UL,
+            PublicationNodeKey,
+            0u,
+            Cacheable: false,
+            Resumable: false,
+            "Frame texture/resource uploads"));
+        if (publication >= 0 && uploads >= 0)
+            _graph.AddDependency(publication, uploads);
+        return uploads;
+    }
 
     private int AddDesktopOutput(
         in RenderOutputRequest request,
@@ -116,7 +250,19 @@ public sealed class RenderOutputGraphPlanner
     {
         int eyeNode = independentDesktopScene
             ? -1
-            : AddXrSceneNode(xrSourceKind, GetXrFamilyKey(xrSourceKind), publicationNode);
+            : AddXrSceneNode(
+                RenderOutputRequest.CreateDefault(
+                    EVrOutputViewKind.LeftEye,
+                    xrSourceKind,
+                    request.FrameId) with
+                {
+                    OutputId = request.OutputId,
+                    ViewFamilyId = GetXrFamilyKey(xrSourceKind),
+                    Target = request.Target,
+                    ProducerDependencySetId = request.ProducerDependencySetId,
+                    ConsumerDependencySetId = request.ConsumerDependencySetId,
+                },
+                publicationNode);
         return AuxiliaryOutputGraphBuilder.AddDesktopMirror(
             _graph,
             GetTerminalNodeKey(request),
@@ -124,7 +270,9 @@ public sealed class RenderOutputGraphPlanner
             request.OutputId,
             eyeNode,
             independentDesktopScene,
-            publicationNode);
+            publicationNode,
+            request.Schedule.MaxContentAgeFrames,
+            cacheLastResult: (request.FallbackPolicy & ERenderOutputFallbackPolicy.AllowStaleReuse) != 0);
     }
 
     private int AddSceneOutput(in RenderOutputRequest request, int publicationNode)
@@ -135,7 +283,9 @@ public sealed class RenderOutputGraphPlanner
             request.OutputId,
             renderedEyeNode: -1,
             independentCamera: true,
-            publicationNode);
+            publicationNode,
+            request.Schedule.MaxContentAgeFrames,
+            cacheLastResult: (request.FallbackPolicy & ERenderOutputFallbackPolicy.AllowStaleReuse) != 0);
 
     private int AddViewDependentOutput(in RenderOutputRequest request, int publicationNode)
     {
@@ -143,7 +293,13 @@ public sealed class RenderOutputGraphPlanner
         int node = AuxiliaryOutputGraphBuilder.AddViewDependentOutput(
             _graph, policy, request.OutputId, GetOutputNodeKey(request), publicationNode);
         return AuxiliaryOutputGraphBuilder.AddPostProcess(
-            _graph, GetTerminalNodeKey(request), request.OutputId, node, policy.EnablePostProcess);
+            _graph,
+            GetTerminalNodeKey(request),
+            request.OutputId,
+            node,
+            policy.EnablePostProcess,
+            request.Schedule.MaxContentAgeFrames,
+            policy.CacheLastResult);
     }
 
     private int AddCaptureOutput(in RenderOutputRequest request, int publicationNode)
@@ -161,7 +317,13 @@ public sealed class RenderOutputGraphPlanner
         if (!postProcess)
             return node;
         return AuxiliaryOutputGraphBuilder.AddPostProcess(
-            _graph, GetTerminalNodeKey(request), request.OutputId, node, enabled: true);
+            _graph,
+            GetTerminalNodeKey(request),
+            request.OutputId,
+            node,
+            enabled: true,
+            request.Schedule.MaxContentAgeFrames,
+            cacheLastResult: cache);
     }
 
     private int AddProbeOutput(in RenderOutputRequest request, int publicationNode)
@@ -175,10 +337,16 @@ public sealed class RenderOutputGraphPlanner
 
     private int AddNonSceneOutput(in RenderOutputRequest request, int publicationNode)
     {
+        ERenderOutputDagNodeKind nodeKind = request.OutputKind switch
+        {
+            EFrameOutputKind.Shadow => ERenderOutputDagNodeKind.Shadow,
+            EFrameOutputKind.Present => ERenderOutputDagNodeKind.Present,
+            _ => ERenderOutputDagNodeKind.Publish,
+        };
         int node = _graph.AddNode(new(
             GetTerminalNodeKey(request),
             request.OutputId,
-            ERenderOutputDagNodeKind.Publish,
+            nodeKind,
             ERenderOutputDataClass.ViewIndependent,
             0UL,
             request.OutputId,
@@ -191,20 +359,22 @@ public sealed class RenderOutputGraphPlanner
         return node;
     }
 
-    private int AddXrSceneNode(EFrameOutputKind kind, ulong familyKey, int publicationNode)
+    private int AddXrSceneNode(
+        in RenderOutputRequest request,
+        int publicationNode)
     {
-        ulong key = GetXrSceneNodeKey(kind);
+        ulong key = GetXrSceneNodeKey(request);
         int node = _graph.AddNode(new(
             key,
-            familyKey,
+            request.OutputId,
             ERenderOutputDagNodeKind.SceneView,
             ERenderOutputDataClass.ViewDependent,
-            familyKey,
-            familyKey,
+            request.ViewFamilyId,
+            request.Target.CompatibilityKey,
             0u,
             Cacheable: false,
             Resumable: false,
-            kind == EFrameOutputKind.OpenXREyeSubmit ? "OpenXR eye family" : "OpenVR eye family"));
+            request.OutputKind == EFrameOutputKind.OpenXREyeSubmit ? "OpenXR eye family" : "OpenVR eye family"));
         if (node >= 0)
             _graph.AddDependency(publicationNode, node);
         return node;
@@ -241,22 +411,38 @@ public sealed class RenderOutputGraphPlanner
         => request.OutputKind switch
         {
             EFrameOutputKind.OpenXREyeSubmit or EFrameOutputKind.OpenVRSubmit =>
-                GetXrSceneNodeKey(request.OutputKind),
+                GetXrSceneNodeKey(request),
             EFrameOutputKind.LightProbeCapture or EFrameOutputKind.ReflectionProbeCapture or
                 EFrameOutputKind.ImageBasedLighting => GetProbeNodeBase(request) + 0x800UL,
             EFrameOutputKind.Diagnostic => GetOutputNodeKey(request),
-            _ => TerminalNodeDomain ^ request.OutputId,
+            _ => TerminalNodeDomain ^ GetVersionedOutputIdentity(request),
         };
 
     private static ulong GetProbeNodeBase(in RenderOutputRequest request)
-        => ProbeNodeDomain ^ request.OutputId;
+        => ProbeNodeDomain ^ GetVersionedOutputIdentity(request);
 
     private static ulong GetOutputNodeKey(in RenderOutputRequest request)
-        => OutputNodeDomain ^ request.OutputId;
+        => OutputNodeDomain ^ GetVersionedOutputIdentity(request);
 
-    private static ulong GetXrSceneNodeKey(EFrameOutputKind kind)
-        => XrSceneNodeDomain | ((ulong)(uint)kind + 1UL);
+    private static ulong GetXrSceneNodeKey(in RenderOutputRequest request)
+        => XrSceneNodeDomain ^ GetVersionedOutputIdentity(request);
 
     private static ulong GetXrFamilyKey(EFrameOutputKind kind)
         => XrSceneNodeDomain ^ (0x100UL + (ulong)(uint)kind);
+
+    private static ulong GetVersionedOutputIdentity(in RenderOutputRequest request)
+    {
+        ulong hash = request.OutputId;
+        Add(ref hash, request.Target.CompatibilityKey);
+        Add(ref hash, request.ProducerDependencySetId);
+        Add(ref hash, request.ConsumerDependencySetId);
+        Add(ref hash, (ulong)(uint)request.OutputKind);
+        return hash == 0UL ? 1UL : hash;
+    }
+
+    private static void Add(ref ulong hash, ulong value)
+    {
+        hash ^= value;
+        hash *= 1099511628211UL;
+    }
 }

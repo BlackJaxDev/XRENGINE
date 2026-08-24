@@ -155,7 +155,7 @@ stability timeouts.
 Copied evidence and a concise deterministic `diagnosis.md` live under:
 
 ```text
-Build/_AgentValidation/self-iteration/<campaign>/<timestamp>/
+Build/_AgentValidation/<timestamp>-self-iteration-<campaign>/
 ```
 
 The LLM receives paths to the clean formal summary, deterministic diagnosis,

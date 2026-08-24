@@ -74,7 +74,7 @@ public sealed class VulkanPipelineCompilationP05Tests
         source.ShouldContain("VulkanPipelineCompileQuarantineSeconds");
         source.ShouldContain("[Vulkan][PipelineWatchdog]");
         source.ShouldContain("return 1;");
-        source.ShouldContain("VulkanPipelineCompileTask.RunAsync");
+        source.ShouldContain("compileTask.Enqueue(");
         source.ShouldContain("VulkanPipelineCompileActivityGeneration");
         source.ShouldContain("pipelineCache: BackgroundPipelineCache");
         source.ShouldContain("PublishVulkanBackgroundPipelineCache(elapsedMs)");
@@ -92,13 +92,13 @@ public sealed class VulkanPipelineCompilationP05Tests
 
         string task = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Pipelines/VulkanPipelineCompileTask.cs");
-        task.ShouldContain("await compileGate.WaitAsync()");
+        task.ShouldContain("internal Task<T> Enqueue<T>(Func<T> compile)");
         task.ShouldContain("TaskCompletionSource<T>");
         task.ShouldContain("Thread worker = new");
         task.ShouldContain("IsBackground = true");
         task.ShouldContain("ThreadPriority.BelowNormal");
         task.ShouldContain("TaskCreationOptions.RunContinuationsAsynchronously");
-        task.ShouldNotContain("compileGate.Wait();");
+        task.ShouldContain("_queue.GetConsumingEnumerable()");
     }
 
     [Test]
@@ -179,12 +179,11 @@ public sealed class VulkanPipelineCompilationP05Tests
     [Test]
     public async Task AsyncCompileTask_NeverInvokesNativeCompileOnTheCallingThread()
     {
-        using SemaphoreSlim compileGate = new(initialCount: 1, maxCount: 1);
+        using VulkanPipelineCompileTask compileTask = new();
         int callingThreadId = Environment.CurrentManagedThreadId;
         int compileThreadId = callingThreadId;
 
-        int result = await VulkanPipelineCompileTask.RunAsync(
-            compileGate,
+        int result = await compileTask.Enqueue(
             () =>
             {
                 compileThreadId = Environment.CurrentManagedThreadId;
@@ -193,7 +192,6 @@ public sealed class VulkanPipelineCompilationP05Tests
 
         result.ShouldBe(42);
         compileThreadId.ShouldNotBe(callingThreadId);
-        compileGate.CurrentCount.ShouldBe(1);
     }
 
     [Test]

@@ -12,6 +12,9 @@ public static partial class AgentRequestValidator
     private static readonly HashSet<string> s_reasoningEfforts =
         new(StringComparer.OrdinalIgnoreCase) { "none", "low", "medium", "high", "xhigh", "max" };
 
+    private static readonly HashSet<string> s_textVerbosityLevels =
+        new(StringComparer.OrdinalIgnoreCase) { "low", "medium", "high" };
+
     public static IReadOnlyList<string> Validate(AgentRunRequest request)
     {
         ArgumentNullException.ThrowIfNull(request);
@@ -23,6 +26,8 @@ public static partial class AgentRequestValidator
             errors.Add("requested_model is required");
         if (!s_reasoningEfforts.Contains(request.ReasoningEffort))
             errors.Add("reasoning_effort must be one of: none, low, medium, high, xhigh, max");
+        if (!s_textVerbosityLevels.Contains(request.TextVerbosity))
+            errors.Add("text_verbosity must be one of: low, medium, high");
         if (!string.IsNullOrWhiteSpace(request.EditorSession) && !SessionNamePattern().IsMatch(request.EditorSession))
             errors.Add("editor_session must match ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$");
         if (request.EvidencePacket is null)
@@ -94,6 +99,7 @@ public static partial class AgentRequestValidator
         long total = CharacterCount(request.Objective)
             + CharacterCount(request.RequestedModel)
             + CharacterCount(request.ReasoningEffort)
+            + CharacterCount(request.TextVerbosity)
             + CharacterCount(request.EditorSession)
             + CharacterCount(request.SystemInstructions)
             + CharacterCount(request.AdditionalInstructions);

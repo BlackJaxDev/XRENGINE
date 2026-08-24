@@ -16,9 +16,6 @@ namespace XREngine.Rendering.Models.Materials
         protected override void SetProgramUniform(XRRenderProgram program, string location)
             => program.Uniform(location, Value);
 
-        [Browsable(false)]
-        public unsafe float* Data { get { fixed (float* ptr = &_value) return ptr; } }
-
         internal override string GetShaderValueString() 
             => $"{Value:0.0######}f";
 

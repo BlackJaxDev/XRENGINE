@@ -5,41 +5,42 @@ using Silk.NET.Vulkan;
 
 namespace XREngine.Rendering.Vulkan;
 
-public unsafe partial class VulkanRenderer
+internal sealed class CommandChainRecordingWorkerState(VulkanCommandRuntime commandRuntime, int workerIndex)
 {
-    private sealed class CommandChainRecordingWorkerState(int workerIndex)
+    private readonly VulkanCommandRuntime _commandRuntime = commandRuntime;
+    public int WorkerIndex { get; } = workerIndex;
+    public readonly AutoResetEvent WorkAvailable = new(initialState: false);
+    public readonly VulkanWorkerSecondaryCommandArena Arena =
+        new(workerIndex);
+    public Thread? Thread;
+    public VulkanCommandChainRecordingBatch? Batch;
+    public VulkanNonGraphicsRecordingBatch? NonGraphicsBatch;
+    public volatile bool StopRequested;
+    public ulong LastFrameId;
+
+    public void Start()
     {
-        public int WorkerIndex { get; } = workerIndex;
-        public readonly AutoResetEvent WorkAvailable = new(initialState: false);
-        public readonly VulkanWorkerSecondaryCommandArena Arena =
-            new(workerIndex);
-        public Thread? Thread;
-        public VulkanRenderer? Owner;
-        public CommandChainRecordingBatch? Batch;
-        public volatile bool StopRequested;
-        public ulong LastFrameId;
-
-        public void Start(VulkanRenderer owner)
+        Thread = new Thread(static state => ((CommandChainRecordingWorkerState)state!).Run())
         {
-            Owner = owner;
-            Thread = new Thread(static state => ((CommandChainRecordingWorkerState)state!).Run())
-            {
-                IsBackground = true,
-                Name = $"Vulkan Command Chain {WorkerIndex}",
-            };
-            Thread.Start(this);
-        }
+            IsBackground = true,
+            Name = $"Vulkan Command Chain {WorkerIndex}",
+        };
+        Thread.Start(this);
+    }
 
-        private void Run()
+    private void Run()
+    {
+        while (true)
         {
-            while (true)
-            {
-                WorkAvailable.WaitOne();
-                if (StopRequested)
-                    return;
+            WorkAvailable.WaitOne();
+            if (StopRequested)
+                return;
 
-                Owner!.RunCommandChainRecordingWorker(this);
-            }
+            VulkanCommandChainRecordingBatch? batch = Batch;
+            if (batch is not null)
+                _commandRuntime.ExecuteCommandChainRecordingWorker(this);
+            else if (NonGraphicsBatch is not null)
+                _commandRuntime.ExecuteNonGraphicsRecordingWorker(this);
         }
     }
 }

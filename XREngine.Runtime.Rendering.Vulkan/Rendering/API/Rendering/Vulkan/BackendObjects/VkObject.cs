@@ -15,24 +15,66 @@ internal abstract class VkObject<T> : VkObjectBase
         => $"{GetType()} {_bindingId}";
 
     public uint CacheObject(VkObject<T> obj)
-        => BackendContext.Registry.Cache(obj);
+        => BackendContext.Resources.BackendObjects.Cache(obj);
 
     public VkObject<T>? GetCachedObject(uint id)
-        => BackendContext.Registry.Get<T>(id);
+        => BackendContext.Resources.BackendObjects.Get<T>(id);
+
+    /// <summary>
+    /// Resolves or creates a context-owned wrapper without routing through the
+    /// renderer facade. Cross-wrapper dependencies therefore share the same
+    /// generation-local backend registry and factory.
+    /// </summary>
+    protected AbstractRenderAPIObject? GetBackendWrapper(GenericRenderObject data, bool generateNow)
+        => WrapperLookup.GetOrCreate(data, generateNow);
 
     public void RemoveCachedObject(uint id)
-        => BackendContext.Registry.Remove<T>(id);
+        => BackendContext.Resources.BackendObjects.Remove<T>(id);
 
-        //We want to set the property instead of the field here just in case subclasses override it.
-        //It will never be set to null because the constructor requires a non-null value.
-#pragma warning disable CS8618 // Non-nullable field must contain a non-null value when exiting constructor. Consider declaring as nullable.
-    public VkObject(VulkanRenderer renderer, T data) : base(renderer)
-#pragma warning restore CS8618 // Non-nullable field must contain a non-null value when exiting constructor. Consider declaring as nullable.
-        => Data = data;
+    /// <summary>
+    /// Creates a context-owned wrapper. The backend context is both the native
+    /// facility provider and the wrapper cache owner, so no renderer backlink is
+    /// retained by migrated wrapper families.
+    /// </summary>
+    protected VkObject(
+        VulkanBackendObjectContext backendContext,
+        T data) : base(backendContext, backendContext)
+        => _data = data ?? throw new ArgumentNullException(nameof(data));
+
+    protected VkObject(
+        VulkanBackendObjectContext backendContext,
+        IRenderApiWrapperOwner owner,
+        T data) : base(backendContext, owner)
+        => _data = data ?? throw new ArgumentNullException(nameof(data));
+
+    /// <summary>
+    /// Completes wrapper construction after the factory has bound the exact
+    /// operation ports required by this wrapper family.
+    /// </summary>
+    internal override void CompleteConstruction()
+    {
+        if (_dataLinked)
+            return;
+
+        _data.AddWrapper(this);
+        try
+        {
+            LinkData();
+            _dataLinked = true;
+        }
+        catch
+        {
+            try { UnlinkData(); }
+            finally { _data.RemoveWrapper(this); }
+            throw;
+        }
+    }
 
     protected override GenericRenderObject Data_Internal => Data;
 
-    private T _data;
+    // The factory binds narrow behavior ports before completing the data link.
+    // This prevents constructor-time callbacks from observing unpublished services.
+    private T _data = null!;
     private bool _dataLinked;
     public virtual T Data
     {
@@ -79,12 +121,13 @@ internal abstract class VkObject<T> : VkObjectBase
     protected internal override void PostGenerated()
     {
         base.PostGenerated();
-        BackendContext.Registry.Publish(BindingId, this);
+        BackendContext.Resources.BackendObjects.Publish(BindingId, this);
     }
 
     protected internal override void PostDeleted()
     {
-        BackendContext.Registry.Remove<T>(BindingId);
+        BackendContext.Resources.BackendObjects.Remove(Data);
+        BackendContext.Resources.BackendObjects.Remove<T>(BindingId);
         base.PostDeleted();
     }
 }

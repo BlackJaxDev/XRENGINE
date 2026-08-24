@@ -96,7 +96,7 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
             return false;
         }
 
-        if (Renderer.IsDeviceLost)
+        if (!BackendContext.IsDeviceOperational)
         {
             failureReason = "Vulkan device is lost";
             return false;
@@ -149,7 +149,7 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
         pendingUpload = null;
         failureReason = null;
 
-        if (Renderer.IsDeviceLost)
+        if (!BackendContext.IsDeviceOperational)
         {
             failureReason = "Vulkan device is lost";
             return false;
@@ -179,8 +179,6 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
                         return false;
                     }
 
-                    Renderer.SetDebugObjectName(ObjectType.Image, preparation.Image.Handle, $"{preparation.DebugName}.Image");
-                    Renderer.SetDebugObjectName(ObjectType.DeviceMemory, preparation.Memory.Handle, $"{preparation.DebugName}.Memory");
                     preparation.Step = VulkanImportedTextureUploadPreparationStep.CreateImageView;
                     return true;
 
@@ -191,7 +189,6 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
                         preparation.AspectMask,
                         preparation.MipLevels,
                         preparation.ArrayLayers);
-                    Renderer.SetDebugObjectName(ObjectType.ImageView, preparation.ImageView.Handle, $"{preparation.DebugName}.View");
                     preparation.Step = CreateSampler
                         ? VulkanImportedTextureUploadPreparationStep.CreateSampler
                         : VulkanImportedTextureUploadPreparationStep.CreateNextStagingMip;
@@ -199,7 +196,6 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
 
                 case VulkanImportedTextureUploadPreparationStep.CreateSampler:
                     preparation.Sampler = CreateImportedUploadSampler();
-                    Renderer.SetDebugObjectName(ObjectType.Sampler, preparation.Sampler.Handle, $"{preparation.DebugName}.Sampler");
                     preparation.Step = VulkanImportedTextureUploadPreparationStep.CreateNextStagingMip;
                     return true;
 
@@ -288,13 +284,15 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
             DataSource? uploadData = VkFormatConversions.CreateNormalizedUploadData2D(mip, preparation.Format, out bool ownsUploadData);
             try
             {
-                if (!TryCreateStagingBuffer(uploadData, out Buffer stagingBuffer, out DeviceMemory stagingMemory))
+                if (!TryAllocateImportedStagingBuffer(
+                        uploadData,
+                        out Buffer stagingBuffer,
+                        out DeviceMemory stagingMemory))
                 {
                     failureReason = $"could not create staging buffer for mip {level}";
                     return false;
                 }
 
-                Renderer.SetDebugObjectName(ObjectType.Buffer, stagingBuffer.Handle, $"{preparation.DebugName}.StagingMip{level}");
 
                 Extent3D mipExtent = new(Math.Max(mip.Width, 1u), Math.Max(mip.Height, 1u), 1u);
                 BufferImageCopy region = new()
@@ -314,6 +312,7 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
                 };
 
                 preparation.StagingResources.Add(new VulkanImportedTextureUploadStagingResource(
+                    default,
                     stagingBuffer,
                     stagingMemory,
                     region,
@@ -378,9 +377,9 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
         committedBytes = 0L;
         failureReason = null;
 
-        if (!Renderer.IsDeviceOperational)
+        if (!BackendContext.IsDeviceOperational)
         {
-            failureReason = $"Vulkan device state is {Renderer.DeviceState}";
+            failureReason = $"Vulkan device state is {BackendContext.DeviceContext.State}";
             return false;
         }
 
@@ -395,9 +394,9 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
 
         uint* uploadQueueFamilies = stackalloc uint[2];
         uint uploadQueueFamilyCount = 0;
-        if (Renderer.HasDedicatedTextureUploadTransferQueue)
+        QueueFamilyIndices families = BackendContext.DeviceContext.QueueFamilies;
+        if (families.GraphicsFamilyIndex != families.TransferFamilyIndex)
         {
-            VulkanRenderer.QueueFamilyIndices families = Renderer.FamilyQueueIndices;
             uint? graphicsFamily = families.GraphicsFamilyIndex;
             uint? transferFamily = families.TransferFamilyIndex;
             if (graphicsFamily.HasValue &&
@@ -427,7 +426,11 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
             PQueueFamilyIndices = uploadQueueFamilyCount > 0 ? uploadQueueFamilies : null,
         };
 
-        Result createResult = Renderer.CreateVulkanImageTracked(ref imageInfo, out image, "VkImageBackedTexture.ImportedUpload");
+        Result createResult = BackendContext.Resources.Images.CreateOwnedImage(
+            BackendContext,
+            ref imageInfo,
+            "VkImageBackedTexture.ImportedUpload",
+            out image);
         if (createResult != Result.Success || image.Handle == 0)
         {
             image = default;
@@ -435,43 +438,29 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
             return false;
         }
 
-        Renderer.ClearTrackedImageLayouts(image);
         Api!.GetImageMemoryRequirements(Device, image, out MemoryRequirements memRequirements);
-        if (!Renderer.TryAllocateImageMemoryWithFallback(
-                image,
-                MemoryProperties,
-                out VulkanMemoryAllocation allocation,
-                out string allocationFailure))
+        VulkanMemoryAllocation allocation;
+        try
         {
-            Renderer.DestroyVulkanImageImmediateTracked(image, "ImportedUpload.AllocationFailure");
+            allocation = BackendContext.Resources.Images.AllocateOwnedImageMemory(BackendContext, image, MemoryProperties);
+        }
+        catch (Exception ex)
+        {
+            BackendContext.Resources.Images.DestroyUnpublishedOwnedImage(BackendContext, image, "ImportedUpload.AllocationFailure");
             image = default;
-            failureReason = allocationFailure;
+            failureReason = ex.Message;
             return false;
         }
 
-        Renderer._imageAllocationTracker.Allocations[image.Handle] = allocation;
-        Renderer.TrackImageAllocation(
-            image,
-            allocation,
-            ResolveLogicalResourceName() ?? Data.Name ?? GetDescribingName(),
-            "imported-texture-upload",
-            extent.Width,
-            extent.Height,
-            extent.Depth,
-            arrayLayers,
-            mipLevels,
-            format,
-            usage,
-            SampleCountFlags.Count1Bit);
+        BackendContext.Resources.Images.RegisterOwnedImageAllocation(image, in allocation);
         memory = allocation.Memory;
 
         Result bindResult = Api!.BindImageMemory(Device, image, allocation.Memory, allocation.Offset);
         if (bindResult != Result.Success)
         {
-            Renderer._imageAllocationTracker.Allocations.TryRemove(image.Handle, out _);
-            Renderer.UntrackImageAllocation(image);
-            Renderer.DestroyVulkanImageImmediateTracked(image, "ImportedUpload.BindFailure");
-            Renderer.FreeMemoryAllocation(allocation);
+            BackendContext.Resources.Images.RemoveOwnedImageAllocation(image);
+            BackendContext.Resources.Images.DestroyUnpublishedOwnedImage(BackendContext, image, "ImportedUpload.BindFailure");
+            BackendContext.Resources.Images.FreeMemory(BackendContext, in allocation);
             image = default;
             memory = default;
             failureReason = $"failed to bind synchronized imported texture image memory ({bindResult})";
@@ -514,7 +503,7 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
         if (Api!.CreateImageView(Device, ref viewInfo, null, out ImageView created) != Result.Success)
             throw new Exception("Failed to create synchronized imported texture image view.");
 
-        Renderer.TrackLiveImageView(created, in viewInfo, "VkImageBackedTexture.ImportedUploadView");
+        BackendContext.Resources.Images.RegisterView(created, in viewInfo, "VkImageBackedTexture.ImportedUploadView");
         return created;
     }
 
@@ -526,7 +515,7 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
 
         uint anisotropyEnable = Vk.False;
         float maxAnisotropy = 1f;
-        if (Renderer.SamplerAnisotropyEnabled)
+        if (BackendContext.Supports(EVulkanDeviceCapability.Anisotropy))
         {
             float requestedAnisotropy = Data is XRTexture2D texture2D ? texture2D.MaxAnisotropy : 1.0f;
             Api!.GetPhysicalDeviceProperties(PhysicalDevice, out PhysicalDeviceProperties props);
@@ -560,12 +549,15 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
         if (Api!.CreateSampler(Device, ref samplerInfo, null, out Sampler created) != Result.Success)
             throw new Exception("Failed to create synchronized imported texture sampler.");
 
-        Renderer.RegisterLiveSampler(created, in samplerInfo);
+        BackendContext.RegisterSampler(created, in samplerInfo, nameof(VkImageBackedTexture<TTexture>));
         return created;
     }
 
     internal void ReleasePreparedImportedUploadResources(VulkanImportedTexturePendingUpload pendingUpload)
     {
+        if (!pendingUpload.TryMarkPreparedResourcesReleased())
+            return;
+
         ReleasePreparedImportedUploadResources(
             pendingUpload.Image,
             pendingUpload.Memory,
@@ -587,18 +579,20 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
         for (int i = 0; i < stagingResources.Length; i++)
         {
             VulkanImportedTextureUploadStagingResource staging = stagingResources[i];
-            Renderer.RetireBuffer(staging.Buffer, staging.Memory);
+            if (!staging.Slice.IsValid)
+                BackendContext.Resources.Buffers.Retire(staging.Buffer, staging.Memory, "VkImageBackedTexture.ImportedUpload.DisposePreparedResources");
         }
 
         if (image.Handle != 0 || memory.Handle != 0 || imageView.Handle != 0 || sampler.Handle != 0)
         {
-            Renderer.RetireImageResources(new RetiredImageResources(
+            BackendContext.Resources.Images.RetireOwnedResources(new RetiredImageResources(
                 image,
                 memory,
                 imageView,
                 [],
                 sampler,
-                committedBytes));
+                committedBytes),
+                "VkImageBackedTexture.ImportedUpload.DisposePreparedResources");
         }
 
         if (committedBytes > 0)
@@ -664,14 +658,16 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
             PostGenerated();
         }
 
-        Renderer.RefreshGlobalMaterialTextureDescriptorForPublishedTexture(Data);
-        Renderer.RetireImageResources(previousResources);
+        BackendContext.Resources.Descriptors.RefreshGlobalMaterialTextureDescriptorForPublishedTexture(Data);
+        BackendContext.Resources.Images.RetireOwnedResources(
+            in previousResources,
+            "VkImageBackedTexture.ImportedUpload.Publish");
         if (previousResources.AllocatedVRAMBytes > 0)
             RuntimeEngine.Rendering.Stats.Vram.RemoveTextureAllocation(previousResources.AllocatedVRAMBytes);
 
+        // Compatible content publication preserves binding identity. Command-chain
+        // invalidation deliberately treats this class of update as a no-op.
         pendingUpload.DetachPublishedImageHandles();
-        Renderer.NotifyTextureDescriptorPublished(
-            $"ImportedTextureUploadPublished texture='{ResolveLogicalResourceName() ?? Data.Name ?? GetDescribingName()}' descriptorGeneration={DescriptorGeneration}");
     }
 
     #endregion

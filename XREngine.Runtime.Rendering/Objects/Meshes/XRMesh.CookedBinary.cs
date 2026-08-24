@@ -8,6 +8,7 @@ using XREngine.Core.Files;
 using XREngine.Data;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
+using XREngine.Rendering.Meshlets;
 using XREngine.Scene.Transforms;
 using YamlDotNet.Serialization;
 using CookedBinaryReader = XREngine.Core.Files.RuntimeCookedBinaryReader;
@@ -221,9 +222,9 @@ public partial class XRMesh : ICookedBinarySerializable
 
         ReadSkinningData(reader);
         ReadBlendshapeData(reader);
-        MeshletPayload = reader.Remaining > 0
-            ? ReadMeshletPayload(reader)
-            : null;
+        MeshletPayload? cookedMeshletPayload = reader.Remaining > 0 ? ReadMeshletPayload(reader) : null;
+        if (cookedMeshletPayload is not null)
+            AttachValidatedCookedMeshletPayload(cookedMeshletPayload);
     }
 
     private void ApplyMetadata(MeshMetadata metadata)
@@ -959,25 +960,39 @@ public partial class XRMesh : ICookedBinarySerializable
     private MeshBufferEncoding ResolveEncoding(XRDataBuffer? buffer, string streamKey)
     {
         if (!string.IsNullOrWhiteSpace(streamKey) && _bufferEncodingOverrides.TryGetValue(streamKey, out MeshBufferEncoding overrideEncoding))
-            return overrideEncoding;
+            return ResolveMeshletOwnershipSafeEncoding(buffer, overrideEncoding);
 
         if (BufferEncodingResolver is not null)
         {
             MeshBufferEncoding resolved = BufferEncodingResolver.Invoke(streamKey);
             if (Enum.IsDefined(typeof(MeshBufferEncoding), resolved))
-                return resolved;
+                return ResolveMeshletOwnershipSafeEncoding(buffer, resolved);
         }
 
         if (buffer is null)
             return MeshBufferEncoding.Raw;
 
-        if (IsUnitVectorStream(streamKey, buffer))
+        if (MeshletPayload is null && IsUnitVectorStream(streamKey, buffer))
             return MeshBufferEncoding.Snorm16;
 
         if (ShouldCompressBuffer(buffer))
             return MeshBufferEncoding.Lzma;
 
         return MeshBufferEncoding.Raw;
+    }
+
+    private MeshBufferEncoding ResolveMeshletOwnershipSafeEncoding(
+        XRDataBuffer? buffer,
+        MeshBufferEncoding requestedEncoding)
+    {
+        if (MeshletPayload is null || requestedEncoding != MeshBufferEncoding.Snorm16)
+            return requestedEncoding;
+
+        // Payload ownership hashes exact source-stream values. A lossy round trip
+        // would make a cooked mesh reject the payload that was serialized with it.
+        return buffer is not null && ShouldCompressBuffer(buffer)
+            ? MeshBufferEncoding.Lzma
+            : MeshBufferEncoding.Raw;
     }
 
     private static bool IsUnitVectorStream(string streamKey, XRDataBuffer buffer)
@@ -1441,7 +1456,7 @@ public partial class XRMesh : ICookedBinarySerializable
     {
         if (buffer.ClientSideSource is null || buffer.ClientSideSource.Length < byteLength)
             buffer.ClientSideSource = DataSource.Allocate(byteLength);
-        reader.ReadBytes((void*)buffer.ClientSideSource!.Address, (int)byteLength);
+        reader.ReadBytes(new Span<byte>((void*)buffer.ClientSideSource!.Address, checked((int)byteLength)));
     }
 
     private unsafe byte[] EncodeSnorm16(XRDataBuffer buffer, out uint encodedLength)

@@ -3,35 +3,40 @@ using System.Threading;
 
 namespace XREngine.Rendering.Vulkan;
 
-public unsafe partial class VulkanRenderer
+/// <summary>
+/// Provides allocation-free synchronization scratch storage scoped to the
+/// calling thread.
+/// </summary>
+internal sealed class VulkanSynchronizationThreadWorkspace : IDisposable
 {
+    private readonly ThreadLocal<VulkanSynchronizationThreadState> _current =
+        new(
+            static () => new VulkanSynchronizationThreadState(),
+            trackAllValues: true);
+
     /// <summary>
-    /// Provides allocation-free synchronization scratch storage scoped to the
-    /// calling thread.
+    /// Gets the synchronization scratch state owned by the current thread.
     /// </summary>
-    private sealed class VulkanSynchronizationThreadWorkspace
+    /// <exception cref="InvalidOperationException">
+    /// Thrown when the thread-local workspace has been disposed.
+    /// </exception>
+    public VulkanSynchronizationThreadState Current
+        => _current.Value
+            ?? throw new InvalidOperationException(
+                "The Vulkan synchronization workspace has been disposed.");
+
+    /// <summary>
+    /// Releases references retained by the current thread's reusable
+    /// synchronization buffers.
+    /// </summary>
+    public void ReleaseCurrentThread()
+        => Current.Reset();
+
+    /// <summary>Disposes every per-thread native scratch owner created by this workspace.</summary>
+    public void Dispose()
     {
-        private readonly ThreadLocal<VulkanSynchronizationThreadState> _current =
-            new(
-                static () => new VulkanSynchronizationThreadState(),
-                trackAllValues: false);
-
-        /// <summary>
-        /// Gets the synchronization scratch state owned by the current thread.
-        /// </summary>
-        /// <exception cref="InvalidOperationException">
-        /// Thrown when the thread-local workspace has been disposed.
-        /// </exception>
-        public VulkanSynchronizationThreadState Current
-            => _current.Value
-                ?? throw new InvalidOperationException(
-                    "The Vulkan synchronization workspace has been disposed.");
-
-        /// <summary>
-        /// Releases references retained by the current thread's reusable
-        /// synchronization buffers.
-        /// </summary>
-        public void ReleaseCurrentThread()
-            => Current.Reset();
+        foreach (VulkanSynchronizationThreadState state in _current.Values)
+            state.Dispose();
+        _current.Dispose();
     }
 }

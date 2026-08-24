@@ -372,7 +372,6 @@ namespace XREngine
             // Unknown scalar format for an XRAsset reference. Throw a descriptive error so the
             // caller (and any strict-nullability enforcement above) gets actionable diagnostics
             // instead of a cryptic "Yaml value is null when target property requires non null values".
-            reader.Consume<Scalar>();
             AssetDiagnostics.RecordMissingAsset(
                 scalarValue,
                 expectedType.Name,

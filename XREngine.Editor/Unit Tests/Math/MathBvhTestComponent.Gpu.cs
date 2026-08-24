@@ -733,30 +733,34 @@ public sealed partial class MathBvhTestComponent
         return program.IsLinked;
     }
 
-    private static unsafe bool TryReadGpuUIntBuffer(XRDataBuffer buffer, Span<uint> destination)
+    private static bool TryReadGpuUIntBuffer(XRDataBuffer buffer, Span<uint> destination)
     {
         buffer.MapBufferData();
         try
         {
-            List<IApiDataBuffer> mappings = buffer.ActivelyMapping;
-            for (int i = 0; i < mappings.Count; i++)
-            {
-                var address = mappings[i].GetMappedAddress();
-                if (!address.HasValue || !address.Value.IsValid)
-                    continue;
+            bool read = buffer.TryReadMapped(
+                ref destination,
+                static (scoped ReadOnlySpan<byte> bytes, ref Span<uint> values) =>
+                {
+                    ReadOnlySpan<uint> source = MemoryMarshal.Cast<byte, uint>(bytes);
+                    if (source.Length < values.Length)
+                        return false;
 
-                new ReadOnlySpan<uint>(address.Value.Pointer, destination.Length).CopyTo(destination);
+                    source[..values.Length].CopyTo(values);
+                    return true;
+                });
+            if (read)
+            {
                 RuntimeEngine.Rendering.Stats.GpuReadback.RecordGpuBufferMapped();
                 RuntimeEngine.Rendering.Stats.GpuReadback.RecordGpuReadbackBytes(destination.Length * sizeof(uint));
-                return true;
             }
+
+            return read;
         }
         finally
         {
             buffer.UnmapBufferData();
         }
-
-        return false;
     }
 
     private RenderableMesh? ResolveGpuMesh()

@@ -47,7 +47,17 @@ namespace XREngine.Rendering.Commands
         /// <summary>Reverse mapping from mesh ID to XRMesh instance.</summary>
         private readonly ConcurrentDictionary<uint, XRMesh> _idToMesh = new();
 
-        private readonly ConcurrentDictionary<uint, byte> _runtimeMeshletRepairFailedMeshIds = new();
+        // Registration records this state at the atlas boundary. Rendering reads it
+        // as an O(1) conservative gate so a pass can never dispatch mesh shaders
+        // for only a subset of its commands and silently lose the remaining draws.
+        private readonly ConcurrentDictionary<uint, byte> _meshletIneligibleResidentMeshIds = new();
+
+        /// <summary>
+        /// Gets whether any resident mesh lacks an attached, runtime-compatible
+        /// meshlet payload. A meshlet-requested pass must use traditional GPU
+        /// indirect while this is true until per-bin command partitioning exists.
+        /// </summary>
+        public bool HasMeshletIneligibleResidentMeshes => !_meshletIneligibleResidentMeshIds.IsEmpty;
 
         private readonly Dictionary<RenderableMesh, Dictionary<uint, uint>> _renderableLogicalMeshIdMap = new(System.Collections.Generic.ReferenceEqualityComparer.Instance);
         private readonly Dictionary<XRMesh, uint> _standaloneLogicalMeshIdMap = new(System.Collections.Generic.ReferenceEqualityComparer.Instance);
@@ -234,33 +244,26 @@ namespace XREngine.Rendering.Commands
                         }
                     }
 
-                    IntPtr mappedAddress = IntPtr.Zero;
                     if (buffer.IsMapped)
-                    {
                         AbstractRenderer.Current?.MemoryBarrier(EMemoryBarrierMask.ClientMappedBuffer);
-                        mappedAddress = buffer.GetMappedAddresses().FirstOrDefault();
-                    }
-
-                    if (mappedAddress != IntPtr.Zero)
+                    bool mappedRead = buffer.IsMapped && buffer.TryWriteMapped(bytes =>
                     {
                         usedMappedAccess = true;
-                        unsafe
+                        Span<uint> values = MemoryMarshal.Cast<byte, uint>(bytes);
+                        for (uint logicalMeshId = 1; logicalMeshId < entryCount; logicalMeshId++)
                         {
-                            uint* ptr = (uint*)(void*)mappedAddress;
-                            for (uint logicalMeshId = 1; logicalMeshId < entryCount; logicalMeshId++)
-                            {
-                                uint lodMask = ptr[logicalMeshId];
-                                if (lodMask == 0)
-                                    continue;
-
-                                RuntimeEngine.Rendering.Stats.GpuReadback.RecordGpuReadbackBytes(sizeof(uint));
-                                requests.Add((logicalMeshId, lodMask));
-                                ptr[logicalMeshId] = 0u;
-                                modified = true;
-                            }
+                            uint lodMask = values[checked((int)logicalMeshId)];
+                            if (lodMask == 0)
+                                continue;
+                            RuntimeEngine.Rendering.Stats.GpuReadback.RecordGpuReadbackBytes(sizeof(uint));
+                            requests.Add((logicalMeshId, lodMask));
+                            values[checked((int)logicalMeshId)] = 0u;
+                            modified = true;
                         }
-                    }
-                    else
+                        return true;
+                    });
+
+                    if (!mappedRead)
                     {
                         for (uint logicalMeshId = 1; logicalMeshId < entryCount; logicalMeshId++)
                         {
@@ -347,17 +350,29 @@ namespace XREngine.Rendering.Commands
         /// Attempts to resolve the original mesh render command for a GPU command index.
         /// </summary>
         public bool TryGetSourceCommand(uint commandIndex, out IRenderCommandMesh? command)
+            => TryGetSourceCommand(commandIndex, out command, out _);
+
+        /// <summary>
+        /// Attempts to resolve the original mesh command and its source primitive
+        /// for a resident GPU command index.
+        /// </summary>
+        public bool TryGetSourceCommand(
+            uint commandIndex,
+            out IRenderCommandMesh? command,
+            out int primitiveIndex)
         {
             using (_lock.EnterScope())
             {
                 if (_commandIndexLookup.TryGetValue(commandIndex, out var entry))
                 {
                     command = entry.command;
+                    primitiveIndex = entry.subMeshIndex;
                     return true;
                 }
             }
 
             command = null;
+            primitiveIndex = -1;
             return false;
         }
 

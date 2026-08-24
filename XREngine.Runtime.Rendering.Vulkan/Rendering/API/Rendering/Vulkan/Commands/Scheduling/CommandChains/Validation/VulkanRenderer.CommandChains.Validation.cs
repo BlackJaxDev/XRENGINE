@@ -13,7 +13,7 @@ using XREngine.Rendering.Shadows;
 
 namespace XREngine.Rendering.Vulkan;
 
-public unsafe partial class VulkanRenderer
+internal sealed partial class VulkanCommandRuntime
 {
     internal static bool TryGetCommandChainScheduleFrameSlot(
         CommandChainSchedule schedule,
@@ -36,7 +36,7 @@ public unsafe partial class VulkanRenderer
 
     internal static void ValidatePrimaryCommandChainSchedule(
         CommandChainSchedule schedule,
-        FrameOp[] staticOps,
+        FrameOperationSequence staticOps,
         int dynamicOverlayOpCount,
         IReadOnlyDictionary<CommandChainKey, CommandChain>? chains = null)
     {
@@ -48,12 +48,13 @@ public unsafe partial class VulkanRenderer
         int currentGroupOpCount = 0;
         for (int opIndex = 0; opIndex < staticOps.Length; opIndex++)
         {
-            FrameOp op = staticOps[opIndex];
-            if (op is QueryOp queryOp)
+            ref readonly FrameOperationHeader header = ref staticOps.GetHeader(opIndex);
+            if (header.OpCode == EVulkanPrimaryPlanNodeKind.Query)
             {
-                if (queryOp.Operation == ERenderQueryOperation.Begin)
+                ERenderQueryOperation queryOperation = staticOps.Stream.GetQuery(opIndex).Operation;
+                if (queryOperation == ERenderQueryOperation.Begin)
                     queryBracketDepth++;
-                else if (queryOp.Operation == ERenderQueryOperation.End && queryBracketDepth > 0)
+                else if (queryOperation == ERenderQueryOperation.End && queryBracketDepth > 0)
                     queryBracketDepth--;
                 continue;
             }
@@ -61,11 +62,11 @@ public unsafe partial class VulkanRenderer
             if (queryBracketDepth != 0)
                 continue;
 
-            if (!IsSchedulableCommandChainFrameOp(op, dynamicOverlay: false))
+            if (!IsSchedulableCommandChainFrameOp(staticOps.Stream, opIndex, dynamicOverlay: false))
                 continue;
 
-            int passIndex = op.PassIndex;
-            int targetIdentity = ResolveCommandChainTargetIdentity(op);
+            int passIndex = header.PassIndex;
+            int targetIdentity = header.TargetIdentity;
             if (currentGroupOpCount == 0)
             {
                 currentPassIndex = passIndex;
@@ -168,7 +169,10 @@ public unsafe partial class VulkanRenderer
         return hash.ToHash();
     }
 
-    private static string DescribeCommandChainDirtyReason(CommandChain chain, RenderPacket packet)
+    private static string DescribeCommandChainDirtyReason(
+        CommandChain chain,
+        RenderPacket packet,
+        ulong currentSharedResourceVersionSignature = 0UL)
     {
         ulong currentInstanceCountSignature = ComputePacketInstanceCountSignature(packet);
         StringBuilder details = new();
@@ -182,8 +186,56 @@ public unsafe partial class VulkanRenderer
         AppendIfChanged(details, "physical-image-signature", chain.PhysicalImageSignature, packet.ResourcePlanSnapshot.PhysicalImageSignature);
         AppendIfChanged(details, "framebuffer-signature", chain.FramebufferSignature, packet.ResourcePlanSnapshot.FramebufferSignature);
         AppendIfChanged(details, "pipeline-generation", chain.PipelineGeneration, packet.ResourcePlanSnapshot.PipelineGeneration);
-        CommandRecordingDependencyMismatch dependencyMismatch = chain.DependencySignature.Compare(
-            BuildCommandChainDependencySignature(packet, chain.Key));
+        if (currentSharedResourceVersionSignature != 0UL)
+        {
+            AppendIfChanged(
+                details,
+                "shared-resource-version",
+                chain.ResourceVersionSignature,
+                currentSharedResourceVersionSignature);
+        }
+        if (!packet.RecordedPacketKey.IsComplete)
+        {
+            AppendDetail(details, "packet-key-complete", bool.FalseString);
+            AppendDetail(
+                details,
+                "packet-key-first-incomplete",
+                packet.RecordedPacketKey.DescribeFirstIncompleteField());
+            VulkanPreparedCommandChainAuthority? authority = chain.PreparedAuthority;
+            AppendDetail(details, "prepared-authority", (authority is not null).ToString());
+            AppendDetail(details, "prepared-key-complete", chain.PreparedKey.IsComplete.ToString());
+            if (!chain.PreparedKey.RecordedPacketKey.IsComplete)
+            {
+                AppendDetail(
+                    details,
+                    "prepared-key-first-incomplete",
+                    chain.PreparedKey.RecordedPacketKey.DescribeFirstIncompleteField());
+            }
+            if (authority is not null)
+            {
+                RecordedPacketKey authorityRecordedKey =
+                    authority.PreparedKey.RecordedPacketKey;
+                RecordedPacketKey completedPacketKey = packet.RecordedPacketKey with
+                {
+                    DescriptorSets = authorityRecordedKey.DescriptorSets,
+                    Programs = authorityRecordedKey.Programs,
+                };
+                AppendDetail(details, "packet-with-authority-complete", completedPacketKey.IsComplete.ToString());
+                AppendDetail(details, "authority-recorded-key-complete", authorityRecordedKey.IsComplete.ToString());
+                if (completedPacketKey.IsComplete &&
+                    authorityRecordedKey.IsComplete &&
+                    !completedPacketKey.Matches(in authorityRecordedKey))
+                {
+                    AppendDetail(
+                        details,
+                        "authority-mismatch",
+                        completedPacketKey.DescribeFirstMismatch(in authorityRecordedKey));
+                }
+            }
+        }
+        CommandRecordingDependencyMismatch dependencyMismatch =
+            chain.DependencySignature.CompareCommandChainSecondary(
+                BuildCommandChainDependencySignature(packet, chain.Key));
         if (dependencyMismatch.Field != CommandRecordingDependencyField.None)
         {
             AppendDetail(details, "dependency-field", dependencyMismatch.Field.ToString());

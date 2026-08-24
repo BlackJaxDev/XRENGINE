@@ -24,6 +24,18 @@ public partial class XRMesh
     public bool HasMeshletPayload
         => _meshletPayload is not null;
 
+    /// <summary>
+    /// Attaches a cooked payload only after it has been validated for this
+    /// owner. This is the sole warm-hydration accounting boundary.
+    /// </summary>
+    public void AttachValidatedCookedMeshletPayload(MeshletPayload payload)
+    {
+        ArgumentNullException.ThrowIfNull(payload);
+        payload.ValidateForMesh(this, payload.SourceMeshIdentity);
+        MeshletPayload = payload;
+        RuntimeEngine.Rendering.Stats.GpuMeshlets.RecordMeshletWarmPayloadHydration();
+    }
+
     public MeshletPayload GetOrCreateMeshletPayload(
         MeshletGenerationSettings? meshletSettings,
         MeshLodGenerationSettings? lodSettings = null,
@@ -42,8 +54,10 @@ public partial class XRMesh
         }
 
         MeshletPayload newPayload = meshletSettings.Enabled
-            ? MeshOptimizerIntegration.BuildMeshlets(this, meshletSettings, lodSettings, sourceMeshIdentity).Payload
+            ? MeshOptimizerIntegration.BuildMeshletPayloadForMesh(this, meshletSettings, lodSettings, sourceMeshIdentity).Payload
             : MeshletPayload.CreateDisabled(this, meshletSettings, lodSettings, sourceMeshIdentity);
+
+        newPayload.ValidateForMesh(this, sourceMeshIdentity);
 
         MeshletPayload = newPayload;
         return newPayload;

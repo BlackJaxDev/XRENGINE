@@ -96,6 +96,9 @@ namespace XREngine.Scene
         private ulong _lastShadowMapsRenderFrameId = ulong.MaxValue;
         private readonly Stopwatch _captureBudgetStopwatch = new();
         private long _lastStreamingPressureLogFrameTicks = -1;
+        private ulong _lastCaptureAdmissionFrameId = ulong.MaxValue;
+        private int _consecutiveCaptureDeferrals;
+        private bool _captureDeferredForStreamingThisFrame;
         private int _captureWorkQueueDepth;
         private int _lightProbeBatchCaptureNesting;
         private int _lightProbeBatchCompletedVersion;
@@ -154,6 +157,17 @@ namespace XREngine.Scene
         /// Budget in milliseconds for processing capture work (collect + render) per frame on the main thread.
         /// </summary>
         public double CaptureBudgetMilliseconds { get; set; } = 2.0;
+
+        /// <summary>
+        /// Maximum consecutive frames that auxiliary captures may reuse their
+        /// last published result while texture streaming owns the GPU budget.
+        /// </summary>
+        public uint MaximumCaptureDeferralFrames { get; set; } = 8u;
+
+        public int ConsecutiveCaptureDeferrals
+            => Math.Max(0, Volatile.Read(ref _consecutiveCaptureDeferrals));
+
+        public ERenderOutputPolicyReason LastCaptureDeferralReason { get; private set; }
 
         [YamlIgnore]
         public Octree<LightProbeCell> LightProbeTree { get; } = new(new AABB());
@@ -251,8 +265,38 @@ namespace XREngine.Scene
 
         private bool ShouldDeferAuxiliaryCaptures()
         {
+            ulong frameId = RuntimeEngine.Rendering.State.RenderFrameId;
+            if (_lastCaptureAdmissionFrameId == frameId)
+                return _captureDeferredForStreamingThisFrame;
+
+            _lastCaptureAdmissionFrameId = frameId;
+            _captureDeferredForStreamingThisFrame = false;
             if (!XRTexture2D.HasLargeProgressiveUploadBacklog)
+            {
+                Interlocked.Exchange(ref _consecutiveCaptureDeferrals, 0);
+                LastCaptureDeferralReason = ERenderOutputPolicyReason.None;
                 return false;
+            }
+
+            uint maximumDeferrals = MaximumCaptureDeferralFrames;
+            int consecutiveDeferrals = Volatile.Read(ref _consecutiveCaptureDeferrals);
+            if (maximumDeferrals != uint.MaxValue &&
+                (uint)Math.Max(0, consecutiveDeferrals) >= maximumDeferrals)
+            {
+                Interlocked.Exchange(ref _consecutiveCaptureDeferrals, 0);
+                LastCaptureDeferralReason = ERenderOutputPolicyReason.MaximumDeferralReached;
+                Debug.Out(
+                    "[Lights3D] Capture maximum deferral reached; admitting one bounded refresh despite texture streaming pressure.");
+                return false;
+            }
+
+            Interlocked.Increment(ref _consecutiveCaptureDeferrals);
+            _captureDeferredForStreamingThisFrame = true;
+            LastCaptureDeferralReason = ERenderOutputPolicyReason.GpuBudget;
+            RuntimeEngine.Rendering.Stats.FrameOutputs.RecordWork(
+                new FrameOutputWorkTelemetry(
+                    GpuBudgetDeferrals: 1,
+                    StaleResultReuses: PendingCaptureComponentCount > 0 ? 1 : 0));
 
             long frameTicks = RuntimeRenderingHostServices.FrameTiming.LastRenderTimestampTicks;
             if (_lastStreamingPressureLogFrameTicks != frameTicks)

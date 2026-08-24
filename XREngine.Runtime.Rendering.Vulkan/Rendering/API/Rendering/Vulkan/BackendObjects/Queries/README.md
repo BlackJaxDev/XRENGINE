@@ -1,6 +1,7 @@
 # Vulkan Query Backend Objects
 
 Owns Vulkan wrappers for engine query-like resources, including render queries
-and transform feedback. Renderer-global query planning, pool allocation, and
-telemetry remain here only until they are extracted into explicit query-system
-owners.
+and transform feedback. Pool allocation, native pool retirement, capability
+state, result-completion checks, and provider registration are owned by the
+generation-local <code>VulkanQueryAuthority</code>. Wrappers access native
+command tracking only through its narrow command service.

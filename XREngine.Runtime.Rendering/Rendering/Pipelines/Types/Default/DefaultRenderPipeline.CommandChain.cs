@@ -15,6 +15,8 @@ namespace XREngine.Rendering;
 
 public partial class DefaultRenderPipeline
 {
+    private const string LateOnTopForwardPassName = "LateOnTopForward";
+
     // \u2500\u2500 AO provider references \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n    // Captured during Configure*Pass calls; used by DeclareAmbientOcclusionFBOs factories.\n    private IDeclaredAoResourceProvider? _disabledAoProvider;\n    private IDeclaredAoResourceProvider? _ssaoAoProvider;\n    private IDeclaredAoResourceProvider? _mvaoAoProvider;\n    private IDeclaredAoResourceProvider? _msvoAoProvider;\n    private IDeclaredAoResourceProvider? _hbaoPlusAoProvider;\n    private IDeclaredAoResourceProvider? _gtaoAoProvider;\n    private IDeclaredAoResourceProvider? _spatialHashAoProvider;
     private IDeclaredAoResourceProvider? _disabledAoProvider;
     private IDeclaredAoResourceProvider? _ssaoAoProvider;
@@ -224,7 +226,9 @@ public partial class DefaultRenderPipeline
                 c.Add<VPRC_DepthTest>().Enable = true;
                 c.Add<VPRC_DepthWrite>().Allow = false;
                 c.Add<VPRC_DepthFunc>().Comp = EComparison.Always;
-                c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.OnTopForward, false);
+                VPRC_RenderMeshesPass onTopForward = c.Add<VPRC_RenderMeshesPass>();
+                onTopForward.SetOptions((int)EDefaultRenderPass.OnTopForward, false);
+                onTopForward.RenderGraphPassName = LateOnTopForwardPassName;
                 c.Add<VPRC_DepthFunc>().Comp = EComparison.Lequal;
                 c.Add<VPRC_DepthWrite>().Allow = true;
             }
@@ -807,7 +811,9 @@ public partial class DefaultRenderPipeline
             c.Add<VPRC_RenderMeshletDebugDisplay>();
             c.Add<VPRC_DepthFunc>().Comp = EComparison.Always;
             // Keep custom on-top materials outside the generated material-table shader contract.
-            c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.OnTopForward, EMeshSubmissionStrategy.CpuDirect);
+            VPRC_RenderMeshesPass onTopForward = c.Add<VPRC_RenderMeshesPass>();
+            onTopForward.SetOptions((int)EDefaultRenderPass.OnTopForward, EMeshSubmissionStrategy.CpuDirect);
+            onTopForward.RenderGraphPassName = LateOnTopForwardPassName;
             c.Add<VPRC_DepthFunc>().Comp = EComparison.Lequal;
             c.Add<VPRC_DepthWrite>().Allow = true;
             c.Add<VPRC_ColorMask>().Set(true, true, true, true);

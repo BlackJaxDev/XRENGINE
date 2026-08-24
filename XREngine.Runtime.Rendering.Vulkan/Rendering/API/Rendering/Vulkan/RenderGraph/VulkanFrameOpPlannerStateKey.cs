@@ -10,7 +10,9 @@ internal readonly record struct VulkanFrameOpPlannerStateKey(
     uint InternalHeight,
     int OutputFrameBufferIdentity,
     int OutputTargetIdentity,
+    ulong LogicalViewId,
     int ResourceRegistrySignature,
     int PassMetadataSignature,
     ulong ResourceGeneration,
+    ulong DescriptorGeneration,
     uint SubmissionQueueFamily);

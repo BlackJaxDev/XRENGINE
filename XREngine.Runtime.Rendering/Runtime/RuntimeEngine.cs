@@ -48,7 +48,6 @@ public static partial class RuntimeEngine
     public static UserSettings UserSettings { get; } = new();
     internal static RuntimeAssetFacade Assets { get; } = new();
     internal static RuntimeProfilerFacade Profiler { get; } = new();
-    public static JobManager Jobs { get; } = new();
     public static RuntimeVrState VRState { get; } = new();
     /// <summary>
     /// Active render windows. Runtime.Rendering owns this registry; the application host owns
@@ -513,6 +512,11 @@ public static partial class RuntimeEngine
         public static EMeshShaderDialect LastResolvedMeshShaderDialect { get; private set; }
         /// <summary>True when the active renderer reported a production meshlet dispatch path.</summary>
         public static bool LastResolvedSupportsMeshletDispatch { get; private set; }
+        /// <summary>
+        /// Effective strategy produced by the most recent resolution against an active renderer.
+        /// This deliberately remains stable while the renderer is between frames.
+        /// </summary>
+        public static EMeshSubmissionStrategy LastResolvedMeshSubmissionStrategy { get; private set; } = EMeshSubmissionStrategy.CpuDirect;
 
         public static void ApplyGpuRenderDispatchToPipeline(object? pipeline, bool enabled)
         {
@@ -631,12 +635,17 @@ public static partial class RuntimeEngine
         public static EMeshSubmissionStrategy ResolveMeshSubmissionStrategy(bool? requestedGpuDispatch = null)
         {
             AbstractRenderer? renderer = AbstractRenderer.Current;
-            bool rendererKnown = renderer is not null;
-            bool supportsIndirectCount = rendererKnown ? renderer!.SupportsIndirectCountDraw() : true;
-            EMeshShaderDialect meshShaderDialect = renderer?.MeshShaderDialect ?? EMeshShaderDialect.None;
-            bool supportsDirectMeshTaskDispatch = renderer?.SupportsDirectMeshTaskDispatch() ?? false;
-            bool supportsIndirectCountMeshTaskDispatch = renderer?.SupportsIndirectCountMeshTaskDispatch() ?? false;
-            bool supportsMeshletDispatch = renderer?.SupportsMeshletDispatch() ?? false;
+            // Configuration and telemetry also ask for this before a window has made its
+            // renderer current. Do not turn that transient absence into a capability
+            // downgrade or overwrite the last active-renderer explanation.
+            if (renderer is null)
+                return ResolveRequestedMeshSubmissionStrategy(requestedGpuDispatch);
+
+            bool supportsIndirectCount = renderer.SupportsIndirectCountDraw();
+            EMeshShaderDialect meshShaderDialect = renderer.MeshShaderDialect;
+            bool supportsDirectMeshTaskDispatch = renderer.SupportsDirectMeshTaskDispatch();
+            bool supportsIndirectCountMeshTaskDispatch = renderer.SupportsIndirectCountMeshTaskDispatch();
+            bool supportsMeshletDispatch = renderer.SupportsMeshletDispatch();
 
             // Snapshot inputs the UI uses to explain meshlet availability without re-deriving them.
             LastResolvedRendererBackend = RuntimeRenderingHostServices.FrameTiming.CurrentRenderBackend;
@@ -685,17 +694,17 @@ public static partial class RuntimeEngine
                         LastMeshletDowngradeReason = null;
                     }
 
-                    return resolved;
+                    return PublishResolvedMeshSubmissionStrategy(resolved);
                 }
 
-                return forced.Value;
+                return PublishResolvedMeshSubmissionStrategy(forced.Value);
             }
 
             if (!(requestedGpuDispatch ?? RuntimeEngine.EffectiveSettings.GPURenderDispatch))
-                return EMeshSubmissionStrategy.CpuDirect;
+                return PublishResolvedMeshSubmissionStrategy(EMeshSubmissionStrategy.CpuDirect);
 
             if (VulkanFeatureProfile.IsActive && !VulkanFeatureProfile.ResolveGpuRenderDispatchPreference(true))
-                return EMeshSubmissionStrategy.CpuDirect;
+                return PublishResolvedMeshSubmissionStrategy(EMeshSubmissionStrategy.CpuDirect);
 
             bool diagnosticsProfile = VulkanFeatureProfile.IsActive &&
                 VulkanFeatureProfile.ActiveProfile == EVulkanGpuDrivenProfile.Diagnostics;
@@ -712,19 +721,53 @@ public static partial class RuntimeEngine
             if (zeroReadbackRequested)
             {
                 if (supportsIndirectCount)
-                    return EMeshSubmissionStrategy.GpuIndirectZeroReadback;
+                    return PublishResolvedMeshSubmissionStrategy(EMeshSubmissionStrategy.GpuIndirectZeroReadback);
 
-                return VulkanFeatureProfile.EnforceStrictNoFallbacks
+                return PublishResolvedMeshSubmissionStrategy(VulkanFeatureProfile.EnforceStrictNoFallbacks
                     ? EMeshSubmissionStrategy.CpuDirect
-                    : EMeshSubmissionStrategy.GpuIndirectInstrumented;
+                    : EMeshSubmissionStrategy.GpuIndirectInstrumented);
             }
 
             if (instrumentationRequested)
-                return EMeshSubmissionStrategy.GpuIndirectInstrumented;
+                return PublishResolvedMeshSubmissionStrategy(EMeshSubmissionStrategy.GpuIndirectInstrumented);
 
-            return supportsIndirectCount
+            return PublishResolvedMeshSubmissionStrategy(supportsIndirectCount
                 ? EMeshSubmissionStrategy.GpuIndirectInstrumented
-                : EMeshSubmissionStrategy.CpuDirect;
+                : EMeshSubmissionStrategy.CpuDirect);
+        }
+
+        private static EMeshSubmissionStrategy PublishResolvedMeshSubmissionStrategy(EMeshSubmissionStrategy strategy)
+        {
+            LastResolvedMeshSubmissionStrategy = strategy;
+            return strategy;
+        }
+
+        /// <summary>
+        /// Resolves user and profile intent without consulting a renderer that
+        /// may not exist yet. Render-pipeline command chains persist this value;
+        /// backend capability resolution happens when the command executes.
+        /// </summary>
+        public static EMeshSubmissionStrategy ResolveRequestedMeshSubmissionStrategy(
+            bool? requestedGpuDispatch = null)
+        {
+            if (RuntimeEngine.EffectiveSettings.ForceMeshSubmissionStrategy is { } forced)
+                return forced;
+
+            if (!(requestedGpuDispatch ?? RuntimeEngine.EffectiveSettings.GPURenderDispatch))
+                return EMeshSubmissionStrategy.CpuDirect;
+
+            if (VulkanFeatureProfile.IsActive && !VulkanFeatureProfile.ResolveGpuRenderDispatchPreference(true))
+                return EMeshSubmissionStrategy.CpuDirect;
+
+            bool shippingFastProfile = VulkanFeatureProfile.IsActive &&
+                VulkanFeatureProfile.ActiveProfile == EVulkanGpuDrivenProfile.ShippingFast;
+            bool zeroReadbackRequested = shippingFastProfile
+                || RuntimeEngine.EffectiveSettings.EnableZeroReadbackMaterialScatter
+                || RuntimeEngine.EditorPreferences.Debug.EnableZeroReadbackMaterialScatter;
+            if (zeroReadbackRequested)
+                return EMeshSubmissionStrategy.GpuIndirectZeroReadback;
+
+            return EMeshSubmissionStrategy.GpuIndirectInstrumented;
         }
 
         private static EMeshSubmissionStrategy ResolveForcedMeshletSubmissionStrategy(

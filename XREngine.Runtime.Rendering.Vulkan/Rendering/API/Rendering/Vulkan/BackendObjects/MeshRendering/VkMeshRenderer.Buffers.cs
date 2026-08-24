@@ -1,9 +1,9 @@
-// ──────────────────────────────────────────────────────────────────────────────
-// VkMeshRenderer.Buffers.cs  – partial class: Buffer & Material Resolution
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// VkMeshRenderer.Buffers.cs  â€“ partial class: Buffer & Material Resolution
 //
 // Gathers GPU data buffers from mesh/renderer, resolves index buffers, and
 // determines the effective material for each draw call.
-// ──────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 using System;
 using System.Collections.Generic;
@@ -41,13 +41,13 @@ internal unsafe partial class VkMeshRenderer
 			var meshBuffers = Mesh?.Buffers as IEventDictionary<string, XRDataBuffer>;
 			if (meshBuffers is not null)
 				foreach (var pair in meshBuffers)
-					if (Renderer.GenericToAPI<VkDataBuffer>(pair.Value) is { } vkBuffer)
+					if (WrapperLookup.GetOrCreate(pair.Value) is VkDataBuffer vkBuffer)
 						_bufferCache[pair.Key] = vkBuffer;
 
 			var rendererBuffers = MeshRenderer.Buffers as IEventDictionary<string, XRDataBuffer>;
 			if (rendererBuffers is not null)
 				foreach (var pair in rendererBuffers)
-					if (Renderer.GenericToAPI<VkDataBuffer>(pair.Value) is { } vkBuffer)
+					if (WrapperLookup.GetOrCreate(pair.Value) is VkDataBuffer vkBuffer)
 						_bufferCache[pair.Key] = vkBuffer;
 
 			FilterRuntimeDeformationSourceBuffers();
@@ -56,12 +56,14 @@ internal unsafe partial class VkMeshRenderer
 			CaptureRuntimeDeformationBufferReferences();
 
 			bool structuralBindingsChanged = UpdateBufferStructuralIdentitySnapshot();
+			PublishCachedBufferResourceFingerprint();
 			if (structuralBindingsChanged)
 			{
+				BumpPreparationCompatibilityRevision();
 				_buffersDirty = true;
 				_descriptorDirty = true;
 				_vertexInputStateDirty = true;
-				Renderer.MarkCommandBuffersDirtyForLegacyMeshState();
+				CommandOperations.MarkCommandBuffersDirtyForLegacyMeshState();
 			}
 
 			PublishBufferReadinessSnapshot();
@@ -77,7 +79,7 @@ internal unsafe partial class VkMeshRenderer
 		ulong handle = buffer.BufferHandle?.Handle ?? 0UL;
 		return new BufferStructuralIdentity(
 			handle,
-			Renderer.GetCurrentVulkanResourceGeneration(ObjectType.Buffer, handle),
+			GetResourceGeneration(ObjectType.Buffer, handle),
 			buffer.AllocatedByteSize,
 			data.BindingIndexOverride ?? uint.MaxValue,
 			data.Target,
@@ -89,7 +91,7 @@ internal unsafe partial class VkMeshRenderer
 	private BufferStructuralIdentity CaptureBufferStructuralIdentity(XRDataBuffer? buffer)
 		=> buffer is null
 			? default
-			: CaptureBufferStructuralIdentity(Renderer.GenericToAPI<VkDataBuffer>(buffer));
+			: CaptureBufferStructuralIdentity(WrapperLookup.GetOrCreate(buffer) as VkDataBuffer);
 
 	private bool UpdateBufferStructuralIdentitySnapshot()
 	{
@@ -175,7 +177,7 @@ internal unsafe partial class VkMeshRenderer
 			|| MeshRenderer.ActiveSkinPaletteBuffer is not { } activeSkinPalette)
 			return;
 
-		if (Renderer.GenericToAPI<VkDataBuffer>(activeSkinPalette) is { } vkBuffer)
+		if (WrapperLookup.GetOrCreate(activeSkinPalette) is VkDataBuffer vkBuffer)
 			_bufferCache[shaderName] = vkBuffer;
 	}
 
@@ -248,7 +250,7 @@ internal unsafe partial class VkMeshRenderer
 
 		if (assignBindingOverride)
 			dataBuffer.BindingIndexOverride = binding;
-		if (Renderer.GenericToAPI<VkDataBuffer>(dataBuffer) is { } vkBuffer)
+		if (WrapperLookup.GetOrCreate(dataBuffer) is VkDataBuffer vkBuffer)
 			_bufferCache[shaderName] = vkBuffer;
 	}
 
@@ -293,7 +295,7 @@ internal unsafe partial class VkMeshRenderer
 	/// <summary>
 	/// Lazily generates (uploads) all cached buffers and resolves index buffers
 	/// for triangles, lines, and points. No-ops if buffers are already up-to-date.
-	/// Index buffer construction is asynchronous — on first call the mesh kicks off a
+	/// Index buffer construction is asynchronous â€” on first call the mesh kicks off a
 	/// background Task.Run to build the buffer and returns null; the callback below
 	/// flips <see cref="_buffersDirty"/> back to true so the next EnsureBuffers call
 	/// picks up the now-cached buffer without stalling the render thread.
@@ -317,10 +319,10 @@ internal unsafe partial class VkMeshRenderer
 			if (!_buffersDirty)
 			{
 				_descriptorDirty = true;
-				Renderer.MarkCommandBuffersDirtyForLegacyMeshState();
+				CommandOperations.MarkCommandBuffersDirtyForLegacyMeshState();
 			}
 
-			bool allowSynchronousBufferUpload = Renderer.AllowSynchronousResourceUploads;
+			bool allowSynchronousBufferUpload = BackendContext.Resources.AllowSynchronousResourceUploads;
 			foreach (var buffer in _bufferCache.Values)
 				buffer.TryEnsureReadyForRendering(allowSynchronousBufferUpload);
 
@@ -340,15 +342,21 @@ internal unsafe partial class VkMeshRenderer
 			{
 				_triangleIndexBufferExternallyProvided = false;
 				var tri = GetIndexBufferForBinding(EPrimitiveType.Triangles, out _triangleIndexSize, _triangleIndexBuffer);
-				_triangleIndexBuffer = tri is not null ? Renderer.GenericToAPI<VkDataBuffer>(tri) : null;
+				_triangleIndexBuffer = tri is not null
+					? WrapperLookup.GetOrCreate(tri, generateNow: allowSynchronousBufferUpload) as VkDataBuffer
+					: null;
 				_triangleIndexBuffer?.TryEnsureReadyForRendering(allowSynchronousBufferUpload);
 
 				var line = GetIndexBufferForBinding(EPrimitiveType.Lines, out _lineIndexSize, _lineIndexBuffer);
-				_lineIndexBuffer = line is not null ? Renderer.GenericToAPI<VkDataBuffer>(line) : null;
+				_lineIndexBuffer = line is not null
+					? WrapperLookup.GetOrCreate(line, generateNow: allowSynchronousBufferUpload) as VkDataBuffer
+					: null;
 				_lineIndexBuffer?.TryEnsureReadyForRendering(allowSynchronousBufferUpload);
 
 				var point = GetIndexBufferForBinding(EPrimitiveType.Points, out _pointIndexSize, _pointIndexBuffer);
-				_pointIndexBuffer = point is not null ? Renderer.GenericToAPI<VkDataBuffer>(point) : null;
+				_pointIndexBuffer = point is not null
+					? WrapperLookup.GetOrCreate(point, generateNow: allowSynchronousBufferUpload) as VkDataBuffer
+					: null;
 				_pointIndexBuffer?.TryEnsureReadyForRendering(allowSynchronousBufferUpload);
 				_indexBuffersSkippedForShaderGeneratedVertices = false;
 			}
@@ -490,12 +498,13 @@ internal unsafe partial class VkMeshRenderer
 	{
 		lock (_bufferStateSync)
 		{
+			BumpPreparationCompatibilityRevision();
 			_buffersDirty = true;
 			_pipelineDirty = true;
 			_descriptorDirty = true;
 			_vertexInputStateDirty = true;
 			_geometryLayoutSignature = MeshGeometryLayoutSignature.Empty;
-			Renderer.MarkCommandBuffersDirtyForLegacyMeshState();
+			CommandOperations.MarkCommandBuffersDirtyForLegacyMeshState();
 		}
 	}
 
@@ -515,7 +524,7 @@ internal unsafe partial class VkMeshRenderer
 			_indexBuffersSkippedForShaderGeneratedVertices = false;
 			if (changed)
 				_vertexInputStateDirty = true;
-			_triangleIndexBuffer?.TryEnsureReadyForRendering(Renderer.AllowSynchronousResourceUploads);
+			_triangleIndexBuffer?.TryEnsureReadyForRendering(BackendContext.Resources.AllowSynchronousResourceUploads);
 			PublishBufferReadinessSnapshot();
 			return changed;
 		}
@@ -589,7 +598,7 @@ internal unsafe partial class VkMeshRenderer
 		if (!HasIndexData(buffer))
 			return false;
 
-		if (!buffer!.TryEnsureReadyForRendering(Renderer.AllowSynchronousResourceUploads))
+		if (!buffer!.TryEnsureReadyForRendering(BackendContext.Resources.AllowSynchronousResourceUploads))
 			return false;
 		if (buffer.BufferHandle is not { } bufferHandle)
 			return false;
@@ -610,9 +619,14 @@ internal unsafe partial class VkMeshRenderer
 	/// MeshRenderer.Material > pipeline invalid material > fallback.
 	/// </summary>
 	private XRMaterial ResolveMaterial(XRMaterial? localOverride, uint instances)
+		=> ResolveMaterialSelection(localOverride, instances).Material;
+
+	private ResolvedMeshRenderMaterial ResolveMaterialSelection(
+		XRMaterial? localOverride,
+		uint instances)
 		=> MeshRenderMaterialResolver.Resolve(
 			MeshRenderer,
 			localOverride,
 			instances,
-			RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.InvalidMaterial).Material;
+			RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.InvalidMaterial);
 }

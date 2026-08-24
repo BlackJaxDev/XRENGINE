@@ -45,7 +45,7 @@
     <RepoRoot>$(MSBuildThisFileDirectory)..\..\..\</RepoRoot>
     <ManagedRuntimeDir>$(RepoRoot)XREngine.Runtime.Rendering\runtimes\win-x64\native\</ManagedRuntimeDir>
     <OutDir>$(ManagedRuntimeDir)</OutDir>
-    <IntDir>$(RepoRoot)Build\Tools\obj\VulkanMemoryAllocatorBridge\$(Configuration)\</IntDir>
+    <IntDir>$(RepoRoot)Build\_AgentValidation\00000000-000000-shared\tools\obj\VulkanMemoryAllocatorBridge\$(Configuration)\</IntDir>
     <TargetName>VulkanMemoryAllocatorBridge.Native</TargetName>
     <VmaIncludeDir>$(MSBuildThisFileDirectory)vendor\VulkanMemoryAllocator\include</VmaIncludeDir>
     <VulkanSdkIncludeDir>$(VULKAN_SDK)\Include</VulkanSdkIncludeDir>

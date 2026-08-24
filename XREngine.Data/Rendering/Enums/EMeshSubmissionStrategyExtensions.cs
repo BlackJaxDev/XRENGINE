@@ -30,6 +30,21 @@ public static class EMeshSubmissionStrategyExtensions
             ? EMeshSubmissionStrategy.GpuMeshletZeroReadback
             : strategy;
 
+    /// <summary>Extracts the submission-only component from a legacy combined strategy.</summary>
+    public static EMeshSubmissionStrategy ToSubmissionMode(this EMeshSubmissionStrategy strategy)
+        => strategy switch
+        {
+            EMeshSubmissionStrategy.GpuMeshletZeroReadback => EMeshSubmissionStrategy.GpuIndirectZeroReadback,
+            EMeshSubmissionStrategy.GpuMeshletInstrumented => EMeshSubmissionStrategy.GpuIndirectInstrumented,
+            _ => strategy,
+        };
+
+    /// <summary>Extracts the primitive preference encoded by a legacy combined strategy.</summary>
+    public static EMeshPrimitivePathPreference ToPrimitivePathPreference(this EMeshSubmissionStrategy strategy)
+        => strategy.IsAnyMeshletStrategy()
+            ? EMeshPrimitivePathPreference.MeshShaderPreferred
+            : EMeshPrimitivePathPreference.TraditionalOnly;
+
     public static bool TryParseMeshSubmissionStrategy(
         string? raw,
         out EMeshSubmissionStrategy strategy,

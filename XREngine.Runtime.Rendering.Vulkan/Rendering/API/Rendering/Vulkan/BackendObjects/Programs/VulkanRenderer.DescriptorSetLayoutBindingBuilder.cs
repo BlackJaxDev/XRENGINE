@@ -11,6 +11,7 @@ internal sealed class DescriptorSetLayoutBindingBuilder(DescriptorBindingInfo in
     public string Name { get; private set; } = string.IsNullOrWhiteSpace(info.Name) ? string.Empty : info.Name;
     public ShaderStageFlags StageFlags { get; private set; } = info.StageFlags;
     public ImageViewType? ExpectedImageViewType { get; private set; } = info.ExpectedImageViewType;
+    public EVulkanDescriptorBindingRequirement Requirement { get; private set; } = info.Requirement;
 
     public void Merge(DescriptorBindingInfo info)
     {
@@ -26,6 +27,8 @@ internal sealed class DescriptorSetLayoutBindingBuilder(DescriptorBindingInfo in
 
         ExpectedImageViewType ??= info.ExpectedImageViewType;
         StageFlags |= info.StageFlags;
+        if (info.Requirement == EVulkanDescriptorBindingRequirement.Required)
+            Requirement = EVulkanDescriptorBindingRequirement.Required;
     }
 
     public DescriptorSetLayoutBinding ToBinding()
@@ -38,5 +41,5 @@ internal sealed class DescriptorSetLayoutBindingBuilder(DescriptorBindingInfo in
         };
 
     public DescriptorBindingInfo ToDescriptorBindingInfo()
-        => new(Set, Binding, DescriptorType, StageFlags, Count, Name, ExpectedImageViewType);
+        => new(Set, Binding, DescriptorType, StageFlags, Count, Name, ExpectedImageViewType, Requirement);
 }

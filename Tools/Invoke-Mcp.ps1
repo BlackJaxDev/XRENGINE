@@ -23,8 +23,15 @@ if (-not [string]::IsNullOrWhiteSpace($Session)) {
     }
 
     $repoRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
-    $manifestPath = Join-Path $repoRoot "Build\_AgentValidation\mcp-sessions\$Session\session.json"
-    if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
+    $sessionsRoot = Join-Path $repoRoot 'Build\_AgentValidation\00000000-000000-shared\mcp-sessions'
+    $manifestPath = Get-ChildItem -LiteralPath $sessionsRoot -Filter session.json -File -Recurse -ErrorAction SilentlyContinue |
+        Where-Object {
+            try { [string](Get-Content -LiteralPath $_.FullName -Raw | ConvertFrom-Json).name -ceq $Session }
+            catch { $false }
+        } |
+        Sort-Object FullName -Descending |
+        Select-Object -First 1 -ExpandProperty FullName
+    if ([string]::IsNullOrWhiteSpace($manifestPath)) {
         throw "MCP editor session '$Session' does not exist. Start it with Tools/Manage-McpEditorSession.ps1."
     }
 

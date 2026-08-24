@@ -13,8 +13,8 @@ internal readonly record struct VulkanImageEntryStateMismatch(
     uint MipLevel,
     uint ArrayLayer,
     ImageAspectFlags Aspect,
-    VulkanRenderer.VulkanImageAccessState Expected,
-    VulkanRenderer.VulkanImageAccessState Actual)
+    VulkanImageAccessState Expected,
+    VulkanImageAccessState Actual)
 {
     public bool RequiresRecording => Kind != EVulkanPrimaryEntryStateMismatch.None;
 }

@@ -10,6 +10,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 if ([string]::IsNullOrWhiteSpace($OutputRoot)) {
+    & (Join-Path $repoRoot 'Tools\Limit-AgentValidation.ps1') -ReserveTaskRun | Out-Null
     $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
     $OutputRoot = Join-Path $repoRoot "Build\_AgentValidation\$stamp-physics-debug-renderdoc\renderdoc"
 }

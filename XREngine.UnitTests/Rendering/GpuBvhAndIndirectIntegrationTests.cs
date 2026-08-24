@@ -22,9 +22,6 @@ namespace XREngine.UnitTests.Rendering;
 [TestFixture]
 public class GpuBvhAndIndirectIntegrationTests : GpuTestBase
 {
-    private const int CommandFloats = GPUScene.CommandFloatCount;
-    private const int DrawMetadataUInts = 16;
-    private const int BoundsGpuLanes = 16;
     private const int LodTransitionUInts = 4;
 
     /// <summary>
@@ -648,11 +645,8 @@ public class GpuBvhAndIndirectIntegrationTests : GpuTestBase
             uint program = CreateComputeProgram(gl, shader);
 
             const int numCommands = 4;
-            float[] culledCommands = new float[numCommands * CommandFloats];
-            
-            // Initialize each command with valid data
-            for (int i = 0; i < numCommands; i++)
-                SetupTestCommand(culledCommands, i, new Vector3(0, 0, -1 - i), 1f);
+            DrawMetadata[] drawMetadata = CreateDrawMetadata(numCommands);
+            uint[] visibleDrawIds = CreateSequentialDrawIds(numCommands);
 
             // Create GPU buffers
             uint culledBuffer = gl.GenBuffer();
@@ -664,10 +658,15 @@ public class GpuBvhAndIndirectIntegrationTests : GpuTestBase
             uint truncationBuffer = gl.GenBuffer();
             uint lodTransitionBuffer = gl.GenBuffer();
 
-            // Culled commands buffer (binding 0)
+            // Culling compaction emits a uint draw-ID stream, not legacy packed commands.
             gl.BindBuffer(BufferTargetARB.ShaderStorageBuffer, culledBuffer);
-            gl.BufferData<float>(BufferTargetARB.ShaderStorageBuffer, culledCommands.AsSpan(), BufferUsageARB.DynamicCopy);
+            gl.BufferData<uint>(BufferTargetARB.ShaderStorageBuffer, visibleDrawIds.AsSpan(), BufferUsageARB.DynamicCopy);
             gl.BindBufferBase(BufferTargetARB.ShaderStorageBuffer, 0, culledBuffer);
+
+            uint metadataBuffer = gl.GenBuffer();
+            gl.BindBuffer(BufferTargetARB.ShaderStorageBuffer, metadataBuffer);
+            gl.BufferData<DrawMetadata>(BufferTargetARB.ShaderStorageBuffer, drawMetadata.AsSpan(), BufferUsageARB.StaticDraw);
+            gl.BindBufferBase(BufferTargetARB.ShaderStorageBuffer, 9, metadataBuffer);
 
             // Indirect draw buffer (binding 1) - 5 uints per command
             uint[] indirectDraws = new uint[numCommands * 5];
@@ -724,7 +723,6 @@ public class GpuBvhAndIndirectIntegrationTests : GpuTestBase
             
             gl.Uniform1(passLoc, 0); // Render pass 0
             gl.Uniform1(maxDrawsLoc, 100); // Max 100 draws
-            gl.Uniform1(gl.GetUniformLocation(program, "UseHotCommands"), 0);
 
             // Dispatch compute shader
             uint workGroupSize = 256;
@@ -742,6 +740,7 @@ public class GpuBvhAndIndirectIntegrationTests : GpuTestBase
 
             // Cleanup
             gl.DeleteBuffer(culledBuffer);
+            gl.DeleteBuffer(metadataBuffer);
             gl.DeleteBuffer(indirectBuffer);
             gl.DeleteBuffer(submeshBuffer);
             gl.DeleteBuffer(culledCountBuffer);
@@ -785,9 +784,8 @@ public class GpuBvhAndIndirectIntegrationTests : GpuTestBase
             const int numCommands = 10;
             const int maxDraws = 5; // Limit to 5
 
-            float[] culledCommands = new float[numCommands * CommandFloats];
-            for (int i = 0; i < numCommands; i++)
-                SetupTestCommand(culledCommands, i, new Vector3(0, 0, -1 - i), 1f);
+            DrawMetadata[] drawMetadata = CreateDrawMetadata(numCommands);
+            uint[] visibleDrawIds = CreateSequentialDrawIds(numCommands);
 
             uint culledBuffer = gl.GenBuffer();
             uint indirectBuffer = gl.GenBuffer();
@@ -799,8 +797,13 @@ public class GpuBvhAndIndirectIntegrationTests : GpuTestBase
             uint lodTransitionBuffer = gl.GenBuffer();
 
             gl.BindBuffer(BufferTargetARB.ShaderStorageBuffer, culledBuffer);
-            gl.BufferData<float>(BufferTargetARB.ShaderStorageBuffer, culledCommands.AsSpan(), BufferUsageARB.DynamicCopy);
+            gl.BufferData<uint>(BufferTargetARB.ShaderStorageBuffer, visibleDrawIds.AsSpan(), BufferUsageARB.DynamicCopy);
             gl.BindBufferBase(BufferTargetARB.ShaderStorageBuffer, 0, culledBuffer);
+
+            uint metadataBuffer = gl.GenBuffer();
+            gl.BindBuffer(BufferTargetARB.ShaderStorageBuffer, metadataBuffer);
+            gl.BufferData<DrawMetadata>(BufferTargetARB.ShaderStorageBuffer, drawMetadata.AsSpan(), BufferUsageARB.StaticDraw);
+            gl.BindBufferBase(BufferTargetARB.ShaderStorageBuffer, 9, metadataBuffer);
 
             uint[] indirectDraws = new uint[numCommands * 5];
             gl.BindBuffer(BufferTargetARB.ShaderStorageBuffer, indirectBuffer);
@@ -847,7 +850,6 @@ public class GpuBvhAndIndirectIntegrationTests : GpuTestBase
             gl.UseProgram(program);
             gl.Uniform1(gl.GetUniformLocation(program, "CurrentRenderPass"), 0);
             gl.Uniform1(gl.GetUniformLocation(program, "MaxIndirectDraws"), maxDraws);
-            gl.Uniform1(gl.GetUniformLocation(program, "UseHotCommands"), 0);
 
             gl.DispatchCompute(1, 1, 1);
             gl.MemoryBarrier(MemoryBarrierMask.ShaderStorageBarrierBit);
@@ -869,6 +871,7 @@ public class GpuBvhAndIndirectIntegrationTests : GpuTestBase
             truncationFlag.ShouldBe(1u, "Truncation flag should be set when exceeding capacity");
 
             gl.DeleteBuffer(culledBuffer);
+            gl.DeleteBuffer(metadataBuffer);
             gl.DeleteBuffer(indirectBuffer);
             gl.DeleteBuffer(submeshBuffer);
             gl.DeleteBuffer(culledCountBuffer);
@@ -914,8 +917,9 @@ public class GpuBvhAndIndirectIntegrationTests : GpuTestBase
             uint program = CreateComputeProgram(gl, shader);
 
             const int numCommands = 4;
-            uint[] drawMetadata = new uint[numCommands * DrawMetadataUInts];
-            float[] boundsData = new float[numCommands * BoundsGpuLanes];
+            DrawMetadata[] drawMetadata = new DrawMetadata[numCommands];
+            BoundsGpu[] boundsData = new BoundsGpu[numCommands];
+            TransformGpu[] transforms = CreateIdentityTransforms(numCommands);
 
             // Object 0: At origin ahead (inside frustum)
             SetupCullingTestCommand(drawMetadata, boundsData, 0, new Vector3(0, 0, -5), 1f, layerMask: 1, renderPass: 0);
@@ -944,26 +948,31 @@ public class GpuBvhAndIndirectIntegrationTests : GpuTestBase
             // Create buffers
             uint metadataBuffer = gl.GenBuffer();    // binding 0
             uint boundsBuffer = gl.GenBuffer();      // binding 1
+            uint transformBuffer = gl.GenBuffer();   // independent GPUScene transform stream
             uint outputBuffer = gl.GenBuffer();      // binding 2
             uint culledCountBuffer = gl.GenBuffer(); // binding 3
             uint overflowBuffer = gl.GenBuffer();    // binding 4
             uint statsBuffer = gl.GenBuffer();       // binding 8
-            uint hotOutputBuffer = gl.GenBuffer();   // binding 10
 
             // Binding 0: Draw metadata
             gl.BindBuffer(BufferTargetARB.ShaderStorageBuffer, metadataBuffer);
-            gl.BufferData<uint>(BufferTargetARB.ShaderStorageBuffer, drawMetadata.AsSpan(), BufferUsageARB.StaticDraw);
+            gl.BufferData<DrawMetadata>(BufferTargetARB.ShaderStorageBuffer, drawMetadata.AsSpan(), BufferUsageARB.StaticDraw);
             gl.BindBufferBase(BufferTargetARB.ShaderStorageBuffer, 0, metadataBuffer);
 
             // Binding 1: Bounds
             gl.BindBuffer(BufferTargetARB.ShaderStorageBuffer, boundsBuffer);
-            gl.BufferData<float>(BufferTargetARB.ShaderStorageBuffer, boundsData.AsSpan(), BufferUsageARB.StaticDraw);
+            gl.BufferData<BoundsGpu>(BufferTargetARB.ShaderStorageBuffer, boundsData.AsSpan(), BufferUsageARB.StaticDraw);
             gl.BindBufferBase(BufferTargetARB.ShaderStorageBuffer, 1, boundsBuffer);
 
-            // Binding 2: Output (culled) commands
-            float[] outputCommands = new float[numCommands * CommandFloats];
+            // Culling dereferences BoundsID and does not consume TransformGpu, but the fixture
+            // keeps the scene-native transform stream separate from bounds and metadata.
+            gl.BindBuffer(BufferTargetARB.ShaderStorageBuffer, transformBuffer);
+            gl.BufferData<TransformGpu>(BufferTargetARB.ShaderStorageBuffer, transforms.AsSpan(), BufferUsageARB.StaticDraw);
+
+            // Binding 2: compacted visible draw-ID stream.
+            uint[] outputCommands = new uint[numCommands];
             gl.BindBuffer(BufferTargetARB.ShaderStorageBuffer, outputBuffer);
-            gl.BufferData<float>(BufferTargetARB.ShaderStorageBuffer, outputCommands.AsSpan(), BufferUsageARB.DynamicCopy);
+            gl.BufferData<uint>(BufferTargetARB.ShaderStorageBuffer, outputCommands.AsSpan(), BufferUsageARB.DynamicCopy);
             gl.BindBufferBase(BufferTargetARB.ShaderStorageBuffer, 2, outputBuffer);
 
             // Binding 3: Culled count (CulledCount, CulledInstanceCount, CulledOverflow)
@@ -983,11 +992,6 @@ public class GpuBvhAndIndirectIntegrationTests : GpuTestBase
             gl.BindBuffer(BufferTargetARB.ShaderStorageBuffer, statsBuffer);
             gl.BufferData<uint>(BufferTargetARB.ShaderStorageBuffer, stats.AsSpan(), BufferUsageARB.DynamicCopy);
             gl.BindBufferBase(BufferTargetARB.ShaderStorageBuffer, 8, statsBuffer);
-
-            uint[] hotOutput = new uint[numCommands * CommandFloats];
-            gl.BindBuffer(BufferTargetARB.ShaderStorageBuffer, hotOutputBuffer);
-            gl.BufferData<uint>(BufferTargetARB.ShaderStorageBuffer, hotOutput.AsSpan(), BufferUsageARB.DynamicCopy);
-            gl.BindBufferBase(BufferTargetARB.ShaderStorageBuffer, 10, hotOutputBuffer);
 
             gl.UseProgram(program);
             
@@ -1038,10 +1042,6 @@ public class GpuBvhAndIndirectIntegrationTests : GpuTestBase
             int activeViewCountLoc = gl.GetUniformLocation(program, "ActiveViewCount");
             if (activeViewCountLoc >= 0)
                 gl.Uniform1(activeViewCountLoc, 0);
-
-            int useHotCommandsLoc = gl.GetUniformLocation(program, "UseHotCommands");
-            if (useHotCommandsLoc >= 0)
-                gl.Uniform1(useHotCommandsLoc, 0);
 
             // Dispatch (1 workgroup of 256 threads is enough for 4 commands)
             gl.DispatchCompute(1, 1, 1);
@@ -1095,11 +1095,11 @@ public class GpuBvhAndIndirectIntegrationTests : GpuTestBase
 
             gl.DeleteBuffer(metadataBuffer);
             gl.DeleteBuffer(boundsBuffer);
+            gl.DeleteBuffer(transformBuffer);
             gl.DeleteBuffer(outputBuffer);
             gl.DeleteBuffer(culledCountBuffer);
             gl.DeleteBuffer(overflowBuffer);
             gl.DeleteBuffer(statsBuffer);
-            gl.DeleteBuffer(hotOutputBuffer);
             gl.DeleteProgram(program);
             gl.DeleteShader(shader);
         }
@@ -1253,30 +1253,22 @@ public class GpuBvhAndIndirectIntegrationTests : GpuTestBase
             uint program = CreateComputeProgram(gl, shader);
 
             const int numCommands = 3;
-            float[] culledCommands = new float[numCommands * CommandFloats];
-
-            // Ensure the shader has meaningful distances in compact slot 10.
-            SetupTestCommand(culledCommands, 0, new Vector3(0, 0, -1), 1f);
-            SetupTestCommand(culledCommands, 1, new Vector3(0, 0, -2), 1f);
-            SetupTestCommand(culledCommands, 2, new Vector3(0, 0, -3), 1f);
-            culledCommands[0 * CommandFloats + 4] = BitConverter.UInt32BitsToSingle(101u);
-            culledCommands[1 * CommandFloats + 4] = BitConverter.UInt32BitsToSingle(102u);
-            culledCommands[2 * CommandFloats + 4] = BitConverter.UInt32BitsToSingle(103u);
-            culledCommands[0 * CommandFloats + 6] = BitConverter.UInt32BitsToSingle(301u);
-            culledCommands[1 * CommandFloats + 6] = BitConverter.UInt32BitsToSingle(302u);
-            culledCommands[2 * CommandFloats + 6] = BitConverter.UInt32BitsToSingle(303u);
-            culledCommands[0 * CommandFloats + 10] = 1.25f;
-            culledCommands[1 * CommandFloats + 10] = 2.50f;
-            culledCommands[2 * CommandFloats + 10] = 3.75f;
-            culledCommands[0 * CommandFloats + 17] = BitConverter.UInt32BitsToSingle(201u);
-            culledCommands[1 * CommandFloats + 17] = BitConverter.UInt32BitsToSingle(202u);
-            culledCommands[2 * CommandFloats + 17] = BitConverter.UInt32BitsToSingle(203u);
-            culledCommands[0 * CommandFloats + 8] = BitConverter.UInt32BitsToSingle(0u);
-            culledCommands[1 * CommandFloats + 8] = BitConverter.UInt32BitsToSingle(1u);
-            culledCommands[2 * CommandFloats + 8] = BitConverter.UInt32BitsToSingle(0u);
-            culledCommands[0 * CommandFloats + 19] = BitConverter.UInt32BitsToSingle(41u);
-            culledCommands[1 * CommandFloats + 19] = BitConverter.UInt32BitsToSingle(42u);
-            culledCommands[2 * CommandFloats + 19] = BitConverter.UInt32BitsToSingle(43u);
+            // BuildKeys consumes a compact draw-ID stream and dereferences scene-native metadata.
+            uint[] visibleDrawIds = [41u, 42u, 43u];
+            DrawMetadata[] drawMetadata = new DrawMetadata[44];
+            for (uint i = 0; i < (uint)numCommands; ++i)
+            {
+                uint drawId = visibleDrawIds[i];
+                drawMetadata[drawId] = new DrawMetadata
+                {
+                    DrawID = drawId,
+                    MeshID = 101u + i,
+                    MaterialID = 301u + i,
+                    StateClassID = 201u + i,
+                    InstanceCount = 1u,
+                    RenderPass = i == 1u ? 1u : 0u,
+                };
+            }
 
             uint culledBuffer = gl.GenBuffer();
             uint culledCountBuffer = gl.GenBuffer();
@@ -1285,7 +1277,7 @@ public class GpuBvhAndIndirectIntegrationTests : GpuTestBase
             uint transparencyMetadataBuffer = gl.GenBuffer();
 
             gl.BindBuffer(BufferTargetARB.ShaderStorageBuffer, culledBuffer);
-            gl.BufferData<float>(BufferTargetARB.ShaderStorageBuffer, culledCommands.AsSpan(), BufferUsageARB.StaticDraw);
+            gl.BufferData<uint>(BufferTargetARB.ShaderStorageBuffer, visibleDrawIds.AsSpan(), BufferUsageARB.StaticDraw);
             gl.BindBufferBase(BufferTargetARB.ShaderStorageBuffer, 0, culledBuffer);
 
             uint[] culledCount = [(uint)numCommands, 0u, 0u];
@@ -1309,6 +1301,11 @@ public class GpuBvhAndIndirectIntegrationTests : GpuTestBase
             gl.BindBuffer(BufferTargetARB.ShaderStorageBuffer, transparencyMetadataBuffer);
             gl.BufferData<uint>(BufferTargetARB.ShaderStorageBuffer, transparencyMetadata.AsSpan(), BufferUsageARB.StaticDraw);
             gl.BindBufferBase(BufferTargetARB.ShaderStorageBuffer, 4, transparencyMetadataBuffer);
+
+            uint metadataBuffer = gl.GenBuffer();
+            gl.BindBuffer(BufferTargetARB.ShaderStorageBuffer, metadataBuffer);
+            gl.BufferData<DrawMetadata>(BufferTargetARB.ShaderStorageBuffer, drawMetadata.AsSpan(), BufferUsageARB.StaticDraw);
+            gl.BindBufferBase(BufferTargetARB.ShaderStorageBuffer, 5, metadataBuffer);
 
             gl.UseProgram(program);
             gl.Uniform1(gl.GetUniformLocation(program, "MaxSortKeys"), numCommands);
@@ -1352,6 +1349,7 @@ public class GpuBvhAndIndirectIntegrationTests : GpuTestBase
             gl.DeleteBuffer(keyIndexBuffer);
             gl.DeleteBuffer(classificationBuffer);
             gl.DeleteBuffer(transparencyMetadataBuffer);
+            gl.DeleteBuffer(metadataBuffer);
             gl.DeleteProgram(program);
             gl.DeleteShader(shader);
         }
@@ -1386,12 +1384,18 @@ public class GpuBvhAndIndirectIntegrationTests : GpuTestBase
 
             const int numCommands = 4;
 
-            float[] inCommands = new float[numCommands * CommandFloats];
+            DrawMetadata[] drawMetadata = new DrawMetadata[numCommands];
             for (int i = 0; i < numCommands; i++)
             {
-                SetupTestCommand(inCommands, i, new Vector3(i, 0, -5), 1f);
-                int baseIdx = i * CommandFloats;
-                inCommands[baseIdx + 8] = BitConverter.UInt32BitsToSingle((uint)(i % 2)); // passes 0,1,0,1
+                drawMetadata[i] = new DrawMetadata
+                {
+                    DrawID = (uint)i,
+                    MeshID = (uint)i,
+                    TransformID = (uint)i,
+                    BoundsID = (uint)i,
+                    InstanceCount = 1u,
+                    RenderPass = (uint)(i % 2), // passes 0,1,0,1
+                };
             }
 
             uint inBuffer = gl.GenBuffer();
@@ -1401,12 +1405,12 @@ public class GpuBvhAndIndirectIntegrationTests : GpuTestBase
             uint overflowFlagBuffer = gl.GenBuffer();
 
             gl.BindBuffer(BufferTargetARB.ShaderStorageBuffer, inBuffer);
-            gl.BufferData<float>(BufferTargetARB.ShaderStorageBuffer, inCommands.AsSpan(), BufferUsageARB.StaticDraw);
+            gl.BufferData<DrawMetadata>(BufferTargetARB.ShaderStorageBuffer, drawMetadata.AsSpan(), BufferUsageARB.StaticDraw);
             gl.BindBufferBase(BufferTargetARB.ShaderStorageBuffer, 0, inBuffer);
 
-            float[] outCommands = new float[numCommands * CommandFloats];
+            uint[] outCommands = new uint[numCommands];
             gl.BindBuffer(BufferTargetARB.ShaderStorageBuffer, outBuffer);
-            gl.BufferData<float>(BufferTargetARB.ShaderStorageBuffer, outCommands.AsSpan(), BufferUsageARB.DynamicCopy);
+            gl.BufferData<uint>(BufferTargetARB.ShaderStorageBuffer, outCommands.AsSpan(), BufferUsageARB.DynamicCopy);
             gl.BindBufferBase(BufferTargetARB.ShaderStorageBuffer, 1, outBuffer);
 
             uint[] visible = [0u, 0u, 0u];
@@ -1489,8 +1493,9 @@ public class GpuBvhAndIndirectIntegrationTests : GpuTestBase
 
             const int numCommands = 4;
 
-            uint[] drawMetadata = new uint[numCommands * DrawMetadataUInts];
-            float[] boundsData = new float[numCommands * BoundsGpuLanes];
+            DrawMetadata[] drawMetadata = new DrawMetadata[numCommands];
+            BoundsGpu[] boundsData = new BoundsGpu[numCommands];
+            TransformGpu[] transforms = CreateIdentityTransforms(numCommands);
             SetupCullingTestCommand(drawMetadata, boundsData, 0, new Vector3(0, 0, -5), 1f, layerMask: 1, renderPass: 0);
             SetupCullingTestCommand(drawMetadata, boundsData, 1, new Vector3(2, 0, -5), 1f, layerMask: 1, renderPass: 0);
             SetupCullingTestCommand(drawMetadata, boundsData, 2, new Vector3(-100, 0, -5), 1f, layerMask: 1, renderPass: 0);
@@ -1503,24 +1508,27 @@ public class GpuBvhAndIndirectIntegrationTests : GpuTestBase
             // Shared buffers across stages.
             uint metadataBuffer = gl.GenBuffer();
             uint boundsBuffer = gl.GenBuffer();
+            uint transformBuffer = gl.GenBuffer();
             uint culledCommandsBuffer = gl.GenBuffer();
             uint culledCountBuffer = gl.GenBuffer();
             uint cullingOverflowBuffer = gl.GenBuffer();
             uint statsBuffer = gl.GenBuffer();
-            uint hotOutputBuffer = gl.GenBuffer();
 
             // Culling stage binds.
             gl.BindBuffer(BufferTargetARB.ShaderStorageBuffer, metadataBuffer);
-            gl.BufferData<uint>(BufferTargetARB.ShaderStorageBuffer, drawMetadata.AsSpan(), BufferUsageARB.StaticDraw);
+            gl.BufferData<DrawMetadata>(BufferTargetARB.ShaderStorageBuffer, drawMetadata.AsSpan(), BufferUsageARB.StaticDraw);
             gl.BindBufferBase(BufferTargetARB.ShaderStorageBuffer, 0, metadataBuffer);
 
             gl.BindBuffer(BufferTargetARB.ShaderStorageBuffer, boundsBuffer);
-            gl.BufferData<float>(BufferTargetARB.ShaderStorageBuffer, boundsData.AsSpan(), BufferUsageARB.StaticDraw);
+            gl.BufferData<BoundsGpu>(BufferTargetARB.ShaderStorageBuffer, boundsData.AsSpan(), BufferUsageARB.StaticDraw);
             gl.BindBufferBase(BufferTargetARB.ShaderStorageBuffer, 1, boundsBuffer);
 
-            float[] culledCommands = new float[numCommands * CommandFloats];
+            gl.BindBuffer(BufferTargetARB.ShaderStorageBuffer, transformBuffer);
+            gl.BufferData<TransformGpu>(BufferTargetARB.ShaderStorageBuffer, transforms.AsSpan(), BufferUsageARB.StaticDraw);
+
+            uint[] visibleDrawIds = new uint[numCommands];
             gl.BindBuffer(BufferTargetARB.ShaderStorageBuffer, culledCommandsBuffer);
-            gl.BufferData<float>(BufferTargetARB.ShaderStorageBuffer, culledCommands.AsSpan(), BufferUsageARB.DynamicCopy);
+            gl.BufferData<uint>(BufferTargetARB.ShaderStorageBuffer, visibleDrawIds.AsSpan(), BufferUsageARB.DynamicCopy);
             gl.BindBufferBase(BufferTargetARB.ShaderStorageBuffer, 2, culledCommandsBuffer);
 
             uint[] culledCount = [0u, 0u, 0u];
@@ -1537,11 +1545,6 @@ public class GpuBvhAndIndirectIntegrationTests : GpuTestBase
             gl.BindBuffer(BufferTargetARB.ShaderStorageBuffer, statsBuffer);
             gl.BufferData<uint>(BufferTargetARB.ShaderStorageBuffer, stats.AsSpan(), BufferUsageARB.DynamicCopy);
             gl.BindBufferBase(BufferTargetARB.ShaderStorageBuffer, 8, statsBuffer);
-
-            uint[] hotOutput = new uint[numCommands * CommandFloats];
-            gl.BindBuffer(BufferTargetARB.ShaderStorageBuffer, hotOutputBuffer);
-            gl.BufferData<uint>(BufferTargetARB.ShaderStorageBuffer, hotOutput.AsSpan(), BufferUsageARB.DynamicCopy);
-            gl.BindBufferBase(BufferTargetARB.ShaderStorageBuffer, 10, hotOutputBuffer);
 
             gl.UseProgram(cullProgram);
             int frustumLoc = gl.GetUniformLocation(cullProgram, "FrustumPlanes");
@@ -1566,13 +1569,10 @@ public class GpuBvhAndIndirectIntegrationTests : GpuTestBase
             gl.Uniform1(gl.GetUniformLocation(cullProgram, "DisabledFlagsMask"), 0);
             gl.Uniform3(gl.GetUniformLocation(cullProgram, "CameraPosition"), 0f, 0f, 0f);
             gl.Uniform1(gl.GetUniformLocation(cullProgram, "ActiveViewCount"), 0);
-            gl.Uniform1(gl.GetUniformLocation(cullProgram, "UseHotCommands"), 0);
 
             gl.DispatchCompute(1, 1, 1);
             gl.MemoryBarrier(MemoryBarrierMask.ShaderStorageBarrierBit);
 
-            // GPURenderCulling.comp and GPURenderIndirect.comp both interpret integer-like fields
-            // via floatBitsToUint(...), so commands must be packed as uint bits in float lanes.
             gl.BindBuffer(BufferTargetARB.ShaderStorageBuffer, culledCountBuffer);
             uint* culledCountPtr = (uint*)gl.MapBuffer(BufferTargetARB.ShaderStorageBuffer, BufferAccessARB.ReadOnly);
             uint visibleCount = culledCountPtr[0];
@@ -1662,12 +1662,12 @@ public class GpuBvhAndIndirectIntegrationTests : GpuTestBase
             gl.BindBufferBase(BufferTargetARB.ShaderStorageBuffer, 0, culledCommandsBuffer);
             gl.BindBufferBase(BufferTargetARB.ShaderStorageBuffer, 3, culledCountBuffer);
             gl.BindBufferBase(BufferTargetARB.ShaderStorageBuffer, 8, statsBuffer);
+            gl.BindBufferBase(BufferTargetARB.ShaderStorageBuffer, 9, metadataBuffer);
 
             gl.UseProgram(indirectProgram);
             gl.Uniform1(gl.GetUniformLocation(indirectProgram, "CurrentRenderPass"), -1);
             gl.Uniform1(gl.GetUniformLocation(indirectProgram, "MaxIndirectDraws"), 100);
             gl.Uniform1(gl.GetUniformLocation(indirectProgram, "StatsEnabled"), 1u);
-            gl.Uniform1(gl.GetUniformLocation(indirectProgram, "UseHotCommands"), 0);
 
             gl.DispatchCompute(1, 1, 1);
             gl.MemoryBarrier(MemoryBarrierMask.ShaderStorageBarrierBit);
@@ -1705,11 +1705,11 @@ public class GpuBvhAndIndirectIntegrationTests : GpuTestBase
 
             gl.DeleteBuffer(metadataBuffer);
             gl.DeleteBuffer(boundsBuffer);
+            gl.DeleteBuffer(transformBuffer);
             gl.DeleteBuffer(culledCommandsBuffer);
             gl.DeleteBuffer(culledCountBuffer);
             gl.DeleteBuffer(cullingOverflowBuffer);
             gl.DeleteBuffer(statsBuffer);
-            gl.DeleteBuffer(hotOutputBuffer);
             gl.DeleteBuffer(indirectDrawBuffer);
             gl.DeleteBuffer(submeshBuffer);
             gl.DeleteBuffer(drawCountBuffer);
@@ -1805,30 +1805,39 @@ public class GpuBvhAndIndirectIntegrationTests : GpuTestBase
         });
     }
 
-    private static void SetupTestCommand(float[] commands, int index, Vector3 position, float radius)
+    private static DrawMetadata[] CreateDrawMetadata(int count)
     {
-        int baseIdx = index * CommandFloats;
+        var metadata = new DrawMetadata[count];
+        for (uint i = 0; i < (uint)count; ++i)
+        {
+            metadata[i] = new DrawMetadata
+            {
+                DrawID = i,
+                MeshID = i,
+                TransformID = i,
+                BoundsID = i,
+                LayerMask = 0xFFFFFFFFu,
+                InstanceCount = 1u,
+            };
+        }
 
-        commands[baseIdx + 0] = position.X;
-        commands[baseIdx + 1] = position.Y;
-        commands[baseIdx + 2] = position.Z;
-        commands[baseIdx + 3] = radius;
-        commands[baseIdx + 4] = BitConverter.UInt32BitsToSingle((uint)index); // MeshID
-        commands[baseIdx + 5] = BitConverter.UInt32BitsToSingle(0u); // SubmeshID
-        commands[baseIdx + 6] = BitConverter.UInt32BitsToSingle(0u); // MaterialID
-        commands[baseIdx + 7] = BitConverter.UInt32BitsToSingle(1u); // InstanceCount
-        commands[baseIdx + 8] = BitConverter.UInt32BitsToSingle(0u); // RenderPass
-        commands[baseIdx + 9] = BitConverter.UInt32BitsToSingle(0u); // RenderIdentityID
-        commands[baseIdx + 10] = position.LengthSquared(); // RenderDistance
-        commands[baseIdx + 11] = BitConverter.UInt32BitsToSingle(0xFFFFFFFFu); // LayerMask
-        commands[baseIdx + 12] = BitConverter.UInt32BitsToSingle(0u); // LODLevel/LodPolicy
-        commands[baseIdx + 13] = BitConverter.UInt32BitsToSingle(0u); // Flags
-        commands[baseIdx + 14] = BitConverter.UInt32BitsToSingle((uint)index); // LogicalMeshID
-        commands[baseIdx + 15] = BitConverter.UInt32BitsToSingle((uint)index); // TransformID
-        commands[baseIdx + 16] = BitConverter.UInt32BitsToSingle(0u); // SkinID
-        commands[baseIdx + 17] = BitConverter.UInt32BitsToSingle(0u); // StateClassID
-        commands[baseIdx + 18] = BitConverter.UInt32BitsToSingle((uint)index); // BoundsID
-        commands[baseIdx + 19] = BitConverter.UInt32BitsToSingle((uint)index); // DrawID
+        return metadata;
+    }
+
+    private static uint[] CreateSequentialDrawIds(int count)
+    {
+        var drawIds = new uint[count];
+        for (uint i = 0; i < (uint)count; ++i)
+            drawIds[i] = i;
+        return drawIds;
+    }
+
+    private static TransformGpu[] CreateIdentityTransforms(int count)
+    {
+        var transforms = new TransformGpu[count];
+        for (int i = 0; i < transforms.Length; ++i)
+            transforms[i] = new TransformGpu(Matrix4x4.Identity);
+        return transforms;
     }
 
     private static float[] ExtractFrustumPlanes(Matrix4x4 viewProj)
@@ -1896,44 +1905,28 @@ public class GpuBvhAndIndirectIntegrationTests : GpuTestBase
     /// <summary>
     /// Sets up draw metadata and bounds entries required by the Phase C culling shader.
     /// </summary>
-    private static void SetupCullingTestCommand(uint[] metadata, float[] bounds, int index, Vector3 position, float radius,
+    private static void SetupCullingTestCommand(DrawMetadata[] metadata, BoundsGpu[] bounds, int index, Vector3 position, float radius,
         uint layerMask = 0xFFFFFFFF, uint renderPass = 0, uint instanceCount = 1)
     {
-        int metaBase = index * DrawMetadataUInts;
-        metadata[metaBase + 0] = (uint)index; // DrawID
-        metadata[metaBase + 1] = (uint)index; // MeshID
-        metadata[metaBase + 2] = 0u; // SubmeshID
-        metadata[metaBase + 3] = 0u; // MaterialID
-        metadata[metaBase + 4] = (uint)index; // TransformID
-        metadata[metaBase + 5] = 0u; // SkinID
-        metadata[metaBase + 6] = 0xFFFFFFFFu; // RenderPassMask
-        metadata[metaBase + 7] = layerMask;
-        metadata[metaBase + 8] = 0u; // Flags
-        metadata[metaBase + 9] = 0u; // LodPolicy
-        metadata[metaBase + 10] = 0u; // StateClassID
-        metadata[metaBase + 11] = instanceCount;
-        metadata[metaBase + 12] = renderPass;
-        metadata[metaBase + 13] = 0u; // RenderIdentityID
-        metadata[metaBase + 14] = (uint)index; // LogicalMeshID
-        metadata[metaBase + 15] = (uint)index; // BoundsID
-
-        int boundsBase = index * BoundsGpuLanes;
-        bounds[boundsBase + 0] = position.X;
-        bounds[boundsBase + 1] = position.Y;
-        bounds[boundsBase + 2] = position.Z;
-        bounds[boundsBase + 3] = radius;
-        bounds[boundsBase + 4] = position.X - radius;
-        bounds[boundsBase + 5] = position.Y - radius;
-        bounds[boundsBase + 6] = position.Z - radius;
-        bounds[boundsBase + 7] = 0f;
-        bounds[boundsBase + 8] = position.X + radius;
-        bounds[boundsBase + 9] = position.Y + radius;
-        bounds[boundsBase + 10] = position.Z + radius;
-        bounds[boundsBase + 11] = 0f;
-        bounds[boundsBase + 12] = BitConverter.UInt32BitsToSingle(1u); // BoundsVersion
-        bounds[boundsBase + 13] = 0f;
-        bounds[boundsBase + 14] = 0f;
-        bounds[boundsBase + 15] = 0f;
+        metadata[index] = new DrawMetadata
+        {
+            DrawID = (uint)index,
+            MeshID = (uint)index,
+            TransformID = (uint)index,
+            RenderPassMask = 0xFFFFFFFFu,
+            LayerMask = layerMask,
+            InstanceCount = instanceCount,
+            RenderPass = renderPass,
+            LogicalMeshID = (uint)index,
+            BoundsID = (uint)index,
+        };
+        bounds[index] = new BoundsGpu
+        {
+            BoundingSphere = new Vector4(position, radius),
+            AabbMin = new Vector4(position - new Vector3(radius), 0f),
+            AabbMax = new Vector4(position + new Vector3(radius), 0f),
+            BoundsVersion = 1u,
+        };
     }
 
     /// <summary>

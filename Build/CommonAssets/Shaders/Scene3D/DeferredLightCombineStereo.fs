@@ -13,15 +13,15 @@ const float MAX_REFLECTION_LOD = 4.0f; // Deprecated; retained to avoid breaking
 layout(location = 0) out vec4 OutLo; //Diffuse Light Color, to start off the HDR Scene Texture
 layout(location = 0) in vec3 FragPos;
 
-layout(binding = 0) uniform sampler2DArray AlbedoOpacity;
-layout(binding = 1) uniform sampler2DArray Normal;
-layout(binding = 2) uniform sampler2DArray RMSE;
-layout(binding = 3) uniform sampler2DArray AmbientOcclusionTexture;
-layout(binding = 4) uniform sampler2DArray DepthView;
-layout(binding = 5) uniform sampler2DArray LightingAccumTexture;
-layout(binding = 6) uniform sampler2D BRDF;
-layout(binding = 7) uniform sampler2DArray IrradianceArray;
-layout(binding = 8) uniform sampler2DArray PrefilterArray;
+layout(binding = 0) uniform sampler2DArray AlbedoOpacity; // XRENGINE_FREQUENCY(Pass)
+layout(binding = 1) uniform sampler2DArray Normal; // XRENGINE_FREQUENCY(Pass)
+layout(binding = 2) uniform sampler2DArray RMSE; // XRENGINE_FREQUENCY(Pass)
+layout(binding = 3) uniform sampler2DArray AmbientOcclusionTexture; // XRENGINE_FREQUENCY(Pass)
+layout(binding = 4) uniform sampler2DArray DepthView; // XRENGINE_FREQUENCY(Pass)
+layout(binding = 5) uniform sampler2DArray LightingAccumTexture; // XRENGINE_FREQUENCY(Pass)
+layout(binding = 6) uniform sampler2D BRDF; // XRENGINE_FREQUENCY(Pass)
+layout(binding = 7) uniform sampler2DArray IrradianceArray; // XRENGINE_FREQUENCY(Pass)
+layout(binding = 8) uniform sampler2DArray PrefilterArray; // XRENGINE_FREQUENCY(Pass)
 
 layout(std430, binding = 20) buffer LightProbePositions
 {

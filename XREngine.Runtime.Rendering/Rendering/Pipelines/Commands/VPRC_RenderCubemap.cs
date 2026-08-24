@@ -27,7 +27,7 @@ namespace XREngine.Rendering.Pipelines.Commands
         public bool CullWithFrustum { get; set; } = true;
         public bool CollectMirrors { get; set; }
         public bool GenerateMipmapsAfterRender { get; set; } = true;
-        public EMeshSubmissionStrategy MeshSubmissionStrategy { get; set; } = RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy();
+        public EMeshSubmissionStrategy MeshSubmissionStrategy { get; set; } = RuntimeEngine.Rendering.ResolveRequestedMeshSubmissionStrategy();
         public bool GPUDispatch
         {
             get => MeshSubmissionStrategy != EMeshSubmissionStrategy.CpuDirect;

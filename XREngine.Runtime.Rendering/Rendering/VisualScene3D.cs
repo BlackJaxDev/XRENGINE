@@ -285,28 +285,11 @@ namespace XREngine.Scene
             SwapBuffersHook?.Invoke(this);
         }
 
-        private bool ShouldMaintainCpuGpuCommandMirror()
-        {
-            // The CPU?GPU command mirror is only needed by Surfel-GI consumers.
-            // CpuDirect no longer trusts any GPU compute cull output (C-CPU-2), so
-            // mirroring would be dead weight on the CpuDirect path. The GPU paths
-            // (Instrumented/ZeroReadback) already maintain the GPUScene directly.
-            foreach (XRViewport viewport in RuntimeEngine.EnumerateActiveViewports())
-            {
-                // This is an observational query and can run concurrently with editor
-                // snapshot restoration. Do not invoke the lazy Pipeline getter here:
-                // it mutates an unbound viewport and races camera/pipeline rebinding.
-                RenderPipeline? pipeline =
-                    viewport.RenderPipelineInstance.AssignedPipeline;
-                if (pipeline is IGlobalIlluminationPipelineProvider { UsesSurfelGI: true } or
-                    SurfelDebugRenderPipeline)
-                {
-                    return true;
-                }
-            }
-
-            return false;
-        }
+        // Phase 2 requires one resident source database under every submission
+        // strategy. CpuDirect keeps drawing from the CPU tree, but GPUScene is
+        // retained as the legacy side of the canonical dual-publication parity
+        // contract rather than being treated as dead compute-cull state.
+        private static bool ShouldMaintainCpuGpuCommandMirror() => true;
 
         private void SyncCpuGpuCommandMirrorState()
         {

@@ -70,7 +70,7 @@ internal unsafe partial class VkMeshRenderer
 		foreach (EngineUniformBuffer buf in buffers)
 		{
 			if (buf.OwnsBuffer)
-				DestroyMappedUniformBuffer(buf.Buffer, buf.Memory, buf.MappedPtr);
+				DestroyMappedUniformBuffer(buf.Buffer, buf.Memory);
 		}
 	}
 
@@ -79,16 +79,13 @@ internal unsafe partial class VkMeshRenderer
 		foreach (AutoUniformBuffer buf in buffers)
 		{
 			if (buf.OwnsBuffer)
-				DestroyMappedUniformBuffer(buf.Buffer, buf.Memory, buf.MappedPtr);
+				DestroyMappedUniformBuffer(buf.Buffer, buf.Memory);
 		}
 	}
 
-	private void DestroyMappedUniformBuffer(Silk.NET.Vulkan.Buffer buffer, DeviceMemory memory, void* mappedPtr)
+	private void DestroyMappedUniformBuffer(Silk.NET.Vulkan.Buffer buffer, DeviceMemory memory)
 	{
-		if (mappedPtr != null)
-			Renderer.UnmapBufferMemory(buffer, memory);
-
-		Renderer.DestroyTrackedMeshUniformBuffer(buffer, memory);
+		BackendContext.Resources.Buffers.Destroy(BackendContext, buffer, memory, "VkMeshRenderer.UniformBuffer");
 	}
 
 	/// <summary>
@@ -144,7 +141,7 @@ internal unsafe partial class VkMeshRenderer
 		bool destroyPoolImmediately = false)
 	{
 		RemoveDescriptorOwnerLookupEntries(allocation);
-		if (!BackendContext.Descriptors.ReleaseSharedMeshDescriptorAllocation(key, allocation))
+		if (!BackendContext.Resources.Descriptors.ReleaseSharedMeshDescriptorAllocation(key, allocation))
 			return;
 
 		ReleaseDescriptorOwnershipTelemetry(allocation);
@@ -183,11 +180,11 @@ internal unsafe partial class VkMeshRenderer
 
 		if (destroyImmediately)
 		{
-			Renderer.RetireDescriptorPool(descriptorPool);
+			BackendContext.Resources.DescriptorLifetime.RetireDescriptorPool(descriptorPool);
 			return;
 		}
 
-		Renderer.RetireDescriptorPool(descriptorPool);
+		BackendContext.Resources.DescriptorLifetime.RetireDescriptorPool(descriptorPool);
 	}
 
 	private void ReleaseDescriptorAllocationResources(
@@ -196,7 +193,7 @@ internal unsafe partial class VkMeshRenderer
 	{
 		if (allocation.PoolSlabLease is not null)
 		{
-			Renderer.ReleaseMeshDescriptorPoolSlab(
+			BackendContext.Resources.DescriptorLifetime.ReleaseMeshDescriptorPoolSlab(
 				allocation.PoolSlabLease,
 				allocation.Sets,
 				allocation.ActiveSetMask);

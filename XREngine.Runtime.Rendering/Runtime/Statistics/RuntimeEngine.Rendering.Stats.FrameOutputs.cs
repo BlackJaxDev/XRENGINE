@@ -115,6 +115,21 @@ namespace XREngine
 
                     public static double LastWholeFrameMs => _lastManifest.WholeFrameMs;
                     public static double LastFrameBudgetMs => _lastManifest.BudgetMs;
+
+                    public static double GetLastOutputGpuMs(ulong outputId)
+                    {
+                        lock (Sync)
+                        {
+                            for (int index = 0; index < _lastOutputCount; index++)
+                            {
+                                ref readonly FrameOutputEntrySnapshot output = ref _lastOutputs[index];
+                                if (output.Request.OutputId == outputId)
+                                    return output.GpuMs;
+                            }
+                        }
+
+                        return 0.0;
+                    }
                     public static string LastBudgetBand => _lastManifest.BudgetBand;
 
                     internal static void SnapshotAndReset()

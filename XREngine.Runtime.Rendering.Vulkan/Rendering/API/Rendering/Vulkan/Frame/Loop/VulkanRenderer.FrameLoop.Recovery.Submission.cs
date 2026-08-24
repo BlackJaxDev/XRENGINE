@@ -4,17 +4,18 @@ using Silk.NET.Vulkan;
 
 namespace XREngine.Rendering.Vulkan
 {
-    public unsafe partial class VulkanRenderer
+    internal sealed partial class VulkanFrameLoop
     {
-        private bool TrySubmitRejectedDesktopAbort(
+        private unsafe bool TrySubmitRejectedDesktopAbort(
             ref VulkanFrameAttempt attempt,
             CommandPool commandPool,
             CommandBuffer commandBuffer,
             CommandBuffer overlayCommandBuffer,
+            CommandBuffer dynamicTextCommandBuffer,
             ref bool submitted)
         {
             CommandBuffer* submittedCommandBuffers =
-                stackalloc CommandBuffer[3];
+                stackalloc CommandBuffer[4];
             uint submittedCommandBufferCount = 0;
             if (attempt.TextureUploadCommandBuffer.Handle != 0)
             {
@@ -29,25 +30,30 @@ namespace XREngine.Rendering.Vulkan
                 submittedCommandBuffers[submittedCommandBufferCount++] =
                     overlayCommandBuffer;
             }
-            ulong signalValue = Math.Max(
-                _graphicsTimelineValue + 1,
-                attempt.AcquireTimelineValue + 1);
+            if (dynamicTextCommandBuffer.Handle != 0)
+            {
+                submittedCommandBuffers[submittedCommandBufferCount++] =
+                    dynamicTextCommandBuffer;
+            }
+            ulong signalValue;
             long stageStartTimestamp = Stopwatch.GetTimestamp();
-            Result submitResult;
+            VulkanSubmissionReceipt submitReceipt;
             using (RuntimeRenderingHostServices.Profiling.StartProfileScope(
                        "Vulkan.FrameLifecycle.DirtyAbortPresentSubmit"))
             {
-                submitResult = SubmitAcquireSemaphoreBridge(
+                submitReceipt = SubmitAcquireSemaphoreBridge(
                     attempt.AcquireSemaphore,
-                    signalValue,
+                    attempt.AcquireTimelineValue + 1UL,
                     attempt.PresentSemaphore,
                     submittedCommandBuffers,
-                    submittedCommandBufferCount);
+                    submittedCommandBufferCount,
+                    out signalValue);
             }
 
             attempt.Timing.AcquireBridgeSubmit +=
                 Stopwatch.GetElapsedTime(stageStartTimestamp);
-            if (submitResult != Result.Success)
+            Result submitResult = submitReceipt.Result;
+            if (!submitReceipt.SubmissionAccepted)
             {
                 if (submitResult == Result.ErrorDeviceLost)
                 {
@@ -69,34 +75,75 @@ namespace XREngine.Rendering.Vulkan
             }
 
             submitted = true;
+            // Capture every post-acceptance obligation before executing any
+            // fallible publication. Terminal settlement can then retry debt
+            // publication without reopening the accepted native submission.
+            attempt.RecoverySubmissionAccepted = true;
+            attempt.RecoveryCommandPool = commandPool;
+            attempt.RecoveryCommandBuffer = commandBuffer;
+            attempt.GraphicsSignalValue = signalValue;
             attempt.TransitionAcquireOwnership(
                 EVulkanDesktopAcquireOwnership
                     .ConsumedByRecoveryImagePendingPresent);
-            _graphicsTimelineValue = Math.Max(
-                _graphicsTimelineValue,
-                signalValue);
-            _frameSlotTimelineValues![attempt.FrameSlot] =
-                signalValue;
-            if (_swapchainImageTimelineValues is not null &&
-                attempt.ImageIndex <
-                _swapchainImageTimelineValues.Length)
-            {
-                _swapchainImageTimelineValues[attempt.ImageIndex] =
-                    signalValue;
-            }
-
-            CommitSubmittedDesktopTextureUpload(
-                ref attempt,
-                signalValue,
-                "rejected desktop recovery frame");
-            DeferSecondaryCommandBufferFree(
-                attempt.ImageIndex,
-                commandPool,
-                commandBuffer);
+            if (attempt.UploadOwnership == EVulkanDesktopUploadOwnership.Recorded)
+                attempt.TransitionUploadOwnership(
+                    EVulkanDesktopUploadOwnership.SubmittedDeferredFree);
+            SettleAcceptedDesktopRecoverySubmissionDebt(ref attempt);
             RuntimeRenderingHostServices.Scheduling
-                .MarkRenderFrameReadyForCollect(XRWindow);
+                .MarkRenderFrameReadyForCollect(DesktopWsiOutput.Window);
             attempt.CollectReleased = true;
             return true;
+        }
+
+        /// <summary>
+        /// Publishes all managed debt for an accepted recovery submission.
+        /// Each publication is independently idempotent so settlement can retry
+        /// after an auxiliary failure without re-submitting native work.
+        /// </summary>
+        private void SettleAcceptedDesktopRecoverySubmissionDebt(
+            ref VulkanFrameAttempt attempt)
+        {
+            if (!attempt.RecoverySubmissionAccepted)
+                return;
+
+            PublishAcceptedRecoverySubmissionReuseLedgers(ref attempt);
+            CommitSubmittedDesktopTextureUpload(
+                ref attempt,
+                attempt.GraphicsSignalValue,
+                "rejected desktop recovery frame");
+            if (attempt.RecoveryCommandRetirementQueued)
+                return;
+
+            _commandRuntime.DeferSecondaryCommandBufferFree(
+                Api,
+                _deviceContext.Device,
+                ResourceRuntime,
+                attempt.FrameSlot,
+                attempt.ImageIndex,
+                attempt.RecoveryCommandPool,
+                attempt.RecoveryCommandBuffer,
+                "FrameLoop.RecoverySecondary");
+            attempt.RecoveryCommandRetirementQueued = true;
+            attempt.RecoveryCommandPool = default;
+            attempt.RecoveryCommandBuffer = default;
+        }
+
+        private void PublishAcceptedRecoverySubmissionReuseLedgers(
+            ref VulkanFrameAttempt attempt)
+        {
+            if (attempt.SubmissionReuseLedgersPublished)
+                return;
+
+            _commandRuntime.Synchronization._frameSlotTimelineValues![attempt.FrameSlot] =
+                attempt.GraphicsSignalValue;
+            if (OutputRuntime.Desktop.ImageTimelineValues is not null &&
+                attempt.ImageIndex < OutputRuntime.Desktop.ImageTimelineValues.Length)
+            {
+                OutputRuntime.Desktop.ImageTimelineValues[attempt.ImageIndex] =
+                    attempt.GraphicsSignalValue;
+            }
+
+            attempt.SubmissionReuseLedgersPublished = true;
         }
     }
 }

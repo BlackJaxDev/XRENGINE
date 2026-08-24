@@ -1,10 +1,10 @@
 # Vulkan Render Loop Target Architecture
 
-Last Updated: 2026-08-05
+Last Updated: 2026-08-12
 
 Owner: Rendering / Vulkan
 
-Status: Target design for the v1 Vulkan backend
+Status: Target design for the v1 Vulkan backend; Phase 4 data-layout and native-boundary cutover complete
 
 ## Purpose
 
@@ -179,26 +179,34 @@ limits so consolidation cannot create another monolith.
   coordination, planning orchestration, command scheduling/recording
   orchestration, submission, settlement, and lifecycle telemetry; it excludes
   leaf feature encoders and backend-object implementations.
-- The complete hand-written Vulkan core under the audited directory is reduced
-  from 858 files / 170,048 lines to no more than 550 files / 125,000 lines.
-  Relocating truly backend-neutral code to its proper assembly counts only when
-  dependency direction remains correct; hiding or generating the same Vulkan
-  behavior does not.
+- The complete hand-written Vulkan core stays below 200,000 physical lines.
+  Global file count is informational because repository policy requires one
+  top-level type per file; reducing that number by combining unrelated types is
+  prohibited. The inventory instead enforces one-type organization, the
+  lifecycle-spine budget, facade size, and reviewed file/method limits. Moving
+  truly backend-neutral code to its proper assembly counts only when dependency
+  direction remains correct; hiding or generating the same Vulkan behavior does
+  not.
 - The main frame orchestration method is at most 100 logical lines and reads as
   the phase sequence below. Any hand-written file above 1,500 physical lines or
   method above 150 logical lines requires a documented ownership exception and
-  a split review before promotion.
+  a split review before promotion. Approved exceptions live in
+  `Tools/Reports/VulkanCoreStructuralExceptions.json`; new oversized surfaces
+  fail the inventory until reviewed.
 - The lifecycle spine uses no more than two ownership directories below
   `Vulkan/`. Deep folders are reserved for leaf backend objects or feature
   implementations, not used as a substitute for types and ownership.
-- There is one production planner, command scheduler, descriptor publication
+- There is one production planner, frame-operation scheduler, descriptor publication
   model, lifetime tracker, queue gateway, and CPU trace schema. Legacy
   equivalents are deleted at cutover.
 
 The structural numbers are architecture guardrails, not a reason to merge
-unrelated types. If implementation evidence proves a target harmful, the owner
-must revise this design and its testing gate before declaring completion; an
-unrecorded exception is a failure.
+unrelated types or remove supported renderer paths. The former 550-file /
+125,000-line target was retired on 2026-08-11 because it conflicted with the
+one-type-per-file rule and incentivized functionality loss or unrelated
+consolidation. The explicit lifecycle map, 200,000-line ceiling, and reviewed
+size exceptions preserve the intended maintainability pressure without gaming
+the source tree. An unrecorded exception remains a failure.
 
 ## The Frame Transaction
 
@@ -430,51 +438,66 @@ The production layout contract is:
 | Prepared mesh draws | Compact AoS hot header plus flattened frame-slot side streams; cold ownership and diagnostics remain in indexed sidecars | The encoder consumes most hot header fields together, while descriptor, vertex, primitive, viewport, scissor, push-constant, and lifetime payloads are variable-length. |
 | Render-graph dependencies and planned barriers | Typed numeric resource IDs and flat offset/count adjacency arrays | Graph traversal is bulk numeric work; string-key dictionaries and lists-of-lists are not the execution representation. |
 | Native barrier and descriptor update payloads | Contiguous ABI-shaped AoS scratch arrays | `VkDependencyInfo` and descriptor update commands take pointers to arrays of Vulkan structures. |
-| Descriptor publication state | SoA dirty/generation/resource/layout tables; driver-ready arrays or descriptor bytes materialized only for dirty ranges | Publication scans selected state, while the final driver contract has a different native layout. |
+| Descriptor publication state | Scan-oriented dirty/range columns plus compact lifecycle slot records; driver-ready arrays or descriptor bytes materialized only for dirty ranges | Publication scans selected state, while allocation/retirement mutates a coherent slot and the final driver contract has a different native layout. |
 | Worker jobs | Compact AoS records | A worker dequeues and consumes one complete job. |
 | Worker-owned counters and trace storage | Per-worker blocks with independently aligned base and stride, merged after work completes | Field padding alone does not prevent false sharing when the containing array base is unaligned. |
 | Frame transaction, typed outcomes, and dependency signatures | Compact AoS, split into structural/binding/data keys only when comparison profiles justify it | These values are consumed as coherent records and protect lifecycle correctness. |
 
-### Current layout implications
+### Phase 4.5 realized layout
 
-The current scene database is a useful domain-level SoA foundation, but it still
-contains broad per-draw records and compatibility conversions:
+Phase 4.5 implements this contract. The exact element sizes, representative
+byte counts, candidate comparison, access patterns, ownership transitions, and
+copy/allocation behavior are recorded in the
+[Vulkan Hot-Data Layout Inventory And Decision Record](../../inventory/rendering/vulkan-hot-data-layout-inventory.md).
 
-- `DrawMetadata` and `BoundsGpu` are currently 64 bytes each, while
-  `GPUIndirectRenderCommandHot` is 80 bytes. Culling consumes only selected draw
-  control lanes plus its chosen sphere/AABB representation.
-- `GPURenderExtractSoA.comp` writes sphere/control scratch buffers, but the
-  current `SoACull` method has no callers and itself binds `DrawMetadataBuffer`
-  and `BoundsBuffer` rather than those extracted buffers. Production must remove
-  this dead conversion and its scratch resources, or establish a measured real
-  consumer before retaining it.
-- `BuildSourceHotCommandBuffer` remains a compatibility conversion for current
-  culling consumers. The target is direct consumption of stage-native GPUScene
-  streams; a broad compatibility envelope must not remain an unconditional
-  production pass.
+- `GPUSceneLayoutSchema` declares cull-control, cull-bounds,
+  classification/sort-key, material/state, current transform, previous
+  transform, visibility, and optional AABB streams. `GPUScene` publishes them
+  through one storage/generation transaction. Compact vector records remain
+  inside a stream when one shader invocation consumes the group.
+- The historical 80-byte broad command and its unconditional 160-byte-per-draw
+  read/write conversion were deleted. Culling and indirect-build consumers bind
+  the stage-native streams, then publish a final contiguous 20-byte indexed
+  indirect-command array for Vulkan.
+- The immutable CPU frame build lowers each authoring `FrameOp` once into a
+  32-byte numeric header and a dense typed per-kind payload. Sorting, dependency
+  planning, packetization, scheduling, and recording use only the lowered
+  stream. Rich objects remain only at ingress and do not form a compatibility
+  planning path.
+- Prepared mesh recording uses a reference-free encoder record and flattened
+  descriptor, dynamic-offset, descriptor-image, vertex, frame-payload,
+  viewport, and scissor streams. Typed offset/count ranges address one
+  frame-owned publication, while owners, generation audit, and diagnostic names
+  live in a cold indexed sidecar.
+- Compiled graph execution and barriers use typed numeric resource IDs, flat
+  records, and offset/count adjacency. Native `Vk*Barrier2` arrays exist only in
+  a validated `VulkanNativeScratchArena<T>` reservation at the Vulkan call.
+- Bindless descriptor lifecycle uses a compact slot record because allocation,
+  refresh, and retirement consume its state coherently. Publication scans
+  preallocated dirty-slot and contiguous-range columns, gathers only dirty
+  descriptor infos, and writes only the required native ranges. Prepared
+  descriptor streams retain numeric resource/layout and binding-frequency
+  generations.
+- Worker queue entries are 24-byte value records. Mutable counters and trace
+  state live in independently base/stride-aligned, single-writer blocks and are
+  merged after completion. Frame-attempt state remains a safe coherent AoS
+  transaction with typed receipts and no naked ownership pointer.
 
-GPUScene should therefore publish compact cull-control, cull-bounds,
-classification/sort-key, material/state, transform, and visibility streams
-directly. A cull-bounds stream may remain an AoS of `vec4` groups when one shader
-invocation consumes the complete sphere or AABB; SoA does not mean splitting
-every scalar into a separate buffer. AABB storage is optional for stages that do
-not use it, rather than being fetched through every bounds lookup.
+The selected prepared header is 304 bytes because the encoder consumes nearly
+all of its pipeline, primitive, viewport/scissor, range, push-constant, and
+instance state together; it contains no managed references or per-draw arrays.
+AoSoA was rejected because no Phase 4.5 stream demonstrated a whole-frame win
+after transpose, publication, worker merge, and tail costs.
 
-Logical SoA streams do not imply one wrapper, source file, Vulkan allocation, or
-descriptor binding per field. One scene-layout schema and one scene-storage
-owner publish related streams transactionally; compatible streams may occupy
-typed aligned ranges of a shared backing allocation. The layout should reduce
-bytes touched without recreating the file-count, object-count, binding-count, or
-lifetime complexity this architecture is intended to remove.
-
-CPU lowering follows the same rule. `FrameOp` subclasses may remain a convenient
-front-door representation, but the immutable frame build lowers them once into
-numeric operation and per-kind payload streams. `RenderPacket` becomes a compact
-header containing IDs and `start/count` ranges into frame-owned storage. Prepared
-mesh recording uses one frame-slot arena instead of per-draw arrays or pooled
-buffers. Managed owner references and diagnostic names live in cold indexed
-sidecars and are never touched by the worker encoding loop unless a diagnostic
-is requested.
+Phase 4 closeout validated this realized layout in the named Vulkan editor
+session `vulkan-phase45-final-20260812`: all instrumented CPU-stage and boundary
+allocation counters remained zero during camera motion, the numeric stream
+contained at most 48 operations in the sampled frames, the final-presentation
+ledger covered all three swapchain descriptor slots without an invariant
+failure, and two inspected camera views changed with the scene. Exact sizes,
+source maps, deleted compatibility paths, and reproducible audit commands are
+recorded in the
+[Vulkan Hot-Data Layout Inventory And Decision Record](../../inventory/rendering/vulkan-hot-data-layout-inventory.md).
 
 ### Unsafe-code policy
 

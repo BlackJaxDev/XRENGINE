@@ -1,5 +1,8 @@
 # Vulkan Camera-Motion Framerate Regression Investigation
 
+> Historical incident record. For current causes, invariants, and triage, use
+> [Vulkan Desktop Camera Motion, Stale Frames, And CPU Scaling](../vulkan-camera-motion-black-flicker-2026-08-10.md).
+
 **Date:** 2026-07-21  
 **Status:** Closed as a historical desktop investigation on 2026-08-04. The
 original desktop exit criteria passed on 2026-07-25. Current directional-light

@@ -55,7 +55,11 @@ public class VPRC_RenderUIBatched : ViewportPopStateRenderCommand
             return;
 
         string passName = $"RenderUIBatched_{RenderPass}";
-        var builder = context.Metadata.ForPass(RenderPass, passName, ERenderGraphPassStage.Graphics);
+        var builder = context.Metadata
+            .ForPass(RenderPass, passName, ERenderGraphPassStage.Graphics)
+            .KeepSecondaryDynamic(
+                ERenderPassSecondaryCachePolicy.DynamicUi |
+                ERenderPassSecondaryCachePolicy.DynamicText);
 
         if (context.CurrentRenderTarget is { } target)
         {

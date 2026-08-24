@@ -13,8 +13,6 @@ namespace XREngine.Rendering;
 public sealed class AdvancedPreparationExtractor : IDisposable
 {
     private readonly AdvancedPreparationOptions _options;
-    private readonly AdvancedReferenceHandleTable _identities;
-    private readonly AdvancedDeformationOutputIdentityTable _outputIdentities;
     private readonly AdvancedAnimationScheduler _animationScheduler;
     private readonly AdvancedVisibilityFeedbackRing _visibilityFeedbackRing;
     private readonly AdvancedGpuHandle[] _feedbackLookupHandles;
@@ -38,8 +36,6 @@ public sealed class AdvancedPreparationExtractor : IDisposable
     private readonly AdvancedVisibilityDispatchPlan[] _visibilityPlans;
     private readonly AdvancedDeformedArenaSlice[] _drawDeformationSlices;
     private readonly int[] _drawDeformationCandidateIndices;
-    private readonly IRenderCommandMesh?[] _commandSources;
-    private readonly uint[] _commandGenerations;
     private readonly uint[] _depthPyramidGenerations;
     private readonly ulong[] _viewHistoryKeys;
     private readonly AdvancedBoneLodTier[] _boneTierScratch;
@@ -59,10 +55,6 @@ public sealed class AdvancedPreparationExtractor : IDisposable
     {
         ValidateOptions(options);
         _options = options;
-        _identities = new AdvancedReferenceHandleTable(
-            checked(options.MaximumDraws + options.MaximumDeformationJobs * 3));
-        _outputIdentities = new AdvancedDeformationOutputIdentityTable(
-            options.MaximumDeformationJobs);
         _animationScheduler = new AdvancedAnimationScheduler(
             options.MaximumDeformationJobs);
         _visibilityFeedbackRing = new AdvancedVisibilityFeedbackRing(
@@ -112,8 +104,6 @@ public sealed class AdvancedPreparationExtractor : IDisposable
             new AdvancedDeformedArenaSlice[options.MaximumDraws];
         _drawDeformationCandidateIndices =
             new int[options.MaximumDraws];
-        _commandSources = new IRenderCommandMesh?[options.MaximumDraws];
-        _commandGenerations = new uint[options.MaximumDraws];
         _depthPyramidGenerations = new uint[options.MaximumViews];
         _viewHistoryKeys = new ulong[options.MaximumViews];
         _boneTierScratch = new AdvancedBoneLodTier[1];
@@ -402,7 +392,7 @@ public sealed class AdvancedPreparationExtractor : IDisposable
         _visibilityPayloads[commandIndex] = default;
         if (!scene.TryGetAdvancedPreparationCommand(
                 commandIndex,
-                out GPUIndirectRenderCommand command))
+                out DrawMetadata command))
         {
             return;
         }
@@ -410,10 +400,16 @@ public sealed class AdvancedPreparationExtractor : IDisposable
         scene.TryGetSourceCommand(
             commandIndex,
             out IRenderCommandMesh? source);
-        bool commandChanged =
-            _commandGenerations[commandIndex] == 0u ||
-            !ReferenceEquals(_commandSources[commandIndex], source);
-        AdvancedGpuHandle draw = ResolveDrawHandle(commandIndex, source);
+        if (!scene.TryGetCanonicalAdvancedPreparationHandles(
+                commandIndex,
+                out AdvancedGpuHandle draw,
+                out AdvancedGpuHandle geometry,
+                out AdvancedGpuHandle material,
+                out AdvancedGpuHandle deformation))
+        {
+            return;
+        }
+        bool commandChanged = scene.WasCanonicalDrawAddedThisPublication(draw);
         AdvancedMeshRenderSnapshot snapshot =
             CaptureSnapshot(source);
         XRMeshRenderer? renderer = snapshot.Renderer;
@@ -424,26 +420,15 @@ public sealed class AdvancedPreparationExtractor : IDisposable
                 ? EAdvancedVisibilityPreparationFlags.NewRecord |
                   EAdvancedVisibilityPreparationFlags.ConservativeVisible
                 : EAdvancedVisibilityPreparationFlags.None;
+        BoundsGpu commandBounds = command.BoundsID < scene.CullBoundsBuffer.ElementCount
+            ? scene.CullBoundsBuffer.GetDataRawAtIndex<BoundsGpu>(command.BoundsID)
+            : default;
         _visibilityCandidates[commandIndex] =
             new AdvancedVisibilityCandidate(
                 draw,
-                command.BoundingSphere,
-                new System.Numerics.Vector4(
-                    command.BoundingSphere.X -
-                        command.BoundingSphere.W,
-                    command.BoundingSphere.Y -
-                        command.BoundingSphere.W,
-                    command.BoundingSphere.Z -
-                        command.BoundingSphere.W,
-                    0.0f),
-                new System.Numerics.Vector4(
-                    command.BoundingSphere.X +
-                        command.BoundingSphere.W,
-                    command.BoundingSphere.Y +
-                        command.BoundingSphere.W,
-                    command.BoundingSphere.Z +
-                        command.BoundingSphere.W,
-                    0.0f),
+                commandBounds.BoundingSphere,
+                commandBounds.AabbMin,
+                commandBounds.AabbMax,
                 ViewMask: ulong.MaxValue,
                 BvhLeaf: command.BoundsID,
                 visibilityFlags);
@@ -467,7 +452,9 @@ public sealed class AdvancedPreparationExtractor : IDisposable
                 renderer,
                 mesh,
                 command,
-                draw,
+                geometry,
+                deformation,
+                (visibilityFlags & EAdvancedVisibilityPreparationFlags.NewRecord) != 0,
                 offsets,
                 meshletRange,
                 frameId,
@@ -494,12 +481,6 @@ public sealed class AdvancedPreparationExtractor : IDisposable
         _drawDeformationCandidateIndices[commandIndex] =
             deformationCandidateIndex;
 
-        AdvancedGpuHandle geometry = new(
-            command.MeshID == 0u ? commandIndex + 1u : command.MeshID,
-            1u);
-        AdvancedGpuHandle material = new(
-            command.MaterialID == 0u ? 1u : command.MaterialID,
-            1u);
         _visibilityPayloads[commandIndex] =
             new AdvancedVisibilityPayload(
                 draw,
@@ -531,8 +512,10 @@ public sealed class AdvancedPreparationExtractor : IDisposable
     private bool TryAddDeformation(
         XRMeshRenderer renderer,
         XRMesh mesh,
-        in GPUIndirectRenderCommand command,
-        AdvancedGpuHandle draw,
+        in DrawMetadata command,
+        AdvancedGpuHandle geometry,
+        AdvancedGpuHandle deformation,
+        bool newlyVisible,
         in AdvancedSceneGeometryOffsets sourceOffsets,
         in GPUScene.GpuMeshletRange meshletRange,
         ulong frameId,
@@ -544,16 +527,14 @@ public sealed class AdvancedPreparationExtractor : IDisposable
         gpuMeshSlice = default;
         gpuPoseSlice = default;
         canonicalCandidateIndex = -1;
-        if (!_identities.TryGetOrAdd(mesh, out AdvancedGpuHandle meshHandle) ||
-            !_identities.TryGetOrAdd(renderer, out AdvancedGpuHandle poseHandle) ||
-            !_outputIdentities.TryGetOrAdd(
-                meshHandle,
-                poseHandle,
-                out AdvancedGpuHandle outputHandle))
+        if (!geometry.IsValid || !deformation.IsValid)
         {
             slice = default;
             return false;
         }
+        AdvancedGpuHandle meshHandle = geometry;
+        AdvancedGpuHandle poseHandle = deformation;
+        AdvancedGpuHandle outputHandle = deformation;
 
         uint topologyGeneration = ComputeTopologyGeneration(
             mesh,
@@ -574,16 +555,16 @@ public sealed class AdvancedPreparationExtractor : IDisposable
                 outputHandle,
                 checked((uint)mesh.VertexCount),
                 topologyGeneration,
-                command.LODLevel + 1u,
-                newlyVisible:
-                    (_visibilityCandidates[checked((int)draw.Index - 1)].Flags &
-                     EAdvancedVisibilityPreparationFlags.NewRecord) != 0,
+                command.LodPolicy + 1u,
+                newlyVisible,
                 out slice))
         {
             return false;
         }
 
-        float contribution = ComputeProjectedContribution(command);
+        // The deformation scheduler consumes the draw record independently of
+        // culling; its conservative contribution is refined by visibility later.
+        float contribution = 1.0f;
         _boneTierScratch[0] = new AdvancedBoneLodTier(
             renderer.ActiveSkinPaletteCount,
             EAdvancedAnimationBoneRequirement.RuntimeRequired |
@@ -594,10 +575,7 @@ public sealed class AdvancedPreparationExtractor : IDisposable
             GetOrCreateAnimationSchedule(
                 poseHandle,
                 contribution,
-                newlyVisible:
-                    (_visibilityCandidates[
-                        checked((int)draw.Index - 1)].Flags &
-                     EAdvancedVisibilityPreparationFlags.NewRecord) != 0,
+                newlyVisible,
                 renderer.ActiveSkinPaletteCount,
                 frameId);
 
@@ -976,28 +954,6 @@ public sealed class AdvancedPreparationExtractor : IDisposable
         _frameUploadArena.Dispose();
     }
 
-    private AdvancedGpuHandle ResolveDrawHandle(
-        uint commandIndex,
-        IRenderCommandMesh? source)
-    {
-        int index = checked((int)commandIndex);
-        if (!ReferenceEquals(_commandSources[index], source))
-        {
-            _commandSources[index] = source;
-            uint generation = _commandGenerations[index] + 1u;
-            _commandGenerations[index] =
-                generation == 0u ? 1u : generation;
-        }
-        else if (_commandGenerations[index] == 0u)
-        {
-            _commandGenerations[index] = 1u;
-        }
-
-        return new AdvancedGpuHandle(
-            commandIndex + 1u,
-            _commandGenerations[index]);
-    }
-
     private static AdvancedMeshRenderSnapshot CaptureSnapshot(
         IRenderCommandMesh? source)
     {
@@ -1011,12 +967,14 @@ public sealed class AdvancedPreparationExtractor : IDisposable
             source.WorldMatrix,
             source.Instances,
             source.WorldMatrixIsModelMatrix,
-            source.ForceCpuRendering);
+            source.ForceCpuRendering,
+            source.MaterialOverride,
+            source.RenderOptionsOverride);
     }
 
     private static AdvancedSceneGeometryOffsets ResolveGeometryOffsets(
         GPUScene scene,
-        in GPUIndirectRenderCommand command)
+        in DrawMetadata command)
     {
         uint firstVertex = 0u;
         uint firstIndex = 0u;
@@ -1050,7 +1008,7 @@ public sealed class AdvancedPreparationExtractor : IDisposable
 
     private static uint ResolveIndexCount(
         GPUScene scene,
-        in GPUIndirectRenderCommand command)
+        in DrawMetadata command)
         => scene.TryGetMeshDataEntry(
             command.MeshID,
             out GPUScene.MeshDataEntry meshData)
@@ -1058,7 +1016,7 @@ public sealed class AdvancedPreparationExtractor : IDisposable
                 : 0u;
 
     private static EAdvancedMaterialCoverageMode ResolveCoverage(
-        in GPUIndirectRenderCommand command)
+        in DrawMetadata command)
     {
         if ((command.Flags &
              (uint)GPUIndirectRenderFlags.Transparent) != 0u)
@@ -1070,12 +1028,10 @@ public sealed class AdvancedPreparationExtractor : IDisposable
             : EAdvancedMaterialCoverageMode.Opaque;
     }
 
-    private static float ComputeProjectedContribution(
-        in GPUIndirectRenderCommand command)
+    private static float ComputeProjectedContribution(in BoundsGpu bounds)
     {
-        float radius = Math.Max(0.0f, command.BoundingSphere.W);
-        float distance = Math.Max(radius, MathF.Sqrt(
-            Math.Max(0.0f, command.RenderDistance)));
+        float radius = Math.Max(0.0f, bounds.BoundingSphere.W);
+        float distance = Math.Max(radius, bounds.BoundingSphere.Length());
         return distance > 0.0f
             ? Math.Clamp(radius / distance, 0.0f, 1.0f)
             : 1.0f;

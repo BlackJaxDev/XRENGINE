@@ -31,4 +31,8 @@ internal sealed class ModelBinaryContainer
     public IReadOnlyList<ModelBinaryChunkEntry> ChunkEntries => _chunkEntries;
     public IReadOnlyList<ModelImportDependency> Dependencies => _dependencies;
     public IReadOnlyDictionary<ModelBinaryChunkKey, ReadOnlyMemory<byte>> SelectedChunks => _selectedChunks;
+
+    /// <summary>Returns a selectively loaded chunk without exposing mutable storage.</summary>
+    public bool TryGetSelectedChunk(ModelBinaryChunkType type, ulong instanceId, out ReadOnlyMemory<byte> bytes)
+        => _selectedChunks.TryGetValue(new ModelBinaryChunkKey((uint)type, instanceId), out bytes);
 }

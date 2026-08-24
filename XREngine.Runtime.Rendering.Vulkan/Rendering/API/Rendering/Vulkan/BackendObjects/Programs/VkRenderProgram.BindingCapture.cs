@@ -1,25 +1,19 @@
-using System.Threading;
 using XREngine.Data.Rendering;
 
 namespace XREngine.Rendering.Vulkan;
 
 internal unsafe partial class VkRenderProgram
 {
-    private static readonly ThreadLocal<BindingCaptureWorkspace> BindingCaptureWorkspaces =
-        new(static () => new BindingCaptureWorkspace(), trackAllValues: false);
+    // Binding callbacks resolve through the renderer command-worker context.
+    // This preserves nested captures across programs without a static ambient
+    // workspace or cross-renderer state retention.
+    private BindingCaptureWorkspace CurrentBindingCaptureWorkspace
+        => ProgramCreationPort.BindingWorkspace;
 
-    private static BindingCaptureWorkspace CurrentBindingCaptureWorkspace
-        => BindingCaptureWorkspaces.Value
-            ?? throw new InvalidOperationException(
-                "The Vulkan program binding-capture workspace has been disposed.");
-
-    internal static void ReleaseCurrentThreadBindingCaptureWorkspace()
-        => CurrentBindingCaptureWorkspace.Reset();
-
-    private sealed class BindingCaptureWorkspace
+    internal sealed class BindingCaptureWorkspace
     {
-        public BindingCaptureState? Active;
-        public BindingCaptureState? Free;
+        internal BindingCaptureState? Active;
+        internal BindingCaptureState? Free;
 
         public void Reset()
         {
@@ -33,7 +27,7 @@ internal unsafe partial class VkRenderProgram
     /// snapshot. It prevents independent views from serializing through a program's
     /// legacy immediate-binding dictionaries.
     /// </summary>
-    private sealed class BindingCaptureState
+    internal sealed class BindingCaptureState
     {
         private readonly List<ComputeDispatchSnapshot> _frameSnapshots = [];
         private ulong _frameSnapshotFrame;

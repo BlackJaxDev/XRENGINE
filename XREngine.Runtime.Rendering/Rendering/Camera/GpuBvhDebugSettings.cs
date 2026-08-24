@@ -95,8 +95,17 @@ namespace XREngine.Rendering
         }
 
         public static bool TryResolve(XRCamera? camera, out GpuBvhDebugSettings? settings)
+            => TryResolve(camera, null, out settings);
+
+        /// <summary>
+        /// Resolves the GPU-BVH debug settings for a camera and an optional explicit pipeline.
+        /// </summary>
+        public static bool TryResolve(
+            XRCamera? camera,
+            RenderPipeline? pipeline,
+            out GpuBvhDebugSettings? settings)
         {
-            var stage = camera?.GetPostProcessStageState<GpuBvhDebugSettings>();
+            var stage = camera?.GetPostProcessStageState<GpuBvhDebugSettings>(pipeline);
             if (stage?.TryGetBacking(out settings) == true && settings is not null)
                 return true;
 
@@ -105,8 +114,20 @@ namespace XREngine.Rendering
         }
 
         public static bool IsMeshletDebugDisplayEnabled(XRCamera? camera)
-            => TryResolve(camera, out GpuBvhDebugSettings? settings) &&
-               settings?.MeshletDebugDisplayEnabled == true;
+            => IsMeshletDebugDisplayEnabled(camera, null);
+
+        /// <summary>
+        /// Resolves the effective per-meshlet color visualization request. A camera-level
+        /// runtime override takes precedence over the selected pipeline's post-process stage.
+        /// </summary>
+        public static bool IsMeshletDebugDisplayEnabled(XRCamera? camera, RenderPipeline? pipeline)
+        {
+            if (camera?.MeshletDebugDisplayEnabledOverride is bool enabledOverride)
+                return enabledOverride;
+
+            return TryResolve(camera, pipeline, out GpuBvhDebugSettings? settings) &&
+                   settings?.MeshletDebugDisplayEnabled == true;
+        }
 
         /// <summary>
         /// Returns true when the given render pass is one of the geometry passes

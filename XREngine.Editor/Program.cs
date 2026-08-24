@@ -1023,6 +1023,10 @@ internal partial class Program
 
         int w = Math.Max(1, (int)Math.Round(defaultWindowWidth * scale));
         int h = Math.Max(1, (int)Math.Round(defaultWindowHeight * scale));
+        if (TryGetIntEnv(XREngineEnvironmentVariables.ProfileWindowWidth, out int profileWindowWidth) && profileWindowWidth > 0)
+            w = profileWindowWidth;
+        if (TryGetIntEnv(XREngineEnvironmentVariables.ProfileWindowHeight, out int profileWindowHeight) && profileWindowHeight > 0)
+            h = profileWindowHeight;
         int startX = workArea.left + Math.Max(0, (workAreaWidth - w) / 2);
         int startY = workArea.top + Math.Max(0, (workAreaHeight - h) / 2);
 
@@ -1083,6 +1087,14 @@ internal partial class Program
 
         // Apply engine settings
         RuntimeEngine.Rendering.Settings.OutputVerbosity = EOutputVerbosity.Verbose;
+        if (TryGetPositiveFloatEnv(XREngineEnvironmentVariables.ProfileRenderScale, out float profileRenderScale))
+        {
+            RuntimeEngine.Rendering.Settings.TsrRenderScale = profileRenderScale;
+            EngineDebug.Out(
+                "TSR render scale overridden to {0:F3} via {1}.",
+                RuntimeEngine.Rendering.Settings.TsrRenderScale,
+                XREngineEnvironmentVariables.ProfileRenderScale);
+        }
 
         // Allow overriding networking mode via env var for quick local testing.
         string? netOverride = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.NetMode);
@@ -1116,7 +1128,13 @@ internal partial class Program
             EngineDebug.Log(ELogCategory.Networking, $"UDP multicast port overridden to {udpMulticastPort} via XRE_UDP_MULTICAST_PORT.");
         }
 
-        if (unitTestSettings.VRPawn && (!unitTestSettings.SceneOnlyVRPawn || unitTestSettings.PreviewVRStereoViews))
+        bool groupedVrSettingsSpecified = unitTestSettings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.VR));
+        bool runtimeVrRequested = groupedVrSettingsSpecified
+            ? unitTestSettings.VR.Mode is UnitTestingVrLaunchMode.MonadoOpenXR
+                or UnitTestingVrLaunchMode.OpenVR
+                or UnitTestingVrLaunchMode.OpenXR
+            : unitTestSettings.VRPawn && (!unitTestSettings.SceneOnlyVRPawn || unitTestSettings.PreviewVRStereoViews);
+        if (unitTestSettings.VRPawn && runtimeVrRequested)
         {
             settings.RunVRInPlace = true;
             EditorVR.ApplyOpenVRSettings(settings);
@@ -1160,6 +1178,18 @@ internal partial class Program
         value = default;
         string? raw = Environment.GetEnvironmentVariable(name);
         return !string.IsNullOrWhiteSpace(raw) && int.TryParse(raw, out value);
+    }
+
+    private static bool TryGetPositiveFloatEnv(string name, out float value)
+    {
+        string? raw = Environment.GetEnvironmentVariable(name);
+        return float.TryParse(
+                   raw,
+                   NumberStyles.Float,
+                   CultureInfo.InvariantCulture,
+                   out value) &&
+               float.IsFinite(value) &&
+               value > 0.0f;
     }
 
     private static bool ResolveDebugOpaquePipelineSetting(UnitTestingWorldSettings settings)

@@ -9,7 +9,7 @@ namespace XREngine.Rendering.Meshlets
     public static class MeshletGenerator
     {
         public static MeshletBuildResult Build(XRMesh mesh, MeshletGenerationSettings settings)
-            => MeshOptimizerIntegration.BuildMeshlets(mesh, settings);
+            => MeshOptimizerIntegration.BuildMeshletPayloadForMesh(mesh, settings);
 
         public static unsafe Meshlet[] Build(
             out uint[] meshletVertexIndices,
@@ -100,7 +100,7 @@ namespace XREngine.Rendering.Meshlets
             uint maxTrianglesPerMeshlet = 124u,
             float coneWeight = 0.0f)
         {
-            MeshletBuildResult build = MeshOptimizerIntegration.BuildMeshlets(
+            MeshletBuildResult build = MeshOptimizerIntegration.BuildMeshletPayloadForMesh(
                 mesh,
                 new MeshletGenerationSettings
                 {

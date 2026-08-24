@@ -38,6 +38,7 @@ This is not only a renderer port. The current project graph, window lifecycle, e
 
 ## Related Work
 
+- [MoltenVK Vulkan renderer integration](../rendering/moltenvk-vulkan-renderer-integration-design.md)
 - [Runtime modularization plan](../runtime-modularization-plan.md)
 - [Window creation and renderer initialization](../../../architecture/rendering/window-creation-and-renderer-init.md)
 - [Vulkan renderer architecture](../../../architecture/rendering/vulkan-renderer.md)

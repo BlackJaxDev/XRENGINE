@@ -14,13 +14,14 @@ using XREngine.Rendering.Resources;
 
 namespace XREngine.Rendering.Vulkan
 {
-    public unsafe partial class VulkanRenderer
+    internal sealed partial class VulkanCommandRuntime
     {
-        private readonly VulkanTextureUploadPublicationState _textureUploadPublicationState = new();
+        private VulkanTextureUploadPublicationState _textureUploadPublicationState
+            => ResourceRuntime.Uploads.PublicationState;
 
         private bool TryRecordTextureUploadCommandBuffer(
             uint imageIndex,
-            FrameOp[] textureUploadOps,
+            FrameOperationSequence textureUploadOps,
             out CommandBuffer commandBuffer,
             out CommandPool commandPool)
         {
@@ -45,37 +46,37 @@ namespace XREngine.Rendering.Vulkan
                     Flags = CommandBufferUsageFlags.OneTimeSubmitBit,
                 };
 
+                ThrowIfVulkanDeviceOperationNotAdmitted("vkBeginCommandBuffer.TextureUploadRecording");
                 if (Api!.BeginCommandBuffer(commandBuffer, ref beginInfo) != Result.Success)
                     throw new Exception("Failed to begin texture upload command buffer.");
 
                 commandBufferBegun = true;
                 ResetCommandBufferBindState(commandBuffer);
 
-                bool uploadBatchLabelActive = CmdBeginLabel(commandBuffer, "TextureUploads");
+                bool uploadBatchLabelActive = _deviceContext.CmdBeginLabel(commandBuffer, "TextureUploads");
                 int queuedBefore = _textureUploadPublicationState.RecordedForSubmit.Count;
                 try
                 {
                     for (int i = 0; i < textureUploadOps.Length; i++)
                     {
-                        if (textureUploadOps[i] is not TextureUploadFrameOp textureUploadOp)
-                            continue;
-
-                        bool uploadLabelActive = CmdBeginLabel(commandBuffer, "TextureUpload");
+                        bool uploadLabelActive = _deviceContext.CmdBeginLabel(commandBuffer, "TextureUpload");
                         try
                         {
-                            RecordTextureUploadOp(commandBuffer, textureUploadOp.Upload);
+                            RecordTextureUploadOp(
+                                commandBuffer,
+                                textureUploadOps.GetTextureUpload(i).Upload);
                         }
                         finally
                         {
                             if (uploadLabelActive)
-                                CmdEndLabel(commandBuffer);
+                                _deviceContext.CmdEndLabel(commandBuffer);
                         }
                     }
                 }
                 finally
                 {
                     if (uploadBatchLabelActive)
-                        CmdEndLabel(commandBuffer);
+                        _deviceContext.CmdEndLabel(commandBuffer);
                 }
 
                 if (EndCommandBufferTracked(commandBuffer) != Result.Success)
@@ -117,12 +118,12 @@ namespace XREngine.Rendering.Vulkan
             }
         }
 
-        internal void RecordTextureUploadOp(CommandBuffer commandBuffer, VulkanImportedTexturePendingUpload upload)
+        internal unsafe void RecordTextureUploadOp(CommandBuffer commandBuffer, VulkanImportedTexturePendingUpload upload)
         {
             VulkanImportedTextureUploadRequest request = upload.Request;
             if (!upload.ShouldPublish())
             {
-                _textureUploadService.RecordState(
+                ResourceRuntime.Uploads.RecordState(
                     request,
                     VulkanTextureUploadGenerationState.Canceled,
                     "request became stale or canceled before command recording");
@@ -131,14 +132,14 @@ namespace XREngine.Rendering.Vulkan
                 return;
             }
 
-            _textureUploadService.RecordState(
+            ResourceRuntime.Uploads.RecordState(
                 request,
                 VulkanTextureUploadGenerationState.UploadRecording,
                 $"recording {upload.StagingResources.Length} mip copies token={upload.PublicationToken}");
 
             if (!upload.TryValidateCopyRegions(out string? validationFailure))
             {
-                _textureUploadService.RecordState(
+                ResourceRuntime.Uploads.RecordState(
                     request,
                     VulkanTextureUploadGenerationState.Failed,
                     validationFailure);
@@ -195,12 +196,11 @@ namespace XREngine.Rendering.Vulkan
             {
                 VulkanImportedTextureUploadStagingResource staging = upload.StagingResources[i];
                 BufferImageCopy copyRegion = staging.CopyRegion;
-                CmdCopyBufferToImageTracked(
+                CopyPreparedUploadBufferToImage(
                     commandBuffer,
                     staging.Buffer,
                     upload.Image,
                     ImageLayout.TransferDstOptimal,
-                    1,
                     ref copyRegion);
             }
 
@@ -229,11 +229,11 @@ namespace XREngine.Rendering.Vulkan
                 1,
                 &uploadEndBarrier);
 
-            _textureUploadService.RecordState(
+            ResourceRuntime.Uploads.RecordState(
                 request,
                 VulkanTextureUploadGenerationState.Uploaded,
                 $"recorded {upload.StagingResources.Length} mip copies");
-            _textureUploadService.RecordState(
+            ResourceRuntime.Uploads.RecordState(
                 request,
                 VulkanTextureUploadGenerationState.DescriptorPublishPending,
                 $"publicationToken={upload.PublicationToken}; waiting for recorded command buffer completion");
@@ -319,7 +319,6 @@ namespace XREngine.Rendering.Vulkan
             // these staging resources. They cannot remain reusable after the
             // canceled upload retires those buffers, images, or descriptors.
             _ = InvalidateCommandChainSecondaryCommandBuffersForDescriptorReferenceRelease();
-            MarkOpenXrPrimaryCommandBufferVariantsDirty();
             MarkCommandBuffersDirty(reason);
 
             for (int i = 0; i < uploads.Count; i++)
@@ -328,7 +327,7 @@ namespace XREngine.Rendering.Vulkan
             uploads.Clear();
         }
 
-        private void CancelRecordedTextureUploadPublications(string reason)
+        internal void CancelRecordedTextureUploadPublications(string reason)
         {
             CancelRecordedTextureUploadSubmitBatch(reason);
 
@@ -341,43 +340,17 @@ namespace XREngine.Rendering.Vulkan
             _textureUploadPublicationState.PendingTimelinePublications.Clear();
         }
 
-        private void DrainCompletedRecordedTextureUploadPublications()
-        {
-            if (_textureUploadPublicationState.PendingTimelinePublications.Count == 0 || IsDeviceLost)
-                return;
-
-            for (int i = _textureUploadPublicationState.PendingTimelinePublications.Count - 1; i >= 0; i--)
-            {
-                PendingRecordedTextureUploadPublication pending = _textureUploadPublicationState.PendingTimelinePublications[i];
-                bool completed;
-                try
-                {
-                    completed = HasTimelineValueCompleted(_graphicsTimelineSemaphore, pending.TimelineValue);
-                }
-                catch (InvalidOperationException)
-                {
-                    return;
-                }
-
-                if (!completed)
-                    continue;
-
-                _textureUploadPublicationState.PendingTimelinePublications.RemoveAt(i);
-                PublishRecordedTextureUploadAfterGpuCompletion(pending.Upload, pending.UploadSource);
-            }
-        }
-
         private void CancelRecordedTextureUpload(
             VulkanImportedTexturePendingUpload upload,
             string reason)
         {
             VulkanImportedTextureUploadRequest request = upload.Request;
-            _textureUploadService.RecordState(
+            ResourceRuntime.Uploads.RecordState(
                 request,
                 VulkanTextureUploadGenerationState.Canceled,
                 reason);
 
-            if (!IsDeviceLost)
+            if (!_deviceLost)
                 upload.Texture.ReleasePreparedImportedUploadResources(upload);
 
             InvokeTextureUploadCanceled(upload);
@@ -391,7 +364,7 @@ namespace XREngine.Rendering.Vulkan
             if (!upload.ShouldPublish())
             {
                 upload.Texture.ReleasePreparedImportedUploadResources(upload);
-                _textureUploadService.RecordState(
+                ResourceRuntime.Uploads.RecordState(
                     request,
                     VulkanTextureUploadGenerationState.Canceled,
                     $"request became stale before {uploadSource} descriptor publication");
@@ -399,11 +372,11 @@ namespace XREngine.Rendering.Vulkan
                 return;
             }
 
-            _textureUploadService.RecordState(
+            ResourceRuntime.Uploads.RecordState(
                 request,
                 VulkanTextureUploadGenerationState.Uploaded,
                 $"{uploadSource} recorded upload completed");
-            _textureUploadService.RecordState(
+            ResourceRuntime.Uploads.RecordState(
                 request,
                 VulkanTextureUploadGenerationState.DescriptorPublishPending,
                 $"publicationToken={upload.PublicationToken}");
@@ -429,11 +402,11 @@ namespace XREngine.Rendering.Vulkan
                 "publicationToOldResourceRetirementEnqueue",
                 TextureRuntimeDiagnostics.ElapsedMilliseconds(publicationStart));
 
-            _textureUploadService.RecordState(
+            ResourceRuntime.Uploads.RecordState(
                 request,
                 VulkanTextureUploadGenerationState.Published,
                 $"publicationToken={upload.PublicationToken}");
-            _textureUploadService.RecordState(
+            ResourceRuntime.Uploads.RecordState(
                 request,
                 VulkanTextureUploadGenerationState.Retired,
                 "old texture and staging resources enqueued for frame-slot retirement");
@@ -442,10 +415,17 @@ namespace XREngine.Rendering.Vulkan
 
         private void RetireTextureUploadStagingResources(VulkanImportedTexturePendingUpload upload)
         {
+            if (!upload.TryMarkStagingResourcesReleased())
+                return;
+
             for (int i = 0; i < upload.StagingResources.Length; i++)
             {
                 VulkanImportedTextureUploadStagingResource staging = upload.StagingResources[i];
-                RetireBuffer(staging.Buffer, staging.Memory);
+                if (!staging.Slice.IsValid)
+                    RetireUploadBuffer(
+                        staging.Buffer,
+                        staging.Memory,
+                        "TextureUpload.Staging");
             }
         }
 

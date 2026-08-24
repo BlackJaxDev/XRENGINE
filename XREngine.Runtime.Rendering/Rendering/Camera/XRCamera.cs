@@ -263,6 +263,12 @@ namespace XREngine.Rendering
         private float? _tsrRenderScaleOverride;
 
         /// <summary>
+        /// Optional runtime-only override for the per-meshlet color visualization.
+        /// A null value defers to the camera's post-process settings.
+        /// </summary>
+        private bool? _meshletDebugDisplayEnabledOverride;
+
+        /// <summary>
         /// The projection parameters (FOV, aspect ratio, near/far planes) for this camera.
         /// Can be perspective or orthographic depending on the parameter type.
         /// </summary>
@@ -481,6 +487,18 @@ namespace XREngine.Rendering
                     : null;
                 SetField(ref _tsrRenderScaleOverride, clamped);
             }
+        }
+
+        /// <summary>
+        /// Overrides the camera post-process meshlet-debug toggle when non-null.
+        /// Intended for runtime tooling and deterministic validation launches; set
+        /// to null to use <see cref="GpuBvhDebugSettings.MeshletDebugDisplayEnabled"/>.
+        /// </summary>
+        [YamlIgnore]
+        public bool? MeshletDebugDisplayEnabledOverride
+        {
+            get => _meshletDebugDisplayEnabledOverride;
+            set => SetField(ref _meshletDebugDisplayEnabledOverride, value);
         }
 
         /// <summary>

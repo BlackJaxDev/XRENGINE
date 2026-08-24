@@ -29,21 +29,87 @@ internal readonly record struct VulkanAutoUniformPublicationSnapshot(
     float BlendshapeWeightThreshold,
     bool HasValidPrecombinedBlendshapeDeltas)
 {
+    [ThreadStatic]
+    private static bool s_hasCachedViewPublication;
+    [ThreadStatic]
+    private static ulong s_cachedRenderFrameId;
+    [ThreadStatic]
+    private static XRRenderPipelineInstance? s_cachedPipeline;
+    [ThreadStatic]
+    private static XRCamera? s_cachedCamera;
+    [ThreadStatic]
+    private static XRCamera? s_cachedRightEyeCamera;
+    [ThreadStatic]
+    private static bool s_cachedIsStereoPass;
+    [ThreadStatic]
+    private static bool s_cachedUseUnjitteredProjection;
+    [ThreadStatic]
+    private static ulong s_cachedFrameGeneration;
+    [ThreadStatic]
+    private static ulong s_cachedViewGeneration;
+    [ThreadStatic]
+    private static float s_cachedCameraNearZ;
+    [ThreadStatic]
+    private static float s_cachedCameraFarZ;
+    [ThreadStatic]
+    private static float s_cachedCameraFovX;
+    [ThreadStatic]
+    private static float s_cachedCameraFovY;
+    [ThreadStatic]
+    private static float s_cachedCameraAspect;
+    [ThreadStatic]
+    private static XRCamera.EDepthMode s_cachedCameraDepthMode;
+
     internal static VulkanAutoUniformPublicationSnapshot Capture(
-        in PendingMeshDraw draw)
+        in PendingMeshDraw draw,
+        XRRenderPipelineInstance? pipeline)
     {
         XRCamera? camera = draw.Camera;
-        XRPerspectiveCameraParameters? perspective =
-            camera?.Parameters as XRPerspectiveCameraParameters;
+        XRCamera? rightEyeCamera = draw.StereoRightEyeCamera;
+        ulong renderFrameId = RuntimeEngine.Rendering.State.RenderFrameId;
+        bool reuseViewPublication =
+            s_hasCachedViewPublication &&
+            s_cachedRenderFrameId == renderFrameId &&
+            ReferenceEquals(s_cachedPipeline, pipeline) &&
+            ReferenceEquals(s_cachedCamera, camera) &&
+            ReferenceEquals(s_cachedRightEyeCamera, rightEyeCamera) &&
+            s_cachedIsStereoPass == draw.IsStereoPass &&
+            s_cachedUseUnjitteredProjection ==
+                draw.UseUnjitteredProjection;
+        if (!reuseViewPublication)
+        {
+            XRPerspectiveCameraParameters? perspective =
+                camera?.Parameters as XRPerspectiveCameraParameters;
+            s_cachedCameraNearZ = camera?.NearZ ?? 0f;
+            s_cachedCameraFarZ = camera?.FarZ ?? 0f;
+            s_cachedCameraFovX =
+                perspective?.HorizontalFieldOfView ?? 0f;
+            s_cachedCameraFovY =
+                perspective?.VerticalFieldOfView ?? 0f;
+            s_cachedCameraAspect = perspective?.AspectRatio ?? 0f;
+            s_cachedCameraDepthMode =
+                camera?.DepthMode ?? XRCamera.EDepthMode.Normal;
+            s_cachedFrameGeneration = ComputeFrameGeneration(renderFrameId);
+            s_cachedViewGeneration = ComputeViewGeneration(
+                draw,
+                s_cachedCameraNearZ,
+                s_cachedCameraFarZ,
+                s_cachedCameraFovX,
+                s_cachedCameraFovY,
+                s_cachedCameraAspect,
+                s_cachedCameraDepthMode);
+            s_cachedRenderFrameId = renderFrameId;
+            s_cachedPipeline = pipeline;
+            s_cachedCamera = camera;
+            s_cachedRightEyeCamera = rightEyeCamera;
+            s_cachedIsStereoPass = draw.IsStereoPass;
+            s_cachedUseUnjitteredProjection =
+                draw.UseUnjitteredProjection;
+            s_hasCachedViewPublication = true;
+        }
+
         XRMeshRenderer meshRenderer = draw.Renderer.MeshRenderer;
 
-        float cameraNearZ = camera?.NearZ ?? 0f;
-        float cameraFarZ = camera?.FarZ ?? 0f;
-        float cameraFovX = perspective?.HorizontalFieldOfView ?? 0f;
-        float cameraFovY = perspective?.VerticalFieldOfView ?? 0f;
-        float cameraAspect = perspective?.AspectRatio ?? 0f;
-        XRCamera.EDepthMode cameraDepthMode =
-            camera?.DepthMode ?? XRCamera.EDepthMode.Normal;
         uint skinPaletteBase = meshRenderer.ActiveSkinPaletteBase;
         uint skinPaletteCount = meshRenderer.ActiveSkinPaletteCount;
         int skinningInfluenceCap = meshRenderer.ActiveSkinningInfluenceCap;
@@ -54,15 +120,8 @@ internal readonly record struct VulkanAutoUniformPublicationSnapshot(
             meshRenderer.HasValidPrecombinedBlendshapeDeltas;
 
         return new VulkanAutoUniformPublicationSnapshot(
-            ComputeFrameGeneration(),
-            ComputeViewGeneration(
-                draw,
-                cameraNearZ,
-                cameraFarZ,
-                cameraFovX,
-                cameraFovY,
-                cameraAspect,
-                cameraDepthMode),
+            s_cachedFrameGeneration,
+            s_cachedViewGeneration,
             ComputePassGeneration(draw),
             ComputeObjectGeneration(
                 draw,
@@ -75,12 +134,12 @@ internal readonly record struct VulkanAutoUniformPublicationSnapshot(
             ComputeInstanceGeneration(draw),
             ComputeRuntimeCallbackGeneration(draw.ProgramBindingSnapshot),
             draw.ProgramBindingSnapshot?.TypedPublicationGenerations ?? default,
-            cameraNearZ,
-            cameraFarZ,
-            cameraFovX,
-            cameraFovY,
-            cameraAspect,
-            cameraDepthMode,
+            s_cachedCameraNearZ,
+            s_cachedCameraFarZ,
+            s_cachedCameraFovX,
+            s_cachedCameraFovY,
+            s_cachedCameraAspect,
+            s_cachedCameraDepthMode,
             skinPaletteBase,
             skinPaletteCount,
             skinningInfluenceCap,
@@ -125,10 +184,10 @@ internal readonly record struct VulkanAutoUniformPublicationSnapshot(
         return hash.ToHash();
     }
 
-    private static ulong ComputeFrameGeneration()
+    private static ulong ComputeFrameGeneration(ulong renderFrameId)
     {
         FrameOpSignatureHasher hash = new();
-        hash.Add(RuntimeEngine.Rendering.State.RenderFrameId);
+        hash.Add(renderFrameId);
         return hash.ToHash();
     }
 
@@ -193,6 +252,8 @@ internal readonly record struct VulkanAutoUniformPublicationSnapshot(
         hash.Add(draw.Scissor.Extent.Width);
         hash.Add(draw.Scissor.Extent.Height);
         hash.Add(unchecked((uint)draw.ShadowUniformState.GetHashCode()));
+        hash.Add(draw.ShadowCasterRelevance.DirectionalCascadeTargetMask);
+        hash.Add(draw.ShadowCasterRelevance.PointLightShadowFaceMask);
         return hash.ToHash();
     }
 

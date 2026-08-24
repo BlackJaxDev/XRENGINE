@@ -1,6 +1,7 @@
 using XREngine.Extensions;
 using System.Numerics;
 using XREngine.Components;
+using XREngine.Components.Lights;
 using XREngine.Data.Core;
 using XREngine.Data.Geometry;
 using XREngine.Data.Profiling;
@@ -31,6 +32,10 @@ namespace XREngine.Rendering
 
         private static long _nextFrameOutputIdentity;
         private readonly ulong _frameOutputIdentity = unchecked((ulong)Interlocked.Increment(ref _nextFrameOutputIdentity));
+        /// <summary>Stable process-local identity correlating this viewport's output policy with backend work.</summary>
+        public ulong FrameOutputIdentity => _frameOutputIdentity;
+        /// <summary>Canonical output request frozen for the current render dispatch.</summary>
+        public RenderOutputRequest CurrentFrameOutputRequest { get; private set; }
         private ulong _sceneRenderSequenceId;
 
         /// <summary>
@@ -1152,9 +1157,12 @@ namespace XREngine.Rendering
         {
             int descriptorGeneration =
                 _renderPipeline.ActiveGeneration?.Registry.DescriptorRevision ?? 0;
+            long collectGeneration = _renderPipeline.AssignedPipeline is ShadowRenderPipeline
+                ? BackendReadyFramePackageIdentity.RetainedCollectGeneration
+                : RuntimeRenderingHostServices.FrameTiming.RequestedCollectGeneration;
             BackendReadyFramePackageIdentity identity = new(
                 RuntimeRenderingHostServices.FrameTiming.CollectFrameId,
-                RuntimeRenderingHostServices.FrameTiming.RequestedCollectGeneration,
+                collectGeneration,
                 _renderPipeline.AssignedPipeline?.CommandGeneration ?? 0UL,
                 _renderPipeline.ResourceGeneration,
                 descriptorGeneration,
@@ -1163,7 +1171,12 @@ namespace XREngine.Rendering
                 Height,
                 InternalWidth,
                 InternalHeight);
-            commandCollection.PrepareBackendReadyFramePackage(identity);
+            commandCollection.PrepareBackendReadyFramePackage(
+                identity,
+                World?.VisualScene?.GPUCommands,
+                Camera,
+                InternalWidth,
+                InternalHeight);
         }
 
         private static int ResolveRenderGraphGeneration(
@@ -1680,6 +1693,19 @@ namespace XREngine.Rendering
                     ? EFrameOutputKind.OpenXREyeSubmit
                     : EFrameOutputKind.OpenVRSubmit,
                 State.RenderFrameId);
+            RenderOutputRequest schedulingRequest = BuildFrameOutputRequest(pacing);
+            CurrentFrameOutputRequest = schedulingRequest;
+            RenderOutputSchedulingDecision scheduling = presentation.PlanRenderOutput(
+                schedulingRequest,
+                pacing.IsDue,
+                ERenderOutputPolicyReason.None);
+            pacing = pacing with
+            {
+                Request = schedulingRequest,
+                IsDue = scheduling.Execute,
+            };
+            if (!scheduling.Execute)
+                return;
             bool uiThroughPipeline = ResolveUiThroughPipeline(out var screenSpaceUI);
             long renderStart = System.Diagnostics.Stopwatch.GetTimestamp();
 
@@ -1719,7 +1745,32 @@ namespace XREngine.Rendering
             FrameOutputPacingDecision pacing = presentation.EvaluateFrameOutputPacing(
                 viewKind, outputKind, xrCritical);
             RenderOutputRequest request = BuildFrameOutputRequest(pacing);
-            presentation.PlanRenderOutput(request, pacing.IsDue);
+            CurrentFrameOutputRequest = request;
+            ERenderOutputPolicyReason deferralReason = pacing.SkipReason switch
+            {
+                EFrameOutputSkipReason.Cadence => ERenderOutputPolicyReason.Cadence,
+                EFrameOutputSkipReason.Budget => ERenderOutputPolicyReason.CpuBudget,
+                EFrameOutputSkipReason.MirrorOff => ERenderOutputPolicyReason.MirrorDisabled,
+                EFrameOutputSkipReason.SurfaceUnavailable => ERenderOutputPolicyReason.SurfaceUnavailable,
+                EFrameOutputSkipReason.VrGated => ERenderOutputPolicyReason.VrGated,
+                EFrameOutputSkipReason.Disabled => ERenderOutputPolicyReason.OutputDisabled,
+                EFrameOutputSkipReason.HeldLastImage => ERenderOutputPolicyReason.HeldLastImage,
+                _ => ERenderOutputPolicyReason.None,
+            };
+            RenderOutputSchedulingDecision scheduling = presentation.PlanRenderOutput(
+                request,
+                pacing.IsDue,
+                deferralReason);
+            if (scheduling.Execute && !pacing.IsDue)
+            {
+                pacing = pacing with
+                {
+                    IsDue = true,
+                    CadenceSkipped = false,
+                    AutoSkipped = false,
+                    SkipReason = EFrameOutputSkipReason.None,
+                };
+            }
             return pacing with { Request = request };
         }
 
@@ -1743,6 +1794,18 @@ namespace XREngine.Rendering
                     ? request.ViewFamilyId
                     : MixFrameOutputIdentity(request.ViewFamilyId, _frameOutputIdentity),
             };
+            if (pacing.OutputKind == EFrameOutputKind.OpenXREyeSubmit &&
+                RuntimeEngine.VRState.OpenXRApi is { } openXrApi)
+            {
+                request = request with
+                {
+                    Schedule = request.Schedule with
+                    {
+                        DeadlineMs = openXrApi.CurrentRenderDeadlineMs,
+                        HardDeadline = true,
+                    },
+                };
+            }
             return request.WithTarget(request.Target with
             {
                 StableTargetId = outputId,
@@ -2468,7 +2531,10 @@ namespace XREngine.Rendering
         /// </summary>
         public IDisposable? EnterRenderPipelineReadbackScope()
         {
-            AbstractRenderer? renderer = AbstractRenderer.Current;
+            // External captures commonly run from a post-viewport callback, after transient
+            // global render state has been cleared. The viewport's owning window remains the
+            // authoritative renderer for its planner generation, including isolated OpenXR eyes.
+            AbstractRenderer? renderer = Window?.Renderer ?? AbstractRenderer.Current;
             return renderer is not null &&
                 ((IRuntimeRendererHost)renderer).TryGetBackendCapability<IRenderPipelineReadbackBackendCapability>(out var capability) &&
                 capability is not null

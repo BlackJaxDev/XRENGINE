@@ -13,6 +13,8 @@ public interface IRuntimeModelImportServices
     bool ProcessMeshesAsynchronously { get; }
     FbxImportBackend PreferredFbxBackend { get; }
     GltfImportBackend PreferredGltfBackend { get; }
+    string? ProjectAssetsRoot { get; }
+    string? EngineAssetsRoot { get; }
 
     EnumeratorJob Schedule(
         Func<IEnumerable> routineFactory,
@@ -47,6 +49,8 @@ public static class RuntimeModelImportServices
         public bool ProcessMeshesAsynchronously => true;
         public FbxImportBackend PreferredFbxBackend => FbxImportBackend.Auto;
         public GltfImportBackend PreferredGltfBackend => GltfImportBackend.Auto;
+        public string? ProjectAssetsRoot => null;
+        public string? EngineAssetsRoot => null;
 
         public EnumeratorJob Schedule(
             Func<IEnumerable> routineFactory,

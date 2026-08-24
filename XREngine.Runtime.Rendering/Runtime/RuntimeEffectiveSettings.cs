@@ -42,6 +42,27 @@ internal sealed class RuntimeEffectiveSettings
 
     public bool AllowInitialSkinnedBoundsBuildWhenNever { get; set; } = true;
     public EAntiAliasingMode AntiAliasingMode { get; set; } = EAntiAliasingMode.None;
+    public int GeneralWorkerThreadCount => TryGetHostSettings(out IRuntimeRenderSettingsServices executionServices)
+        ? executionServices.GeneralWorkerThreadCount
+        : Settings.GeneralWorkerThreadCount;
+    public int GeneralWorkerThreadCap => TryGetHostSettings(out IRuntimeRenderSettingsServices executionServices)
+        ? executionServices.GeneralWorkerThreadCap
+        : Settings.GeneralWorkerThreadCap;
+    public int RenderWorkerThreadCount => TryGetHostSettings(out IRuntimeRenderSettingsServices executionServices)
+        ? executionServices.RenderWorkerThreadCount
+        : Settings.RenderWorkerThreadCount;
+    public int RenderWorkerThreadCap => TryGetHostSettings(out IRuntimeRenderSettingsServices executionServices)
+        ? executionServices.RenderWorkerThreadCap
+        : Settings.RenderWorkerThreadCap;
+    public int ReservedForegroundThreadCount => TryGetHostSettings(out IRuntimeRenderSettingsServices executionServices)
+        ? executionServices.ReservedForegroundThreadCount
+        : Settings.ReservedForegroundThreadCount;
+    public bool AllowCpuOversubscription => TryGetHostSettings(out IRuntimeRenderSettingsServices executionServices)
+        ? executionServices.AllowCpuOversubscription
+        : Settings.AllowCpuOversubscription;
+    public ERenderWorkerQos RenderWorkerQos => TryGetHostSettings(out IRuntimeRenderSettingsServices executionServices)
+        ? executionServices.RenderWorkerQos
+        : Settings.RenderWorkerQos;
     public EDlssQualityMode DlssQuality => TryGetHostFrameTiming(out IRuntimeRenderFrameTimingServices services)
         ? services.DlssQuality
         : Settings.DlssQuality;
@@ -92,7 +113,6 @@ internal sealed class RuntimeEffectiveSettings
         }
         set => _zeroReadbackMaterialDrawPath = value;
     }
-    public EGpuCullingDataLayout GpuCullingDataLayout { get; set; } = EGpuCullingDataLayout.AoSHot;
     private EOcclusionCullingMode _gpuOcclusionCullingMode = EOcclusionCullingMode.GpuHiZ;
     public EOcclusionCullingMode GpuOcclusionCullingMode
     {

@@ -20,10 +20,10 @@ internal unsafe partial class VkMeshRenderer
 	public string LastPrepareDetail => _lastPrepareDetail;
 
 	public bool TryPrepareForRendering()
-		=> TryPrepareForRendering(ResolveMaterial(null, 1u), out _);
+		=> TryPrepareForDrawEnqueue(ResolveMaterial(null, 1u), out _);
 
 	public bool TryPrepareForRendering(out string reason)
-		=> TryPrepareForRendering(ResolveMaterial(null, 1u), out reason);
+		=> TryPrepareForDrawEnqueue(ResolveMaterial(null, 1u), out reason);
 
 	private bool TryPrepareForRendering(XRMaterial material, out string reason)
 	{
@@ -295,7 +295,7 @@ internal unsafe partial class VkMeshRenderer
 	{
 		if (preparedProgram.LinkGeneration != preparedProgramLinkGeneration)
 		{
-			Renderer.MarkCommandBuffersDirtyForLegacyMeshState();
+			CommandOperations.MarkCommandBuffersDirtyForLegacyMeshState();
 			return false;
 		}
 
@@ -331,7 +331,7 @@ internal unsafe partial class VkMeshRenderer
 			return false;
 		if (_program.LinkGeneration != preparedProgramLinkGeneration)
 		{
-			Renderer.MarkCommandBuffersDirtyForLegacyMeshState();
+			CommandOperations.MarkCommandBuffersDirtyForLegacyMeshState();
 			return false;
 		}
 
@@ -458,7 +458,7 @@ internal unsafe partial class VkMeshRenderer
 			detail = "Descriptor sets are not allocated or populated for the active program/material layout.";
 			return false;
 		}
-		catch (VulkanOutOfMemoryException ex) when (VulkanRenderer.IsExpectedVulkanImageAllocationDeferral(ex))
+		catch (VulkanOutOfMemoryException ex) when (VulkanMeshRenderingConventions.IsExpectedVulkanImageAllocationDeferral(ex))
 		{
 			detail = $"Descriptor resources deferred under Vulkan allocator pressure: {ex.Message}";
 			return false;
@@ -515,7 +515,7 @@ internal unsafe partial class VkMeshRenderer
 
 	private string BuildPrepareSuccessDetail(string descriptorState)
 	{
-		if (!VulkanRenderer.CommandRecordingDiagnosticsEnabled)
+		if (!VulkanMeshRenderingConventions.CommandRecordingDiagnosticsEnabled)
 			return string.Empty;
 
 		return $"buffers=Ready; program={_program?.Data?.Name ?? "<unnamed>"}; descriptors={descriptorState}; pipeline=DeferredUntilPass; layout={_geometryLayoutSignature.DebugSummary}";

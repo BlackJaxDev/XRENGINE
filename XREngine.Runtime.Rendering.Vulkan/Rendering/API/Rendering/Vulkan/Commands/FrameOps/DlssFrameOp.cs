@@ -7,38 +7,17 @@ namespace XREngine.Rendering.Vulkan;
 /// <summary>
 /// Base operation for Streamline-backed DLSS command recording.
 /// </summary>
-internal abstract unsafe record DlssFrameOp(
+internal abstract record DlssFrameOp(
     int PassIndex,
     FrameOpContext Context)
     : FrameOp(PassIndex, null, Context)
 {
-    protected abstract string CommandLabel { get; }
-
-    internal sealed override int RecordPrimary(
-        VulkanRenderer renderer,
-        scoped ref VulkanRenderer.PrimaryCommandBufferRecordingState recordingState,
-        in VulkanPrimaryOperationRecordingInfo recordingInfo)
-    {
-        renderer.CmdBeginLabel(recordingState.CommandBuffer, CommandLabel);
-        RecordStreamlineCommand(
-            renderer,
-            recordingState.CommandBuffer,
-            recordingState.ImageIndex);
-        renderer.CmdEndLabel(recordingState.CommandBuffer);
-        return recordingInfo.OperationIndex;
-    }
-
-    protected abstract void RecordStreamlineCommand(
-        VulkanRenderer renderer,
-        CommandBuffer commandBuffer,
-        uint imageIndex);
-
     /// <summary>
     /// Transitions a Streamline input or output image to the general layout
     /// required by the native DLSS Vulkan bridge.
     /// </summary>
-    protected static VulkanStreamlineImage TransitionImageToGeneral(
-        VulkanRenderer renderer,
+    internal static unsafe VulkanStreamlineImage TransitionImageToGeneral(
+        VulkanCommandRuntime commandRuntime,
         CommandBuffer commandBuffer,
         in VulkanStreamlineImage image)
     {
@@ -78,7 +57,7 @@ internal abstract unsafe record DlssFrameOp(
             };
 
             // Issue a pipeline barrier to transition the image to the general layout.
-            renderer.CmdPipelineBarrierTracked(
+            commandRuntime.CmdPipelineBarrierTracked(
                 commandBuffer,
                 ResolvePipelineStage(oldLayout),
                 PipelineStageFlags.AllCommandsBit,
@@ -101,8 +80,8 @@ internal abstract unsafe record DlssFrameOp(
     /// <summary>
     /// Makes a Streamline output visible to subsequent shader sampling.
     /// </summary>
-    protected static void MakeOutputVisibleForSampling(
-        VulkanRenderer renderer,
+    internal static unsafe void MakeOutputVisibleForSampling(
+        VulkanCommandRuntime commandRuntime,
         CommandBuffer commandBuffer,
         in VulkanStreamlineImage image)
     {
@@ -140,7 +119,7 @@ internal abstract unsafe record DlssFrameOp(
         };
 
         // Issue a pipeline barrier to make the output image visible for shader sampling.
-        renderer.CmdPipelineBarrierTracked(
+        commandRuntime.CmdPipelineBarrierTracked(
             commandBuffer,
             PipelineStageFlags.AllCommandsBit,
             PipelineStageFlags.FragmentShaderBit |
@@ -163,7 +142,7 @@ internal abstract unsafe record DlssFrameOp(
     /// <param name="operation">The DLSS operation that failed.</param>
     /// <param name="failureReason">The reason for the failure, if available.</param>
     /// <exception cref="InvalidOperationException">Thrown if the DLSS operation fails during Vulkan command recording.</exception>
-    protected static void ThrowRecordingFailure(
+    internal static void ThrowRecordingFailure(
         string operation,
         string failureReason)
     {

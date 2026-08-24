@@ -406,6 +406,8 @@ namespace XREngine.Rendering.Commands
             if (existing.PassIndex != incoming.PassIndex ||
                 existing.DeclarationOrder != incoming.DeclarationOrder ||
                 existing.Stage != incoming.Stage ||
+                existing.RequiresPipelineReady != incoming.RequiresPipelineReady ||
+                existing.SecondaryCachePolicy != incoming.SecondaryCachePolicy ||
                 !string.Equals(existing.Name, incoming.Name, StringComparison.Ordinal))
             {
                 return false;
@@ -610,20 +612,36 @@ namespace XREngine.Rendering.Commands
         /// signatures, and resource-plan metadata on the collect-visible side.
         /// </summary>
         public void PrepareBackendReadyFramePackage(in BackendReadyFramePackageIdentity identity)
+            => PrepareBackendReadyFramePackage(identity, null, null, 0, 0);
+
+        public void PrepareBackendReadyFramePackage(
+            in BackendReadyFramePackageIdentity identity,
+            GPUScene? scene,
+            XRCamera? camera,
+            int viewportWidth,
+            int viewportHeight)
         {
             long started = System.Diagnostics.Stopwatch.GetTimestamp();
 
             using (_lock.EnterScope())
             {
                 _updatingBackendReadyIdentity = identity;
-                PrepareBackendReadyFramePackageNoLock();
+                PrepareBackendReadyFramePackageNoLock(
+                    scene,
+                    camera,
+                    viewportWidth,
+                    viewportHeight);
             }
 
             RuntimeEngine.Rendering.Stats.FrameLifecycle.RecordFramePackageProduction(
                 System.Diagnostics.Stopwatch.GetTimestamp() - started);
         }
 
-        private void PrepareBackendReadyFramePackageNoLock()
+        private void PrepareBackendReadyFramePackageNoLock(
+            GPUScene? scene = null,
+            XRCamera? camera = null,
+            int viewportWidth = 0,
+            int viewportHeight = 0)
         {
             IReadOnlyCollection<RenderPassMetadata>? passMetadata =
                 (_ownerPipeline as XRRenderPipelineInstance)?.Pipeline?.PassMetadata;
@@ -633,6 +651,11 @@ namespace XREngine.Rendering.Commands
                 _updatingRevision,
                 _updatingPasses,
                 passMetadata);
+            _updatingBackendReadyPackage.PrepareCanonicalFromScene(
+                scene,
+                camera,
+                viewportWidth,
+                viewportHeight);
         }
 
         /// <summary>
@@ -1843,13 +1866,22 @@ namespace XREngine.Rendering.Commands
             => RenderGPU(renderPass, RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy(true));
 
         public void RenderGPU(int renderPass, EMeshSubmissionStrategy meshSubmissionStrategy)
+            => RenderGPU(
+                renderPass,
+                meshSubmissionStrategy.ToSubmissionMode(),
+                meshSubmissionStrategy.ToPrimitivePathPreference());
+
+        public void RenderGPU(
+            int renderPass,
+            EMeshSubmissionStrategy meshSubmissionMode,
+            EMeshPrimitivePathPreference primitivePathPreference)
         {
             using var renderingBufferScope = EnterRenderingBufferReadScope();
 
             if (!_gpuPasses.TryGetValue(renderPass, out GPURenderPassCollection? gpuPass))
                 return;
 
-            if (!HasGpuEligibleMeshCommands(renderPass, meshSubmissionStrategy))
+            if (!HasGpuEligibleMeshCommands(renderPass, meshSubmissionMode))
                 return;
             
             IRuntimeRenderCommandExecutionState? renderState = RuntimeRenderingHostServices.FrameTiming.ActiveRenderCommandExecutionState;
@@ -1865,34 +1897,32 @@ namespace XREngine.Rendering.Commands
             if (scene is null)
                 return;
 
-            if (meshSubmissionStrategy == EMeshSubmissionStrategy.GpuIndirectInstrumented &&
+            if (meshSubmissionMode == EMeshSubmissionStrategy.GpuIndirectInstrumented &&
                 camera is XRCamera xrCamera)
             {
                 PrepareCpuSoftwareOcclusion(renderPass, xrCamera);
             }
 
-            bool meshletStrategy = meshSubmissionStrategy.IsAnyMeshletStrategy();
+            bool meshletStrategy = primitivePathPreference != EMeshPrimitivePathPreference.TraditionalOnly;
             bool previousUseMeshletPipeline = gpuPass.UseMeshletPipeline;
             if (meshletStrategy)
                 gpuPass.UseMeshletPipeline = true;
 
             try
             {
-                gpuPass.MeshSubmissionStrategy = meshSubmissionStrategy;
+                gpuPass.MeshSubmissionStrategy = meshSubmissionMode;
+                gpuPass.MeshPrimitivePathPreference = primitivePathPreference;
                 RenderFrameViewSet configuredViewSet = ConfigureGpuViewSet(gpuPass, renderState, camera);
                 gpuPass.ConfigureStableHiZViewSet(
                     configuredViewSet,
                     worldSnapshot?.FrameId ?? RuntimeEngine.Rendering.State.RenderFrameId);
-
-                if (meshletStrategy && worldSnapshot is RenderWorldSnapshot snapshot)
-                    snapshot.GpuScene.EnsureRuntimeMeshletPayloadsForMeshletDispatch();
 
                 scene.RenderGpuPass(gpuPass);
 
                 gpuPass.GetVisibleCounts(out uint draws, out uint instances, out _);
                 scene.RecordGpuVisibility(draws, instances);
 
-                bool allowPerViewReadback = meshSubmissionStrategy == EMeshSubmissionStrategy.GpuIndirectInstrumented &&
+                bool allowPerViewReadback = meshSubmissionMode == EMeshSubmissionStrategy.GpuIndirectInstrumented &&
                     RuntimeRenderingHostServices.FrameTiming.EnableGpuIndirectDebugLogging;
                 if (allowPerViewReadback && gpuPass.ActiveViewCount > 0)
                 {
@@ -1963,15 +1993,15 @@ namespace XREngine.Rendering.Commands
             EMeshSubmissionStrategy meshSubmissionStrategy)
         {
             using var renderingBufferScope = EnterRenderingBufferReadScope();
+            // Strict zero-readback owns every otherwise supported mesh. Commands
+            // are sourced from the GPU scene and filtered by the pass culling
+            // mask, so CPU-published pass membership is not an authority gate.
+            if (meshSubmissionStrategy.IsGpuZeroReadbackStrategy())
+                return _gpuPasses.ContainsKey(renderPass);
+
             if (!TryGetPublishedPassNoLock(renderPass, out BackendReadyRenderPass pass) ||
                 pass.MeshCommandCount == 0)
                 return false;
-
-            // Strict zero-readback owns every otherwise supported mesh. Commands
-            // marked CPU-preferred remain GPU-resident and are enabled by the
-            // pass culling mask instead of being submitted directly by the CPU.
-            if (meshSubmissionStrategy.IsGpuZeroReadbackStrategy())
-                return true;
 
             ReadOnlySpan<BackendReadyMeshSelection> selections =
                 _renderingBackendReadyPackage.MeshSelections;

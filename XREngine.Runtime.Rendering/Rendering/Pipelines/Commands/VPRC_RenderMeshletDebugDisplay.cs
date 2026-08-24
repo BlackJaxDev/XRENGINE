@@ -44,11 +44,11 @@ public sealed class VPRC_RenderMeshletDebugDisplay : ViewportRenderCommand
         AbstractRenderer? renderer = AbstractRenderer.Current;
         bool supportsDiagnosticDirectDispatch = renderer?.SupportsDirectMeshTaskDispatch() == true;
         bool supportsProductionMeshletDispatch = renderer?.SupportsMeshletDispatch() == true;
+        if (supportsProductionMeshletDispatch)
+            return;
+
         if (!supportsDiagnosticDirectDispatch)
         {
-            if (supportsProductionMeshletDispatch)
-                return;
-
             XREngine.Debug.RenderingWarningEvery(
                 "MeshletDebugDisplay.DirectDispatchUnsupported",
                 TimeSpan.FromSeconds(5),

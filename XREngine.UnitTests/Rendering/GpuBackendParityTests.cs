@@ -50,11 +50,11 @@ public class GpuBackendParityTests
     [Test]
     public void CrossBackendParity_EquivalentSnapshots_Pass()
     {
-        GPUIndirectRenderCommand[] commands =
+        DrawMetadata[] commands =
         [
-            new GPUIndirectRenderCommand { MeshID = 10, MaterialID = 100, RenderPass = 1 },
-            new GPUIndirectRenderCommand { MeshID = 11, MaterialID = 101, RenderPass = 1 },
-            new GPUIndirectRenderCommand { MeshID = 12, MaterialID = 102, RenderPass = 2 },
+            new DrawMetadata { MeshID = 10, MaterialID = 100, RenderPass = 1 },
+            new DrawMetadata { MeshID = 11, MaterialID = 101, RenderPass = 1 },
+            new DrawMetadata { MeshID = 12, MaterialID = 102, RenderPass = 2 },
         ];
 
         GpuBackendParitySnapshot opengl = GpuBackendParity.BuildSnapshot("OpenGL", visibleCount: 3, drawCount: 3, commands, maxSamples: 3);
@@ -69,10 +69,10 @@ public class GpuBackendParityTests
     [Test]
     public void CrossBackendParity_VisibleCountMismatch_Fails()
     {
-        GPUIndirectRenderCommand[] commands =
+        DrawMetadata[] commands =
         [
-            new GPUIndirectRenderCommand { MeshID = 10, MaterialID = 100, RenderPass = 1 },
-            new GPUIndirectRenderCommand { MeshID = 11, MaterialID = 101, RenderPass = 1 },
+            new DrawMetadata { MeshID = 10, MaterialID = 100, RenderPass = 1 },
+            new DrawMetadata { MeshID = 11, MaterialID = 101, RenderPass = 1 },
         ];
 
         GpuBackendParitySnapshot opengl = GpuBackendParity.BuildSnapshot("OpenGL", visibleCount: 2, drawCount: 2, commands, maxSamples: 2);
@@ -87,10 +87,10 @@ public class GpuBackendParityTests
     [Test]
     public void CrossBackendParity_DrawCountMismatch_Fails()
     {
-        GPUIndirectRenderCommand[] commands =
+        DrawMetadata[] commands =
         [
-            new GPUIndirectRenderCommand { MeshID = 10, MaterialID = 100, RenderPass = 1 },
-            new GPUIndirectRenderCommand { MeshID = 11, MaterialID = 101, RenderPass = 1 },
+            new DrawMetadata { MeshID = 10, MaterialID = 100, RenderPass = 1 },
+            new DrawMetadata { MeshID = 11, MaterialID = 101, RenderPass = 1 },
         ];
 
         GpuBackendParitySnapshot opengl = GpuBackendParity.BuildSnapshot("OpenGL", visibleCount: 2, drawCount: 2, commands, maxSamples: 2);
@@ -105,16 +105,16 @@ public class GpuBackendParityTests
     [Test]
     public void CrossBackendParity_SampledCommandSignatureMismatch_Fails()
     {
-        GPUIndirectRenderCommand[] glCommands =
+        DrawMetadata[] glCommands =
         [
-            new GPUIndirectRenderCommand { MeshID = 10, MaterialID = 100, RenderPass = 1 },
-            new GPUIndirectRenderCommand { MeshID = 11, MaterialID = 101, RenderPass = 1 },
+            new DrawMetadata { MeshID = 10, MaterialID = 100, RenderPass = 1 },
+            new DrawMetadata { MeshID = 11, MaterialID = 101, RenderPass = 1 },
         ];
 
-        GPUIndirectRenderCommand[] vkCommands =
+        DrawMetadata[] vkCommands =
         [
-            new GPUIndirectRenderCommand { MeshID = 10, MaterialID = 100, RenderPass = 1 },
-            new GPUIndirectRenderCommand { MeshID = 99, MaterialID = 101, RenderPass = 1 },
+            new DrawMetadata { MeshID = 10, MaterialID = 100, RenderPass = 1 },
+            new DrawMetadata { MeshID = 99, MaterialID = 101, RenderPass = 1 },
         ];
 
         GpuBackendParitySnapshot opengl = GpuBackendParity.BuildSnapshot("OpenGL", visibleCount: 2, drawCount: 2, glCommands, maxSamples: 2);

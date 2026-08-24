@@ -18,19 +18,23 @@ using XREngine.Data.Core;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
+using XREngine.Rendering.Meshlets;
 using XREngine.Rendering.Models;
+using XREngine.Rendering.Models.Caching;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Scene;
 using XREngine.Scene.Prefabs;
 using XREngine.Scene.Transforms;
 using System.Diagnostics;
+using System.Security.Cryptography;
+using System.Text.Json;
 using Quaternion = System.Numerics.Quaternion;
 
 namespace XREngine.Editor;
 
 public static partial class EditorUnitTests
 {
-    public static class Models
+    public static partial class Models
     {
         private static ModelImporter.DelMakeMaterialAction ResolveMakeMaterialAction(Settings.ModelImportSettings model)
         {
@@ -148,6 +152,15 @@ public static partial class EditorUnitTests
                 // Dependent systems such as light-probe model bounds should only see complete geometry.
                 BatchSubmeshAddsDuringAsyncImport = true,
                 TextureLoadDirSearchPaths = textureLoadDirSearchPaths,
+                CookSettings = new ModelCookSettings
+                {
+                    Meshlets = new MeshletGenerationSettings { Enabled = true },
+                    Lods = new MeshLodGenerationSettings
+                    {
+                        Enabled = model.GenerateMeshletLods,
+                        AdditionalLodCount = Math.Clamp(model.MeshletAdditionalLodCount, 1, 8),
+                    },
+                },
             };
         }
 
@@ -275,7 +288,9 @@ public static partial class EditorUnitTests
                     ? XRMaterial.CreateColorMaterialDeferred(ColorF4.Red)
                     : XRMaterial.CreateUnlitColorMaterialForward(ColorF4.Red);
                 material.Name = $"UnitBox Shared Material {materialIndex + 1}";
-                material.RenderOptions.CullMode = ECullMode.None;
+                material.RenderOptions.CullMode = Toggles.UnitBoxDoubleSided
+                    ? ECullMode.None
+                    : ECullMode.Back;
                 material.RenderPass = Toggles.UnitBoxDeferredMaterial
                     ? (int)EDefaultRenderPass.OpaqueDeferred
                     : (int)EDefaultRenderPass.OpaqueForward;
@@ -392,6 +407,101 @@ public static partial class EditorUnitTests
                     return;
                 }
 
+                if (IsUnityPrefabPath(resolvedPath))
+                {
+                    SceneNode? unityStaticParent = null;
+                    if (model.Kind is UnitTestModelImportKind.Static)
+                    {
+                        importedStaticModelsRootNode ??= new SceneNode(rootNode)
+                        {
+                            Name = "Static Model Root",
+                            Layer = DefaultLayers.StaticIndex,
+                        };
+                        unityStaticParent = importedStaticModelsRootNode;
+                    }
+
+                    ScheduleUnityPrefabImport(
+                        resolvedPath,
+                        model,
+                        onFinished: result =>
+                        {
+                            _ = Engine.InvokeOnAppThread(() =>
+                            {
+                                try
+                                {
+                                    SceneNode importedRoot = result.RootNode;
+                                    if (model.Kind is UnitTestModelImportKind.Animated)
+                                    {
+                                        List<ModelComponent> suspendedModels =
+                                            SuspendUnityPrefabModelPublication(importedRoot);
+                                        if (importedRoot.Transform.Parent != characterParentNode.Transform)
+                                            characterParentNode.Transform.AddChild(importedRoot.Transform, false, EParentAssignmentMode.Immediate);
+
+                                        OnFinishedImportingAvatar(importedRoot, characterParentNode);
+                                        StageUnityPrefabModelPublication(
+                                            importedRoot,
+                                            suspendedModels);
+                                    }
+                                    else
+                                    {
+                                        SceneNode staticParent = unityStaticParent
+                                            ?? throw new InvalidOperationException("Unity static prefab import has no static parent node.");
+                                        if (importedRoot.Transform.Parent != staticParent.Transform)
+                                            staticParent.Transform.AddChild(importedRoot.Transform, false, EParentAssignmentMode.Immediate);
+
+                                        if (HasPostImportFlag(model, ModelPostImportFlags.GenerateCoacdCollidersPerSubmesh))
+                                        {
+                                            bool combineCoacdColliders = HasPostImportFlag(model, ModelPostImportFlags.PutAllCoacdCollidersIntoOneStaticRigidBodyComponent);
+                                            AttachAutoGeneratedStaticColliders(importedRoot, combineCoacdColliders);
+                                        }
+
+                                        lock (importedStaticRootsLock)
+                                            importedStaticRoots.Add(importedRoot);
+
+                                        int instanceCount = Math.Clamp(model.InstanceCount, 1, 64);
+                                        for (int instanceIndex = 1; instanceIndex < instanceCount; instanceIndex++)
+                                        {
+                                            SceneNode instance = SceneNodePrefabUtility.CloneHierarchyAttached(importedRoot, staticParent);
+                                            instance.Name = $"{importedRoot.Name} Instance {instanceIndex + 1}";
+                                            lock (importedStaticRootsLock)
+                                                importedStaticRoots.Add(instance);
+                                        }
+                                    }
+
+                                    Debug.Meshes(
+                                        $"[UnityPrefab] Import completed: {resolvedPath} " +
+                                        $"({result.ModelCount} models, {result.MaterialCount} materials, " +
+                                        $"{result.PoiyomiMaterialCount} Poiyomi-to-Uber conversions, " +
+                                        $"{result.PoiyomiDowngradeCount} Poiyomi Pro downgrade(s))");
+                                }
+                                catch (Exception ex)
+                                {
+                                    Debug.MeshesException(ex, $"[UnityPrefab] Failed to finalize imported prefab: {resolvedPath}");
+                                }
+                                finally
+                                {
+                                    try
+                                    {
+                                        if (model.Kind is UnitTestModelImportKind.Static)
+                                            CompleteStaticImportSlot();
+                                    }
+                                    finally
+                                    {
+                                        CompleteAllModelImportSlot();
+                                    }
+                                }
+                            }, $"UnitTestingWorld: Finish Unity prefab import '{Path.GetFileName(resolvedPath)}'", executeNowIfAlreadyAppThread: true);
+                        },
+                        onError: ex =>
+                        {
+                            Debug.MeshesException(ex, $"[UnityPrefab] Failed to import prefab: {resolvedPath}");
+                            if (model.Kind is UnitTestModelImportKind.Static)
+                                CompleteStaticImportSlot();
+                            CompleteAllModelImportSlot();
+                        });
+                    return;
+                }
+
                 switch (model.Kind)
                 {
                     case UnitTestModelImportKind.Animated:
@@ -440,6 +550,32 @@ public static partial class EditorUnitTests
                     default:
                     {
                         importedStaticModelsRootNode ??= new SceneNode(rootNode) { Name = "Static Model Root", Layer = DefaultLayers.StaticIndex };
+                        if (TryLoadStandaloneCookedMeshes(
+                                model,
+                                resolvedPath,
+                                textureLoadDirSearchPaths,
+                                importedStaticModelsRootNode,
+                                out SceneNode? cookedRoot,
+                                out string? cookedLoadError))
+                        {
+                            lock (importedStaticRootsLock)
+                                importedStaticRoots.Add(cookedRoot!);
+                            Debug.Meshes($"[StaticModel] Loaded standalone cooked meshlets: {resolvedPath}");
+                            CompleteStaticImportSlot();
+                            CompleteAllModelImportSlot();
+                            break;
+                        }
+
+                        // A requested warm load must never fall through to a source parser.
+                        // The measurement harness treats this as a failed warm proof rather than
+                        // quietly converting it into a cold import.
+                        if (!string.IsNullOrWhiteSpace(cookedLoadError))
+                        {
+                            Debug.MeshesWarning($"[StaticModel] {cookedLoadError}");
+                            CompleteStaticImportSlot();
+                            CompleteAllModelImportSlot();
+                            break;
+                        }
                         ModelImporter.DelMakeMaterialAction makeMaterialAction = ResolveMakeMaterialAction(model);
                         ModelImportOptions? importOptions = CreateImportOptions(model, textureLoadDirSearchPaths);
 
@@ -455,6 +591,7 @@ public static partial class EditorUnitTests
                                     else
                                     {
                                         SceneNode importedRoot = result.RootNode;
+                                        ApplySourceMaterialOverrides(importedRoot, model);
                                         if (HasPostImportFlag(model, ModelPostImportFlags.GenerateCoacdCollidersPerSubmesh))
                                         {
                                             bool combineCoacdColliders = HasPostImportFlag(model, ModelPostImportFlags.PutAllCoacdCollidersIntoOneStaticRigidBodyComponent);
@@ -463,6 +600,8 @@ public static partial class EditorUnitTests
 
                                         lock (importedStaticRootsLock)
                                             importedStaticRoots.Add(importedRoot);
+
+                                        TryPublishStandaloneCookedMeshes(model, resolvedPath, textureLoadDirSearchPaths, importedRoot);
 
                                         int instanceCount = Math.Clamp(model.InstanceCount, 1, 64);
                                         for (int instanceIndex = 1; instanceIndex < instanceCount; instanceIndex++)
@@ -524,6 +663,20 @@ public static partial class EditorUnitTests
             });
         }
 
+        private static void ApplySourceMaterialOverrides(
+            SceneNode importedRoot,
+            Settings.ModelImportSettings model)
+        {
+            if (!model.UseSourceMaterialAsOverride)
+                return;
+
+            importedRoot.IterateComponents<ModelComponent>(component =>
+            {
+                foreach (RenderableMesh renderable in component.Meshes)
+                    renderable.MaterialOverride = renderable.CurrentLODRenderer?.Material;
+            }, iterateChildHierarchy: true);
+        }
+
         private static void QueueLightProbeSpawnerModelBoundsWiring(SceneNode rootNode, object importedStaticRootsLock, List<SceneNode> importedStaticRoots)
         {
             Engine.InvokeOnAppThread(() =>
@@ -568,6 +721,359 @@ public static partial class EditorUnitTests
 
                 spawner.ConfigurePlacementBoundsModels(modelsArray, enabled: true);
                 Debug.Lighting($"[LightProbeGrid] Wired {modelsArray.Length} imported ModelComponents as placement bounds for '{spawner.Name}'.");
+            }
+        }
+
+        private static bool TryLoadStandaloneCookedMeshes(
+            Settings.ModelImportSettings model,
+            string sourcePath,
+            string[] textureLoadDirSearchPaths,
+            SceneNode parent,
+            out SceneNode? root,
+            out string? error)
+        {
+            root = null;
+            error = null;
+            if (!string.Equals(
+                    Environment.GetEnvironmentVariable("XRE_MESHLET_STANDALONE_COOKED_CACHE_MODE"),
+                    "Load",
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            string? cacheRoot = Environment.GetEnvironmentVariable("XRE_MESHLET_STANDALONE_COOKED_CACHE_ROOT");
+            if (string.IsNullOrWhiteSpace(cacheRoot))
+            {
+                error = "Standalone cooked-mesh warm load was requested without a cache root.";
+                return false;
+            }
+
+            string cacheDirectory = GetStandaloneCookedMeshDirectory(cacheRoot, sourcePath);
+            string currentGenerationPath = Path.Combine(cacheDirectory, "current-generation.txt");
+            if (!File.Exists(currentGenerationPath))
+            {
+                error = $"Standalone cooked-mesh cache has no published generation for '{sourcePath}'.";
+                return false;
+            }
+
+            string generationName = File.ReadAllText(currentGenerationPath).Trim();
+            if (!IsStandaloneCookedMeshGenerationName(generationName))
+            {
+                error = $"Standalone cooked-mesh cache has an invalid generation pointer for '{sourcePath}'.";
+                return false;
+            }
+
+            string directory = Path.Combine(cacheDirectory, "generations", generationName);
+            string manifestPath = Path.Combine(directory, "lod-manifest.txt");
+            if (!File.Exists(manifestPath))
+            {
+                error = $"Standalone cooked-mesh cache has no LOD manifest for '{sourcePath}'.";
+                return false;
+            }
+
+            string requestIdentityPath = Path.Combine(directory, "request-identity.txt");
+            if (!File.Exists(requestIdentityPath))
+            {
+                error = $"Standalone cooked-mesh cache has no request identity for '{sourcePath}'.";
+                return false;
+            }
+
+            try
+            {
+                string expectedRequestIdentity = ComputeStandaloneCookedMeshRequestIdentity(
+                    model,
+                    sourcePath,
+                    textureLoadDirSearchPaths);
+                string actualRequestIdentity = File.ReadAllText(requestIdentityPath).Trim();
+                if (!string.Equals(actualRequestIdentity, expectedRequestIdentity, StringComparison.Ordinal))
+                {
+                    throw new InvalidDataException(
+                        $"Cooked mesh request identity mismatch (expected {expectedRequestIdentity}, actual {actualRequestIdentity}).");
+                }
+
+                XRMaterial material = XRMaterial.CreateColorMaterialDeferred(ColorF4.Red);
+                material.Name = "Standalone Cooked Meshlet Material";
+                material.RenderOptions.CullMode = ECullMode.Back;
+                material.RenderPass = (int)EDefaultRenderPass.OpaqueDeferred;
+                Dictionary<int, List<SubMeshLOD>> lodsBySubMesh = [];
+                int hydrationCount = 0;
+                foreach (string manifestLine in File.ReadLines(manifestPath))
+                {
+                    string[] fields = manifestLine.Split('|');
+                    if (fields.Length != 4 ||
+                        !int.TryParse(fields[0], out int subMeshIndex) ||
+                        !int.TryParse(fields[1], out _) ||
+                        !float.TryParse(fields[2], System.Globalization.CultureInfo.InvariantCulture, out float maxDistance))
+                    {
+                        throw new InvalidDataException($"Cooked mesh LOD manifest '{manifestPath}' contains an invalid row.");
+                    }
+
+                    string meshPath = Path.Combine(directory, fields[3]);
+                    XRMesh? mesh = Engine.Assets.Load<XRMesh>(meshPath, bypassJobThread: true);
+                    if (mesh?.MeshletPayload is null)
+                        throw new InvalidDataException($"Cooked mesh '{meshPath}' did not contain a meshlet payload.");
+                    if (!lodsBySubMesh.TryGetValue(subMeshIndex, out List<SubMeshLOD>? lods))
+                        lodsBySubMesh.Add(subMeshIndex, lods = []);
+                    lods.Add(new SubMeshLOD(material, mesh, maxDistance));
+                    hydrationCount++;
+                }
+
+                if (lodsBySubMesh.Count == 0 || hydrationCount == 0)
+                    throw new InvalidDataException($"Cooked mesh LOD manifest '{manifestPath}' has no mesh entries.");
+
+                List<SubMesh> subMeshes = lodsBySubMesh
+                    .OrderBy(static pair => pair.Key)
+                    .Select(static pair => new SubMesh(pair.Value))
+                    .ToList();
+
+                root = new SceneNode(parent)
+                {
+                    Name = $"Standalone Cooked Meshlet Root ({Path.GetFileName(sourcePath)})",
+                    Layer = DefaultLayers.StaticIndex,
+                };
+                root.AddComponent<ModelComponent>()!.Model = new Model(subMeshes);
+                Transform transform = root.GetTransformAs<Transform>(false)!;
+                transform.DeriveLocalMatrix(CreateUnitTestImportRootMatrix(model));
+                transform.RecalculateMatrices(true, false);
+                transform.SaveBindState();
+
+                return true;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException or InvalidOperationException)
+            {
+                error = $"Standalone cooked-mesh cache load failed for '{sourcePath}': {ex.Message}";
+                return false;
+            }
+        }
+
+        private static void TryPublishStandaloneCookedMeshes(
+            Settings.ModelImportSettings model,
+            string sourcePath,
+            string[] textureLoadDirSearchPaths,
+            SceneNode importedRoot)
+        {
+            if (!string.Equals(
+                    Environment.GetEnvironmentVariable("XRE_MESHLET_STANDALONE_COOKED_CACHE_MODE"),
+                    "Publish",
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
+            string? cacheRoot = Environment.GetEnvironmentVariable("XRE_MESHLET_STANDALONE_COOKED_CACHE_ROOT");
+            if (string.IsNullOrWhiteSpace(cacheRoot))
+                return;
+
+            try
+            {
+                string cacheDirectory = GetStandaloneCookedMeshDirectory(cacheRoot, sourcePath);
+                string requestIdentity = ComputeStandaloneCookedMeshRequestIdentity(
+                    model,
+                    sourcePath,
+                    textureLoadDirSearchPaths);
+                string generationName = Guid.NewGuid().ToString("N");
+                string directory = Path.Combine(cacheDirectory, "generations", generationName);
+                Directory.CreateDirectory(directory);
+                List<SubMesh> subMeshes = [];
+                importedRoot.IterateComponents<ModelComponent>(
+                    component =>
+                    {
+                        if (component.Model is { } importedModel)
+                            subMeshes.AddRange(importedModel.Meshes);
+                    },
+                    iterateChildHierarchy: true);
+
+                List<string> manifest = [];
+                int meshCount = 0;
+                for (int subMeshIndex = 0; subMeshIndex < subMeshes.Count; subMeshIndex++)
+                {
+                    int lodIndex = 0;
+                    foreach (SubMeshLOD lod in subMeshes[subMeshIndex].LODs)
+                    {
+                        XRMesh? mesh = lod.Mesh;
+                        if (mesh?.MeshletPayload is null)
+                            throw new InvalidDataException($"Imported mesh LOD '{mesh?.Name}' has no cooked meshlet payload.");
+
+                        string fileName = $"mesh-{subMeshIndex:D4}-lod-{lodIndex:D4}.asset";
+                        string finalPath = Path.Combine(directory, fileName);
+                        string temporaryPath = finalPath + ".tmp";
+                        mesh.SerializeTo(temporaryPath, AssetManager.Serializer);
+                        File.Move(temporaryPath, finalPath, overwrite: true);
+                        manifest.Add($"{subMeshIndex}|{lodIndex}|{lod.MaxVisibleDistance.ToString("R", System.Globalization.CultureInfo.InvariantCulture)}|{fileName}");
+                        lodIndex++;
+                        meshCount++;
+                    }
+                }
+
+                if (meshCount == 0)
+                    throw new InvalidDataException($"Imported model '{sourcePath}' has no mesh LODs to publish.");
+
+                string manifestPath = Path.Combine(directory, "lod-manifest.txt");
+                string temporaryManifestPath = manifestPath + ".tmp";
+                File.WriteAllLines(temporaryManifestPath, manifest);
+                File.Move(temporaryManifestPath, manifestPath, overwrite: true);
+
+                string requestIdentityPath = Path.Combine(directory, "request-identity.txt");
+                string temporaryRequestIdentityPath = requestIdentityPath + ".tmp";
+                File.WriteAllText(temporaryRequestIdentityPath, requestIdentity);
+                File.Move(temporaryRequestIdentityPath, requestIdentityPath, overwrite: true);
+
+                // The generation pointer is the publication root. Publishing it last
+                // means readers observe either the old complete closure or this new
+                // complete closure, never a mixed set of LOD files after a failed cook.
+                Directory.CreateDirectory(cacheDirectory);
+                string currentGenerationPath = Path.Combine(cacheDirectory, "current-generation.txt");
+                string temporaryCurrentGenerationPath = currentGenerationPath + ".tmp";
+                File.WriteAllText(temporaryCurrentGenerationPath, generationName);
+                File.Move(temporaryCurrentGenerationPath, currentGenerationPath, overwrite: true);
+                RetireStandaloneCookedMeshGenerations(cacheDirectory, generationName);
+
+                Debug.Meshes($"[StaticModel] Published {meshCount} standalone cooked meshlet LOD(s) for '{sourcePath}' generation={generationName}.");
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException or InvalidOperationException)
+            {
+                Debug.MeshesWarning($"[StaticModel] Failed to publish standalone cooked meshlets for '{sourcePath}': {ex.Message}");
+            }
+        }
+
+        private static string GetStandaloneCookedMeshDirectory(string cacheRoot, string sourcePath)
+        {
+            string sourceIdentity = Path.GetFullPath(sourcePath).ToUpperInvariant();
+            byte[] hash = System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(sourceIdentity));
+            return Path.Combine(Path.GetFullPath(cacheRoot), "standalone-cooked-mesh", Convert.ToHexString(hash));
+        }
+
+        /// <summary>
+        /// Computes the semantic request admitted by the standalone cooked-mesh proof cache.
+        /// This deliberately excludes local cooker provenance so a runtime-only deployment can
+        /// hydrate an already validated payload without loading meshoptimizer.
+        /// </summary>
+        private static string ComputeStandaloneCookedMeshRequestIdentity(
+            Settings.ModelImportSettings model,
+            string sourcePath,
+            string[] textureLoadDirSearchPaths)
+        {
+            ModelImportOptions importOptions = CreateImportOptions(model, textureLoadDirSearchPaths)
+                ?? throw new InvalidOperationException("Static model import options are required for cooked-mesh identity.");
+            byte[] importSettings = ModelImportCanonicalSettings.Serialize(importOptions, sourcePath);
+            byte[] sourceHash = ComputeStandaloneSourceClosureHash(sourcePath);
+
+            ulong meshletSettingsHash = MeshletPayloadUtility.ComputeHash(
+                MeshletGenerationSettingsSnapshot.From(importOptions.CookSettings.Meshlets));
+            ulong lodSettingsHash = MeshletPayloadUtility.ComputeHash(
+                MeshLodGenerationSettingsSnapshot.From(importOptions.CookSettings.Lods));
+
+            using MemoryStream canonical = new();
+            using (BinaryWriter writer = new(canonical, System.Text.Encoding.UTF8, leaveOpen: true))
+            {
+                writer.Write(1u);
+                writer.Write(sourceHash.Length);
+                writer.Write(sourceHash);
+                writer.Write(importSettings.Length);
+                writer.Write(importSettings);
+                writer.Write(meshletSettingsHash);
+                writer.Write(lodSettingsHash);
+                writer.Write((ulong)model.PostImportFlags);
+            }
+
+            return Convert.ToHexString(SHA256.HashData(canonical.GetBuffer().AsSpan(0, checked((int)canonical.Length))));
+        }
+
+        private static byte[] ComputeStandaloneSourceClosureHash(string sourcePath)
+        {
+            using MemoryStream canonical = new();
+            using BinaryWriter writer = new(canonical, System.Text.Encoding.UTF8, leaveOpen: true);
+            WriteStandaloneDependencyDigest(writer, "source", sourcePath);
+
+            if (string.Equals(Path.GetExtension(sourcePath), ".gltf", StringComparison.OrdinalIgnoreCase))
+            {
+                using JsonDocument document = JsonDocument.Parse(File.ReadAllBytes(sourcePath));
+                HashSet<string> relativeDependencies = new(StringComparer.Ordinal);
+                CollectLocalGltfUris(document.RootElement, "buffers", relativeDependencies);
+                CollectLocalGltfUris(document.RootElement, "images", relativeDependencies);
+                string sourceDirectory = Path.GetDirectoryName(Path.GetFullPath(sourcePath))!;
+                foreach (string relativePath in relativeDependencies.Order(StringComparer.Ordinal))
+                {
+                    string dependencyPath = Path.GetFullPath(Path.Combine(
+                        sourceDirectory,
+                        Uri.UnescapeDataString(relativePath.Replace('/', Path.DirectorySeparatorChar))));
+                    WriteStandaloneDependencyDigest(writer, relativePath, dependencyPath);
+                }
+            }
+
+            writer.Flush();
+            return SHA256.HashData(canonical.GetBuffer().AsSpan(0, checked((int)canonical.Length)));
+        }
+
+        private static void CollectLocalGltfUris(
+            JsonElement root,
+            string propertyName,
+            HashSet<string> relativeDependencies)
+        {
+            if (!root.TryGetProperty(propertyName, out JsonElement entries) || entries.ValueKind != JsonValueKind.Array)
+                return;
+
+            foreach (JsonElement entry in entries.EnumerateArray())
+            {
+                if (!entry.TryGetProperty("uri", out JsonElement uriElement) || uriElement.ValueKind != JsonValueKind.String)
+                    continue;
+                string? uri = uriElement.GetString();
+                if (string.IsNullOrWhiteSpace(uri) ||
+                    uri.StartsWith("data:", StringComparison.OrdinalIgnoreCase) ||
+                    Uri.TryCreate(uri, UriKind.Absolute, out _))
+                {
+                    continue;
+                }
+
+                relativeDependencies.Add(uri.Replace('\\', '/'));
+            }
+        }
+
+        private static void WriteStandaloneDependencyDigest(BinaryWriter writer, string identity, string path)
+        {
+            writer.Write(identity);
+            using FileStream source = File.OpenRead(path);
+            byte[] digest = SHA256.HashData(source);
+            writer.Write(digest.Length);
+            writer.Write(digest);
+        }
+
+        private static Matrix4x4 CreateUnitTestImportRootMatrix(Settings.ModelImportSettings model)
+        {
+            Matrix4x4 matrix = Matrix4x4.Identity;
+            if (model.Scale != 1.0f)
+                matrix *= Matrix4x4.CreateScale(model.Scale);
+            if (model.ZUp)
+                matrix *= Matrix4x4.CreateRotationX(XRMath.DegToRad(90.0f));
+            if (GetOptionalRootTransformMatrix(model) is { } configuredTransform)
+                matrix *= configuredTransform;
+            return matrix;
+        }
+
+        private static bool IsStandaloneCookedMeshGenerationName(string value)
+            => value.Length == 32 && value.All(static character => char.IsAsciiHexDigit(character));
+
+        private static void RetireStandaloneCookedMeshGenerations(string cacheDirectory, string currentGenerationName)
+        {
+            string generationsDirectory = Path.Combine(cacheDirectory, "generations");
+            if (!Directory.Exists(generationsDirectory))
+                return;
+
+            string fullGenerationsDirectory = Path.GetFullPath(generationsDirectory)
+                .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
+            DirectoryInfo[] retired = Directory.EnumerateDirectories(generationsDirectory)
+                .Select(static path => new DirectoryInfo(path))
+                .Where(directory => !string.Equals(directory.Name, currentGenerationName, StringComparison.OrdinalIgnoreCase))
+                .Where(directory => IsStandaloneCookedMeshGenerationName(directory.Name))
+                .OrderByDescending(static directory => directory.LastWriteTimeUtc)
+                .Skip(2)
+                .ToArray();
+            foreach (DirectoryInfo generation in retired)
+            {
+                string fullPath = Path.GetFullPath(generation.FullName);
+                if (fullPath.StartsWith(fullGenerationsDirectory, StringComparison.OrdinalIgnoreCase))
+                    generation.Delete(recursive: true);
             }
         }
 

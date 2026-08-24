@@ -8,6 +8,12 @@
                 "XREngine.Server/Assets/UnitTestingWorldSettings.jsonc"
             ],
             "url": "./.vscode/schemas/unit-testing-world-settings.schema.json"
+        },
+        {
+            "fileMatch": [
+                "docs/examples/profiling/recipes/*.jsonc"
+            ],
+            "url": "./.vscode/schemas/render-profile-recipe.schema.json"
         }
     ]
 }

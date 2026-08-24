@@ -2,10 +2,9 @@
 
 layout(local_size_x = 256) in;
 
-const uint COMMAND_FLOATS = 20u;
 const uint METADATA_UINTS = 4u;
 
-layout(std430, binding = 0) readonly buffer CulledCommands { float culled[]; };
+layout(std430, binding = 0) readonly buffer VisibleDrawIds { uint visibleDrawIds[]; };
 layout(std430, binding = 1) readonly buffer CulledCountBuffer
 {
     uint CulledCount;
@@ -33,8 +32,7 @@ const uint DOMAIN_EXACT = 3u;
 
 uint ReadSourceCommandIndex(uint logicalIdx)
 {
-    uint base = logicalIdx * COMMAND_FLOATS;
-    return floatBitsToUint(culled[base + 19u]);
+    return visibleDrawIds[logicalIdx];
 }
 
 uint ReadDomain(uint sourceCommandIndex)
@@ -52,8 +50,7 @@ void main()
     if (logicalIdx >= total || logicalIdx >= uint(MaxVisibleCommands))
         return;
 
-    uint base = logicalIdx * COMMAND_FLOATS;
-    if (base + COMMAND_FLOATS > uint(culled.length()))
+    if (logicalIdx >= uint(visibleDrawIds.length()))
         return;
 
     uint sourceCommandIndex = ReadSourceCommandIndex(logicalIdx);

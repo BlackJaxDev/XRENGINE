@@ -134,15 +134,16 @@ public sealed class VulkanP1ValidationTests
     }
 
     [Test]
-    public void DynamicUniformRingBuffer_IsInstrumentedForProfilingBeforeAdoption()
+    public void MappedFrameArena_IsInstrumentedForProfiling()
     {
-        string ringSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Resources/Buffers/VulkanDynamicUniformRingBuffer.cs");
+        string arenaSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Resources/Buffers/VulkanMappedFrameArena.cs") +
+            ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Resources/Buffers/VulkanRenderer.MappedFrameArena.cs");
         string statsSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/Statistics/RuntimeEngine.Rendering.Stats.Vulkan.cs");
         string packetSource = ReadWorkspaceFile("XREngine.Data/Profiling/ProfilerStatsPacket.cs");
         string profilerUiSource = ReadWorkspaceFile("XREngine.Profiler.UI/ProfilerPanelRenderer.cs");
 
-        ringSource.ShouldContain("RecordVulkanDynamicUniformAllocation");
-        ringSource.ShouldContain("RecordVulkanDynamicUniformExhaustion");
+        arenaSource.ShouldContain("RecordVulkanDynamicUniformAllocation");
+        arenaSource.ShouldContain("RecordVulkanDynamicUniformExhaustion");
         statsSource.ShouldContain("VulkanDynamicUniformAllocations");
         statsSource.ShouldContain("VulkanDynamicUniformAllocatedBytes");
         statsSource.ShouldContain("VulkanDynamicUniformExhaustions");
@@ -668,7 +669,7 @@ public sealed class VulkanP1ValidationTests
         string stateSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.StateTracking.cs").Replace("\r\n", "\n");
         string plannerSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/RenderGraph/VulkanRenderer.ResourcePlannerState.cs").Replace("\r\n", "\n");
         string commandBufferSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs").Replace("\r\n", "\n");
-        string loweringSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandChainLowering.cs").Replace("\r\n", "\n");
+        string loweringSource = SourceContractWorkspace.ReadVulkanSourcesContaining("FrameOpResourcePlannerSwitchingState frameOpSwitchingState = ActiveFrameOpResourcePlannerSwitchingState;").Replace("\r\n", "\n");
         string initializationSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Bootstrap/VulkanRenderer.Initialization.cs").Replace("\r\n", "\n");
 
         stateSource.ShouldContain("Dictionary<VulkanFrameOpPlannerStateKey, ResourcePlannerRuntimeState> States");
@@ -743,7 +744,7 @@ public sealed class VulkanP1ValidationTests
     {
         string stateSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.StateTracking.cs");
         string plannerSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/RenderGraph/VulkanRenderer.ResourcePlannerState.cs");
-        string loweringSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandChainLowering.cs");
+        string loweringSource = SourceContractWorkspace.ReadVulkanSourcesContaining("BeginCommandChainResourcePlanReadScope(resourcePlanRevision)");
 
         stateSource.ShouldContain("_commandChainFrozenPlanReaders");
         stateSource.ShouldContain("_commandChainFrozenResourcePlanRevision");

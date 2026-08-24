@@ -103,11 +103,15 @@ Call `start_agent_run` only when all of these conditions are true:
   criteria, constraints, tool policy, and narrow turn, tool-call,
   tool-result-byte, output-token, elapsed-time, retry, and concurrency budgets.
 
-Automatic runs default to at most 3 turns, 8 editor tool calls, 4,096 output
-tokens, 120 seconds, 1 retry, and per-run concurrency 1. Raise an individual
-limit only when the objective requires it and the expected validation benefit
-justifies the additional cost. Global broker concurrency remains bounded by
-`XRE_LOCAL_AGENT_BROKER_MAX_CONCURRENCY`.
+Automatic runs default to at most 3 turns, 8 editor tool calls, 1 retry, and
+per-run concurrency 1. Luna and Terra default to 4,096 combined
+output/reasoning tokens and 120 seconds. Sol defaults to 16,384 tokens and 300
+seconds, or 32,768 tokens and 600 seconds at `xhigh`/`max`, because its deeper
+reasoning can otherwise consume either generic budget before producing visible
+evidence. Explicit token and elapsed-time limits are never raised. Raise any
+other individual limit only when the objective requires it and the expected
+validation benefit justifies the additional cost. Global broker concurrency
+remains bounded by `XRE_LOCAL_AGENT_BROKER_MAX_CONCURRENCY`.
 
 #### Required Coordinator Workflow
 
@@ -233,7 +237,7 @@ pwsh Tools/Invoke-Mcp.ps1 -Session <unique-agent-session> -Method ping
 pwsh Tools/Manage-McpEditorSession.ps1 Stop -Name <unique-agent-session>
 ```
 
-The session build and running editor live under `Build/_AgentValidation/mcp-sessions/<name>/`, so they do not lock `Build/Editor` or normal solution-build outputs. Never stop editor processes by name or shut down an editor you did not start. Use the session manager, which validates PID ownership and only stops the named session.
+The session build and running editor live under `Build/_AgentValidation/00000000-000000-shared/mcp-sessions/<timestamp>-<name>/`, so they do not lock `Build/Editor` or normal solution-build outputs. Commands continue to address the logical `<name>`. Never stop editor processes by name or shut down an editor you did not start. Use the session manager, which validates PID ownership and only stops the named session.
 
 Preferred VS Code tasks:
 
@@ -274,7 +278,9 @@ Tool categories include Setup, Build, Editor, Repo, Docs, Reports, and Deps. `Ex
 
 All AI/LLM-generated outputs that are not intended to be committed must live under `Build/_AgentValidation/`. The folder is ignored by Git and should be treated as disposable local evidence, not durable project documentation.
 
-Keep `Build/_AgentValidation/` bounded. Before creating a new run root, delete old agent validation run subfolders as needed so there are no more than 10 immediate run subfolders under `Build/_AgentValidation/` at once. Preserve only active investigation output or evidence explicitly referenced by a durable `docs/work/` note; otherwise delete stale run folders instead of archiving them elsewhere in the repo.
+Keep `Build/_AgentValidation/` bounded to five immediate directories. `00000000-000000-shared` is the one reserved root for reproducible local tooling, renderer hot-reload generations, and at most five isolated MCP editor sessions. The other four roots are task runs named `yyyyMMdd-HHmmss-short-task-name`; delete the oldest inactive run before creating a fifth task run. Ignored evidence is disposable even when a durable note mentions it; copy any required result into tracked documentation rather than retaining an unbounded artifact tree.
+
+Run `pwsh Tools/Limit-AgentValidation.ps1 -ReserveTaskRun` before creating a task run root; omit `-ReserveTaskRun` for routine cleanup.
 
 Use one run root per task or investigation:
 
@@ -323,7 +329,7 @@ The loop:
    pwsh Tools/Manage-McpEditorSession.ps1 Stop -Name <unique-agent-session>
    ```
 
-6. Review that session's logs under `Build/_AgentValidation/mcp-sessions/<name>/logs/` — for rendering work this is primarily `log_vulkan.log`, `log_opengl.log`, and `log_rendering.log`. Distinguish steady-state messages from shutdown-only teardown noise (for example `VUID-vkDestroyDevice-device-05137` is teardown, not a render bug). Group/filter validation errors, warnings, and the render-pass (`BeginRendering FBO=...`) sequence.
+6. Review that session's logs under `Build/_AgentValidation/00000000-000000-shared/mcp-sessions/<timestamp>-<name>/logs/` — for rendering work this is primarily `log_vulkan.log`, `log_opengl.log`, and `log_rendering.log`. Distinguish steady-state messages from shutdown-only teardown noise (for example `VUID-vkDestroyDevice-device-05137` is teardown, not a render bug). Group/filter validation errors, warnings, and the render-pass (`BeginRendering FBO=...`) sequence.
 7. Form or refine a hypothesis, change exactly one variable (a setting, a toggle, or a targeted code fix), and repeat from step 1 until the issue is understood or resolved. Use `Start -NoBuild` only when the stopped session's existing binaries already contain the source change being tested.
 
 Notes:

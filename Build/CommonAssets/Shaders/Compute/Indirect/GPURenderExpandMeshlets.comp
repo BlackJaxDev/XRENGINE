@@ -2,8 +2,6 @@
 
 layout(local_size_x = 256) in;
 
-const uint COMMAND_FLOATS = 20u;
-const uint HOT_COMMAND_UINTS = 20u;
 const uint MESHLET_RANGE_UINTS = 4u;
 const uint LOD_TRANSITION_UINTS = 4u;
 const uint LOD_TRANSITION_ACTIVE = 1u;
@@ -12,14 +10,6 @@ const uint MESHLET_TASK_INDEX_MASK = 0x7FFFFFFFu;
 const uint METADATA_UINTS = 4u;
 const uint DOMAIN_EXACT = 3u;
 
-const uint COMMAND_MESH_ID = 4u;
-const uint COMMAND_MATERIAL_ID = 6u;
-const uint COMMAND_DRAW_ID = 19u;
-const uint COMMAND_TRANSFORM_ID = 15u;
-const uint HOT_COMMAND_MESH_ID = 4u;
-const uint HOT_COMMAND_MATERIAL_ID = 6u;
-const uint HOT_COMMAND_DRAW_ID = 14u;
-const uint HOT_COMMAND_TRANSFORM_ID = 16u;
 
 struct DrawMetadata
 {
@@ -72,7 +62,7 @@ struct GpuMeshletDescriptor
     uint Reserved2;
 };
 
-layout(std430, binding = 0) readonly buffer VisibleCommandsBuffer { float visibleCommands[]; };
+layout(std430, binding = 0) readonly buffer VisibleDrawIdsBuffer { uint visibleDrawIds[]; };
 layout(std430, binding = 1) readonly buffer CulledCountBuffer
 {
     uint CulledCount;
@@ -95,13 +85,11 @@ layout(std430, binding = 11) buffer MeshletDispatchIndirectBuffer
     uint MeshletDispatchZ;
 };
 layout(std430, binding = 12) buffer MeshletExpansionOverflowFlagBuffer { uint MeshletExpansionOverflowFlag; };
-layout(std430, binding = 13) readonly buffer VisibleHotCommandsBuffer { uint visibleHotCommands[]; };
 layout(std430, binding = 14) buffer MeshletDispatchCountBuffer { uint MeshletDispatchCount; };
 layout(std430, binding = 15) readonly buffer TransparencyMetadataBuffer { uint transparencyMetadata[]; };
 
 uniform int InputCommandCount;
 uniform int MaxMeshletTaskRecords;
-uniform int UseHotCommands;
 uniform int ExpandPreviousLodTransitions;
 uniform uint RejectExactTransparentMultiview;
 
@@ -118,7 +106,7 @@ bool TryReserveTaskSlot(out uint outIndex)
     uint capacity = uint(MaxMeshletTaskRecords);
     while (true)
     {
-        uint current = MeshletTaskCount;
+        uint current = atomicAdd(MeshletTaskCount, 0u);
         if (current >= capacity)
         {
             atomicExchange(MeshletExpansionOverflowFlag, 1u);
@@ -130,15 +118,14 @@ bool TryReserveTaskSlot(out uint outIndex)
         {
             outIndex = current;
             atomicMax(MeshletDispatchX, current + 1u);
-            MeshletDispatchY = 1u;
-            MeshletDispatchZ = 1u;
-            MeshletDispatchCount = 1u;
+            // Y/Z are initialized to one by the reset pass. Only X varies.
+            atomicExchange(MeshletDispatchCount, 1u);
             return true;
         }
     }
 }
 
-void AppendTask(uint meshletIndex, uint drawID, uint transformID, uint materialID)
+void AppendTask(uint meshletIndex, uint drawID, uint transformID, uint selectedMeshID)
 {
     uint taskIndex;
     if (!TryReserveTaskSlot(taskIndex))
@@ -147,10 +134,13 @@ void AppendTask(uint meshletIndex, uint drawID, uint transformID, uint materialI
     meshletTasks[taskIndex].MeshletIndex = meshletIndex;
     meshletTasks[taskIndex].DrawID = drawID;
     meshletTasks[taskIndex].TransformID = transformID;
-    meshletTasks[taskIndex].MaterialID = materialID;
+    // The fourth word is the selected LOD mesh ID.  Material identity remains
+    // in DrawMetadata, so all mesh shader dialects fetch the exact geometry
+    // selected by the LOD stage without widening this fixed-stride record.
+    meshletTasks[taskIndex].MaterialID = selectedMeshID;
 }
 
-void ExpandMeshletRange(uint meshID, uint drawID, uint transformID, uint materialID, bool previousLod)
+void ExpandMeshletRange(uint meshID, uint drawID, uint transformID, uint selectedMeshID, bool previousLod)
 {
     if (meshID == 0u || meshID >= uint(meshletRanges.length()))
         return;
@@ -182,7 +172,7 @@ void ExpandMeshletRange(uint meshID, uint drawID, uint transformID, uint materia
         if (previousLod)
             meshletIndex |= MESHLET_TASK_PREVIOUS_LOD_FLAG;
 
-        AppendTask(meshletIndex, drawID, transformID, materialID);
+        AppendTask(meshletIndex, drawID, transformID, selectedMeshID);
     }
 }
 
@@ -195,27 +185,15 @@ void main()
     if (idx >= total)
         return;
 
-    uint meshID;
-    uint drawID;
-    uint transformID;
-    uint materialID;
+    if (idx >= uint(visibleDrawIds.length()))
+        return;
 
-    if (UseHotCommands != 0)
-    {
-        uint base = idx * HOT_COMMAND_UINTS;
-        meshID = visibleHotCommands[base + HOT_COMMAND_MESH_ID];
-        drawID = visibleHotCommands[base + HOT_COMMAND_DRAW_ID];
-        transformID = visibleHotCommands[base + HOT_COMMAND_TRANSFORM_ID];
-        materialID = visibleHotCommands[base + HOT_COMMAND_MATERIAL_ID];
-    }
-    else
-    {
-        uint base = idx * COMMAND_FLOATS;
-        meshID = floatBitsToUint(visibleCommands[base + COMMAND_MESH_ID]);
-        drawID = floatBitsToUint(visibleCommands[base + COMMAND_DRAW_ID]);
-        transformID = floatBitsToUint(visibleCommands[base + COMMAND_TRANSFORM_ID]);
-        materialID = floatBitsToUint(visibleCommands[base + COMMAND_MATERIAL_ID]);
-    }
+    uint drawID = visibleDrawIds[idx];
+    if (drawID >= uint(Draws.length()))
+        return;
+    DrawMetadata meta = Draws[drawID];
+    uint meshID = meta.MeshID;
+    uint transformID = meta.TransformID;
 
     if (RejectExactTransparentMultiview != 0u)
     {
@@ -228,30 +206,31 @@ void main()
             return;
     }
 
-    if (drawID < uint(Draws.length()))
-    {
-        DrawMetadata meta = Draws[drawID];
-        transformID = meta.TransformID;
-        materialID = meta.MaterialID;
-    }
+    uint transitionBase = drawID * LOD_TRANSITION_UINTS;
+    uint transitionFlags = transitionBase + 3u < uint(lodTransitions.length())
+        ? lodTransitions[transitionBase + 2u]
+        : 0u;
+
+    const uint MESHLET_INELIGIBLE_FLAGS =
+        (1u << 0u) | (1u << 2u) | (1u << 3u) | (1u << 4u) | (1u << 9u) |
+        (1u << 10u) | (1u << 11u) | (1u << 12u) | (1u << 16u) | (1u << 20u) |
+        (1u << 21u);
+    const uint OPAQUE_DEFERRED_STATE_CLASS = 1u;
+    // Keep this in exact lockstep with material scatter: unsupported rows stay
+    // in the conventional stream and are never appended here.
+    if (meta.SkinID != 0u ||
+        meta.InstanceCount != 1u ||
+        meta.StateClassID != OPAQUE_DEFERRED_STATE_CLASS ||
+        (meta.Flags & MESHLET_INELIGIBLE_FLAGS) != 0u ||
+        (transitionFlags & LOD_TRANSITION_ACTIVE) != 0u)
+        return;
 
     if (meshID >= uint(meshData.length()) / MESHLET_RANGE_UINTS)
         return;
 
-    ExpandMeshletRange(meshID, drawID, transformID, materialID, false);
+    ExpandMeshletRange(meshID, drawID, transformID, meshID, false);
 
     if (ExpandPreviousLodTransitions == 0)
         return;
 
-    uint transitionBase = drawID * LOD_TRANSITION_UINTS;
-    if (transitionBase + 3u >= uint(lodTransitions.length()))
-        return;
-
-    uint previousMeshID = lodTransitions[transitionBase + 0u];
-    uint transitionFlags = lodTransitions[transitionBase + 2u];
-    float transitionProgress = clamp(uintBitsToFloat(lodTransitions[transitionBase + 3u]), 0.0, 1.0);
-    bool transitionActive = (transitionFlags & LOD_TRANSITION_ACTIVE) != 0u && previousMeshID != 0u && transitionProgress < 1.0;
-
-    if (transitionActive)
-        ExpandMeshletRange(previousMeshID, drawID, transformID, materialID, true);
 }

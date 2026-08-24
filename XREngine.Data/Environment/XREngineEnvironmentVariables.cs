@@ -125,6 +125,8 @@ public static class XREngineEnvironmentVariables
     public const string ProfileLights = "XRE_PROFILE_LIGHTS";
     public const string ProfileViewport = "XRE_PROFILE_VIEWPORT";
     public const string ProfileRenderScale = "XRE_PROFILE_RENDER_SCALE";
+    public const string ProfileWindowWidth = "XRE_PROFILE_WINDOW_WIDTH";
+    public const string ProfileWindowHeight = "XRE_PROFILE_WINDOW_HEIGHT";
     public const string ShaderCacheMode = "XRE_SHADER_CACHE_MODE";
     public const string TextureCacheMode = "XRE_TEXTURE_CACHE_MODE";
     public const string TextureStreamingCacheWarmupEnabled = "XRE_TEXTURE_STREAMING_CACHE_WARMUP_ENABLED";
@@ -133,6 +135,8 @@ public static class XREngineEnvironmentVariables
     public const string ProfilePhase = "XRE_PROFILE_PHASE";
     public const string ProfileWarmupSeconds = "XRE_PROFILE_WARMUP_SEC";
     public const string ProfileCaptureSeconds = "XRE_PROFILE_CAPTURE_SEC";
+    public const string ProfileSampleIntervalFrames = "XRE_PROFILE_SAMPLE_INTERVAL_FRAMES";
+    public const string ProfileVulkanGpuDrivenProfile = "XRE_PROFILE_VULKAN_GPU_DRIVEN_PROFILE";
     public const string GpuDeviceId = "XRE_GPU_DEVICE_ID";
     public const string GpuDriver = "XRE_GPU_DRIVER";
     public const string GpuTimestampDense = "XRE_GPU_TIMESTAMP_DENSE";
@@ -244,10 +248,18 @@ public static class XREngineEnvironmentVariables
     public const string VulkanDescriptorFingerprintDiag = "XRE_VULKAN_DESCRIPTOR_FINGERPRINT_DIAG";
     public const string VulkanMaterialBindingDiag = "XRE_VULKAN_MATERIAL_BINDING_DIAG";
     public const string VulkanRecordingDiag = "XRE_VULKAN_RECORDING_DIAG";
+
+    /// <summary>
+    /// One-shot destructive validation hook that marks the Vulkan device lost
+    /// after at least one resident draw template has been published.
+    /// </summary>
+    public const string VulkanResidentTemplateDeviceLossInject =
+        "XRE_VULKAN_RESIDENT_TEMPLATE_DEVICE_LOSS_INJECT";
     public const string VulkanRecordingProfileDetail = "XRE_VULKAN_RECORDING_PROFILE_DETAIL";
     public const string VulkanCommandBufferLabels = "XRE_VULKAN_COMMAND_BUFFER_LABELS";
     public const string VulkanCommandChains = "XRE_VULKAN_COMMAND_CHAINS";
     public const string VulkanCommandChainsSingleThread = "XRE_VULKAN_COMMAND_CHAINS_SINGLE_THREAD";
+    public const string VulkanCommandChainWorkerCount = "XRE_VULKAN_COMMAND_CHAIN_WORKER_COUNT";
     public const string VulkanCommandChainValidate = "XRE_VULKAN_COMMAND_CHAIN_VALIDATE";
     public const string VulkanCommandChainTrace = "XRE_VULKAN_COMMAND_CHAIN_TRACE";
     public const string VulkanDisableParallelChainRecording = "XRE_VULKAN_DISABLE_PARALLEL_CHAIN_RECORDING";
@@ -339,6 +351,11 @@ public static class XREngineEnvironmentVariables
     public const string UploadQueueChunkLogging = "XRE_UPLOAD_QUEUE_CHUNK_LOGGING";
     public const string ImGuiViewportDisposeNative = "XRE_IMGUI_VIEWPORT_DISPOSE_NATIVE";
 
+    public const string RenderWorkerThreads = "XRE_RENDER_WORKER_THREADS";
+    public const string RenderWorkerThreadCap = "XRE_RENDER_WORKER_THREAD_CAP";
+    public const string ReservedForegroundThreads = "XRE_RESERVED_FOREGROUND_THREADS";
+    public const string AllowCpuOversubscription = "XRE_ALLOW_CPU_OVERSUBSCRIPTION";
+    public const string RenderWorkerQos = "XRE_RENDER_WORKER_QOS";
     public const string JobWorkers = "XR_JOB_WORKERS";
     public const string JobWorkerCap = "XR_JOB_WORKER_CAP";
     public const string JobQueueLimit = "XR_JOB_QUEUE_LIMIT";

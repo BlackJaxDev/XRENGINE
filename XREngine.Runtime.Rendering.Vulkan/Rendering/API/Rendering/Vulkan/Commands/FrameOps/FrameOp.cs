@@ -1,12 +1,30 @@
-using System.Threading;
-
 namespace XREngine.Rendering.Vulkan;
 
 internal abstract record FrameOp(int PassIndex, XRFrameBuffer? Target, FrameOpContext Context)
 {
-    public int PassIndex { get; internal set; } = PassIndex;
-    public XRFrameBuffer? Target { get; internal set; } = Target;
-    public FrameOpContext Context { get; internal set; } = Context;
+    private int _passIndex = PassIndex;
+    private XRFrameBuffer? _target = Target;
+    private FrameOpContext _context = Context;
+    private FrameOpResourceUseList _resourceUses;
+
+    public int PassIndex
+    {
+        get => _passIndex;
+        internal set => _passIndex = value;
+    }
+    public XRFrameBuffer? Target
+    {
+        get => _target;
+        internal set => _target = value;
+    }
+    public FrameOpContext Context
+    {
+        get => _context;
+        internal set => _context = value;
+    }
+    internal ref readonly FrameOpContext ContextReference => ref _context;
+    internal ref readonly FrameOpResourceUseList ResourceUsesReference
+        => ref _resourceUses;
     public abstract EVulkanPrimaryPlanNodeKind Kind { get; }
 
     /// <summary>
@@ -16,138 +34,47 @@ internal abstract record FrameOp(int PassIndex, XRFrameBuffer? Target, FrameOpCo
     internal virtual bool RequiresPrimaryRecordingContext => true;
 
     /// <summary>
-    /// Routes this operation to its strongly typed primary-command handler.
-    /// </summary>
-    internal abstract int RecordPrimary(
-        VulkanRenderer renderer,
-        scoped ref VulkanRenderer.PrimaryCommandBufferRecordingState recordingState,
-        in VulkanPrimaryOperationRecordingInfo recordingInfo);
-
-    /// <summary>
-    /// Executes a planned secondary bucket shared by operations that support
-    /// secondary-range recording.
-    /// </summary>
-    protected static bool TryRecordSecondaryBucket(
-        VulkanRenderer renderer,
-        scoped ref VulkanRenderer.PrimaryCommandBufferRecordingState recordingState,
-        in VulkanPrimaryOperationRecordingInfo recordingInfo,
-        string label,
-        out int lastOperationIndex)
-    {
-        lastOperationIndex = recordingInfo.OperationIndex;
-        if (!recordingInfo.ExecutesSecondaryRange ||
-            !VulkanRenderer.TryGetSecondaryBucketForStart(
-                recordingState.SecondaryBuckets,
-                recordingState.SecondaryBucketByStart,
-                recordingInfo.OperationIndex,
-                out VulkanSecondaryRecordingBucket bucket) ||
-            !renderer.TryRecordSecondaryBucket(
-                primaryCommandBuffer: recordingState.CommandBuffer,
-                recordingState.FrameDataImageIndex,
-                recordingState.ExecutedCommandChainSecondaryHandles,
-                recordingState.Ops,
-                recordingInfo.OperationIndex,
-                bucket,
-                recordingInfo.PassIndex,
-                recordingState.RenderScope.IsActive,
-                recordingState.ActiveInlineQuery is not null,
-                label))
-        {
-            return false;
-        }
-
-        lastOperationIndex = recordingInfo.OperationIndex + bucket.Count - 1;
-        return true;
-    }
-
-    /// <summary>
     /// Rents an operation whose lifetime is bounded by the current render frame.
     /// The same slot is not reused again until a later frame, so deferred command
     /// recording can safely retain references for the rest of this frame.
     /// </summary>
-    protected static bool TryRentForCurrentFrame<T>(out T? reusable)
+    protected static bool TryRentForCurrentFrame<T>(
+        in FrameOpContext context,
+        out T? reusable)
         where T : FrameOp
     {
         reusable = null;
-        if (RuntimeRenderingHostServices.FrameTiming.CurrentRenderPipelineContext is null)
+        if (context.OperationWorkspace is null)
             return false;
 
         ulong frameId = RuntimeRenderingHostServices.FrameTiming.CurrentRenderFrameId;
         if (frameId == 0)
             return false;
 
-        if (FramePool<T>.FrameId != frameId)
-        {
-            FramePool<T>.FrameId = frameId;
-            FramePool<T>.Cursor = 0;
-        }
-
-        List<T> pool = FramePool<T>.Items ??= [];
-        int slot = FramePool<T>.Cursor++;
-        if (slot < pool.Count)
-            reusable = pool[slot];
-
-        return true;
+        return context.OperationWorkspace.TryRent(frameId, out reusable);
     }
 
-    protected static T RetainForCurrentFrame<T>(T created)
+    internal ref FrameOpResourceUseList BeginResourceUseUpdate()
+    {
+        _resourceUses.Clear();
+        return ref _resourceUses;
+    }
+
+    /// <summary>
+    /// Freezes an authoring operation before work that can advance the render
+    /// frame and reuse its pooled instance. This preserves both the concrete
+    /// operation payload and its resource-use column.
+    /// </summary>
+    internal FrameOp CreateSealedAuthoringCopy()
+    {
+        FrameOp copy = (FrameOp)MemberwiseClone();
+        copy._resourceUses = _resourceUses.CreateSealedCopy();
+        return copy;
+    }
+
+    protected static T RetainForCurrentFrame<T>(T created, in FrameOpContext context)
         where T : FrameOp
     {
-        (FramePool<T>.Items ??= []).Add(created);
-        return created;
-    }
-
-    internal static void ReleaseCurrentThreadPools()
-    {
-        FramePool<ClearOp>.ReleaseCurrentThread();
-        FramePool<MeshDrawOp>.ReleaseCurrentThread();
-        FramePool<IndirectDrawOp>.ReleaseCurrentThread();
-        FramePool<MemoryBarrierOp>.ReleaseCurrentThread();
-        FramePool<ComputeDispatchOp>.ReleaseCurrentThread();
-    }
-
-    private static class FramePool<T>
-        where T : FrameOp
-    {
-        private static readonly ThreadLocal<PoolState> ThreadState =
-            new(static () => new PoolState(), trackAllValues: false);
-
-        private static PoolState Current
-            => ThreadState.Value
-                ?? throw new InvalidOperationException(
-                    "The Vulkan frame-operation pool has been disposed.");
-
-        internal static List<T>? Items
-        {
-            get => Current.Items;
-            set => Current.Items = value;
-        }
-
-        internal static ulong FrameId
-        {
-            get => Current.FrameId;
-            set => Current.FrameId = value;
-        }
-
-        internal static int Cursor
-        {
-            get => Current.Cursor;
-            set => Current.Cursor = value;
-        }
-
-        internal static void ReleaseCurrentThread()
-        {
-            Current.Items?.Clear();
-            Current.Items = null;
-            Current.FrameId = 0;
-            Current.Cursor = 0;
-        }
-
-        private sealed class PoolState
-        {
-            public List<T>? Items;
-            public ulong FrameId;
-            public int Cursor;
-        }
+        return context.OperationWorkspace?.Retain(created) ?? created;
     }
 }

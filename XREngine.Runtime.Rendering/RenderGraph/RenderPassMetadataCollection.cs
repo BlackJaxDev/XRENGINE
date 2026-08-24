@@ -33,6 +33,24 @@ public sealed class RenderPassMetadataCollection
         return new RenderPassBuilder(metadata);
     }
 
+    /// <summary>
+    /// Resolves a previously described pass by its stable render-graph name.
+    /// </summary>
+    public bool TryGetPassIndex(string name, out int passIndex)
+    {
+        foreach (RenderPassMetadata pass in _passes.Values)
+        {
+            if (!string.Equals(pass.Name, name, StringComparison.Ordinal))
+                continue;
+
+            passIndex = pass.PassIndex;
+            return true;
+        }
+
+        passIndex = default;
+        return false;
+    }
+
     private static void EnsureDefaultDescriptorSchemas(RenderPassMetadata metadata)
     {
         metadata.AddDescriptorSchema(RenderGraphDescriptorSchemaCatalog.EngineGlobals.Name);

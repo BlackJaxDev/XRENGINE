@@ -1,4 +1,3 @@
-using Silk.NET.Vulkan;
 using XREngine.Rendering.DLSS;
 
 namespace XREngine.Rendering.Vulkan;
@@ -28,44 +27,4 @@ internal sealed record DlssUpscaleOp(
     : DlssFrameOp(PassIndex, Context)
 {
     public override EVulkanPrimaryPlanNodeKind Kind => EVulkanPrimaryPlanNodeKind.DlssUpscale;
-    protected override string CommandLabel => "DLSS.SuperResolution";
-
-    protected override void RecordStreamlineCommand(
-        VulkanRenderer renderer,
-        CommandBuffer commandBuffer,
-        uint imageIndex)
-    {
-        VulkanStreamlineImage sourceColor =
-            TransitionImageToGeneral(renderer, commandBuffer, SourceColor);
-        VulkanStreamlineImage depth =
-            TransitionImageToGeneral(renderer, commandBuffer, Depth);
-        VulkanStreamlineImage motion =
-            TransitionImageToGeneral(renderer, commandBuffer, Motion);
-        VulkanStreamlineImage outputColor =
-            TransitionImageToGeneral(renderer, commandBuffer, OutputColor);
-        VulkanStreamlineImage? exposure = Exposure.HasValue
-            ? TransitionImageToGeneral(
-                renderer,
-                commandBuffer,
-                Exposure.Value)
-            : null;
-
-        VulkanUpscaleBridgeDispatchParameters parameters = Parameters;
-        if (!NvidiaDlssManager.Native.TryRecordNativeVulkanUpscale(
-                Session,
-                commandBuffer,
-                sourceColor,
-                depth,
-                motion,
-                outputColor,
-                exposure,
-                in parameters,
-                out string failureReason))
-            ThrowRecordingFailure("upscale", failureReason);
-
-        MakeOutputVisibleForSampling(
-            renderer,
-            commandBuffer,
-            outputColor);
-    }
 }

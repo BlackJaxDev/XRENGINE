@@ -12,28 +12,12 @@ internal sealed record BufferCopyOp(
     Buffer DestinationBuffer,
     ulong DestinationOffset,
     ulong ByteCount,
+    bool RequireGpuWriteVisibility,
+    GpuDiagnosticSnapshotReceipt? DiagnosticReceipt,
     string Label,
     FrameOpContext Context) 
     : FrameOp(PassIndex, null, Context)
 {
     public override EVulkanPrimaryPlanNodeKind Kind => EVulkanPrimaryPlanNodeKind.BufferCopy;
 
-    internal override int RecordPrimary(
-        VulkanRenderer renderer,
-        scoped ref VulkanRenderer.PrimaryCommandBufferRecordingState recordingState,
-        in VulkanPrimaryOperationRecordingInfo recordingInfo)
-    {
-        if (TryRecordSecondaryBucket(
-                renderer,
-                ref recordingState,
-                in recordingInfo,
-                Label,
-                out int lastOperationIndex))
-            return lastOperationIndex;
-
-        renderer.CmdBeginLabel(recordingState.CommandBuffer, Label);
-        renderer.RecordBufferCopyOp(recordingState.CommandBuffer, this);
-        renderer.CmdEndLabel(recordingState.CommandBuffer);
-        return recordingInfo.OperationIndex;
-    }
 }

@@ -3,7 +3,7 @@ using System;
 
 namespace XREngine.Rendering.Vulkan;
 
-public unsafe partial class VulkanRenderer
+internal sealed partial class VulkanOutputRuntime
 {
     private const string ObsHookLayerName = "VK_LAYER_OBS_HOOK";
     private const string ObsHookPolicyEnvVar = XREngineEnvironmentVariables.VkObsHook;
@@ -11,18 +11,16 @@ public unsafe partial class VulkanRenderer
     private const string VulkanLoaderLayersDisableEnvVar = XREngineEnvironmentVariables.VulkanLoaderLayersDisable;
     private const string ObsRequiredDeviceExtension = "VK_KHR_external_memory_win32";
 
-    private EVulkanObsHookPolicy _obsHookPolicy = EVulkanObsHookPolicy.Auto;
-    private bool _obsHookLayerAvailable;
-    private bool _obsHookDisabledForProcess;
-    private bool _obsHookDisabledByLoader;
-    private bool _obsHookDeviceCaptureReady;
-    private string? _obsHookDeviceCaptureFailure;
-    private string? _obsHookLayerManifestPath;
+    private ref EVulkanObsHookPolicy _obsHookPolicy => ref ObsHook.Policy;
+    private ref bool _obsHookLayerAvailable => ref ObsHook.LayerAvailable;
+    private ref bool _obsHookDisabledForProcess => ref ObsHook.DisabledForProcess;
+    private ref bool _obsHookDisabledByLoader => ref ObsHook.DisabledByLoader;
+    private ref string? _obsHookLayerManifestPath => ref ObsHook.LayerManifestPath;
 
     private bool ObsHookLayerLikelyEnabled
         => _obsHookLayerAvailable && !_obsHookDisabledForProcess && !_obsHookDisabledByLoader;
 
-    private void PrepareObsHookCompatibility()
+    internal void PrepareObsHookCompatibility()
     {
         _obsHookPolicy = ResolveObsHookPolicy();
 
@@ -85,7 +83,10 @@ public unsafe partial class VulkanRenderer
         }
     }
 
-    private void ValidateObsHookDeviceCompatibility(HashSet<string> availableExtensionSet, string[] enabledExtensions)
+    internal void ValidateObsHookDeviceCompatibility(
+        VulkanDeviceContext deviceContext,
+        HashSet<string> availableExtensionSet,
+        string[] enabledExtensions)
     {
         if (_obsHookPolicy == EVulkanObsHookPolicy.Auto && !ObsHookLayerLikelyEnabled)
             return;
@@ -99,17 +100,18 @@ public unsafe partial class VulkanRenderer
         if (externalMemoryWin32Available)
         {
             sharedTextureImportSupported = TryQueryObsSharedTextureImportSupport(
+                deviceContext,
                 out sharedTextureImportFeatures,
                 out sharedTextureImportResult);
         }
 
-        _obsHookDeviceCaptureReady =
+        Capture.ObsHookDeviceCaptureReady =
             ObsHookLayerLikelyEnabled &&
             externalMemoryWin32Available &&
             externalMemoryWin32Enabled &&
             sharedTextureImportSupported;
 
-        _obsHookDeviceCaptureFailure = _obsHookDeviceCaptureReady
+        Capture.ObsHookDeviceCaptureFailure = Capture.ObsHookDeviceCaptureReady
             ? null
             : BuildObsHookDeviceCaptureFailure(
                 externalMemoryWin32Available,
@@ -118,13 +120,13 @@ public unsafe partial class VulkanRenderer
                 sharedTextureImportResult,
                 sharedTextureImportFeatures);
 
-        if (_obsHookPolicy == EVulkanObsHookPolicy.Require && !_obsHookDeviceCaptureReady)
+        if (_obsHookPolicy == EVulkanObsHookPolicy.Require && !Capture.ObsHookDeviceCaptureReady)
         {
             throw new InvalidOperationException(
-                $"{ObsHookPolicyEnvVar}=Require was requested, but Vulkan OBS capture is not ready: {_obsHookDeviceCaptureFailure}");
+                $"{ObsHookPolicyEnvVar}=Require was requested, but Vulkan OBS capture is not ready: {Capture.ObsHookDeviceCaptureFailure}");
         }
 
-        if (_obsHookDeviceCaptureReady)
+        if (Capture.ObsHookDeviceCaptureReady)
         {
             Debug.Vulkan(
                 "[Vulkan][OBS] Capture-ready device path confirmed: {0}=enabled, D3D11 texture KMT import result={1}, features={2}.",
@@ -136,11 +138,12 @@ public unsafe partial class VulkanRenderer
         {
             Debug.VulkanWarning(
                 "[Vulkan][OBS] Capture device path is not ready: {0}",
-                _obsHookDeviceCaptureFailure ?? "unknown failure");
+                Capture.ObsHookDeviceCaptureFailure ?? "unknown failure");
         }
     }
 
-    private bool TryQueryObsSharedTextureImportSupport(
+    private static unsafe bool TryQueryObsSharedTextureImportSupport(
+        VulkanDeviceContext deviceContext,
         out ExternalMemoryFeatureFlags features,
         out Result result)
     {
@@ -176,8 +179,8 @@ public unsafe partial class VulkanRenderer
             PNext = &externalProperties,
         };
 
-        result = Api!.GetPhysicalDeviceImageFormatProperties2(
-            _physicalDevice,
+        result = deviceContext.Api.GetPhysicalDeviceImageFormatProperties2(
+            deviceContext.PhysicalDevice,
             &formatInfo,
             &imageFormatProperties);
 

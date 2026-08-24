@@ -18,6 +18,7 @@ if ($cohortDefinition.Count -ne 1) {
 $cohortDefinition = $cohortDefinition[0]
 
 if ([string]::IsNullOrWhiteSpace($RunRoot)) {
+    & (Join-Path $repoRoot 'Tools\Limit-AgentValidation.ps1') -ReserveTaskRun | Out-Null
     $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
     $RunRoot = "Build\_AgentValidation\$stamp-vulkan-profile-overhead"
 }

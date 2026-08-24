@@ -152,6 +152,7 @@ internal sealed class McpStdioServer(
     {
         AgentRunRequest request = arguments.Deserialize<AgentRunRequest>(s_jsonOptions)
             ?? throw new ArgumentException("start_agent_run arguments are invalid.");
+        request = AgentRunBudgetPolicy.ApplyDefaults(request, arguments);
         string runId = registry.Start(request);
         return new
         {
@@ -159,6 +160,10 @@ internal sealed class McpStdioServer(
             status = AgentRunStatus.Queued,
             requestedModel = request.RequestedModel,
             actualModel = string.Empty,
+            requestedReasoningEffort = request.ReasoningEffort,
+            requestedTextVerbosity = request.TextVerbosity,
+            maxOutputTokens = request.Budget.MaxOutputTokens,
+            maxElapsedSeconds = request.Budget.MaxElapsedSeconds,
             useBackgroundMode = request.UseBackgroundMode,
             message = "Run queued. Poll get_agent_run until status is terminal.",
         };
@@ -201,7 +206,7 @@ internal sealed class McpStdioServer(
             ["serverInfo"] = new JsonObject
             {
                 ["name"] = "XREngine.LocalAgentBroker",
-                ["version"] = "0.3.0",
+                ["version"] = "0.7.0",
             },
             ["capabilities"] = new JsonObject
             {

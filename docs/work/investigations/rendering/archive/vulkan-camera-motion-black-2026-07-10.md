@@ -1,5 +1,8 @@
 # Vulkan Camera-Motion Black Frames — 2026-07-10
 
+> Historical incident record. For current causes, invariants, and triage, use
+> [Vulkan Desktop Camera Motion, Stale Frames, And CPU Scaling](../vulkan-camera-motion-black-flicker-2026-08-10.md).
+
 ## Problem
 
 The live Vulkan editor viewport can become completely black while the editor

@@ -124,8 +124,49 @@ namespace XREngine.Rendering
             }
         }
 
-        public IEnumerable<VoidPtr> GetMappedAddresses()
-            => ActivelyMapping.Select(x => x.GetMappedAddress()).Where(x => x.HasValue).Select(x => x!.Value);
+        /// <summary>
+        /// Reads the first active backend mapping while its address is valid. The callback must not retain the span.
+        /// </summary>
+        public bool TryReadMapped(DataBufferMappedReadCallback callback)
+        {
+            ArgumentNullException.ThrowIfNull(callback);
+            for (int i = 0; i < ActivelyMapping.Count; i++)
+                if (ActivelyMapping[i].TryReadMapped(callback))
+                    return true;
+            return false;
+        }
+
+        /// <summary>
+        /// Writes the first active backend mapping while its address is valid. The callback must not retain the span.
+        /// </summary>
+        public bool TryWriteMapped(DataBufferMappedWriteCallback callback)
+        {
+            ArgumentNullException.ThrowIfNull(callback);
+            for (int i = 0; i < ActivelyMapping.Count; i++)
+                if (ActivelyMapping[i].TryWriteMapped(callback))
+                    return true;
+            return false;
+        }
+
+        public bool TryReadMapped<TState>(ref TState state, DataBufferMappedReadCallback<TState> callback)
+            where TState : allows ref struct
+        {
+            ArgumentNullException.ThrowIfNull(callback);
+            for (int i = 0; i < ActivelyMapping.Count; i++)
+                if (ActivelyMapping[i].TryReadMapped(ref state, callback))
+                    return true;
+            return false;
+        }
+
+        public bool TryWriteMapped<TState>(ref TState state, DataBufferMappedWriteCallback<TState> callback)
+            where TState : allows ref struct
+        {
+            ArgumentNullException.ThrowIfNull(callback);
+            for (int i = 0; i < ActivelyMapping.Count; i++)
+                if (ActivelyMapping[i].TryWriteMapped(ref state, callback))
+                    return true;
+            return false;
+        }
 
         // Defaults: no implicit bits. Callers set exactly what they need.
         private EBufferMapStorageFlags _storageFlags = 0;

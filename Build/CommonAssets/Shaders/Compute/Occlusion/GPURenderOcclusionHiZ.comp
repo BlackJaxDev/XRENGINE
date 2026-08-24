@@ -5,9 +5,10 @@
 
 layout(local_size_x = 256) in;
 
-// Command layout: 20 32-bit lanes per compact command.
-layout(std430, binding = 0) buffer InputCommandsBuffer { float inCommands[]; };
-layout(std430, binding = 1) buffer OutputCommandsBuffer { float outCommands[]; };
+// Compact visible draw-ID ping-pong. Scene-native metadata/bounds remain the
+// source of truth; no 80-byte command copies cross this stage.
+layout(std430, binding = 0) buffer InputDrawIdsBuffer { uint inDrawIds[]; };
+layout(std430, binding = 1) buffer OutputDrawIdsBuffer { uint outDrawIds[]; };
 
 // Input counters (from frustum/BVH cull stage)
 layout(std430, binding = 2) buffer InCountBuffer
@@ -39,10 +40,16 @@ struct BoundsGpu
 };
 
 layout(std430, binding = 5) readonly buffer BoundsBuffer { BoundsGpu Bounds[]; };
+struct DrawMetadata
+{
+    uint DrawID; uint MeshID; uint SubmeshID; uint MaterialID;
+    uint TransformID; uint SkinID; uint RenderPassMask; uint LayerMask;
+    uint Flags; uint LodPolicy; uint StateClassID; uint InstanceCount;
+    uint RenderPass; uint RenderIdentityID; uint LogicalMeshID; uint BoundsID;
+};
+layout(std430, binding = 10) readonly buffer DrawMetadataBuffer { DrawMetadata Draws[]; };
 // Two uints per DrawID: { RenderIdentityID + 1, visible }.
 layout(std430, binding = 6) buffer VisibilityHistoryBuffer { uint VisibilityHistory[]; };
-layout(std430, binding = 9) readonly buffer InputHotCommandsBuffer { uint inHotCommands[]; };
-layout(std430, binding = 10) writeonly buffer OutputHotCommandsBuffer { uint outHotCommands[]; };
 
 struct GPUViewDescriptor
 {
@@ -106,23 +113,32 @@ uniform mat4 ViewProj;
 uniform int HiZMaxMip;
 uniform uint IsReversedDepth; // 1 if camera uses reversed Z
 uniform int MaxOutputCommands;
-uniform int UseHotCommands;
 uniform int TwoPassPhase; // 0 = legacy refine, 2 = late two-pass visibility update
 uniform int ActiveViewCount;
 uniform int CurrentRenderPass;
+uniform uint ForcePhaseOneVisible;
+uniform int ClipDepthRange;
+uniform int FramebufferTextureYDirection;
 
-const int COMMAND_FLOATS = 20;
-const int HOT_UINTS = 20;
 const int HIZ_TARGET_TEXEL_SPAN = 6;
 const int HIZ_MAX_SAMPLE_TEXELS = 8;
+const float HIZ_DEPTH_EPSILON = 0.0001;
 
 #define FLAG_TRANSPARENT (1u << 0u)
 
-uint LoadCommandUInt(int base, int hotBase, int commandLane, int hotLane)
+vec2 ClipToFramebufferUv(vec2 ndc)
 {
-    return UseHotCommands != 0
-        ? inHotCommands[hotBase + hotLane]
-        : floatBitsToUint(inCommands[base + commandLane]);
+    vec2 uv = ndc * 0.5 + 0.5;
+    if (FramebufferTextureYDirection == 1)
+        uv.y = 1.0 - uv.y;
+    return uv;
+}
+
+float ClipToFramebufferDepth(float ndcDepth)
+{
+    return ClipDepthRange == 0
+        ? ndcDepth
+        : ndcDepth * 0.5 + 0.5;
 }
 
 bool LoadPreviousVisibility(uint drawId, uint renderIdentityId, out uint recordBase)
@@ -212,28 +228,6 @@ void AppendPerView(uint sourceCommandIndex, uint outputCommandIndex, vec3 comman
     }
 }
 
-uint LoadBoundsId(int base, int hotBase)
-{
-    if (UseHotCommands != 0)
-        return inHotCommands[hotBase + 19];
-
-    return floatBitsToUint(inCommands[base + 18]);
-}
-
-bool IsValidCommand(int base)
-{
-    // Minimal validity: InstanceCount > 0
-    uint instanceCount;
-    if (UseHotCommands != 0)
-    {
-        int hotBase = (base / COMMAND_FLOATS) * HOT_UINTS;
-        instanceCount = inHotCommands[hotBase + 7];
-    }
-    else
-        instanceCount = floatBitsToUint(inCommands[base + 7]);
-
-    return instanceCount != 0u;
-}
 
 float CombineHiZDepth(float a, float b)
 {
@@ -246,6 +240,17 @@ float CombineHiZDepth(float a, float b)
 float InitialHiZDepth()
 {
     return IsReversedDepth != 0u ? 1.0 : 0.0;
+}
+
+bool IsDefinitelyBehindHiZ(float nearestDepth, float hizDepth)
+{
+    // Bounds projection and fixed-function rasterization do not produce bit-
+    // identical depth for a surface that contributed to the pyramid. Require
+    // separation beyond that precision envelope before rejecting the draw.
+    if (IsReversedDepth != 0u)
+        return nearestDepth < hizDepth - HIZ_DEPTH_EPSILON;
+
+    return nearestDepth > hizDepth + HIZ_DEPTH_EPSILON;
 }
 
 int SelectHiZMip(vec2 uvMin, vec2 uvMax)
@@ -326,11 +331,11 @@ bool HiZOccludedAabb(vec3 aabbMin, vec3 aabbMax)
             return false;
 
         vec3 ndc = clip.xyz / clip.w;
-        vec2 uv = ndc.xy * 0.5 + 0.5;
+        vec2 uv = ClipToFramebufferUv(ndc.xy);
         uvMin = min(uvMin, uv);
         uvMax = max(uvMax, uv);
 
-        float depth = ndc.z * 0.5 + 0.5;
+        float depth = ClipToFramebufferDepth(ndc.z);
         if (depth < 0.0 || depth > 1.0)
             return false;
 
@@ -348,15 +353,11 @@ bool HiZOccludedAabb(vec3 aabbMin, vec3 aabbMax)
 
     int mip = SelectHiZMip(clampedUvMin, clampedUvMax);
     float hiz = SampleHiZConservative(clampedUvMin, clampedUvMax, mip);
-    if (IsReversedDepth != 0u)
-        return nearestDepth < hiz;
-
-    return nearestDepth > hiz;
+    return IsDefinitelyBehindHiZ(nearestDepth, hiz);
 }
 
-bool TryLoadAabb(int base, int hotBase, out vec3 aabbMin, out vec3 aabbMax)
+bool TryLoadAabb(uint boundsId, out vec3 aabbMin, out vec3 aabbMax)
 {
-    uint boundsId = LoadBoundsId(base, hotBase);
     if (boundsId >= uint(Bounds.length()))
     {
         aabbMin = vec3(0.0);
@@ -386,7 +387,7 @@ bool HiZOccluded(vec3 worldCenter, float radius)
     vec3 ndc = clip.xyz / clip.w;
 
     // Convert to UV in [0,1]
-    vec2 uvCenter = ndc.xy * 0.5 + 0.5;
+    vec2 uvCenter = ClipToFramebufferUv(ndc.xy);
 
     // Conservative screen radius approximation.
     float rNdc = radius / max(clip.w, 1e-6);
@@ -408,7 +409,7 @@ bool HiZOccluded(vec3 worldCenter, float radius)
     float hiz = SampleHiZConservative(clampedUvMin, clampedUvMax, mip);
 
     // Convert NDC z to depth-buffer space.
-    float depth = ndc.z * 0.5 + 0.5;
+    float depth = ClipToFramebufferDepth(ndc.z);
 
     // Approximate depth extent of the sphere and use the nearest point for a conservative test.
     float depthDelta = rNdc * 0.5;
@@ -419,7 +420,7 @@ bool HiZOccluded(vec3 worldCenter, float radius)
         return false;
 
     // Occlusion test depends on depth mode.
-    bool sphereOccluded = (IsReversedDepth != 0u) ? (nearestDepth < hiz) : (nearestDepth > hiz);
+    bool sphereOccluded = IsDefinitelyBehindHiZ(nearestDepth, hiz);
     if (!sphereOccluded)
         return false;
 
@@ -439,40 +440,28 @@ void main()
     if (idx >= inputCount)
         return;
 
-    int base = int(idx) * COMMAND_FLOATS;
-    if (base + COMMAND_FLOATS > inCommands.length())
+    if (idx >= uint(inDrawIds.length()))
         return;
 
-    int hotBase = int(idx) * HOT_UINTS;
-    if (UseHotCommands != 0 && hotBase + HOT_UINTS > inHotCommands.length())
+    uint drawId = inDrawIds[idx];
+    if (drawId >= uint(Draws.length()))
         return;
-
-    if (!IsValidCommand(base))
+    DrawMetadata draw = Draws[drawId];
+    if (draw.InstanceCount == 0u)
         return;
-
-    uint drawId = LoadCommandUInt(base, hotBase, 19, 14);
-    uint renderIdentityId = LoadCommandUInt(base, hotBase, 9, 12);
+    uint renderIdentityId = draw.RenderIdentityID;
     uint visibilityRecordBase = 0u;
     bool previouslyVisible = true;
     if (TwoPassPhase == 2)
-        previouslyVisible = LoadPreviousVisibility(drawId, renderIdentityId, visibilityRecordBase);
+        previouslyVisible = ForcePhaseOneVisible != 0u || LoadPreviousVisibility(drawId, renderIdentityId, visibilityRecordBase);
 
-    vec3 center;
-    float radius;
-    if (UseHotCommands != 0)
-    {
-        center = vec3(uintBitsToFloat(inHotCommands[hotBase + 0]), uintBitsToFloat(inHotCommands[hotBase + 1]), uintBitsToFloat(inHotCommands[hotBase + 2]));
-        radius = uintBitsToFloat(inHotCommands[hotBase + 3]);
-    }
-    else
-    {
-        center = vec3(inCommands[base + 0], inCommands[base + 1], inCommands[base + 2]);
-        radius = inCommands[base + 3];
-    }
+    BoundsGpu bounds = draw.BoundsID < uint(Bounds.length()) ? Bounds[draw.BoundsID] : BoundsGpu(vec4(0.0), vec4(0.0), vec4(0.0), 0u, 0u, 0u, 0u);
+    vec3 center = bounds.BoundingSphere.xyz;
+    float radius = bounds.BoundingSphere.w;
 
     vec3 aabbMin;
     vec3 aabbMax;
-    bool occluded = TryLoadAabb(base, hotBase, aabbMin, aabbMax)
+    bool occluded = TryLoadAabb(draw.BoundsID, aabbMin, aabbMax)
         ? HiZOccludedAabb(aabbMin, aabbMax)
         : HiZOccluded(center, radius);
 
@@ -495,21 +484,7 @@ void main()
         return;
     }
 
-    int outBase = int(outIndex) * COMMAND_FLOATS;
-    for (int i = 0; i < COMMAND_FLOATS; ++i)
-        outCommands[outBase + i] = inCommands[base + i];
-
-    if (UseHotCommands != 0)
-    {
-        int outHotBase = int(outIndex) * HOT_UINTS;
-        for (int i = 0; i < HOT_UINTS; ++i)
-            outHotCommands[outHotBase + i] = inHotCommands[hotBase + i];
-    }
-
-    uint instanceCount = UseHotCommands != 0
-        ? inHotCommands[hotBase + 7]
-        : floatBitsToUint(inCommands[base + 7]);
-    uint flags = LoadCommandUInt(base, hotBase, 13, 10);
-    AppendPerView(drawId, outIndex, center, flags);
-    atomicAdd(OutInstanceCount, instanceCount);
+    outDrawIds[outIndex] = drawId;
+    AppendPerView(drawId, outIndex, center, draw.Flags);
+    atomicAdd(OutInstanceCount, draw.InstanceCount);
 }

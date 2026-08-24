@@ -1,15 +1,16 @@
-// ──────────────────────────────────────────────────────────────────────────────
-// VkMeshRenderer.Descriptors.cs  – partial class: Descriptor Set Management
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// VkMeshRenderer.Descriptors.cs  â€“ partial class: Descriptor Set Management
 //
 // Allocates and writes Vulkan descriptor sets for each swapchain frame.
 // Resolves buffer, image, and texel-buffer descriptors from the buffer cache,
 // material textures, and engine/auto uniform buffers.
-// ──────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Text;
 
@@ -33,7 +34,7 @@ internal unsafe partial class VkMeshRenderer
 		AppendComponent(builder, "textures", ComputeMaterialTextureResourceFingerprint(material));
 		AppendComponent(builder, "engineUbo", ComputeEngineUniformResourceFingerprint());
 		AppendComponent(builder, "autoUbo", ComputeAutoUniformResourceFingerprint());
-		AppendComponent(builder, "resourceAllocator", unchecked((ulong)Renderer.ResourceAllocatorIdentity));
+		AppendComponent(builder, "resourceAllocator", unchecked((ulong)RuntimeHelpers.GetHashCode(BackendContext.Resources.Buffers)));
 		if (_program is not null)
 		{
 			AppendReferencedProgramSamplerResourceFingerprintDetails(builder, material, bindings);
@@ -85,16 +86,19 @@ internal unsafe partial class VkMeshRenderer
 		int descriptorOwnerSlot,
 		bool usesSharedMaterialTier)
 	{
-		// Vulkan handles are deliberately excluded. Replacing the backing image,
-		// view, sampler, or buffer for the same engine binding is descriptor content
-		// publication, not a new descriptor-set identity. The per-slot resource
-		// fingerprint below decides when the completed slot must be rewritten.
+		// This key describes the logical binding schema only. Physical identity is
+		// captured by ComputeDescriptorResourceFingerprint using native handles and
+		// lifetime generations; managed object identity must never represent a Vulkan
+		// allocation.
 		FrameOpSignatureHasher hash = new();
 		hash.Add(descriptorOwnerSlot);
+		bool excludesGlobalTextureArray =
+			VulkanBindlessMaterialDescriptors.IsGlobalTextureArrayOnlySet(bindings);
 		for (int bindingIndex = 0; bindingIndex < bindings.Count; bindingIndex++)
 		{
 			DescriptorBindingInfo binding = bindings[bindingIndex];
-			if (usesSharedMaterialTier && binding.Set == VulkanRenderer.DescriptorSetMaterial)
+			if ((usesSharedMaterialTier && binding.Set == VulkanMeshRenderingConventions.DescriptorSetMaterial) ||
+				(excludesGlobalTextureArray && binding.Set == VulkanBindlessMaterialDescriptors.TextureArraySet))
 				continue;
 
 			hash.Add(binding.Set);
@@ -102,6 +106,7 @@ internal unsafe partial class VkMeshRenderer
 			hash.Add((int)binding.DescriptorType);
 			hash.Add(binding.Name);
 			hash.Add(binding.ExpectedImageViewType.HasValue);
+			hash.Add((int)binding.Requirement);
 			if (binding.ExpectedImageViewType is { } expectedViewType)
 				hash.Add((int)expectedViewType);
 
@@ -117,26 +122,8 @@ internal unsafe partial class VkMeshRenderer
 				continue;
 			}
 
-			uint descriptorCount = VulkanBindlessMaterialDescriptors.ResolveDescriptorCount(binding);
-			bool bindless = VulkanBindlessMaterialDescriptors.IsBindlessTextureArrayBinding(binding);
-			for (int arrayIndex = 0; arrayIndex < descriptorCount; arrayIndex++)
-			{
-				MaterialTextureBindingResolution resolution = MaterialTextureBindingResolver.Resolve(
-					material,
-					binding.Name,
-					(int)binding.Binding,
-					arrayIndex,
-					bindless,
-					_program,
-					static (program, samplerName) =>
-						program is not null && program.TryGetSamplerTexture(samplerName, out XRTexture? namedTexture)
-							? namedTexture
-							: null);
-				XRTexture? texture = resolution.Texture;
-				hash.Add(texture is not null);
-				if (texture is not null)
-					hash.Add(System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(texture));
-			}
+			hash.Add(VulkanBindlessMaterialDescriptors.ResolveDescriptorCount(binding));
+			hash.Add(VulkanBindlessMaterialDescriptors.IsBindlessTextureArrayBinding(binding));
 		}
 
 		return hash.ToHash();
@@ -151,12 +138,27 @@ internal unsafe partial class VkMeshRenderer
 		ComputeDispatchSnapshot? bindingSnapshot = null,
 		bool includeFrameSourceDescriptors = true)
 	{
+		if (TryComputePublishedDescriptorResourceFingerprint(
+			material,
+			frameCount,
+			bindings,
+			usesSharedMaterialTier,
+			bindingSnapshot,
+			includeFrameSourceDescriptors,
+			out ulong publishedFingerprint))
+		{
+			return publishedFingerprint;
+		}
+
 		FrameOpSignatureHasher hash = new();
 		hash.Add(frameCount);
+		bool excludesGlobalTextureArray =
+			VulkanBindlessMaterialDescriptors.IsGlobalTextureArrayOnlySet(bindings);
 		for (int bindingIndex = 0; bindingIndex < bindings.Count; bindingIndex++)
 		{
 			DescriptorBindingInfo binding = bindings[bindingIndex];
-			if (usesSharedMaterialTier && binding.Set == VulkanRenderer.DescriptorSetMaterial)
+			if ((usesSharedMaterialTier && binding.Set == VulkanMeshRenderingConventions.DescriptorSetMaterial) ||
+				(excludesGlobalTextureArray && binding.Set == VulkanBindlessMaterialDescriptors.TextureArraySet))
 				continue;
 
 			uint descriptorCount = VulkanBindlessMaterialDescriptors.ResolveDescriptorCount(binding);
@@ -164,6 +166,7 @@ internal unsafe partial class VkMeshRenderer
 			hash.Add(binding.Binding);
 			hash.Add((int)binding.DescriptorType);
 			hash.Add(descriptorCount);
+			hash.Add((int)binding.Requirement);
 			switch (binding.DescriptorType)
 			{
 				case DescriptorType.UniformBuffer:
@@ -181,6 +184,9 @@ internal unsafe partial class VkMeshRenderer
 						if (!resolved)
 							continue;
 						hash.Add(info.Buffer.Handle);
+						hash.Add(GetResourceGeneration(
+							ObjectType.Buffer,
+							info.Buffer.Handle));
 						hash.Add(info.Offset);
 						hash.Add(info.Range);
 					}
@@ -197,7 +203,7 @@ internal unsafe partial class VkMeshRenderer
 							binding,
 							bindingSnapshot))
 					{
-						hash.Add(VulkanRenderer.FrameSourceMutableDescriptorSignature);
+						hash.Add(VulkanMeshRenderingConventions.FrameSourceMutableDescriptorSignature);
 						break;
 					}
 
@@ -214,7 +220,27 @@ internal unsafe partial class VkMeshRenderer
 						if (!resolved)
 							continue;
 						hash.Add(info.ImageView.Handle);
+						hash.Add(GetResourceGeneration(
+							ObjectType.ImageView,
+							info.ImageView.Handle));
+						if (TryGetDescriptorImageBacking(
+								info.ImageView,
+								out Image backingImage))
+						{
+							hash.Add(backingImage.Handle);
+							hash.Add(GetResourceGeneration(
+								ObjectType.Image,
+								backingImage.Handle));
+						}
+						else
+						{
+							hash.Add(0UL);
+							hash.Add(0UL);
+						}
 						hash.Add(info.Sampler.Handle);
+						hash.Add(GetResourceGeneration(
+							ObjectType.Sampler,
+							info.Sampler.Handle));
 						hash.Add((int)info.ImageLayout);
 					}
 					break;
@@ -226,13 +252,89 @@ internal unsafe partial class VkMeshRenderer
 						bool resolved = TryResolveTexelBuffer(binding, material, out BufferView view, arrayIndex);
 						hash.Add(resolved);
 						if (resolved)
+						{
 							hash.Add(view.Handle);
+							hash.Add(GetResourceGeneration(
+								ObjectType.BufferView,
+								view.Handle));
+							if (BackendContext.TryGetBufferViewBackingBuffer(
+									view,
+									out Silk.NET.Vulkan.Buffer backingBuffer))
+							{
+								hash.Add(backingBuffer.Handle);
+								hash.Add(GetResourceGeneration(
+									ObjectType.Buffer,
+									backingBuffer.Handle));
+							}
+						}
 					}
 					break;
 			}
 		}
 
 		return hash.ToHash();
+	}
+
+	/// <summary>
+	/// Reduces immutable enqueue-time descriptor publications to an O(1) physical
+	/// resource identity. Camera motion can enqueue hundreds of shadow draws; walking
+	/// every reflected binding and every frame slot for each draw made descriptor
+	/// validation quadratic in practice. Mutable frame-source samplers use the
+	/// snapshot's once-per-frame live signature, while allocation ownership uses the
+	/// separately published stable signature that excludes their changing views.
+	/// </summary>
+	private bool TryComputePublishedDescriptorResourceFingerprint(
+		XRMaterial material,
+		int frameCount,
+		IReadOnlyList<DescriptorBindingInfo> bindings,
+		bool usesSharedMaterialTier,
+		ComputeDispatchSnapshot? bindingSnapshot,
+		bool includeFrameSourceDescriptors,
+		out ulong fingerprint)
+	{
+		fingerprint = 0UL;
+		if (bindingSnapshot is not
+			{ HasPublishedBindingLayoutSignatures: true } ||
+			_program is not { } program ||
+			BackendContext.Resources.MappedFrameArena is not
+				{ IsActive: true } frameArena)
+		{
+			return false;
+		}
+
+		ulong snapshotResourceSignature;
+		if (includeFrameSourceDescriptors)
+		{
+			bindingSnapshot.ResolvePublishedResourceSignatures(
+				MaterializationSnapshot.DescriptorViewFamilyIdentity,
+				out _,
+				out snapshotResourceSignature);
+		}
+		else
+		{
+			snapshotResourceSignature =
+				bindingSnapshot.StablePersistentEngineResourceSignature;
+		}
+
+		// The snapshot owns sampler/image/program-buffer identities. Renderer-owned
+		// mesh buffers are represented by a fingerprint published when CollectBuffers
+		// changes, and all frame/draw UBO views bind stable mapped-arena allocations.
+		// Allocation keys separately carry the material and draw-slot identities.
+		FrameOpSignatureHasher hash = new();
+		hash.Add(frameCount);
+		hash.Add(bindings.Count);
+		hash.Add(program.BindingId);
+		hash.Add(program.LinkGeneration);
+		hash.Add(program.DescriptorLayoutFingerprint);
+		hash.Add(program.DescriptorSchemaFingerprint);
+		hash.Add(usesSharedMaterialTier);
+		hash.Add(bindingSnapshot.DescriptorSetLayoutSignature);
+		hash.Add(snapshotResourceSignature);
+		hash.Add(ComputeCachedBufferResourceFingerprintCore());
+		hash.Add(frameArena.Identity);
+		hash.Add(frameArena.Generation);
+		fingerprint = hash.ToHash();
+		return true;
 	}
 
 	private ulong ComputeReferencedProgramSamplerResourceFingerprint(XRMaterial material, IReadOnlyList<DescriptorBindingInfo> bindings)
@@ -290,7 +392,7 @@ internal unsafe partial class VkMeshRenderer
 		DescriptorBindingInfo binding,
 		ComputeDispatchSnapshot? snapshot = null)
 	{
-		if (VulkanRenderer.IsFrameSourceSamplerName(binding.Name))
+		if (VulkanMeshRenderingConventions.IsFrameSourceSamplerName(binding.Name))
 			return true;
 
 		if (string.IsNullOrWhiteSpace(binding.Name) ||
@@ -393,7 +495,7 @@ internal unsafe partial class VkMeshRenderer
 
 	private void AddFrameSourceSamplerDescriptorResourceFingerprint(ref HashCode hash, XRTexture? texture)
 	{
-		hash.Add(VulkanRenderer.FrameSourceMutableDescriptorSignature);
+		hash.Add(VulkanMeshRenderingConventions.FrameSourceMutableDescriptorSignature);
 		AddTextureDescriptorResourceFingerprint(ref hash, texture);
 	}
 
@@ -461,7 +563,7 @@ internal unsafe partial class VkMeshRenderer
 			return false;
 
 		foreach (KeyValuePair<string, XRTexture> sampler in snapshot.SamplersByName)
-			if (VulkanRenderer.IsMutableFrameSourceSamplerName(sampler.Key, pipeline))
+			if (VulkanMeshRenderingConventions.IsMutableFrameSourceSamplerName(sampler.Key, pipeline))
 				return true;
 
 		return false;
@@ -496,7 +598,7 @@ internal unsafe partial class VkMeshRenderer
 		if (snapshot is { HasPublishedBindingLayoutSignatures: true })
 		{
 			snapshot.ResolvePublishedResourceSignatures(
-				Renderer.ResolveMeshDescriptorViewFamilyIdentity(),
+				MaterializationSnapshot.DescriptorViewFamilyIdentity,
 				out exactSamplerResourceSignature,
 				out _);
 		}
@@ -508,7 +610,7 @@ internal unsafe partial class VkMeshRenderer
 			allocation.SlotFrameSourceSamplerSignaturesValid[descriptorSlotIndex] &&
 			allocation.SlotFrameSourceSamplerSignatures[descriptorSlotIndex] ==
 				exactSamplerResourceSignature;
-		if (VulkanRenderer.DescriptorTraceEnabled &&
+		if (VulkanMeshRenderingConventions.DescriptorTraceEnabled &&
 			SnapshotContainsNamedSampler(snapshot, "SourceTexture"))
 		{
 			Debug.VulkanEvery(
@@ -578,7 +680,7 @@ internal unsafe partial class VkMeshRenderer
 				resolvedImageInfos);
 			if (writeMatched)
 			{
-				Renderer.ObserveFinalPresentationDescriptor(
+				ObserveFinalPresentationDescriptor(
 					descriptorSlotIndex,
 					descriptorCommandBuffer,
 					frameSets[binding.Set],
@@ -592,61 +694,20 @@ internal unsafe partial class VkMeshRenderer
 				continue;
 			}
 
-			fixed (DescriptorImageInfo* imageInfoPtr = imageInfos)
+			if (!TryWriteFrameSourceDescriptor(
+					allocation,
+					descriptorSlotIndex,
+					frameSets[binding.Set],
+					binding,
+					descriptorCount,
+					resolvedImageInfos,
+					out reason))
 			{
-				WriteDescriptorSet write = new()
-				{
-					SType = StructureType.WriteDescriptorSet,
-					DstSet = frameSets[binding.Set],
-					DstBinding = binding.Binding,
-					DescriptorCount = descriptorCount,
-					DescriptorType = binding.DescriptorType,
-					PImageInfo = imageInfoPtr
-				};
-
-				if (!ValidateDescriptorWrites(&write, 1))
-				{
-					reason = $"invalid frame-source sampler descriptor '{binding.Name}'";
-					return false;
-				}
-
-				if (Renderer.IsDescriptorHeapDrawBindingActive)
-				{
-					DescriptorHeapPushDataPayload? payload = allocation?.DescriptorHeapPushData is { Length: > 0 } heapPayloads &&
-						(uint)descriptorSlotIndex < (uint)heapPayloads.Length
-							? heapPayloads[descriptorSlotIndex]
-							: null;
-					if (payload is null || _program is null)
-					{
-						reason = $"descriptor heap frame-source payload missing for '{binding.Name}'";
-						return false;
-					}
-
-					if (!Renderer.TryWriteDescriptorHeapBinding(_program, binding, payload, null, imageInfoPtr, null, descriptorCount, out string heapReason))
-					{
-						reason = $"descriptor heap frame-source sampler '{binding.Name}' update failed: {heapReason}";
-						return false;
-					}
-				}
-
-				if (!Renderer.TryUpdateDescriptorSetsTracked(1, &write, out string updateFailureReason))
-				{
-					reason = $"frame-source sampler '{binding.Name}' update deferred: {updateFailureReason}";
-					Debug.VulkanWarningEvery(
-						$"Vulkan.MeshRenderer.FrameSourceDescriptorGenerationRace.{GetHashCode()}",
-						TimeSpan.FromSeconds(1),
-						"[Vulkan] Deferred frame-source sampler descriptor update because a render-resource generation retired concurrently: {0}",
-						updateFailureReason);
-					return false;
-				}
-				// The completed frame slot keeps the same descriptor-set handle. Its
-				// contents are data publication, not a command-buffer binding change.
-				// Advancing the global descriptor generation here would unnecessarily
-				// invalidate every cached primary before the next slot can reuse it.
+				return false;
 			}
 
 			RecordFrameSourceDescriptorWriteSignature(allocation, descriptorSlotIndex, binding, descriptorCount, resolvedImageInfos);
-			Renderer.ObserveFinalPresentationDescriptor(
+			ObserveFinalPresentationDescriptor(
 				descriptorSlotIndex,
 				descriptorCommandBuffer,
 				frameSets[binding.Set],
@@ -678,12 +739,85 @@ internal unsafe partial class VkMeshRenderer
 		return true;
 	}
 
+	private bool TryWriteFrameSourceDescriptor(
+		DescriptorAllocation? allocation,
+		int descriptorSlotIndex,
+		DescriptorSet destinationSet,
+		DescriptorBindingInfo binding,
+		uint descriptorCount,
+		ReadOnlySpan<DescriptorImageInfo> imageInfos,
+		out string reason)
+	{
+		fixed (DescriptorImageInfo* imageInfoPtr = imageInfos)
+		{
+			WriteDescriptorSet write = new()
+			{
+				SType = StructureType.WriteDescriptorSet,
+				DstSet = destinationSet,
+				DstBinding = binding.Binding,
+				DescriptorCount = descriptorCount,
+				DescriptorType = binding.DescriptorType,
+				PImageInfo = imageInfoPtr
+			};
+
+			if (!ValidateDescriptorWrites(&write, 1))
+			{
+				reason = $"invalid frame-source sampler descriptor '{binding.Name}'";
+				return false;
+			}
+
+			if (BackendContext.Resources.Descriptors.Heap.ActiveBackend == EVulkanDescriptorBackend.DescriptorHeap)
+			{
+				DescriptorHeapPushDataPayload? payload = allocation?.DescriptorHeapPushData is { Length: > 0 } heapPayloads &&
+					(uint)descriptorSlotIndex < (uint)heapPayloads.Length
+						? heapPayloads[descriptorSlotIndex]
+						: null;
+				if (payload is null || _program is null)
+				{
+					reason = $"descriptor heap frame-source payload missing for '{binding.Name}'";
+					return false;
+				}
+
+				if (!BackendContext.Resources.DescriptorLifetime.TryWriteDescriptorHeapBinding(
+						_program,
+						binding,
+						payload,
+						null,
+						imageInfoPtr,
+						null,
+						descriptorCount,
+						out string heapReason))
+				{
+					reason = $"descriptor heap frame-source sampler '{binding.Name}' update failed: {heapReason}";
+					return false;
+				}
+			}
+
+			if (!BackendContext.Resources.DescriptorLifetime.TryUpdateDescriptorSets(
+					1,
+					&write,
+					out string updateFailureReason))
+			{
+				reason = $"frame-source sampler '{binding.Name}' update deferred: {updateFailureReason}";
+				Debug.VulkanWarningEvery(
+					$"Vulkan.MeshRenderer.FrameSourceDescriptorGenerationRace.{GetHashCode()}",
+					TimeSpan.FromSeconds(1),
+					"[Vulkan] Deferred frame-source sampler descriptor update because a render-resource generation retired concurrently: {0}",
+					updateFailureReason);
+				return false;
+			}
+
+			reason = string.Empty;
+			return true;
+		}
+	}
+
 	private static bool SnapshotContainsNamedSampler(
 		ComputeDispatchSnapshot? snapshot,
 		string name)
 		=> snapshot?.SamplersByName.ContainsKey(name) == true;
 
-	private static bool FrameSourceDescriptorWriteMatches(
+	private bool FrameSourceDescriptorWriteMatches(
 		DescriptorAllocation? allocation,
 		int descriptorSlotIndex,
 		DescriptorBindingInfo binding,
@@ -705,7 +839,7 @@ internal unsafe partial class VkMeshRenderer
 			previousSignature == ComputeDescriptorImageInfoSignature(binding.DescriptorType, imageInfos);
 	}
 
-	private static void RecordFrameSourceDescriptorWriteSignature(
+	private void RecordFrameSourceDescriptorWriteSignature(
 		DescriptorAllocation? allocation,
 		int descriptorSlotIndex,
 		DescriptorBindingInfo binding,
@@ -727,7 +861,7 @@ internal unsafe partial class VkMeshRenderer
 			ComputeDescriptorImageInfoSignature(binding.DescriptorType, imageInfos);
 	}
 
-	private static ulong ComputeDescriptorImageInfoSignature(
+	private ulong ComputeDescriptorImageInfoSignature(
 		DescriptorType descriptorType,
 		ReadOnlySpan<DescriptorImageInfo> imageInfos)
 	{
@@ -739,7 +873,24 @@ internal unsafe partial class VkMeshRenderer
 			DescriptorImageInfo info = imageInfos[i];
 			hash.Add((int)info.ImageLayout);
 			hash.Add(info.ImageView.Handle);
+			hash.Add(GetResourceGeneration(
+				ObjectType.ImageView,
+				info.ImageView.Handle));
+			if (TryGetDescriptorImageBacking(info.ImageView, out Image image))
+			{
+				hash.Add(image.Handle);
+				hash.Add(GetResourceGeneration(
+					ObjectType.Image,
+					image.Handle));
+			}
+			else
+			{
+				hash.Add(0UL);
+			}
 			hash.Add(info.Sampler.Handle);
+			hash.Add(GetResourceGeneration(
+				ObjectType.Sampler,
+				info.Sampler.Handle));
 		}
 
 		return hash.ToHash();
@@ -847,7 +998,7 @@ internal unsafe partial class VkMeshRenderer
 		hash.Add((int)buffer.Target);
 		hash.Add(buffer.BindingIndexOverride ?? uint.MaxValue);
 
-		if (Renderer.GetOrCreateAPIRenderObject(buffer, generateNow: false) is VkDataBuffer vkBuffer)
+		if (WrapperLookup.GetOrCreate(buffer, generateNow: false) is VkDataBuffer vkBuffer)
 		{
 			hash.Add(vkBuffer.BufferHandle?.Handle ?? 0UL);
 			hash.Add(vkBuffer.AllocatedByteSize);
@@ -871,20 +1022,32 @@ internal unsafe partial class VkMeshRenderer
 	}
 
 	private ulong ComputeCachedBufferResourceFingerprintCore()
-	{
-		lock (_bufferStateSync)
-		{
-			ulong xor = 0;
-			ulong sum = 0;
-			foreach (KeyValuePair<string, VkDataBuffer> pair in _bufferCache)
-				AddUnorderedFingerprintItem(ref xor, ref sum, ComputeCachedBufferResourceFingerprintItem(pair.Key, pair.Value));
+		=> System.Threading.Volatile.Read(ref _cachedBufferResourceFingerprint);
 
-			HashCode hash = new();
-			hash.Add(_bufferCache.Count);
-			hash.Add(xor);
-			hash.Add(sum);
-			return unchecked((ulong)hash.ToHashCode());
+	/// <summary>
+	/// Publishes the renderer buffer-set fingerprint while the collection lock is
+	/// already held. Read-side descriptor validation then needs no monitor or
+	/// dictionary traversal in the frame loop.
+	/// </summary>
+	private void PublishCachedBufferResourceFingerprint()
+	{
+		ulong xor = 0;
+		ulong sum = 0;
+		foreach (KeyValuePair<string, VkDataBuffer> pair in _bufferCache)
+		{
+			AddUnorderedFingerprintItem(
+				ref xor,
+				ref sum,
+				ComputeCachedBufferResourceFingerprintItem(pair.Key, pair.Value));
 		}
+
+		HashCode hash = new();
+		hash.Add(_bufferCache.Count);
+		hash.Add(xor);
+		hash.Add(sum);
+		System.Threading.Volatile.Write(
+			ref _cachedBufferResourceFingerprint,
+			unchecked((ulong)hash.ToHashCode()));
 	}
 
 	private static ulong ComputeCachedBufferResourceFingerprintItem(string name, VkDataBuffer buffer)
@@ -973,7 +1136,7 @@ internal unsafe partial class VkMeshRenderer
 			return;
 		}
 
-		if (!Renderer.TryGetAPIRenderObject(texture, out AbstractRenderAPIObject? apiObject))
+		if (BackendContext.Resources.BackendObjects.Get(texture) is not AbstractRenderAPIObject apiObject)
 		{
 			hash.Add(false);
 			hash.Add(0UL);
@@ -1012,6 +1175,31 @@ internal unsafe partial class VkMeshRenderer
 		{
 			hash.Add(0UL);
 		}
+	}
+
+	private void ObserveFinalPresentationDescriptor(
+		int descriptorSlot,
+		CommandBuffer commandBuffer,
+		DescriptorSet descriptorSet,
+		uint set,
+		uint binding,
+		string? bindingName,
+		in DescriptorImageInfo imageInfo,
+		ulong resourceSignature,
+		bool writeMatched,
+		bool writeSucceeded)
+	{
+		_finalPresentationDescriptors?.Observe(
+			descriptorSlot,
+			commandBuffer,
+			descriptorSet,
+			set,
+			binding,
+			bindingName,
+			imageInfo,
+			resourceSignature,
+			writeMatched,
+			writeSucceeded);
 	}
 
 	/// <summary>Resolves one or more buffer descriptors for a binding, duplicating for array bindings.</summary>

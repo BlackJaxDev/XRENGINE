@@ -3,7 +3,7 @@ using System.Diagnostics;
 
 namespace XREngine.Rendering.Vulkan
 {
-    public unsafe partial class VulkanRenderer
+    internal sealed partial class VulkanFrameLoop
     {
         private void MarkSkippedResizeFrameObserved(long frameStartTimestamp)
         {

@@ -7,6 +7,7 @@ This document describes how XREngine creates OS windows on startup, selects a gr
 - [Entry Points](#entry-points)
 - [Engine.Run() → Engine.Initialize()](#enginerun--engineinitialize)
 - [Renderer API Selection](#renderer-api-selection)
+- [Target-First Renderer Contexts](#target-first-renderer-contexts)
 - [Window Creation](#window-creation)
 - [XRWindow Constructor](#xrwindow-constructor)
 - [Deferred Renderer Initialization](#deferred-renderer-initialization)
@@ -130,6 +131,33 @@ resolves the engine default from `Engine.Rendering.Settings.Vulkan.Startup.Fallb
 plus project/user overrides. `RequireRequested` fails visibly when Vulkan cannot
 initialize. `FallbackWithWarning` and `AutoPreferRequested` may retry with OpenGL
 after logging the requested backend, fallback policy, and exception summary.
+
+---
+
+## Target-First Renderer Contexts
+
+Window creation remains the desktop application path, but renderer construction
+is no longer intrinsically window-first. A backend factory receives a
+`RendererBackendCreateContext`, validates the requested presentation target,
+and freezes it into a renderer-owned `RendererHostContext`. The stable context
+contains the execution mode, presentation target, backend generation, and
+fixed-output properties where applicable. Desktop services are available only
+through `IRendererDesktopWindowServices`; non-window modes never receive a
+synthetic `XRWindow`.
+
+| Execution mode | Presentation target and initialization contract |
+|---|---|
+| `DesktopWsi` | `DesktopWindowRenderTarget`; the desktop host owns the native window and render loop, while the backend target driver owns surface/swapchain policy. |
+| `Presentationless` | `PresentationlessRenderTarget`; fixed engine-owned color/depth slots, no surface, swapchain, acquire, or present. |
+| `Component` | `ComponentRenderTarget`; fixed output with the same presentationless device path for isolated profiling workloads. |
+| `HeadlessWsi` | `HeadlessWsiRenderTarget`; requires `VK_EXT_headless_surface`, a present-capable queue, and swapchain support. Unsupported requests fail explicitly and are not silently replaced with presentationless rendering. |
+| `OpenXr` | `OpenXrRenderTarget`; runtime-owned images are leased to the renderer and returned through OpenXR acquire/wait/release ordering rather than desktop presentation. |
+| `BrowserCanvas` | Reserved portable host contract for future WebGL2/WebGPU backends. It carries browser-canvas output state without exposing JavaScript or browser-native handles through the shared renderer API. |
+
+`VulkanRendererBackendFactory` constructs Vulkan exclusively from the frozen
+host context. OpenGL accepts the same context boundary but currently requires
+the desktop-window capability. BrowserCanvas is an architectural reservation,
+not an implemented backend.
 
 ---
 
@@ -272,13 +300,18 @@ window-thread ownership.
 ### Renderer Constructor Side Effects
 
 - **`OpenGLRenderer`**: The constructor calls `GetAPI()` → `GL.GetApi(Window.GLContext)` → `InitGL(api)`, which queries GPU info, enumerates extensions, enables multisampling, sets up debug callbacks, and reads the binary shader cache. All OpenGL state setup happens here.
-- **`VulkanRenderer`**: The constructor only calls `Vk.GetApi()` to obtain the Vulkan API entry points. No Vulkan objects are created yet — that's deferred.
+- **`VulkanRenderer`**: The constructor freezes the target driver and creates
+  managed subsystem owners, but creates no native Vulkan objects. Native
+  initialization remains deferred.
 
 ---
 
 ## Deferred Renderer Initialization
 
-The full renderer initialization does **not** happen in the constructor. It is deferred until the window has both **viewports** and a **target world**.
+The full renderer initialization does **not** happen in the constructor. For a
+desktop host it is deferred until the window has both **viewports** and a
+**target world**. Presentationless, component, headless-WSI, and OpenXR hosts
+invoke the same backend initialization through their explicit host lifecycle.
 
 ### VerifyTick / BeginTick
 

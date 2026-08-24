@@ -22,8 +22,9 @@ public class BrokerRunIntegrationTests
             temporaryRoot,
             "Build",
             "_AgentValidation",
+            "00000000-000000-shared",
             "mcp-sessions",
-            sessionName);
+            $"20260812-120000-{sessionName}");
         string apiKeyEnvironmentVariable = $"XRE_TEST_OPENAI_KEY_{Guid.NewGuid():N}";
 
         try

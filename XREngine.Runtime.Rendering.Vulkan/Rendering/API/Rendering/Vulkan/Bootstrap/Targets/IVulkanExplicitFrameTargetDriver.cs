@@ -14,6 +14,7 @@ internal interface IVulkanExplicitFrameTargetDriver
     double LastCompletedGpuFrameNanoseconds { get; }
     string PresentationDescription { get; }
     VulkanFrameTargetLease AcquireFrameTarget(out CommandBuffer commandBuffer);
+    void BeginFrameRecording(in VulkanFrameTargetLease lease, CommandBuffer commandBuffer);
     void EndFrameRecording(in VulkanFrameTargetLease lease, CommandBuffer commandBuffer);
     void NotifyFrameSubmitted(in VulkanFrameTargetLease lease);
     void CompleteFrameTarget(in VulkanFrameTargetLease lease);

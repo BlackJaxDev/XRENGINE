@@ -10,6 +10,7 @@ public partial class XRMesh
             InterleavedVertexBuffer?.SetVector3AtOffset(index * InterleavedStride + PositionOffset, value);
         else
             PositionsBuffer?.SetVector3(index, value);
+        AdvanceGeometryRevision();
     }
     public Vector3 GetPosition(uint index)
         => Interleaved
@@ -22,6 +23,7 @@ public partial class XRMesh
             InterleavedVertexBuffer?.SetVector3AtOffset(index * InterleavedStride + NormalOffset.Value, value);
         else if (!Interleaved)
             NormalsBuffer?.SetVector3(index, value);
+        AdvanceGeometryRevision();
     }
     public Vector3 GetNormal(uint index)
     {
@@ -37,6 +39,7 @@ public partial class XRMesh
             InterleavedVertexBuffer?.SetVector4AtOffset(index * InterleavedStride + TangentOffset.Value, value);
         else if (!Interleaved)
             TangentsBuffer?.SetVector4(index, value);
+        AdvanceGeometryRevision();
     }
     public Vector3 GetTangent(uint index)
     {
@@ -62,6 +65,7 @@ public partial class XRMesh
             XRDataBuffer? colorBuffer = ColorBuffers[(int)colorIndex];
             colorBuffer?.SetVector4(index, value);
         }
+        AdvanceGeometryRevision();
     }
     public Vector4 GetColor(uint index, uint colorIndex)
     {
@@ -90,6 +94,7 @@ public partial class XRMesh
             XRDataBuffer? texCoordBuffer = TexCoordBuffers[(int)texCoordIndex];
             texCoordBuffer?.SetVector2(index, value);
         }
+        AdvanceGeometryRevision();
     }
     public Vector2 GetTexCoord(uint index, uint texCoordIndex)
     {

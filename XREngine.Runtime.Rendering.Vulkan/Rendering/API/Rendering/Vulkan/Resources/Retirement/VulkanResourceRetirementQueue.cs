@@ -14,60 +14,67 @@ internal sealed class VulkanResourceRetirementQueue
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(frameSlotCount);
 
-        Buffers = CreateLists<VulkanRenderer.RetiredBuffer>(frameSlotCount);
+        Buffers = CreateLists<RetiredBuffer>(frameSlotCount);
         BufferHandles = CreateSets<ulong>(frameSlotCount);
         MemoryHandles = CreateSets<ulong>(frameSlotCount);
-        Framebuffers = CreateLists<VulkanRenderer.RetiredFramebuffer>(frameSlotCount);
+        Framebuffers = CreateLists<RetiredFramebuffer>(frameSlotCount);
         FramebufferHandles = CreateSets<ulong>(frameSlotCount);
-        DescriptorPools = CreateLists<VulkanRenderer.RetiredDescriptorPool>(frameSlotCount);
+        DescriptorPools = CreateLists<RetiredDescriptorPool>(frameSlotCount);
         DescriptorPoolHandles = CreateSets<ulong>(frameSlotCount);
-        DescriptorSets = CreateLists<VulkanRenderer.RetiredDescriptorSet>(frameSlotCount);
+        DescriptorSets = CreateLists<RetiredDescriptorSet>(frameSlotCount);
         DescriptorSetHandles = CreateSets<ulong>(frameSlotCount);
-        Pipelines = CreateLists<VulkanRenderer.RetiredPipeline>(frameSlotCount);
+        Pipelines = CreateLists<RetiredPipeline>(frameSlotCount);
         PipelineHandles = CreateSets<ulong>(frameSlotCount);
-        PipelineLayouts = CreateLists<VulkanRenderer.RetiredPipelineLayout>(frameSlotCount);
+        PipelineLayouts = CreateLists<VulkanRetiredPipelineLayout>(frameSlotCount);
         PipelineLayoutHandles = CreateSets<ulong>(frameSlotCount);
-        QueryPools = CreateLists<VulkanRenderer.RetiredQueryPool>(frameSlotCount);
+        DescriptorSetLayouts = CreateLists<VulkanRetiredDescriptorSetLayout>(frameSlotCount);
+        DescriptorSetLayoutHandles = CreateSets<ulong>(frameSlotCount);
+        QueryPools = CreateLists<RetiredQueryPool>(frameSlotCount);
         QueryPoolHandles = CreateSets<ulong>(frameSlotCount);
         CommandBuffers = CreateLists<RetiredCommandBuffer>(frameSlotCount);
         CommandBufferHandles = CreateSets<ulong>(frameSlotCount);
+        CommandPools = CreateLists<RetiredCommandPool>(frameSlotCount);
+        CommandPoolHandles = CreateSets<ulong>(frameSlotCount);
         BufferViews = CreateLists<RetiredBufferView>(frameSlotCount);
         BufferViewHandles = CreateSets<ulong>(frameSlotCount);
-        Images = CreateLists<VulkanRenderer.RetiredImageResourceEntry>(frameSlotCount);
+        Images = CreateLists<RetiredImageResourceEntry>(frameSlotCount);
         ImageHandles = CreateSets<ulong>(frameSlotCount);
         ImageMemoryHandles = CreateSets<ulong>(frameSlotCount);
-        ImageViewHandles = CreateSets<VulkanRenderer.VulkanPinnedResourceGeneration>(frameSlotCount);
+        ImageViewHandles = CreateSets<VulkanPinnedResourceGeneration>(frameSlotCount);
         SamplerHandles = CreateSets<ulong>(frameSlotCount);
     }
 
     internal object SyncRoot { get; } = new();
 
-    internal List<VulkanRenderer.RetiredBuffer>[] Buffers { get; }
+    internal List<RetiredBuffer>[] Buffers { get; }
     internal HashSet<ulong>[] BufferHandles { get; }
     internal HashSet<ulong> AllBufferHandles { get; } = [];
     internal HashSet<ulong>[] MemoryHandles { get; }
     internal HashSet<ulong> AllMemoryHandles { get; } = [];
 
-    internal List<VulkanRenderer.RetiredFramebuffer>[] Framebuffers { get; }
+    internal List<RetiredFramebuffer>[] Framebuffers { get; }
     internal HashSet<ulong>[] FramebufferHandles { get; }
     internal HashSet<ulong> AllFramebufferHandles { get; } = [];
 
-    internal List<VulkanRenderer.RetiredDescriptorPool>[] DescriptorPools { get; }
+    internal List<RetiredDescriptorPool>[] DescriptorPools { get; }
     internal HashSet<ulong>[] DescriptorPoolHandles { get; }
     internal HashSet<ulong> AllDescriptorPoolHandles { get; } = [];
 
-    internal List<VulkanRenderer.RetiredDescriptorSet>[] DescriptorSets { get; }
+    internal List<RetiredDescriptorSet>[] DescriptorSets { get; }
     internal HashSet<ulong>[] DescriptorSetHandles { get; }
     internal HashSet<ulong> AllDescriptorSetHandles { get; } = [];
 
-    internal List<VulkanRenderer.RetiredPipeline>[] Pipelines { get; }
+    internal List<RetiredPipeline>[] Pipelines { get; }
     internal HashSet<ulong>[] PipelineHandles { get; }
     internal HashSet<ulong> AllPipelineHandles { get; } = [];
-    internal List<VulkanRenderer.RetiredPipelineLayout>[] PipelineLayouts { get; }
+    internal List<VulkanRetiredPipelineLayout>[] PipelineLayouts { get; }
     internal HashSet<ulong>[] PipelineLayoutHandles { get; }
     internal HashSet<ulong> AllPipelineLayoutHandles { get; } = [];
+    internal List<VulkanRetiredDescriptorSetLayout>[] DescriptorSetLayouts { get; }
+    internal HashSet<ulong>[] DescriptorSetLayoutHandles { get; }
+    internal HashSet<ulong> AllDescriptorSetLayoutHandles { get; } = [];
 
-    internal List<VulkanRenderer.RetiredQueryPool>[] QueryPools { get; }
+    internal List<RetiredQueryPool>[] QueryPools { get; }
     internal HashSet<ulong>[] QueryPoolHandles { get; }
     internal HashSet<ulong> AllQueryPoolHandles { get; } = [];
 
@@ -75,17 +82,21 @@ internal sealed class VulkanResourceRetirementQueue
     internal HashSet<ulong>[] CommandBufferHandles { get; }
     internal HashSet<ulong> AllCommandBufferHandles { get; } = [];
 
+    internal List<RetiredCommandPool>[] CommandPools { get; }
+    internal HashSet<ulong>[] CommandPoolHandles { get; }
+    internal HashSet<ulong> AllCommandPoolHandles { get; } = [];
+
     internal List<RetiredBufferView>[] BufferViews { get; }
     internal HashSet<ulong>[] BufferViewHandles { get; }
     internal HashSet<ulong> AllBufferViewHandles { get; } = [];
 
-    internal List<VulkanRenderer.RetiredImageResourceEntry>[] Images { get; }
+    internal List<RetiredImageResourceEntry>[] Images { get; }
     internal HashSet<ulong>[] ImageHandles { get; }
     internal HashSet<ulong> AllImageHandles { get; } = [];
     internal HashSet<ulong>[] ImageMemoryHandles { get; }
     internal HashSet<ulong> AllImageMemoryHandles { get; } = [];
-    internal HashSet<VulkanRenderer.VulkanPinnedResourceGeneration>[] ImageViewHandles { get; }
-    internal HashSet<VulkanRenderer.VulkanPinnedResourceGeneration> AllImageViewHandles { get; } = [];
+    internal HashSet<VulkanPinnedResourceGeneration>[] ImageViewHandles { get; }
+    internal HashSet<VulkanPinnedResourceGeneration> AllImageViewHandles { get; } = [];
     internal HashSet<ulong>[] SamplerHandles { get; }
     internal HashSet<ulong> AllSamplerHandles { get; } = [];
 

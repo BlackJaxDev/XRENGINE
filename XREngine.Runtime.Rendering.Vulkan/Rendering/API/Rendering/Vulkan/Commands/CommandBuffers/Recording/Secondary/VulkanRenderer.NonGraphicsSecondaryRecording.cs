@@ -2,7 +2,7 @@ using Silk.NET.Vulkan;
 
 namespace XREngine.Rendering.Vulkan;
 
-public unsafe partial class VulkanRenderer
+internal sealed partial class VulkanCommandRuntime
 {
     /// <summary>
     /// Evaluates the exact contract for compute, transfer, and query secondary
@@ -11,10 +11,11 @@ public unsafe partial class VulkanRenderer
     /// and queue-ownership transfers before the secondary is executed.
     /// </summary>
     private VulkanSecondaryRecordingContract EvaluateSecondaryRecordingContract(
-        FrameOp[] operations,
+        FrameOperationSequence operations,
         int startIndex,
         in VulkanSecondaryRecordingBucket bucket,
         int resolvedPassIndex,
+        bool barrierPlanHasPass,
         bool renderScopeActive,
         bool primaryQueryActive)
     {
@@ -22,7 +23,7 @@ public unsafe partial class VulkanRenderer
         VulkanQuerySecondaryInheritanceContract queryInheritance =
             VulkanQuerySecondaryInheritanceContract.Create(
                 primaryQueryActive,
-                QueryCapabilities.InheritedQueriesEnabled);
+                ResourceRuntime.Queries.InheritedQueriesEnabled);
         if (!IsSecondaryFamilyEnabled(family))
         {
             return new(
@@ -83,12 +84,14 @@ public unsafe partial class VulkanRenderer
                 queryInheritance);
         }
 
-        QueueFamilyIndices queueFamilies = FamilyQueueIndices;
+        QueueFamilyIndices queueFamilies = _deviceContext.QueueFamilies;
         bool queueFamilySupported = family switch
         {
             EVulkanSecondaryCommandFamily.Compute =>
                 queueFamilies.GraphicsFamilyIndex.HasValue &&
                 queueFamilies.GraphicsFamilySupportsCompute,
+            EVulkanSecondaryCommandFamily.Synchronization =>
+                queueFamilies.GraphicsFamilyIndex.HasValue,
             EVulkanSecondaryCommandFamily.Transfer =>
                 queueFamilies.GraphicsFamilyIndex.HasValue &&
                 queueFamilies.GraphicsFamilySupportsTransfer,
@@ -105,7 +108,7 @@ public unsafe partial class VulkanRenderer
                 queryInheritance);
         }
 
-        if (!BarrierPlanner.HasKnownPass(resolvedPassIndex))
+        if (!barrierPlanHasPass)
         {
             return new(
                 family,
@@ -118,18 +121,22 @@ public unsafe partial class VulkanRenderer
              operationIndex < endIndex;
              operationIndex++)
         {
-            FrameOp operation = operations[operationIndex];
             bool operationValid = family switch
             {
                 EVulkanSecondaryCommandFamily.Compute =>
-                    operation is ComputeDispatchOp dispatch &&
-                    IsComputeSecondaryOperationValid(dispatch, bucket),
+                    operations.GetHeader(operationIndex).OpCode == EVulkanPrimaryPlanNodeKind.ComputeDispatch &&
+                    IsComputeSecondaryOperationValid(in operations.GetComputeDispatch(operationIndex), bucket) ||
+                    operations.GetHeader(operationIndex).OpCode == EVulkanPrimaryPlanNodeKind.ComputeDispatchIndirect &&
+                    IsComputeIndirectSecondaryOperationValid(in operations.GetComputeDispatchIndirect(operationIndex), bucket),
+                EVulkanSecondaryCommandFamily.Synchronization =>
+                    operations.GetHeader(operationIndex).OpCode == EVulkanPrimaryPlanNodeKind.MemoryBarrier &&
+                    IsExplicitFixedMemoryBarrier(in operations.GetMemoryBarrier(operationIndex), bucket),
                 EVulkanSecondaryCommandFamily.Transfer =>
-                    operation is BufferCopyOp copy &&
-                    IsTransferSecondaryOperationValid(copy, bucket),
+                    operations.GetHeader(operationIndex).OpCode == EVulkanPrimaryPlanNodeKind.BufferCopy &&
+                    IsTransferSecondaryOperationValid(in operations.GetBufferCopy(operationIndex), bucket),
                 EVulkanSecondaryCommandFamily.Query =>
-                    operation is QueryOp query &&
-                    query.Operation ==
+                    operations.GetHeader(operationIndex).OpCode == EVulkanPrimaryPlanNodeKind.Query &&
+                    operations.GetQuery(operationIndex).Operation ==
                         ERenderQueryOperation.CopyResults,
                 _ => false,
             };
@@ -154,6 +161,9 @@ public unsafe partial class VulkanRenderer
         {
             EVulkanSecondaryCommandFamily.Compute =>
                 ComputeSecondaryCommandBuffersEnabled,
+            // Only MemoryBarrierOp is admitted to this family. Render-graph,
+            // image-layout, and queue-transfer barriers remain primary-owned.
+            EVulkanSecondaryCommandFamily.Synchronization => true,
             EVulkanSecondaryCommandFamily.Transfer =>
                 TransferSecondaryCommandBuffersEnabled,
             EVulkanSecondaryCommandFamily.Query =>
@@ -163,7 +173,7 @@ public unsafe partial class VulkanRenderer
 
     private static EVulkanSecondaryRecordingEligibility
         EvaluateQuerySecondaryOperations(
-            FrameOp[] operations,
+            FrameOperationSequence operations,
             int startIndex,
             in VulkanSecondaryRecordingBucket bucket)
     {
@@ -172,14 +182,14 @@ public unsafe partial class VulkanRenderer
              operationIndex < endIndex;
              operationIndex++)
         {
-            if (operations[operationIndex] is not QueryOp query)
+            if (operations.GetHeader(operationIndex).OpCode != EVulkanPrimaryPlanNodeKind.Query)
             {
                 return EVulkanSecondaryRecordingEligibility
                     .InvalidOperationState;
             }
 
-            EVulkanSecondaryRecordingEligibility eligibility =
-                query.Operation switch
+            ref readonly QueryPayload query = ref operations.GetQuery(operationIndex);
+            EVulkanSecondaryRecordingEligibility eligibility = query.Operation switch
                 {
                     ERenderQueryOperation.Reset =>
                         EVulkanSecondaryRecordingEligibility
@@ -198,7 +208,7 @@ public unsafe partial class VulkanRenderer
                         IsQueryResultCopyOrdered(
                             operations,
                             operationIndex,
-                            query)
+                            in query)
                             ? EVulkanSecondaryRecordingEligibility.Eligible
                             : EVulkanSecondaryRecordingEligibility
                                 .QueryResultOrderingUnavailable,
@@ -226,9 +236,9 @@ public unsafe partial class VulkanRenderer
     }
 
     private static bool IsQueryResultCopyOrdered(
-        FrameOp[] operations,
+        FrameOperationSequence operations,
         int copyIndex,
-        QueryOp copy)
+        in QueryPayload copy)
     {
         bool queryActive = false;
         bool producerRecorded = false;
@@ -236,13 +246,13 @@ public unsafe partial class VulkanRenderer
              operationIndex < copyIndex;
              operationIndex++)
         {
-            if (operations[operationIndex] is not QueryOp query ||
-                !ReferenceEquals(query.Query, copy.Query))
+            if (operations.GetHeader(operationIndex).OpCode != EVulkanPrimaryPlanNodeKind.Query ||
+                !ReferenceEquals(operations.GetQuery(operationIndex).Query, copy.Query))
             {
                 continue;
             }
 
-            switch (query.Operation)
+            switch (operations.GetQuery(operationIndex).Operation)
             {
                 case ERenderQueryOperation.Reset:
                     queryActive = false;
@@ -270,21 +280,87 @@ public unsafe partial class VulkanRenderer
     }
 
     private static bool IsComputeSecondaryOperationValid(
-        ComputeDispatchOp operation,
+        in ComputeDispatchPayload operation,
         in VulkanSecondaryRecordingBucket bucket)
-        => operation.PassIndex == bucket.PassIndex &&
-           operation.GroupsX > 0 &&
+        => operation.GroupsX > 0 &&
            operation.GroupsY > 0 &&
            operation.GroupsZ > 0 &&
            operation.Program is not null &&
-           operation.Snapshot is not null;
+           operation.Snapshot is not null &&
+           !ComputeSnapshotHasSampledStorageImageAlias(operation.Snapshot);
+
+    private static bool IsComputeIndirectSecondaryOperationValid(
+        in ComputeDispatchIndirectPayload operation,
+        in VulkanSecondaryRecordingBucket bucket)
+        => operation.Program is not null &&
+           operation.Snapshot is not null &&
+           operation.ArgumentOwner is not null &&
+           operation.ArgumentBuffer.Handle != 0UL &&
+           !ComputeSnapshotHasSampledStorageImageAlias(operation.Snapshot);
+
+    /// <summary>
+    /// Reduction dispatches that sample and write different mips of one image
+    /// must remain inline. Each non-graphics secondary contains one operation,
+    /// so batching those secondaries cannot express the sampled/storage layout
+    /// hand-off between consecutive dispatches on the primary image journal.
+    /// </summary>
+    private static bool ComputeSnapshotHasSampledStorageImageAlias(
+        ComputeDispatchSnapshot snapshot)
+    {
+        foreach (XRTexture sampler in snapshot.Samplers.Values)
+            if (SnapshotWritesTexture(snapshot, sampler))
+                return true;
+
+        foreach (XRTexture sampler in snapshot.SamplersByName.Values)
+            if (SnapshotWritesTexture(snapshot, sampler))
+                return true;
+
+        return false;
+
+        static bool SnapshotWritesTexture(
+            ComputeDispatchSnapshot snapshot,
+            XRTexture sampler)
+        {
+            XRTexture sampledStorage = ResolveTextureStorage(sampler);
+            foreach (ProgramImageBinding binding in snapshot.Images.Values)
+                if (ReferenceEquals(
+                        ResolveTextureStorage(binding.Texture),
+                        sampledStorage))
+                    return true;
+
+            return false;
+        }
+
+        static XRTexture ResolveTextureStorage(XRTexture texture)
+        {
+            while (texture is XRTextureViewBase view)
+            {
+                XRTexture viewedTexture = view.GetViewedTexture();
+                if (ReferenceEquals(viewedTexture, texture))
+                    break;
+
+                texture = viewedTexture;
+            }
+
+            return texture;
+        }
+    }
+
+    private static bool IsExplicitFixedMemoryBarrier(
+        in MemoryBarrierPayload operation,
+        in VulkanSecondaryRecordingBucket bucket)
+        => operation.Mask != 0;
 
     private static bool IsTransferSecondaryOperationValid(
-        BufferCopyOp operation,
+        in BufferCopyPayload operation,
         in VulkanSecondaryRecordingBucket bucket)
     {
-        if (operation.PassIndex != bucket.PassIndex ||
-            operation.SourceOwner is null ||
+        // Receipt-bearing diagnostics copies must be recorded directly into the
+        // accepted primary; a cached or unexecuted secondary is not proof.
+        if (operation.DiagnosticReceipt is not null)
+            return false;
+
+        if (operation.SourceOwner is null ||
             operation.DestinationOwner is null ||
             operation.SourceBuffer.Handle == 0 ||
             operation.DestinationBuffer.Handle == 0 ||
@@ -323,4 +399,10 @@ public unsafe partial class VulkanRenderer
                operation.DestinationOffset >=
                    operation.SourceOffset + operation.ByteCount;
     }
+
+    private static bool IsBufferRangeValid(
+        ulong capacity,
+        ulong offset,
+        ulong count)
+        => count <= capacity && offset <= capacity - count;
 }

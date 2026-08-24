@@ -473,13 +473,21 @@ public static class BootstrapPawnFactory
     private static void ConfigureCameraPostProcessing(CameraComponent cameraComponent)
     {
         var settings = RuntimeBootstrapState.Settings;
-        Debug.Out($"[BootstrapPawnFactory] ConfigureCameraPostProcessing Atmosphere={settings.InitializeAtmosphericScattering} VolumetricFog={settings.InitializeVolumetricFog}");
-        if (!settings.InitializeVolumetricFog && !settings.InitializeAtmosphericScattering)
+        Debug.Out($"[BootstrapPawnFactory] ConfigureCameraPostProcessing Atmosphere={settings.InitializeAtmosphericScattering} VolumetricFog={settings.InitializeVolumetricFog} MeshletDebugDisplay={settings.MeshletDebugDisplay}");
+        if (!settings.InitializeVolumetricFog &&
+            !settings.InitializeAtmosphericScattering &&
+            !settings.MeshletDebugDisplay)
             return;
 
         var camera = cameraComponent.Camera;
         if (!camera.RenderPipeline.OverrideProtected)
             camera.RenderPipeline.OverrideProtected = true;
+
+        if (settings.MeshletDebugDisplay)
+        {
+            camera.MeshletDebugDisplayEnabledOverride = true;
+            Debug.Out("[Meshlets] Runtime camera meshlet debug display override enabled.");
+        }
 
         if (settings.InitializeAtmosphericScattering)
         {

@@ -2,7 +2,6 @@
 
 layout(local_size_x = 256) in;
 
-const uint COMMAND_FLOATS = 20u;
 const uint KEY_UINTS = 4u;
 const uint CLASSIFICATION_UINTS = 8u;
 const uint POLICY_CONSERVATIVE_UNION = 0u;
@@ -20,7 +19,7 @@ const uint DOMAIN_APPROXIMATE = 2u;
 const uint DOMAIN_EXACT = 3u;
 const uint LOD_POLICY_PER_VIEW_EXACT = 0u;
 
-layout(std430, binding = 0) readonly buffer CulledCommands { float culled[]; };
+layout(std430, binding = 0) readonly buffer VisibleDrawIds { uint visibleDrawIds[]; };
 layout(std430, binding = 1) readonly buffer CulledCountBuffer
 {
     uint CulledCount;
@@ -30,6 +29,14 @@ layout(std430, binding = 1) readonly buffer CulledCountBuffer
 layout(std430, binding = 2) writeonly buffer SortKeyBuffer { uint sortKeys[]; };
 layout(std430, binding = 3) writeonly buffer ViewBatchClassificationBuffer { uint classifications[]; };
 layout(std430, binding = 4) readonly buffer TransparencyMetadataBuffer { uint metadata[]; };
+struct DrawMetadata
+{
+    uint DrawID; uint MeshID; uint SubmeshID; uint MaterialID;
+    uint TransformID; uint SkinID; uint RenderPassMask; uint LayerMask;
+    uint Flags; uint LodPolicy; uint StateClassID; uint InstanceCount;
+    uint RenderPass; uint RenderIdentityID; uint LogicalMeshID; uint BoundsID;
+};
+layout(std430, binding = 5) readonly buffer DrawMetadataBuffer { DrawMetadata Draws[]; };
 layout(std430, binding = 16) readonly buffer CulledCommandViewMaskBuffer { uvec2 CulledCommandViewMasks[]; };
 
 uniform int MaxSortKeys;
@@ -78,23 +85,25 @@ void main()
         (ExactViewMasksValid != 0u && logicalIdx >= uint(CulledCommandViewMasks.length())))
         return;
 
-    uint base = logicalIdx * COMMAND_FLOATS;
-    if (base + COMMAND_FLOATS > uint(culled.length()))
+    if (logicalIdx >= uint(visibleDrawIds.length()))
         return;
 
     // Publish a key for every compacted command. Material scatter walks the
     // full CulledCount and performs the render-pass filter from DrawMetadata.
     // Leaving a key slot unwritten here lets stale draw IDs from an earlier
     // pass/frame turn into duplicate or malformed indirect commands.
-    uint renderPass = floatBitsToUint(culled[base + 8u]);
-    uint materialID = floatBitsToUint(culled[base + 6u]);
-    uint meshID = floatBitsToUint(culled[base + 4u]);
-    uint shaderProgramID = floatBitsToUint(culled[base + 9u]);
-    float renderDistance = culled[base + 10u];
-    uint lodLevel = floatBitsToUint(culled[base + 12u]);
-    uint flags = floatBitsToUint(culled[base + 13u]);
-    uint stateClassID = floatBitsToUint(culled[base + 17u]);
-    uint drawID = floatBitsToUint(culled[base + 19u]);
+    uint drawID = visibleDrawIds[logicalIdx];
+    if (drawID >= uint(Draws.length()))
+        return;
+    DrawMetadata draw = Draws[drawID];
+    uint renderPass = draw.RenderPass;
+    uint materialID = draw.MaterialID;
+    uint meshID = draw.MeshID;
+    uint shaderProgramID = draw.RenderIdentityID;
+    float renderDistance = 0.0;
+    uint lodLevel = draw.LodPolicy;
+    uint flags = draw.Flags;
+    uint stateClassID = draw.StateClassID;
 
     uint stateBits = flags & StateBitMask;
     uint packedPassPipelineState =

@@ -3,6 +3,7 @@ using XREngine.Components;
 using XREngine.Components.Scene.Mesh;
 using XREngine.Rendering;
 using XREngine.Rendering.Models;
+using XREngine.Rendering.Models.Caching;
 using XREngine.Scene.Importers.Poiyomi;
 using XREngine.Scene.Prefabs;
 using XREngine.Scene.Transforms;
@@ -67,6 +68,12 @@ internal static partial class UnitySceneImporter
         ApplyUnityImportedSkeletonBindPose(root, metadata, state);
         if (metadata.SortHierarchyByName)
             SortHierarchyByName(root);
+
+        // Do not cook this imported model here. A Unity prefab can compose this
+        // hierarchy with built-in and .asset meshes and then apply topology
+        // changes from prefab overrides. The completed prefab hierarchy owns one
+        // cook immediately before it is published, so every mesh receives an
+        // identity from its final Unity placement.
 
         UnityAnimatorImportMetadataComponent? animatorMetadata = root.TryGetComponent<UnityAnimatorImportMetadataComponent>(
             out UnityAnimatorImportMetadataComponent? existingAnimatorMetadata)
@@ -133,6 +140,7 @@ internal static partial class UnitySceneImporter
             // generation-2 GameObject/Transform/renderer fileIDs.
             OptimizeGraph = false,
             OptimizeMeshes = false,
+            DeferMeshletCookingUntilPostNormalization = true,
             ProcessMeshesAsynchronously = false,
             GenerateMeshRenderersAsync = false,
             MaterialRemap = externalMaterials.ToDictionary(

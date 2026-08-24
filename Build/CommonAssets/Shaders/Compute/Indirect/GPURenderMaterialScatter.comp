@@ -48,6 +48,18 @@ struct DrawMetadata
     uint BoundsID;
 };
 
+// Mirrors GPUScene.GpuMeshletRange.  Material scatter reads this only when the
+// direct task/mesh path was sealed ready for the current pass; meshlet-resident
+// rows are then omitted from the traditional indirect output so each draw is
+// submitted by exactly one primitive path.
+struct GpuMeshletRange
+{
+    uint MeshletOffset;
+    uint MeshletCount;
+    uint VertexIndexOffset;
+    uint TriangleIndexOffset;
+};
+
 layout(std430, binding = 0) readonly buffer DrawMetadataBuffer { DrawMetadata Draws[]; };
 layout(std430, binding = 1) readonly buffer MeshDataBuffer { uint meshData[]; };
 layout(std430, binding = 2) readonly buffer CulledCountBuffer
@@ -64,6 +76,10 @@ layout(std430, binding = 7) buffer OverflowFlagBuffer { uint overflowFlag; };
 layout(std430, binding = 8) readonly buffer LODTransitionBuffer { uint lodTransitions[]; };
 layout(std430, binding = 9) buffer StatsBuffer { uint stats[]; };
 layout(std430, binding = 10) readonly buffer TransparencyMetadataBuffer { uint transparencyMetadata[]; };
+layout(std430, binding = 11) readonly buffer MeshletRangeBuffer { GpuMeshletRange meshletRanges[]; };
+// Expansion precedes scatter.  If its bounded task allocator overflowed, this
+// pass retains every row conventionally and the task shader emits no mesh work.
+layout(std430, binding = 12) readonly buffer MeshletExpansionOverflowBuffer { uint meshletExpansionOverflow; };
 
 uniform int CurrentRenderPass;
 uniform int MaxMaterialSlotLookup;
@@ -74,6 +90,7 @@ uniform uvec3 AtlasVertexCounts;
 uniform uint StatsEnabled;
 uniform uint RejectExactTransparentMultiview;
 uniform uint CompactMaterialTableOutput;
+uniform uint ExcludeMeshletResidentRows;
 
 shared uint compactScan[MATERIAL_TIER_COUNT][64];
 shared uint compactBase[MATERIAL_TIER_COUNT];
@@ -431,30 +448,57 @@ void main()
             (CurrentRenderPass < 0 ||
              meta.RenderPass == uint(CurrentRenderPass) ||
              meta.RenderPass == 0xFFFFFFFFu);
+
     }
 
     uint transitionBase = drawID * LOD_TRANSITION_UINTS;
-    bool transitionActive = false;
-    uint previousMeshID = 0u;
+    uint selectedMeshID = meta.MeshID;
     if (inputValid && transitionBase + 3u < uint(lodTransitions.length()))
     {
-        previousMeshID = lodTransitions[transitionBase + 0u];
+        selectedMeshID = lodTransitions[transitionBase + 0u];
         uint transitionFlags = lodTransitions[transitionBase + 2u];
-        float transitionProgress = clamp(uintBitsToFloat(lodTransitions[transitionBase + 3u]), 0.0, 1.0);
-        transitionActive = (transitionFlags & LOD_TRANSITION_ACTIVE) != 0u && previousMeshID != 0u && transitionProgress < 1.0;
+        if ((transitionFlags & LOD_TRANSITION_ACTIVE) == 0u || selectedMeshID == 0u)
+            selectedMeshID = meta.MeshID;
     }
 
-    DrawCandidate previousCandidate = transitionActive
-        ? BuildDrawCandidate(
-            previousMeshID,
-            meta.MaterialID,
-            meta.InstanceCount,
-            drawID,
-            true)
-        : BuildDrawCandidate(0u, 0u, 0u, 0u, false);
+    // Exact inverse of GPURenderExpandMeshlets.  The initial production path is
+    // deliberately narrow: one static opaque-deferred instance, no LOD blend,
+    // and no custom/deformation/cull-mode special cases.  Everything else keeps
+    // the proven material-table indirect path.
+    if (inputValid && ExcludeMeshletResidentRows != 0u)
+    {
+        uint transitionFlags = transitionBase + 3u < uint(lodTransitions.length())
+            ? lodTransitions[transitionBase + 2u]
+            : 0u;
+        const uint MESHLET_INELIGIBLE_FLAGS =
+            (1u << 0u) |  // transparent
+            (1u << 2u) |  // skinned
+            (1u << 3u) |  // non-rigid/non-uniform transform
+            (1u << 4u) |  // double-sided
+            (1u << 9u) |  // wireframe
+            (1u << 10u) | // instanced
+            (1u << 11u) | // animated
+            (1u << 12u) | // blend shapes
+            (1u << 16u) | // custom shader
+            (1u << 20u) | // explicit CPU-only/custom routing
+            (1u << 21u);  // non-canonical raster/cull state
+        const uint OPAQUE_DEFERRED_STATE_CLASS = 1u;
+        bool meshletEligible =
+            meshletExpansionOverflow == 0u &&
+            meta.SkinID == 0u &&
+            meta.InstanceCount == 1u &&
+            meta.StateClassID == OPAQUE_DEFERRED_STATE_CLASS &&
+            (meta.Flags & MESHLET_INELIGIBLE_FLAGS) == 0u &&
+            (transitionFlags & LOD_TRANSITION_ACTIVE) == 0u &&
+            selectedMeshID < uint(meshletRanges.length()) &&
+            meshletRanges[selectedMeshID].MeshletCount != 0u;
+        inputValid = !meshletEligible;
+    }
+
+    DrawCandidate previousCandidate = BuildDrawCandidate(0u, 0u, 0u, 0u, false);
     DrawCandidate currentCandidate = inputValid
         ? BuildDrawCandidate(
-            meta.MeshID,
+            selectedMeshID,
             meta.MaterialID,
             meta.InstanceCount,
             drawID,

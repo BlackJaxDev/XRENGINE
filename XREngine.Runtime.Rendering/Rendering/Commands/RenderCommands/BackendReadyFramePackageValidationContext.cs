@@ -12,4 +12,5 @@ public readonly record struct BackendReadyFramePackageValidationContext(
     int ViewportWidth,
     int ViewportHeight,
     int InternalWidth,
-    int InternalHeight);
+    int InternalHeight,
+    bool AllowViewportResizeLag = false);

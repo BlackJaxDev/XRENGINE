@@ -61,16 +61,21 @@ public static class InteractiveWindowResizeStrategyUtility
 
     private static string Normalize(string value)
     {
-        Span<char> buffer = stackalloc char[value.Length];
         int length = 0;
         for (int i = 0; i < value.Length; i++)
-        {
-            char c = value[i];
-            if (c is '-' or '_' or ' ' or '\t')
-                continue;
-            buffer[length++] = char.ToLowerInvariant(c);
-        }
+            if (value[i] is not ('-' or '_' or ' ' or '\t'))
+                length++;
 
-        return new string(buffer[..length]);
+        return string.Create(length, value, static (destination, source) =>
+        {
+            int index = 0;
+            for (int i = 0; i < source.Length; i++)
+            {
+                char current = source[i];
+                if (current is '-' or '_' or ' ' or '\t')
+                    continue;
+                destination[index++] = char.ToLowerInvariant(current);
+            }
+        });
     }
 }

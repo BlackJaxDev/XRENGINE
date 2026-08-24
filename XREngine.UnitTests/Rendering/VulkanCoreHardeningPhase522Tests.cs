@@ -54,8 +54,9 @@ public sealed class VulkanCoreHardeningPhase522Tests
     {
         string recording = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
-        string lowering = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandChainLowering.cs");
+        string lowering = SourceContractWorkspace.ReadVulkanSourcesContaining(
+            "ComputeFrameOpFrameDataSignature",
+            "FrameDataSignature");
         string plannerState = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/RenderGraph/VulkanRenderer.ResourcePlannerState.cs");
 
@@ -85,17 +86,18 @@ public sealed class VulkanCoreHardeningPhase522Tests
     [Test]
     public void VolatileSecondaryContentGeneration_DoesNotInvalidateItsCachedPrimary()
     {
-        string lowering = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandChainLowering.cs");
+        string lowering = SourceContractWorkspace.ReadVulkanSourcesContaining(
+            "internal static ulong ComputePrimaryCommandBufferGroupSignature(");
         int start = lowering.IndexOf(
-            "internal static ulong ComputePrimaryCommandBufferGroupSignature(\n        CommandChainSchedule schedule,",
+            "ComputePrimaryCommandBufferGroupIdentity(\n            CommandChainSchedule schedule,",
             StringComparison.Ordinal);
         start.ShouldBeGreaterThanOrEqualTo(0);
-        int end = lowering.IndexOf("return hash.ToHash();", start, StringComparison.Ordinal);
+        int end = lowering.IndexOf("return new VulkanCommandIdentityComponents(", start, StringComparison.Ordinal);
         end.ShouldBeGreaterThan(start);
         string method = lowering[start..end];
 
-        method.ShouldContain("chain.SecondaryCommandBuffer.Handle");
+        method.ShouldContain("chain.RecordedArtifact.CreateReference()");
+        method.ShouldContain("artifact.AddTo(ref nestedArtifacts);");
         method.ShouldNotContain("SecondaryCommandBufferGeneration");
     }
 

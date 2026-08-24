@@ -1,6 +1,6 @@
 # XREngine MCP (Model Context Protocol) Server
 
-This document describes the MCP server implementation in XREngine Editor, which enables AI assistants and external tools to interact with the engine through a standardized JSON-RPC 2.0 protocol.
+This document describes the MCP server implementation in XREngine Editor and the editor-independent runtime automation host, which enable AI assistants and external tools to interact with the engine through a standardized JSON-RPC 2.0 protocol.
 
 For enabling the server, configuring editor preferences, and connecting VS Code or the in-editor assistant, start with the [MCP Server And Assistant user guide](../../user-guide/ai/mcp-server.md). This page is the protocol, tool surface, and contributor implementation reference.
 
@@ -22,6 +22,19 @@ The XREngine MCP Server exposes the editor's functionality via HTTP, allowing ex
 - List worlds and scenes
 
 The server implements the [Model Context Protocol](https://modelcontextprotocol.io/) specification (version `2024-11-05`).
+
+Runtime-only hosts use `XREngine.Runtime.Automation`. That assembly owns the
+small HTTP transport, tool registry, permission/idempotency enforcement,
+capability-scoped context, and asynchronous job primitives required by
+RenderBench. It does not reference `XREngine.Editor`. The editor can adapt and
+register its scene/action catalog through `EditorMcpToolBundle`; runtime
+profiling tools register independently through `RenderProfileMcpToolBundle`.
+
+Runtime tools declare any required `World`, `Renderer`, `RenderTarget`,
+`ProfilerSession`, `Editor`, or `Window` capabilities. Dispatch reports the
+specific missing capabilities instead of applying a process-wide active-world
+gate. Existing editor scene tools retain `World` as their default requirement,
+while profiler dumps can explicitly require only `ProfilerSession`.
 
 ---
 
@@ -51,13 +64,14 @@ The child process receives these isolation variables:
 | `XRE_GAME_METADATA_PATH` | Per-session asset metadata, initially seeded from the repository metadata |
 | `XRE_TEXTURE_STREAMING_CACHE_WARMUP_ENABLED` | Defaults to `false` for isolated sessions so short automation runs do not cook multi-gigabyte texture caches; override explicitly when cache behavior is under test |
 
-The manifest at `Build/_AgentValidation/mcp-sessions/<name>/session.json` records the endpoint, artifact path, PID, and process start time. Port selection and same-name startup are serialized through a file lock. Stop operations validate the recorded executable, PID, and start time to prevent PID reuse or cross-session termination.
+The manifest at `Build/_AgentValidation/00000000-000000-shared/mcp-sessions/<timestamp>-<name>/session.json` records the logical name, endpoint, artifact path, PID, and process start time. Port selection and same-name startup are serialized through a file lock. Stop operations resolve the logical name and validate the recorded executable, PID, and start time to prevent PID reuse or cross-session termination.
 
-Before starting a session, the manager removes imported-asset caches from inactive
-sessions, retains isolated build artifacts for only the two most recently active
-stopped sessions, and requires at least 10 GiB of free space on the session drive.
-Referenced logs, captures, metadata, and manifests are preserved. This bounds the
-rebuildable portion of agent validation without discarding investigation evidence.
+Before starting a session, the manager removes imported-asset caches, seeded metadata,
+and isolated build artifacts from inactive sessions, removes the oldest stopped session
+when five session roots already exist, and requires at least 10 GiB of free space on the
+session drive. `-NoBuild` is therefore a short-lived restart optimization, not a durable
+artifact guarantee. Ignored logs, captures, metadata, and manifests are disposable;
+durable conclusions belong in tracked documentation.
 
 MCP status distinguishes the editor process session from protocol client sessions:
 
@@ -753,6 +767,15 @@ When a tool executes but encounters an error, `isError` is set to `true`:
 ---
 
 ## Architecture
+
+Runtime profiling recipes and fixture execution are editor-independent. The
+strict Phase 4 schema is `.vscode/schemas/render-profile-recipe.schema.json`;
+`list_render_profile_targets` reports each catalog target's component, mode,
+inclusions, exclusions, and output-hash support. Recipes loaded through MCP and
+recipes passed to RenderBench with `--recipe-file` use the same executor,
+workload identity, correctness gates, and artifact format. Worker-count matrix
+variants retain a common underlying workload hash and suspend MCP only during
+each child capture/drain interval.
 
 The MCP implementation consists of the following classes:
 

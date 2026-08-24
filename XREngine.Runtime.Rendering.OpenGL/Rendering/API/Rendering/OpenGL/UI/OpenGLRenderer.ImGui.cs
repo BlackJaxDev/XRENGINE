@@ -75,6 +75,13 @@ public partial class OpenGLRenderer
             _controller.Render();
         }
 
+        public void UpdatePlatformWindows(bool deferGpuLifecycle)
+        {
+            using var clipScope = _renderer.PushUiClipSpacePolicy();
+            using var _ = FramebufferSrgbScope.Disable(_renderer.Api);
+            _renderer._imguiMultiViewportController?.UpdatePlatformWindows(deferGpuLifecycle);
+        }
+
         public void RenderPlatformWindows()
         {
             using var clipScope = _renderer.PushUiClipSpacePolicy();
@@ -150,6 +157,7 @@ public partial class OpenGLRenderer
         // frame 2; otherwise Dear ImGui correctly reports that the required
         // UpdatePlatformWindows call was skipped between frames.
         controller.Render();
+        multiViewport?.UpdatePlatformWindows(deferGpuLifecycle: false);
         multiViewport?.RenderPlatformWindows();
 
         _imguiMultiViewportController = multiViewport;

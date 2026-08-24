@@ -6,7 +6,7 @@ using Buffer = Silk.NET.Vulkan.Buffer;
 
 namespace XREngine.Rendering.Vulkan;
 
-internal unsafe sealed class VulkanStagingManager
+internal sealed class VulkanStagingManager
 {
     private readonly object _sync = new();
     private readonly List<StagingBufferEntry> _entries = [];
@@ -64,8 +64,8 @@ internal unsafe sealed class VulkanStagingManager
         return false;
     }
 
-    public (Buffer buffer, DeviceMemory memory) Acquire(
-        VulkanRenderer renderer,
+    public unsafe (Buffer buffer, DeviceMemory memory) Acquire(
+        VulkanBackendObjectContext context,
         ulong requestedSize,
         BufferUsageFlags usage,
         MemoryPropertyFlags properties,
@@ -79,7 +79,12 @@ internal unsafe sealed class VulkanStagingManager
             StagingBufferEntry? entry = TryTakeReusable(requestedSize, usage, properties);
             if (entry is null)
             {
-                (Buffer buffer, DeviceMemory memory) = renderer.CreateBufferRaw(requestedSize, usage, properties);
+                (Buffer buffer, DeviceMemory memory) = context.Resources.Buffers.CreateRaw(
+                    context,
+                    requestedSize,
+                    usage,
+                    properties,
+                    owner: "VulkanStagingManager");
                 entry = new StagingBufferEntry
                 {
                     Buffer = buffer,
@@ -98,7 +103,10 @@ internal unsafe sealed class VulkanStagingManager
             }
 
             if (data != null)
-                renderer.UploadBufferMemory(entry.Buffer, entry.Memory, requestedSize, data.Pointer);
+            {
+                context.Resources.Buffers.UpdateFromVoidPtr(
+                    context, entry.Buffer, entry.Memory, 0, requestedSize, data);
+            }
 
             return (entry.Buffer, entry.Memory);
         }
@@ -142,7 +150,7 @@ internal unsafe sealed class VulkanStagingManager
         return false;
     }
 
-    public void Destroy(VulkanRenderer renderer)
+    public void Destroy(VulkanBackendObjectContext context)
     {
         StagingBufferEntry[] entries;
         lock (_sync)
@@ -152,7 +160,7 @@ internal unsafe sealed class VulkanStagingManager
         }
 
         foreach (StagingBufferEntry entry in entries)
-            renderer.DestroyBufferRaw(entry.Buffer, entry.Memory);
+            context.Resources.Buffers.Destroy(context, entry.Buffer, entry.Memory, "VulkanStagingManager.Destroy");
     }
 
     /// <summary>
@@ -160,22 +168,17 @@ internal unsafe sealed class VulkanStagingManager
     /// consecutive idle frames or that exceed <see cref="MaxPoolEntries"/> total pool size.
     /// Call once per frame (e.g. after command buffer submission).
     /// </summary>
-    public void Trim(VulkanRenderer renderer)
+    public void Trim(VulkanBackendObjectContext backendContext)
     {
         lock (_sync)
         {
             _trimFrameCounter++;
 
             ulong idleBytes = 0;
-            int idleEntries = 0;
-            for (int i = 0; i < _entries.Count; i++)
+            for (int index = 0; index < _entries.Count; index++)
             {
-                StagingBufferEntry entry = _entries[i];
-                if (entry.InUse)
-                    continue;
-
-                idleEntries++;
-                idleBytes += entry.Size;
+                if (!_entries[index].InUse)
+                    idleBytes += _entries[index].Size;
             }
 
             bool overEntryBudget = _entries.Count > MaxPoolEntries;
@@ -185,13 +188,10 @@ internal unsafe sealed class VulkanStagingManager
                 return;
 
             _trimFrameCounter = 0;
-
             List<StagingBufferEntry>? evicted = null;
-
-            // Increment idle counters and collect eviction candidates.
-            for (int i = _entries.Count - 1; i >= 0; i--)
+            for (int index = _entries.Count - 1; index >= 0; index--)
             {
-                StagingBufferEntry entry = _entries[i];
+                StagingBufferEntry entry = _entries[index];
                 if (entry.InUse)
                 {
                     entry.IdleFrames = 0;
@@ -199,25 +199,32 @@ internal unsafe sealed class VulkanStagingManager
                 }
 
                 entry.IdleFrames++;
-
-                bool entryOldEnough = entry.IdleFrames >= IdleFramesBeforeEviction;
-                bool stillOverEntryBudget = _entries.Count > MaxPoolEntries;
-                bool stillOverIdleBudget = idleBytes > IdleBytesWatermark;
-                if (entryOldEnough || stillOverEntryBudget || stillOverIdleBudget)
+                if (entry.IdleFrames < IdleFramesBeforeEviction &&
+                    _entries.Count <= MaxPoolEntries &&
+                    idleBytes <= IdleBytesWatermark)
                 {
-                    evicted ??= [];
-                    evicted.Add(entry);
-                    _entries.RemoveAt(i);
-                    if (idleEntries > 0)
-                        idleEntries--;
-                    idleBytes = idleBytes > entry.Size ? idleBytes - entry.Size : 0;
+                    continue;
                 }
+
+                evicted ??= [];
+                evicted.Add(entry);
+                _entries.RemoveAt(index);
+                idleBytes = idleBytes > entry.Size
+                    ? idleBytes - entry.Size
+                    : 0;
             }
 
-            if (evicted is not null)
+            if (evicted is null)
+                return;
+
+            for (int index = 0; index < evicted.Count; index++)
             {
-                foreach (StagingBufferEntry entry in evicted)
-                    renderer.DestroyBufferRaw(entry.Buffer, entry.Memory);
+                StagingBufferEntry entry = evicted[index];
+                backendContext.Resources.Buffers.Destroy(
+                    backendContext,
+                    entry.Buffer,
+                    entry.Memory,
+                    "Staging.Trim");
             }
         }
     }

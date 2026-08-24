@@ -1,74 +1,329 @@
 using System;
+using System.Diagnostics;
 using Silk.NET.Vulkan;
 
 namespace XREngine.Rendering.Vulkan
 {
-    public unsafe partial class VulkanRenderer
+    internal sealed partial class VulkanFrameLoop
     {
+        private VulkanTrackedCommandEncoder CreateRecoveryCommandEncoder()
+            => new(_commandRuntime);
+
         private void PrepareRejectedDesktopAbortCommand(
-        ref VulkanFrameAttempt attempt,
+            ref VulkanFrameAttempt attempt,
             in RejectedDesktopFramePolicyDecision policy,
             bool imageWasEverPresented,
             out CommandPool commandPool,
-            out CommandBuffer commandBuffer)
+            out CommandBuffer commandBuffer,
+            out bool replayedPresentationSource)
         {
-            commandPool = GetThreadCommandPool();
-            commandBuffer = AllocateCommandBuffer(
+            commandPool = _commandRuntime.GetThreadGraphicsCommandPool(Api!, _deviceContext, ResourceRuntime);
+            commandBuffer = _commandRuntime.AllocateTrackedCommandBuffer(
+                Api!,
+                _deviceContext,
+                ResourceRuntime,
+                commandPool,
                 CommandBufferLevel.Primary,
-                "swapchain abort present transition command buffer",
-                commandPool);
-            RegisterCommandBufferImageIndex(
+                "swapchain abort present transition command buffer");
+            _commandRuntime.CommandBuffers.RegisterImageIndex(
                 commandBuffer,
                 attempt.ImageIndex);
             BeginRejectedDesktopTransition(
                 ref attempt,
                 commandBuffer,
                 in policy,
-                imageWasEverPresented);
+                imageWasEverPresented,
+                out replayedPresentationSource);
         }
 
         private void BeginRejectedDesktopTransition(
-        ref VulkanFrameAttempt attempt,
+            ref VulkanFrameAttempt attempt,
             CommandBuffer commandBuffer,
             in RejectedDesktopFramePolicyDecision policy,
-            bool imageWasEverPresented)
+            bool imageWasEverPresented,
+            out bool replayedPresentationSource)
         {
+            replayedPresentationSource = false;
             CommandBufferBeginInfo beginInfo = new()
             {
                 SType = StructureType.CommandBufferBeginInfo,
                 Flags = CommandBufferUsageFlags.OneTimeSubmitBit,
             };
+            ThrowIfVulkanDeviceOperationNotAdmitted("vkBeginCommandBuffer.FrameRecovery");
             if (Api!.BeginCommandBuffer(commandBuffer, ref beginInfo) !=
                 Result.Success)
-            {
                 throw new InvalidOperationException(
                     "Failed to begin swapchain abort-present transition command buffer.");
-            }
 
-            ResetCommandBufferBindState(commandBuffer);
-            if (policy.ShouldClearBeforePresent)
-            {
+            VulkanTrackedCommandEncoder encoder = CreateRecoveryCommandEncoder();
+            _commandRuntime.ResetBindState(encoder, commandBuffer);
+            if (policy.Disposition == ERejectedDesktopFrameDisposition.PresentLastCompletedContent)
+                replayedPresentationSource = TryRecordRejectedDesktopPresentationReplay(
+                    ref attempt,
+                    commandBuffer);
+
+            if (!replayedPresentationSource && policy.ShouldClearBeforePresent)
                 RecordRejectedDesktopInitializationClear(
                     attempt.ImageIndex,
                     commandBuffer,
                     imageWasEverPresented);
-            }
 
-            if (EndCommandBufferTracked(
-                    commandBuffer,
-                    cacheVariant: false) != Result.Success)
-            {
+            if (encoder.End(commandBuffer, cacheVariant: false) != Result.Success)
                 throw new InvalidOperationException(
                     "Failed to end swapchain abort-present transition command buffer.");
-            }
         }
 
-        private void RecordRejectedDesktopInitializationClear(
+        private bool TryRecordRejectedDesktopPresentationReplay(
+            ref VulkanFrameAttempt attempt,
+            CommandBuffer commandBuffer)
+        {
+            VulkanPresentationSourceTuple source =
+                _windowPresentSource.CaptureAnyCompleteBinding();
+                if (!ResourceRuntime.TryValidatePresentationSourceForReplay(
+                    source,
+                    out string unavailableReason))
+            {
+                Debug.VulkanEvery(
+                    $"Vulkan.Frame.{GetHashCode()}.RecoveryReplayUnavailable",
+                    TimeSpan.FromSeconds(1),
+                    "[Vulkan] Rejected-frame presentation replay is unavailable for image {0}: {1}.",
+                    attempt.ImageIndex,
+                    unavailableReason);
+                return false;
+            }
+
+            Image desktopImage = OutputRuntime.Desktop.Images is not null &&
+                attempt.ImageIndex < OutputRuntime.Desktop.Images.Length
+                    ? OutputRuntime.Desktop.Images[attempt.ImageIndex]
+                    : default;
+            ImageSubresourceRange colorRange = new()
+            {
+                AspectMask = ImageAspectFlags.ColorBit,
+                BaseMipLevel = 0,
+                LevelCount = 1,
+                BaseArrayLayer = 0,
+                LayerCount = 1,
+            };
+            _commandRuntime.Synchronization.TryGetSubmittedImageLayout(
+                desktopImage,
+                in colorRange,
+                out ImageLayout desktopInitialLayout);
+            VulkanSwapchainRecordingTargetInput targetInput = new(
+                attempt.ImageIndex,
+                OpenXrTargetContext: null,
+                OutputRuntime.DesktopDepthResources,
+                OpenXrInitialColorLayout: ImageLayout.Undefined,
+                DesktopInitialColorLayout: desktopInitialLayout);
+            SwapchainRecordingTarget target = OutputRuntime.ResolveRecordingTarget(
+                in targetInput);
+            if (!target.IsValid)
+                return false;
+
+            bool recorded = RecordRejectedDesktopPresentationBlit(
+                commandBuffer,
+                source,
+                in target,
+                new VulkanTrackedCommandEncoder(_commandRuntime));
+            if (!recorded)
+                return false;
+
+            TransitionRejectedDesktopReplayTargetToPresent(commandBuffer, in target);
+            return true;
+        }
+
+        private static unsafe bool RecordRejectedDesktopPresentationBlit(
+            CommandBuffer commandBuffer,
+            in VulkanPresentationSourceTuple source,
+            in SwapchainRecordingTarget target,
+            VulkanTrackedCommandEncoder encoder)
+        {
+            if (source.Image.Handle == 0 ||
+                source.Width == 0 ||
+                source.Height == 0 ||
+                target.Image.Handle == 0 ||
+                target.Extent.Width == 0 ||
+                target.Extent.Height == 0)
+            {
+                return false;
+            }
+
+            ImageSubresourceRange sourceRange = new()
+            {
+                AspectMask = source.Aspect,
+                BaseMipLevel = 0,
+                LevelCount = 1,
+                BaseArrayLayer = 0,
+                LayerCount = 1,
+            };
+            ImageSubresourceRange targetRange = new()
+            {
+                AspectMask = ImageAspectFlags.ColorBit,
+                BaseMipLevel = 0,
+                LevelCount = 1,
+                BaseArrayLayer = 0,
+                LayerCount = 1,
+            };
+            ImageLayout sourceInitialLayout = source.ExpectedLayout == ImageLayout.Undefined
+                ? ImageLayout.ShaderReadOnlyOptimal
+                : source.ExpectedLayout;
+            ImageLayout targetInitialLayout = target.InitialColorLayout;
+            ImageMemoryBarrier* toTransfer = stackalloc ImageMemoryBarrier[2];
+            toTransfer[0] = new ImageMemoryBarrier
+            {
+                SType = StructureType.ImageMemoryBarrier,
+                SrcAccessMask = AccessFlags.ShaderReadBit,
+                DstAccessMask = AccessFlags.TransferReadBit,
+                OldLayout = sourceInitialLayout,
+                NewLayout = ImageLayout.TransferSrcOptimal,
+                SrcQueueFamilyIndex = Vk.QueueFamilyIgnored,
+                DstQueueFamilyIndex = Vk.QueueFamilyIgnored,
+                Image = source.Image,
+                SubresourceRange = sourceRange,
+            };
+            toTransfer[1] = new ImageMemoryBarrier
+            {
+                SType = StructureType.ImageMemoryBarrier,
+                SrcAccessMask = targetInitialLayout == ImageLayout.Undefined
+                    ? 0
+                    : AccessFlags.ColorAttachmentWriteBit,
+                DstAccessMask = AccessFlags.TransferWriteBit,
+                OldLayout = targetInitialLayout,
+                NewLayout = ImageLayout.TransferDstOptimal,
+                SrcQueueFamilyIndex = Vk.QueueFamilyIgnored,
+                DstQueueFamilyIndex = Vk.QueueFamilyIgnored,
+                Image = target.Image,
+                SubresourceRange = targetRange,
+            };
+            encoder.PipelineBarrier(
+                commandBuffer,
+                PipelineStageFlags.FragmentShaderBit |
+                    PipelineStageFlags.ColorAttachmentOutputBit,
+                PipelineStageFlags.TransferBit,
+                0,
+                0,
+                null,
+                0,
+                null,
+                2,
+                toTransfer);
+
+            ImageBlit region = new()
+            {
+                SrcSubresource = new ImageSubresourceLayers
+                {
+                    AspectMask = source.Aspect,
+                    MipLevel = 0,
+                    BaseArrayLayer = 0,
+                    LayerCount = 1,
+                },
+                DstSubresource = new ImageSubresourceLayers
+                {
+                    AspectMask = ImageAspectFlags.ColorBit,
+                    MipLevel = 0,
+                    BaseArrayLayer = 0,
+                    LayerCount = 1,
+                },
+            };
+            region.SrcOffsets.Element1 = new Offset3D(
+                checked((int)source.Width),
+                checked((int)source.Height),
+                1);
+            region.DstOffsets.Element1 = new Offset3D(
+                checked((int)target.Extent.Width),
+                checked((int)target.Extent.Height),
+                1);
+            encoder.BlitImage(
+                commandBuffer,
+                source.Image,
+                ImageLayout.TransferSrcOptimal,
+                target.Image,
+                ImageLayout.TransferDstOptimal,
+                ref region,
+                Filter.Linear);
+
+            ImageMemoryBarrier* afterTransfer = stackalloc ImageMemoryBarrier[2];
+            afterTransfer[0] = new ImageMemoryBarrier
+            {
+                SType = StructureType.ImageMemoryBarrier,
+                SrcAccessMask = AccessFlags.TransferReadBit,
+                DstAccessMask = AccessFlags.ShaderReadBit,
+                OldLayout = ImageLayout.TransferSrcOptimal,
+                NewLayout = sourceInitialLayout,
+                SrcQueueFamilyIndex = Vk.QueueFamilyIgnored,
+                DstQueueFamilyIndex = Vk.QueueFamilyIgnored,
+                Image = source.Image,
+                SubresourceRange = sourceRange,
+            };
+            afterTransfer[1] = new ImageMemoryBarrier
+            {
+                SType = StructureType.ImageMemoryBarrier,
+                SrcAccessMask = AccessFlags.TransferWriteBit,
+                DstAccessMask = AccessFlags.ColorAttachmentReadBit |
+                    AccessFlags.ColorAttachmentWriteBit,
+                OldLayout = ImageLayout.TransferDstOptimal,
+                NewLayout = ImageLayout.ColorAttachmentOptimal,
+                SrcQueueFamilyIndex = Vk.QueueFamilyIgnored,
+                DstQueueFamilyIndex = Vk.QueueFamilyIgnored,
+                Image = target.Image,
+                SubresourceRange = targetRange,
+            };
+            encoder.PipelineBarrier(
+                commandBuffer,
+                PipelineStageFlags.TransferBit,
+                PipelineStageFlags.FragmentShaderBit |
+                    PipelineStageFlags.ColorAttachmentOutputBit,
+                0,
+                0,
+                null,
+                0,
+                null,
+                2,
+                afterTransfer);
+            return true;
+        }
+
+        private unsafe void TransitionRejectedDesktopReplayTargetToPresent(
+            CommandBuffer commandBuffer,
+            in SwapchainRecordingTarget target)
+        {
+            ImageMemoryBarrier toPresent = new()
+            {
+                SType = StructureType.ImageMemoryBarrier,
+                SrcAccessMask = AccessFlags.ColorAttachmentReadBit | AccessFlags.ColorAttachmentWriteBit,
+                DstAccessMask = 0,
+                OldLayout = ImageLayout.ColorAttachmentOptimal,
+                NewLayout = ImageLayout.PresentSrcKhr,
+                SrcQueueFamilyIndex = Vk.QueueFamilyIgnored,
+                DstQueueFamilyIndex = Vk.QueueFamilyIgnored,
+                Image = target.Image,
+                SubresourceRange = new ImageSubresourceRange
+                {
+                    AspectMask = ImageAspectFlags.ColorBit,
+                    BaseMipLevel = 0,
+                    LevelCount = 1,
+                    BaseArrayLayer = 0,
+                    LayerCount = 1,
+                },
+            };
+            CreateRecoveryCommandEncoder().PipelineBarrier(
+                commandBuffer,
+                PipelineStageFlags.ColorAttachmentOutputBit,
+                PipelineStageFlags.BottomOfPipeBit,
+                0,
+                0,
+                null,
+                0,
+                null,
+                1,
+                &toPresent);
+        }
+
+        private unsafe void RecordRejectedDesktopInitializationClear(
             uint imageIndex,
             CommandBuffer commandBuffer,
             bool imageWasEverPresented)
         {
-            Image swapchainImage = swapChainImages![imageIndex];
+            Image swapchainImage = OutputRuntime.Desktop.Images![imageIndex];
             ImageSubresourceRange clearRange = new()
             {
                 AspectMask = ImageAspectFlags.ColorBit,
@@ -91,7 +346,7 @@ namespace XREngine.Rendering.Vulkan
                 Image = swapchainImage,
                 SubresourceRange = clearRange,
             };
-            CmdPipelineBarrierTracked(
+            CreateRecoveryCommandEncoder().PipelineBarrier(
                 commandBuffer,
                 PipelineStageFlags.AllCommandsBit,
                 PipelineStageFlags.TransferBit,
@@ -108,7 +363,7 @@ namespace XREngine.Rendering.Vulkan
             // content survived a resize.
             ClearColorValue clearColor =
                 new(0.06f, 0.015f, 0.08f, 1.0f);
-            CmdClearColorImageTracked(
+            CreateRecoveryCommandEncoder().ClearColorImage(
                 commandBuffer,
                 swapchainImage,
                 ImageLayout.TransferDstOptimal,
@@ -128,7 +383,7 @@ namespace XREngine.Rendering.Vulkan
                 Image = swapchainImage,
                 SubresourceRange = clearRange,
             };
-            CmdPipelineBarrierTracked(
+            CreateRecoveryCommandEncoder().PipelineBarrier(
                 commandBuffer,
                 PipelineStageFlags.TransferBit,
                 PipelineStageFlags.BottomOfPipeBit,
@@ -153,7 +408,7 @@ namespace XREngine.Rendering.Vulkan
 
             try
             {
-                bool recorded = TryRecordImGuiOverlayCommandBuffer(
+                bool recorded = TryRecordImGuiOverlay(
                     attempt.ImageIndex,
                     snapshot,
                     ImageLayout.PresentSrcKhr,
@@ -183,6 +438,55 @@ namespace XREngine.Rendering.Vulkan
             }
         }
 
+        private bool TryRecordRejectedDesktopDynamicTextOverlay(
+            ref VulkanFrameAttempt attempt,
+            CommandBuffer secondaryCommandBuffer,
+            int operationCount,
+            CommandBuffer predecessorCommandBuffer,
+            out CommandBuffer overlayCommandBuffer)
+        {
+            long stageStartTimestamp = Stopwatch.GetTimestamp();
+            bool recorded = false;
+            overlayCommandBuffer = default;
+            try
+            {
+                recorded = TryRecordDesktopDynamicTextOverlayCommandBuffer(
+                    attempt.ImageIndex,
+                    secondaryCommandBuffer,
+                    operationCount,
+                    ImageLayout.PresentSrcKhr,
+                    predecessorCommandBuffer,
+                    out overlayCommandBuffer);
+                return recorded;
+            }
+            catch (Exception ex)
+            {
+                overlayCommandBuffer = default;
+                Debug.VulkanWarningEvery(
+                    "Vulkan.Frame.RecoveryDynamicTextOverlayFailed",
+                    TimeSpan.FromSeconds(1),
+                    "[Vulkan] Rejected-frame dynamic text recovery overlay failed; presenting the remaining recovery chain instead. {0}: {1}",
+                    ex.GetType().Name,
+                    ex.Message);
+                return false;
+            }
+            finally
+            {
+                long elapsedTicks =
+                    Stopwatch.GetTimestamp() - stageStartTimestamp;
+                TimeSpan elapsed =
+                    Stopwatch.GetElapsedTime(stageStartTimestamp);
+                attempt.Timing.RecordDynamicUiTextOverlay += elapsed;
+                attempt.Timing.RecordCommandBuffer += elapsed;
+                RecordOverlayFrameOutput(
+                    EFrameOutputKind.DynamicTextOverlay,
+                    "Vulkan rejected-frame dynamic text overlay",
+                    recorded,
+                    recorded ? 1 : 0,
+                    elapsedTicks);
+            }
+        }
+
         private void ReleaseUnsubmittedRejectedDesktopAbortCommand(
             CommandPool commandPool,
             ref CommandBuffer commandBuffer,
@@ -192,15 +496,17 @@ namespace XREngine.Rendering.Vulkan
                 commandBuffer.Handle == 0 ||
                 commandPool.Handle == 0 ||
                 _deviceLost)
-            {
                 return;
-            }
 
-            FreeVulkanCommandBufferTracked(
+            _commandRuntime.FreeTrackedCommandBuffer(
+                Api,
+                _deviceContext.Device,
+                ResourceRuntime,
+                CurrentFrameSlot,
                 commandPool,
                 ref commandBuffer,
                 "FrameLoop.AbortPresent");
-            RemoveCommandBufferBindState(commandBuffer);
+            _commandRuntime.RemoveCommandBufferState(commandBuffer);
         }
     }
 }

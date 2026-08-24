@@ -9,6 +9,8 @@ internal sealed class EngineRuntimeModelImportServices : IRuntimeModelImportServ
     public bool ProcessMeshesAsynchronously => RuntimeEngine.Rendering.Settings.ProcessMeshImportsAsynchronously;
     public FbxImportBackend PreferredFbxBackend => Engine.EditorPreferences?.FbxImporterBackend ?? FbxImportBackend.Auto;
     public GltfImportBackend PreferredGltfBackend => Engine.EditorPreferences?.GltfImporterBackend ?? GltfImportBackend.Auto;
+    public string? ProjectAssetsRoot => Engine.Assets.GameAssetsPath;
+    public string? EngineAssetsRoot => Engine.Assets.EngineAssetsPath;
 
     public EnumeratorJob Schedule(
         Func<IEnumerable> routineFactory,

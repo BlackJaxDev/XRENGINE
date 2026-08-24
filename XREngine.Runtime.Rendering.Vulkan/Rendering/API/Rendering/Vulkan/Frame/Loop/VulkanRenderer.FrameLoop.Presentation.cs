@@ -7,14 +7,9 @@ using Semaphore = Silk.NET.Vulkan.Semaphore;
 
 namespace XREngine.Rendering.Vulkan
 {
-    public unsafe partial class VulkanRenderer
+    internal sealed partial class VulkanFrameLoop
     {
-        private int _hasPresentedCompleteSceneFrame;
-
-        public override bool IsBackendReplacementFrameReady
-            => Volatile.Read(ref _hasPresentedCompleteSceneFrame) != 0;
-
-        private EDesktopFrameFlow PresentSubmittedDesktopFrame(
+        internal EDesktopFrameFlow PresentSubmittedDesktopFrame(
             ref VulkanFrameAttempt attempt)
         {
             // Detached ImGui viewports sample renderer-owned textures. Submit them only
@@ -22,13 +17,18 @@ namespace XREngine.Rendering.Vulkan
             // resources visible without introducing a second engine-wide frame graph.
             _imguiBackend?.RenderPendingViewports();
 
-            VulkanDesktopPresentDispatchOutcome dispatch =
-                DesktopWsiTarget.PresentFrameTarget(
-                this,
+            VulkanDesktopPresentDispatchOutcome dispatch = QueueDesktopPresentCore(
                 ref attempt,
                 "Vulkan.FrameLifecycle.QueuePresent",
                 disableFrameGenerationReason: null);
             Result result = dispatch.Result;
+            if (dispatch.Dispatched)
+            {
+                attempt.TransitionAcquireOwnership(
+                    result == Result.ErrorDeviceLost
+                        ? EVulkanDesktopAcquireOwnership.IndeterminateAfterDeviceLoss
+                        : EVulkanDesktopAcquireOwnership.ResolvedByPresentation);
+            }
 
             if (!dispatch.Dispatched &&
                 result != Result.ErrorDeviceLost)
@@ -50,7 +50,7 @@ namespace XREngine.Rendering.Vulkan
             }
 
             VulkanDesktopPresentOutcome presentOutcome =
-                DesktopWsiTarget.ClassifyPresent(result);
+                DesktopWsiOutput.ClassifyPresent(result);
             bool presentAccepted =
                 presentOutcome.PresentationAccepted;
             RecordDesktopPresentBookkeeping(
@@ -71,17 +71,12 @@ namespace XREngine.Rendering.Vulkan
 
             if (result == Result.ErrorDeviceLost)
             {
-                attempt.TransitionAcquireOwnership(
-                    EVulkanDesktopAcquireOwnership
-                        .IndeterminateAfterDeviceLoss);
                 attempt.Stop(
                     EDesktopFrameReason.PresentDeviceLost,
                     EDesktopFrameRecoveryAction.DeviceLost);
                 throw CreateDeviceLostException("QueuePresent", result);
             }
 
-            attempt.TransitionAcquireOwnership(
-                EVulkanDesktopAcquireOwnership.ResolvedByPresentation);
             Exception? policyFailure = ApplyDesktopPresentPolicy(
                 ref attempt,
                 result,
@@ -116,7 +111,7 @@ namespace XREngine.Rendering.Vulkan
             return EDesktopFrameFlow.Completed;
         }
 
-        internal VulkanDesktopPresentDispatchOutcome QueueDesktopPresentCore(
+        internal unsafe VulkanDesktopPresentDispatchOutcome QueueDesktopPresentCore(
             ref VulkanFrameAttempt attempt,
             string profileScope,
             string? disableFrameGenerationReason)
@@ -127,7 +122,7 @@ namespace XREngine.Rendering.Vulkan
             bool dispatched = false;
             Semaphore queuedPresentSemaphore = attempt.PresentSemaphore;
             uint queuedImageIndex = attempt.ImageIndex;
-            var swapChains = stackalloc[] { swapChain };
+            var swapChains = stackalloc[] { OutputRuntime.Desktop.Swapchain };
             PresentInfoKHR presentInfo = new()
             {
                 SType = StructureType.PresentInfoKhr,
@@ -161,11 +156,13 @@ namespace XREngine.Rendering.Vulkan
                 }
 
                 dispatched = TryPresentToQueueTracked(
-                        presentQueue,
+                        _deviceContext.PresentQueue,
                         ref presentInfo,
                         out result,
                         out string failureReason,
-                        caller: nameof(RenderFrameCallback));
+                        out Exception? postDispatchFailure,
+                        caller: "RenderFrameCallback");
+                auxiliaryFailure ??= postDispatchFailure;
                 if (!dispatched)
                 {
                     if (result == Result.ErrorDeviceLost)
@@ -221,17 +218,17 @@ namespace XREngine.Rendering.Vulkan
             if (!presentAccepted)
                 return;
 
-            _lastPresentedImageIndex = attempt.ImageIndex;
-            if (_swapchainImageEverPresented is not null &&
-                attempt.ImageIndex < _swapchainImageEverPresented.Length)
+            OutputRuntime.Desktop.LastPresentedImageIndex = attempt.ImageIndex;
+            if (OutputRuntime.Desktop.ImageEverPresented is not null &&
+                attempt.ImageIndex < OutputRuntime.Desktop.ImageEverPresented.Length)
             {
-                _swapchainImageEverPresented[attempt.ImageIndex] = true;
+                OutputRuntime.Desktop.ImageEverPresented[attempt.ImageIndex] = true;
             }
 
             if (!hasValidFrameContent ||
-                _swapchainImageHasValidPresentedContent is null ||
+                OutputRuntime.Desktop.ImageHasValidPresentedContent is null ||
                 attempt.ImageIndex >=
-                _swapchainImageHasValidPresentedContent.Length)
+                OutputRuntime.Desktop.ImageHasValidPresentedContent.Length)
             {
                 return;
             }
@@ -242,16 +239,20 @@ namespace XREngine.Rendering.Vulkan
                 attempt.HasImGuiOverlayCommandBuffer ||
                 attempt.HasDynamicTextOverlayCommandBuffer;
             if (attempt.SceneSwapchainWriteCount > 0)
-                Volatile.Write(ref _hasPresentedCompleteSceneFrame, 1);
+                Volatile.Write(ref _outputRuntime._hasPresentedCompleteSceneFrame, 1);
 
             if (submittedFrameWroteSwapchain)
             {
-                _swapchainImageHasValidPresentedContent[
+                OutputRuntime.Desktop.ImageHasValidPresentedContent[
                     attempt.ImageIndex] = true;
+                OutputRuntime.Desktop.LastPresentedFrameNumber = attempt.FrameNumber;
                 return;
             }
 
-            if (!_swapchainImageHasValidPresentedContent[attempt.ImageIndex])
+            if (OutputRuntime.Desktop.ImageHasValidPresentedContent[attempt.ImageIndex])
+                OutputRuntime.Desktop.LastPresentedFrameNumber = attempt.FrameNumber;
+
+            if (!OutputRuntime.Desktop.ImageHasValidPresentedContent[attempt.ImageIndex])
             {
                 Debug.VulkanWarningEvery(
                     $"Vulkan.Frame.{GetHashCode()}.PresentedWithoutValidFinalWrite",
@@ -277,8 +278,7 @@ namespace XREngine.Rendering.Vulkan
                 case Result.Success:
                     return null;
                 case Result.SuboptimalKhr:
-                    if (!DesktopWsiTarget.ShouldKeepPresentScalingSwapchain(
-                            this,
+                    if (!ShouldKeepDesktopPresentScalingSwapchainCore(
                             result,
                             attempt.InteractiveResize))
                     {

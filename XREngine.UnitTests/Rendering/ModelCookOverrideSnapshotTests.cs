@@ -28,6 +28,7 @@ public sealed class ModelCookOverrideSnapshotTests
             RootNode = root,
         };
         ModelCookSettings defaults = new();
+        defaults.Meshlets.Enabled = subMesh.MeshOptimizer.Meshlets.Enabled;
 
         ModelCookOverrideSnapshot empty = ModelCookOverrideSnapshotBuilder.Build(prefab, defaults);
         empty.Entries.ShouldBeEmpty();

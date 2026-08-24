@@ -18,12 +18,19 @@ using XREngine.Rendering.RenderGraph;
 
 namespace XREngine.Rendering.Vulkan;
 
-internal unsafe partial class VkRenderProgram(VulkanRenderer renderer, XRRenderProgram data) : VkObject<XRRenderProgram>(renderer, data)
+internal unsafe partial class VkRenderProgram(
+    VulkanBackendObjectContext backendContext,
+    XRRenderProgram data) : VkObject<XRRenderProgram>(backendContext, data)
 {
+    protected override void BindOperationPorts(VulkanWrapperPortBinding binding)
+        => binding.AttachPlannerOperationHandlers(this);
     private readonly Dictionary<XRShader, VkShader> _shaderCache = new();
     private readonly Dictionary<EProgramStageMask, VkShader> _stageLookup = new();
-    private readonly object _linkLock = new();
+    private readonly Lock _linkLock = new();
     private DescriptorSetLayout[] _descriptorSetLayouts = Array.Empty<DescriptorSetLayout>();
+    private DescriptorSetLayout[] _descriptorSetLayoutsBeforeGlobalMaterial = Array.Empty<DescriptorSetLayout>();
+    private bool _hasGlobalTextureArrayOnlySet;
+    private bool _canBindGlobalTextureArraySeparately;
     private ulong _descriptorLayoutFingerprint;
     private ulong _descriptorSchemaFingerprint;
     private PipelineLayout _pipelineLayout;
@@ -59,7 +66,7 @@ internal unsafe partial class VkRenderProgram(VulkanRenderer renderer, XRRenderP
         new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, byte> _computeWarnings = new(StringComparer.Ordinal);
     private readonly Dictionary<ComputeUniformBufferKey, ComputeUniformBuffer> _computeUniformBuffers = new();
-    private readonly Dictionary<(uint ImageIndex, ulong BindingKey), ulong>
+    private readonly Dictionary<(uint ImageIndex, ulong SchemaFingerprint, ulong BindingKey), ulong>
         _reusableComputeDescriptorResourceSignatures = [];
     private Pipeline _computePipeline;
     private DescriptorHeapProgramLayout? _descriptorHeapLayout;
@@ -77,12 +84,12 @@ internal unsafe partial class VkRenderProgram(VulkanRenderer renderer, XRRenderP
     private bool _isLinked;
     public bool IsLinked
     {
-        get => _isLinked;
+        get => Volatile.Read(ref _isLinked);
         private set
         {
-            if (_isLinked == value)
+            if (Volatile.Read(ref _isLinked) == value)
                 return;
-            _isLinked = value;
+            Volatile.Write(ref _isLinked, value);
             Data.SetBackendLinked(value);
         }
     }
@@ -95,6 +102,8 @@ internal unsafe partial class VkRenderProgram(VulkanRenderer renderer, XRRenderP
     public IReadOnlyList<DescriptorBindingInfo> DescriptorBindings => _programDescriptorBindings;
     public IReadOnlyDictionary<string, AutoUniformBlockInfo> AutoUniformBlocks => _autoUniformBlocks;
     internal VulkanProgramBindingSchema? BindingSchema => _bindingSchema;
+    internal VulkanProgramCreationPort MeshTaskProgramServices => ProgramCreationPort;
+    internal VulkanBackendObjectContext MeshTaskBackendContext => BackendContext;
 
     /// <summary>
     /// Exposes the concrete auto-uniform map to Vulkan hot paths so dictionary
@@ -103,6 +112,8 @@ internal unsafe partial class VkRenderProgram(VulkanRenderer renderer, XRRenderP
     internal Dictionary<string, AutoUniformBlockInfo> AutoUniformBlockMap => _autoUniformBlocks;
     public bool DescriptorSetsRequireUpdateAfterBind => _descriptorSetsRequireUpdateAfterBind;
     public bool DescriptorSetsRequireVariableDescriptorCount => _descriptorSetsRequireVariableDescriptorCount;
+    internal bool HasGlobalTextureArrayOnlySet => _hasGlobalTextureArrayOnlySet;
+    internal bool CanBindGlobalTextureArraySeparately => _canBindGlobalTextureArraySeparately;
     public bool DescriptorSetUsesUpdateAfterBind(uint setIndex)
         => setIndex < _descriptorSetUsesUpdateAfterBind.Length && _descriptorSetUsesUpdateAfterBind[setIndex];
 
@@ -171,7 +182,6 @@ internal unsafe partial class VkRenderProgram(VulkanRenderer renderer, XRRenderP
         Data.SamplerRequestedByLocation += Sampler;
         Data.BindImageTextureRequested += BindImageTexture;
         Data.BindBufferRequested += BindBuffer;
-        Data.DispatchComputeRequested += DispatchCompute;
 
         Data.LinkRequested += OnLinkRequested;
         Data.UseRequested += OnUseRequested;
@@ -240,7 +250,6 @@ internal unsafe partial class VkRenderProgram(VulkanRenderer renderer, XRRenderP
         Data.SamplerRequestedByLocation -= Sampler;
         Data.BindImageTextureRequested -= BindImageTexture;
         Data.BindBufferRequested -= BindBuffer;
-        Data.DispatchComputeRequested -= DispatchCompute;
 
         Data.LinkRequested -= OnLinkRequested;
         Data.UseRequested -= OnUseRequested;
@@ -260,7 +269,7 @@ internal unsafe partial class VkRenderProgram(VulkanRenderer renderer, XRRenderP
         if (_shaderCache.ContainsKey(shader))
             return;
 
-        if (Renderer.GetOrCreateAPIRenderObject(shader) is not VkShader vkShader)
+        if (ProgramCreationPort.GetOrCreateShader(shader) is not { } vkShader)
             return;
 
         _shaderCache.Add(shader, vkShader);
@@ -314,7 +323,7 @@ internal unsafe partial class VkRenderProgram(VulkanRenderer renderer, XRRenderP
         IsLinked = false;
         _linkedTransformFeedbackLayoutVersion = ulong.MaxValue;
 
-        if (Data.LinkReady && Renderer.IsLogicalDeviceReady)
+        if (Data.LinkReady && BackendContext.IsLogicalDeviceReady)
             Link();
     }
 
@@ -323,9 +332,9 @@ internal unsafe partial class VkRenderProgram(VulkanRenderer renderer, XRRenderP
         if (RuntimeEngine.InvokeOnMainThread(() => OnLinkRequested(program), "VkRenderProgram.LinkRequested"))
             return;
 
-        if (!Renderer.IsLogicalDeviceReady)
+        if (!BackendContext.IsLogicalDeviceReady)
         {
-            BackendContext.Pipelines.QueueProgramLinkUntilDeviceReady(this);
+            BackendContext.Resources.PipelineManager.QueueProgramLinkUntilDeviceReady(this);
             return;
         }
 
@@ -353,9 +362,9 @@ internal unsafe partial class VkRenderProgram(VulkanRenderer renderer, XRRenderP
         if (RuntimeEngine.InvokeOnMainThread(() => OnUseRequested(program), "VkRenderProgram.UseRequested"))
             return;
 
-        if (!Renderer.IsLogicalDeviceReady)
+        if (!BackendContext.IsLogicalDeviceReady)
         {
-            BackendContext.Pipelines.QueueProgramLinkUntilDeviceReady(this);
+            BackendContext.Resources.PipelineManager.QueueProgramLinkUntilDeviceReady(this);
             return;
         }
 

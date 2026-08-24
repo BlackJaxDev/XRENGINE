@@ -10,7 +10,7 @@ namespace XREngine.Rendering.Pipelines.Commands;
 [RenderPipelineScriptCommand]
 public class VPRC_SurfelDebugVisualization : ViewportRenderCommand
 {
-    private const uint CulledCommandFloats = 20u;
+    private const uint CulledCommandFloats = 1u;
 
     public enum EVisualizationMode
     {

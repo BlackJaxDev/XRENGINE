@@ -706,18 +706,60 @@ namespace XREngine.Timers
         /// </summary>
         /// <remarks>
         /// The collapsed Windows window/render thread can remain inside the OS size/move
-        /// loop while the normal outer render loop is paused. This entry point preserves
-        /// the ordinary render clock, callbacks, visibility-generation handoff, and
-        /// collect/swap publication instead of drawing a window-only frame.
+        /// loop while the normal outer render loop is paused. The callback must not enter
+        /// ordinary render dispatch because that path may wait for visibility, GPU
+        /// completion, workers, or retirement. The already-published swapchain image is
+        /// instead retained for WSI/compositor scaling until the modal loop exits.
         /// </remarks>
-        public bool TryDispatchInteractiveResizeFrame()
+        public XREngine.Rendering.InteractiveResizeDispatchResult TryDispatchInteractiveResizeFrame(
+            ulong? presentationPackageId = null)
         {
-            if (!IsRunning || !Engine.IsRenderThread || Engine.IsDispatchingRenderFrame)
-                return false;
+            long started = Stopwatch.GetTimestamp();
+            ulong packageId = presentationPackageId ?? PresentFrameId;
+            if (!IsRunning)
+                return XREngine.Rendering.InteractiveResizeDispatchResult.Deferred(
+                    XREngine.Rendering.EInteractiveResizeDispatchReason.RuntimeStopped,
+                    packageId);
+            if (!Engine.IsRenderThread)
+                return XREngine.Rendering.InteractiveResizeDispatchResult.Deferred(
+                    XREngine.Rendering.EInteractiveResizeDispatchReason.WrongThread,
+                    packageId);
+            if (Engine.IsDispatchingRenderFrame)
+                return XREngine.Rendering.InteractiveResizeDispatchResult.Deferred(
+                    XREngine.Rendering.EInteractiveResizeDispatchReason.FrameAlreadyActive,
+                    packageId);
 
-            ulong previousPresentFrameId = PresentFrameId;
-            WaitToRender();
-            return IsRunning && PresentFrameId != previousPresentFrameId;
+            if (!IsRenderDispatchDue())
+            {
+                return XREngine.Rendering.InteractiveResizeDispatchResult.Deferred(
+                    XREngine.Rendering.EInteractiveResizeDispatchReason.RenderCadenceNotDue,
+                    packageId,
+                    Stopwatch.GetTimestamp() - started);
+            }
+
+            if (packageId == 0UL)
+            {
+                return XREngine.Rendering.InteractiveResizeDispatchResult.Deferred(
+                    XREngine.Rendering.EInteractiveResizeDispatchReason.PresentationPackageUnavailable,
+                    packageId,
+                    Stopwatch.GetTimestamp() - started);
+            }
+
+            return new XREngine.Rendering.InteractiveResizeDispatchResult(
+                XREngine.Rendering.EInteractiveResizeDispatchOutcome.PresentedScaledStale,
+                XREngine.Rendering.EInteractiveResizeDispatchReason.None,
+                packageId,
+                Stopwatch.GetTimestamp() - started);
+        }
+
+        private bool IsRenderDispatchDue()
+        {
+            long timestampTicks = TimeTicks();
+            long elapsedTicks = Math.Clamp(
+                timestampTicks - Render.LastTimestampTicks,
+                0L,
+                Stopwatch.Frequency);
+            return elapsedTicks > 0L && elapsedTicks >= _targetRenderPeriodTicks;
         }
 
         public bool DispatchRender()

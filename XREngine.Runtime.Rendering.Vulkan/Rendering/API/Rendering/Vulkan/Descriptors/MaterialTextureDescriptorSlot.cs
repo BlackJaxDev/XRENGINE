@@ -9,6 +9,9 @@ internal struct MaterialTextureDescriptorSlot
 {
     public XRTexture? Texture;
     public DescriptorImageInfo ImageInfo;
+    public ImageLayout ExpectedImageLayout;
+    public ulong ImageViewGeneration;
+    public ulong SamplerGeneration;
     public uint Generation;
     public ulong LastUsedFrameId;
     public ulong RetireAfterFrameId;

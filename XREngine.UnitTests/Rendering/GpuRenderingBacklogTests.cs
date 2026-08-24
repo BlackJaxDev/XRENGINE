@@ -68,40 +68,36 @@ public class GpuRenderingBacklogTests
     [Test]
     public void GPUScene_UpdateCommand_TransformChange_UpdatesCullingBounds()
     {
-        var method = typeof(GPUScene).GetMethod("SetWorldSpaceBoundingSphere", BindingFlags.NonPublic | BindingFlags.Static);
+        var method = typeof(GPUScene).GetMethod("ComputeWorldBoundsGpu", BindingFlags.NonPublic | BindingFlags.Static);
         method.ShouldNotBeNull();
 
-        GPUIndirectRenderCommand command = default;
         var localBounds = new AABB(new Vector3(-1f, -1f, -1f), new Vector3(1f, 1f, 1f));
         Matrix4x4 model = Matrix4x4.CreateScale(2f, 3f, 4f) * Matrix4x4.CreateTranslation(10f, 20f, 30f);
 
-        object?[] args = [command, localBounds, model];
-        method!.Invoke(null, args);
-        command = (GPUIndirectRenderCommand)args[0]!;
+        object?[] args = [localBounds, model, 1u];
+        BoundsGpu bounds = (BoundsGpu)method!.Invoke(null, args)!;
 
-        command.BoundingSphere.X.ShouldBe(10f, 0.0001f);
-        command.BoundingSphere.Y.ShouldBe(20f, 0.0001f);
-        command.BoundingSphere.Z.ShouldBe(30f, 0.0001f);
+        bounds.BoundingSphere.X.ShouldBe(10f, 0.0001f);
+        bounds.BoundingSphere.Y.ShouldBe(20f, 0.0001f);
+        bounds.BoundingSphere.Z.ShouldBe(30f, 0.0001f);
 
         float expectedRadius = MathF.Sqrt(3f) * 4f;
-        command.BoundingSphere.W.ShouldBe(expectedRadius, 0.0001f);
+        bounds.BoundingSphere.W.ShouldBe(expectedRadius, 0.0001f);
     }
 
     [Test]
     public void GPUScene_UpdateCommand_RotatedAffineTransform_MatchesExpectedBoundingSphere()
     {
-        var method = typeof(GPUScene).GetMethod("SetWorldSpaceBoundingSphere", BindingFlags.NonPublic | BindingFlags.Static);
+        var method = typeof(GPUScene).GetMethod("ComputeWorldBoundsGpu", BindingFlags.NonPublic | BindingFlags.Static);
         method.ShouldNotBeNull();
 
-        GPUIndirectRenderCommand command = default;
         var localBounds = new AABB(new Vector3(-2f, -1f, -3f), new Vector3(2f, 1f, 3f));
         Matrix4x4 model = Matrix4x4.CreateScale(1.5f, 2.5f, 0.75f)
             * Matrix4x4.CreateFromQuaternion(Quaternion.Normalize(Quaternion.CreateFromYawPitchRoll(0.35f, -0.2f, 0.15f)))
             * Matrix4x4.CreateTranslation(7f, -4f, 11f);
 
-        object?[] args = [command, localBounds, model];
-        method!.Invoke(null, args);
-        command = (GPUIndirectRenderCommand)args[0]!;
+        object?[] args = [localBounds, model, 1u];
+        BoundsGpu bounds = (BoundsGpu)method!.Invoke(null, args)!;
 
         Vector3 expectedCenter = Vector3.Transform(localBounds.Center, model);
         Vector3 xAxis = new(model.M11, model.M12, model.M13);
@@ -109,10 +105,10 @@ public class GpuRenderingBacklogTests
         Vector3 zAxis = new(model.M31, model.M32, model.M33);
         float expectedRadius = localBounds.HalfExtents.Length() * MathF.Max(xAxis.Length(), MathF.Max(yAxis.Length(), zAxis.Length()));
 
-        command.BoundingSphere.X.ShouldBe(expectedCenter.X, 0.0001f);
-        command.BoundingSphere.Y.ShouldBe(expectedCenter.Y, 0.0001f);
-        command.BoundingSphere.Z.ShouldBe(expectedCenter.Z, 0.0001f);
-        command.BoundingSphere.W.ShouldBe(expectedRadius, 0.0001f);
+        bounds.BoundingSphere.X.ShouldBe(expectedCenter.X, 0.0001f);
+        bounds.BoundingSphere.Y.ShouldBe(expectedCenter.Y, 0.0001f);
+        bounds.BoundingSphere.Z.ShouldBe(expectedCenter.Z, 0.0001f);
+        bounds.BoundingSphere.W.ShouldBe(expectedRadius, 0.0001f);
     }
 
     [Test]
@@ -225,15 +221,14 @@ public class GpuRenderingBacklogTests
     }
 
     [Test]
-    public void GpuFrustumShaders_UseAabbBoundsForVisibilityRejection()
+    public void CanonicalGpuFrustumShaders_UseAabbBoundsForVisibilityRejection()
     {
         string classicCull = ReadWorkspaceFile("Build/CommonAssets/Shaders/Compute/Culling/GPURenderCulling.comp");
-        string soaCull = ReadWorkspaceFile("Build/CommonAssets/Shaders/Compute/Culling/GPURenderCullingSoA.comp");
         string bvhCull = ReadWorkspaceFile("Build/CommonAssets/Shaders/Scene3D/RenderPipeline/bvh_frustum_cull.comp");
 
         classicCull.ShouldContain("FrustumAabbVisible(bounds.AabbMin.xyz, bounds.AabbMax.xyz)");
-        soaCull.ShouldContain("FrustumAabbVisible(bounds.AabbMin.xyz, bounds.AabbMax.xyz)");
         bvhCull.ShouldContain("AabbVisibleMasked(bounds.AabbMin.xyz, bounds.AabbMax.xyz");
+        File.Exists(Path.Combine(GltfImportTestUtilities.ResolveWorkspaceRoot(), "Build", "CommonAssets", "Shaders", "Compute", "Culling", "GPURenderCullingSoA.comp")).ShouldBeFalse();
     }
 
     [Test]
@@ -343,10 +338,10 @@ public class GpuRenderingBacklogTests
     [Test]
     public void Occlusion_OpenGL_Vulkan_Parity_BasicScene()
     {
-        GPUIndirectRenderCommand[] commands =
+        DrawMetadata[] commands =
         [
-            new GPUIndirectRenderCommand { MeshID = 1, MaterialID = 10, RenderPass = 0 },
-            new GPUIndirectRenderCommand { MeshID = 2, MaterialID = 11, RenderPass = 0 },
+            new DrawMetadata { MeshID = 1, MaterialID = 10, RenderPass = 0 },
+            new DrawMetadata { MeshID = 2, MaterialID = 11, RenderPass = 0 },
         ];
 
         GpuBackendParitySnapshot gl = GpuBackendParity.BuildSnapshot("OpenGL", 2, 2, commands, maxSamples: 2);
@@ -358,11 +353,11 @@ public class GpuRenderingBacklogTests
     [Test]
     public void IndirectPipeline_OpenGL_Vulkan_Parity_BasicScene()
     {
-        GPUIndirectRenderCommand[] commands =
+        DrawMetadata[] commands =
         [
-            new GPUIndirectRenderCommand { MeshID = 101, MaterialID = 201, RenderPass = 1 },
-            new GPUIndirectRenderCommand { MeshID = 102, MaterialID = 202, RenderPass = 1 },
-            new GPUIndirectRenderCommand { MeshID = 103, MaterialID = 203, RenderPass = 1 },
+            new DrawMetadata { MeshID = 101, MaterialID = 201, RenderPass = 1 },
+            new DrawMetadata { MeshID = 102, MaterialID = 202, RenderPass = 1 },
+            new DrawMetadata { MeshID = 103, MaterialID = 203, RenderPass = 1 },
         ];
 
         GpuBackendParitySnapshot gl = GpuBackendParity.BuildSnapshot("OpenGL", 3, 3, commands, maxSamples: 3);
@@ -374,12 +369,12 @@ public class GpuRenderingBacklogTests
     [Test]
     public void IndirectPipeline_OpenGL_Vulkan_Parity_MultiPass()
     {
-        GPUIndirectRenderCommand[] commands =
+        DrawMetadata[] commands =
         [
-            new GPUIndirectRenderCommand { MeshID = 501, MaterialID = 11, RenderPass = 0 },
-            new GPUIndirectRenderCommand { MeshID = 502, MaterialID = 12, RenderPass = 1 },
-            new GPUIndirectRenderCommand { MeshID = 503, MaterialID = 13, RenderPass = 2 },
-            new GPUIndirectRenderCommand { MeshID = 504, MaterialID = 14, RenderPass = 2 },
+            new DrawMetadata { MeshID = 501, MaterialID = 11, RenderPass = 0 },
+            new DrawMetadata { MeshID = 502, MaterialID = 12, RenderPass = 1 },
+            new DrawMetadata { MeshID = 503, MaterialID = 13, RenderPass = 2 },
+            new DrawMetadata { MeshID = 504, MaterialID = 14, RenderPass = 2 },
         ];
 
         GpuBackendParitySnapshot gl = GpuBackendParity.BuildSnapshot("OpenGL", 4, 4, commands, maxSamples: 4);
@@ -716,10 +711,10 @@ public class GpuRenderingBacklogTests
     [Test]
     public void VR_OpenGL_Multiview_And_NVFallback_UseSameVisibleSet()
     {
-        GPUIndirectRenderCommand[] commands =
+        DrawMetadata[] commands =
         [
-            new GPUIndirectRenderCommand { MeshID = 1001, MaterialID = 2001, RenderPass = 0 },
-            new GPUIndirectRenderCommand { MeshID = 1002, MaterialID = 2002, RenderPass = 0 },
+            new DrawMetadata { MeshID = 1001, MaterialID = 2001, RenderPass = 0 },
+            new DrawMetadata { MeshID = 1002, MaterialID = 2002, RenderPass = 0 },
         ];
 
         GpuBackendParitySnapshot ovr = GpuBackendParity.BuildSnapshot("OpenGL-OVR", 2, 2, commands, maxSamples: 2);
@@ -731,26 +726,27 @@ public class GpuRenderingBacklogTests
     [Test]
     public void VR_Vulkan_CommandChainWorkers_DoNotUseGenericScheduler()
     {
-        string recording = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
+        string recording = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/Recording/Primary/VulkanRenderer.CommandBufferRecording.Primary.Secondaries.cs");
         string secondary = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.SecondaryCommandBuffers.cs");
         string workers = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandChainWorkers.cs");
+        string workerState = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/Recording/Secondary/Workers/VulkanRenderer.CommandChainRecordingWorkerState.cs");
         string commandPools = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandPool.cs");
 
         secondary.ShouldNotContain("Task.Run");
         recording.ShouldContain("TryExecuteIndirectCommandChainSecondaryRun");
         workers.ShouldContain("DispatchCommandChainRecordingWorkers");
-        workers.ShouldContain("new Thread");
+        workerState.ShouldContain("new Thread");
         commandPools.ShouldContain("GetThreadCommandPool");
     }
 
     [Test]
     public void Vulkan_GpuPipelineProfilerToggle_DoesNotInstrumentMainRenderCommandBuffers()
     {
-        string commandBuffers = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs")
+        string commandBuffers = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/Lifecycle/VulkanRenderer.CommandBufferLifecycle.cs")
             .Replace("\r\n", "\n");
-        string frameTiming = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.FrameTiming.cs")
+        string frameTiming = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/Timing/VulkanRenderer.FrameTiming.cs")
             .Replace("\r\n", "\n");
-        string frameSlots = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.FrameLoop.FrameSlots.cs")
+        string frameSlots = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/Loop/VulkanRenderer.FrameLoop.FrameSlots.cs")
             .Replace("\r\n", "\n");
         string gpuProfiler = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/RenderPipelineGpuProfiler.cs")
             .Replace("\r\n", "\n");
@@ -803,10 +799,9 @@ public class GpuRenderingBacklogTests
         uiBatchCollector.ShouldContain("bool profileGpu = profiler.ShouldInstrumentCommandScopes;");
         viewportCommand.ShouldContain("using var gpuScope = gpuProfiler.ShouldInstrumentCommandScopes");
 
-        commandBuffers.ShouldContain("bool gpuPipelineProfilingActive =\n                IsVulkanGpuProfilerCommandBufferInstrumentationEnabled &&\n                RenderPipelineGpuProfiler.Instance.IsProfilingActive;");
-        commandBuffers.ShouldContain("bool gpuProfilerCommandBufferStateDirty = IsVulkanGpuProfilerCommandBufferStateDirty");
-        commandBuffers.ShouldContain("ClearVulkanGpuProfilerPendingQueries();\n                MarkCommandBufferVariantsDirty(imageIndex, \"gpu-profiler-command-buffer-state\");");
-        commandBuffers.ShouldContain("UpdateVulkanGpuProfilerCommandBufferState(");
+        commandBuffers.ShouldContain("GpuPipelineProfilingActive =\n                    IsVulkanGpuProfilerCommandBufferInstrumentationEnabled &&\n                    RenderPipelineGpuProfiler.Instance.IsProfilingActive,");
+        commandBuffers.ShouldContain("state.GpuProfilerCommandBufferStateDirty =\n                IsVulkanGpuProfilerCommandBufferStateDirty(");
+        commandBuffers.ShouldContain("ClearVulkanGpuProfilerPendingQueries();\n                MarkPrimaryCommandArtifactOwnersDirty(");
 
         frameTiming.ShouldContain("private void ClearVulkanGpuProfilerPendingQueries()");
         frameTiming.ShouldContain("Array.Fill(_vulkanGpuProfilerPendingQueryCounts, 0);");
@@ -817,13 +812,13 @@ public class GpuRenderingBacklogTests
     [Test]
     public void Vulkan_ImGuiOverlay_UsesExplicitSwapchainLayoutHandoff()
     {
-        string recording = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.FrameLoop.Recording.cs")
+        string recording = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/Loop/VulkanRenderer.FrameLoop.Recording.cs")
             .Replace("\r\n", "\n");
-        string commandBuffers = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs")
+        string commandBuffers = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/Recording/Primary/VulkanRenderer.CommandBufferRecording.Primary.Finalization.cs")
             .Replace("\r\n", "\n");
-        string commandBufferVariant = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferCacheVariant.cs")
+        string commandBufferVariant = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/Reuse/VulkanRenderer.PrimaryCommandArtifactOwner.cs")
             .Replace("\r\n", "\n");
-        string commandBufferAllocation = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferAllocation.cs")
+        string commandBufferFrameData = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/FrameData/VulkanRenderer.CommandBufferReuse.FrameData.cs")
             .Replace("\r\n", "\n");
         string imgui = global::XREngine.UnitTests.SourceContractWorkspace.ReadFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/UI/VulkanRenderer.ImGui.Rendering.cs")
             .Replace("\r\n", "\n");
@@ -840,8 +835,8 @@ public class GpuRenderingBacklogTests
 
         commandBufferVariant.ShouldContain("public bool PreserveSwapchainForOverlay { get; set; }");
         commandBufferVariant.ShouldContain("public ImageLayout RecordedSwapchainFinalLayout { get; set; } = ImageLayout.PresentSrcKhr;");
-        commandBufferAllocation.ShouldContain("variant.PreserveSwapchainForOverlay == preserveSwapchainForOverlay");
-        commandBuffers.ShouldContain("int expectedPresentTransitions = preserveSwapchainForOverlay || !transitionSwapchainToPresent ? 0 : 1;");
+        commandBufferFrameData.ShouldContain("variant.PreserveSwapchainForOverlay != preserveSwapchainForOverlay");
+        commandBuffers.ShouldContain("int expectedPresentTransitions = recordingState.PreserveSwapchainForOverlay || !recordingState.TransitionSwapchainToPresent ? 0 : 1;");
 
         imgui.ShouldContain("ImageLayout initialSwapchainLayout");
         imgui.ShouldContain("initialSwapchainLayout,\n                ImageLayout.ColorAttachmentOptimal");

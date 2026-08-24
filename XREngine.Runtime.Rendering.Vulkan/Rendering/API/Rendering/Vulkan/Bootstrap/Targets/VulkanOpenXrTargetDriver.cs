@@ -24,10 +24,10 @@ internal sealed class VulkanOpenXrTargetDriver : IVulkanRendererTargetDriver
     public IReadOnlyList<string> RequiredDeviceExtensions => [];
 
     public string[] GetRequiredInstanceExtensions() => [];
-    public void CreateInstanceResources(VulkanRenderer renderer) { }
-    public void InitializeFinalOutput(VulkanRenderer renderer) { }
-    public void DestroyFinalOutput(VulkanRenderer renderer) { }
-    public void DestroyInstanceResources(VulkanRenderer renderer) { }
+    public void CreateInstanceResources(VulkanTargetSurfaceAuthority surfaces) { }
+    public void InitializeFinalOutput(VulkanTargetOutputContext output) { }
+    public void DestroyFinalOutput(VulkanTargetOutputContext output) { }
+    public void DestroyInstanceResources(VulkanTargetSurfaceAuthority surfaces) { }
 
     /// <summary>
     /// Maps an image already acquired and waited by the OpenXR runtime binding.

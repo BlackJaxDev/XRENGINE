@@ -17,4 +17,11 @@ public static class AgentModelCatalog
 
     public static bool IsApproved(string model)
         => s_modelSet.Contains(model);
+
+    /// <summary>
+    /// Response controls are accepted only for the broker's exact approved
+    /// model IDs. Aliases and dated provider snapshots are not normalized.
+    /// </summary>
+    public static bool SupportsResponseControls(string model)
+        => IsApproved(model);
 }

@@ -467,6 +467,19 @@ namespace XREngine.Components.Lights
                 return;
             }
 
+            // Vulkan mesh packets already carry an immutable copy of every
+            // cascade matrix in LayeredShadowUniformState. Re-reading the live
+            // light state here for every caster duplicated those values and
+            // serialized the render thread on _cascadeDataLock. The material
+            // resolver publishes the captured matrices after this callback for
+            // layered variants; sequential Vulkan passes do not consume the
+            // callback's cascade array.
+            if (IsVulkanDirectionalShadowBackend())
+            {
+                program.Uniform("CascadeLayerCount", 0);
+                return;
+            }
+
             // Acquire the cascade data lock to safely access the cascade state and set the view-projection matrices for each cascade.
             int cascadeCount;
             lock (_cascadeDataLock)
@@ -664,7 +677,18 @@ namespace XREngine.Components.Lights
                     EnsureCascadeShadowResources();
                     break;
                 case nameof(CascadeShadowRenderMode):
-                    ClearCascadeAtlasSlots();
+                    // The selected writer does not change the mathematical atlas
+                    // contents. Dropping the published slots here leaves the atlas
+                    // manager free to reuse its unchanged content hash without a
+                    // redraw, so receivers can remain unbound until camera motion.
+                    // Preserve resident samples and rebuild only the command/caster
+                    // cache the next time a refresh is actually requested.
+                    InvalidateDirectionalCascadeAtlasVisibleSetCache(
+                        ShadowRequestSource.Desktop,
+                        MaxCascadeRenderCount);
+                    InvalidateDirectionalCascadeAtlasVisibleSetCache(
+                        ShadowRequestSource.Hmd,
+                        MaxCascadeRenderCount);
                     break;
                 case nameof(EnableCascadedShadows):
                     ClearDirectionalAtlasSlots();

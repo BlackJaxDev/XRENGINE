@@ -174,6 +174,7 @@ namespace XREngine.Rendering.Commands
         private const int CpuOcclusionMaxQueriesPerFrame = 64;
 
         private bool _hiZDepthPyramidReadyForMeshlets;
+        private bool _meshletHiZSamplingEnabledForSubmission;
         private bool _hiZDepthPyramidUsesReversedZ;
         private Matrix4x4 _hiZDepthPyramidViewProjection = Matrix4x4.Identity;
 
@@ -257,9 +258,9 @@ namespace XREngine.Rendering.Commands
             const ulong prime = 1099511628211UL;
             ulong revision = offsetBasis;
             revision = (revision ^ scene.TotalCommandCount) * prime;
-            revision = (revision ^ scene.BoundsBuffer.Revision) * prime;
+            revision = (revision ^ scene.CullBoundsBuffer.Revision) * prime;
             revision = (revision ^ scene.TransformBuffer.Revision) * prime;
-            revision = (revision ^ scene.DrawMetadataBuffer.Revision) * prime;
+            revision = (revision ^ scene.CullControlBuffer.Revision) * prime;
             revision = (revision ^ scene.MaterialStateBuffer.Revision) * prime;
             return revision;
         }
@@ -294,7 +295,10 @@ namespace XREngine.Rendering.Commands
             _occlusionAccepted = 0u;
             _occlusionFalsePositiveRecoveries = 0u;
             _occlusionTemporalOverrides = 0u;
-            _hiZDepthPyramidReadyForMeshlets = false;
+            // The pyramid remains valid as temporal history until it is rebuilt.
+            // Submission phases opt in explicitly after validating the exact
+            // view, scene revision, and camera stability for that phase.
+            _meshletHiZSamplingEnabledForSubmission = false;
         }
 
         public bool TryGetHiZDepthPyramidForMeshlets(
@@ -303,7 +307,7 @@ namespace XREngine.Rendering.Commands
             out Matrix4x4 viewProjection,
             out bool usesReversedZ)
         {
-            if (_stableHiZDecisionCount <= 1 &&
+            if (_meshletHiZSamplingEnabledForSubmission &&
                 _hiZDepthPyramidReadyForMeshlets &&
                 _hiZDepthPyramid is not null &&
                 _hiZDepthPyramid.Mipmaps.Length != 0)
@@ -315,15 +319,54 @@ namespace XREngine.Rendering.Commands
                 return true;
             }
 
-            if (_stableHiZDecisionCount > 1)
-                _ = IsMeshletMultiviewHiZPromoted();
-
             pyramid = null!;
             maxMip = 0;
             viewProjection = Matrix4x4.Identity;
             usesReversedZ = false;
             return false;
         }
+
+        /// <summary>
+        /// Enables the completed prior-frame pyramid for the early mesh-task
+        /// draw only when its stable mono view is still exact. Any camera or
+        /// scene invalidation keeps every task visible for this phase.
+        /// </summary>
+        private void EnableTemporalMeshletHiZForSubmission(
+            XRCamera camera,
+            bool temporalInvalidated)
+        {
+            bool hiZEligible =
+                !temporalInvalidated &&
+                _hiZDepthPyramidReadyForMeshlets &&
+                _stableHiZDecisionCount == 1 &&
+                _stableHiZDecisions[0].MaySample;
+            bool? stereoEyeLeft = camera.StereoEyeLeft;
+            _meshletHiZSamplingEnabledForSubmission = !stereoEyeLeft.HasValue && hiZEligible;
+
+            if (_stableHiZDecisionCount > 1)
+                _ = IsMeshletMultiviewHiZPromoted();
+        }
+
+        /// <summary>
+        /// Enables the pyramid just built from the current early depth. Mono
+        /// rendering is conservative here even when temporal history was
+        /// invalidated; multiview remains disabled until it has explicit
+        /// per-view pyramid support.
+        /// </summary>
+        private void EnableCurrentMeshletHiZForSubmission(XRCamera camera)
+        {
+            bool hiZEligible =
+                _hiZDepthPyramidReadyForMeshlets &&
+                _stableHiZDecisionCount <= 1;
+            bool? stereoEyeLeft = camera.StereoEyeLeft;
+            _meshletHiZSamplingEnabledForSubmission = !stereoEyeLeft.HasValue && hiZEligible;
+
+            if (_stableHiZDecisionCount > 1)
+                _ = IsMeshletMultiviewHiZPromoted();
+        }
+
+        private void DisableMeshletHiZForSubmission()
+            => _meshletHiZSamplingEnabledForSubmission = false;
 
         private void RecordOcclusionFrameStats(
             uint candidatesTested,
@@ -742,7 +785,11 @@ namespace XREngine.Rendering.Commands
                 HiZStageStats.Record("BuildPyramid.PerPass", (Stopwatch.GetTimestamp() - _bpStart2) * 1000.0 / Stopwatch.Frequency);
             }
 
-            _hiZDepthPyramidReadyForMeshlets = _hiZDepthPyramid is not null;
+            // A dirty temporal state may still build a pyramid for later frames,
+            // but mesh tasks in this frame must not consume depth that can omit a
+            // moved camera or newly changed scene.
+            _hiZDepthPyramidReadyForMeshlets =
+                _hiZDepthPyramid is not null && !invalidateTemporalHiZ;
             _hiZDepthPyramidViewProjection = depthInput.ViewProjection;
             _hiZDepthPyramidUsesReversedZ = isReverseZ;
             PublishStableHiZHistories(scene);
@@ -885,9 +932,9 @@ namespace XREngine.Rendering.Commands
 
             for (uint readIndex = 0; readIndex < inputCount; ++readIndex)
             {
-                GPUIndirectRenderCommand command = CulledSceneToRenderBuffer.GetDataRawAtIndex<GPUIndirectRenderCommand>(readIndex);
+                uint command = CulledSceneToRenderBuffer.GetDataRawAtIndex<uint>(readIndex);
                 bool keepVisible = true;
-                uint sourceIndex = command.Reserved1;
+                uint sourceIndex = command;
 
                 if (scene.TryGetSourceCommand(sourceIndex, out IRenderCommandMesh? sourceCommand) &&
                     sourceCommand is RenderCommand renderCommand &&
@@ -906,7 +953,7 @@ namespace XREngine.Rendering.Commands
                 if (writeIndex != readIndex)
                     CulledSceneToRenderBuffer.SetDataRawAtIndex(writeIndex, command);
 
-                visibleInstances += Math.Max(command.InstanceCount, 1u);
+                visibleInstances++;
                 writeIndex++;
             }
 
@@ -927,14 +974,19 @@ namespace XREngine.Rendering.Commands
             if (sceneChanged)
                 _gpuHiZLastSceneCommandCount = scene.TotalCommandCount;
 
-            bool cameraChanged = HasSignificantCameraChange(
+            _ = HasSignificantCameraChange(
                 camera,
                 ref _gpuHiZHasCameraState,
                 ref _gpuHiZLastCameraPosition,
                 ref _gpuHiZLastProjection,
-                out _);
+                out bool cameraMoved);
 
-            return sceneChanged || cameraChanged;
+            // Visibility history belongs to an exact view. Even sub-jump camera
+            // motion can reveal work that the prior view marked occluded, so the
+            // two-pass early list must be conservatively reseeded whenever the
+            // view moves. The larger jump result remains useful to CPU temporal
+            // policies, but is too permissive for GPU visibility reuse.
+            return sceneChanged || cameraMoved;
         }
 
         private static bool TryResolveGpuHiZDepthInput(
@@ -1057,6 +1109,7 @@ namespace XREngine.Rendering.Commands
                 return;
 
             // Only destroy the per-pass owned pyramid here.
+            DestroyHiZMipSourceViews();
             _hiZDepthPyramidOwned?.Destroy();
             _hiZDepthPyramidOwned = null;
             _hiZDepthPyramid = null;
@@ -1109,6 +1162,8 @@ namespace XREngine.Rendering.Commands
             if (!needsRecreate)
                 return;
 
+            if (ReferenceEquals(_hiZMipSourceViewTexture, shared.Pyramid))
+                DestroyHiZMipSourceViews();
             shared.Pyramid?.Destroy();
             shared.Pyramid = null;
 
@@ -1144,10 +1199,67 @@ namespace XREngine.Rendering.Commands
             shared.Pyramid.PushData();
         }
 
+        /// <summary>
+        /// Builds stable one-mip sampled views for Hi-Z reduction. Sampling the
+        /// entire pyramid while writing one of its mips creates an overlapping
+        /// sampled/storage descriptor range on Vulkan and can leave tail mips
+        /// unwritten. Views are recreated only when the pyramid allocation or
+        /// mip count changes, never in the steady-state frame path.
+        /// </summary>
+        private void EnsureHiZMipSourceViews(XRTexture2D pyramid)
+        {
+            int requiredViewCount = Math.Max(_hiZMaxMip, 0);
+            if (ReferenceEquals(_hiZMipSourceViewTexture, pyramid) &&
+                _hiZMipSourceViews.Length == requiredViewCount)
+            {
+                return;
+            }
+
+            DestroyHiZMipSourceViews();
+            if (requiredViewCount == 0)
+            {
+                _hiZMipSourceViewTexture = pyramid;
+                return;
+            }
+
+            var views = new XRTexture2DView[requiredViewCount];
+            for (int sourceMip = 0; sourceMip < requiredViewCount; sourceMip++)
+            {
+                views[sourceMip] = new XRTexture2DView(
+                    pyramid,
+                    (uint)sourceMip,
+                    1u,
+                    pyramid.SizedInternalFormat,
+                    array: false,
+                    pyramid.MultiSample)
+                {
+                    Name = $"{pyramid.Name}.Mip{sourceMip}.HiZSourceView",
+                    MagFilter = ETexMagFilter.Nearest,
+                    MinFilter = ETexMinFilter.Nearest,
+                    UWrap = ETexWrapMode.ClampToEdge,
+                    VWrap = ETexWrapMode.ClampToEdge,
+                };
+            }
+
+            _hiZMipSourceViewTexture = pyramid;
+            _hiZMipSourceViews = views;
+        }
+
+        private void DestroyHiZMipSourceViews()
+        {
+            foreach (XRTexture2DView view in _hiZMipSourceViews)
+                view.Destroy();
+
+            _hiZMipSourceViews = [];
+            _hiZMipSourceViewTexture = null;
+        }
+
         private void BuildHiZPyramid(XRTexture depthSamplerTexture, bool isReverseZ)
         {
             if (_hiZDepthPyramid is null)
                 return;
+
+            EnsureHiZMipSourceViews(_hiZDepthPyramid);
 
             // Mip 0 init.
             _hiZInitProgram!.Use();
@@ -1165,13 +1277,14 @@ namespace XREngine.Rendering.Commands
             uint useMinReduction = isReverseZ ? 1u : 0u;
 
             _hiZGenProgram!.Use();
-            _hiZGenProgram.Sampler("depthTexture", _hiZDepthPyramid, 0);
             _hiZGenProgram.Uniform("UseMinReduction", useMinReduction);
 
             for (int dstMip = 1; dstMip <= _hiZMaxMip; ++dstMip)
             {
                 var mip = _hiZDepthPyramid.Mipmaps[dstMip];
-                _hiZGenProgram.Uniform("SrcMip", dstMip - 1);
+                _hiZGenProgram.Sampler("depthTexture", _hiZMipSourceViews[dstMip - 1], 0);
+                // A one-mip texture view rebases its source mip to level zero.
+                _hiZGenProgram.Uniform("SrcMip", 0);
                 _hiZGenProgram.Uniform("mipLevelSize", new IVector2((int)mip.Width, (int)mip.Height));
                 _hiZGenProgram.BindImageTexture(1u, _hiZDepthPyramid, dstMip, false, 0, XRRenderProgram.EImageAccess.WriteOnly, XRRenderProgram.EImageFormat.RGBA32F);
 
@@ -1204,19 +1317,8 @@ namespace XREngine.Rendering.Commands
             _hiZOcclusionProgram.Uniform("TwoPassPhase", 0);
             _hiZOcclusionProgram.Uniform("ActiveViewCount", (int)_activeViewCount);
             _hiZOcclusionProgram.Uniform("CurrentRenderPass", RenderPass);
-
-            bool requireHotCommands = IsHotCommandLayoutRequired();
-            bool useHotCommands = _culledHotCommandsValid &&
-                _culledHotCommandBuffer is not null &&
-                _occlusionCulledHotBuffer is not null;
-
-            if (requireHotCommands && !useHotCommands)
-            {
-                Debug.MeshesWarning($"{FormatDebugPrefix("Culling")} ShippingFast profile requires hot-command layout for Hi-Z occlusion refine; refine pass skipped.");
-                return;
-            }
-
-            _hiZOcclusionProgram.Uniform("UseHotCommands", useHotCommands ? 1 : 0);
+            _hiZOcclusionProgram.Uniform("ForcePhaseOneVisible", 0u);
+            SetHiZOcclusionClipSpaceUniforms(_hiZOcclusionProgram);
 
             // Bind pyramid and buffers
             _hiZOcclusionProgram.Sampler("HiZDepth", _hiZDepthPyramid, 0);
@@ -1225,23 +1327,10 @@ namespace XREngine.Rendering.Commands
             BindStorageBuffer(_hiZOcclusionProgram, _culledCountBuffer!, 2);
             BindStorageBuffer(_hiZOcclusionProgram, _cullCountScratchBuffer!, 3);
             _hiZOcclusionProgram.BindBuffer(_occlusionOverflowFlagBuffer!, 4);
-            scene.BoundsBuffer.BindTo(_hiZOcclusionProgram, 5);
+            scene.CullControlBuffer.BindTo(_hiZOcclusionProgram, 10u);
+            scene.CullBoundsBuffer.BindTo(_hiZOcclusionProgram, 5);
             if (_twoPassVisibilityBuffer is not null)
                 _twoPassVisibilityBuffer.BindTo(_hiZOcclusionProgram, 6);
-            if (useHotCommands)
-            {
-                _hiZOcclusionProgram.BindBuffer(_culledHotCommandBuffer!, 9);
-                _hiZOcclusionProgram.BindBuffer(_occlusionCulledHotBuffer!, 10);
-            }
-            else
-            {
-                // The descriptor layout still declares the optional hot streams.
-                // Bind the layout-compatible cold streams while UseHotCommands is
-                // zero so Vulkan can publish a complete descriptor set; the shader
-                // does not access these aliases on the cold-command branch.
-                _hiZOcclusionProgram.BindBuffer(CulledSceneToRenderBuffer!, 9);
-                _hiZOcclusionProgram.BindBuffer(_occlusionCulledBuffer!, 10);
-            }
             if (_statsBuffer is not null)
                 _hiZOcclusionProgram.BindBuffer(_statsBuffer, 8);
             BindViewSetBuffers(_hiZOcclusionProgram);
@@ -1283,8 +1372,6 @@ namespace XREngine.Rendering.Commands
             BindStorageBuffer(_copyCount3Program, _culledCountBuffer!, 1);
             _copyCount3Program.DispatchCompute(1, 1, 1, EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.Command);
 
-            _culledHotCommandsValid = useHotCommands;
-
             // Update VisibleCommandCount/InstanceCount from final count buffer in debug/readback mode.
             UpdateVisibleCountersFromBuffer(_culledCountBuffer);
         }
@@ -1300,8 +1387,6 @@ namespace XREngine.Rendering.Commands
             // After occlusion, the refined buffer becomes the active culled buffer.
             (_culledSceneToRenderBuffer, _occlusionCulledBuffer) = (_occlusionCulledBuffer, _culledSceneToRenderBuffer);
 
-            if (_culledHotCommandsValid && _culledHotCommandBuffer is not null && _occlusionCulledHotBuffer is not null)
-                (_culledHotCommandBuffer, _occlusionCulledHotBuffer) = (_occlusionCulledHotBuffer, _culledHotCommandBuffer);
         }
 
         private void ApplyCpuQueryAsyncOcclusionScaffold(GPUScene scene, XRCamera? camera, uint candidates)
@@ -1485,8 +1570,7 @@ namespace XREngine.Rendering.Commands
             CpuOcclusionCameraSnapshot queryCamera = CpuOcclusionCameraSnapshot.Capture(camera);
             for (uint i = 0; i < inputCount && submitted < submissionBudget; ++i)
             {
-                GPUIndirectRenderCommand cmd = CulledSceneToRenderBuffer.GetDataRawAtIndex<GPUIndirectRenderCommand>(i);
-                uint sourceIndex = cmd.Reserved1;
+                uint sourceIndex = CulledSceneToRenderBuffer.GetDataRawAtIndex<uint>(i);
 
                 // Skip if already in flight this frame.
                 if (pendingSet is not null && pendingSet.Contains(sourceIndex))
@@ -1569,8 +1653,7 @@ namespace XREngine.Rendering.Commands
 
             for (uint i = 0; i < inputCount; ++i)
             {
-                var cmd = CulledSceneToRenderBuffer.GetDataRawAtIndex<GPUIndirectRenderCommand>(i);
-                uint sourceIndex = cmd.Reserved1;
+                uint sourceIndex = CulledSceneToRenderBuffer.GetDataRawAtIndex<uint>(i);
 
                 bool resolved = _cpuOcclusionLastResolved.TryGetValue(
                     sourceIndex,
@@ -1640,9 +1723,9 @@ namespace XREngine.Rendering.Commands
                     continue;
 
                 if (writeIndex != i)
-                    CulledSceneToRenderBuffer.SetDataRawAtIndex(writeIndex, cmd);
+                    CulledSceneToRenderBuffer.SetDataRawAtIndex(writeIndex, sourceIndex);
                 writeIndex++;
-                visibleInstances += cmd.InstanceCount;
+                visibleInstances++;
             }
 
             if (writeIndex != inputCount)

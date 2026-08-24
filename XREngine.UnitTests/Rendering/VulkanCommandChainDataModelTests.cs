@@ -11,6 +11,7 @@ using XREngine.Rendering.RenderGraph;
 using XREngine.Rendering.Shadows;
 using XREngine.Rendering.Vulkan;
 using XREngine.Scene.Transforms;
+using CommandRuntime = XREngine.Rendering.Vulkan.VulkanCommandRuntime;
 
 namespace XREngine.UnitTests.Rendering;
 
@@ -43,7 +44,7 @@ public sealed class VulkanCommandChainDataModelTests
                 primaryContext),
         ];
         VulkanPrimaryCommandPlan primaryPlan = new();
-        primaryPlan.Build(primaryOperations);
+        primaryPlan.Build(LowerOperations(primaryOperations));
         recording.AddPrimaryPlan(primaryPlan);
 
         recording.AddMeshDraw(
@@ -51,21 +52,21 @@ public sealed class VulkanCommandChainDataModelTests
                 SourceOpIndex: 0,
                 Viewport: default,
                 Scissor: default,
-                IndexedViewports: null,
-                IndexedScissors: null,
+                IndexedViewports: default,
+                IndexedScissors: default,
                 ViewportScissorCount: 1,
-                Context: CreateFrameOpContext(outputTargetIdentity: 10),
-                UniformSlot: 3)).ShouldBe(0);
+                UniformSlot: 3,
+                RecordingState: default)).ShouldBe(0);
         recording.AddMeshDraw(
             new VkPreparedMeshDraw(
                 SourceOpIndex: 1,
                 Viewport: default,
                 Scissor: default,
-                IndexedViewports: null,
-                IndexedScissors: null,
+                IndexedViewports: default,
+                IndexedScissors: default,
                 ViewportScissorCount: 1,
-                Context: CreateFrameOpContext(outputTargetIdentity: 10),
-                UniformSlot: 4)).ShouldBe(1);
+                UniformSlot: 4,
+                RecordingState: default)).ShouldBe(1);
         recording.IsFrozen.ShouldBeFalse();
         recording.ContainsMeshDrawRangeForOwnerValidation(0, 2).ShouldBeTrue();
         recording.ContainsMeshDrawRangeForOwnerValidation(1, 2).ShouldBeFalse();
@@ -74,6 +75,7 @@ public sealed class VulkanCommandChainDataModelTests
             ViewKey: default,
             PassIndex: 5,
             TargetIdentity: 10,
+            DescriptorBindingVariant: 0,
             DynamicOverlay: false,
             ChainOrdinal: 0);
         CommandChain chain = new(chainKey)
@@ -81,6 +83,16 @@ public sealed class VulkanCommandChainDataModelTests
             SourceStartIndex = 0,
             SourceCount = 2,
         };
+        RenderPacket packet = CreatePacket(
+            structuralSignature: 1,
+            frameDataSignature: 2,
+            resourcePlanRevision: 3,
+            descriptorGeneration: 4,
+            pipelineGeneration: 5,
+            volatility: RenderPacketVolatility.FrameDataOnly);
+        packet.Seal();
+        chain.PublishPacketSnapshot(packet);
+        int packetIndex = recording.RetainPacket(packet);
         chain.RecordedArtifact.AssignNativeBuffer(
             new CommandBuffer { Handle = 101 },
             new CommandPool { Handle = 202 },
@@ -93,8 +105,10 @@ public sealed class VulkanCommandChainDataModelTests
                 SourceStartIndex: 0,
                 SourceCount: 2,
                 PreparedDrawStartIndex: 0,
+                PacketIndex: packetIndex,
+                PreparedFrameGeneration: 41,
                 Inheritance: default,
-                DependencySignature: default,
+                Authority: null!,
                 WritableArtifact: artifact,
                 WorkerEligibility:
                     EVulkanCommandChainWorkerEligibility.Eligible))
@@ -115,7 +129,7 @@ public sealed class VulkanCommandChainDataModelTests
             EVulkanPrimaryPlanNodeKind.MemoryBarrier);
         recording.GetPrimaryPlanNode(2).Kind.ShouldBe(
             EVulkanPrimaryPlanNodeKind.EndRendering);
-        recording.GetPrimaryPlanNode(2).Operation.ShouldBeNull();
+        recording.GetPrimaryPlanNode(2).OperationIndex.ShouldBe(-1);
         VkPreparedMeshDraw first = recording.GetMeshDraw(0);
         VkPreparedMeshDraw second = recording.GetMeshDraw(1);
         VulkanPreparedCommandChain preparedChain =
@@ -124,7 +138,7 @@ public sealed class VulkanCommandChainDataModelTests
         first.UniformSlot.ShouldBe(3);
         second.SourceOpIndex.ShouldBe(1);
         second.UniformSlot.ShouldBe(4);
-        preparedChain.Matches(chain).ShouldBeTrue();
+        preparedChain.Matches(chain, packet).ShouldBeTrue();
         preparedChain.WorkerEligibility.ShouldBe(
             EVulkanCommandChainWorkerEligibility.Eligible);
         Should.Throw<InvalidOperationException>(
@@ -238,51 +252,47 @@ public sealed class VulkanCommandChainDataModelTests
     {
         XRCamera leftCamera = new(new Transform(), new XROVRCameraParameters(true, 0.1f, 1000.0f));
         XRCamera rightCamera = new(new Transform(), new XROVRCameraParameters(false, 0.1f, 1000.0f));
-        MeshDrawOp leftOp = CreateMeshDrawOp(default(PendingMeshDraw) with { Camera = leftCamera });
-        MeshDrawOp rightOp = CreateMeshDrawOp(default(PendingMeshDraw) with { Camera = rightCamera });
+        MeshDrawOp leftOp = CreateMeshDrawOp(CreatePendingMeshDraw(camera: leftCamera));
+        MeshDrawOp rightOp = CreateMeshDrawOp(CreatePendingMeshDraw(camera: rightCamera));
 
-        RenderViewKey leftKey = VulkanRenderer.BuildRenderViewKey(leftOp, dynamicOverlay: false);
-        RenderViewKey rightKey = VulkanRenderer.BuildRenderViewKey(rightOp, dynamicOverlay: false);
+        RenderViewKey leftKey = BuildRenderViewKey(leftOp, dynamicOverlay: false);
+        RenderViewKey rightKey = BuildRenderViewKey(rightOp, dynamicOverlay: false);
 
         leftKey.Kind.ShouldBe(RenderViewKind.VREye);
-        leftKey.ViewIndex.ShouldBe(VulkanRenderer.CommandChainLeftEyeViewIndex);
+        leftKey.ViewIndex.ShouldBe(CommandRuntime.CommandChainLeftEyeViewIndex);
         rightKey.Kind.ShouldBe(RenderViewKind.VREye);
-        rightKey.ViewIndex.ShouldBe(VulkanRenderer.CommandChainRightEyeViewIndex);
+        rightKey.ViewIndex.ShouldBe(CommandRuntime.CommandChainRightEyeViewIndex);
         leftKey.ShouldNotBe(rightKey);
     }
 
     [Test]
     public void BuildRenderViewKey_SinglePassStereoUsesMultiviewSentinel()
     {
-        MeshDrawOp op = CreateMeshDrawOp(default(PendingMeshDraw) with { IsStereoPass = true });
+        MeshDrawOp op = CreateMeshDrawOp(CreatePendingMeshDraw(isStereoPass: true));
 
-        RenderViewKey key = VulkanRenderer.BuildRenderViewKey(op, dynamicOverlay: false);
+        RenderViewKey key = BuildRenderViewKey(op, dynamicOverlay: false);
 
         key.Kind.ShouldBe(RenderViewKind.VREye);
-        key.ViewIndex.ShouldBe(VulkanRenderer.CommandChainStereoMultiviewViewIndex);
+        key.ViewIndex.ShouldBe(CommandRuntime.CommandChainStereoMultiviewViewIndex);
     }
 
     [Test]
     public void BuildRenderViewKey_SinglePassStereoPrefersMultiviewSentinelOverEyeCamera()
     {
         XRCamera leftCamera = new(new Transform(), new XROVRCameraParameters(true, 0.1f, 1000.0f));
-        MeshDrawOp op = CreateMeshDrawOp(default(PendingMeshDraw) with
-        {
-            Camera = leftCamera,
-            IsStereoPass = true
-        });
+        MeshDrawOp op = CreateMeshDrawOp(CreatePendingMeshDraw(leftCamera, isStereoPass: true));
 
-        RenderViewKey key = VulkanRenderer.BuildRenderViewKey(op, dynamicOverlay: false);
+        RenderViewKey key = BuildRenderViewKey(op, dynamicOverlay: false);
 
         key.Kind.ShouldBe(RenderViewKind.VREye);
-        key.ViewIndex.ShouldBe(VulkanRenderer.CommandChainStereoMultiviewViewIndex);
+        key.ViewIndex.ShouldBe(CommandRuntime.CommandChainStereoMultiviewViewIndex);
     }
 
     [Test]
     public void OpenXrEyeRenderTargetContext_SeparatesLeftAndRightTargetIdentity()
     {
         Extent2D extent = new(2160, 2160);
-        VulkanRenderer.OpenXrEyeRenderTargetContext left = new(
+        OpenXrEyeRenderTargetContext left = new(
             OpenXrViewIndex: 0u,
             OpenXrImageIndex: 4u,
             Image: new Image(0x1001UL),
@@ -301,7 +311,7 @@ public sealed class VulkanCommandChainDataModelTests
             FoveationResourceKey: 0xF001UL,
             FoveationAttachmentKind: EVrFoveationAttachmentKind.VulkanFragmentShadingRate,
             FoveationAttachmentOwnedByResourcePlanner: true);
-        VulkanRenderer.OpenXrEyeRenderTargetContext right = new(
+        OpenXrEyeRenderTargetContext right = new(
             OpenXrViewIndex: 1u,
             OpenXrImageIndex: 4u,
             Image: new Image(0x2001UL),
@@ -335,34 +345,34 @@ public sealed class VulkanCommandChainDataModelTests
         VulkanOpenXrViewResourcePlannerContextKey.FromTarget(left)
             .ShouldNotBe(VulkanOpenXrViewResourcePlannerContextKey.FromTarget(right));
 
-        ulong leftKey = VulkanRenderer.BuildOpenXrPrimaryCommandBufferCacheKey(left.CommandChainImageKey, left);
-        ulong rightKey = VulkanRenderer.BuildOpenXrPrimaryCommandBufferCacheKey(right.CommandChainImageKey, right);
+        ulong leftKey = VulkanFrameLoop.BuildOpenXrPrimaryCommandBufferCacheKey(left.CommandChainImageKey, left);
+        ulong rightKey = VulkanFrameLoop.BuildOpenXrPrimaryCommandBufferCacheKey(right.CommandChainImageKey, right);
         leftKey.ShouldNotBe(rightKey);
     }
 
     [Test]
     public void OpenXrPlannerIdentity_IsStableAcrossAcquiredImageRotation_WhileCommandVariantsRemainImageSpecific()
     {
-        VulkanRenderer.OpenXrEyeRenderTargetContext firstImage = CreateTarget(
+        OpenXrEyeRenderTargetContext firstImage = CreateTarget(
             openXrImageIndex: 0u,
             imageHandle: 0x1001UL,
             commandChainImageKey: 1_000_010u,
             frameDataSlotIndex: 3u);
-        VulkanRenderer.OpenXrEyeRenderTargetContext secondImage = CreateTarget(
+        OpenXrEyeRenderTargetContext secondImage = CreateTarget(
             openXrImageIndex: 1u,
             imageHandle: 0x2001UL,
             commandChainImageKey: 1_000_011u,
             frameDataSlotIndex: 4u);
 
-        VulkanRenderer.BuildOpenXrExternalSwapchainPlannerTargetIdentity(firstImage.OpenXrViewIndex)
-            .ShouldBe(VulkanRenderer.BuildOpenXrExternalSwapchainPlannerTargetIdentity(secondImage.OpenXrViewIndex));
+        VulkanFrameLoop.BuildOpenXrExternalSwapchainPlannerTargetIdentity(firstImage.OpenXrViewIndex)
+            .ShouldBe(VulkanFrameLoop.BuildOpenXrExternalSwapchainPlannerTargetIdentity(secondImage.OpenXrViewIndex));
         VulkanOpenXrViewResourcePlannerContextKey.FromTarget(firstImage)
             .ShouldBe(VulkanOpenXrViewResourcePlannerContextKey.FromTarget(secondImage));
 
-        VulkanRenderer.BuildOpenXrPrimaryCommandBufferCacheKey(firstImage.CommandChainImageKey, firstImage)
-            .ShouldNotBe(VulkanRenderer.BuildOpenXrPrimaryCommandBufferCacheKey(secondImage.CommandChainImageKey, secondImage));
+        VulkanFrameLoop.BuildOpenXrPrimaryCommandBufferCacheKey(firstImage.CommandChainImageKey, firstImage)
+            .ShouldNotBe(VulkanFrameLoop.BuildOpenXrPrimaryCommandBufferCacheKey(secondImage.CommandChainImageKey, secondImage));
 
-        static VulkanRenderer.OpenXrEyeRenderTargetContext CreateTarget(
+        static OpenXrEyeRenderTargetContext CreateTarget(
             uint openXrImageIndex,
             ulong imageHandle,
             uint commandChainImageKey,
@@ -399,18 +409,20 @@ public sealed class VulkanCommandChainDataModelTests
             outputTargetName: "<right-eye>");
         ClearOp left = CreateClearOp(0) with { Context = leftContext };
         ClearOp right = CreateClearOp(0) with { Context = rightContext };
+        FrameOpContext leftOperationContext = left.Context;
+        FrameOpContext rightOperationContext = right.Context;
 
-        VulkanRenderer.ResolveCommandChainTargetIdentity(left).ShouldBe(101);
-        VulkanRenderer.ResolveCommandChainTargetIdentity(right).ShouldBe(202);
-        VulkanRenderer.ResolveCommandChainTargetName(left).ShouldBe("<left-eye>");
-        VulkanRenderer.ResolveCommandChainTargetName(right).ShouldBe("<right-eye>");
+        CommandRuntime.ResolveCommandChainTargetIdentity(left.Target, in leftOperationContext).ShouldBe(101);
+        CommandRuntime.ResolveCommandChainTargetIdentity(right.Target, in rightOperationContext).ShouldBe(202);
+        ResolveCommandChainTargetName(left.Target, in leftOperationContext).ShouldBe("<left-eye>");
+        ResolveCommandChainTargetName(right.Target, in rightOperationContext).ShouldBe("<right-eye>");
         left.Context.SchedulingIdentity.ShouldNotBe(right.Context.SchedulingIdentity);
     }
 
     [Test]
     public void OpenXrExternalSwapchainTargets_DoNotForceCommandChains()
     {
-        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandChainLowering.cs");
+        string source = SourceContractWorkspace.ReadVulkanSourcesContaining("!IsRenderingExternalSwapchainTarget &&");
 
         source.ShouldContain("!IsRenderingExternalSwapchainTarget &&");
         source.ShouldNotContain("IsRenderingExternalSwapchainTarget ||");
@@ -497,7 +509,8 @@ public sealed class VulkanCommandChainDataModelTests
         string stateTrackingSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.StateTracking.cs");
         string openXrSource = ReadOpenXrVulkanRendererSources();
         string resourcePlannerSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/RenderGraph/VulkanRenderer.ResourcePlannerState.cs");
-        string commandChainSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandChainLowering.cs");
+        string commandChainSource = SourceContractWorkspace.ReadVulkanSourcesContaining(
+            "FrameOpResourcePlannerSwitchingState frameOpSwitchingState = ActiveFrameOpResourcePlannerSwitchingState;");
         string commandBufferSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
 
         stateTrackingSource.ShouldContain("private sealed class FrameOpResourcePlannerSwitchingState");
@@ -642,9 +655,9 @@ public sealed class VulkanCommandChainDataModelTests
     [Test]
     public void OpenXrEyeUploadPublicationBuffers_AreEyeScopedBeforeMergedSubmit()
     {
-        VulkanRenderer.ResolveOpenXrEyeUploadPublicationBufferIndex(0u).ShouldBe(0);
-        VulkanRenderer.ResolveOpenXrEyeUploadPublicationBufferIndex(1u).ShouldBe(1);
-        VulkanRenderer.ResolveOpenXrEyeUploadPublicationBufferIndex(99u).ShouldBe(1);
+        VulkanFrameLoop.ResolveOpenXrEyeUploadPublicationBufferIndex(0u).ShouldBe(0);
+        VulkanFrameLoop.ResolveOpenXrEyeUploadPublicationBufferIndex(1u).ShouldBe(1);
+        VulkanFrameLoop.ResolveOpenXrEyeUploadPublicationBufferIndex(99u).ShouldBe(1);
 
         string openXrSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/OpenXR/VulkanRenderer.OpenXR.cs");
         string openXrBackendSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/OpenXR/VulkanOpenXrBackend.cs");
@@ -840,14 +853,15 @@ public sealed class VulkanCommandChainDataModelTests
     {
         CommandChainKey left = new(
             FrameSlot: 3,
-            ViewKey: new RenderViewKey(10, 20, VulkanRenderer.CommandChainLeftEyeViewIndex, RenderViewKind.VREye, 0, -1),
+            ViewKey: new RenderViewKey(10, 20, CommandRuntime.CommandChainLeftEyeViewIndex, RenderViewKind.VREye, 0, -1),
             PassIndex: 4,
             TargetIdentity: 5,
+            DescriptorBindingVariant: 0,
             DynamicOverlay: false,
             ChainOrdinal: 0);
         CommandChainKey right = left with
         {
-            ViewKey = left.ViewKey with { ViewIndex = VulkanRenderer.CommandChainRightEyeViewIndex },
+            ViewKey = left.ViewKey with { ViewIndex = CommandRuntime.CommandChainRightEyeViewIndex },
             FrameSlot = 4,
         };
 
@@ -1164,12 +1178,12 @@ public sealed class VulkanCommandChainDataModelTests
     [Test]
     public void OpenXrParallelEyeRecording_ComputesNativeRecordSpanAndOverlap()
     {
-        TimeSpan span = VulkanRenderer.ComputeOpenXrEyeRecordSpan(
+        TimeSpan span = OpenXrEyeRecordWorkerScheduler.ComputeOpenXrEyeRecordSpan(
             leftStart: 10,
             leftEnd: 110,
             rightStart: 40,
             rightEnd: 140);
-        TimeSpan overlap = VulkanRenderer.ComputeOpenXrEyeRecordOverlap(
+        TimeSpan overlap = OpenXrEyeRecordWorkerScheduler.ComputeOpenXrEyeRecordOverlap(
             leftStart: 10,
             leftEnd: 110,
             rightStart: 40,
@@ -1177,9 +1191,9 @@ public sealed class VulkanCommandChainDataModelTests
 
         span.ShouldBe(System.Diagnostics.Stopwatch.GetElapsedTime(10, 140));
         overlap.ShouldBe(System.Diagnostics.Stopwatch.GetElapsedTime(40, 110));
-        VulkanRenderer.ComputeOpenXrEyeRecordOverlap(10, 20, 20, 30)
+        OpenXrEyeRecordWorkerScheduler.ComputeOpenXrEyeRecordOverlap(10, 20, 20, 30)
             .ShouldBe(TimeSpan.Zero);
-        VulkanRenderer.ComputeOpenXrEyeRecordSpan(10, 10, 20, 30)
+        OpenXrEyeRecordWorkerScheduler.ComputeOpenXrEyeRecordSpan(10, 10, 20, 30)
             .ShouldBe(TimeSpan.Zero);
     }
 
@@ -1218,8 +1232,8 @@ public sealed class VulkanCommandChainDataModelTests
             VulkanMeshFrameDataRendererFamilyKeyComparer.Instance);
         var familyStrides = new Dictionary<VulkanMeshFrameDataFamilyKey, int>();
 
-        VulkanRenderer.CollectMeshFrameDataRequirementsForRecording(
-            ops,
+        CommandRuntime.CollectMeshFrameDataRequirementsForRecording(
+            new FrameOperationSequence(LowerOperations(ops)),
             4,
             EVulkanMeshFrameDataStreamKind.Primary,
             rendererFamilies,
@@ -1231,8 +1245,8 @@ public sealed class VulkanCommandChainDataModelTests
 
         // A second reservation for the identical strict-SPS stream is steady
         // state: it neither grows capacity nor invokes descriptor/buffer teardown.
-        VulkanRenderer.CollectMeshFrameDataRequirementsForRecording(
-            ops,
+        CommandRuntime.CollectMeshFrameDataRequirementsForRecording(
+            new FrameOperationSequence(LowerOperations(ops)),
             4,
             EVulkanMeshFrameDataStreamKind.Primary,
             rendererFamilies,
@@ -1245,7 +1259,7 @@ public sealed class VulkanCommandChainDataModelTests
             PhysicalImageSignature: 0xA100,
             FramebufferSignature: 0xB200,
             PipelineGeneration: 17);
-        VulkanRenderer.VulkanResourceLifetimeRecord[] resources =
+        VulkanResourceLifetimeRecord[] resources =
         [
             CreateLifetimeRecord(ObjectType.Buffer, 0x1001, 101, "StrictSps.Mesh.UniformBuffer"),
             CreateLifetimeRecord(ObjectType.DescriptorSet, 0x1002, 102, "StrictSps.Mesh.DescriptorSet"),
@@ -1261,13 +1275,17 @@ public sealed class VulkanCommandChainDataModelTests
         // Model the exact production command-buffer dependency set. Repeating a
         // renderer in one command must not multiply the command-level pin, but
         // every referenced generation must be present before publication.
-        var commandLifetime = new VulkanRenderer.VulkanCommandBufferLifetimeRecord();
+        var commandLifetime = new VulkanCommandBufferLifetimeRecord();
         for (int useIndex = 0; useIndex < 3; useIndex++)
         {
             for (int resourceIndex = 0; resourceIndex < resources.Length; resourceIndex++)
             {
-                VulkanRenderer.AddVulkanRecordedGenerationPin(commandLifetime, resources[resourceIndex])
-                    .ShouldBe(useIndex == 0);
+                bool added = commandLifetime.Dependencies.TryAdd(
+                    resources[resourceIndex].Key,
+                    resources[resourceIndex].Generation);
+                if (added)
+                    resources[resourceIndex].Pins.AddRecordedReference();
+                added.ShouldBe(useIndex == 0);
             }
         }
 
@@ -1280,7 +1298,7 @@ public sealed class VulkanCommandChainDataModelTests
         // The validation-to-dispatch gateway adds a separate queue pin without
         // dropping the recorded dependency.
         for (int i = 0; i < resources.Length; i++)
-            VulkanRenderer.AddVulkanQueuedGenerationPin_NoLock(resources[i]);
+            resources[i].Pins.AddQueuedReference();
         resources.ShouldAllBe(static resource => resource.Pins.RecordedReferenceCount == 1);
         resources.ShouldAllBe(static resource => resource.Pins.QueuedReferenceCount == 1);
         AssertGenerationSetRetirementReady(resources, completedGraphicsSequence: ulong.MaxValue, expected: false);
@@ -1290,15 +1308,11 @@ public sealed class VulkanCommandChainDataModelTests
         // physical-plan generation pinned until that sequence completes.
         for (int i = 0; i < resources.Length; i++)
         {
-            VulkanRenderer.MarkVulkanResourceSubmitted_NoLock(
-                resources[i],
-                VulkanRenderer.EVulkanLifetimeQueueDomain.Graphics,
-                queueSequence: 7,
-                submissionSerial: 31,
-                frameOpContextId: 41,
-                frameOpKind: "OpenXR.TrueSinglePassStereo");
-            VulkanRenderer.ReleaseVulkanQueuedGenerationPin_NoLock(resources[i]);
-            VulkanRenderer.ReleaseVulkanRecordedGenerationPin(resources[i]);
+            resources[i].Pins.MarkSubmitted(
+                EVulkanLifetimeQueueDomain.Graphics,
+                queueSequence: 7);
+            resources[i].Pins.ReleaseQueuedReference();
+            resources[i].Pins.ReleaseRecordedReference();
         }
 
         resources.ShouldAllBe(static resource => resource.Pins.RecordedReferenceCount == 0);
@@ -1319,11 +1333,11 @@ public sealed class VulkanCommandChainDataModelTests
             DirectionalCascadeShadowLayerCount = 4,
         };
         MeshDrawOp op = CreateMeshDrawOp(
-            default(PendingMeshDraw) with { ShadowUniformState = shadowState },
+            CreatePendingMeshDraw(shadowUniformState: shadowState),
             passIndex: 5,
             context: CreateFrameOpContext(passMetadata: [shadowPass]));
 
-        RenderViewKey key = VulkanRenderer.BuildRenderViewKey(op, dynamicOverlay: false);
+        RenderViewKey key = BuildRenderViewKey(op, dynamicOverlay: false);
 
         key.Kind.ShouldBe(RenderViewKind.Shadow);
         key.LightIdentity.ShouldNotBe(0);
@@ -1343,19 +1357,19 @@ public sealed class VulkanCommandChainDataModelTests
         LayeredShadowUniformState twoCascadeState = fourCascadeState;
         twoCascadeState.DirectionalCascadeShadowLayerCount = 2;
 
-        VulkanRenderer.ComputeShadowCommandChainStructuralSignature(fourCascadeState)
-            .ShouldNotBe(VulkanRenderer.ComputeShadowCommandChainStructuralSignature(twoCascadeState));
+        CommandRuntime.ComputeShadowCommandChainStructuralSignature(fourCascadeState)
+            .ShouldNotBe(CommandRuntime.ComputeShadowCommandChainStructuralSignature(twoCascadeState));
     }
 
     [Test]
     public void ValidateCommandChainShadowFallbackMode_AllowsOnlyExplicitReusableShadowFallbacks()
     {
-        Should.NotThrow(() => VulkanRenderer.ValidateCommandChainShadowFallbackMode(ShadowFallbackMode.None, shadowTileResident: true));
-        Should.NotThrow(() => VulkanRenderer.ValidateCommandChainShadowFallbackMode(ShadowFallbackMode.StaleTile, shadowTileResident: true));
-        Should.NotThrow(() => VulkanRenderer.ValidateCommandChainShadowFallbackMode(ShadowFallbackMode.Lit, shadowTileResident: false));
-        Should.Throw<InvalidOperationException>(() => VulkanRenderer.ValidateCommandChainShadowFallbackMode(ShadowFallbackMode.Legacy, shadowTileResident: true))
+        Should.NotThrow(() => CommandRuntime.ValidateCommandChainShadowFallbackMode(ShadowFallbackMode.None, shadowTileResident: true));
+        Should.NotThrow(() => CommandRuntime.ValidateCommandChainShadowFallbackMode(ShadowFallbackMode.StaleTile, shadowTileResident: true));
+        Should.NotThrow(() => CommandRuntime.ValidateCommandChainShadowFallbackMode(ShadowFallbackMode.Lit, shadowTileResident: false));
+        Should.Throw<InvalidOperationException>(() => CommandRuntime.ValidateCommandChainShadowFallbackMode(ShadowFallbackMode.Legacy, shadowTileResident: true))
             .Message.ShouldContain("fallback mode");
-        Should.Throw<InvalidOperationException>(() => VulkanRenderer.ValidateCommandChainShadowFallbackMode(ShadowFallbackMode.None, shadowTileResident: false))
+        Should.Throw<InvalidOperationException>(() => CommandRuntime.ValidateCommandChainShadowFallbackMode(ShadowFallbackMode.None, shadowTileResident: false))
             .Message.ShouldContain("explicit fallback");
     }
 
@@ -1363,7 +1377,7 @@ public sealed class VulkanCommandChainDataModelTests
     public void CommandChainKey_IncludesFrameSlotAndOrdinal()
     {
         RenderViewKey view = new(1, 2, 0, RenderViewKind.Main, 0, -1);
-        CommandChainKey slotZero = new(0, view, 3, 4, false, 5);
+        CommandChainKey slotZero = new(0, view, 3, 4, 0, false, 5);
         CommandChainKey slotOne = slotZero with { FrameSlot = 1 };
         CommandChainKey differentOrdinal = slotZero with { ChainOrdinal = 6 };
         CommandChainKey dynamicOverlay = slotZero with { DynamicOverlay = true };
@@ -1371,7 +1385,7 @@ public sealed class VulkanCommandChainDataModelTests
         slotZero.ShouldNotBe(slotOne);
         slotZero.ShouldNotBe(differentOrdinal);
         slotZero.ShouldNotBe(dynamicOverlay);
-        slotZero.ShouldBe(new CommandChainKey(0, view, 3, 4, false, 5));
+        slotZero.ShouldBe(new CommandChainKey(0, view, 3, 4, 0, false, 5));
     }
 
     [Test]
@@ -1403,9 +1417,9 @@ public sealed class VulkanCommandChainDataModelTests
             Mask: EMemoryBarrierMask.TextureFetch,
             Context: context);
 
-        VulkanRenderer.ClassifyRenderPacketVolatility(clear, dynamicOverlay: false)
+        ClassifyRenderPacketVolatility(clear, dynamicOverlay: false)
             .ShouldBe(RenderPacketVolatility.StaticStructural);
-        VulkanRenderer.ClassifyRenderPacketVolatility(barrier, dynamicOverlay: false)
+        ClassifyRenderPacketVolatility(barrier, dynamicOverlay: false)
             .ShouldBe(RenderPacketVolatility.StaticStructural);
     }
 
@@ -1426,7 +1440,7 @@ public sealed class VulkanCommandChainDataModelTests
             Rect: default,
             Context: context);
 
-        VulkanRenderer.ClassifyRenderPacketVolatility(clear, dynamicOverlay: false)
+        ClassifyRenderPacketVolatility(clear, dynamicOverlay: false)
             .ShouldBe(RenderPacketVolatility.DynamicCommand);
     }
 
@@ -1445,7 +1459,7 @@ public sealed class VulkanCommandChainDataModelTests
             Rect: default,
             Context: CreateFrameOpContext());
 
-        VulkanRenderer.ClassifyRenderPacketVolatility(clear, dynamicOverlay: true)
+        ClassifyRenderPacketVolatility(clear, dynamicOverlay: true)
             .ShouldBe(RenderPacketVolatility.DynamicCommand);
     }
 
@@ -1454,9 +1468,9 @@ public sealed class VulkanCommandChainDataModelTests
     {
         ComputeDispatchOp compute = CreateComputeDispatchOp();
 
-        VulkanRenderer.ClassifyRenderPacketVolatility(compute, dynamicOverlay: false)
+        ClassifyRenderPacketVolatility(compute, dynamicOverlay: false)
             .ShouldBe(RenderPacketVolatility.FrameDataOnly);
-        VulkanRenderer.ClassifyRenderPacketVolatility(compute, dynamicOverlay: true)
+        ClassifyRenderPacketVolatility(compute, dynamicOverlay: true)
             .ShouldBe(RenderPacketVolatility.DynamicCommand);
     }
 
@@ -1479,7 +1493,7 @@ public sealed class VulkanCommandChainDataModelTests
             pipelineGeneration: chain.PipelineGeneration,
             volatility: RenderPacketVolatility.FrameDataOnly);
 
-        VulkanRenderer.EvaluateCommandChainDirtyReason(chain, packet)
+        CommandRuntime.EvaluateCommandChainDirtyReason(chain, packet)
             .ShouldBe(CommandChainDirtyReason.None);
     }
 
@@ -1504,7 +1518,7 @@ public sealed class VulkanCommandChainDataModelTests
             descriptorSetSignature: baseline.DescriptorSnapshot.DescriptorSetSignature,
             volatility: RenderPacketVolatility.FrameDataOnly);
 
-        VulkanRenderer.TryRefreshReusableCommandChainFrameData(chain, packet)
+        CommandRuntime.TryRefreshReusableCommandChainFrameData(chain, packet)
             .ShouldBeTrue();
         chain.FrameDataSignature.ShouldBe(packet.FrameDataSignature);
     }
@@ -1532,12 +1546,12 @@ public sealed class VulkanCommandChainDataModelTests
             descriptorSetSignature: baseline.DescriptorSnapshot.DescriptorSetSignature + 1,
             volatility: RenderPacketVolatility.FrameDataOnly);
 
-        VulkanRenderer.EvaluateCommandChainDirtyReason(chain, packet)
+        CommandRuntime.EvaluateCommandChainDirtyReason(chain, packet)
             .ShouldBe(
                 CommandChainDirtyReason.Structure |
                 CommandChainDirtyReason.ResourcePlan |
                 CommandChainDirtyReason.DescriptorGeneration);
-        VulkanRenderer.TryRefreshReusableCommandChainFrameData(chain, packet)
+        CommandRuntime.TryRefreshReusableCommandChainFrameData(chain, packet)
             .ShouldBeFalse();
         chain.FrameDataSignature.ShouldBe(baseline.FrameDataSignature);
     }
@@ -1565,9 +1579,9 @@ public sealed class VulkanCommandChainDataModelTests
             descriptorSetSignature: baseline.DescriptorSnapshot.DescriptorSetSignature,
             volatility: RenderPacketVolatility.FrameDataOnly);
 
-        VulkanRenderer.EvaluateCommandChainDirtyReason(chain, packet)
+        CommandRuntime.EvaluateCommandChainDirtyReason(chain, packet)
             .ShouldBe(CommandChainDirtyReason.None);
-        VulkanRenderer.TryRefreshReusableCommandChainFrameData(chain, packet)
+        CommandRuntime.TryRefreshReusableCommandChainFrameData(chain, packet)
             .ShouldBeTrue();
         chain.FrameDataSignature.ShouldBe(packet.FrameDataSignature);
         chain.FrameDataRefreshTouchedDescriptors.ShouldBeFalse();
@@ -1602,7 +1616,7 @@ public sealed class VulkanCommandChainDataModelTests
             descriptorSetSignature: 0x402,
             dispatches: dispatches);
 
-        VulkanRenderer.TryRefreshReusableCommandChainFrameData(chain, descriptorChanged)
+        CommandRuntime.TryRefreshReusableCommandChainFrameData(chain, descriptorChanged)
             .ShouldBeFalse();
 
         RenderPacket uniformOnlyChanged = CreatePacket(
@@ -1616,7 +1630,7 @@ public sealed class VulkanCommandChainDataModelTests
             descriptorSetSignature: 0x401,
             dispatches: dispatches);
 
-        VulkanRenderer.TryRefreshReusableCommandChainFrameData(chain, uniformOnlyChanged)
+        CommandRuntime.TryRefreshReusableCommandChainFrameData(chain, uniformOnlyChanged)
             .ShouldBeTrue();
         chain.FrameDataRefreshTouchedDescriptors.ShouldBeFalse();
     }
@@ -1644,9 +1658,9 @@ public sealed class VulkanCommandChainDataModelTests
             descriptorSetSignature: baseline.DescriptorSnapshot.DescriptorSetSignature,
             volatility: RenderPacketVolatility.FrameDataOnly);
 
-        VulkanRenderer.EvaluateCommandChainDirtyReason(chain, packet)
+        CommandRuntime.EvaluateCommandChainDirtyReason(chain, packet)
             .ShouldBe(CommandChainDirtyReason.ResourcePlan | CommandChainDirtyReason.DescriptorGeneration);
-        VulkanRenderer.TryRefreshReusableCommandChainFrameData(chain, packet)
+        CommandRuntime.TryRefreshReusableCommandChainFrameData(chain, packet)
             .ShouldBeFalse();
         chain.FrameDataSignature.ShouldBe(baseline.FrameDataSignature);
         chain.DescriptorGeneration.ShouldBe(baseline.DescriptorSnapshot.DescriptorGeneration);
@@ -1680,7 +1694,7 @@ public sealed class VulkanCommandChainDataModelTests
             baseline.DescriptorSnapshot.DescriptorSetSignature,
             baseline.ResourcePlanSnapshot.PhysicalImageSignature,
             baseline.ResourcePlanSnapshot.FramebufferSignature);
-        VulkanRenderer.EvaluateCommandChainDirtyReason(materialEditChain, materialEdit)
+        CommandRuntime.EvaluateCommandChainDirtyReason(materialEditChain, materialEdit)
             .ShouldBe(CommandChainDirtyReason.None);
 
         CommandChain texturePublicationChain = CreateRecordedChain(baseline);
@@ -1695,9 +1709,9 @@ public sealed class VulkanCommandChainDataModelTests
             baseline.DescriptorSnapshot.DescriptorSetSignature,
             baseline.ResourcePlanSnapshot.PhysicalImageSignature,
             baseline.ResourcePlanSnapshot.FramebufferSignature);
-        VulkanRenderer.EvaluateCommandChainDirtyReason(texturePublicationChain, texturePublication)
+        CommandRuntime.EvaluateCommandChainDirtyReason(texturePublicationChain, texturePublication)
             .ShouldBe(CommandChainDirtyReason.ResourcePlan | CommandChainDirtyReason.DescriptorGeneration);
-        VulkanRenderer.TryRefreshReusableCommandChainFrameData(texturePublicationChain, texturePublication)
+        CommandRuntime.TryRefreshReusableCommandChainFrameData(texturePublicationChain, texturePublication)
             .ShouldBeFalse();
 
         CommandChain resizeChain = CreateRecordedChain(baseline);
@@ -1712,7 +1726,7 @@ public sealed class VulkanCommandChainDataModelTests
             baseline.DescriptorSnapshot.DescriptorSetSignature,
             baseline.ResourcePlanSnapshot.PhysicalImageSignature + 1,
             baseline.ResourcePlanSnapshot.FramebufferSignature + 1);
-        VulkanRenderer.EvaluateCommandChainDirtyReason(resizeChain, resize)
+        CommandRuntime.EvaluateCommandChainDirtyReason(resizeChain, resize)
             .ShouldBe(CommandChainDirtyReason.Structure | CommandChainDirtyReason.ResourcePlan);
 
         CommandChain hotReloadChain = CreateRecordedChain(baseline);
@@ -1727,7 +1741,7 @@ public sealed class VulkanCommandChainDataModelTests
             baseline.DescriptorSnapshot.DescriptorSetSignature,
             baseline.ResourcePlanSnapshot.PhysicalImageSignature,
             baseline.ResourcePlanSnapshot.FramebufferSignature);
-        VulkanRenderer.EvaluateCommandChainDirtyReason(hotReloadChain, hotReload)
+        CommandRuntime.EvaluateCommandChainDirtyReason(hotReloadChain, hotReload)
             .ShouldBe(CommandChainDirtyReason.Structure | CommandChainDirtyReason.PipelineGeneration);
     }
 
@@ -1759,36 +1773,32 @@ public sealed class VulkanCommandChainDataModelTests
             CreateRecordedChain(baseline, frameSlot: 2),
         ];
 
-        VulkanRenderer.TryRefreshReusableCommandChainFrameData(slots[0], publication).ShouldBeFalse();
+        CommandRuntime.TryRefreshReusableCommandChainFrameData(slots[0], publication).ShouldBeFalse();
         slots[0].DescriptorGeneration.ShouldBe(baseline.DescriptorSnapshot.DescriptorGeneration);
         slots[1].DescriptorGeneration.ShouldBe(baseline.DescriptorSnapshot.DescriptorGeneration);
         slots[2].DescriptorGeneration.ShouldBe(baseline.DescriptorSnapshot.DescriptorGeneration);
 
-        VulkanRenderer.VulkanResourceLifetimeRecord retiredImage =
+        VulkanResourceLifetimeRecord retiredImage =
             CreateLifetimeRecord(ObjectType.Image, 0x991, 73, "P04.StreamedTexture.OldImage");
         for (ulong completionSequence = 11; completionSequence <= 13; completionSequence++)
         {
-            VulkanRenderer.MarkVulkanResourceSubmitted_NoLock(
-                retiredImage,
-                VulkanRenderer.EVulkanLifetimeQueueDomain.Graphics,
-                completionSequence,
-                submissionSerial: completionSequence,
-                frameOpContextId: completionSequence,
-                frameOpKind: "P04.ForcedPublicationDelay");
+            retiredImage.Pins.MarkSubmitted(
+                EVulkanLifetimeQueueDomain.Graphics,
+                completionSequence);
         }
 
         retiredImage.Pins.IsRetirementReady(12, 0, 0).ShouldBeFalse();
         retiredImage.Pins.IsRetirementReady(13, 0, 0).ShouldBeTrue();
 
-        VulkanRenderer.TryRefreshReusableCommandChainFrameData(slots[1], publication).ShouldBeFalse();
-        VulkanRenderer.TryRefreshReusableCommandChainFrameData(slots[2], publication).ShouldBeFalse();
+        CommandRuntime.TryRefreshReusableCommandChainFrameData(slots[1], publication).ShouldBeFalse();
+        CommandRuntime.TryRefreshReusableCommandChainFrameData(slots[2], publication).ShouldBeFalse();
         slots.ShouldAllBe(chain => chain.DescriptorGeneration == baseline.DescriptorSnapshot.DescriptorGeneration);
         slots.Select(static chain => chain.Key.FrameSlot).ShouldBe([0, 1, 2]);
     }
     [Test]
     public void DescriptorGenerationPin_DelaysRetirementUntilDescriptorPublicationReleasesIt()
     {
-        VulkanRenderer.VulkanResourceLifetimeRecord referencedImage =
+        VulkanResourceLifetimeRecord referencedImage =
             CreateLifetimeRecord(ObjectType.Image, 0x992, 74, "DescriptorPinnedImage");
 
         referencedImage.Pins.AddDescriptorReference();
@@ -1826,9 +1836,9 @@ public sealed class VulkanCommandChainDataModelTests
             descriptorSetSignature: chain.DescriptorSetSignature,
             volatility: RenderPacketVolatility.FrameDataOnly);
 
-        VulkanRenderer.TryRefreshReusableCommandChainFrameData(chain, staticPacket)
+        CommandRuntime.TryRefreshReusableCommandChainFrameData(chain, staticPacket)
             .ShouldBeFalse();
-        VulkanRenderer.TryRefreshReusableCommandChainFrameData(chain, structurallyDirtyPacket)
+        CommandRuntime.TryRefreshReusableCommandChainFrameData(chain, structurallyDirtyPacket)
             .ShouldBeFalse();
         chain.FrameDataSignature.ShouldBe(0x200UL);
     }
@@ -1845,7 +1855,7 @@ public sealed class VulkanCommandChainDataModelTests
             pipelineGeneration: chain.PipelineGeneration,
             volatility: RenderPacketVolatility.FrameDataOnly);
 
-        VulkanRenderer.EvaluateCommandChainDirtyReason(chain, packet)
+        CommandRuntime.EvaluateCommandChainDirtyReason(chain, packet)
             .ShouldBe(CommandChainDirtyReason.Structure);
     }
 
@@ -1863,7 +1873,7 @@ public sealed class VulkanCommandChainDataModelTests
             descriptorSetSignature: chain.DescriptorSetSignature,
             volatility: RenderPacketVolatility.FrameDataOnly);
 
-        VulkanRenderer.EvaluateCommandChainDirtyReason(chain, packet)
+        CommandRuntime.EvaluateCommandChainDirtyReason(chain, packet)
             .ShouldBe(
                 CommandChainDirtyReason.Structure |
                 CommandChainDirtyReason.ResourcePlan |
@@ -1887,7 +1897,7 @@ public sealed class VulkanCommandChainDataModelTests
             framebufferSignature: chain.FramebufferSignature + 1,
             volatility: RenderPacketVolatility.FrameDataOnly);
 
-        VulkanRenderer.EvaluateCommandChainDirtyReason(chain, packet)
+        CommandRuntime.EvaluateCommandChainDirtyReason(chain, packet)
             .ShouldBe(CommandChainDirtyReason.Structure | CommandChainDirtyReason.ResourcePlan);
     }
 
@@ -1907,7 +1917,7 @@ public sealed class VulkanCommandChainDataModelTests
             framebufferSignature: chain.FramebufferSignature,
             volatility: RenderPacketVolatility.FrameDataOnly);
 
-        Should.NotThrow(() => VulkanRenderer.ValidateReusableCommandChainReferences(chain, packet));
+        Should.NotThrow(() => CommandRuntime.ValidateReusableCommandChainReferences(chain, packet));
     }
 
     [Test]
@@ -1926,7 +1936,7 @@ public sealed class VulkanCommandChainDataModelTests
             framebufferSignature: chain.FramebufferSignature,
             volatility: RenderPacketVolatility.FrameDataOnly);
 
-        Should.Throw<InvalidOperationException>(() => VulkanRenderer.ValidateReusableCommandChainReferences(chain, packet))
+        Should.Throw<InvalidOperationException>(() => CommandRuntime.ValidateReusableCommandChainReferences(chain, packet))
             .Message.ShouldContain("stale descriptor-set");
     }
 
@@ -1957,9 +1967,9 @@ public sealed class VulkanCommandChainDataModelTests
             framebufferSignature: chain.FramebufferSignature + 1,
             volatility: RenderPacketVolatility.FrameDataOnly);
 
-        Should.Throw<InvalidOperationException>(() => VulkanRenderer.ValidateReusableCommandChainReferences(chain, stalePhysicalImage))
+        Should.Throw<InvalidOperationException>(() => CommandRuntime.ValidateReusableCommandChainReferences(chain, stalePhysicalImage))
             .Message.ShouldContain("stale physical-image");
-        Should.Throw<InvalidOperationException>(() => VulkanRenderer.ValidateReusableCommandChainReferences(chain, staleFramebuffer))
+        Should.Throw<InvalidOperationException>(() => CommandRuntime.ValidateReusableCommandChainReferences(chain, staleFramebuffer))
             .Message.ShouldContain("stale framebuffer");
     }
 
@@ -1979,7 +1989,7 @@ public sealed class VulkanCommandChainDataModelTests
             framebufferSignature: chain.FramebufferSignature,
             volatility: RenderPacketVolatility.FrameDataOnly);
 
-        Should.Throw<InvalidOperationException>(() => VulkanRenderer.ValidateReusableCommandChainReferences(chain, packet))
+        Should.Throw<InvalidOperationException>(() => CommandRuntime.ValidateReusableCommandChainReferences(chain, packet))
             .Message.ShouldContain("stale pipeline");
     }
 
@@ -2006,14 +2016,14 @@ public sealed class VulkanCommandChainDataModelTests
             volatility: RenderPacketVolatility.FrameDataOnly,
             draws: [CreateDrawPacket(instanceCount: 2), CreateDrawPacket(instanceCount: 3)]);
 
-        VulkanRenderer.EvaluateCommandChainDirtyReason(chain, packet)
+        CommandRuntime.EvaluateCommandChainDirtyReason(chain, packet)
             .ShouldBe(CommandChainDirtyReason.Structure | CommandChainDirtyReason.ResourcePlan);
     }
 
     [Test]
     public void CommandChainDirtyReason_UnrecordedChain_DirtiesStructure()
     {
-        CommandChain chain = new(new CommandChainKey(0, new RenderViewKey(1, 2, 0, RenderViewKind.Main, 0, -1), 3, 4, false, 5));
+        CommandChain chain = new(new CommandChainKey(0, new RenderViewKey(1, 2, 0, RenderViewKind.Main, 0, -1), 3, 4, 0, false, 5));
         RenderPacket packet = CreatePacket(
             structuralSignature: 10,
             frameDataSignature: 20,
@@ -2022,7 +2032,7 @@ public sealed class VulkanCommandChainDataModelTests
             pipelineGeneration: 50,
             volatility: RenderPacketVolatility.FrameDataOnly);
 
-        VulkanRenderer.EvaluateCommandChainDirtyReason(chain, packet)
+        CommandRuntime.EvaluateCommandChainDirtyReason(chain, packet)
             .ShouldBe(CommandChainDirtyReason.Structure);
     }
 
@@ -2030,9 +2040,9 @@ public sealed class VulkanCommandChainDataModelTests
     public void PrimaryCommandBufferDirtyReason_IsCleanForMatchingSchedule()
     {
         CommandChainSchedule schedule = CreateSchedule(dynamicOverlay: false, chainCount: 2);
-        ulong groupSignature = VulkanRenderer.ComputePrimaryCommandBufferGroupSignature(schedule);
+        ulong groupSignature = CommandRuntime.ComputePrimaryCommandBufferGroupSignature(schedule);
 
-        VulkanRenderer.EvaluatePrimaryCommandBufferDirtyReason(
+        CommandRuntime.EvaluatePrimaryCommandBufferDirtyReason(
                 schedule,
                 recordedScheduleSignature: schedule.StructuralSignature,
                 recordedGroupSignature: groupSignature,
@@ -2049,10 +2059,10 @@ public sealed class VulkanCommandChainDataModelTests
     {
         CommandChainSchedule schedule = CreateSchedule(dynamicOverlay: false, chainCount: 2);
 
-        VulkanRenderer.EvaluatePrimaryCommandBufferDirtyReason(
+        CommandRuntime.EvaluatePrimaryCommandBufferDirtyReason(
                 schedule,
                 recordedScheduleSignature: schedule.StructuralSignature + 1,
-                recordedGroupSignature: VulkanRenderer.ComputePrimaryCommandBufferGroupSignature(schedule) + 1,
+                recordedGroupSignature: CommandRuntime.ComputePrimaryCommandBufferGroupSignature(schedule) + 1,
                 recordedGroupCount: schedule.Groups.Length + 1,
                 recordedProfilerActive: false,
                 recordedProfilerFrameSlot: -1,
@@ -2071,10 +2081,10 @@ public sealed class VulkanCommandChainDataModelTests
         CommandChainSchedule twoChains = CreateSchedule(dynamicOverlay: false, chainCount: 2);
         CommandChainSchedule overlay = CreateSchedule(dynamicOverlay: true, chainCount: 1);
 
-        VulkanRenderer.ComputePrimaryCommandBufferGroupSignature(oneChain)
-            .ShouldNotBe(VulkanRenderer.ComputePrimaryCommandBufferGroupSignature(twoChains));
-        VulkanRenderer.ComputePrimaryCommandBufferGroupSignature(oneChain)
-            .ShouldNotBe(VulkanRenderer.ComputePrimaryCommandBufferGroupSignature(overlay));
+        CommandRuntime.ComputePrimaryCommandBufferGroupSignature(oneChain)
+            .ShouldNotBe(CommandRuntime.ComputePrimaryCommandBufferGroupSignature(twoChains));
+        CommandRuntime.ComputePrimaryCommandBufferGroupSignature(oneChain)
+            .ShouldNotBe(CommandRuntime.ComputePrimaryCommandBufferGroupSignature(overlay));
     }
 
     [Test]
@@ -2102,8 +2112,8 @@ public sealed class VulkanCommandChainDataModelTests
             resourcePlanRevision: 0x200UL,
             groups: new[] { changedPacketContentGroup });
 
-        VulkanRenderer.ComputePrimaryCommandBufferGroupSignature(baseline)
-            .ShouldBe(VulkanRenderer.ComputePrimaryCommandBufferGroupSignature(changedPacketContent));
+        CommandRuntime.ComputePrimaryCommandBufferGroupSignature(baseline)
+            .ShouldBe(CommandRuntime.ComputePrimaryCommandBufferGroupSignature(changedPacketContent));
     }
 
     [Test]
@@ -2114,6 +2124,7 @@ public sealed class VulkanCommandChainDataModelTests
             new RenderViewKey(1, 2, 0, RenderViewKind.Main, 0, -1),
             PassIndex: 3,
             TargetIdentity: 4,
+            DescriptorBindingVariant: 0,
             DynamicOverlay: false,
             ChainOrdinal: 5);
         RenderPassChainGroup group = new(
@@ -2139,21 +2150,21 @@ public sealed class VulkanCommandChainDataModelTests
         };
 
         ulong allocatedIdentity =
-            VulkanRenderer.ComputePrimaryCommandBufferGroupSignature(
+            CommandRuntime.ComputePrimaryCommandBufferGroupSignature(
                 schedule,
                 chains);
         VulkanCommandIdentityComponents allocatedComponents =
-            VulkanRenderer.ComputePrimaryCommandBufferGroupIdentity(
+            CommandRuntime.ComputePrimaryCommandBufferGroupIdentity(
                 schedule,
                 chains);
         chain.RecordedArtifact.Invalidate(
             EVulkanRecordedCommandArtifactInvalidationReason.DependencyChanged);
         ulong invalidatedIdentity =
-            VulkanRenderer.ComputePrimaryCommandBufferGroupSignature(
+            CommandRuntime.ComputePrimaryCommandBufferGroupSignature(
                 schedule,
                 chains);
         VulkanCommandIdentityComponents invalidatedComponents =
-            VulkanRenderer.ComputePrimaryCommandBufferGroupIdentity(
+            CommandRuntime.ComputePrimaryCommandBufferGroupIdentity(
                 schedule,
                 chains);
 
@@ -2187,50 +2198,51 @@ public sealed class VulkanCommandChainDataModelTests
                 CreateGroup(passIndex: 0, targetIdentity: 0, dynamicOverlay: false, chainCount: 2),
             });
 
-        Should.NotThrow(() => VulkanRenderer.ValidatePrimaryCommandChainSchedule(valid, [firstStatic, secondStatic], dynamicOverlayOpCount: 1));
-        Should.Throw<InvalidOperationException>(() => VulkanRenderer.ValidatePrimaryCommandChainSchedule(invalid, [firstStatic, secondStatic], dynamicOverlayOpCount: 1))
+        FrameOperationSequence operations = new(LowerOperations([firstStatic, secondStatic]));
+        Should.NotThrow(() => CommandRuntime.ValidatePrimaryCommandChainSchedule(valid, operations, dynamicOverlayOpCount: 1));
+        Should.Throw<InvalidOperationException>(() => CommandRuntime.ValidatePrimaryCommandChainSchedule(invalid, operations, dynamicOverlayOpCount: 1))
             .Message.ShouldContain("dynamic overlay group before");
     }
 
     [Test]
     public void ValidateCommandChainViewSpecialization_RequiresVrOrderingAndShadowIdentity()
     {
-        RenderViewKey leftEye = new(1, 2, VulkanRenderer.CommandChainLeftEyeViewIndex, RenderViewKind.VREye, 0, -1);
-        RenderViewKey rightEye = leftEye with { ViewIndex = VulkanRenderer.CommandChainRightEyeViewIndex };
-        RenderViewKey multiviewEye = leftEye with { ViewIndex = VulkanRenderer.CommandChainStereoMultiviewViewIndex };
+        RenderViewKey leftEye = new(1, 2, CommandRuntime.CommandChainLeftEyeViewIndex, RenderViewKind.VREye, 0, -1);
+        RenderViewKey rightEye = leftEye with { ViewIndex = CommandRuntime.CommandChainRightEyeViewIndex };
+        RenderViewKey multiviewEye = leftEye with { ViewIndex = CommandRuntime.CommandChainStereoMultiviewViewIndex };
         CommandChainSchedule validVr = new(
             structuralSignature: 0x100,
             resourcePlanRevision: 0x200,
-            groups: new[] { CreateGroupForKeys(new CommandChainKey(0, leftEye, 0, 0, false, 0), new CommandChainKey(0, rightEye, 0, 0, false, 1)) });
+            groups: new[] { CreateGroupForKeys(new CommandChainKey(0, leftEye, 0, 0, 0, false, 0), new CommandChainKey(0, rightEye, 0, 0, 0, false, 1)) });
         CommandChainSchedule validMultiviewVr = new(
             structuralSignature: 0x101,
             resourcePlanRevision: 0x200,
-            groups: new[] { CreateGroupForKeys(new CommandChainKey(0, multiviewEye, 0, 0, false, 0)) });
+            groups: new[] { CreateGroupForKeys(new CommandChainKey(0, multiviewEye, 0, 0, 0, false, 0)) });
         CommandChainSchedule invalidVr = new(
             structuralSignature: 0x102,
             resourcePlanRevision: 0x200,
-            groups: new[] { CreateGroupForKeys(new CommandChainKey(0, rightEye, 0, 0, false, 0), new CommandChainKey(0, leftEye, 0, 0, false, 1)) });
+            groups: new[] { CreateGroupForKeys(new CommandChainKey(0, rightEye, 0, 0, 0, false, 0), new CommandChainKey(0, leftEye, 0, 0, 0, false, 1)) });
         CommandChainSchedule invalidMixedVr = new(
             structuralSignature: 0x103,
             resourcePlanRevision: 0x200,
             groups: new[]
             {
-                CreateGroupForKeys(new CommandChainKey(0, multiviewEye, 0, 0, false, 0)),
-                CreateGroupForKeys(new CommandChainKey(0, leftEye, 0, 0, false, 1), new CommandChainKey(0, rightEye, 0, 0, false, 2)),
+                CreateGroupForKeys(new CommandChainKey(0, multiviewEye, 0, 0, 0, false, 0)),
+                CreateGroupForKeys(new CommandChainKey(0, leftEye, 0, 0, 0, false, 1), new CommandChainKey(0, rightEye, 0, 0, 0, false, 2)),
             });
         RenderViewKey invalidShadow = new(1, 2, 0, RenderViewKind.Shadow, 0, -1);
         CommandChainSchedule invalidShadowSchedule = new(
             structuralSignature: 0x104,
             resourcePlanRevision: 0x200,
-            groups: new[] { CreateGroupForKeys(new CommandChainKey(0, invalidShadow, 0, 0, false, 0)) });
+            groups: new[] { CreateGroupForKeys(new CommandChainKey(0, invalidShadow, 0, 0, 0, false, 0)) });
 
-        Should.NotThrow(() => VulkanRenderer.ValidateCommandChainViewSpecialization(validVr));
-        Should.NotThrow(() => VulkanRenderer.ValidateCommandChainViewSpecialization(validMultiviewVr));
-        Should.Throw<InvalidOperationException>(() => VulkanRenderer.ValidateCommandChainViewSpecialization(invalidVr))
+        Should.NotThrow(() => CommandRuntime.ValidateCommandChainViewSpecialization(validVr));
+        Should.NotThrow(() => CommandRuntime.ValidateCommandChainViewSpecialization(validMultiviewVr));
+        Should.Throw<InvalidOperationException>(() => CommandRuntime.ValidateCommandChainViewSpecialization(invalidVr))
             .Message.ShouldContain("left eye before right eye");
-        Should.Throw<InvalidOperationException>(() => VulkanRenderer.ValidateCommandChainViewSpecialization(invalidMixedVr))
+        Should.Throw<InvalidOperationException>(() => CommandRuntime.ValidateCommandChainViewSpecialization(invalidMixedVr))
             .Message.ShouldContain("mixes");
-        Should.Throw<InvalidOperationException>(() => VulkanRenderer.ValidateCommandChainViewSpecialization(invalidShadowSchedule))
+        Should.Throw<InvalidOperationException>(() => CommandRuntime.ValidateCommandChainViewSpecialization(invalidShadowSchedule))
             .Message.ShouldContain("shadow key");
     }
 
@@ -2238,7 +2250,7 @@ public sealed class VulkanCommandChainDataModelTests
     public void BuildCommandChainQueueSchedule_DefaultsToSingleGraphicsFallback()
     {
         CommandChainSchedule commandSchedule = CreateSchedule(dynamicOverlay: false, chainCount: 2);
-        CommandChainQueueSchedule queueSchedule = VulkanRenderer.BuildCommandChainQueueSchedule(
+        CommandChainQueueSchedule queueSchedule = CommandRuntime.BuildCommandChainQueueSchedule(
             commandSchedule,
             multiQueueRequested: true,
             hasSecondaryGraphicsQueue: true,
@@ -2257,8 +2269,8 @@ public sealed class VulkanCommandChainDataModelTests
     public void IdentifyCommandChainQueueEligibility_FindsSidecarCandidatesWithoutEnablingThem()
     {
         RenderPassChainGroup computeGroup = CreateGroupForKeys(
-            new CommandChainKey(0, new RenderViewKey(1, 2, 0, RenderViewKind.Main, 0, -1), 0, 3, false, 0),
-            new CommandChainKey(0, new RenderViewKey(1, 2, 0, RenderViewKind.Main, 0, -1), 0, 3, false, 1));
+            new CommandChainKey(0, new RenderViewKey(1, 2, 0, RenderViewKind.Main, 0, -1), 0, 3, 0, false, 0),
+            new CommandChainKey(0, new RenderViewKey(1, 2, 0, RenderViewKind.Main, 0, -1), 0, 3, 0, false, 1));
         computeGroup = new RenderPassChainGroup(
             computeGroup.PassIndex,
             computeGroup.TargetIdentity,
@@ -2268,7 +2280,7 @@ public sealed class VulkanCommandChainDataModelTests
             computeGroup.SupportsSecondaryCommandBuffers,
             computeGroup.DynamicOverlay);
 
-        CommandChainQueueEligibility eligibility = VulkanRenderer.IdentifyCommandChainQueueEligibility(computeGroup);
+        CommandChainQueueEligibility eligibility = CommandRuntime.IdentifyCommandChainQueueEligibility(computeGroup);
 
         eligibility.HasFlag(CommandChainQueueEligibility.Graphics).ShouldBeTrue();
         eligibility.HasFlag(CommandChainQueueEligibility.SecondaryGraphics).ShouldBeTrue();
@@ -2279,8 +2291,8 @@ public sealed class VulkanCommandChainDataModelTests
     public void BuildCommandChainKeysByFrameOpIndex_UsesRecordedSourceIndices()
     {
         RenderViewKey viewKey = new(1, 2, 0, RenderViewKind.Main, 0, -1);
-        CommandChainKey firstKey = new(0, viewKey, 3, 4, false, 0);
-        CommandChainKey secondKey = new(0, viewKey, 3, 4, false, 1);
+        CommandChainKey firstKey = new(0, viewKey, 3, 4, 0, false, 0);
+        CommandChainKey secondKey = new(0, viewKey, 3, 4, 0, false, 1);
         CommandChainSchedule schedule = new(
             structuralSignature: 0x100,
             resourcePlanRevision: 0x200,
@@ -2291,7 +2303,7 @@ public sealed class VulkanCommandChainDataModelTests
             [secondKey] = new CommandChain(secondKey) { SourceStartIndex = 5, SourceCount = 1 },
         };
 
-        CommandChainKey[] keysByOp = VulkanRenderer.BuildCommandChainKeysByFrameOpIndex(schedule, chains, staticOpCount: 7);
+        CommandChainKey[] keysByOp = CommandRuntime.BuildCommandChainKeysByFrameOpIndex(schedule, chains, staticOpCount: 7);
 
         keysByOp[0].ChainOrdinal.ShouldBe(-1);
         keysByOp[1].ChainOrdinal.ShouldBe(-1);
@@ -2351,24 +2363,24 @@ public sealed class VulkanCommandChainDataModelTests
             dependencies: new[] { dependency },
             diagnostics: "ok");
 
-        Should.Throw<InvalidOperationException>(() => VulkanRenderer.ValidateCommandChainQueueSchedule(missingFallback))
+        Should.Throw<InvalidOperationException>(() => CommandRuntime.ValidateCommandChainQueueSchedule(missingFallback))
             .Message.ShouldContain("single-queue fallback");
-        Should.Throw<InvalidOperationException>(() => VulkanRenderer.ValidateCommandChainQueueSchedule(missingTimeline))
+        Should.Throw<InvalidOperationException>(() => CommandRuntime.ValidateCommandChainQueueSchedule(missingTimeline))
             .Message.ShouldContain("timeline semaphore");
-        Should.NotThrow(() => VulkanRenderer.ValidateCommandChainQueueSchedule(valid));
+        Should.NotThrow(() => CommandRuntime.ValidateCommandChainQueueSchedule(valid));
     }
 
     [Test]
     public void ResolveCommandChainRecordingWorkerCount_HonorsSingleThreadAndDisableFlags()
     {
-        VulkanRenderer.ResolveCommandChainRecordingWorkerCount(
+        CommandRuntime.ResolveCommandChainRecordingWorkerCount(
                 independentChainCount: 128,
                 processorCount: 16,
                 singleThread: true,
                 parallelDisabled: false)
             .ShouldBe(1);
 
-        VulkanRenderer.ResolveCommandChainRecordingWorkerCount(
+        CommandRuntime.ResolveCommandChainRecordingWorkerCount(
                 independentChainCount: 128,
                 processorCount: 16,
                 singleThread: false,
@@ -2379,21 +2391,21 @@ public sealed class VulkanCommandChainDataModelTests
     [Test]
     public void ResolveCommandChainRecordingWorkerCount_IsBoundedAndLeavesProcessorForRenderThread()
     {
-        VulkanRenderer.ResolveCommandChainRecordingWorkerCount(
+        CommandRuntime.ResolveCommandChainRecordingWorkerCount(
                 independentChainCount: 128,
                 processorCount: 16,
                 singleThread: false,
                 parallelDisabled: false)
             .ShouldBe(8);
 
-        VulkanRenderer.ResolveCommandChainRecordingWorkerCount(
+        CommandRuntime.ResolveCommandChainRecordingWorkerCount(
                 independentChainCount: 3,
                 processorCount: 16,
                 singleThread: false,
                 parallelDisabled: false)
             .ShouldBe(3);
 
-        VulkanRenderer.ResolveCommandChainRecordingWorkerCount(
+        CommandRuntime.ResolveCommandChainRecordingWorkerCount(
                 independentChainCount: 128,
                 processorCount: 2,
                 singleThread: false,
@@ -2411,7 +2423,7 @@ public sealed class VulkanCommandChainDataModelTests
         bool uniformSlotMappingChanged,
         bool expected)
     {
-        VulkanRenderer.ResolveCommandChainNeedsRecording(
+        CommandRuntime.ResolveCommandChainNeedsRecording(
                 benchmarkForcedRerecord,
                 secondaryNeedsRecording,
                 uniformSlotMappingChanged)
@@ -2430,10 +2442,10 @@ public sealed class VulkanCommandChainDataModelTests
         bool renderingExternalSwapchainTarget,
         bool expected)
     {
-        VulkanRenderer.CanReuseCachedCommandChainSchedule(
-                benchmarkForcedRerecord,
-                validationEnabled,
+        CommandRuntime.ResolveCommandChainStabilityGuardEnabled(
                 traceEnabled,
+                validationEnabled,
+                benchmarkForcedRerecord,
                 renderingExternalSwapchainTarget)
             .ShouldBe(expected);
     }
@@ -2450,7 +2462,7 @@ public sealed class VulkanCommandChainDataModelTests
         bool explicitlyDisabled,
         bool expected)
     {
-        VulkanRenderer.ResolveCommandChainStabilityGuardEnabled(
+        CommandRuntime.ResolveCommandChainStabilityGuardEnabled(
                 traceEnabled,
                 validationEnabled,
                 benchmarkForcedRerecord,
@@ -2472,7 +2484,7 @@ public sealed class VulkanCommandChainDataModelTests
         bool workerDomainFaulted,
         EVulkanCommandChainWorkerEligibility expected)
     {
-        VulkanRenderer.EvaluateParallelCommandChainRecording(
+        CommandRuntime.EvaluateParallelCommandChainRecording(
                 independentChainCount,
                 processorCount,
                 singleThread,
@@ -2526,27 +2538,27 @@ public sealed class VulkanCommandChainDataModelTests
         recording.ShouldNotContain("Task.Run(() => RecordSecondaryAt");
     }
 
-    private static VulkanRenderer.VulkanResourceLifetimeRecord CreateLifetimeRecord(
+    private static VulkanResourceLifetimeRecord CreateLifetimeRecord(
         ObjectType type,
         ulong handle,
         ulong generation,
         string owner)
         => new()
         {
-            Key = new VulkanRenderer.VulkanResourceLifetimeKey(type, handle),
+            Key = new VulkanResourceLifetimeKey(type, handle),
             Generation = generation,
             Owner = owner,
-            State = VulkanRenderer.EVulkanResourceLifetimeState.CpuOwned,
+            State = EVulkanResourceLifetimeState.CpuOwned,
         };
 
     private static void AssertGenerationSetRetirementReady(
-        IReadOnlyList<VulkanRenderer.VulkanResourceLifetimeRecord> resources,
+        IReadOnlyList<VulkanResourceLifetimeRecord> resources,
         ulong completedGraphicsSequence,
         bool expected)
     {
         for (int i = 0; i < resources.Count; i++)
         {
-            VulkanRenderer.VulkanResourceLifetimeRecord resource = resources[i];
+            VulkanResourceLifetimeRecord resource = resources[i];
             resource.Pins.IsRetirementReady(
                     completedGraphicsSequence,
                     completedTransferSequence: 0,
@@ -2569,7 +2581,7 @@ public sealed class VulkanCommandChainDataModelTests
 
     private static CommandChain CreateRecordedChain(RenderPacket packet, int frameSlot = 0)
     {
-        CommandChain chain = new(new CommandChainKey(frameSlot, new RenderViewKey(1, 2, 0, RenderViewKind.Main, 0, -1), 3, 4, false, 5))
+        CommandChain chain = new(new CommandChainKey(frameSlot, new RenderViewKey(1, 2, 0, RenderViewKind.Main, 0, -1), 3, 4, 0, false, 5))
         {
             State = CommandChainState.Recorded,
             StructuralSignature = packet.StructuralSignature,
@@ -2581,13 +2593,13 @@ public sealed class VulkanCommandChainDataModelTests
             PipelineGeneration = packet.ResourcePlanSnapshot.PipelineGeneration,
             DrawCount = packet.DrawCount,
             DispatchCount = packet.DispatchCount,
-            InstanceCountSignature = VulkanRenderer.ComputePacketInstanceCountSignature(packet),
+            InstanceCountSignature = CommandRuntime.ComputePacketInstanceCountSignature(packet),
             DescriptorSetCount = packet.DescriptorSnapshot.DescriptorSetCount,
             DescriptorSetSignature = packet.DescriptorSnapshot.DescriptorSetSignature,
             SourceStartIndex = packet.SourceStartIndex,
             SourceCount = packet.SourceCount,
         };
-        chain.DependencySignature = VulkanRenderer.BuildCommandChainDependencySignature(packet, chain.Key);
+        chain.DependencySignature = CommandRuntime.BuildCommandChainDependencySignature(packet, chain.Key);
 
         return chain;
     }
@@ -2605,24 +2617,29 @@ public sealed class VulkanCommandChainDataModelTests
         ulong framebufferSignature = 0x456,
         DrawPacket[]? draws = null,
         DispatchPacket[]? dispatches = null)
-        => new(
-            viewKey: new RenderViewKey(1, 2, 0, RenderViewKind.Main, 0, -1),
+    {
+        RenderPacket packet = new();
+        packet.Reset(
+            new RenderPacketPayloadArena(),
+            new RenderViewKey(1, 2, 0, RenderViewKind.Main, 0, -1),
             passIndex: 3,
             targetIdentity: 4,
             targetName: "Target",
             volatility,
-            draws: draws is null ? ReadOnlyMemory<DrawPacket>.Empty : new ReadOnlyMemory<DrawPacket>(draws),
-            dispatches: dispatches is null ? ReadOnlyMemory<DispatchPacket>.Empty : new ReadOnlyMemory<DispatchPacket>(dispatches),
-            descriptorSnapshot: new DescriptorBindingSnapshot(
+            draws ?? [],
+            dispatches ?? [],
+            new DescriptorBindingSnapshot(
                 descriptorGeneration,
                 descriptorSetCount ?? (descriptorGeneration == 0 ? 0 : 1),
                 descriptorSetSignature ?? descriptorGeneration),
-            resourcePlanSnapshot: new ResourcePlanSnapshot(resourcePlanRevision, physicalImageSignature, framebufferSignature, pipelineGeneration),
+            new ResourcePlanSnapshot(resourcePlanRevision, physicalImageSignature, framebufferSignature, pipelineGeneration),
             structuralSignature,
             frameDataSignature,
             sourceStartIndex: 5,
             sourceCount: 1,
             dynamicOverlay: false);
+        return packet;
+    }
 
     private static CommandChainSchedule CreateSchedule(bool dynamicOverlay, int chainCount)
         => new(
@@ -2635,7 +2652,7 @@ public sealed class VulkanCommandChainDataModelTests
         CommandChainKey[] keys = new CommandChainKey[chainCount];
         RenderViewKey viewKey = new(1, 2, 0, dynamicOverlay ? RenderViewKind.Overlay : RenderViewKind.Main, 0, -1);
         for (int i = 0; i < keys.Length; i++)
-            keys[i] = new CommandChainKey(0, viewKey, passIndex, targetIdentity, dynamicOverlay, i);
+            keys[i] = new CommandChainKey(0, viewKey, passIndex, targetIdentity, 0, dynamicOverlay, i);
 
         return new RenderPassChainGroup(
             passIndex,
@@ -2666,6 +2683,37 @@ public sealed class VulkanCommandChainDataModelTests
             Target: null,
             draw,
             context ?? CreateFrameOpContext());
+
+    private static PendingMeshDraw CreatePendingMeshDraw(
+        XRCamera? camera = null,
+        bool isStereoPass = false,
+        LayeredShadowUniformState shadowUniformState = default)
+    {
+        FrameOpContext context = CreateFrameOpContext();
+        VulkanMeshProducerSnapshot producer = new(
+            context,
+            Target: null,
+            TargetExtent: default,
+            Viewport: default,
+            Scissor: default,
+            IndexedViewportScissors: default,
+            FixedFunctionState: default,
+            IsExternalSwapchainTarget: false,
+            IsPrewarmingExternalSwapchainTarget: false);
+        return default(PendingMeshDraw) with
+        {
+            ViewSnapshot = VulkanMeshDrawViewSnapshot.Capture(
+                pipeline: null,
+                camera,
+                rightEyeCamera: null,
+                isStereoPass,
+                useUnjitteredProjection: false,
+                passIndex: 0,
+                target: null,
+                producer,
+                shadowUniformState),
+        };
+    }
 
     private static ComputeDispatchOp CreateComputeDispatchOp(
         int passIndex = 0,
@@ -2726,6 +2774,54 @@ public sealed class VulkanCommandChainDataModelTests
             InternalHeight: 1080,
             OutputTargetIdentity: outputTargetIdentity,
             OutputTargetName: outputTargetName);
+
+    private static RenderViewKey BuildRenderViewKey(
+        MeshDrawOp operation,
+        bool dynamicOverlay)
+        => InvokeCommandRuntime<RenderViewKey>(
+            "BuildRenderViewKey",
+            operation.Draw,
+            operation.PassIndex,
+            operation.Context,
+            dynamicOverlay);
+
+    private static string ResolveCommandChainTargetName(
+        XRFrameBuffer? target,
+        in FrameOpContext context)
+        => InvokeCommandRuntime<string>(
+            "ResolveCommandChainTargetName",
+            target,
+            context);
+
+    private static RenderPacketVolatility ClassifyRenderPacketVolatility(
+        FrameOp operation,
+        bool dynamicOverlay)
+        => InvokeCommandRuntime<RenderPacketVolatility>(
+            "ClassifyRenderPacketVolatility",
+            operation.Kind,
+            dynamicOverlay);
+
+    private static T InvokeCommandRuntime<T>(string methodName, params object?[] arguments)
+    {
+        System.Reflection.MethodInfo method = typeof(VulkanCommandRuntime)
+            .GetMethods(
+                System.Reflection.BindingFlags.Static |
+                System.Reflection.BindingFlags.NonPublic |
+                System.Reflection.BindingFlags.Public)
+            .Single(candidate =>
+                candidate.Name == methodName &&
+                candidate.GetParameters().Length == arguments.Length);
+        return (T)method.Invoke(null, arguments)!;
+    }
+
+    private static FrameOperationStream LowerOperations(FrameOp[] operations)
+    {
+        FrameOperationIngress ingress = new();
+        ingress.Populate(operations);
+        FrameOperationStream stream = new();
+        stream.Lower(ingress);
+        return stream;
+    }
 
     private static string ReadOpenXrVulkanRendererSources()
     {

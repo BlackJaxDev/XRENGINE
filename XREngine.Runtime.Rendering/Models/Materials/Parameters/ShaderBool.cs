@@ -13,9 +13,6 @@ namespace XREngine.Rendering.Models.Materials
         protected override void SetProgramUniform(XRRenderProgram program, string location)
             => program.Uniform(location, Value);
 
-        [Browsable(false)]
-        public unsafe bool* Data { get { fixed (bool* ptr = &_value) return ptr; } }
-
         internal override string GetShaderValueString()
             => Value.ToString().ToLowerInvariant();
 

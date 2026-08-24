@@ -12,7 +12,7 @@ namespace XREngine.Rendering.Vulkan;
 /// <see cref="XRDataBuffer"/> so it can be sampled as a uniform texel buffer in shaders.
 /// Implements <see cref="IVkTexelBufferDescriptorSource"/> for descriptor-set binding.
 /// </summary>
-internal unsafe sealed class VkTextureBuffer(VulkanRenderer api, XRTextureBuffer data) : VkTexture<XRTextureBuffer>(api, data), IVkTexelBufferDescriptorSource
+internal unsafe sealed class VkTextureBuffer(VulkanBackendObjectContext backendContext, IRenderApiWrapperOwner owner, XRTextureBuffer data) : VkTexture<XRTextureBuffer>(backendContext, owner, data), IVkTexelBufferDescriptorSource
 {
     private BufferView _view;
     private Format _format = Format.R8G8B8A8Unorm;
@@ -44,8 +44,7 @@ internal unsafe sealed class VkTextureBuffer(VulkanRenderer api, XRTextureBuffer
     {
         if (_view.Handle != 0)
         {
-            Renderer.UntrackDescriptorHeapBufferView(_view);
-            Renderer.RetireBufferView(_view);
+            BackendContext.Resources.Buffers.RetireBufferView(BackendContext, _view, nameof(VkTextureBuffer));
             _view = default;
         }
 
@@ -168,7 +167,7 @@ internal unsafe sealed class VkTextureBuffer(VulkanRenderer api, XRTextureBuffer
             return;
         }
 
-        if (Renderer.GetOrCreateAPIRenderObject(sourceBuffer, generateNow: true) is not VkDataBuffer vkDataBuffer)
+        if (GetBackendWrapper(sourceBuffer, generateNow: true) is not VkDataBuffer vkDataBuffer)
             throw new InvalidOperationException("Texture buffer source is not backed by a Vulkan data buffer.");
 
         vkDataBuffer.PushData();
@@ -198,7 +197,7 @@ internal unsafe sealed class VkTextureBuffer(VulkanRenderer api, XRTextureBuffer
         if (Api!.CreateBufferView(Device, ref createInfo, null, out _view) != Result.Success)
             throw new Exception($"Failed to create Vulkan buffer view for texture buffer '{Data.Name ?? "<unnamed>"}'.");
 
-        Renderer.TrackDescriptorHeapBufferView(_view, in createInfo);
+        BackendContext.Resources.Buffers.RegisterBufferView(BackendContext, _view, in createInfo, nameof(VkTextureBuffer));
     }
 
     /// <summary>

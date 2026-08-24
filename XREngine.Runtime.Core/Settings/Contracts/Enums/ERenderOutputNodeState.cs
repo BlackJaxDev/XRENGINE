@@ -7,5 +7,6 @@ public enum ERenderOutputNodeState : byte
     Running,
     Complete,
     Reused,
+    Deferred,
     Skipped,
 }

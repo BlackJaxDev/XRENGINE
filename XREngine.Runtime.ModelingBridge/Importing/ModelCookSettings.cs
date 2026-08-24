@@ -9,7 +9,12 @@ namespace XREngine.Rendering.Models;
 public sealed class ModelCookSettings
 {
     public uint PolicyVersion { get; set; } = ModelBinaryCacheVersions.CookPolicy;
-    public MeshletGenerationSettings Meshlets { get; set; } = new();
+    /// <summary>
+    /// Imported triangle meshes are cooked for the portable mesh-shader profile by
+    /// default. This is deliberately a model-import policy rather than changing the
+    /// default for procedural/runtime-created meshes.
+    /// </summary>
+    public MeshletGenerationSettings Meshlets { get; set; } = new() { Enabled = true };
     public MeshLodGenerationSettings Lods { get; set; } = new();
     public ModelCookRepairPolicy RepairPolicy { get; set; } = ModelCookRepairPolicy.RepairOptionalDerivedData;
 }

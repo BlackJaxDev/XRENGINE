@@ -1,0 +1,82 @@
+using Silk.NET.Vulkan;
+
+namespace XREngine.Rendering.Vulkan;
+
+internal sealed partial class VulkanDescriptorManager
+{
+    /// <summary>
+    /// Republishes a streamed texture before its old image generation enters the
+    /// retirement queues. The bindless table state remains singular in
+    /// <see cref="BindlessMaterialTextures"/>; this descriptor authority owns
+    /// the native update rather than routing through the renderer facade.
+    /// </summary>
+    internal void RefreshGlobalMaterialTextureDescriptorForPublishedTexture(XRTexture texture)
+    {
+        ArgumentNullException.ThrowIfNull(texture);
+        VulkanBackendObjectContext context = _backendContext ?? throw new InvalidOperationException(
+            "The descriptor manager has not been bound to a Vulkan backend context.");
+        VulkanBindlessMaterialTextureTableState state = BindlessMaterialTextures;
+        lock (state.Sync)
+        {
+            if (state.Set.Handle == 0 || !state.SlotsByTexture.TryGetValue(texture, out uint slotIndex))
+                return;
+
+            if (!TryResolvePublishedTextureDescriptor(context, texture, out DescriptorImageInfo imageInfo))
+                imageInfo = state.Slots[0].ImageInfo;
+
+            ref MaterialTextureDescriptorSlot slot = ref state.Slots[slotIndex];
+            if (slot.ImageInfo.ImageView.Handle == imageInfo.ImageView.Handle &&
+                slot.ImageInfo.Sampler.Handle == imageInfo.Sampler.Handle &&
+                slot.ImageInfo.ImageLayout == imageInfo.ImageLayout)
+            {
+                return;
+            }
+
+            slot.ImageInfo = imageInfo;
+            slot.ExpectedImageLayout = imageInfo.ImageLayout;
+            slot.ImageViewGeneration = context.Resources.GetPublishedGeneration(ObjectType.ImageView, imageInfo.ImageView.Handle);
+            slot.SamplerGeneration = context.Resources.GetPublishedGeneration(ObjectType.Sampler, imageInfo.Sampler.Handle);
+            slot.Generation++;
+            MarkGlobalMaterialTextureDescriptorSlotDirty(slotIndex);
+            FlushGlobalMaterialTextureDescriptorUpdatesLocked();
+        }
+    }
+
+    private bool TryResolvePublishedTextureDescriptor(
+        VulkanBackendObjectContext context,
+        XRTexture texture,
+        out DescriptorImageInfo imageInfo)
+    {
+        imageInfo = default;
+        if (WrapperLookup.GetOrCreate(texture, generateNow: context.Resources.AllowSynchronousResourceUploads) is not IVkImageDescriptorSource source ||
+            !source.TryEnsureDescriptorReadyForUse("streamed texture publication", context.Resources.AllowSynchronousResourceUploads))
+        {
+            return false;
+        }
+
+        ImageView view = source.DescriptorViewType == ImageViewType.Type2D
+            ? source.DescriptorView
+            : source.GetDescriptorView(ImageViewType.Type2D);
+        if (view.Handle == 0 || !context.Resources.Images.IsAvailableForDescriptor(view))
+            return false;
+
+        Sampler sampler = source.DescriptorSampler;
+        if (sampler.Handle == 0 || !IsLiveSampler(sampler))
+            sampler = context.Resources.FallbackTexture.GetSampler();
+        if (sampler.Handle == 0 || !IsLiveSampler(sampler))
+            return false;
+
+        imageInfo = new DescriptorImageInfo
+        {
+            // A descriptor publishes the layout that must be active when it is
+            // consumed, not the source's transient layout at publication time.
+            // Streaming can republish while the image is still an attachment or
+            // transfer destination; baking that state into a sampled descriptor
+            // makes the later read-only transition disagree with the descriptor.
+            ImageLayout = ResolveDescriptorImageLayout(source, DescriptorType.CombinedImageSampler),
+            ImageView = view,
+            Sampler = sampler,
+        };
+        return true;
+    }
+}

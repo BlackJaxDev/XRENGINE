@@ -4,7 +4,7 @@ using Buffer = Silk.NET.Vulkan.Buffer;
 
 namespace XREngine.Rendering.Vulkan;
 
-internal sealed class VkTextureCube(VulkanRenderer api, XRTextureCube data) : VkImageBackedTexture<XRTextureCube>(api, data)
+internal sealed class VkTextureCube(VulkanBackendObjectContext backendContext, IRenderApiWrapperOwner owner, XRTextureCube data) : VkImageBackedTexture<XRTextureCube>(backendContext, owner, data)
 {
     private const ImageCreateFlags CubeCompatibleFlag = (ImageCreateFlags)0x10;
 
@@ -56,18 +56,8 @@ internal sealed class VkTextureCube(VulkanRenderer api, XRTextureCube data) : Vk
             for (uint face = 0; face < faceCount; face++)
             {
                 Mipmap2D side = cubeMip.Sides[face];
-                if (!TryCreateStagingBuffer(side.Data, out Buffer stagingBuffer, out DeviceMemory stagingMemory))
-                    continue;
-
-                try
-                {
-                    Extent3D extent = new(Math.Max(side.Width, 1u), Math.Max(side.Height, 1u), 1);
-                    CopyBufferToImage(stagingBuffer, level, face, 1, extent, (ulong)(side.Data?.Length ?? 0));
-                }
-                finally
-                {
-                    DestroyStagingBuffer(stagingBuffer, stagingMemory);
-                }
+                Extent3D extent = new(Math.Max(side.Width, 1u), Math.Max(side.Height, 1u), 1);
+                _ = UploadStagingDataToImage(side.Data, level, face, 1, extent);
             }
         }
 

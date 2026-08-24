@@ -1262,6 +1262,8 @@ internal sealed class RenderPipelineGpuProfiler
         {
             RuntimeGraphicsApiKind.OpenGL => "OpenGL",
             RuntimeGraphicsApiKind.Vulkan => "Vulkan",
+            RuntimeGraphicsApiKind.WebGL2 => "WebGL2",
+            RuntimeGraphicsApiKind.WebGPU => "WebGPU",
             _ => "Unknown"
         };
     }

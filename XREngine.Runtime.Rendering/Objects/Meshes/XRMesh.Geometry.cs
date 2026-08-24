@@ -69,10 +69,12 @@ public partial class XRMesh
             remapper.Remap(vertices, null);
             for (int i = 0; i < remapper.RemapTable?.Length;)
                 _triangles.Add(new IndexTriangle(remapper.RemapTable[i++], remapper.RemapTable[i++], remapper.RemapTable[i++]));
+            AdvanceGeometryRevision();
             return remapper;
         }
         for (int i = 0; i < vertices.Length;)
             _triangles.Add(new IndexTriangle(i++, i++, i++));
+        AdvanceGeometryRevision();
         return null;
     }
 
@@ -86,10 +88,12 @@ public partial class XRMesh
             remapper.Remap(vertices, null);
             for (int i = 0; i < remapper.RemapTable?.Length;)
                 _lines.Add(new IndexLine(remapper.RemapTable[i++], remapper.RemapTable[i++]));
+            AdvanceGeometryRevision();
             return remapper;
         }
         for (int i = 0; i < vertices.Length;)
             _lines.Add(new IndexLine(i++, i++));
+        AdvanceGeometryRevision();
         return null;
     }
 
@@ -103,10 +107,12 @@ public partial class XRMesh
             remapper.Remap(vertices, null);
             for (int i = 0; i < remapper.RemapTable?.Length;)
                 _points.Add(remapper.RemapTable[i++]);
+            AdvanceGeometryRevision();
             return remapper;
         }
         for (int i = 0; i < vertices.Length;)
             _points.Add(i++);
+        AdvanceGeometryRevision();
         return null;
     }
 

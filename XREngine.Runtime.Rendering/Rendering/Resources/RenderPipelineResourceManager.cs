@@ -88,15 +88,38 @@ public sealed class RenderPipelineResourceManager
         }
         catch (Exception ex)
         {
-            generation.MarkFailed(ex.Message);
+            string failure = DescribeMaterializationFailure(generation, ex);
+            generation.MarkFailed(failure);
             Debug.RenderingWarning(
-                "[RenderResources] Pending generation failed. Pipeline={0} Target={1} Reason={2}. Active generation remains {3}.",
+                "[RenderResources] Pending generation failed. Pipeline={0} Target={1} Progress={2}/{3} Reason={4}. Active generation remains {5}.",
                 instance.ProfilerKey,
                 generation.Key,
-                ex.Message,
+                generation.MaterializedSpecCount,
+                generation.Layout.OrderedSpecs.Count,
+                failure,
                 instance.ActiveGeneration?.Key.ToString() ?? "<none>");
             return false;
         }
+    }
+
+    private static string DescribeMaterializationFailure(
+        RenderResourceGeneration generation,
+        Exception exception)
+    {
+        IReadOnlyList<RenderPipelineResourceSpec> specs = generation.Layout.OrderedSpecs;
+        int index = generation.MaterializedSpecCount;
+        string stage;
+        if ((uint)index < (uint)specs.Count)
+        {
+            RenderPipelineResourceSpec spec = specs[index];
+            stage = $"spec {index + 1}/{specs.Count} '{spec.Name}' ({spec.Kind}, {spec.GetType().Name})";
+        }
+        else
+        {
+            stage = $"post-materialization validation after {specs.Count} specs";
+        }
+
+        return $"{stage} threw {exception.GetType().Name}: {exception.Message}";
     }
 
     private static bool IsExpectedBackendImageAllocationDeferral(Exception exception)

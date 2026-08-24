@@ -3,6 +3,7 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using XREngine.Data.Core;
+using McpCapability = XREngine.Runtime.Automation.Mcp.McpCapability;
 
 namespace XREngine.Editor.Mcp
 {
@@ -26,7 +27,8 @@ namespace XREngine.Editor.Mcp
         Func<McpToolContext, JsonElement, CancellationToken, Task<McpToolResponse>> handler,
         McpPermissionLevel permissionLevel = McpPermissionLevel.ReadOnly,
         string? permissionReason = null,
-        McpThreadAffinity? threadAffinity = null)
+        McpThreadAffinity? threadAffinity = null,
+        McpCapability requiredCapabilities = McpCapability.World)
     {
         /// <summary>
         /// The tool name as exposed to MCP clients (e.g., "list_scene_nodes").
@@ -66,5 +68,8 @@ namespace XREngine.Editor.Mcp
         /// When set, overrides the global default.
         /// </summary>
         public McpThreadAffinity? ThreadAffinity { get; } = threadAffinity;
+
+        /// <summary>Host capabilities which must be present before invocation.</summary>
+        public McpCapability RequiredCapabilities { get; } = requiredCapabilities;
     }
 }

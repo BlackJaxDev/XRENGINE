@@ -1775,6 +1775,7 @@ namespace XREngine
                     {
                         try
                         {
+                            RuntimeEngine.Rendering.Stats.GpuMeshlets.RecordMeshletSourceParserEntry();
                             NativeGltfSceneImporter.ImportResult result = NativeGltfSceneImporter.Import(
                                 this,
                                 SourceFilePath,
@@ -1795,6 +1796,7 @@ namespace XREngine
                             LastProducerReport = new ModelImportProducerReport(
                                 LastBackendSelection,
                                 result.ProducerMetadata);
+                            CompleteImportedScene(result.RootNode, effectiveImportOptions);
                             _onCompleted?.Invoke();
                             return result.RootNode;
                         }
@@ -1811,6 +1813,7 @@ namespace XREngine
                     {
                         try
                         {
+                            RuntimeEngine.Rendering.Stats.GpuMeshlets.RecordMeshletSourceParserEntry();
                             LogImportDiagnostic(
                                 SourceFilePath,
                                 "[ModelImporter.Import] Using native FBX backend '{0}' for '{1}'.",
@@ -1837,6 +1840,7 @@ namespace XREngine
                             LastProducerReport = new ModelImportProducerReport(
                                 LastBackendSelection,
                                 result.ProducerMetadata);
+                            CompleteImportedScene(result.RootNode, effectiveImportOptions);
                             _onCompleted?.Invoke();
                             return result.RootNode;
                         }
@@ -1881,6 +1885,7 @@ namespace XREngine
                     using (runtimeServices.StartProfileScope($"Assimp ImportFile: {SourceFilePath} with options: {effectiveImportOptions.PostProcessSteps}"))
                     {
                         assimpProgress?.Invoke(0.02f);
+                        RuntimeEngine.Rendering.Stats.GpuMeshlets.RecordMeshletSourceParserEntry();
                         scene = _assimp.ImportFile(SourceFilePath, effectiveImportOptions.PostProcessSteps);
                         assimpProgress?.Invoke(0.12f);
                     }
@@ -1896,7 +1901,10 @@ namespace XREngine
 
                     _meshProcessRoutines.Clear();
                     _meshFinalizeActions.Clear();
-                    bool processMeshesAsync = effectiveImportOptions.ProcessMeshesAsynchronously ?? runtimeServices.ProcessMeshesAsynchronously;
+                    // Meshlet cooking is part of import publication. Keep the complete
+                    // topology/cook closure on this import worker so scheduled imports
+                    // cannot publish an uncooked scene through the async callback.
+                    bool processMeshesAsync = false;
                     bool batchSubmeshAdds = effectiveImportOptions.BatchSubmeshAddsDuringAsyncImport;
                     bool importedRenderersGenerateAsync = effectiveImportOptions.GenerateMeshRenderersAsync;
                     bool generateSceneNodesPerSubmesh = effectiveImportOptions.GenerateSceneNodesPerSubmesh;
@@ -1936,7 +1944,12 @@ namespace XREngine
                     try
                     {
                         void meshProcessAction() => ProcessMeshesOnJobThread(assimpMeshProgress, cancellationToken);
-                        RunMeshProcessing(meshProcessAction, processMeshesAsync, cancellationToken, importedTextureStreamingScope);
+                        RunMeshProcessing(
+                            meshProcessAction,
+                            processMeshesAsync,
+                            cancellationToken,
+                            importedTextureStreamingScope,
+                            () => CompleteImportedScene(rootNode, effectiveImportOptions));
                         importedTextureStreamingScope = null;
                         return rootNode;
                     }
@@ -1990,6 +2003,19 @@ namespace XREngine
             return resolved;
         }
 
+        private void CompleteImportedScene(SceneNode? rootNode, ModelImportOptions importOptions)
+        {
+            if (rootNode is null || importOptions.DeferMeshletCookingUntilPostNormalization)
+                return;
+
+            string sourcePath = Path.GetFullPath(SourceFilePath);
+            string identity = ModelCacheSourceIdentityResolver.Resolve(
+                sourcePath,
+                RuntimeModelImportServices.Current.ProjectAssetsRoot,
+                RuntimeModelImportServices.Current.EngineAssetsRoot).IdentityHash;
+            ModelImportMeshletCooker.CookScene(rootNode, importOptions.CookSettings, identity, importOptions.CookOverrides);
+        }
+
         private void SetAssimpConfig(ModelImportOptions importOptions)
         {
             float rotate = importOptions.ZUp ? -90.0f : 0.0f;
@@ -2025,14 +2051,21 @@ namespace XREngine
             Action meshProcessAction,
             bool processAsynchronously,
             CancellationToken cancellationToken,
-            IDisposable? completionScope)
+            IDisposable? completionScope,
+            Action? beforeCompleted = null)
         {
+            void CompleteImport()
+            {
+                beforeCompleted?.Invoke();
+                _onCompleted?.Invoke();
+            }
+
             if (!processAsynchronously)
             {
                 try
                 {
                     meshProcessAction();
-                    _onCompleted?.Invoke();
+                    CompleteImport();
                 }
                 finally
                 {
@@ -2046,7 +2079,7 @@ namespace XREngine
             {
                 try
                 {
-                    _onCompleted?.Invoke();
+                    CompleteImport();
                 }
                 finally
                 {
@@ -2083,7 +2116,7 @@ namespace XREngine
                         if (Volatile.Read(ref faulted) != 0 || Volatile.Read(ref canceled) != 0)
                             LogImportWarning(SourceFilePath, $"[ModelImporter] Mesh processing completed with partial failures for '{SourceFilePath}'. faulted={faulted}, canceled={canceled}");
 
-                        _onCompleted?.Invoke();
+                        CompleteImport();
                     }
                     catch (Exception ex)
                     {

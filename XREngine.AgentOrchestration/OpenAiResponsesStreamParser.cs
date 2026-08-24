@@ -215,13 +215,17 @@ public sealed class OpenAiResponsesStreamParser
         {
             bool outputBudgetReached = IncompleteReason.Contains(
                 "max_output_tokens",
-                StringComparison.OrdinalIgnoreCase);
+                StringComparison.OrdinalIgnoreCase)
+                || IncompleteReason.Contains("max_tokens", StringComparison.OrdinalIgnoreCase);
             string reason = string.IsNullOrWhiteSpace(IncompleteReason)
                 ? "unspecified reason"
                 : IncompleteReason;
+            string guidance = outputBudgetReached
+                ? " The configured max_output_tokens budget remains a hard limit; for a later explicitly authorized run, request a higher max_output_tokens budget or lower reasoning_effort/text_verbosity."
+                : string.Empty;
             return new AgentModelException(
                 outputBudgetReached ? AgentFailureCategory.BudgetExceeded : AgentFailureCategory.ProviderError,
-                $"The Responses API response was incomplete: {reason}.");
+                $"The Responses API response was incomplete: {reason}.{guidance}");
         }
 
         string message = string.IsNullOrWhiteSpace(TerminalErrorMessage)

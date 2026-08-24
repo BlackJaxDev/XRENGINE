@@ -327,6 +327,15 @@ internal static class ModelBinaryContainerWriter
             throw new ArgumentException("This chunk contract does not permit an empty payload.", nameof(chunk));
 
         ModelBinaryChunkType type = (ModelBinaryChunkType)chunk.TypeId;
+        if (type == ModelBinaryChunkType.Meshlets)
+        {
+            // Validate the semantic payload now, before publishing a cache
+            // entry. This is intentionally the same authority used by warm
+            // hydration; it prevents a checksum-valid but malformed section
+            // from becoming a durable cache hit.
+            _ = ModelBinaryMeshletSectionCodec.Deserialize(chunk.DecodedBytes.Span, chunk.ElementCount, limits);
+        }
+
         bool required = (chunk.Flags & ModelBinaryChunkFlags.Required) != 0;
         if (type is ModelBinaryChunkType.Dependencies
             or ModelBinaryChunkType.Manifest

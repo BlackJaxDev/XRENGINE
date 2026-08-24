@@ -20,13 +20,20 @@ namespace XREngine.Rendering.Vulkan;
 
 internal unsafe partial class VkRenderProgram
 {
+    private readonly VulkanComputeDescriptorScratchBuilder _computeDescriptorScratch = new();
+
+    /// <summary>Allocation-free work counters for this program's compute descriptor publication scratch.</summary>
+    internal VulkanComputeDescriptorScratchBuilder.Telemetry ComputeDescriptorPublicationTelemetry
+        => _computeDescriptorScratch.GetTelemetry();
+    internal Pipeline ComputePipeline => _computePipeline;
+
     public Pipeline CreateComputePipeline(ref ComputePipelineCreateInfo pipelineInfo, PipelineCache pipelineCache = default)
     {
         if (!Link())
             throw new InvalidOperationException($"Program '{Data.Name ?? "UnnamedProgram"}' is not linkable.");
 
         if (pipelineCache.Handle == 0)
-            pipelineCache = Renderer.ActivePipelineCache;
+            pipelineCache = BackendContext.Resources.PipelineManager.ActivePipelineCache;
 
         PipelineShaderStageCreateInfo computeStage = GetShaderStages(EProgramStageMask.ComputeShaderBit).SingleOrDefault();
         if (computeStage.Module.Handle == 0)
@@ -37,7 +44,7 @@ internal unsafe partial class VkRenderProgram
 
         Result result;
         DescriptorHeapProgramLayout? descriptorHeapLayout = _descriptorHeapLayout;
-        if (Renderer.IsDescriptorHeapDrawBindingActive)
+        if (BackendContext.Resources.Descriptors.Heap.ActiveBackend == EVulkanDescriptorBackend.DescriptorHeap)
         {
             void* originalPipelinePNext = pipelineInfo.PNext;
             PipelineCreateFlags2CreateInfoNative flags2 = new()
@@ -61,41 +68,41 @@ internal unsafe partial class VkRenderProgram
                         Mappings = mappingPtr,
                     };
                     pipelineInfo.Stage.PNext = &mappingInfo;
-                    result = Renderer.CreateComputePipelinesSynchronized(pipelineCache, ref pipelineInfo, out Pipeline mappedHeapPipeline);
+                    result = BackendContext.Resources.PipelineManager.CreateComputePipelinesSynchronized(pipelineCache, ref pipelineInfo, out Pipeline mappedHeapPipeline);
                     pipelineInfo.Stage.PNext = originalStagePNext;
                     pipelineInfo.PNext = originalPipelinePNext;
                     if (result != Result.Success)
                         throw new InvalidOperationException($"Failed to create compute pipeline ({result}).");
 
-                    Renderer.RegisterVulkanPipeline(mappedHeapPipeline, "VkRenderProgram.ComputeMappedHeap");
-                    Renderer.NotifyVulkanPipelineCreated("compute");
+                    ProgramCreationPort.RegisterPipeline(mappedHeapPipeline, "VkRenderProgram.ComputeMappedHeap");
+                    ProgramCreationPort.NotifyPipelineCreated("compute");
                     return mappedHeapPipeline;
                 }
             }
 
-            result = Renderer.CreateComputePipelinesSynchronized(pipelineCache, ref pipelineInfo, out Pipeline heapPipeline);
+            result = BackendContext.Resources.PipelineManager.CreateComputePipelinesSynchronized(pipelineCache, ref pipelineInfo, out Pipeline heapPipeline);
             pipelineInfo.PNext = originalPipelinePNext;
             if (result != Result.Success)
                 throw new InvalidOperationException($"Failed to create compute pipeline ({result}).");
 
-            Renderer.RegisterVulkanPipeline(heapPipeline, "VkRenderProgram.ComputeHeap");
-            Renderer.NotifyVulkanPipelineCreated("compute");
+            ProgramCreationPort.RegisterPipeline(heapPipeline, "VkRenderProgram.ComputeHeap");
+            ProgramCreationPort.NotifyPipelineCreated("compute");
             return heapPipeline;
         }
 
-        result = Renderer.CreateComputePipelinesSynchronized(pipelineCache, ref pipelineInfo, out Pipeline pipeline);
+        result = BackendContext.Resources.PipelineManager.CreateComputePipelinesSynchronized(pipelineCache, ref pipelineInfo, out Pipeline pipeline);
         if (result != Result.Success)
             throw new InvalidOperationException($"Failed to create compute pipeline ({result}).");
 
-        Renderer.RegisterVulkanPipeline(pipeline, "VkRenderProgram.Compute");
-        Renderer.NotifyVulkanPipelineCreated("compute");
+        ProgramCreationPort.RegisterPipeline(pipeline, "VkRenderProgram.Compute");
+        ProgramCreationPort.NotifyPipelineCreated("compute");
         return pipeline;
     }
 
     public ulong ComputeGraphicsPipelineFingerprint()
     {
         VulkanStableHash64 hash = new(schemaVersion: 2);
-        hash.Add(VulkanRenderer.CommonPushConstantSize);
+        hash.Add(VulkanPipelineManager.CommonPushConstantByteSize);
 
         for (int stageIndex = 0; stageIndex < VulkanProgramUtilities.StageOrder.Length; stageIndex++)
         {
@@ -103,7 +110,7 @@ internal unsafe partial class VkRenderProgram
             if ((VulkanProgramUtilities.GraphicsStageMask & flag) == 0)
                 continue;
 
-            if (flag == EProgramStageMask.GeometryShaderBit && !Renderer.SupportsGeometryShader)
+            if (flag == EProgramStageMask.GeometryShaderBit && !BackendContext.Supports(EVulkanDeviceCapability.GeometryShader))
                 continue;
 
             if (!_stageLookup.TryGetValue(flag, out VkShader? shader))
@@ -114,7 +121,7 @@ internal unsafe partial class VkRenderProgram
         }
 
         hash.Add(_descriptorSetLayouts.Length);
-        hash.Add((int)Renderer.ActiveDescriptorBackend);
+        hash.Add((int)BackendContext.Resources.Descriptors.Heap.ActiveBackend);
         hash.Add(_descriptorHeapLayout?.PushByteCount ?? 0u);
         // Descriptor layout construction publishes this list in set/binding order.
         for (int i = 0; i < _programDescriptorBindings.Count; i++)
@@ -133,7 +140,7 @@ internal unsafe partial class VkRenderProgram
     public ulong ComputeComputePipelineFingerprint()
     {
         VulkanStableHash64 hash = new(schemaVersion: 2);
-        hash.Add(VulkanRenderer.CommonPushConstantSize);
+        hash.Add(VulkanPipelineManager.CommonPushConstantByteSize);
 
         if (_stageLookup.TryGetValue(EProgramStageMask.ComputeShaderBit, out VkShader? shader))
         {
@@ -142,7 +149,7 @@ internal unsafe partial class VkRenderProgram
         }
 
         hash.Add(_descriptorSetLayouts.Length);
-        hash.Add((int)Renderer.ActiveDescriptorBackend);
+        hash.Add((int)BackendContext.Resources.Descriptors.Heap.ActiveBackend);
         hash.Add(_descriptorHeapLayout?.PushByteCount ?? 0u);
         // Descriptor layout construction publishes this list in set/binding order.
         for (int i = 0; i < _programDescriptorBindings.Count; i++)
@@ -171,136 +178,122 @@ internal unsafe partial class VkRenderProgram
             return _computePipeline;
         }
 
-        Renderer.RecordVulkanComputePipelineCacheMiss(
-            passIndex,
-            passMetadata,
-            this,
-            ComputeComputePipelineFingerprint());
+        RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanPipelineCacheLookup(cacheHit: false);
 
         ComputePipelineCreateInfo pipelineInfo = new()
         {
             SType = StructureType.ComputePipelineCreateInfo
         };
 
-        _computePipeline = CreateComputePipeline(ref pipelineInfo, Renderer.ActivePipelineCache);
+        _computePipeline = CreateComputePipeline(ref pipelineInfo, BackendContext.Resources.PipelineManager.ActivePipelineCache);
         return _computePipeline;
     }
 
     internal bool TryBuildAndBindComputeDescriptorSets(
-        CommandBuffer commandBuffer,
+        in VulkanProgramRecordingRequest recording,
         uint imageIndex,
         ComputeDispatchSnapshot snapshot,
         ulong reusableDescriptorBindingKey,
+        PipelineBindPoint bindPoint,
         out DescriptorPool descriptorPool,
-        out List<(Silk.NET.Vulkan.Buffer buffer, DeviceMemory memory)> tempUniformBuffers)
+        out DescriptorSet[] boundDescriptorSets,
+        out IReadOnlyList<(Silk.NET.Vulkan.Buffer buffer, DeviceMemory memory)> tempUniformBuffers,
+        bool excludeGlobalTextureArray = false)
     {
         descriptorPool = default;
-        tempUniformBuffers = [];
+        boundDescriptorSets = Array.Empty<DescriptorSet>();
+        tempUniformBuffers = Array.Empty<(Silk.NET.Vulkan.Buffer buffer, DeviceMemory memory)>();
 
-        if (_descriptorSetLayouts.Length == 0 || _programDescriptorBindings.Count == 0)
-            return false;
-
-        Dictionary<DescriptorType, uint> poolSizeCounts = new();
-        foreach (DescriptorBindingInfo binding in _programDescriptorBindings)
-        {
-            uint count = Math.Max(binding.Count, 1u);
-            if (poolSizeCounts.TryGetValue(binding.DescriptorType, out uint existing))
-                poolSizeCounts[binding.DescriptorType] = existing + count;
-            else
-                poolSizeCounts[binding.DescriptorType] = count;
-        }
-
-        if (poolSizeCounts.Count == 0)
-            return false;
-
-        DescriptorPoolSize[] poolSizes = poolSizeCounts
-            .Select(p => new DescriptorPoolSize { Type = p.Key, DescriptorCount = p.Value })
-            .ToArray();
-
-        List<PendingDescriptorWrite> pendingWrites = [];
-        List<DescriptorBufferInfo> bufferInfos = [];
-        List<DescriptorImageInfo> imageInfos = [];
-        List<BufferView> texelBufferViews = [];
-        bool hasUnresolvedBinding = false;
-
-        foreach (DescriptorBindingInfo binding in _programDescriptorBindings)
-        {
-            if (binding.Set >= _descriptorSetLayouts.Length)
-                continue;
-
-            uint descriptorCount = Math.Max(binding.Count, 1u);
-            switch (binding.DescriptorType)
-            {
-                case DescriptorType.UniformBuffer:
-                case DescriptorType.StorageBuffer:
-                    if (!TryResolveComputeBuffer(binding, imageIndex, snapshot, reusableDescriptorBindingKey, out DescriptorBufferInfo bufferInfo))
-                    {
-                        hasUnresolvedBinding = true;
-                        WarnComputeOnce($"Skipping unresolved {binding.DescriptorType} binding '{binding.Name}' (set {binding.Set}, binding {binding.Binding}). Compute dispatch will be skipped.");
-                        RecordComputeDescriptorFailure(binding, "buffer resolution failed", skippedDispatch: true);
-                        continue;
-                    }
-
-                    int bufferStart = bufferInfos.Count;
-                    for (int i = 0; i < descriptorCount; i++)
-                        bufferInfos.Add(bufferInfo);
-
-                    pendingWrites.Add(PendingDescriptorWrite.Buffer(binding.Set, binding.Binding, binding.DescriptorType, descriptorCount, bufferStart));
-                    break;
-
-                case DescriptorType.CombinedImageSampler:
-                case DescriptorType.SampledImage:
-                case DescriptorType.Sampler:
-                case DescriptorType.StorageImage:
-                    if (!TryResolveComputeImage(binding, snapshot, out DescriptorImageInfo imageInfo))
-                    {
-                        hasUnresolvedBinding = true;
-                        WarnComputeOnce($"Skipping unresolved {binding.DescriptorType} image binding '{binding.Name}' (set {binding.Set}, binding {binding.Binding}). Compute dispatch will be skipped.");
-                        RecordComputeDescriptorFailure(binding, "image resolution failed", skippedDispatch: true);
-                        continue;
-                    }
-
-                    int imageStart = imageInfos.Count;
-                    for (int i = 0; i < descriptorCount; i++)
-                        imageInfos.Add(imageInfo);
-
-                    pendingWrites.Add(PendingDescriptorWrite.Image(binding.Set, binding.Binding, binding.DescriptorType, descriptorCount, imageStart));
-                    break;
-
-                case DescriptorType.UniformTexelBuffer:
-                case DescriptorType.StorageTexelBuffer:
-                    if (!TryResolveComputeTexelBuffer(binding, snapshot, out BufferView texelView))
-                    {
-                        hasUnresolvedBinding = true;
-                        WarnComputeOnce($"Skipping unresolved {binding.DescriptorType} texel binding '{binding.Name}' (set {binding.Set}, binding {binding.Binding}). Compute dispatch will be skipped.");
-                        RecordComputeDescriptorFailure(binding, "texel buffer resolution failed", skippedDispatch: true);
-                        continue;
-                    }
-
-                    int texelStart = texelBufferViews.Count;
-                    for (int i = 0; i < descriptorCount; i++)
-                        texelBufferViews.Add(texelView);
-
-                    pendingWrites.Add(PendingDescriptorWrite.Texel(binding.Set, binding.Binding, binding.DescriptorType, descriptorCount, texelStart));
-                    break;
-            }
-        }
-
-        if (hasUnresolvedBinding)
+        if (excludeGlobalTextureArray && !_canBindGlobalTextureArraySeparately)
         {
             RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanDescriptorBindingFailure(
                 Data.Name,
                 "descriptor-set",
-                "<compute-required-binding>",
-                0,
-                0,
-                skippedDraw: false,
-                skippedDispatch: true,
-                "compute descriptor build had unresolved required bindings");
+                VulkanBindlessMaterialDescriptors.TextureArrayBindingName,
+                VulkanBindlessMaterialDescriptors.TextureArraySet,
+                VulkanBindlessMaterialDescriptors.TextureArrayBinding,
+                skippedDraw: bindPoint == PipelineBindPoint.Graphics,
+                skippedDispatch: bindPoint == PipelineBindPoint.Compute,
+                "global material set cannot be separated because it is missing, shared with another binding, or followed by a non-empty set");
             return false;
         }
 
-        if (pendingWrites.Count == 0)
+        DescriptorSetLayout[] descriptorLayouts =
+            excludeGlobalTextureArray
+                ? _descriptorSetLayoutsBeforeGlobalMaterial
+                : _descriptorSetLayouts;
+        uint descriptorSetLimit = checked((uint)descriptorLayouts.Length);
+        if (descriptorLayouts.Length == 0 || _programDescriptorBindings.Count == 0)
+            return false;
+
+        int dynamicOffsetCount = CountDynamicUniformOffsets(descriptorSetLimit);
+        if (dynamicOffsetCount > 64)
+        {
+            RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanDescriptorBindingFailure(
+                Data.Name,
+                "descriptor-set",
+                "<dynamic-offsets>",
+                0,
+                0,
+                skippedDraw: bindPoint == PipelineBindPoint.Graphics,
+                skippedDispatch: bindPoint == PipelineBindPoint.Compute,
+                $"descriptor binding requires {dynamicOffsetCount} dynamic offsets; the bounded limit is 64");
+            return false;
+        }
+
+        Span<uint> dynamicOffsets = stackalloc uint[dynamicOffsetCount];
+        dynamicOffsets.Clear();
+
+        if (reusableDescriptorBindingKey != 0UL && BackendContext.Resources.Descriptors.Heap.ActiveBackend != EVulkanDescriptorBackend.DescriptorHeap)
+        {
+            ulong preparedSchemaFingerprint = ComputeComputeDescriptorSchemaFingerprint(
+                descriptorLayouts,
+                descriptorSetLimit);
+            if (!ProgramCreationPort.TryGetPreparedComputeDescriptorSets(
+                    imageIndex,
+                    preparedSchemaFingerprint,
+                    reusableDescriptorBindingKey,
+                    out DescriptorSet[] preparedDescriptorSets))
+            {
+                Debug.VulkanWarningEvery(
+                    $"Vulkan.ComputeDispatch.PreparedDescriptorsMissing.{GetHashCode()}.{imageIndex}",
+                    TimeSpan.FromSeconds(1),
+                    "[Vulkan] Prepared compute descriptors are unavailable for '{0}'. image={1} schema=0x{2:X16} binding=0x{3:X16} candidates={4}.",
+                    Data.Name ?? "UnnamedProgram",
+                    imageIndex,
+                    preparedSchemaFingerprint,
+                    reusableDescriptorBindingKey,
+                    ProgramCreationPort.DescribePreparedComputeDescriptorBindings(
+                        imageIndex,
+                        preparedSchemaFingerprint));
+                RecordComputeDescriptorFailure(
+                    default,
+                    "prepared descriptor sets were not published before recording",
+                    skippedDispatch: true);
+                return false;
+            }
+
+            recording.Commands.BindDescriptorSetsTracked(
+                recording.CommandBuffer,
+                bindPoint,
+                _pipelineLayout,
+                0,
+                preparedDescriptorSets,
+                dynamicOffsets);
+            boundDescriptorSets = preparedDescriptorSets;
+            return true;
+        }
+
+        if (!TryBuildComputeDescriptorScratch(
+                imageIndex,
+                snapshot,
+                reusableDescriptorBindingKey,
+                descriptorSetLimit,
+                reportFailures: true))
+            return false;
+        VulkanComputeDescriptorScratchBuilder scratch = _computeDescriptorScratch;
+
+        if (scratch.WriteCount == 0)
         {
             RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanDescriptorBindingFailure(
                 Data.Name,
@@ -314,19 +307,19 @@ internal unsafe partial class VkRenderProgram
             return false;
         }
 
-        PendingDescriptorWrite[] pendingWriteArray = pendingWrites.ToArray();
-        DescriptorBufferInfo[] bufferArray = bufferInfos.ToArray();
-        DescriptorImageInfo[] imageArray = imageInfos.ToArray();
-        BufferView[] texelArray = texelBufferViews.ToArray();
+        PendingDescriptorWrite[] pendingWriteArray = scratch.Writes;
+        DescriptorBufferInfo[] bufferArray = scratch.Buffers;
+        DescriptorImageInfo[] imageArray = scratch.Images;
+        BufferView[] texelArray = scratch.Texels;
 
-        if (Renderer.IsDescriptorHeapDrawBindingActive)
+        if (BackendContext.Resources.Descriptors.Heap.ActiveBackend == EVulkanDescriptorBackend.DescriptorHeap)
         {
-            DescriptorHeapPushDataPayload payload = Renderer.CreateDescriptorHeapPushDataPayload(_descriptorHeapLayout);
+            DescriptorHeapPushDataPayload payload = VulkanDescriptorManager.CreateHeapPushDataPayload(_descriptorHeapLayout);
             fixed (DescriptorBufferInfo* bufferPtr = bufferArray)
             fixed (DescriptorImageInfo* imagePtr = imageArray)
             fixed (BufferView* texelPtr = texelArray)
             {
-                for (int i = 0; i < pendingWriteArray.Length; i++)
+                for (int i = 0; i < scratch.WriteCount; i++)
                 {
                     PendingDescriptorWrite pending = pendingWriteArray[i];
                     DescriptorBindingInfo binding = FindDescriptorBinding(pending.Set, pending.Binding, pending.DescriptorType);
@@ -335,13 +328,13 @@ internal unsafe partial class VkRenderProgram
                     switch (pending.Source)
                     {
                         case PendingDescriptorSource.Buffer:
-                            wrote = Renderer.TryWriteDescriptorHeapBinding(this, binding, payload, bufferPtr + pending.SourceStartIndex, null, null, pending.DescriptorCount, out heapReason);
+                            wrote = BackendContext.Resources.DescriptorLifetime.TryWriteDescriptorHeapBinding(this, binding, payload, bufferPtr + pending.SourceStartIndex, null, null, pending.DescriptorCount, out heapReason);
                             break;
                         case PendingDescriptorSource.Image:
-                            wrote = Renderer.TryWriteDescriptorHeapBinding(this, binding, payload, null, imagePtr + pending.SourceStartIndex, null, pending.DescriptorCount, out heapReason);
+                            wrote = BackendContext.Resources.DescriptorLifetime.TryWriteDescriptorHeapBinding(this, binding, payload, null, imagePtr + pending.SourceStartIndex, null, pending.DescriptorCount, out heapReason);
                             break;
                         case PendingDescriptorSource.TexelBuffer:
-                            wrote = Renderer.TryWriteDescriptorHeapBinding(this, binding, payload, null, null, texelPtr + pending.SourceStartIndex, pending.DescriptorCount, out heapReason);
+                            wrote = BackendContext.Resources.DescriptorLifetime.TryWriteDescriptorHeapBinding(this, binding, payload, null, null, texelPtr + pending.SourceStartIndex, pending.DescriptorCount, out heapReason);
                             break;
                         default:
                             wrote = false;
@@ -356,7 +349,7 @@ internal unsafe partial class VkRenderProgram
                     }
                 }
 
-                if (!Renderer.TryPushDescriptorHeapProgramData(commandBuffer, this, payload, out string pushReason))
+                if (!recording.Commands.TryPushProgramDescriptorHeapData(recording.CommandBuffer, this, payload))
                 {
                     RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanDescriptorBindingFailure(
                         Data.Name,
@@ -366,7 +359,7 @@ internal unsafe partial class VkRenderProgram
                         0,
                         skippedDraw: false,
                         skippedDispatch: true,
-                        pushReason);
+                        "command authority rejected descriptor heap push");
                     return false;
                 }
             }
@@ -374,87 +367,61 @@ internal unsafe partial class VkRenderProgram
             return true;
         }
 
-        bool cacheable = tempUniformBuffers.Count == 0;
-        DescriptorSet[] descriptorSets;
-        bool shouldUpdateDescriptorData = true;
-
-        if (cacheable)
+        ulong schemaFingerprint = ComputeComputeDescriptorSchemaFingerprint(
+            descriptorLayouts,
+            descriptorSetLimit);
+        ulong bindingFingerprint = ComputeComputeDescriptorBindingFingerprint(pendingWriteArray.AsSpan(0, scratch.WriteCount), bufferArray.AsSpan(0, scratch.BufferCount), imageArray.AsSpan(0, scratch.ImageCount), texelArray.AsSpan(0, scratch.TexelCount));
+        ulong cacheBindingFingerprint = reusableDescriptorBindingKey == 0UL ? bindingFingerprint : reusableDescriptorBindingKey;
+        if (!ProgramCreationPort.TryGetOrCreateComputeDescriptorSets(
+            imageIndex,
+            schemaFingerprint,
+            cacheBindingFingerprint,
+            descriptorLayouts,
+            scratch.PoolSizeArray,
+            scratch.PoolSizeCount,
+            DescriptorLayoutsUseUpdateAfterBind(descriptorLayouts.Length),
+            out DescriptorSet[] descriptorSets,
+            out bool isNewAllocation))
         {
-            ulong schemaFingerprint = ComputeComputeDescriptorSchemaFingerprint();
-            ulong bindingFingerprint = ComputeComputeDescriptorBindingFingerprint(pendingWriteArray, bufferArray, imageArray, texelArray);
-            ulong cacheBindingFingerprint = reusableDescriptorBindingKey == 0UL ? bindingFingerprint : reusableDescriptorBindingKey;
-            DescriptorSetLayout[] layoutArray = _descriptorSetLayouts.ToArray();
-
-            if (!Renderer.TryGetOrCreateComputeDescriptorSets(
-                imageIndex,
-                schemaFingerprint,
-                cacheBindingFingerprint,
-                layoutArray,
-                poolSizes,
-                _descriptorSetsRequireUpdateAfterBind,
-                out descriptorSets,
-                out bool isNewAllocation))
-            {
-                WarnComputeOnce("Failed to acquire cached Vulkan compute descriptor sets.");
-                RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanDescriptorBindingFailure(
-                    Data.Name,
-                    "descriptor-set",
-                    "<cached-compute>",
-                    0,
-                    0,
-                    skippedDraw: false,
-                    skippedDispatch: true,
-                    "failed to acquire cached compute descriptor sets");
-                return false;
-            }
-
-            shouldUpdateDescriptorData = isNewAllocation || reusableDescriptorBindingKey != 0UL;
-        }
-        else
-        {
-            if (!Renderer.TryAllocateTransientComputeDescriptorSets(
-                imageIndex,
-                _descriptorSetLayouts,
-                poolSizes,
-                _descriptorSetsRequireUpdateAfterBind,
-                out descriptorSets))
-            {
-                WarnComputeOnce("Failed to allocate transient Vulkan compute descriptor sets.");
-                RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanDescriptorBindingFailure(
-                    Data.Name,
-                    "descriptor-set",
-                    "<transient-compute>",
-                    0,
-                    0,
-                    skippedDraw: false,
-                    skippedDispatch: true,
-                    "failed to allocate transient compute descriptor sets");
-                return false;
-            }
+            WarnComputeOnce("Failed to acquire cached Vulkan compute descriptor sets.");
+            RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanDescriptorBindingFailure(
+                Data.Name,
+                "descriptor-set",
+                "<cached-compute>",
+                0,
+                0,
+                skippedDraw: false,
+                skippedDispatch: true,
+                "failed to acquire cached compute descriptor sets");
+            return false;
         }
 
+        bool shouldUpdateDescriptorData = isNewAllocation || reusableDescriptorBindingKey != 0UL;
         if (shouldUpdateDescriptorData)
-            UpdateComputeDescriptorSets(descriptorSets, pendingWriteArray, bufferArray, imageArray, texelArray);
+            UpdateComputeDescriptorSets(descriptorSets, scratch);
 
-        Renderer.BindDescriptorSetsTracked(
-            commandBuffer,
-            PipelineBindPoint.Compute,
+        recording.Commands.BindDescriptorSetsTracked(
+            recording.CommandBuffer,
+            bindPoint,
             _pipelineLayout,
             0,
-            descriptorSets);
+            descriptorSets,
+            dynamicOffsets);
+
+        boundDescriptorSets = descriptorSets;
 
         return true;
     }
 
-    private void UpdateComputeDescriptorSets(
-        DescriptorSet[] descriptorSets,
-        PendingDescriptorWrite[] pendingWrites,
-        DescriptorBufferInfo[] bufferArray,
-        DescriptorImageInfo[] imageArray,
-        BufferView[] texelArray)
+    private void UpdateComputeDescriptorSets(DescriptorSet[] descriptorSets, VulkanComputeDescriptorScratchBuilder scratch)
     {
-        WriteDescriptorSet[] writeArray = new WriteDescriptorSet[pendingWrites.Length];
-        for (int i = 0; i < pendingWrites.Length; i++)
+        PendingDescriptorWrite[] pendingWrites = scratch.Writes;
+        DescriptorBufferInfo[] bufferArray = scratch.Buffers;
+        DescriptorImageInfo[] imageArray = scratch.Images;
+        BufferView[] texelArray = scratch.Texels;
+        scratch.EnsureNativeWriteCapacity(scratch.WriteCount);
+        WriteDescriptorSet[] writeArray = scratch.NativeWrites;
+        for (int i = 0; i < scratch.WriteCount; i++)
         {
             PendingDescriptorWrite pending = pendingWrites[i];
             writeArray[i] = new WriteDescriptorSet
@@ -472,7 +439,7 @@ internal unsafe partial class VkRenderProgram
         fixed (DescriptorImageInfo* imagePtr = imageArray)
         fixed (BufferView* texelPtr = texelArray)
         {
-            for (int i = 0; i < pendingWrites.Length; i++)
+            for (int i = 0; i < scratch.WriteCount; i++)
             {
                 PendingDescriptorWrite pending = pendingWrites[i];
                 switch (pending.Source)
@@ -489,21 +456,85 @@ internal unsafe partial class VkRenderProgram
                 }
             }
 
-            if (!TryUpdateComputeDescriptorSetsWithTemplates(descriptorSets, writeArray))
-                Renderer.UpdateDescriptorSetsTracked((uint)writeArray.Length, writePtr);
-            Renderer.RecordVulkanDescriptorTableGeneration("ComputeDescriptorSets.Update");
+            if (!TryUpdateComputeDescriptorSetsWithTemplates(descriptorSets, writeArray.AsSpan(0, scratch.WriteCount)))
+                BackendContext.Resources.DescriptorLifetime.UpdateDescriptorSets((uint)scratch.WriteCount, writePtr);
+            BackendContext.Resources.DescriptorLifetime.RecordTableGeneration();
         }
+    }
+
+    private bool TryBuildComputeDescriptorScratch(
+        uint imageIndex,
+        ComputeDispatchSnapshot snapshot,
+        ulong bindingKey,
+        uint descriptorSetLimit,
+        bool reportFailures)
+    {
+        VulkanComputeDescriptorScratchBuilder scratch = _computeDescriptorScratch;
+        scratch.Reset();
+        bool unresolved = false;
+        for (int index = 0; index < _programDescriptorBindings.Count; index++)
+        {
+            DescriptorBindingInfo binding = _programDescriptorBindings[index];
+            scratch.RecordScanned();
+            if (binding.Set >= descriptorSetLimit)
+                continue;
+            uint count = Math.Max(binding.Count, 1u);
+            scratch.AddPoolSize(binding.DescriptorType, count);
+            if (binding.DescriptorType is
+                DescriptorType.UniformBuffer or
+                DescriptorType.UniformBufferDynamic or
+                DescriptorType.StorageBuffer or
+                DescriptorType.StorageBufferDynamic)
+            {
+                if (!TryResolveComputeBuffer(binding, imageIndex, snapshot, bindingKey, out DescriptorBufferInfo info))
+                    unresolved = true;
+                else
+                {
+                    int start = scratch.BufferCount;
+                    scratch.AddBuffer(in info, count);
+                    scratch.AddWrite(binding.Set, binding.Binding, binding.DescriptorType, count, PendingDescriptorSource.Buffer, start);
+                }
+            }
+            else if (binding.DescriptorType is DescriptorType.CombinedImageSampler or DescriptorType.SampledImage or DescriptorType.Sampler or DescriptorType.StorageImage)
+            {
+                if (!TryResolveComputeImage(binding, snapshot, out DescriptorImageInfo info))
+                    unresolved = true;
+                else
+                {
+                    int start = scratch.ImageCount;
+                    scratch.AddImage(in info, count);
+                    scratch.AddWrite(binding.Set, binding.Binding, binding.DescriptorType, count, PendingDescriptorSource.Image, start);
+                }
+            }
+            else if (binding.DescriptorType is DescriptorType.UniformTexelBuffer or DescriptorType.StorageTexelBuffer)
+            {
+                if (!TryResolveComputeTexelBuffer(binding, snapshot, out BufferView view))
+                    unresolved = true;
+                else
+                {
+                    int start = scratch.TexelCount;
+                    scratch.AddTexel(in view, count);
+                    scratch.AddWrite(binding.Set, binding.Binding, binding.DescriptorType, count, PendingDescriptorSource.TexelBuffer, start);
+                }
+            }
+        }
+
+        if (!unresolved)
+            return scratch.WriteCount != 0;
+        if (reportFailures)
+            RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanDescriptorBindingFailure(Data.Name, "descriptor-set", "<compute-required-binding>", 0, 0, false, true, "compute descriptor build had unresolved required bindings");
+        return false;
     }
 
     private static PushConstantRange CreateCommonPushConstantRange()
         => new()
         {
-            StageFlags = VulkanRenderer.CommonPushConstantStageFlags,
+            StageFlags = VulkanPipelineManager.CommonPushConstantStages,
             Offset = 0,
-            Size = VulkanRenderer.CommonPushConstantSize
+            Size = VulkanPipelineManager.CommonPushConstantByteSize
         };
 
-    private bool TryUpdateComputeDescriptorSetsWithTemplates(DescriptorSet[] descriptorSets, WriteDescriptorSet[] writeArray)
+    private bool TryUpdateComputeDescriptorSetsWithTemplates(DescriptorSet[] descriptorSets, ReadOnlySpan<WriteDescriptorSet> writeArray)
     {
         if (RuntimeEngine.Rendering.Settings.VulkanRobustnessSettings.DescriptorUpdateBackend != EVulkanDescriptorUpdateBackend.Template)
             return false;
@@ -513,23 +544,26 @@ internal unsafe partial class VkRenderProgram
 
         for (int setIndex = 0; setIndex < descriptorSets.Length; setIndex++)
         {
-            List<WriteDescriptorSet> setWrites = [];
+            int first = -1;
+            int count = 0;
             for (int i = 0; i < writeArray.Length; i++)
-            {
                 if (writeArray[i].DstSet.Handle == descriptorSets[setIndex].Handle)
-                    setWrites.Add(writeArray[i]);
-            }
+                {
+                    if (first < 0)
+                        first = i;
+                    count++;
+                }
 
-            if (setWrites.Count == 0)
+            if (count == 0)
                 continue;
 
-            if (!Renderer.TryUpdateDescriptorSetWithTemplate(
+            if (!BackendContext.Resources.DescriptorLifetime.TryUpdateDescriptorSetWithTemplate(
                 descriptorSets[setIndex],
                 _descriptorSetLayouts[setIndex],
                 PipelineBindPoint.Compute,
                 _pipelineLayout,
                 (uint)setIndex,
-                CollectionsMarshal.AsSpan(setWrites)))
+                writeArray.Slice(first, count)))
             {
                 return false;
             }
@@ -538,7 +572,9 @@ internal unsafe partial class VkRenderProgram
         return true;
     }
 
-    private ulong ComputeComputeDescriptorSchemaFingerprint()
+    private ulong ComputeComputeDescriptorSchemaFingerprint(
+        IReadOnlyList<DescriptorSetLayout> descriptorLayouts,
+        uint descriptorSetLimit)
     {
         ulong hash = 1469598103934665603UL;
 
@@ -550,6 +586,8 @@ internal unsafe partial class VkRenderProgram
 
         foreach (DescriptorBindingInfo binding in _programDescriptorBindings.OrderBy(b => b.Set).ThenBy(b => b.Binding))
         {
+            if (binding.Set >= descriptorSetLimit)
+                continue;
             Mix(ref hash, binding.Set);
             Mix(ref hash, binding.Binding);
             Mix(ref hash, (ulong)binding.DescriptorType);
@@ -557,17 +595,44 @@ internal unsafe partial class VkRenderProgram
             Mix(ref hash, (ulong)binding.StageFlags);
         }
 
-        foreach (DescriptorSetLayout layout in _descriptorSetLayouts)
+        foreach (DescriptorSetLayout layout in descriptorLayouts)
             Mix(ref hash, layout.Handle);
 
         return hash;
     }
 
-    private static ulong ComputeComputeDescriptorBindingFingerprint(
-        PendingDescriptorWrite[] writes,
-        DescriptorBufferInfo[] buffers,
-        DescriptorImageInfo[] images,
-        BufferView[] texelViews)
+    private bool DescriptorLayoutsUseUpdateAfterBind(int descriptorLayoutCount)
+    {
+        int count = Math.Min(descriptorLayoutCount, _descriptorSetUsesUpdateAfterBind.Length);
+        for (int index = 0; index < count; index++)
+            if (_descriptorSetUsesUpdateAfterBind[index])
+                return true;
+        return false;
+    }
+
+    private int CountDynamicUniformOffsets(uint descriptorSetLimit)
+    {
+        int count = 0;
+        for (int bindingIndex = 0; bindingIndex < _programDescriptorBindings.Count; bindingIndex++)
+        {
+            DescriptorBindingInfo binding = _programDescriptorBindings[bindingIndex];
+            if (binding.Set >= descriptorSetLimit ||
+                binding.DescriptorType is not (DescriptorType.UniformBufferDynamic or DescriptorType.StorageBufferDynamic))
+            {
+                continue;
+            }
+
+            count = checked(count + checked((int)VulkanBindlessMaterialDescriptors.ResolveDescriptorCount(binding)));
+        }
+
+        return count;
+    }
+
+    private ulong ComputeComputeDescriptorBindingFingerprint(
+        ReadOnlySpan<PendingDescriptorWrite> writes,
+        ReadOnlySpan<DescriptorBufferInfo> buffers,
+        ReadOnlySpan<DescriptorImageInfo> images,
+        ReadOnlySpan<BufferView> texelViews)
     {
         ulong hash = 1469598103934665603UL;
 
@@ -594,6 +659,7 @@ internal unsafe partial class VkRenderProgram
                         {
                             DescriptorBufferInfo info = buffers[index];
                             Mix(ref hash, info.Buffer.Handle);
+                            Mix(ref hash, BackendContext.GetResourceGeneration(ObjectType.Buffer, info.Buffer.Handle));
                             Mix(ref hash, info.Offset);
                             Mix(ref hash, info.Range);
                             break;
@@ -602,7 +668,19 @@ internal unsafe partial class VkRenderProgram
                         {
                             DescriptorImageInfo info = images[index];
                             Mix(ref hash, info.ImageView.Handle);
+                            Mix(ref hash, BackendContext.GetResourceGeneration(ObjectType.ImageView, info.ImageView.Handle));
+                            if (BackendContext.Resources.Images.TryGetBackingImage(info.ImageView, out Image backingImage))
+                            {
+                                Mix(ref hash, backingImage.Handle);
+                                Mix(ref hash, BackendContext.GetResourceGeneration(ObjectType.Image, backingImage.Handle));
+                            }
+                            else
+                            {
+                                Mix(ref hash, 0UL);
+                                Mix(ref hash, 0UL);
+                            }
                             Mix(ref hash, info.Sampler.Handle);
+                            Mix(ref hash, BackendContext.GetResourceGeneration(ObjectType.Sampler, info.Sampler.Handle));
                             Mix(ref hash, (ulong)info.ImageLayout);
                             break;
                         }
@@ -610,6 +688,17 @@ internal unsafe partial class VkRenderProgram
                         {
                             BufferView view = texelViews[index];
                             Mix(ref hash, view.Handle);
+                            Mix(ref hash, BackendContext.GetResourceGeneration(ObjectType.BufferView, view.Handle));
+                            if (BackendContext.TryGetBufferViewBackingBuffer(view, out Silk.NET.Vulkan.Buffer backingBuffer))
+                            {
+                                Mix(ref hash, backingBuffer.Handle);
+                                Mix(ref hash, BackendContext.GetResourceGeneration(ObjectType.Buffer, backingBuffer.Handle));
+                            }
+                            else
+                            {
+                                Mix(ref hash, 0UL);
+                                Mix(ref hash, 0UL);
+                            }
                             break;
                         }
                 }
@@ -619,30 +708,6 @@ internal unsafe partial class VkRenderProgram
         return hash;
     }
 
-    private enum PendingDescriptorSource : byte
-    {
-        Buffer,
-        Image,
-        TexelBuffer
-    }
-
-    private readonly record struct PendingDescriptorWrite(
-        uint Set,
-        uint Binding,
-        DescriptorType DescriptorType,
-        uint DescriptorCount,
-        PendingDescriptorSource Source,
-        int SourceStartIndex)
-    {
-        public static PendingDescriptorWrite Buffer(uint set, uint binding, DescriptorType descriptorType, uint descriptorCount, int sourceStartIndex)
-            => new(set, binding, descriptorType, descriptorCount, PendingDescriptorSource.Buffer, sourceStartIndex);
-
-        public static PendingDescriptorWrite Image(uint set, uint binding, DescriptorType descriptorType, uint descriptorCount, int sourceStartIndex)
-            => new(set, binding, descriptorType, descriptorCount, PendingDescriptorSource.Image, sourceStartIndex);
-
-        public static PendingDescriptorWrite Texel(uint set, uint binding, DescriptorType descriptorType, uint descriptorCount, int sourceStartIndex)
-            => new(set, binding, descriptorType, descriptorCount, PendingDescriptorSource.TexelBuffer, sourceStartIndex);
-    }
 
     private DescriptorBindingInfo FindDescriptorBinding(uint set, uint binding, DescriptorType descriptorType)
     {
@@ -698,7 +763,7 @@ internal unsafe partial class VkRenderProgram
         if (snapshot.Buffers.TryGetValue(binding.Binding, out VulkanComputeBufferBinding boundBuffer))
             return TryCreateDescriptorBufferInfo(binding, boundBuffer, out bufferInfo);
 
-        if (binding.DescriptorType == DescriptorType.UniformBuffer &&
+        if ((binding.DescriptorType is DescriptorType.UniformBuffer or DescriptorType.UniformBufferDynamic) &&
             TryGetAutoUniformBlockFuzzy(binding.Name, binding.Set, binding.Binding, out AutoUniformBlockInfo block))
         {
             if (TryGetOrUpdateComputeAutoUniformBuffer(imageIndex, binding, snapshot, block, dispatchKey, out bufferInfo))
@@ -714,7 +779,8 @@ internal unsafe partial class VkRenderProgram
             }
         }
 
-        if (binding.DescriptorType == DescriptorType.UniformBuffer &&
+        if (binding.Requirement == EVulkanDescriptorBindingRequirement.Optional &&
+            (binding.DescriptorType is DescriptorType.UniformBuffer or DescriptorType.UniformBufferDynamic) &&
             TryGetOrUpdateComputeFallbackUniformBuffer(imageIndex, binding, dispatchKey, out bufferInfo))
         {
             RecordComputeDescriptorFallback(binding);
@@ -802,16 +868,25 @@ internal unsafe partial class VkRenderProgram
     /// before a command buffer enters its recording scope.
     /// </summary>
     internal bool TryPrepareComputeDispatchResources(
+        in VulkanProgramPlannerRequest planner,
         uint imageIndex,
         ComputeDispatchSnapshot snapshot,
-        ulong reusableDescriptorBindingKey)
+        ulong reusableDescriptorBindingKey,
+        bool excludeGlobalTextureArray = false)
     {
-        if (_descriptorSetLayouts.Length == 0 || _programDescriptorBindings.Count == 0)
+        if (excludeGlobalTextureArray && !_canBindGlobalTextureArraySeparately)
+            return false;
+
+        DescriptorSetLayout[] descriptorLayouts = excludeGlobalTextureArray
+            ? _descriptorSetLayoutsBeforeGlobalMaterial
+            : _descriptorSetLayouts;
+        uint descriptorSetLimit = checked((uint)descriptorLayouts.Length);
+        if (descriptorLayouts.Length == 0 || _programDescriptorBindings.Count == 0)
             return true;
 
         foreach (DescriptorBindingInfo binding in _programDescriptorBindings)
         {
-            if (binding.Set >= _descriptorSetLayouts.Length ||
+            if (binding.Set >= descriptorSetLimit ||
                 binding.DescriptorType != DescriptorType.UniformBuffer)
             {
                 continue;
@@ -839,25 +914,35 @@ internal unsafe partial class VkRenderProgram
                 continue;
             }
 
-            if (!TryGetOrUpdateComputeFallbackUniformBuffer(
-                imageIndex,
-                binding,
-                reusableDescriptorBindingKey,
-                out _))
+            if (binding.Requirement == EVulkanDescriptorBindingRequirement.Required)
             {
+                RecordComputeDescriptorFailure(binding, "required uniform buffer is unresolved during pre-native preparation", skippedDispatch: true);
+                return false;
+            }
+
+            if (!TryGetOrUpdateComputeFallbackUniformBuffer(
+                    imageIndex,
+                    binding,
+                    reusableDescriptorBindingKey,
+                    out _))
+            {
+                RecordComputeDescriptorFailure(binding, "optional fallback uniform buffer preparation failed", skippedDispatch: true);
                 return false;
             }
         }
 
-        if (reusableDescriptorBindingKey == 0UL || Renderer.IsDescriptorHeapDrawBindingActive)
+        if (reusableDescriptorBindingKey == 0UL || BackendContext.Resources.Descriptors.Heap.ActiveBackend == EVulkanDescriptorBackend.DescriptorHeap)
             return true;
 
         return TryRefreshReusableComputeDescriptorSets(
+            planner,
             imageIndex,
             snapshot,
-            reusableDescriptorBindingKey);
+            reusableDescriptorBindingKey,
+            descriptorLayouts,
+            descriptorSetLimit);
     }
-    internal bool TryRefreshReusableComputeDispatchFrameData(uint imageIndex, ComputeDispatchSnapshot snapshot, ulong reusableDescriptorBindingKey)
+    internal bool TryRefreshReusableComputeDispatchFrameData(in VulkanProgramPlannerRequest planner, uint imageIndex, ComputeDispatchSnapshot snapshot, ulong reusableDescriptorBindingKey)
     {
         if (_descriptorSetLayouts.Length == 0 || _programDescriptorBindings.Count == 0)
             return true;
@@ -883,126 +968,75 @@ internal unsafe partial class VkRenderProgram
                 continue;
             }
 
+            if (binding.Requirement == EVulkanDescriptorBindingRequirement.Required)
+            {
+                RecordComputeDescriptorFailure(binding, "required uniform buffer is unresolved during frame-data refresh", skippedDispatch: true);
+                return false;
+            }
+
             if (!HasExistingComputeFallbackUniformBuffer(imageIndex, binding, reusableDescriptorBindingKey))
                 return false;
         }
 
-        return TryRefreshReusableComputeDescriptorSets(imageIndex, snapshot, reusableDescriptorBindingKey);
+        return TryRefreshReusableComputeDescriptorSets(
+            planner,
+            imageIndex,
+            snapshot,
+            reusableDescriptorBindingKey,
+            _descriptorSetLayouts,
+            checked((uint)_descriptorSetLayouts.Length));
     }
 
-    private bool TryRefreshReusableComputeDescriptorSets(uint imageIndex, ComputeDispatchSnapshot snapshot, ulong reusableDescriptorBindingKey)
+    private bool TryRefreshReusableComputeDescriptorSets(
+        in VulkanProgramPlannerRequest planner,
+        uint imageIndex,
+        ComputeDispatchSnapshot snapshot,
+        ulong reusableDescriptorBindingKey,
+        DescriptorSetLayout[] descriptorLayouts,
+        uint descriptorSetLimit)
     {
         if (reusableDescriptorBindingKey == 0UL)
             return true;
 
-        (uint ImageIndex, ulong BindingKey) refreshKey = (imageIndex, reusableDescriptorBindingKey);
         snapshot.ResolvePublishedResourceSignatures(
-            Renderer.ResolveMeshDescriptorViewFamilyIdentity(),
+            planner.DescriptorViewFamilyIdentity,
             out _,
             out ulong resourceSignature);
+        ulong schemaFingerprint = ComputeComputeDescriptorSchemaFingerprint(
+            descriptorLayouts,
+            descriptorSetLimit);
+        (uint ImageIndex, ulong SchemaFingerprint, ulong BindingKey) refreshKey =
+            (imageIndex, schemaFingerprint, reusableDescriptorBindingKey);
         if (snapshot.HasPublishedBindingLayoutSignatures &&
             _reusableComputeDescriptorResourceSignatures.TryGetValue(
                 refreshKey,
                 out ulong publishedResourceSignature) &&
-            publishedResourceSignature == resourceSignature)
+            publishedResourceSignature == resourceSignature &&
+            ProgramCreationPort.TryGetPreparedComputeDescriptorSets(
+                imageIndex,
+                schemaFingerprint,
+                reusableDescriptorBindingKey,
+                out _))
         {
             return true;
         }
 
-        Dictionary<DescriptorType, uint> poolSizeCounts = new();
-        foreach (DescriptorBindingInfo binding in _programDescriptorBindings)
-        {
-            uint count = Math.Max(binding.Count, 1u);
-            if (poolSizeCounts.TryGetValue(binding.DescriptorType, out uint existing))
-                poolSizeCounts[binding.DescriptorType] = existing + count;
-            else
-                poolSizeCounts[binding.DescriptorType] = count;
-        }
-
-        if (poolSizeCounts.Count == 0)
-            return true;
-
-        DescriptorPoolSize[] poolSizes = poolSizeCounts
-            .Select(p => new DescriptorPoolSize { Type = p.Key, DescriptorCount = p.Value })
-            .ToArray();
-
-        List<PendingDescriptorWrite> pendingWrites = [];
-        List<DescriptorBufferInfo> bufferInfos = [];
-        List<DescriptorImageInfo> imageInfos = [];
-        List<BufferView> texelBufferViews = [];
-        bool hasUnresolvedBinding = false;
-
-        foreach (DescriptorBindingInfo binding in _programDescriptorBindings)
-        {
-            if (binding.Set >= _descriptorSetLayouts.Length)
-                continue;
-
-            uint descriptorCount = Math.Max(binding.Count, 1u);
-            switch (binding.DescriptorType)
-            {
-                case DescriptorType.UniformBuffer:
-                case DescriptorType.StorageBuffer:
-                    if (!TryResolveComputeBuffer(binding, imageIndex, snapshot, reusableDescriptorBindingKey, out DescriptorBufferInfo bufferInfo))
-                    {
-                        hasUnresolvedBinding = true;
-                        RecordComputeDescriptorFailure(binding, "buffer refresh failed", skippedDispatch: true);
-                        continue;
-                    }
-
-                    int bufferStart = bufferInfos.Count;
-                    for (int i = 0; i < descriptorCount; i++)
-                        bufferInfos.Add(bufferInfo);
-
-                    pendingWrites.Add(PendingDescriptorWrite.Buffer(binding.Set, binding.Binding, binding.DescriptorType, descriptorCount, bufferStart));
-                    break;
-
-                case DescriptorType.CombinedImageSampler:
-                case DescriptorType.SampledImage:
-                case DescriptorType.Sampler:
-                case DescriptorType.StorageImage:
-                    if (!TryResolveComputeImage(binding, snapshot, out DescriptorImageInfo imageInfo))
-                    {
-                        hasUnresolvedBinding = true;
-                        RecordComputeDescriptorFailure(binding, "image refresh failed", skippedDispatch: true);
-                        continue;
-                    }
-
-                    int imageStart = imageInfos.Count;
-                    for (int i = 0; i < descriptorCount; i++)
-                        imageInfos.Add(imageInfo);
-
-                    pendingWrites.Add(PendingDescriptorWrite.Image(binding.Set, binding.Binding, binding.DescriptorType, descriptorCount, imageStart));
-                    break;
-
-                case DescriptorType.UniformTexelBuffer:
-                case DescriptorType.StorageTexelBuffer:
-                    if (!TryResolveComputeTexelBuffer(binding, snapshot, out BufferView texelView))
-                    {
-                        hasUnresolvedBinding = true;
-                        RecordComputeDescriptorFailure(binding, "texel refresh failed", skippedDispatch: true);
-                        continue;
-                    }
-
-                    int texelStart = texelBufferViews.Count;
-                    for (int i = 0; i < descriptorCount; i++)
-                        texelBufferViews.Add(texelView);
-
-                    pendingWrites.Add(PendingDescriptorWrite.Texel(binding.Set, binding.Binding, binding.DescriptorType, descriptorCount, texelStart));
-                    break;
-            }
-        }
-
-        if (hasUnresolvedBinding || pendingWrites.Count == 0)
+        if (!TryBuildComputeDescriptorScratch(
+                imageIndex,
+                snapshot,
+                reusableDescriptorBindingKey,
+                descriptorSetLimit,
+                reportFailures: true))
             return false;
 
-        ulong schemaFingerprint = ComputeComputeDescriptorSchemaFingerprint();
-        DescriptorSetLayout[] layoutArray = _descriptorSetLayouts.ToArray();
-        if (!Renderer.TryGetOrCreateComputeDescriptorSets(
+        VulkanComputeDescriptorScratchBuilder scratch = _computeDescriptorScratch;
+        if (!ProgramCreationPort.TryGetOrCreateComputeDescriptorSets(
             imageIndex,
             schemaFingerprint,
             reusableDescriptorBindingKey,
-            layoutArray,
-            poolSizes,
+            descriptorLayouts,
+            scratch.PoolSizeArray,
+            scratch.PoolSizeCount,
             _descriptorSetsRequireUpdateAfterBind,
             out DescriptorSet[] descriptorSets,
             out _))
@@ -1010,12 +1044,7 @@ internal unsafe partial class VkRenderProgram
             return false;
         }
 
-        UpdateComputeDescriptorSets(
-            descriptorSets,
-            pendingWrites.ToArray(),
-            bufferInfos.ToArray(),
-            imageInfos.ToArray(),
-            texelBufferViews.ToArray());
+        UpdateComputeDescriptorSets(descriptorSets, scratch);
         if (snapshot.HasPublishedBindingLayoutSignatures)
             _reusableComputeDescriptorResourceSignatures[refreshKey] =
                 resourceSignature;
@@ -1073,15 +1102,20 @@ internal unsafe partial class VkRenderProgram
         ComputeDispatchSnapshot snapshot,
         AutoUniformBlockInfo block)
     {
-        if (resource.Mapped == null || resource.Size < size)
+        VulkanMappedMemorySlice slice = resource.Slice;
+        if (resource.Size < size ||
+            !BackendContext.Resources.Buffers.TryAcquireWrite(BackendContext, in slice, out VulkanMappedMemoryWriteLease lease))
             return false;
 
-        Span<byte> data = new(resource.Mapped, (int)size);
-        data.Clear();
+        using (lease)
+        {
+            Span<byte> data = lease.Bytes[..checked((int)size)];
+            data.Clear();
 
-        IReadOnlyList<AutoUniformMember> members = block.Members;
-        for (int memberIndex = 0; memberIndex < members.Count; memberIndex++)
-            TryWriteAutoUniformMember(data, members[memberIndex], snapshot);
+            IReadOnlyList<AutoUniformMember> members = block.Members;
+            for (int memberIndex = 0; memberIndex < members.Count; memberIndex++)
+                TryWriteAutoUniformMember(data, members[memberIndex], snapshot);
+        }
 
         return true;
     }
@@ -1105,14 +1139,14 @@ internal unsafe partial class VkRenderProgram
         if (resource.Buffer.Handle != 0 || resource.Memory.Handle != 0)
             ReleaseComputeUniformBuffer(resource);
 
-        (Silk.NET.Vulkan.Buffer buffer, DeviceMemory memory) = Renderer.CreateBuffer(
+        (Silk.NET.Vulkan.Buffer buffer, DeviceMemory memory) = BackendContext.Resources.Buffers.Create(BackendContext,
             size,
-            Renderer.IsDescriptorHeapDrawBindingActive
+            BackendContext.Resources.Descriptors.Heap.ActiveBackend == EVulkanDescriptorBackend.DescriptorHeap
                 ? BufferUsageFlags.UniformBufferBit | BufferUsageFlags.ShaderDeviceAddressBit
                 : BufferUsageFlags.UniformBufferBit,
             MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit,
             null,
-            Renderer.IsDescriptorHeapDrawBindingActive);
+            BackendContext.Resources.Descriptors.Heap.ActiveBackend == EVulkanDescriptorBackend.DescriptorHeap);
 
         if (buffer.Handle == 0 || memory.Handle == 0)
         {
@@ -1120,14 +1154,14 @@ internal unsafe partial class VkRenderProgram
             return false;
         }
 
-        if (!Renderer.TryMapBufferMemory(buffer, memory, 0, size, out void* mapped))
+        if (!BackendContext.Resources.Buffers.TryCreateMappedSlice(BackendContext, buffer, memory, 0, size, out VulkanMappedMemorySlice slice))
         {
-            Renderer.RetireBuffer(buffer, memory);
+            BackendContext.Resources.Buffers.Retire(buffer, memory, "VkRenderProgram.ComputeUniformBuffer");
             resource = default;
             return false;
         }
 
-        resource = new ComputeUniformBuffer(buffer, memory, size, mapped);
+        resource = new ComputeUniformBuffer(buffer, memory, size, slice);
         _computeUniformBuffers[key] = resource;
         created = true;
         return true;
@@ -1135,11 +1169,12 @@ internal unsafe partial class VkRenderProgram
 
     private bool ClearComputeUniformBuffer(ComputeUniformBuffer resource, uint size)
     {
-        if (resource.Mapped == null || resource.Size < size)
+        VulkanMappedMemorySlice slice = resource.Slice;
+        if (resource.Size < size ||
+            !BackendContext.Resources.Buffers.TryAcquireWrite(BackendContext, in slice, out VulkanMappedMemoryWriteLease lease))
             return false;
-
-        Span<byte> data = new(resource.Mapped, (int)size);
-        data.Clear();
+        using (lease)
+            lease.Bytes[..checked((int)size)].Clear();
         return true;
     }
 
@@ -1149,8 +1184,8 @@ internal unsafe partial class VkRenderProgram
         out DescriptorBufferInfo bufferInfo)
     {
         bufferInfo = default;
-        bool allowSynchronousBufferUpload = Renderer.AllowSynchronousResourceUploads;
-        if (Renderer.GetOrCreateAPIRenderObject(dataBuffer, generateNow: allowSynchronousBufferUpload) is not VkDataBuffer vkBuffer)
+        bool allowSynchronousBufferUpload = BackendContext.Resources.AllowSynchronousResourceUploads;
+        if (WrapperLookup.GetOrCreate(dataBuffer, generateNow: allowSynchronousBufferUpload) is not VkDataBuffer vkBuffer)
             return false;
 
         if (!vkBuffer.TryEnsureReadyForRendering(allowSynchronousBufferUpload))
@@ -1218,7 +1253,7 @@ internal unsafe partial class VkRenderProgram
             if (!snapshot.Images.TryGetValue(binding.Binding, out ProgramImageBinding imageBinding))
                 return false;
 
-            if (!TryResolveTextureDescriptor(binding, imageBinding.Texture, includeSampler: false, requiresSampledUsage: false, requiresStorageUsage: true, ImageLayout.General, out imageInfo))
+            if (!TryResolveTextureDescriptor(binding, imageBinding.Texture, includeSampler: false, requiresSampledUsage: false, requiresStorageUsage: true, ImageLayout.General, imageBinding, out imageInfo))
                 return false;
 
             return true;
@@ -1228,16 +1263,31 @@ internal unsafe partial class VkRenderProgram
         {
             // Fallback for shaders that only bind a single sampler but use non-zero binding in source.
             texture = snapshot.Samplers.Count == 1 ? snapshot.Samplers.Values.First() : null;
-            if (texture is null)
-                return false;
+            if (texture is not null)
+            {
+                WarnComputeOnce($"Image binding {binding.Binding} ('{binding.Name}') not found in snapshot; using only available sampler '{texture.Name ?? "<unnamed>"}' as fallback.");
+                RecordComputeDescriptorFallback(binding);
+            }
+        }
 
-            WarnComputeOnce($"Image binding {binding.Binding} ('{binding.Name}') not found in snapshot; using only available sampler '{texture.Name ?? "<unnamed>"}' as fallback.");
-            RecordComputeDescriptorFallback(binding);
+        if (texture is null)
+        {
+            imageInfo = BackendContext.Resources.FallbackTexture.GetImageInfo(
+                binding.DescriptorType,
+                binding.ExpectedImageViewType);
+            if (imageInfo.ImageView.Handle != 0)
+            {
+                RecordComputeDescriptorFallback(binding);
+                return true;
+            }
+
+            RecordComputeDescriptorFailure(binding, "missing sampled texture and placeholder unavailable", skippedDispatch: false);
+            return false;
         }
 
         bool includeSampler = binding.DescriptorType is DescriptorType.CombinedImageSampler or DescriptorType.Sampler;
         bool requiresSampledUsage = binding.DescriptorType is DescriptorType.CombinedImageSampler or DescriptorType.Sampler or DescriptorType.SampledImage;
-        return TryResolveTextureDescriptor(binding, texture, includeSampler, requiresSampledUsage, requiresStorageUsage: false, ImageLayout.ShaderReadOnlyOptimal, out imageInfo);
+        return TryResolveTextureDescriptor(binding, texture, includeSampler, requiresSampledUsage, requiresStorageUsage: false, ImageLayout.ShaderReadOnlyOptimal, storageImageBinding: null, out imageInfo);
     }
 
     private bool TryResolveComputeTexelBuffer(DescriptorBindingInfo binding, ComputeDispatchSnapshot snapshot, out BufferView texelView)
@@ -1246,6 +1296,9 @@ internal unsafe partial class VkRenderProgram
 
         if (!snapshot.Samplers.TryGetValue(binding.Binding, out XRTexture? texture))
         {
+            if (binding.Requirement == EVulkanDescriptorBindingRequirement.Required)
+                return false;
+
             texture = snapshot.Samplers.Count == 1 ? snapshot.Samplers.Values.First() : null;
             if (texture is null)
                 return false;
@@ -1257,14 +1310,22 @@ internal unsafe partial class VkRenderProgram
         return TryResolveTexelBufferDescriptor(texture, out texelView);
     }
 
-    private bool TryResolveTextureDescriptor(DescriptorBindingInfo binding, XRTexture texture, bool includeSampler, bool requiresSampledUsage, bool requiresStorageUsage, ImageLayout layout, out DescriptorImageInfo imageInfo)
+    private bool TryResolveTextureDescriptor(
+        DescriptorBindingInfo binding,
+        XRTexture texture,
+        bool includeSampler,
+        bool requiresSampledUsage,
+        bool requiresStorageUsage,
+        ImageLayout layout,
+        ProgramImageBinding? storageImageBinding,
+        out DescriptorImageInfo imageInfo)
     {
         imageInfo = default;
         if (texture is null)
             return false;
 
-        bool allowSynchronousTextureUpload = Renderer.AllowSynchronousResourceUploads;
-        if (Renderer.GetOrCreateAPIRenderObject(texture, generateNow: allowSynchronousTextureUpload) is not IVkImageDescriptorSource source)
+        bool allowSynchronousTextureUpload = BackendContext.Resources.AllowSynchronousResourceUploads;
+        if (WrapperLookup.GetOrCreate(texture, generateNow: allowSynchronousTextureUpload) is not IVkImageDescriptorSource source)
             return false;
 
         if (!source.TryEnsureDescriptorReadyForUse($"compute descriptor '{binding.Name}'", allowSynchronousTextureUpload))
@@ -1299,7 +1360,22 @@ internal unsafe partial class VkRenderProgram
             return false;
         }
 
-        ImageView descriptorView = source.DescriptorView;
+        ImageView descriptorView = storageImageBinding is { } imageBinding
+            ? source.GetStorageDescriptorView(imageBinding.Level, imageBinding.Layered, imageBinding.Layer)
+            : source.DescriptorView;
+        if (descriptorView.Handle == 0)
+        {
+            Debug.VulkanWarningEvery(
+                $"Vulkan.Descriptor.StorageSubresourceViewUnavailable.{GetHashCode()}",
+                TimeSpan.FromSeconds(1),
+                "[Vulkan] Skipping storage descriptor bind for texture '{0}' because mip {1}, layered={2}, layer={3} has no compatible Vulkan image view.",
+                texture.Name ?? texture.GetDescribingName(),
+                storageImageBinding?.Level ?? 0,
+                storageImageBinding?.Layered ?? false,
+                storageImageBinding?.Layer ?? 0);
+            return false;
+        }
+
         ImageAspectFlags descriptorAspect = source.DescriptorAspect;
         if (IsCombinedDepthStencilFormat(source.DescriptorFormat) &&
             (descriptorAspect & (ImageAspectFlags.DepthBit | ImageAspectFlags.StencilBit)) == (ImageAspectFlags.DepthBit | ImageAspectFlags.StencilBit))
@@ -1323,7 +1399,7 @@ internal unsafe partial class VkRenderProgram
             }
         }
 
-        if (!Renderer.IsLiveImageViewBackedByLiveImage(descriptorView))
+        if (!BackendContext.Resources.Images.IsLiveBackedByLiveImage(descriptorView))
         {
             Debug.VulkanWarningEvery(
                 $"Vulkan.Descriptor.RetiredImageView.{GetHashCode()}",
@@ -1336,7 +1412,7 @@ internal unsafe partial class VkRenderProgram
         if (!TryResolveComputeDescriptorSampler(includeSampler, binding, source, out Sampler sampler))
             return false;
 
-        ImageLayout descriptorLayout = Renderer.ResolveDescriptorImageLayout(
+        ImageLayout descriptorLayout = VulkanProgramUtilities.ResolveDescriptorImageLayout(
             source,
             requiresStorageUsage ? DescriptorType.StorageImage : DescriptorType.SampledImage);
 
@@ -1356,17 +1432,23 @@ internal unsafe partial class VkRenderProgram
             return true;
 
         sampler = source.DescriptorSampler;
-        if (sampler.Handle != 0 && Renderer.IsLiveSampler(sampler))
+        if (sampler.Handle != 0 && BackendContext.Resources.Descriptors.IsLiveSampler(sampler))
             return true;
 
         if (sampler.Handle != 0)
         {
+            if (binding.Requirement == EVulkanDescriptorBindingRequirement.Required)
+                return false;
+
             WarnComputeOnce($"Compute texture for binding '{binding.Name}' references a retired Vulkan sampler. Using placeholder sampler.");
             RecordComputeDescriptorFallback(binding);
         }
 
-        sampler = Renderer.GetPlaceholderSampler();
-        if (sampler.Handle != 0 && Renderer.IsLiveSampler(sampler))
+        if (binding.Requirement == EVulkanDescriptorBindingRequirement.Required)
+            return false;
+
+        sampler = BackendContext.Resources.FallbackTexture.GetSampler();
+        if (sampler.Handle != 0 && BackendContext.Resources.Descriptors.IsLiveSampler(sampler))
         {
             WarnComputeOnce($"Compute texture for binding '{binding.Name}' has no Vulkan sampler. Using placeholder sampler.");
             RecordComputeDescriptorFallback(binding);
@@ -1389,7 +1471,7 @@ internal unsafe partial class VkRenderProgram
         if (texture is null)
             return false;
 
-        if (Renderer.GetOrCreateAPIRenderObject(texture, generateNow: true) is not IVkTexelBufferDescriptorSource source)
+        if (WrapperLookup.GetOrCreate(texture, generateNow: true) is not IVkTexelBufferDescriptorSource source)
             return false;
 
         texelView = source.DescriptorBufferView;

@@ -58,6 +58,23 @@ namespace XREngine.Rendering.Commands
         }
 
         private uint _renderGpuCommandIndex = uint.MaxValue;
+        private AdvancedGpuSceneDrawIdentitySnapshot _canonicalDrawIdentitySnapshot;
+        private AdvancedGpuSceneDrawIdentitySnapshot _renderCanonicalDrawIdentitySnapshot;
+
+        /// <summary>
+        /// Exact canonical identity for primitive zero in the render-buffer
+        /// snapshot. Multi-primitive renderers retain the complete mapping in
+        /// <see cref="CanonicalDrawIdentitySnapshot"/>.
+        /// </summary>
+        internal AdvancedGpuSceneDrawIdentity RenderCanonicalDrawIdentity
+            => _renderCanonicalDrawIdentitySnapshot.Primary;
+
+        /// <summary>
+        /// Immutable primitive mapping and publication reference captured at
+        /// the scene's successful publication boundary.
+        /// </summary>
+        internal AdvancedGpuSceneDrawIdentitySnapshot CanonicalDrawIdentitySnapshot
+            => _renderCanonicalDrawIdentitySnapshot;
 
         [YamlIgnore]
         public XRMeshRenderer? Mesh
@@ -158,7 +175,8 @@ namespace XREngine.Rendering.Commands
                     previousModelMatrix,
                     _renderMaterialOverride,
                     _renderInstances,
-                    renderOptionsOverride: _renderRenderOptionsOverride);
+                    renderOptionsOverride: _renderRenderOptionsOverride,
+                    canonicalDrawIdentitySnapshot: _renderCanonicalDrawIdentitySnapshot);
             }
             finally
             {
@@ -201,6 +219,7 @@ namespace XREngine.Rendering.Commands
             _renderForceCpuRendering = ForceCpuRendering;
             _renderWorldCullingVolumeOverride = WorldCullingVolumeOverride;
             _renderGpuCommandIndex = GPUCommandIndex;
+            _renderCanonicalDrawIdentitySnapshot = _canonicalDrawIdentitySnapshot;
             if (_renderWorldMatrixIsModelMatrix)
             {
                 _renderPrevWorldMatrix = _lastSubmittedModelMatrixValid ? _lastSubmittedModelMatrix : _renderWorldMatrix;
@@ -220,6 +239,27 @@ namespace XREngine.Rendering.Commands
             base.SwapBuffers();
         }
 
+        internal void PublishCanonicalDrawIdentities(
+            AdvancedSharedGpuSceneDatabase database,
+            in AdvancedGpuScenePublicationReference publication,
+            ReadOnlySpan<AdvancedGpuHandle> handles)
+        {
+            AdvancedGpuSceneDrawHandleSet? existing = _canonicalDrawIdentitySnapshot.Handles;
+            AdvancedGpuSceneDrawHandleSet handleSet = existing is not null && existing.Matches(handles)
+                ? existing
+                : new AdvancedGpuSceneDrawHandleSet(handles);
+            AdvancedGpuSceneDrawIdentitySnapshot snapshot = new(
+                database,
+                publication,
+                handleSet);
+            SetField(ref _canonicalDrawIdentitySnapshot, snapshot);
+            // GPUScene seals after the generic render tree has swapped for this
+            // frame. Publish the same immutable snapshot to the render buffer
+            // so Vulkan sees the exact resident publication immediately rather
+            // than one swap later.
+            SetField(ref _renderCanonicalDrawIdentitySnapshot, snapshot);
+        }
+
         /// <summary>
         /// Captures the immutable render-buffer state used by aggregate GPU
         /// preparation. This avoids reading mutable update-side properties
@@ -234,7 +274,9 @@ namespace XREngine.Rendering.Commands
                     : _renderWorldMatrix,
                 _renderInstances,
                 _renderWorldMatrixIsModelMatrix,
-                _renderForceCpuRendering);
+                _renderForceCpuRendering,
+                _renderMaterialOverride,
+                _renderRenderOptionsOverride);
 
         internal void ApplyLateRenderThreadWorldMatrix(Matrix4x4 worldMatrix)
         {

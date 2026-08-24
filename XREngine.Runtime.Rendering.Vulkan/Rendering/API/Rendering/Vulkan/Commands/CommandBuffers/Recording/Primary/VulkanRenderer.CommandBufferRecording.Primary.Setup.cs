@@ -15,7 +15,7 @@ using XREngine.Rendering.Resources;
 
 namespace XREngine.Rendering.Vulkan
 {
-    public unsafe partial class VulkanRenderer
+    internal sealed partial class VulkanCommandRuntime
     {
 
         private void ResetAndBeginPrimaryCommandBuffer(
@@ -29,7 +29,11 @@ namespace XREngine.Rendering.Vulkan
                 ResetSubmissionMarkersForCommandBuffer(recordingState.CommandBuffer);
                 CleanupComputeTransientResources(recordingState.FrameDataImageIndex);
 
-                _commandRecorder.Begin(Api!, recordingState.CommandBuffer);
+                _commandRuntime.BeginRecording(
+                    VulkanApi,
+                    _deviceContext.StateMachine,
+                    recordingState.CommandBuffer,
+                    "vkBeginCommandBuffer.Primary");
 
                 BeginFrameTimingQueries(recordingState.CommandBuffer, recordingState.CommandBufferImageSlot);
                 BeginVulkanGpuProfilerQueries(recordingState.CommandBuffer, recordingState.CommandBufferImageSlot);
@@ -38,9 +42,9 @@ namespace XREngine.Rendering.Vulkan
                 recordingState.RecordingScratch.PreparedInlineQueries.Clear();
                 recordingState.RecordingScratch.BegunInlineQueries.Clear();
 
-                if (CanRecordCommandBufferDebugLabels)
+                if (_deviceContext.CanRecordCommandBufferDebugLabels)
                 {
-                    CmdBeginLabel(recordingState.CommandBuffer, recordingState.FrameDataImageIndex == recordingState.ImageIndex
+                    _deviceContext.CmdBeginLabel(recordingState.CommandBuffer, recordingState.FrameDataImageIndex == recordingState.ImageIndex
                         ? $"FrameCmd[{recordingState.ImageIndex}]"
                         : $"FrameCmd[target={recordingState.ImageIndex} frame={recordingState.FrameDataImageIndex}]");
                 }
@@ -52,17 +56,11 @@ namespace XREngine.Rendering.Vulkan
         {
             using (RuntimeRenderingHostServices.Profiling.StartProfileScope("Vulkan.RecordPrimary.SortAndSecondaryBuckets"))
             {
-                if (recordingState.CommandChainSchedule is null)
-                {
-                    // Always sort frame ops by (PassOrder, safe draw order, OriginalIndex)
-                    // and then normalize same-target clears before first same-target use.
-                    // Render graph pass order preserves cross-pass dependencies, while same-pass
-                    // compute/barrier/indirect operations stay in enqueue order so GPU-produced
-                    // counters are written before the draw commands that consume them.
-                    recordingState.Ops = _frameOperationScheduler.SortFrameOpsCore(recordingState.Ops, CompiledRenderGraph);
-                }
+                if (recordingState.FramePlan is not null && !recordingState.Ops.IsNumericStream)
+                    throw new VulkanPlanPreconditionException(
+                        "frame-plan precondition failed: sealed desktop operations were not published as a numeric stream");
 
-                _frameOperationScheduler.BuildSecondaryRecordingBuckets(recordingState.Ops, recordingState.SecondaryBuckets);
+                _primaryOperationScheduler.BuildSecondaryRecordingBuckets(recordingState.Ops, recordingState.SecondaryBuckets);
                 if (recordingState.SecondaryBuckets.Count > 8)
                 {
                     recordingState.SecondaryBucketByStart = recordingState.RecordingScratch.SecondaryBucketByStart;
@@ -88,11 +86,18 @@ namespace XREngine.Rendering.Vulkan
                         int capacity = Math.Max(recordingState.Ops.Length, Math.Max(recordingState.RecordingScratch.ScheduledCommandChainKeysByOpIndex.Length * 2, 16));
                         recordingState.RecordingScratch.ScheduledCommandChainKeysByOpIndex = new CommandChainKey[capacity];
                     }
+                    if (recordingState.RecordingScratch.ScheduledCommandChainsByOpIndex.Length < recordingState.Ops.Length)
+                    {
+                        int capacity = Math.Max(recordingState.Ops.Length, Math.Max(recordingState.RecordingScratch.ScheduledCommandChainsByOpIndex.Length * 2, 16));
+                        recordingState.RecordingScratch.ScheduledCommandChainsByOpIndex = new CommandChain?[capacity];
+                    }
                     recordingState.ScheduledCommandChainKeysByOpIndex = recordingState.RecordingScratch.ScheduledCommandChainKeysByOpIndex;
-                    PopulateCommandChainKeysByFrameOpIndex(
+                    recordingState.ScheduledCommandChainsByOpIndex = recordingState.RecordingScratch.ScheduledCommandChainsByOpIndex;
+                    PopulateCommandChainsByFrameOpIndex(
                         recordingState.CommandChainSchedule,
                         recordingState.ScheduledCommandChainCache,
                         recordingState.ScheduledCommandChainKeysByOpIndex.AsSpan(),
+                        recordingState.ScheduledCommandChainsByOpIndex.AsSpan(),
                         recordingState.Ops.Length);
                 }
             }
@@ -105,23 +110,25 @@ namespace XREngine.Rendering.Vulkan
             // Ensure swapchain resources are transitioned appropriately before any rendering.
             using (RuntimeRenderingHostServices.Profiling.StartProfileScope("Vulkan.RecordPrimary.FrameStartBarriers"))
             {
-                CmdBeginLabel(recordingState.CommandBuffer, "SwapchainBarriers");
+                _deviceContext.CmdBeginLabel(recordingState.CommandBuffer, "SwapchainBarriers");
                 if (recordingState.SwapchainTarget.IsValid)
                 {
-                    var plannedSwapchainBarriers = BarrierPlanner.GetSwapchainBarriersForPass(VulkanBarrierPlanner.SwapchainPassIndex);
-                    var swapchainImageBarriers = BarrierPlanner.GetBarriersForPass(VulkanBarrierPlanner.SwapchainPassIndex);
-                    var swapchainBufferBarriers = BarrierPlanner.GetBufferBarriersForPass(VulkanBarrierPlanner.SwapchainPassIndex);
+                    VulkanBarrierPlan barrierPlan = recordingState.RenderGraphPlan.Barriers;
+                    ReadOnlySpan<VulkanFrozenSwapchainBarrier> plannedSwapchainBarriers =
+                        barrierPlan.GetSwapchainBarriersForPass(VulkanBarrierPlanner.SwapchainPassIndex);
+                    ReadOnlySpan<VulkanFrozenImageBarrier> swapchainImageBarriers =
+                        barrierPlan.GetImageBarriersForPass(VulkanBarrierPlanner.SwapchainPassIndex);
+                    ReadOnlySpan<VulkanFrozenBufferBarrier> swapchainBufferBarriers =
+                        barrierPlan.GetBufferBarriersForPass(VulkanBarrierPlanner.SwapchainPassIndex);
                     EmitPlannedSwapchainBarriers(ref recordingState, recordingState.CommandBuffer, plannedSwapchainBarriers);
                     EmitPlannedImageBarriers(recordingState.CommandBuffer, swapchainImageBarriers);
                     EmitPlannedBufferBarriers(recordingState.CommandBuffer, swapchainBufferBarriers);
                 }
-                CmdEndLabel(recordingState.CommandBuffer);
+                _deviceContext.CmdEndLabel(recordingState.CommandBuffer);
 
-                // Transition any freshly-allocated physical images from UNDEFINED to
-                // a safe initial layout so that render passes never see UNDEFINED.
-                EmitInitialImageBarriersForUnknownPass(
-                    recordingState.CommandBuffer,
-                    skipDesktopSwapchainImages: recordingState.ExcludeDesktopSwapchainBarriers);
+                // Every physical image transition is frozen into RenderGraphPlan.Barriers.
+                // Encoding must not enumerate a live resource allocator to synthesize
+                // unplanned fallback barriers after prepared-input validation.
             }
         }
 
@@ -133,7 +140,6 @@ namespace XREngine.Rendering.Vulkan
                 recordingState.SwapchainWritesByPipeline.Clear();
                 recordingState.SwapchainWriterLabelByPipeline.Clear();
                 recordingState.SwapchainWriterDetailByPipeline.Clear();
-                recordingState.SwapchainWriterOpByPipeline.Clear();
                 recordingState.SwapchainWriterDynamicUiDrawCountByPipeline.Clear();
                 recordingState.SwapchainWriterPassByPipeline.Clear();
                 recordingState.SwapchainWriterOpIndexByPipeline.Clear();
@@ -143,7 +149,6 @@ namespace XREngine.Rendering.Vulkan
                 recordingState.SwapchainWritesByPipeline.EnsureCapacity(writerCapacityHint);
                 recordingState.SwapchainWriterLabelByPipeline.EnsureCapacity(writerCapacityHint);
                 recordingState.SwapchainWriterDetailByPipeline.EnsureCapacity(writerCapacityHint);
-                recordingState.SwapchainWriterOpByPipeline.EnsureCapacity(writerCapacityHint);
                 recordingState.SwapchainWriterDynamicUiDrawCountByPipeline.EnsureCapacity(writerCapacityHint);
                 recordingState.SwapchainWriterPassByPipeline.EnsureCapacity(writerCapacityHint);
                 recordingState.SwapchainWriterOpIndexByPipeline.EnsureCapacity(writerCapacityHint);
@@ -159,100 +164,89 @@ namespace XREngine.Rendering.Vulkan
 
             using (RuntimeRenderingHostServices.Profiling.StartProfileScope("Vulkan.RecordPrimary.OpCensus"))
             {
-                int opScanIndex = 0;
-                foreach (var op in recordingState.Ops)
+                for (int opScanIndex = 0; opScanIndex < recordingState.Ops.Length; opScanIndex++)
                 {
-                    switch (op)
+                    ref readonly FrameOperationHeader header = ref recordingState.Ops.GetHeader(opScanIndex);
+                    ref readonly FrameOpContext context = ref recordingState.Ops.GetContext(opScanIndex);
+                    XRFrameBuffer? target = recordingState.Ops.GetTarget(opScanIndex);
+                    RememberPipelineName(ref recordingState, context);
+                    switch (header.OpCode)
                     {
-                        case ClearOp clear:
-                            RememberPipelineName(ref recordingState, clear.Context);
+                        case EVulkanPrimaryPlanNodeKind.Clear:
+                            ref readonly ClearPayload clear = ref recordingState.Ops.GetClear(opScanIndex);
                             recordingState.Metrics.ClearCount++;
-                            if (clear.Target is null && (clear.ClearColor || clear.ClearDepth || clear.ClearStencil))
+                            if (target is null && (clear.ClearColor || clear.ClearDepth || clear.ClearStencil))
                             {
                                 recordingState.SwapchainWriteCount++;
                                 recordingState.Metrics.SwapchainClearWrites++;
-                                CountLogicalSwapchainWriter(ref recordingState, clear.Context);
-                                MarkSwapchainFrameOpWriter(ref recordingState, nameof(ClearOp), clear, clear.PassIndex, opScanIndex, clear.Context.PipelineIdentity);
+                                CountLogicalSwapchainWriter(ref recordingState, context);
+                                MarkSwapchainStaticWriter(ref recordingState, nameof(ClearOp), header.OpCode.ToString(), header.PassIndex, opScanIndex, context.PipelineIdentity);
                             }
                             break;
-                        case MeshDrawOp meshDraw:
-                            RememberPipelineName(ref recordingState, meshDraw.Context);
+                        case EVulkanPrimaryPlanNodeKind.MeshDraw:
                             recordingState.Metrics.DrawCount++;
                             recordingState.Metrics.MeshDrawCount++;
-                            if (meshDraw.Target is null)
+                            if (target is null)
                             {
                                 recordingState.SwapchainWriteCount++;
                                 recordingState.SwapchainDrawWrites++;
-                                CountLogicalSwapchainWriter(ref recordingState, meshDraw.Context);
-                                MarkSwapchainFrameOpWriter(ref recordingState, nameof(MeshDrawOp), meshDraw, meshDraw.PassIndex, opScanIndex, meshDraw.Context.PipelineIdentity);
+                                CountLogicalSwapchainWriter(ref recordingState, context);
+                                MarkSwapchainStaticWriter(ref recordingState, nameof(MeshDrawOp), header.OpCode.ToString(), header.PassIndex, opScanIndex, context.PipelineIdentity);
                             }
                             else
                             {
                                 recordingState.Metrics.FboOnlyDrawOps++;
                             }
                             break;
-                        case IndirectDrawOp indirectDraw:
-                            RememberPipelineName(ref recordingState, indirectDraw.Context);
+                        case EVulkanPrimaryPlanNodeKind.IndirectDraw:
                             recordingState.Metrics.DrawCount++;
                             recordingState.Metrics.IndirectDrawCount++;
-                            if (indirectDraw.Target is null)
+                            if (target is null)
                             {
                                 recordingState.SwapchainWriteCount++;
                                 recordingState.SwapchainDrawWrites++;
-                                CountLogicalSwapchainWriter(ref recordingState, indirectDraw.Context);
-                                MarkSwapchainFrameOpWriter(ref recordingState, nameof(IndirectDrawOp), indirectDraw, indirectDraw.PassIndex, opScanIndex, indirectDraw.Context.PipelineIdentity);
+                                CountLogicalSwapchainWriter(ref recordingState, context);
+                                MarkSwapchainStaticWriter(ref recordingState, nameof(IndirectDrawOp), header.OpCode.ToString(), header.PassIndex, opScanIndex, context.PipelineIdentity);
                             }
                             else
                             {
                                 recordingState.Metrics.FboOnlyDrawOps++;
                             }
                             break;
-                        case MeshTaskDispatchIndirectCountOp meshTaskDispatch:
-                            RememberPipelineName(ref recordingState, meshTaskDispatch.Context);
+                        case EVulkanPrimaryPlanNodeKind.MeshTaskDispatchIndirectCount:
                             recordingState.Metrics.DrawCount++;
                             recordingState.Metrics.MeshTaskDispatchCount++;
-                            recordingState.SwapchainWriteCount++;
-                            recordingState.SwapchainDrawWrites++;
-                            CountLogicalSwapchainWriter(ref recordingState, meshTaskDispatch.Context);
-                            MarkSwapchainFrameOpWriter(ref recordingState, nameof(MeshTaskDispatchIndirectCountOp), meshTaskDispatch, meshTaskDispatch.PassIndex, opScanIndex, meshTaskDispatch.Context.PipelineIdentity);
+                            if (target is null)
+                            {
+                                recordingState.SwapchainWriteCount++;
+                                recordingState.SwapchainDrawWrites++;
+                                CountLogicalSwapchainWriter(ref recordingState, context);
+                                MarkSwapchainStaticWriter(ref recordingState, nameof(MeshTaskDispatchIndirectCountOp), header.OpCode.ToString(), header.PassIndex, opScanIndex, context.PipelineIdentity);
+                            }
+                            else
+                            {
+                                recordingState.Metrics.FboOnlyDrawOps++;
+                            }
                             break;
-                        case BlitOp blit:
-                            RememberPipelineName(ref recordingState, blit.Context);
+                        case EVulkanPrimaryPlanNodeKind.Blit:
+                            ref readonly BlitPayload blit = ref recordingState.Ops.GetBlit(opScanIndex);
                             recordingState.Metrics.BlitCount++;
                             if (blit.OutFbo is null && (blit.ColorBit || blit.DepthBit || blit.StencilBit))
                             {
                                 recordingState.SwapchainWriteCount++;
                                 recordingState.SwapchainBlitWrites++;
-                                CountLogicalSwapchainWriter(ref recordingState, blit.Context);
-                                MarkSwapchainFrameOpWriter(ref recordingState, nameof(BlitOp), blit, blit.PassIndex, opScanIndex, blit.Context.PipelineIdentity);
+                                CountLogicalSwapchainWriter(ref recordingState, context);
+                                MarkSwapchainStaticWriter(ref recordingState, nameof(BlitOp), header.OpCode.ToString(), header.PassIndex, opScanIndex, context.PipelineIdentity);
                             }
                             else
                             {
                                 recordingState.Metrics.FboOnlyBlitOps++;
                             }
                             break;
-                        case ComputeDispatchOp or ComputeDispatchIndirectOp: recordingState.Metrics.ComputeCount++; break;
-                        case DlssUpscaleOp: recordingState.Metrics.ComputeCount++; break;
-                        case DlssFrameGenerationOp: recordingState.Metrics.ComputeCount++; break;
+                        case EVulkanPrimaryPlanNodeKind.ComputeDispatch or EVulkanPrimaryPlanNodeKind.ComputeDispatchIndirect or EVulkanPrimaryPlanNodeKind.DlssUpscale or EVulkanPrimaryPlanNodeKind.DlssFrameGeneration: recordingState.Metrics.ComputeCount++; break;
                     }
 
-                    if (FrameOpTraceEnabled)
-                    {
-                        Debug.Vulkan(
-                            "[VulkanFrameOp] index={0} op={1} pass={2} passName='{3}' target='{4}' targetId={5} pipe={6} vp={7} sched={8}{9}",
-                            opScanIndex,
-                            op.GetType().Name,
-                            op.PassIndex,
-                            TryGetPassName(op) ?? "<unknown>",
-                            ResolveCommandChainTargetName(op),
-                            ResolveCommandChainTargetIdentity(op),
-                            op.Context.PipelineIdentity,
-                            op.Context.ViewportIdentity,
-                            op.Context.SchedulingIdentity,
-                            DescribeFrameOpTraceDetails(op));
-                    }
-
-                    opScanIndex++;
+                    if (FrameOpTraceEnabled) Debug.Vulkan("[VulkanFrameOp] index={0} op={1} pass={2} target='{3}' pipe={4} vp={5} sched={6}", opScanIndex, header.OpCode, header.PassIndex, target?.Name ?? "<swapchain>", context.PipelineIdentity, context.ViewportIdentity, context.SchedulingIdentity);
                 }
 
                 RecordVulkanFrameOpCensus(
@@ -308,8 +302,10 @@ namespace XREngine.Rendering.Vulkan
             {
                 for (int prepareIndex = 0; prepareIndex < recordingState.Ops.Length; prepareIndex++)
                 {
-                    if (recordingState.Ops[prepareIndex] is not QueryOp pendingQuery ||
-                        pendingQuery.Operation is not (
+                    if (recordingState.Ops.GetHeader(prepareIndex).OpCode != EVulkanPrimaryPlanNodeKind.Query)
+                        continue;
+                    ref readonly QueryPayload pendingQuery = ref recordingState.Ops.GetQuery(prepareIndex);
+                    if (pendingQuery.Operation is not (
                             ERenderQueryOperation.Reset or
                             ERenderQueryOperation.Begin or
                             ERenderQueryOperation.WriteTimestamp or
@@ -320,8 +316,9 @@ namespace XREngine.Rendering.Vulkan
                     }
 
                     uint queryCount = 1u;
-                    if (pendingQuery.Target is not null &&
-                        GenericToAPI<VkFrameBuffer>(pendingQuery.Target) is { MultiviewViewMask: not 0u } queryFbo)
+                    XRFrameBuffer? target = recordingState.Ops.GetTarget(prepareIndex);
+                    if (target is not null &&
+                        GenericToAPI<VkFrameBuffer>(target) is { MultiviewViewMask: not 0u } queryFbo)
                     {
                         queryCount = (uint)System.Numerics.BitOperations.PopCount(queryFbo.MultiviewViewMask);
                     }

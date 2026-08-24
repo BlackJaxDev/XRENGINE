@@ -201,6 +201,42 @@ public interface IRuntimeRenderSettingsServices
     int OpenGLParallelShaderCompileProbeTimeoutMs { get; }
 
     /// <summary>
+    /// Gets the general-domain worker request; -1 selects auto.
+    /// </summary>
+    int GeneralWorkerThreadCount => RuntimeRenderingHostServiceDefaults.GeneralWorkerThreadCount;
+
+    /// <summary>
+    /// Gets the general-domain worker cap.
+    /// </summary>
+    int GeneralWorkerThreadCap => RuntimeRenderingHostServiceDefaults.GeneralWorkerThreadCap;
+
+    /// <summary>
+    /// Gets the renderer-neutral render-domain worker request; -1 selects auto
+    /// and 0 selects render-thread lane 0 only.
+    /// </summary>
+    int RenderWorkerThreadCount => RuntimeRenderingHostServiceDefaults.RenderWorkerThreadCount;
+
+    /// <summary>
+    /// Gets the renderer-neutral render-domain worker cap.
+    /// </summary>
+    int RenderWorkerThreadCap => RuntimeRenderingHostServiceDefaults.RenderWorkerThreadCap;
+
+    /// <summary>
+    /// Gets the foreground engine-loop reservation; -1 selects auto.
+    /// </summary>
+    int ReservedForegroundThreadCount => RuntimeRenderingHostServiceDefaults.ReservedForegroundThreadCount;
+
+    /// <summary>
+    /// Gets whether explicit CPU oversubscription is allowed for diagnostics.
+    /// </summary>
+    bool AllowCpuOversubscription => RuntimeRenderingHostServiceDefaults.AllowCpuOversubscription;
+
+    /// <summary>
+    /// Gets the scheduling policy requested for renderer-neutral render-domain workers.
+    /// </summary>
+    ERenderWorkerQos RenderWorkerQos => RuntimeRenderingHostServiceDefaults.RenderWorkerQos;
+
+    /// <summary>
     /// Gets the Vulkan memory allocation backend requested by the host.
     /// </summary>
     EVulkanAllocatorBackend VulkanAllocatorBackend { get; }
@@ -344,7 +380,7 @@ public interface IRuntimeRenderSettingsServices
     float MaxShadowRenderMilliseconds { get; }
 
     /// <summary>
-    /// Gets the maximum rendered-frame age for directional cascade atlas stale reprojection.
+    /// Gets the maximum consecutive camera/content-change frames for directional cascade atlas stale reprojection.
     /// </summary>
     int MaxDirectionalCascadeAtlasStaleFrames { get; }
 

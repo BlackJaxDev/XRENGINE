@@ -26,6 +26,34 @@ public sealed class RenderPassMetadataSnapshot : IReadOnlyList<RenderPassMetadat
 
     public int RevisionStamp => _revisionSource.Generation;
 
+    /// <summary>
+    /// Looks up pass metadata by its stable pass index without walking the
+    /// complete snapshot. Snapshots are published in ascending pass-index order.
+    /// </summary>
+    public bool TryGetPass(int passIndex, out RenderPassMetadata pass)
+    {
+        int low = 0;
+        int high = _passes.Length - 1;
+        while (low <= high)
+        {
+            int middle = low + ((high - low) >> 1);
+            RenderPassMetadata candidate = _passes[middle];
+            if (candidate.PassIndex == passIndex)
+            {
+                pass = candidate;
+                return true;
+            }
+
+            if (candidate.PassIndex < passIndex)
+                low = middle + 1;
+            else
+                high = middle - 1;
+        }
+
+        pass = null!;
+        return false;
+    }
+
     public IEnumerator<RenderPassMetadata> GetEnumerator()
         => ((IEnumerable<RenderPassMetadata>)_passes).GetEnumerator();
 

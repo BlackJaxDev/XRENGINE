@@ -19,6 +19,296 @@ internal unsafe partial class VkMeshRenderer
         EUniformRequirements.Lights |
         EUniformRequirements.AmbientOcclusion;
 
+    private XRMaterial? _fastPersistentArtifactMaterial;
+    private VkRenderProgram? _fastPersistentArtifactProgram;
+    private PersistentProgramBindingArtifactGeneration
+        _fastPersistentArtifactGeneration;
+    private RenderBindingPublisherGenerationSnapshot?
+        _fastPersistentArtifactPublisherGenerations;
+    private ComputeDispatchSnapshot? _fastPersistentArtifact;
+    private bool _hasFastPersistentArtifact;
+
+    /// <summary>
+    /// Reuses the renderer-local artifact after validating only the mutable owner
+    /// generations. Eligibility and the program-wide cache lookup were already
+    /// proven by the publication that populated this slot.
+    /// </summary>
+    private bool TryReuseFastPersistentProgramBindingArtifact(
+        XRMaterial material,
+        XRRenderProgram programData,
+        VkRenderProgram program,
+        in LayeredShadowUniformState shadowUniformState,
+        out ComputeDispatchSnapshot? artifact)
+    {
+        artifact = null;
+        if (!_hasFastPersistentArtifact ||
+            !ReferenceEquals(_fastPersistentArtifactMaterial, material) ||
+            !ReferenceEquals(_fastPersistentArtifactProgram, program) ||
+            shadowUniformState.IsShadowPass ||
+            MeshRenderer.HasSettingUniformsHandlers ||
+            material.HasSettingUniformsHandlers ||
+            RuntimeEngine.Rendering.State.RenderingPipelineState
+                ?.HasActiveScopedBindings == true)
+        {
+            return false;
+        }
+
+        IRenderBindingPublisher[] materialPublishers =
+            material.BindingPublishers.CaptureSnapshot();
+        IRenderBindingPublisher[] meshPublishers =
+            MeshRenderer.BindingPublishers.CaptureSnapshot();
+        if (_fastPersistentArtifactPublisherGenerations is not { } generations ||
+            !generations.Matches(materialPublishers, meshPublishers))
+        {
+            return false;
+        }
+
+        EUniformRequirements engineRequirements =
+            _fastPersistentArtifactGeneration.EngineRequirements;
+        ComputeDispatchSnapshot? engineBindingSnapshot = null;
+        if ((engineRequirements & EUniformRequirements.Lights) != 0)
+        {
+            Lights3DCollection? lights =
+                RuntimeEngine.Rendering.State.RenderingWorld?.Lights;
+            if (lights is null)
+                return false;
+
+            engineBindingSnapshot =
+                CommandOperations.GetForwardLightingBindingSnapshotForArtifact(
+                    lights,
+                    programData,
+                    program);
+            if (engineBindingSnapshot is null)
+                return false;
+        }
+
+        PersistentProgramBindingArtifactGeneration currentGeneration = new(
+            material.BindingLayoutVersion,
+            material.BindingValueVersion,
+            material.BindingResourceVersion,
+            material.ShaderStateRevision,
+            material.UberStateRevision,
+            program.LinkGeneration,
+            _fastPersistentArtifactGeneration.TypedPublisherSignature,
+            engineBindingSnapshot?.PersistentEngineUniformSignature ?? 0UL,
+            engineBindingSnapshot?.PersistentEngineResourceSignature ?? 0UL,
+            RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.Variables
+                .UniformContentGeneration ?? 0UL,
+            engineRequirements,
+            MeshRenderer.CaptureUniformsOnRender);
+        if (currentGeneration != _fastPersistentArtifactGeneration)
+            return false;
+
+        artifact = _fastPersistentArtifact;
+        return true;
+    }
+
+    /// <summary>
+    /// Captures the exact mutable-owner generation of the renderer-local
+    /// persistent binding artifact without reacquiring the program cache slot.
+    /// Resident templates use this as their invalidation authority.
+    /// </summary>
+    private bool TryCaptureCurrentPersistentProgramBindingArtifactGeneration(
+        XRMaterial material,
+        VkRenderProgram program,
+        out PersistentProgramBindingArtifactGeneration generation)
+    {
+        generation = default;
+        if (!_hasFastPersistentArtifact ||
+            !ReferenceEquals(_fastPersistentArtifactMaterial, material) ||
+            !ReferenceEquals(_fastPersistentArtifactProgram, program) ||
+            program.Data is not { } programData ||
+            material.BindingPublishers.Count != 0 ||
+            MeshRenderer.BindingPublishers.Count != 0)
+        {
+            return false;
+        }
+
+        EUniformRequirements engineRequirements =
+            _fastPersistentArtifactGeneration.EngineRequirements;
+        ComputeDispatchSnapshot? engineBindingSnapshot = null;
+        if ((engineRequirements & EUniformRequirements.Lights) != 0)
+        {
+            Lights3DCollection? lights =
+                RuntimeEngine.Rendering.State.RenderingWorld?.Lights;
+            if (lights is null)
+                return false;
+
+            engineBindingSnapshot =
+                CommandOperations.GetForwardLightingBindingSnapshotForArtifact(
+                    lights,
+                    programData,
+                    program);
+            if (engineBindingSnapshot is null)
+                return false;
+        }
+
+        generation = new PersistentProgramBindingArtifactGeneration(
+            material.BindingLayoutVersion,
+            material.BindingValueVersion,
+            material.BindingResourceVersion,
+            material.ShaderStateRevision,
+            material.UberStateRevision,
+            program.LinkGeneration,
+            _fastPersistentArtifactGeneration.TypedPublisherSignature,
+            engineBindingSnapshot?.PersistentEngineUniformSignature ?? 0UL,
+            engineBindingSnapshot?.PersistentEngineResourceSignature ?? 0UL,
+            RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.Variables
+                .UniformContentGeneration ?? 0UL,
+            engineRequirements,
+            MeshRenderer.CaptureUniformsOnRender);
+        return generation == _fastPersistentArtifactGeneration;
+    }
+
+    /// <summary>
+    /// Computes the generation authority used by a resident template even when
+    /// the current draw has no program-cache artifact object. Eligible resident
+    /// draws have no external publishers, so material/program/engine owners are
+    /// sufficient and can be sampled without a cache lookup or allocation.
+    /// </summary>
+    private bool TryCaptureResidentProgramBindingGeneration(
+        XRMaterial material,
+        VkRenderProgram program,
+        out PersistentProgramBindingArtifactGeneration generation)
+    {
+        generation = default;
+        if (program.Data is not { } programData)
+            return false;
+
+        IRenderBindingPublisher[] materialPublishers =
+            material.BindingPublishers.CaptureSnapshot();
+        IRenderBindingPublisher[] meshPublishers =
+            MeshRenderer.BindingPublishers.CaptureSnapshot();
+        LayeredShadowUniformState nonShadowState = default;
+        if (!TryComputeTypedBindingPublisherSignature(
+                materialPublishers,
+                meshPublishers,
+                out ulong typedPublisherSignature,
+                out _) ||
+            !CanUsePersistentProgramBindingArtifact(
+                material,
+                programData,
+                program,
+                in nonShadowState,
+                materialPublishers,
+                meshPublishers,
+                out EUniformRequirements engineRequirements,
+                out ComputeDispatchSnapshot? engineBindingSnapshot,
+                out _))
+        {
+            return false;
+        }
+
+        generation = CreatePersistentProgramBindingArtifactGeneration(
+            material,
+            program,
+            typedPublisherSignature,
+            engineRequirements,
+            engineBindingSnapshot);
+        return true;
+    }
+
+    /// <summary>
+    /// Revalidates a retained draw artifact against the program-owned cache and
+    /// every mutable owner generation. The expected program is supplied by the
+    /// captured draw because one mesh renderer can alternate among several
+    /// material/program variants; its active-program slot is not an ownership
+    /// oracle for an older retained draw.
+    /// </summary>
+    internal bool TryGetCurrentPersistentProgramBindingArtifact(
+        XRMaterial material,
+        VkRenderProgram expectedProgram,
+        in LayeredShadowUniformState shadowUniformState,
+        out ComputeDispatchSnapshot? artifact)
+    {
+        artifact = null;
+        if (!expectedProgram.IsActive ||
+            !expectedProgram.IsLinked ||
+            !_recordDrawSync.TryEnter())
+        {
+            return false;
+        }
+
+        try
+        {
+            if (expectedProgram.Data is not { } programData)
+                return false;
+
+            if (TryReuseFastPersistentProgramBindingArtifact(
+                    material,
+                    programData,
+                    expectedProgram,
+                    in shadowUniformState,
+                    out artifact))
+            {
+                return true;
+            }
+
+            IRenderBindingPublisher[] materialPublishers =
+                material.BindingPublishers.CaptureSnapshot();
+            IRenderBindingPublisher[] meshPublishers =
+                MeshRenderer.BindingPublishers.CaptureSnapshot();
+            if (!TryComputeTypedBindingPublisherSignature(
+                    materialPublishers,
+                    meshPublishers,
+                    out ulong typedPublisherSignature,
+                    out _) ||
+                !CanUsePersistentProgramBindingArtifact(
+                    material,
+                    programData,
+                    expectedProgram,
+                    in shadowUniformState,
+                    materialPublishers,
+                    meshPublishers,
+                    out EUniformRequirements engineRequirements,
+                    out ComputeDispatchSnapshot? engineBindingSnapshot,
+                    out _))
+            {
+                artifact = null;
+                return false;
+            }
+
+            PersistentProgramBindingArtifactGeneration generation =
+                CreatePersistentProgramBindingArtifactGeneration(
+                    material,
+                    expectedProgram,
+                    typedPublisherSignature,
+                    engineRequirements,
+                    engineBindingSnapshot);
+            PersistentProgramBindingArtifactSlotKey slot =
+                new(material, MeshRenderer);
+            return expectedProgram.TryGetPersistentProgramBindingArtifact(
+                in slot,
+                in generation,
+                materialPublishers,
+                meshPublishers,
+                out artifact);
+        }
+        finally
+        {
+            _recordDrawSync.Exit();
+        }
+    }
+
+    private void PublishFastPersistentProgramBindingArtifact(
+        XRMaterial material,
+        VkRenderProgram program,
+        in PersistentProgramBindingArtifactGeneration generation,
+        IRenderBindingPublisher[] materialPublishers,
+        IRenderBindingPublisher[] meshPublishers,
+        ComputeDispatchSnapshot? artifact)
+    {
+        _fastPersistentArtifactMaterial = material;
+        _fastPersistentArtifactProgram = program;
+        _fastPersistentArtifactGeneration = generation;
+        _fastPersistentArtifactPublisherGenerations =
+            RenderBindingPublisherGenerationSnapshot.Capture(
+                materialPublishers,
+                meshPublishers);
+        _fastPersistentArtifact = artifact;
+        _hasFastPersistentArtifact = true;
+    }
+
     /// <summary>
     /// Cross-frame artifacts are restricted to inputs with an explicit owner
     /// generation. Lighting/AO use one immutable scope publication and its
@@ -28,6 +318,7 @@ internal unsafe partial class VkMeshRenderer
     private bool CanUsePersistentProgramBindingArtifact(
         XRMaterial material,
         XRRenderProgram programData,
+        VkRenderProgram program,
         in LayeredShadowUniformState shadowUniformState,
         IRenderBindingPublisher[] materialBindingPublishers,
         IRenderBindingPublisher[] meshBindingPublishers,
@@ -82,7 +373,7 @@ internal unsafe partial class VkMeshRenderer
         {
             Lights3DCollection? lights =
                 RuntimeEngine.Rendering.State.RenderingWorld?.Lights;
-            if (lights is null || _program is null)
+            if (lights is null)
             {
                 fallbackReason = EVulkanProgramBindingArtifactFallbackReason
                     .MissingLightingOwner;
@@ -90,10 +381,10 @@ internal unsafe partial class VkMeshRenderer
             }
 
             engineBindingSnapshot =
-                Renderer.GetForwardLightingBindingSnapshotForArtifact(
+                CommandOperations.GetForwardLightingBindingSnapshotForArtifact(
                     lights,
                     programData,
-                    _program);
+                    program);
             if (engineBindingSnapshot is null)
             {
                 fallbackReason = EVulkanProgramBindingArtifactFallbackReason
@@ -246,6 +537,9 @@ internal unsafe partial class VkMeshRenderer
             }
 
         artifact = snapshot.CreatePersistentProgramBindingArtifact(
+            BackendContext,
+            WrapperLookup,
+            RuntimeEngine.Rendering.State.CurrentRenderingPipeline,
             RetainedArtifactEngineRequirements);
         return true;
     }

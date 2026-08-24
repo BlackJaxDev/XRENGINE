@@ -12,8 +12,10 @@ internal interface IVulkanRendererTargetDriver
     bool SupportsStreamlinePresentation { get; }
     IReadOnlyList<string> RequiredDeviceExtensions { get; }
     string[] GetRequiredInstanceExtensions();
-    void CreateInstanceResources(VulkanRenderer renderer);
-    void InitializeFinalOutput(VulkanRenderer renderer);
-    void DestroyFinalOutput(VulkanRenderer renderer);
-    void DestroyInstanceResources(VulkanRenderer renderer);
+    /// <summary>Stops target-side frame admission before GPU teardown begins.</summary>
+    void Quiesce() { }
+    void CreateInstanceResources(VulkanTargetSurfaceAuthority surfaces);
+    void InitializeFinalOutput(VulkanTargetOutputContext output);
+    void DestroyFinalOutput(VulkanTargetOutputContext output);
+    void DestroyInstanceResources(VulkanTargetSurfaceAuthority surfaces);
 }

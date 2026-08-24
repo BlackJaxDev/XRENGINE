@@ -7,6 +7,10 @@ sections describe the historical point-in-time state, not the current backlog.
 
 ## Current focus
 
+- [Vulkan Desktop Camera Motion, Stale Frames, And CPU Scaling](vulkan-camera-motion-black-flicker-2026-08-10.md)
+  is the canonical desktop camera/input/cadence triage guide. Its stale-frame
+  correctness fixes are live-validated; remaining prepared-producer CPU work is
+  owned by the linked optimization and testing trackers.
 - [Directional Light Vulkan Stability](directional-light-inspector-shadow-2026-08-03.md)
   is the canonical active investigation.
 

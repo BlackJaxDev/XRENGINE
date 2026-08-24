@@ -323,6 +323,18 @@ and visibility-buffer counters. Zero-readback variants should keep current-frame
 `gpu_readback_bytes` and `gpu_mapped_buffers` at zero; delayed diagnostic
 readbacks are reported separately.
 
+The game-loop harness retains meshlet requested/production frames, Vulkan
+mesh-task frame-op count, task records and frustum/cone/Hi-Z culls, resident/live/
+retired bytes, lifetime rebuild/retire counters, and capture-window rebuild/
+retire deltas. `ShippingFast` and `DevParity` production acceptance uses the
+recorded production frame plus retained Vulkan mesh-task operation because those
+profiles intentionally suppress diagnostic readback. The explicit `Diagnostics`
+profile instead requires fence-delayed task records and dispatch groups. Its MCP
+snapshot supplies the stable latest task/cull values so a low-frequency NDJSON
+sample cannot miss the single frame in which an asynchronous readback completed.
+Generic readback/map counters must remain zero in either case; delayed diagnostic
+bytes stay in their separately named fields.
+
 ### Benchmark Harness
 
 Use `Tools/Measure-GameLoopRenderPipeline.ps1` for reproducible run-to-run
@@ -343,6 +355,17 @@ pwsh Tools/Measure-GameLoopRenderPipeline.ps1 `
   -ProfileLights "None" `
   -GpuClockPolicy "Pinned manually in vendor control panel"
 ```
+
+For cross-machine renderer evidence, also fix the camera and output rather than
+using a descriptive camera label alone. Specify all six `-CameraPosition*` and
+`-CameraLookAt*` values together, plus `-WindowWidth`, `-WindowHeight`,
+`-ProfileViewport`, and `-RenderScale`. The harness positions the camera through
+MCP before warmup and rejects a partial pose. `-SampleIntervalFrames` controls
+the frame-stride of the NDJSON stream (the first completed frame is always
+written), so long captures do not turn profiler serialization into the measured
+workload. `-VulkanGpuDrivenProfile ShippingFast`, `DevParity`, or `Diagnostics`
+freezes the effective GPU-driven feature profile independently of saved user
+settings. Every value is copied into the summary and capture manifest.
 
 Use `-CacheMode Cold` for startup/cache-miss measurements; the harness clears
 OpenGL shader-program caches only in cold mode unless
@@ -401,17 +424,17 @@ pwsh Tools/Benchmarks/Invoke-VulkanPerf.ps1 `
 # Three warm desktop repetitions per selected Deferred/Uber cohort.
 pwsh Tools/Benchmarks/Invoke-VulkanPerf.ps1 `
   -Preset Compare `
-  -BaselinePath Build/_AgentValidation/vulkan-perf-baselines/desktop.json
+  -BaselinePath Build/_AgentValidation/00000000-000000-shared/baselines/vulkan-perf/desktop.json
 
 # Full desktop and available Vulkan RVC matrix.
 pwsh Tools/Benchmarks/Invoke-VulkanPerf.ps1 `
   -Preset Gate `
-  -BaselinePath Build/_AgentValidation/vulkan-perf-baselines/gate.json
+  -BaselinePath Build/_AgentValidation/00000000-000000-shared/baselines/vulkan-perf/gate.json
 
 # Baselines are replaced only by this explicit action.
 pwsh Tools/Benchmarks/Invoke-VulkanPerf.ps1 `
   -Preset Gate `
-  -BaselinePath Build/_AgentValidation/vulkan-perf-baselines/gate.json `
+  -BaselinePath Build/_AgentValidation/00000000-000000-shared/baselines/vulkan-perf/gate.json `
   -AcceptBaseline
 ```
 
@@ -635,3 +658,134 @@ Invokes exposes **Invoke Diagnostics**.
 
 For minimal editor overhead, keep in-process profiler panels closed and use the
 remote profiler instead.
+
+## Dedicated Vulkan RenderBench
+
+`XREngine.RenderBench` is the editor-free process for deterministic
+presentationless Vulkan control measurements. It constructs no `XRWindow`,
+editor panel, ImGui UI, input service, dynamic text, or window title. The Phase
+2 fixture is a synthetic clear whose fixed-step animation, random seed, output
+contract, warmup, stability window, and capture length are explicit.
+
+Run a bounded process without MCP:
+
+```powershell
+dotnet run --project .\XREngine.RenderBench\XREngine.RenderBench.csproj -- `
+  --output-dir .\Build\_AgentValidation\<run> `
+  --execution-mode Presentationless `
+  --recipe deterministic-clear `
+  --fixture synthetic-clear `
+  --warmup-frames 30 `
+  --stability-frames 5 `
+  --capture-frames 120 `
+  --fixed-step 0.016666666666666666 `
+  --random-seed 5784133 `
+  --frozen-world
+```
+
+Use the named manager for an isolated build and MCP lifecycle:
+
+```powershell
+.\Tools\Manage-McpRenderBenchSession.ps1 Start -Name profile-control
+.\Tools\Manage-McpRenderBenchSession.ps1 Run -Name profile-control
+.\Tools\Manage-McpRenderBenchSession.ps1 Status -Name profile-control
+.\Tools\Manage-McpRenderBenchSession.ps1 Stop -Name profile-control
+```
+
+The manager places build artifacts, logs, cache, metadata, PID/start-time
+ownership, endpoint identity, and the shutdown event under its named shared
+session. Result evidence is placed in a bounded
+`Build/_AgentValidation/<run>/` root. `Stop` validates process ownership and
+requests frame-boundary cancellation before it considers forced termination.
+
+MCP is available while the process is idle and after completion. The listener
+and all in-flight request handlers are stopped and drained before a measured
+capture begins. The legacy `start_render_bench` path also stops MCP before
+warmup. Runtime profile preparation and stabilization may run asynchronously
+while MCP remains available; `start_render_profile` serializes its accepted
+response, suspends the listener, and only then releases the parked capture
+worker at its published frame boundary. The listener resumes after capture and
+delayed GPU-query drainage reach a terminal state. The result contains canonical effective-configuration and
+workload hashes, managed executable hash, adapter/driver identity, delayed GPU
+query results, CPU samples, allocation count, output hash, and explicit
+stability gates. Control-fixture results are diagnostic renderer-submit
+evidence; they are not equivalent to desktop WSI, OpenXR, or a production
+render-graph cohort.
+
+### RenderBench Runtime Profile MCP Tools
+
+The editor-independent implementation lives in `XREngine.Runtime.Automation`.
+Its context declares optional `World`, `Renderer`, `RenderTarget`,
+`ProfilerSession`, `Editor`, and `Window` capabilities. A tool is rejected with
+the exact missing capability list; a synthetic presentationless recipe needs
+no editor, window, or world. Mutating calls require RenderBench `Control` policy
+and the named session token, and successful idempotent calls are not executed a
+second time.
+
+| Tool | Purpose |
+| --- | --- |
+| `list_render_profile_targets` | Report supported and explicitly unsupported component/execution-mode targets. |
+| `load_render_profile_recipe` | Parse JSON/JSONC, reject unknown fields, validate the schema and target, and return a stable recipe hash/id. |
+| `prepare_render_profile` | Return a session ID immediately while device/fixture preparation and stabilization continue asynchronously. |
+| `wait_render_profile_ready` | Wait outside capture for preparation to become armable. |
+| `arm_render_profile` | Warm and park the dedicated capture worker, then publish its exact next engine/render frame. |
+| `start_render_profile` | Return acceptance, suspend MCP, release the worker, drain delayed queries, and resume MCP at a terminal state. |
+| `stop_render_profile` / `cancel_render_profile` | Stop at a frame boundary or cancel preparation/capture/drain with renderer cleanup. |
+| `get_render_profile_status` | Read buffered state without calling the renderer or render workers. |
+| `get_render_profile_result` | Return only a completed result plus artifact paths. |
+| `run_render_profile_matrix` | Return a job ID for a bounded worker-count matrix; variants execute sequentially and MCP is suspended only for each measured capture/drain interval. |
+| `get_render_profile_matrix_status` / `cancel_render_profile_matrix` | Inspect or cancel a matrix job. |
+
+`Created` after preparation means ready-to-arm for schema-v1 clients. Other
+states are `Preparing`, `Stabilizing`, `Armed`, `Capturing`, `Draining`,
+`Completed`, `Failed`, and `Cancelled`. Timeouts fail visibly; unsupported
+targets and requirements never select a fallback renderer.
+
+### Phase 4 Recipes and Deterministic Fixtures
+
+The authoritative JSONC schema is
+`.vscode/schemas/render-profile-recipe.schema.json`. A recipe declares every
+execution, output, timing, instrumentation, scene, mutation, workload,
+validation, and acceptance-budget input. Unknown fields and unsupported enum
+values fail during `load_render_profile_recipe`; no editor preference is read.
+Tracked examples are under `docs/examples/profiling/recipes/`.
+
+Run a recipe without MCP through the same executor:
+
+```powershell
+dotnet .\Build\RenderBench\Debug\AnyCPU\Debug\net10.0-windows7.0\XREngine.RenderBench.dll `
+  --output-dir .\Build\_AgentValidation\<run>\reports\lighting `
+  --recipe-file .\docs\examples\profiling\recipes\gpu-lighting-pass.jsonc
+```
+
+The stable fixture names are:
+
+- Controls and CPU preparation: `synthetic-clear`, `noop-control`,
+  `command-chain-signature`, and `packet-lowering`.
+- Command work: `primary-command-small`, `primary-command-medium`,
+  `primary-command-large`, `secondary-command-recording`,
+  `command-buffer-stable-reuse`, and `command-buffer-forced-dirty`.
+- Resource/submission work: `descriptor-publication`, `resource-planning`,
+  `queue-lock-submit`, and `upload-fixed`.
+- GPU passes: `gpu-shadow`, `gpu-depth-normal`, `gpu-gbuffer`,
+  `gpu-lighting`, `gpu-transparency`, `gpu-ao`, `gpu-bloom`, `gpu-tsr`, and
+  `gpu-final-composition`.
+- Full presentationless proxies: `presentationless-deferred` and
+  `presentationless-uber`.
+
+GPU-pass fixtures compile their fullscreen shader and create their dynamic-
+rendering pipeline before capture. Secondary fixtures create persistent workers
+with one command pool per worker and one secondary buffer per frame slot.
+Descriptor layouts/pools/buffers and upload staging/device buffers are likewise
+resident before capture. Native object creation during capture occurs only when
+the recipe explicitly selects resource, descriptor, or pipeline churn.
+
+The effective-configuration hash includes the complete recipe and resolved
+catalog defaults. The workload hash deliberately excludes recipe name, worker
+count, mutation policy, instrumentation, and budgets; therefore scaling and
+reuse/dirty variants remain directly comparable. Results publish exact work
+counters, per-repetition retained samples, inclusion/exclusion manifests,
+adapter/driver identity, output hash, optional PNG, and explicit gates for
+fixture/shader/fallback identity, expected work, query drainage, allocations,
+and percentile budgets. Expected counters are per retained frame and are
+multiplied by `capture_frames * repetitions` during validation.

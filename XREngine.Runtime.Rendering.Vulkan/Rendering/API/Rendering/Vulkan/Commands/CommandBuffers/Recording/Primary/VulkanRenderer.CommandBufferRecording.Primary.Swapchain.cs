@@ -15,7 +15,7 @@ using XREngine.Rendering.Resources;
 
 namespace XREngine.Rendering.Vulkan
 {
-    public unsafe partial class VulkanRenderer
+    internal sealed partial class VulkanCommandRuntime
     {
 
         private ImageLayout ResolveCurrentSwapchainColorLayout(scoped ref PrimaryCommandBufferRecordingState recordingState)
@@ -44,61 +44,72 @@ namespace XREngine.Rendering.Vulkan
                 _ => AccessFlags.MemoryReadBit | AccessFlags.MemoryWriteBit,
             };
 
-        private void EmitPlannedSwapchainBarriers(scoped ref PrimaryCommandBufferRecordingState recordingState,
+        private unsafe void EmitPlannedSwapchainBarriers(scoped ref PrimaryCommandBufferRecordingState recordingState,
             CommandBuffer targetCommandBuffer,
-            IReadOnlyList<VulkanBarrierPlanner.PlannedSwapchainBarrier>? plannedBarriers)
+            ReadOnlySpan<VulkanFrozenSwapchainBarrier> plannedBarriers)
         {
-            if (plannedBarriers is null || plannedBarriers.Count == 0 || !recordingState.SwapchainTarget.IsValid)
+            if (plannedBarriers.IsEmpty || !recordingState.SwapchainTarget.IsValid)
                 return;
 
-            for (int i = 0; i < plannedBarriers.Count; i++)
+            // The desktop target has one acquired color image. Collapse its
+            // pass-local state chain into its final transition, then submit the
+            // contiguous synchronization2 ABI range in one command. There is no
+            // intervening work between these planner-only transitions.
+            ImageLayout liveOldLayout = ResolveCurrentSwapchainColorLayout(ref recordingState);
+            VulkanFrozenSwapchainBarrier finalPlanned = default;
+            bool hasTransition = false;
+            for (int i = 0; i < plannedBarriers.Length; i++)
             {
-                VulkanBarrierPlanner.PlannedSwapchainBarrier planned = plannedBarriers[i];
-                ImageLayout liveOldLayout = ResolveCurrentSwapchainColorLayout(ref recordingState);
+                VulkanFrozenSwapchainBarrier planned = plannedBarriers[i];
                 ImageLayout nextLayout = planned.Next.Layout;
-
                 if (nextLayout == ImageLayout.Undefined)
                     continue;
-
-                if (liveOldLayout != nextLayout)
-                {
-                    PipelineStageFlags srcStages = ResolveSwapchainLayoutStage(liveOldLayout);
-                    PipelineStageFlags dstStages = NormalizePipelineStages(planned.Next.StageMask);
-                    ImageMemoryBarrier barrier = new()
-                    {
-                        SType = StructureType.ImageMemoryBarrier,
-                        SrcAccessMask = FilterAccessFlagsForStages(ResolveSwapchainLayoutAccess(liveOldLayout), srcStages),
-                        DstAccessMask = FilterAccessFlagsForStages(planned.Next.AccessMask, dstStages),
-                        OldLayout = liveOldLayout,
-                        NewLayout = nextLayout,
-                        SrcQueueFamilyIndex = planned.SrcQueueFamilyIndex,
-                        DstQueueFamilyIndex = planned.DstQueueFamilyIndex,
-                        Image = recordingState.SwapchainTarget.Image,
-                        SubresourceRange = new ImageSubresourceRange
-                        {
-                            AspectMask = ImageAspectFlags.ColorBit,
-                            BaseMipLevel = 0,
-                            LevelCount = 1,
-                            BaseArrayLayer = 0,
-                            LayerCount = 1
-                        }
-                    };
-
-                    CmdPipelineBarrierTracked(
-                        targetCommandBuffer,
-                        srcStages,
-                        dstStages,
-                        DependencyFlags.None,
-                        0,
-                        null,
-                        0,
-                        null,
-                        1,
-                        &barrier);
-                }
-
+                finalPlanned = planned;
+                hasTransition = true;
                 recordingState.SwapchainInColorAttachmentLayout = nextLayout == ImageLayout.ColorAttachmentOptimal;
                 recordingState.SwapchainFinalLayout = nextLayout;
+            }
+
+            if (!hasTransition || liveOldLayout == finalPlanned.Next.Layout)
+                return;
+
+            using VulkanNativeScratchReservation<ImageMemoryBarrier2> barrierReservation =
+                Synchronization._synchronizationThreadWorkspace.Current.ImageMemoryBarrier2Scratch.Reserve(1);
+            Span<ImageMemoryBarrier2> barriers = barrierReservation.Span;
+            PipelineStageFlags srcStages = ResolveSwapchainLayoutStage(liveOldLayout);
+            PipelineStageFlags dstStages = NormalizePipelineStages(finalPlanned.Next.StageMask);
+            barriers[0] = new ImageMemoryBarrier2
+            {
+                SType = StructureType.ImageMemoryBarrier2,
+                SrcStageMask = (PipelineStageFlags2)srcStages,
+                DstStageMask = (PipelineStageFlags2)dstStages,
+                SrcAccessMask = (AccessFlags2)FilterAccessFlagsForStages(
+                    ResolveSwapchainLayoutAccess(liveOldLayout), srcStages),
+                DstAccessMask = (AccessFlags2)FilterAccessFlagsForStages(
+                    finalPlanned.Next.AccessMask, dstStages),
+                OldLayout = liveOldLayout,
+                NewLayout = finalPlanned.Next.Layout,
+                SrcQueueFamilyIndex = finalPlanned.SrcQueueFamilyIndex,
+                DstQueueFamilyIndex = finalPlanned.DstQueueFamilyIndex,
+                Image = recordingState.SwapchainTarget.Image,
+                SubresourceRange = new ImageSubresourceRange
+                {
+                    AspectMask = ImageAspectFlags.ColorBit,
+                    BaseMipLevel = 0,
+                    LevelCount = 1,
+                    BaseArrayLayer = 0,
+                    LayerCount = 1,
+                },
+            };
+            fixed (ImageMemoryBarrier2* nativeBarriers = barriers)
+            {
+                DependencyInfo dependencyInfo = new()
+                {
+                    SType = StructureType.DependencyInfo,
+                    ImageMemoryBarrierCount = 1,
+                    PImageMemoryBarriers = nativeBarriers,
+                };
+                CmdPipelineBarrier2Tracked(targetCommandBuffer, in dependencyInfo);
             }
         }
 
@@ -110,7 +121,7 @@ namespace XREngine.Rendering.Vulkan
             recordingState.ActivePipelineOverrideScopeSet = true;
         }
 
-        private void TransitionSwapchainToPresent(scoped ref PrimaryCommandBufferRecordingState recordingState)
+        private unsafe void TransitionSwapchainToPresent(scoped ref PrimaryCommandBufferRecordingState recordingState)
         {
             if (!recordingState.SwapchainInColorAttachmentLayout || !recordingState.SwapchainTarget.IsValid)
                 return;
@@ -126,7 +137,7 @@ namespace XREngine.Rendering.Vulkan
             {
                 SType = StructureType.ImageMemoryBarrier,
                 SrcAccessMask = AccessFlags.ColorAttachmentWriteBit,
-                DstAccessMask = 0,
+                DstAccessMask = ResolveSwapchainLayoutAccess(recordingState.SwapchainFinalTargetLayout),
                 OldLayout = ImageLayout.ColorAttachmentOptimal,
                 NewLayout = recordingState.SwapchainFinalTargetLayout,
                 SrcQueueFamilyIndex = Vk.QueueFamilyIgnored,
@@ -145,7 +156,7 @@ namespace XREngine.Rendering.Vulkan
             CmdPipelineBarrierTracked(
                 recordingState.CommandBuffer,
                 PipelineStageFlags.ColorAttachmentOutputBit,
-                PipelineStageFlags.BottomOfPipeBit,
+                ResolveSwapchainLayoutStage(recordingState.SwapchainFinalTargetLayout),
                 0,
                 0,
                 null,
@@ -158,7 +169,7 @@ namespace XREngine.Rendering.Vulkan
             recordingState.SwapchainFinalLayout = recordingState.SwapchainFinalTargetLayout;
         }
 
-        internal void EnsureSwapchainColorAttachmentLayoutForBlit(scoped ref PrimaryCommandBufferRecordingState recordingState)
+        internal unsafe void EnsureSwapchainColorAttachmentLayoutForBlit(scoped ref PrimaryCommandBufferRecordingState recordingState)
         {
             if (!recordingState.SwapchainTarget.IsValid)
                 return;
@@ -207,7 +218,7 @@ namespace XREngine.Rendering.Vulkan
             recordingState.SwapchainFinalLayout = ImageLayout.ColorAttachmentOptimal;
         }
 
-        private void TransitionUnwrittenSwapchainToPresent(scoped ref PrimaryCommandBufferRecordingState recordingState)
+        private unsafe void TransitionUnwrittenSwapchainToPresent(scoped ref PrimaryCommandBufferRecordingState recordingState)
         {
             if (!recordingState.TransitionSwapchainToPresent || !recordingState.SwapchainTarget.IsValid)
                 return;
@@ -219,9 +230,10 @@ namespace XREngine.Rendering.Vulkan
             }
 
             ImageLayout oldLayout = ResolveCurrentSwapchainColorLayout(ref recordingState);
-            if (oldLayout == ImageLayout.PresentSrcKhr)
+            ImageLayout finalLayout = recordingState.SwapchainFinalTargetLayout;
+            if (oldLayout == finalLayout)
             {
-                recordingState.SwapchainFinalLayout = ImageLayout.PresentSrcKhr;
+                recordingState.SwapchainFinalLayout = finalLayout;
                 return;
             }
 
@@ -229,9 +241,9 @@ namespace XREngine.Rendering.Vulkan
             {
                 SType = StructureType.ImageMemoryBarrier,
                 SrcAccessMask = ResolveSwapchainLayoutAccess(oldLayout),
-                DstAccessMask = 0,
+                DstAccessMask = ResolveSwapchainLayoutAccess(finalLayout),
                 OldLayout = oldLayout,
-                NewLayout = ImageLayout.PresentSrcKhr,
+                NewLayout = finalLayout,
                 SrcQueueFamilyIndex = Vk.QueueFamilyIgnored,
                 DstQueueFamilyIndex = Vk.QueueFamilyIgnored,
                 Image = recordingState.SwapchainTarget.Image,
@@ -248,7 +260,7 @@ namespace XREngine.Rendering.Vulkan
             CmdPipelineBarrierTracked(
                 recordingState.CommandBuffer,
                 ResolveSwapchainLayoutStage(oldLayout),
-                PipelineStageFlags.BottomOfPipeBit,
+                ResolveSwapchainLayoutStage(finalLayout),
                 0,
                 0,
                 null,
@@ -256,18 +268,24 @@ namespace XREngine.Rendering.Vulkan
                 null,
                 1,
                 &presentBarrier);
-            recordingState.SwapchainFinalLayout = ImageLayout.PresentSrcKhr;
+            recordingState.SwapchainFinalLayout = finalLayout;
         }
 
         private bool TryRefreshUnwrittenSwapchainFromLastWindowPresentSource(scoped ref PrimaryCommandBufferRecordingState recordingState)
         {
-            XRFrameBuffer? sourceFrameBuffer = _lastWindowPresentFrameBuffer;
-            string? unavailableReason = sourceFrameBuffer is null
-                ? $"no tracked source framebuffer; colorTexture='{_lastWindowPresentColorTexture?.Name ?? "<null>"}'"
+            VulkanPresentationSourceTuple presentationSource =
+                recordingState.PresentationSource;
+            XRFrameBuffer? sourceFrameBuffer = presentationSource.FrameBuffer;
+            string? unavailableReason = !presentationSource.HasLogicalSource
+                ? "no published presentation source"
                 : !recordingState.SwapchainTarget.IsValid
                     ? "swapchain target is invalid"
-                    : sourceFrameBuffer.Width == 0 || sourceFrameBuffer.Height == 0
-                        ? $"tracked source framebuffer '{sourceFrameBuffer.Name ?? "<unnamed fbo>"}' has zero size {sourceFrameBuffer.Width}x{sourceFrameBuffer.Height}"
+                    : !ResourceRuntime.TryValidatePresentationSourceForReplay(
+                        presentationSource,
+                        out string tupleFailure)
+                        ? tupleFailure
+                    : presentationSource.Width == 0 || presentationSource.Height == 0
+                        ? $"published native source has zero size {presentationSource.Width}x{presentationSource.Height}"
                         : recordingState.SwapchainRecordExtent.Width == 0 || recordingState.SwapchainRecordExtent.Height == 0
                             ? $"swapchain record extent is zero {recordingState.SwapchainRecordExtent.Width}x{recordingState.SwapchainRecordExtent.Height}"
                             : null;
@@ -281,80 +299,32 @@ namespace XREngine.Rendering.Vulkan
                 return false;
             }
 
-            if (sourceFrameBuffer is null)
-                return false;
-
             EnsureSwapchainColorAttachmentLayoutForBlit(ref recordingState);
 
             int passIndex = recordingState.ActivePassIndex != int.MinValue
                 ? recordingState.ActivePassIndex
                 : VulkanBarrierPlanner.SwapchainPassIndex;
-            FrameOpContext blitContext = _lastWindowPresentFrameOpContext ?? (recordingState.HasActiveContext ? recordingState.ActiveContext : recordingState.InitialContext);
-            BlitOp replayBlit = new(
+            FrameOpContext blitContext = presentationSource.LogicalEpoch != 0
+                ? presentationSource.Context
+                : recordingState.HasActiveContext
+                    ? recordingState.ActiveContext
+                    : recordingState.InitialContext;
+            _deviceContext.CmdBeginLabel(recordingState.CommandBuffer, "RefreshSwapchainFromLastPresentSource");
+            bool blitRecorded = RecordPresentationSourceBlit(
+                recordingState.CommandBuffer,
+                recordingState.ImageIndex,
+                presentationSource,
+                in recordingState.SwapchainTarget,
                 passIndex,
-                sourceFrameBuffer,
-                null,
-                0,
-                0,
-                sourceFrameBuffer.Width,
-                sourceFrameBuffer.Height,
-                0,
-                0,
-                recordingState.SwapchainRecordExtent.Width,
-                recordingState.SwapchainRecordExtent.Height,
-                EReadBufferMode.ColorAttachment0,
-                ColorBit: true,
-                DepthBit: false,
-                StencilBit: false,
-                LinearFilter: true,
                 blitContext);
-
-            bool blitRecorded;
-            CmdBeginLabel(recordingState.CommandBuffer, "RefreshSwapchainFromLastPresentSource");
-            using (EnterFrameOpResourcePlannerReadbackScope(blitContext))
-            {
-                bool canResolveRefreshSource = TryResolveBlitImage(
-                    sourceFrameBuffer,
-                    recordingState.ImageIndex,
-                    EReadBufferMode.ColorAttachment0,
-                    wantColor: true,
-                    wantDepth: false,
-                    wantStencil: false,
-                    out _,
-                    isSource: true);
-                bool canResolveRefreshDestination = TryResolveBlitImage(
-                    null,
-                    recordingState.ImageIndex,
-                    EReadBufferMode.ColorAttachment0,
-                    wantColor: true,
-                    wantDepth: false,
-                    wantStencil: false,
-                    out _,
-                    isSource: false,
-                    in recordingState.SwapchainTarget);
-                if (!canResolveRefreshSource || !canResolveRefreshDestination)
-                {
-                    Debug.VulkanEvery(
-                        $"Vulkan.LastPresentRefresh.ResolveFailure.{GetHashCode()}",
-                        TimeSpan.FromSeconds(1),
-                        "[Vulkan] Unable to refresh unwritten swapchain image from last present source: resolve source={0} destination={1} sourceFbo='{2}' colorTexture='{3}' imageIndex={4}.",
-                        canResolveRefreshSource,
-                        canResolveRefreshDestination,
-                        sourceFrameBuffer.Name ?? "<unnamed fbo>",
-                        _lastWindowPresentColorTexture?.Name ?? "<null>",
-                        recordingState.ImageIndex);
-                }
-
-                blitRecorded = RecordBlitOp(recordingState.CommandBuffer, recordingState.ImageIndex, replayBlit, in recordingState.SwapchainTarget);
-            }
-            CmdEndLabel(recordingState.CommandBuffer);
+            _deviceContext.CmdEndLabel(recordingState.CommandBuffer);
             if (!blitRecorded)
             {
                 Debug.VulkanEvery(
                     $"Vulkan.LastPresentRefresh.BlitRejected.{GetHashCode()}",
                     TimeSpan.FromSeconds(1),
                     "[Vulkan] Unable to refresh unwritten swapchain image from last present source: blit from '{0}' was not recorded.",
-                    sourceFrameBuffer.Name ?? "<unnamed fbo>");
+                    sourceFrameBuffer?.Name ?? presentationSource.ColorTexture?.Name ?? "<native source>");
                 return false;
             }
 
@@ -367,7 +337,7 @@ namespace XREngine.Rendering.Vulkan
             recordingState.SceneSwapchainWriters++;
             MarkSwapchainStaticWriter(ref recordingState,
                 "LastPresentSourceBlit",
-                $"refreshed acquired swapchain image from '{sourceFrameBuffer.Name ?? "<unnamed fbo>"}'",
+                $"refreshed acquired swapchain image from '{sourceFrameBuffer?.Name ?? presentationSource.ColorTexture?.Name ?? "<native source>"}'",
                 passIndex,
                 recordingState.Ops.Length,
                 blitContext.PipelineIdentity);

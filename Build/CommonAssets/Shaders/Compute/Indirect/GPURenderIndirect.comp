@@ -4,7 +4,6 @@
 layout(local_size_x = 256) in;
 
 // Constants
-const int COMMAND_FLOATS = 20;      // 80 bytes per command
 const int DRAW_COMMAND_UINTS = 5;   // count, instanceCount, firstIndex, baseVertex, baseInstance
 const uint LOD_TRANSITION_UINTS = 4u;
 const uint LOD_TRANSITION_ACTIVE = 1u;
@@ -17,14 +16,8 @@ const uint METADATA_UINTS = 4u;
 const uint DOMAIN_EXACT = 3u;
 const uint POLICY_TRADITIONAL_LAYER_SUPPRESSION = 1u;
 
-/* Command layout (float[20]):
- 0-3 BoundingSphere, 4 MeshID, 5 SubmeshID, 6 MaterialID, 7 InstanceCount,
- 8 RenderPass, 9 RenderIdentityID, 10 RenderDistance, 11 LayerMask,
- 12 LODLevel, 13 Flags, 14 LogicalMeshID, 15 TransformID, 16 SkinID,
- 17 StateClassID, 18 BoundsID, 19 DrawID */
-
 // === Buffers ===
-layout(std430, binding = 0) buffer CulledCommandsBuffer { float culled[]; };
+layout(std430, binding = 0) readonly buffer CulledCommandsBuffer { uint culled[]; };
 layout(std430, binding = 1) buffer IndirectDrawBuffer { uint indirectDraws[]; };
 layout(std430, binding = 2) buffer SubmeshDataBuffer { uint submeshData[]; }; // uint4 per submesh: indexCount, firstIndex, baseVertex, baseInstance
 layout(std430, binding = 3) buffer CulledCountBuffer
@@ -38,6 +31,14 @@ layout(std430, binding = 4) buffer DrawCountBuffer { uint DrawCount; };
 // Overflow flag specific to indirect build (distinct from culling overflow)
 layout(std430, binding = 5) buffer IndirectOverflowFlagBuffer { uint IndirectOverflowFlag; };
 layout(std430, binding = 10) readonly buffer LODTransitionBuffer { uint lodTransitions[]; };
+struct DrawMetadata
+{
+    uint DrawID; uint MeshID; uint SubmeshID; uint MaterialID;
+    uint TransformID; uint SkinID; uint RenderPassMask; uint LayerMask;
+    uint Flags; uint LodPolicy; uint StateClassID; uint InstanceCount;
+    uint RenderPass; uint RenderIdentityID; uint LogicalMeshID; uint BoundsID;
+};
+layout(std430, binding = 9) readonly buffer DrawMetadataBuffer { DrawMetadata Draws[]; };
 
 // Optional sorted key-index list: pairs [key, originalIndex]
 //layout(std430, binding = 6) buffer KeyIndexBuffer { uint keyIndexPairs[]; };
@@ -68,7 +69,6 @@ layout(std430, binding = 8) buffer StatsBuffer
     uint StatsTriangleCount;
 };
 
-layout(std430, binding = 9) readonly buffer CulledHotCommandsBuffer { uint culledHot[]; };
 
 struct GPUViewDescriptor
 {
@@ -101,7 +101,6 @@ uniform int MaxIndirectDraws;      // capacity in draws
 uniform uint StatsEnabled;         // 0 when stats buffer is unbound
 uniform int ActiveViewCount;
 uniform int SourceViewId;
-uniform int UseHotCommands;
 uniform uint ViewBatchSubmissionPolicy;
 uniform uint UseViewBatchClassification;
 uniform uint RejectExactTransparentMultiview;
@@ -213,28 +212,15 @@ void main()
     //        idx = keyIndexPairs[pairBase + 1u];
     //}
 
-    int base = int(idx) * COMMAND_FLOATS;
-    int hotBase = int(idx) * 20;
-
-    uint renderPass;
-    uint instanceCount;
-    uint meshID;
-    uint drawID;
-
-    if (UseHotCommands != 0)
-    {
-        renderPass = culledHot[hotBase + 8];
-        instanceCount = culledHot[hotBase + 7];
-        meshID = culledHot[hotBase + 4];
-        drawID = culledHot[hotBase + 14];
-    }
-    else
-    {
-        renderPass = floatBitsToUint(culled[base + 8]);
-        instanceCount = floatBitsToUint(culled[base + 7]);
-        meshID = floatBitsToUint(culled[base + 4]);
-        drawID = floatBitsToUint(culled[base + 19]);
-    }
+    if (idx >= uint(culled.length()))
+        return;
+    uint drawID = culled[idx];
+    if (drawID >= uint(Draws.length()))
+        return;
+    DrawMetadata draw = Draws[drawID];
+    uint renderPass = draw.RenderPass;
+    uint instanceCount = draw.InstanceCount;
+    uint meshID = draw.MeshID;
 
     if (UseViewBatchClassification != 0u)
     {
@@ -277,18 +263,14 @@ void main()
         return;
 
     uint transitionBase = drawID * LOD_TRANSITION_UINTS;
-    bool transitionActive = false;
-    uint previousMeshID = 0u;
+    uint selectedMeshID = meshID;
     if (transitionBase + 3u < uint(lodTransitions.length()))
     {
-        previousMeshID = lodTransitions[transitionBase + 0u];
+        selectedMeshID = lodTransitions[transitionBase + 0u];
         uint transitionFlags = lodTransitions[transitionBase + 2u];
-        float transitionProgress = clamp(uintBitsToFloat(lodTransitions[transitionBase + 3u]), 0.0, 1.0);
-        transitionActive = (transitionFlags & LOD_TRANSITION_ACTIVE) != 0u && previousMeshID != 0u && transitionProgress < 1.0;
+        if ((transitionFlags & LOD_TRANSITION_ACTIVE) == 0u || selectedMeshID == 0u)
+            selectedMeshID = meshID;
     }
 
-    if (transitionActive)
-        TryEmitDraw(previousMeshID, instanceCount, drawID, true);
-
-    TryEmitDraw(meshID, instanceCount, drawID, false);
+    TryEmitDraw(selectedMeshID, instanceCount, drawID, false);
 }

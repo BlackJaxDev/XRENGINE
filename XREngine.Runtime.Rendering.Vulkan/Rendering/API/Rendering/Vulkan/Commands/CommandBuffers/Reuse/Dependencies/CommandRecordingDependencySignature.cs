@@ -29,8 +29,22 @@ internal readonly record struct CommandRecordingDependencySignature(
     int FrameSlotVariant,
     ulong DescriptorPublicationGeneration,
     ulong DataPublicationGeneration,
-    ulong VolatileSuffixGeneration)
+    ulong VolatileSuffixGeneration,
+    VulkanRecordedRenderTargetSnapshot RenderTargetSnapshot = default,
+    RecordedPacketKey RecordedPacketKey = default)
 {
+    private readonly RecordedPacketKey _recordedPacketKey = RecordedPacketKey;
+
+    public RecordedPacketKey RecordedPacketKey
+    {
+        get => _recordedPacketKey;
+        init => _recordedPacketKey = value;
+    }
+
+    internal static ref readonly RecordedPacketKey GetRecordedPacketKeyReference(
+        in CommandRecordingDependencySignature signature)
+        => ref signature._recordedPacketKey;
+
     /// <summary>
     /// Captures the identity components of this dependency signature,
     /// which can be used for comparison with other signatures to determine
@@ -49,6 +63,9 @@ internal readonly record struct CommandRecordingDependencySignature(
         resourceGenerations.Add(SamplerAllocationGeneration);
         resourceGenerations.Add(DescriptorLayoutGeneration);
         resourceGenerations.Add(DescriptorSetGeneration);
+        ref readonly RecordedPacketKey recordedPacketKey =
+            ref GetRecordedPacketKeyReference(in this);
+        recordedPacketKey.AddIdentityComponents(ref resourceGenerations);
 
         FrameOpSignatureHasher renderScopeInheritance = new();
         renderScopeInheritance.Add(OutputPassAttachment);
@@ -100,7 +117,23 @@ internal readonly record struct CommandRecordingDependencySignature(
     public CommandRecordingDependencyMismatch Compare(in CommandRecordingDependencySignature current)
         => Compare(
             current,
-            commandChainPrimaryTopologyValidatedSeparately: false);
+            commandChainPrimaryTopologyValidatedSeparately: false,
+            compareResourcePlanGeneration: true);
+
+    /// <summary>
+    /// Compares dependencies for a command-chain secondary. Concrete packet and
+    /// native-resource identities remain recording dependencies, while the coarse
+    /// renderer-wide planning epoch is ignored because it can advance when an
+    /// unrelated logical resource or visibility cohort changes.
+    /// </summary>
+    /// <param name="current">The dependency signature to compare against.</param>
+    /// <returns>A mismatch for the first recording-visible dependency that changed.</returns>
+    public CommandRecordingDependencyMismatch CompareCommandChainSecondary(
+        in CommandRecordingDependencySignature current)
+        => Compare(
+            current,
+            commandChainPrimaryTopologyValidatedSeparately: false,
+            compareResourcePlanGeneration: false);
 
     /// <summary>
     /// Compares this dependency signature with another signature to determine if they are equivalent
@@ -113,7 +146,8 @@ internal readonly record struct CommandRecordingDependencySignature(
         in CommandRecordingDependencySignature current)
         => Compare(
             current,
-            commandChainPrimaryTopologyValidatedSeparately: true);
+            commandChainPrimaryTopologyValidatedSeparately: true,
+            compareResourcePlanGeneration: false);
 
     /// <summary>
     /// Compares this dependency signature with another signature to determine if they are equivalent
@@ -122,14 +156,26 @@ internal readonly record struct CommandRecordingDependencySignature(
     /// </summary>
     /// <param name="current">The dependency signature to compare against.</param>
     /// <param name="commandChainPrimaryTopologyValidatedSeparately">Indicates whether the command-chain primary topology is validated separately.</param>
+    /// <param name="compareResourcePlanGeneration">Indicates whether the coarse renderer-wide resource-plan epoch is itself a recording dependency.</param>
     /// <returns>A CommandRecordingDependencyMismatch indicating the differences between the signatures, if any.</returns>
     private CommandRecordingDependencyMismatch Compare(
         in CommandRecordingDependencySignature current,
-        bool commandChainPrimaryTopologyValidatedSeparately)
+        bool commandChainPrimaryTopologyValidatedSeparately,
+        bool compareResourcePlanGeneration)
     {
+        ref readonly RecordedPacketKey recordedPacketKey =
+            ref GetRecordedPacketKeyReference(in this);
+        ref readonly RecordedPacketKey currentRecordedPacketKey =
+            ref GetRecordedPacketKeyReference(in current);
+        if (!recordedPacketKey.Matches(in currentRecordedPacketKey))
+            return Binding(CommandRecordingDependencyField.RecordedPacketKey);
+
         if (!commandChainPrimaryTopologyValidatedSeparately &&
             OutputPassAttachment != current.OutputPassAttachment)
             return Structural(CommandRecordingDependencyField.OutputPassAttachment);
+
+        if (RenderTargetSnapshot != current.RenderTargetSnapshot)
+            return Binding(CommandRecordingDependencyField.RenderTargetSnapshot);
 
         if (!commandChainPrimaryTopologyValidatedSeparately &&
             RenderArea != current.RenderArea)
@@ -189,14 +235,13 @@ internal readonly record struct CommandRecordingDependencySignature(
             DescriptorSetGeneration != current.DescriptorSetGeneration)
             return Binding(CommandRecordingDependencyField.DescriptorSetGeneration);
 
-        // Command-chain primaries contain only pass boundaries, barriers, and
-        // vkCmdExecuteCommands calls. Their concrete topology is validated by the
-        // schedule/group signatures and their exact Vulkan image entry states are
-        // validated immediately before reuse. A renderer-wide planner revision can
-        // advance when streaming adds an unrelated logical resource; treating that
-        // coarse generation as a primary binding dependency turns an otherwise thin
-        // command chain into a full-frame re-record.
-        if (!commandChainPrimaryTopologyValidatedSeparately &&
+        // Command-chain primaries validate concrete topology separately, and
+        // secondaries compare exact packet/native-resource identities above. A
+        // renderer-wide planner revision can advance when streaming or camera
+        // visibility changes an unrelated logical resource; treating that coarse
+        // epoch as a binding dependency turns camera motion into a full-frame
+        // secondary re-record without improving native-resource safety.
+        if (compareResourcePlanGeneration &&
             ResourcePlanGeneration != current.ResourcePlanGeneration)
             return Binding(CommandRecordingDependencyField.ResourcePlanGeneration);
 

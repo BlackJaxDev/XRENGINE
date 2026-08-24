@@ -184,6 +184,9 @@ public static partial class EditorImGuiUI
 
     private static bool TryReadEffectiveSettingValue(EffectiveSettingsRow row, out object? value)
     {
+        if (TryReadResolvedExecutionTopologyValue(row.Name, out value))
+            return true;
+
         if (row.EffectiveProperty is not null)
             return TryReadPropertyValue(row.EffectiveProperty, null, out value);
 
@@ -192,6 +195,26 @@ public static partial class EditorImGuiUI
 
         value = null;
         return false;
+    }
+
+    private static bool TryReadResolvedExecutionTopologyValue(string settingName, out object? value)
+    {
+        value = null;
+        if (Engine.ExecutionTopology is not { } topology)
+            return false;
+
+        value = settingName switch
+        {
+            nameof(Engine.EffectiveSettings.GeneralWorkerThreadCount) => topology.GeneralWorkerThreadCount,
+            nameof(Engine.EffectiveSettings.GeneralWorkerThreadCap) => topology.Request.GeneralWorkerThreadCap,
+            nameof(Engine.EffectiveSettings.RenderWorkerThreadCount) => topology.RenderWorkerThreadCount,
+            nameof(Engine.EffectiveSettings.RenderWorkerThreadCap) => topology.Request.RenderWorkerThreadCap,
+            nameof(Engine.EffectiveSettings.ReservedForegroundThreadCount) => topology.ReservedForegroundThreadCount,
+            nameof(Engine.EffectiveSettings.AllowCpuOversubscription) => topology.AllowCpuOversubscription,
+            nameof(Engine.EffectiveSettings.RenderWorkerQos) => topology.RenderWorkerQos,
+            _ => null,
+        };
+        return value is not null;
     }
 
     private static bool TryReadPropertyValue(PropertyInfo property, object? owner, out object? value)
@@ -218,7 +241,7 @@ public static partial class EditorImGuiUI
 
     private static string ResolveEffectiveSettingSource(string settingName)
     {
-        string overridePropertyName = settingName + "Override";
+        string overridePropertyName = ResolveOverridePropertyName(settingName);
 
         if (TryResolveEnvironmentSettingSource(settingName, out string environmentSource))
             return environmentSource;
@@ -266,7 +289,7 @@ public static partial class EditorImGuiUI
 
     private static EffectiveSettingCascadeValues ResolveEffectiveSettingCascade(string settingName)
     {
-        string overridePropertyName = settingName + "Override";
+        string overridePropertyName = ResolveOverridePropertyName(settingName);
 
         return new EffectiveSettingCascadeValues(
             GlobalDefault: ResolveGlobalEngineDefaultValue(settingName),
@@ -275,6 +298,14 @@ public static partial class EditorImGuiUI
             UserSetting: ResolveUserSettingValue(settingName, overridePropertyName),
             EditorOverride: ResolveEditorOverrideValue(settingName, overridePropertyName));
     }
+
+    private static string ResolveOverridePropertyName(string settingName)
+        => settingName switch
+        {
+            nameof(Engine.EffectiveSettings.GeneralWorkerThreadCount) => nameof(UserSettings.JobWorkersOverride),
+            nameof(Engine.EffectiveSettings.GeneralWorkerThreadCap) => nameof(UserSettings.JobWorkerCapOverride),
+            _ => settingName + "Override",
+        };
 
     private static string ResolveGlobalEngineDefaultValue(string settingName)
         => TryFormatReadablePropertyValue(RuntimeEngine.Rendering.GlobalDefaultSettings, settingName, out string value)
@@ -352,8 +383,32 @@ public static partial class EditorImGuiUI
                 => TryResolveEnvironmentEnumSource<EVulkanRenderTargetMode>(XREngineEnvironmentVariables.VkRenderTargetMode, out source),
             nameof(Engine.EffectiveSettings.ForceMeshSubmissionStrategy)
                 => TryResolveMeshSubmissionStrategyEnvironmentSource(out source),
+            nameof(Engine.EffectiveSettings.GeneralWorkerThreadCount)
+                => TryResolveEnvironmentPresence(XREngineEnvironmentVariables.JobWorkers, out source),
+            nameof(Engine.EffectiveSettings.GeneralWorkerThreadCap)
+                => TryResolveEnvironmentPresence(XREngineEnvironmentVariables.JobWorkerCap, out source),
+            nameof(Engine.EffectiveSettings.RenderWorkerThreadCount)
+                => TryResolveEnvironmentPresence(XREngineEnvironmentVariables.RenderWorkerThreads, out source),
+            nameof(Engine.EffectiveSettings.RenderWorkerThreadCap)
+                => TryResolveEnvironmentPresence(XREngineEnvironmentVariables.RenderWorkerThreadCap, out source),
+            nameof(Engine.EffectiveSettings.ReservedForegroundThreadCount)
+                => TryResolveEnvironmentPresence(XREngineEnvironmentVariables.ReservedForegroundThreads, out source),
+            nameof(Engine.EffectiveSettings.AllowCpuOversubscription)
+                => TryResolveEnvironmentPresence(XREngineEnvironmentVariables.AllowCpuOversubscription, out source),
+            nameof(Engine.EffectiveSettings.RenderWorkerQos)
+                => TryResolveEnvironmentPresence(XREngineEnvironmentVariables.RenderWorkerQos, out source),
             _ => NoEnvironmentSource(out source),
         };
+    }
+
+    private static bool TryResolveEnvironmentPresence(string variableName, out string source)
+    {
+        source = string.Empty;
+        if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(variableName)))
+            return false;
+
+        source = "Environment";
+        return true;
     }
 
     private static bool TryResolveMeshSubmissionStrategyEnvironmentSource(out string source)
@@ -482,6 +537,14 @@ public static partial class EditorImGuiUI
             nameof(Engine.EffectiveSettings.JobQueueLimit) or
             nameof(Engine.EffectiveSettings.JobQueueWarningThreshold) => "Threading",
 
+            nameof(Engine.EffectiveSettings.GeneralWorkerThreadCount) or
+            nameof(Engine.EffectiveSettings.GeneralWorkerThreadCap) or
+            nameof(Engine.EffectiveSettings.RenderWorkerThreadCount) or
+            nameof(Engine.EffectiveSettings.RenderWorkerThreadCap) or
+            nameof(Engine.EffectiveSettings.ReservedForegroundThreadCount) or
+            nameof(Engine.EffectiveSettings.AllowCpuOversubscription) or
+            nameof(Engine.EffectiveSettings.RenderWorkerQos) => "Execution",
+
             nameof(Engine.EffectiveSettings.TickGroupedItemsInParallel) or
             nameof(Engine.EffectiveSettings.TargetUpdatesPerSecond) or
             nameof(Engine.EffectiveSettings.TargetFramesPerSecond) or
@@ -531,18 +594,19 @@ public static partial class EditorImGuiUI
     private static int GetCategoryOrder(string category)
         => category switch
         {
-            "Threading" => 0,
-            "Rendering" => 1,
-            "OpenGL" => 2,
-            "Vulkan" => 3,
-            "Performance" => 4,
-            "Technical" => 5,
-            "Networking" => 6,
-            "Debug" => 7,
-            "Audio" => 8,
-            "GPU Rendering" => 9,
-            "VR" => 10,
-            "Physics" => 11,
+            "Execution" => 0,
+            "Threading" => 1,
+            "Rendering" => 2,
+            "OpenGL" => 3,
+            "Vulkan" => 4,
+            "Performance" => 5,
+            "Technical" => 6,
+            "Networking" => 7,
+            "Debug" => 8,
+            "Audio" => 9,
+            "GPU Rendering" => 10,
+            "VR" => 11,
+            "Physics" => 12,
             _ => 20,
         };
 

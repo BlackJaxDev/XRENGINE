@@ -1,8 +1,6 @@
 namespace XREngine.Rendering.Vulkan;
 
-public unsafe partial class VulkanRenderer
-{
-    internal readonly record struct VulkanLifetimeRejectionDiagnostic(
+internal readonly record struct VulkanLifetimeRejectionDiagnostic(
         VulkanResourceLifetimeKey Resource,
         string Owner,
         ulong OldGeneration,
@@ -12,10 +10,9 @@ public unsafe partial class VulkanRenderer
         VulkanRetirementTicket RetirementTicket,
         EVulkanResourceLifetimeState State,
         string Reason)
-    {
-        public override string ToString()
-            => $"resource={Resource} owner={Owner} oldGeneration={OldGeneration} newGeneration={NewGeneration} " +
+{
+    public override string ToString()
+        => $"resource={Resource} owner={Owner} oldGeneration={OldGeneration} newGeneration={NewGeneration} " +
                $"output={Output} commandBuffer=0x{CommandBufferHandle:X} " +
-               $"retirementTicket={DescribeVulkanRetirementTicket(RetirementTicket)} state={State} reason={Reason}";
-    }
+               $"retirementTicket=gfx:{RetirementTicket.GraphicsSequence}/transfer:{RetirementTicket.TransferSequence}/other:{RetirementTicket.OtherSequence}/generation:{RetirementTicket.ResourceGeneration}/external:{RetirementTicket.ExternalOwnershipPending}/pins:{RetirementTicket.PinSet?.Count ?? 0} state={State} reason={Reason}";
 }

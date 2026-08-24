@@ -119,10 +119,12 @@ public sealed class OpenXrTimingPipelineContractTests
         string vulkanRendererOpenXr = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/OpenXR/VulkanRenderer.OpenXR.cs");
         string vulkanCommandBufferState = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferState.cs")
             + ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.OwnedCommandChainSecondaryPool.cs");
-        string vulkanCommandChainLowering = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandChainLowering.cs");
+        string vulkanCommandChainLowering = SourceContractWorkspace.ReadVulkanSourcesContaining(
+            "private Dictionary<CommandChainKey, CommandChain> GetCommandChainCache",
+            "private void DestroyCommandChainSecondaryCommandBuffer");
         string vkDataBuffer = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Buffers/VkDataBuffer.cs");
         string vulkanComputeDescriptors = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Descriptors/VulkanRenderer.ComputeDescriptors.cs");
-        string vulkanDynamicUniformRingBuffer = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Resources/Buffers/VulkanDynamicUniformRingBuffer.cs");
+        string vulkanMappedFrameArena = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Resources/Buffers/VulkanMappedFrameArena.cs");
         string vulkanResourceRetirement = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.ResourceRetirement.cs");
         string vulkanFrameLoop = ReadVulkanDesktopFrameLoopSources();
         string renderPipelineGpuProfiler = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/RenderPipelineGpuProfiler.cs");
@@ -244,7 +246,7 @@ public sealed class OpenXrTimingPipelineContractTests
         vulkanCommandBufferState.ShouldContain("MarkOpenXrPrimaryCommandBufferVariantsDirty();");
         vulkanCommandBufferState.ShouldContain("Array.Resize(ref _computeTransientResources, frameDataSlotCount);");
         vulkanCommandBufferState.ShouldContain("Array.Resize(ref _deferredSecondaryCommandBuffers, frameDataSlotCount);");
-        vulkanCommandBufferState.ShouldContain("EnsureDynamicUniformRingBufferCapacity(frameDataSlotCount);");
+        vulkanCommandBufferState.ShouldContain("EnsureMappedFrameArenaFrameSlotCapacity(frameDataSlotCount);");
         vulkanCommandBufferState.ShouldContain("EnsureFrameTimingSlotCapacity(frameDataSlotCount);");
         vulkanCommandBufferState.ShouldContain("private readonly Dictionary<ulong, OwnedCommandChainSecondaryPool> _ownedCommandChainSecondaryPools = new();");
         vulkanCommandBufferState.ShouldContain("DestroyTrackedCommandChainSecondaryPools();");
@@ -297,8 +299,8 @@ public sealed class OpenXrTimingPipelineContractTests
         vulkanFrameLoop.ShouldContain("Command buffer dirtied before submit - recovering timeline/present state");
         vulkanComputeDescriptors.ShouldContain("private void EnsureComputeDescriptorCacheCapacity");
         vulkanComputeDescriptors.ShouldContain("Array.Resize(ref _computeDescriptorCaches, imageCount);");
-        vulkanDynamicUniformRingBuffer.ShouldContain("private void EnsureDynamicUniformRingBufferCapacity");
-        vulkanDynamicUniformRingBuffer.ShouldContain("Array.Resize(ref _dynamicUniformRingBuffers, count);");
+        vulkanMappedFrameArena.ShouldContain("internal void EnsureFrameSlotCount(int requiredFrameSlots)");
+        vulkanMappedFrameArena.ShouldContain("Array.Resize(ref _chunks, requiredFrameSlots);");
 
         renderPipelineGpuProfiler.ShouldContain("private const ulong LiveSnapshotMergeWindowFrames");
         renderPipelineGpuProfiler.ShouldContain("FrameCapture snapshotFrame = CreateMergedSnapshotFrameNoLock(currentFrameId, best);");
@@ -855,7 +857,8 @@ public sealed class OpenXrTimingPipelineContractTests
         frameOpSignatures.ShouldContain("ComputeCommandBufferDataBufferSignature(indirect.IndirectBuffer)");
         frameOpSignatures.ShouldContain("indirectBuffer=0x{indirect.IndirectBuffer.BufferHandle?.Handle");
 
-        string commandChainLowering = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandChainLowering.cs");
+        string commandChainLowering = SourceContractWorkspace.ReadVulkanSourcesContaining(
+            "HashProgramBindingSnapshot(ref hash, snapshot, includeMutableFrameSourceDescriptors: true);");
         commandChainLowering.ShouldContain("HashProgramBindingSnapshot(ref hash, snapshot, includeMutableFrameSourceDescriptors: true);");
         commandChainLowering.ShouldContain("ComputeCommandBufferDataBufferSignature(indirect.IndirectBuffer)");
         commandChainLowering.ShouldContain("ComputeCommandBufferDataBufferSignature(meshTask.CountBuffer)");

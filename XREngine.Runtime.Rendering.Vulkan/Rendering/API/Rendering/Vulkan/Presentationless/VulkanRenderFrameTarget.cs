@@ -3,7 +3,7 @@ using Silk.NET.Vulkan;
 namespace XREngine.Rendering.Vulkan;
 
 /// <summary>Vulkan images and views owned by a presentation-independent frame target.</summary>
-internal readonly record struct VulkanRenderFrameTarget(
+public readonly record struct VulkanRenderFrameTarget(
     Image ColorImage,
     ImageView ColorView,
     Image DepthImage,
