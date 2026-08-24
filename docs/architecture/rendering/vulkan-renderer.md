@@ -478,6 +478,12 @@ Additional diagnostic flags are:
 | `XRE_VULKAN_COMMAND_CHAIN_BENCHMARK_FORCE_RERECORD=1` | Benchmark-only mode that forces every scheduled mesh-chain secondary to rerecord each frame. Use only for controlled serial/parallel dirty-recording comparisons. |
 | `XRE_VULKAN_COMMAND_CHAIN_MULTI_QUEUE=1` | Builds and validates queue-schedule sidecar metadata; execution still falls back to the graphics queue. |
 
+`XRE_VULKAN_RESIDENT_TEMPLATE_DEVICE_LOSS_INJECT=1` is a destructive,
+one-shot validation hook for the resident draw-template lifetime contract. It
+waits until at least one resident template exists, marks the Vulkan device
+terminally lost, and requires renderer/window recreation. Use it only in a
+named isolated editor session; it is not a recovery or fallback mode.
+
 Packet lowering is deterministic and sequential. The obsolete
 `XRE_VULKAN_PARALLEL_PACKET_BUILD` compatibility flag is no longer recognized;
 parallel native recording is controlled by the command-chain worker settings

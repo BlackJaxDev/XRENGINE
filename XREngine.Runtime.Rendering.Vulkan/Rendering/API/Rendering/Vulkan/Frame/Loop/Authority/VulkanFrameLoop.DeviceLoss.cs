@@ -11,6 +11,27 @@ namespace XREngine.Rendering.Vulkan;
 /// </summary>
 internal sealed partial class VulkanFrameLoop
 {
+    /// <summary>
+    /// Destructive, opt-in lifetime validation. The injection waits for a real
+    /// resident native template so teardown exercises detached table ownership,
+    /// frame-slot uses, and device-loss-aware dependency release together.
+    /// </summary>
+    private void InjectResidentTemplateDeviceLossIfRequested()
+    {
+        if (!_injectResidentTemplateDeviceLoss ||
+            _resourceRuntime.ResidentDrawTemplates.ResidentCount == 0 ||
+            Interlocked.Exchange(
+                ref _residentTemplateDeviceLossInjected,
+                1) != 0)
+        {
+            return;
+        }
+
+        throw CreateDeviceLostException(
+            "ResidentTemplateLifetimeFaultInjection",
+            Result.ErrorDeviceLost);
+    }
+
     internal void MarkDeviceLost(string? reason, string? operation, Result result)
     {
         DeviceBootstrap.VulkanNativeDeviceFault? nativeFault =

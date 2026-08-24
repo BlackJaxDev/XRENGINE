@@ -143,6 +143,9 @@ internal sealed partial class VulkanFrameLoop
         int requestCount = MeshOperationRequests.CaptureTo(
             emitter,
             _meshOperationRequestScratch);
+        if (requestCount < 0)
+            throw new InvalidOperationException(
+                "The bounded OpenXR mesh request cohort was rejected atomically during capture.");
         MaterializeCapturedOpenXrMeshRequests(requestCount);
     }
 
@@ -158,6 +161,9 @@ internal sealed partial class VulkanFrameLoop
             emitter,
             in emission,
             _meshOperationRequestScratch);
+        if (requestCount < 0)
+            throw new InvalidOperationException(
+                "The bounded OpenXR eye mesh request cohort was rejected atomically during capture.");
         MaterializeCapturedOpenXrMeshRequests(requestCount);
     }
 

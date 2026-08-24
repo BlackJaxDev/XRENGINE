@@ -114,6 +114,7 @@ namespace XREngine.Rendering.Commands
                 
                 // Update the render count to match the updating count
                 TotalCommandCount = _updatingCommandCount;
+                PublishAdvancedResidentScene();
 
                 if (_useInternalBvh && !_commandAabbBackfillRequired)
                     _commandAabbPublishedContentVersion = _lastSwappedCommandsContentVersion;

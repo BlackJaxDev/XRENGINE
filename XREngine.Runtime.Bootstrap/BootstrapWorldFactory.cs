@@ -178,12 +178,12 @@ public static class BootstrapWorldFactory
     private static void QueueStartupShadowAtlasReset(XRWorld world)
     {
         Engine.EnqueueMainThreadTask(
-            () => ResetStartupShadowAtlasState(world),
-            "BootstrapWorldFactory: reset startup shadow atlas state",
+            () => RequestStartupShadowAtlasReset(world),
+            "BootstrapWorldFactory: request startup shadow atlas reset",
             RenderThreadJobKind.RenderPipelineResource);
     }
 
-    private static void ResetStartupShadowAtlasState(XRWorld world)
+    private static void RequestStartupShadowAtlasReset(XRWorld world)
     {
         if (!XRWorldInstance.WorldInstances.TryGetValue(world, out XRWorldInstance? worldInstance))
         {
@@ -192,12 +192,12 @@ public static class BootstrapWorldFactory
         }
 
         ShadowAtlasManager shadowAtlas = worldInstance.Lights.ShadowAtlas;
-        shadowAtlas.ResetAtlasKind(EShadowAtlasKind.Directional);
-        shadowAtlas.ResetAtlasKind(EShadowAtlasKind.Spot);
-        shadowAtlas.ResetAtlasKind(EShadowAtlasKind.Point);
+        shadowAtlas.RequestAtlasKindReset(EShadowAtlasKind.Directional);
+        shadowAtlas.RequestAtlasKindReset(EShadowAtlasKind.Spot);
+        shadowAtlas.RequestAtlasKindReset(EShadowAtlasKind.Point);
         shadowAtlas.RequestRepack();
 
-        Debug.Out("[BootstrapWorldFactory] Reset shadow atlas state after startup model imports completed.");
+        Debug.Out("[BootstrapWorldFactory] Requested a shadow atlas reset after startup model imports completed.");
     }
 
     public static XRWorld CreateDefaultEmptyWorld(bool setUI, bool isServer)

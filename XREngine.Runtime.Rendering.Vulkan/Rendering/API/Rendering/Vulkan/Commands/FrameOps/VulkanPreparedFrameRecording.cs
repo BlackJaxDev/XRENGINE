@@ -51,6 +51,14 @@ internal sealed class VulkanPreparedFrameRecording
     private Silk.NET.Vulkan.Rect2D[] _scissors = new Silk.NET.Vulkan.Rect2D[64];
     private VulkanPreparedDescriptorImagePayload[] _descriptorImagePayloads = new VulkanPreparedDescriptorImagePayload[64];
     private VulkanPreparedDescriptorImageRequirement[] _descriptorImageRequirements = new VulkanPreparedDescriptorImageRequirement[128];
+    private readonly AdvancedSharedGpuSceneDatabase?[] _canonicalPublicationDatabases =
+        new AdvancedSharedGpuSceneDatabase[VulkanMeshOperationRequestQueue.Capacity];
+    private readonly AdvancedGpuScenePublicationReference[] _canonicalPublicationReferences =
+        new AdvancedGpuScenePublicationReference[VulkanMeshOperationRequestQueue.Capacity];
+    private readonly AdvancedGpuScenePublicationLease[] _canonicalPublicationLeases =
+        new AdvancedGpuScenePublicationLease[VulkanMeshOperationRequestQueue.Capacity];
+    private readonly VulkanResidentDrawTemplate?[] _residentTemplateUses =
+        new VulkanResidentDrawTemplate[VulkanMeshOperationRequestQueue.Capacity];
     private VulkanPreparedCommandChain[] _commandChains =
         new VulkanPreparedCommandChain[16];
     // Prepared chains retain their packet snapshots independently from the
@@ -62,6 +70,8 @@ internal sealed class VulkanPreparedFrameRecording
     private int _meshDrawColdDataCount, _descriptorBindingCount, _dynamicOffsetCount, _descriptorHeapPushDwordCount, _vertexBufferCount, _frameDataPayloadHandleCount, _viewportCount, _scissorCount, _descriptorImagePayloadCount, _descriptorImageRequirementCount;
     private int _meshDrawHighWater, _descriptorBindingHighWater, _dynamicOffsetHighWater, _descriptorHeapDwordHighWater, _vertexBufferHighWater, _framePayloadHighWater, _viewportHighWater, _scissorHighWater, _descriptorImagePayloadHighWater, _descriptorImageRequirementHighWater;
     private int _commandChainCount;
+    private int _canonicalPublicationLeaseCount;
+    private int _residentTemplateUseCount;
     private bool _hasPrimaryPlan;
 
     internal int FrameSlot { get; private set; } = -1;
@@ -421,8 +431,163 @@ internal sealed class VulkanPreparedFrameRecording
            count > 0 &&
            startIndex <= _meshDrawCount - count;
 
+    /// <summary>
+    /// Retains the canonical scene publication through this frame slot's GPU
+    /// completion. The fixed lease stream makes exhaustion a producer-visible
+    /// preparation failure before the recording is sealed.
+    /// </summary>
+    internal bool TryRetainCanonicalPublication(
+        in AdvancedGpuSceneDrawIdentitySnapshot canonicalDraw,
+        out string reason)
+    {
+        if (IsFrozen)
+            throw new InvalidOperationException(
+                "Canonical publications must be retained before prepared recording is frozen.");
+        if (!canonicalDraw.IsValid || canonicalDraw.Database is not { } database)
+        {
+            reason = "canonical draw identity is invalid";
+            return false;
+        }
+
+        AdvancedGpuScenePublicationReference publication = canonicalDraw.Publication;
+        for (int index = 0; index < _canonicalPublicationLeaseCount; ++index)
+        {
+            if (ReferenceEquals(_canonicalPublicationDatabases[index], database) &&
+                _canonicalPublicationReferences[index] == publication)
+            {
+                reason = "Ready";
+                return true;
+            }
+        }
+
+        if (_canonicalPublicationLeaseCount >= _canonicalPublicationLeases.Length)
+        {
+            reason =
+                $"canonical publication lease capacity {_canonicalPublicationLeases.Length} was exhausted";
+            return false;
+        }
+        if (!database.TryAcquirePublicationLease(
+                publication,
+                EAdvancedGpuScenePublicationPinKind.Gpu,
+                out AdvancedGpuScenePublicationLease lease))
+        {
+            reason = "canonical publication is no longer available for GPU retention";
+            return false;
+        }
+
+        int slot = _canonicalPublicationLeaseCount++;
+        _canonicalPublicationDatabases[slot] = database;
+        _canonicalPublicationReferences[slot] = publication;
+        _canonicalPublicationLeases[slot] = lease;
+        reason = "Ready";
+        return true;
+    }
+
+    /// <summary>
+    /// Adopts one use already acquired from the resident table. Duplicate draw
+    /// references collapse to one frame-owned use without allocating.
+    /// </summary>
+    internal bool TryAdoptResidentTemplateUse(
+        VulkanResidentDrawTemplate template,
+        out string reason)
+    {
+        ArgumentNullException.ThrowIfNull(template);
+        if (IsFrozen)
+            throw new InvalidOperationException(
+                "Resident template uses must be retained before prepared recording is frozen.");
+
+        for (int index = 0; index < _residentTemplateUseCount; ++index)
+        {
+            if (!ReferenceEquals(_residentTemplateUses[index], template))
+                continue;
+
+            template.ReleaseUse();
+            reason = "Ready";
+            return true;
+        }
+        if (_residentTemplateUseCount == _residentTemplateUses.Length)
+        {
+            template.ReleaseUse();
+            reason =
+                $"resident template use capacity {_residentTemplateUses.Length} was exhausted";
+            return false;
+        }
+
+        _residentTemplateUses[_residentTemplateUseCount++] = template;
+        reason = "Ready";
+        return true;
+    }
+
+    /// <summary>
+    /// Moves CPU-preparation leases into frame-slot retirement before their
+    /// secondary command buffers are executed into the primary.
+    /// </summary>
+    internal bool TryTransferRetainedLifetimesTo(
+        VulkanResidentTemplateFrameSlotLifetimes destination,
+        out string reason)
+    {
+        ArgumentNullException.ThrowIfNull(destination);
+        if (FrameSlot < 0)
+        {
+            reason = "prepared recording has no frame-slot owner";
+            return false;
+        }
+
+        for (int index = 0; index < _canonicalPublicationLeaseCount; ++index)
+        {
+            AdvancedSharedGpuSceneDatabase database =
+                _canonicalPublicationDatabases[index]
+                ?? throw new InvalidOperationException(
+                    "Prepared canonical publication database ownership is missing.");
+            if (!destination.TryAdoptCanonicalPublication(
+                    FrameSlot,
+                    database,
+                    _canonicalPublicationReferences[index],
+                    ref _canonicalPublicationLeases[index]))
+            {
+                reason = "frame-slot canonical publication retirement capacity was exhausted";
+                return false;
+            }
+            _canonicalPublicationDatabases[index] = null;
+            _canonicalPublicationReferences[index] = default;
+        }
+        _canonicalPublicationLeaseCount = 0;
+
+        for (int index = 0; index < _residentTemplateUseCount; ++index)
+        {
+            VulkanResidentDrawTemplate template = _residentTemplateUses[index]
+                ?? throw new InvalidOperationException(
+                    "Prepared resident template use ownership is missing.");
+            if (!destination.TryAdoptResidentTemplate(FrameSlot, template))
+            {
+                reason = "frame-slot resident template retirement capacity was exhausted";
+                return false;
+            }
+            _residentTemplateUses[index] = null;
+        }
+        _residentTemplateUseCount = 0;
+        reason = "Ready";
+        return true;
+    }
+
     internal void Reset()
     {
+        for (int index = 0; index < _residentTemplateUseCount; ++index)
+        {
+            _residentTemplateUses[index]?.ReleaseUse();
+            _residentTemplateUses[index] = null;
+        }
+        _residentTemplateUseCount = 0;
+
+        for (int index = 0; index < _canonicalPublicationLeaseCount; ++index)
+        {
+            _canonicalPublicationLeases[index].Dispose();
+            _canonicalPublicationLeases[index] = default;
+            _canonicalPublicationDatabases[index] = null;
+            _canonicalPublicationReferences[index] = default;
+        }
+        _canonicalPublicationLeaseCount = 0;
+
         if (_meshDrawCount > 0)
             Array.Clear(_meshDraws, 0, _meshDrawCount);
 

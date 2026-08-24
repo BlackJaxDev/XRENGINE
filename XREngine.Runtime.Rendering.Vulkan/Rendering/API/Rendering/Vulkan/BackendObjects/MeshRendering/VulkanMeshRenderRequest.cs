@@ -1,5 +1,6 @@
 using System.Numerics;
 using XREngine.Data.Rendering;
+using XREngine.Rendering.Commands;
 using XREngine.Rendering.Models.Materials;
 
 namespace XREngine.Rendering.Vulkan;
@@ -29,4 +30,6 @@ internal readonly record struct VulkanMeshRenderRequest(
     uint Instances,
     uint ExpandedInstances,
     EMeshBillboardMode BillboardMode,
-    bool ForceNoStereo);
+    bool ForceNoStereo,
+    AdvancedGpuSceneDrawIdentitySnapshot CanonicalDrawIdentitySnapshot,
+    VulkanResidentDrawTemplateHandle ResidentTemplateHandle);

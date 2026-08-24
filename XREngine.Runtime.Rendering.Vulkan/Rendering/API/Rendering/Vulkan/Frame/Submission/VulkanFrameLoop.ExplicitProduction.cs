@@ -71,6 +71,7 @@ internal sealed partial class VulkanFrameLoop
                 throw new InvalidOperationException($"Explicit frame slot {planIndex} has no reusable primary plan.");
             PublishFrameSlot(planIndex);
             uint frameSlot = lease.Target.FrameSlotIndex;
+            ResourceRuntime.ResidentTemplateFrameSlotLifetimes.ReleaseFrameSlot(planIndex);
             mappedFrameArena = MappedFrameArena;
             mappedFrameGeneration = mappedFrameArena?.Generation ?? 0UL;
             frameDataArena = FrameDataArena;

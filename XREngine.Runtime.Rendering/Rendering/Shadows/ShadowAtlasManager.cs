@@ -342,6 +342,9 @@ public sealed partial class ShadowAtlasManager
     private bool _directionalGroupedFrame;
     private bool _directionalSequentialFallbackFrame;
     private bool _repackRequested;
+    // Any thread may publish maintenance bits; only the planning thread consumes them.
+    private int _pendingAtlasResetMask;
+    private int _pendingRepackRequest;
     private ShadowAtlasSolveDiagnosticsBuilder _solveDiagnostics;
     private ShadowAtlasSolveDiagnostics _lastSolveDiagnostics;
     private int _publishedRenderPlanIndex;
@@ -467,6 +470,8 @@ public sealed partial class ShadowAtlasManager
         _queueOverflowCount = 0;
         _tilesScheduledThisFrame = 0;
         DrainTileCompletions();
+        // Reset after reconciling prior completions so stale completions cannot repopulate cleared atlas state.
+        ConsumePendingAtlasMaintenanceRequests();
         _requests.Clear();
         _requestIndexByKey.Clear();
         _frameAllocations.Clear();
@@ -2689,11 +2694,37 @@ public sealed partial class ShadowAtlasManager
         _fallbackFrameId = 0u;
         _nextRenderPlanId = 0u;
         _repackRequested = false;
+        Interlocked.Exchange(ref _pendingAtlasResetMask, 0);
+        Interlocked.Exchange(ref _pendingRepackRequest, 0);
         ResetResources();
     }
 
-    public void ResetAtlasKind(EShadowAtlasKind atlasKind)
+    /// <summary>
+    /// Requests that one atlas kind be reset at the next planning-thread frame boundary.
+    /// </summary>
+    public void RequestAtlasKindReset(EShadowAtlasKind atlasKind)
+        => Interlocked.Or(ref _pendingAtlasResetMask, GetAtlasResetMask(atlasKind));
+
+    private void ConsumePendingAtlasMaintenanceRequests()
     {
+        AssertPlanningThread();
+
+        int resetMask = Interlocked.Exchange(ref _pendingAtlasResetMask, 0);
+        if ((resetMask & GetAtlasResetMask(EShadowAtlasKind.Directional)) != 0)
+            ResetAtlasKindOnPlanningThread(EShadowAtlasKind.Directional);
+        if ((resetMask & GetAtlasResetMask(EShadowAtlasKind.Point)) != 0)
+            ResetAtlasKindOnPlanningThread(EShadowAtlasKind.Point);
+        if ((resetMask & GetAtlasResetMask(EShadowAtlasKind.Spot)) != 0)
+            ResetAtlasKindOnPlanningThread(EShadowAtlasKind.Spot);
+
+        if (Interlocked.Exchange(ref _pendingRepackRequest, 0) != 0)
+            _repackRequested = true;
+    }
+
+    private void ResetAtlasKindOnPlanningThread(EShadowAtlasKind atlasKind)
+    {
+        AssertPlanningThread();
+
         _residentRemovalScratch.Clear();
         foreach (var pair in _residentAllocations)
         {
@@ -2764,7 +2795,6 @@ public sealed partial class ShadowAtlasManager
 
         AdvancePublicationGenerations(layoutChanged: true, contentChanged: true, storageChanged: true);
         _publishedStorageSignature = CalculateStorageSignature();
-        _repackRequested = false;
         _lastSolveDiagnostics = default;
     }
 
@@ -2804,7 +2834,16 @@ public sealed partial class ShadowAtlasManager
     }
 
     public void RequestRepack()
-        => _repackRequested = true;
+        => Interlocked.Exchange(ref _pendingRepackRequest, 1);
+
+    private static int GetAtlasResetMask(EShadowAtlasKind atlasKind)
+        => atlasKind switch
+        {
+            EShadowAtlasKind.Directional => 1 << 0,
+            EShadowAtlasKind.Point => 1 << 1,
+            EShadowAtlasKind.Spot => 1 << 2,
+            _ => throw new ArgumentOutOfRangeException(nameof(atlasKind), atlasKind, "Unknown shadow atlas kind."),
+        };
 
     public static uint NormalizeTileResolution(uint requested, uint minimum, uint maximum, uint pageSize)
     {

@@ -501,6 +501,13 @@ internal sealed partial class VulkanFrameLoop
                 _meshOperationRequestScratch);
         }
 
+        if (requestCount < 0)
+        {
+            deferredReason =
+                "The bounded mesh request cohort was rejected atomically before materialization.";
+            return false;
+        }
+
         return MaterializeQueuedMeshRenderRequests(
             requestCount,
             allowPreparedCohort,
@@ -523,6 +530,8 @@ internal sealed partial class VulkanFrameLoop
             return true;
 
         NormalizeQueuedMeshRenderRequests(requestCount);
+        ApplyResidentTemplateProjectionDeltas(requestCount);
+        InjectResidentTemplateDeviceLossIfRequested();
 
         long coldPreparationTicks = 0;
         int deferredRequestCount = 0;
@@ -562,6 +571,11 @@ internal sealed partial class VulkanFrameLoop
             using VulkanCpuStageScope cohortStage = new(
                 _telemetry,
                 EVulkanCpuStage.FrameOpCohort);
+            if (TryStageResidentMeshTemplates(requestCount, out deferredReason))
+            {
+                _meshOperationRequestScratch.AsSpan(0, requestCount).Clear();
+                return true;
+            }
             stagedPreparedCohort = TryStagePreparedMeshOperationCohort(
                 requestCount,
                 in materializationSnapshot,
@@ -815,10 +829,18 @@ internal sealed partial class VulkanFrameLoop
     /// </summary>
     private void NormalizeQueuedMeshRenderRequests(int requestCount)
     {
+        uint requiredTemplateCapacity =
+            _resourceRuntime.ResidentDrawTemplates.PrimaryCapacity;
         for (int index = 0; index < requestCount; index++)
         {
             ref VulkanMeshRenderRequest request =
                 ref _meshOperationRequestScratch[index];
+            AdvancedGpuHandle canonicalHandle =
+                request.CanonicalDrawIdentitySnapshot.Primary.Handle;
+            if (canonicalHandle.IsValid)
+                requiredTemplateCapacity = Math.Max(
+                    requiredTemplateCapacity,
+                    canonicalHandle.Index);
             XRRenderPipelineInstance? pipeline = request.Pipeline;
             if (pipeline is null)
                 continue;
@@ -834,6 +856,46 @@ internal sealed partial class VulkanFrameLoop
                 Context = context,
                 Producer = producer,
             };
+        }
+
+        if (requiredTemplateCapacity >
+            _resourceRuntime.ResidentDrawTemplates.PrimaryCapacity)
+        {
+            uint grownCapacity =
+                _resourceRuntime.ResidentDrawTemplates.PrimaryCapacity;
+            while (grownCapacity < requiredTemplateCapacity &&
+                   grownCapacity <= uint.MaxValue / 2u)
+            {
+                grownCapacity *= 2u;
+            }
+            _ = _resourceRuntime.ResidentDrawTemplates.GrowAtBoundary(
+                Math.Max(grownCapacity, requiredTemplateCapacity));
+        }
+    }
+
+    /// <summary>
+    /// Consumes each canonical package journal once on the render thread before
+    /// any resident lookup. Structural draw mutations detach the exact primary
+    /// slot; data-only owners remain generation-driven and do not rebuild native
+    /// templates.
+    /// </summary>
+    private void ApplyResidentTemplateProjectionDeltas(int requestCount)
+    {
+        for (int index = 0; index < requestCount; ++index)
+        {
+            XRRenderPipelineInstance? pipeline =
+                _meshOperationRequestScratch[index].Pipeline;
+            if (pipeline is null)
+                continue;
+
+            BackendReadyFramePackage package =
+                pipeline.ActiveMeshRenderCommands.RenderingBackendReadyPackage;
+            BackendReadyCanonicalScenePublication publication =
+                package.CanonicalScenePublication;
+            _resourceRuntime.ResidentDrawTemplates.ApplyProjectionDeltas(
+                publication.DatabaseEpoch,
+                publication.Sequence,
+                package.TemplateProjectionDeltas);
         }
     }
 
@@ -1038,6 +1100,124 @@ internal sealed partial class VulkanFrameLoop
         }
 
         return true;
+    }
+
+    /// <summary>
+    /// Projects a complete stable request cohort through direct canonical slots.
+    /// A miss leaves the retained cohort/full-materialization compatibility path
+    /// untouched; a hit never hashes, compares structure, or reacquires the
+    /// persistent program-binding artifact.
+    /// </summary>
+    private bool TryStageResidentMeshTemplates(
+        int requestCount,
+        out string deferredReason)
+    {
+        deferredReason = string.Empty;
+        if (requestCount <= 0 ||
+            _frameOperationQueue.CurrentThread.RenderQueryBracketDepth != 0)
+        {
+            return false;
+        }
+
+        for (int index = 0; index < requestCount; ++index)
+        {
+            ref readonly VulkanMeshRenderRequest request =
+                ref _meshOperationRequestScratch[index];
+            if (!request.Renderer.TryGetResidentDrawTemplate(
+                    request,
+                    out VulkanResidentDrawTemplateHandle handle,
+                    out VulkanResidentDrawTemplate? template) ||
+                template is null)
+            {
+                _residentTemplateHitScratch.AsSpan(0, index).Clear();
+                _residentTemplateHandleScratch.AsSpan(0, index).Clear();
+                return false;
+            }
+
+            _residentTemplateHitScratch[index] = template;
+            _residentTemplateHandleScratch[index] = handle;
+        }
+
+        _preparedMeshIngress.Clear();
+        XRRenderPipelineInstance? scopedPipeline = null;
+        XRCamera? scopedCamera = null;
+        IDisposable? pipelineScope = null;
+        IDisposable? cameraScope = null;
+        bool published = false;
+        try
+        {
+            for (int index = 0; index < requestCount; ++index)
+            {
+                ref readonly VulkanMeshRenderRequest request =
+                    ref _meshOperationRequestScratch[index];
+                VulkanResidentDrawTemplate template =
+                    _residentTemplateHitScratch[index]!;
+                XRRenderPipelineInstance pipeline = request.Pipeline!;
+                XRCamera? camera = pipeline.LastRenderingCamera ??
+                    pipeline.LastSceneCamera;
+                if (!ReferenceEquals(scopedPipeline, pipeline) ||
+                    !ReferenceEquals(scopedCamera, camera))
+                {
+                    cameraScope?.Dispose();
+                    pipelineScope?.Dispose();
+                    pipelineScope = RuntimeRenderingHostServices.Diagnostics
+                        .PushRenderingPipeline(pipeline);
+                    cameraScope = pipeline.RenderState.PushRenderingCamera(camera);
+                    scopedPipeline = pipeline;
+                    scopedCamera = camera;
+                }
+
+                PendingMeshDraw draw = template.NativeState.DrawTemplate with
+                {
+                    ModelMatrix = request.ModelMatrix,
+                    PreviousModelMatrix = request.PreviousModelMatrix,
+                    MaterialOverride = request.ResolvedMaterial.Material,
+                    Instances = request.ExpandedInstances,
+                    BillboardMode = request.BillboardMode,
+                    TransformId = request.TransformId,
+                    ViewSnapshot = request.ViewSnapshot,
+                    ShadowCasterRelevance = request.ShadowCasterRelevance,
+                    CanonicalDrawIdentitySnapshot =
+                        request.CanonicalDrawIdentitySnapshot,
+                    ResidentTemplateHandle =
+                        _residentTemplateHandleScratch[index],
+                };
+                draw = draw with
+                {
+                    AutoUniformPublication =
+                        VulkanAutoUniformPublicationSnapshot.Capture(
+                            draw,
+                            pipeline),
+                };
+                if (!_preparedMeshIngress.TryAppend(
+                        request.PassIndex,
+                        request.Producer.Target,
+                        draw,
+                        request.Context,
+                        preserveSubmissionOrder: false,
+                        isDynamicUi: false))
+                {
+                    deferredReason =
+                        "Resident mesh templates exceeded prepared-ingress capacity before sealing.";
+                    return false;
+                }
+            }
+
+            _preparedMeshIngress.MarkCohortHit(
+                reusedOperationCount: requestCount,
+                legacyHoleMaterializationCount: 0);
+            published = true;
+            return true;
+        }
+        finally
+        {
+            _residentTemplateHitScratch.AsSpan(0, requestCount).Clear();
+            _residentTemplateHandleScratch.AsSpan(0, requestCount).Clear();
+            if (!published)
+                _preparedMeshIngress.Clear();
+            cameraScope?.Dispose();
+            pipelineScope?.Dispose();
+        }
     }
 
     private void PublishPreparedMeshIngressCohortHit()

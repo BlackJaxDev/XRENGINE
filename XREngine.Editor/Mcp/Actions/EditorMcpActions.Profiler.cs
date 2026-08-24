@@ -509,6 +509,14 @@ namespace XREngine.Editor.Mcp
                             prepared_mesh_operation_full_materializations = VulkanStats.VulkanPreparedMeshOperationFullMaterializations,
                             prepared_mesh_operation_reuses = VulkanStats.VulkanPreparedMeshOperationReuses,
                             prepared_mesh_operation_legacy_hole_materializations = VulkanStats.VulkanPreparedMeshOperationLegacyHoleMaterializations,
+                            resident_draw_template_hits = VulkanStats.VulkanResidentDrawTemplateHits,
+                            resident_draw_template_misses = VulkanStats.VulkanResidentDrawTemplateMisses,
+                            resident_draw_template_creates = VulkanStats.VulkanResidentDrawTemplateCreates,
+                            resident_draw_template_replacements = VulkanStats.VulkanResidentDrawTemplateReplacements,
+                            resident_draw_template_evictions = VulkanStats.VulkanResidentDrawTemplateEvictions,
+                            resident_draw_template_structural_comparisons = VulkanStats.VulkanResidentDrawTemplateStructuralComparisons,
+                            resident_draw_template_dependency_rejects = VulkanStats.VulkanResidentDrawTemplateDependencyRejects,
+                            resident_draw_template_capacity_failures = VulkanStats.VulkanResidentDrawTemplateCapacityFailures,
                         },
                         binding_data = new
                         {

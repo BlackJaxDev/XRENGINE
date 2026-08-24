@@ -1171,7 +1171,12 @@ namespace XREngine.Rendering
                 Height,
                 InternalWidth,
                 InternalHeight);
-            commandCollection.PrepareBackendReadyFramePackage(identity);
+            commandCollection.PrepareBackendReadyFramePackage(
+                identity,
+                World?.VisualScene?.GPUCommands,
+                Camera,
+                InternalWidth,
+                InternalHeight);
         }
 
         private static int ResolveRenderGraphGeneration(

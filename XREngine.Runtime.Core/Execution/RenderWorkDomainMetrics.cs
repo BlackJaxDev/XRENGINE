@@ -25,4 +25,24 @@ public readonly record struct RenderWorkDomainMetrics(
     long EmptyWakeCount,
     long QueueOverflowCount,
     int QueueHighWaterMark,
-    long TotalWaitTicks);
+    long TotalWaitTicks,
+    long BuildOperationCount,
+    long DispatchOperationCount,
+    long ExecuteOperationCount,
+    long MergeOperationCount,
+    long BuildAllocatedBytes,
+    long DispatchAllocatedBytes,
+    long ExecuteAllocatedBytes,
+    long MergeAllocatedBytes)
+{
+    /// <summary>
+    /// True when the observed scheduler-owned stages added no managed bytes
+    /// between two snapshots. Executor-owned allocation is included in execute;
+    /// merge covers the complete join/wait interval and pooled lease return.
+    /// </summary>
+    public bool HasNoManagedAllocationsSince(in RenderWorkDomainMetrics baseline)
+        => BuildAllocatedBytes == baseline.BuildAllocatedBytes &&
+           DispatchAllocatedBytes == baseline.DispatchAllocatedBytes &&
+           ExecuteAllocatedBytes == baseline.ExecuteAllocatedBytes &&
+           MergeAllocatedBytes == baseline.MergeAllocatedBytes;
+}

@@ -248,6 +248,13 @@ public static class XREngineEnvironmentVariables
     public const string VulkanDescriptorFingerprintDiag = "XRE_VULKAN_DESCRIPTOR_FINGERPRINT_DIAG";
     public const string VulkanMaterialBindingDiag = "XRE_VULKAN_MATERIAL_BINDING_DIAG";
     public const string VulkanRecordingDiag = "XRE_VULKAN_RECORDING_DIAG";
+
+    /// <summary>
+    /// One-shot destructive validation hook that marks the Vulkan device lost
+    /// after at least one resident draw template has been published.
+    /// </summary>
+    public const string VulkanResidentTemplateDeviceLossInject =
+        "XRE_VULKAN_RESIDENT_TEMPLATE_DEVICE_LOSS_INJECT";
     public const string VulkanRecordingProfileDetail = "XRE_VULKAN_RECORDING_PROFILE_DETAIL";
     public const string VulkanCommandBufferLabels = "XRE_VULKAN_COMMAND_BUFFER_LABELS";
     public const string VulkanCommandChains = "XRE_VULKAN_COMMAND_CHAINS";

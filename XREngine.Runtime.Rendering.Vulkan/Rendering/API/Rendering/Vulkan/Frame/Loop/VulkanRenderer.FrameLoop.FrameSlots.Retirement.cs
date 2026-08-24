@@ -35,6 +35,8 @@ namespace XREngine.Rendering.Vulkan
                 ResourceRuntime.NotifyTimingQueryPoolsCompleted(completedQueries);
             }
 
+            ResourceRuntime.ResidentTemplateFrameSlotLifetimes.ReleaseFrameSlot(
+                frameSlot);
             _commandRuntime.DrainInvalidatedCommandBufferRecordings(
                 Api, ResourceRuntime);
             _commandRuntime.DrainRetiredSynchronousSubmissions();

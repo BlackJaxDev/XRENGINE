@@ -1601,6 +1601,15 @@ namespace XREngine.Rendering.Vulkan
                         executionBuffers,
                         secondaryCount);
 
+                    if (!batch.PreparedFrame.TryTransferRetainedLifetimesTo(
+                            ResourceRuntime.ResidentTemplateFrameSlotLifetimes,
+                            out string lifetimeTransferReason))
+                    {
+                        LogScheduledMeshCommandChainPreparationFallback(
+                            lifetimeTransferReason);
+                        return false;
+                    }
+
                     BeginRenderPassForTarget(ref recordingState, firstTarget, passIndex, firstContext, secondaryContents: true);
                     if (!ActiveMeshSecondaryInheritanceMatches(ref recordingState,
                         "scheduled-mesh",

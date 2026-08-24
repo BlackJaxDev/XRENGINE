@@ -9,6 +9,7 @@ namespace XREngine.Rendering.Vulkan;
 internal struct VulkanResourceGenerationPins
 {
     public int DescriptorReferenceCount { get; private set; }
+    public int TemplateReferenceCount { get; private set; }
     public int RecordedReferenceCount { get; private set; }
     public int QueuedReferenceCount { get; private set; }
     public ulong LastGraphicsSequence { get; private set; }
@@ -16,6 +17,7 @@ internal struct VulkanResourceGenerationPins
     public ulong LastOtherSequence { get; private set; }
 
     public readonly bool HasDescriptorReferences => DescriptorReferenceCount > 0;
+    public readonly bool HasTemplateReferences => TemplateReferenceCount > 0;
     public readonly bool HasRecordedReferences => RecordedReferenceCount > 0;
     public readonly bool HasQueuedReferences => QueuedReferenceCount > 0;
 
@@ -27,6 +29,21 @@ internal struct VulkanResourceGenerationPins
         if (DescriptorReferenceCount <= 0)
             throw new InvalidOperationException("Vulkan descriptor-generation pin underflow.");
         DescriptorReferenceCount--;
+    }
+
+    /// <summary>
+    /// Pins a native generation for a structural resident-template artifact.
+    /// Template pins intentionally outlive descriptor and command recording
+    /// ownership until the artifact lease is disposed.
+    /// </summary>
+    public void AddTemplateReference()
+        => TemplateReferenceCount = checked(TemplateReferenceCount + 1);
+
+    public void ReleaseTemplateReference()
+    {
+        if (TemplateReferenceCount <= 0)
+            throw new InvalidOperationException("Vulkan resident-template generation pin underflow.");
+        TemplateReferenceCount--;
     }
 
     public void AddRecordedReference()
@@ -77,6 +94,7 @@ internal struct VulkanResourceGenerationPins
         ulong completedTransferSequence,
         ulong completedOtherSequence)
         => !HasDescriptorReferences &&
+           !HasTemplateReferences &&
            !HasRecordedReferences &&
            !HasQueuedReferences &&
            LastGraphicsSequence <= completedGraphicsSequence &&

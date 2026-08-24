@@ -2,6 +2,7 @@ using System.Numerics;
 using System.Runtime.CompilerServices;
 using Silk.NET.Vulkan;
 using XREngine.Data.Rendering;
+using XREngine.Rendering.Commands;
 using XREngine.Rendering.Models.Materials;
 
 namespace XREngine.Rendering.Vulkan;
@@ -43,8 +44,11 @@ internal readonly record struct PendingMeshDraw(
     VkRenderProgram? PreparedProgram,
     string? PreparedProgramIdentity,
     ulong PreparedProgramLinkGeneration,
-    ComputeDispatchSnapshot? ProgramBindingSnapshot)
+    ComputeDispatchSnapshot? ProgramBindingSnapshot,
+    AdvancedGpuSceneDrawIdentitySnapshot CanonicalDrawIdentitySnapshot)
 {
+    internal AdvancedGpuSceneDrawIdentity CanonicalDrawIdentity
+        => CanonicalDrawIdentitySnapshot.Primary;
     internal XRCamera? Camera => ViewSnapshot?.Camera;
     internal XRCamera? StereoRightEyeCamera => ViewSnapshot?.RightEyeCamera;
     internal bool IsStereoPass => ViewSnapshot?.IsStereoPass == true;
@@ -133,6 +137,16 @@ internal readonly record struct PendingMeshDraw(
         };
 
     internal VulkanAutoUniformPublicationSnapshot AutoUniformPublication
+    {
+        get;
+        init;
+    }
+
+    /// <summary>
+    /// Direct resident-template address resolved transactionally for the whole
+    /// request cohort. A default handle selects the cold resolve path.
+    /// </summary>
+    internal VulkanResidentDrawTemplateHandle ResidentTemplateHandle
     {
         get;
         init;

@@ -49,6 +49,12 @@ internal sealed partial class VulkanResourceRuntime
         Samplers = new VulkanSamplerResourceService(this, Descriptors, Lifetime);
         Framebuffers = new VulkanFrameBufferResourceService(this);
         SparseTextureStreaming = new VulkanSparseTextureStreamingService();
+        ResidentDrawTemplates = new VulkanResidentDrawTemplateTable(
+            this,
+            primaryCapacity: 256u,
+            variantsPerDraw: 1u);
+        ResidentTemplateFrameSlotLifetimes =
+            new VulkanResidentTemplateFrameSlotLifetimes(frameSlotCount);
     }
 
     internal VulkanBackendObjectRegistry BackendObjects { get; }
@@ -76,6 +82,8 @@ internal sealed partial class VulkanResourceRuntime
     internal VulkanSamplerResourceService Samplers { get; }
     internal VulkanFrameBufferResourceService Framebuffers { get; }
     internal VulkanSparseTextureStreamingService SparseTextureStreaming { get; }
+    internal VulkanResidentDrawTemplateTable ResidentDrawTemplates { get; }
+    internal VulkanResidentTemplateFrameSlotLifetimes ResidentTemplateFrameSlotLifetimes { get; }
     internal VulkanPipelineManager PipelineManager { get; } = new();
     internal VulkanBackendObjectContext? BackendObjectContext;
     internal bool AllowSynchronousResourceUploads { get; private set; }

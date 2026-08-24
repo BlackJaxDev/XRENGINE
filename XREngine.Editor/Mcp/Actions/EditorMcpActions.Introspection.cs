@@ -341,6 +341,9 @@ namespace XREngine.Editor.Mcp
             var renderArea = RuntimeEngine.Rendering.State.RenderArea;
             var activeViewportCommands = activeViewport?.RenderPipelineInstance.MeshRenderCommands;
             var renderingViewportCommands = viewport?.RenderPipelineInstance.MeshRenderCommands;
+            var activeGpuScene = activeViewport?.World?.VisualScene?.GPUCommands;
+            BackendReadyFramePackage? activeFramePackage =
+                activeViewportCommands?.RenderingBackendReadyPackage;
             var activeViewports = RuntimeEngine
                 .EnumerateActiveViewports(RuntimeEngine.EViewportEnumerationMode.IncludeVrEyeViewports)
                 .Select(BuildViewportRenderSummary)
@@ -374,6 +377,38 @@ namespace XREngine.Editor.Mcp
                 activeViewportUpdatingCommandCount = activeViewportCommands?.GetUpdatingCommandCount(),
                 activeViewportCommandsAddedCount = activeViewportCommands?.GetCommandsAddedCount(),
                 activeViewportRenderingCommandPasses = BuildRenderCommandPassSummary(activeViewportCommands),
+                canonicalResidentScene = activeGpuScene is null ? null : new
+                {
+                    publication = activeGpuScene.AdvancedScenePublication.Publication,
+                    publicationRejected = activeGpuScene.AdvancedPublicationRejected,
+                    topologyDeltaCount = activeGpuScene.AdvancedTopologyDeltaCount,
+                    contentDeltaCount = activeGpuScene.AdvancedContentDeltaCount,
+                    residentDrawCount = activeGpuScene.AdvancedSharedDatabase.Scene.Draws.Count,
+                    residentInstanceCount = activeGpuScene.AdvancedSharedDatabase.Scene.Instances.Count,
+                    residentGeometryCount = activeGpuScene.AdvancedSharedDatabase.Scene.Geometry.Records.Count,
+                    residentMaterialCount = activeGpuScene.AdvancedSharedDatabase.Materials.Materials.Count,
+                    legacyMappingCount = activeGpuScene.LegacyCanonicalDrawMappings.Length,
+                    lastLegacyMapping = GetLastLegacyCanonicalDrawMapping(activeGpuScene),
+                    dirtyOwnerRangeCount = activeGpuScene.AdvancedDirtyOwnerRanges.Length,
+                    pendingDrawDeltaCount = activeGpuScene.AdvancedSharedDatabase.Scene.Draws.PublishedDeltas.Length,
+                    minimumAcknowledgedSequence = activeGpuScene.AdvancedSharedDatabase.MinimumAcknowledgedPublicationSequence,
+                    minimumReclaimableSequence = activeGpuScene.AdvancedSharedDatabase.MinimumReclaimablePublicationSequence,
+                },
+                canonicalFramePackage = activeFramePackage is null ? null : new
+                {
+                    state = activeFramePackage.State.ToString(),
+                    scenePublication = activeFramePackage.CanonicalScenePublication,
+                    frame = activeFramePackage.CanonicalFrame,
+                    submission = activeFramePackage.SubmissionResolution,
+                    viewCount = activeFramePackage.CanonicalViews.Length,
+                    residentPassCount = activeFramePackage.CanonicalPasses.Length,
+                    dirtyOwnerRangeCount = activeFramePackage.CanonicalDirtyOwnerRanges.Length,
+                    diagnosticRequestCount = activeFramePackage.DiagnosticReadbackRequests.Length,
+                    cpuVisibleDrawCount = activeFramePackage.CpuVisibleDraws.Length,
+                    orderedExceptionCount = activeFramePackage.OrderedExceptions.Length,
+                    templateProjectionDeltaCount = activeFramePackage.TemplateProjectionDeltas.Length,
+                    legacySelectionCount = activeFramePackage.MeshSelections.Length,
+                },
                 activeCameraType = activeCamera?.GetType().FullName,
                 activeCameraNodeId = activeCameraNode?.ID,
                 activeCameraNodeName = activeCameraNode?.Name,
@@ -430,6 +465,14 @@ namespace XREngine.Editor.Mcp
             };
 
             return Task.FromResult(new McpToolResponse("Retrieved render state.", data));
+        }
+
+        private static LegacyCanonicalDrawMapping? GetLastLegacyCanonicalDrawMapping(
+            GPUScene scene)
+        {
+            ReadOnlySpan<LegacyCanonicalDrawMapping> mappings =
+                scene.LegacyCanonicalDrawMappings;
+            return mappings.IsEmpty ? null : mappings[^1];
         }
 
         private static object BuildViewportRenderSummary(XRViewport viewport)

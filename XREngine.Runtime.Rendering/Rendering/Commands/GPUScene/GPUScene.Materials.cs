@@ -350,17 +350,29 @@ namespace XREngine.Rendering.Commands
         /// Attempts to resolve the original mesh render command for a GPU command index.
         /// </summary>
         public bool TryGetSourceCommand(uint commandIndex, out IRenderCommandMesh? command)
+            => TryGetSourceCommand(commandIndex, out command, out _);
+
+        /// <summary>
+        /// Attempts to resolve the original mesh command and its source primitive
+        /// for a resident GPU command index.
+        /// </summary>
+        public bool TryGetSourceCommand(
+            uint commandIndex,
+            out IRenderCommandMesh? command,
+            out int primitiveIndex)
         {
             using (_lock.EnterScope())
             {
                 if (_commandIndexLookup.TryGetValue(commandIndex, out var entry))
                 {
                     command = entry.command;
+                    primitiveIndex = entry.subMeshIndex;
                     return true;
                 }
             }
 
             command = null;
+            primitiveIndex = -1;
             return false;
         }
 

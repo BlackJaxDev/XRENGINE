@@ -12,6 +12,7 @@ using XREngine.Data.Core;
 using XREngine.Data.Rendering;
 using XREngine.Data.Vectors;
 using XREngine.Rendering;
+using XREngine.Rendering.Commands;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.Models.Materials.Textures;
 using XREngine.Rendering.Pipelines.Commands;
@@ -25,6 +26,7 @@ internal unsafe partial class VkMeshRenderer(
     private VulkanProgramCommandOperations? _commandOperations;
     private VulkanProgramPlannerPort? _programPlanner;
     private VulkanMeshOperationRequestQueue? _meshRequests;
+    private VulkanResidentDrawTemplatePublication? _residentTemplatePublication;
     private VulkanFinalPresentationDescriptorPort? _finalPresentationDescriptors;
     private VulkanMeshMaterializationSnapshot _materializationSnapshot;
     private long _preparationCompatibilityRevision = 1;
@@ -224,7 +226,7 @@ internal unsafe partial class VkMeshRenderer(
 
     protected override void LinkData()
     {
-        Data.RenderRequested += OnRenderRequested;
+        Data.CanonicalRenderRequested += OnRenderRequested;
         MeshRenderer.PropertyChanged += OnMeshRendererPropertyChanged;
         MeshRenderer.PropertyChanging += OnMeshRendererPropertyChanging;
         SubscribeRendererBuffers(MeshRenderer.Buffers);
@@ -237,7 +239,7 @@ internal unsafe partial class VkMeshRenderer(
 
     protected override void UnlinkData()
     {
-        Data.RenderRequested -= OnRenderRequested;
+        Data.CanonicalRenderRequested -= OnRenderRequested;
         MeshRenderer.PropertyChanged -= OnMeshRendererPropertyChanged;
         MeshRenderer.PropertyChanging -= OnMeshRendererPropertyChanging;
         SubscribeRendererBuffers(null);
@@ -349,7 +351,7 @@ internal unsafe partial class VkMeshRenderer(
         }
     }
 
-    private void OnRenderRequested(Matrix4x4 modelMatrix, Matrix4x4 prevModelMatrix, XRMaterial? materialOverride, RenderingParameters? renderOptionsOverride, uint instances, EMeshBillboardMode billboardMode, bool forceNoStereo)
+    private void OnRenderRequested(Matrix4x4 modelMatrix, Matrix4x4 prevModelMatrix, XRMaterial? materialOverride, RenderingParameters? renderOptionsOverride, uint instances, EMeshBillboardMode billboardMode, bool forceNoStereo, AdvancedGpuSceneDrawIdentitySnapshot canonicalDrawIdentitySnapshot)
     {
         int passIndex = RuntimeEngine.Rendering.State.CurrentRenderGraphPassIndex;
         XRRenderPipelineInstance? pipeline =
@@ -405,6 +407,11 @@ internal unsafe partial class VkMeshRenderer(
                 passIndex,
                 deferredBindings.Publisher,
                 in shadowUniformState);
+        VulkanResidentDrawTemplateHandle residentTemplateHandle =
+            CapturePublishedResidentTemplateHandle(
+                canonicalDrawIdentitySnapshot,
+                passIndex,
+                context);
         VulkanMeshRenderRequest request = new(
             this,
             passIndex,
@@ -424,7 +431,9 @@ internal unsafe partial class VkMeshRenderer(
             instances,
             expandedInstances,
             billboardMode,
-            forceNoStereo);
+            forceNoStereo,
+            canonicalDrawIdentitySnapshot,
+            residentTemplateHandle);
         if (_meshRequests?.TryEnqueue(in request) == true)
             return;
 
@@ -432,7 +441,7 @@ internal unsafe partial class VkMeshRenderer(
         Debug.VulkanWarningEvery(
             $"Vulkan.MeshRenderer.RequestQueueFull.{MeshRenderer.Name ?? "UnnamedRenderer"}",
             TimeSpan.FromSeconds(2),
-            "[Vulkan] Dropping mesh render request for renderer='{0}' because the bounded frame-loop request queue is unavailable or full.",
+            "[Vulkan] Rejecting the current mesh request cohort at renderer='{0}' because its bounded publication or queue capacity was exceeded.",
             MeshRenderer.Name ?? "<unnamed renderer>");
     }
 
@@ -837,7 +846,8 @@ internal unsafe partial class VkMeshRenderer(
             preparedProgramSnapshot,
             preparedProgramIdentitySnapshot,
             preparedProgramLinkGenerationSnapshot,
-            programBindingSnapshot);
+            programBindingSnapshot,
+            request.CanonicalDrawIdentitySnapshot);
         draw = draw with
         {
             PreparationCompatibilitySignature =
@@ -1036,7 +1046,8 @@ internal unsafe partial class VkMeshRenderer(
             preparedProgram,
             preparedProgramIdentity,
             preparedProgramLinkGeneration,
-            programBindingSnapshot);
+            programBindingSnapshot,
+            default);
         draw = draw with
         {
             AutoUniformPublication =
