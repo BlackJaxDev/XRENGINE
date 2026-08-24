@@ -234,23 +234,23 @@ internal sealed class VulkanPhysicalImageGroup
            TransientAttachmentPolicy == previousGroup.TransientAttachmentPolicy &&
            Template.Layers == previousGroup.Template.Layers;
 
-    public void EnsureAllocated(VulkanRenderer renderer)
+    public void EnsureAllocated(VulkanBackendObjectContext context)
     {
         if (_allocated)
             return;
 
-        renderer.AllocatePhysicalImage(this, ref _image, ref _memory);
+        if (!context.Resources.Images.TryAllocatePhysicalImage(context, this, ref _image, ref _memory, out string failureReason))
+            throw new VulkanOutOfMemoryException(failureReason, MemoryProperties);
         _allocated = true;
         LastKnownLayout = ImageLayout.Undefined;
     }
 
-    public bool TryEnsureAllocated(VulkanRenderer renderer, out string failureReason)
+    internal bool TryEnsureAllocated(VulkanBackendObjectContext context, out string failureReason)
     {
         failureReason = string.Empty;
         if (_allocated)
             return true;
-
-        if (!renderer.TryAllocatePhysicalImage(this, ref _image, ref _memory, out failureReason))
+        if (!context.Resources.Images.TryAllocatePhysicalImage(context, this, ref _image, ref _memory, out failureReason))
             return false;
 
         _allocated = true;
@@ -258,22 +258,31 @@ internal sealed class VulkanPhysicalImageGroup
         return true;
     }
 
-    public void Destroy(VulkanRenderer renderer)
+    public void Destroy(VulkanBackendObjectContext context)
     {
         if (!_allocated)
             return;
 
-        renderer.DestroyPhysicalImage(ref _image, ref _memory);
+        context.Resources.Images.RetireOwnedResources(
+            new RetiredImageResources(_image, _memory, default, [], default, 0),
+            $"ResourcePlanner.{Key}");
+        _image = default;
+        _memory = default;
         _allocated = false;
         LastKnownLayout = ImageLayout.Undefined;
     }
 
-    public void DestroyImmediate(VulkanRenderer renderer)
+    public void DestroyImmediate(VulkanBackendObjectContext context)
     {
         if (!_allocated)
             return;
 
-        renderer.DestroyPhysicalImageImmediate(ref _image, ref _memory);
+        bool hasAllocation = context.Resources.Allocations.Images.Allocations.TryRemove(_image.Handle, out VulkanMemoryAllocation allocation);
+        context.Resources.Images.DestroyUnpublishedOwnedImage(context, _image, $"ResourcePlanner.{Key}");
+        if (hasAllocation)
+            context.Resources.Images.FreeMemory(context, in allocation);
+        _image = default;
+        _memory = default;
         _allocated = false;
         LastKnownLayout = ImageLayout.Undefined;
     }

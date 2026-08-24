@@ -15,7 +15,7 @@ internal sealed class VulkanOpenXrBackend
     private const int EyeResourcePlannerStateCount = 2;
     private readonly ThreadLocal<VulkanOpenXrThreadExecutionState> _threadExecutionState =
         new(static () => new VulkanOpenXrThreadExecutionState(), trackAllValues: false);
-    private object? _primaryCommandBufferVariants;
+    private object? _primaryCommandArtifactOwners;
     private object? _resourcePlannerStates;
 
     internal readonly Dictionary<RenderResourceRegistry, VulkanOpenXrResourceRegistryWrapperRefreshStamp>
@@ -23,9 +23,7 @@ internal sealed class VulkanOpenXrBackend
     internal long RuntimeSessionStartDirtyWaitStartTimestamp;
     internal long RuntimeSessionStartPendingFrameWaitStartTimestamp;
     internal readonly Dictionary<ulong, VulkanOpenXrSwapchainImageViewCacheEntry> SwapchainImageViews = new();
-    internal readonly object PrimaryCommandBufferVariantsLock = new();
-    internal readonly CommandPool[] EyeCommandPools = new CommandPool[EyeResourcePlannerStateCount];
-    internal readonly object EyeCommandPoolsLock = new();
+    internal readonly object PrimaryCommandArtifactOwnersLock = new();
     internal readonly VulkanOpenXrFrameDataRefreshRequestStorage[]
         EyeFrameDataRefreshRequests =
         [new(), new()];
@@ -42,27 +40,27 @@ internal sealed class VulkanOpenXrBackend
 
     internal VulkanOpenXrThreadExecutionState CurrentThreadExecutionState =>
         _threadExecutionState.Value
-        ?? throw new InvalidOperationException("The Vulkan OpenXR thread execution context is unavailable.");
+            ?? throw new InvalidOperationException("The Vulkan OpenXR thread execution context is unavailable.");
 
-    internal Dictionary<ulong, List<TVariant>> GetPrimaryCommandBufferVariants<TVariant>()
-        where TVariant : class
-        => (Dictionary<ulong, List<TVariant>>)(_primaryCommandBufferVariants ??=
-            new Dictionary<ulong, List<TVariant>>());
+    /// <summary>Number of reserved eye-planner frame-data slots.</summary>
+    internal int EyeFrameDataSlotCount => EyeResourcePlannerStateCount;
+
+    internal Dictionary<ulong, TOwner> GetPrimaryCommandArtifactOwners<TOwner>()
+        where TOwner : class
+        => (Dictionary<ulong, TOwner>)(_primaryCommandArtifactOwners ??=
+            new Dictionary<ulong, TOwner>());
 
     internal Dictionary<TKey, TState> GetResourcePlannerStates<TKey, TState>()
         where TKey : notnull
         => (Dictionary<TKey, TState>)(_resourcePlannerStates ??= new Dictionary<TKey, TState>());
 
-    internal VulkanOpenXrDiagnosticsSnapshot CaptureDiagnostics<TVariant, TKey, TState>()
-        where TVariant : class
+    internal VulkanOpenXrDiagnosticsSnapshot CaptureDiagnostics<TOwner, TKey, TState>()
+        where TOwner : class
         where TKey : notnull
     {
-        int primaryVariantCount = 0;
-        lock (PrimaryCommandBufferVariantsLock)
-        {
-            foreach (List<TVariant> variants in GetPrimaryCommandBufferVariants<TVariant>().Values)
-                primaryVariantCount += variants.Count;
-        }
+        int primaryOwnerCount;
+        lock (PrimaryCommandArtifactOwnersLock)
+            primaryOwnerCount = GetPrimaryCommandArtifactOwners<TOwner>().Count;
 
         int plannerStateCount;
         lock (ResourcePlannerStatesLock)
@@ -70,7 +68,7 @@ internal sealed class VulkanOpenXrBackend
 
         return new VulkanOpenXrDiagnosticsSnapshot(
             SwapchainImageViews.Count,
-            primaryVariantCount,
+            primaryOwnerCount,
             plannerStateCount,
             Volatile.Read(ref ExternalSwapchainRenderDepth),
             Volatile.Read(ref SynchronousResourceUploadBlockDepth),

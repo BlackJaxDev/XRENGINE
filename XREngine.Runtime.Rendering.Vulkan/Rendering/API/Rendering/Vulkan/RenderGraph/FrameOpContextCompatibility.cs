@@ -12,8 +12,11 @@ internal static class FrameOpContextCompatibility
         if (first.RecordingFingerprint != second.RecordingFingerprint)
             return false;
 
-        // ContextId identifies a diagnostic capture, not Vulkan recording state.
-        return (first with { ContextId = 0UL }).Equals(second with { ContextId = 0UL });
+        // Context and output-scheduling metadata select diagnostics/admission,
+        // not Vulkan commands. In particular, RenderOutputRequest.FrameId changes
+        // every frame and must never split an otherwise reusable recording batch.
+        return NormalizeSchedulingMetadata(first with { ContextId = 0UL }).Equals(
+            NormalizeSchedulingMetadata(second with { ContextId = 0UL }));
     }
 
     /// <summary>
@@ -30,22 +33,22 @@ internal static class FrameOpContextCompatibility
         // those captured planning fields. Target, dimensions, queue family,
         // stereo/multiview, pipeline, registry identity, and ordering policy
         // remain exact so incompatible rendering scopes never share a batch.
-        FrameOpContext normalizedFirst = first with
+        FrameOpContext normalizedFirst = NormalizeSchedulingMetadata(first with
         {
             ContextId = 0UL,
             RecordingFingerprint = 0UL,
             ResourceGeneration = 0UL,
             DescriptorGeneration = 0UL,
             ResourceRegistrySignatureSnapshot = null,
-        };
-        FrameOpContext normalizedSecond = second with
+        });
+        FrameOpContext normalizedSecond = NormalizeSchedulingMetadata(second with
         {
             ContextId = 0UL,
             RecordingFingerprint = 0UL,
             ResourceGeneration = 0UL,
             DescriptorGeneration = 0UL,
             ResourceRegistrySignatureSnapshot = null,
-        };
+        });
         return normalizedFirst.Equals(normalizedSecond);
     }
 
@@ -55,18 +58,32 @@ internal static class FrameOpContextCompatibility
             return true;
 
         // Descriptor-table changes do not alter dynamic-rendering compatibility.
-        FrameOpContext normalizedFirst = first with
+        FrameOpContext normalizedFirst = NormalizeSchedulingMetadata(first with
         {
             ContextId = 0UL,
             RecordingFingerprint = 0UL,
             DescriptorGeneration = 0UL,
-        };
-        FrameOpContext normalizedSecond = second with
+        });
+        FrameOpContext normalizedSecond = NormalizeSchedulingMetadata(second with
         {
             ContextId = 0UL,
             RecordingFingerprint = 0UL,
             DescriptorGeneration = 0UL,
-        };
+        });
         return normalizedFirst.Equals(normalizedSecond);
     }
+
+    /// <summary>
+    /// Removes policy-only fields from comparisons that answer whether two
+    /// contexts encode the same native Vulkan work. The output DAG consumes
+    /// these values separately through <see cref="OutputRequest"/>.
+    /// </summary>
+    private static FrameOpContext NormalizeSchedulingMetadata(in FrameOpContext context)
+        => context with
+        {
+            OutputProducerDependencySetId = 0UL,
+            OutputConsumerDependencySetId = 0UL,
+            OutputSchedulingInstanceIdentity = 0UL,
+            OutputSchedulingRequest = default,
+        };
 }

@@ -20,28 +20,130 @@ internal sealed class VulkanResourceLifetimeTracker
 {
     internal object SyncRoot { get; } = new();
 
-    internal ConcurrentDictionary<VulkanRenderer.VulkanResourceLifetimeKey, ulong> PublishedResourceGenerations { get; } = new();
-    internal Dictionary<VulkanRenderer.VulkanResourceLifetimeKey, VulkanRenderer.VulkanResourceLifetimeRecord> ResourceLifetimes { get; } = new();
-    internal Dictionary<ulong, VulkanRenderer.VulkanCommandBufferLifetimeRecord> CommandBufferLifetimes { get; } = new();
-    internal Dictionary<VulkanRenderer.VulkanResourceLifetimeKey, HashSet<ulong>> ResourceCommandBufferDependencies { get; } = new();
-    internal Dictionary<ulong, VulkanRenderer.VulkanDescriptorSetLifetimeRecord> DescriptorSetLifetimes { get; } = new();
+    internal ConcurrentDictionary<VulkanResourceLifetimeKey, ulong> PublishedResourceGenerations { get; } = new();
+    internal Dictionary<VulkanResourceLifetimeKey, VulkanResourceLifetimeRecord> ResourceLifetimes { get; } = new();
+    internal Dictionary<ulong, VulkanCommandBufferLifetimeRecord> CommandBufferLifetimes { get; } = new();
+    /// <summary>
+    /// Persistent allocation ownership, separate from a command buffer's transient
+    /// recording dependencies. Destroying a command pool implicitly frees every
+    /// child, so the pool must retain this relation until that native destruction
+    /// has settled every child generation.
+    /// </summary>
+    internal Dictionary<VulkanResourceLifetimeKey, HashSet<ulong>> CommandBuffersByPool { get; } = new();
+    internal Dictionary<VulkanResourceLifetimeKey, HashSet<ulong>> ResourceCommandBufferDependencies { get; } = new();
+    internal Dictionary<ulong, VulkanDescriptorSetLifetimeRecord> DescriptorSetLifetimes { get; } = new();
     internal Dictionary<ulong, List<VkRenderQuery>> RenderQueriesByPool { get; } = new();
     internal Dictionary<ulong, HashSet<ulong>> DescriptorSetsByPool { get; } = new();
-    internal Dictionary<VulkanRenderer.VulkanResourceLifetimeKey, HashSet<ulong>> DescriptorSetsByReferencedResource { get; } = new();
-    internal ConcurrentDictionary<ulong, VulkanRenderer.VulkanPublishedDescriptorSetSnapshot> PublishedDescriptorSets { get; } = new();
+    internal Dictionary<VulkanResourceLifetimeKey, HashSet<ulong>> DescriptorSetsByReferencedResource { get; } = new();
+    internal ConcurrentDictionary<ulong, VulkanPublishedDescriptorSetSnapshot> PublishedDescriptorSets { get; } = new();
     internal Dictionary<ulong, ulong> ImageViewBackingImages { get; } = new();
     internal Dictionary<ulong, ulong> BufferViewBackingBuffers { get; } = new();
-    internal Dictionary<ulong, VulkanRenderer.VulkanResourceLifetimeKey[]> FramebufferAttachments { get; } = new();
+
+    internal VulkanResourceLifetimeSnapshot CaptureSnapshot(
+        bool includeExactLiveResourceGenerations)
+    {
+        lock (SyncRoot)
+        {
+            int live = 0;
+            int recorded = 0;
+            int submitted = 0;
+            int completed = 0;
+            int external = 0;
+            int pending = 0;
+            int destroyed = 0;
+            long oldestTimestamp = 0;
+            ulong oldestRetirementSerial = 0;
+            List<VulkanPinnedResourceGeneration>? exactLiveResourceGenerations =
+                includeExactLiveResourceGenerations ? [] : null;
+
+            foreach (VulkanResourceLifetimeRecord resource in ResourceLifetimes.Values)
+            {
+                EVulkanResourceLifetimeState state = resource.State;
+                if ((state & EVulkanResourceLifetimeState.Destroyed) != 0)
+                    destroyed++;
+                else
+                {
+                    live++;
+                    exactLiveResourceGenerations?.Add(
+                        new VulkanPinnedResourceGeneration(
+                            resource.Key,
+                            resource.Generation));
+                }
+
+                if ((state & EVulkanResourceLifetimeState.Recorded) != 0)
+                    recorded++;
+                if ((state & EVulkanResourceLifetimeState.Submitted) != 0)
+                    submitted++;
+                if ((state & EVulkanResourceLifetimeState.Completed) != 0)
+                    completed++;
+                if ((state & EVulkanResourceLifetimeState.External) != 0)
+                    external++;
+                if ((state & EVulkanResourceLifetimeState.PendingRetirement) == 0)
+                    continue;
+
+                pending++;
+                long timestamp = resource.RetirementTicket.EnqueuedTimestamp;
+                if (timestamp != 0 &&
+                    (oldestTimestamp == 0 || timestamp < oldestTimestamp))
+                {
+                    oldestTimestamp = timestamp;
+                }
+                if (resource.RetirementSerial != 0 &&
+                    (oldestRetirementSerial == 0 ||
+                     resource.RetirementSerial < oldestRetirementSerial))
+                {
+                    oldestRetirementSerial = resource.RetirementSerial;
+                }
+            }
+
+            long oldestAgeMilliseconds = oldestTimestamp == 0
+                ? 0
+                : (long)Math.Max(
+                    0,
+                    Stopwatch.GetElapsedTime(oldestTimestamp).TotalMilliseconds);
+            ulong latestRetirementSerial = unchecked(
+                (ulong)Math.Max(0, Volatile.Read(ref RetirementSerial)));
+            ulong oldestGenerationAge = oldestRetirementSerial == 0
+                ? 0
+                : latestRetirementSerial - oldestRetirementSerial + 1;
+
+            return new VulkanResourceLifetimeSnapshot(
+                live,
+                recorded,
+                submitted,
+                completed,
+                external,
+                pending,
+                destroyed,
+                CommandBufferLifetimes.Count,
+                DescriptorSetLifetimes.Count,
+                LifetimeSubmissions.Count,
+                LastGraphicsSequence,
+                CompletedGraphicsSequence,
+                LastTransferSequence,
+                CompletedTransferSequence,
+                LastOtherSequence,
+                CompletedOtherSequence,
+                oldestAgeMilliseconds,
+                oldestGenerationAge,
+                Volatile.Read(ref ForcedResourceDestructionCount),
+                DeviceLost,
+                exactLiveResourceGenerations is null
+                    ? []
+                    : [.. exactLiveResourceGenerations]);
+        }
+    }
+    internal Dictionary<ulong, VulkanResourceLifetimeKey[]> FramebufferAttachments { get; } = new();
 
     /// <summary>
     /// Retained submission lookup shared by serialized queue submissions.
     /// </summary>
-    internal Dictionary<VulkanRenderer.VulkanResourceLifetimeKey, ulong> SubmissionDependencyGenerationsScratch { get; } = new(4096);
+    internal Dictionary<VulkanResourceLifetimeKey, ulong> SubmissionDependencyGenerationsScratch { get; } = new(4096);
 
     internal List<VulkanLifetimeSubmission> LifetimeSubmissions { get; } = new(16);
     internal ThreadLocal<HashSet<ulong>> ChangedDescriptorSetsScratch { get; } = new(static () => []);
-    internal ThreadLocal<HashSet<VulkanRenderer.VulkanResourceLifetimeKey>> DescriptorReferencesScratch { get; } = new(static () => []);
-    internal ThreadLocal<HashSet<VulkanRenderer.VulkanResourceLifetimeKey>> DescriptorPinnedReferencesScratch { get; } = new(static () => []);
+    internal ThreadLocal<HashSet<VulkanResourceLifetimeKey>> DescriptorReferencesScratch { get; } = new(static () => []);
+    internal ThreadLocal<HashSet<VulkanResourceLifetimeKey>> DescriptorPinnedReferencesScratch { get; } = new(static () => []);
 
     internal long ResourceGeneration;
     internal long RetirementSerial;
@@ -55,13 +157,13 @@ internal sealed class VulkanResourceLifetimeTracker
     internal bool DeviceLost;
     internal int ForcedRetirementDrainDepth;
 
-    internal ulong GetPublishedGeneration(VulkanRenderer.VulkanResourceLifetimeKey key)
+    internal ulong GetPublishedGeneration(VulkanResourceLifetimeKey key)
         => key.IsValid && PublishedResourceGenerations.TryGetValue(key, out ulong generation)
             ? generation
             : 0;
 
     internal void RegisterResource(
-        VulkanRenderer.VulkanResourceLifetimeKey key,
+        VulkanResourceLifetimeKey key,
         string owner,
         bool externallyOwned)
     {
@@ -70,15 +172,15 @@ internal sealed class VulkanResourceLifetimeTracker
 
         lock (SyncRoot)
         {
-            if (ResourceLifetimes.TryGetValue(key, out VulkanRenderer.VulkanResourceLifetimeRecord? existing))
+            if (ResourceLifetimes.TryGetValue(key, out VulkanResourceLifetimeRecord? existing))
             {
-                if ((existing.State & VulkanRenderer.EVulkanResourceLifetimeState.PendingRetirement) != 0)
+                if ((existing.State & EVulkanResourceLifetimeState.PendingRetirement) != 0)
                 {
                     throw new InvalidOperationException(
                         $"Vulkan handle {key} was recycled by {owner} while generation {existing.Generation} is still pending retirement.");
                 }
 
-                if ((existing.State & VulkanRenderer.EVulkanResourceLifetimeState.Destroyed) == 0)
+                if ((existing.State & EVulkanResourceLifetimeState.Destroyed) == 0)
                 {
                     existing.Owner = owner;
                     // TryAdd preserves a zero-valued retirement admission fence. Re-registering
@@ -86,40 +188,40 @@ internal sealed class VulkanResourceLifetimeTracker
                     // publishing command-buffer dependencies for that generation.
                     PublishedResourceGenerations.TryAdd(key, existing.Generation);
                     if (externallyOwned)
-                        existing.State |= VulkanRenderer.EVulkanResourceLifetimeState.External;
+                        existing.State |= EVulkanResourceLifetimeState.External;
                     return;
                 }
             }
 
             ulong generation = VulkanGeneration.IncrementNonZero(ref ResourceGeneration);
-            ResourceLifetimes[key] = new VulkanRenderer.VulkanResourceLifetimeRecord
+            ResourceLifetimes[key] = new VulkanResourceLifetimeRecord
             {
                 Key = key,
                 Generation = generation,
                 Owner = string.IsNullOrWhiteSpace(owner) ? "<unknown>" : owner,
-                State = VulkanRenderer.EVulkanResourceLifetimeState.CpuOwned |
+                State = EVulkanResourceLifetimeState.CpuOwned |
                     (externallyOwned
-                        ? VulkanRenderer.EVulkanResourceLifetimeState.External
-                        : VulkanRenderer.EVulkanResourceLifetimeState.None),
+                        ? EVulkanResourceLifetimeState.External
+                        : EVulkanResourceLifetimeState.None),
             };
             PublishedResourceGenerations[key] = generation;
         }
     }
 
-    internal VulkanRenderer.VulkanResourceLifetimeRecord GetOrRegisterResourceNoLock(
-        VulkanRenderer.VulkanResourceLifetimeKey key,
+    internal VulkanResourceLifetimeRecord GetOrRegisterResourceNoLock(
+        VulkanResourceLifetimeKey key,
         string owner)
     {
-        if (ResourceLifetimes.TryGetValue(key, out VulkanRenderer.VulkanResourceLifetimeRecord? record))
+        if (ResourceLifetimes.TryGetValue(key, out VulkanResourceLifetimeRecord? record))
             return record;
 
         ulong generation = VulkanGeneration.IncrementNonZero(ref ResourceGeneration);
-        record = new VulkanRenderer.VulkanResourceLifetimeRecord
+        record = new VulkanResourceLifetimeRecord
         {
             Key = key,
             Generation = generation,
             Owner = owner,
-            State = VulkanRenderer.EVulkanResourceLifetimeState.CpuOwned,
+            State = EVulkanResourceLifetimeState.CpuOwned,
         };
         ResourceLifetimes[key] = record;
         PublishedResourceGenerations[key] = generation;
@@ -133,7 +235,7 @@ internal sealed class VulkanResourceLifetimeTracker
     /// a dependency before retirement commits or observe the pending-retirement state.
     /// </summary>
     internal void FenceResourceRecordingAdmission(
-        VulkanRenderer.VulkanResourceLifetimeKey key,
+        VulkanResourceLifetimeKey key,
         string owner)
     {
         lock (SyncRoot)
@@ -143,11 +245,11 @@ internal sealed class VulkanResourceLifetimeTracker
         }
     }
 
-    internal VulkanRenderer.VulkanRetirementTicket CaptureRetirementWatermark()
+    internal VulkanRetirementTicket CaptureRetirementWatermark()
     {
         lock (SyncRoot)
         {
-            return new VulkanRenderer.VulkanRetirementTicket(
+            return new VulkanRetirementTicket(
                 LastGraphicsSequence,
                 LastTransferSequence,
                 LastOtherSequence,
@@ -158,15 +260,15 @@ internal sealed class VulkanResourceLifetimeTracker
     }
 
     internal void MarkQueueSequenceCompletedNoLock(
-        VulkanRenderer.EVulkanLifetimeQueueDomain domain,
+        EVulkanLifetimeQueueDomain domain,
         ulong queueSequence)
     {
         switch (domain)
         {
-            case VulkanRenderer.EVulkanLifetimeQueueDomain.Graphics:
+            case EVulkanLifetimeQueueDomain.Graphics:
                 CompletedGraphicsSequence = Math.Max(CompletedGraphicsSequence, queueSequence);
                 break;
-            case VulkanRenderer.EVulkanLifetimeQueueDomain.Transfer:
+            case EVulkanLifetimeQueueDomain.Transfer:
                 CompletedTransferSequence = Math.Max(CompletedTransferSequence, queueSequence);
                 break;
             default:
@@ -175,13 +277,35 @@ internal sealed class VulkanResourceLifetimeTracker
         }
     }
 
-    internal bool IsRetirementReady(in VulkanRenderer.VulkanRetirementTicket ticket)
+    /// <summary>
+    /// Publishes the completion boundary established by a successful
+    /// <c>vkDeviceWaitIdle</c>. Native idleness covers every queue submission,
+    /// so retaining older software completion counters would reject resources
+    /// whose pins are already safe to destroy during teardown.
+    /// </summary>
+    internal void MarkDeviceIdleCompleted()
+    {
+        lock (SyncRoot)
+        {
+            CompletedGraphicsSequence = Math.Max(
+                CompletedGraphicsSequence,
+                LastGraphicsSequence);
+            CompletedTransferSequence = Math.Max(
+                CompletedTransferSequence,
+                LastTransferSequence);
+            CompletedOtherSequence = Math.Max(
+                CompletedOtherSequence,
+                LastOtherSequence);
+        }
+    }
+
+    internal bool IsRetirementReady(in VulkanRetirementTicket ticket)
     {
         lock (SyncRoot)
             return IsRetirementReadyNoLock(ticket);
     }
 
-    internal bool IsRetirementReadyNoLock(in VulkanRenderer.VulkanRetirementTicket ticket)
+    internal bool IsRetirementReadyNoLock(in VulkanRetirementTicket ticket)
     {
         if (ForcedRetirementDrainDepth > 0)
             return true;
@@ -193,26 +317,26 @@ internal sealed class VulkanResourceLifetimeTracker
             return false;
         }
 
-        VulkanRenderer.VulkanRetirementPinSet? pinSet = ticket.PinSet;
+        VulkanRetirementPinSet? pinSet = ticket.PinSet;
         if (pinSet is null)
             return !ticket.ExternalOwnershipPending;
 
         bool externalOwnershipStillPending = false;
-        ReadOnlySpan<VulkanRenderer.VulkanPinnedResourceGeneration> pinnedResources = pinSet.Resources;
+        ReadOnlySpan<VulkanPinnedResourceGeneration> pinnedResources = pinSet.Resources;
         for (int i = 0; i < pinnedResources.Length; i++)
         {
-            VulkanRenderer.VulkanPinnedResourceGeneration pinned = pinnedResources[i];
+            VulkanPinnedResourceGeneration pinned = pinnedResources[i];
             if (!ResourceLifetimes.TryGetValue(
                     pinned.Key,
-                    out VulkanRenderer.VulkanResourceLifetimeRecord? resource) ||
+                    out VulkanResourceLifetimeRecord? resource) ||
                 resource.Generation != pinned.Generation ||
-                (resource.State & VulkanRenderer.EVulkanResourceLifetimeState.Destroyed) != 0)
+                (resource.State & EVulkanResourceLifetimeState.Destroyed) != 0)
             {
                 continue;
             }
 
             externalOwnershipStillPending |=
-                (resource.State & VulkanRenderer.EVulkanResourceLifetimeState.External) != 0;
+                (resource.State & EVulkanResourceLifetimeState.External) != 0;
             if (!resource.Pins.IsRetirementReady(
                     CompletedGraphicsSequence,
                     CompletedTransferSequence,

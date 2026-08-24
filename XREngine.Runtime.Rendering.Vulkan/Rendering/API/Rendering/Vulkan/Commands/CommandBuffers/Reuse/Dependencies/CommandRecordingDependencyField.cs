@@ -28,4 +28,6 @@ internal enum CommandRecordingDependencyField
     DescriptorPublicationGeneration,
     DataPublicationGeneration,
     VolatileSuffixGeneration,
+    RenderTargetSnapshot,
+    RecordedPacketKey,
 }

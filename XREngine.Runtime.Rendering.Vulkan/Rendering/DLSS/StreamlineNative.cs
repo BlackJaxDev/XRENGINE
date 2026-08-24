@@ -307,7 +307,7 @@ namespace XREngine.Rendering.DLSS
             }
 
             internal static bool TryCreateNativeVulkanSession(
-                VulkanRenderer renderer,
+                in VulkanStreamlineDeviceBinding binding,
                 uint viewportId,
                 out NativeVulkanSession? session,
                 out string failureReason)
@@ -317,7 +317,7 @@ namespace XREngine.Rendering.DLSS
 
                 lock (Sync)
                 {
-                    if (!EnsureNativeVulkanRuntime(renderer, includeFrameGeneration: false, out failureReason))
+                    if (!EnsureNativeVulkanRuntime(binding, includeFrameGeneration: false, out failureReason))
                         return false;
 
                     _activeNativeVulkanSessions++;
@@ -348,7 +348,8 @@ namespace XREngine.Rendering.DLSS
                     out failureReason);
 
             internal static bool TryCreateNativeFrameGenerationSession(
-                VulkanRenderer renderer,
+                in VulkanStreamlineDeviceBinding binding,
+                in VulkanFrameGenerationOutputSnapshot output,
                 uint viewportId,
                 out NativeFrameGenerationSession? session,
                 out string failureReason)
@@ -358,7 +359,7 @@ namespace XREngine.Rendering.DLSS
 
                 lock (Sync)
                 {
-                    if (!EnsureNativeVulkanRuntime(renderer, includeFrameGeneration: true, out failureReason, includeDlss: false)
+                    if (!EnsureNativeVulkanRuntime(binding, includeFrameGeneration: true, out failureReason, includeDlss: false)
                         || !ResolveFrameGenerationFeatureFunctions(out failureReason))
                     {
                         return false;
@@ -367,7 +368,7 @@ namespace XREngine.Rendering.DLSS
                     _activeNativeVulkanSessions++;
                 }
 
-                session = new NativeFrameGenerationSession(renderer, viewportId);
+                session = new NativeFrameGenerationSession(output, viewportId);
                 return true;
             }
 
@@ -581,7 +582,7 @@ namespace XREngine.Rendering.DLSS
             }
 
             private static bool TryConfigureFrameGenerationForRecordedFrame(
-                VulkanRenderer renderer,
+                in VulkanFrameGenerationOutputSnapshot output,
                 ref StreamlineViewportHandle viewport,
                 in VulkanUpscaleBridgeDispatchParameters parameters,
                 in VulkanStreamlineImage depth,
@@ -617,7 +618,7 @@ namespace XREngine.Rendering.DLSS
                     }
 
                     StreamlineDlssGOptions options = CreateFrameGenerationOptions(
-                        renderer,
+                        output,
                         in parameters,
                         in depth,
                         in motion,
@@ -729,6 +730,15 @@ namespace XREngine.Rendering.DLSS
                 VulkanRenderer renderer,
                 XRViewport viewport,
                 out string failureReason)
+                => TryDisableFrameGeneration(
+                    renderer.StreamlineDeviceBinding,
+                    viewport,
+                    out failureReason);
+
+            internal static bool TryDisableFrameGeneration(
+                VulkanStreamlineDeviceBinding binding,
+                XRViewport viewport,
+                out string failureReason)
             {
                 failureReason = string.Empty;
 
@@ -738,7 +748,11 @@ namespace XREngine.Rendering.DLSS
                     if (_frameGenerationExplicitlyDisabled)
                         return true;
 
-                    if (!EnsureNativeVulkanRuntime(renderer, includeFrameGeneration: true, out failureReason, includeDlss: renderer.StreamlineFrameGenerationSwapchainIncludesDlss)
+                        if (!EnsureNativeVulkanRuntime(
+                            binding,
+                            includeFrameGeneration: true,
+                            out failureReason,
+                            includeDlss: binding.FrameGenerationSwapchainIncludesDlss)
                         || !ResolveFrameGenerationFeatureFunctions(out failureReason))
                     {
                         return false;
@@ -779,6 +793,15 @@ namespace XREngine.Rendering.DLSS
                 VulkanRenderer renderer,
                 XRViewport viewport,
                 out string failureReason)
+                => TryDrainFrameGenerationDisableForPresent(
+                    renderer.StreamlineDeviceBinding,
+                    viewport,
+                    out failureReason);
+
+            internal static bool TryDrainFrameGenerationDisableForPresent(
+                VulkanStreamlineDeviceBinding binding,
+                XRViewport viewport,
+                out string failureReason)
             {
                 failureReason = string.Empty;
 
@@ -790,7 +813,7 @@ namespace XREngine.Rendering.DLSS
                     _frameGenerationHostEnabled = false;
 
                     if (!_frameGenerationExplicitlyDisabled)
-                        return TryDisableFrameGeneration(renderer, viewport, out failureReason);
+                        return TryDisableFrameGeneration(binding, viewport, out failureReason);
 
                     if (_frameGenerationOffPreparedForNextPresent)
                     {
@@ -801,7 +824,11 @@ namespace XREngine.Rendering.DLSS
                     if (_frameGenerationDisableDrainPresentsRemaining <= 0)
                         return true;
 
-                    if (!EnsureNativeVulkanRuntime(renderer, includeFrameGeneration: true, out failureReason, includeDlss: renderer.StreamlineFrameGenerationSwapchainIncludesDlss)
+                        if (!EnsureNativeVulkanRuntime(
+                            binding,
+                            includeFrameGeneration: true,
+                            out failureReason,
+                            includeDlss: binding.FrameGenerationSwapchainIncludesDlss)
                         || !ResolveFrameGenerationFeatureFunctions(out failureReason))
                     {
                         return false;
@@ -864,6 +891,42 @@ namespace XREngine.Rendering.DLSS
                 return true;
             }
 
+            /// <summary>
+            /// Creates a Streamline proxy swapchain from the output authority's immutable
+            /// device binding. This keeps desktop WSI lifecycle ownership out of the
+            /// renderer facade.
+            /// </summary>
+            internal static unsafe bool TryCreateProxySwapchain(
+                VulkanStreamlineDeviceBinding binding,
+                ref SwapchainCreateInfoKHR createInfo,
+                bool includeDlss,
+                out SwapchainKHR swapchain,
+                out Result result,
+                out string failureReason)
+            {
+                swapchain = default;
+                result = Result.ErrorInitializationFailed;
+
+                if (includeDlss && !NvidiaDlssManager.RequiredRuntimeDllsAvailable)
+                {
+                    failureReason = NvidiaDlssManager.RequiredRuntimeDllsUnavailableReason;
+                    _lastError = failureReason;
+                    return false;
+                }
+
+                if (!EnsureFrameGenerationVulkanProxyReady(binding, includeDlss, out failureReason))
+                    return false;
+
+                fixed (SwapchainCreateInfoKHR* createInfoPtr = &createInfo)
+                fixed (SwapchainKHR* swapchainPtr = &swapchain)
+                    result = CallVkCreateSwapchainProxy(binding.Device, createInfoPtr, null, swapchainPtr);
+
+                if (result == Result.Success)
+                    RegisterFrameGenerationProxySwapchain();
+
+                return true;
+            }
+
             internal static unsafe bool TryDestroyProxySwapchain(
                 VulkanRenderer renderer,
                 SwapchainKHR swapchain,
@@ -875,6 +938,30 @@ namespace XREngine.Rendering.DLSS
                         return false;
 
                     CallVkDestroySwapchainProxy(renderer.Device, swapchain, null);
+                    return true;
+                }
+                finally
+                {
+                    ReleaseFrameGenerationProxySwapchain();
+                }
+            }
+
+            internal static unsafe bool TryDestroyProxySwapchain(
+                VulkanStreamlineDeviceBinding binding,
+                SwapchainKHR swapchain,
+                out string failureReason)
+            {
+                try
+                {
+                    if (!EnsureFrameGenerationVulkanProxyReady(
+                            binding,
+                            binding.FrameGenerationSwapchainIncludesDlss,
+                            out failureReason))
+                    {
+                        return false;
+                    }
+
+                    CallVkDestroySwapchainProxy(binding.Device, swapchain, null);
                     return true;
                 }
                 finally
@@ -902,8 +989,50 @@ namespace XREngine.Rendering.DLSS
                 return true;
             }
 
+            internal static unsafe bool TryGetProxySwapchainImages(
+                VulkanStreamlineDeviceBinding binding,
+                SwapchainKHR swapchain,
+                ref uint imageCount,
+                Image* images,
+                out Result result,
+                out string failureReason)
+            {
+                result = Result.ErrorInitializationFailed;
+                if (!EnsureFrameGenerationVulkanProxyReady(
+                        binding,
+                        binding.FrameGenerationSwapchainIncludesDlss,
+                        out failureReason))
+                {
+                    return false;
+                }
+
+                fixed (uint* imageCountPtr = &imageCount)
+                    result = CallVkGetSwapchainImagesProxy(binding.Device, swapchain, imageCountPtr, images);
+
+                return true;
+            }
+
             internal static unsafe bool TryAcquireProxyNextImage(
                 VulkanRenderer renderer,
+                SwapchainKHR swapchain,
+                ulong timeout,
+                Silk.NET.Vulkan.Semaphore semaphore,
+                Fence fence,
+                ref uint imageIndex,
+                out Result result,
+                out string failureReason)
+                => TryAcquireProxyNextImage(
+                    renderer.StreamlineDeviceBinding,
+                    swapchain,
+                    timeout,
+                    semaphore,
+                    fence,
+                    ref imageIndex,
+                    out result,
+                    out failureReason);
+
+            internal static unsafe bool TryAcquireProxyNextImage(
+                VulkanStreamlineDeviceBinding binding,
                 SwapchainKHR swapchain,
                 ulong timeout,
                 Silk.NET.Vulkan.Semaphore semaphore,
@@ -914,11 +1043,14 @@ namespace XREngine.Rendering.DLSS
             {
                 result = Result.ErrorInitializationFailed;
 
-                if (!EnsureFrameGenerationVulkanProxyReady(renderer, renderer.StreamlineFrameGenerationSwapchainIncludesDlss, out failureReason))
+                if (!EnsureFrameGenerationVulkanProxyReady(
+                    binding,
+                    binding.FrameGenerationSwapchainIncludesDlss,
+                    out failureReason))
                     return false;
 
                 fixed (uint* imageIndexPtr = &imageIndex)
-                    result = CallVkAcquireNextImageProxy(renderer.Device, swapchain, timeout, semaphore, fence, imageIndexPtr);
+                    result = CallVkAcquireNextImageProxy(binding.Device, swapchain, timeout, semaphore, fence, imageIndexPtr);
 
                 return true;
             }
@@ -929,10 +1061,26 @@ namespace XREngine.Rendering.DLSS
                 ref PresentInfoKHR presentInfo,
                 out Result result,
                 out string failureReason)
+                => TryQueueProxyPresent(
+                    renderer.StreamlineDeviceBinding,
+                    queue,
+                    ref presentInfo,
+                    out result,
+                    out failureReason);
+
+            internal static unsafe bool TryQueueProxyPresent(
+                VulkanStreamlineDeviceBinding binding,
+                Queue queue,
+                ref PresentInfoKHR presentInfo,
+                out Result result,
+                out string failureReason)
             {
                 result = Result.ErrorInitializationFailed;
 
-                if (!EnsureFrameGenerationVulkanProxyReady(renderer, renderer.StreamlineFrameGenerationSwapchainIncludesDlss, out failureReason))
+                if (!EnsureFrameGenerationVulkanProxyReady(
+                        binding,
+                        binding.FrameGenerationSwapchainIncludesDlss,
+                        out failureReason))
                     return false;
 
                 fixed (PresentInfoKHR* presentInfoPtr = &presentInfo)
@@ -946,10 +1094,25 @@ namespace XREngine.Rendering.DLSS
                 StreamlinePclMarker marker,
                 uint frameIndex,
                 out string failureReason)
+                => TryMarkFrameGenerationPclMarker(
+                    renderer.StreamlineDeviceBinding,
+                    marker,
+                    frameIndex,
+                    out failureReason);
+
+            internal static bool TryMarkFrameGenerationPclMarker(
+                VulkanStreamlineDeviceBinding binding,
+                StreamlinePclMarker marker,
+                uint frameIndex,
+                out string failureReason)
             {
                 lock (Sync)
                 {
-                    if (!EnsureNativeVulkanRuntime(renderer, includeFrameGeneration: true, out failureReason, includeDlss: renderer.StreamlineFrameGenerationSwapchainIncludesDlss)
+                    if (!EnsureNativeVulkanRuntime(
+                            binding,
+                            includeFrameGeneration: true,
+                            out failureReason,
+                            includeDlss: binding.FrameGenerationSwapchainIncludesDlss)
                         || !ResolveFrameGenerationFeatureFunctions(out failureReason))
                     {
                         return false;
@@ -981,7 +1144,7 @@ namespace XREngine.Rendering.DLSS
             }
 
             internal static bool TryCreateBridgeSession(
-                VulkanUpscaleBridgeSidecar sidecar,
+                VulkanUpscaleBridgeVulkanContext context,
                 uint viewportId,
                 out BridgeSession? session,
                 out string failureReason)
@@ -991,13 +1154,13 @@ namespace XREngine.Rendering.DLSS
 
                 lock (Sync)
                 {
-                    if (!EnsureBridgeRuntime(sidecar, out failureReason))
+                    if (!EnsureBridgeRuntime(context, out failureReason))
                         return false;
 
                     _activeBridgeSessions++;
                 }
 
-                session = new BridgeSession(sidecar, viewportId);
+                session = new BridgeSession(context, viewportId);
                 return true;
             }
 
@@ -1006,10 +1169,21 @@ namespace XREngine.Rendering.DLSS
                 bool includeFrameGeneration,
                 out string failureReason,
                 bool includeDlss = true)
+                => EnsureNativeVulkanRuntime(
+                    renderer.StreamlineDeviceBinding,
+                    includeFrameGeneration,
+                    out failureReason,
+                    includeDlss);
+
+            private static unsafe bool EnsureNativeVulkanRuntime(
+                VulkanStreamlineDeviceBinding binding,
+                bool includeFrameGeneration,
+                out string failureReason,
+                bool includeDlss = true)
             {
                 failureReason = string.Empty;
 
-                if (includeDlss && !renderer.StreamlineDlssProvisioned)
+                if (includeDlss && !binding.DlssProvisioned)
                 {
                     failureReason =
                         "NVIDIA DLSS was enabled after the Vulkan device was created without its immutable Streamline requirements. " +
@@ -1018,7 +1192,7 @@ namespace XREngine.Rendering.DLSS
                     return false;
                 }
 
-                if (includeFrameGeneration && !renderer.StreamlineFrameGenerationProvisioned)
+                if (includeFrameGeneration && !binding.FrameGenerationProvisioned)
                 {
                     failureReason =
                         "NVIDIA DLSS frame generation was enabled after the Vulkan device was created without its immutable Streamline requirements. " +
@@ -1031,12 +1205,12 @@ namespace XREngine.Rendering.DLSS
                 // process-global feature set equally broad. Initializing only the feature
                 // requested by the first live toggle makes a later DLSS/DLSS-G toggle fail
                 // while that first session or proxy swapchain still owns the runtime.
-                bool initializeFrameGeneration = includeFrameGeneration || renderer.StreamlineFrameGenerationProvisioned;
-                bool initializeDlss = includeDlss || renderer.StreamlineDlssProvisioned;
+                bool initializeFrameGeneration = includeFrameGeneration || binding.FrameGenerationProvisioned;
+                bool initializeDlss = includeDlss || binding.DlssProvisioned;
                 if (!EnsureRuntimeInitialized(initializeFrameGeneration, out failureReason, initializeDlss))
                     return false;
 
-                if (_vulkanInfoInitialized && !MatchesBoundDevice(renderer))
+                if (_vulkanInfoInitialized && !MatchesBoundDevice(binding))
                 {
                     if (HasActiveRuntimeOwnersUnsafe)
                     {
@@ -1052,7 +1226,7 @@ namespace XREngine.Rendering.DLSS
 
                 if (!_vulkanInfoInitialized)
                 {
-                    StreamlineVulkanInfo info = CreateVulkanInfo(renderer);
+                    StreamlineVulkanInfo info = CreateVulkanInfo(binding);
                     StreamlineResult setInfoResult = CallSetVulkanInfo(ref info);
                     if (setInfoResult != StreamlineResult.Ok)
                     {
@@ -1062,9 +1236,9 @@ namespace XREngine.Rendering.DLSS
                     }
 
                     _vulkanInfoInitialized = true;
-                    _boundDeviceHandle = renderer.Device.Handle;
-                    _boundInstanceHandle = renderer.Instance.Handle;
-                    _boundPhysicalDeviceHandle = renderer.PhysicalDevice.Handle;
+                    _boundDeviceHandle = binding.Device.Handle;
+                    _boundInstanceHandle = binding.Instance.Handle;
+                    _boundPhysicalDeviceHandle = binding.PhysicalDevice.Handle;
                 }
 
                 if (includeDlss && !_featureFunctionsResolved && !ResolveFeatureFunctions(out failureReason))
@@ -1082,14 +1256,14 @@ namespace XREngine.Rendering.DLSS
                 return true;
             }
 
-            private static unsafe bool EnsureBridgeRuntime(VulkanUpscaleBridgeSidecar sidecar, out string failureReason)
+            private static unsafe bool EnsureBridgeRuntime(VulkanUpscaleBridgeVulkanContext context, out string failureReason)
             {
                 failureReason = string.Empty;
 
                 if (!EnsureRuntimeInitialized(includeFrameGeneration: false, out failureReason))
                     return false;
 
-                if (_vulkanInfoInitialized && !MatchesBoundDevice(sidecar))
+                if (_vulkanInfoInitialized && !MatchesBoundDevice(context))
                 {
                     if (HasActiveRuntimeOwnersUnsafe)
                     {
@@ -1105,7 +1279,7 @@ namespace XREngine.Rendering.DLSS
 
                 if (!_vulkanInfoInitialized)
                 {
-                    StreamlineVulkanInfo info = CreateVulkanInfo(sidecar);
+                    StreamlineVulkanInfo info = CreateVulkanInfo(context);
                     StreamlineResult setInfoResult = CallSetVulkanInfo(ref info);
                     if (setInfoResult != StreamlineResult.Ok)
                     {
@@ -1115,9 +1289,9 @@ namespace XREngine.Rendering.DLSS
                     }
 
                     _vulkanInfoInitialized = true;
-                    _boundDeviceHandle = sidecar.Device.Handle;
-                    _boundInstanceHandle = sidecar.Instance.Handle;
-                    _boundPhysicalDeviceHandle = sidecar.PhysicalDevice.Handle;
+                    _boundDeviceHandle = context.Device.Handle;
+                    _boundInstanceHandle = context.Instance.Handle;
+                    _boundPhysicalDeviceHandle = context.PhysicalDevice.Handle;
                 }
 
                 if (!_featureFunctionsResolved && !ResolveFeatureFunctions(out failureReason))
@@ -1413,10 +1587,19 @@ namespace XREngine.Rendering.DLSS
                    || global::XREngine.Rendering.RenderPipeline.ResolveEffectiveAntiAliasingModeForFrame() == global::XREngine.EAntiAliasingMode.Dlaa;
 
             private static bool EnsureFrameGenerationVulkanProxyReady(VulkanRenderer renderer, bool includeDlss, out string failureReason)
+                => EnsureFrameGenerationVulkanProxyReady(
+                    renderer.StreamlineDeviceBinding,
+                    includeDlss,
+                    out failureReason);
+
+            private static bool EnsureFrameGenerationVulkanProxyReady(
+                VulkanStreamlineDeviceBinding binding,
+                bool includeDlss,
+                out string failureReason)
             {
                 lock (Sync)
                 {
-                    if (!EnsureNativeVulkanRuntime(renderer, includeFrameGeneration: true, out failureReason, includeDlss)
+                    if (!EnsureNativeVulkanRuntime(binding, includeFrameGeneration: true, out failureReason, includeDlss)
                         || !EnsureVulkanProxyFunctionsResolved(out failureReason))
                     {
                         return false;
@@ -1550,7 +1733,7 @@ namespace XREngine.Rendering.DLSS
             }
 
             private static StreamlineDlssGOptions CreateFrameGenerationOptions(
-                VulkanRenderer renderer,
+                in VulkanFrameGenerationOutputSnapshot output,
                 in VulkanUpscaleBridgeDispatchParameters parameters,
                 in VulkanStreamlineImage depth,
                 in VulkanStreamlineImage motion,
@@ -1558,7 +1741,7 @@ namespace XREngine.Rendering.DLSS
                 in VulkanStreamlineImage uiColorAndAlpha,
                 ENvidiaDlssFrameGenerationMode mode)
             {
-                Extent2D swapchainExtent = renderer.SwapchainExtent;
+                Extent2D swapchainExtent = output.Extent;
                 uint colorWidth = Math.Max(1u, swapchainExtent.Width);
                 uint colorHeight = Math.Max(1u, swapchainExtent.Height);
                 uint inputWidth = Math.Max(1u, parameters.InputWidth);
@@ -1576,12 +1759,12 @@ namespace XREngine.Rendering.DLSS
                     Flags = flags,
                     DynamicResWidth = inputWidth,
                     DynamicResHeight = inputHeight,
-                    NumBackBuffers = Math.Max(1u, renderer.SwapchainImageCount),
+                    NumBackBuffers = Math.Max(1u, output.ImageCount),
                     MvecDepthWidth = inputWidth,
                     MvecDepthHeight = inputHeight,
                     ColorWidth = colorWidth,
                     ColorHeight = colorHeight,
-                    ColorBufferFormat = (uint)renderer.SwapchainImageFormat,
+                    ColorBufferFormat = (uint)output.ImageFormat,
                     MvecBufferFormat = (uint)motion.Format,
                     DepthBufferFormat = (uint)depth.Format,
                     HudLessBufferFormat = (uint)hudlessColor.Format,
@@ -1663,19 +1846,19 @@ namespace XREngine.Rendering.DLSS
                 };
             }
 
-            private static StreamlineVulkanInfo CreateVulkanInfo(VulkanUpscaleBridgeSidecar sidecar)
+            private static StreamlineVulkanInfo CreateVulkanInfo(VulkanUpscaleBridgeVulkanContext context)
             {
                 return new StreamlineVulkanInfo
                 {
                     Base = CreateBase(VulkanInfoStructType, 3),
-                    Device = sidecar.Device,
-                    Instance = sidecar.Instance,
-                    PhysicalDevice = sidecar.PhysicalDevice,
-                    ComputeQueueIndex = sidecar.StreamlineComputeQueueIndex,
-                    ComputeQueueFamily = sidecar.GraphicsQueueFamilyIndex,
-                    GraphicsQueueIndex = sidecar.StreamlineGraphicsQueueIndex,
-                    GraphicsQueueFamily = sidecar.GraphicsQueueFamilyIndex,
-                    OpticalFlowQueueIndex = sidecar.StreamlineOpticalFlowQueueIndex,
+                    Device = context.Device,
+                    Instance = context.Instance,
+                    PhysicalDevice = context.PhysicalDevice,
+                    ComputeQueueIndex = context.StreamlineComputeQueueIndex,
+                    ComputeQueueFamily = context.GraphicsQueueFamilyIndex,
+                    GraphicsQueueIndex = context.StreamlineGraphicsQueueIndex,
+                    GraphicsQueueFamily = context.GraphicsQueueFamilyIndex,
+                    OpticalFlowQueueIndex = context.StreamlineOpticalFlowQueueIndex,
                     OpticalFlowQueueFamily = 0,
                     UseNativeOpticalFlowMode = 0,
                     ComputeQueueCreateFlags = 0,
@@ -1684,21 +1867,21 @@ namespace XREngine.Rendering.DLSS
                 };
             }
 
-            private static StreamlineVulkanInfo CreateVulkanInfo(VulkanRenderer renderer)
+            private static StreamlineVulkanInfo CreateVulkanInfo(VulkanStreamlineDeviceBinding binding)
             {
                 return new StreamlineVulkanInfo
                 {
                     Base = CreateBase(VulkanInfoStructType, 3),
-                    Device = renderer.Device,
-                    Instance = renderer.Instance,
-                    PhysicalDevice = renderer.PhysicalDevice,
-                    ComputeQueueIndex = renderer.StreamlineComputeQueueIndex,
-                    ComputeQueueFamily = renderer.StreamlineComputeQueueFamily,
-                    GraphicsQueueIndex = renderer.StreamlineGraphicsQueueIndex,
-                    GraphicsQueueFamily = renderer.StreamlineGraphicsQueueFamily,
-                    OpticalFlowQueueIndex = renderer.StreamlineOpticalFlowQueueIndex,
-                    OpticalFlowQueueFamily = renderer.StreamlineOpticalFlowQueueFamily,
-                    UseNativeOpticalFlowMode = renderer.StreamlineUsesNativeOpticalFlow ? (byte)1 : (byte)0,
+                    Device = binding.Device,
+                    Instance = binding.Instance,
+                    PhysicalDevice = binding.PhysicalDevice,
+                    ComputeQueueIndex = binding.ComputeQueueIndex,
+                    ComputeQueueFamily = binding.ComputeQueueFamily,
+                    GraphicsQueueIndex = binding.GraphicsQueueIndex,
+                    GraphicsQueueFamily = binding.GraphicsQueueFamily,
+                    OpticalFlowQueueIndex = binding.OpticalFlowQueueIndex,
+                    OpticalFlowQueueFamily = binding.OpticalFlowQueueFamily,
+                    UseNativeOpticalFlowMode = binding.UsesNativeOpticalFlow ? (byte)1 : (byte)0,
                     ComputeQueueCreateFlags = 0,
                     GraphicsQueueCreateFlags = 0,
                     OpticalFlowQueueCreateFlags = 0,
@@ -1807,15 +1990,15 @@ namespace XREngine.Rendering.DLSS
                 _vkDeviceWaitIdleProxy = 0;
             }
 
-            private static bool MatchesBoundDevice(VulkanUpscaleBridgeSidecar sidecar)
-                => _boundDeviceHandle == sidecar.Device.Handle
-                    && _boundInstanceHandle == sidecar.Instance.Handle
-                    && _boundPhysicalDeviceHandle == sidecar.PhysicalDevice.Handle;
+            private static bool MatchesBoundDevice(VulkanUpscaleBridgeVulkanContext context)
+                => _boundDeviceHandle == context.Device.Handle
+                    && _boundInstanceHandle == context.Instance.Handle
+                    && _boundPhysicalDeviceHandle == context.PhysicalDevice.Handle;
 
-            private static bool MatchesBoundDevice(VulkanRenderer renderer)
-                => _boundDeviceHandle == renderer.Device.Handle
-                    && _boundInstanceHandle == renderer.Instance.Handle
-                    && _boundPhysicalDeviceHandle == renderer.PhysicalDevice.Handle;
+            private static bool MatchesBoundDevice(VulkanStreamlineDeviceBinding binding)
+                => _boundDeviceHandle == binding.Device.Handle
+                    && _boundInstanceHandle == binding.Instance.Handle
+                    && _boundPhysicalDeviceHandle == binding.PhysicalDevice.Handle;
 
             private static void MarkTerminalBridgeFailure(string failureReason)
             {
@@ -2351,16 +2534,18 @@ namespace XREngine.Rendering.DLSS
 
             internal sealed class NativeFrameGenerationSession : IDisposable
             {
-                private readonly VulkanRenderer _renderer;
+                private readonly VulkanFrameGenerationOutputSnapshot _output;
                 private readonly StreamlineViewportHandle _viewport;
                 private bool _disposed;
                 private bool _firstDispatch = true;
                 private uint _lastConfiguredFrameIndex;
                 private bool _hasConfiguredFrame;
 
-                public NativeFrameGenerationSession(VulkanRenderer renderer, uint viewportId)
+                public NativeFrameGenerationSession(
+                    in VulkanFrameGenerationOutputSnapshot output,
+                    uint viewportId)
                 {
-                    _renderer = renderer;
+                    _output = output;
                     _viewport = new StreamlineViewportHandle
                     {
                         Base = CreateBase(ViewportStructType, 1),
@@ -2476,7 +2661,7 @@ namespace XREngine.Rendering.DLSS
 
                     if ((!_hasConfiguredFrame || _lastConfiguredFrameIndex != parameters.FrameIndex)
                         && !TryConfigureFrameGenerationForRecordedFrame(
-                            _renderer,
+                            _output,
                             ref viewport,
                             in parameters,
                             in depthImage,
@@ -2616,15 +2801,15 @@ namespace XREngine.Rendering.DLSS
 
             internal sealed class BridgeSession : IDisposable
             {
-                private readonly VulkanUpscaleBridgeSidecar _sidecar;
+                private readonly VulkanUpscaleBridgeVulkanContext _context;
                 private readonly StreamlineViewportHandle _viewport;
                 private bool _disposed;
                 private bool _resourcesAllocated;
                 private bool _firstDispatch = true;
 
-                public BridgeSession(VulkanUpscaleBridgeSidecar sidecar, uint viewportId)
+                public BridgeSession(VulkanUpscaleBridgeVulkanContext context, uint viewportId)
                 {
-                    _sidecar = sidecar;
+                    _context = context;
                     _viewport = new StreamlineViewportHandle
                     {
                         Base = CreateBase(ViewportStructType, 1),
@@ -2760,12 +2945,12 @@ namespace XREngine.Rendering.DLSS
 
                     _resourcesAllocated = true;
 
-                    _sidecar.RecordTransitionImageLayout(slot.CommandBuffer, slot.SourceColor, ImageLayout.General, PipelineStageFlags.AllCommandsBit, AccessFlags.MemoryReadBit | AccessFlags.MemoryWriteBit);
-                    _sidecar.RecordTransitionImageLayout(slot.CommandBuffer, slot.SourceDepth, ImageLayout.General, PipelineStageFlags.AllCommandsBit, AccessFlags.MemoryReadBit | AccessFlags.MemoryWriteBit);
-                    _sidecar.RecordTransitionImageLayout(slot.CommandBuffer, slot.SourceMotion, ImageLayout.General, PipelineStageFlags.AllCommandsBit, AccessFlags.MemoryReadBit | AccessFlags.MemoryWriteBit);
+                    _context.TransitionImageLayout(slot.CommandBuffer, slot.SourceColor, ImageLayout.General, PipelineStageFlags.AllCommandsBit, AccessFlags.MemoryReadBit | AccessFlags.MemoryWriteBit);
+                    _context.TransitionImageLayout(slot.CommandBuffer, slot.SourceDepth, ImageLayout.General, PipelineStageFlags.AllCommandsBit, AccessFlags.MemoryReadBit | AccessFlags.MemoryWriteBit);
+                    _context.TransitionImageLayout(slot.CommandBuffer, slot.SourceMotion, ImageLayout.General, PipelineStageFlags.AllCommandsBit, AccessFlags.MemoryReadBit | AccessFlags.MemoryWriteBit);
                     if (parameters.HasExposureTexture)
-                        _sidecar.RecordTransitionImageLayout(slot.CommandBuffer, slot.Exposure, ImageLayout.General, PipelineStageFlags.AllCommandsBit, AccessFlags.MemoryReadBit | AccessFlags.MemoryWriteBit);
-                    _sidecar.RecordTransitionImageLayout(slot.CommandBuffer, slot.OutputColor, ImageLayout.General, PipelineStageFlags.AllCommandsBit, AccessFlags.MemoryReadBit | AccessFlags.MemoryWriteBit);
+                        _context.TransitionImageLayout(slot.CommandBuffer, slot.Exposure, ImageLayout.General, PipelineStageFlags.AllCommandsBit, AccessFlags.MemoryReadBit | AccessFlags.MemoryWriteBit);
+                    _context.TransitionImageLayout(slot.CommandBuffer, slot.OutputColor, ImageLayout.General, PipelineStageFlags.AllCommandsBit, AccessFlags.MemoryReadBit | AccessFlags.MemoryWriteBit);
 
                     _firstDispatch = false;
                     return true;

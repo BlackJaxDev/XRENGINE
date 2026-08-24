@@ -210,6 +210,8 @@ internal sealed class VulkanCompiledRenderGraphPlan
         CompatibilityIdentity = identity.Value;
         Generation = unchecked((ulong)Interlocked.Increment(ref _nextGeneration));
         SubmissionCount = _submissions.Count;
+        ResourceIds = new VulkanRenderGraphResourceIds();
+        Execution = new VulkanCompiledRenderGraphExecution(_passes, _edges, _submissions, ResourceIds);
     }
 
     public ulong Generation { get; }
@@ -220,6 +222,10 @@ internal sealed class VulkanCompiledRenderGraphPlan
     public ReadOnlyCollection<RenderGraphPlanSubmission> Submissions => _submissions;
     public ReadOnlyCollection<RenderGraphPlanOutputContract> Outputs => _outputs;
     public int SubmissionCount { get; }
+    /// <summary>Flat numeric representation consumed by hot recording paths.</summary>
+    internal VulkanCompiledRenderGraphExecution Execution { get; }
+    /// <summary>Shared cold-publication IDs used by execution and frozen barriers.</summary>
+    internal VulkanRenderGraphResourceIds ResourceIds { get; }
     /// <summary>Physical aliasing remains fail-closed until asynchronous interval proof exists.</summary>
     public bool PhysicalAliasingEnabled => false;
 

@@ -104,6 +104,37 @@ public sealed class RenderBindingPublisherCollection :
     internal IRenderBindingPublisher[] CaptureSnapshot()
         => Volatile.Read(ref _snapshot);
 
+    /// <summary>
+    /// Captures the sole publisher whose producer scope must survive deferred
+    /// backend consumption. Collections with more than one such publisher are
+    /// rejected because a render request intentionally carries one bounded,
+    /// allocation-free publication handle.
+    /// </summary>
+    internal DeferredRenderBindingPublication CaptureDeferredPublication()
+    {
+        IRenderBindingPublisher[] publishers = Volatile.Read(ref _snapshot);
+        IDeferredRenderBindingPublisher? deferredPublisher = null;
+        for (int index = 0; index < publishers.Length; index++)
+        {
+            if (publishers[index] is not IDeferredRenderBindingPublisher candidate)
+                continue;
+
+            if (deferredPublisher is not null)
+            {
+                throw new InvalidOperationException(
+                    "A render binding publisher collection may contain only one deferred-scope publisher.");
+            }
+
+            deferredPublisher = candidate;
+        }
+
+        return deferredPublisher is null
+            ? default
+            : new DeferredRenderBindingPublication(
+                deferredPublisher,
+                deferredPublisher.CaptureDeferredPublication());
+    }
+
     /// <inheritdoc/>
     public IEnumerator<IRenderBindingPublisher> GetEnumerator()
         => ((IEnumerable<IRenderBindingPublisher>)

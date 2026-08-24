@@ -13,11 +13,14 @@ Internet-facing editor bridge.
 | Project | Owns | Must not own |
 |---|---|---|
 | `XREngine.AgentOrchestration` | Provider-neutral run contracts, prompt packet, budgets, bounded tool loop, Responses transport/SSE parsing, HTTP MCP client | ImGui state, editor globals, process/session lifecycle |
-| `Tools/LocalAgentBroker` | Stdio MCP host, exact model catalog/routing advice, run registry, named-session resolution, leases, trace policy | Editor implementation, shell/Git execution, API-key persistence |
+| `Tools/LocalAgentBroker` | Stdio MCP host, exact model catalog/routing advice, run registry, named-session resolution, leases, trace policy, durable history publishing | Editor implementation, shell/Git execution, API-key persistence |
+| `Tools/LocalAgentBroker.Shared` | Tray/history contracts, checkout-local paths, atomic record and settings storage | MCP transport, API calls, Windows UI |
+| `Tools/LocalAgentBroker.Tray` | Windows notifications and notification icon, running-task menu, live prompt/response viewer, idle exit, history cleanup | API keys, provider calls, broker process ownership |
 | `XREngine.Editor` | ImGui messages/segments, preferences, local tools, viewport presentation, in-process MCP startup | A second OpenAI function loop |
 
 `XREngine.Editor` references the shared orchestration project. The broker
-references only that project. No NuGet package was added for this feature.
+and tray companion share only provider-neutral contracts and the file-backed
+history project. No NuGet package was added for this feature.
 
 ## Run Contract
 
@@ -103,11 +106,75 @@ snapshot. `get_agent_run` is the authoritative incremental/terminal view.
 The snapshot and nested terminal result both retain provider attempts, retry
 count, and the earliest observed actual model, including cancellation paths.
 
+Broker server version `0.4.0` adds live status metadata to both
+`get_agent_run` and `list_agent_runs`:
+
+- `ObservedUtc` is sampled while the snapshot is produced, so it advances on
+  every poll independently of provider output.
+- `ElapsedMilliseconds` is the non-negative wall-clock interval from
+  `CreatedUtc` to `ObservedUtc`; it is a diagnostic duration, not provider CPU
+  time or a budget override.
+- `ProgressMessage` is the latest informational stage. It is not durable
+  evidence, a completion percentage, or a substitute for terminal
+  `AgentRunStatus`.
+
+`UpdatedUtc` remains the last retained-state mutation. This distinction lets a
+client identify a quiet but actively observable stream without treating a poll
+as a provider-progress event. The terminal result remains authoritative once
+the status becomes `Completed`, `Failed`, or `Cancelled`.
+
+For streamed Responses calls, the model client emits
+`provider_stream_connected` after obtaining the SSE stream. It then emits a
+bounded in-progress provider-attempt diagnostic after the first parsed provider
+event and every 32 events thereafter. The broker projects the latest provider
+event type into `ProgressMessage`, including event-only periods with no text
+delta. Background responses continue to expose their normal polling
+diagnostics; neither path reports speculative percentage completion.
+
+Broker server version `0.5.0` retains requested Responses controls in both
+`get_agent_run` and `list_agent_runs`: `RequestedReasoningEffort`,
+`RequestedTextVerbosity`, and `MaxOutputTokens`. `text_verbosity` accepts
+`low`, `medium`, or `high` and defaults to `medium`. The broker serializes it
+as `text: { verbosity: ... }`; reasoning effort remains separately serialized
+as `reasoning: { effort: ... }` for the exact selected GPT-5.6 worker model.
+`max_output_tokens` remains a hard combined visible-output and reasoning-token
+budget and is never raised automatically. If the provider terminates an
+incomplete response with `max_output_tokens`, the terminal failure advises a
+later explicitly authorized run to use a higher output budget or lower
+reasoning/verbosity rather than spending beyond the original authorization.
+
+Broker server version `0.6.1` makes both omitted failure-prone budgets
+route-aware. Luna and Terra retain 4,096 tokens and 120 seconds. Sol receives
+16,384 tokens and 300 seconds, or 32,768 tokens and 600 seconds at
+`xhigh`/`max`, so its internal reasoning does not routinely exhaust either
+generic budget before returning evidence. The server resolves each value only
+when its corresponding budget property is absent; every explicit limit remains
+a hard authorization boundary and is never increased or retried automatically.
+
+Broker server version `0.7.0` adds the Windows tray companion. Once the first
+run is accepted, the broker writes its prompt record and starts the published
+tray executable if that checkout does not already own a tray instance. Multiple
+stdio broker processes share the same checkout-local record directory and a
+named mutex prevents duplicate tray processes. The tray discovers updates by
+polling atomic JSON snapshots; it never connects to the API or broker stdio
+transport, so closing or restarting it cannot interrupt a worker.
+
+History snapshots live under
+`Build/_AgentValidation/00000000-000000-shared/local-agent-broker-ui/runs/`.
+They include the provider prompt, optional system instructions, incremental or
+terminal response text, concise run metadata, usage, and failures. Initial
+inline image data, editor tool arguments/results, API keys, headers, and raw
+provider payloads are excluded. Writes are coalesced during streaming and
+flushed immediately at terminal state. The tray's `settings.json` supports a
+nullable idle-exit duration and a nullable terminal-record retention duration;
+null means never. It also stores whether new-prompt Windows notifications are
+enabled; they default to enabled. Cleanup never removes queued or running records.
+
 The supported exact model IDs are `gpt-5.6-luna`, `gpt-5.6-terra`, and
 `gpt-5.6-sol`. Route advice implements the repository policy but has no launch
-side effect. A provider-reported model may include a dated snapshot suffix of
-the exact requested model; any other model is classified as substitution and
-fails the run. Re-check the
+side effect. Both the requested and provider-reported model must match the same
+exact ID; aliases and dated snapshot suffixes are terminal substitution failures
+rather than silently accepted replacements. Re-check the
 [current GPT-5.6 guidance](https://developers.openai.com/api/docs/guides/latest-model)
 before distribution.
 
@@ -119,7 +186,7 @@ catalog, so the Responses request is a bounded reasoning-only call over the
 coordinator-supplied evidence packet.
 
 `EditorSessionResolver` validates the session-name grammar, combines it only
-under `Build/_AgentValidation/mcp-sessions`, checks full-path containment,
+under `Build/_AgentValidation/00000000-000000-shared/mcp-sessions`, checks full-path containment,
 reads `session.json`, requires a loopback HTTP(S) URI, and verifies the
 manifest name. `HttpMcpToolProvider.PreflightAsync` then calls MCP `ping` and
 requires the exact editor session name.
@@ -166,7 +233,7 @@ when truncated.
 The checked-in `.codex/config.toml` resolves
 `Tools/Invoke-LocalAgentBroker.ps1` by walking upward from the current
 directory. The launcher resolves the repository root from its own location,
-reads `Build/AgentTools/LocalAgentBroker.current`, and executes that immutable
+reads `Build/_AgentValidation/00000000-000000-shared/agent-tools/LocalAgentBroker.current`, and executes that immutable
 versioned deployment without writing a build banner to the stdio protocol.
 `Setup-LocalAgentBroker.ps1` publishes a fresh version before atomically moving
 the pointer, so a loaded MCP process never blocks the update. A legacy fixed

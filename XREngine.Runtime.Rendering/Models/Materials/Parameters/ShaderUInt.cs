@@ -16,9 +16,6 @@ namespace XREngine.Rendering.Models.Materials
         protected override void SetProgramUniform(XRRenderProgram program, string location)
             => program.Uniform(location, Value);
 
-        [Browsable(false)]
-        public unsafe uint* Data { get { fixed (uint* ptr = &_value) return ptr; } }
-
         public ShaderUInt()
             : this(0u, NoName) { }
         public ShaderUInt(uint defaultValue, string name) 

@@ -59,7 +59,7 @@ namespace XREngine.Rendering.Commands
         }
 
         /// <summary>
-        /// The resulting culled commands that will be rendered in this pass.
+        /// The resulting compact visible draw-ID stream for this pass.
         /// </summary>
         public XRDataBuffer CulledSceneToRenderBuffer
             => _culledSceneToRenderBuffer ??= MakeCulledSceneToRenderBuffer(GPUScene.MinCommandCount);
@@ -146,11 +146,6 @@ namespace XREngine.Rendering.Commands
             /// </summary>
             public bool ValidateCopyCommandAtomicBounds { get; set; } = true;
 
-            /// <summary>
-            /// Enables compact hot-command buffers for culling/occlusion/indirect stages.
-            /// Falls back to compact 20-lane command reads when disabled.
-            /// </summary>
-            public bool EnableHotCommandLayout { get; set; } = true;
         }
 
         private static readonly IndirectDebugSettings _indirectDebug = new();
@@ -167,8 +162,12 @@ namespace XREngine.Rendering.Commands
         private bool _passValidateCopyCommandAtomicBounds;
         private bool _passAllowCpuFallback;
         private bool _passDiagnosticReadbacksEnabled;
+        private bool _passMeshletEvidenceReadbacksEnabled;
         private bool _passEnableZeroReadbackMaterialScatter;
         private EZeroReadbackMaterialDrawPath _passZeroReadbackMaterialDrawPath;
+        private bool _meshletDirectPipelineReadyThisFrame;
+        private bool _forceTraditionalMeshletRowsThisFrame;
+        private string? _meshletReadinessFailure;
         private int _zeroReadbackProgramPendingCountThisFrame;
         private int _forbiddenFallbackLogBudget = 8;
 
@@ -202,14 +201,6 @@ namespace XREngine.Rendering.Commands
             return value.SequenceEqual("1") || value.Equals("true", StringComparison.OrdinalIgnoreCase);
         }
 
-        private static bool IsShippingHotOnlyProfile()
-            => VulkanFeatureProfile.IsActive && VulkanFeatureProfile.ActiveProfile == EVulkanGpuDrivenProfile.ShippingFast;
-
-        private static bool IsHotCommandLayoutEnabled()
-            => IndirectDebug.EnableHotCommandLayout || IsShippingHotOnlyProfile();
-
-        private static bool IsHotCommandLayoutRequired()
-            => IsShippingHotOnlyProfile();
 
         private bool IsCpuReadbackCountDisabledForPass()
             => _passPolicySnapshotValid
@@ -269,10 +260,13 @@ namespace XREngine.Rendering.Commands
 
         private void CapturePassPolicySnapshot()
         {
+            _meshletDirectPipelineReadyThisFrame = false;
+            _forceTraditionalMeshletRowsThisFrame = false;
+            _meshletReadinessFailure = null;
             EMeshSubmissionStrategy strategy = MeshSubmissionStrategy;
             bool instrumented = IsInstrumentedGpuStrategy(strategy);
             bool zeroReadback = strategy.IsGpuZeroReadbackStrategy();
-            bool meshlet = strategy.IsAnyMeshletStrategy();
+            bool meshlet = MeshPrimitivePathPreference != EMeshPrimitivePathPreference.TraditionalOnly;
 
             _passDebugLoggingEnabled = instrumented && RuntimeEngine.EffectiveSettings.EnableGpuIndirectDebugLogging;
             _passValidationLoggingEnabled = instrumented && RuntimeEngine.EffectiveSettings.EnableGpuIndirectValidationLogging;
@@ -306,8 +300,11 @@ namespace XREngine.Rendering.Commands
                 && fallbackRequested
                 && (!VulkanFeatureProfile.IsActive || VulkanFeatureProfile.ActiveProfile == EVulkanGpuDrivenProfile.Diagnostics);
 
-            _passDiagnosticReadbacksEnabled = instrumented
-                && (_passDebugLoggingEnabled
+            _passMeshletEvidenceReadbacksEnabled = meshlet &&
+                VulkanFeatureProfile.IsActive &&
+                VulkanFeatureProfile.ActiveProfile == EVulkanGpuDrivenProfile.Diagnostics;
+            _passDiagnosticReadbacksEnabled = instrumented &&
+                (_passDebugLoggingEnabled
                     || _passValidationLoggingEnabled
                     || !_passDisableCpuReadbackCount
                     || _passEnableCpuBatching);
@@ -485,18 +482,20 @@ namespace XREngine.Rendering.Commands
         private XRDataBuffer? _indirectDrawBuffer;         // DrawElementsIndirectCommand array
         private XRDataBuffer? _culledSceneToRenderBuffer;  // Compacted visible commands
         private XRDataBuffer? _passFilterDebugBuffer;      // Optional GPU pass-filter instrumentation
-        private XRDataBuffer? _sourceHotCommandBuffer;     // Hot source commands (16 uints)
-        private XRDataBuffer? _culledHotCommandBuffer;     // Hot compacted visible commands
-        private XRDataBuffer? _occlusionCulledHotBuffer;   // Hot ping-pong output for occlusion refine
         private XRDataBuffer? _visibleMeshletTaskBuffer;   // GpuMeshletTaskRecord stream
         private XRDataBuffer? _visibleMeshletTaskCountBuffer;
         private XRDataBuffer? _meshletDispatchIndirectBuffer;
         private XRDataBuffer? _meshletDispatchCountBuffer;
         private XRDataBuffer? _meshletExpansionOverflowFlagBuffer;
-        private bool _sourceCommandsUseHotLayout;
-        private bool _culledHotCommandsValid;
-        private bool _culledCommandsUseHotLayout;
+        private XRDataBuffer? _meshletStatsDiagnosticsSnapshotBuffer;
+        private XRDataBuffer? _meshletDispatchDiagnosticsSnapshotBuffer;
+        private XRDataBuffer? _meshletStatsDiagnosticsRefreshSnapshotBuffer;
+        private XRDataBuffer? _meshletDispatchDiagnosticsRefreshSnapshotBuffer;
         private bool _meshletExpansionPreparedThisFrame;
+        private bool _meshletEvidenceSnapshotQueuedThisFrame;
+        private bool _meshletEvidenceRefreshSnapshotQueuedThisFrame;
+        private ulong _meshletEvidenceSnapshotFrameId;
+        private ulong _meshletEvidenceSnapshotDiscardGeneration;
 
         // Synchronization & lifecycle
         private readonly Lock _lock = new();
@@ -517,8 +516,8 @@ namespace XREngine.Rendering.Commands
                 name,
                 EBufferTarget.ShaderStorageBuffer,
                 capacity,
-                EComponentType.Float,
-                GPUScene.CommandFloatCount,
+                EComponentType.UInt,
+                1,
                 false,
                 false)
             {
@@ -532,32 +531,19 @@ namespace XREngine.Rendering.Commands
             return buffer;
         }
 
-        private static XRDataBuffer MakeHotCommandBuffer(string name, uint capacity)
-        {
-            XRDataBuffer buffer = new(
-                name,
-                EBufferTarget.ShaderStorageBuffer,
-                capacity,
-                EComponentType.UInt,
-                GPUScene.CommandHotUIntCount,
-                false,
-                false)
-            {
-                Usage = EBufferUsage.StreamDraw,
-                DisposeOnPush = false,
-                Resizable = false,
-                StorageFlags = EBufferMapStorageFlags.DynamicStorage | EBufferMapStorageFlags.Read,
-                RangeFlags = EBufferMapRangeFlags.Read,
-            };
-            buffer.Generate();
-            return buffer;
-        }
-
-        private uint ComputeMeshletTaskCapacity(uint commandCapacity)
+        private uint ComputeMeshletTaskCapacity(uint commandCapacity, uint residentMeshletCount)
         {
             uint visibleCommandCapacity = Math.Max(commandCapacity, 1u);
-            ulong taskCapacity = (ulong)visibleCommandCapacity * Math.Max(_meshletTaskCapacityPerVisibleCommand, 1u) * 2ul;
-            return (uint)Math.Min(Math.Max(taskCapacity, 1ul), MaxMeshletTaskCapacityHardLimit);
+            ulong commandCapacityEstimate =
+                (ulong)visibleCommandCapacity * Math.Max(_meshletTaskCapacityPerVisibleCommand, 1u) * 2ul;
+            // The command estimate protects repeated instances of a small mesh.
+            // The resident estimate protects a small command set containing one
+            // very dense model and reserves a second range for LOD transitions.
+            ulong residentCapacityEstimate = (ulong)residentMeshletCount * 2ul;
+            ulong taskCapacity = Math.Max(commandCapacityEstimate, residentCapacityEstimate);
+            uint backendLimit = AbstractRenderer.Current?.MaxMeshTaskDispatchGroupsX ?? uint.MaxValue;
+            ulong boundedCapacity = Math.Min(MaxMeshletTaskCapacityHardLimit, backendLimit);
+            return (uint)Math.Min(Math.Max(taskCapacity, 1ul), Math.Max(boundedCapacity, 1ul));
         }
 
         private GPUSortAlgorithm _sortAlgorithm = GPUSortAlgorithm.Bitonic;
@@ -592,7 +578,6 @@ namespace XREngine.Rendering.Commands
         //public XRRenderProgram? RadixIndexSortComputeShader;
         private XRRenderProgram? _lodSelectComputeShader;
         public XRRenderProgram? _indirectRenderTaskShader;
-        public XRRenderProgram? _buildHotCommandsProgram;
         public XRRenderProgram? _resetCountersComputeShader;
         private XRRenderProgram? _expandMeshletsComputeShader;
         private XRRenderProgram? _clearUIntsComputeShader;
@@ -616,6 +601,8 @@ namespace XREngine.Rendering.Commands
         private XRRenderProgram? _copyCount3Program;
         private XRTexture2D? _hiZDepthPyramid;
         private XRTexture2D? _hiZDepthPyramidOwned;
+        private XRTexture2D? _hiZMipSourceViewTexture;
+        private XRTexture2DView[] _hiZMipSourceViews = [];
         private int _hiZMaxMip;
 
         // Occlusion stage needs an input count that survives writing the final visible count.
@@ -627,7 +614,6 @@ namespace XREngine.Rendering.Commands
         private XRDataBuffer? _twoPassCandidateCountBuffer;
         private XRDataBuffer? _twoPassPhaseOneCountBuffer;
         private XRDataBuffer? _twoPassPhaseOneCommandBuffer;
-        private XRDataBuffer? _twoPassPhaseOneHotCommandBuffer;
         private XRDataBuffer? _twoPassPhaseOneMaterialTierIndirectDrawBuffer;
         private XRDataBuffer? _twoPassPhaseOneMaterialTierDrawCountBuffer;
 
@@ -680,20 +666,6 @@ namespace XREngine.Rendering.Commands
             private set => SetField(ref _exactTransparentVisibleCommandCount, value);
         }
 
-        // SoA double buffers & related
-        private XRDataBuffer? _soaBoundingSpheresA;
-        private XRDataBuffer? _soaMetadataA;
-        private XRDataBuffer? _soaBoundingSpheresB;
-        private XRDataBuffer? _soaMetadataB;
-        private bool _useBufferAForRender = true;
-        private XRRenderProgram? _extractSoAComputeShader;
-        private XRRenderProgram? _soACullingComputeShader;
-        //private XRRenderProgram? HiZSoACullingComputeShader;
-        //private XRRenderProgram? _gatherProgram;
-        private XRDataBuffer? _soaIndexList;
-        //public int HiZMaxMip { get; set; } = 0;
-        //private XRTexture? _hiZDepthPyramid;
-
         // Key-index radix buffers
         //private XRDataBuffer? _keyIndexBufferA;
         //private XRDataBuffer? _keyIndexBufferB;
@@ -741,6 +713,8 @@ namespace XREngine.Rendering.Commands
             ? _passZeroReadbackMaterialDrawPath
             : RuntimeEngine.EffectiveSettings.ZeroReadbackMaterialDrawPath;
         public EMeshSubmissionStrategy MeshSubmissionStrategy { get; set; } = EMeshSubmissionStrategy.GpuIndirectInstrumented;
+        /// <summary>Primitive generation selected independently from submission mode.</summary>
+        public EMeshPrimitivePathPreference MeshPrimitivePathPreference { get; set; } = EMeshPrimitivePathPreference.TraditionalOnly;
         public uint LodTransitionFrameCount { get; set; } = 8u;
         private uint _meshletTaskCapacityPerVisibleCommand = 128u;
         public uint MeshletTaskCapacityPerVisibleCommand
@@ -822,8 +796,6 @@ namespace XREngine.Rendering.Commands
 
         // Simple passthrough for count/flag/stat buffer exposure
         public XRDataBuffer? CulledCountBuffer => _culledCountBuffer;
-        public XRDataBuffer? CulledHotCommandBuffer => _culledCommandsUseHotLayout ? _culledHotCommandBuffer : null;
-        public bool CulledCommandsUseHotLayout => _culledCommandsUseHotLayout;
         public XRDataBuffer? DrawCountBuffer => _drawCountBuffer;
         public XRDataBuffer? IndirectDrawBuffer => _indirectDrawBuffer;
         public XRDataBuffer? MaterialTierIndirectDrawBuffer => _materialTierIndirectDrawBuffer;
@@ -837,6 +809,8 @@ namespace XREngine.Rendering.Commands
         public XRDataBuffer? MeshletDispatchIndirectBuffer => _meshletDispatchIndirectBuffer;
         public XRDataBuffer? MeshletDispatchCountBuffer => _meshletDispatchCountBuffer;
         public XRDataBuffer? MeshletExpansionOverflowFlagBuffer => _meshletExpansionOverflowFlagBuffer;
+        public XRDataBuffer? MeshletDispatchDiagnosticsSnapshotBuffer
+            => _meshletEvidenceSnapshotQueuedThisFrame ? _meshletDispatchDiagnosticsSnapshotBuffer : null;
         public XRDataBuffer? TruncationFlagBuffer => _truncationFlagBuffer;
         public XRDataBuffer? StatsBuffer => _statsBuffer;
         public XRDataBuffer? MaskedVisibleIndexBuffer => _maskedVisibleIndexBuffer;
@@ -849,9 +823,29 @@ namespace XREngine.Rendering.Commands
         public bool ZeroReadbackMaterialScatterPreparedThisFrame => _zeroReadbackMaterialScatterPreparedThisFrame;
         public bool ZeroReadbackActiveBucketListPreparedThisFrame => _zeroReadbackActiveBucketListPreparedThisFrame;
         public bool MeshletExpansionPreparedThisFrame => _meshletExpansionPreparedThisFrame;
+        /// <summary>
+        /// Gets whether the direct task/mesh program and material-table pipeline
+        /// were linked and accepted before the pass's traditional rows were sealed.
+        /// </summary>
+        public bool MeshletDirectPipelineReadyThisFrame => _meshletDirectPipelineReadyThisFrame;
+        public string? MeshletReadinessFailure => _meshletReadinessFailure;
+
+        internal void SealMeshletDirectPipelineReadiness(bool ready, string? failureReason)
+        {
+            _meshletDirectPipelineReadyThisFrame = ready;
+            _meshletReadinessFailure = ready ? null : failureReason;
+        }
+
+        internal void ForceTraditionalMeshletRowsForCurrentSubmission(string failureReason)
+        {
+            _forceTraditionalMeshletRowsThisFrame = true;
+            _meshletDirectPipelineReadyThisFrame = false;
+            _meshletReadinessFailure = failureReason;
+        }
         public uint CommandCapacity => _lastMaxCommands == 0u ? GPUScene.MinCommandCount : _lastMaxCommands;
         public uint MaxIndirectDrawCapacity => Math.Max(CommandCapacity * 2u, 1u);
-        public uint MaxVisibleMeshletTaskCapacity => ComputeMeshletTaskCapacity(CommandCapacity);
+        public uint MaxVisibleMeshletTaskCapacity
+            => _visibleMeshletTaskBuffer?.ElementCount ?? ComputeMeshletTaskCapacity(CommandCapacity, 0u);
 
         public bool TryGetMeshletExpansionInputs(GPUScene scene, out GpuMeshletExpansionInputs inputs)
         {
@@ -859,15 +853,12 @@ namespace XREngine.Rendering.Commands
             if (scene is null || _culledSceneToRenderBuffer is null || _culledCountBuffer is null)
                 return false;
 
-            XRDataBuffer? visibleHotCommandBuffer = _culledCommandsUseHotLayout ? _culledHotCommandBuffer : null;
             uint visibleCommandUpperBound = _visibleCommandUpperBoundValid
                 ? Math.Min(_visibleCommandUpperBound, CommandCapacity)
                 : Math.Min(VisibleCommandCount, CommandCapacity);
 
             inputs = new GpuMeshletExpansionInputs(
                 _culledSceneToRenderBuffer,
-                visibleHotCommandBuffer,
-                visibleHotCommandBuffer is not null,
                 _culledCountBuffer,
                 scene.DrawMetadataBuffer,
                 scene.MeshDataBuffer,
@@ -878,40 +869,6 @@ namespace XREngine.Rendering.Commands
                 scene.LodTransitionBuffer,
                 visibleCommandUpperBound);
             return true;
-        }
-
-        internal void CaptureMeshletInstrumentationAfterDispatch(TimeSpan dispatchElapsed)
-        {
-            if (!MeshSubmissionStrategy.IsInstrumentedMeshletStrategy() ||
-                !RuntimeEngine.EffectiveSettings.EnableGpuIndirectDebugLogging)
-            {
-                return;
-            }
-
-            uint visibleMeshlets = VisibleMeshletTaskCountBuffer is not null
-                ? ReadUIntAt(VisibleMeshletTaskCountBuffer, 0u)
-                : 0u;
-            uint dispatchedMeshlets = MeshletDispatchCountBuffer is not null
-                ? ReadUIntAt(MeshletDispatchCountBuffer, 0u)
-                : 0u;
-            uint overflowCount = MeshletExpansionOverflowFlagBuffer is not null
-                ? ReadUIntAt(MeshletExpansionOverflowFlagBuffer, 0u)
-                : 0u;
-
-            uint readbackBytes = 0u;
-            if (VisibleMeshletTaskCountBuffer is not null)
-                readbackBytes += sizeof(uint);
-            if (MeshletDispatchCountBuffer is not null)
-                readbackBytes += sizeof(uint);
-            if (MeshletExpansionOverflowFlagBuffer is not null)
-                readbackBytes += sizeof(uint);
-
-            RuntimeEngine.Rendering.Stats.GpuMeshlets.RecordGpuMeshletInstrumentation(
-                visibleMeshlets,
-                dispatchedMeshlets,
-                overflowCount,
-                dispatchElapsed,
-                readbackBytes);
         }
 
         // Returns the current scene material map (ID -> XRMaterial)

@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -387,13 +388,30 @@ public static class SelfIterationBenchmarkHarness
 
     private static string CreateRunRoot(string workspaceRoot, string campaignId)
     {
+        ProcessStartInfo retentionStart = new()
+        {
+            FileName = "powershell",
+            WorkingDirectory = workspaceRoot,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+        };
+        retentionStart.ArgumentList.Add("-NoProfile");
+        retentionStart.ArgumentList.Add("-ExecutionPolicy");
+        retentionStart.ArgumentList.Add("Bypass");
+        retentionStart.ArgumentList.Add("-File");
+        retentionStart.ArgumentList.Add(Path.Combine(workspaceRoot, "Tools", "Limit-AgentValidation.ps1"));
+        retentionStart.ArgumentList.Add("-ReserveTaskRun");
+        using Process retention = Process.Start(retentionStart)
+            ?? throw new InvalidOperationException("Could not start agent-output retention cleanup.");
+        retention.WaitForExit();
+        if (retention.ExitCode != 0)
+            throw new InvalidOperationException("Agent-output retention cleanup failed.");
+
         string path = Path.Combine(
             workspaceRoot,
             "Build",
             "_AgentValidation",
-            "self-iteration",
-            campaignId,
-            $"{DateTime.Now:yyyyMMdd-HHmmss}");
+            $"{DateTime.Now:yyyyMMdd-HHmmss}-self-iteration-{campaignId}");
         Directory.CreateDirectory(path);
         return path;
     }

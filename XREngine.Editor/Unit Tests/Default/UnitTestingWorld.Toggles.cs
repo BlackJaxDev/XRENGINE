@@ -141,6 +141,7 @@ public static partial class EditorUnitTests
         //Debug visualize
         public bool VisualizeOctree = false;
         public bool VisualizeQuadtree = false;
+        public bool MeshletDebugDisplay = false; //Colors production mesh-shader geometry by meshlet on the unit-test camera; unsupported passes remain on their planned traditional GPU route.
 
         //Editor UI
         public UnitTestEditorType EditorType { get; set; } = UnitTestEditorType.IMGUI; //Selects which editor UI pipeline to create for unit testing.
@@ -255,6 +256,11 @@ public static partial class EditorUnitTests
         {
             public bool Enabled { get; set; } = true;
             public UnitTestModelImportKind Kind { get; set; } = UnitTestModelImportKind.Static;
+            /// <summary>
+            /// Selects the generic model material factory. Unity prefabs use their source-aware
+            /// material converter instead; recognized Poiyomi materials are always converted to
+            /// XRENGINE's forward-plus Uber shader.
+            /// </summary>
             public ModelImportMaterialMode MaterialMode { get; set; } = ModelImportMaterialMode.Deferred;
             /// <summary>
             /// When true and <see cref="MaterialMode"/> is <see cref="ModelImportMaterialMode.Deferred"/>,
@@ -265,6 +271,13 @@ public static partial class EditorUnitTests
             public bool UseForwardForTransparent { get; set; } = false;
 
             /// <summary>
+            /// Publishes each imported renderable's source material as an explicit local
+            /// material override. This keeps the visual result unchanged while exercising
+            /// the local-override submission contract.
+            /// </summary>
+            public bool UseSourceMaterialAsOverride { get; set; }
+
+            /// <summary>
             /// Selects how this model import chooses between native format-specific importers
             /// and Assimp fallback. PreferNativeThenAssimp uses a native importer when the
             /// format has one available and falls back to Assimp otherwise. Today the native
@@ -273,6 +286,12 @@ public static partial class EditorUnitTests
             public ModelImportBackendPreference ImporterBackend { get; set; } = ModelImportBackendPreference.PreferNativeThenAssimp;
 
             public string Path { get; set; } = string.Empty;
+            /// <summary>
+            /// Optional Unity project root (or its Assets directory) for <c>.prefab</c> imports.
+            /// When omitted, the importer locates the owning project from the prefab path.
+            /// Relative paths are resolved from the process working directory.
+            /// </summary>
+            public string? UnityProjectRoot { get; set; }
             public PostProcessSteps ImportFlags { get; set; } = PostProcessSteps.None;
             public float Scale { get; set; } = 1.0f;
             public bool ZUp { get; set; } = false;
@@ -282,6 +301,15 @@ public static partial class EditorUnitTests
             /// imported hierarchy. The source asset is imported once.
             /// </summary>
             public int InstanceCount { get; set; } = 1;
+
+            /// <summary>
+            /// Enables deterministic import-time LOD generation for this model. Meshlets are
+            /// cooked for every resulting LOD before the model becomes renderable.
+            /// </summary>
+            public bool GenerateMeshletLods { get; set; }
+
+            /// <summary>Additional LOD levels requested when <see cref="GenerateMeshletLods"/> is enabled.</summary>
+            public int MeshletAdditionalLodCount { get; set; } = 2;
 
             /// <summary>
             /// Additional post-import actions to apply after the source model has been loaded.
@@ -356,7 +384,10 @@ public static partial class EditorUnitTests
         /// <summary>
         /// Startup model imports processed when the Unit Testing World boots. Each array item
         /// is a ModelImportSettings object with Enabled, Kind, MaterialMode, ImporterBackend,
-        /// Path, ImportFlags, Scale, ZUp, PostImportFlags, and optional YawPitchRoll/Translation objects.
+        /// Path, optional UnityProjectRoot, ImportFlags, Scale, ZUp, InstanceCount, GenerateMeshletLods,
+        /// MeshletAdditionalLodCount, PostImportFlags, and optional
+        /// YawPitchRoll/Translation objects. Unity prefab entries use the Unity converter; recognized
+        /// Poiyomi materials are converted to the forward-plus Uber shader.
         /// Paths are relative to the process working directory unless absolute.
         /// </summary>
         public List<ModelImportSettings> ModelsToImport { get; set; } = [];
@@ -470,6 +501,13 @@ public static partial class EditorUnitTests
         /// the existing forward unlit unit-box behavior.
         /// </summary>
         public bool UnitBoxDeferredMaterial { get; set; } = false;
+
+        /// <summary>
+        /// Disables face culling on unit boxes. Set false when a fixture needs the boxes to
+        /// reach the missing-meshlet-payload classification instead of the two-sided-state
+        /// classification.
+        /// </summary>
+        public bool UnitBoxDoubleSided { get; set; } = true;
 
         public EVSyncMode? VSyncOverride = EVSyncMode.Off; //When set, overrides loaded user VSync for unit-test runs. Null preserves saved user settings.
         public float RenderFPS = 0.0f;

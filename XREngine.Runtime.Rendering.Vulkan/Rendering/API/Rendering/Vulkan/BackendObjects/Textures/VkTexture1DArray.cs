@@ -8,7 +8,7 @@ namespace XREngine.Rendering.Vulkan;
 /// Each element in <c>Data.Textures</c> becomes one array layer, and mipmaps are uploaded
 /// per-layer with <see cref="ImageViewType.Type1DArray"/>.
 /// </summary>
-internal sealed class VkTexture1DArray(VulkanRenderer api, XRTexture1DArray data) : VkImageBackedTexture<XRTexture1DArray>(api, data)
+internal sealed class VkTexture1DArray(VulkanBackendObjectContext backendContext, IRenderApiWrapperOwner owner, XRTexture1DArray data) : VkImageBackedTexture<XRTexture1DArray>(backendContext, owner, data)
 {
     protected override ImageType TextureImageType => ImageType.Type1D;
     protected override ImageViewType DefaultImageViewType => ImageViewType.Type1DArray;
@@ -64,18 +64,8 @@ internal sealed class VkTexture1DArray(VulkanRenderer api, XRTexture1DArray data
                 if (mip is null)
                     continue;
 
-                if (!TryCreateStagingBuffer(mip.Data, out Buffer stagingBuffer, out DeviceMemory stagingMemory))
-                    continue;
-
-                try
-                {
-                    Extent3D extent = new(Math.Max(mip.Width, 1u), 1, 1);
-                    CopyBufferToImage(stagingBuffer, level, layer, 1, extent, (ulong)(mip.Data?.Length ?? 0));
-                }
-                finally
-                {
-                    DestroyStagingBuffer(stagingBuffer, stagingMemory);
-                }
+                Extent3D extent = new(Math.Max(mip.Width, 1u), 1, 1);
+                _ = UploadStagingDataToImage(mip.Data, level, layer, 1, extent);
             }
         }
 

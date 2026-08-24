@@ -1,6 +1,6 @@
 # Vulkan Core Hardening And Recording Code Changes TODO
 
-Last Updated: 2026-08-05
+Last Updated: 2026-08-13
 Owner: Rendering
 Status: Active
 
@@ -22,273 +22,37 @@ may be traded away to claim progress on another.
 Completed implementation history remains in the
 [completed-work record](vulkan-core-hardening-and-device-loss-completed.md).
 
-The context-isolation and generation-publication work below incorporates the
-remaining architectural findings from the
-[directional-light and final-presentation investigation](../../investigations/rendering/directional-light-inspector-shadow-2026-08-03.md).
-The renderer must not mix main-view, shadow, UI-preview, capture, or swapchain
-resource generations even when those outputs share a window or frame.
-
 ## Code Changes
-
-### 1. Contain Device Loss And Make Resource Lifetime Explicit
-
-- [ ] Make device-loss transition first-writer-wins and stop all new recording,
-  submission, waits, allocation, mapping, descriptor updates, and planner
-  publication after it is confirmed.
-- [ ] Preserve the original failing Vulkan/OpenXR call, result, frame operation,
-  submission context, and in-flight resource generations for diagnostics.
-- [ ] Make resource retirement timeline/fence-safe for images, views,
-  framebuffers, descriptors, buffers, command pools, and plans.
-- [ ] Replace physical resources through one generation transaction: prepare
-  the new allocation, image views, framebuffer attachments, descriptor payloads,
-  layout requirements, and command dependencies; publish them atomically; then
-  retire the previous generation only after every owning frame slot and timeline
-  dependency completes.
-- [ ] Give every native image, image view, framebuffer/dynamic-rendering
-  attachment, sampler, descriptor payload, and recorded command artifact an
-  explicit allocation/publication generation. Do not use managed-object hashes,
-  resource names, or stable logical wrappers as physical-lifetime identity.
-- [ ] Ensure retirement cannot wait on a frame that was rejected for a planner,
-  viewport, collect, or publication-generation mismatch; cancellation and
-  supersession must release or transfer all completion dependencies explicitly.
-- [ ] Add descriptor fingerprints that include every binding identity, resource
-  allocation generation, expected layout, image view, and sampler.
-- [ ] Replace placeholder descriptor behavior with explicit required-binding
-  failures and bounded diagnostic counters.
-
-### 2. Build Immutable Context-Local Frame, View, And Output Plans
-
-- [ ] Introduce immutable `FramePlan`, `ViewSetPlan`, `OutputRequest`,
-  `RenderPacket`, `RecordedPacketKey`, and `FramePlanBuilder` types; lower the
-  existing `FrameOp` stream into these plans while preserving frame-slot
-  ownership.
-- [ ] Build one immutable logical view set after OpenXR locates views; key
-  temporal state by logical-view identity rather than batch position or
-  swapchain image.
-- [ ] Route desktop, OpenXR, mirror, capture, probe, shadow, UI-preview, and
-  diagnostic outputs through the same output and view-family plan.
-- [ ] Make resource-planner state context-local. Its key must include pipeline,
-  logical view, output target, resource registry/generation, display extent, and
-  internal extent; a swapchain-targeting operation must never copy internal
-  dimensions or allocator state from whichever unrelated pipeline is currently
-  live on the render thread.
-- [ ] Replace the multi-context "merged physical plan" fallback with either a
-  genuinely merged immutable allocation plan that preserves each context's
-  registry and extents, or independently activated per-context planner states.
-  If neither is available, reject or defer the frame before recording rather
-  than warning and continuing with the first context's plan.
-- [ ] Treat a planner-context change during command recording as a failed plan
-  precondition. Abort and re-plan against one immutable snapshot; never continue
-  recording shadow, main-view, UI-preview, capture, or presentation operations
-  against a pre-recorded plan owned by another context.
-- [ ] Compile explicit resource dependencies into a deterministic render-pass
-  DAG; centralize primary-owned operations and reject invalid graph dataflow.
-- [ ] Version plans, resources, attachments, and publications so resize,
-  topology, descriptor, and allocation changes invalidate only affected work.
-- [ ] Publish the final presentation source as one immutable tuple containing
-  logical resource epoch, native allocation/view generation, image, image view,
-  sampler, expected layout, descriptor set/slot generation, output extent, and
-  owning command artifact. Re-resolve nothing between validation, descriptor
-  publication, command selection, and submission; reject or defer if the tuple
-  changes before submit.
-
-### 3. Make Command Recording Snapshot-Driven And Reusable
-
-- [ ] Add `FreshSerial` recording mode and retain comparable recording scopes,
-  counters, and miss reasons without hot-path allocation.
-- [ ] Record from immutable `RenderPacket` snapshots with frame-local tracking,
-  persistent per-thread command pools, scratch storage, and capacity-backed
-  collections.
-- [ ] Replace the primary-reuse hard-off gate with generation-complete
-  `RecordedPacketKey` dependency validation.
-- [ ] Make `RecordedPacketKey` and secondary-chain dependencies include exact
-  native image-allocation generation, image-view generation,
-  framebuffer/dynamic-rendering attachment identity, render area and extent,
-  descriptor payload/publication generation, sampler generation, and pipeline
-  layout generation. Remove placeholder `RenderArea=0` and logical target/name
-  hashes from fields that claim to represent physical resources.
-- [ ] Couple in-place descriptor-set updates to recorded-artifact ownership. A
-  descriptor payload that changes image/view/layout under a stable set handle
-  must also republish the secondary's descriptor-image requirements or
-  invalidate and re-record every dependent artifact before submission.
-- [ ] Retain live descriptor-image transition/preflight for mutable frame-source
-  bindings until a scheduled secondary proves that its frozen requirements were
-  produced from the exact descriptor payload generation being submitted. Never
-  skip the live scan solely because a reusable chain exists.
-- [ ] Cache only stable secondary command ranges; keep UI, text, debug,
-  dynamic-resource, and output-sensitive ranges dynamic.
-- [ ] Record stable GPU-driven dispatch, barrier, indirect-draw, and count
-  topology once; update only bounded data ranges for changing visibility and
-  counts.
-- [ ] Remove obsolete primary-command variant caches and cache-only scheduling
-  branches once packet reuse owns their responsibility.
-
-### 4. Collapse The Runtime Surface And Remove Hot-Path Work
-
-- [ ] Pre-resolve pass, resource, material, pipeline, and descriptor decisions
-  into compact plan data; defer diagnostic string construction until emission.
-- [ ] Move required pipeline/shader creation and planner warnings out of primary
-  recording.
-- [ ] Use frame-indexed upload/storage arenas, stable bindings and offsets, and
-  capacity growth with subrange updates for camera, transform, material,
-  skinning, debug-line, and indirect data.
-- [ ] Remove per-frame attachment-layout arrays, UI split arrays, graph sorting,
-  and other repeated/superlinear plan construction.
-- [ ] Add allocation and timing scopes for plan build, recording, queue-lock
-  wait, native submission, and worker wait.
-- [ ] Replace the stateful `VulkanRenderer` partial-class implementation with
-  the seven explicit authorities in the target architecture and one non-partial
-  facade that owns API translation and composition only.
-- [ ] Make the acquire-to-settlement frame loop one readable orchestration spine
-  with typed phase outcomes and exactly-once ownership settlement on every
-  return, exception, resize, output-unavailable, and device-loss path.
-- [ ] Inventory hand-written/generated source separately, dependency direction,
-  file/line counts, partials, fields, largest files/methods, directory depth, and
-  duplicated authorities before each consolidation phase.
-- [ ] Reduce the hand-written Vulkan core from the 2026-08-05 baseline of 858
-  files / 170,048 lines to at most 550 files / 125,000 lines, and reduce the
-  acquire-to-settlement lifecycle spine to at most 40 files / 20,000 lines.
-- [ ] Keep `VulkanRenderer` in one hand-written non-partial file of at most 500
-  physical lines; generated interop may not own renderer state or hide behavior
-  excluded from the structural audit.
-- [ ] Keep the main frame orchestration method at most 100 logical lines. Split
-  any hand-written file above 1,500 physical lines or method above 150 logical
-  lines unless a documented ownership exception is approved before cutover.
-- [ ] Consolidate or delete duplicate planners, schedulers, profilers, caches,
-  descriptor/lifetime models, forwarding shims, compatibility branches, and
-  one-method partials as their consumers migrate. Do not preserve two production
-  authorities or meet counts by combining unrelated top-level types.
-- [ ] Enforce dependency direction from facade/frame orchestration toward
-  output, planning, resource, command, device, and telemetry owners; forbid
-  ambient facade callbacks, service-location, and ordinary hot-path thread-static
-  state.
-- [ ] Make stable-frame work proportional to changed or visible content rather
-  than registered resources, cache size, or historical frame operations; remove
-  steady-state full scans, string parsing/hashing, reflection, repeated graph
-  sorting, and cache-wide dirty propagation.
-- [ ] Keep the normal hot path free of LINQ, closures, boxing, strings,
-  expected-status exceptions, `Task` creation, collection growth, and
-  contention-heavy global atomics; use fixed frame-slot arenas and persistent
-  worker-owned storage.
-
-#### 4.1 Make Hot Data Layout And Unsafe Boundaries Explicit
-
-The [target architecture's data-layout contract](../../design/rendering/vulkan-render-loop-target-architecture.md#data-layout-and-native-memory-boundary)
-is mandatory. SoA is used for field-wise bulk stages, compact AoS for records
-consumed as a unit, and hot/cold or AoSoA only where measured. Unsafe code is a
-contained native-memory mechanism, not a general performance mode.
-The [Vulkan CPU SIMD Refactor Pass Design](../../design/rendering/vulkan-cpu-simd-refactor-pass-design.md)
-defines the shared scalar oracle, width-selection policy, candidate order, and
-promotion gates; it does not authorize SIMD in branch-heavy lifecycle, graph,
-descriptor, barrier, or native command code.
-
-- [ ] Add a reproducible hot-data inventory containing every per-frame/per-draw
-  stream, current element size/alignment, managed-reference fields, arrays or
-  pooled buffers per element, producer/consumer stages, fields touched by each
-  consumer, bytes copied/converted, mutation frequency, and owning generation.
-- [ ] Establish a layout decision record for every changed stream. Compare the
-  existing AoS with candidate SoA, compact AoS/hot-cold, and—only when useful—
-  AoSoA layouts at representative counts before selecting the canonical form.
-- [ ] Preserve exact ABI/layout checks for `DrawMetadata`, `BoundsGpu`,
-  `GPUIndirectRenderCommandHot`, shader structs, and native Vulkan records. Treat
-  the current 64-byte metadata, 64-byte bounds, and 80-byte hot command as a
-  measured baseline, not an immutable contract.
-- [ ] Make GPUScene publish stage-native cull-control, cull-bounds,
-  classification/sort-key, material/state, transform, previous-transform,
-  visibility, and optional AABB streams directly. Keep compact vector AoS inside
-  a stream when one shader invocation consumes the complete vector group.
-- [ ] Define those logical streams in one scene-layout schema and publish them
-  through one storage owner and generation transaction. Use typed aligned ranges
-  in shared backing allocations where appropriate; do not add a wrapper, source
-  file, Vulkan allocation, or descriptor binding for every individual column.
-- [ ] Remove `GPURenderExtractSoA.comp`, its scratch buffers, and the uncalled
-  `SoACull` compatibility path unless a real consumer and a whole-stage win are
-  demonstrated first. Do not pay a conversion merely to label a path SoA.
-- [ ] Replace unconditional broad hot-command conversion with direct
-  stage-native GPUScene consumption. Retain a compatibility envelope only for a
-  named temporary consumer, meter its bytes/time, and give it a deletion gate.
-- [ ] Generate the final contiguous `VkDrawIndirectCommand` or
-  `VkDrawIndexedIndirectCommand` AoS stream after culling; do not split the
-  driver-required indirect command structure into submission-time SoA buffers.
-- [ ] Lower polymorphic `FrameOp` objects exactly once into an opcode/payload
-  index stream plus dense per-kind draw, dispatch, copy, clear, barrier, and
-  output payload arrays before sorting, planning, or worker scheduling.
-- [ ] Replace `RenderPacket`-owned draw/dispatch arrays and hot diagnostic target
-  strings with compact numeric headers and `start/count` ranges into frame-owned
-  arenas. Resolve names only in diagnostics/exporters.
-- [ ] Replace `VulkanPreparedMeshDrawState` and `VkPreparedMeshDraw` per-draw
-  descriptor, dynamic-offset, vertex, frame-payload, viewport, scissor, and
-  other pooled arrays with flattened frame-slot streams and typed ranges.
-  Separate the compact encoder hot header from managed owners, generation audit
-  data, and diagnostic names in cold indexed sidecars.
-- [ ] Keep prepared-draw headers compact AoS by default because encoding consumes
-  most hot fields together. Introduce AoSoA tiles only if CPU counter and
-  full-frame measurements beat compact AoS after including transpose, tail, and
-  publication cost.
-- [ ] Replace render-graph and barrier execution data based on strings,
-  dictionaries, and lists-of-lists with typed numeric resource IDs and flat
-  offset/count adjacency and barrier ranges. Materialize contiguous
-  `VkMemoryBarrier2`, `VkBufferMemoryBarrier2`, and `VkImageMemoryBarrier2` AoS
-  arrays only at the native call boundary.
-- [ ] Store descriptor dirty state, resource/allocation generations, layouts,
-  samplers, slots, and update frequency in scan-friendly publication streams.
-  Build native descriptor-info/write arrays or aligned descriptor-buffer bytes
-  only for dirty ranges in preallocated frame-slot scratch storage.
-- [ ] Keep worker queue entries as compact AoS records. Move mutable worker
-  counters and trace rings into independently write-owned blocks whose allocation
-  base and stride are both aligned; merge them after completion instead of using
-  contended per-item global atomics.
-- [ ] Keep frame-attempt/lifecycle state, typed outcomes, queue receipts, and
-  whole-record dependency keys as safe AoS. Split dependency identity into
-  structural, binding, and data keys only if comparison profiles show a benefit;
-  never replace resource ownership with naked pointers.
-- [ ] Introduce small focused `VulkanNativeScratchArena` and
-  `VulkanMappedFrameArena`-style owners for Vulkan ABI arrays, `pNext` chains,
-  mapped upload/uniform/staging/readback memory, descriptor bytes, and validated
-  binary decoding. Expose typed offset/length/alignment/generation slices and
-  acquire raw pointers only at the final boundary.
-- [ ] Remove type-wide `unsafe` from the renderer facade and ordinary planning,
-  graph, scheduling, and lifecycle owners. Prefer safe `Span<T>`/
-  `ReadOnlySpan<T>` and measured vector APIs; every retained pointer loop must
-  name the benchmarked gap that safe code could not close.
-- [ ] Forbid raw managed pointers escaping `fixed`, pooled buffers escaping
-  return ownership, per-frame `GCHandle` pinning that survives a native call,
-  unchecked bitwise copies of padded/non-blittable structs, and `stackalloc`
-  inside loops or with unbounded lengths.
-- [ ] Validate mapped-memory slices against host/device ownership,
-  `minMemoryMapAlignment`, and `nonCoherentAtomSize`; record flush/invalidate
-  expansion rather than confusing CPU cache-line alignment with Vulkan memory
-  visibility.
-- [ ] Add allocation-free telemetry for elements and bytes read/written per hot
-  stream, compatibility/conversion bytes, native scratch reservations/high-water
-  marks, dirty descriptor ranges, graph edges, prepared-draw side-stream bytes,
-  worker queue depth, and worker-local merge cost.
-- [ ] Delete superseded object pools, per-packet arrays, conversion shaders,
-  scratch buffers, descriptor builders, and unsafe helpers immediately after
-  their final consumer moves to the canonical layout.
 
 ### 5. Schedule Outputs And Submission Without Cross-Output Blocking
 
-- [ ] Build one deadline-aware submission DAG for uploads, shadows, desktop,
+> Reopened on 2026-08-12 and implemented on 2026-08-13. The output manifest now
+> owns admission and executable ordering, acquired OpenXR paths are explicitly
+> reserved, optional-output policy is canonical and bounded, queue waits no
+> longer hold native queue leases, and modal resize consumes a per-window stale
+> presentation package. Long-duration and performance acceptance remain in the
+> companion testing tracker.
+
+- [x] Build one deadline-aware submission DAG for uploads, shadows, desktop,
   OpenXR eyes, mirror, probes, captures, and publication.
-- [ ] Prioritize acquired OpenXR eyes and reserve their critical path before
+- [x] Prioritize acquired OpenXR eyes and reserve their critical path before
   optional output work; make desktop/secondary acquisition nonblocking for
   XR-owned frames.
-- [ ] Add bounded, observable deferral, cadence, and stale-reuse policy for
+- [x] Add bounded, observable deferral, cadence, and stale-reuse policy for
   mirrors, probes, optional effects, and captures.
-- [ ] Narrow native queue-lock ownership and never hold it across a blocking
+- [x] Narrow native queue-lock ownership and never hold it across a blocking
   fence wait; use timeline/frame-slot completion for queue and OpenXR image
   ownership.
-- [ ] During Win32 modal interactive resize, keep the already-published scene,
+- [x] During Win32 modal interactive resize, keep the already-published scene,
   shadow, UI, and presentation generations frozen independently and use WSI
   presentation scaling for the changing surface. Do not rebuild or retire the
   main physical resource plan inside the drag callback; publish one catch-up
   generation after the modal loop exits.
-- [ ] Make modal resize dispatch bounded and nonblocking with respect to
+- [x] Make modal resize dispatch bounded and nonblocking with respect to
   visibility publication, GPU completion, and retirement drains. A missing or
   incompatible frame package must produce an explicit defer/stale-reuse result,
   not leave the interactive-render guard latched indefinitely.
-- [ ] Add persistent worker recording for independent safe packet classes and
+- [x] Add persistent worker recording for independent safe packet classes and
   preserve serial recording for packets that cannot yet be isolated.
 
 ### 6. Simplify The Forward+ Render Graph

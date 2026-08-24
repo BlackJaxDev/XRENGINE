@@ -8,7 +8,7 @@ namespace XREngine.Rendering.Vulkan;
 /// Rectangle textures use a single mip level and are addressed by non-normalised
 /// texel coordinates. The image is always one mip-level deep.
 /// </summary>
-internal sealed class VkTextureRectangle(VulkanRenderer api, XRTextureRectangle data) : VkImageBackedTexture<XRTextureRectangle>(api, data)
+internal sealed class VkTextureRectangle(VulkanBackendObjectContext backendContext, IRenderApiWrapperOwner owner, XRTextureRectangle data) : VkImageBackedTexture<XRTextureRectangle>(backendContext, owner, data)
 {
     protected override TextureLayout DescribeTexture()
     {
@@ -22,18 +22,8 @@ internal sealed class VkTextureRectangle(VulkanRenderer api, XRTextureRectangle 
         Generate();
         TransitionImageLayout(_currentImageLayout, ImageLayout.TransferDstOptimal);
 
-        if (TryCreateStagingBuffer(Data.Data, out Buffer stagingBuffer, out DeviceMemory stagingMemory))
-        {
-            try
-            {
-                Extent3D extent = new(Math.Max(Data.Width, 1u), Math.Max(Data.Height, 1u), 1);
-                CopyBufferToImage(stagingBuffer, 0, 0, 1, extent, (ulong)(Data.Data?.Length ?? 0));
-            }
-            finally
-            {
-                DestroyStagingBuffer(stagingBuffer, stagingMemory);
-            }
-        }
+        Extent3D extent = new(Math.Max(Data.Width, 1u), Math.Max(Data.Height, 1u), 1);
+        _ = UploadStagingDataToImage(Data.Data, 0, 0, 1, extent);
 
         TransitionImageLayout(ImageLayout.TransferDstOptimal, ImageLayout.ShaderReadOnlyOptimal);
     }

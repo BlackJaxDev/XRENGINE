@@ -15,7 +15,7 @@ using XREngine.Rendering.Resources;
 
 namespace XREngine.Rendering.Vulkan
 {
-    public unsafe partial class VulkanRenderer
+    internal sealed partial class VulkanCommandRuntime
     {
         private bool RecordCommandBufferLifecycle(
             ref VulkanCommandRecordingContext context)
@@ -24,11 +24,9 @@ namespace XREngine.Rendering.Vulkan
             recordingState.RecordedSwapchainWriteCount = ref context.RecordedSwapchainWriteCount;
             recordingState.RecordedSwapchainFinalLayout = ref context.RecordedSwapchainFinalLayout;
             recordingState.RecordingDeferredReason = ref context.RecordingDeferredReason;
-            recordingState.QueryFrameOpsRequireRerecord = ref context.QueryFrameOpsRequireRerecord;
+            recordingState.FrameOpsRequireRerecord = ref context.FrameOpsRequireRerecord;
             CapturePrimaryCommandBufferRecordingContext(in context, ref recordingState);
 
-            using DesktopSwapchainBarrierExclusionScope desktopSwapchainBarrierExclusion =
-                new(SynchronizationThreadContext, recordingState.ExcludeDesktopSwapchainBarriers);
             InitializePrimaryCommandBufferRecordingState(ref recordingState);
             if (!TryPreparePrimaryFrameData(
                     ref recordingState,
@@ -37,21 +35,56 @@ namespace XREngine.Rendering.Vulkan
 
             using VulkanMeshFrameDataManifestRecordingScope frameDataManifestScope = new(frameDataManifest);
             using VulkanCpuStageScope primaryCommandEncodingStage =
-                new(EVulkanCpuStage.PrimaryCommandEncoding);
-            PreparePrimaryCommandEncoding(ref recordingState);
-            using FrameOpResourcePlannerRecordingScope frameOpResourcePlannerRecordingScope =
-                EnterFrameOpResourcePlannerRecordingScope();
-            _ = TryActivateFrameOpResourcePlannerState(recordingState.InitialContext);
-            InitializePrimaryCommandEncodingState(ref recordingState);
+                new(_frameTelemetry, EVulkanCpuStage.PrimaryCommandEncoding);
+            using (VulkanCpuStageScope encodingSetupStage =
+                   new(_frameTelemetry, EVulkanCpuStage.PrimaryEncodingSetup))
+            {
+                PreparePrimaryCommandEncoding(ref recordingState);
+                InitializePrimaryCommandEncodingState(ref recordingState);
+            }
 
             try
             {
-                RecordPrimaryOperations(ref recordingState);
-
-                FinalizePrimaryCommandRecording(ref recordingState);
-
-                if (!EndPrimaryCommandBuffer(ref recordingState))
+                bool primaryOperationsRecorded;
+                using (VulkanCpuStageScope operationLoopStage =
+                       new(_frameTelemetry, EVulkanCpuStage.PrimaryOperationLoop))
+                {
+                    primaryOperationsRecorded =
+                        RecordPrimaryOperations(ref recordingState);
+                }
+                if (!primaryOperationsRecorded)
+                {
+                    _ = EndCommandBufferTracked(
+                        recordingState.CommandBuffer,
+                        cacheVariant: false,
+                        out _);
+                    _ = TryAbandonCommandBufferRecording(recordingState.CommandBuffer);
                     return false;
+                }
+
+                using (VulkanCpuStageScope finalizationStage =
+                       new(_frameTelemetry, EVulkanCpuStage.PrimaryFinalization))
+                {
+                    FinalizePrimaryCommandRecording(ref recordingState);
+                }
+
+                using (VulkanCpuStageScope endCommandBufferStage =
+                       new(_frameTelemetry, EVulkanCpuStage.PrimaryEndCommandBuffer))
+                {
+                    if (!EndPrimaryCommandBuffer(ref recordingState))
+                        return false;
+                }
+            }
+            catch (VulkanPlanPreconditionException exception)
+            {
+                recordingState.RecordingDeferredReason = exception.Message;
+                context.FailureKind = EVulkanCommandRecordingFailureKind.ReplanRequired;
+                _ = EndCommandBufferTracked(
+                    recordingState.CommandBuffer,
+                    cacheVariant: false,
+                    out _);
+                _ = TryAbandonCommandBufferRecording(recordingState.CommandBuffer);
+                return false;
             }
             finally
             {

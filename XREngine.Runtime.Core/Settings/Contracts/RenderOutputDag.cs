@@ -9,11 +9,20 @@ public sealed class RenderOutputDag
     private readonly RenderOutputDagNodeDescriptor[] _nodes;
     private readonly RenderOutputDagNodeStatus[] _status;
     private readonly bool[] _active;
+    private readonly ulong[] _reservedOutputKeys;
     private readonly Edge[] _edges;
+    private readonly ERenderOutputPriority[] _priorities;
+    private readonly double[] _deadlinesMilliseconds;
+    private readonly bool[] _xrCriticalPath;
+    private readonly bool[] _executionRoots;
+    private readonly bool[] _executable;
+    private readonly int[] _criticalPathDepth;
     private int _slotCount;
     private int _activeCount;
     private int _edgeCount;
     private uint _frameIndex;
+    private ERenderOutputDagCompilationFailure _buildFailure;
+    private bool _hasAdmissionDecisions;
 
     public RenderOutputDag(int nodeCapacity, int edgeCapacity)
     {
@@ -24,31 +33,75 @@ public sealed class RenderOutputDag
         _nodes = new RenderOutputDagNodeDescriptor[nodeCapacity];
         _status = new RenderOutputDagNodeStatus[nodeCapacity];
         _active = new bool[nodeCapacity];
+        _reservedOutputKeys = new ulong[nodeCapacity];
         _edges = new Edge[edgeCapacity];
+        _priorities = new ERenderOutputPriority[nodeCapacity];
+        _deadlinesMilliseconds = new double[nodeCapacity];
+        _xrCriticalPath = new bool[nodeCapacity];
+        _executionRoots = new bool[nodeCapacity];
+        _executable = new bool[nodeCapacity];
+        _criticalPathDepth = new int[nodeCapacity];
     }
 
     public int NodeCount => _activeCount;
     public int EdgeCount => _edgeCount;
+    /// <summary>Number of persistent node slots required by compilation scratch storage.</summary>
+    public int SlotCount => _slotCount;
 
     public void BeginFrame(uint frameIndex)
     {
         _frameIndex = frameIndex;
-        _activeCount = 0;
-        _edgeCount = 0;
-        for (int i = 0; i < _slotCount; i++)
+        // Node keys include output/resource revisions. Clear only this frame's
+        // activity/edges: stable keys retain their cache and resumable status,
+        // while inactive slots are available for a revised resource key.
+        Array.Clear(_active);
+        Array.Clear(_deadlinesMilliseconds);
+        Array.Clear(_xrCriticalPath);
+        Array.Clear(_executionRoots);
+        Array.Clear(_executable);
+        Array.Clear(_criticalPathDepth);
+        Array.Fill(_priorities, ERenderOutputPriority.Diagnostic);
+        for (int slot = 0; slot < _slotCount; slot++)
         {
-            _active[i] = false;
-            RenderOutputDagNodeStatus status = _status[i];
-            uint age = !status.HasCompletedResult
-                ? status.ContentAgeFrames
-                : frameIndex - status.LastCompletedFrame;
-            _status[i] = status with
+            RenderOutputDagNodeStatus previous = _status[slot];
+            uint age = previous.HasCompletedResult && previous.ContentAgeFrames != uint.MaxValue
+                ? previous.ContentAgeFrames + 1u
+                : previous.ContentAgeFrames;
+            _status[slot] = previous with
             {
                 State = ERenderOutputNodeState.Pending,
+                Progress = 0.0f,
                 ContentAgeFrames = age,
                 AuthorizedReuse = false,
+                Disposition = ERenderOutputWorkDisposition.FreshRender,
+                PolicyReason = ERenderOutputPolicyReason.None,
             };
         }
+        _activeCount = 0;
+        _edgeCount = 0;
+        _reservedOutputKeyCount = 0;
+        _buildFailure = ERenderOutputDagCompilationFailure.None;
+        _hasAdmissionDecisions = false;
+    }
+
+    private int _reservedOutputKeyCount;
+
+    /// <summary>
+    /// Reserves every current output before lowering begins. This prevents a
+    /// newly introduced output from recycling a stable cache slot belonging to
+    /// a later output in the same frame.
+    /// </summary>
+    public bool ReserveOutputKey(ulong stableOutputKey)
+    {
+        if (stableOutputKey == 0UL)
+            return false;
+        for (int i = 0; i < _reservedOutputKeyCount; i++)
+            if (_reservedOutputKeys[i] == stableOutputKey)
+                return true;
+        if (_reservedOutputKeyCount >= _reservedOutputKeys.Length)
+            return false;
+        _reservedOutputKeys[_reservedOutputKeyCount++] = stableOutputKey;
+        return true;
     }
 
     public int AddNode(in RenderOutputDagNodeDescriptor descriptor)
@@ -58,9 +111,16 @@ public sealed class RenderOutputDag
         int slot = FindNode(descriptor.StableNodeKey);
         if (slot < 0)
         {
-            if (_slotCount >= _nodes.Length)
+            slot = FindReusableSlot(descriptor.StableOutputKey);
+            if (slot < 0)
+            {
+                _buildFailure = ERenderOutputDagCompilationFailure.DestinationCapacity;
                 return -1;
-            slot = _slotCount++;
+            }
+
+            _status[slot] = default;
+            if (slot == _slotCount)
+                _slotCount++;
         }
 
         _nodes[slot] = descriptor;
@@ -76,8 +136,16 @@ public sealed class RenderOutputDag
     {
         ValidateActiveNode(prerequisiteNode);
         ValidateActiveNode(dependentNode);
-        if (prerequisiteNode == dependentNode || _edgeCount >= _edges.Length)
+        if (prerequisiteNode == dependentNode)
+        {
+            _buildFailure = ERenderOutputDagCompilationFailure.Cycle;
             return false;
+        }
+        if (_edgeCount >= _edges.Length)
+        {
+            _buildFailure = ERenderOutputDagCompilationFailure.DestinationCapacity;
+            return false;
+        }
         _edges[_edgeCount++] = new(prerequisiteNode, dependentNode);
         return true;
     }
@@ -129,16 +197,39 @@ public sealed class RenderOutputDag
             ContentAgeFrames = state == ERenderOutputNodeState.Complete ? 0u : previous.ContentAgeFrames,
             LastCompletedFrame = state == ERenderOutputNodeState.Complete ? _frameIndex : previous.LastCompletedFrame,
             HasCompletedResult = state == ERenderOutputNodeState.Complete || previous.HasCompletedResult,
+            Disposition = ERenderOutputWorkDisposition.FreshRender,
+            PolicyReason = ERenderOutputPolicyReason.None,
+            ConsecutiveDeferrals = state == ERenderOutputNodeState.Complete ? 0u : previous.ConsecutiveDeferrals,
         };
     }
 
-    public void SetSkipped(int nodeIndex)
+    public void SetSkipped(
+        int nodeIndex,
+        ERenderOutputPolicyReason reason = ERenderOutputPolicyReason.OutputDisabled)
     {
         ValidateActiveNode(nodeIndex);
         _status[nodeIndex] = _status[nodeIndex] with
         {
             State = ERenderOutputNodeState.Skipped,
             AuthorizedReuse = false,
+            Disposition = ERenderOutputWorkDisposition.Skipped,
+            PolicyReason = reason,
+        };
+    }
+
+    public void SetDeferred(int nodeIndex, ERenderOutputPolicyReason reason)
+    {
+        ValidateActiveNode(nodeIndex);
+        RenderOutputDagNodeStatus previous = _status[nodeIndex];
+        _status[nodeIndex] = previous with
+        {
+            State = ERenderOutputNodeState.Deferred,
+            AuthorizedReuse = false,
+            Disposition = ERenderOutputWorkDisposition.Deferred,
+            PolicyReason = reason,
+            ConsecutiveDeferrals = previous.ConsecutiveDeferrals == uint.MaxValue
+                ? uint.MaxValue
+                : previous.ConsecutiveDeferrals + 1u,
         };
     }
 
@@ -154,8 +245,307 @@ public sealed class RenderOutputDag
         {
             State = ERenderOutputNodeState.Reused,
             AuthorizedReuse = true,
+            Disposition = ERenderOutputWorkDisposition.ReusedStale,
+            PolicyReason = ERenderOutputPolicyReason.HeldLastImage,
+            ConsecutiveDeferrals = status.ConsecutiveDeferrals == uint.MaxValue
+                ? uint.MaxValue
+                : status.ConsecutiveDeferrals + 1u,
         };
         return true;
+    }
+
+    /// <summary>
+    /// Mirrors the admission decision made by the runtime output ledger into
+    /// this frame's executable DAG. The DAG consumes this decision; it never
+    /// performs a second cadence, reuse, or forced-refresh calculation.
+    /// </summary>
+    public void ApplyAdmissionDecision(
+        int nodeIndex,
+        in RenderOutputSchedulingDecision decision)
+    {
+        ValidateActiveNode(nodeIndex);
+        _hasAdmissionDecisions = true;
+        _executionRoots[nodeIndex] = decision.Execute;
+        RenderOutputDagNodeStatus previous = _status[nodeIndex];
+        ERenderOutputNodeState state = decision.Execute
+            ? ERenderOutputNodeState.Pending
+            : decision.Disposition switch
+            {
+                ERenderOutputWorkDisposition.ReusedStale => ERenderOutputNodeState.Reused,
+                ERenderOutputWorkDisposition.Deferred => ERenderOutputNodeState.Deferred,
+                _ => ERenderOutputNodeState.Skipped,
+            };
+        bool reused = state == ERenderOutputNodeState.Reused;
+        _status[nodeIndex] = previous with
+        {
+            State = state,
+            Progress = decision.Execute ? 0.0f : previous.Progress,
+            ContentAgeFrames = decision.ContentAgeFrames,
+            AuthorizedReuse = reused,
+            HasCompletedResult = previous.HasCompletedResult,
+            Disposition = decision.Disposition,
+            PolicyReason = decision.Reason,
+            ConsecutiveDeferrals = previous.ConsecutiveDeferrals,
+        };
+    }
+
+    /// <summary>
+    /// Applies one terminal output policy to the terminal and all prerequisite
+    /// nodes. Acquired XR work therefore promotes uploads/publication on its
+    /// reverse dependency path without changing stable graph identity.
+    /// </summary>
+    public void ApplyScheduleToPrerequisites(
+        int terminalNode,
+        ERenderOutputPriority priority,
+        double deadlineMilliseconds,
+        bool xrImagesAcquired)
+    {
+        ValidateActiveNode(terminalNode);
+        ApplySchedule(terminalNode, priority, deadlineMilliseconds, xrImagesAcquired);
+
+        bool changed;
+        do
+        {
+            changed = false;
+            for (int edgeIndex = 0; edgeIndex < _edgeCount; edgeIndex++)
+            {
+                Edge edge = _edges[edgeIndex];
+                if (!_active[edge.Prerequisite] || !_active[edge.Dependent])
+                    continue;
+                if (!ScheduleDominates(edge.Dependent, edge.Prerequisite))
+                    continue;
+
+                ApplySchedule(
+                    edge.Prerequisite,
+                    _priorities[edge.Dependent],
+                    _deadlinesMilliseconds[edge.Dependent],
+                    _xrCriticalPath[edge.Dependent]);
+                changed = true;
+            }
+        }
+        while (changed);
+    }
+
+    /// <summary>
+    /// Compiles a stable topological order that reserves acquired OpenXR paths,
+    /// then orders by output priority, deadline, reverse critical-path depth,
+    /// and stable node identity.
+    /// </summary>
+    public bool TryCompileDeadlineOrder(
+        Span<int> destination,
+        Span<int> indegreeScratch,
+        out int count,
+        out ERenderOutputDagCompilationFailure failure)
+    {
+        BuildExecutableClosure();
+        ComputeCriticalPathDepth();
+        return TryCompileOrder(destination, indegreeScratch, deadlineAware: true, out count, out failure);
+    }
+
+    /// <summary>
+    /// Copies a stable topological order for the active frame graph. Nodes with
+    /// no dependency relationship are ordered by stable node key, then slot, so
+    /// equivalent output sets always lower to the same execution sequence.
+    /// </summary>
+    public bool TryCompileDeterministicOrder(
+        Span<int> destination,
+        Span<int> indegreeScratch,
+        out int count,
+        out ERenderOutputDagCompilationFailure failure)
+    {
+        BuildExecutableClosure();
+        return TryCompileOrder(destination, indegreeScratch, deadlineAware: false, out count, out failure);
+    }
+
+    private bool TryCompileOrder(
+        Span<int> destination,
+        Span<int> indegreeScratch,
+        bool deadlineAware,
+        out int count,
+        out ERenderOutputDagCompilationFailure failure)
+    {
+        count = 0;
+        failure = _buildFailure;
+        if (failure != ERenderOutputDagCompilationFailure.None)
+            return false;
+        int executableCount = CountExecutableNodes();
+        if (destination.Length < executableCount || indegreeScratch.Length < _slotCount)
+        {
+            failure = ERenderOutputDagCompilationFailure.DestinationCapacity;
+            return false;
+        }
+
+        for (int slot = 0; slot < _slotCount; slot++)
+            indegreeScratch[slot] = _executable[slot] ? 0 : -1;
+
+        for (int edgeIndex = 0; edgeIndex < _edgeCount; edgeIndex++)
+        {
+            Edge edge = _edges[edgeIndex];
+            if ((uint)edge.Prerequisite >= (uint)_slotCount ||
+                (uint)edge.Dependent >= (uint)_slotCount ||
+                !_active[edge.Prerequisite] ||
+                !_active[edge.Dependent])
+            {
+                failure = ERenderOutputDagCompilationFailure.MissingPrerequisite;
+                return false;
+            }
+
+            if (_executable[edge.Prerequisite] && _executable[edge.Dependent])
+                indegreeScratch[edge.Dependent]++;
+        }
+
+        while (count < executableCount)
+        {
+            int selected = -1;
+            for (int slot = 0; slot < _slotCount; slot++)
+            {
+                if (indegreeScratch[slot] != 0)
+                    continue;
+                if (selected < 0 || IsPreferredReadyNode(slot, selected, deadlineAware))
+                {
+                    selected = slot;
+                }
+            }
+
+            if (selected < 0)
+            {
+                failure = ERenderOutputDagCompilationFailure.Cycle;
+                return false;
+            }
+
+            destination[count++] = selected;
+            indegreeScratch[selected] = -1;
+            for (int edgeIndex = 0; edgeIndex < _edgeCount; edgeIndex++)
+            {
+                Edge edge = _edges[edgeIndex];
+                if (edge.Prerequisite == selected && _executable[edge.Dependent])
+                    indegreeScratch[edge.Dependent]--;
+            }
+        }
+
+        return true;
+    }
+
+    private bool IsPreferredReadyNode(int candidate, int selected, bool deadlineAware)
+    {
+        if (deadlineAware)
+        {
+            int result = _xrCriticalPath[selected].CompareTo(_xrCriticalPath[candidate]);
+            if (result != 0)
+                return result < 0;
+            result = _priorities[candidate].CompareTo(_priorities[selected]);
+            if (result != 0)
+                return result < 0;
+            result = CompareDeadline(
+                _deadlinesMilliseconds[candidate],
+                _deadlinesMilliseconds[selected]);
+            if (result != 0)
+                return result < 0;
+            result = _criticalPathDepth[selected].CompareTo(_criticalPathDepth[candidate]);
+            if (result != 0)
+                return result < 0;
+        }
+
+        return _nodes[candidate].StableNodeKey < _nodes[selected].StableNodeKey ||
+               (_nodes[candidate].StableNodeKey == _nodes[selected].StableNodeKey && candidate < selected);
+    }
+
+    private void ApplySchedule(
+        int nodeIndex,
+        ERenderOutputPriority priority,
+        double deadlineMilliseconds,
+        bool xrImagesAcquired)
+    {
+        if (priority < _priorities[nodeIndex])
+            _priorities[nodeIndex] = priority;
+        if (deadlineMilliseconds > 0.0 &&
+            (_deadlinesMilliseconds[nodeIndex] <= 0.0 ||
+             deadlineMilliseconds < _deadlinesMilliseconds[nodeIndex]))
+        {
+            _deadlinesMilliseconds[nodeIndex] = deadlineMilliseconds;
+        }
+        _xrCriticalPath[nodeIndex] |= xrImagesAcquired;
+    }
+
+    private bool ScheduleDominates(int source, int destination)
+        => _xrCriticalPath[source] && !_xrCriticalPath[destination] ||
+           _priorities[source] < _priorities[destination] ||
+           _deadlinesMilliseconds[source] > 0.0 &&
+           (_deadlinesMilliseconds[destination] <= 0.0 ||
+            _deadlinesMilliseconds[source] < _deadlinesMilliseconds[destination]);
+
+    private void ComputeCriticalPathDepth()
+    {
+        Array.Clear(_criticalPathDepth, 0, _slotCount);
+        for (int slot = 0; slot < _slotCount; slot++)
+            if (_executable[slot] && _xrCriticalPath[slot])
+                _criticalPathDepth[slot] = 1;
+
+        for (int pass = 0; pass < _activeCount; pass++)
+        {
+            bool changed = false;
+            for (int edgeIndex = 0; edgeIndex < _edgeCount; edgeIndex++)
+            {
+                Edge edge = _edges[edgeIndex];
+                if (!_executable[edge.Prerequisite] || !_executable[edge.Dependent])
+                    continue;
+                int dependentDepth = _criticalPathDepth[edge.Dependent];
+                if (dependentDepth == 0 || _criticalPathDepth[edge.Prerequisite] >= dependentDepth + 1)
+                    continue;
+                _criticalPathDepth[edge.Prerequisite] = dependentDepth + 1;
+                changed = true;
+            }
+            if (!changed)
+                break;
+        }
+    }
+
+    private void BuildExecutableClosure()
+    {
+        Array.Clear(_executable, 0, _slotCount);
+        if (!_hasAdmissionDecisions)
+        {
+            for (int slot = 0; slot < _slotCount; slot++)
+                _executable[slot] = _active[slot];
+            return;
+        }
+
+        for (int slot = 0; slot < _slotCount; slot++)
+            _executable[slot] = _active[slot] && _executionRoots[slot];
+
+        bool changed;
+        do
+        {
+            changed = false;
+            for (int edgeIndex = 0; edgeIndex < _edgeCount; edgeIndex++)
+            {
+                Edge edge = _edges[edgeIndex];
+                if (!_executable[edge.Dependent] || _executable[edge.Prerequisite])
+                    continue;
+
+                _executable[edge.Prerequisite] = true;
+                changed = true;
+            }
+        }
+        while (changed);
+    }
+
+    private int CountExecutableNodes()
+    {
+        int count = 0;
+        for (int slot = 0; slot < _slotCount; slot++)
+            if (_executable[slot])
+                count++;
+        return count;
+    }
+
+    private static int CompareDeadline(double left, double right)
+    {
+        if (left <= 0.0)
+            return right <= 0.0 ? 0 : 1;
+        if (right <= 0.0)
+            return -1;
+        return left.CompareTo(right);
     }
 
     private int FindNode(ulong stableNodeKey)
@@ -164,6 +554,30 @@ public sealed class RenderOutputDag
             if (_nodes[i].StableNodeKey == stableNodeKey)
                 return i;
         return -1;
+    }
+
+    private int FindReusableSlot(ulong requestedOutputKey)
+    {
+        // A revised target/resource generation for the same output supersedes
+        // its inactive node version. Recycle that version first so repeated
+        // resize generations cannot exhaust the persistent DAG slot table.
+        for (int i = 0; i < _slotCount; i++)
+            if (!_active[i] && _nodes[i].StableOutputKey == requestedOutputKey)
+                return i;
+
+        for (int i = 0; i < _slotCount; i++)
+            if (!_active[i] && !IsReservedOutputKey(_nodes[i].StableOutputKey))
+                return i;
+
+        return _slotCount < _nodes.Length ? _slotCount : -1;
+    }
+
+    private bool IsReservedOutputKey(ulong stableOutputKey)
+    {
+        for (int i = 0; i < _reservedOutputKeyCount; i++)
+            if (_reservedOutputKeys[i] == stableOutputKey)
+                return true;
+        return false;
     }
 
     private void ValidateActiveNode(int nodeIndex)

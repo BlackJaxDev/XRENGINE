@@ -57,7 +57,7 @@ layout(std430, binding = 4) buffer GridIndices
 };
 
 // TransformBuffer for world matrix reconstruction
-layout(std430, binding = 5) buffer CulledCommandsBuffer { float culled[]; };
+layout(std430, binding = 5) readonly buffer CulledDrawIdsBuffer { uint culledDrawIds[]; };
 layout(std430, binding = 6) buffer TransformBuffer { float transforms[]; };
 uniform bool hasCulledCommands;
 uniform uint culledFloatCount;

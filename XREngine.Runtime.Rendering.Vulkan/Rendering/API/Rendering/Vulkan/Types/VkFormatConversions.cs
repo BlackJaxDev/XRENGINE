@@ -271,7 +271,9 @@ internal unsafe static class VkFormatConversions
 
         ulong expectedSourceBytes = texelCount * (uint)source.ComponentCount;
         ulong expectedDestinationBytes = texelCount * (uint)destination.ComponentCount;
-        if (expectedSourceBytes > sourceData.Length || expectedDestinationBytes > uint.MaxValue)
+        if (expectedSourceBytes > sourceData.Length ||
+            expectedSourceBytes > int.MaxValue ||
+            expectedDestinationBytes > int.MaxValue)
             return sourceData;
 
         if (sourceData.Length == expectedDestinationBytes && LayoutsMatch(source, destination))
@@ -281,17 +283,25 @@ internal unsafe static class VkFormatConversions
             return sourceData;
 
         DataSource repacked = new((uint)expectedDestinationBytes);
-        byte* src = (byte*)sourceData.Address.Pointer;
-        byte* dst = (byte*)repacked.Address.Pointer;
+        ReadOnlySpan<byte> sourceBytes = new(
+            (byte*)sourceData.Address.Pointer,
+            checked((int)expectedSourceBytes));
+        Span<byte> destinationBytes = new(
+            (byte*)repacked.Address.Pointer,
+            checked((int)expectedDestinationBytes));
 
-        for (ulong i = 0; i < texelCount; i++)
+        for (int i = 0; i < checked((int)texelCount); i++)
         {
-            byte* srcTexel = src + (i * (uint)source.ComponentCount);
+            ReadOnlySpan<byte> srcTexel = sourceBytes.Slice(
+                i * source.ComponentCount,
+                source.ComponentCount);
             byte r = ReadSourceChannel(srcTexel, source.RedIndex, 0);
             byte g = ReadSourceChannel(srcTexel, source.GreenIndex, r);
             byte b = ReadSourceChannel(srcTexel, source.BlueIndex, r);
             byte a = ReadSourceChannel(srcTexel, source.AlphaIndex, 255);
-            byte* dstTexel = dst + (i * (uint)destination.ComponentCount);
+            Span<byte> dstTexel = destinationBytes.Slice(
+                i * destination.ComponentCount,
+                destination.ComponentCount);
 
             switch (destination.Kind)
             {
@@ -321,7 +331,7 @@ internal unsafe static class VkFormatConversions
         return repacked;
     }
 
-    private static byte ReadSourceChannel(byte* srcTexel, int channelIndex, byte fallback)
+    private static byte ReadSourceChannel(ReadOnlySpan<byte> srcTexel, int channelIndex, byte fallback)
         => channelIndex >= 0 ? srcTexel[channelIndex] : fallback;
 
     private static bool TryGetDestinationByteColorLayout(Format format, out ByteColorDestination destination)

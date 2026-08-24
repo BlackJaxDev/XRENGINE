@@ -16,7 +16,7 @@ internal readonly record struct VulkanOpenXrViewResourcePlannerContextKey(
     /// OpenXR swapchain image. Runtime image and frame-slot identity remain recording inputs.
     /// </summary>
     internal static VulkanOpenXrViewResourcePlannerContextKey FromTarget(
-        in VulkanRenderer.OpenXrEyeRenderTargetContext target)
+        in OpenXrEyeRenderTargetContext target)
         => new(
             EVulkanOpenXrResourcePlannerPurpose.Eye,
             target.ResourcePlannerStateIndex,

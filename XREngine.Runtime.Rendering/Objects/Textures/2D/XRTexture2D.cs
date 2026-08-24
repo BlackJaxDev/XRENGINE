@@ -873,7 +873,18 @@ namespace XREngine.Rendering
         {
             try
             {
-                using StreamReader reader = new(filePath);
+                using FileStream stream = new(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+                int firstByte = stream.ReadByte();
+                if (firstByte < 0)
+                    return false;
+
+                // Streaming-cache assets are raw cooked binary. Do not hand them to
+                // YamlDotNet merely to determine whether they contain a texture.
+                if (IsBinaryTextureStreamingMarker((byte)firstByte))
+                    return true;
+
+                stream.Position = 0;
+                using StreamReader reader = new(stream);
                 var yaml = new YamlStream();
                 yaml.Load(reader);
 

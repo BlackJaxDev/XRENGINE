@@ -225,7 +225,7 @@ public sealed class AdvancedMaterialDatabase
     {
         if (!_materials.TryGetDenseIndex(materialHandle, out uint denseIndex))
             return false;
-        if (!_materials.Remove(materialHandle))
+        if (!_materials.TryTombstone(materialHandle))
             return false;
 
         MarkMaterialDirty(denseIndex);
@@ -235,7 +235,7 @@ public sealed class AdvancedMaterialDatabase
 
     public bool RemoveKernel(AdvancedGpuHandle kernelHandle)
     {
-        if (!_kernels.Remove(kernelHandle))
+        if (!_kernels.TryTombstone(kernelHandle))
             return false;
 
         IncrementGeneration(ref _kernelGeneration);
@@ -244,7 +244,7 @@ public sealed class AdvancedMaterialDatabase
 
     public bool RemoveLayout(AdvancedGpuHandle layoutHandle)
     {
-        if (!_layouts.Remove(layoutHandle))
+        if (!_layouts.TryTombstone(layoutHandle))
             return false;
 
         IncrementGeneration(ref _layoutGeneration);

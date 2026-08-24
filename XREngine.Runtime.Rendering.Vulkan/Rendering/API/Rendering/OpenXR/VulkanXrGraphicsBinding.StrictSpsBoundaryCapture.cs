@@ -86,14 +86,14 @@ internal sealed unsafe partial class VulkanXrGraphicsBinding
         if (leftPreview is null || rightPreview is null)
             return;
 
-        bool copiedLeft = renderer.TryCopyOpenXrEyeSwapchainImageToTexture(
+        bool copiedLeft = renderer.OpenXrFrameLoop.TryCopyOpenXrEyeSwapchainImageToTexture(
             leftImage,
             leftFormat,
             extent,
             leftPreview,
             "strict SPS acquired-image capture left",
             flipY: false);
-        bool copiedRight = renderer.TryCopyOpenXrEyeSwapchainImageToTexture(
+        bool copiedRight = renderer.OpenXrFrameLoop.TryCopyOpenXrEyeSwapchainImageToTexture(
             rightImage,
             rightFormat,
             extent,
@@ -212,7 +212,7 @@ internal sealed unsafe partial class VulkanXrGraphicsBinding
             outputDirectory,
             $"OpenXrSps_{stage}_motion{motionIndex}_{viewKind}.png");
         var sourceState = ResolveStrictSpsBoundaryCaptureSourceState(stage);
-        if (!renderer.TryCaptureTextureLayerToPng(
+        if (!renderer.OpenXrFrameLoop.TryCaptureTextureLayerToPng(
                 texture,
                 mipLevel: 0,
                 layerIndex: readbackLayer,

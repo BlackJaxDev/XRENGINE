@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Collections.Concurrent;
 using XREngine.Rendering.Meshlets;
 
 namespace XREngine.Rendering;
@@ -23,6 +24,7 @@ internal static class MeshletPayloadDiskCache
     private const int FileVersion = 1;
     private const string CacheFolderName = "Meshlets";
     private const string CacheVersionFolderName = "v1";
+    private static readonly ConcurrentDictionary<string, object> s_keyedWriteLocks = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
     /// Optional override for the cache root. When null, falls back to
@@ -57,10 +59,11 @@ internal static class MeshletPayloadDiskCache
             if (payload is null)
                 return false;
 
+            payload.ValidatePortablePayload();
+
             if (payload.FreshnessHash != expectedFreshness)
             {
                 payload = null;
-                TryDeleteStale(cachePath);
                 return false;
             }
 
@@ -70,7 +73,9 @@ internal static class MeshletPayloadDiskCache
         {
             XREngine.Debug.MeshesWarning($"[Meshlet Cache] Failed to load '{cachePath}'. {ex.Message}");
             payload = null;
-            TryDeleteStale(cachePath);
+            // Do not delete a malformed/stale entry here: another process may have
+            // atomically replaced it after this reader opened the path. A later
+            // import repair owns replacement under its keyed publication path.
             return false;
         }
     }
@@ -107,15 +112,34 @@ internal static class MeshletPayloadDiskCache
 
             byte[] bytes = XRMesh.SerializeMeshletPayloadToBytes(payload);
 
-            string tempPath = $"{cachePath}.{Guid.NewGuid():N}.tmp";
-            File.WriteAllBytes(tempPath, bytes);
+            object keyedLock = s_keyedWriteLocks.GetOrAdd(cachePath!, static _ => new object());
+            lock (keyedLock)
+            {
+                string tempPath = $"{cachePath}.{Guid.NewGuid():N}.tmp";
+                try
+                {
+                    File.WriteAllBytes(tempPath, bytes);
+                    // Replace in one filesystem operation: readers see either the
+                    // previous complete payload or the new complete payload, never
+                    // the delete/move gap used by the old implementation.
+                    File.Move(tempPath, cachePath!, overwrite: true);
 
-            if (File.Exists(cachePath))
-                File.Delete(cachePath);
-
-            File.Move(tempPath, cachePath!);
+                    // Read back the exact published bytes before returning. This
+                    // catches filesystem/filter-driver corruption without making a
+                    // renderer path depend on this secondary cache.
+                    MeshletPayload? published = XRMesh.DeserializeMeshletPayloadFromBytes(File.ReadAllBytes(cachePath!));
+                    if (published is null || published.FreshnessHash != payload.FreshnessHash)
+                        throw new InvalidDataException("Meshlet cache read-back did not match the published payload.");
+                }
+                finally
+                {
+                    if (File.Exists(tempPath))
+                        File.Delete(tempPath);
+                    s_keyedWriteLocks.TryRemove(new KeyValuePair<string, object>(cachePath!, keyedLock));
+                }
+            }
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException or InvalidOperationException)
         {
             XREngine.Debug.MeshesWarning($"[Meshlet Cache] Failed to store '{cachePath}'. {ex.Message}");
         }
@@ -162,26 +186,9 @@ internal static class MeshletPayloadDiskCache
         ulong sourceHash = MeshletPayloadUtility.ComputeSourceMeshHash(mesh);
         ulong meshletHash = MeshletPayloadUtility.ComputeHash(meshletSnapshot);
         ulong lodHash = MeshletPayloadUtility.ComputeHash(lodSnapshot);
-        string versionKey = MeshOptimizerIntegration.MeshOptimizerVersionKey;
+        string versionKey = MeshletPayloadUtility.CurrentCookProvenanceKey;
 
         return MeshletPayloadUtility.ComputeFreshnessHash(identity, sourceHash, meshletHash, lodHash, versionKey);
-    }
-
-    private static void TryDeleteStale(string? path)
-    {
-        if (string.IsNullOrWhiteSpace(path))
-            return;
-
-        try
-        {
-            if (File.Exists(path))
-                File.Delete(path);
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            // Best-effort cleanup; ignore.
-            _ = ex;
-        }
     }
 
     /// <summary>

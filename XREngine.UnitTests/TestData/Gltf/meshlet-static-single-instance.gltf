@@ -1,0 +1,33 @@
+{
+  "asset": { "version": "2.0", "generator": "XRENGINE meshlet acceptance fixture" },
+  "scene": 0,
+  "scenes": [ { "name": "MeshletStaticSingleInstance", "nodes": [ 0 ] } ],
+  "nodes": [ { "name": "MeshletStaticSingleInstance", "mesh": 0 } ],
+  "meshes": [ {
+    "name": "MeshletGrid",
+    "primitives": [ {
+      "attributes": { "POSITION": 0, "NORMAL": 1, "TEXCOORD_0": 2 },
+      "indices": 3,
+      "material": 0
+    } ]
+  } ],
+  "materials": [ {
+    "name": "MeshletOpaqueBackCull",
+    "pbrMetallicRoughness": { "baseColorFactor": [ 0.8, 0.2, 0.15, 1.0 ], "metallicFactor": 0.0, "roughnessFactor": 0.9 },
+    "doubleSided": false,
+    "alphaMode": "OPAQUE"
+  } ],
+  "buffers": [ { "uri": "large-production-scene.bin", "byteLength": 104480 } ],
+  "bufferViews": [
+    { "buffer": 0, "byteOffset": 0, "byteLength": 28812, "target": 34962 },
+    { "buffer": 0, "byteOffset": 28812, "byteLength": 28812, "target": 34962 },
+    { "buffer": 0, "byteOffset": 57624, "byteLength": 19208, "target": 34962 },
+    { "buffer": 0, "byteOffset": 76832, "byteLength": 27648, "target": 34963 }
+  ],
+  "accessors": [
+    { "bufferView": 0, "componentType": 5126, "count": 2401, "type": "VEC3", "min": [ -5.0, -0.0642, -5.0 ], "max": [ 5.0, 0.13, 5.0 ] },
+    { "bufferView": 1, "componentType": 5126, "count": 2401, "type": "VEC3" },
+    { "bufferView": 2, "componentType": 5126, "count": 2401, "type": "VEC2" },
+    { "bufferView": 3, "componentType": 5123, "count": 13824, "type": "SCALAR", "min": [ 0 ], "max": [ 2400 ] }
+  ]
+}

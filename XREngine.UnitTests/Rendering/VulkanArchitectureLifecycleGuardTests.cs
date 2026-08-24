@@ -13,7 +13,7 @@ public sealed class VulkanArchitectureLifecycleGuardTests
     public void PipelineManager_WarmCacheLookupDoesNotAllocate()
     {
         VulkanPipelineManager manager = new();
-        VkMeshRenderer.PipelineKey key = default;
+        VulkanGraphicsPipelineKey key = default;
         Pipeline pipeline = new(7);
         manager.StoreSharedGraphicsPipeline(key, pipeline).Handle.ShouldBe(7UL);
         manager.TryGetSharedGraphicsPipeline(key, out _).ShouldBeTrue();
@@ -35,9 +35,9 @@ public sealed class VulkanArchitectureLifecycleGuardTests
     public void PipelineManager_NativePipelineLayoutsHaveDistinctCacheIdentities()
     {
         VulkanPipelineManager manager = new();
-        VkMeshRenderer.PipelineKey firstKey = default;
+        VulkanGraphicsPipelineKey firstKey = default;
         firstKey = firstKey with { PipelineLayoutHandle = 101 };
-        VkMeshRenderer.PipelineKey secondKey = firstKey with { PipelineLayoutHandle = 202 };
+        VulkanGraphicsPipelineKey secondKey = firstKey with { PipelineLayoutHandle = 202 };
 
         manager.StoreSharedGraphicsPipeline(firstKey, new Pipeline(7));
 
@@ -52,8 +52,8 @@ public sealed class VulkanArchitectureLifecycleGuardTests
     public void PipelineManager_DeviceLifetimeDrainRemovesAllCachedHandlesAndReservations()
     {
         VulkanPipelineManager manager = new();
-        VkMeshRenderer.PipelineKey pipelineKey = default;
-        VkMeshRenderer.GraphicsPipelineLibraryKey libraryKey = default;
+        VulkanGraphicsPipelineKey pipelineKey = default;
+        VulkanGraphicsPipelineLibraryKey libraryKey = default;
 
         manager.StoreSharedGraphicsPipeline(pipelineKey, new Pipeline(11));
         manager.TryGetOrReserveSharedGraphicsPipelineLibrary(
@@ -122,7 +122,7 @@ public sealed class VulkanArchitectureLifecycleGuardTests
     public void CommandRecordingPreparation_IsAllocationFreeAfterWarmup()
     {
         VulkanCommandRecorder recorder = new();
-        FrameOp[] operations = [];
+        FrameOperationSequence operations = FrameOperationSequence.Empty;
         VulkanCommandRecordingContext warmup = new(
             0,
             new CommandBuffer(1),
@@ -132,10 +132,13 @@ public sealed class VulkanArchitectureLifecycleGuardTests
             null,
             false,
             true,
+            null!,
             null,
             null,
             false,
-            VulkanRenderGraphPlan.Empty);
+            VulkanRenderGraphPlan.Empty,
+            null,
+            0UL);
         recorder.Prepare(ref warmup).ShouldBeTrue();
 
         int prepared = 0;
@@ -151,10 +154,13 @@ public sealed class VulkanArchitectureLifecycleGuardTests
                 null,
                 false,
                 true,
+                null!,
                 null,
                 null,
                 false,
-                VulkanRenderGraphPlan.Empty);
+                VulkanRenderGraphPlan.Empty,
+                null,
+                0UL);
             if (recorder.Prepare(ref context))
                 prepared++;
         }
@@ -164,25 +170,14 @@ public sealed class VulkanArchitectureLifecycleGuardTests
     }
 
     [Test]
-    public void DesktopCoordinatorAttemptBookkeeping_IsAllocationFreeAfterWarmup()
+    public void DesktopFrameAttemptBookkeeping_RemainsOwnedByFrameLoop()
     {
-        VulkanDesktopFrameCoordinator coordinator = new(null!);
-        coordinator.TryEnter(out DesktopFrameIdentity warmup).ShouldBeTrue();
-        coordinator.Exit(in warmup);
+        string frameLoop = SourceContractWorkspace.ReadExactFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/Loop/Authority/VulkanFrameLoop.cs");
 
-        ulong checksum = 0;
-        long allocatedBefore = GC.GetAllocatedBytesForCurrentThread();
-        for (int index = 0; index < 10_000; index++)
-        {
-            if (!coordinator.TryEnter(out DesktopFrameIdentity identity))
-                Assert.Fail("Desktop coordinator unexpectedly rejected an uncontended attempt.");
-            checksum += identity.FrameNumber;
-            coordinator.Exit(in identity);
-            coordinator.AdvanceFrameSlot(identity.FrameSlot, 3);
-        }
-
-        (GC.GetAllocatedBytesForCurrentThread() - allocatedBefore).ShouldBe(0);
-        checksum.ShouldBeGreaterThan(0UL);
+        frameLoop.ShouldContain("internal bool TryEnter(out DesktopFrameIdentity identity)");
+        frameLoop.ShouldContain("internal void Exit(in DesktopFrameIdentity identity)");
+        frameLoop.ShouldNotContain("VulkanDesktopFrameCoordinator");
     }
 
     [Test]
@@ -190,7 +185,7 @@ public sealed class VulkanArchitectureLifecycleGuardTests
     {
         VulkanFrameOperationScheduler scheduler = new();
         List<VulkanSecondaryRecordingBucket> buckets = new(4);
-        FrameOp[] operations = [];
+        FrameOperationSequence operations = FrameOperationSequence.Empty;
         scheduler.BuildSecondaryRecordingBuckets(operations, buckets);
 
         long allocatedBefore = GC.GetAllocatedBytesForCurrentThread();

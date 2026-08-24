@@ -15,6 +15,7 @@ internal sealed class AgentRunRegistry : IAsyncDisposable
     private readonly EditorSessionResolver _sessionResolver;
     private readonly SessionRunLeaseManager _leaseManager = new();
     private readonly BrokerTraceWriter _traceWriter;
+    private readonly BrokerHistoryPublisher _historyPublisher;
     private readonly SemaphoreSlim _globalConcurrency;
     private readonly ConcurrentDictionary<string, BrokerRunRecord> _runs =
         new(StringComparer.Ordinal);
@@ -30,6 +31,7 @@ internal sealed class AgentRunRegistry : IAsyncDisposable
             new OpenAiResponsesModelClient(httpClient, configuration.ReadApiKey));
         _sessionResolver = new EditorSessionResolver(configuration.RepositoryRoot);
         _traceWriter = new BrokerTraceWriter(configuration);
+        _historyPublisher = new BrokerHistoryPublisher(configuration);
         _globalConcurrency = new SemaphoreSlim(
             configuration.MaximumConcurrentRuns,
             configuration.MaximumConcurrentRuns);
@@ -45,6 +47,8 @@ internal sealed class AgentRunRegistry : IAsyncDisposable
             throw new ArgumentException(
                 $"requested_model must be exactly one of: {string.Join(", ", AgentModelCatalog.Models)}");
         }
+        if (!AgentModelCatalog.SupportsResponseControls(request.RequestedModel))
+            throw new ArgumentException("The exact requested_model does not support broker response controls.");
         if (string.IsNullOrWhiteSpace(_configuration.ReadApiKey()))
         {
             throw new InvalidOperationException(
@@ -59,6 +63,7 @@ internal sealed class AgentRunRegistry : IAsyncDisposable
 
         string runId = Guid.NewGuid().ToString("N");
         var record = new BrokerRunRecord(runId, request);
+        _historyPublisher.Track(record);
         if (!_runs.TryAdd(runId, record))
             throw new InvalidOperationException("Could not allocate a unique run ID.");
 
@@ -74,6 +79,7 @@ internal sealed class AgentRunRegistry : IAsyncDisposable
             CancellationToken.None,
             TaskContinuationOptions.ExecuteSynchronously,
             TaskScheduler.Default);
+        BrokerUiLauncher.EnsureStarted(_configuration.RepositoryRoot);
         return runId;
     }
 
@@ -98,8 +104,14 @@ internal sealed class AgentRunRegistry : IAsyncDisposable
                 Status = snapshot.Status,
                 CreatedUtc = snapshot.CreatedUtc,
                 UpdatedUtc = snapshot.UpdatedUtc,
+                ObservedUtc = snapshot.ObservedUtc,
+                ElapsedMilliseconds = snapshot.ElapsedMilliseconds,
+                ProgressMessage = snapshot.ProgressMessage,
                 RequestedModel = snapshot.RequestedModel,
                 ActualModel = snapshot.ActualModel,
+                RequestedReasoningEffort = snapshot.RequestedReasoningEffort,
+                RequestedTextVerbosity = snapshot.RequestedTextVerbosity,
+                MaxOutputTokens = snapshot.MaxOutputTokens,
                 EditorSession = snapshot.EditorSession,
                 UseBackgroundMode = snapshot.UseBackgroundMode,
                 AttemptCount = snapshot.ProviderAttempts.Count,
@@ -131,6 +143,7 @@ internal sealed class AgentRunRegistry : IAsyncDisposable
         _shutdown.Dispose();
         foreach (BrokerRunRecord record in _runs.Values)
             record.Cancellation.Dispose();
+        await _historyPublisher.DisposeAsync();
     }
 
     private async Task ExecuteAsync(BrokerRunRecord record, ResolvedEditorSession? session)
@@ -146,11 +159,13 @@ internal sealed class AgentRunRegistry : IAsyncDisposable
             await _globalConcurrency.WaitAsync(cancellationToken);
             enteredGlobal = true;
             record.MarkRunning();
+            _historyPublisher.QueueUpdate(record);
 
             AgentRunResult result = session is null
                 ? await RunReasoningOnlyAsync(record, cancellationToken)
                 : await RunWithEditorSessionAsync(record, session, cancellationToken);
             record.SetResult(result);
+            _historyPublisher.PublishNow(record);
             _traceWriter.Write(record, result);
         }
         catch (OperationCanceledException)
@@ -162,6 +177,7 @@ internal sealed class AgentRunRegistry : IAsyncDisposable
                 AgentFailureCategory.Cancelled,
                 "The run was cancelled.");
             record.SetResult(result);
+            _historyPublisher.PublishNow(record);
             _traceWriter.Write(record, result);
         }
         catch (AgentToolProviderException exception)
@@ -174,6 +190,7 @@ internal sealed class AgentRunRegistry : IAsyncDisposable
                 exception.Message,
                 exception.DiagnosticDetail);
             record.SetResult(result);
+            _historyPublisher.PublishNow(record);
             _traceWriter.Write(record, result);
         }
         catch (Exception exception)
@@ -186,6 +203,7 @@ internal sealed class AgentRunRegistry : IAsyncDisposable
                 "The broker could not start or complete the run.",
                 exception.Message);
             record.SetResult(result);
+            _historyPublisher.PublishNow(record);
             _traceWriter.Write(record, result);
         }
         finally
@@ -202,7 +220,7 @@ internal sealed class AgentRunRegistry : IAsyncDisposable
             record.RunId,
             record.Request,
             EmptyAgentToolProvider.Instance,
-            new BrokerRunObserver(record),
+            new BrokerRunObserver(record, _historyPublisher),
             cancellationToken);
 
     private async Task<AgentRunResult> RunWithEditorSessionAsync(
@@ -225,7 +243,7 @@ internal sealed class AgentRunRegistry : IAsyncDisposable
             record.RunId,
             record.Request,
             provider,
-            new BrokerRunObserver(record),
+            new BrokerRunObserver(record, _historyPublisher),
             cancellationToken);
     }
 

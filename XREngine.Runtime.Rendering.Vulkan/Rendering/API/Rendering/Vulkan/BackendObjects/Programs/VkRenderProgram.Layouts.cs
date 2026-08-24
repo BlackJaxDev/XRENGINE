@@ -21,7 +21,7 @@ namespace XREngine.Rendering.Vulkan;
 internal unsafe partial class VkRenderProgram
 {
     private void BuildProgramInterface()
-        => Renderer.ExecuteWithVulkanPipelineCompilationQuiesced(
+        => ProgramCreationPort.ExecuteWithPipelineCompilationQuiesced(
             BuildProgramInterfaceAfterPipelineCompileDrain,
             $"program interface rebuild for '{Data.Name ?? "<unnamed program>"}'");
 
@@ -32,11 +32,40 @@ internal unsafe partial class VkRenderProgram
 
         IEnumerable<DescriptorBindingInfo> shaderBindings = EnumerateShaderDescriptorBindings();
         string programName = Data.Name ?? "UnnamedProgram";
-        var result = VulkanProgramUtilities.BuildDescriptorLayoutsShared(Renderer, Device, shaderBindings, programName);
+        var result = VulkanProgramUtilities.BuildDescriptorLayoutsShared(BackendContext.Resources.Descriptors, shaderBindings, programName);
 
         _descriptorSetLayouts = result.Layouts;
         _programDescriptorBindings.Clear();
         _programDescriptorBindings.AddRange(result.Bindings);
+        _hasGlobalTextureArrayOnlySet =
+            VulkanBindlessMaterialDescriptors.IsGlobalTextureArrayOnlySet(_programDescriptorBindings);
+        _canBindGlobalTextureArraySeparately = _hasGlobalTextureArrayOnlySet;
+        if (_canBindGlobalTextureArraySeparately)
+        {
+            for (int bindingIndex = 0; bindingIndex < _programDescriptorBindings.Count; bindingIndex++)
+            {
+                if (_programDescriptorBindings[bindingIndex].Set > VulkanBindlessMaterialDescriptors.TextureArraySet)
+                {
+                    _canBindGlobalTextureArraySeparately = false;
+                    break;
+                }
+            }
+        }
+        if (_canBindGlobalTextureArraySeparately)
+        {
+            int ownedSetCount = Math.Min(
+                checked((int)VulkanBindlessMaterialDescriptors.TextureArraySet),
+                _descriptorSetLayouts.Length);
+            _descriptorSetLayoutsBeforeGlobalMaterial = new DescriptorSetLayout[ownedSetCount];
+            Array.Copy(
+                _descriptorSetLayouts,
+                _descriptorSetLayoutsBeforeGlobalMaterial,
+                ownedSetCount);
+        }
+        else
+        {
+            _descriptorSetLayoutsBeforeGlobalMaterial = _descriptorSetLayouts;
+        }
         _descriptorLayoutFingerprint = ComputeDescriptorLayoutFingerprint(_descriptorSetLayouts);
         _descriptorSchemaFingerprint = ComputeDescriptorSchemaFingerprint(
             _programDescriptorBindings,
@@ -45,9 +74,9 @@ internal unsafe partial class VkRenderProgram
         _descriptorSetsRequireUpdateAfterBind = result.RequiresUpdateAfterBind;
         _descriptorSetsRequireVariableDescriptorCount = result.RequiresVariableDescriptorCount;
         _descriptorHeapLayout = null;
-        if (Renderer.IsDescriptorHeapDrawBindingActive)
+        if (BackendContext.Resources.Descriptors.Heap.ActiveBackend == EVulkanDescriptorBackend.DescriptorHeap)
         {
-            _descriptorHeapLayout = Renderer.CreateDescriptorHeapProgramLayout(
+            _descriptorHeapLayout = BackendContext.Resources.DescriptorLifetime.CreateDescriptorHeapProgramLayout(
                 _programDescriptorBindings,
                 programName,
                 out string descriptorHeapReason);
@@ -185,7 +214,7 @@ internal unsafe partial class VkRenderProgram
 
     private void CreatePipelineLayout(IReadOnlyList<DescriptorSetLayout> layouts)
     {
-        if (Renderer.IsDeviceLost)
+        if (!BackendContext.IsDeviceOperational)
             return;
 
         DestroyPipelineLayout("VkRenderProgram.CreatePipelineLayout");
@@ -201,7 +230,7 @@ internal unsafe partial class VkRenderProgram
             };
             if (Api!.CreatePipelineLayout(Device, ref info, null, out _pipelineLayout) != Result.Success)
                 throw new InvalidOperationException($"Failed to create pipeline layout for program '{Data.Name ?? "UnnamedProgram"}'.");
-            Renderer.TrackLivePipelineLayout(_pipelineLayout, "VkRenderProgram.PipelineLayout");
+            ProgramCreationPort.TrackPipelineLayout(_pipelineLayout, "VkRenderProgram.PipelineLayout");
             return;
         }
 
@@ -220,7 +249,7 @@ internal unsafe partial class VkRenderProgram
 
             if (Api!.CreatePipelineLayout(Device, ref info, null, out _pipelineLayout) != Result.Success)
                 throw new InvalidOperationException($"Failed to create pipeline layout for program '{Data.Name ?? "UnnamedProgram"}'.");
-            Renderer.TrackLivePipelineLayout(_pipelineLayout, "VkRenderProgram.PipelineLayout");
+            ProgramCreationPort.TrackPipelineLayout(_pipelineLayout, "VkRenderProgram.PipelineLayout");
         }
     }
 
@@ -228,7 +257,7 @@ internal unsafe partial class VkRenderProgram
     {
         lock (_linkLock)
         {
-            Renderer.ExecuteWithVulkanPipelineCompilationQuiesced(
+            ProgramCreationPort.ExecuteWithPipelineCompilationQuiesced(
                 DestroyLayoutsAfterPipelineCompileDrain,
                 $"pipeline layout mutation for '{Data.Name ?? "<unnamed program>"}'");
         }
@@ -242,17 +271,21 @@ internal unsafe partial class VkRenderProgram
 
         if (_computePipeline.Handle != 0)
         {
-            Renderer.RetirePipeline(_computePipeline);
+            ProgramCreationPort.RetirePipeline(_computePipeline);
             _computePipeline = default;
         }
 
         if (_descriptorSetLayouts.Length > 0)
         {
             foreach (DescriptorSetLayout layout in _descriptorSetLayouts)
-                Renderer.ReleaseCachedDescriptorSetLayout(layout);
+                BackendContext.Resources.Descriptors.ReleaseProgramDescriptorSetLayout(layout);
 
             _descriptorSetLayouts = Array.Empty<DescriptorSetLayout>();
         }
+
+        _descriptorSetLayoutsBeforeGlobalMaterial = Array.Empty<DescriptorSetLayout>();
+        _hasGlobalTextureArrayOnlySet = false;
+        _canBindGlobalTextureArraySeparately = false;
 
         if (_pipelineLayout.Handle != 0)
             DestroyPipelineLayout("VkRenderProgram.DestroyLayouts");
@@ -283,7 +316,7 @@ internal unsafe partial class VkRenderProgram
         PipelineLayout pipelineLayout = _pipelineLayout;
         _pipelineLayout = default;
 
-        if (Renderer.TryBeginDestroyPipelineLayout(pipelineLayout, owner))
+        if (ProgramCreationPort.TryBeginDestroyPipelineLayout(pipelineLayout, owner))
             Api!.DestroyPipelineLayout(Device, pipelineLayout, null);
     }
 
@@ -297,11 +330,8 @@ internal unsafe partial class VkRenderProgram
 
     private void ReleaseComputeUniformBuffer(in ComputeUniformBuffer resource)
     {
-        if (resource.Mapped != null)
-            Renderer.UnmapBufferMemory(resource.Buffer, resource.Memory);
-
         if (resource.Buffer.Handle != 0 || resource.Memory.Handle != 0)
-            Renderer.RetireBuffer(resource.Buffer, resource.Memory);
+            BackendContext.Resources.Buffers.Retire(resource.Buffer, resource.Memory, "VkRenderProgram.ComputeUniformBuffer");
     }
 
     public IEnumerable<PipelineShaderStageCreateInfo> GetShaderStages()
@@ -312,7 +342,7 @@ internal unsafe partial class VkRenderProgram
         foreach (EProgramStageMask flag in VulkanProgramUtilities.EnumerateStages(mask))
         {
             // Skip geometry shader stage if the device feature is not enabled.
-            if (flag == EProgramStageMask.GeometryShaderBit && !Renderer.SupportsGeometryShader)
+            if (flag == EProgramStageMask.GeometryShaderBit && !BackendContext.Supports(EVulkanDeviceCapability.GeometryShader))
                 continue;
 
             if (_stageLookup.TryGetValue(flag, out VkShader? shader))

@@ -1,11 +1,14 @@
 using Silk.NET.Vulkan;
+using System.Buffers;
 
 namespace XREngine.Rendering.Vulkan;
 
 /// <summary>
-/// Lightweight Vulkan query handle backed by a renderer-owned arena range.
+/// Lightweight Vulkan query handle backed by a generation-owned arena range.
 /// </summary>
-internal unsafe sealed class VkRenderQuery(VulkanRenderer api, XRRenderQuery data) : VkObject<XRRenderQuery>(api, data)
+internal unsafe sealed class VkRenderQuery(
+    VulkanBackendObjectContext backendContext,
+    XRRenderQuery data) : VkObject<XRRenderQuery>(backendContext, data)
 {
     private readonly record struct RecordedEpoch(
         RenderQueryTicket Ticket,
@@ -64,12 +67,12 @@ internal unsafe sealed class VkRenderQuery(VulkanRenderer api, XRRenderQuery dat
     internal bool PrepareForRecording(CommandBuffer commandBuffer, uint viewSlotCount = 1u)
     {
         ulong commandBufferHandle = unchecked((ulong)commandBuffer.Handle);
-        if (commandBufferHandle == 0ul || Renderer.IsDeviceLost)
+        if (commandBufferHandle == 0ul || !BackendContext.IsDeviceOperational)
             return false;
 
         VulkanQueryPlan plan = VulkanQueryDescriptorMapper.Map(
             Data.Descriptor,
-            Renderer.QueryCapabilities,
+            BackendContext.Resources.Queries.Capabilities,
             viewSlotCount);
         if (!plan.Supported)
         {
@@ -113,7 +116,7 @@ internal unsafe sealed class VkRenderQuery(VulkanRenderer api, XRRenderQuery dat
                 _allocation.Pool,
                 _allocation.FirstQuery,
                 ticket.QueryCount);
-            Renderer.QueryPoolArenas.RecordResetEpoch();
+            BackendContext.Resources.Queries.RecordResetEpoch();
             return true;
         }
     }
@@ -171,9 +174,9 @@ internal unsafe sealed class VkRenderQuery(VulkanRenderer api, XRRenderQuery dat
                     break;
                 case EVulkanQueryRecordingProvider.TransformFeedbackIndexed:
                 case EVulkanQueryRecordingProvider.PrimitivesGeneratedIndexed:
-                    if (Renderer._extTransformFeedback is null)
+                    if (BackendContext.TransformFeedbackExtension is null)
                         return ERenderQueryReadStatus.Unsupported;
-                    Renderer._extTransformFeedback.CmdBeginQueryIndexed(
+                    BackendContext.TransformFeedbackExtension.CmdBeginQueryIndexed(
                         commandBuffer,
                         _allocation.Pool,
                         _allocation.FirstQuery,
@@ -208,9 +211,9 @@ internal unsafe sealed class VkRenderQuery(VulkanRenderer api, XRRenderQuery dat
             if (_plan.Provider is EVulkanQueryRecordingProvider.TransformFeedbackIndexed or
                 EVulkanQueryRecordingProvider.PrimitivesGeneratedIndexed)
             {
-                if (Renderer._extTransformFeedback is null)
+                if (BackendContext.TransformFeedbackExtension is null)
                     return ERenderQueryReadStatus.Unsupported;
-                Renderer._extTransformFeedback.CmdEndQueryIndexed(
+                BackendContext.TransformFeedbackExtension.CmdEndQueryIndexed(
                     commandBuffer,
                     _allocation.Pool,
                     _allocation.FirstQuery,
@@ -245,13 +248,18 @@ internal unsafe sealed class VkRenderQuery(VulkanRenderer api, XRRenderQuery dat
                 return ERenderQueryReadStatus.InvalidState;
             }
 
-            if (!VulkanQueryDescriptorMapper.IsTimestampStageSupported((ulong)stage, Renderer.QueryCapabilities))
+            if (!VulkanQueryDescriptorMapper.IsTimestampStageSupported((ulong)stage, BackendContext.Resources.Queries.Capabilities))
                 return ERenderQueryReadStatus.Unsupported;
 
             TrackPool(commandBuffer, "Query.Timestamp");
             uint queryIndex = _allocation.FirstQuery + pointIndex;
-            if (Renderer.QueryCapabilities.Synchronization2Enabled)
-                Renderer.CmdWriteTimestamp2Compat(commandBuffer, stage, _allocation.Pool, queryIndex);
+            if (BackendContext.Resources.Queries.Capabilities.Synchronization2Enabled)
+            {
+                VulkanQueryCommandService? commands = BackendContext.Resources.Queries.Commands;
+                if (commands is null)
+                    return ERenderQueryReadStatus.SubsystemUnavailable;
+                commands.WriteTimestamp2(commandBuffer, stage, _allocation.Pool, queryIndex);
+            }
             else
                 Api!.CmdWriteTimestamp(commandBuffer, (PipelineStageFlags)(ulong)stage, _allocation.Pool, queryIndex);
             RenderQueryTelemetry.RecordRecording(Data.Descriptor.Kind);
@@ -267,6 +275,7 @@ internal unsafe sealed class VkRenderQuery(VulkanRenderer api, XRRenderQuery dat
     }
 
     public ERenderQueryReadStatus WriteProperties(
+        VulkanTrackedCommandEncoder encoder,
         CommandBuffer commandBuffer,
         ReadOnlySpan<ulong> sourceHandles)
     {
@@ -275,17 +284,17 @@ internal unsafe sealed class VkRenderQuery(VulkanRenderer api, XRRenderQuery dat
         {
             if (!_allocation.IsValid ||
                 !_recordedEpochs.TryGetValue(commandBufferHandle, out RecordedEpoch epoch) ||
-                epoch.State != ERenderQuerySlotState.ResetRecorded ||
-                !Renderer.TryGetSpecializedQueryProvider(Data.Descriptor.Kind, out IVulkanSpecializedQueryProvider provider))
+                epoch.State != ERenderQuerySlotState.ResetRecorded)
             {
                 return ERenderQueryReadStatus.SubsystemUnavailable;
             }
-            if (!provider.HasRequiredExternalOwnership)
+            if (!BackendContext.Resources.Queries.TryGet(Data.Descriptor.Kind, out IVulkanSpecializedQueryProvider provider) ||
+                !provider.HasRequiredExternalOwnership)
                 return ERenderQueryReadStatus.InvalidState;
 
             TrackPool(commandBuffer, "Query.Properties");
-            if (!provider.TryRecord(
-                    Renderer,
+            if (!BackendContext.Resources.Queries.TryRecord(
+                    encoder,
                     commandBuffer,
                     _allocation.Pool,
                     _allocation.FirstQuery,
@@ -368,7 +377,7 @@ internal unsafe sealed class VkRenderQuery(VulkanRenderer api, XRRenderQuery dat
             epoch = _submittedEpoch;
 
         RenderQueryResultLayout layout = _plan.ResultLayout;
-        if (Renderer.IsDeviceLost)
+        if (!BackendContext.IsDeviceOperational)
             return new(ERenderQueryReadStatus.DeviceLost, epoch.Ticket, layout, 0, "The Vulkan device is lost.");
         if (!epoch.IsValid)
             return new(ERenderQueryReadStatus.InvalidState, _latestTicket, layout, 0, "No submitted query epoch is pending.");
@@ -377,7 +386,7 @@ internal unsafe sealed class VkRenderQuery(VulkanRenderer api, XRRenderQuery dat
         if (!layout.FitsNativeResult(destination.Length))
             return new(ERenderQueryReadStatus.BufferTooSmall, epoch.Ticket, layout, 0, "Caller storage must include native availability words.");
 
-        if (!Renderer.IsVulkanSubmissionCompleted(epoch.Submission))
+        if (!BackendContext.Resources.Queries.IsSubmissionCompleted(epoch.Submission))
         {
             if (!wait)
             {
@@ -387,8 +396,8 @@ internal unsafe sealed class VkRenderQuery(VulkanRenderer api, XRRenderQuery dat
             if (string.IsNullOrWhiteSpace(waitingCaller))
                 return new(ERenderQueryReadStatus.InvalidState, epoch.Ticket, layout, 0, "Explicit waits require a diagnostic caller name.");
             RenderQueryTelemetry.RecordWait();
-            if (!Renderer.WaitForVulkanSubmissionCompletion(epoch.Submission, $"query:{waitingCaller}"))
-                return new(Renderer.IsDeviceLost ? ERenderQueryReadStatus.DeviceLost : ERenderQueryReadStatus.ApiError, epoch.Ticket, layout, 0);
+            if (!BackendContext.Resources.Queries.WaitForSubmissionCompletion(epoch.Submission, $"query:{waitingCaller}"))
+                return new(!BackendContext.IsDeviceOperational ? ERenderQueryReadStatus.DeviceLost : ERenderQueryReadStatus.ApiError, epoch.Ticket, layout, 0);
         }
 
         if (epoch.ForceVisible && Data.Descriptor.Kind == ERenderQueryKind.Occlusion)
@@ -420,7 +429,10 @@ internal unsafe sealed class VkRenderQuery(VulkanRenderer api, XRRenderQuery dat
         if (result is not (Result.Success or Result.NotReady))
         {
             if (result == Result.ErrorDeviceLost)
-                Renderer.MarkDeviceLost("vkGetQueryPoolResults returned ErrorDeviceLost");
+                BackendContext.Resources.Queries.MarkDeviceLost(
+                    "vkGetQueryPoolResults returned ErrorDeviceLost",
+                    "vkGetQueryPoolResults",
+                    result);
             return new(
                 result == Result.ErrorDeviceLost ? ERenderQueryReadStatus.DeviceLost : ERenderQueryReadStatus.ApiError,
                 epoch.Ticket,
@@ -453,16 +465,22 @@ internal unsafe sealed class VkRenderQuery(VulkanRenderer api, XRRenderQuery dat
             return ERenderQueryReadStatus.InvalidState;
         }
 
-        Span<ulong> values = stackalloc ulong[checked((int)Math.Max(_plan.ResultLayout.NativeValueCount, 2u))];
-        RenderQueryReadResult read = TryReadRaw(values, expectedTicket);
-        if (!read.IsReady)
-            return read.Status;
+        int valueCount = checked((int)Math.Max(_plan.ResultLayout.NativeValueCount, 2u));
+        ulong[] rented = ArrayPool<ulong>.Shared.Rent(valueCount);
+        try
+        {
+            Span<ulong> values = rented.AsSpan(0, valueCount);
+            RenderQueryReadResult read = TryReadRaw(values, expectedTicket);
+            if (!read.IsReady)
+                return read.Status;
 
-        bool any = false;
-        for (int index = 0; index < read.ValuesWritten; index++)
-            any |= values[index] != 0ul;
-        result = new(any, any ? 1ul : 0ul, read.Layout.ViewSlotCount);
-        return ERenderQueryReadStatus.Ready;
+            bool any = false;
+            for (int index = 0; index < read.ValuesWritten; index++)
+                any |= values[index] != 0ul;
+            result = new(any, any ? 1ul : 0ul, read.Layout.ViewSlotCount);
+            return ERenderQueryReadStatus.Ready;
+        }
+        finally { ArrayPool<ulong>.Shared.Return(rented); }
     }
 
     public ERenderQueryReadStatus TryGetExactSamplesPassed(
@@ -476,16 +494,22 @@ internal unsafe sealed class VkRenderQuery(VulkanRenderer api, XRRenderQuery dat
             return ERenderQueryReadStatus.InvalidState;
         }
 
-        Span<ulong> values = stackalloc ulong[checked((int)Math.Max(_plan.ResultLayout.NativeValueCount, 2u))];
-        RenderQueryReadResult read = TryReadRaw(values, expectedTicket);
-        if (!read.IsReady)
-            return read.Status;
+        int valueCount = checked((int)Math.Max(_plan.ResultLayout.NativeValueCount, 2u));
+        ulong[] rented = ArrayPool<ulong>.Shared.Rent(valueCount);
+        try
+        {
+            Span<ulong> values = rented.AsSpan(0, valueCount);
+            RenderQueryReadResult read = TryReadRaw(values, expectedTicket);
+            if (!read.IsReady)
+                return read.Status;
 
-        ulong samples = 0ul;
-        for (int index = 0; index < read.ValuesWritten; index++)
-            samples = ulong.MaxValue - samples < values[index] ? ulong.MaxValue : samples + values[index];
-        result = new(samples != 0ul, samples, read.Layout.ViewSlotCount);
-        return ERenderQueryReadStatus.Ready;
+            ulong samples = 0ul;
+            for (int index = 0; index < read.ValuesWritten; index++)
+                samples = ulong.MaxValue - samples < values[index] ? ulong.MaxValue : samples + values[index];
+            result = new(samples != 0ul, samples, read.Layout.ViewSlotCount);
+            return ERenderQueryReadStatus.Ready;
+        }
+        finally { ArrayPool<ulong>.Shared.Return(rented); }
     }
 
     public ERenderQueryReadStatus TryGetTimestamp(
@@ -501,8 +525,8 @@ internal unsafe sealed class VkRenderQuery(VulkanRenderer api, XRRenderQuery dat
         if (!read.IsReady)
             return read.Status;
 
-        ulong ticks = RenderQueryTimestampMath.MaskTicks(values[0], Renderer.QueryCapabilities.GraphicsTimestampValidBits);
-        result = new(ticks, RenderQueryTimestampMath.TicksToNanoseconds(ticks, Renderer.QueryCapabilities.TimestampPeriodNanoseconds));
+        ulong ticks = RenderQueryTimestampMath.MaskTicks(values[0], BackendContext.Resources.Queries.Capabilities.GraphicsTimestampValidBits);
+        result = new(ticks, RenderQueryTimestampMath.TicksToNanoseconds(ticks, BackendContext.Resources.Queries.Capabilities.TimestampPeriodNanoseconds));
         return ERenderQueryReadStatus.Ready;
     }
 
@@ -519,11 +543,11 @@ internal unsafe sealed class VkRenderQuery(VulkanRenderer api, XRRenderQuery dat
         if (!read.IsReady)
             return read.Status;
 
-        uint validBits = Renderer.QueryCapabilities.GraphicsTimestampValidBits;
+        uint validBits = BackendContext.Resources.Queries.Capabilities.GraphicsTimestampValidBits;
         ulong start = RenderQueryTimestampMath.MaskTicks(values[0], validBits);
         ulong end = RenderQueryTimestampMath.MaskTicks(values[1], validBits);
         ulong delta = RenderQueryTimestampMath.DeltaTicks(start, end, validBits);
-        result = new(start, end, RenderQueryTimestampMath.TicksToNanoseconds(delta, Renderer.QueryCapabilities.TimestampPeriodNanoseconds));
+        result = new(start, end, RenderQueryTimestampMath.TicksToNanoseconds(delta, BackendContext.Resources.Queries.Capabilities.TimestampPeriodNanoseconds));
         return ERenderQueryReadStatus.Ready;
     }
 
@@ -664,7 +688,7 @@ internal unsafe sealed class VkRenderQuery(VulkanRenderer api, XRRenderQuery dat
             plan.QueryType,
             plan.PipelineStatistics,
             plan.Provider,
-            Renderer.QueryCapabilities.GraphicsQueueFamily,
+            BackendContext.Resources.Queries.Capabilities.GraphicsQueueFamily,
             plan.ResultLayout.ValuesPerQuery,
             Data.Descriptor.Property);
 
@@ -673,7 +697,7 @@ internal unsafe sealed class VkRenderQuery(VulkanRenderer api, XRRenderQuery dat
         if (_allocation.IsValid)
             ReleaseAllocationNoLock();
 
-        if (!Renderer.QueryPoolArenas.TryAllocate(key, queryCount, out _allocation, out string? reason))
+        if (!BackendContext.Resources.Queries.TryAllocate(key, queryCount, out _allocation, out string? reason))
         {
             Debug.VulkanWarningEvery(
                 $"Vulkan.QueryArena.Exhausted.{key.GetHashCode()}",
@@ -685,7 +709,7 @@ internal unsafe sealed class VkRenderQuery(VulkanRenderer api, XRRenderQuery dat
             return false;
         }
 
-        Renderer.RegisterVulkanRenderQuery(_allocation.Pool, this);
+        VulkanQueryAuthority.RegisterRenderQuery(BackendContext.Resources.Lifetime.Tracker, _allocation.Pool, this);
         RenderQueryTelemetry.RecordAllocation();
         return true;
     }
@@ -694,8 +718,8 @@ internal unsafe sealed class VkRenderQuery(VulkanRenderer api, XRRenderQuery dat
     {
         if (!_allocation.IsValid)
             return;
-        Renderer.UnregisterVulkanRenderQuery(_allocation.Pool, this);
-        Renderer.QueryPoolArenas.Release(_allocation);
+        VulkanQueryAuthority.UnregisterRenderQuery(BackendContext.Resources.Lifetime.Tracker, _allocation.Pool, this);
+        BackendContext.Resources.Queries.Release(_allocation);
         RenderQueryTelemetry.RecordRelease();
         _allocation = default;
         _plan = default;
@@ -704,11 +728,17 @@ internal unsafe sealed class VkRenderQuery(VulkanRenderer api, XRRenderQuery dat
     }
 
     private void TrackPool(CommandBuffer commandBuffer, string operation)
-        => Renderer.TrackVulkanCommandBufferResource(
+    {
+        VulkanQueryCommandService? commands = BackendContext.Resources.Queries.Commands;
+        if (commands is null)
+            throw new InvalidOperationException("Vulkan query command services are unavailable during query recording.");
+
+        commands.Track(
             commandBuffer,
             ObjectType.QueryPool,
             _allocation.Pool.Handle,
             operation);
+    }
 
     private bool TryConsumeSubmittedEpoch(ulong epoch)
     {

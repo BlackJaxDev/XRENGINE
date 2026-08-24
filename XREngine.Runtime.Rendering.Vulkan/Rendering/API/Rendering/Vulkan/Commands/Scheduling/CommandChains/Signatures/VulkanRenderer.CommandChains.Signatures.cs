@@ -13,7 +13,7 @@ using XREngine.Rendering.Shadows;
 
 namespace XREngine.Rendering.Vulkan;
 
-public unsafe partial class VulkanRenderer
+internal sealed partial class VulkanCommandRuntime
 {
     private static ulong ComputeScheduleStructuralSignature(
         ReadOnlySpan<RenderPassChainGroup> groups,
@@ -63,8 +63,11 @@ public unsafe partial class VulkanRenderer
     /// </summary>
     internal static bool AreAllPreparedDrawBindingsSecondaryOwned(
         CommandChainSchedule schedule,
-        FrameOp[] ops)
+        FrameOperationStream operations)
     {
+        if (schedule.BudgetLimitedInlineFrameOpCount != 0)
+            return false;
+
         ReadOnlySpan<RenderPassChainGroup> groups = schedule.Groups.Span;
         if (groups.Length == 0)
             return false;
@@ -75,30 +78,29 @@ public unsafe partial class VulkanRenderer
 
         bool foundPreparedDraw = false;
         int queryBracketDepth = 0;
-        for (int i = 0; i < ops.Length; i++)
+        for (int i = 0; i < operations.Count; i++)
         {
-            FrameOp op = ops[i];
-            if (op is QueryOp queryOp)
+            ref readonly FrameOperationHeader header = ref operations.GetHeader(i);
+            if (header.OpCode == EVulkanPrimaryPlanNodeKind.Query)
             {
-                if (queryOp.Operation == ERenderQueryOperation.Begin)
+                ERenderQueryOperation queryOperation = operations.GetQuery(i).Operation;
+                if (queryOperation == ERenderQueryOperation.Begin)
                     queryBracketDepth++;
-                else if (queryOp.Operation == ERenderQueryOperation.End && queryBracketDepth > 0)
+                else if (queryOperation == ERenderQueryOperation.End && queryBracketDepth > 0)
                     queryBracketDepth--;
                 continue;
             }
 
-            PendingMeshDraw draw = op switch
-            {
-                MeshDrawOp direct => direct.Draw,
-                IndirectDrawOp indirect => indirect.Draw,
-                _ => default,
-            };
+            PendingMeshDraw draw = header.OpCode == EVulkanPrimaryPlanNodeKind.MeshDraw
+                ? operations.GetMeshDraw(i).Draw
+                : header.OpCode == EVulkanPrimaryPlanNodeKind.IndirectDraw
+                    ? operations.GetIndirectDraw(i).Draw : default;
             if (draw.Renderer is null)
                 continue;
 
             foundPreparedDraw = true;
             if (queryBracketDepth != 0 ||
-                !IsSchedulableCommandChainFrameOp(op, dynamicOverlay: false))
+                !IsSchedulableCommandChainFrameOp(operations, i, dynamicOverlay: false))
             {
                 return false;
             }
@@ -107,7 +109,8 @@ public unsafe partial class VulkanRenderer
         return foundPreparedDraw;
     }
 
-    internal static ulong ComputeCommandChainPrimarySkeletonSignature(FrameOp[] ops)
+    internal static ulong ComputeCommandChainPrimarySkeletonSignature(
+        FrameOperationStream operations)
     {
         FrameOpSignatureHasher hash = new();
         hash.Add(0x5052494D534B454CUL);
@@ -120,20 +123,23 @@ public unsafe partial class VulkanRenderer
         int currentTargetIdentity = 0;
         RenderViewKey currentViewKey = default;
 
-        for (int opIndex = 0; opIndex < ops.Length; opIndex++)
+        for (int opIndex = 0; opIndex < operations.Count; opIndex++)
         {
-            FrameOp op = ops[opIndex];
-            bool isQuery = op is QueryOp;
+            ref readonly FrameOperationHeader header = ref operations.GetHeader(opIndex);
+            ref readonly FrameOpContext context = ref operations.GetContext(opIndex);
+            bool isQuery = header.OpCode == EVulkanPrimaryPlanNodeKind.Query;
             bool schedulable =
                 !isQuery &&
                 queryBracketDepth == 0 &&
-                IsSchedulableCommandChainFrameOp(op, dynamicOverlay: false);
+                IsSchedulableCommandChainFrameOp(operations, opIndex, dynamicOverlay: false);
 
             if (schedulable)
             {
-                int passIndex = op.PassIndex;
-                int targetIdentity = ResolveCommandChainTargetIdentity(op);
-                RenderViewKey viewKey = BuildRenderViewKey(op, dynamicOverlay: false);
+                int passIndex = header.PassIndex;
+                int targetIdentity = header.TargetIdentity;
+                RenderViewKey viewKey = header.OpCode == EVulkanPrimaryPlanNodeKind.MeshDraw
+                    ? BuildRenderViewKey(operations.GetMeshDraw(opIndex).Draw, passIndex, in context, false)
+                    : BuildRenderViewKey(in context, passIndex, false);
                 if (!inSecondaryRun ||
                     passIndex != currentPassIndex ||
                     targetIdentity != currentTargetIdentity ||
@@ -159,18 +165,19 @@ public unsafe partial class VulkanRenderer
             else
             {
                 inSecondaryRun = false;
-                RenderPacketVolatility volatility = ClassifyRenderPacketVolatility(op, dynamicOverlay: false);
+                RenderPacketVolatility volatility = ClassifyRenderPacketVolatility(header.OpCode, dynamicOverlay: false);
                 hash.Add(0x494E4C494E454F50UL);
-                hash.Add(ComputeFrameOpStructuralSignature(op, inlineOpIndex, volatility));
-                hash.Add(ResolvePipelineGeneration(op));
+                hash.Add(ComputeFrameOpStructuralSignature(header, in context, inlineOpIndex, volatility));
+                hash.Add(ResolvePipelineGeneration(in context));
                 inlineOpIndex++;
             }
 
-            if (op is QueryOp queryOp)
+            if (isQuery)
             {
-                if (queryOp.Operation == ERenderQueryOperation.Begin)
+                ERenderQueryOperation queryOperation = operations.GetQuery(opIndex).Operation;
+                if (queryOperation == ERenderQueryOperation.Begin)
                     queryBracketDepth++;
-                else if (queryOp.Operation == ERenderQueryOperation.End && queryBracketDepth > 0)
+                else if (queryOperation == ERenderQueryOperation.End && queryBracketDepth > 0)
                     queryBracketDepth--;
             }
         }
@@ -261,8 +268,10 @@ public unsafe partial class VulkanRenderer
             }
         }
 
+        ref readonly CommandRecordingDependencySignature scheduleDependency =
+            ref schedule.DependencySignatureReference;
         VulkanCommandIdentityComponents scheduleComponents =
-            schedule.DependencySignature.CaptureIdentityComponents();
+            scheduleDependency.CaptureIdentityComponents();
         return new VulkanCommandIdentityComponents(
             orderedNodes.ToHash(),
             ResourceGenerations: 0,
@@ -292,11 +301,84 @@ public unsafe partial class VulkanRenderer
                     return false;
                 }
 
-                if (!chain.RecordedArtifact.TryValidateSharedDependency(
-                        chain.DependencySignature,
+                ref readonly CommandRecordingDependencySignature expectedDependency =
+                    ref chain.DependencySignatureReference;
+                if (!chain.RecordedArtifact.TryValidateCommandChainSecondaryDependency(
+                        in expectedDependency,
                         out mismatch))
+                {
+                    ref readonly CommandRecordingDependencySignature recordedDependency =
+                        ref chain.RecordedArtifact.DependencyIdentityReference;
+                    ref readonly RecordedPacketKey recordedKey =
+                        ref CommandRecordingDependencySignature.GetRecordedPacketKeyReference(
+                            in recordedDependency);
+                    ref readonly RecordedPacketKey expectedKey =
+                        ref CommandRecordingDependencySignature.GetRecordedPacketKeyReference(
+                            in expectedDependency);
+                    VulkanRecordedRenderTargetSnapshot expectedRenderTarget =
+                        expectedKey.RenderTarget;
+                    Debug.VulkanWarningEvery(
+                        $"Vulkan.CommandChain.SharedDependency.{chain.Key.GetHashCode()}",
+                        TimeSpan.FromSeconds(1),
+                        "[Vulkan] Command-chain shared dependency changed after recording. chain={0} field={1} packetField={2} renderTargetField={3} artifactExecutable={4}.",
+                        chain.Key,
+                        mismatch.Field,
+                        recordedKey.DescribeFirstMismatch(in expectedKey),
+                        recordedKey.RenderTarget.DescribeFirstMismatch(in expectedRenderTarget),
+                        chain.RecordedArtifact.IsExecutable);
                     return false;
+                }
             }
+        }
+
+        mismatch = CommandRecordingDependencyMismatch.None;
+        return true;
+    }
+
+    internal static bool TryValidatePrimaryCommandBufferGroupSharedDependencies(
+        VulkanPrimarySecondaryArtifactSequence executedArtifacts,
+        IReadOnlyDictionary<CommandChainKey, CommandChain> chains,
+        out CommandRecordingDependencyMismatch mismatch)
+    {
+        for (int artifactIndex = 0; artifactIndex < executedArtifacts.Count; artifactIndex++)
+        {
+            ref readonly VulkanPrimarySecondaryArtifactSequenceEntry entry =
+                ref executedArtifacts.GetEntry(artifactIndex);
+            if (!chains.TryGetValue(entry.Key, out CommandChain? chain))
+            {
+                mismatch = CommandRecordingDependencyMismatch.None;
+                return false;
+            }
+
+            ref readonly CommandRecordingDependencySignature expectedDependency =
+                ref chain.DependencySignatureReference;
+            if (chain.RecordedArtifact.TryValidateCommandChainSecondaryDependency(
+                    in expectedDependency,
+                    out mismatch))
+            {
+                continue;
+            }
+
+            ref readonly CommandRecordingDependencySignature recordedDependency =
+                ref chain.RecordedArtifact.DependencyIdentityReference;
+            ref readonly RecordedPacketKey recordedKey =
+                ref CommandRecordingDependencySignature.GetRecordedPacketKeyReference(
+                    in recordedDependency);
+            ref readonly RecordedPacketKey expectedKey =
+                ref CommandRecordingDependencySignature.GetRecordedPacketKeyReference(
+                    in expectedDependency);
+            VulkanRecordedRenderTargetSnapshot expectedRenderTarget =
+                expectedKey.RenderTarget;
+            Debug.VulkanWarningEvery(
+                $"Vulkan.CommandChain.ExecutedSharedDependency.{chain.Key.GetHashCode()}",
+                TimeSpan.FromSeconds(1),
+                "[Vulkan] Executed command-chain dependency changed after recording. chain={0} field={1} packetField={2} renderTargetField={3} artifactExecutable={4}.",
+                chain.Key,
+                mismatch.Field,
+                recordedKey.DescribeFirstMismatch(in expectedKey),
+                recordedKey.RenderTarget.DescribeFirstMismatch(in expectedRenderTarget),
+                chain.RecordedArtifact.IsExecutable);
+            return false;
         }
 
         mismatch = CommandRecordingDependencyMismatch.None;
@@ -315,13 +397,17 @@ public unsafe partial class VulkanRenderer
                 groups[groupIndex].ChainKeys.Span;
             for (int keyIndex = 0; keyIndex < keys.Length; keyIndex++)
             {
-                if (!chains.TryGetValue(keys[keyIndex], out CommandChain? chain) ||
-                    chain.RecordedArtifact.TryValidateSharedDependency(
-                        chain.DependencySignature,
-                        out CommandRecordingDependencyMismatch mismatch))
+                if (!chains.TryGetValue(keys[keyIndex], out CommandChain? chain))
                 {
                     continue;
                 }
+
+                ref readonly CommandRecordingDependencySignature expectedDependency =
+                    ref chain.DependencySignatureReference;
+                if (chain.RecordedArtifact.TryValidateCommandChainSecondaryDependency(
+                        in expectedDependency,
+                        out CommandRecordingDependencyMismatch mismatch))
+                    continue;
 
                 MarkCommandChainSecondaryCommandBufferInvalid(
                     chain,
@@ -333,6 +419,41 @@ public unsafe partial class VulkanRenderer
                         : CommandChainDirtyReason.Structure;
                 invalidated++;
             }
+        }
+
+        return invalidated;
+    }
+
+    private static int InvalidatePrimaryCommandBufferGroupSharedDependencyMismatches(
+        VulkanPrimarySecondaryArtifactSequence executedArtifacts,
+        IReadOnlyDictionary<CommandChainKey, CommandChain> chains)
+    {
+        int invalidated = 0;
+        for (int artifactIndex = 0; artifactIndex < executedArtifacts.Count; artifactIndex++)
+        {
+            ref readonly VulkanPrimarySecondaryArtifactSequenceEntry entry =
+                ref executedArtifacts.GetEntry(artifactIndex);
+            if (!chains.TryGetValue(entry.Key, out CommandChain? chain))
+            {
+                continue;
+            }
+
+
+            ref readonly CommandRecordingDependencySignature expectedDependency =
+                ref chain.DependencySignatureReference;
+            if (chain.RecordedArtifact.TryValidateCommandChainSecondaryDependency(
+                    in expectedDependency,
+                    out CommandRecordingDependencyMismatch mismatch))
+                continue;
+
+            MarkCommandChainSecondaryCommandBufferInvalid(
+                chain,
+                EVulkanRecordedCommandArtifactInvalidationReason.DependencyChanged);
+            chain.DirtyReason |=
+                mismatch.InvalidationClass == CommandRecordingInvalidationClass.BindingIdentity
+                    ? CommandChainDirtyReason.ResourcePlan
+                    : CommandChainDirtyReason.Structure;
+            invalidated++;
         }
 
         return invalidated;
@@ -360,15 +481,35 @@ public unsafe partial class VulkanRenderer
         IReadOnlyDictionary<CommandChainKey, CommandChain> commandChains,
         Span<CommandChainKey> keysByOpIndex,
         int staticOpCount)
+        => PopulateCommandChainsByFrameOpIndex(
+            schedule,
+            commandChains,
+            keysByOpIndex,
+            default,
+            staticOpCount);
+
+    private static void PopulateCommandChainsByFrameOpIndex(
+        CommandChainSchedule schedule,
+        IReadOnlyDictionary<CommandChainKey, CommandChain> commandChains,
+        Span<CommandChainKey> keysByOpIndex,
+        Span<CommandChain?> chainsByOpIndex,
+        int staticOpCount)
     {
         if (staticOpCount <= 0)
             return;
         if (keysByOpIndex.Length < staticOpCount)
             throw new ArgumentException("The command-chain key scratch span is smaller than the frame-op count.", nameof(keysByOpIndex));
+        if (!chainsByOpIndex.IsEmpty && chainsByOpIndex.Length < staticOpCount)
+            throw new ArgumentException("The resolved command-chain scratch span is smaller than the frame-op count.", nameof(chainsByOpIndex));
 
         keysByOpIndex = keysByOpIndex[..staticOpCount];
         CommandChainKey unmappedKey = new(0, default, 0, 0, 0UL, false, -1);
         keysByOpIndex.Fill(unmappedKey);
+        if (!chainsByOpIndex.IsEmpty)
+        {
+            chainsByOpIndex = chainsByOpIndex[..staticOpCount];
+            chainsByOpIndex.Clear();
+        }
         ReadOnlySpan<RenderPassChainGroup> groups = schedule.Groups.Span;
         for (int groupIndex = 0; groupIndex < groups.Length; groupIndex++)
         {
@@ -389,7 +530,11 @@ public unsafe partial class VulkanRenderer
 
                 int endIndex = Math.Min(staticOpCount, chain.SourceStartIndex + chain.SourceCount);
                 for (int opIndex = chain.SourceStartIndex; opIndex < endIndex; opIndex++)
+                {
                     keysByOpIndex[opIndex] = key;
+                    if (!chainsByOpIndex.IsEmpty)
+                        chainsByOpIndex[opIndex] = chain;
+                }
             }
         }
 
@@ -429,109 +574,6 @@ public unsafe partial class VulkanRenderer
             throw new InvalidOperationException("Command-chain shadow validation rejected non-resident shadow tile without an explicit fallback mode.");
     }
 
-    private static ulong ComputeFrameOpFrameDataSignature(FrameOp op, int opIndex)
-    {
-        FrameOpSignatureHasher hash = new();
-        hash.Add(opIndex);
-        switch (op)
-        {
-            case MeshDrawOp draw:
-                AddMatrixSignature(ref hash, draw.Draw.ModelMatrix);
-                AddMatrixSignature(ref hash, draw.Draw.PreviousModelMatrix);
-                AddMatrixSignature(ref hash, draw.Draw.ViewProjectionMatrix);
-                AddMatrixSignature(ref hash, draw.Draw.PreviousViewProjectionMatrix);
-                if (draw.Draw.IsStereoPass)
-                {
-                    AddMatrixSignature(ref hash, draw.Draw.RightEyeViewProjectionMatrix);
-                    AddMatrixSignature(ref hash, draw.Draw.PreviousRightEyeViewProjectionMatrix);
-                }
-                AddVector3Signature(ref hash, draw.Draw.CameraPosition);
-                AddVector3Signature(ref hash, draw.Draw.CameraForward);
-                AddVector3Signature(ref hash, draw.Draw.CameraUp);
-                AddVector3Signature(ref hash, draw.Draw.CameraRight);
-                hash.Add(draw.Draw.TransformId);
-                hash.Add(draw.Draw.RenderAreaWidth);
-                hash.Add(draw.Draw.RenderAreaHeight);
-                break;
-            case ComputeDispatchOp compute:
-                hash.Add(compute.Snapshot.HasPublishedBindingLayoutSignatures
-                    ? compute.Snapshot.RuntimeUniformValueSignature
-                    : HashUniformBindings(compute.Snapshot.Uniforms));
-                break;
-            case ClearOp clear:
-                hash.Add(clear.Color.R);
-                hash.Add(clear.Color.G);
-                hash.Add(clear.Color.B);
-                hash.Add(clear.Color.A);
-                hash.Add(clear.Depth);
-                hash.Add(clear.Stencil);
-                break;
-        }
-
-        return hash.ToHash();
-    }
-
-    private static void AddViewportScissorSignature(ref FrameOpSignatureHasher hash, in PendingMeshDraw draw)
-    {
-        AddViewportSignature(ref hash, draw.Viewport);
-        AddRectSignature(ref hash, draw.Scissor);
-        hash.Add(draw.ViewportScissorCount);
-        if (draw.ViewportScissorCount <= 1 ||
-            draw.IndexedViewports is not { } indexedViewports ||
-            draw.IndexedScissors is not { } indexedScissors)
-        {
-            return;
-        }
-
-        int indexedCount = (int)Math.Min(
-            draw.ViewportScissorCount,
-            (uint)Math.Min(indexedViewports.Length, indexedScissors.Length));
-        hash.Add(indexedCount);
-        for (int i = 0; i < indexedCount; i++)
-        {
-            AddViewportSignature(ref hash, indexedViewports[i]);
-            AddRectSignature(ref hash, indexedScissors[i]);
-        }
-    }
-
-    private static void AddViewportSignature(ref FrameOpSignatureHasher hash, in Viewport viewport)
-    {
-        hash.Add(viewport.X);
-        hash.Add(viewport.Y);
-        hash.Add(viewport.Width);
-        hash.Add(viewport.Height);
-        hash.Add(viewport.MinDepth);
-        hash.Add(viewport.MaxDepth);
-    }
-
-    private static void AddRectSignature(ref FrameOpSignatureHasher hash, in Rect2D rect)
-    {
-        hash.Add(rect.Offset.X);
-        hash.Add(rect.Offset.Y);
-        hash.Add(rect.Extent.Width);
-        hash.Add(rect.Extent.Height);
-    }
-
-    private static void AddMatrixSignature(ref FrameOpSignatureHasher hash, in Matrix4x4 matrix)
-    {
-        hash.Add(matrix.M11);
-        hash.Add(matrix.M12);
-        hash.Add(matrix.M13);
-        hash.Add(matrix.M14);
-        hash.Add(matrix.M21);
-        hash.Add(matrix.M22);
-        hash.Add(matrix.M23);
-        hash.Add(matrix.M24);
-        hash.Add(matrix.M31);
-        hash.Add(matrix.M32);
-        hash.Add(matrix.M33);
-        hash.Add(matrix.M34);
-        hash.Add(matrix.M41);
-        hash.Add(matrix.M42);
-        hash.Add(matrix.M43);
-        hash.Add(matrix.M44);
-    }
-
     private static void AddVector3Signature(ref FrameOpSignatureHasher hash, in Vector3 vector)
     {
         hash.Add(vector.X);
@@ -553,7 +595,7 @@ public unsafe partial class VulkanRenderer
             return hash.ToHash();
         }
 
-        HashProgramBindingSnapshot(ref hash, snapshot, includeMutableFrameSourceDescriptors: true);
+        HashCommandChainProgramBindingSnapshot(ref hash, snapshot);
         return hash.ToHash();
     }
 
@@ -580,10 +622,16 @@ public unsafe partial class VulkanRenderer
             FrameOpSignatureHasher item = new();
             item.Add(pair.Key);
             item.Add(samplerNamesByUnit.TryGetValue(pair.Key, out string? name) ? name : string.Empty);
-            AddUnorderedItemHash(ref xor, ref sum, item.ToHash());
+            VulkanFrameOpSnapshotSignatures.AddUnorderedItemHash(
+                ref xor,
+                ref sum,
+                item.ToHash());
         }
 
-        return FinishUnorderedHash(samplers.Count, xor, sum);
+        return VulkanFrameOpSnapshotSignatures.FinishUnorderedHash(
+            samplers.Count,
+            xor,
+            sum);
     }
 
     internal static ulong HashSamplerNameBindingLayout(Dictionary<string, XRTexture> samplers)
@@ -594,10 +642,16 @@ public unsafe partial class VulkanRenderer
         {
             FrameOpSignatureHasher item = new();
             item.Add(pair.Key);
-            AddUnorderedItemHash(ref xor, ref sum, item.ToHash());
+            VulkanFrameOpSnapshotSignatures.AddUnorderedItemHash(
+                ref xor,
+                ref sum,
+                item.ToHash());
         }
 
-        return FinishUnorderedHash(samplers.Count, xor, sum);
+        return VulkanFrameOpSnapshotSignatures.FinishUnorderedHash(
+            samplers.Count,
+            xor,
+            sum);
     }
 
     internal static ulong HashImageBindingLayout(Dictionary<uint, ProgramImageBinding> images)
@@ -614,10 +668,16 @@ public unsafe partial class VulkanRenderer
             item.Add(binding.Layer);
             item.Add((int)binding.Access);
             item.Add((int)binding.Format);
-            AddUnorderedItemHash(ref xor, ref sum, item.ToHash());
+            VulkanFrameOpSnapshotSignatures.AddUnorderedItemHash(
+                ref xor,
+                ref sum,
+                item.ToHash());
         }
 
-        return FinishUnorderedHash(images.Count, xor, sum);
+        return VulkanFrameOpSnapshotSignatures.FinishUnorderedHash(
+            images.Count,
+            xor,
+            sum);
     }
 
     internal static ulong HashBufferBindingLayout(Dictionary<uint, VulkanComputeBufferBinding> buffers)
@@ -628,10 +688,16 @@ public unsafe partial class VulkanRenderer
         {
             FrameOpSignatureHasher item = new();
             item.Add(pair.Key);
-            AddUnorderedItemHash(ref xor, ref sum, item.ToHash());
+            VulkanFrameOpSnapshotSignatures.AddUnorderedItemHash(
+                ref xor,
+                ref sum,
+                item.ToHash());
         }
 
-        return FinishUnorderedHash(buffers.Count, xor, sum);
+        return VulkanFrameOpSnapshotSignatures.FinishUnorderedHash(
+            buffers.Count,
+            xor,
+            sum);
     }
 
     private static ulong MixSignature(ulong left, ulong right)

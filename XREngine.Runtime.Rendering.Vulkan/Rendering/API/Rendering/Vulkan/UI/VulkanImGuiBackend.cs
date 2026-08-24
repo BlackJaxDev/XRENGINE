@@ -7,25 +7,25 @@ namespace XREngine.Rendering.Vulkan;
 
 internal unsafe sealed class VulkanImGuiBackend : IImGuiRendererBackend, IDisposable
 {
-    private readonly VulkanRenderer _renderer;
+    private readonly IVulkanImGuiOutputHost _outputHost;
     private readonly VulkanImGuiInputRouter _input;
-    private readonly VulkanRenderer.VulkanImGuiMultiViewportController? _viewports;
+    private readonly VulkanImGuiMultiViewportController? _viewports;
     private readonly IntPtr _context;
     private bool _disposed;
 
 
     public IntPtr ContextHandle => _context;
 
-    public VulkanImGuiBackend(VulkanRenderer renderer)
+    public VulkanImGuiBackend(IVulkanImGuiOutputHost outputHost, XRWindow windowHost)
     {
-        _renderer = renderer;
-        _input = new VulkanImGuiInputRouter(renderer);
+        _outputHost = outputHost;
+        _input = new VulkanImGuiInputRouter(windowHost);
         _context = ImGui.CreateContext();
         ImGuiContextTracker.Register(_context);
         MakeCurrent();
 
         // ImGui.NewFrame() asserts that the font atlas has been built.
-        // The GPU texture upload happens later in EnsureImGuiFontResources(),
+        // The GPU texture upload happens later in VulkanImGuiFontAtlasResources,
         // but the CPU-side atlas must be built now so NewFrame() doesn't AV.
         var io = ImGui.GetIO();
         io.BackendFlags |= ImGuiBackendFlags.RendererHasVtxOffset;
@@ -48,7 +48,7 @@ internal unsafe sealed class VulkanImGuiBackend : IImGuiRendererBackend, IDispos
 
         VulkanImGuiClipboard.InstallCallbacks();
         _input.TryAttachInputHandlers();
-        _viewports = VulkanRenderer.VulkanImGuiMultiViewportController.TryCreate(renderer, _context);
+        _viewports = VulkanImGuiMultiViewportController.TryCreate(outputHost, _context);
         _viewports?.Install();
     }
 
@@ -94,8 +94,27 @@ internal unsafe sealed class VulkanImGuiBackend : IImGuiRendererBackend, IDispos
         if (drawData.NativePtr == null)
             return;
 
-        _renderer.StoreImGuiDrawData(drawData);
+        if (XREnvironment.IsEnabled(
+                XREngineEnvironmentVariables.VulkanRecordingDiag))
+        {
+            Debug.VulkanEvery(
+                "Vulkan.ImGui.DrawData",
+                TimeSpan.FromSeconds(1),
+                "[Vulkan.ImGui] Producer output lists={0} vertices={1} indices={2} display={3:F0}x{4:F0} framebufferScale={5:F2}x{6:F2}.",
+                drawData.CmdListsCount,
+                drawData.TotalVtxCount,
+                drawData.TotalIdxCount,
+                drawData.DisplaySize.X,
+                drawData.DisplaySize.Y,
+                drawData.FramebufferScale.X,
+                drawData.FramebufferScale.Y);
+        }
+
+        _outputHost.StoreDrawData(drawData);
     }
+
+    public void UpdatePlatformWindows(bool deferGpuLifecycle)
+        => _viewports?.UpdatePlatformWindows(deferGpuLifecycle);
 
     public void RenderPlatformWindows()
         => _viewports?.RenderPlatformWindows();

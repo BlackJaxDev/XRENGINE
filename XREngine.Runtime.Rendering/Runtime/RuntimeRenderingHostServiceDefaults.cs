@@ -42,6 +42,13 @@ public static class RuntimeRenderingHostServiceDefaults
     public const int OpenGLShaderCompilerThreadCount = 1;
     public const bool OpenGLParallelShaderCompileProbeEnabled = true;
     public const int OpenGLParallelShaderCompileProbeTimeoutMs = 25;
+    public const int GeneralWorkerThreadCount = -1;
+    public const int GeneralWorkerThreadCap = 16;
+    public const int RenderWorkerThreadCount = 0;
+    public const int RenderWorkerThreadCap = 8;
+    public const int ReservedForegroundThreadCount = -1;
+    public const bool AllowCpuOversubscription = false;
+    public const ERenderWorkerQos RenderWorkerQos = ERenderWorkerQos.OsDefault;
     public const EVulkanAllocatorBackend VulkanAllocatorBackend = EVulkanAllocatorBackend.Vma;
     public const EVulkanSynchronizationBackend VulkanSynchronizationBackend = EVulkanSynchronizationBackend.Sync2;
     public const EVulkanDescriptorUpdateBackend VulkanDescriptorUpdateBackend = EVulkanDescriptorUpdateBackend.Template;
@@ -132,7 +139,7 @@ public static class RuntimeRenderingHostServiceDefaults
     public const long MaxShadowAtlasMemoryBytes = 0L;
     public const int MaxShadowTilesRenderedPerFrame = 16;
     public const float MaxShadowRenderMilliseconds = 2.0f;
-    public const int MaxDirectionalCascadeAtlasStaleFrames = 2;
+    public const int MaxDirectionalCascadeAtlasStaleFrames = 4;
     public const uint MinShadowAtlasTileResolution = 128u;
     public const uint MaxShadowAtlasTileResolution = 4096u;
 

@@ -1,4 +1,5 @@
 using System.Numerics;
+using XREngine.Rendering.Models.Materials;
 
 namespace XREngine.Rendering;
 
@@ -12,4 +13,6 @@ public readonly record struct AdvancedMeshRenderSnapshot(
     Matrix4x4 PreviousWorld,
     uint Instances,
     bool WorldMatrixIsModelMatrix,
-    bool ForceCpuRendering);
+    bool ForceCpuRendering,
+    XRMaterial? MaterialOverride,
+    RenderingParameters? RenderOptionsOverride);

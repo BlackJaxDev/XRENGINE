@@ -15,26 +15,40 @@ using XREngine.Rendering.RenderGraph;
 using XREngine.Rendering.Resources;
 using Buffer = Silk.NET.Vulkan.Buffer;
 
-namespace XREngine.Rendering.Vulkan;
+namespace XREngine.Rendering.Vulkan.RenderGraph;
 
-public unsafe partial class VulkanRenderer
+internal sealed partial class VulkanFramePlanner
 {
-    private RenderResourceRegistry? BuildMergedFrameOpRegistry(
+    private const int MaxFrameOpResourcePlannerSwitchingStates = 12;
+    private const int MaxMergedFrameOpRegistryCacheEntries = 8;
+
+    private List<MergedFrameOpRegistryCacheEntry> MergedFrameOpRegistryCache
+        => MutableState.MergedRegistryCache;
+    private List<RenderResourceRegistry> FrameOpRegistryScratch
+        => MutableState.RegistryScratch;
+    private List<FrameOpRegistryCacheSource> FrameOpRegistryCacheSourceScratch
+        => MutableState.RegistryCacheSourceScratch;
+    private List<XRFrameBuffer> FrameOpFrameBufferScratch
+        => MutableState.FrameBufferScratch;
+
+    internal RenderResourceRegistry? BuildMergedFrameOpRegistry(
         FrameOp[] ops,
         in FrameOpContext primaryContext,
+        ulong frameId,
         ulong frameOpsSignature = 0)
     {
         RenderResourceRegistry? primaryRegistry = primaryContext.ResourceRegistry;
-        VulkanFrameOpPlannerStateKey ownerKey = BuildFrameOpPlannerStateKey(primaryContext);
+        VulkanFrameOpPlannerStateKey ownerKey =
+            VulkanFrameOpSnapshotSignatures.BuildPlannerStateKey(primaryContext);
         if (frameOpsSignature != 0)
         {
-            for (int cacheIndex = 0; cacheIndex < _mergedFrameOpRegistryCache.Count; cacheIndex++)
+            for (int cacheIndex = 0; cacheIndex < MergedFrameOpRegistryCache.Count; cacheIndex++)
             {
-                MergedFrameOpRegistryCacheEntry entry = _mergedFrameOpRegistryCache[cacheIndex];
+                MergedFrameOpRegistryCacheEntry entry = MergedFrameOpRegistryCache[cacheIndex];
                 if (entry.FrameOpsSignature != frameOpsSignature || !entry.OwnerKey.Equals(ownerKey))
                     continue;
 
-                entry.LastUsedFrameId = RuntimeEngine.Rendering.State.RenderFrameId;
+                entry.LastUsedFrameId = frameId;
                 return entry.MergedRegistry;
             }
         }
@@ -48,7 +62,7 @@ public unsafe partial class VulkanRenderer
         // plan, retain its descriptors until the compatibility key changes. Owner scoping prevents
         // a desktop shadow/source registry from mutating an eye, mirror, or capture plan.
         List<FrameOpRegistryCacheSource> cacheSources = BuildFrameOpRegistryCacheSources(registries);
-        if (TryGetCachedMergedFrameOpRegistry(ownerKey, primaryRegistry, cacheSources, frameBufferDescriptorSignature, ops, out RenderResourceRegistry? cachedRegistry))
+        if (TryGetCachedMergedFrameOpRegistry(ownerKey, primaryRegistry, cacheSources, frameBufferDescriptorSignature, ops, frameId, out RenderResourceRegistry? cachedRegistry))
             return cachedRegistry;
 
         if (registries.Count == 0 && !hasFrameBufferDescriptors)
@@ -59,7 +73,8 @@ public unsafe partial class VulkanRenderer
                 cacheSources,
                 frameBufferDescriptorSignature,
                 frameOpsSignature,
-                primaryRegistry);
+                primaryRegistry,
+                frameId);
             return primaryRegistry;
         }
 
@@ -72,7 +87,8 @@ public unsafe partial class VulkanRenderer
                 cacheSources,
                 frameBufferDescriptorSignature,
                 frameOpsSignature,
-                resolvedRegistry);
+                resolvedRegistry,
+                frameId);
             return resolvedRegistry;
         }
 
@@ -84,7 +100,8 @@ public unsafe partial class VulkanRenderer
                 cacheSources,
                 frameBufferDescriptorSignature,
                 frameOpsSignature,
-                primaryRegistry);
+                primaryRegistry,
+                frameId);
             return primaryRegistry;
         }
 
@@ -109,7 +126,8 @@ public unsafe partial class VulkanRenderer
             cacheSources,
             frameBufferDescriptorSignature,
             frameOpsSignature,
-            merged);
+            merged,
+            frameId);
         return merged;
     }
 
@@ -119,7 +137,8 @@ public unsafe partial class VulkanRenderer
         List<FrameOpRegistryCacheSource> cacheSources,
         int frameBufferDescriptorSignature,
         ulong frameOpsSignature,
-        RenderResourceRegistry? resolvedRegistry)
+        RenderResourceRegistry? resolvedRegistry,
+        ulong frameId)
     {
         if (frameOpsSignature == 0 || resolvedRegistry is null)
             return;
@@ -130,12 +149,13 @@ public unsafe partial class VulkanRenderer
             cacheSources,
             frameBufferDescriptorSignature,
             frameOpsSignature,
-            resolvedRegistry);
+            resolvedRegistry,
+            frameId);
     }
 
     private List<RenderResourceRegistry> CollectUniqueFrameOpRegistries(FrameOp[] ops)
     {
-        List<RenderResourceRegistry> registries = _frameOpRegistryScratch;
+        List<RenderResourceRegistry> registries = FrameOpRegistryScratch;
         registries.Clear();
         registries.EnsureCapacity(Math.Min(ops.Length, MaxFrameOpResourcePlannerSwitchingStates));
         for (int opIndex = 0; opIndex < ops.Length; opIndex++)
@@ -181,7 +201,7 @@ public unsafe partial class VulkanRenderer
     private List<FrameOpRegistryCacheSource> BuildFrameOpRegistryCacheSources(
         List<RenderResourceRegistry> registries)
     {
-        List<FrameOpRegistryCacheSource> sources = _frameOpRegistryCacheSourceScratch;
+        List<FrameOpRegistryCacheSource> sources = FrameOpRegistryCacheSourceScratch;
         sources.Clear();
         sources.EnsureCapacity(registries.Count);
         for (int i = 0; i < registries.Count; i++)
@@ -189,7 +209,7 @@ public unsafe partial class VulkanRenderer
             RenderResourceRegistry registry = registries[i];
             sources.Add(new FrameOpRegistryCacheSource(
                 registry,
-                ComputeResourceRegistrySignature(registry)));
+                registry.DescriptorSignature));
         }
 
         return sources;
@@ -201,11 +221,12 @@ public unsafe partial class VulkanRenderer
         List<FrameOpRegistryCacheSource> sources,
         int frameBufferDescriptorSignature,
         FrameOp[] ops,
+        ulong frameId,
         out RenderResourceRegistry? mergedRegistry)
     {
-        for (int i = 0; i < _mergedFrameOpRegistryCache.Count; i++)
+        for (int i = 0; i < MergedFrameOpRegistryCache.Count; i++)
         {
-            MergedFrameOpRegistryCacheEntry entry = _mergedFrameOpRegistryCache[i];
+            MergedFrameOpRegistryCacheEntry entry = MergedFrameOpRegistryCache[i];
             if (!entry.OwnerKey.Equals(ownerKey))
                 continue;
 
@@ -261,7 +282,7 @@ public unsafe partial class VulkanRenderer
                     frameBufferDescriptorSignature;
             }
 
-            entry.LastUsedFrameId = RuntimeEngine.Rendering.State.RenderFrameId;
+            entry.LastUsedFrameId = frameId;
             mergedRegistry = entry.MergedRegistry;
             return true;
         }
@@ -353,10 +374,10 @@ public unsafe partial class VulkanRenderer
         List<FrameOpRegistryCacheSource> sources,
         int frameBufferDescriptorSignature,
         ulong frameOpsSignature,
-        RenderResourceRegistry mergedRegistry)
+        RenderResourceRegistry mergedRegistry,
+        ulong frameId)
     {
-        ulong frameId = RuntimeEngine.Rendering.State.RenderFrameId;
-        _mergedFrameOpRegistryCache.Add(new MergedFrameOpRegistryCacheEntry(
+        MergedFrameOpRegistryCache.Add(new MergedFrameOpRegistryCacheEntry(
             ownerKey,
             primaryRegistry,
             sources.ToArray(),
@@ -365,14 +386,14 @@ public unsafe partial class VulkanRenderer
             mergedRegistry,
             frameId));
 
-        if (_mergedFrameOpRegistryCache.Count <= MaxMergedFrameOpRegistryCacheEntries)
+        if (MergedFrameOpRegistryCache.Count <= MaxMergedFrameOpRegistryCacheEntries)
             return;
 
         int oldestIndex = 0;
-        ulong oldestFrameId = _mergedFrameOpRegistryCache[0].LastUsedFrameId;
-        for (int i = 1; i < _mergedFrameOpRegistryCache.Count; i++)
+        ulong oldestFrameId = MergedFrameOpRegistryCache[0].LastUsedFrameId;
+        for (int i = 1; i < MergedFrameOpRegistryCache.Count; i++)
         {
-            ulong candidateFrameId = _mergedFrameOpRegistryCache[i].LastUsedFrameId;
+            ulong candidateFrameId = MergedFrameOpRegistryCache[i].LastUsedFrameId;
             if (candidateFrameId < oldestFrameId)
             {
                 oldestIndex = i;
@@ -380,7 +401,7 @@ public unsafe partial class VulkanRenderer
             }
         }
 
-        _mergedFrameOpRegistryCache.RemoveAt(oldestIndex);
+        MergedFrameOpRegistryCache.RemoveAt(oldestIndex);
     }
 
     private static bool RegistriesCoveredByPrimary(
@@ -500,7 +521,13 @@ public unsafe partial class VulkanRenderer
                     if (overwrite || !destination.TextureRecords.ContainsKey(texture.Name))
                     {
                         TextureResourceDescriptor textureDescriptor = RenderResourceDescriptorFactory.FromTexture(texture, RenderResourceLifetime.External);
-                        destination.RegisterTextureDescriptor(EnrichTextureDescriptorForFrameBufferAttachment(textureDescriptor, texture, attachment, mipLevel, layerIndex));
+                        destination.RegisterTextureDescriptor(
+                            VulkanResourcePlanningCompatibility.EnrichTextureDescriptorForFrameBufferAttachment(
+                                textureDescriptor,
+                                texture,
+                                attachment,
+                                mipLevel,
+                                layerIndex));
                     }
 
                     if (texture is XRTextureViewBase view)
@@ -509,10 +536,20 @@ public unsafe partial class VulkanRenderer
                         if (!string.IsNullOrWhiteSpace(viewedTexture.Name) &&
                             (overwrite || !destination.TextureRecords.ContainsKey(viewedTexture.Name)))
                         {
-                            int sourceMipLevel = mipLevel >= 0 ? SaturatingAddToInt32(view.MinLevel, (uint)mipLevel) : mipLevel;
-                            int sourceLayerIndex = layerIndex >= 0 ? SaturatingAddToInt32(view.MinLayer, (uint)layerIndex) : layerIndex;
+                            int sourceMipLevel = mipLevel >= 0
+                                ? VulkanResourcePlanningCompatibility.SaturatingAddToInt32(view.MinLevel, (uint)mipLevel)
+                                : mipLevel;
+                            int sourceLayerIndex = layerIndex >= 0
+                                ? VulkanResourcePlanningCompatibility.SaturatingAddToInt32(view.MinLayer, (uint)layerIndex)
+                                : layerIndex;
                             TextureResourceDescriptor viewedDescriptor = RenderResourceDescriptorFactory.FromTexture(viewedTexture, RenderResourceLifetime.External);
-                            destination.RegisterTextureDescriptor(EnrichTextureDescriptorForFrameBufferAttachment(viewedDescriptor, viewedTexture, attachment, sourceMipLevel, sourceLayerIndex));
+                            destination.RegisterTextureDescriptor(
+                                VulkanResourcePlanningCompatibility.EnrichTextureDescriptorForFrameBufferAttachment(
+                                    viewedDescriptor,
+                                    viewedTexture,
+                                    attachment,
+                                    sourceMipLevel,
+                                    sourceLayerIndex));
                         }
                     }
                 }
@@ -561,7 +598,7 @@ public unsafe partial class VulkanRenderer
 
     private List<XRFrameBuffer> CollectUniqueFrameOpFrameBuffers(FrameOp[] ops)
     {
-        List<XRFrameBuffer> frameBuffers = _frameOpFrameBufferScratch;
+        List<XRFrameBuffer> frameBuffers = FrameOpFrameBufferScratch;
         frameBuffers.Clear();
         frameBuffers.EnsureCapacity(Math.Min(ops.Length * 4, 256));
         for (int opIndex = 0; opIndex < ops.Length; opIndex++)

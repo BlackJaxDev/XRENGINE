@@ -23,7 +23,7 @@ internal static class VPRC_RenderMeshesPassTraditional
 
     private static void RenderGPU(VPRC_RenderMeshesPassShared command, EMeshSubmissionStrategy meshSubmissionStrategy)
     {
-        using var passScope = RuntimeEngine.Rendering.State.PushRenderGraphPassIndex(command.RenderPass);
+        using var passScope = RuntimeEngine.Rendering.State.PushRenderGraphPassIndex(command.ResolveRenderGraphPassIndex());
         using var prof = RuntimeEngine.Profiler.Start("VPRC_RenderMeshesPassTraditional.RenderGPU", ProfilerScopeKind.AlwaysOnHotPathLoop);
         var activeInstance = RuntimeEngine.Rendering.State.CurrentRenderingPipeline;
         if (activeInstance is null)
@@ -95,7 +95,7 @@ internal static class VPRC_RenderMeshesPassTraditional
 
     private static void RenderCPU(VPRC_RenderMeshesPassShared command)
     {
-        using var passScope = RuntimeEngine.Rendering.State.PushRenderGraphPassIndex(command.RenderPass);
+        using var passScope = RuntimeEngine.Rendering.State.PushRenderGraphPassIndex(command.ResolveRenderGraphPassIndex());
         var activeInstance = RuntimeEngine.Rendering.State.CurrentRenderingPipeline;
         if (activeInstance is null)
         {

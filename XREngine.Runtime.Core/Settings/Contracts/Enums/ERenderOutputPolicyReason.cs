@@ -13,4 +13,6 @@ public enum ERenderOutputPolicyReason
     HeldLastImage,
     DependencyUnavailable,
     DeadlineRisk,
+    MaximumDeferralReached,
+    XrCriticalPathReserved,
 }

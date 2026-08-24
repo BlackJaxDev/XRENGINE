@@ -1,10 +1,10 @@
-// ──────────────────────────────────────────────────────────────────────────────
-// VkMeshRenderer.Uniforms.cs  – partial class: Uniform Buffer Management
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// VkMeshRenderer.Uniforms.cs  â€“ partial class: Uniform Buffer Management
 //
 // Allocates per-frame host-visible UBOs for engine and auto uniform blocks,
 // writes typed values (scalars, vectors, matrices) into mapped buffer memory,
 // and uploads legacy per-binding engine uniforms to Vulkan descriptor buffers.
-// ──────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 using System;
 using System.Buffers;
@@ -36,7 +36,7 @@ internal unsafe partial class VkMeshRenderer
 
 	private int UniformBufferSlotCount => Math.Max(_uniformDrawSlotCapacity, 1);
 
-	private int UniformBufferFrameCount => Math.Max(BackendContext.Descriptors.FrameSlotCount, 1);
+	private int UniformBufferFrameCount => Math.Max(BackendContext.Resources.Descriptors.FrameSlotCount, 1);
 
 	private int UniformBufferArrayLength => UniformBufferFrameCount * UniformBufferSlotCount;
 
@@ -75,7 +75,7 @@ internal unsafe partial class VkMeshRenderer
 	{
 		size = Math.Max(size, 1u);
 		int bufferCount = UniformBufferArrayLength;
-		bool useFrameArena = Renderer.MeshFrameDataArenaEnabled &&
+		bool useFrameArena = BackendContext.Resources.MappedFrameArena is not null &&
 			!string.Equals(name, FallbackDescriptorUniformName, StringComparison.Ordinal);
 		if (_engineUniformBuffers.TryGetValue(name, out EngineUniformBuffer[]? existing))
 		{
@@ -107,17 +107,21 @@ internal unsafe partial class VkMeshRenderer
 			return false;
 		}
 
-		if (!Renderer.TryMapBufferMemory(buffer, memory, 0, totalSize, out void* mappedPtr))
+		if (!BackendContext.Resources.Buffers.TryCreateMappedSlice(BackendContext, buffer, memory, 0, totalSize, out VulkanMappedMemorySlice mappedSlice))
 		{
-			Renderer.DestroyTrackedMeshUniformBuffer(buffer, memory);
+			BackendContext.Resources.Buffers.Destroy(BackendContext, buffer, memory, "VkMeshRenderer.UniformBuffer");
 			return false;
 		}
 
 		for (int i = 0; i < bufferCount; i++)
 		{
 			ulong offset = stride * (ulong)i;
-			void* slotPtr = (byte*)mappedPtr + checked((nint)offset);
-			buffers[i] = new EngineUniformBuffer(buffer, memory, size, slotPtr, offset, ownsBuffer: i == 0);
+			if (!BackendContext.Resources.Buffers.TryCreateMappedSlice(BackendContext, buffer, memory, offset, size, out VulkanMappedMemorySlice slotSlice))
+			{
+				BackendContext.Resources.Buffers.Destroy(BackendContext, buffer, memory, "VkMeshRenderer.UniformBuffer");
+				return false;
+			}
+			buffers[i] = new EngineUniformBuffer(buffer, memory, size, offset, ownsBuffer: i == 0, mappedMemorySlice: slotSlice);
 		}
 
 		_engineUniformBuffers[name] = buffers;
@@ -132,7 +136,7 @@ internal unsafe partial class VkMeshRenderer
 	{
 		size = Math.Max(size, 1u);
 		int bufferCount = UniformBufferArrayLength;
-		bool useFrameArena = Renderer.MeshFrameDataArenaEnabled;
+		bool useFrameArena = BackendContext.Resources.MappedFrameArena is not null;
 		if (_autoUniformBuffers.TryGetValue(name, out AutoUniformBuffer[]? existing))
 		{
 			bool frequencyOwnedArena =
@@ -173,17 +177,21 @@ internal unsafe partial class VkMeshRenderer
 			return false;
 		}
 
-		if (!Renderer.TryMapBufferMemory(buffer, memory, 0, totalSize, out void* mappedPtr))
+		if (!BackendContext.Resources.Buffers.TryCreateMappedSlice(BackendContext, buffer, memory, 0, totalSize, out VulkanMappedMemorySlice mappedSlice))
 		{
-			Renderer.DestroyTrackedMeshUniformBuffer(buffer, memory);
+			BackendContext.Resources.Buffers.Destroy(BackendContext, buffer, memory, "VkMeshRenderer.UniformBuffer");
 			return false;
 		}
 
 		for (int i = 0; i < bufferCount; i++)
 		{
 			ulong offset = stride * (ulong)i;
-			void* slotPtr = (byte*)mappedPtr + checked((nint)offset);
-			buffers[i] = new AutoUniformBuffer(buffer, memory, size, slotPtr, offset, ownsBuffer: i == 0);
+			if (!BackendContext.Resources.Buffers.TryCreateMappedSlice(BackendContext, buffer, memory, offset, size, out VulkanMappedMemorySlice slotSlice))
+			{
+				BackendContext.Resources.Buffers.Destroy(BackendContext, buffer, memory, "VkMeshRenderer.UniformBuffer");
+				return false;
+			}
+			buffers[i] = new AutoUniformBuffer(buffer, memory, size, offset, ownsBuffer: i == 0, mappedMemorySlice: slotSlice);
 		}
 
 		_autoUniformBuffers[name] = buffers;
@@ -193,17 +201,22 @@ internal unsafe partial class VkMeshRenderer
 	private bool TryCreateEngineUniformArenaViews(string name, uint size, out EngineUniformBuffer[] buffers)
 	{
 		buffers = new EngineUniformBuffer[UniformBufferArrayLength];
+		VulkanMappedFrameArena? arena = BackendContext.Resources.MappedFrameArena;
+		if (arena is null)
+			return false;
 		for (int drawSlot = 0; drawSlot < UniformBufferSlotCount; drawSlot++)
 		{
-			if (!Renderer.TryReserveMeshFrameDataRange(this, name, isAutoUniform: false, drawSlot, size, out ulong offset))
+			if (!arena.TryReserve(this, name, isAutoUniform: false, drawSlot, size, out VulkanMappedFrameReservation reservation))
 				return false;
 
 			for (int frame = 0; frame < UniformBufferFrameCount; frame++)
 			{
-				if (!Renderer.TryGetMeshFrameDataArenaRange(frame, offset, size, out var buffer, out var memory, out void* mappedPtr))
+				if (!arena.TryGetSlice(frame, reservation, out VulkanMappedFrameSlice slice))
 					return false;
 				int index = frame * UniformBufferSlotCount + drawSlot;
-				buffers[index] = new EngineUniformBuffer(buffer, memory, size, mappedPtr, offset, ownsBuffer: false);
+				buffers[index] = new EngineUniformBuffer(
+					 slice.Buffer, slice.Memory, size, offset: slice.Offset,
+					ownsBuffer: false, mappedSlice: slice);
 			}
 		}
 		return true;
@@ -212,6 +225,9 @@ internal unsafe partial class VkMeshRenderer
 	private bool TryCreateAutoUniformArenaViews(string name, uint size, out AutoUniformBuffer[] buffers)
 	{
 		buffers = new AutoUniformBuffer[UniformBufferArrayLength];
+		VulkanMappedFrameArena? arena = BackendContext.Resources.MappedFrameArena;
+		if (arena is null)
+			return false;
 		if (_program is not null &&
 			_program.TryGetAutoUniformBlock(
 				name,
@@ -220,14 +236,10 @@ internal unsafe partial class VkMeshRenderer
 		{
 			for (int frame = 0; frame < UniformBufferFrameCount; frame++)
 			{
-				if (!Renderer.TryGetMeshFrameDataArenaRange(
-						frame,
-						offset: 0,
-						size,
-						out var buffer,
-						out var memory,
-						out _))
+				if (!arena.TryGetSlice(frame, offset: 0, length: size, out VulkanMappedFrameSlice slice))
 				{
+					_lastDescriptorPreparationFailure =
+						$"frequency auto-uniform slice rejected for '{name}': {arena.DescribeSliceRejection(frame, 0, size)}";
 					return false;
 				}
 
@@ -238,12 +250,12 @@ internal unsafe partial class VkMeshRenderer
 					int index =
 						frame * UniformBufferSlotCount + drawSlot;
 					buffers[index] = new AutoUniformBuffer(
-						buffer,
-						memory,
+						slice.Buffer,
+						slice.Memory,
 						size,
-						mappedPtr: null,
 						offset: 0,
-						ownsBuffer: false);
+						ownsBuffer: false,
+						mappedSlice: slice);
 				}
 			}
 
@@ -252,15 +264,17 @@ internal unsafe partial class VkMeshRenderer
 
 		for (int drawSlot = 0; drawSlot < UniformBufferSlotCount; drawSlot++)
 		{
-			if (!Renderer.TryReserveMeshFrameDataRange(this, name, isAutoUniform: true, drawSlot, size, out ulong offset))
+			if (!arena.TryReserve(this, name, isAutoUniform: true, drawSlot, size, out VulkanMappedFrameReservation reservation))
 				return false;
 
 			for (int frame = 0; frame < UniformBufferFrameCount; frame++)
 			{
-				if (!Renderer.TryGetMeshFrameDataArenaRange(frame, offset, size, out var buffer, out var memory, out void* mappedPtr))
+				if (!arena.TryGetSlice(frame, reservation, out VulkanMappedFrameSlice slice))
 					return false;
 				int index = frame * UniformBufferSlotCount + drawSlot;
-				buffers[index] = new AutoUniformBuffer(buffer, memory, size, mappedPtr, offset, ownsBuffer: false);
+				buffers[index] = new AutoUniformBuffer(
+					slice.Buffer, slice.Memory, size, offset: slice.Offset,
+					ownsBuffer: false, mappedSlice: slice);
 			}
 		}
 		return true;
@@ -268,7 +282,7 @@ internal unsafe partial class VkMeshRenderer
 
 	private ulong ResolveUniformBufferStride(uint size)
 	{
-		ulong alignment = Math.Max(Renderer._uniformBufferOffsetAlignment, 1UL);
+		ulong alignment = Math.Max(BackendContext.DeviceContext.MinUniformBufferOffsetAlignment, 1UL);
 		ulong value = Math.Max(size, 1u);
 		ulong remainder = value % alignment;
 		return remainder == 0 ? value : value + alignment - remainder;
@@ -295,7 +309,9 @@ internal unsafe partial class VkMeshRenderer
 
 		for (int i = 0; i < buffers.Length; i++)
 		{
-			if (buffers[i].Buffer.Handle == 0 || buffers[i].MappedPtr == null || buffers[i].Size < requiredSize)
+			if (buffers[i].Buffer.Handle == 0 ||
+				(!buffers[i].UsesMappedFrameArena && !buffers[i].UsesMappedMemoryLease) ||
+				buffers[i].Size < requiredSize)
 				return false;
 		}
 
@@ -314,7 +330,7 @@ internal unsafe partial class VkMeshRenderer
 		for (int i = 0; i < buffers.Length; i++)
 		{
 			if (buffers[i].Buffer.Handle == 0 ||
-				(requireMappedPointers && buffers[i].MappedPtr == null) ||
+				(requireMappedPointers && !buffers[i].UsesMappedFrameArena && !buffers[i].UsesMappedMemoryLease) ||
 				buffers[i].Size < requiredSize)
 				return false;
 		}
@@ -331,15 +347,14 @@ internal unsafe partial class VkMeshRenderer
 		buffer = default;
 		memory = default;
 		size = Math.Max(size, 1UL);
-		bool enableDeviceAddress = Renderer.IsDescriptorHeapDrawBindingActive;
+		bool enableDeviceAddress = BackendContext.Resources.Descriptors.Heap.ActiveBackend == EVulkanDescriptorBackend.DescriptorHeap;
 		if (enableDeviceAddress)
 			usage |= BufferUsageFlags.ShaderDeviceAddressBit;
 
 		MemoryPropertyFlags props = MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit;
 		try
 		{
-			(buffer, memory) = Renderer.CreateBufferRaw(size, usage, props, enableDeviceAddress);
-			Renderer.TrackMeshUniformBuffer(buffer, memory);
+			(buffer, memory) = BackendContext.Resources.Buffers.CreateRaw(BackendContext, size, usage, props, enableDeviceAddress, "VkMeshRenderer.UniformBuffer");
 			return true;
 		}
 		catch (Exception ex)
@@ -361,10 +376,6 @@ internal unsafe partial class VkMeshRenderer
 	/// </summary>
 	private void UpdateEngineUniformBuffersForDraw(int frameIndex, int drawUniformSlot, in PendingMeshDraw draw)
 	{
-		// Capture value-only CPU-direct state in the same bounded frame/timeline slot as
-		// the UBOs. A later pass-aware capture refines the conservative pass bit.
-		Renderer.TryCaptureCpuDirectDynamicData(this, frameIndex, drawUniformSlot, draw, passMask: 1u);
-
 		if (_engineUniformBuffers.Count == 0)
 			return;
 
@@ -424,20 +435,20 @@ internal unsafe partial class VkMeshRenderer
 				out ulong ownerIdentity);
 			VulkanFrequencyAutoUniformReservation? frequencyReservation = null;
 			if (block.Frequency != EVulkanBindingFrequency.Unknown &&
-				Renderer.MeshFrameDataArenaEnabled)
+				BackendContext.Resources.MappedFrameArena is not null)
 			{
-				if (!Renderer.TryGetOrReserveFrequencyAutoUniformRange(
+				VulkanMappedFrameArena? arena = BackendContext.Resources.MappedFrameArena;
+				if (arena is null ||
+					!arena.TryGetOrReserveFrequencyAutoUniformRange(
 						_program,
 						block,
 						ownerIdentity,
 						out frequencyReservation) ||
-					!Renderer.TryGetMeshFrameDataArenaRange(
+					!arena.TryGetSlice(
 						frameIndex,
 						frequencyReservation.Offset,
 						block.Size,
-						out var sharedBuffer,
-						out var sharedMemory,
-						out void* sharedMappedPtr))
+						out VulkanMappedFrameSlice sharedSlice))
 				{
 					RuntimeEngine.Rendering.Stats.Vulkan
 						.RecordVulkanDynamicUniformExhaustion();
@@ -445,12 +456,12 @@ internal unsafe partial class VkMeshRenderer
 				}
 
 				buffers[idx] = new AutoUniformBuffer(
-					sharedBuffer,
-					sharedMemory,
+					sharedSlice.Buffer,
+					sharedSlice.Memory,
 					block.Size,
-					sharedMappedPtr,
-					frequencyReservation.Offset,
-					ownsBuffer: false);
+					offset: frequencyReservation.Offset,
+					ownsBuffer: false,
+					mappedSlice: sharedSlice);
 			}
 			AutoUniformBuffer buffer = buffers[idx];
 			if (buffer.Buffer.Handle == 0)
@@ -482,10 +493,28 @@ internal unsafe partial class VkMeshRenderer
 		in PendingMeshDraw draw,
 		VulkanFrequencyAutoUniformReservation? frequencyReservation)
 	{
-		if (buffer.MappedPtr == null)
-			return false;
-
-		Span<byte> data = new(buffer.MappedPtr, (int)buffer.Size);
+		VulkanMappedFrameWriteScope mappedWrite = default;
+		VulkanMappedMemoryWriteLease mappedMemoryWrite = default;
+		try
+		{
+			Span<byte> data;
+			if (buffer.UsesMappedFrameArena)
+			{
+				if (BackendContext.Resources.MappedFrameArena is not { } arena ||
+					!arena.TryBeginWrite(buffer.MappedSlice, out mappedWrite))
+				{
+					return false;
+				}
+				data = mappedWrite.Bytes;
+			}
+			else
+			{
+				VulkanMappedMemorySlice mappedMemorySlice = buffer.MappedMemorySlice;
+				if (!buffer.UsesMappedMemoryLease ||
+					!BackendContext.Resources.Buffers.TryAcquireWrite(BackendContext, in mappedMemorySlice, out mappedMemoryWrite))
+					return false;
+				data = mappedMemoryWrite.Bytes;
+			}
 		EVulkanAutoUniformFallbackReason fallbackReason =
 			EVulkanAutoUniformFallbackReason.BindingSnapshotIneligible;
 		bool materialOwned =
@@ -667,6 +696,12 @@ internal unsafe partial class VkMeshRenderer
 		RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanAutoUniformFallbackReason(
 			fallbackReason);
 		return WriteLegacyAutoUniformBlock(data, block, buffer.Size, material, draw);
+		}
+		finally
+		{
+			mappedMemoryWrite.Dispose();
+			mappedWrite.Dispose();
+		}
 	}
 
 	private bool ValidateAutoUniformPayloadParity(
@@ -862,7 +897,7 @@ internal unsafe partial class VkMeshRenderer
 			runtimeUniformNameSignature,
 			runtimeUniformPublicationLayoutSignature);
 		VkMaterial? materialPlanOwner = materialOwned
-			? Renderer.GetOrCreateAPIRenderObject(
+			? WrapperLookup.GetOrCreate(
 				material,
 				generateNow: true) as VkMaterial
 			: null;
@@ -1115,7 +1150,7 @@ internal unsafe partial class VkMeshRenderer
 	{
 		ownerIdentity = 0;
 		if (block.Frequency == EVulkanBindingFrequency.Unknown ||
-			Renderer.IsDescriptorHeapDrawBindingActive)
+			BackendContext.Resources.Descriptors.Heap.ActiveBackend == EVulkanDescriptorBackend.DescriptorHeap)
 		{
 			return ResolveUniformBufferIndex(
 				frameIndex,
@@ -1146,7 +1181,7 @@ internal unsafe partial class VkMeshRenderer
 		int bufferCount)
 	{
 		if (block.Frequency == EVulkanBindingFrequency.Unknown ||
-			Renderer.IsDescriptorHeapDrawBindingActive ||
+			BackendContext.Resources.Descriptors.Heap.ActiveBackend == EVulkanDescriptorBackend.DescriptorHeap ||
 			!_autoUniformOwnerSlotTables.TryGetValue(
 				block.InstanceName,
 				out VulkanAutoUniformOwnerSlotTable? table) ||
@@ -2379,23 +2414,19 @@ internal unsafe partial class VkMeshRenderer
 		switch (uniform)
 		{
 			case EEngineUniform.UpdateDelta:
-				Renderer.EnsureMaterialUniformFrameTime();
-				value = Renderer._materialUniformUpdateDeltaLive;
+				value = CommandOperations.MaterialUniformUpdateDelta;
 				type = EShaderVarType._float;
 				return true;
 			case EEngineUniform.RenderTime:
-				Renderer.EnsureMaterialUniformFrameTime();
-				value = Renderer._materialUniformSecondsLive;
+				value = CommandOperations.MaterialUniformSeconds;
 				type = EShaderVarType._float;
 				return true;
 			case EEngineUniform.EngineTime:
-				Renderer.EnsureMaterialUniformFrameTime();
-				value = Renderer._materialUniformSecondsLive;
+				value = CommandOperations.MaterialUniformSeconds;
 				type = EShaderVarType._float;
 				return true;
 			case EEngineUniform.DeltaTime:
-				Renderer.EnsureMaterialUniformFrameTime();
-				value = Renderer._materialUniformDeltaSecondsLive;
+				value = CommandOperations.MaterialUniformRenderDelta;
 				type = EShaderVarType._float;
 				return true;
 			case EEngineUniform.ModelMatrix:
@@ -2634,7 +2665,7 @@ internal unsafe partial class VkMeshRenderer
 
 	/// <summary>
 	/// Writes a typed value into auto uniform buffer memory at the member's offset.
-	/// Supports float, int, uint, bool, vec2–vec4, ivec2–ivec4, uvec2–uvec4, and mat4.
+	/// Supports float, int, uint, bool, vec2â€“vec4, ivec2â€“ivec4, uvec2â€“uvec4, and mat4.
 	/// </summary>
 	private bool TryWriteAutoUniformValue(Span<byte> data, AutoUniformMember member, object value, EShaderVarType valueType)
 	{
@@ -2730,7 +2761,7 @@ internal unsafe partial class VkMeshRenderer
 
     /// <summary>
     /// Checks whether two shader variable types are compatible for writing.
-    /// Allows common promotions (vec3↔vec4, int↔bool, uint↔bool).
+    /// Allows common promotions (vec3â†”vec4, intâ†”bool, uintâ†”bool).
     /// </summary>
     private static bool AreCompatible(EShaderVarType expected, EShaderVarType actual)
 		=> expected == actual || (expected, actual) switch
@@ -2744,7 +2775,7 @@ internal unsafe partial class VkMeshRenderer
 			_ => false
 		};
 
-    // ── Scalar and Vector Write Helpers ───────────────────────────────────
+    // â”€â”€ Scalar and Vector Write Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     // Each helper writes a specific type into a byte span at the given offset.
     // std140 aligns vec3 members to 16 bytes but still lets the next scalar use
     // the fourth lane, so vec3 writes must only touch xyz.
@@ -2975,17 +3006,13 @@ internal unsafe partial class VkMeshRenderer
 		switch (normalized)
 		{
 			case nameof(EEngineUniform.UpdateDelta):
-				Renderer.EnsureMaterialUniformFrameTime();
-				return UploadUniform(buffer, Renderer._materialUniformUpdateDeltaLive);
+				return UploadUniform(buffer, CommandOperations.MaterialUniformUpdateDelta);
 			case nameof(EEngineUniform.RenderTime):
-				Renderer.EnsureMaterialUniformFrameTime();
-				return UploadUniform(buffer, Renderer._materialUniformSecondsLive);
+				return UploadUniform(buffer, CommandOperations.MaterialUniformSeconds);
 			case nameof(EEngineUniform.EngineTime):
-				Renderer.EnsureMaterialUniformFrameTime();
-				return UploadUniform(buffer, Renderer._materialUniformSecondsLive);
+				return UploadUniform(buffer, CommandOperations.MaterialUniformSeconds);
 			case nameof(EEngineUniform.DeltaTime):
-				Renderer.EnsureMaterialUniformFrameTime();
-				return UploadUniform(buffer, Renderer._materialUniformDeltaSecondsLive);
+				return UploadUniform(buffer, CommandOperations.MaterialUniformRenderDelta);
 			case TransformIdUniformName:
 				return UploadUniform(buffer, draw.TransformId);
 			case SkinPaletteBaseUniformName:
@@ -3187,23 +3214,57 @@ internal unsafe partial class VkMeshRenderer
 	/// <summary>Maps and uploads a single unmanaged value to a host-visible UBO.</summary>
 	private bool UploadUniform<T>(EngineUniformBuffer buffer, in T value) where T : unmanaged
 	{
-		if (buffer.MappedPtr == null)
-			return false;
-
 		uint size = (uint)Unsafe.SizeOf<T>();
 		uint copySize = Math.Min(buffer.Size, size);
+		if (buffer.UsesMappedFrameArena)
+		{
+			if (BackendContext.Resources.MappedFrameArena is not { } arena ||
+				!arena.TryBeginWrite(buffer.MappedSlice, out VulkanMappedFrameWriteScope write))
+			{
+				return false;
+			}
+			using (write)
+			{
+				T localValue = value;
+				ReadOnlySpan<byte> source = new(Unsafe.AsPointer(ref localValue), checked((int)copySize));
+				source.CopyTo(write.Bytes);
+			}
+			return true;
+		}
 
-		T localValue = value;
-		Unsafe.CopyBlock(buffer.MappedPtr, Unsafe.AsPointer(ref localValue), copySize);
+		VulkanMappedMemorySlice mappedMemorySlice = buffer.MappedMemorySlice;
+		if (!buffer.UsesMappedMemoryLease ||
+			!BackendContext.Resources.Buffers.TryAcquireWrite(BackendContext, in mappedMemorySlice, out VulkanMappedMemoryWriteLease mappedWriteLease))
+			return false;
+		using (mappedWriteLease)
+		{
+			T local = value;
+			ReadOnlySpan<byte> source = new(Unsafe.AsPointer(ref local), checked((int)copySize));
+			source.CopyTo(mappedWriteLease.Bytes);
+		}
 		return true;
 	}
 
 	private bool ClearEngineUniformBuffer(EngineUniformBuffer buffer)
 	{
-		if (buffer.MappedPtr == null)
-			return false;
+		if (buffer.UsesMappedFrameArena)
+		{
+			if (BackendContext.Resources.MappedFrameArena is not { } arena ||
+				!arena.TryBeginWrite(buffer.MappedSlice, out VulkanMappedFrameWriteScope write))
+			{
+				return false;
+			}
+			using (write)
+				write.Bytes.Clear();
+			return true;
+		}
 
-		new Span<byte>(buffer.MappedPtr, (int)buffer.Size).Clear();
+		VulkanMappedMemorySlice mappedMemorySlice = buffer.MappedMemorySlice;
+		if (!buffer.UsesMappedMemoryLease ||
+			!BackendContext.Resources.Buffers.TryAcquireWrite(BackendContext, in mappedMemorySlice, out VulkanMappedMemoryWriteLease mappedWriteLease))
+			return false;
+		using (mappedWriteLease)
+			mappedWriteLease.Bytes.Clear();
 		return true;
 	}
 

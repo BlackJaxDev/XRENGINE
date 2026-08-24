@@ -205,7 +205,8 @@ public sealed class SelfIterationEditorSessionController : IAsyncDisposable
                 _workspaceRoot,
                 "Build",
                 "_AgentValidation",
-                "self-iteration",
+                "00000000-000000-shared",
+                "self-iteration-shutdown",
                 "_session-shutdown");
             await StopAsync(output, CancellationToken.None);
         }
@@ -533,13 +534,25 @@ public sealed class SelfIterationEditorSessionController : IAsyncDisposable
 
     private Uri ReadSessionEndpoint()
     {
-        string manifestPath = Path.Combine(
+        string sessionsRoot = Path.Combine(
             _workspaceRoot,
             "Build",
             "_AgentValidation",
-            "mcp-sessions",
-            _sessionName!,
-            "session.json");
+            "00000000-000000-shared",
+            "mcp-sessions");
+        string manifestPath = Directory.EnumerateFiles(
+                sessionsRoot,
+                "session.json",
+                SearchOption.AllDirectories)
+            .OrderByDescending(static path => path, StringComparer.OrdinalIgnoreCase)
+            .First(path =>
+            {
+                using JsonDocument candidate = JsonDocument.Parse(File.ReadAllText(path));
+                return string.Equals(
+                    candidate.RootElement.GetProperty("name").GetString(),
+                    _sessionName,
+                    StringComparison.Ordinal);
+            });
         using JsonDocument manifest = JsonDocument.Parse(File.ReadAllText(manifestPath));
         string endpoint = manifest.RootElement.GetProperty("endpoint").GetString()
             ?? throw new InvalidDataException($"Session manifest has no endpoint: {manifestPath}");

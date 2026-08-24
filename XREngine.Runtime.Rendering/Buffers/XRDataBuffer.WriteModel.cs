@@ -26,6 +26,12 @@ public partial class XRDataBuffer
     [MemoryPackIgnore]
     private ulong _revision;
 
+    /// <summary>
+    /// Raised after a committed CPU-side write advances <see cref="Revision"/>.
+    /// Observers must be non-blocking; this is invoked on the committing thread.
+    /// </summary>
+    public event Action<XRDataBuffer, ulong>? RevisionCommitted;
+
     [YamlIgnore]
     [MemoryPackIgnore]
     private ulong _uploadedRevision;
@@ -541,9 +547,10 @@ public partial class XRDataBuffer
         XRBufferDirtyRange[]? rentedRanges = null;
         Span<XRBufferDirtyRange> uploadStorage = stackalloc XRBufferDirtyRange[DefaultDirtyRangeCollapseThreshold];
         int uploadRangeCount;
+        ulong committedRevision;
         lock (_writeModelSync)
         {
-            _revision++;
+            committedRevision = ++_revision;
             _pendingWriterUpload = true;
             ulong totalDirtyBytes = 0u;
             for (int i = 0; i < dirtyRanges.Length; i++)
@@ -563,6 +570,8 @@ public partial class XRDataBuffer
 
             CollectionsMarshal.AsSpan(_dirtyRanges).CopyTo(uploadStorage);
         }
+
+        RevisionCommitted?.Invoke(this, committedRevision);
 
         ReadOnlySpan<XRBufferDirtyRange> rangesToUpload = uploadStorage[..uploadRangeCount];
         try

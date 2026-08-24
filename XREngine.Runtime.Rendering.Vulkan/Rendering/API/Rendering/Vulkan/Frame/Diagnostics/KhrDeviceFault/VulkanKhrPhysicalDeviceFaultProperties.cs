@@ -1,0 +1,15 @@
+using System.Runtime.InteropServices;
+using Silk.NET.Vulkan;
+
+namespace XREngine.Rendering.Vulkan;
+
+/// <summary>
+/// Specifies the properties related to KHR device fault reporting supported by the physical device.
+/// </summary>
+[StructLayout(LayoutKind.Sequential)]
+internal unsafe struct VulkanKhrPhysicalDeviceFaultProperties
+{
+    public StructureType SType;
+    public void* PNext;
+    public uint MaxDeviceFaultCount;
+}

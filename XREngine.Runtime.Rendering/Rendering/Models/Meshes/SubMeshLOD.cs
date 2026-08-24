@@ -12,6 +12,7 @@ namespace XREngine.Rendering.Models
         private float _generatedNormalizedError;
         private float _generatedObjectSpaceError;
         private float _minProjectedScreenRadiusPixels = float.NaN;
+        private string _stableSortKey = string.Empty;
 
         public SubMeshLOD() 
             : this(null, null, 0) { }
@@ -93,6 +94,16 @@ namespace XREngine.Rendering.Models
         {
             get => _generatedObjectSpaceError;
             set => SetField(ref _generatedObjectSpaceError, value);
+        }
+
+        /// <summary>
+        /// Deterministic tie-breaker for LODs at the same visible distance. Import
+        /// cooking assigns stable model/submesh/LOD keys before rebuilding the set.
+        /// </summary>
+        public string StableSortKey
+        {
+            get => _stableSortKey;
+            set => SetField(ref _stableSortKey, value ?? string.Empty);
         }
 
         public XRMeshRenderer NewRenderer()

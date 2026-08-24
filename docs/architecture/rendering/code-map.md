@@ -85,7 +85,7 @@ adjustments required by the split.
 | `Vulkan/Drawing.Core.cs` | `Vulkan/Frame/VulkanRenderer.FrameLoop.cs`, `Vulkan/Commands/VulkanRenderer.FrameOpApi.cs`, `Vulkan/Commands/VulkanRenderer.RenderStateApi.cs`, `Vulkan/BackendObjects/VulkanRenderer.RenderObjectFactory.cs` |
 | `Vulkan/SwapChain.cs` | `Vulkan/Frame/VulkanRenderer.Swapchain.cs` |
 | `Vulkan/VulkanSynchronization.cs` | `Vulkan/Frame/VulkanRenderer.Synchronization.cs` |
-| `Vulkan/Objects/CommandBuffers.cs` | `Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBuffer*.cs` and focused `VulkanCommandScheduler` / `VulkanCommandRecorder` owners |
+| `Vulkan/Objects/CommandBuffers.cs` | `Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBuffer*.cs` and focused `VulkanFrameOperationScheduler` / `VulkanCommandRecorder` owners |
 | `Vulkan/VulkanCommandChain*.cs` | `Vulkan/Commands/Scheduling/CommandChain*.cs` |
 | `Vulkan/VulkanRenderer.State.cs` | `Vulkan/Commands/VulkanRenderer.RenderStateMutation.cs`, `Vulkan/RenderGraph/VulkanRenderer.RenderGraphState.cs` plus focused planner partials, and `Vulkan/Resources/VulkanRenderer.ResourceRegistration.cs` |
 | `Vulkan/VulkanRenderGraphCompiler.cs` | `Vulkan/RenderGraph/VulkanRenderGraphCompiler.cs` |
@@ -348,8 +348,6 @@ Primary ownership in this phase:
 | `Build/CommonAssets/Shaders/Compute/SurfelGI/DebugGrid.comp` | `Build/CommonAssets/Shaders/Compute/GI/SurfelGI/DebugGrid.comp` | 2 | Moved |
 | `Build/CommonAssets/Shaders/Compute/SurfelGI/DebugCircles.comp` | `Build/CommonAssets/Shaders/Compute/GI/SurfelGI/DebugCircles.comp` | 2 | Moved |
 | `Build/CommonAssets/Shaders/Compute/GPURenderCulling.comp` | `Build/CommonAssets/Shaders/Compute/Culling/GPURenderCulling.comp` | 2 | Moved |
-| `Build/CommonAssets/Shaders/Compute/GPURenderCullingSoA.comp` | `Build/CommonAssets/Shaders/Compute/Culling/GPURenderCullingSoA.comp` | 2 | Moved |
-| `Build/CommonAssets/Shaders/Compute/GPURenderExtractSoA.comp` | `Build/CommonAssets/Shaders/Compute/Culling/GPURenderExtractSoA.comp` | 2 | Moved |
 | `Build/CommonAssets/Shaders/Compute/GPURenderHiZSoACulling.comp` | `Build/CommonAssets/Shaders/Compute/Culling/GPURenderHiZSoACulling.comp` | 2 | Moved |
 | `Build/CommonAssets/Shaders/Compute/GPURenderIndirect.comp` | `Build/CommonAssets/Shaders/Compute/Indirect/GPURenderIndirect.comp` | 2 | Moved |
 | `Build/CommonAssets/Shaders/Compute/GPURenderBuildKeys.comp` | `Build/CommonAssets/Shaders/Compute/Indirect/GPURenderBuildKeys.comp` | 2 | Moved |

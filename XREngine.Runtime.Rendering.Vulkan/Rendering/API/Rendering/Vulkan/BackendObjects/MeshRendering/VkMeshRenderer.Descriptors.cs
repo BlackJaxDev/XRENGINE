@@ -1,10 +1,10 @@
-// ──────────────────────────────────────────────────────────────────────────────
-// VkMeshRenderer.Descriptors.cs  – partial class: Descriptor Set Management
+// Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
+// VkMeshRenderer.Descriptors.cs  Ã¢â‚¬â€œ partial class: Descriptor Set Management
 //
 // Allocates and writes Vulkan descriptor sets for each swapchain frame.
 // Resolves buffer, image, and texel-buffer descriptors from the buffer cache,
 // material textures, and engine/auto uniform buffers.
-// ──────────────────────────────────────────────────────────────────────────────
+// Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 
 using System;
 using System.Collections.Concurrent;
@@ -32,6 +32,7 @@ internal unsafe partial class VkMeshRenderer
 		new(StringComparer.Ordinal);
 	private static readonly ConcurrentDictionary<string, byte> DescriptorWriteChangeDiagnostics =
 		new(StringComparer.Ordinal);
+	private static readonly ConcurrentDictionary<(string Name, int Index), string> DescriptorArrayElementNames = new();
 
 	private static bool DescriptorResourceFingerprintDiagnosticsEnabled =>
 		XREnvironment.IsEnabled(XREngineEnvironmentVariables.VulkanFrameDataReuseDiag) ||
@@ -41,11 +42,15 @@ internal unsafe partial class VkMeshRenderer
 		=> XREnvironment.IsEnabled(XREngineEnvironmentVariables.VulkanMaterialBindingDiag);
 
 	private ulong _descriptorAllocationUsageSerial;
+	private string _lastDescriptorPreparationFailure = "descriptor preparation did not report a reason";
 
-	private static readonly ThreadLocal<DescriptorWriteScratch?> DescriptorWriteScratchWorkspace = new();
+	// Descriptor writes are serialized per mesh renderer. Keep the reusable
+	// workspace with that owner instead of leaking it through thread-local state.
+	private readonly DescriptorWriteScratch _descriptorWriteScratch = new();
+	private readonly VulkanDescriptorPublicationTelemetry _descriptorPublicationTelemetry = new();
 
-	internal static void ReleaseCurrentThreadDescriptorScratch()
-		=> DescriptorWriteScratchWorkspace.Value = null;
+	internal VulkanDescriptorPublicationTelemetrySnapshot DescriptorPublicationTelemetry
+		=> _descriptorPublicationTelemetry.Snapshot();
 
 	/// <summary>
 	/// Ensures the descriptor sets for one frame/draw slot are allocated and current.
@@ -58,8 +63,9 @@ internal unsafe partial class VkMeshRenderer
 		int frameIndex = 0,
 		ComputeDispatchSnapshot? bindingSnapshot = null)
 	{
+		_lastDescriptorPreparationFailure = "descriptor preparation did not report a reason";
 		if (_program is null)
-			return false;
+			return FailDescriptorPreparation("program unavailable");
 
 		var layouts = _program.DescriptorSetLayouts;
 		var bindings = _program.DescriptorBindings;
@@ -69,9 +75,9 @@ internal unsafe partial class VkMeshRenderer
 			return true;
 		}
 
-		int frameCount = BackendContext.Descriptors.FrameSlotCount;
+		int frameCount = BackendContext.Resources.Descriptors.FrameSlotCount;
 		if (frameCount <= 0)
-			return false;
+			return FailDescriptorPreparation("descriptor frame slots unavailable");
 
 		EnsureUniformDrawSlotCapacity(drawUniformSlot + 1);
 		if (!EnsureDescriptorUniformBuffers(bindings))
@@ -82,26 +88,50 @@ internal unsafe partial class VkMeshRenderer
 		uint activeSetMask = ComputeActiveDescriptorSetMask(bindings, setCount);
 		VkMaterial? sharedMaterial = null;
 		bool usesSharedMaterialTier = false;
-		if (!Renderer.IsDescriptorHeapDrawBindingActive &&
-			(activeSetMask & (1u << (int)VulkanRenderer.DescriptorSetMaterial)) != 0 &&
-			_program.DescriptorSetUsesUpdateAfterBind(VulkanRenderer.DescriptorSetMaterial) &&
-			Renderer.GetOrCreateAPIRenderObject(material, generateNow: true) is VkMaterial materialObject &&
+		if (BackendContext.Resources.Descriptors.Heap.ActiveBackend != EVulkanDescriptorBackend.DescriptorHeap &&
+			(activeSetMask & (1u << (int)VulkanMeshRenderingConventions.DescriptorSetMaterial)) != 0 &&
+			_program.DescriptorSetUsesUpdateAfterBind(VulkanMeshRenderingConventions.DescriptorSetMaterial) &&
+			WrapperLookup.GetOrCreate(material, generateNow: true) is VkMaterial materialObject &&
 			materialObject.TryGetMaterialDescriptorSet(_program, frameIndex, out _, out _))
 		{
 			sharedMaterial = materialObject;
 			usesSharedMaterialTier = true;
-			activeSetMask &= ~(1u << (int)VulkanRenderer.DescriptorSetMaterial);
+			activeSetMask &= ~(1u << (int)VulkanMeshRenderingConventions.DescriptorSetMaterial);
 		}
 		bool descriptorBindingsAreDrawSlotInvariant =
 			AreDescriptorBindingsDrawSlotInvariant(
 				bindings,
 				usesSharedMaterialTier,
-				Renderer.IsDescriptorHeapDrawBindingActive);
+				BackendContext.Resources.Descriptors.Heap.ActiveBackend == EVulkanDescriptorBackend.DescriptorHeap);
 		int descriptorOwnerSlot =
 			descriptorBindingsAreDrawSlotInvariant ? 0 : drawUniformSlot;
 		int activeSetCount = System.Numerics.BitOperations.PopCount(activeSetMask);
 		ulong layoutFingerprint = _program.DescriptorLayoutFingerprint;
 		ulong schemaFingerprint = _program.DescriptorSchemaFingerprint;
+		int viewFamilyIdentity = MaterializationSnapshot.DescriptorViewFamilyIdentity;
+		if (bindingSnapshot is { HasPublishedBindingLayoutSignatures: true } &&
+			BackendContext.Resources.MappedFrameArena is { IsActive: true } &&
+			TryActivatePublishedDescriptorOwnerGeneration(
+				material,
+				drawUniformSlot,
+				descriptorOwnerSlot,
+				descriptorFrameSlotCount,
+				setCount,
+				layoutFingerprint,
+				schemaFingerprint,
+				viewFamilyIdentity,
+				frameIndex,
+				bindingSnapshot) &&
+			TryRefreshSharedMaterialDescriptorSetForReusableFrame(
+				material,
+				frameIndex,
+				capturedResourcesValidated: true,
+				out _))
+		{
+			_descriptorDirty = false;
+			return true;
+		}
+
 		ulong resourceFingerprint = ComputeDescriptorResourceFingerprint(
 			material,
 			frameCount,
@@ -134,7 +164,6 @@ internal unsafe partial class VkMeshRenderer
 			descriptorOwnerSlot,
 			usesSharedMaterialTier);
 		int materialIdentity = System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(material);
-		int viewFamilyIdentity = Renderer.ResolveMeshDescriptorViewFamilyIdentity();
 		ulong immutableResourceFingerprint =
 			ResolveDescriptorAllocationImmutableResourceFingerprint(
 				descriptorBindingsAreDrawSlotInvariant,
@@ -180,7 +209,7 @@ internal unsafe partial class VkMeshRenderer
 			_descriptorAllocations.Remove(allocationKey);
 		}
 
-		if (BackendContext.Descriptors.TryAcquireSharedMeshDescriptorAllocation(
+		if (BackendContext.Resources.Descriptors.TryAcquireSharedMeshDescriptorAllocation(
 				allocationKey,
 				material,
 				out DescriptorAllocation sharedAllocation))
@@ -206,16 +235,16 @@ internal unsafe partial class VkMeshRenderer
 		var poolSizes = BuildDescriptorPoolSizes(
 			bindings,
 			descriptorFrameSlotCount,
-			usesSharedMaterialTier ? 1u << (int)VulkanRenderer.DescriptorSetMaterial : 0u);
+			~activeSetMask);
 		if (poolSizes.Length == 0 && activeSetCount != 0)
-			return false;
+			return FailDescriptorPreparation("descriptor pool requirements are empty for active sets");
 
 		DescriptorPool descriptorPool = default;
 		MeshDescriptorPoolSlabLease? poolSlabLease = null;
 
 		if (activeSetCount > 0)
 		{
-			if (!Renderer.TryAcquireMeshDescriptorPoolSlab(
+			if (!BackendContext.Resources.DescriptorLifetime.TryAcquireMeshDescriptorPoolSlab(
 					poolSizes,
 					activeSetCount * descriptorFrameSlotCount,
 					_program.DescriptorSetsRequireUpdateAfterBind,
@@ -223,7 +252,7 @@ internal unsafe partial class VkMeshRenderer
 				poolSlabLease is null)
 			{
 				Debug.VulkanWarning("Failed to acquire a Vulkan mesh descriptor pool slab.");
-				return false;
+				return FailDescriptorPreparation("mesh descriptor pool slab unavailable");
 			}
 			descriptorPool = poolSlabLease.Pool;
 		}
@@ -275,14 +304,14 @@ internal unsafe partial class VkMeshRenderer
 		{
 			if (EnsureDescriptorSlotReady(allocation, material, bindings, frameSlot, drawUniformSlot, resourceFingerprint, bindingSnapshot))
 				continue;
-			Renderer.ReleaseMeshDescriptorPoolSlab(poolSlabLease, descriptorSets, activeSetMask);
-			return false;
+			BackendContext.Resources.DescriptorLifetime.ReleaseMeshDescriptorPoolSlab(poolSlabLease, descriptorSets, activeSetMask);
+			return FailDescriptorPreparation($"descriptor slot {frameSlot} unavailable: {_lastDescriptorPreparationFailure}");
 		}
 
 		allocation.ResourceFingerprintDetails = DescriptorResourceFingerprintDiagnosticsEnabled
 			? ComputeDescriptorResourceFingerprintDetails(material, frameCount, bindings)
 			: string.Empty;
-		DescriptorAllocation publishedAllocation = BackendContext.Descriptors.PublishSharedMeshDescriptorAllocation(
+		DescriptorAllocation publishedAllocation = BackendContext.Resources.Descriptors.PublishSharedMeshDescriptorAllocation(
 			allocationKey,
 			allocation,
 			out bool published);
@@ -292,7 +321,7 @@ internal unsafe partial class VkMeshRenderer
 		}
 		else
 		{
-			Renderer.ReleaseMeshDescriptorPoolSlab(
+			BackendContext.Resources.DescriptorLifetime.ReleaseMeshDescriptorPoolSlab(
 				allocation.PoolSlabLease,
 				allocation.Sets,
 				allocation.ActiveSetMask);
@@ -304,6 +333,84 @@ internal unsafe partial class VkMeshRenderer
 		ActivateDescriptorAllocation(allocation, drawUniformSlot, bindingSnapshot);
 		_descriptorDirty = false;
 		return true;
+	}
+
+	/// <summary>
+	/// Materializes draw-slot-invariant descriptor allocations while the frame
+	/// loop is still inside its bounded mesh-resource preparation phase. Dynamic
+	/// frame-source descriptors and draw-slot-dependent layouts stay in the
+	/// authoritative command-recording phase.
+	/// </summary>
+	private bool TryPrewarmInvariantDescriptorAllocationForDrawEnqueue(
+		XRMaterial material,
+		ComputeDispatchSnapshot? bindingSnapshot,
+		out string reason)
+	{
+		reason = "descriptor allocation deferred until command recording";
+		if (_program is null)
+			return false;
+
+		IReadOnlyList<DescriptorBindingInfo> bindings =
+			_program.DescriptorBindings;
+		int setCount = _program.DescriptorSetLayouts.Count;
+		if (setCount == 0 || bindings.Count == 0)
+			return true;
+
+		uint activeSetMask = ComputeActiveDescriptorSetMask(
+			bindings,
+			setCount);
+		bool usesSharedMaterialTier = false;
+		if (BackendContext.Resources.Descriptors.Heap.ActiveBackend !=
+				EVulkanDescriptorBackend.DescriptorHeap &&
+			(activeSetMask &
+			 (1u << (int)VulkanMeshRenderingConventions.DescriptorSetMaterial)) != 0 &&
+			_program.DescriptorSetUsesUpdateAfterBind(
+				VulkanMeshRenderingConventions.DescriptorSetMaterial) &&
+			WrapperLookup.GetOrCreate(material, generateNow: true) is
+				VkMaterial materialObject &&
+			materialObject.TryGetMaterialDescriptorSet(
+				_program,
+				frameIndex: 0,
+				out _,
+				out _))
+		{
+			usesSharedMaterialTier = true;
+		}
+
+		if (!AreDescriptorBindingsDrawSlotInvariant(
+				bindings,
+				usesSharedMaterialTier,
+				BackendContext.Resources.Descriptors.Heap.ActiveBackend ==
+					EVulkanDescriptorBackend.DescriptorHeap) ||
+			SnapshotHasFrameSourceSampler(
+				bindingSnapshot,
+				RuntimeEngine.Rendering.State.CurrentRenderingPipeline) ||
+			DescriptorBindingsHaveFrameSourceSampler(
+				material,
+				bindings,
+				bindingSnapshot))
+		{
+			return true;
+		}
+
+		if (EnsureDescriptorSets(
+				material,
+				drawUniformSlot: 0,
+				frameIndex: 0,
+				bindingSnapshot))
+		{
+			reason = "descriptor allocation prewarmed";
+			return true;
+		}
+
+		reason = _lastDescriptorPreparationFailure;
+		return false;
+	}
+
+	private bool FailDescriptorPreparation(string reason)
+	{
+		_lastDescriptorPreparationFailure = reason;
+		return false;
 	}
 
 	private bool EnsureDescriptorSlotReady(
@@ -350,21 +457,21 @@ internal unsafe partial class VkMeshRenderer
 				if (Api!.AllocateDescriptorSets(Device, ref allocInfo, &descriptorSet) != Result.Success)
 				{
 					Debug.VulkanWarning("Failed to lazily allocate Vulkan descriptor sets for mesh renderer slot.");
-					return false;
+					return FailDescriptorPreparation($"descriptor-set allocation failed for set {setIndex}");
 				}
 				frameSets[setIndex] = descriptorSet;
 			}
 
-			int resolvedFrame = frameIndex % Math.Max(BackendContext.Descriptors.FrameSlotCount, 1);
+			int resolvedFrame = frameIndex % Math.Max(BackendContext.Resources.Descriptors.FrameSlotCount, 1);
 			if (resolvedFrame < 0)
-				resolvedFrame += Math.Max(BackendContext.Descriptors.FrameSlotCount, 1);
+				resolvedFrame += Math.Max(BackendContext.Resources.Descriptors.FrameSlotCount, 1);
 			string owner = $"MeshRenderer.DescriptorSet.Frame{resolvedFrame}";
 			for (int setIndex = 0; setIndex < frameSets.Length; setIndex++)
 			{
 				if (frameSets[setIndex].Handle == 0)
 					continue;
-				Renderer.SetDebugDescriptorSetName(frameSets[setIndex], $"{owner}.Set{setIndex}");
-				Renderer.RegisterVulkanDescriptorSet(
+				BackendContext.Resources.DescriptorLifetime.SetDebugName(frameSets[setIndex], $"{owner}.Set{setIndex}");
+			BackendContext.Resources.DescriptorLifetime.RegisterDescriptorSet(
 					allocation.Pool,
 					frameSets[setIndex],
 					_program!.DescriptorSetUsesUpdateAfterBind((uint)setIndex),
@@ -372,9 +479,9 @@ internal unsafe partial class VkMeshRenderer
 					(uint)setIndex,
 					bindings);
 			}
-			Renderer.RecordVulkanDescriptorTableGeneration("MeshRendererDescriptorSets.AllocatedLazySlot");
+			BackendContext.Resources.DescriptorLifetime.RecordTableGeneration();
 			allocation.Sets[descriptorSlotIndex] = frameSets;
-			allocation.DescriptorHeapPushData[descriptorSlotIndex] = Renderer.CreateDescriptorHeapPushDataPayload(_program!.DescriptorHeapLayout);
+			allocation.DescriptorHeapPushData[descriptorSlotIndex] = VulkanDescriptorManager.CreateHeapPushDataPayload(_program!.DescriptorHeapLayout);
 		}
 
 		if (allocation.UsesSharedMaterialTier)
@@ -382,9 +489,9 @@ internal unsafe partial class VkMeshRenderer
 			if (allocation.SharedMaterial is null ||
 				!allocation.SharedMaterial.TryGetMaterialDescriptorSet(_program!, frameIndex, out DescriptorSet materialSet, out _))
 			{
-				return false;
+				return FailDescriptorPreparation("shared material descriptor set unavailable");
 			}
-			frameSets[VulkanRenderer.DescriptorSetMaterial] = materialSet;
+			frameSets[VulkanMeshRenderingConventions.DescriptorSetMaterial] = materialSet;
 		}
 
 		if (DescriptorSlotResourceFingerprintMatches(allocation, descriptorSlotIndex, resourceFingerprint))
@@ -407,13 +514,13 @@ internal unsafe partial class VkMeshRenderer
 			descriptorSlotIndex,
 			bindingSnapshot,
 			recordDescriptorTableGeneration))
-			return false;
+			return FailDescriptorPreparation("descriptor writes unresolved");
 
 		ulong stableResourceFingerprint =
 			allocation.HasFrameSourceDescriptors
 				? ComputeDescriptorResourceFingerprint(
 					material,
-					BackendContext.Descriptors.FrameSlotCount,
+					BackendContext.Resources.Descriptors.FrameSlotCount,
 					bindings,
 					drawUniformSlot,
 					allocation.UsesSharedMaterialTier,
@@ -433,7 +540,7 @@ internal unsafe partial class VkMeshRenderer
 		if (allocation.OwnershipTelemetryRegistered)
 			return;
 		allocation.OwnershipTelemetryRegistered = true;
-		Renderer.RecordMeshDescriptorOwnershipDiagnostic(
+		RecordDescriptorOwnershipDiagnostic(
 			allocation.Program?.Data?.Name ?? "<unnamed>",
 			allocation.Material?.Name ?? "<unnamed>",
 			allocation.LayoutFingerprint,
@@ -445,6 +552,26 @@ internal unsafe partial class VkMeshRenderer
 			pools: 0,
 			allocatedSets: allocation.AllocatedLocalSetCount,
 			reservedSets: allocation.ReservedLocalSetCount);
+	}
+
+	private void RecordDescriptorOwnershipDiagnostic(
+		string programName,
+		string materialName,
+		ulong layoutFingerprint,
+		int descriptorFrameSlotCount,
+		int allocatedSetCount,
+		bool sharedMaterialTier)
+	{
+		int diagnosticIndex = BackendContext.Resources.Descriptors.RecordMeshOwnershipDiagnostic();
+		if (diagnosticIndex > 64)
+			return;
+
+		FrameOpContext? active = MaterializationSnapshot.ActiveFrameOpContext;
+		Debug.Vulkan(
+			"[Vulkan.MeshOwnership] index={0}/64 program='{1}' layout=0x{2:X16} material='{3}' output={4} frameSlots={5} sets={6} sharedMaterial={7}",
+			diagnosticIndex, programName, layoutFingerprint, materialName,
+			active?.ContextKind ?? EVulkanFrameOpContextKind.Unknown,
+			descriptorFrameSlotCount, allocatedSetCount, sharedMaterialTier);
 	}
 
 	private static void ReleaseDescriptorOwnershipTelemetry(DescriptorAllocation allocation)
@@ -476,14 +603,16 @@ internal unsafe partial class VkMeshRenderer
 					out AutoUniformBlockInfo block))
 			{
 				if (!EnsureAutoUniformBuffer(block.InstanceName, Math.Max(block.Size, 1u)))
-					return false;
+					return FailDescriptorPreparation(
+						$"auto-uniform buffer '{block.InstanceName}' unavailable (size={Math.Max(block.Size, 1u)}): {_lastDescriptorPreparationFailure}");
 				continue;
 			}
 
 			string bindingName = binding.Name ?? string.Empty;
 			uint engineSize = GetEngineUniformSize(bindingName);
 			if (engineSize != 0 && !EnsureEngineUniformBuffer(NormalizeEngineUniformName(bindingName), engineSize))
-				return false;
+				return FailDescriptorPreparation(
+					$"engine-uniform buffer '{NormalizeEngineUniformName(bindingName)}' unavailable (size={engineSize})");
 		}
 
 		return true;
@@ -579,12 +708,17 @@ internal unsafe partial class VkMeshRenderer
 				viewFamilyIdentity,
 				descriptorOwnerSlot,
 				bindingSnapshot);
-        if (!_descriptorAllocationsByOwner.TryGetValue(
-				ownerLookupKey,
-				out DescriptorAllocation? allocation) &&
-			!_descriptorAllocationsByDrawSlot.TryGetValue(
-                drawUniformSlot,
-                out allocation))
+		bool ownerFound = _descriptorAllocationsByOwner.TryGetValue(
+			ownerLookupKey,
+			out DescriptorAllocation? allocation);
+		if (!ownerFound &&
+			bindingSnapshot is null)
+		{
+			ownerFound = _descriptorAllocationsByDrawSlot.TryGetValue(
+				drawUniformSlot,
+				out allocation);
+		}
+		if (!ownerFound || allocation is null)
         {
 			RuntimeEngine.Rendering.Stats.Vulkan
 				.RecordVulkanDescriptorOwnerGenerationMiss(
@@ -699,9 +833,9 @@ internal unsafe partial class VkMeshRenderer
 		}
 
 		DescriptorSet[] frameSets = allocation.Sets[frameIndex];
-		if ((uint)frameSets.Length <= VulkanRenderer.DescriptorSetMaterial)
+		if ((uint)frameSets.Length <= VulkanMeshRenderingConventions.DescriptorSetMaterial)
 		{
-			reason = $"shared-material descriptor set {VulkanRenderer.DescriptorSetMaterial} is unavailable for frame {frameIndex}";
+			reason = $"shared-material descriptor set {VulkanMeshRenderingConventions.DescriptorSetMaterial} is unavailable for frame {frameIndex}";
 			return false;
 		}
 
@@ -724,7 +858,7 @@ internal unsafe partial class VkMeshRenderer
 			return false;
 		}
 
-		DescriptorSet recordedSet = frameSets[VulkanRenderer.DescriptorSetMaterial];
+		DescriptorSet recordedSet = frameSets[VulkanMeshRenderingConventions.DescriptorSetMaterial];
 		if (recordedSet.Handle == currentSet.Handle)
 			return true;
 
@@ -764,7 +898,7 @@ internal unsafe partial class VkMeshRenderer
 		if (layouts is not { Count: > 0 } || bindings is not { Count: > 0 })
 			return 0UL;
 
-		int frameCount = BackendContext.Descriptors.FrameSlotCount;
+		int frameCount = BackendContext.Resources.Descriptors.FrameSlotCount;
 		if (frameCount <= 0)
 			return 0UL;
 
@@ -791,7 +925,7 @@ internal unsafe partial class VkMeshRenderer
 		// mode still fingerprints the exact renderer-owned UBO allocations.
 		FrameOpSignatureHasher hash = new();
 		bindingSnapshot.ResolvePublishedResourceSignatures(
-			Renderer.ResolveMeshDescriptorViewFamilyIdentity(),
+			MaterializationSnapshot.DescriptorViewFamilyIdentity,
 			out _,
 			out ulong snapshotResourceSignature);
 		ulong cachedBufferResourceSignature =
@@ -807,9 +941,9 @@ internal unsafe partial class VkMeshRenderer
 		hash.Add(bindingSnapshot.DescriptorSetLayoutSignature);
 		hash.Add(snapshotResourceSignature);
 		hash.Add(cachedBufferResourceSignature);
-		if (Renderer.MeshFrameDataArenaEnabled)
+		if (BackendContext.Resources.MappedFrameArena is not null)
 		{
-			hash.Add(Renderer.MeshFrameDataReservationGeneration);
+			hash.Add(BackendContext.Resources.MappedFrameArena?.Generation ?? 0UL);
 		}
 		else
 		{
@@ -836,7 +970,7 @@ internal unsafe partial class VkMeshRenderer
 		if (layouts is null || layouts.Count == 0 || bindings.Count == 0)
 			return true;
 
-		int frameCount = BackendContext.Descriptors.FrameSlotCount;
+		int frameCount = BackendContext.Resources.Descriptors.FrameSlotCount;
 		if (frameCount <= 0)
 		{
 			reason = "swapchain images unavailable";
@@ -852,7 +986,7 @@ internal unsafe partial class VkMeshRenderer
 
 		int descriptorFrameSlotCount = frameCount;
 		int setCount = layouts.Count;
-		int viewFamilyIdentity = Renderer.ResolveMeshDescriptorViewFamilyIdentity();
+		int viewFamilyIdentity = MaterializationSnapshot.DescriptorViewFamilyIdentity;
 		ulong layoutFingerprint = _program.DescriptorLayoutFingerprint;
 		ulong schemaFingerprint = _program.DescriptorSchemaFingerprint;
 		bool usesSharedMaterialTier = _activeDescriptorAllocation is { } activeAllocation &&
@@ -863,7 +997,7 @@ internal unsafe partial class VkMeshRenderer
 			AreDescriptorBindingsDrawSlotInvariant(
 				bindings,
 				usesSharedMaterialTier,
-				Renderer.IsDescriptorHeapDrawBindingActive);
+				BackendContext.Resources.Descriptors.Heap.ActiveBackend == EVulkanDescriptorBackend.DescriptorHeap);
 		int descriptorOwnerSlot =
 			descriptorBindingsAreDrawSlotInvariant ? 0 : drawUniformSlot;
         // A captured binding snapshot can differ from the program's current bindings even
@@ -1009,7 +1143,7 @@ internal unsafe partial class VkMeshRenderer
 				AreDescriptorBindingsDrawSlotInvariant(
 					bindings,
 					usesSharedMaterialTier: true,
-					Renderer.IsDescriptorHeapDrawBindingActive);
+					BackendContext.Resources.Descriptors.Heap.ActiveBackend == EVulkanDescriptorBackend.DescriptorHeap);
 			int sharedDescriptorOwnerSlot =
 				sharedDescriptorBindingsAreDrawSlotInvariant
 					? 0
@@ -1062,7 +1196,7 @@ internal unsafe partial class VkMeshRenderer
 		int materialIdentity = System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(material);
 		uint activeSetMask = ComputeActiveDescriptorSetMask(bindings, setCount);
 		if (usesSharedMaterialTier)
-			activeSetMask &= ~(1u << (int)VulkanRenderer.DescriptorSetMaterial);
+			activeSetMask &= ~(1u << (int)VulkanMeshRenderingConventions.DescriptorSetMaterial);
 		ulong immutableResourceFingerprint =
 			ResolveDescriptorAllocationImmutableResourceFingerprint(
 				descriptorBindingsAreDrawSlotInvariant,
@@ -1093,7 +1227,7 @@ internal unsafe partial class VkMeshRenderer
 		}
 
 		if (allocation is null &&
-			BackendContext.Descriptors.TryAcquireSharedMeshDescriptorAllocation(allocationKey, material, out DescriptorAllocation cachedSharedAllocation))
+			BackendContext.Resources.Descriptors.TryAcquireSharedMeshDescriptorAllocation(allocationKey, material, out DescriptorAllocation cachedSharedAllocation))
 		{
 			if (DescriptorAllocationMatchesProgram(cachedSharedAllocation) &&
 				IsDescriptorAllocationValid(cachedSharedAllocation, descriptorFrameSlotCount, setCount))
@@ -1103,7 +1237,7 @@ internal unsafe partial class VkMeshRenderer
 			}
 			else
 			{
-				BackendContext.Descriptors.ReleaseSharedMeshDescriptorAllocation(allocationKey, cachedSharedAllocation);
+				BackendContext.Resources.Descriptors.ReleaseSharedMeshDescriptorAllocation(allocationKey, cachedSharedAllocation);
 			}
 		}
 
@@ -1335,7 +1469,7 @@ internal unsafe partial class VkMeshRenderer
 		allocation.FrameSourceDescriptorClassificationInitialized = true;
 	}
 
-	private static DescriptorOwnerLookupKey CreateDescriptorOwnerLookupKey(
+	private DescriptorOwnerLookupKey CreateDescriptorOwnerLookupKey(
 		ulong layoutFingerprint,
 		ulong schemaFingerprint,
 		uint programBindingId,
@@ -1343,7 +1477,9 @@ internal unsafe partial class VkMeshRenderer
 		int viewFamilyIdentity,
 		int descriptorOwnerSlot,
 		ComputeDispatchSnapshot? bindingSnapshot)
-		=> new(
+	{
+		VulkanMappedFrameArena? frameArena = BackendContext.Resources.MappedFrameArena;
+		return new DescriptorOwnerLookupKey(
 			layoutFingerprint,
 			schemaFingerprint,
 			programBindingId,
@@ -1355,8 +1491,12 @@ internal unsafe partial class VkMeshRenderer
 				? bindingSnapshot.DescriptorSetLayoutSignature
 				: 0UL,
 			bindingSnapshot is { HasPublishedBindingLayoutSignatures: true }
-				? bindingSnapshot.ExactSamplerResourceSignature
-				: 0UL);
+				? bindingSnapshot.StablePersistentEngineResourceSignature
+				: 0UL,
+			ComputeCachedBufferResourceFingerprintCore(),
+			frameArena?.Identity ?? 0UL,
+			frameArena?.Generation ?? 0UL);
+	}
 
 	private bool TryFindReusableDescriptorAllocationForCapturedResources(
 		XRMaterial material,
@@ -1526,13 +1666,13 @@ internal unsafe partial class VkMeshRenderer
 		bool allowMutableFrameSourceRefresh =
 			hasFrameSourceDescriptors &&
 			refreshFrameIndex is { } completedFrameIndex &&
-			Renderer.CanUpdateCompletedDescriptorFrameSlot(completedFrameIndex);
+			CommandOperations.CanUpdateCompletedDescriptorFrameSlot(completedFrameIndex);
 		bool allowCompletedDescriptorSlotRefresh =
 			allowMutableFrameSourceRefresh ||
 			(!descriptorBindingsAreDrawSlotInvariant &&
 			 bindingSnapshot is null &&
 			 refreshFrameIndex is { } mutableFrameIndex &&
-			 Renderer.CanUpdateCompletedDescriptorFrameSlot(mutableFrameIndex));
+			 CommandOperations.CanUpdateCompletedDescriptorFrameSlot(mutableFrameIndex));
 
 		if (drawUniformSlot >= _uniformDrawSlotCapacity)
 		{
@@ -1592,7 +1732,7 @@ internal unsafe partial class VkMeshRenderer
 				if (DescriptorResourceFingerprintDiagnosticsEnabled)
 				{
 					IReadOnlyList<DescriptorBindingInfo> currentBindings = _program?.DescriptorBindings ?? [];
-					string currentDetails = ComputeDescriptorResourceFingerprintDetails(material, BackendContext.Descriptors.FrameSlotCount, currentBindings);
+					string currentDetails = ComputeDescriptorResourceFingerprintDetails(material, BackendContext.Resources.Descriptors.FrameSlotCount, currentBindings);
 					reason = _descriptorDirty
 						? $"captured descriptors dirty; old=[{allocation.ResourceFingerprintDetails}] new=[{currentDetails}]"
 						: $"captured resource fingerprint 0x{allocation.ResourceFingerprint:X16}->0x{resourceFingerprint:X16}; old=[{allocation.ResourceFingerprintDetails}] new=[{currentDetails}]";
@@ -1652,7 +1792,7 @@ internal unsafe partial class VkMeshRenderer
 		}
 
 		if (!DescriptorSetsAreUpdateAfterBind(allocation.ActiveSetMask) &&
-			!Renderer.CanUpdateCompletedDescriptorFrameSlot(frameIndex))
+			!CommandOperations.CanUpdateCompletedDescriptorFrameSlot(frameIndex))
 		{
 			reason = $"captured descriptor frame slot {frameIndex} is still in flight";
 			return false;
@@ -1688,7 +1828,7 @@ internal unsafe partial class VkMeshRenderer
 		}
 
 		if (DescriptorResourceFingerprintDiagnosticsEnabled)
-			allocation.ResourceFingerprintDetails = ComputeDescriptorResourceFingerprintDetails(material, BackendContext.Descriptors.FrameSlotCount, _program.DescriptorBindings);
+			allocation.ResourceFingerprintDetails = ComputeDescriptorResourceFingerprintDetails(material, BackendContext.Resources.Descriptors.FrameSlotCount, _program.DescriptorBindings);
 		return true;
 	}
 
@@ -1837,7 +1977,7 @@ internal unsafe partial class VkMeshRenderer
 			ReferenceEquals(allocation.Program, _program);
 
 	private static bool IsDescriptorAllocationValid(DescriptorAllocation allocation, int descriptorFrameSlotCount, int setCount)
-		=> (allocation.Pool.Handle != 0 || (allocation.ActiveSetMask == 0 && allocation.UsesSharedMaterialTier)) &&
+		=> (allocation.Pool.Handle != 0 || allocation.ActiveSetMask == 0) &&
             allocation.Sets is { Length: > 0 } &&
 			allocation.Sets.Length == descriptorFrameSlotCount &&
 			allocation.SlotResourceFingerprints.Length == descriptorFrameSlotCount &&

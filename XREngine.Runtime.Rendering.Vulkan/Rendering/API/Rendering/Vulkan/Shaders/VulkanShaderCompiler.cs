@@ -20,6 +20,10 @@ namespace XREngine.Rendering.Vulkan;
 
 internal static class VulkanShaderCompiler
 {
+    // GL_EXT_mesh_shader is emitted as SPIR-V 1.6 by current shaderc/glslang.
+    // Keep this narrow: ordinary stages retain shaderc's existing default
+    // target so this capability opt-in cannot perturb their artifact output.
+    private const uint Vulkan13TargetEnvironmentVersion = 0x00403000u;
     private static readonly Shaderc ShadercApi = Shaderc.GetApi();
     private static readonly Regex OvrMultiviewExtensionRegex = new(
         @"^\s*#\s*extension\s+GL_OVR_multiview2\s*:\s*(?<behavior>\w+)\s*$",
@@ -150,6 +154,7 @@ internal static class VulkanShaderCompiler
         ShadercApi.CompileOptionsSetSourceLanguage(options, SourceLanguage.Glsl);
         ShadercApi.CompileOptionsSetOptimizationLevel(options, OptimizationLevel.Performance);
         ShadercApi.CompileOptionsSetWarningsAsErrors(options);
+        ConfigureTargetEnvironment(options, shader.Type);
 
         byte[] sourceBytes = Encoding.UTF8.GetBytes(prepared.RewrittenSource);
         byte[] nameBytes = GetNullTerminatedUtf8(shader.Name ?? $"Shader_{shader.GetHashCode():X8}");
@@ -227,6 +232,7 @@ internal static class VulkanShaderCompiler
         builder.AppendLine("Backend=Vulkan");
         builder.AppendLine("XRENGINE_VULKAN=1");
         builder.Append("ShaderType=").Append(shader.Type).Append('\n');
+        builder.Append("CompileTarget=").Append(GetCompileTargetLabel(shader.Type)).Append('\n');
         builder.Append("ShaderName=").Append(shader.Name ?? "UnnamedShader").Append('\n');
         builder.Append("SourcePath=").Append(shader.Source?.FilePath ?? shader.FilePath ?? string.Empty).Append('\n');
         builder.Append("IsGeneratedUberVariant=").Append(shader.IsGeneratedUberVariant).Append('\n');
@@ -261,6 +267,28 @@ internal static class VulkanShaderCompiler
 
         return "VKSHD-" + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(builder.ToString())), 0, 12);
     }
+
+    /// <summary>
+    /// Selects the minimum target required by the shipped EXT task/mesh shader
+    /// sources. EXT mesh shaders require a newer SPIR-V target than the legacy
+    /// default; no other shader stage opts into this target.
+    /// </summary>
+    private static unsafe void ConfigureTargetEnvironment(CompileOptions* options, EShaderType shaderType)
+    {
+        if (shaderType is not (EShaderType.Task or EShaderType.Mesh))
+            return;
+
+        ShadercApi.CompileOptionsSetTargetEnv(
+            options,
+            TargetEnv.Vulkan,
+            Vulkan13TargetEnvironmentVersion);
+        ShadercApi.CompileOptionsSetTargetSpirv(options, SpirvVersion.Shaderc16);
+    }
+
+    private static string GetCompileTargetLabel(EShaderType shaderType)
+        => shaderType is EShaderType.Task or EShaderType.Mesh
+            ? "Vulkan1.3-SPIRV1.6"
+            : "ShadercDefault";
 
     private static byte[] GetNullTerminatedUtf8(string value)
     {

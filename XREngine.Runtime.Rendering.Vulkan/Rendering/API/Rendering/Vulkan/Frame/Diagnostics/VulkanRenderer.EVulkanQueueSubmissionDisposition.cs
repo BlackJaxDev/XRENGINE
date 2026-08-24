@@ -1,11 +1,8 @@
 namespace XREngine.Rendering.Vulkan;
 
-public unsafe partial class VulkanRenderer
+internal enum EVulkanQueueSubmissionDisposition : byte
 {
-    internal enum EVulkanQueueSubmissionDisposition : byte
-    {
-        NotSubmitted = 0,
-        SubmittedIncomplete,
-        Completed,
-    }
+    NotSubmitted = 0,
+    SubmittedIncomplete,
+    Completed,
 }

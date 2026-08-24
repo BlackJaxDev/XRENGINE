@@ -8,7 +8,6 @@ namespace XREngine.Rendering.Vulkan;
 /// referenced by a prepared mesh draw.
 /// </summary>
 internal readonly record struct VulkanPreparedFrameDataPayloadHandle(
-    VkMeshRenderer Owner,
     VkBufferHandle Storage,
     ulong Offset,
     uint Range,
@@ -22,12 +21,10 @@ internal readonly record struct VulkanPreparedFrameDataPayloadHandle(
     ulong MaterialGeneration)
 {
     internal bool IsValidFor(
-        VkMeshRenderer owner,
         int frameIndex,
         int drawUniformSlot,
         ulong arenaGeneration)
-        => ReferenceEquals(Owner, owner) &&
-            Storage.Handle != 0 &&
+        => Storage.Handle != 0 &&
             Range != 0 &&
             FrameIndex == frameIndex &&
             DrawUniformSlot == drawUniformSlot &&

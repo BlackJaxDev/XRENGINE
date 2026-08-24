@@ -318,15 +318,15 @@ public sealed class WindowOwnershipContractTests
         var backbufferExtent = new Vector2D<int>(1338, 794);
         const int sharedPresentationEdge = 371;
 
-        BoundingRectangle full = VulkanRenderer.ScalePresentationRegionToBackbuffer(
+        BoundingRectangle full = VulkanFrameLoop.ScalePresentationRegionToBackbuffer(
             new BoundingRectangle(0, 0, presentationExtent.X, presentationExtent.Y),
             presentationExtent,
             backbufferExtent);
-        BoundingRectangle left = VulkanRenderer.ScalePresentationRegionToBackbuffer(
+        BoundingRectangle left = VulkanFrameLoop.ScalePresentationRegionToBackbuffer(
             new BoundingRectangle(0, 0, sharedPresentationEdge, presentationExtent.Y),
             presentationExtent,
             backbufferExtent);
-        BoundingRectangle right = VulkanRenderer.ScalePresentationRegionToBackbuffer(
+        BoundingRectangle right = VulkanFrameLoop.ScalePresentationRegionToBackbuffer(
             new BoundingRectangle(
                 sharedPresentationEdge,
                 0,

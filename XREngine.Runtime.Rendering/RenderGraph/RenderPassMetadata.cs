@@ -28,6 +28,10 @@ public sealed class RenderPassMetadata
     /// Passes are required by default; optional deferral must be declared explicitly.
     /// </summary>
     public bool RequiresPipelineReady { get; private set; } = true;
+    /// <summary>
+    /// Gets semantic exclusions from reusable secondary-command recording.
+    /// </summary>
+    public ERenderPassSecondaryCachePolicy SecondaryCachePolicy { get; private set; }
     public int Revision => _revision;
 
     public RenderPassMetadata(int passIndex, string name, ERenderGraphPassStage stage, int? declarationOrder = null)
@@ -125,6 +129,17 @@ public sealed class RenderPassMetadata
             return;
 
         RequiresPipelineReady = required;
+        AdvanceRevision();
+    }
+
+    internal void UpdateSecondaryCachePolicy(
+        ERenderPassSecondaryCachePolicy policy)
+    {
+        ERenderPassSecondaryCachePolicy combined = SecondaryCachePolicy | policy;
+        if (combined == SecondaryCachePolicy)
+            return;
+
+        SecondaryCachePolicy = combined;
         AdvanceRevision();
     }
 

@@ -4,47 +4,30 @@ using XREngine.Rendering.RenderGraph;
 
 namespace XREngine.Rendering.Vulkan;
 
-public unsafe partial class VulkanRenderer
+internal sealed partial class VulkanCommandRuntime
 {
     /// <summary>
-    /// Prepares compute pipelines, persistent uniform buffers, and reusable
-    /// descriptor sets before the command recorder enters its guarded scope.
+    /// Links compute programs and creates their pipelines before the frame plan
+    /// is sealed. Descriptor publication must wait for the plan's final DAG
+    /// order because that order owns the recording-time binding ordinal.
     /// </summary>
-    private bool TryPrepareComputeFrameOpsForRecording(
-        uint imageIndex,
-        FrameOp[] operations,
-        out string failureReason)
+    internal VulkanComputePreparationResult PrepareComputeProgramsForFramePlan(
+        FrameOp[] operations)
     {
         for (int operationIndex = 0; operationIndex < operations.Length; operationIndex++)
         {
-            VkRenderProgram? program;
-            ComputeDispatchSnapshot? snapshot;
-            ulong reusableDescriptorKey;
+            VkRenderProgram program;
             int passIndex;
             IReadOnlyCollection<RenderPassMetadata>? passMetadata;
-
             switch (operations[operationIndex])
             {
                 case ComputeDispatchOp dispatch:
                     program = dispatch.Program;
-                    snapshot = dispatch.Snapshot;
-                    int descriptorBindingOrdinal =
-                        ResolveCommandChainInlineOperationIndex(
-                            operations,
-                            operationIndex);
-                    dispatch.SetReusableDescriptorBindingOrdinal(
-                        descriptorBindingOrdinal);
-                    reusableDescriptorKey =
-                        ComputeReusableComputeDescriptorBindingKey(
-                            dispatch,
-                            descriptorBindingOrdinal);
                     passIndex = dispatch.PassIndex;
                     passMetadata = dispatch.Context.PassMetadata;
                     break;
                 case ComputeDispatchIndirectOp indirect:
                     program = indirect.Program;
-                    snapshot = indirect.Snapshot;
-                    reusableDescriptorKey = 0UL;
                     passIndex = indirect.PassIndex;
                     passMetadata = indirect.Context.PassMetadata;
                     break;
@@ -52,45 +35,201 @@ public unsafe partial class VulkanRenderer
                     continue;
             }
 
-            if (!program.Link())
+            VulkanComputePreparationResult preparation =
+                TryPrepareComputeProgram(
+                    program,
+                    passIndex,
+                    passMetadata,
+                    operationIndex,
+                    operations.Length);
+            if (!preparation.Succeeded)
+                return preparation;
+        }
+
+        return VulkanComputePreparationResult.Success;
+    }
+
+    /// <summary>
+    /// Publishes persistent uniform buffers and reusable descriptor sets for
+    /// the exact sealed operation sequence consumed by command recording.
+    /// </summary>
+    internal VulkanComputePreparationResult PrepareComputeFrameOpsForRecording(
+        uint imageIndex,
+        FrameOperationSequence operations)
+        => PrepareComputeFrameOps(
+            imageIndex,
+            operations,
+            prepareDescriptors: true);
+
+    private VulkanComputePreparationResult PrepareComputeFrameOps(
+        uint imageIndex,
+        FrameOperationSequence operations,
+        bool prepareDescriptors)
+    {
+        for (int operationIndex = 0; operationIndex < operations.Length; operationIndex++)
+        {
+            VkRenderProgram program;
+            ComputeDispatchSnapshot? snapshot;
+            ulong reusableDescriptorKey;
+            bool requiresComputePipeline;
+            bool excludeGlobalTextureArray;
+            int passIndex;
+            IReadOnlyCollection<RenderPassMetadata>? passMetadata;
+            FrameOpContext frameContext;
+
+            ref readonly FrameOperationHeader header =
+                ref operations.GetHeader(operationIndex);
+            ref readonly FrameOpContext operationContext =
+                ref operations.GetContext(operationIndex);
+            switch (header.OpCode)
             {
-                failureReason =
-                    $"Compute program '{program.Data.Name ?? "UnnamedProgram"}' is not linkable before recording.";
-                return false;
+                case EVulkanPrimaryPlanNodeKind.ComputeDispatch:
+                    ref readonly ComputeDispatchPayload dispatch =
+                        ref operations.GetComputeDispatch(operationIndex);
+                    program = dispatch.Program;
+                    snapshot = dispatch.Snapshot;
+                    reusableDescriptorKey = 0UL;
+                    requiresComputePipeline = true;
+                    excludeGlobalTextureArray = false;
+                    passIndex = header.PassIndex;
+                    passMetadata = operationContext.PassMetadata;
+                    frameContext = operationContext;
+                    break;
+                case EVulkanPrimaryPlanNodeKind.ComputeDispatchIndirect:
+                    ref readonly ComputeDispatchIndirectPayload indirect =
+                        ref operations.GetComputeDispatchIndirect(operationIndex);
+                    program = indirect.Program;
+                    snapshot = indirect.Snapshot;
+                    reusableDescriptorKey = 0UL;
+                    requiresComputePipeline = true;
+                    excludeGlobalTextureArray = false;
+                    passIndex = header.PassIndex;
+                    passMetadata = operationContext.PassMetadata;
+                    frameContext = operationContext;
+                    break;
+                case EVulkanPrimaryPlanNodeKind.MeshTaskDispatchIndirectCount:
+                    ref readonly MeshTaskDispatchIndirectCountPayload meshTask =
+                        ref operations.GetMeshTask(operationIndex);
+                    program = meshTask.Program;
+                    snapshot = meshTask.ProgramBindingSnapshot;
+                    reusableDescriptorKey = snapshot.ComputeReusableDescriptorBindingKey();
+                    requiresComputePipeline = false;
+                    excludeGlobalTextureArray = meshTask.BindlessMaterialTextures is not null;
+                    passIndex = header.PassIndex;
+                    passMetadata = operationContext.PassMetadata;
+                    frameContext = operationContext;
+                    break;
+                default:
+                    continue;
             }
 
-            try
+            VulkanComputePreparationResult preparation = requiresComputePipeline
+                ? TryPrepareComputeProgram(
+                    program,
+                    passIndex,
+                    passMetadata,
+                    operationIndex,
+                    operations.Length)
+                : TryPrepareMeshTaskDescriptorProgram(
+                    program,
+                    operationIndex,
+                    operations.Length);
+            if (!preparation.Succeeded)
+                return preparation;
+
+            if (!prepareDescriptors)
+                continue;
+
+            // Linking publishes the program binding and link generation used by
+            // the reusable descriptor key. The sealed FramePlan sequence also
+            // publishes the final resource-DAG order used by secondary recording;
+            // preparing from the authoring array would publish a different key.
+            if (header.OpCode == EVulkanPrimaryPlanNodeKind.ComputeDispatch)
             {
-                if (program.GetOrCreateComputePipeline(passIndex, passMetadata).Handle == 0)
-                {
-                    failureReason =
-                        $"Compute pipeline '{program.Data.Name ?? "UnnamedProgram"}' is unavailable before recording.";
-                    return false;
-                }
-            }
-            catch (Exception exception)
-            {
-                failureReason =
-                    $"Compute pipeline '{program.Data.Name ?? "UnnamedProgram"}' preparation failed: " +
-                    $"{exception.GetType().Name}: {exception.Message}";
-                return false;
+                int descriptorBindingOrdinal =
+                    ResolveCommandChainInlineOperationIndex(
+                        operations.Stream,
+                        operationIndex);
+                ref readonly ComputeDispatchPayload preparedDispatch =
+                    ref operations.GetComputeDispatch(operationIndex);
+                reusableDescriptorKey =
+                    ComputeReusableComputeDescriptorBindingKey(
+                        in preparedDispatch,
+                        in header,
+                        in operationContext,
+                        descriptorBindingOrdinal);
             }
 
             if (program.TryPrepareComputeDispatchResources(
+                VulkanProgramPlannerRequest.From(frameContext),
                 imageIndex,
                 snapshot,
-                reusableDescriptorKey))
+                reusableDescriptorKey,
+                excludeGlobalTextureArray))
             {
                 continue;
             }
 
-            failureReason =
-                $"Compute descriptor resources for '{program.Data.Name ?? "UnnamedProgram"}' " +
-                $"could not be prepared before recording (op {operationIndex}/{operations.Length}).";
-            return false;
+            return new(
+                EVulkanComputePreparationOutcome.DescriptorPreparationFailed,
+                operationIndex,
+                operations.Length,
+                program.Data.Name);
         }
 
-        failureReason = string.Empty;
-        return true;
+        return VulkanComputePreparationResult.Success;
+    }
+
+    private static VulkanComputePreparationResult TryPrepareMeshTaskDescriptorProgram(
+        VkRenderProgram program,
+        int operationIndex,
+        int operationCount)
+    {
+        if (program.Link() && program.PipelineLayout.Handle != 0)
+            return VulkanComputePreparationResult.Success;
+
+        return new(
+            EVulkanComputePreparationOutcome.ProgramLinkFailed,
+            operationIndex,
+            operationCount,
+            program.Data.Name);
+    }
+
+    private static VulkanComputePreparationResult TryPrepareComputeProgram(
+        VkRenderProgram program,
+        int passIndex,
+        IReadOnlyCollection<RenderPassMetadata>? passMetadata,
+        int operationIndex,
+        int operationCount)
+    {
+        if (!program.Link())
+        {
+            return new(
+                EVulkanComputePreparationOutcome.ProgramLinkFailed,
+                operationIndex,
+                operationCount,
+                program.Data.Name);
+        }
+
+        try
+        {
+            if (program.GetOrCreateComputePipeline(passIndex, passMetadata).Handle != 0)
+                return VulkanComputePreparationResult.Success;
+
+            return new(
+                EVulkanComputePreparationOutcome.PipelineUnavailable,
+                operationIndex,
+                operationCount,
+                program.Data.Name);
+        }
+        catch (Exception exception)
+        {
+            return new(
+                EVulkanComputePreparationOutcome.PipelineCreationFailed,
+                operationIndex,
+                operationCount,
+                program.Data.Name,
+                exception);
+        }
     }
 }

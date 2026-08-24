@@ -12,7 +12,9 @@ using XREngine.Diagnostics;
 
 namespace XREngine.Rendering.Vulkan;
 
-internal sealed unsafe class VkShader(VulkanRenderer api, XRShader data) : VkObject<XRShader>(api, data)
+internal sealed unsafe class VkShader(
+    VulkanBackendObjectContext backendContext,
+    XRShader data) : VkObject<XRShader>(backendContext, data)
 {
         private ShaderModule _shaderModule;
         private readonly List<DescriptorBindingInfo> _descriptorBindings = new();
@@ -582,7 +584,7 @@ internal sealed unsafe class VkShader(VulkanRenderer api, XRShader data) : VkObj
         }
 
         private void DestroyShaderResources()
-            => Renderer.ExecuteWithVulkanPipelineCompilationQuiesced(
+            => ProgramCreationPort.ExecuteWithPipelineCompilationQuiesced(
                 DestroyShaderResourcesAfterPipelineCompileDrain,
                 $"shader module mutation for '{SourceLabel}'");
 
@@ -680,7 +682,7 @@ internal sealed unsafe class VkShader(VulkanRenderer api, XRShader data) : VkObj
                 return;
             }
 
-            Renderer.ExecuteWithVulkanPipelineCompilationQuiesced(
+            ProgramCreationPort.ExecuteWithPipelineCompilationQuiesced(
                 InvalidateAfterPipelineCompileDrain,
                 $"shader invalidation for '{SourceLabel}'");
         }

@@ -29,7 +29,7 @@ namespace XREngine.Rendering.Commands
             string backendName,
             uint visibleCount,
             uint drawCount,
-            ReadOnlySpan<GPUIndirectRenderCommand> commands,
+            ReadOnlySpan<DrawMetadata> commands,
             int maxSamples = 8)
         {
             if (maxSamples < 0)
@@ -43,7 +43,7 @@ namespace XREngine.Rendering.Commands
             var signatures = new GpuCommandSignature[targetSamples];
             for (uint i = 0; i < targetSamples; ++i)
             {
-                GPUIndirectRenderCommand command = commands[(int)i];
+                DrawMetadata command = commands[(int)i];
                 signatures[i] = new GpuCommandSignature(command.MeshID, command.MaterialID, command.RenderPass);
             }
 

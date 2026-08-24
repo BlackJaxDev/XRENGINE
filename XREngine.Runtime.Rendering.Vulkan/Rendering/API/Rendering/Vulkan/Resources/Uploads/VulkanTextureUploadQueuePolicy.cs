@@ -98,7 +98,75 @@ internal sealed partial class VulkanTextureUploadService
         }
     }
 
-    internal void CancelAllQueuedWork(VulkanRenderer renderer, string reason)
+    /// <summary>
+    /// Closes CPU preparation admission and proves that no preparation worker can
+    /// access Vulkan staging resources after this method returns. Submitted GPU
+    /// transfers deliberately remain owned until device idle is established.
+    /// </summary>
+    internal void QuiescePreparationForRetirement(string reason, TimeSpan timeout)
+    {
+        Interlocked.Exchange(ref _preparationRetirementStarted, 1);
+        if (!_preparationDrainsIdle.Wait(timeout))
+            throw new TimeoutException("Timed out waiting for Vulkan texture preparation drains during backend retirement.");
+
+        VulkanImportedTextureUploadJob[] queuedJobs;
+        lock (_prepQueueSync)
+            queuedJobs = [.. _pendingPrepJobs];
+
+        long deadline = Stopwatch.GetTimestamp() +
+            (long)(timeout.TotalSeconds * Stopwatch.Frequency);
+        for (int index = 0; index < queuedJobs.Length; index++)
+        {
+            Task? workerTask = queuedJobs[index].WorkerPrepTask;
+            if (workerTask is null || workerTask.IsCompleted)
+                continue;
+
+            long remainingTicks = deadline - Stopwatch.GetTimestamp();
+            bool completed = false;
+            if (remainingTicks > 0)
+            {
+                try
+                {
+                    completed = workerTask.Wait(
+                        TimeSpan.FromSeconds((double)remainingTicks / Stopwatch.Frequency));
+                }
+                catch (AggregateException) when (workerTask.IsCompleted)
+                {
+                    // The worker owns failure reporting through its queued job.
+                    // A faulted task is nevertheless no longer accessing staging.
+                    completed = true;
+                }
+            }
+
+            if (!completed)
+            {
+                throw new TimeoutException(
+                    $"Timed out waiting for Vulkan texture preparation worker {index + 1}/{queuedJobs.Length} during backend retirement.");
+            }
+        }
+
+        lock (_prepQueueSync)
+            _pendingPrepJobs.Clear();
+        for (int index = 0; index < queuedJobs.Length; index++)
+        {
+            VulkanImportedTextureUploadJob job = queuedJobs[index];
+            if (job.Preparation is not null)
+            {
+                job.Preparation.Texture.ReleaseSynchronizedImportedUploadPreparation(job.Preparation);
+                job.Preparation = null;
+            }
+
+            RecordState(job.Request, VulkanTextureUploadGenerationState.Canceled, reason);
+            Interlocked.Increment(ref s_canceledStaleUploads);
+            job.OnCanceled?.Invoke();
+        }
+
+        RenderWorkBudgetCoordinator.RecordTextureQueue(0, 0.0);
+        Volatile.Write(ref s_pendingVulkanPrepPackages, 0);
+        Interlocked.Exchange(ref _prepDrainScheduled, 0);
+    }
+
+    internal void CancelAllQueuedWork(VulkanCommandRuntime commandRuntime, string reason)
     {
         VulkanImportedTextureUploadJob[] canceledJobs;
         lock (_prepQueueSync)
@@ -132,7 +200,7 @@ internal sealed partial class VulkanTextureUploadService
             job.OnCanceled?.Invoke();
         }
 
-        CancelSubmittedTransfers(renderer, reason);
+        CancelSubmittedTransfers(commandRuntime, reason);
         Interlocked.Exchange(ref _prepDrainScheduled, 0);
         Interlocked.Exchange(ref _transferDrainScheduled, 0);
     }
@@ -238,7 +306,7 @@ internal sealed partial class VulkanTextureUploadService
             _ => 0,
         };
 
-    private void LogCompatibilityPathState(VulkanRenderer renderer)
+    private void LogCompatibilityPathState(VulkanCommandRuntime commandRuntime)
     {
         if (RenderDiagnosticsFlags.VkTextureUploadPrepWorker
             && Interlocked.Exchange(ref _workerPrepCompatLogged, 1) == 0)
@@ -248,7 +316,7 @@ internal sealed partial class VulkanTextureUploadService
         }
 
         if (RenderDiagnosticsFlags.VkTextureUploadTransferQueue
-            && !renderer.HasDedicatedTextureUploadTransferQueue
+            && !commandRuntime.HasDedicatedTextureUploadTransferQueue
             && Interlocked.Exchange(ref _transferQueueCompatLogged, 1) == 0)
         {
             XREngine.Debug.Vulkan(

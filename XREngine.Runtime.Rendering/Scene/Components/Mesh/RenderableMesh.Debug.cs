@@ -87,7 +87,8 @@ namespace XREngine.Components.Scene.Mesh
                     return;
 
                 Volatile.Write(ref _highlightStencilBits, nextBits);
-                ApplyHighlightRenderOptionsOverride_NoLock(CurrentLODRenderer?.Material);
+                ApplyHighlightRenderOptionsOverride_NoLock(
+                    Volatile.Read(ref _materialOverride) ?? CurrentLODRenderer?.Material);
             }
         }
 
@@ -95,7 +96,7 @@ namespace XREngine.Components.Scene.Mesh
         {
             if (Volatile.Read(ref _highlightStencilBits) == 0)
             {
-                _rc.MaterialOverride = null;
+                _rc.MaterialOverride = Volatile.Read(ref _materialOverride);
                 _rc.RenderOptionsOverride = null;
                 _rc.ForceCpuRendering = false;
 
@@ -114,7 +115,7 @@ namespace XREngine.Components.Scene.Mesh
         {
             if (_highlightStencilBits == 0 || sourceMaterial is null)
             {
-                _rc.MaterialOverride = null;
+                _rc.MaterialOverride = Volatile.Read(ref _materialOverride);
                 _rc.RenderOptionsOverride = null;
                 _rc.ForceCpuRendering = false;
                 return;
@@ -127,7 +128,7 @@ namespace XREngine.Components.Scene.Mesh
             }
 
             ConfigureHighlightStencil(_highlightRenderOptionsOverride, _highlightStencilBits);
-            _rc.MaterialOverride = null;
+            _rc.MaterialOverride = Volatile.Read(ref _materialOverride);
             _rc.RenderOptionsOverride = _highlightRenderOptionsOverride;
             _rc.ForceCpuRendering = true;
         }

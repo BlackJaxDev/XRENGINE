@@ -109,6 +109,13 @@ public sealed class OpenAiResponsesModelClient : IAgentModelClient
 
             await using Stream stream = await response.Content.ReadAsStreamAsync(cancellationToken);
             using var reader = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
+            await observer.OnEventAsync(
+                new AgentRunEvent
+                {
+                    Kind = AgentRunEventKind.Status,
+                    Message = "provider_stream_connected",
+                },
+                cancellationToken);
             while (!cancellationToken.IsCancellationRequested)
             {
                 string? line = await reader.ReadLineAsync(cancellationToken);
@@ -120,7 +127,26 @@ public sealed class OpenAiResponsesModelClient : IAgentModelClient
                 string data = line[5..].TrimStart();
                 if (string.Equals(data, "[DONE]", StringComparison.Ordinal))
                     break;
-                if (!parser.ProcessData(data, out string delta))
+                int previousEventCount = parser.ProviderEventCount;
+                bool hasTextDelta = parser.ProcessData(data, out string delta);
+                if (parser.ProviderEventCount != previousEventCount
+                    && (parser.ProviderEventCount == 1 || parser.ProviderEventCount % 32 == 0))
+                {
+                    await observer.OnEventAsync(
+                        new AgentRunEvent
+                        {
+                            Kind = AgentRunEventKind.Diagnostic,
+                            Message = "Streaming provider response is in progress.",
+                            ProviderAttempt = CreateAttemptDiagnostic(
+                                request,
+                                stopwatch,
+                                outcome: "in_progress",
+                                parser: parser),
+                        },
+                        cancellationToken);
+                }
+
+                if (!hasTextDelta)
                     continue;
 
                 await observer.OnEventAsync(
@@ -652,6 +678,10 @@ public sealed class OpenAiResponsesModelClient : IAgentModelClient
             ["max_output_tokens"] = request.MaxOutputTokens > 0
                 ? request.MaxOutputTokens
                 : request.Run.Budget.MaxOutputTokens,
+            ["text"] = new JsonObject
+            {
+                ["verbosity"] = request.Run.TextVerbosity.ToLowerInvariant(),
+            },
             ["parallel_tool_calls"] = request.Run.Budget.MaxConcurrency > 1
                 && !request.Run.ToolPolicy.AllowMutation,
         };

@@ -10,8 +10,10 @@ internal readonly record struct VulkanPreparedCommandChain(
     int SourceStartIndex,
     int SourceCount,
     int PreparedDrawStartIndex,
+    int PacketIndex,
+    ulong PreparedFrameGeneration,
+    VulkanPreparedCommandChainAuthority Authority,
     VulkanRecordedCommandInheritance Inheritance,
-    CommandRecordingDependencySignature DependencySignature,
     VulkanRecordedCommandArtifactReference WritableArtifact,
     EVulkanCommandChainWorkerEligibility WorkerEligibility)
 {
@@ -19,13 +21,19 @@ internal readonly record struct VulkanPreparedCommandChain(
     /// Verifies that the mutable lifecycle owner still represents the exact
     /// artifact lease and dependency identity frozen for this encoding job.
     /// </summary>
-    internal bool Matches(CommandChain chain)
-        => chain.Key == Key &&
+    internal bool Matches(CommandChain chain, RenderPacket packet)
+    {
+        ref readonly VulkanPreparedCommandChainKey authorityKey = ref Authority.PreparedKey;
+        ref readonly VulkanPreparedCommandChainKey chainPreparedKey =
+            ref chain.PreparedKeyReference;
+        return chain.Key == Key &&
             chain.SourceStartIndex == SourceStartIndex &&
             chain.SourceCount == SourceCount &&
-            chain.DependencySignature == DependencySignature &&
+            ReferenceEquals(chain.PacketSnapshot, packet) &&
+            chainPreparedKey.Matches(in authorityKey) &&
             chain.RecordedArtifact.Generation ==
                 WritableArtifact.ArtifactGeneration &&
             chain.RecordedArtifact.NativeBuffer.Handle ==
                 WritableArtifact.NativeBuffer.Handle;
+    }
 }

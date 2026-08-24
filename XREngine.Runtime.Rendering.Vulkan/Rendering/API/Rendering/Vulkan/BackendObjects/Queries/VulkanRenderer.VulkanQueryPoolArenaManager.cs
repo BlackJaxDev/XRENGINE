@@ -6,7 +6,7 @@ namespace XREngine.Rendering.Vulkan;
 /// Bounded renderer-owned native query-pool arenas. Query wrappers retain
 /// immutable slot ranges instead of creating or reconfiguring native pools.
 /// </summary>
-internal unsafe sealed class VulkanQueryPoolArenaManager(VulkanRenderer renderer)
+internal unsafe sealed class VulkanQueryPoolArenaManager(IVulkanQueryArenaFacility facility)
 {
     private sealed class Chunk(
         QueryPool pool,
@@ -57,7 +57,7 @@ internal unsafe sealed class VulkanQueryPoolArenaManager(VulkanRenderer renderer
 
         lock (_lock)
         {
-            if (_disposed || renderer.IsDeviceLost || !renderer.IsLogicalDeviceReady)
+            if (_disposed || facility.IsDeviceLost || !facility.IsLogicalDeviceReady)
             {
                 reason = "The Vulkan query arena is unavailable because the device is lost or shutting down.";
                 return false;
@@ -168,7 +168,7 @@ internal unsafe sealed class VulkanQueryPoolArenaManager(VulkanRenderer renderer
                     QueryPool pool = arena.Chunks[index].Pool;
                     if (pool.Handle != 0)
                     {
-                        renderer.RetireQueryPool(pool);
+                        facility.RetireQueryPool(pool);
                         _retiredPoolCount++;
                     }
                 }
@@ -193,7 +193,7 @@ internal unsafe sealed class VulkanQueryPoolArenaManager(VulkanRenderer renderer
             QueryCount = capacity,
             PipelineStatistics = key.PipelineStatistics,
         };
-        Result result = renderer.VulkanApi.CreateQueryPool(renderer.Device, ref createInfo, null, out QueryPool pool);
+        Result result = facility.CreateQueryPool(ref createInfo, out QueryPool pool);
         if (result != Result.Success)
         {
             chunk = null!;
@@ -205,7 +205,7 @@ internal unsafe sealed class VulkanQueryPoolArenaManager(VulkanRenderer renderer
         if (identity == 0u)
             identity = ++_nextPoolIdentity;
         chunk = new Chunk(pool, identity, capacity, key);
-        renderer.RegisterVulkanResource(ObjectType.QueryPool, pool.Handle, $"QueryArena.{key.QueryType}.{identity}");
+        facility.RegisterQueryPool(pool, $"QueryArena.{key.QueryType}.{identity}");
         _poolCount++;
         _capacity += capacity;
         reason = null;

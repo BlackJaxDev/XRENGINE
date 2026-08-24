@@ -158,10 +158,17 @@ namespace XREngine.Rendering
             protected abstract string? GenerateVertexShaderSource();
 
             public delegate void DelRenderRequested(Matrix4x4 worldMatrix, Matrix4x4 prevWorldMatrix, XRMaterial? materialOverride, RenderingParameters? renderOptionsOverride, uint instances, EMeshBillboardMode billboardMode, bool forceNoStereo);
+            public delegate void DelCanonicalRenderRequested(Matrix4x4 worldMatrix, Matrix4x4 prevWorldMatrix, XRMaterial? materialOverride, RenderingParameters? renderOptionsOverride, uint instances, EMeshBillboardMode billboardMode, bool forceNoStereo, AdvancedGpuSceneDrawIdentitySnapshot canonicalDrawIdentitySnapshot);
             /// <summary>
             /// Tells all renderers to render this mesh.
             /// </summary>
             public event DelRenderRequested? RenderRequested;
+            /// <summary>
+            /// Carries canonical resident draw identities to backends that can
+            /// retain the associated publication through GPU submission.
+            /// Legacy backends continue to consume <see cref="RenderRequested"/>.
+            /// </summary>
+            public event DelCanonicalRenderRequested? CanonicalRenderRequested;
 
             /// <summary>
             /// Use this to render the mesh.
@@ -169,8 +176,11 @@ namespace XREngine.Rendering
             /// <param name="modelMatrix"></param>
             /// <param name="prevModelMatrix"></param>
             /// <param name="materialOverride"></param>
-            public void Render(Matrix4x4 modelMatrix, Matrix4x4 prevModelMatrix, XRMaterial? materialOverride, RenderingParameters? renderOptionsOverride, uint instances, EMeshBillboardMode billboardMode, bool forceNoStereo)
-                => RenderRequested?.Invoke(modelMatrix, prevModelMatrix, materialOverride, renderOptionsOverride, instances, billboardMode, forceNoStereo);
+            public void Render(Matrix4x4 modelMatrix, Matrix4x4 prevModelMatrix, XRMaterial? materialOverride, RenderingParameters? renderOptionsOverride, uint instances, EMeshBillboardMode billboardMode, bool forceNoStereo, in AdvancedGpuSceneDrawIdentitySnapshot canonicalDrawIdentitySnapshot)
+            {
+                RenderRequested?.Invoke(modelMatrix, prevModelMatrix, materialOverride, renderOptionsOverride, instances, billboardMode, forceNoStereo);
+                CanonicalRenderRequested?.Invoke(modelMatrix, prevModelMatrix, materialOverride, renderOptionsOverride, instances, billboardMode, forceNoStereo, canonicalDrawIdentitySnapshot);
+            }
         }
 
         public class Version<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] T>(XRMeshRenderer renderer, Func<XRShader, bool> vertexShaderSelector, bool allowShaderPipelines) 
@@ -940,8 +950,8 @@ namespace XREngine.Rendering
         /// </summary>
         /// <param name="modelMatrix"></param>
         /// <param name="materialOverride"></param>
-        public void Render(Matrix4x4 modelMatrix, Matrix4x4 prevModelMatrix, XRMaterial? materialOverride = null, uint instances = 1u, bool forceNoStereo = false, RenderingParameters? renderOptionsOverride = null)
-            => GetVersion(forceNoStereo).Render(modelMatrix, prevModelMatrix, materialOverride, renderOptionsOverride, instances, Material?.BillboardMode ?? EMeshBillboardMode.None, forceNoStereo);
+        public void Render(Matrix4x4 modelMatrix, Matrix4x4 prevModelMatrix, XRMaterial? materialOverride = null, uint instances = 1u, bool forceNoStereo = false, RenderingParameters? renderOptionsOverride = null, AdvancedGpuSceneDrawIdentitySnapshot canonicalDrawIdentitySnapshot = default)
+            => GetVersion(forceNoStereo).Render(modelMatrix, prevModelMatrix, materialOverride, renderOptionsOverride, instances, Material?.BillboardMode ?? EMeshBillboardMode.None, forceNoStereo, canonicalDrawIdentitySnapshot);
 
         public bool TryPrepareForRendering(bool forceNoStereo = false)
         {
@@ -3274,6 +3284,42 @@ namespace XREngine.Rendering
                 }
                 return arr;
             }
+        }
+
+        /// <summary>
+        /// Resolves one render primitive without allocating the compatibility
+        /// array returned by <see cref="GetMeshes"/>.
+        /// </summary>
+        public bool TryGetMesh(
+            int primitiveIndex,
+            out XRMesh? mesh,
+            out XRMaterial? material)
+        {
+            if (primitiveIndex < 0)
+            {
+                mesh = null;
+                material = null;
+                return false;
+            }
+
+            if (Submeshes.Count == 0)
+            {
+                mesh = Mesh;
+                material = Material;
+                return primitiveIndex == 0;
+            }
+
+            if ((uint)primitiveIndex >= (uint)Submeshes.Count)
+            {
+                mesh = null;
+                material = null;
+                return false;
+            }
+
+            SubMesh submesh = Submeshes[primitiveIndex];
+            mesh = submesh.Mesh;
+            material = submesh.Material;
+            return true;
         }
     }
 }

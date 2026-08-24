@@ -74,6 +74,7 @@ public interface IRuntimeRendererHost
     /// Submits mesh-task work from GPU-written indirect arguments and a GPU-written indirect-command count.
     /// </summary>
     bool TryDrawMeshTasksIndirectCount(
+        XRRenderProgram program,
         XRDataBuffer indirectBuffer,
         XRDataBuffer countBuffer,
         uint maxDrawCount,

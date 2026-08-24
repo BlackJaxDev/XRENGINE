@@ -4,7 +4,7 @@ using XREngine.Data.Rendering;
 
 namespace XREngine.Rendering.Vulkan
 {
-    public unsafe partial class VulkanRenderer
+    internal sealed partial class VulkanFrameLoop
     {
         private RejectedDesktopFramePolicyDecision ResolveRejectedDesktopRecoveryPolicy(
             ref VulkanFrameAttempt attempt,
@@ -14,18 +14,18 @@ namespace XREngine.Rendering.Vulkan
             out bool acquireAvailable)
         {
             imageWasEverPresented =
-                IsSwapchainImageEverPresented(attempt.ImageIndex);
+                OutputRuntime.Desktop.IsImageEverPresented(attempt.ImageIndex);
             imageHasValidPresentedContent =
-                _swapchainImageHasValidPresentedContent is not null &&
+                OutputRuntime.Desktop.ImageHasValidPresentedContent is not null &&
                 attempt.ImageIndex <
-                _swapchainImageHasValidPresentedContent.Length &&
-                _swapchainImageHasValidPresentedContent[attempt.ImageIndex];
+                OutputRuntime.Desktop.ImageHasValidPresentedContent.Length &&
+                OutputRuntime.Desktop.ImageHasValidPresentedContent[attempt.ImageIndex];
             acquireAvailable =
                 attempt.AcquireOwnership ==
                     EVulkanDesktopAcquireOwnership.AcquiredUnresolved &&
                 attempt.AcquireSemaphore.Handle != 0;
             RejectedDesktopFramePolicyDecision policy =
-                ResolveRejectedDesktopFramePolicy(
+                VulkanRejectedDesktopFramePolicy.Resolve(
                     acquireAvailable,
                     _deviceLost,
                     imageWasEverPresented,
@@ -123,7 +123,7 @@ namespace XREngine.Rendering.Vulkan
         {
             if (!string.Equals(
                     rejectionStage,
-                    Phase524bInjectedDesktopRejectionStage,
+                    VulkanRejectedDesktopFramePolicy.InjectedRejectionStage,
                     StringComparison.Ordinal))
             {
                 return;
@@ -135,7 +135,7 @@ namespace XREngine.Rendering.Vulkan
             if (!rejectionContext.HasValue)
                 return;
 
-            RecordPhase524bInjectedDesktopRejection(
+            _outputRuntime.RecordPhase524bInjectedDesktopRejection(
                 rejectionContext.Value,
                 in policy,
                 presentAccepted,

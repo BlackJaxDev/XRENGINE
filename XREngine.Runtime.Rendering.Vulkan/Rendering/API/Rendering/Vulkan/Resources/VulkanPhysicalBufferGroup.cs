@@ -42,30 +42,39 @@ internal sealed class VulkanPhysicalBufferGroup
     internal void AddLogical(VulkanBufferAllocation allocation)
         => _logicalResources.Add(allocation);
 
-    public void EnsureAllocated(VulkanRenderer renderer)
+    public void EnsureAllocated(VulkanBackendObjectContext context)
     {
         if (_allocated)
             return;
 
-        renderer.AllocatePhysicalBuffer(this, ref _buffer, ref _memory);
+        (_buffer, _memory) = context.Resources.Buffers.CreateRaw(
+            context,
+            SizeInBytes,
+            Usage,
+            MemoryPropertyFlags.DeviceLocalBit,
+            owner: $"ResourcePlanner.{Key}");
         _allocated = true;
     }
 
-    public void Destroy(VulkanRenderer renderer)
+    public void Destroy(VulkanBackendObjectContext context)
     {
         if (!_allocated)
             return;
 
-        renderer.DestroyPhysicalBuffer(ref _buffer, ref _memory);
+        context.Resources.Buffers.Retire(_buffer, _memory, $"ResourcePlanner.{Key}");
+        _buffer = default;
+        _memory = default;
         _allocated = false;
     }
 
-    public void DestroyImmediate(VulkanRenderer renderer)
+    public void DestroyImmediate(VulkanBackendObjectContext context)
     {
         if (!_allocated)
             return;
 
-        renderer.DestroyPhysicalBufferImmediate(ref _buffer, ref _memory);
+        context.Resources.Buffers.Destroy(context, _buffer, _memory, $"ResourcePlanner.{Key}");
+        _buffer = default;
+        _memory = default;
         _allocated = false;
     }
 }

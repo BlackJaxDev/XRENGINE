@@ -98,7 +98,7 @@ public sealed class VulkanCoreHardeningPhase524Tests
     [Test]
     public void PendingImageAccessIndex_UsesLatestStateAcrossSubresources()
     {
-        VulkanRenderer.VulkanCommandBufferImageAccessIndex index = new();
+        VulkanCommandBufferImageAccessIndex index = new();
         const ulong imageHandle = 0x1234UL;
         ImageSubresourceRange bothLayers = new()
         {
@@ -113,22 +113,22 @@ public sealed class VulkanCoreHardeningPhase524Tests
             BaseArrayLayer = 1,
             LayerCount = 1,
         };
-        VulkanRenderer.VulkanImageAccessState sampled = VulkanRenderer.ResolveVulkanImageAccessState(
+        VulkanImageAccessState sampled = VulkanCommandSynchronizationState.ResolveVulkanImageAccessState(
             ImageLayout.ShaderReadOnlyOptimal,
             ImageAspectFlags.ColorBit,
             serial: 10);
-        VulkanRenderer.VulkanImageAccessState storage = VulkanRenderer.ResolveVulkanImageAccessState(
+        VulkanImageAccessState storage = VulkanCommandSynchronizationState.ResolveVulkanImageAccessState(
             ImageLayout.General,
             ImageAspectFlags.ColorBit,
             serial: 20);
 
         index.Record(imageHandle, bothLayers, sampled);
-        index.TryGet(imageHandle, bothLayers, out VulkanRenderer.VulkanImageAccessState initial).ShouldBeTrue();
+        index.TryGet(imageHandle, bothLayers, out VulkanImageAccessState initial).ShouldBeTrue();
         initial.Layout.ShouldBe(ImageLayout.ShaderReadOnlyOptimal);
         initial.Serial.ShouldBe(10UL);
 
         index.Record(imageHandle, secondLayer, storage);
-        index.TryGet(imageHandle, secondLayer, out VulkanRenderer.VulkanImageAccessState latest).ShouldBeTrue();
+        index.TryGet(imageHandle, secondLayer, out VulkanImageAccessState latest).ShouldBeTrue();
         latest.Layout.ShouldBe(ImageLayout.General);
         latest.Serial.ShouldBe(20UL);
         index.TryGet(imageHandle, bothLayers, out _).ShouldBeFalse();
@@ -138,7 +138,7 @@ public sealed class VulkanCoreHardeningPhase524Tests
     [Test]
     public void PendingImageAccessIndex_RequiresEveryRequestedAspect()
     {
-        VulkanRenderer.VulkanCommandBufferImageAccessIndex index = new();
+        VulkanCommandBufferImageAccessIndex index = new();
         const ulong imageHandle = 0x5678UL;
         ImageSubresourceRange depthOnly = new()
         {
@@ -152,14 +152,14 @@ public sealed class VulkanCoreHardeningPhase524Tests
         {
             AspectMask = ImageAspectFlags.DepthBit | ImageAspectFlags.StencilBit,
         };
-        VulkanRenderer.VulkanImageAccessState depthRead = VulkanRenderer.ResolveVulkanImageAccessState(
+        VulkanImageAccessState depthRead = VulkanCommandSynchronizationState.ResolveVulkanImageAccessState(
             ImageLayout.DepthStencilReadOnlyOptimal,
             ImageAspectFlags.DepthBit,
             serial: 30);
 
         index.Record(imageHandle, depthOnly, depthRead);
 
-        index.TryGet(imageHandle, depthOnly, out VulkanRenderer.VulkanImageAccessState found).ShouldBeTrue();
+        index.TryGet(imageHandle, depthOnly, out VulkanImageAccessState found).ShouldBeTrue();
         found.Layout.ShouldBe(ImageLayout.DepthStencilReadOnlyOptimal);
         index.TryGet(imageHandle, depthStencil, out _).ShouldBeFalse();
     }
@@ -167,7 +167,7 @@ public sealed class VulkanCoreHardeningPhase524Tests
     [Test]
     public void PendingImageAccessIndex_RepeatedCurrentStateAccessDoesNotAllocate()
     {
-        VulkanRenderer.VulkanCommandBufferImageAccessIndex index = new();
+        VulkanCommandBufferImageAccessIndex index = new();
         const ulong imageHandle = 0x9ABCUL;
         ImageSubresourceRange range = new()
         {
@@ -177,7 +177,7 @@ public sealed class VulkanCoreHardeningPhase524Tests
             BaseArrayLayer = 0,
             LayerCount = 1,
         };
-        VulkanRenderer.VulkanImageAccessState sampled = VulkanRenderer.ResolveVulkanImageAccessState(
+        VulkanImageAccessState sampled = VulkanCommandSynchronizationState.ResolveVulkanImageAccessState(
             ImageLayout.ShaderReadOnlyOptimal,
             ImageAspectFlags.ColorBit,
             serial: 1);

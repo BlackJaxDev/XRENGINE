@@ -1189,6 +1189,7 @@ namespace XREngine.Components.Scene.Mesh
                 // GPU indirect dispatch would replace it with a model-matrix-based shader, breaking rendering.
                 ExcludeFromGpuIndirect = true,
                 BlendModeAllDrawBuffers = BlendMode.Disabled(),
+                MissingTextureFallback = EMissingTextureFallback.Black,
             };
 
             _material = new XRMaterial(

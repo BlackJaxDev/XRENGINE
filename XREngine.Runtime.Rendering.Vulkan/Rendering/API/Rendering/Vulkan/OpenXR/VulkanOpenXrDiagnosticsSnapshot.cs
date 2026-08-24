@@ -7,7 +7,7 @@ namespace XREngine.Rendering.Vulkan;
 /// </summary>
 internal readonly record struct VulkanOpenXrDiagnosticsSnapshot(
     int SwapchainImageViewCount,
-    int PrimaryCommandBufferVariantCount,
+    int PrimaryPrimaryCommandArtifactOwnerCount,
     int ResourcePlannerStateCount,
     int ActiveExternalSwapchainScopeCount,
     int SynchronousUploadBlockCount,

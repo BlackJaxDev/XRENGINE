@@ -1,6 +1,8 @@
 # Vulkan Renderer
 
-This document describes how the Vulkan renderer is initialized, how it manages the swapchain and synchronization primitives, and how the per-frame render loop works including command buffer recording and presentation.
+This document describes target-first Vulkan initialization, target output and
+synchronization ownership, and the common per-frame acquire, record, submit,
+and completion flow.
 
 ## Table of Contents
 
@@ -18,7 +20,7 @@ This document describes how the Vulkan renderer is initialized, how it manages t
   - [Swapchain & Dependent Objects](#swapchain--dependent-objects)
   - [Synchronization Objects](#synchronization-objects)
 - [The Render Loop](#the-render-loop)
-  - [WindowRenderCallback() — Frame-Level Flow](#windowrendercallback--frame-level-flow)
+  - [RenderFrameCallback() — Frame-Level Flow](#renderframecallback--frame-level-flow)
   - [Command Buffer Recording](#command-buffer-recording)
   - [The Render Graph](#the-render-graph)
   - [Frame Operations (FrameOps)](#frame-operations-frameops)
@@ -54,12 +56,20 @@ Unlike the OpenGL renderer where swap is automatic, Vulkan explicitly manages
 the complete acquire, record, submit, and present lifecycle.
 
 ```csharp
-// XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Bootstrap/VulkanRenderer.Initialization.cs
-public unsafe partial class VulkanRenderer(XRWindow window, bool shouldLinkWindow = true)
-    : AbstractRenderer<Vk>(window, shouldLinkWindow)
+// XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Bootstrap/VulkanRenderer.cs
+public sealed class VulkanRenderer : AbstractRenderer<Vk>
+{
+    public VulkanRenderer(RendererHostContext hostContext)
+        : base(hostContext)
+    {
+        // Select the immutable target driver before Vulkan instance creation.
+    }
+}
 ```
 
-The renderer targets **Vulkan 1.3** (instance) with a **1.1 minimum** API version for the swapchain surface, and uses double-buffered frames in flight (`MAX_FRAMES_IN_FLIGHT = 2`).
+The renderer targets **Vulkan 1.3** with a **1.1 minimum** device API. Desktop
+WSI uses two frame slots; fixed-output targets use the configured
+`RenderTargetOutputProperties.FrameSlotCount`.
 
 ---
 
@@ -108,7 +118,7 @@ depend on the focused owner rather than ambient facade state.
 | --- | --- |
 | `VulkanDeviceContext` | Physical/logical device identity, queues, enabled capabilities, extension commands, and the per-device backend-object context. |
 | `VulkanDesktopFrameCoordinator` | Exactly-once desktop attempt lifecycle and phase ordering. |
-| `VulkanCommandScheduler` / `VulkanCommandRecorder` | Schedule/cache decisions and native command emission from explicit recording contexts. |
+| `VulkanFrameOperationScheduler` / `VulkanCommandRecorder` | Frame-operation ordering and native command emission from explicit recording contexts; command-chain cache generations remain with `VulkanCommandChainState`. |
 | `VulkanRenderGraphRuntime` | Versioned immutable render-graph and barrier plans. |
 | `VulkanResourceLifetimeTracker` / `VulkanResourceRetirementQueue` | Resource-use publication and deferred destruction. |
 | `VulkanDescriptorManager` / `VulkanPipelineManager` | Device-lifetime descriptor and graphics/compute pipeline caches. |
@@ -135,25 +145,26 @@ depend on the focused owner rather than ambient facade state.
 
 ### Initialize() Sequence
 
-Called from `XRWindow.BeginTick()` when the window first has viewports and a world:
+Desktop initialization is triggered by `XRWindow.BeginTick()`. Presentationless,
+component, headless-WSI, and OpenXR hosts initialize through their own
+composition roots without fabricating a desktop window. All modes use the same
+ordered core:
 
 ```csharp
 public override void Initialize()
 {
-    if (Window?.VkSurface is null)
-        throw new Exception("Windowing platform doesn't support Vulkan.");
-
-    CreateInstance();              // 1. Vulkan instance (1.3)
-    SetupDebugMessenger();         // 2. Validation layers (opt-in via XRE_VULKAN_VALIDATION)
-    CreateSurface();               // 3. KHR surface from window
-    PickPhysicalDevice();          // 4. Select GPU
-    CreateLogicalDevice();         // 5. Queues + features + extensions
-    CreateCommandPool();           // 6. Per-thread command pool
-    CreateDescriptorSetLayout();   // 7. Global UBO layout
-    CreateAllSwapChainObjects();   // 8. Swapchain + all dependent resources
-    CreateSyncObjects();           // 9. Semaphores + fences
+    CreateInstance();                 // Target-required instance extensions
+    SetupDebugMessenger();            // Optional validation diagnostics
+    CreateTargetInstanceResources();  // Surface only for desktop/headless WSI
+    PickPhysicalDevice();             // Target queue/extension requirements
+    CreateLogicalDevice();            // Common features plus target extensions
+    CreateCommonDeviceResources();     // Allocator, commands, descriptors, timing
+    InitializeFinalOutput();           // Swapchain, image ring, or XR adapter
 }
 ```
+
+An initialization stage is published after each ownership boundary. Any failure
+uses the normal cleanup path to unwind only reached stages in reverse order.
 
 ### Instance Creation
 
@@ -161,7 +172,9 @@ From `Bootstrap/VulkanRenderer.Instance.cs`:
 
 - Creates a Vulkan 1.3 instance with application name "XRENGINE"
 - Enumerates available instance extensions via `vkEnumerateInstanceExtensionProperties`
-- Adds required extensions from the Silk.NET window surface (`VK_KHR_surface`, platform-specific surface extension)
+- Adds only extensions required by the selected target driver: desktop
+  platform surface extensions, `VK_EXT_headless_surface`, or none for
+  presentationless/component and OpenXR device-core initialization
 - When validation layers are enabled, adds `VK_EXT_debug_utils` for validation layer reporting
 
 ### Validation & Debug Messenger
@@ -174,16 +187,10 @@ From `Validation.cs`:
 
 ### Surface Creation
 
-From `Bootstrap/VulkanRenderer.Surface.cs`:
-
-```csharp
-private void CreateSurface()
-{
-    surface = Window!.VkSurface!.Create<AllocationCallbacks>(instance.ToHandle(), null).ToSurface();
-}
-```
-
-Uses Silk.NET's built-in VkSurface support from the GLFW window.
+Surface creation is a target-driver operation. Desktop WSI uses the surface
+provided by the window platform; headless WSI creates an
+`VK_EXT_headless_surface` after the extension is enabled. Presentationless,
+component, and OpenXR modes create no `VkSurfaceKHR`.
 
 ### Physical Device Selection
 
@@ -191,8 +198,10 @@ From `PhysicalDevice.cs`:
 
 - Enumerates all physical devices via `vkEnumeratePhysicalDevices`
 - Scores each device for suitability (discrete GPU preferred over integrated)
-- Checks for required extension support (`VK_KHR_swapchain`)
-- Verifies queue family support (graphics, present, compute, transfer)
+- Checks common device requirements plus target extensions; only WSI targets
+  require `VK_KHR_swapchain`
+- Verifies graphics, compute, and transfer queue support, with a present queue
+  required only by desktop and headless WSI
 - Probes for ray tracing capabilities if the extension is available
 - Sets engine-wide capability flags (`HasNvRayTracing`, `HasVulkanRayTracing`, `HasVulkanMultiView`, etc.)
 
@@ -307,7 +316,9 @@ The command pool is associated with the graphics queue family. The `TransientBit
 
 ### Swapchain & Dependent Objects
 
-`CreateAllSwapChainObjects()` creates the entire swapchain dependency chain in order:
+Swapchains are final-output resources owned only by desktop and headless-WSI
+target drivers. Their target initialization creates the dependency chain in
+order:
 
 ```
 CreateAllSwapChainObjects()
@@ -323,6 +334,11 @@ CreateAllSwapChainObjects()
 ```
 
 In dynamic-rendering mode, `CreateRenderPass()` leaves the swapchain render-pass handles empty and `CreateFramebuffers()` creates only placeholder slots for command-buffer ownership. In legacy mode, those calls create the retained Vulkan `VkRenderPass` and `VkFramebuffer` objects used by the fallback command-buffer branch.
+
+Presentationless/component targets instead create a fixed color/depth image
+ring and per-slot completion/readback resources through the production
+allocator. OpenXR leases runtime-owned images and does not create a Vulkan WSI
+swapchain.
 
 ### Synchronization Objects
 
@@ -346,28 +362,31 @@ reinterpret zeroed arrays as completed submissions.
 
 ## The Render Loop
 
-### WindowRenderCallback() — Frame-Level Flow
+### RenderFrameCallback() — Frame-Level Flow
 
-`WindowRenderCallback` delegates to `VulkanDesktopFrameCoordinator`. The
-coordinator captures immutable frame identity, publishes one coherent desktop
-activity state, carries attempt-local state in stack-only
-`VulkanFrameAttempt`, and invokes the focused phase operations documented in
-`Frame/README.md`.
+Every target acquires or supplies a `VulkanFrameTargetLease`. The immutable
+lease carries target generation, slot/image identity, output images and views,
+extent and formats, initial/final layouts, submission dependencies, and the
+completion disposition. Common render-pipeline code consumes the portable
+`RenderFrameOutputDescription`; only the Vulkan leaf module sees native lease
+handles.
 
 ```
-WindowRenderCallback(double delta)
-│
-├─ TryEnterDesktopFrameAttempt
-├─ RunDesktopFramePreflight
-├─ PrepareDesktopFrameSlot
-├─ AcquireDesktopSwapchainImage
-├─ PrepareAcquiredDesktopImage
-├─ RecordDesktopFrame
-├─ SubmitDesktopFrame
-├─ PresentSubmittedDesktopFrame
-├─ catch: SettleDesktopAcquireAfterUnexpectedFailure
-└─ finally: PublishDesktopFrameTelemetry → ExitDesktopFrameAttempt
+Admit frame
+  -> acquire/freeze target lease
+  -> publish portable output description
+  -> run viewport and production render graph
+  -> record primary/secondary command work
+  -> submit through the tracked submission gateway
+  -> invoke target completion (present, OpenXR release, or no-op completion)
+  -> publish telemetry and retire completed generations
 ```
+
+Desktop WSI still delegates its attempt lifecycle to
+`VulkanDesktopFrameCoordinator`; that coordinator freezes the accepted
+swapchain acquire into the common lease before recording/submission. The target
+driver retains resize, out-of-date, surface-loss, and presentation settlement.
+Presentationless execution has no acquire/present branch in its executed path.
 
 Acquire, upload, image, timeline, and slot obligations are explicit typed
 states. `SuboptimalKhr` is an acquiring result and continues through settlement.
@@ -437,6 +456,7 @@ recording. `Vulkan.CommandRecording.Mode` controls the policy:
 | `Auto` (default) | Uses the validated hybrid primary/secondary path for desktop targets and retains the safety quarantines below. |
 | `Inline` | Records frame operations directly into the primary command buffer. Use this only for correctness or performance bisection. |
 | `Hybrid` | Explicitly requests the supported hybrid path. Safety-quarantined targets still remain inline. |
+| `FreshSerial` | Records every command artifact serially from the current immutable packet plan, bypassing primary and secondary reuse while retaining the same scopes, counters, and miss diagnostics for deterministic correctness/performance comparison. |
 
 `XRE_VULKAN_COMMAND_CHAINS=0/1` is a process-level diagnostic override. `0`
 forces inline recording and `1` forces the hybrid request. The explicit `1`
@@ -451,11 +471,18 @@ Additional diagnostic flags are:
 |---|---|
 | `XRE_VULKAN_COMMAND_CHAINS_SINGLE_THREAD=1` | Forces deterministic single-thread chain processing for bisection. |
 | `XRE_VULKAN_DISABLE_PARALLEL_CHAIN_RECORDING=1` | Keeps command-chain lowering enabled while disabling worker dispatch. |
+| `XRE_VULKAN_COMMAND_CHAIN_WORKER_COUNT=0..8` | Startup-only persistent worker capacity. Auto mode caps the domain at four workers and dispatches graphics packets only when at least 32 eligible operations can amortize the handoff; smaller packets stay serial. Any explicit `1..8` value bypasses that cost heuristic for controlled comparison, while `0` forces serial recording. The single-thread and disable flags take precedence. |
 | `XRE_VULKAN_COMMAND_CHAIN_VALIDATE=1` | Enables expensive schedule, view-specialization, queue-schedule, and signature checks. |
 | `XRE_VULKAN_COMMAND_CHAIN_TRACE=1` | Emits throttled first-dirty-reason and schedule diagnostics. |
 | `XRE_VULKAN_COMMAND_CHAIN_MESH_SECONDARY_NOOP=1` | Diagnostic mode that records secondary mesh chains without draw payloads. |
 | `XRE_VULKAN_COMMAND_CHAIN_BENCHMARK_FORCE_RERECORD=1` | Benchmark-only mode that forces every scheduled mesh-chain secondary to rerecord each frame. Use only for controlled serial/parallel dirty-recording comparisons. |
 | `XRE_VULKAN_COMMAND_CHAIN_MULTI_QUEUE=1` | Builds and validates queue-schedule sidecar metadata; execution still falls back to the graphics queue. |
+
+`XRE_VULKAN_RESIDENT_TEMPLATE_DEVICE_LOSS_INJECT=1` is a destructive,
+one-shot validation hook for the resident draw-template lifetime contract. It
+waits until at least one resident template exists, marks the Vulkan device
+terminally lost, and requires renderer/window recreation. Use it only in a
+named isolated editor session; it is not a recovery or fallback mode.
 
 Packet lowering is deterministic and sequential. The obsolete
 `XRE_VULKAN_PARALLEL_PACKET_BUILD` compatibility flag is no longer recognized;
@@ -1009,36 +1036,82 @@ and render-loop ownership remains with `XRWindow`.
 production `VulkanRenderer`; it owns no Vulkan resources. Explicit callbacks
 receive `VulkanRenderFrameTarget` images/views, extent, generation, slot, and
 layout requirements. Bounded post-measurement readback and SHA-256 identity
-are presentationless-only. Phase 4 threads the new lease value through the
-normal production frame loop; Phase 5 binds the complete render graph to it.
+are presentationless-only.
+
+Raw explicit callbacks and ordinary production rendering share the same
+lease-backed submission gateway. `SubmitProductionFrame` acquires a target
+lease, publishes a backend-neutral `RenderFrameOutputDescription`, runs normal
+viewport/pipeline code, records the queued graph through the production primary
+command runtime, submits with lease-provided synchronization, and invokes the
+target completion or abort policy. Desktop WSI freezes its acquired swapchain
+state into the same lease before common submission.
+
+The portable output description contains execution mode, dimensions, layers,
+formats, samples, target generation, slot/view identity, and host capabilities.
+It never contains Vulkan images, views, semaphores, fences, or other native
+handles. `XRRenderPipelineInstance` uses it for output selection and resource
+generation identity, including color/depth formats, so a future browser canvas
+backend can publish the same generic state while retaining WebGL2/WebGPU and
+JavaScript handles inside its leaf module.
+
+#### Presentationless output contract
+
+`RenderTargetOutputProperties` defines the immutable fixed-output generation:
+width, height, layer count, color and depth formats, color space, sample count,
+and frame-slot count. The Vulkan leaf module resolves the portable
+`EPixelInternalFormat` values to supported `VkFormat` values; native images and
+views never cross into the portable renderer contract.
+
+Each acquired presentationless slot starts in `VK_IMAGE_LAYOUT_UNDEFINED` on
+first use and in `VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL` after reuse. The frame
+lease requires `VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL` as the final color layout
+so an explicitly requested post-measurement hash or bounded readback can use
+the completed slot. There is no `VK_IMAGE_LAYOUT_PRESENT_SRC_KHR` transition.
+Depth layout is carried independently by the lease and resource tracker.
+
+Readback staging is allocated with the target generation, not per frame.
+Ordinary submission performs no GPU-to-CPU copy or current-frame wait. Hash and
+bounded readback operations are explicit, presentationless-only correctness
+operations performed after slot completion and outside measured intervals.
+
+#### Headless WSI capability contract
+
+Headless WSI requires `VK_KHR_surface` and `VK_EXT_headless_surface` at instance
+scope, `VK_KHR_swapchain` at device scope, a graphics/present queue, and a
+surface supporting the selected format, image usage, layer count, extent, and
+FIFO present mode. Its real swapchain acquire/present sequence is recorded as
+headless no-op presentation and is not desktop compositor evidence.
+
+If any requirement is unavailable, construction reports the missing capability
+and the requested `HeadlessWsi` mode remains unsupported. The renderer does not
+fall back silently. A caller may separately request `Presentationless`, which
+does not require surface or swapchain extensions.
 
 ---
 
-## CleanUp()
+## Cleanup And Partial Initialization
 
-Cleanup runs in reverse initialization order:
+Initialization publishes an explicit stage after every ownership boundary.
+Failure invokes the same teardown routine, which visits only reached stages in
+reverse order and preserves cleanup failures alongside the original exception.
 
-```csharp
-public override void CleanUp()
-{
-    DeviceWaitIdle();                       // Ensure GPU is idle
+Normal cleanup is idempotent and follows this order:
 
-    DestroyAutoExposureComputeResources();  // Compute resources
-    DisposeImGuiResources();                // ImGui pipeline, font atlas, buffers
-    DestroyAllSwapChainObjects();           // Swapchain + all dependents
-    DestroyDescriptorSetLayout();           // Global descriptor layout
-    _resourceAllocator.DestroyPhysicalImages(this);
-    _resourceAllocator.DestroyPhysicalBuffers(this);
-    _stagingManager.Destroy(this);          // Staging buffer pool
+1. Publish quiescing, reject new frame admission, drain active frame owners,
+   and ask the target driver to reject new acquisition.
+2. Establish GPU completion when requested, then retire old target generations.
+3. Cancel queued work and drain screenshot/statistics readbacks before staging.
+4. Destroy graph resources, arenas, synchronization objects, and target final
+   output while the logical device is alive.
+5. Destroy command pools, descriptor/pipeline state, allocator blocks, and the
+   logical device.
+6. Detach managed output services, destroy target instance resources (including
+   a target-owned surface), and finally destroy the Vulkan instance.
 
-    DestroySyncObjects();                   // Semaphores + fences
-    DestroyCommandPool();                   // Command pool
-    DestroyLogicalDevice();                 // Logical device + queues
-    DestroyValidationLayers();              // Debug messenger
-    DestroySurface();                       // KHR surface
-    DestroyInstance();                      // Vulkan instance
-}
-```
+After device loss, the same sequence enables forced retirement rather than
+waiting for completion that can no longer be proven. Cleanup continues through
+independent steps and reports collected failures as an aggregate, preventing an
+early teardown error from leaking later renderer-owned resources.
 
 ---
 

@@ -187,26 +187,23 @@ public sealed class XRMeshSerializationTests
             IndentYaml(payloadYaml, 2));
     }
 
-    private static unsafe byte[] CreateLegacyArrayMeshPayload(XRMesh mesh)
+    private static byte[] CreateLegacyArrayMeshPayload(XRMesh mesh)
     {
         const byte runtimeCookedCustomObjectMarker = 25;
         byte[] buffer = new byte[64 * 1024];
 
-        fixed (byte* ptr = buffer)
-        {
-            using RuntimeCookedBinaryWriter writer = new(ptr, buffer.Length);
-            writer.Write(runtimeCookedCustomObjectMarker);
-            writer.Write(typeof(XRMesh).AssemblyQualifiedName ?? typeof(XRMesh).FullName ?? nameof(XRMesh));
+        using RuntimeCookedBinaryWriter writer = new(buffer);
+        writer.Write(runtimeCookedCustomObjectMarker);
+        writer.Write(typeof(XRMesh).AssemblyQualifiedName ?? typeof(XRMesh).FullName ?? nameof(XRMesh));
 
-            writer.WriteValue(mesh.ID);
-            writer.WriteValue(mesh.Name);
-            writer.WriteValue(mesh.FilePath);
-            writer.WriteValue(mesh.OriginalPath);
-            writer.WriteValue(mesh.OriginalLastWriteTimeUtc);
+        writer.WriteValue(mesh.ID);
+        writer.WriteValue(mesh.Name);
+        writer.WriteValue(mesh.FilePath);
+        writer.WriteValue(mesh.OriginalPath);
+        writer.WriteValue(mesh.OriginalLastWriteTimeUtc);
 
-            WriteLegacyArrayMeshBody(writer, mesh);
-            return buffer[..(int)writer.Position];
-        }
+        WriteLegacyArrayMeshBody(writer, mesh);
+        return buffer[..(int)writer.Position];
     }
 
     private static void WriteLegacyArrayMeshBody(RuntimeCookedBinaryWriter writer, XRMesh mesh)

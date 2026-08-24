@@ -25,7 +25,7 @@ public sealed class DebugOpaqueRenderPipeline : RenderPipeline
 
     private readonly NearToFarRenderCommandSorter _nearToFarSorter = new();
 
-    private EMeshSubmissionStrategy _meshSubmissionStrategy = RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy();
+    private EMeshSubmissionStrategy _meshSubmissionStrategy = RuntimeEngine.Rendering.ResolveRequestedMeshSubmissionStrategy();
 
     /// <summary>
     /// When true, the pipeline dispatches opaque passes using GPU-driven rendering.
@@ -34,7 +34,7 @@ public sealed class DebugOpaqueRenderPipeline : RenderPipeline
     {
         get => MeshSubmissionStrategy != EMeshSubmissionStrategy.CpuDirect;
         set => MeshSubmissionStrategy = value
-            ? RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy(true)
+            ? RuntimeEngine.Rendering.ResolveRequestedMeshSubmissionStrategy(true)
             : EMeshSubmissionStrategy.CpuDirect;
     }
 

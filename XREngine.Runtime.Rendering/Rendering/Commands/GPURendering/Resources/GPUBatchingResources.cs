@@ -63,6 +63,7 @@ namespace XREngine.Rendering.Commands
         public const int BuildBatchesStats = 13;
         public const int BuildBatchesSortScratch = 14;
         public const int BuildBatchesLodTransitions = 15;
+        public const int BuildBatchesDrawMetadata = 16;
 
         // Compute GPURenderMaterialScatter.comp bindings
         public const int MaterialScatterInputCommands = 0;
@@ -75,6 +76,11 @@ namespace XREngine.Rendering.Commands
         public const int MaterialScatterOverflow = 7;
         public const int MaterialScatterLodTransitions = 8;
         public const int MaterialScatterStats = 9;
+        public const int MaterialScatterMeshletRanges = 11;
+        // Kept separate from the ordinary indirect overflow flag.  The meshlet
+        // expansion result determines whether this scatter must retain every row
+        // in the traditional stream for the current submission.
+        public const int MaterialScatterMeshletExpansionOverflow = 12;
 
         // Compute GPURenderBuildActiveMaterialBuckets.comp bindings
         public const int ActiveMaterialBucketDrawCounts = 0;

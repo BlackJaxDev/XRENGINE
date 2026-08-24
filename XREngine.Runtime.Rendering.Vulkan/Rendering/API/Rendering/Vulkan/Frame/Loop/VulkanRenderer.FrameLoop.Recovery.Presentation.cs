@@ -4,7 +4,7 @@ using Silk.NET.Vulkan;
 
 namespace XREngine.Rendering.Vulkan
 {
-    public unsafe partial class VulkanRenderer
+    internal sealed partial class VulkanFrameLoop
     {
         private bool PresentRejectedDesktopImageAndFinalize(
             ref VulkanFrameAttempt attempt,
@@ -18,24 +18,22 @@ namespace XREngine.Rendering.Vulkan
             int clearedLayoutCount,
             bool recoveryFrameWritten)
         {
-            VulkanDesktopPresentDispatchOutcome dispatch =
-                DesktopWsiTarget.PresentFrameTarget(
-                    this,
-                    ref attempt,
-                    "Vulkan.FrameLifecycle.DirtyAbortQueuePresent",
-                    $"presenting rejected Vulkan frame {attempt.FrameNumber} ({rejectionStage})");
+            VulkanDesktopPresentDispatchOutcome dispatch = QueueDesktopPresentCore(
+                ref attempt,
+                "Vulkan.FrameLifecycle.DirtyAbortQueuePresent",
+                $"presenting rejected Vulkan frame {attempt.FrameNumber} ({rejectionStage})");
             Result presentResult = dispatch.Result;
             if (!dispatch.Dispatched &&
                 presentResult != Result.ErrorDeviceLost)
             {
+                ResolveDesktopAcquireBySwapchainRecreation(
+                    ref attempt,
+                    "Rejected-frame presentation dispatch failed before vkQueuePresent");
                 RecordDesktopPresentBookkeeping(
                     ref attempt,
                     presentResult,
                     presentAccepted: false,
                     hasValidFrameContent: false);
-                ResolveDesktopAcquireBySwapchainRecreation(
-                    ref attempt,
-                    "Rejected-frame presentation dispatch failed before vkQueuePresent");
                 CompleteDesktopFrameSlot(ref attempt);
                 attempt.AdvanceTo(EDesktopFramePhase.Recovered);
                 attempt.Flow = EDesktopFrameFlow.Completed;
@@ -46,13 +44,6 @@ namespace XREngine.Rendering.Vulkan
 
             bool accepted =
                 presentResult is Result.Success or Result.SuboptimalKhr;
-            RecordDesktopPresentBookkeeping(
-                ref attempt,
-                presentResult,
-                accepted,
-                hasValidFrameContent:
-                    imageHasValidPresentedContent ||
-                    recoveryFrameWritten);
             if (presentResult == Result.ErrorDeviceLost)
             {
                 attempt.TransitionAcquireOwnership(
@@ -65,6 +56,13 @@ namespace XREngine.Rendering.Vulkan
 
             attempt.TransitionAcquireOwnership(
                 EVulkanDesktopAcquireOwnership.ResolvedByPresentation);
+            RecordDesktopPresentBookkeeping(
+                ref attempt,
+                presentResult,
+                accepted,
+                hasValidFrameContent:
+                    imageHasValidPresentedContent ||
+                    recoveryFrameWritten);
             Exception? policyFailure = ApplyDesktopPresentPolicy(
                 ref attempt,
                 presentResult,

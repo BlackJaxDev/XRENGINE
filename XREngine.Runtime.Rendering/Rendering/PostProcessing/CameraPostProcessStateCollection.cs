@@ -32,7 +32,8 @@ public sealed class CameraPostProcessStateCollection
         ArgumentNullException.ThrowIfNull(pipeline);
 
         Dictionary<Guid, PipelinePostProcessState> published = Volatile.Read(ref _publishedPipelines);
-        if (published.TryGetValue(pipeline.ID, out PipelinePostProcessState? publishedState))
+        if (published.TryGetValue(pipeline.ID, out PipelinePostProcessState? publishedState) &&
+            publishedState.IsBoundTo(pipeline))
             return publishedState;
 
         lock (_pipelinesSync)
@@ -46,8 +47,9 @@ public sealed class CameraPostProcessStateCollection
                 return state;
             }
 
-            // Only rebind if this state is not already for this pipeline ID (or schema changed).
-            if (state.PipelineId != pipeline.ID)
+            // Command-chain rebuilds replace the schema without replacing the pipeline ID.
+            // Rebind so camera values remain attached to the descriptors that will render.
+            if (!state.IsBoundTo(pipeline))
                 state.BindToPipeline(pipeline);
 
             PublishPipelinesNoLock();
@@ -103,8 +105,11 @@ public sealed class PipelinePostProcessState
     public Guid PipelineId { get; private set; }
     public string PipelineName { get; private set; } = string.Empty;
 
+    [NonSerialized]
+    private RenderPipelinePostProcessSchema _schema = RenderPipelinePostProcessSchema.Empty;
+
     [YamlIgnore]
-    public RenderPipelinePostProcessSchema Schema { get; private set; } = RenderPipelinePostProcessSchema.Empty;
+    public RenderPipelinePostProcessSchema Schema => Volatile.Read(ref _schema);
 
     public IReadOnlyDictionary<string, PostProcessStageState> Stages => _stages;
 
@@ -114,12 +119,17 @@ public sealed class PipelinePostProcessState
 
         lock (_stagesSync)
         {
+            RenderPipelinePostProcessSchema schema = pipeline.PostProcessSchema ?? RenderPipelinePostProcessSchema.Empty;
             PipelineId = pipeline.ID;
             PipelineName = pipeline.DebugName;
-            Schema = pipeline.PostProcessSchema ?? RenderPipelinePostProcessSchema.Empty;
-            SynchronizeStages();
+            SynchronizeStages(schema);
+            Volatile.Write(ref _schema, schema);
         }
     }
+
+    internal bool IsBoundTo(RenderPipeline pipeline)
+        => PipelineId == pipeline.ID &&
+           ReferenceEquals(Schema, pipeline.PostProcessSchema ?? RenderPipelinePostProcessSchema.Empty);
 
     public bool TryGetStage(string stageKey, out PostProcessStageState? state)
     {
@@ -162,15 +172,15 @@ public sealed class PipelinePostProcessState
         }
     }
 
-    private void SynchronizeStages()
+    private void SynchronizeStages(RenderPipelinePostProcessSchema schema)
     {
-        if (Schema.IsEmpty)
+        if (schema.IsEmpty)
         {
             _stages.Clear();
             return;
         }
 
-        foreach (var (key, descriptor) in Schema.StagesByKey)
+        foreach (var (key, descriptor) in schema.StagesByKey)
         {
             if (!_stages.TryGetValue(key, out var stage))
             {
@@ -182,7 +192,7 @@ public sealed class PipelinePostProcessState
         }
 
         var obsolete = _stages.Keys
-            .Where(key => !Schema.StagesByKey.ContainsKey(key))
+            .Where(key => !schema.StagesByKey.ContainsKey(key))
             .ToList();
         foreach (var key in obsolete)
             _stages.Remove(key);
@@ -191,6 +201,7 @@ public sealed class PipelinePostProcessState
     [OnDeserialized]
     private void OnDeserialized(StreamingContext context)
     {
+        _schema = RenderPipelinePostProcessSchema.Empty;
         if (_stages is null)
             _stages = new(StringComparer.OrdinalIgnoreCase);
         else if (_stages.Comparer != StringComparer.OrdinalIgnoreCase)

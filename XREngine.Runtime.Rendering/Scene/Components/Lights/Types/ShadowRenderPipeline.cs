@@ -41,6 +41,7 @@ namespace XREngine.Components.Lights
         protected override ViewportRenderCommandContainer GenerateCommandChain()
         {
             ViewportRenderCommandContainer c = [];
+            EMeshSubmissionStrategy meshSubmissionStrategy = RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy();
 
             c.Add<VPRC_SetShadowClears>();
 
@@ -54,11 +55,11 @@ namespace XREngine.Components.Lights
                 using (c.AddUsing<VPRC_BindOutputFBO>(t => t.SetOptions(write: true, clearColor: false, clearDepth: false, clearStencil: false)))
                 {
                     c.Add<VPRC_ClearShadowOutputFBO>();
-                    c.Add<VPRC_RenderMeshesPass>().RenderPass = (int)EDefaultRenderPass.PreRender;
-                    c.Add<VPRC_RenderMeshesPass>().RenderPass = (int)EDefaultRenderPass.OpaqueDeferred;
-                    c.Add<VPRC_RenderMeshesPass>().RenderPass = (int)EDefaultRenderPass.OpaqueForward;
-                    c.Add<VPRC_RenderMeshesPass>().RenderPass = (int)EDefaultRenderPass.MaskedForward;
-                    c.Add<VPRC_RenderMeshesPass>().RenderPass = (int)EDefaultRenderPass.PostRender;
+                    c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.PreRender, meshSubmissionStrategy);
+                    c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.OpaqueDeferred, meshSubmissionStrategy);
+                    c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.OpaqueForward, meshSubmissionStrategy);
+                    c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.MaskedForward, meshSubmissionStrategy);
+                    c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.PostRender, meshSubmissionStrategy);
                 }
             }
             return c;

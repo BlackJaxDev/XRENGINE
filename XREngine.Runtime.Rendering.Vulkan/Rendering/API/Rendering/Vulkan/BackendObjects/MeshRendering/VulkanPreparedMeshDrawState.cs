@@ -8,30 +8,25 @@ namespace XREngine.Rendering.Vulkan;
 /// traversing live material or reflected binding data.
 /// </summary>
 internal readonly record struct VulkanPreparedMeshDrawState(
-    VkMeshRenderer OwnerIdentity,
-    VulkanRenderer Renderer,
-    VkRenderProgram Program,
     PipelineLayout PipelineLayout,
     bool UsesDescriptorHeap,
-    VulkanPreparedDescriptorSetBinding[]? DescriptorBindings,
-    int DescriptorBindingCount,
-    uint[]? DynamicOffsets,
-    uint[]? DescriptorHeapPushDwords,
-    int DescriptorHeapPushDwordCount,
-    VkBufferHandle[]? VertexBuffers,
-    uint[]? VertexBindings,
-    int VertexBufferCount,
+    uint DescriptorHeapPushByteCount,
+    VulkanPreparedStreamRange DescriptorBindings,
+    VulkanPreparedStreamRange DynamicOffsets,
+    VulkanPreparedStreamRange DescriptorImagePayloads,
+    VulkanPreparedStreamRange DescriptorImageRequirements,
+    VulkanPreparedStreamRange DescriptorHeapPushDwords,
+    VulkanPreparedStreamRange VertexBuffers,
     VulkanPreparedMeshPrimitive Primitive0,
     VulkanPreparedMeshPrimitive Primitive1,
     VulkanPreparedMeshPrimitive Primitive2,
     int PrimitiveCount,
     int FrameIndex,
     int DrawUniformSlot,
-    ulong FrameDataGeneration,
-    VulkanPreparedFrameDataPayloadHandle[]? FrameDataPayloadHandles,
-    int FrameDataPayloadHandleCount,
+    VulkanPreparedStreamRange FrameDataPayloadHandles,
     VkMeshRenderer.MeshDrawPushConstants PushConstants,
-    uint InstanceCount)
+    uint InstanceCount,
+    int ColdDataIndex)
 {
     internal VulkanPreparedMeshPrimitive GetPrimitive(int index)
         => index switch
@@ -42,28 +37,4 @@ internal readonly record struct VulkanPreparedMeshDrawState(
             _ => throw new ArgumentOutOfRangeException(nameof(index)),
         };
 
-    internal bool HasValidFrameDataPayloadHandles()
-    {
-        if (FrameDataPayloadHandleCount == 0)
-            return true;
-        if (FrameDataPayloadHandles is not { } handles ||
-            handles.Length < FrameDataPayloadHandleCount)
-        {
-            return false;
-        }
-
-        for (int index = 0; index < FrameDataPayloadHandleCount; index++)
-        {
-            if (!handles[index].IsValidFor(
-                    OwnerIdentity,
-                    FrameIndex,
-                    DrawUniformSlot,
-                    FrameDataGeneration))
-            {
-                return false;
-            }
-        }
-
-        return true;
-    }
 }

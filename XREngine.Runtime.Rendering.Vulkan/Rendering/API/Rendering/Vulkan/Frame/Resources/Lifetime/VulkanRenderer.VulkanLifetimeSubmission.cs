@@ -2,7 +2,7 @@ namespace XREngine.Rendering.Vulkan;
 
 internal readonly record struct VulkanLifetimeSubmission(
     ulong QueueHandle,
-    VulkanRenderer.EVulkanLifetimeQueueDomain QueueDomain,
+    EVulkanLifetimeQueueDomain QueueDomain,
     ulong QueueSequence,
     ulong TimelineSemaphoreHandle,
     ulong TimelineValue,

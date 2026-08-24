@@ -38,7 +38,7 @@ not make an OpenAI API request. Starting a worker requires every item below.
 | Requirement | How to satisfy or verify it |
 |---|---|
 | Supported checkout | Use Windows 10/11 with this XRENGINE checkout and the .NET 10 SDK. |
-| Published broker | Run `Tools/Setup-LocalAgentBroker.ps1`; verify `Build/AgentTools/LocalAgentBroker.current` names a versioned deployment containing `XREngine.LocalAgentBroker.dll`. |
+| Published broker | Run `Tools/Setup-LocalAgentBroker.ps1`; verify `Build/_AgentValidation/00000000-000000-shared/agent-tools/LocalAgentBroker.current` names a versioned deployment containing `XREngine.LocalAgentBroker.dll`. |
 | Trusted project configuration | Trust the repository in Codex. Project-scoped `.codex/config.toml` MCP configuration is loaded only for trusted projects. Restart Codex after setup or configuration changes. |
 | API project | Use an OpenAI API project with billing/quota and access to the exact selected model. API service is managed and billed separately from ChatGPT subscriptions. |
 | API key | Put the project key in the process environment or, on Windows, the user environment, normally as `OPENAI_API_KEY`. Never put the value in the repository, MCP arguments, a prompt, logs, or command-line arguments. |
@@ -52,6 +52,9 @@ The supported exact model IDs are:
 - `gpt-5.6-luna`
 - `gpt-5.6-terra`
 - `gpt-5.6-sol`
+
+The broker rejects aliases and provider-reported dated snapshot suffixes: both
+the requested and actual model must be the same exact approved model ID.
 
 Check the [current OpenAI model catalog](https://developers.openai.com/api/docs/models)
 and the API project's model access before a live run. The broker never silently
@@ -68,7 +71,8 @@ The fixed MCP surface contains five orchestration tools:
 - `start_agent_run` validates a request, starts the paid worker asynchronously,
   and returns a run ID promptly.
 - `get_agent_run` returns incremental text/evidence/usage, retry count, bounded
-  provider-attempt diagnostics, and the terminal result for one run.
+  provider-attempt diagnostics, current observation/progress metadata, and the
+  terminal result for one run.
 - `cancel_agent_run` cooperatively cancels a queued or running worker and its
   pending editor tool call.
 - `list_agent_runs` returns bounded metadata for active and recently retained
@@ -76,6 +80,65 @@ The fixed MCP surface contains five orchestration tools:
 
 The broker itself does not start or stop the editor. The named session manager
 owns editor process lifecycle and validates PID ownership.
+
+### Tray And Prompt History
+
+On Windows, accepting the first prompt starts one notification-area companion
+for this checkout. Its menu lists every queued or running task across all local
+broker processes. Click a task to open its prompt and watch response text update
+while it streams. Double-click the tray icon, or choose **Open prompt history**,
+to browse and search all retained prompts and responses.
+
+Each newly accepted prompt also shows a Windows notification containing its
+objective. Clicking the notification opens that prompt in the history viewer.
+Notifications are enabled by default and can be disabled in **Settings**.
+
+Closing the history window hides it back to the tray and does not cancel runs.
+Choose **Exit** from the tray menu to close only the companion; the next
+accepted prompt starts it again. The **Settings** dialog controls prompt
+notifications and provides two independent lifecycle policies:
+
+- auto-close after a chosen number of minutes with no queued or running prompts,
+  or never; and
+- auto-delete terminal prompt records after a chosen number of hours, or never.
+
+Both policies default to never. Active records are never auto-deleted. A
+terminal record can also be deleted directly from the history window.
+
+### Run Status And Progress Contract
+
+`get_agent_run` is the authoritative snapshot for one run; `list_agent_runs`
+returns the same status fields in compact form. Both responses include:
+
+- `updatedUtc`: the most recent time the broker changed retained run state;
+- `observedUtc`: the time this response was produced. It advances on every poll,
+  including when the provider has produced no text or tool result;
+- `elapsedMilliseconds`: non-negative wall-clock time from run creation through
+  `observedUtc`; and
+- `progressMessage`: the latest informational broker/provider stage. It is not a
+  percent-complete estimate and does not replace the authoritative `status`.
+
+New runs begin with `queued`; orchestration changes this to
+`orchestration_started`. A streaming Responses call publishes
+`provider_stream_connected` once the SSE connection is established. While the
+stream advances, the broker periodically records the provider's latest event
+type (after the first provider event and then at bounded intervals), even if no
+text delta is available. A terminal snapshot replaces `progressMessage` with
+the terminal status. Continue polling until `status` is `completed`, `failed`,
+or `cancelled`; use elapsed/observed time to distinguish a quiet healthy stream
+from a stale caller or transport.
+
+### Response Controls And Output Budget
+
+`start_agent_run` accepts `text_verbosity` as `low`, `medium`, or `high`; it
+defaults to `medium`. The broker sends this as the Responses API `text.verbosity`
+control and preserves `reasoning_effort` separately. Start, get, and list
+responses retain both requested controls and the resolved `max_output_tokens`
+hard budget. When that field is omitted, Luna and Terra use 4,096 combined
+visible-output/reasoning tokens; Sol uses 16,384, or 32,768 for `xhigh`/`max`.
+An explicit value is never raised, and an incomplete response is never retried
+with a larger budget. When an explicit cap ends in `max_output_tokens`, start a
+new authorized run with a higher cap or lower reasoning effort/text verbosity.
 
 ## One-Time Installation
 
@@ -85,15 +148,17 @@ From the repository root, publish and smoke-test the broker:
 powershell -NoProfile -ExecutionPolicy Bypass -File Tools/Setup-LocalAgentBroker.ps1
 ```
 
-This publishes the BCL-only app to an immutable directory under
-`Build/AgentTools/LocalAgentBroker-<timestamp>`, atomically updates
-`Build/AgentTools/LocalAgentBroker.current`, and performs an MCP
+This publishes the broker and Windows tray companion to an immutable directory under
+`Build/_AgentValidation/00000000-000000-shared/agent-tools/LocalAgentBroker-<timestamp>`, atomically updates
+`Build/_AgentValidation/00000000-000000-shared/agent-tools/LocalAgentBroker.current`, and performs an MCP
 initialize/list-tools test. Versioned deployment avoids overwriting DLLs held
 by a broker process that is already running. It does not contact the OpenAI API.
 An already-running Codex task remains attached to its existing stdio process;
 restart that task or Codex after setup before expecting it to use the new
 deployment. Killing the child process alone closes the old transport and does
-not hot-rebind it.
+not hot-rebind it. If a tray companion from an older deployment is already
+running, choose **Exit** from its menu; the next prompt starts the newly
+published version.
 
 Alternatively, the opt-in agent-tool bootstrap includes the same setup:
 
@@ -167,7 +232,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File Tools/Manage-McpEditorSessio
 ```
 
 The broker resolves only
-`Build/_AgentValidation/mcp-sessions/<name>/session.json`, accepts only a
+`Build/_AgentValidation/00000000-000000-shared/mcp-sessions/<timestamp>-<name>/session.json`, accepts only a
 loopback HTTP(S) endpoint, calls `ping`, and verifies the exact reported
 session name. Do not edit `session.json` by hand.
 
@@ -258,6 +323,7 @@ A reasoning-only request has no editor session or tool policy entries:
   ],
   "requested_model": "gpt-5.6-sol",
   "reasoning_effort": "max",
+  "text_verbosity": "medium",
   "use_background_mode": false,
   "evidence_packet": {
     "relevant_files_and_symbols": [],
@@ -270,9 +336,9 @@ A reasoning-only request has no editor session or tool policy entries:
   "budget": {
     "max_turns": 3,
     "max_tool_calls": 0,
-    "max_output_tokens": 4096,
+    "max_output_tokens": 32768,
     "max_tool_result_bytes": 262144,
-    "max_elapsed_seconds": 120,
+    "max_elapsed_seconds": 600,
     "max_retries": 1,
     "max_concurrency": 1
   }
@@ -323,9 +389,9 @@ An editor-aware request names the session and exact tool policy:
   "budget": {
     "max_turns": 3,
     "max_tool_calls": 6,
-    "max_output_tokens": 2000,
+    "max_output_tokens": 16384,
     "max_tool_result_bytes": 262144,
-    "max_elapsed_seconds": 120,
+    "max_elapsed_seconds": 300,
     "max_retries": 1,
     "max_concurrency": 1
   }
@@ -367,9 +433,11 @@ Each worker is billed to the API project associated with the configured key,
 independently of ChatGPT/Codex product billing. Configure API project budgets,
 usage alerts, and model access before relying on standing automatic runs. The
 broker reports token usage but intentionally does not embed volatile price
-estimates. Omitted run budgets default to 3 turns, 8 tool calls, 4,096 output
-tokens, 120 seconds, 1 retry, and per-run concurrency 1; the process default is
-at most 4 concurrent runs.
+estimates. Omitted run budgets default to 3 turns, 8 tool calls, 1 retry, and
+per-run concurrency 1. Luna and Terra receive 4,096 combined output/reasoning
+tokens and 120 seconds. Sol receives 16,384 tokens and 300 seconds, or 32,768
+tokens and 600 seconds at `xhigh`/`max`. The process default is at most 4
+concurrent runs. Explicit output-token and elapsed-time limits remain hard caps.
 
 Requests and editor evidence selected for the run leave the machine for OpenAI
 processing. The editor MCP endpoint remains loopback-only. Responses use
@@ -389,6 +457,14 @@ If a key may have leaked, rotate it before another run.
 Tracing is off by default. `metadata` traces contain run/model IDs, budgets,
 counts, timing, usage, and redacted failures. They exclude prompts, editor tool
 arguments/results, API keys, and authorization headers.
+
+The tray history is separate from metadata tracing and intentionally retains
+the prompt and streamed/final response so the user can inspect prior work. It
+is stored only in the ignored checkout-local directory
+`Build/_AgentValidation/00000000-000000-shared/local-agent-broker-ui/`.
+The record omits inline image data, editor tool arguments/results, credentials,
+headers, and raw provider payloads. Use the tray retention setting or delete a
+selected terminal record when that local content should no longer be kept.
 
 ## Process Configuration
 
@@ -418,12 +494,16 @@ named by `XRE_LOCAL_AGENT_BROKER_EDITOR_AUTH_ENV`.
   restart the Codex task/app. Stdio MCP transports are process-bound; an
   already-running task cannot attach the replacement deployment in place.
 - **Published DLL is missing:** verify
-  `Build/AgentTools/LocalAgentBroker.current` contains a valid versioned
+-  `Build/_AgentValidation/00000000-000000-shared/agent-tools/LocalAgentBroker.current` contains a valid versioned
   deployment name and that deployment contains `XREngine.LocalAgentBroker.dll`,
   then rerun setup.
 - **Protocol smoke test fails:** run
   `powershell -NoProfile -ExecutionPolicy Bypass -File Tools/Test-LocalAgentBrokerMcp.ps1`.
   This test does not make a paid API request.
+- **Tray icon does not appear:** rerun setup, restart the Codex task so its
+  broker uses the new deployment, and confirm the published deployment contains
+  `tray/XREngine.LocalAgentBroker.Tray.exe`. The tray starts only after a prompt
+  is accepted; exiting it does not cancel active broker runs.
 - **API key is not set:** on Windows, set the configured variable in the user or
   process environment; on other systems ensure Codex inherits it. Restart Codex
   only when changing broker setup/configuration or when an older broker process
@@ -443,7 +523,9 @@ named by `XRE_LOCAL_AGENT_BROKER_EDITOR_AUTH_ENV`.
 - **Mutation result is rejected:** the worker must perform a later read-back or
   capture. A successful mutating call alone is not a successful run.
 - **Run remains queued/running:** poll the retained run ID within its elapsed
-  budget; cancel it if the result is no longer needed.
+  budget. `observedUtc` must advance on each poll; use `progressMessage` and
+  `updatedUtc` to see the latest broker/provider stage, then cancel the run if
+  the result is no longer needed.
 - **A long stream ends before completion:** after accepting the temporary
   storage/ZDR tradeoff, rerun the newly bounded slice with
   `use_background_mode: true`; do not silently enable it for unrelated runs.

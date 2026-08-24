@@ -85,13 +85,13 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
             }
         };
 
-        if (Renderer.IsImageViewAvailableForDescriptor(reusableView) &&
-            Renderer.IsLiveImageViewStructurallyEquivalent(reusableView, in viewInfo))
+        if (BackendContext.Resources.Images.IsAvailableForDescriptor(reusableView) &&
+            BackendContext.Resources.Images.IsStructurallyEquivalent(reusableView, in viewInfo))
             return reusableView;
 
         if (Api!.CreateImageView(Device, ref viewInfo, null, out ImageView created) != Result.Success)
             throw new Exception("Failed to create image view.");
-        Renderer.TrackLiveImageView(
+        BackendContext.Resources.Images.RegisterView(
             created,
             in viewInfo,
             $"VkImageBackedTexture.View:{ResolveLogicalResourceName() ?? Data.Name ?? GetDescribingName()}");
@@ -158,13 +158,14 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
     {
         if (view.Handle != 0)
         {
-            Renderer.RetireImageResources(new RetiredImageResources(
+            BackendContext.Resources.Images.RetireOwnedResources(new RetiredImageResources(
                 default,
                 default,
                 view,
                 [],
                 default,
-                0));
+                0),
+                "VkImageBackedTexture.DestroyView");
             view = default;
         }
     }
@@ -195,13 +196,14 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
 
         if (primaryView.Handle != 0 || attachmentViews.Length != 0)
         {
-            Renderer.RetireImageResources(new RetiredImageResources(
+            BackendContext.Resources.Images.RetireOwnedResources(new RetiredImageResources(
                 default,
                 default,
                 primaryView,
                 attachmentViews,
                 default,
-                0));
+                0),
+                "VkImageBackedTexture.DestroyCurrentViews");
         }
 
         _view = default;
@@ -257,7 +259,7 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
             AttachmentViewKey key = BuildAttachmentViewKey(mipLevel, layerIndex);
             if (key == default)
             {
-                if (VulkanRenderer.BloomVulkanDiagnosticsEnabled && VulkanRenderer.IsBloomDiagnosticName(ResolveLogicalResourceName() ?? Data.Name))
+                if (BloomDiagnosticsEnabled && IsBloomDiagnosticName(ResolveLogicalResourceName() ?? Data.Name))
                 {
                     Debug.VulkanEvery(
                         $"Vulkan.BloomDiag.AttachmentView.Primary.{ResolveLogicalResourceName() ?? Data.Name}.{mipLevel}.{layerIndex}",
@@ -276,7 +278,7 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
 
             if (_attachmentViews.TryGetValue(key, out ImageView cached) &&
                 (!IsImageViewBackedByCurrentImage(cached) ||
-                 !Renderer.IsImageViewAvailableForDescriptor(cached)))
+                 !BackendContext.Resources.Images.IsAvailableForDescriptor(cached)))
             {
                 _attachmentViews.Remove(key);
                 cached = default;
@@ -292,7 +294,7 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
                 }
             }
 
-            if (VulkanRenderer.BloomVulkanDiagnosticsEnabled && VulkanRenderer.IsBloomDiagnosticName(ResolveLogicalResourceName() ?? Data.Name))
+            if (BloomDiagnosticsEnabled && IsBloomDiagnosticName(ResolveLogicalResourceName() ?? Data.Name))
             {
                 Debug.VulkanEvery(
                     $"Vulkan.BloomDiag.AttachmentView.{ResolveLogicalResourceName() ?? Data.Name}.{mipLevel}.{layerIndex}.{key.BaseMipLevel}.{key.BaseArrayLayer}.{cached.Handle}",
@@ -315,14 +317,98 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
         }
     }
 
+    /// <summary>
+    /// Returns a cached view covering exactly one storage-image mip and either
+    /// one layer or the complete layered range requested by the binding.
+    /// </summary>
+    public ImageView GetStorageDescriptorView(int mipLevel, bool layered, int layerIndex)
+    {
+        lock (_imageStateLock)
+        {
+            RefreshPhysicalGroupImageIfStaleNoLock();
+            if (_image.Handle == 0)
+            {
+                AcquireImageHandle();
+                RefreshPhysicalGroupImageIfStaleNoLock();
+            }
+
+            if (_image.Handle == 0 || !RefreshPrimaryDescriptorViewForUseNoLock())
+                return default;
+
+            AttachmentViewKey key = BuildStorageDescriptorViewKey(mipLevel, layered, layerIndex);
+            AttachmentViewKey primaryKey = NormalizeAttachmentViewKey(new AttachmentViewKey(
+                0u,
+                ResolvedMipLevels,
+                0u,
+                ResolvedArrayLayers,
+                DefaultViewType,
+                AspectFlags));
+            if (key == primaryKey)
+                return _view;
+
+            if (_attachmentViews.TryGetValue(key, out ImageView cached) &&
+                (!IsImageViewBackedByCurrentImage(cached) ||
+                 !BackendContext.Resources.Images.IsAvailableForDescriptor(cached)))
+            {
+                _attachmentViews.Remove(key);
+                cached = default;
+            }
+
+            if (cached.Handle != 0)
+                return cached;
+
+            cached = CreateView(key);
+            if (cached.Handle == 0)
+                return default;
+
+            _attachmentViews[key] = cached;
+            PublishDescriptorViewRefreshNoLock();
+            return cached;
+        }
+    }
+
+    private AttachmentViewKey BuildStorageDescriptorViewKey(int mipLevel, bool layered, int layerIndex)
+    {
+        uint baseMip = ClampAttachmentMipLevel(mipLevel);
+        uint resolvedLayers = Math.Max(ResolvedArrayLayers, 1u);
+        if (TextureImageType == ImageType.Type3D)
+            return NormalizeAttachmentViewKey(new AttachmentViewKey(
+                baseMip,
+                1u,
+                0u,
+                1u,
+                ImageViewType.Type3D,
+                AspectFlags));
+
+        if (layered)
+            return NormalizeAttachmentViewKey(new AttachmentViewKey(
+                baseMip,
+                1u,
+                0u,
+                resolvedLayers,
+                DefaultViewType,
+                AspectFlags));
+
+        ImageViewType singleLayerViewType = TextureImageType == ImageType.Type1D
+            ? ImageViewType.Type1D
+            : ImageViewType.Type2D;
+        return NormalizeAttachmentViewKey(new AttachmentViewKey(
+            baseMip,
+            1u,
+            ClampAttachmentLayerIndex(layerIndex),
+            1u,
+            singleLayerViewType,
+            AspectFlags));
+    }
+
     private bool IsImageViewBackedByCurrentImage(ImageView view)
     {
         if (view.Handle == 0 || _image.Handle == 0)
             return false;
 
-        return Renderer.TryGetImageViewBackingImage(view, out Image backingImage) &&
+        return BackendContext.Resources.Images.TryGetBackingImage(view, out Image backingImage) &&
             backingImage.Handle == _image.Handle &&
-            Renderer.IsLiveImageViewBackedByLiveImage(view);
+            BackendContext.Resources.Images.IsLiveBackedByLiveImage(view);
     }
 
     bool IVkFrameBufferAttachmentSource.TryGetAttachmentExtent(int mipLevel, int layerIndex, out Extent2D extent)
@@ -354,7 +440,7 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
     public void EnsureAttachmentLayout(bool depthStencil)
     {
         // Intentionally a no-op.  The render pass handles the initial layout
-        // transition from Undefined → attachment-optimal via its initialLayout
+        // transition from Undefined â†’ attachment-optimal via its initialLayout
         // field.  Performing a separate one-shot transition here would put the
         // image in attachment-optimal BEFORE the render pass begins, creating a
         // mismatch between the actual GPU layout and the declared initialLayout
@@ -373,7 +459,7 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
 
         // Framebuffer attachments require single-mip-level views (levelCount=1).
         // Only reuse the default full-mip view when it already has exactly 1 level
-        // and 1 layer — otherwise we must create a single-mip view.
+        // and 1 layer â€” otherwise we must create a single-mip view.
         if (baseMip == 0 && layerIndex < 0 && ResolvedMipLevels <= 1 && ResolvedArrayLayers <= 1)
             return default;
 
@@ -585,9 +671,8 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
             entry = new PhysicalImageViewCacheEntry(
                 _physicalGroup,
                 _image.Handle,
-                Renderer.GetCurrentVulkanResourceGeneration(
-                    ObjectType.Image,
-                    _image.Handle),
+                BackendContext.Resources.Lifetime.Tracker.GetPublishedGeneration(
+                    new VulkanResourceLifetimeKey(ObjectType.Image, _image.Handle)),
                 CreatePhysicalImageViewCacheValue(_view),
                 new Dictionary<AttachmentViewKey, PhysicalImageViewCacheValue>(_attachmentViews.Count));
             _physicalImageViewCache.Add(entry);
@@ -600,9 +685,8 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
     private PhysicalImageViewCacheValue CreatePhysicalImageViewCacheValue(ImageView view)
         => new(
             view,
-            Renderer.GetCurrentVulkanResourceGeneration(
-                ObjectType.ImageView,
-                view.Handle));
+            BackendContext.Resources.Lifetime.Tracker.GetPublishedGeneration(
+                new VulkanResourceLifetimeKey(ObjectType.ImageView, view.Handle)));
 
     private bool TryRestorePhysicalImageViewCache(VulkanPhysicalImageGroup group, Image image)
     {
@@ -632,17 +716,16 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
         if (view.Handle == 0 || image.Handle == 0)
             return false;
 
-        if (Renderer.GetCurrentVulkanResourceGeneration(
-                ObjectType.ImageView,
-                view.Handle) != cached.Generation)
+        if (BackendContext.Resources.Lifetime.Tracker.GetPublishedGeneration(
+                new VulkanResourceLifetimeKey(ObjectType.ImageView, view.Handle)) != cached.Generation)
         {
             return false;
         }
 
-        return Renderer.TryGetImageViewBackingImage(view, out Image backingImage) &&
+        return BackendContext.Resources.Images.TryGetBackingImage(view, out Image backingImage) &&
             backingImage.Handle == image.Handle &&
-            Renderer.IsLiveImageViewBackedByLiveImage(view) &&
-            Renderer.IsImageViewAvailableForDescriptor(view);
+            BackendContext.Resources.Images.IsLiveBackedByLiveImage(view) &&
+            BackendContext.Resources.Images.IsAvailableForDescriptor(view);
     }
 
     private int FindPhysicalImageViewCacheIndex(VulkanPhysicalImageGroup? group, ulong imageHandle)
@@ -650,9 +733,8 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
         if (group is null || imageHandle == 0)
             return -1;
 
-        ulong imageGeneration = Renderer.GetCurrentVulkanResourceGeneration(
-            ObjectType.Image,
-            imageHandle);
+        ulong imageGeneration = BackendContext.Resources.Lifetime.Tracker.GetPublishedGeneration(
+            new VulkanResourceLifetimeKey(ObjectType.Image, imageHandle));
         for (int i = 0; i < _physicalImageViewCache.Count; i++)
         {
             PhysicalImageViewCacheEntry entry = _physicalImageViewCache[i];
@@ -690,13 +772,14 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
 
         if (cachedViews.Count > 0)
         {
-            Renderer.RetireImageResources(new RetiredImageResources(
+            BackendContext.Resources.Images.RetireOwnedResources(new RetiredImageResources(
                 default,
                 default,
                 default,
                 [.. cachedViews],
                 default,
-                0));
+                0),
+                "VkImageBackedTexture.DestroyPhysicalImageViewCache");
         }
 
         _physicalImageViewCache.Clear();
@@ -705,9 +788,8 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
         {
             ImageView view = cached.View;
             if (view.Handle == 0 ||
-                Renderer.GetCurrentVulkanResourceGeneration(
-                    ObjectType.ImageView,
-                    view.Handle) != cached.Generation ||
+                BackendContext.Resources.Lifetime.Tracker.GetPublishedGeneration(
+                    new VulkanResourceLifetimeKey(ObjectType.ImageView, view.Handle)) != cached.Generation ||
                 !seenHandles.Add(view.Handle))
             {
                 return;
@@ -733,6 +815,13 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
     private readonly record struct PhysicalImageViewCacheValue(
         ImageView View,
         ulong Generation);
+
+    private static bool BloomDiagnosticsEnabled
+        => XREnvironment.IsEnabled(XREngineEnvironmentVariables.BloomDiag);
+
+    private static bool IsBloomDiagnosticName(string? name)
+        => !string.IsNullOrWhiteSpace(name) &&
+           name.Contains("Bloom", StringComparison.OrdinalIgnoreCase);
 
     protected internal readonly record struct AttachmentViewKey(uint BaseMipLevel, uint LevelCount, uint BaseArrayLayer, uint LayerCount, ImageViewType ViewType, ImageAspectFlags AspectMask);
 

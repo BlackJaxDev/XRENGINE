@@ -1,25 +1,52 @@
 using System;
 using System.Diagnostics;
+using System.Globalization;
+using System.Numerics;
 using System.Threading;
 using Silk.NET.Vulkan;
 
 namespace XREngine.Rendering.Vulkan;
 
-public unsafe partial class VulkanRenderer
+internal sealed partial class VulkanCommandRuntime
 {
     // One chain cannot overlap. Two independent chains are the smallest batch
     // that can prove useful concurrency; the closeout cohorts own any
     // hardware-specific threshold tuning above this correctness floor.
     private const int MinParallelCommandChainRecordJobs = 2;
+    // A bounded Sponza replacement batch with 16 prepared mesh operations was
+    // consistently faster inline than through the worker handoff. Dispatch only
+    // when the immutable graphics packet contains enough encoding work to repay
+    // queue, wake, merge, and render-thread wait overhead. Explicit worker-count
+    // experiments intentionally bypass this production heuristic.
+    private const int MinParallelCommandChainRecordOperations = 32;
+    private const int DefaultMaxCommandChainRecordingWorkerCount = 4;
+    private const int MaxCommandChainRecordingWorkerCount = 8;
+    // Non-graphics packets are normally one dispatch, barrier, transfer, or
+    // query operation. Keep tiny cohorts on the render thread because waking
+    // persistent workers costs more than encoding two or three such packets.
+    private const int MinParallelNonGraphicsRecordJobs = 4;
     private const int CommandChainWorkerWaitTimeoutMilliseconds = 2_000;
-    private readonly object _commandChainRecordingWorkersLock = new();
-    private readonly ManualResetEventSlim _commandChainRecordingWorkersIdle = new(initialState: true);
-    private readonly CountdownEvent _commandChainRecordingWorkerCountdown = new(initialCount: 1);
-    private CommandChainRecordingBatch _commandChainRecordingBatch = new();
-    private CommandChainRecordingWorkerState[]? _commandChainRecordingWorkers;
-    private int _commandChainRecordingWorkerGeneration;
-    private int _activeCommandChainRecordingWorkerCount;
-    private int _commandChainRecordingWorkersFaulted;
+    // This is intentionally a launch-only setting. Worker-owned command pools and
+    // cached secondary buffers cannot safely migrate between capacities at runtime.
+    private static readonly int? s_configuredCommandChainRecordingWorkerCount =
+        ResolveConfiguredCommandChainRecordingWorkerCount();
+    private object _commandChainRecordingWorkersLock => _commandRuntime.Workers.Gate;
+    private ManualResetEventSlim _commandChainRecordingWorkersIdle => _commandRuntime.Workers.Idle;
+    private CountdownEvent _commandChainRecordingWorkerCountdown => _commandRuntime.Workers.Countdown;
+    private VulkanCommandChainRecordingBatch _commandChainRecordingBatch
+    {
+        get => _commandRuntime.Workers.Batch;
+        set => _commandRuntime.Workers.Batch = value;
+    }
+    private CommandChainRecordingWorkerState[]? _commandChainRecordingWorkers
+    {
+        get => _commandRuntime.Workers.WorkerStates;
+        set => _commandRuntime.Workers.WorkerStates = value;
+    }
+    private ref int _commandChainRecordingWorkerGeneration => ref _commandRuntime.Workers.Generation;
+    private ref int _activeCommandChainRecordingWorkerCount => ref _commandRuntime.Workers.ActiveWorkerCount;
+    private ref int _commandChainRecordingWorkersFaulted => ref _commandRuntime.Workers.Faulted;
+    private VulkanNonGraphicsRecordingBatch _nonGraphicsRecordingBatch = new();
 
 
 
@@ -34,7 +61,48 @@ public unsafe partial class VulkanRenderer
             return 1;
 
         int usableProcessors = Math.Max(1, processorCount - 1);
-        return Math.Clamp(independentChainCount, 1, Math.Min(usableProcessors, 8));
+        return Math.Clamp(independentChainCount, 1, Math.Min(usableProcessors, MaxCommandChainRecordingWorkerCount));
+    }
+
+    private static int ResolveEffectiveCommandChainRecordingWorkerCount(
+        int independentChainCount,
+        int processorCount,
+        bool singleThread,
+        bool parallelDisabled)
+    {
+        if (singleThread || parallelDisabled ||
+            s_configuredCommandChainRecordingWorkerCount == 0)
+        {
+            return 0;
+        }
+
+        if (s_configuredCommandChainRecordingWorkerCount.HasValue)
+            return s_configuredCommandChainRecordingWorkerCount.Value;
+
+        // Preserve one stable default ownership domain for the process lifetime.
+        // The dirty subset changes from frame to frame; sizing the domain from
+        // independentChainCount would migrate a chain between worker-owned pools
+        // or make the second eligible batch fail after the first capacity was
+        // instantiated. ActiveWorkerMask still wakes only workers that own work.
+        return Math.Clamp(
+            Math.Max(processorCount - 1, 1),
+            1,
+            DefaultMaxCommandChainRecordingWorkerCount);
+    }
+
+    private static int? ResolveConfiguredCommandChainRecordingWorkerCount()
+    {
+        string? rawValue = XREnvironment.GetLaunchValue(CommandChainWorkerCountEnvVar);
+        if (string.IsNullOrWhiteSpace(rawValue))
+            return null;
+
+        return int.TryParse(
+                rawValue,
+                NumberStyles.Integer,
+                CultureInfo.InvariantCulture,
+                out int configuredCount)
+            ? Math.Clamp(configuredCount, 0, MaxCommandChainRecordingWorkerCount)
+            : null;
     }
 
     internal static EVulkanCommandChainWorkerEligibility EvaluateParallelCommandChainRecording(
@@ -58,8 +126,48 @@ public unsafe partial class VulkanRenderer
         return EVulkanCommandChainWorkerEligibility.Eligible;
     }
 
+    private static EVulkanCommandChainWorkerEligibility EvaluateConfiguredParallelCommandChainRecording(
+        int independentChainCount,
+        int independentOperationCount,
+        bool applyGraphicsCostThreshold,
+        int processorCount,
+        bool singleThread,
+        bool parallelDisabled,
+        bool workerDomainFaulted)
+    {
+        if (workerDomainFaulted)
+            return EVulkanCommandChainWorkerEligibility.WorkerQuarantined;
+
+        if (singleThread ||
+            parallelDisabled ||
+            s_configuredCommandChainRecordingWorkerCount == 0 ||
+            independentChainCount < MinParallelCommandChainRecordJobs)
+        {
+            return EVulkanCommandChainWorkerEligibility.TooLittleIndependentWork;
+        }
+
+        // An explicit capacity is a controlled diagnostic experiment. In
+        // particular, one worker verifies worker-owned state and wait behavior
+        // without pretending it provides CPU parallelism.
+        if (s_configuredCommandChainRecordingWorkerCount.HasValue)
+            return EVulkanCommandChainWorkerEligibility.Eligible;
+
+        if (applyGraphicsCostThreshold &&
+            independentOperationCount < MinParallelCommandChainRecordOperations)
+        {
+            return EVulkanCommandChainWorkerEligibility.TooLittleIndependentWork;
+        }
+
+        return EvaluateParallelCommandChainRecording(
+            independentChainCount,
+            processorCount,
+            singleThread,
+            parallelDisabled,
+            workerDomainFaulted);
+    }
+
     private static EVulkanCommandChainWorkerEligibility EvaluateCommandChainWorkerEncodability(
-        FrameOp[] ops,
+        FrameOperationSequence ops,
         CommandChain chain)
     {
         if (chain.SourceStartIndex < 0 ||
@@ -71,14 +179,15 @@ public unsafe partial class VulkanRenderer
 
         for (int drawIndex = 0; drawIndex < chain.SourceCount; drawIndex++)
         {
-            FrameOp op = ops[chain.SourceStartIndex + drawIndex];
-            if (op is IndirectDrawOp or MeshTaskDispatchIndirectCountOp)
+            int operationIndex = chain.SourceStartIndex + drawIndex;
+            EVulkanPrimaryPlanNodeKind kind = ops.GetHeader(operationIndex).OpCode;
+            if (kind is EVulkanPrimaryPlanNodeKind.IndirectDraw or EVulkanPrimaryPlanNodeKind.MeshTaskDispatchIndirectCount)
                 return EVulkanCommandChainWorkerEligibility.PrimaryOwnedIndirectStream;
 
-            if (op is not MeshDrawOp meshDraw)
+            if (kind != EVulkanPrimaryPlanNodeKind.MeshDraw)
                 return EVulkanCommandChainWorkerEligibility.UnsupportedOperation;
 
-            if (meshDraw.Draw.Renderer is null)
+            if (ops.GetMeshDraw(operationIndex).Draw.Renderer is null)
                 return EVulkanCommandChainWorkerEligibility.ResourcePreparationFailed;
         }
 
@@ -86,7 +195,7 @@ public unsafe partial class VulkanRenderer
     }
 
     private static VulkanCommandChainWorkerEligibilityResult AssignCommandChainRecordingWorker(
-        CommandChainRecordingBatch batch,
+        VulkanCommandChainRecordingBatch batch,
         CommandChain chain,
         int workerCount)
     {
@@ -95,7 +204,7 @@ public unsafe partial class VulkanRenderer
         if (encodability != EVulkanCommandChainWorkerEligibility.Eligible)
             return new VulkanCommandChainWorkerEligibilityResult(encodability);
 
-        if (workerCount <= 1)
+        if (workerCount <= 0)
         {
             return new VulkanCommandChainWorkerEligibilityResult(
                 EVulkanCommandChainWorkerEligibility.TooLittleIndependentWork);
@@ -108,7 +217,7 @@ public unsafe partial class VulkanRenderer
 
     private static EVulkanCommandChainWorkerEligibility
         EvaluatePreparedCommandChainWorkerEncodability(
-            CommandChainRecordingBatch batch,
+            VulkanCommandChainRecordingBatch batch,
             CommandChain chain)
     {
         int preparedStartIndex = chain.SourceStartIndex - batch.StartIndex;
@@ -126,29 +235,18 @@ public unsafe partial class VulkanRenderer
             ref readonly VkPreparedMeshDraw draw =
                 ref batch.PreparedFrame.GetMeshDrawForOwnerValidation(
                     preparedStartIndex + drawIndex);
-            if (draw.OwnerIdentity is null)
+            if (batch.PreparedFrame.GetMeshDrawColdData(draw.RecordingState.ColdDataIndex).Owner is null)
                 return EVulkanCommandChainWorkerEligibility.ResourcePreparationFailed;
         }
 
         return EVulkanCommandChainWorkerEligibility.Eligible;
     }
 
-    private static ref readonly VkPreparedMeshDraw GetPreparedCommandChainDraw(
-        CommandChainRecordingBatch batch,
-        int chainIndex,
-        int drawIndex)
-    {
-        ref readonly VulkanPreparedCommandChain preparedChain =
-            ref batch.PreparedFrame.GetCommandChain(chainIndex);
-        if ((uint)drawIndex >= (uint)preparedChain.SourceCount)
-            throw new ArgumentOutOfRangeException(nameof(drawIndex));
-
-        int preparedIndex = preparedChain.PreparedDrawStartIndex + drawIndex;
-        return ref batch.PreparedFrame.GetMeshDraw(preparedIndex);
-    }
-
     private EVulkanCommandChainWorkerEligibility PrepareCommandChainRecordingWorkers(
         int recordJobCount,
+        int recordOperationCount,
+        bool applyGraphicsCostThreshold,
+        bool forceSerial,
         uint frameDataImageIndex,
         out CommandChainRecordingWorkerState[] workers,
         out int workerCount,
@@ -157,18 +255,36 @@ public unsafe partial class VulkanRenderer
         workers = [];
         workerCount = 0;
         frameSlot = -1;
-        int requestedWorkerCount = ResolveCommandChainRecordingWorkerCount(
+        // Live isolation proved that a cohort containing worker-recorded
+        // command-chain artifacts can wedge the graphics queue when its first
+        // admitted primary executes. Keep command-chain recording serial, with an
+        // explicit quarantine diagnostic, until the cross-thread interaction is
+        // identified and proven safe.
+        if (Volatile.Read(ref _commandChainRecordingWorkersFaulted) != 0 &&
+            Volatile.Read(ref _activeCommandChainRecordingWorkerCount) != 0)
+        {
+            // A timed-out worker may still own a chain artifact and its arena.
+            // Serial fallback must not migrate or rerecord that artifact until
+            // the final abandoned worker has released its recording lease.
+            throw new InvalidOperationException(
+                "Vulkan command recording is quarantined until the abandoned persistent workers exit.");
+        }
+
+        int requestedWorkerCount = ResolveEffectiveCommandChainRecordingWorkerCount(
             recordJobCount,
             Environment.ProcessorCount,
             CommandChainsSingleThread,
             ParallelCommandChainRecordingDisabled);
-        EVulkanCommandChainWorkerEligibility eligibility =
-            EvaluateParallelCommandChainRecording(
-            recordJobCount,
-            Environment.ProcessorCount,
-            CommandChainsSingleThread,
-            ParallelCommandChainRecordingDisabled,
-            Volatile.Read(ref _commandChainRecordingWorkersFaulted) != 0);
+        EVulkanCommandChainWorkerEligibility eligibility = forceSerial
+            ? EVulkanCommandChainWorkerEligibility.WorkerQuarantined
+            : EvaluateConfiguredParallelCommandChainRecording(
+                recordJobCount,
+                recordOperationCount,
+                applyGraphicsCostThreshold,
+                Environment.ProcessorCount,
+                CommandChainsSingleThread,
+                ParallelCommandChainRecordingDisabled,
+                Volatile.Read(ref _commandChainRecordingWorkersFaulted) != 0);
         bool hasIndexedFrameSlot = TryGetIndexedCommandChainCacheSlot(frameDataImageIndex, out frameSlot);
         if (eligibility != EVulkanCommandChainWorkerEligibility.Eligible ||
             recordJobCount <= 0 ||
@@ -185,9 +301,10 @@ public unsafe partial class VulkanRenderer
                 Debug.VulkanWarningEvery(
                     $"Vulkan.CommandChainWorkers.Rejected.{GetHashCode()}",
                     TimeSpan.FromSeconds(2),
-                    "[Vulkan.CommandChainWorkers] Serial fallback reason={0} jobs={1} processors={2} singleThread={3} disabled={4} faulted={5} indexedFrameSlot={6} frameDataImageIndex={7}.",
+                    "[Vulkan.CommandChainWorkers] Serial fallback reason={0} jobs={1} operations={2} processors={3} singleThread={4} disabled={5} faulted={6} indexedFrameSlot={7} frameDataImageIndex={8}.",
                     eligibility,
                     recordJobCount,
+                    recordOperationCount,
                     Environment.ProcessorCount,
                     CommandChainsSingleThread,
                     ParallelCommandChainRecordingDisabled,
@@ -199,10 +316,9 @@ public unsafe partial class VulkanRenderer
             return eligibility;
         }
 
-        workers = EnsureCommandChainRecordingWorkers(Math.Max(requestedWorkerCount, 2));
-        // EnsureCommandChainRecordingWorkers creates the fixed bounded worker
-        // capacity on first use. Hash against that capacity for the lifetime of
-        // the pools so a changing dirty subset cannot migrate a chain.
+        workers = EnsureCommandChainRecordingWorkers(requestedWorkerCount);
+        // Hash against the fixed instantiated capacity for the lifetime of the
+        // pools so a changing dirty subset cannot migrate a chain.
         workerCount = workers.Length;
         int frameSlotCount = ResolveIndexedCommandChainCacheCount();
         EnsureCommandChainWorkerFrameSlotPools(workers, frameSlotCount);
@@ -212,11 +328,11 @@ public unsafe partial class VulkanRenderer
     }
 
     private CommandChainWorkerTiming DispatchCommandChainRecordingWorkers(
-        CommandChainRecordingBatch batch,
+        VulkanCommandChainRecordingBatch batch,
         CommandChainRecordingWorkerState[] workers,
         int workerCount)
     {
-        if (batch.JobCount <= 0 || workerCount <= 1 || batch.ActiveWorkerMask == 0)
+        if (batch.JobCount <= 0 || workerCount <= 0 || batch.ActiveWorkerMask == 0)
             return default;
 
         long dispatchStart = Stopwatch.GetTimestamp();
@@ -230,13 +346,16 @@ public unsafe partial class VulkanRenderer
         if (activeWorkerCount == 0)
             return default;
 
-        batch.ResetTiming();
+        batch.ResetWorkerState(workerCount);
         batch.DispatchTimestamp = dispatchStart;
-        for (int jobIndex = 0; jobIndex < batch.JobCount; jobIndex++)
+        int queuedEntryCount = 0;
+        for (int entryIndex = 0; entryIndex < batch.EntryCount; entryIndex++)
         {
-            if (batch.RecordJobWorkerIndices[jobIndex] >= 0)
-                batch.QueuedChains++;
+            ref VulkanCommandChainRecordingEntry entry = ref batch.Entries[entryIndex];
+            if (entry.NeedsRecording && entry.WorkerIndex >= 0)
+                queuedEntryCount++;
         }
+        batch.PublishQueueTelemetry(queuedEntryCount);
 
         _commandChainRecordingWorkersIdle.Reset();
         _commandChainRecordingWorkerCountdown.Reset(activeWorkerCount);
@@ -256,19 +375,28 @@ public unsafe partial class VulkanRenderer
         }
 
         long waitStart = Stopwatch.GetTimestamp();
-        bool completed = _commandChainRecordingWorkerCountdown.Wait(
-            TimeSpan.FromMilliseconds(CommandChainWorkerWaitTimeoutMilliseconds));
+        bool completed;
+        using (VulkanCpuStageScope workerWaitStage =
+               new(_frameTelemetry, EVulkanCpuStage.WorkerWait))
+        {
+            completed = _commandChainRecordingWorkerCountdown.Wait(
+                TimeSpan.FromMilliseconds(CommandChainWorkerWaitTimeoutMilliseconds));
+        }
         bool timedOut = !completed;
         if (timedOut)
         {
             Volatile.Write(ref batch.CancelRequested, 1);
             Interlocked.Exchange(ref _commandChainRecordingWorkersFaulted, 1);
-            completed = _commandChainRecordingWorkerCountdown.Wait(
-                TimeSpan.FromMilliseconds(CommandChainWorkerWaitTimeoutMilliseconds));
+            using (VulkanCpuStageScope workerWaitStage =
+                   new(_frameTelemetry, EVulkanCpuStage.WorkerWait))
+            {
+                completed = _commandChainRecordingWorkerCountdown.Wait(
+                    TimeSpan.FromMilliseconds(CommandChainWorkerWaitTimeoutMilliseconds));
+            }
             if (!completed)
             {
                 batch.Abandoned = true;
-                _commandChainRecordingBatch = new CommandChainRecordingBatch();
+                _commandChainRecordingBatch = new VulkanCommandChainRecordingBatch();
             }
         }
 
@@ -281,10 +409,7 @@ public unsafe partial class VulkanRenderer
         if (timedOut)
         {
             RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanCommandChainWorkerMetrics(
-                queuedChains: batch.QueuedChains,
-                workersStarted: Volatile.Read(ref batch.WorkersStarted),
-                workersCompleted: Volatile.Read(ref batch.WorkersCompleted),
-                peakConcurrentWorkers: Volatile.Read(ref batch.PeakConcurrentWorkers),
+                queuedChains: batch.QueueDepth,
                 waitTimeouts: 1,
                 workerFailures: 1,
                 waitForWorkersTime: Stopwatch.GetElapsedTime(waitStart));
@@ -300,126 +425,166 @@ public unsafe partial class VulkanRenderer
         {
             Interlocked.Exchange(ref _commandChainRecordingWorkersFaulted, 1);
             RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanCommandChainWorkerMetrics(workerFailures: 1);
+            if (batch.Error is VulkanPlanPreconditionException planPrecondition)
+                throw planPrecondition;
             throw new InvalidOperationException("A Vulkan command-chain worker failed to record a secondary command buffer.", batch.Error);
         }
 
-        long firstStart = Volatile.Read(ref batch.FirstWorkerStartTimestamp);
-        long lastCompletion = Volatile.Read(ref batch.LastWorkerCompletionTimestamp);
-        long workerRecordTicks = Volatile.Read(ref batch.WorkerRecordTimestampTotal);
-        TimeSpan activeSpan = firstStart == long.MaxValue || lastCompletion <= firstStart
-            ? TimeSpan.Zero
-            : Stopwatch.GetElapsedTime(firstStart, lastCompletion);
-        TimeSpan workerRecordTime = StopwatchTicksToTimeSpan(workerRecordTicks);
-        TimeSpan overlap = workerRecordTime > activeSpan
-            ? workerRecordTime - activeSpan
-            : TimeSpan.Zero;
-
-        return new CommandChainWorkerTiming(
-            batch.QueuedChains,
-            Volatile.Read(ref batch.WorkersStarted),
-            Volatile.Read(ref batch.WorkersCompleted),
-            Volatile.Read(ref batch.PeakConcurrentWorkers),
-            StopwatchTicksToTimeSpan(Volatile.Read(ref batch.MaximumQueueDelayTimestamp)),
-            workerRecordTime,
-            activeSpan,
-            overlap,
-            Stopwatch.GetElapsedTime(waitStart));
+        long mergeStart = Stopwatch.GetTimestamp();
+        batch.WorkerLocalStates.Merge(workerCount, out CommandChainWorkerTiming timing);
+        batch.LocalMergeElapsedTicks = Stopwatch.GetTimestamp() - mergeStart;
+        batch.LocalMergeBytes = workerCount * batch.WorkerLocalStateBlockStride;
+        RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanCommandChainWorkerLayoutTelemetry(
+            batch.QueueDepth,
+            batch.QueueBytes,
+            batch.QueueHighWaterDepth,
+            batch.QueueHighWaterBytes,
+            batch.LocalMergeBytes,
+            batch.LocalMergeElapsedTicks,
+            0,
+            0);
+        return timing with { QueuedChains = batch.QueueDepth, WaitForWorkersTime = Stopwatch.GetElapsedTime(waitStart) };
     }
 
-    private void RunCommandChainRecordingWorker(CommandChainRecordingWorkerState worker)
+    private bool TryPrepareNonGraphicsRecordingWorkers(
+        int entryCount,
+        bool forceSerial,
+        uint imageIndex,
+        out CommandChainRecordingWorkerState[] workers,
+        out int workerCount)
     {
-        using VulkanCpuStageScope cpuStage = new(EVulkanCpuStage.SecondaryRecording);
-        CommandChainRecordingBatch? batch = worker.Batch;
-        if (batch is null)
+        ThrowIfAbandonedRecordingWorkersRemainActive();
+        if (entryCount < MinParallelNonGraphicsRecordJobs)
+        {
+            workers = [];
+            workerCount = 0;
+            return false;
+        }
+
+        EVulkanCommandChainWorkerEligibility eligibility =
+            PrepareCommandChainRecordingWorkers(
+                entryCount,
+                entryCount,
+                false,
+                forceSerial,
+                imageIndex,
+                out workers,
+                out workerCount,
+                out _);
+        return eligibility == EVulkanCommandChainWorkerEligibility.Eligible &&
+               workerCount > 0;
+    }
+
+    private void ThrowIfAbandonedRecordingWorkersRemainActive()
+    {
+        if (Volatile.Read(ref _commandChainRecordingWorkersFaulted) == 0 ||
+            Volatile.Read(ref _activeCommandChainRecordingWorkerCount) == 0)
             return;
 
-        long workerStart = Stopwatch.GetTimestamp();
-        Interlocked.Increment(ref batch.WorkersStarted);
-        UpdateMinimum(ref batch.FirstWorkerStartTimestamp, workerStart);
-        UpdateMaximum(ref batch.MaximumQueueDelayTimestamp, workerStart - batch.DispatchTimestamp);
-        int concurrentWorkers = Interlocked.Increment(ref batch.ConcurrentWorkers);
-        UpdateMaximum(ref batch.PeakConcurrentWorkers, concurrentWorkers);
-        try
+        throw new InvalidOperationException(
+            "Vulkan command recording is quarantined until the abandoned persistent workers exit.");
+    }
+
+    private void DispatchNonGraphicsRecordingWorkers(
+        CommandChainRecordingWorkerState[] workers,
+        int workerCount,
+        FrameOperationSequence operations,
+        uint imageIndex,
+        CommandChain[] chains,
+        CommandBuffer[] secondaryBuffers,
+        int count,
+        VulkanQuerySecondaryInheritanceContract queryInheritance)
+    {
+        VulkanNonGraphicsRecordingBatch batch = _nonGraphicsRecordingBatch;
+        batch.Reset(operations, imageIndex, queryInheritance, count);
+        for (int index = 0; index < count; index++)
         {
-            worker.LastFrameId = VulkanFrameCounter;
-            for (int jobIndex = 0; jobIndex < batch.JobCount; jobIndex++)
+            CommandChain chain = chains[index];
+            int workerIndex = ResolveCommandChainRecordingWorkerIndex(
+                chain.Key,
+                workerCount);
+            batch.Entries[index] = new VulkanNonGraphicsRecordingEntry
             {
-                if (Volatile.Read(ref batch.Error) is not null ||
-                    Volatile.Read(ref batch.CancelRequested) != 0)
-                    break;
+                Chain = chain,
+                SecondaryBuffer = secondaryBuffers[index],
+                WorkerIndex = workerIndex,
+            };
+            batch.ActiveWorkerMask |= 1u << workerIndex;
+        }
 
-                if (batch.RecordJobWorkerIndices[jobIndex] != worker.WorkerIndex)
-                    continue;
+        int activeWorkerCount = BitOperations.PopCount(batch.ActiveWorkerMask);
+        if (activeWorkerCount <= 0)
+            throw new InvalidOperationException(
+                "Persistent non-graphics recording produced no active workers.");
 
-                try
-                {
-                    int chainIndex = batch.RecordJobChainIndices[jobIndex];
-                    RecordScheduledMeshCommandChainWorker(batch, chainIndex);
-                }
-                catch (Exception ex)
-                {
-                    Interlocked.CompareExchange(ref batch.Error, ex, null);
-                    break;
-                }
+        _commandChainRecordingWorkersIdle.Reset();
+        _commandChainRecordingWorkerCountdown.Reset(activeWorkerCount);
+        Volatile.Write(ref _activeCommandChainRecordingWorkerCount, activeWorkerCount);
+        for (int workerIndex = 0; workerIndex < workerCount; workerIndex++)
+        {
+            if ((batch.ActiveWorkerMask & (1u << workerIndex)) == 0)
+                continue;
+            workers[workerIndex].NonGraphicsBatch = batch;
+            workers[workerIndex].WorkAvailable.Set();
+        }
+
+        long waitStarted = Stopwatch.GetTimestamp();
+        bool completed;
+        using (VulkanCpuStageScope workerWaitStage =
+               new(_frameTelemetry, EVulkanCpuStage.WorkerWait))
+        {
+            completed = _commandChainRecordingWorkerCountdown.Wait(
+                TimeSpan.FromMilliseconds(
+                    CommandChainWorkerWaitTimeoutMilliseconds));
+        }
+
+        bool timedOut = !completed;
+        if (timedOut)
+        {
+            Volatile.Write(ref batch.CancelRequested, 1);
+            Interlocked.Exchange(ref _commandChainRecordingWorkersFaulted, 1);
+            using (VulkanCpuStageScope workerWaitStage =
+                   new(_frameTelemetry, EVulkanCpuStage.WorkerWait))
+            {
+                completed = _commandChainRecordingWorkerCountdown.Wait(
+                    TimeSpan.FromMilliseconds(
+                        CommandChainWorkerWaitTimeoutMilliseconds));
+            }
+            if (!completed)
+            {
+                batch.Abandoned = true;
+                _nonGraphicsRecordingBatch = new VulkanNonGraphicsRecordingBatch();
+                throw new TimeoutException(
+                    $"Persistent Vulkan non-graphics workers did not stop within {CommandChainWorkerWaitTimeoutMilliseconds * 2} ms; " +
+                    "the worker domain is quarantined and the frame will not be submitted.");
             }
         }
-        finally
+
+        _commandChainRecordingWorkersIdle.Set();
+        Volatile.Write(ref _activeCommandChainRecordingWorkerCount, 0);
+        TimeSpan activeSpan = Stopwatch.GetElapsedTime(waitStarted);
+        RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanCommandChainWorkerMetrics(
+            queuedChains: count,
+            workersStarted: activeWorkerCount,
+            workersCompleted: completed ? activeWorkerCount : 0,
+            peakConcurrentWorkers: activeWorkerCount,
+            workerActiveSpan: activeSpan,
+            waitForWorkersTime: activeSpan);
+        Exception? workerError = batch.Error;
+        batch.ClearReferences();
+        if (timedOut)
         {
-            long workerCompletion = Stopwatch.GetTimestamp();
-            Interlocked.Add(ref batch.WorkerRecordTimestampTotal, workerCompletion - workerStart);
-            UpdateMaximum(ref batch.LastWorkerCompletionTimestamp, workerCompletion);
-            Interlocked.Decrement(ref batch.ConcurrentWorkers);
-            Interlocked.Increment(ref batch.WorkersCompleted);
-            worker.Batch = null;
-            bool lastWorker = _commandChainRecordingWorkerCountdown.Signal();
-            if (lastWorker)
-            {
-                Volatile.Write(ref _activeCommandChainRecordingWorkerCount, 0);
-                _commandChainRecordingWorkersIdle.Set();
-                if (batch.Abandoned)
-                    batch.ClearReferences();
-            }
+            Interlocked.Exchange(ref _commandChainRecordingWorkersFaulted, 1);
+            throw new TimeoutException(
+                $"Persistent Vulkan non-graphics recording exceeded the {CommandChainWorkerWaitTimeoutMilliseconds} ms deadline; " +
+                "cancellation completed during the grace interval, but the partial secondary batch is rejected and will not execute.");
         }
-    }
-
-    private static TimeSpan StopwatchTicksToTimeSpan(long ticks)
-        => ticks <= 0
-            ? TimeSpan.Zero
-            : TimeSpan.FromSeconds((double)ticks / Stopwatch.Frequency);
-
-    private static void UpdateMaximum(ref long target, long candidate)
-    {
-        long current = Volatile.Read(ref target);
-        while (candidate > current)
+        if (workerError is not null)
         {
-            long observed = Interlocked.CompareExchange(ref target, candidate, current);
-            if (observed == current)
-                return;
-            current = observed;
-        }
-    }
-
-    private static void UpdateMaximum(ref int target, int candidate)
-    {
-        int current = Volatile.Read(ref target);
-        while (candidate > current)
-        {
-            int observed = Interlocked.CompareExchange(ref target, candidate, current);
-            if (observed == current)
-                return;
-            current = observed;
-        }
-    }
-
-    private static void UpdateMinimum(ref long target, long candidate)
-    {
-        long current = Volatile.Read(ref target);
-        while (candidate < current)
-        {
-            long observed = Interlocked.CompareExchange(ref target, candidate, current);
-            if (observed == current)
-                return;
-            current = observed;
+            Interlocked.Exchange(ref _commandChainRecordingWorkersFaulted, 1);
+            throw new InvalidOperationException(
+                "A persistent Vulkan non-graphics recording worker failed.",
+                workerError);
         }
     }
 
@@ -427,18 +592,20 @@ public unsafe partial class VulkanRenderer
     {
         lock (_commandChainRecordingWorkersLock)
         {
-            if (_commandChainRecordingWorkers is { Length: var existingCount } && existingCount >= workerCount)
+            if (_commandChainRecordingWorkers is { Length: var existingCount } && existingCount == workerCount)
                 return _commandChainRecordingWorkers;
 
             if (_commandChainRecordingWorkers is not null)
                 throw new InvalidOperationException("Vulkan command-chain worker capacity cannot grow while worker-owned command pools are live.");
 
-            int capacity = Math.Clamp(Math.Max(Environment.ProcessorCount - 1, 1), 1, 8);
-            CommandChainRecordingWorkerState[] workers = new CommandChainRecordingWorkerState[capacity];
+            if (workerCount is <= 0 or > MaxCommandChainRecordingWorkerCount)
+                throw new ArgumentOutOfRangeException(nameof(workerCount));
+
+            CommandChainRecordingWorkerState[] workers = new CommandChainRecordingWorkerState[workerCount];
             for (int i = 0; i < workers.Length; i++)
             {
-                CommandChainRecordingWorkerState worker = new(i);
-                worker.Start(this);
+                CommandChainRecordingWorkerState worker = new(_commandRuntime, i);
+                worker.Start();
                 workers[i] = worker;
             }
 
@@ -451,7 +618,7 @@ public unsafe partial class VulkanRenderer
         CommandChainRecordingWorkerState[] workers,
         int frameSlotCount)
     {
-        uint graphicsFamily = FamilyQueueIndices.GraphicsFamilyIndex
+        uint graphicsFamily = _deviceContext.QueueFamilies.GraphicsFamilyIndex
             ?? throw new InvalidOperationException("Graphics queue family is not available.");
         for (int workerIndex = 0; workerIndex < workers.Length; workerIndex++)
         {
@@ -486,6 +653,24 @@ public unsafe partial class VulkanRenderer
         unchecked
         {
             _commandChainRecordingWorkerGeneration++;
+        }
+    }
+
+    /// <summary>
+    /// Establishes a strict CPU-side command-recording boundary before the
+    /// renderer waits for device idle. Unlike ordinary recovery cancellation,
+    /// retirement cannot continue with a quarantined worker still accessing
+    /// native command pools.
+    /// </summary>
+    internal void QuiesceCommandChainRecordingWorkersForRetirement()
+    {
+        RequestCommandChainRecordingWorkerCancellation();
+        if (!_commandChainRecordingWorkersIdle.Wait(
+                TimeSpan.FromMilliseconds(CommandChainWorkerWaitTimeoutMilliseconds)))
+        {
+            Interlocked.Exchange(ref _commandChainRecordingWorkersFaulted, 1);
+            throw new InvalidOperationException(
+                "Vulkan command-chain workers did not become idle before backend retirement.");
         }
     }
 
@@ -535,7 +720,6 @@ public unsafe partial class VulkanRenderer
             CommandChainRecordingWorkerState worker = _commandChainRecordingWorkers[i];
             worker.WorkAvailable.Dispose();
             worker.Thread = null;
-            worker.Owner = null;
         }
 
         DestroyCommandChainRecordingWorkerPoolsLocked();
@@ -546,6 +730,7 @@ public unsafe partial class VulkanRenderer
     private void RequestCommandChainRecordingWorkerCancellation()
     {
         Volatile.Write(ref _commandChainRecordingBatch.CancelRequested, 1);
+        Volatile.Write(ref _nonGraphicsRecordingBatch.CancelRequested, 1);
         if (_commandChainRecordingWorkers is null)
             return;
 
@@ -553,6 +738,8 @@ public unsafe partial class VulkanRenderer
         {
             if (_commandChainRecordingWorkers[i].Batch is { } batch)
                 Volatile.Write(ref batch.CancelRequested, 1);
+            if (_commandChainRecordingWorkers[i].NonGraphicsBatch is { } nonGraphicsBatch)
+                Volatile.Write(ref nonGraphicsBatch.CancelRequested, 1);
         }
     }
 

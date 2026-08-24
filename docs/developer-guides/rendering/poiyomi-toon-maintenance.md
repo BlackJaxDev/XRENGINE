@@ -13,7 +13,7 @@ validation have been reviewed together.
    ```powershell
    powershell -NoProfile -ExecutionPolicy Bypass -File .\Tools\Reports\Test-PoiyomiSourceVersion.ps1 `
      -PoiyomiRoot C:\src\PoiyomiToonShader `
-     -ReportPath Build\_AgentValidation\poiyomi-source-version-audit.json `
+     -ReportPath Build\_AgentValidation\00000000-000000-shared\reports\poiyomi-source-version-audit.json `
      -FailOnChanges
    ```
 

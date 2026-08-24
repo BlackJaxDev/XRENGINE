@@ -105,9 +105,19 @@ namespace XREngine.Rendering.Materials
             SupportsGeneratedMaterialTableDispatch = supportsGeneratedMaterialTableDispatch;
             PackedMembers = BuildPackedMembers(textureArray, fieldArray, usesFlags);
             ValidatePackedMembers(PackedMembers);
-            RowWordCount = PackedMembers.Count == 0
-                ? 0u
-                : PackedMembers[^1].WordOffset + PackedMembers[^1].WordCount;
+            uint rowEndWord = 0u;
+            uint rowAlignmentWords = 1u;
+            foreach (MaterialBindingPackedMember member in PackedMembers)
+            {
+                rowEndWord = Math.Max(rowEndWord, member.WordOffset + member.WordCount);
+                rowAlignmentWords = Math.Max(rowAlignmentWords, GetStd430WordAlignment(member.GlslType));
+            }
+
+            // std430 arrays use the aligned size of their element type as the array stride.
+            // Without this final struct padding, CPU rows following a vec4-bearing record are
+            // packed more tightly than GLSL advances XR_MaterialTable[index].
+            RowAlignmentWordCount = rowAlignmentWords;
+            RowWordCount = Align(rowEndWord, rowAlignmentWords);
             LayoutHash = ComputeLayoutHash();
 
             _fieldsBySemantic = Fields.ToDictionary(static x => x.Semantic, StringComparer.OrdinalIgnoreCase);
@@ -123,6 +133,7 @@ namespace XREngine.Rendering.Materials
         public IReadOnlyList<MaterialBindingPackedMember> PackedMembers { get; }
         public bool UsesFlags { get; }
         public bool SupportsGeneratedMaterialTableDispatch { get; }
+        public uint RowAlignmentWordCount { get; }
         public uint RowWordCount { get; }
         public uint RowByteCount => RowWordCount * sizeof(uint);
         public string LayoutHash { get; }
@@ -251,7 +262,9 @@ namespace XREngine.Rendering.Materials
             builder.Append(Name).Append('|')
                 .Append(RenderPass.ToString(CultureInfo.InvariantCulture)).Append('|')
                 .Append(UsesFlags ? '1' : '0').Append('|')
-                .Append(SupportsGeneratedMaterialTableDispatch ? '1' : '0').AppendLine();
+                .Append(SupportsGeneratedMaterialTableDispatch ? '1' : '0').Append('|')
+                .Append(RowAlignmentWordCount.ToString(CultureInfo.InvariantCulture)).Append('|')
+                .Append(RowWordCount.ToString(CultureInfo.InvariantCulture)).AppendLine();
 
             foreach (MaterialBindingOutput output in Outputs)
             {

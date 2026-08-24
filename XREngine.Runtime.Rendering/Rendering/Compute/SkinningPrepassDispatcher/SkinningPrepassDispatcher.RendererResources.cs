@@ -239,17 +239,16 @@ internal sealed partial class SkinningPrepassDispatcher
             if (!HasValidSkinnedBounds || _skinnedBounds is null)
                 return false;
 
-            if (!TryGetMappedAddress(_skinnedBounds, out VoidPtr mappedAddress))
-                return false;
-
-            PackedUInt4 minBits;
-            PackedUInt4 maxBits;
-            unsafe
+            PackedUInt4 minBits = default;
+            PackedUInt4 maxBits = default;
+            if (!_skinnedBounds.TryReadMapped(bytes =>
             {
-                PackedUInt4* ptr = (PackedUInt4*)mappedAddress.Pointer + _skinnedBoundsVec4Offset;
-                minBits = ptr[0];
-                maxBits = ptr[1];
-            }
+                ReadOnlySpan<PackedUInt4> values = MemoryMarshal.Cast<byte, PackedUInt4>(bytes);
+                minBits = values[checked((int)_skinnedBoundsVec4Offset)];
+                maxBits = values[checked((int)_skinnedBoundsVec4Offset + 1)];
+                return true;
+            }))
+                return false;
 
             Vector3 min = minBits.ToVector3();
             Vector3 max = maxBits.ToVector3();
@@ -310,20 +309,6 @@ internal sealed partial class SkinningPrepassDispatcher
         private static uint AlignUp(uint value, uint alignment)
             => alignment == 0u ? value : ((value + alignment - 1u) / alignment) * alignment;
 
-        private static bool TryGetMappedAddress(XRDataBuffer buffer, out VoidPtr mappedAddress)
-        {
-            foreach (VoidPtr address in buffer.GetMappedAddresses())
-            {
-                if (address != VoidPtr.Zero)
-                {
-                    mappedAddress = address;
-                    return true;
-                }
-            }
-
-            mappedAddress = VoidPtr.Zero;
-            return false;
-        }
 
         [StructLayout(LayoutKind.Sequential)]
         private struct PackedUInt4

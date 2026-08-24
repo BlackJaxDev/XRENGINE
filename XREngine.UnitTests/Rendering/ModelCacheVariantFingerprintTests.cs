@@ -100,7 +100,7 @@ public sealed class ModelCacheVariantFingerprintTests
         Compute(sourcePath, backendChange).Value.ShouldNotBe(baselineFingerprint);
 
         ModelImportOptions cookChange = new();
-        cookChange.CookSettings.Meshlets.Enabled = true;
+        cookChange.CookSettings.Meshlets.Enabled = false;
         Compute(sourcePath, cookChange).Value.ShouldNotBe(baselineFingerprint);
 
         MeshOptimizerSubMeshSettings authoredSettings = new();

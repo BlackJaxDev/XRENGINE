@@ -51,90 +51,13 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
         if (sourceLayout != ImageLayout.TransferDstOptimal)
             TransitionImageLayout(sourceLayout, ImageLayout.TransferDstOptimal);
 
-        using var scope = Renderer.NewCommandScope();
-        CommandBuffer cmd = scope.CommandBuffer;
-
-        ImageMemoryBarrier barrier = new()
-        {
-            SType = StructureType.ImageMemoryBarrier,
-            Image = Image,
-            SrcQueueFamilyIndex = Vk.QueueFamilyIgnored,
-            DstQueueFamilyIndex = Vk.QueueFamilyIgnored,
-            SubresourceRange = new ImageSubresourceRange
-            {
-                AspectMask = AspectFlags,
-                BaseArrayLayer = 0,
-                LayerCount = ResolvedArrayLayers,
-                LevelCount = 1,
-            }
-        };
-
-        int mipWidth = (int)ResolvedExtent.Width;
-        int mipHeight = (int)ResolvedExtent.Height;
-
-        for (uint level = 1; level < ResolvedMipLevels; level++)
-        {
-            barrier.SubresourceRange.BaseMipLevel = level - 1;
-            barrier.OldLayout = ImageLayout.TransferDstOptimal;
-            barrier.NewLayout = ImageLayout.TransferSrcOptimal;
-            barrier.SrcAccessMask = AccessFlags.TransferWriteBit;
-            barrier.DstAccessMask = AccessFlags.TransferReadBit;
-
-            Renderer.CmdPipelineBarrierTracked(
-                cmd,
-                PipelineStageFlags.TransferBit,
-                PipelineStageFlags.TransferBit,
-                0,
-                0,
-                null,
-                0,
-                null,
-                1,
-                &barrier);
-
-            ImageBlit blit = CreateMipBlit(level, mipWidth, mipHeight);
-            Renderer.CmdBlitImageTracked(cmd, Image, ImageLayout.TransferSrcOptimal, Image, ImageLayout.TransferDstOptimal, 1, &blit, Filter.Linear);
-
-            barrier.OldLayout = ImageLayout.TransferSrcOptimal;
-            barrier.NewLayout = ImageLayout.ShaderReadOnlyOptimal;
-            barrier.SrcAccessMask = AccessFlags.TransferReadBit;
-            barrier.DstAccessMask = AccessFlags.ShaderReadBit;
-
-            Renderer.CmdPipelineBarrierTracked(
-                cmd,
-                PipelineStageFlags.TransferBit,
-                PipelineStageFlags.FragmentShaderBit,
-                0,
-                0,
-                null,
-                0,
-                null,
-                1,
-                &barrier);
-
-            if (mipWidth > 1)
-                mipWidth /= 2;
-            if (mipHeight > 1)
-                mipHeight /= 2;
-        }
-
-        barrier.SubresourceRange.BaseMipLevel = ResolvedMipLevels - 1;
-        barrier.OldLayout = ImageLayout.TransferDstOptimal;
-        barrier.NewLayout = ImageLayout.ShaderReadOnlyOptimal;
-        barrier.SrcAccessMask = AccessFlags.TransferWriteBit;
-        barrier.DstAccessMask = AccessFlags.ShaderReadBit;
-
-        Renderer.CmdPipelineBarrierTracked(
-            cmd,
-            PipelineStageFlags.TransferBit,
-            PipelineStageFlags.FragmentShaderBit,
-            0,
-            0,
-            null,
-            0,
-            null,
-            1,
-            &barrier);
+        ResourceCommandPort.GenerateMipmaps(
+            Image,
+            ResolvedMipLevels,
+            ResolvedArrayLayers,
+            AspectFlags,
+            ResolvedExtent,
+            "VkImageBackedTexture.GenerateMipmaps");
 
         _currentImageLayout = ImageLayout.ShaderReadOnlyOptimal;
         _physicalGroup?.LastKnownLayout = ImageLayout.ShaderReadOnlyOptimal;
@@ -142,10 +65,10 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
 
     /// <summary>
     /// Builds an <see cref="ImageBlit"/> descriptor that copies from mip level
-    /// <paramref name="targetLevel"/> − 1 to <paramref name="targetLevel"/>, halving
+    /// <paramref name="targetLevel"/> âˆ’ 1 to <paramref name="targetLevel"/>, halving
     /// the width and height (clamped to 1).
     /// </summary>
-    /// <param name="targetLevel">The destination mip level (source is <c>targetLevel − 1</c>).</param>
+    /// <param name="targetLevel">The destination mip level (source is <c>targetLevel âˆ’ 1</c>).</param>
     /// <param name="mipWidth">Width of the source mip level.</param>
     /// <param name="mipHeight">Height of the source mip level.</param>
     /// <returns>A configured <see cref="ImageBlit"/> ready for <c>CmdBlitImage</c>.</returns>

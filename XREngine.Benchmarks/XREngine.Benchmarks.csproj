@@ -10,7 +10,7 @@
 
   <PropertyGroup Condition="'$(VulkanPerformanceToolOnly)' == 'true'">
     <DefineConstants>$(DefineConstants);VULKAN_PERFORMANCE_TOOL_ONLY</DefineConstants>
-    <BaseOutputPath>..\Build\Tools\VulkanPerformance\bin\</BaseOutputPath>
+    <BaseOutputPath>..\Build\_AgentValidation\00000000-000000-shared\tools\VulkanPerformance\bin\</BaseOutputPath>
   </PropertyGroup>
 
   <ItemGroup Condition="'$(VulkanPerformanceToolOnly)' == 'true'">

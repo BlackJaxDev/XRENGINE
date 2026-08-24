@@ -13,19 +13,16 @@ using XREngine.Rendering.Shadows;
 
 namespace XREngine.Rendering.Vulkan;
 
-public unsafe partial class VulkanRenderer
-{
-    private readonly record struct CommandChainLoweringStats(
-        int VisibilityPackets,
-        int RenderPackets,
-        int ChainsScheduled,
-        int ChainsRecorded,
-        int ChainsReused,
-        int ChainsFrameDataRefreshed,
-        int VolatileChainsRecorded,
-        int SecondaryCommandBuffers,
-        string? FirstStructuralDirtyReason,
-        string? FirstDescriptorGenerationMismatch,
-        string? FirstResourcePlanRevisionMismatch);
-}
+internal readonly record struct CommandChainLoweringStats(
+    int VisibilityPackets,
+    int RenderPackets,
+    int ChainsScheduled,
+    int ChainsRecorded,
+    int ChainsReused,
+    int ChainsFrameDataRefreshed,
+    int VolatileChainsRecorded,
+    int SecondaryCommandBuffers,
+    string? FirstStructuralDirtyReason,
+    string? FirstDescriptorGenerationMismatch,
+    string? FirstResourcePlanRevisionMismatch);
 

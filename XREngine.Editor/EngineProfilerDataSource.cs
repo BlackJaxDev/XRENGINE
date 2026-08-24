@@ -3,6 +3,7 @@ using XREngine;
 using XREngine.Data.Profiling;
 using XREngine.Profiler.UI;
 using XREngine.Rendering.Shadows;
+using XREngine.Rendering.Vulkan;
 using OcclusionTelemetry = XREngine.Rendering.Occlusion.OcclusionTelemetry;
 
 namespace XREngine.Editor;
@@ -195,6 +196,7 @@ internal sealed class EngineProfilerDataSource : IProfilerDataSource
         }
 
         ShadowAtlasSolveDiagnostics shadowAtlasSolve = RuntimeEngine.Rendering.Stats.ShadowAtlas.LastSolveDiagnostics;
+        VulkanFrameTelemetryPublication vulkanFrame = RuntimeEngine.Rendering.Stats.Vulkan.LatestVulkanFrameTelemetry;
         return new RenderStatsPacket
         {
             DrawCalls = RuntimeEngine.Rendering.Stats.Frame.DrawCalls,
@@ -370,13 +372,13 @@ internal sealed class EngineProfilerDataSource : IProfilerDataSource
             VulkanPipelineCacheLookupMisses = RuntimeEngine.Rendering.Stats.Vulkan.VulkanPipelineCacheLookupMisses,
             VulkanPipelineCacheLookupHitRate = RuntimeEngine.Rendering.Stats.Vulkan.VulkanPipelineCacheLookupHitRate,
             VulkanPipelineCacheMissSummary = RuntimeEngine.Rendering.Stats.Vulkan.VulkanPipelineCacheMissSummary,
-            VulkanFrameWaitFenceMs = RuntimeEngine.Rendering.Stats.Vulkan.VulkanFrameWaitFenceMs,
-            VulkanFrameAcquireImageMs = RuntimeEngine.Rendering.Stats.Vulkan.VulkanFrameAcquireImageMs,
-            VulkanFrameRecordCommandBufferMs = RuntimeEngine.Rendering.Stats.Vulkan.VulkanFrameRecordCommandBufferMs,
-            VulkanFrameSubmitMs = RuntimeEngine.Rendering.Stats.Vulkan.VulkanFrameSubmitMs,
-            VulkanFrameTrimMs = RuntimeEngine.Rendering.Stats.Vulkan.VulkanFrameTrimMs,
-            VulkanFramePresentMs = RuntimeEngine.Rendering.Stats.Vulkan.VulkanFramePresentMs,
-            VulkanFrameTotalMs = RuntimeEngine.Rendering.Stats.Vulkan.VulkanFrameTotalMs,
+            VulkanFrameWaitFenceMs = vulkanFrame.Detail.WaitFrameSlot.TotalMilliseconds,
+            VulkanFrameAcquireImageMs = vulkanFrame.Detail.AcquireImage.TotalMilliseconds,
+            VulkanFrameRecordCommandBufferMs = vulkanFrame.Detail.RecordCommandBuffer.TotalMilliseconds,
+            VulkanFrameSubmitMs = vulkanFrame.Detail.SubmitQueue.TotalMilliseconds,
+            VulkanFrameTrimMs = vulkanFrame.Detail.TrimStaging.TotalMilliseconds,
+            VulkanFramePresentMs = vulkanFrame.Detail.PresentQueue.TotalMilliseconds,
+            VulkanFrameTotalMs = vulkanFrame.TotalElapsed.TotalMilliseconds,
             VulkanFrameGpuCommandBufferMs = RuntimeEngine.Rendering.Stats.Vulkan.VulkanFrameGpuCommandBufferMs,
             VulkanDeviceLocalAllocationCount = RuntimeEngine.Rendering.Stats.Vulkan.VulkanDeviceLocalAllocationCount,
             VulkanDeviceLocalAllocatedBytes = RuntimeEngine.Rendering.Stats.Vulkan.VulkanDeviceLocalAllocatedBytes,
@@ -453,11 +455,11 @@ internal sealed class EngineProfilerDataSource : IProfilerDataSource
             VulkanRetiredResourcePlanBuffers = RuntimeEngine.Rendering.Stats.Vulkan.VulkanRetiredResourcePlanBuffers,
             VulkanFrameLoop = new VulkanFrameLoopTelemetryData
             {
-                FrameSampleTimingQueriesMs = RuntimeEngine.Rendering.Stats.Vulkan.VulkanFrameSampleTimingQueriesMs,
-                FrameDrainRetiredResourcesMs = RuntimeEngine.Rendering.Stats.Vulkan.VulkanFrameDrainRetiredResourcesMs,
-                FrameAcquireBridgeSubmitMs = RuntimeEngine.Rendering.Stats.Vulkan.VulkanFrameAcquireBridgeSubmitMs,
-                FrameWaitSwapchainImageMs = RuntimeEngine.Rendering.Stats.Vulkan.VulkanFrameWaitSwapchainImageMs,
-                FrameResetDynamicUniformRingMs = RuntimeEngine.Rendering.Stats.Vulkan.VulkanFrameResetDynamicUniformRingMs,
+                FrameSampleTimingQueriesMs = vulkanFrame.Detail.SampleTimingQueries.TotalMilliseconds,
+                FrameDrainRetiredResourcesMs = vulkanFrame.Detail.DrainRetiredResources.TotalMilliseconds,
+                FrameAcquireBridgeSubmitMs = vulkanFrame.Detail.AcquireBridgeSubmit.TotalMilliseconds,
+                FrameWaitSwapchainImageMs = vulkanFrame.Detail.WaitSwapchainImage.TotalMilliseconds,
+                FrameResetDynamicUniformRingMs = vulkanFrame.Detail.ResetDynamicUniformRing.TotalMilliseconds,
                 RecordCommandBufferAllocatedBytes = RuntimeEngine.Rendering.Stats.Vulkan.VulkanRecordCommandBufferAllocatedBytes,
                 ResetCommandBufferCalls = RuntimeEngine.Rendering.Stats.Vulkan.VulkanResetCommandBufferCalls,
                 ResetCommandPoolCalls = RuntimeEngine.Rendering.Stats.Vulkan.VulkanResetCommandPoolCalls,

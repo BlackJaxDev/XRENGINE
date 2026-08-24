@@ -44,8 +44,20 @@ public enum MeshOptimizerVertexLockFlags : byte
 [MemoryPackable(GenerateType.NoGenerate)]
 public partial class MeshOptimizerSubMeshSettings : XRBase
 {
+    private bool _useModelImportDefaults = true;
     private MeshletGenerationSettings _meshlets = new();
     private MeshLodGenerationSettings _lods = new();
+
+    /// <summary>
+    /// Uses the owning model import's cook policy. Set false only when this
+    /// submesh has an authored override; this removes ambiguous value-based
+    /// default detection from deterministic import cooking.
+    /// </summary>
+    public bool UseModelImportDefaults
+    {
+        get => _useModelImportDefaults;
+        set => SetField(ref _useModelImportDefaults, value);
+    }
 
     public MeshletGenerationSettings Meshlets
     {

@@ -69,162 +69,6 @@ namespace XREngine.Rendering.Commands
         public uint Flags;
     }
 
-    [StructLayout(LayoutKind.Sequential)]
-    public struct GPUIndirectRenderCommand
-    {
-        public Vector4 BoundingSphere;
-        public uint MeshID;
-        public uint SubmeshID;
-        public uint MaterialID;
-        public uint InstanceCount;
-        public uint RenderPass;
-        public uint RenderIdentityID;
-        public float RenderDistance;
-        public uint LayerMask;
-        public uint LODLevel;
-        public uint Flags;
-        public uint LogicalMeshID;
-        public uint TransformID;
-        public uint SkinID;
-        public uint StateClassID;
-        public uint BoundsID;
-        public uint Reserved1;
-
-        public uint Reserved0
-        {
-            readonly get => LogicalMeshID;
-            set => LogicalMeshID = value;
-        }
-
-        public void SetBoundingSphere(Vector3 center, float radius)
-            => BoundingSphere = new Vector4(center, radius);
-
-        public GPUIndirectRenderCommandHot ToHot(uint sourceCommandIndex)
-            => new()
-            {
-                BoundingSphere = BoundingSphere,
-                MeshID = MeshID,
-                SubmeshID = SubmeshID,
-                MaterialID = MaterialID,
-                InstanceCount = InstanceCount,
-                RenderPass = RenderPass,
-                LayerMask = LayerMask,
-                Flags = Flags,
-                LODLevel = LODLevel,
-                RenderIdentityID = RenderIdentityID,
-                RenderDistance = RenderDistance,
-                SourceCommandIndex = sourceCommandIndex,
-                LogicalMeshID = LogicalMeshID,
-                TransformID = TransformID,
-                SkinID = SkinID,
-                StateClassID = StateClassID,
-                BoundsID = BoundsID,
-            };
-
-        public GPUIndirectRenderCommandCold ToCold()
-            => new()
-            {
-                RenderIdentityID = RenderIdentityID,
-                RenderDistance = RenderDistance,
-                LogicalMeshID = LogicalMeshID,
-                TransformID = TransformID,
-                SkinID = SkinID,
-                StateClassID = StateClassID,
-                BoundsID = BoundsID,
-                Reserved1 = Reserved1,
-            };
-
-        public static GPUIndirectRenderCommand FromHotCold(in GPUIndirectRenderCommandHot hot, in GPUIndirectRenderCommandCold cold)
-            => new()
-            {
-                BoundingSphere = hot.BoundingSphere,
-                MeshID = hot.MeshID,
-                SubmeshID = hot.SubmeshID,
-                MaterialID = hot.MaterialID,
-                InstanceCount = hot.InstanceCount,
-                RenderPass = hot.RenderPass,
-                RenderIdentityID = cold.RenderIdentityID,
-                RenderDistance = cold.RenderDistance,
-                LayerMask = hot.LayerMask,
-                LODLevel = hot.LODLevel,
-                Flags = hot.Flags,
-                LogicalMeshID = cold.LogicalMeshID,
-                TransformID = cold.TransformID,
-                SkinID = cold.SkinID,
-                StateClassID = cold.StateClassID,
-                BoundsID = cold.BoundsID,
-                Reserved1 = cold.Reserved1,
-            };
-
-        public readonly DrawMetadata ToDrawMetadata(uint drawID)
-            => new()
-            {
-                DrawID = drawID,
-                MeshID = MeshID,
-                SubmeshID = SubmeshID,
-                MaterialID = MaterialID,
-                TransformID = TransformID,
-                SkinID = SkinID,
-                RenderPassMask = RenderPass < 32u ? 1u << (int)RenderPass : 0u,
-                LayerMask = LayerMask,
-                Flags = Flags,
-                LodPolicy = LODLevel,
-                StateClassID = StateClassID,
-                InstanceCount = InstanceCount,
-                RenderPass = RenderPass,
-                RenderIdentityID = RenderIdentityID,
-                LogicalMeshID = LogicalMeshID,
-                BoundsID = BoundsID
-            };
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    public struct GPUIndirectRenderCommandHot
-    {
-        public Vector4 BoundingSphere;
-        public uint MeshID;
-        public uint SubmeshID;
-        public uint MaterialID;
-        public uint InstanceCount;
-        public uint RenderPass;
-        public uint LayerMask;
-        public uint Flags;
-        public uint LODLevel;
-        public uint RenderIdentityID;
-        public float RenderDistance;
-        public uint SourceCommandIndex;
-        public uint LogicalMeshID;
-        public uint TransformID;
-        public uint SkinID;
-        public uint StateClassID;
-        public uint BoundsID;
-
-        public uint Reserved0
-        {
-            readonly get => LogicalMeshID;
-            set => LogicalMeshID = value;
-        }
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    public struct GPUIndirectRenderCommandCold
-    {
-        public uint RenderIdentityID;
-        public float RenderDistance;
-        public uint LogicalMeshID;
-        public uint TransformID;
-        public uint SkinID;
-        public uint StateClassID;
-        public uint BoundsID;
-        public uint Reserved1;
-
-        public uint Reserved0
-        {
-            readonly get => LogicalMeshID;
-            set => LogicalMeshID = value;
-        }
-    }
-
     [Flags]
     public enum GPUIndirectRenderFlags : uint
     {
@@ -250,7 +94,12 @@ namespace XREngine.Rendering.Commands
         /// The mesh prefers the legacy CPU lane in diagnostic strategies. Strict
         /// zero-readback ignores this bit and keeps the draw GPU-resident.
         /// </summary>
-        CpuFallbackOnly = 1 << 20
+        CpuFallbackOnly = 1 << 20,
+        /// <summary>
+        /// The draw requires raster state that is not represented by the current
+        /// canonical opaque-deferred meshlet pipeline (for example front-face culling).
+        /// </summary>
+        NonCanonicalRasterState = 1 << 21
     }
 
     public enum GPUSortAlgorithm

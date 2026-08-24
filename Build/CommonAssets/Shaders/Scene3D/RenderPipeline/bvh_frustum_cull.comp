@@ -6,7 +6,6 @@ uniform uint ENABLE_CPU_GPU_COMPARE;
 
 #define PLANES_PER_FRUSTUM 6u
 #define INVALID_INDEX 0xFFFFFFFFu
-const uint COMMAND_FLOATS = 20u;
 
 #include "bvh_nodes.glslinc"
 
@@ -49,8 +48,7 @@ struct BoundsGpu
 
 layout(std430, binding = 0) readonly buffer DrawMetadataBuffer { DrawMetadata Draws[]; };
 layout(std430, binding = 1) readonly buffer BoundsBuffer { BoundsGpu Bounds[]; };
-layout(std430, binding = 2) writeonly buffer CulledCommandsBuffer { float outCommands[]; };
-layout(std430, binding = 10) writeonly buffer CulledHotCommandsBuffer { uint outHotCommands[]; };
+layout(std430, binding = 2) writeonly buffer VisibleDrawIdsBuffer { uint outDrawIds[]; };
 layout(std430, binding = 3) buffer CulledCountBuffer
 {
     uint CulledCount;
@@ -172,7 +170,6 @@ uniform vec3 CameraPosition;
 uniform uint StatsEnabled;
 uniform uint OverflowDebugEnabled;
 uniform int ActiveViewCount;
-uniform uint UseHotCommands;
 
 #include "bvh_exact_view_mask.glslinc"
 
@@ -313,52 +310,7 @@ void LogOverflow(uint marker)
 
 void StoreCommand(uint outIndex, DrawMetadata meta, vec4 sphere, float renderDistance)
 {
-    int base = int(outIndex) * int(COMMAND_FLOATS);
-    outCommands[base + 0] = sphere.x;
-    outCommands[base + 1] = sphere.y;
-    outCommands[base + 2] = sphere.z;
-    outCommands[base + 3] = sphere.w;
-    outCommands[base + 4] = uintBitsToFloat(meta.MeshID);
-    outCommands[base + 5] = uintBitsToFloat(meta.SubmeshID);
-    outCommands[base + 6] = uintBitsToFloat(meta.MaterialID);
-    outCommands[base + 7] = uintBitsToFloat(meta.InstanceCount);
-    outCommands[base + 8] = uintBitsToFloat(meta.RenderPass);
-    outCommands[base + 9] = uintBitsToFloat(meta.RenderIdentityID);
-    outCommands[base + 10] = renderDistance;
-    outCommands[base + 11] = uintBitsToFloat(meta.LayerMask);
-    outCommands[base + 12] = uintBitsToFloat(meta.LodPolicy);
-    outCommands[base + 13] = uintBitsToFloat(meta.Flags);
-    outCommands[base + 14] = uintBitsToFloat(meta.LogicalMeshID);
-    outCommands[base + 15] = uintBitsToFloat(meta.TransformID);
-    outCommands[base + 16] = uintBitsToFloat(meta.SkinID);
-    outCommands[base + 17] = uintBitsToFloat(meta.StateClassID);
-    outCommands[base + 18] = uintBitsToFloat(meta.BoundsID);
-    outCommands[base + 19] = uintBitsToFloat(meta.DrawID);
-}
-
-void StoreHotCommand(uint outIndex, DrawMetadata meta, vec4 sphere, float renderDistance)
-{
-    uint base = outIndex * 20u;
-    outHotCommands[base + 0u] = floatBitsToUint(sphere.x);
-    outHotCommands[base + 1u] = floatBitsToUint(sphere.y);
-    outHotCommands[base + 2u] = floatBitsToUint(sphere.z);
-    outHotCommands[base + 3u] = floatBitsToUint(sphere.w);
-    outHotCommands[base + 4u] = meta.MeshID;
-    outHotCommands[base + 5u] = meta.SubmeshID;
-    outHotCommands[base + 6u] = meta.MaterialID;
-    outHotCommands[base + 7u] = meta.InstanceCount;
-    outHotCommands[base + 8u] = meta.RenderPass;
-    outHotCommands[base + 9u] = meta.LayerMask;
-    outHotCommands[base + 10u] = meta.Flags;
-    outHotCommands[base + 11u] = meta.LodPolicy;
-    outHotCommands[base + 12u] = meta.RenderIdentityID;
-    outHotCommands[base + 13u] = floatBitsToUint(renderDistance);
-    outHotCommands[base + 14u] = meta.DrawID;
-    outHotCommands[base + 15u] = meta.LogicalMeshID;
-    outHotCommands[base + 16u] = meta.TransformID;
-    outHotCommands[base + 17u] = meta.SkinID;
-    outHotCommands[base + 18u] = meta.StateClassID;
-    outHotCommands[base + 19u] = meta.BoundsID;
+    outDrawIds[outIndex] = meta.DrawID;
 }
 
 void AppendVisible(uint cmdIndex, DrawMetadata meta, vec4 sphere, float renderDistance, uvec2 exactViewMask)
@@ -373,8 +325,6 @@ void AppendVisible(uint cmdIndex, DrawMetadata meta, vec4 sphere, float renderDi
     }
 
     StoreCommand(outIndex, meta, sphere, renderDistance);
-    if (UseHotCommands != 0u)
-        StoreHotCommand(outIndex, meta, sphere, renderDistance);
     if (outIndex < CulledCommandViewMasks.length())
         CulledCommandViewMasks[outIndex] = exactViewMask;
 

@@ -76,6 +76,8 @@ namespace XREngine.Rendering
         private static AbstractRenderer? _threadCurrent;
         [ThreadStatic]
         private static bool _hasThreadCurrentOverride;
+        [ThreadStatic]
+        private static RenderFrameOutputDescription? _currentFrameOutput;
 
         /// <summary>
         /// Use this to retrieve the currently rendering window renderer.
@@ -89,6 +91,35 @@ namespace XREngine.Rendering
                 _hasThreadCurrentOverride = value is not null;
                 _globalCurrent = value;
             }
+        }
+
+        /// <summary>
+        /// Gets the immutable final-output description active on this render
+        /// thread, or <see langword="null"/> outside lease-backed frame work.
+        /// </summary>
+        public RenderFrameOutputDescription? CurrentFrameOutput => _currentFrameOutput;
+
+        /// <summary>
+        /// Publishes one acquired output to render-pipeline execution without
+        /// exposing backend-native lease state.
+        /// </summary>
+        internal FrameOutputScope PushFrameOutput(in RenderFrameOutputDescription output)
+        {
+            output.Validate();
+            return new FrameOutputScope(output);
+        }
+
+        internal readonly ref struct FrameOutputScope
+        {
+            private readonly RenderFrameOutputDescription? _previous;
+
+            internal FrameOutputScope(in RenderFrameOutputDescription output)
+            {
+                _previous = _currentFrameOutput;
+                _currentFrameOutput = output;
+            }
+
+            public void Dispose() => _currentFrameOutput = _previous;
         }
 
         internal static IDisposable PushThreadCurrent(AbstractRenderer? renderer)
@@ -135,10 +166,6 @@ namespace XREngine.Rendering
             hostContext.Target.Validate();
             _hostContext = hostContext;
             BackendGeneration = hostContext.BackendGeneration;
-
-            // The cache belongs to the renderer generation, not to a desktop window.
-            using (_roCacheLock.EnterScope())
-                _renderObjectCache = RuntimeRenderObjectServices.Current?.CreateObjectsForOwner(this) ?? [];
         }
 
         /// <summary>Compatibility constructor for existing desktop renderer implementations.</summary>
@@ -441,13 +468,7 @@ namespace XREngine.Rendering
             Vector2 displayPos = Vector2.Zero;
             Vector2 framebufferScale = Vector2.One;
 
-            bool interactiveResize = viewport?.Window?.IsInteractiveResizeInProgress == true;
-
-            // Canvas ActualSize is layout-produced and can lag the Win32 modal resize loop.
-            // ImGui needs the live viewport/window size here so it relays out instead of
-            // rendering old logical coordinates into the new framebuffer scale.
-            if (!interactiveResize &&
-                canvas?.TryGetImGuiDisplayMetrics(viewport, camera, out displaySize, out displayPos, out framebufferScale) == true)
+            if (canvas?.TryGetImGuiDisplayMetrics(viewport, camera, out displaySize, out displayPos, out framebufferScale) == true)
             {
             }
             else if (viewport is not null)
@@ -458,8 +479,8 @@ namespace XREngine.Rendering
                 var hostWindow = viewport.Window?.Window;
                 if (hostWindow is not null)
                 {
-                    var logicalSize = viewport.Window?.EffectiveWindowSize ?? hostWindow.Size;
-                    var framebufferSize = viewport.Window?.EffectiveFramebufferSize ?? hostWindow.FramebufferSize;
+                    var logicalSize = viewport.Window?.RenderWindowSize ?? hostWindow.Size;
+                    var framebufferSize = viewport.Window?.RenderFramebufferSize ?? hostWindow.FramebufferSize;
                     var scaleSourceFramebufferSize = framebufferSize;
                     if (scaleSourceFramebufferSize.X <= 0 || scaleSourceFramebufferSize.Y <= 0)
                         scaleSourceFramebufferSize = hostWindow.FramebufferSize;
@@ -573,8 +594,28 @@ namespace XREngine.Rendering
                         RecordImGuiCpuPhase(profilingActive, frameId, "ImGui.Backend.Render", phaseStart);
 
                         phaseStart = BeginImGuiCpuPhase(profilingActive);
-                        using (profilingActive ? profiler.StartScope("ImGui.PlatformWindows") : default)
-                            backend.RenderPlatformWindows();
+                        // Dear ImGui requires UpdatePlatformWindows after every
+                        // completed frame when multi-viewports are enabled. Keep
+                        // that lifecycle step separate from the potentially
+                        // blocking detached-window render/present work.
+                        bool xrOwnsCurrentOutput = viewport?.CurrentFrameOutputRequest.OutputKind is
+                            EFrameOutputKind.OpenXREyeSubmit or EFrameOutputKind.OpenVRSubmit;
+                        bool xrAuxiliaryCadenceDue = !RuntimeRenderingHostServices.Presentation.IsOpenXRActive ||
+                            (frameId & 7UL) == 0UL;
+                        bool deferPlatformGpuLifecycle = allowResizeFrame ||
+                            xrOwnsCurrentOutput ||
+                            !xrAuxiliaryCadenceDue;
+                        using (profilingActive ? profiler.StartScope("ImGui.PlatformWindows.Update") : default)
+                            backend.UpdatePlatformWindows(deferPlatformGpuLifecycle);
+
+                        // During a Win32 modal drag or XR-critical frame,
+                        // detached platform windows keep their last published
+                        // images and defer all GPU/WSI lifecycle work.
+                        if (!deferPlatformGpuLifecycle)
+                        {
+                            using (profilingActive ? profiler.StartScope("ImGui.PlatformWindows.Render") : default)
+                                backend.RenderPlatformWindows();
+                        }
                         RecordImGuiCpuPhase(profilingActive, frameId, "ImGui.PlatformWindows", phaseStart);
 
                         frameStarted = false;
@@ -626,6 +667,25 @@ namespace XREngine.Rendering
         private readonly Lock _roCacheLock = new();
         private readonly ConcurrentDictionary<GenericRenderObject, AbstractRenderAPIObject> _renderObjectCache = [];
         public IReadOnlyDictionary<GenericRenderObject, AbstractRenderAPIObject> RenderObjectCache => _renderObjectCache;
+
+        /// <summary>
+        /// Creates wrappers for render objects that predate this renderer generation.
+        /// Derived renderers must call this only after their backend-specific wrapper
+        /// factory dependencies are fully initialized.
+        /// </summary>
+        protected void InitializeRenderObjectCache()
+        {
+            ConcurrentDictionary<GenericRenderObject, AbstractRenderAPIObject>? initialObjects =
+                RuntimeRenderObjectServices.Current?.CreateObjectsForOwner(this);
+            if (initialObjects is null || ReferenceEquals(initialObjects, _renderObjectCache))
+                return;
+
+            using (_roCacheLock.EnterScope())
+            {
+                foreach (KeyValuePair<GenericRenderObject, AbstractRenderAPIObject> pair in initialObjects)
+                    _renderObjectCache.TryAdd(pair.Key, pair.Value);
+            }
+        }
 
         /// <summary>
         /// Gets or creates a new API-specific render object linked to this window renderer from a generic render object.
@@ -914,6 +974,20 @@ namespace XREngine.Rendering
             uint groupsX,
             uint groupsY,
             uint groupsZ)
+            => ERendererComputeEnqueueStatus.Unsupported;
+
+        /// <summary>
+        /// Attempts to enqueue an ordered GPU-side buffer copy in the active
+        /// render command stream. Callers remain responsible for publishing any
+        /// visibility barrier required by later shader or indirect consumers.
+        /// </summary>
+        public virtual ERendererComputeEnqueueStatus TryEnqueueGpuBufferCopy(
+            XRDataBuffer source,
+            nint sourceOffset,
+            XRDataBuffer destination,
+            nint destinationOffset,
+            nuint byteCount,
+            string label)
             => ERendererComputeEnqueueStatus.Unsupported;
 
         /// <summary>
@@ -1331,6 +1405,53 @@ namespace XREngine.Rendering
             => false;
 
         /// <summary>
+        /// Queues a diagnostics-only, fence-delayed readback of the GPU-written
+        /// mesh-task indirect command. The production meshlet path must never
+        /// depend on this observation.
+        /// </summary>
+        public virtual bool QueueGpuMeshletDispatchDiagnosticsReadback(XRDataBuffer dispatchIndirectBuffer)
+            => false;
+
+        /// <summary>
+        /// Advances when diagnostics queued for a rejected or abandoned GPU
+        /// submission are discarded. Producers use this to retry within the same
+        /// engine render frame without overwriting an accepted snapshot.
+        /// </summary>
+        public virtual ulong GpuDiagnosticSnapshotDiscardGeneration
+            => 0UL;
+
+        /// <summary>
+        /// Enqueues an ordered GPU-side copy used to preserve diagnostics from a
+        /// transient producer generation. The destination remains GPU-resident;
+        /// callers may request an asynchronous readback after frame submission.
+        /// </summary>
+        public virtual bool TryEnqueueGpuDiagnosticBufferSnapshot(
+            XRDataBuffer source,
+            XRDataBuffer destination,
+            nuint byteCount,
+            string label)
+            => TryEnqueueGpuDiagnosticBufferSnapshot(
+                source,
+                0,
+                destination,
+                0,
+                byteCount,
+                label);
+
+        /// <summary>
+        /// Enqueues a ranged GPU-side diagnostics copy. Offsets and length are
+        /// expressed in bytes and must fit both buffers.
+        /// </summary>
+        public virtual bool TryEnqueueGpuDiagnosticBufferSnapshot(
+            XRDataBuffer source,
+            nuint sourceByteOffset,
+            XRDataBuffer destination,
+            nuint destinationByteOffset,
+            nuint byteCount,
+            string label)
+            => false;
+
+        /// <summary>
         /// Issue indirect multi-draws.
         /// </summary>
         public abstract void MultiDrawElementsIndirect(uint drawCount, uint stride);
@@ -1376,7 +1497,32 @@ namespace XREngine.Rendering
         public virtual bool SupportsProductionMeshletShaders()
             => false;
 
+        /// <summary>
+        /// Maximum task workgroups that one X-only mesh-task dispatch may emit.
+        /// Backends without a negotiated task stage leave the generic limit open.
+        /// </summary>
+        public virtual uint MaxMeshTaskDispatchGroupsX
+            => uint.MaxValue;
+
+        /// <summary>
+        /// Begins an all-or-nothing batch for multiple mesh-task submissions.
+        /// Backends that cannot roll back accepted submissions fail closed so a
+        /// later tier cannot disappear after an earlier tier was accepted.
+        /// </summary>
+        public virtual bool TryBeginMeshTaskSubmissionBatch(out string failureReason)
+        {
+            failureReason = "The active renderer cannot atomically batch multiple mesh-task submissions.";
+            return false;
+        }
+
+        public virtual void CommitMeshTaskSubmissionBatch()
+            => throw new NotSupportedException("The active renderer does not support mesh-task submission batches.");
+
+        public virtual void RollbackMeshTaskSubmissionBatch()
+            => throw new NotSupportedException("The active renderer does not support mesh-task submission batches.");
+
         public virtual bool TryDrawMeshTasksIndirectCount(
+            XRRenderProgram program,
             XRDataBuffer indirectBuffer,
             XRDataBuffer countBuffer,
             uint maxDrawCount,
@@ -1385,6 +1531,11 @@ namespace XREngine.Rendering
             nuint byteOffset = 0,
             nuint countByteOffset = 0)
         {
+            if (program is null)
+            {
+                failureReason = "Mesh-task indirect dispatch requires the explicit task/mesh graphics program.";
+                return false;
+            }
             if (!ValidateMeshTasksIndirectCountArgs(
                 indirectBuffer,
                 countBuffer,
@@ -1452,15 +1603,18 @@ namespace XREngine.Rendering
                 return false;
             }
 
-            ulong indirectBytesRequired = (ulong)byteOffset + ((ulong)stride * maxDrawCount);
-            if (indirectBytesRequired > indirectBuffer.Length)
+            ulong indirectOffset = (ulong)byteOffset;
+            ulong indirectLength = indirectBuffer.Length;
+            if (indirectOffset > indirectLength ||
+                maxDrawCount > (indirectLength - indirectOffset) / stride)
             {
                 failureReason = $"Mesh-task indirect buffer is too small for maxDrawCount={maxDrawCount}, stride={stride}, offset={byteOffset}.";
                 return false;
             }
 
-            ulong countBytesRequired = (ulong)countByteOffset + sizeof(uint);
-            if (countBytesRequired > countBuffer.Length)
+            ulong countOffset = (ulong)countByteOffset;
+            ulong countLength = countBuffer.Length;
+            if (countOffset > countLength || countLength - countOffset < sizeof(uint))
             {
                 failureReason = $"Mesh-task dispatch count buffer is too small for offset={countByteOffset}.";
                 return false;

@@ -21,7 +21,8 @@ internal readonly record struct VulkanReusableFrameDataRefreshRequest(
     ulong ComputeDescriptorKey,
     uint ComputeGroupsX,
     uint ComputeGroupsY,
-    uint ComputeGroupsZ)
+    uint ComputeGroupsZ,
+    VulkanReusableFrameOwnerKey OwnerKey)
 {
     internal static VulkanReusableFrameDataRefreshRequest CreateMesh(
         EVulkanReusableFrameDataRefreshKind kind,
@@ -33,7 +34,8 @@ internal readonly record struct VulkanReusableFrameDataRefreshRequest(
         in PendingMeshDraw draw,
         int drawUniformSlot,
         EVulkanBindingFrequencyMask frequencyMask =
-            EVulkanBindingFrequencyMask.All)
+            EVulkanBindingFrequencyMask.All,
+        in VulkanReusableFrameOwnerKey ownerKey = default)
         => new(
             kind,
             sourceOpIndex,
@@ -44,12 +46,13 @@ internal readonly record struct VulkanReusableFrameDataRefreshRequest(
             draw,
             drawUniformSlot,
             frequencyMask,
+            default,
             null,
-            null,
             0,
             0,
             0,
-            0);
+            0,
+            ownerKey);
 
     internal static VulkanReusableFrameDataRefreshRequest CreateCompute(
         int sourceOpIndex,
@@ -77,5 +80,6 @@ internal readonly record struct VulkanReusableFrameDataRefreshRequest(
             descriptorKey,
             groupsX,
             groupsY,
-            groupsZ);
+            groupsZ,
+            default);
 }

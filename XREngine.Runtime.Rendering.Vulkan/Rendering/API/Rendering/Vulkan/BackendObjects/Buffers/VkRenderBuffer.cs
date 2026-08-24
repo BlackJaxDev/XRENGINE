@@ -4,8 +4,12 @@ using XREngine.Rendering;
 
 namespace XREngine.Rendering.Vulkan;
 
-internal unsafe sealed class VkRenderBuffer(VulkanRenderer api, XRRenderBuffer data) : VkObject<XRRenderBuffer>(api, data)
+internal unsafe sealed class VkRenderBuffer(
+    VulkanBackendObjectContext backendContext,
+    XRRenderBuffer data) : VkObject<XRRenderBuffer>(backendContext, data)
 {
+    private VulkanResourcePublicationPort? _resourcePublicationPort;
+    private VulkanResourcePublicationPort ResourcePublications => _resourcePublicationPort ?? throw new InvalidOperationException("Render-buffer publication port has not been bound.");
     private Image _image;
     private DeviceMemory _memory;
     private ImageView _view;
@@ -19,6 +23,9 @@ internal unsafe sealed class VkRenderBuffer(VulkanRenderer api, XRRenderBuffer d
     /// Tracks the currently allocated GPU memory size for this render buffer in bytes.
     /// </summary>
     private long _allocatedVRAMBytes = 0;
+
+    protected override void BindOperationPorts(VulkanWrapperPortBinding binding)
+        => _resourcePublicationPort = binding.TryGetResourcePublications();
 
     internal Image Image => _image;
 
@@ -39,7 +46,10 @@ internal unsafe sealed class VkRenderBuffer(VulkanRenderer api, XRRenderBuffer d
 
         bool physicalGroupChanged = false;
         if (!string.IsNullOrWhiteSpace(Data.Name) &&
-            Renderer.ResourceAllocator.TryGetPhysicalGroupForResource(Data.Name, out VulkanPhysicalImageGroup? activeGroup) &&
+            ResourcePublications.TryGetPhysicalImageGroup(
+                ResourcePublications.GetCurrentGeneration(),
+                Data.Name,
+                out VulkanPhysicalImageGroup? activeGroup) &&
             activeGroup is not null &&
             !ReferenceEquals(activeGroup, _physicalGroup))
         {
@@ -49,11 +59,14 @@ internal unsafe sealed class VkRenderBuffer(VulkanRenderer api, XRRenderBuffer d
 
         if (!_physicalGroup.IsAllocated)
         {
-            // The physical group was destroyed — the resource planner may have rebuilt
+            // The physical group was destroyed Ã¢â‚¬â€ the resource planner may have rebuilt
             // between frames and replaced it with a brand-new group object.
             // Try to re-resolve from the allocator.
             if (!string.IsNullOrWhiteSpace(Data.Name) &&
-                Renderer.ResourceAllocator.TryGetPhysicalGroupForResource(Data.Name, out VulkanPhysicalImageGroup? replacement) &&
+                ResourcePublications.TryGetPhysicalImageGroup(
+                    ResourcePublications.GetCurrentGeneration(),
+                    Data.Name,
+                    out VulkanPhysicalImageGroup? replacement) &&
                 replacement is not null)
             {
                 physicalGroupChanged |= !ReferenceEquals(replacement, _physicalGroup);
@@ -74,7 +87,8 @@ internal unsafe sealed class VkRenderBuffer(VulkanRenderer api, XRRenderBuffer d
             }
         }
 
-        _physicalGroup.EnsureAllocated(Renderer);
+        if (!_physicalGroup.TryEnsureAllocated(BackendContext, out string allocationFailure))
+            throw new VulkanOutOfMemoryException(allocationFailure, _physicalGroup.MemoryProperties);
         Format expectedFormat = _physicalGroup.Format;
         ImageAspectFlags expectedAspect = ResolveAspect(Data.Type);
         bool viewMetadataChanged =
@@ -92,7 +106,7 @@ internal unsafe sealed class VkRenderBuffer(VulkanRenderer api, XRRenderBuffer d
             return;
         }
 
-        // Physical group was reallocated — refresh our cached handles.
+        // Physical group was reallocated Ã¢â‚¬â€ refresh our cached handles.
         RetireView();
 
         _image = _physicalGroup.Image;
@@ -146,13 +160,13 @@ internal unsafe sealed class VkRenderBuffer(VulkanRenderer api, XRRenderBuffer d
 
         if (retiredView.Handle != 0 || retiredImage.Handle != 0 || retiredMemory.Handle != 0)
         {
-            Renderer.RetireImageResources(new RetiredImageResources(
+            BackendContext.Resources.Images.RetireOwnedResources(new RetiredImageResources(
                 retiredImage,
                 retiredMemory,
                 retiredView,
                 [],
                 default,
-                0));
+                0), nameof(VkRenderBuffer));
         }
 
         _view = default;
@@ -167,10 +181,14 @@ internal unsafe sealed class VkRenderBuffer(VulkanRenderer api, XRRenderBuffer d
     private void AcquireImage()
     {
         if (!string.IsNullOrWhiteSpace(Data.Name)
-            && Renderer.ResourceAllocator.TryGetPhysicalGroupForResource(Data.Name, out VulkanPhysicalImageGroup? group)
+            && ResourcePublications.TryGetPhysicalImageGroup(
+                ResourcePublications.GetCurrentGeneration(),
+                Data.Name,
+                out VulkanPhysicalImageGroup? group)
             && group is not null)
         {
-            group.EnsureAllocated(Renderer);
+            if (!group.TryEnsureAllocated(BackendContext, out string allocationFailure))
+                throw new VulkanOutOfMemoryException(allocationFailure, group.MemoryProperties);
             _physicalGroup = group;
             _image = group.Image;
             _memory = group.Memory;
@@ -207,22 +225,20 @@ internal unsafe sealed class VkRenderBuffer(VulkanRenderer api, XRRenderBuffer d
             SharingMode = SharingMode.Exclusive,
         };
 
-        fixed (Image* imagePtr = &_image)
-        {
-            if (Renderer.CreateVulkanImageTracked(ref info, imagePtr, "VkRenderBuffer.Image") != Result.Success)
-                throw new Exception("Failed to create Vulkan render buffer image.");
-        }
+        if (BackendContext.Resources.Images.CreateOwnedImage(BackendContext, ref info, "VkRenderBuffer.Image", out _image) != Result.Success)
+            throw new Exception("Failed to create Vulkan render buffer image.");
 
-        Renderer.ClearTrackedImageLayouts(_image);
-        VulkanMemoryAllocation allocation = Renderer.AllocateImageMemoryWithFallback(_image, MemoryPropertyFlags.DeviceLocalBit);
-        Renderer._imageAllocationTracker.Allocations[_image.Handle] = allocation;
+        VulkanMemoryAllocation allocation = BackendContext.Resources.Images.AllocateOwnedImageMemory(
+            BackendContext,
+            _image,
+            MemoryPropertyFlags.DeviceLocalBit);
+        BackendContext.Resources.Images.RegisterOwnedImageAllocation(_image, in allocation);
         _memory = allocation.Memory;
 
         if (Api!.BindImageMemory(Device, _image, _memory, allocation.Offset) != Result.Success)
         {
-            Renderer._imageAllocationTracker.Allocations.TryRemove(_image.Handle, out _);
-            Renderer.DestroyVulkanImageImmediateTracked(_image, "VkRenderBuffer.BindFailure");
-            Renderer.FreeMemoryAllocation(allocation);
+            BackendContext.Resources.Images.DestroyUnpublishedOwnedImage(BackendContext, _image, "VkRenderBuffer.BindFailure");
+            BackendContext.Resources.Images.FreeMemory(BackendContext, in allocation);
             _image = default;
             _memory = default;
             throw new Exception("Failed to bind memory for render buffer image.");
@@ -246,6 +262,8 @@ internal unsafe sealed class VkRenderBuffer(VulkanRenderer api, XRRenderBuffer d
 
     private void CreateImageView()
     {
+        if (!BackendContext.IsDeviceOperational)
+            throw new InvalidOperationException("Cannot create a Vulkan render-buffer view after device loss.");
         RetireView();
 
         Format viewFormat = Format;
@@ -268,7 +286,7 @@ internal unsafe sealed class VkRenderBuffer(VulkanRenderer api, XRRenderBuffer d
 
         if (Api!.CreateImageView(Device, ref viewInfo, null, out _view) != Result.Success)
             throw new Exception("Failed to create render buffer image view.");
-        Renderer.TrackLiveImageView(_view, in viewInfo, "VkRenderBuffer.View");
+        BackendContext.Resources.Images.RegisterView(_view, in viewInfo, "VkRenderBuffer.View");
     }
 
     private void RetireView()
@@ -276,13 +294,13 @@ internal unsafe sealed class VkRenderBuffer(VulkanRenderer api, XRRenderBuffer d
         if (_view.Handle == 0)
             return;
 
-        Renderer.RetireImageResources(new RetiredImageResources(
+        BackendContext.Resources.Images.RetireOwnedResources(new RetiredImageResources(
             default,
             default,
             _view,
             [],
             default,
-            0));
+            0), nameof(VkRenderBuffer));
         _view = default;
     }
 
@@ -346,7 +364,7 @@ internal unsafe sealed class VkRenderBuffer(VulkanRenderer api, XRRenderBuffer d
         if (RuntimeEngine.InvokeOnMainThread(AllocateCompat, "VkRenderBuffer.AllocateCompat"))
             return;
 
-        if (Renderer.IsDeviceLost)
+        if (!BackendContext.IsDeviceOperational)
             return;
 
         Debug.VulkanEvery(
@@ -366,7 +384,7 @@ internal unsafe sealed class VkRenderBuffer(VulkanRenderer api, XRRenderBuffer d
         if (RuntimeEngine.InvokeOnMainThread(BindCompat, "VkRenderBuffer.BindCompat"))
             return;
 
-        if (Renderer.IsDeviceLost)
+        if (!BackendContext.IsDeviceOperational)
             return;
 
         Debug.VulkanEvery(
@@ -391,7 +409,7 @@ internal unsafe sealed class VkRenderBuffer(VulkanRenderer api, XRRenderBuffer d
         if (RuntimeEngine.InvokeOnMainThread(() => AttachToFBOCompat(target, attachment, mipLevel), "VkRenderBuffer.AttachToFBOCompat"))
             return;
 
-        if (Renderer.IsDeviceLost)
+        if (!BackendContext.IsDeviceOperational)
             return;
 
         bool addedTarget = AddTargetIfMissing(target, attachment, mipLevel);
@@ -502,7 +520,7 @@ internal unsafe sealed class VkRenderBuffer(VulkanRenderer api, XRRenderBuffer d
 
     private void InvalidateFrameBuffer(XRFrameBuffer target)
     {
-        if (Renderer.GetOrCreateAPIRenderObject(target, generateNow: false) is VkFrameBuffer vkFrameBuffer && vkFrameBuffer.IsGenerated)
+        if (GetBackendWrapper(target, generateNow: false) is VkFrameBuffer vkFrameBuffer && vkFrameBuffer.IsGenerated)
             vkFrameBuffer.Destroy();
     }
 

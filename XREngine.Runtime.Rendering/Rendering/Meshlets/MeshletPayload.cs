@@ -1,9 +1,21 @@
 using System.Buffers.Binary;
+using System.Collections.Immutable;
 using System.IO.Hashing;
 using System.Numerics;
 using XREngine.Data.Rendering;
 
 namespace XREngine.Rendering.Meshlets;
+
+/// <summary>Persisted derived-data state; absence is never inferred from a null payload.</summary>
+public enum MeshletPayloadState : byte
+{
+    Present,
+    Disabled,
+    Empty,
+    MissingRepairable,
+    CorruptRepairable,
+    RepairFailed,
+}
 
 public readonly record struct CpuMeshletDescriptor(
     Vector4 BoundsSphere,
@@ -117,11 +129,25 @@ public readonly record struct MeshLodGenerationSettingsSnapshot(
 
 public sealed class MeshletPayload
 {
-    public const int CurrentPayloadVersion = 1;
+    private static long s_nextValidationRevision;
+    public const int CurrentPayloadVersion = 3;
+    public const uint PortableMaxVertices = 64u;
+    public const uint PortableMaxTriangles = 124u;
 
     public int PayloadVersion { get; init; } = CurrentPayloadVersion;
     public bool GenerationEnabled { get; init; }
+    public MeshletPayloadState State { get; init; }
     public string MeshOptimizerVersionKey { get; init; } = string.Empty;
+    /// <summary>Cooker-only provenance. Runtime compatibility never depends on this value.</summary>
+    public string CookProvenanceKey { get; init; } = string.Empty;
+    /// <summary>Stable token used for O(1) runtime payload compatibility checks.</summary>
+    public ulong RuntimeCompatibilityToken { get; init; }
+    /// <summary>Nonserialized proof that this in-memory payload passed full validation.</summary>
+    public long ValidationRevision { get; private set; }
+    /// <summary>Nonserialized owner binding issued only after source-mesh validation.</summary>
+    public ulong OwnerValidationToken { get; private set; }
+    /// <summary>Nonserialized geometry revision of the mesh that issued the owner binding.</summary>
+    public long OwnerGeometryRevision { get; private set; }
     public string SourceMeshIdentity { get; init; } = string.Empty;
     public int SourceVertexCount { get; init; }
     public int SourceTriangleCount { get; init; }
@@ -131,13 +157,145 @@ public sealed class MeshletPayload
     public ulong FreshnessHash { get; init; }
     public MeshletGenerationSettingsSnapshot MeshletSettings { get; init; }
     public MeshLodGenerationSettingsSnapshot LodSettings { get; init; }
-    public CpuMeshletDescriptor[] Meshlets { get; init; } = [];
-    public uint[] VertexIndices { get; init; } = [];
-    public byte[] TriangleIndices { get; init; } = [];
-    public MeshletVertex[] Vertices { get; init; } = [];
+    public ImmutableArray<CpuMeshletDescriptor> Meshlets { get; init; } = [];
+    public ImmutableArray<uint> VertexIndices { get; init; } = [];
+    public ImmutableArray<byte> TriangleIndices { get; init; } = [];
+    public ImmutableArray<MeshletVertex> Vertices { get; init; } = [];
     public MeshOptimizerMeshletStats Stats { get; init; }
 
-    public bool HasMeshlets => GenerationEnabled && Meshlets.Length > 0;
+    public bool HasMeshlets => State == MeshletPayloadState.Present && Meshlets.Length > 0;
+
+    public bool IsRuntimeCompatible
+        => PayloadVersion == CurrentPayloadVersion
+           && RuntimeCompatibilityToken == MeshletPayloadUtility.ComputeRuntimeCompatibilityToken(MeshletSettings)
+           && MeshletSettings.MaxVertices <= PortableMaxVertices
+           && MeshletSettings.MaxTriangles <= PortableMaxTriangles;
+
+    public bool IsValidatedForRuntime
+        => ValidationRevision != 0 && OwnerValidationToken != 0UL && OwnerGeometryRevision != 0 && IsRuntimeCompatible;
+
+    /// <summary>Performs the O(1) owner-revision check required by runtime registration.</summary>
+    public bool IsValidatedFor(XRMesh mesh)
+        => mesh is not null && IsValidatedForRuntime && OwnerGeometryRevision == mesh.GeometryRevision;
+
+    /// <summary>Validates this derived payload against its owning source mesh on the import/cache thread.</summary>
+    public void ValidateForMesh(XRMesh mesh, string? expectedIdentity = null)
+    {
+        ArgumentNullException.ThrowIfNull(mesh);
+        ValidatePortablePayload();
+        string identity = MeshletPayloadUtility.ResolveSourceMeshIdentity(mesh, expectedIdentity);
+        int triangleCount = (mesh.GetIndices(EPrimitiveType.Triangles)?.Length ?? 0) / 3;
+        ulong sourceHash = MeshletPayloadUtility.ComputeSourceMeshHash(mesh);
+        ulong freshness = MeshletPayloadUtility.ComputeFreshnessHash(identity, sourceHash, MeshletSettingsHash, LodSettingsHash, CookProvenanceKey);
+        if (SourceVertexCount != mesh.VertexCount || SourceTriangleCount != triangleCount || SourceMeshHash != sourceHash
+            || !string.Equals(SourceMeshIdentity, identity, StringComparison.Ordinal) || FreshnessHash != freshness)
+            throw new InvalidDataException("Meshlet payload does not belong to the supplied source mesh.");
+
+        if (OwnerValidationToken == 0UL)
+            OwnerValidationToken = MeshletPayloadUtility.ComputeOwnerValidationToken(identity, sourceHash, FreshnessHash);
+        OwnerGeometryRevision = mesh.GeometryRevision;
+        if (ValidationRevision == 0)
+            ValidationRevision = Interlocked.Increment(ref s_nextValidationRevision);
+    }
+
+    private static bool IsFinite(Vector4 value)
+        => float.IsFinite(value.X) && float.IsFinite(value.Y) && float.IsFinite(value.Z) && float.IsFinite(value.W);
+
+    /// <summary>Validates all portable CPU payload ranges before persistence or GPU registration.</summary>
+    public void ValidatePortablePayload()
+    {
+        if (!IsRuntimeCompatible)
+            throw new InvalidDataException($"Meshlet payload is not compatible with the portable shader profile ({PortableMaxVertices} vertices, {PortableMaxTriangles} triangles).");
+        if (!Enum.IsDefined(State))
+            throw new InvalidDataException("Meshlet payload has an unknown generated-data state.");
+        if (SourceVertexCount < 0 || SourceTriangleCount < 0 || Stats.MeshletCount != Meshlets.Length
+            || Stats.VertexReferenceCount != VertexIndices.Length || Stats.TriangleByteCount != TriangleIndices.Length
+            || Stats.EncodedByteCount < 0)
+            throw new InvalidDataException("Meshlet payload has invalid source or statistics counts.");
+
+        if (State == MeshletPayloadState.Present
+            && (!GenerationEnabled || Meshlets.Length == 0 || VertexIndices.Length == 0 || TriangleIndices.Length == 0))
+            throw new InvalidDataException("Present meshlet payloads must contain enabled descriptor and index streams.");
+
+        if (State == MeshletPayloadState.Empty && !GenerationEnabled)
+            throw new InvalidDataException("Empty meshlet payloads must record enabled generation with no output.");
+
+        if (State == MeshletPayloadState.Disabled
+            && (GenerationEnabled || Meshlets.Length != 0 || VertexIndices.Length != 0 || TriangleIndices.Length != 0 || Stats.EncodedByteCount != 0))
+            throw new InvalidDataException("Disabled meshlet payloads must not contain generated meshlet data.");
+
+        if ((State is MeshletPayloadState.Empty or MeshletPayloadState.MissingRepairable or MeshletPayloadState.CorruptRepairable or MeshletPayloadState.RepairFailed)
+            && (Meshlets.Length != 0 || VertexIndices.Length != 0 || TriangleIndices.Length != 0))
+            throw new InvalidDataException($"Meshlet payload state '{State}' must not contain meshlet streams.");
+
+        if (Meshlets.Length == 0 && (VertexIndices.Length != 0 || TriangleIndices.Length != 0))
+            throw new InvalidDataException("Empty meshlet payloads must not contain index streams.");
+
+        uint previousVertexEnd = 0;
+        uint previousTriangleEnd = 0;
+        for (int index = 0; index < Meshlets.Length; index++)
+        {
+            CpuMeshletDescriptor descriptor = Meshlets[index];
+            if (descriptor.VertexCount == 0 || descriptor.TriangleCount == 0
+                || descriptor.VertexCount > PortableMaxVertices || descriptor.TriangleCount > PortableMaxTriangles
+                || descriptor.VertexCount > MeshletSettings.MaxVertices
+                || descriptor.TriangleCount > MeshletSettings.MaxTriangles
+                || (ulong)descriptor.VertexOffset + descriptor.VertexCount > (ulong)VertexIndices.Length
+                || (ulong)descriptor.TriangleOffset + ((ulong)descriptor.TriangleCount * 3UL) > (ulong)TriangleIndices.Length)
+            {
+                throw new InvalidDataException($"Meshlet descriptor {index} has an invalid vertex or triangle range.");
+            }
+
+            if (descriptor.TriangleOffset % 4u != 0u
+                || descriptor.VertexOffset < previousVertexEnd
+                || descriptor.TriangleOffset < previousTriangleEnd)
+            {
+                throw new InvalidDataException($"Meshlet descriptor {index} has non-monotonic or unaligned stream offsets.");
+            }
+
+            if (!float.IsFinite(descriptor.BoundsSphere.X) || !float.IsFinite(descriptor.BoundsSphere.Y)
+                || !float.IsFinite(descriptor.BoundsSphere.Z) || !float.IsFinite(descriptor.BoundsSphere.W)
+                || descriptor.BoundsSphere.W < 0.0f
+                || !float.IsFinite(descriptor.Cone.X) || !float.IsFinite(descriptor.Cone.Y)
+                || !float.IsFinite(descriptor.Cone.Z) || !float.IsFinite(descriptor.Cone.W)
+                || !float.IsFinite(descriptor.ConeApex.X) || !float.IsFinite(descriptor.ConeApex.Y)
+                || !float.IsFinite(descriptor.ConeApex.Z) || !float.IsFinite(descriptor.ConeApex.W))
+            {
+                throw new InvalidDataException($"Meshlet descriptor {index} contains non-finite bounds or cone data.");
+            }
+
+            for (uint vertex = 0; vertex < descriptor.VertexCount; vertex++)
+                if (VertexIndices[checked((int)(descriptor.VertexOffset + vertex))] >= (uint)SourceVertexCount)
+                    throw new InvalidDataException($"Meshlet descriptor {index} references a vertex outside the source mesh.");
+
+            for (uint triangleByte = 0; triangleByte < descriptor.TriangleCount * 3u; triangleByte++)
+                if (TriangleIndices[checked((int)(descriptor.TriangleOffset + triangleByte))] >= descriptor.VertexCount)
+                    throw new InvalidDataException($"Meshlet descriptor {index} contains an invalid local triangle index.");
+
+            previousVertexEnd = checked(descriptor.VertexOffset + descriptor.VertexCount);
+            previousTriangleEnd = checked(descriptor.TriangleOffset + (descriptor.TriangleCount * 3u));
+        }
+
+        if (TriangleIndices.Length != 0 && (TriangleIndices.Length & 3) != 0)
+            throw new InvalidDataException("The meshlet local-triangle stream must have four-byte-aligned terminal padding.");
+
+        if (Meshlets.Length > 0)
+        {
+            CpuMeshletDescriptor last = Meshlets[^1];
+            ulong requiredByteCount = (last.TriangleOffset + ((ulong)last.TriangleCount * 3UL) + 3UL) & ~3UL;
+            if (requiredByteCount != (ulong)TriangleIndices.Length)
+                throw new InvalidDataException("The meshlet local-triangle stream does not preserve its required terminal padding.");
+        }
+
+        for (int vertexIndex = 0; vertexIndex < Vertices.Length; vertexIndex++)
+        {
+            MeshletVertex vertex = Vertices[vertexIndex];
+            if (!IsFinite(vertex.Position) || !IsFinite(vertex.Normal) || !IsFinite(vertex.Tangent)
+                || !float.IsFinite(vertex.TexCoord.X) || !float.IsFinite(vertex.TexCoord.Y))
+                throw new InvalidDataException($"Meshlet vertex {vertexIndex} contains non-finite data.");
+        }
+
+    }
 
     public bool IsFreshFor(XRMesh mesh, MeshletGenerationSettings? meshletSettings, MeshLodGenerationSettings? lodSettings, string? sourceMeshIdentity = null)
     {
@@ -149,10 +307,11 @@ public sealed class MeshletPayload
         ulong sourceHash = MeshletPayloadUtility.ComputeSourceMeshHash(mesh);
         ulong meshletHash = MeshletPayloadUtility.ComputeHash(meshletSnapshot);
         ulong lodHash = MeshletPayloadUtility.ComputeHash(lodSnapshot);
-        string versionKey = MeshOptimizerIntegration.MeshOptimizerVersionKey;
-        ulong freshness = MeshletPayloadUtility.ComputeFreshnessHash(identity, sourceHash, meshletHash, lodHash, versionKey);
+        string provenanceKey = MeshletPayloadUtility.CurrentCookProvenanceKey;
+        ulong freshness = MeshletPayloadUtility.ComputeFreshnessHash(identity, sourceHash, meshletHash, lodHash, provenanceKey);
 
         return PayloadVersion == CurrentPayloadVersion
+            && OwnerGeometryRevision == mesh.GeometryRevision
             && SourceVertexCount == mesh.VertexCount
             && SourceTriangleCount == ((mesh.GetIndices(EPrimitiveType.Triangles)?.Length ?? 0) / 3)
             && SourceMeshHash == sourceHash
@@ -160,7 +319,7 @@ public sealed class MeshletPayload
             && LodSettingsHash == lodHash
             && FreshnessHash == freshness
             && string.Equals(SourceMeshIdentity, identity, StringComparison.Ordinal)
-            && string.Equals(MeshOptimizerVersionKey, versionKey, StringComparison.Ordinal);
+            && string.Equals(CookProvenanceKey, provenanceKey, StringComparison.Ordinal);
     }
 
     public bool IsFreshForSourceMesh(XRMesh mesh)
@@ -169,16 +328,17 @@ public sealed class MeshletPayload
 
         string identity = MeshletPayloadUtility.ResolveSourceMeshIdentity(mesh, SourceMeshIdentity);
         ulong sourceHash = MeshletPayloadUtility.ComputeSourceMeshHash(mesh);
-        string versionKey = MeshOptimizerIntegration.MeshOptimizerVersionKey;
+        string versionKey = CookProvenanceKey;
         ulong freshness = MeshletPayloadUtility.ComputeFreshnessHash(identity, sourceHash, MeshletSettingsHash, LodSettingsHash, versionKey);
 
         return PayloadVersion == CurrentPayloadVersion
+            && OwnerGeometryRevision == mesh.GeometryRevision
             && SourceVertexCount == mesh.VertexCount
             && SourceTriangleCount == ((mesh.GetIndices(EPrimitiveType.Triangles)?.Length ?? 0) / 3)
             && SourceMeshHash == sourceHash
             && FreshnessHash == freshness
             && string.Equals(SourceMeshIdentity, identity, StringComparison.Ordinal)
-            && string.Equals(MeshOptimizerVersionKey, versionKey, StringComparison.Ordinal);
+            && IsRuntimeCompatible;
     }
 
     public Meshlet[] CreateGpuMeshlets(uint meshID, uint materialID, int renderPass, uint vertexOffset = 0u, uint vertexIndexOffset = 0u, uint triangleOffset = 0u)
@@ -216,31 +376,54 @@ public sealed class MeshletPayload
         ulong meshletHash = MeshletPayloadUtility.ComputeHash(meshletSnapshot);
         ulong lodHash = MeshletPayloadUtility.ComputeHash(lodSnapshot);
         string versionKey = MeshOptimizerIntegration.MeshOptimizerVersionKey;
+        string provenanceKey = MeshletPayloadUtility.CurrentCookProvenanceKey;
 
-        return new MeshletPayload
+        MeshletPayload payload = new()
         {
             GenerationEnabled = false,
+            State = MeshletPayloadState.Disabled,
             MeshOptimizerVersionKey = versionKey,
+            CookProvenanceKey = provenanceKey,
+            RuntimeCompatibilityToken = MeshletPayloadUtility.ComputeRuntimeCompatibilityToken(meshletSnapshot),
             SourceMeshIdentity = identity,
             SourceVertexCount = mesh.VertexCount,
             SourceTriangleCount = (mesh.GetIndices(EPrimitiveType.Triangles)?.Length ?? 0) / 3,
             SourceMeshHash = sourceHash,
             MeshletSettingsHash = meshletHash,
             LodSettingsHash = lodHash,
-            FreshnessHash = MeshletPayloadUtility.ComputeFreshnessHash(identity, sourceHash, meshletHash, lodHash, versionKey),
+            FreshnessHash = MeshletPayloadUtility.ComputeFreshnessHash(identity, sourceHash, meshletHash, lodHash, provenanceKey),
             MeshletSettings = meshletSnapshot,
             LodSettings = lodSnapshot,
             Stats = new MeshOptimizerMeshletStats(0, 0, 0, 0),
         };
+        payload.ValidatePortablePayload();
+        return payload;
     }
 }
 
 public static class MeshletPayloadUtility
 {
-    private const int SourceMeshHashVersion = 1;
+    private const int SourceMeshHashVersion = 3;
     private const int MeshletSettingsHashVersion = 1;
     private const int LodSettingsHashVersion = 1;
-    private const int FreshnessHashVersion = 1;
+    private const int FreshnessHashVersion = 2;
+    private const int TopologyPolicyVersion = 1;
+    // Version 4 requires lossless source-stream persistence whenever an XRMesh
+    // carries an ownership-validated meshlet payload.
+    private const int SharedMeshletCodecVersion = 4;
+
+    /// <summary>Import/cache provenance; runtime compatibility is deliberately separate.</summary>
+    public static string CurrentCookProvenanceKey
+        => $"meshoptimizer={MeshOptimizerIntegration.MeshOptimizerVersionKey};payload={MeshletPayload.CurrentPayloadVersion};sourceHash={SourceMeshHashVersion};meshletSettings={MeshletSettingsHashVersion};lodSettings={LodSettingsHashVersion};freshness={FreshnessHashVersion};topologyPolicy={TopologyPolicyVersion};codec={SharedMeshletCodecVersion}";
+
+    public static ulong ComputeOwnerValidationToken(string identity, ulong sourceHash, ulong freshnessHash)
+    {
+        XxHash64 hash = new();
+        AppendString(hash, identity);
+        AppendUInt64(hash, sourceHash);
+        AppendUInt64(hash, freshnessHash);
+        return BinaryPrimitives.ReadUInt64LittleEndian(hash.GetCurrentHash());
+    }
 
     public static string ResolveSourceMeshIdentity(XRMesh mesh, string? sourceMeshIdentity = null)
     {
@@ -267,6 +450,10 @@ public static class MeshletPayloadUtility
         AppendInt32(hash, SourceMeshHashVersion);
         AppendInt32(hash, mesh.VertexCount);
         AppendInt32(hash, (int)mesh.Type);
+        AppendBoolean(hash, mesh.HasNormals);
+        AppendBoolean(hash, mesh.HasTangents);
+        AppendUInt32(hash, mesh.TexCoordCount);
+        AppendUInt32(hash, mesh.ColorCount);
 
         int[] indices = mesh.GetIndices(EPrimitiveType.Triangles) ?? [];
         AppendInt32(hash, indices.Length);
@@ -274,7 +461,16 @@ public static class MeshletPayloadUtility
             AppendInt32(hash, indices[i]);
 
         for (int i = 0; i < mesh.VertexCount; i++)
+        {
             AppendVector3(hash, mesh.GetPosition((uint)i));
+            AppendVector3(hash, mesh.GetNormal((uint)i));
+            AppendVector4(hash, mesh.GetTangentWithSign((uint)i));
+            AppendBoolean(hash, mesh.Vertices.Length > i && mesh.Vertices[i].Weights is { Count: > 0 });
+            for (uint texCoord = 0; texCoord < mesh.TexCoordCount; texCoord++)
+                AppendVector2(hash, mesh.GetTexCoord((uint)i, texCoord));
+            for (uint color = 0; color < mesh.ColorCount; color++)
+                AppendVector4(hash, mesh.GetColor((uint)i, color));
+        }
 
         return hash.GetCurrentHashAsUInt64();
     }
@@ -339,6 +535,18 @@ public static class MeshletPayloadUtility
         return hash.GetCurrentHashAsUInt64();
     }
 
+    public static ulong ComputeRuntimeCompatibilityToken(MeshletGenerationSettingsSnapshot settings)
+    {
+        XxHash64 hash = new();
+        AppendInt32(hash, MeshletPayload.CurrentPayloadVersion);
+        AppendInt32(hash, 1); // portable descriptor layout
+        AppendInt32(hash, 1); // local-triangle byte packing
+        AppendInt32(hash, 1); // uint32 vertex-reference stream encoding
+        AppendUInt32(hash, MeshletPayload.PortableMaxVertices);
+        AppendUInt32(hash, MeshletPayload.PortableMaxTriangles);
+        return hash.GetCurrentHashAsUInt64();
+    }
+
     private static void AppendBoolean(XxHash64 hash, bool value)
     {
         Span<byte> buffer = stackalloc byte[1];
@@ -358,6 +566,20 @@ public static class MeshletPayloadUtility
         Span<byte> buffer = stackalloc byte[sizeof(uint)];
         BinaryPrimitives.WriteUInt32LittleEndian(buffer, value);
         hash.Append(buffer);
+    }
+
+    private static void AppendVector2(XxHash64 hash, Vector2 value)
+    {
+        AppendSingle(hash, value.X);
+        AppendSingle(hash, value.Y);
+    }
+
+    private static void AppendVector4(XxHash64 hash, Vector4 value)
+    {
+        AppendSingle(hash, value.X);
+        AppendSingle(hash, value.Y);
+        AppendSingle(hash, value.Z);
+        AppendSingle(hash, value.W);
     }
 
     private static void AppendUInt64(XxHash64 hash, ulong value)

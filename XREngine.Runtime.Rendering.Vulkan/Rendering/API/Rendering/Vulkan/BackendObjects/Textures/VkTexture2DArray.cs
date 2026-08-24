@@ -8,7 +8,7 @@ namespace XREngine.Rendering.Vulkan;
 /// Each element in <c>Data.Textures</c> maps to an array layer. Provides per-layer
 /// attachment views suitable for framebuffer targets (e.g. shadow cascades).
 /// </summary>
-internal sealed class VkTexture2DArray(VulkanRenderer api, XRTexture2DArray data) : VkImageBackedTexture<XRTexture2DArray>(api, data)
+internal sealed class VkTexture2DArray(VulkanBackendObjectContext backendContext, IRenderApiWrapperOwner owner, XRTexture2DArray data) : VkImageBackedTexture<XRTexture2DArray>(backendContext, owner, data)
 {
     protected override ImageViewType DefaultImageViewType => ImageViewType.Type2DArray;
 
@@ -76,27 +76,18 @@ internal sealed class VkTexture2DArray(VulkanRenderer api, XRTexture2DArray data
                 Mipmap2D? mip = mipmaps[level];
                 if (mip is null)
                     continue;
-
-                if (!TryCreateStagingBuffer(mip.Data, out Buffer stagingBuffer, out DeviceMemory stagingMemory))
+                if (mip.Data is null || mip.Data.Length == 0)
                     continue;
 
-                try
+                if (!uploadedAny)
                 {
-                    if (!uploadedAny)
-                    {
-                        ImageLayout oldLayout = CurrentImageLayout;
-                        if (oldLayout != ImageLayout.TransferDstOptimal)
-                            TransitionImageLayout(oldLayout, ImageLayout.TransferDstOptimal);
-                        uploadedAny = true;
-                    }
-
-                    Extent3D extent = new(Math.Max(mip.Width, 1u), Math.Max(mip.Height, 1u), 1);
-                    CopyBufferToImage(stagingBuffer, level, layer, 1, extent, (ulong)(mip.Data?.Length ?? 0));
+                    ImageLayout oldLayout = CurrentImageLayout;
+                    if (oldLayout != ImageLayout.TransferDstOptimal)
+                        TransitionImageLayout(oldLayout, ImageLayout.TransferDstOptimal);
+                    uploadedAny = true;
                 }
-                finally
-                {
-                    DestroyStagingBuffer(stagingBuffer, stagingMemory);
-                }
+                Extent3D extent = new(Math.Max(mip.Width, 1u), Math.Max(mip.Height, 1u), 1);
+                _ = UploadStagingDataToImage(mip.Data, level, layer, 1, extent);
             }
         }
 

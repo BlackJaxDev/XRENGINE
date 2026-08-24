@@ -554,17 +554,27 @@ public unsafe partial class OpenXRAPI
         || state == SessionState.Visible
         || state == SessionState.Focused;
 
-    private void MarkRuntimeLoss(OpenXrRuntimeLossReason reason)
+    private void MarkRuntimeLoss(
+        OpenXrRuntimeLossReason reason,
+        string operation = "OpenXR runtime state",
+        Result? result = null)
     {
         if (reason == OpenXrRuntimeLossReason.None)
             return;
 
         lock (_runtimeLossLock)
         {
-            if (Volatile.Read(ref _runtimeLossPending) == 0 ||
-                GetRuntimeLossReasonSeverity(reason) >= GetRuntimeLossReasonSeverity(_runtimeLossReason))
+            // One incident has one authoritative observer. Later fallout may be
+            // more severe, but it must not replace the call/result that first
+            // established the loss transition.
+            if (Volatile.Read(ref _runtimeLossPending) == 0)
             {
                 _runtimeLossReason = reason;
+                _lastRuntimeLossRecord = new OpenXrRuntimeLossRecord(
+                    reason,
+                    operation,
+                    result,
+                    DateTimeOffset.UtcNow);
             }
 
             Volatile.Write(ref _runtimeLossPending, 1);
@@ -634,11 +644,11 @@ public unsafe partial class OpenXRAPI
     private Result CheckResult(Result result, string operation)
     {
         if (result == Result.ErrorSessionLost)
-            MarkRuntimeLoss(OpenXrRuntimeLossReason.SessionLostError);
+            MarkRuntimeLoss(OpenXrRuntimeLossReason.SessionLostError, operation, result);
         else if (result == Result.ErrorInstanceLost)
-            MarkRuntimeLoss(OpenXrRuntimeLossReason.InstanceLostError);
+            MarkRuntimeLoss(OpenXrRuntimeLossReason.InstanceLostError, operation, result);
         else if (result == Result.ErrorRuntimeFailure)
-            MarkRuntimeLoss(OpenXrRuntimeLossReason.RuntimeUnavailable);
+            MarkRuntimeLoss(OpenXrRuntimeLossReason.RuntimeUnavailable, operation, result);
 
         if (result != Result.Success)
             RecordSmokeFailure($"{operation} returned {result}.");

@@ -11,13 +11,28 @@ param(
     [string]$UnitTestingWorldSettingsPath = '',
     [ValidateSet('Cold', 'Warm')]
     [string]$CacheMode = 'Cold',
+    # An explicit cross-process cache root for a standalone cooked XRMesh warm load.
+    # This does not claim coverage of the still-inactive broad model cache.
+    [string]$MeshletStandaloneCookedCacheRoot = '',
     [ValidateSet('FullBucketScanDiagnostic', 'ActiveBucketListReadbackDiagnostic', 'MaterialTable', 'BindlessMaterialTable', 'FullBucketScan', 'ActiveBucketList')]
     [string]$ZeroReadbackMaterialDrawPath = 'BindlessMaterialTable',
     [string]$ProfileScene = '',
     [string]$ProfileCamera = '',
+    [double]$CameraPositionX = [double]::NaN,
+    [double]$CameraPositionY = [double]::NaN,
+    [double]$CameraPositionZ = [double]::NaN,
+    [double]$CameraLookAtX = [double]::NaN,
+    [double]$CameraLookAtY = [double]::NaN,
+    [double]$CameraLookAtZ = [double]::NaN,
     [string]$ProfileLights = '',
     [string]$ProfileViewport = '',
     [string]$RenderScale = '',
+    [int]$WindowWidth = 0,
+    [int]$WindowHeight = 0,
+    [ValidateRange(1, 10000)]
+    [int]$SampleIntervalFrames = 10,
+    [ValidateSet('Configured', 'ShippingFast', 'DevParity', 'Diagnostics')]
+    [string]$VulkanGpuDrivenProfile = 'Configured',
     [string]$GpuClockPolicy = 'Unspecified',
     [double]$TargetRefreshHz = 0,
     [switch]$GpuTimestampDense,
@@ -132,8 +147,56 @@ if ($invalidStrategies.Count -gt 0) {
     throw "Invalid render path(s): $($invalidStrategies -join ', '). Allowed: $($validStrategies -join ', ')"
 }
 
-if ($WarmupSec -lt 0 -or $CaptureSec -le 0 -or $Repetitions -le 0 -or $ShutdownGraceSec -lt 1 -or $NoSampleHangSec -lt 0 -or $RetainedRunCount -lt 1 -or $StabilityWindowSec -lt 1 -or $StabilityTimeoutSec -lt 1 -or $MinSteadyStateGpuSceneCommandCount -lt 0 -or $MinSteadyStateCommandBufferCleanReuseRatio -lt 0 -or $MinSteadyStateCommandBufferCleanReuseRatio -gt 1 -or $MaxSteadyStateVulkanLiveResources -lt 1 -or $MaxSteadyStateVulkanDescriptorSets -lt 1) {
+if ($WarmupSec -lt 0 -or $CaptureSec -le 0 -or $Repetitions -le 0 -or $ShutdownGraceSec -lt 1 -or $NoSampleHangSec -lt 0 -or $RetainedRunCount -lt 1 -or $StabilityWindowSec -lt 1 -or $StabilityTimeoutSec -lt 1 -or $MinSteadyStateGpuSceneCommandCount -lt 0 -or $MinSteadyStateCommandBufferCleanReuseRatio -lt 0 -or $MinSteadyStateCommandBufferCleanReuseRatio -gt 1 -or $MaxSteadyStateVulkanLiveResources -lt 1 -or $MaxSteadyStateVulkanDescriptorSets -lt 1 -or $WindowWidth -lt 0 -or $WindowHeight -lt 0) {
     throw 'WarmupSec must be >= 0, CaptureSec/Repetitions must be > 0, ShutdownGraceSec/StabilityWindowSec/StabilityTimeoutSec must be >= 1, NoSampleHangSec and MinSteadyStateGpuSceneCommandCount must be >= 0, RetainedRunCount must be >= 1, and MinSteadyStateCommandBufferCleanReuseRatio must be between 0 and 1.'
+}
+$usesMeshletStrategy = @($Strategies | Where-Object { $_ -in @('GpuMeshletInstrumented', 'GpuMeshletZeroReadback') }).Count -gt 0
+if ($usesMeshletStrategy -and $CacheMode -eq 'Warm' -and [string]::IsNullOrWhiteSpace($MeshletStandaloneCookedCacheRoot)) {
+    throw 'Meshlet warm measurement requires -MeshletStandaloneCookedCacheRoot from its preceding cold publish run. This is a standalone cooked-XRMesh cache, not a broad model-cache claim.'
+}
+if (-not [string]::IsNullOrWhiteSpace($MeshletStandaloneCookedCacheRoot)) {
+    $MeshletStandaloneCookedCacheRoot = [System.IO.Path]::GetFullPath($(if ([System.IO.Path]::IsPathRooted($MeshletStandaloneCookedCacheRoot)) { $MeshletStandaloneCookedCacheRoot } else { Join-Path $repoRoot $MeshletStandaloneCookedCacheRoot }))
+    $repoWithSeparator = $repoRoot.TrimEnd('\') + '\'
+    if (-not $MeshletStandaloneCookedCacheRoot.StartsWith($repoWithSeparator, [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "MeshletStandaloneCookedCacheRoot must remain inside the repository: $MeshletStandaloneCookedCacheRoot"
+    }
+}
+if (($WindowWidth -eq 0) -ne ($WindowHeight -eq 0)) {
+    throw 'Specify both WindowWidth and WindowHeight as positive values, or leave both at zero.'
+}
+$parsedRenderScale = 0.0
+if (-not [string]::IsNullOrWhiteSpace($RenderScale) -and
+    (-not [double]::TryParse(
+        $RenderScale,
+        [System.Globalization.NumberStyles]::Float,
+        [System.Globalization.CultureInfo]::InvariantCulture,
+        [ref]$parsedRenderScale) -or
+     -not [double]::IsFinite($parsedRenderScale) -or
+     $parsedRenderScale -lt 0.5 -or
+     $parsedRenderScale -gt 1.0)) {
+    throw 'RenderScale must be empty or a finite value in [0.5, 1.0].'
+}
+
+$cameraPoseValues = @(
+    $CameraPositionX,
+    $CameraPositionY,
+    $CameraPositionZ,
+    $CameraLookAtX,
+    $CameraLookAtY,
+    $CameraLookAtZ)
+$specifiedCameraPoseValueCount = @($cameraPoseValues | Where-Object { -not [double]::IsNaN($_) }).Count
+$hasFixedCameraPose = $specifiedCameraPoseValueCount -eq $cameraPoseValues.Count
+if ($specifiedCameraPoseValueCount -ne 0 -and -not $hasFixedCameraPose) {
+    throw 'Specify all six CameraPosition* and CameraLookAt* values together, or omit all of them.'
+}
+if ($hasFixedCameraPose -and $DisableMcpDiagnostics) {
+    throw 'A fixed camera pose requires MCP; do not combine CameraPosition*/CameraLookAt* with DisableMcpDiagnostics.'
+}
+if ($hasFixedCameraPose -and
+    $CameraPositionX -eq $CameraLookAtX -and
+    $CameraPositionY -eq $CameraLookAtY -and
+    $CameraPositionZ -eq $CameraLookAtZ) {
+    throw 'The fixed camera position and look-at target must differ.'
 }
 
 function Get-SpeedProfileRoot {
@@ -158,7 +221,8 @@ function Invoke-ProfileMcpTool {
         [int]$Port,
         [string]$Name,
         [hashtable]$Arguments = @{},
-        [int]$ReadyTimeoutSec = 10
+        [int]$ReadyTimeoutSec = 10,
+        [switch]$RetryUnavailableCapabilities
     )
 
     $endpoint = "http://localhost:$Port/mcp/"
@@ -181,29 +245,83 @@ function Invoke-ProfileMcpTool {
         throw "MCP did not become ready on port $Port within $ReadyTimeoutSec seconds."
     }
 
-    $body = @{
-        jsonrpc = '2.0'
-        id = [guid]::NewGuid().ToString()
-        method = 'tools/call'
-        params = @{
-            name = $Name
-            arguments = $Arguments
-        }
-    } | ConvertTo-Json -Depth 12 -Compress
+    do {
+        $body = @{
+            jsonrpc = '2.0'
+            id = [guid]::NewGuid().ToString()
+            method = 'tools/call'
+            params = @{
+                name = $Name
+                arguments = $Arguments
+            }
+        } | ConvertTo-Json -Depth 12 -Compress
 
-    $response = Invoke-RestMethod `
-        -Uri $endpoint `
-        -Method Post `
-        -Body $body `
-        -ContentType 'application/json' `
-        -TimeoutSec 60
-    if ($null -ne $response.error) {
-        throw "MCP tool '$Name' returned JSON-RPC error: $($response.error | ConvertTo-Json -Compress)"
-    }
-    if ($null -ne $response.result -and [bool]$response.result.isError) {
-        throw "MCP tool '$Name' reported isError=true."
-    }
-    return $response
+        $response = Invoke-RestMethod `
+            -Uri $endpoint `
+            -Method Post `
+            -Body $body `
+            -ContentType 'application/json' `
+            -TimeoutSec 60
+        if ($null -ne $response.error) {
+            $errorJson = $response.error | ConvertTo-Json -Compress
+            if ($RetryUnavailableCapabilities -and
+                $errorJson.Contains('requires unavailable capabilities', [StringComparison]::OrdinalIgnoreCase) -and
+                [DateTime]::UtcNow -lt $deadline) {
+                Start-Sleep -Milliseconds 500
+                continue
+            }
+            throw "MCP tool '$Name' returned JSON-RPC error: $errorJson"
+        }
+        if ($null -ne $response.result -and [bool]$response.result.isError) {
+            $resultJson = $response.result | ConvertTo-Json -Depth 6 -Compress
+            throw "MCP tool '$Name' reported isError=true: $resultJson"
+        }
+        return $response
+    } while ([DateTime]::UtcNow -lt $deadline)
+
+    throw "MCP tool '$Name' remained unavailable for $ReadyTimeoutSec seconds."
+}
+
+function Set-ProfileFixedCameraWhenReady {
+    param(
+        [int]$Port,
+        [System.Diagnostics.Process]$Process,
+        [hashtable]$Arguments,
+        [int]$TimeoutSec = 120
+    )
+
+    $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSec)
+    $attempt = 0
+    $lastError = 'camera operation was not attempted'
+    do {
+        if ($Process.HasExited) {
+            throw "Editor exited before its fixed camera became ready (exit=0x$([Convert]::ToString($Process.ExitCode, 16))). Last camera error: $lastError"
+        }
+
+        $attempt++
+        try {
+            # A live MCP listener can precede creation of the world viewport.
+            # Keep probing readiness rather than treating its first transient
+            # camera failure as a failed measurement run.
+            Invoke-ProfileMcpTool `
+                -Port $Port `
+                -Name 'set_editor_camera_view' `
+                -Arguments $Arguments `
+                -ReadyTimeoutSec 5 `
+                -RetryUnavailableCapabilities | Out-Null
+            Write-Host "[measure] fixed camera accepted after $attempt MCP attempt(s)." -ForegroundColor DarkGray
+            return
+        }
+        catch {
+            $lastError = $_.Exception.Message
+            if ([DateTime]::UtcNow -ge $deadline) {
+                break
+            }
+            Start-Sleep -Milliseconds 500
+        }
+    } while ([DateTime]::UtcNow -lt $deadline)
+
+    throw "Fixed camera did not become ready within ${TimeoutSec}s after $attempt MCP attempt(s). Last error: $lastError"
 }
 
 function New-SpeedProfileRunDirectory {
@@ -445,6 +563,38 @@ function Read-AllRenderStatsSamples {
     return $samples
 }
 
+function Read-McpRenderStatsPayload {
+    param([string]$LogDir)
+
+    if ([string]::IsNullOrWhiteSpace($LogDir)) {
+        return $null
+    }
+
+    $path = Join-Path $LogDir 'profiler-mcp-render-stats.json'
+    if (-not (Test-Path -LiteralPath $path)) {
+        return $null
+    }
+
+    try {
+        $response = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
+        foreach ($content in @($response.result.content)) {
+            if ($content.type -ne 'text' -or [string]::IsNullOrWhiteSpace([string]$content.text)) {
+                continue
+            }
+
+            $text = ([string]$content.text).Trim()
+            if ($text.StartsWith('{')) {
+                return $text | ConvertFrom-Json
+            }
+        }
+    }
+    catch {
+        Write-Warning "Unable to parse MCP render-profiler payload '$path': $($_.Exception.Message)"
+    }
+
+    return $null
+}
+
 function Select-RenderStatsSamples {
     param(
         [System.Collections.IEnumerable]$Samples,
@@ -585,6 +735,23 @@ function Sum-NumericProperty {
     return [Math]::Round($sum, 3)
 }
 
+function Get-MonotonicCounterDelta {
+    param([object[]]$Samples, [string]$Property)
+
+    if ($Samples.Count -lt 2) {
+        return 0
+    }
+
+    try {
+        [double]$first = Get-SamplePropertyValue -Sample $Samples[0] -Property $Property
+        [double]$last = Get-SamplePropertyValue -Sample $Samples[$Samples.Count - 1] -Property $Property
+        return [Math]::Round([Math]::Max(0.0, $last - $first), 3)
+    }
+    catch {
+        return 0
+    }
+}
+
 function New-RenderStatsStabilityState {
     return [pscustomobject]@{
         Path = ''
@@ -703,7 +870,10 @@ function Update-RenderStatsStabilityState {
     }
 
     $latestUtc = $State.Samples[$State.Samples.Count - 1].Utc
-    $retainAfterUtc = $latestUtc.AddSeconds(-($WindowSec + 2))
+    # Validation and cold-pipeline frames can space profiler samples several
+    # seconds apart. Retain enough history to keep the sample immediately before
+    # the requested boundary instead of continually discarding the only anchor.
+    $retainAfterUtc = $latestUtc.AddSeconds(-($WindowSec + 60))
     while ($State.Samples.Count -gt 0 -and $State.Samples[0].Utc -lt $retainAfterUtc) {
         $State.Samples.RemoveAt(0)
     }
@@ -725,9 +895,9 @@ function Test-RenderStatsStability {
     }
 
     $latestUtc = $timestamped[$timestamped.Count - 1].Utc
-    # Include one extra second so the first retained sample brackets the requested
-    # interval instead of always landing just after its exact boundary.
-    $windowStartUtc = $latestUtc.AddSeconds(-($WindowSec + 1))
+    $requestedStartUtc = $latestUtc.AddSeconds(-$WindowSec)
+    $anchor = @($timestamped | Where-Object { $_.Utc -le $requestedStartUtc } | Select-Object -Last 1)
+    $windowStartUtc = if ($anchor.Count -gt 0) { $anchor[0].Utc } else { $timestamped[0].Utc }
     $window = @($timestamped | Where-Object { $_.Utc -ge $windowStartUtc })
     $observedSec = ($latestUtc - $window[0].Utc).TotalSeconds
     if ($observedSec -lt $WindowSec -or $window.Count -lt 2) {
@@ -937,6 +1107,8 @@ function Measure-Variant {
         'XRE_FORCE_MESH_SUBMISSION_STRATEGY',
         'XRE_ZERO_READBACK_MATERIAL_DRAW_PATH',
         'XRE_PROFILE_CACHE_MODE',
+        'XRE_MESHLET_STANDALONE_COOKED_CACHE_MODE',
+        'XRE_MESHLET_STANDALONE_COOKED_CACHE_ROOT',
         'XRE_SHADER_CACHE_MODE',
         'XRE_TEXTURE_CACHE_MODE',
         'XRE_PROFILE_SCENE',
@@ -944,6 +1116,10 @@ function Measure-Variant {
         'XRE_PROFILE_LIGHTS',
         'XRE_PROFILE_VIEWPORT',
         'XRE_PROFILE_RENDER_SCALE',
+        'XRE_PROFILE_WINDOW_WIDTH',
+        'XRE_PROFILE_WINDOW_HEIGHT',
+        'XRE_PROFILE_SAMPLE_INTERVAL_FRAMES',
+        'XRE_PROFILE_VULKAN_GPU_DRIVEN_PROFILE',
         'XRE_PROFILE_WARMUP_SEC',
         'XRE_PROFILE_CAPTURE_SEC',
         'XRE_PROFILE_MODE',
@@ -1076,6 +1252,13 @@ function Measure-Variant {
         Set-BenchmarkEnvValue 'XRE_FORCE_MESH_SUBMISSION_STRATEGY' $Strategy -AllowedValues $validStrategies
         Set-BenchmarkEnvValue 'XRE_ZERO_READBACK_MATERIAL_DRAW_PATH' $ZeroReadbackMaterialDrawPath -AllowedValues @('FullBucketScanDiagnostic', 'ActiveBucketListReadbackDiagnostic', 'MaterialTable', 'BindlessMaterialTable', 'FullBucketScan', 'ActiveBucketList')
         Set-BenchmarkEnvValue 'XRE_PROFILE_CACHE_MODE' $CacheMode -AllowedValues @('Cold', 'Warm')
+        if (-not [string]::IsNullOrWhiteSpace($MeshletStandaloneCookedCacheRoot)) {
+            Set-BenchmarkEnvValue 'XRE_MESHLET_STANDALONE_COOKED_CACHE_ROOT' $MeshletStandaloneCookedCacheRoot
+            Set-BenchmarkEnvValue 'XRE_MESHLET_STANDALONE_COOKED_CACHE_MODE' $(if ($CacheMode -eq 'Warm') { 'Load' } else { 'Publish' }) -AllowedValues @('Publish', 'Load')
+        } else {
+            Clear-EnvValue 'XRE_MESHLET_STANDALONE_COOKED_CACHE_ROOT'
+            Clear-EnvValue 'XRE_MESHLET_STANDALONE_COOKED_CACHE_MODE'
+        }
         Set-BenchmarkEnvValue 'XRE_SHADER_CACHE_MODE' $CacheMode -AllowedValues @('Cold', 'Warm')
         Set-BenchmarkEnvValue 'XRE_TEXTURE_CACHE_MODE' $CacheMode -AllowedValues @('Cold', 'Warm')
         if ($WarmupSec -gt 0) {
@@ -1106,6 +1289,19 @@ function Measure-Variant {
             Clear-EnvValue 'XRE_PROFILE_RENDER_SCALE'
         } else {
             Set-BenchmarkEnvValue 'XRE_PROFILE_RENDER_SCALE' $RenderScale -PositiveNumber
+        }
+        if ($WindowWidth -gt 0) {
+            Set-BenchmarkEnvValue 'XRE_PROFILE_WINDOW_WIDTH' ([string]$WindowWidth) -PositiveNumber
+            Set-BenchmarkEnvValue 'XRE_PROFILE_WINDOW_HEIGHT' ([string]$WindowHeight) -PositiveNumber
+        } else {
+            Clear-EnvValue 'XRE_PROFILE_WINDOW_WIDTH'
+            Clear-EnvValue 'XRE_PROFILE_WINDOW_HEIGHT'
+        }
+        Set-BenchmarkEnvValue 'XRE_PROFILE_SAMPLE_INTERVAL_FRAMES' ([string]$SampleIntervalFrames) -PositiveNumber
+        if ($VulkanGpuDrivenProfile -eq 'Configured') {
+            Clear-EnvValue 'XRE_PROFILE_VULKAN_GPU_DRIVEN_PROFILE'
+        } else {
+            Set-BenchmarkEnvValue 'XRE_PROFILE_VULKAN_GPU_DRIVEN_PROFILE' $VulkanGpuDrivenProfile -AllowedValues @('ShippingFast', 'DevParity', 'Diagnostics')
         }
 
         Set-EnvValue 'XRE_WINDOW_TITLE' "XRE Editor (Profile $Strategy r$Repetition)"
@@ -1138,7 +1334,7 @@ function Measure-Variant {
             @(
                 '--mcp',
                 '--mcp-permission-policy',
-                'AllowReadOnly',
+                $(if ($hasFixedCameraPose) { 'AllowMutate' } else { 'AllowReadOnly' }),
                 '--mcp-port',
                 [string]$mcpPort
             )
@@ -1152,6 +1348,30 @@ function Measure-Variant {
             $startProcessArguments.ArgumentList = $editorArguments
         }
         $proc = Start-Process @startProcessArguments
+        if ($hasFixedCameraPose) {
+            Write-Host "[measure] $runName positioning fixed camera via MCP..."
+            try {
+                Set-ProfileFixedCameraWhenReady `
+                    -Port $mcpPort `
+                    -Process $proc `
+                    -Arguments @{
+                        position_x = $CameraPositionX
+                        position_y = $CameraPositionY
+                        position_z = $CameraPositionZ
+                        look_at_x = $CameraLookAtX
+                        look_at_y = $CameraLookAtY
+                        look_at_z = $CameraLookAtZ
+                        duration = 0.0
+                    } `
+                    -TimeoutSec 120
+            }
+            catch {
+                if (-not $proc.HasExited) {
+                    Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+                }
+                throw
+            }
+        }
         Write-Host "[measure] $runName PID=$($proc.Id) warmup ${WarmupSec}s..."
         for ($second = 0; $second -lt $WarmupSec; $second++) {
             Start-Sleep -Seconds 1
@@ -1234,23 +1454,24 @@ function Measure-Variant {
             if (-not $DisableMcpDiagnostics) {
                 $logDir = Get-RunLogDir -EditorProcessId $proc.Id
                 $mcpErrors = [System.Collections.Generic.List[string]]::new()
-                $mcpRequests = @(
-                    [pscustomobject]@{
-                        Name = 'dump_cpu_frame_profile'
-                        Arguments = @{}
-                        ResponseFile = 'profiler-mcp-cpu-dump-response.json'
-                    },
-                    [pscustomobject]@{
+                $mcpRequests = [System.Collections.Generic.List[object]]::new()
+                $mcpRequests.Add([pscustomobject]@{
+                    Name = 'dump_cpu_frame_profile'
+                    Arguments = @{}
+                    ResponseFile = 'profiler-mcp-cpu-dump-response.json'
+                })
+                if (-not $cleanProfile) {
+                    $mcpRequests.Add([pscustomobject]@{
                         Name = 'dump_gpu_render_pipeline_profile'
                         Arguments = @{ all_pipelines = $true }
                         ResponseFile = 'profiler-mcp-gpu-dump-response.json'
-                    },
-                    [pscustomobject]@{
-                        Name = 'get_render_profiler_stats'
-                        Arguments = @{}
-                        ResponseFile = 'profiler-mcp-render-stats.json'
-                    }
-                )
+                    })
+                }
+                $mcpRequests.Add([pscustomobject]@{
+                    Name = 'get_render_profiler_stats'
+                    Arguments = @{}
+                    ResponseFile = 'profiler-mcp-render-stats.json'
+                })
                 foreach ($request in $mcpRequests) {
                     try {
                         $response = Invoke-ProfileMcpTool `
@@ -1293,6 +1514,9 @@ function Measure-Variant {
 
     $allSamples = @(Read-AllRenderStatsSamples -LogDir $logDir)
     $samples = @(Select-RenderStatsSamples -Samples $allSamples -CaptureStartUtc $captureStartUtc -CaptureEndUtc $captureEndUtc)
+    $mcpRenderStats = Read-McpRenderStatsPayload -LogDir $logDir
+    $mcpMeshletStats = if ($null -ne $mcpRenderStats) { $mcpRenderStats.meshlets } else { $null }
+    $mcpVulkanFrameOps = if ($null -ne $mcpRenderStats) { $mcpRenderStats.vulkan.frame_ops } else { $null }
     $render = Get-NumericStats -Samples $samples -Property 'render_dispatch_ms' -PositiveOnly
     $renderOutsideVulkan = Get-NumericStats -Samples $samples -Property 'render_outside_vulkan_frame_ms'
     $update = Get-NumericStats -Samples $samples -Property 'update_ms' -PositiveOnly
@@ -1323,6 +1547,61 @@ function Measure-Variant {
     $allMappedTotal = Sum-NumericProperty -Samples $allSamples -Property 'gpu_mapped_buffers'
     $allFallbackTotal = Sum-NumericProperty -Samples $allSamples -Property 'gpu_cpu_fallback_events'
     $allForbiddenFallbackTotal = Sum-NumericProperty -Samples $allSamples -Property 'forbidden_gpu_fallback_events'
+    # Meshlet cook and render-path guards are lifetime counters, so use the
+    # highest observed value rather than summing every repeated profile sample.
+    $meshletColdImportBuilderCalls = Max-NumericProperty -Samples $allSamples -Property 'meshlet_cold_import_builder_calls'
+    $meshletColdImportBuildMs = Max-NumericProperty -Samples $allSamples -Property 'meshlet_cold_import_build_ms'
+    $meshletColdImportAllocatedBytes = Max-NumericProperty -Samples $allSamples -Property 'meshlet_cold_import_allocated_bytes'
+    $meshletGeneratedLodCount = Max-NumericProperty -Samples $allSamples -Property 'meshlet_generated_lod_count'
+    $meshletCookedPayloadCount = Max-NumericProperty -Samples $allSamples -Property 'meshlet_cooked_payload_count'
+    $meshletCookedMeshletCount = Max-NumericProperty -Samples $allSamples -Property 'meshlet_cooked_meshlet_count'
+    $meshletSourceParserCalls = Max-NumericProperty -Samples $allSamples -Property 'meshlet_source_parser_calls'
+    $meshletWarmPayloadHydrations = Max-NumericProperty -Samples $allSamples -Property 'meshlet_warm_payload_hydrations'
+    $meshletRenderPathSourceHashCalls = Max-NumericProperty -Samples $allSamples -Property 'meshlet_render_path_source_hash_calls'
+    $meshletRenderPathDiskCalls = Max-NumericProperty -Samples $allSamples -Property 'meshlet_render_path_disk_calls'
+    $meshletRenderPathCookerCalls = Max-NumericProperty -Samples $allSamples -Property 'meshlet_render_path_cooker_calls'
+    $meshletDispatchCalls = Max-NumericProperty -Samples $samples -Property 'meshlet_dispatch_calls'
+    $meshletDispatchGroups = Max-NumericProperty -Samples $samples -Property 'meshlet_dispatch_groups'
+    $meshletMappedBytes = Max-NumericProperty -Samples $allSamples -Property 'meshlet_mapped_bytes'
+    $meshletCapabilityFailedRung = Get-SamplePropertyValue -Sample $lastSample -Property 'meshlet_vulkan_capability_failed_rung'
+    $meshletResolvedPass = Get-SamplePropertyValue -Sample $lastSample -Property 'meshlet_resolved_pass'
+    $meshletResolvedRoute = Get-SamplePropertyValue -Sample $lastSample -Property 'meshlet_resolved_route'
+    $meshletPrimaryRouteReason = Get-SamplePropertyValue -Sample $lastSample -Property 'meshlet_primary_route_reason'
+    $meshletResolvedRows = Max-NumericProperty -Samples $samples -Property 'meshlet_resolved_meshlet_rows'
+    $meshletResolvedTaskGroups = Max-NumericProperty -Samples $samples -Property 'meshlet_resolved_task_groups'
+    $meshletTaskRecordsEmitted = Max-NumericProperty -Samples $samples -Property 'gpu_meshlet_task_records_emitted'
+    $meshletTaskRecordsFrustumCulled = Max-NumericProperty -Samples $samples -Property 'gpu_meshlet_task_records_frustum_culled'
+    $meshletTaskRecordsConeCulled = Max-NumericProperty -Samples $samples -Property 'gpu_meshlet_task_records_cone_culled'
+    $meshletTaskRecordsHiZCulled = Max-NumericProperty -Samples $samples -Property 'gpu_meshlet_task_records_hiz_culled'
+    $meshletDelayedDispatchGroups = Max-NumericProperty -Samples $samples -Property 'gpu_meshlet_delayed_dispatch_group_count'
+    $meshletDiagnosticReadbackBytes = Max-NumericProperty -Samples $samples -Property 'gpu_meshlet_diagnostic_readback_bytes'
+    $meshletRequestedFrames = Max-NumericProperty -Samples $samples -Property 'gpu_meshlet_requested_frames'
+    $meshletProductionFrames = Max-NumericProperty -Samples $samples -Property 'gpu_meshlet_production_frames'
+    $vulkanFrameOpMeshTaskDispatchCount = Max-NumericProperty -Samples $samples -Property 'vulkan_frame_op_mesh_task_dispatch_count'
+    $meshletBufferBytesResident = Max-NumericProperty -Samples $samples -Property 'gpu_meshlet_buffer_bytes_resident'
+    $meshletBufferLiveBytes = Max-NumericProperty -Samples $samples -Property 'meshlet_buffer_live_bytes'
+    $meshletBufferRetiredBytes = Max-NumericProperty -Samples $samples -Property 'meshlet_buffer_retired_bytes'
+    $meshletBufferRebuildCount = Max-NumericProperty -Samples $allSamples -Property 'meshlet_buffer_rebuild_count'
+    $meshletBufferRetireCount = Max-NumericProperty -Samples $allSamples -Property 'meshlet_buffer_retire_count'
+    $meshletBufferRebuildsDuringCapture = Get-MonotonicCounterDelta -Samples $samples -Property 'meshlet_buffer_rebuild_count'
+    $meshletBufferRetiresDuringCapture = Get-MonotonicCounterDelta -Samples $samples -Property 'meshlet_buffer_retire_count'
+    if ($null -ne $mcpMeshletStats) {
+        $meshletTaskRecordsEmitted = [Math]::Max([double]$meshletTaskRecordsEmitted, [double]$mcpMeshletStats.latest_task_records_emitted)
+        $meshletTaskRecordsFrustumCulled = [Math]::Max([double]$meshletTaskRecordsFrustumCulled, [double]$mcpMeshletStats.latest_task_records_frustum_culled)
+        $meshletTaskRecordsConeCulled = [Math]::Max([double]$meshletTaskRecordsConeCulled, [double]$mcpMeshletStats.latest_task_records_cone_culled)
+        $meshletTaskRecordsHiZCulled = [Math]::Max([double]$meshletTaskRecordsHiZCulled, [double]$mcpMeshletStats.latest_task_records_hiz_culled)
+        $meshletDelayedDispatchGroups = [Math]::Max([double]$meshletDelayedDispatchGroups, [double]$mcpMeshletStats.delayed_dispatch_group_count)
+        $meshletDiagnosticReadbackBytes = [Math]::Max([double]$meshletDiagnosticReadbackBytes, [double]$mcpMeshletStats.diagnostic_readback_bytes)
+        $meshletBufferLiveBytes = [Math]::Max([double]$meshletBufferLiveBytes, [double]$mcpMeshletStats.buffer_live_bytes)
+        $meshletBufferRetiredBytes = [Math]::Max([double]$meshletBufferRetiredBytes, [double]$mcpMeshletStats.buffer_retired_bytes)
+        $meshletBufferRebuildCount = [Math]::Max([double]$meshletBufferRebuildCount, [double]$mcpMeshletStats.buffer_rebuild_count)
+        $meshletBufferRetireCount = [Math]::Max([double]$meshletBufferRetireCount, [double]$mcpMeshletStats.buffer_retire_count)
+    }
+    if ($null -ne $mcpVulkanFrameOps) {
+        $vulkanFrameOpMeshTaskDispatchCount = [Math]::Max(
+            [double]$vulkanFrameOpMeshTaskDispatchCount,
+            [double]$mcpVulkanFrameOps.mesh_task_dispatch_count)
+    }
     $vkFrame = Get-NumericStats -Samples $samples -Property 'vulkan_frame_total_ms' -PositiveOnly
     $vkWaitFrameSlot = Get-NumericStats -Samples $samples -Property 'vulkan_frame_wait_fence_ms' -PositiveOnly
     $vkSampleTimingQueries = Get-NumericStats -Samples $samples -Property 'vulkan_frame_sample_timing_queries_ms' -PositiveOnly
@@ -1333,10 +1612,30 @@ function Measure-Variant {
     $vkResetDynamicUniformRing = Get-NumericStats -Samples $samples -Property 'vulkan_frame_reset_dynamic_uniform_ring_ms' -PositiveOnly
     $vkRecordCommandBuffer = Get-NumericStats -Samples $samples -Property 'vulkan_frame_record_command_buffer_ms' -PositiveOnly
     $vkFrameOpPreparation = Get-NumericStats -Samples $samples -Property 'vulkan_cpu_frame_op_preparation_ms'
+    $vkRawMeshRequestDrain = Get-NumericStats -Samples $samples -Property 'vulkan_cpu_raw_mesh_request_drain_ms'
+    $vkFrameOpCohort = Get-NumericStats -Samples $samples -Property 'vulkan_cpu_frame_op_cohort_ms'
+    $vkPreparedMeshBindingValidation = Get-NumericStats -Samples $samples -Property 'vulkan_cpu_prepared_mesh_binding_validation_ms'
+    $vkPreparedMeshHoleMaterialization = Get-NumericStats -Samples $samples -Property 'vulkan_cpu_prepared_mesh_hole_materialization_ms'
+    $vkFrameOpResourceUseLowering = Get-NumericStats -Samples $samples -Property 'vulkan_cpu_frame_op_resource_use_lowering_ms'
+    $vkFrameOpPlan = Get-NumericStats -Samples $samples -Property 'vulkan_cpu_frame_op_plan_ms'
+    $vkWorkerWait = Get-NumericStats -Samples $samples -Property 'vulkan_cpu_worker_wait_ms'
+    $gpuDrivenIndirectConstruction = Get-NumericStats -Samples $samples -Property 'gpu_driven_indirect_command_generation_ms'
     $vkResourcePlanning = Get-NumericStats -Samples $samples -Property 'vulkan_cpu_resource_planning_ms'
     $vkFrameDataRefresh = Get-NumericStats -Samples $samples -Property 'vulkan_cpu_frame_data_refresh_ms'
     $vkPrimaryCommandEncoding = Get-NumericStats -Samples $samples -Property 'vulkan_cpu_primary_command_encoding_ms'
     $vkSecondaryRecording = Get-NumericStats -Samples $samples -Property 'vulkan_cpu_secondary_recording_ms'
+    $vkRawMeshRequestDrainInvocations = Get-MonotonicCounterDelta -Samples $samples -Property 'vulkan_cpu_raw_mesh_request_drain_process_invocation_count'
+    $vkFrameOpCohortInvocations = Get-MonotonicCounterDelta -Samples $samples -Property 'vulkan_cpu_frame_op_cohort_process_invocation_count'
+    $vkPreparedMeshBindingValidationInvocations = Get-MonotonicCounterDelta -Samples $samples -Property 'vulkan_cpu_prepared_mesh_binding_validation_process_invocation_count'
+    $vkPreparedMeshHoleMaterializationInvocations = Get-MonotonicCounterDelta -Samples $samples -Property 'vulkan_cpu_prepared_mesh_hole_materialization_process_invocation_count'
+    $vkFrameOpResourceUseLoweringInvocations = Get-MonotonicCounterDelta -Samples $samples -Property 'vulkan_cpu_frame_op_resource_use_lowering_process_invocation_count'
+    $vkFrameOpPlanInvocations = Get-MonotonicCounterDelta -Samples $samples -Property 'vulkan_cpu_frame_op_plan_process_invocation_count'
+    $vkPrimaryCommandEncodingInvocations = Get-MonotonicCounterDelta -Samples $samples -Property 'vulkan_cpu_primary_command_encoding_process_invocation_count'
+    $vkWorkerWaitInvocations = Get-MonotonicCounterDelta -Samples $samples -Property 'vulkan_cpu_worker_wait_process_invocation_count'
+    $vkPreparedMeshCohortHits = Get-MonotonicCounterDelta -Samples $samples -Property 'vulkan_prepared_mesh_operation_cohort_hits'
+    $vkPreparedMeshCohortBuilds = Get-MonotonicCounterDelta -Samples $samples -Property 'vulkan_prepared_mesh_operation_cohort_builds'
+    $vkPreparedMeshOperationReuses = Get-MonotonicCounterDelta -Samples $samples -Property 'vulkan_prepared_mesh_operation_reuses'
+    $vkPreparedMeshLegacyHoleMaterializations = Get-MonotonicCounterDelta -Samples $samples -Property 'vulkan_prepared_mesh_operation_legacy_hole_materializations'
     $vkRecordCommandBufferAllocatedBytesTotal = Sum-NumericProperty -Samples $samples -Property 'vulkan_record_command_buffer_allocated_bytes'
     $vkFrameOpPreparationAllocatedBytesTotal = Sum-NumericProperty -Samples $samples -Property 'vulkan_cpu_frame_op_preparation_allocated_bytes'
     $vkResourcePlanningAllocatedBytesTotal = Sum-NumericProperty -Samples $samples -Property 'vulkan_cpu_resource_planning_allocated_bytes'
@@ -1556,6 +1855,22 @@ function Measure-Variant {
             $noteParts.Add("zero-readback violation capture(readbackBytes=$captureReadbackTotal mappedBuffers=$captureMappedTotal) all(readbackBytes=$allReadbackTotal mappedBuffers=$allMappedTotal)") | Out-Null
         }
     }
+    if ($Strategy -eq 'GpuMeshletZeroReadback') {
+        if ($null -eq $meshletRenderPathSourceHashCalls -or $null -eq $meshletRenderPathDiskCalls -or $null -eq $meshletRenderPathCookerCalls -or $null -eq $meshletMappedBytes) {
+            $noteParts.Add('meshlet production telemetry incomplete') | Out-Null
+        } elseif ($meshletRenderPathSourceHashCalls -ne 0 -or $meshletRenderPathDiskCalls -ne 0 -or $meshletRenderPathCookerCalls -ne 0 -or $meshletMappedBytes -ne 0) {
+            $noteParts.Add("meshlet render-path violation hash=$meshletRenderPathSourceHashCalls disk=$meshletRenderPathDiskCalls cooker=$meshletRenderPathCookerCalls mappedBytes=$meshletMappedBytes") | Out-Null
+        }
+        if ($VulkanGpuDrivenProfile -eq 'Diagnostics') {
+            if ($null -eq $meshletTaskRecordsEmitted -or $null -eq $meshletDelayedDispatchGroups -or
+                $meshletTaskRecordsEmitted -le 0 -or $meshletDelayedDispatchGroups -le 0) {
+                $noteParts.Add("meshlet production work was not observed from delayed GPU diagnostics; taskRecords=$meshletTaskRecordsEmitted dispatchX=$meshletDelayedDispatchGroups diagnosticReadbackBytes=$meshletDiagnosticReadbackBytes failedRung=$meshletCapabilityFailedRung") | Out-Null
+            }
+        } elseif ($null -eq $meshletProductionFrames -or $null -eq $vulkanFrameOpMeshTaskDispatchCount -or
+            $meshletProductionFrames -le 0 -or $vulkanFrameOpMeshTaskDispatchCount -le 0) {
+            $noteParts.Add("meshlet production work was not observed from the zero-readback recording path; productionFrames=$meshletProductionFrames frameOpDispatches=$vulkanFrameOpMeshTaskDispatchCount apiEnqueues=$meshletDispatchCalls failedRung=$meshletCapabilityFailedRung") | Out-Null
+        }
+    }
     if ($FailOnSteadyStateResourceChurn -and ($vkRetiredResourceCountTotal -gt 0 -or $plannerPruneTotal -gt 0 -or $globalInFlightWaitTotal -gt 0 -or $forceFlushTotal -gt 0 -or $vkDescriptorPoolCreatesTotal -gt 0 -or $vkLifetimeLiveResourcesMax -gt $MaxSteadyStateVulkanLiveResources -or $vkTrackedDescriptorSetsMax -gt $MaxSteadyStateVulkanDescriptorSets)) {
         $noteParts.Add("steady-state resource churn failure retired=$vkRetiredResourceCountTotal planReplacements=$vkResourcePlanReplacementsTotal plannerPrunes=$plannerPruneTotal globalWaits=$globalInFlightWaitTotal forceFlushes=$forceFlushTotal descriptorPoolCreates=$vkDescriptorPoolCreatesTotal liveResourcesMax=$vkLifetimeLiveResourcesMax/$MaxSteadyStateVulkanLiveResources descriptorSetsMax=$vkTrackedDescriptorSetsMax/$MaxSteadyStateVulkanDescriptorSets") | Out-Null
     }
@@ -1617,9 +1932,19 @@ function Measure-Variant {
         ZeroReadbackMaterialDrawPath = $ZeroReadbackMaterialDrawPath
         ProfileScene = $ProfileScene
         ProfileCamera = $ProfileCamera
+        CameraPositionX = if ($hasFixedCameraPose) { $CameraPositionX } else { $null }
+        CameraPositionY = if ($hasFixedCameraPose) { $CameraPositionY } else { $null }
+        CameraPositionZ = if ($hasFixedCameraPose) { $CameraPositionZ } else { $null }
+        CameraLookAtX = if ($hasFixedCameraPose) { $CameraLookAtX } else { $null }
+        CameraLookAtY = if ($hasFixedCameraPose) { $CameraLookAtY } else { $null }
+        CameraLookAtZ = if ($hasFixedCameraPose) { $CameraLookAtZ } else { $null }
         ProfileLights = $ProfileLights
         ProfileViewport = $ProfileViewport
         RenderScale = $RenderScale
+        WindowWidth = if ($WindowWidth -gt 0) { $WindowWidth } else { $null }
+        WindowHeight = if ($WindowHeight -gt 0) { $WindowHeight } else { $null }
+        SampleIntervalFrames = $SampleIntervalFrames
+        VulkanGpuDrivenProfile = $VulkanGpuDrivenProfile
         GpuClockPolicy = $GpuClockPolicy
         TargetRefreshHz = if ($TargetRefreshHz -gt 0) { $TargetRefreshHz } else { $null }
         GpuTimestampDense = [bool]$GpuTimestampDense
@@ -1713,6 +2038,34 @@ function Measure-Variant {
         VulkanFrameOpPreparationP50Ms = $vkFrameOpPreparation.P50
         VulkanFrameOpPreparationP95Ms = $vkFrameOpPreparation.P95
         VulkanFrameOpPreparationP99Ms = $vkFrameOpPreparation.P99
+        VulkanRawMeshRequestDrainP50Ms = $vkRawMeshRequestDrain.P50
+        VulkanRawMeshRequestDrainP95Ms = $vkRawMeshRequestDrain.P95
+        VulkanRawMeshRequestDrainInvocations = $vkRawMeshRequestDrainInvocations
+        VulkanFrameOpCohortP50Ms = $vkFrameOpCohort.P50
+        VulkanFrameOpCohortP95Ms = $vkFrameOpCohort.P95
+        VulkanFrameOpCohortInvocations = $vkFrameOpCohortInvocations
+        VulkanPreparedMeshBindingValidationP50Ms = $vkPreparedMeshBindingValidation.P50
+        VulkanPreparedMeshBindingValidationP95Ms = $vkPreparedMeshBindingValidation.P95
+        VulkanPreparedMeshBindingValidationInvocations = $vkPreparedMeshBindingValidationInvocations
+        VulkanPreparedMeshHoleMaterializationP50Ms = $vkPreparedMeshHoleMaterialization.P50
+        VulkanPreparedMeshHoleMaterializationP95Ms = $vkPreparedMeshHoleMaterialization.P95
+        VulkanPreparedMeshHoleMaterializationInvocations = $vkPreparedMeshHoleMaterializationInvocations
+        VulkanFrameOpResourceUseLoweringP50Ms = $vkFrameOpResourceUseLowering.P50
+        VulkanFrameOpResourceUseLoweringP95Ms = $vkFrameOpResourceUseLowering.P95
+        VulkanFrameOpResourceUseLoweringInvocations = $vkFrameOpResourceUseLoweringInvocations
+        VulkanFrameOpPlanP50Ms = $vkFrameOpPlan.P50
+        VulkanFrameOpPlanP95Ms = $vkFrameOpPlan.P95
+        VulkanFrameOpPlanInvocations = $vkFrameOpPlanInvocations
+        GpuDrivenIndirectConstructionP50Ms = $gpuDrivenIndirectConstruction.P50
+        GpuDrivenIndirectConstructionP95Ms = $gpuDrivenIndirectConstruction.P95
+        VulkanPrimaryCommandEncodingInvocations = $vkPrimaryCommandEncodingInvocations
+        VulkanWorkerWaitP50Ms = $vkWorkerWait.P50
+        VulkanWorkerWaitP95Ms = $vkWorkerWait.P95
+        VulkanWorkerWaitInvocations = $vkWorkerWaitInvocations
+        VulkanPreparedMeshCohortHits = $vkPreparedMeshCohortHits
+        VulkanPreparedMeshCohortBuilds = $vkPreparedMeshCohortBuilds
+        VulkanPreparedMeshOperationReuses = $vkPreparedMeshOperationReuses
+        VulkanPreparedMeshLegacyHoleMaterializations = $vkPreparedMeshLegacyHoleMaterializations
         VulkanResourcePlanningP50Ms = $vkResourcePlanning.P50
         VulkanResourcePlanningP95Ms = $vkResourcePlanning.P95
         VulkanResourcePlanningP99Ms = $vkResourcePlanning.P99
@@ -1916,6 +2269,42 @@ function Measure-Variant {
         AllGpuMappedBuffersTotal = $allMappedTotal
         AllFallbackEventsTotal = $allFallbackTotal
         AllForbiddenFallbackEventsTotal = $allForbiddenFallbackTotal
+        MeshletColdImportBuilderCalls = $meshletColdImportBuilderCalls
+        MeshletColdImportBuildMs = $meshletColdImportBuildMs
+        MeshletColdImportAllocatedBytes = $meshletColdImportAllocatedBytes
+        MeshletGeneratedLodCount = $meshletGeneratedLodCount
+        MeshletCookedPayloadCount = $meshletCookedPayloadCount
+        MeshletCookedMeshletCount = $meshletCookedMeshletCount
+        MeshletSourceParserCalls = $meshletSourceParserCalls
+        MeshletWarmPayloadHydrations = $meshletWarmPayloadHydrations
+        MeshletRenderPathSourceHashCalls = $meshletRenderPathSourceHashCalls
+        MeshletRenderPathDiskCalls = $meshletRenderPathDiskCalls
+        MeshletRenderPathCookerCalls = $meshletRenderPathCookerCalls
+        MeshletDispatchCalls = $meshletDispatchCalls
+        MeshletDispatchGroups = $meshletDispatchGroups
+        MeshletMappedBytes = $meshletMappedBytes
+        MeshletVulkanCapabilityFailedRung = $meshletCapabilityFailedRung
+        MeshletResolvedPass = $meshletResolvedPass
+        MeshletResolvedRoute = $meshletResolvedRoute
+        MeshletPrimaryRouteReason = $meshletPrimaryRouteReason
+        MeshletResolvedRows = $meshletResolvedRows
+        MeshletResolvedTaskGroups = $meshletResolvedTaskGroups
+        MeshletRequestedFrames = $meshletRequestedFrames
+        MeshletProductionFrames = $meshletProductionFrames
+        VulkanFrameOpMeshTaskDispatchCount = $vulkanFrameOpMeshTaskDispatchCount
+        MeshletTaskRecordsEmitted = $meshletTaskRecordsEmitted
+        MeshletTaskRecordsFrustumCulled = $meshletTaskRecordsFrustumCulled
+        MeshletTaskRecordsConeCulled = $meshletTaskRecordsConeCulled
+        MeshletTaskRecordsHiZCulled = $meshletTaskRecordsHiZCulled
+        MeshletDelayedDispatchGroups = $meshletDelayedDispatchGroups
+        MeshletDiagnosticReadbackBytes = $meshletDiagnosticReadbackBytes
+        MeshletBufferBytesResident = $meshletBufferBytesResident
+        MeshletBufferLiveBytes = $meshletBufferLiveBytes
+        MeshletBufferRetiredBytes = $meshletBufferRetiredBytes
+        MeshletBufferRebuildCount = $meshletBufferRebuildCount
+        MeshletBufferRetireCount = $meshletBufferRetireCount
+        MeshletBufferRebuildsDuringCapture = $meshletBufferRebuildsDuringCapture
+        MeshletBufferRetiresDuringCapture = $meshletBufferRetiresDuringCapture
         LastSampleUtc = $lastSampleUtc
         LastRenderFrameId = $lastRenderFrameId
         LastCompletedFrameId = $lastCompletedFrameId
@@ -1965,6 +2354,7 @@ $results | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $summaryJson -Enco
     "ZeroReadbackMaterialDrawPath: $ZeroReadbackMaterialDrawPath"
     "Scene: $ProfileScene"
     "Camera: $ProfileCamera"
+    "CameraPose: $(if ($hasFixedCameraPose) { 'position=({0},{1},{2}) lookAt=({3},{4},{5})' -f $CameraPositionX,$CameraPositionY,$CameraPositionZ,$CameraLookAtX,$CameraLookAtY,$CameraLookAtZ } else { 'not fixed by harness' })"
     "OcclusionCullingMode: $OcclusionCullingMode"
     "VulkanCommandChains: $VulkanCommandChains"
     "VulkanParallelCommandChainRecording: $VulkanParallelCommandChainRecording"
@@ -1975,6 +2365,9 @@ $results | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $summaryJson -Enco
     "Lights: $ProfileLights"
     "Viewport: $ProfileViewport"
     "RenderScale: $RenderScale"
+    "WindowSize: $(if ($WindowWidth -gt 0) { "${WindowWidth}x${WindowHeight}" } else { 'automatic' })"
+    "SampleIntervalFrames: $SampleIntervalFrames"
+    "VulkanGpuDrivenProfile: $VulkanGpuDrivenProfile"
     "GpuClockPolicy: $GpuClockPolicy"
     "TargetRefreshHz: $TargetRefreshHz"
     "GpuTimestampDense: $([bool]$GpuTimestampDense)"
@@ -2084,4 +2477,82 @@ if ($invalidCaptureFailures.Count -gt 0) {
         "$($_.Strategy) r$($_.Repetition): stable=$($_.StabilityReady) identities=$($_.CaptureWorkloadIdentityCount) unapprovedPolicy=$($_.UnapprovedOutputPolicyEventsTotal) rejectedSubmissions=$($_.VulkanSubmissionRejectionsTotal) reason=$($_.StabilityReason)"
     }
     throw "Invalid render-pipeline performance capture: $($details -join '; ')"
+}
+
+$meshletProductionFailures = @($results | Where-Object {
+    if ($_.Strategy -ne 'GpuMeshletZeroReadback') {
+        return $false
+    }
+
+    # EffectiveStrategy aggregates all observed pass/bin routes. A valid meshlet
+    # frame can therefore include planned traditional GPU routes for unsupported
+    # auxiliary or deformation bins. Shipping/DevParity deliberately suppress
+    # diagnostics readback, so their proof is the production-frame counter plus
+    # the mesh-task operation retained in the Vulkan primary frame plan. The
+    # explicit Diagnostics profile additionally requires fence-delayed GPU data.
+    $commonFailure =
+        $null -eq $_.MeshletRenderPathSourceHashCalls -or
+        $null -eq $_.MeshletRenderPathDiskCalls -or
+        $null -eq $_.MeshletRenderPathCookerCalls -or
+        $null -eq $_.MeshletMappedBytes -or
+        $null -eq $_.MeshletDispatchCalls -or
+        [double]$_.MeshletRenderPathSourceHashCalls -ne 0.0 -or
+        [double]$_.MeshletRenderPathDiskCalls -ne 0.0 -or
+        [double]$_.MeshletRenderPathCookerCalls -ne 0.0 -or
+        [double]$_.MeshletMappedBytes -ne 0.0 -or
+        [double]$_.MeshletDispatchCalls -le 0.0 -or
+        [double]$_.AllGpuReadbackBytesTotal -ne 0.0 -or
+        [double]$_.AllGpuMappedBuffersTotal -ne 0.0
+
+    if ($commonFailure) {
+        return $true
+    }
+
+    if ($_.VulkanGpuDrivenProfile -eq 'Diagnostics') {
+        return $null -eq $_.MeshletTaskRecordsEmitted -or
+            $null -eq $_.MeshletDelayedDispatchGroups -or
+            $null -eq $_.MeshletDiagnosticReadbackBytes -or
+            [double]$_.MeshletTaskRecordsEmitted -le 0.0 -or
+            [double]$_.MeshletDelayedDispatchGroups -le 0.0 -or
+            [double]$_.MeshletDiagnosticReadbackBytes -le 0.0
+    }
+
+    return $null -eq $_.MeshletProductionFrames -or
+        $null -eq $_.VulkanFrameOpMeshTaskDispatchCount -or
+        [double]$_.MeshletProductionFrames -le 0.0 -or
+        [double]$_.VulkanFrameOpMeshTaskDispatchCount -le 0.0
+})
+if ($meshletProductionFailures.Count -gt 0) {
+    $details = $meshletProductionFailures | ForEach-Object {
+        "$($_.Strategy) r$($_.Repetition): profile=$($_.VulkanGpuDrivenProfile) effective=$($_.EffectiveStrategy) lastResolvedPass=$($_.MeshletResolvedPass) lastResolvedRoute=$($_.MeshletResolvedRoute) hash=$($_.MeshletRenderPathSourceHashCalls) disk=$($_.MeshletRenderPathDiskCalls) cooker=$($_.MeshletRenderPathCookerCalls) mapped=$($_.MeshletMappedBytes) apiEnqueues=$($_.MeshletDispatchCalls) productionFrames=$($_.MeshletProductionFrames) frameOpDispatches=$($_.VulkanFrameOpMeshTaskDispatchCount) delayedTaskRecords=$($_.MeshletTaskRecordsEmitted) delayedDispatchX=$($_.MeshletDelayedDispatchGroups) diagnosticReadbackBytes=$($_.MeshletDiagnosticReadbackBytes) readback=$($_.AllGpuReadbackBytesTotal) mappedBuffers=$($_.AllGpuMappedBuffersTotal) failedRung=$($_.MeshletVulkanCapabilityFailedRung)"
+    }
+    throw "GpuMeshletZeroReadback production gate failed: $($details -join '; ')"
+}
+
+$meshletCacheEvidenceFailures = @($results | Where-Object {
+    if ($_.Strategy -notin @('GpuMeshletInstrumented', 'GpuMeshletZeroReadback')) { return $false }
+
+    if ($_.CacheMode -eq 'Cold') {
+        return $null -eq $_.MeshletSourceParserCalls -or
+            $null -eq $_.MeshletColdImportBuilderCalls -or
+            $null -eq $_.MeshletCookedPayloadCount -or
+            $null -eq $_.MeshletGeneratedLodCount -or
+            [double]$_.MeshletSourceParserCalls -le 0.0 -or
+            [double]$_.MeshletColdImportBuilderCalls -le 0.0 -or
+            [double]$_.MeshletCookedPayloadCount -le 0.0 -or
+            [double]$_.MeshletGeneratedLodCount -le 0.0
+    }
+
+    return $null -eq $_.MeshletWarmPayloadHydrations -or
+        $null -eq $_.MeshletSourceParserCalls -or
+        $null -eq $_.MeshletColdImportBuilderCalls -or
+        [double]$_.MeshletWarmPayloadHydrations -le 0.0 -or
+        [double]$_.MeshletSourceParserCalls -ne 0.0 -or
+        [double]$_.MeshletColdImportBuilderCalls -ne 0.0
+})
+if ($meshletCacheEvidenceFailures.Count -gt 0) {
+    $details = $meshletCacheEvidenceFailures | ForEach-Object {
+        "$($_.Strategy) r$($_.Repetition) $($_.CacheMode): parser=$($_.MeshletSourceParserCalls) nativeBuilder=$($_.MeshletColdImportBuilderCalls) generatedLods=$($_.MeshletGeneratedLodCount) payloads=$($_.MeshletCookedPayloadCount) warmHydrations=$($_.MeshletWarmPayloadHydrations)"
+    }
+    throw "Meshlet import-cache evidence gate failed: $($details -join '; '). Cold requires source parsing plus nonzero cook/LOD evidence; warm requires standalone cooked-mesh hydration with zero source parsing and builder calls."
 }

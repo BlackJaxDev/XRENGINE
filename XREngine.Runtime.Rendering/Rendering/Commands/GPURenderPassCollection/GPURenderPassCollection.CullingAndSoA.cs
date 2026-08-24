@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.Linq;
 using System.Numerics;
 using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
 using XREngine;
@@ -107,7 +108,7 @@ namespace XREngine.Rendering.Commands
         /// <param name="values">The span to populate with the unsigned integer values read from the buffer. The length of the span
         /// determines the number of values to read.</param>
         /// <exception cref="Exception">Thrown if the buffer's mapped address is null.</exception>
-        private unsafe void ReadUints(XRDataBuffer buf, Span<uint> values)
+        private void ReadUints(XRDataBuffer buf, Span<uint> values)
         {
             if (!buf.IsMapped)
             {
@@ -121,13 +122,12 @@ namespace XREngine.Rendering.Commands
 
             AbstractRenderer.Current?.MemoryBarrier(EMemoryBarrierMask.ClientMappedBuffer);
 
-            var addr = buf.GetMappedAddresses().FirstOrDefault();
-            if (addr == IntPtr.Zero)
+            if (!buf.TryReadMapped(ref values, static (scoped ReadOnlySpan<byte> bytes, ref Span<uint> destination) =>
+            {
+                MemoryMarshal.Cast<byte, uint>(bytes)[..destination.Length].CopyTo(destination);
+                return true;
+            }))
                 throw new InvalidOperationException("ReadUints failed - buffer mapped address is null");
-
-            uint* ptr = (uint*)addr.Pointer;
-            for (int i = 0; i < values.Length; i++)
-                values[i] = ptr[i];
         }
 
         /// <summary>
@@ -137,7 +137,7 @@ namespace XREngine.Rendering.Commands
         /// caller is responsible for ensuring that the buffer has sufficient capacity to store the values.</remarks>
         /// <param name="buf">The data buffer to which the unsigned integers will be written.</param>
         /// <param name="values">An array of unsigned integers to write to the buffer. This parameter can be empty.</param>
-        private unsafe void WriteUints(XRDataBuffer buf, params uint[] values)
+        private void WriteUints(XRDataBuffer buf, params uint[] values)
             => WriteUints(buf, values.AsSpan());
 
         /// <summary>
@@ -150,7 +150,7 @@ namespace XREngine.Rendering.Commands
         /// this method.</param>
         /// <param name="values">A read-only span of unsigned integers to write to the buffer.</param>
         /// <exception cref="Exception">Thrown if the buffer's mapped address is null.</exception>
-        private unsafe void WriteUints(XRDataBuffer buf, ReadOnlySpan<uint> values)
+        private void WriteUints(XRDataBuffer buf, ReadOnlySpan<uint> values)
         {
             if (!buf.IsMapped)
             {
@@ -164,13 +164,12 @@ namespace XREngine.Rendering.Commands
 
             AbstractRenderer.Current?.MemoryBarrier(EMemoryBarrierMask.ClientMappedBuffer);
 
-            var addr = buf.GetMappedAddresses().FirstOrDefault();
-            if (addr == IntPtr.Zero)
+            if (!buf.TryWriteMapped(ref values, static (scoped Span<byte> bytes, ref ReadOnlySpan<uint> source) =>
+            {
+                source.CopyTo(MemoryMarshal.Cast<byte, uint>(bytes));
+                return true;
+            }))
                 throw new InvalidOperationException("WriteUints failed - buffer mapped address is null");
-
-            uint* ptr = (uint*)addr.Pointer;
-            for (int i = 0; i < values.Length; i++)
-                ptr[i] = values[i];
 
             AbstractRenderer.Current?.MemoryBarrier(EMemoryBarrierMask.ClientMappedBuffer | EMemoryBarrierMask.Command);
         }
@@ -185,7 +184,7 @@ namespace XREngine.Rendering.Commands
         /// <param name="index">The zero-based index of the value to read within the mapped memory.</param>
         /// <returns>The unsigned 32-bit integer located at the specified index.</returns>
         /// <exception cref="Exception">Thrown if the mapped memory address is null.</exception>
-        private unsafe uint ReadUIntAt(XRDataBuffer buf, uint index)
+        private uint ReadUIntAt(XRDataBuffer buf, uint index)
         {
             bool mappedTemporarily = false;
 
@@ -202,11 +201,15 @@ namespace XREngine.Rendering.Commands
 
                 AbstractRenderer.Current?.MemoryBarrier(EMemoryBarrierMask.ClientMappedBuffer);
 
-                var addr = buf.GetMappedAddresses().FirstOrDefault();
-                if (addr == IntPtr.Zero)
+                uint value = 0;
+                if (!buf.TryReadMapped(bytes =>
+                {
+                    value = MemoryMarshal.Cast<byte, uint>(bytes)[checked((int)index)];
+                    return true;
+                }))
                     throw new InvalidOperationException("ReadUIntAt failed - buffer mapped address is null");
                 RuntimeEngine.Rendering.Stats.GpuReadback.RecordGpuReadbackBytes(sizeof(uint));
-                return ((uint*)addr.Pointer)[index];
+                return value;
             }
             finally
             {
@@ -225,7 +228,7 @@ namespace XREngine.Rendering.Commands
         /// <param name="index">The zero-based index within the buffer's mapped memory where the value will be written.</param>
         /// <param name="value">The unsigned integer value to write at the specified index.</param>
         /// <exception cref="Exception">Thrown if the buffer's mapped address is null.</exception>
-        private unsafe void WriteUIntAt(XRDataBuffer buf, uint index, uint value)
+        private void WriteUIntAt(XRDataBuffer buf, uint index, uint value)
         {
             if (!buf.IsMapped)
             {
@@ -238,11 +241,12 @@ namespace XREngine.Rendering.Commands
 
             AbstractRenderer.Current?.MemoryBarrier(EMemoryBarrierMask.ClientMappedBuffer);
 
-            var addr = buf.GetMappedAddresses().FirstOrDefault();
-            if (addr == IntPtr.Zero)
+            if (!buf.TryWriteMapped(bytes =>
+            {
+                MemoryMarshal.Cast<byte, uint>(bytes)[checked((int)index)] = value;
+                return true;
+            }))
                 throw new InvalidOperationException("WriteUIntAt failed - buffer mapped address is null");
-
-            ((uint*)addr.Pointer)[index] = value;
 
             AbstractRenderer.Current?.MemoryBarrier(EMemoryBarrierMask.ClientMappedBuffer | EMemoryBarrierMask.Command);
         }
@@ -253,7 +257,7 @@ namespace XREngine.Rendering.Commands
         /// <param name="buf">The <see cref="XRDataBuffer"/> from which to read the value. The buffer must be mapped.</param>
         /// <returns>The unsigned integer value read from the buffer. Returns 0 if the buffer is not mapped.</returns>
         /// <exception cref="Exception">Thrown if the buffer is mapped but the mapped address is a null pointer.</exception>
-    private unsafe uint ReadUInt(XRDataBuffer buf)
+    private uint ReadUInt(XRDataBuffer buf)
         {
             bool mappedTemporarily = false;
 
@@ -270,11 +274,15 @@ namespace XREngine.Rendering.Commands
 
                 AbstractRenderer.Current?.MemoryBarrier(EMemoryBarrierMask.ClientMappedBuffer);
 
-                var addr = buf.GetMappedAddresses().FirstOrDefault();
-                if (addr == IntPtr.Zero)
+                uint value = 0;
+                if (!buf.TryReadMapped(bytes =>
+                {
+                    value = MemoryMarshal.Cast<byte, uint>(bytes)[0];
+                    return true;
+                }))
                     throw new InvalidOperationException("ReadUInt failed - buffer mapped address is null");
                 RuntimeEngine.Rendering.Stats.GpuReadback.RecordGpuReadbackBytes(sizeof(uint));
-                return *((uint*)addr.Pointer);
+                return value;
             }
             finally
             {
@@ -289,7 +297,7 @@ namespace XREngine.Rendering.Commands
         /// <param name="buf">The <see cref="XRDataBuffer"/> to which the value will be written. The buffer must be mapped.</param>
         /// <param name="value">The unsigned integer value to write to the buffer.</param>
         /// <exception cref="InvalidOperationException">Thrown if the buffer is mapped but the mapped address is null.</exception>
-        private unsafe void WriteUInt(XRDataBuffer buf, uint value)
+        private void WriteUInt(XRDataBuffer buf, uint value)
         {
             if (!buf.IsMapped)
             {
@@ -301,11 +309,12 @@ namespace XREngine.Rendering.Commands
             {
                 AbstractRenderer.Current?.MemoryBarrier(EMemoryBarrierMask.ClientMappedBuffer);
 
-                var addr = buf.GetMappedAddresses().FirstOrDefault();
-                if (addr == IntPtr.Zero)
+                if (!buf.TryWriteMapped(bytes =>
+                {
+                    MemoryMarshal.Cast<byte, uint>(bytes)[0] = value;
+                    return true;
+                }))
                     throw new InvalidOperationException("WriteUInt failed - buffer mapped address is null");
-
-                *(uint*)addr.Pointer = value;
 
                 AbstractRenderer.Current?.MemoryBarrier(EMemoryBarrierMask.ClientMappedBuffer | EMemoryBarrierMask.Command);
             }
@@ -430,12 +439,13 @@ namespace XREngine.Rendering.Commands
             WriteUints(_culledCountBuffer, draws, instances, overflow);
         }
 
-        private void EnsurePassFilterDebugBuffer(uint sampleCount)
+        private void EnsurePassFilterDebugBuffer(uint sampleCount, bool clearContents = true)
         {
             if (sampleCount == 0)
                 return;
 
             uint requiredElements = Math.Max(sampleCount * PassFilterDebugComponentsPerSample, 1u);
+            bool recreated = false;
 
             if (_passFilterDebugBuffer is null || _passFilterDebugBuffer.ElementCount < requiredElements)
             {
@@ -449,7 +459,11 @@ namespace XREngine.Rendering.Commands
                 _passFilterDebugBuffer.StorageFlags |= EBufferMapStorageFlags.DynamicStorage | EBufferMapStorageFlags.Read;
                 _passFilterDebugBuffer.RangeFlags |= EBufferMapRangeFlags.Read;
                 _passFilterDebugBuffer.Generate();
+                recreated = true;
             }
+
+            if (!recreated && !clearContents)
+                return;
 
             for (uint i = 0; i < requiredElements; ++i)
                 _passFilterDebugBuffer!.SetDataRawAtIndex(i, 0u);
@@ -476,38 +490,33 @@ namespace XREngine.Rendering.Commands
                     mappedLocally = true;
                 }
 
-                VoidPtr mapped = _passFilterDebugBuffer.GetMappedAddresses().FirstOrDefault();
-                if (!mapped.IsValid)
-                {
-                    if (mappedLocally)
-                        _passFilterDebugBuffer.UnmapBufferData();
-                    Dbg("PassFilterDebug aborted; debug buffer not mapped.", "Culling");
-                    return;
-                }
-
                 AbstractRenderer.Current?.MemoryBarrier(EMemoryBarrierMask.ClientMappedBuffer);
-
-                uint* data = (uint*)mapped.Pointer;
                 uint loggedSamples = Math.Min(sampleCount, PassFilterDebugMaxSamples);
 
                 var sb = new StringBuilder();
                 sb.Append("PassFilterDebug samples: ");
-
-                for (uint i = 0; i < loggedSamples; ++i)
+                if (!_passFilterDebugBuffer.TryReadMapped(bytes =>
                 {
-                    uint baseIndex = i * PassFilterDebugComponentsPerSample;
-                    uint cmdIndex = data[baseIndex + 0];
-                    uint passValue = data[baseIndex + 1];
-                    uint accepted = data[baseIndex + 2];
-                    uint expected = data[baseIndex + 3];
-
-                    if (i > 0)
-                        sb.Append(" | ");
-
-                    sb.Append('#').Append(cmdIndex).Append(" pass=").Append(passValue);
-                    if (expected != 0xFFFFFFFFu)
-                        sb.Append(" expected=").Append(expected);
-                    sb.Append(accepted == 1 ? " accepted" : " rejected");
+                    ReadOnlySpan<uint> data = MemoryMarshal.Cast<byte, uint>(bytes);
+                    for (uint i = 0; i < loggedSamples; ++i)
+                    {
+                        int baseIndex = checked((int)(i * PassFilterDebugComponentsPerSample));
+                        uint cmdIndex = data[baseIndex + 0];
+                        uint passValue = data[baseIndex + 1];
+                        uint accepted = data[baseIndex + 2];
+                        uint expected = data[baseIndex + 3];
+                        if (i > 0)
+                            sb.Append(" | ");
+                        sb.Append('#').Append(cmdIndex).Append(" pass=").Append(passValue);
+                        if (expected != 0xFFFFFFFFu)
+                            sb.Append(" expected=").Append(expected);
+                        sb.Append(accepted == 1 ? " accepted" : " rejected");
+                    }
+                    return true;
+                }))
+                {
+                    Dbg("PassFilterDebug aborted; debug buffer not mapped.", "Culling");
+                    return;
                 }
 
                 Dbg(sb.ToString(), "Culling");
@@ -551,19 +560,12 @@ namespace XREngine.Rendering.Commands
             {
                 VisibleCommandCount = 0;
                 VisibleInstanceCount = 0;
-                _sourceCommandsUseHotLayout = false;
-                _culledHotCommandsValid = false;
                 Dbg("Cull: no commands","Culling");
                 Log(LogCategory.Culling, LogLevel.Debug, "Cull: no commands - early exit");
                 RecordCullTiming();
                 return;
             }
 
-            BuildSourceHotCommandBuffer(gpuCommands, numCommands);
-            _culledHotCommandsValid = false;
-
-            if (ShouldExtractSoAForCurrentPolicy(numCommands))
-                ExtractSoA(gpuCommands);
 
             bool externalVrSharedVisibility = ShouldUseExternalVrSharedVisibilityPassFilter(camera);
 
@@ -630,11 +632,6 @@ namespace XREngine.Rendering.Commands
                     _loggedBvhCullMode = true;
                     modeName = "BVH";
                     break;
-                case CullFrameMode.SoA:
-                    shouldLog = !_loggedFrustumCullMode;
-                    _loggedFrustumCullMode = true;
-                    modeName = "SoA";
-                    break;
                 default:
                     shouldLog = !_loggedFrustumCullMode;
                     _loggedFrustumCullMode = true;
@@ -648,39 +645,6 @@ namespace XREngine.Rendering.Commands
             Log(LogCategory.Culling, LogLevel.Info, "Culling mode active: {0} (pass={1})", modeName, RenderPass);
         }
 
-        private bool ShouldExtractSoAForCurrentPolicy(uint commandCount)
-        {
-            if (_extractSoAComputeShader is null)
-                return false;
-
-            return RuntimeEngine.EffectiveSettings.GpuCullingDataLayout switch
-            {
-                EGpuCullingDataLayout.SoA => true,
-                EGpuCullingDataLayout.Auto => commandCount >= 4096u,
-                _ => false,
-            };
-        }
-
-        private void BuildSourceHotCommandBuffer(GPUScene scene, uint inputCount)
-        {
-            _sourceCommandsUseHotLayout = false;
-
-            if (!IsHotCommandLayoutEnabled() ||
-                _buildHotCommandsProgram is null ||
-                _sourceHotCommandBuffer is null ||
-                inputCount == 0u)
-                return;
-
-            _buildHotCommandsProgram.Uniform("InputCount", (int)inputCount);
-            _buildHotCommandsProgram.BindBuffer(scene.AllLoadedCommandsBuffer, 0);
-            _buildHotCommandsProgram.BindBuffer(_sourceHotCommandBuffer, 1);
-
-            uint groups = Math.Max(1u, XRRenderProgram.ComputeDispatch.ForCommands(inputCount).Item1);
-            _buildHotCommandsProgram.DispatchCompute(groups, 1, 1, EMemoryBarrierMask.ShaderStorage);
-            AbstractRenderer.Current?.MemoryBarrier(EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.Command);
-
-            _sourceCommandsUseHotLayout = true;
-        }
 
         private static void RecordCpuFallbackUsage(uint recoveredCommands)
             => RuntimeEngine.Rendering.Stats.GpuFallback.RecordGpuCpuFallback(1, (int)Math.Min(recoveredCommands, int.MaxValue));
@@ -779,7 +743,7 @@ namespace XREngine.Rendering.Commands
                 return;
             }
 
-            XRDataBuffer src = scene.AllLoadedCommandsBuffer;
+            XRDataBuffer src = scene.CullControlBuffer;
             XRDataBuffer dst = CulledSceneToRenderBuffer;
 
             uint capacity = CulledSceneToRenderBuffer.ElementCount;
@@ -831,40 +795,15 @@ namespace XREngine.Rendering.Commands
             _cullingComputeShader.Uniform("CameraPosition", camera.Transform?.RenderTranslation ?? System.Numerics.Vector3.Zero);
             _cullingComputeShader.Uniform("ActiveViewCount", (int)activeViewCount);
 
-            bool requireHotCommands = IsHotCommandLayoutRequired();
-            bool useHotCommands = _sourceCommandsUseHotLayout &&
-                _sourceHotCommandBuffer is not null &&
-                _culledHotCommandBuffer is not null;
-
-            if (requireHotCommands && !useHotCommands)
-            {
-                ResetVisibleCounters();
-                _skipGpuSubmissionThisPass = true;
-                _skipGpuSubmissionReason = "ShippingFast profile requires hot-command layout for frustum culling.";
-                Debug.MeshesWarning($"{FormatDebugPrefix("Culling")} {_skipGpuSubmissionReason}");
-                return;
-            }
-
-            _cullingComputeShader.Uniform("UseHotCommands", useHotCommands ? 1 : 0);
-
             // Bind Phase C SoA scene buffers.
-            scene.DrawMetadataBuffer.BindTo(_cullingComputeShader, 0);
-            scene.BoundsBuffer.BindTo(_cullingComputeShader, 1);
+            scene.CullControlBuffer.BindTo(_cullingComputeShader, 0);
+            scene.CullBoundsBuffer.BindTo(_cullingComputeShader, 1);
             _cullingComputeShader.BindBuffer(dst, 2);
             BindStorageBuffer(_cullingComputeShader, _culledCountBuffer!, 3);
             if (_cullingOverflowFlagBuffer is not null)
                 _cullingComputeShader.BindBuffer(_cullingOverflowFlagBuffer, 4);
             if (_statsBuffer is not null)
                 _cullingComputeShader.BindBuffer(_statsBuffer, 8);
-            if (useHotCommands)
-            {
-                _cullingComputeShader.BindBuffer(_sourceHotCommandBuffer!, 9);
-                _cullingComputeShader.BindBuffer(_culledHotCommandBuffer!, 10);
-            }
-            else
-            {
-                _cullingComputeShader.BindBuffer(dst, 10);
-            }
             BindViewSetBuffers(_cullingComputeShader);
 
             // Dispatch compute shader
@@ -876,7 +815,6 @@ namespace XREngine.Rendering.Commands
                 _cullingComputeShader.DispatchCompute(x, y, z, postCullBarrier);
             }
 
-            _culledHotCommandsValid = useHotCommands;
 
             // Check for overflow
             if (_cullingOverflowFlagBuffer is not null && ShouldCaptureDiagnosticReadbacksForPass())
@@ -1089,7 +1027,7 @@ namespace XREngine.Rendering.Commands
                 return;
             }
 
-            XRDataBuffer src = scene.AllLoadedCommandsBuffer;
+            XRDataBuffer src = scene.CullControlBuffer;
             XRDataBuffer dst = CulledSceneToRenderBuffer;
 
             uint capacity = CulledSceneToRenderBuffer.ElementCount;
@@ -1147,25 +1085,9 @@ namespace XREngine.Rendering.Commands
             _bvhFrustumCullProgram.Uniform("ENABLE_CPU_GPU_COMPARE", 0u); // OpenGL-compatible uniform (was Vulkan specialization constant)
             _bvhFrustumCullProgram.Uniform("ActiveViewCount", (int)activeViewCount);
 
-            bool requireHotCommands = IsHotCommandLayoutRequired();
-            bool useHotCommands = _sourceCommandsUseHotLayout &&
-                _sourceHotCommandBuffer is not null &&
-                _culledHotCommandBuffer is not null;
-
-            if (requireHotCommands && !useHotCommands)
-            {
-                ResetVisibleCounters();
-                _skipGpuSubmissionThisPass = true;
-                _skipGpuSubmissionReason = "ShippingFast profile requires hot-command layout for BVH culling.";
-                Debug.MeshesWarning($"{FormatDebugPrefix("Culling")} {_skipGpuSubmissionReason}");
-                return;
-            }
-
-            _bvhFrustumCullProgram.Uniform("UseHotCommands", useHotCommands ? 1u : 0u);
-
             // Bind Phase C SoA scene buffers (metadata + bounds) and compact command output.
-            scene.DrawMetadataBuffer.BindTo(_bvhFrustumCullProgram, 0);
-            scene.BoundsBuffer.BindTo(_bvhFrustumCullProgram, 1);
+            scene.CullControlBuffer.BindTo(_bvhFrustumCullProgram, 0);
+            scene.CullBoundsBuffer.BindTo(_bvhFrustumCullProgram, 1);
             _bvhFrustumCullProgram.BindBuffer(dst, 2);
             BindStorageBuffer(_bvhFrustumCullProgram, _culledCountBuffer!, 3);
             if (_cullingOverflowFlagBuffer is not null)
@@ -1180,10 +1102,6 @@ namespace XREngine.Rendering.Commands
                 _bvhFrustumCullProgram.BindBuffer(_statsBuffer, 8);
             if (_overflowDebugBuffer is not null)
                 _bvhFrustumCullProgram.BindBuffer(_overflowDebugBuffer, 9);
-            if (useHotCommands)
-                _bvhFrustumCullProgram.BindBuffer(_culledHotCommandBuffer!, 10);
-            else
-                _bvhFrustumCullProgram.BindBuffer(dst, 10);
             BindViewSetBuffers(_bvhFrustumCullProgram);
 
             uint nodeCount = bvhProvider.BvhNodeCount;
@@ -1199,7 +1117,6 @@ namespace XREngine.Rendering.Commands
             }
 
             PublishExactCommandViewMasks();
-            _culledHotCommandsValid = useHotCommands;
 
             // Check for overflow
             if (_cullingOverflowFlagBuffer is not null && ShouldCaptureDiagnosticReadbacksForPass())
@@ -1284,8 +1201,7 @@ namespace XREngine.Rendering.Commands
                 return;
             }
             
-            //TODO: use compute shader to avoid CPU roundtripping
-            XRDataBuffer src = scene.AllLoadedCommandsBuffer;
+            XRDataBuffer src = scene.CullControlBuffer;
             XRDataBuffer dst = CulledSceneToRenderBuffer;
 
             uint capacity = CulledSceneToRenderBuffer.ElementCount;
@@ -1312,15 +1228,15 @@ namespace XREngine.Rendering.Commands
                 WriteUInt(_cullingOverflowFlagBuffer, 0u);
 
             uint debugSamples = debugLoggingEnabled ? Math.Min(copyCount, PassFilterDebugMaxSamples) : 0u;
+            EnsurePassFilterDebugBuffer(Math.Max(debugSamples, 1u), clearContents: debugSamples > 0u);
+            if (_passFilterDebugBuffer is not null)
+                _copyCommandsProgram.BindBuffer(_passFilterDebugBuffer, 3);
 
             if (debugSamples > 0)
             {
-                EnsurePassFilterDebugBuffer(debugSamples);
                 _copyCommandsProgram.Uniform("DebugEnabled", 1);
                 _copyCommandsProgram.Uniform("DebugMaxSamples", (int)debugSamples);
                 _copyCommandsProgram.Uniform("DebugInstanceStride", (int)PassFilterDebugComponentsPerSample);
-                if (_passFilterDebugBuffer is not null)
-                    _copyCommandsProgram.BindBuffer(_passFilterDebugBuffer, 3);
             }
             else
             {
@@ -1432,12 +1348,10 @@ namespace XREngine.Rendering.Commands
             bool matchAll = RenderPass < 0;
             uint targetPass = unchecked((uint)RenderPass);
 
-            XRDataBuffer src = scene.AllLoadedCommandsBuffer;
+            XRDataBuffer src = scene.CullControlBuffer;
             XRDataBuffer dst = CulledSceneToRenderBuffer;
 
             uint elementSize = dst.ElementSize;
-            if (elementSize == 0)
-                elementSize = GPUScene.CommandFloatCount * sizeof(float);
 
             uint outIndex = 0;
             uint rejected = 0;
@@ -1446,7 +1360,7 @@ namespace XREngine.Rendering.Commands
             string? firstFatalRejection = null;
             for (uint i = 0; i < copyCount; ++i)
             {
-                GPUIndirectRenderCommand cmd = src.GetDataRawAtIndex<GPUIndirectRenderCommand>(i);
+                DrawMetadata cmd = src.GetDataRawAtIndex<DrawMetadata>(i);
                 if (!TryPrepareCpuFallbackCommand(scene, matchAll, targetPass, ref cmd, out string? rejectionReason))
                 {
                     rejected++;
@@ -1455,11 +1369,11 @@ namespace XREngine.Rendering.Commands
                     {
                         fatalRejected++;
                         if (rejectionReason is not null && _cpuFallbackDetailLogBudget > 0 && Interlocked.Decrement(ref _cpuFallbackDetailLogBudget) >= 0)
-                            Debug.MeshesWarning($"{FormatDebugPrefix("Culling")} CPU fallback reject idx={i} reason={rejectionReason} {FormatCommandSnapshot(cmd)}");
+                            Debug.MeshesWarning($"{FormatDebugPrefix("Culling")} CPU fallback reject idx={i} reason={rejectionReason} draw={cmd.DrawID} mesh={cmd.MeshID} material={cmd.MaterialID}");
 
                         if (firstFatalRejection is null)
                         {
-                            string commandSummary = FormatCommandSnapshot(cmd);
+                            string commandSummary = $"draw={cmd.DrawID} mesh={cmd.MeshID} material={cmd.MaterialID}";
                             firstFatalRejection = $"idx={i} reason={rejectionReason ?? "unknown"} {commandSummary}";
                         }
                     }
@@ -1467,7 +1381,7 @@ namespace XREngine.Rendering.Commands
                 }
 
                 if (commit)
-                    dst.SetDataRawAtIndex(outIndex, cmd);
+                    dst.SetDataRawAtIndex(outIndex, cmd.DrawID);
                 outIndex++;
                 instanceAccumulator += cmd.InstanceCount;
             }
@@ -1513,7 +1427,7 @@ namespace XREngine.Rendering.Commands
             return true;
         }
 
-        private bool TryPrepareCpuFallbackCommand(GPUScene scene, bool matchAll, uint targetPass, ref GPUIndirectRenderCommand cmd, out string? reason)
+        private bool TryPrepareCpuFallbackCommand(GPUScene scene, bool matchAll, uint targetPass, ref DrawMetadata cmd, out string? reason)
         {
             reason = null;
 
@@ -1548,7 +1462,10 @@ namespace XREngine.Rendering.Commands
             }
 
             if (cmd.InstanceCount == 0u)
-                cmd.InstanceCount = 1u;
+            {
+                reason = "zero-instances";
+                return false;
+            }
 
             return true;
         }
@@ -1563,14 +1480,14 @@ namespace XREngine.Rendering.Commands
 
             try
             {
-                GPUIndirectRenderCommand[] sample = scene.AllLoadedCommandsBuffer.GetDataArrayRawAtIndex<GPUIndirectRenderCommand>(0, (int)sampleCount);
                 var sb = new StringBuilder();
                 sb.Append("Pre-pass copy probe (target=").Append(RenderPass).Append(" count=").Append(sampleCount).Append("): ");
-                for (int i = 0; i < sample.Length; i++)
+                for (uint i = 0; i < sampleCount; ++i)
                 {
                     if (i > 0)
                         sb.Append(" | ");
-                    sb.Append('#').Append(i).Append(' ').Append(FormatCommandSnapshot(sample[i]));
+                    GetDrawSnapshot(scene, i, out DrawMetadata metadata, out BoundsGpu bounds);
+                    sb.Append('#').Append(i).Append(' ').Append(FormatCommandSnapshot(metadata, bounds));
                 }
 
                 Debug.Meshes($"{FormatDebugPrefix("Culling")} ProbeSource {sb}");
@@ -1589,14 +1506,13 @@ namespace XREngine.Rendering.Commands
                 if (sampleCount == 0)
                     return;
 
-                GPUIndirectRenderCommand[] sample = scene.AllLoadedCommandsBuffer.GetDataArrayRawAtIndex<GPUIndirectRenderCommand>(0, (int)sampleCount);
                 var sb = new StringBuilder();
                 sb.Append("Cull passthrough sample passes (target=").Append(RenderPass).Append("): ");
-                for (int i = 0; i < sample.Length; i++)
+                for (uint i = 0; i < sampleCount; ++i)
                 {
                     if (i > 0)
                         sb.Append(", ");
-                    sb.Append('[').Append(i).Append("]=").Append(sample[i].RenderPass);
+                    sb.Append('[').Append(i).Append("]=").Append(scene.CullControlBuffer.GetDataRawAtIndex<DrawMetadata>(i).RenderPass);
                 }
 
                 Dbg(sb.ToString(), "Culling");
@@ -1607,62 +1523,15 @@ namespace XREngine.Rendering.Commands
             }
         }
 
-        private void ExtractSoA(GPUScene scene)
-        {
-            Dbg("ExtractSoA begin", "SoA");
-
-            if (_extractSoAComputeShader is null)
-                return;
-
-            uint count = scene.TotalCommandCount;
-            if (count == 0)
-                return;
-
-            EnsureSoABuffers(scene.AllocatedMaxCommandCount);
-
-            var spheres = _useBufferAForRender
-                ? _soaBoundingSpheresA
-                : _soaBoundingSpheresB;
-
-            var meta = _useBufferAForRender
-                ? _soaMetadataA
-                : _soaMetadataB;
-
-            if (spheres is null || meta is null)
-            {
-                Debug.MeshesWarning($"{FormatDebugPrefix("SoA")} SoA extraction buffers not available");
-                return;
-            }
-
-            _extractSoAComputeShader.Uniform("InputCommandCount", (int)count);
-            bool requireHotCommands = IsHotCommandLayoutRequired();
-            bool useHotCommands = _sourceCommandsUseHotLayout && _sourceHotCommandBuffer is not null;
-            if (requireHotCommands && !useHotCommands)
-            {
-                Debug.MeshesWarning($"{FormatDebugPrefix("SoA")} ShippingFast profile requires hot-command layout for SoA extraction.");
-                return;
-            }
-
-            _extractSoAComputeShader.Uniform("UseHotCommands", useHotCommands ? 1 : 0);
-            scene.DrawMetadataBuffer.BindTo(_extractSoAComputeShader, 0);
-            scene.BoundsBuffer.BindTo(_extractSoAComputeShader, 1);
-            _extractSoAComputeShader.BindBuffer(spheres, 2);
-            _extractSoAComputeShader.BindBuffer(meta, 3);
-
-            uint groups = (count + ComputeWorkGroupSize - 1) / ComputeWorkGroupSize;
-            _extractSoAComputeShader.DispatchCompute(groups, 1, 1, EMemoryBarrierMask.ShaderStorage);
-
-            Dbg($"ExtractSoA dispatched groups={groups} count={count}", "SoA");
-        }
-
         private struct SoftIssueInfo
         {
             public int Count;
             public uint FirstIndex;
-            public GPUIndirectRenderCommand FirstCommand;
+            public DrawMetadata FirstMetadata;
+            public BoundsGpu FirstBounds;
         }
 
-        private static void RecordSoftIssue(Dictionary<string, SoftIssueInfo> map, string reason, uint index, in GPUIndirectRenderCommand cmd)
+        private static void RecordSoftIssue(Dictionary<string, SoftIssueInfo> map, string reason, uint index, in DrawMetadata metadata, in BoundsGpu bounds)
         {
             if (map.TryGetValue(reason, out SoftIssueInfo info))
             {
@@ -1675,21 +1544,22 @@ namespace XREngine.Rendering.Commands
                 {
                     Count = 1,
                     FirstIndex = index,
-                    FirstCommand = cmd
+                    FirstMetadata = metadata,
+                    FirstBounds = bounds
                 };
             }
         }
 
-        private void CollectSoftIssues(in GPUIndirectRenderCommand cmd, uint index, Dictionary<string, SoftIssueInfo> softIssues)
+        private void CollectSoftIssues(in DrawMetadata metadata, in BoundsGpu bounds, uint index, Dictionary<string, SoftIssueInfo> softIssues)
         {
-            if (cmd.InstanceCount == 0)
-                RecordSoftIssue(softIssues, "instance-count-zero", index, cmd);
+            if (metadata.InstanceCount == 0)
+                RecordSoftIssue(softIssues, "instance-count-zero", index, metadata, bounds);
 
-            if (RenderPass >= 0 && cmd.RenderPass != (uint)RenderPass && cmd.RenderPass != uint.MaxValue)
-                RecordSoftIssue(softIssues, "render-pass-mismatch", index, cmd);
+            if (RenderPass >= 0 && metadata.RenderPass != (uint)RenderPass && metadata.RenderPass != uint.MaxValue)
+                RecordSoftIssue(softIssues, "render-pass-mismatch", index, metadata, bounds);
         }
 
-        private unsafe bool SanitizeCulledCommands(GPUScene scene)
+        private bool SanitizeCulledCommands(GPUScene scene)
         {
             if (_culledSceneToRenderBuffer is null || _culledCountBuffer is null)
             {
@@ -1698,119 +1568,81 @@ namespace XREngine.Rendering.Commands
             }
 
             uint visible = VisibleCommandCount;
-            if (visible == 0)
+            if (visible == 0u)
             {
-                VisibleInstanceCount = 0;
+                VisibleInstanceCount = 0u;
                 return true;
             }
 
-            var invalidCommands = new List<(uint index, GPUIndirectRenderCommand command, string reason)>();
+            var invalidCommands = new List<(uint index, DrawMetadata metadata, BoundsGpu bounds, string reason)>();
             var softIssues = new Dictionary<string, SoftIssueInfo>(StringComparer.OrdinalIgnoreCase);
             var missingMaterialIds = new HashSet<uint>();
             uint writeIndex = 0u;
             ulong instanceTotal = 0u;
 
-            bool mappedLocally = false;
-            VoidPtr mappedPtr = default;
-            try
+            for (uint i = 0; i < visible; ++i)
             {
-                if (_culledSceneToRenderBuffer.ActivelyMapping.Count == 0)
+                uint drawId = _culledSceneToRenderBuffer.GetDataRawAtIndex<uint>(i);
+                if (!TryGetDrawSnapshot(scene, drawId, out DrawMetadata metadata, out BoundsGpu bounds))
                 {
-                    _culledSceneToRenderBuffer.StorageFlags |= EBufferMapStorageFlags.Read;
-                    _culledSceneToRenderBuffer.RangeFlags |= EBufferMapRangeFlags.Read;
-                    _culledSceneToRenderBuffer.MapBufferData();
-                    mappedLocally = true;
+                    invalidCommands.Add((i, default, default, "draw-id-out-of-range"));
+                    continue;
                 }
 
-                mappedPtr = _culledSceneToRenderBuffer.GetMappedAddresses().FirstOrDefault();
-                if (!mappedPtr.IsValid)
+                if (IsDebugLoggingEnabledForPass() && _sanitizerSampleLogBudget > 0 && Interlocked.Decrement(ref _sanitizerSampleLogBudget) >= 0)
+                    Dbg($"Sanitize sample idx={i} draw={drawId} material={metadata.MaterialID} known={scene.MaterialMap.ContainsKey(metadata.MaterialID)} mesh={metadata.MeshID} pass={metadata.RenderPass} instances={metadata.InstanceCount}", "Materials");
+
+                CollectSoftIssues(metadata, bounds, i, softIssues);
+                if (IsCulledCommandValid(scene, metadata, missingMaterialIds, out string? failureReason))
                 {
-                    if (mappedLocally)
-                        _culledSceneToRenderBuffer.UnmapBufferData();
-                    Dbg("SanitizeCulledCommands aborted; culled buffer not mapped for read.", "Materials");
-                    return true;
+                    _culledSceneToRenderBuffer.SetDataRawAtIndex(writeIndex++, drawId);
+                    instanceTotal += metadata.InstanceCount;
+                    continue;
                 }
 
-                AbstractRenderer.Current?.MemoryBarrier(EMemoryBarrierMask.ClientMappedBuffer | EMemoryBarrierMask.Command);
+                string reason = failureReason ?? "invalid";
+                invalidCommands.Add((i, metadata, bounds, reason));
+                if (_sanitizerDetailLogBudget > 0 && Interlocked.Decrement(ref _sanitizerDetailLogBudget) >= 0)
+                    Debug.MeshesWarning($"{FormatDebugPrefix("Materials")} Sanitize drop idx={i} draw={drawId} reason={reason} {FormatCommandSnapshot(metadata, bounds)}");
+            }
 
-                byte* basePtr = (byte*)mappedPtr.Pointer;
-                uint elementSize = _culledSceneToRenderBuffer.ElementSize;
-                if (elementSize == 0)
-                    elementSize = GPUScene.CommandFloatCount * sizeof(float);
+            _culledSceneToRenderBuffer.PushSubData(0, writeIndex * _culledSceneToRenderBuffer.ElementSize);
+            WriteVisibleCounters(writeIndex, (uint)Math.Min(instanceTotal, uint.MaxValue));
 
-                for (uint i = 0; i < visible; ++i)
-                {
-                    byte* src = basePtr + (i * elementSize);
-                    GPUIndirectRenderCommand cmd = Unsafe.ReadUnaligned<GPUIndirectRenderCommand>(src);
-
-                    if (IsDebugLoggingEnabledForPass() && _sanitizerSampleLogBudget > 0)
-                    {
-                        if (Interlocked.Decrement(ref _sanitizerSampleLogBudget) >= 0)
-                        {
-                            bool materialKnown = scene.MaterialMap.ContainsKey(cmd.MaterialID);
-                            string sampleInfo = 
-                                $"Sanitize sample idx={i} material={cmd.MaterialID} known={materialKnown} mesh={cmd.MeshID} pass={cmd.RenderPass} instances={cmd.InstanceCount}";
-                            Dbg(sampleInfo, "Materials");
-                        }
-                    }
-
-                    CollectSoftIssues(cmd, i, softIssues);
-
-                    if (IsCulledCommandValid(scene, cmd, missingMaterialIds, out string? failureReason))
-                    {
-                        _culledSceneToRenderBuffer.SetDataRawAtIndex(writeIndex, cmd);
-                        writeIndex++;
-                        instanceTotal += cmd.InstanceCount;
-                    }
-                    else
-                    {
-                        string reason = failureReason ?? "invalid";
-                        invalidCommands.Add((i, cmd, reason));
-                        if (_sanitizerDetailLogBudget > 0 && Interlocked.Decrement(ref _sanitizerDetailLogBudget) >= 0)
-                            Debug.MeshesWarning($"{FormatDebugPrefix("Materials")} Sanitize drop idx={i} reason={reason} {FormatCommandSnapshot(cmd)}");
-                    }
-                }
-
-                bool hasSoftIssues = softIssues.Count > 0;
-
-                uint newVisible = writeIndex;
-                uint instanceCount = (uint)Math.Min(instanceTotal, uint.MaxValue);
-                WriteVisibleCounters(newVisible, instanceCount);
-
-                if (invalidCommands.Count == 0)
-                {
-                    if (hasSoftIssues && _culledSanitizerLogBudget > 0)
-                    {
-                        string softSummary = BuildSoftIssueSummary(visible, softIssues, RenderPass);
-                        Dbg(softSummary, "Materials");
-                        _culledSanitizerLogBudget--;
-                    }
-                    return true;
-                }
-
-                if (_culledSanitizerLogBudget > 0)
-                {
-                    string summary = BuildSanitizerSummary(visible, invalidCommands, softIssues, RenderPass);
-                    Dbg(summary, "Materials");
-                    _culledSanitizerLogBudget--;
-                }
-
-                if (missingMaterialIds.Count > 0)
-                    LogMaterialSnapshot(scene, missingMaterialIds);
-
-                // Even if we dropped some commands, the sanitization itself was successful.
-                // The remaining commands in the buffer are valid and ready to be rendered.
+            if (invalidCommands.Count == 0)
+            {
+                if (softIssues.Count > 0 && _culledSanitizerLogBudget-- > 0)
+                    Dbg(BuildSoftIssueSummary(visible, softIssues, RenderPass), "Materials");
                 return true;
             }
-            finally
-            {
-                if (mappedLocally)
-                    _culledSceneToRenderBuffer.UnmapBufferData();
-            }
+
+            if (_culledSanitizerLogBudget-- > 0)
+                Dbg(BuildSanitizerSummary(visible, invalidCommands, softIssues, RenderPass), "Materials");
+            if (missingMaterialIds.Count > 0)
+                LogMaterialSnapshot(scene, missingMaterialIds);
+            return true;
         }
 
-        private static string FormatCommandSnapshot(in GPUIndirectRenderCommand cmd)
-            => $"mesh={cmd.MeshID} material={cmd.MaterialID} pass={cmd.RenderPass} instances={cmd.InstanceCount} layer=0x{cmd.LayerMask:X8} center=<{cmd.BoundingSphere.X:F2},{cmd.BoundingSphere.Y:F2},{cmd.BoundingSphere.Z:F2}> radius={cmd.BoundingSphere.W:F2}";
+        private static bool TryGetDrawSnapshot(GPUScene scene, uint drawId, out DrawMetadata metadata, out BoundsGpu bounds)
+        {
+            metadata = default;
+            bounds = default;
+            if (drawId >= scene.CullControlBuffer.ElementCount)
+                return false;
+
+            metadata = scene.CullControlBuffer.GetDataRawAtIndex<DrawMetadata>(drawId);
+            if (metadata.BoundsID >= scene.CullBoundsBuffer.ElementCount)
+                return false;
+
+            bounds = scene.CullBoundsBuffer.GetDataRawAtIndex<BoundsGpu>(metadata.BoundsID);
+            return true;
+        }
+
+        private static void GetDrawSnapshot(GPUScene scene, uint drawId, out DrawMetadata metadata, out BoundsGpu bounds)
+            => _ = TryGetDrawSnapshot(scene, drawId, out metadata, out bounds);
+
+        private static string FormatCommandSnapshot(in DrawMetadata metadata, in BoundsGpu bounds)
+            => $"mesh={metadata.MeshID} material={metadata.MaterialID} pass={metadata.RenderPass} instances={metadata.InstanceCount} layer=0x{metadata.LayerMask:X8} center=<{bounds.BoundingSphere.X:F2},{bounds.BoundingSphere.Y:F2},{bounds.BoundingSphere.Z:F2}> radius={bounds.BoundingSphere.W:F2}";
 
         private void LogZeroVisibilityDiagnostics(GPUScene scene, XRCamera camera, uint inputCount)
         {
@@ -1829,7 +1661,6 @@ namespace XREngine.Rendering.Commands
                 return;
             }
 
-            GPUIndirectRenderCommand[] sample = scene.AllLoadedCommandsBuffer.GetDataArrayRawAtIndex<GPUIndirectRenderCommand>(0, (int)sampleCount);
             Frustum frustum = camera.WorldFrustum();
             uint cameraMask = unchecked((uint)camera.CullingMask.Value);
             Vector3 cameraPosition = camera.Transform?.RenderTranslation ?? Vector3.Zero;
@@ -1837,11 +1668,11 @@ namespace XREngine.Rendering.Commands
 
             var sb = new StringBuilder(512);
             sb.Append($"{FormatDebugPrefix("Culling")} Zero-visible diagnostic: rejectedFrustum={rejectedFrustum} rejectedDistance={rejectedDistance} cameraMask=0x{cameraMask:X8} farZ={camera.FarZ:F2}");
-            for (int i = 0; i < sample.Length; i++)
+            for (uint i = 0; i < sampleCount; ++i)
             {
-                GPUIndirectRenderCommand cmd = sample[i];
-                string reason = DescribeCpuFrustumRejectReason(cmd, frustum, cameraPosition, cameraMask, maxDistanceSq);
-                sb.Append(" | #").Append(i).Append(' ').Append(reason).Append(' ').Append(FormatCommandSnapshot(cmd));
+                GetDrawSnapshot(scene, i, out DrawMetadata metadata, out BoundsGpu bounds);
+                string reason = DescribeCpuFrustumRejectReason(metadata, bounds, frustum, cameraPosition, cameraMask, maxDistanceSq);
+                sb.Append(" | #").Append(i).Append(' ').Append(reason).Append(' ').Append(FormatCommandSnapshot(metadata, bounds));
             }
 
             Debug.MeshesWarning(sb.ToString());
@@ -1862,19 +1693,19 @@ namespace XREngine.Rendering.Commands
             }
         }
 
-        private string DescribeCpuFrustumRejectReason(in GPUIndirectRenderCommand cmd, Frustum frustum, Vector3 cameraPosition, uint cameraMask, float maxDistanceSq)
+        private string DescribeCpuFrustumRejectReason(in DrawMetadata metadata, in BoundsGpu bounds, Frustum frustum, Vector3 cameraPosition, uint cameraMask, float maxDistanceSq)
         {
-            if (cmd.InstanceCount == 0u)
+            if (metadata.InstanceCount == 0u)
                 return "reject=instance-count";
 
-            if ((cmd.LayerMask & cameraMask) == 0u)
+            if ((metadata.LayerMask & cameraMask) == 0u)
                 return "reject=layer-mask";
 
-            if (RenderPass >= 0 && cmd.RenderPass != (uint)RenderPass && cmd.RenderPass != uint.MaxValue)
+            if (RenderPass >= 0 && metadata.RenderPass != (uint)RenderPass && metadata.RenderPass != uint.MaxValue)
                 return "reject=render-pass";
 
-            Vector3 center = new(cmd.BoundingSphere.X, cmd.BoundingSphere.Y, cmd.BoundingSphere.Z);
-            float radius = cmd.BoundingSphere.W;
+            Vector3 center = new(bounds.BoundingSphere.X, bounds.BoundingSphere.Y, bounds.BoundingSphere.Z);
+            float radius = bounds.BoundingSphere.W;
             if (float.IsNaN(center.X) || float.IsNaN(center.Y) || float.IsNaN(center.Z) || float.IsNaN(radius))
                 return "reject=nan-bounds";
 
@@ -1891,21 +1722,21 @@ namespace XREngine.Rendering.Commands
                 : "candidate=visible";
         }
 
-        private static (uint MeshId, uint MaterialId, uint Pass) BuildVisibilitySignature(in GPUIndirectRenderCommand cmd)
+        private static (uint MeshId, uint MaterialId, uint Pass) BuildVisibilitySignature(in DrawMetadata cmd)
             => (cmd.MeshID, cmd.MaterialID, cmd.RenderPass);
 
         private List<(uint MeshId, uint MaterialId, uint Pass)> BuildCpuVisibilitySignatures(GPUScene scene, uint copyCount, out uint cpuVisibleCount)
         {
             bool matchAll = RenderPass < 0;
             uint targetPass = unchecked((uint)RenderPass);
-            XRDataBuffer src = scene.AllLoadedCommandsBuffer;
+            XRDataBuffer src = scene.CullControlBuffer;
 
             cpuVisibleCount = 0;
             var signatures = new List<(uint MeshId, uint MaterialId, uint Pass)>(Math.Min((int)copyCount, ValidationSignatureLogLimit));
 
             for (uint i = 0; i < copyCount; ++i)
             {
-                GPUIndirectRenderCommand cmd = src.GetDataRawAtIndex<GPUIndirectRenderCommand>(i);
+                DrawMetadata cmd = src.GetDataRawAtIndex<DrawMetadata>(i);
                 if (!TryPrepareCpuFallbackCommand(scene, matchAll, targetPass, ref cmd, out _))
                     continue;
 
@@ -1917,7 +1748,7 @@ namespace XREngine.Rendering.Commands
             return signatures;
         }
 
-        private List<(uint MeshId, uint MaterialId, uint Pass)> BuildGpuVisibilitySignatures(uint gpuVisibleCount)
+        private List<(uint MeshId, uint MaterialId, uint Pass)> BuildGpuVisibilitySignatures(GPUScene scene, uint gpuVisibleCount)
         {
             var signatures = new List<(uint MeshId, uint MaterialId, uint Pass)>(Math.Min((int)gpuVisibleCount, ValidationSignatureLogLimit));
 
@@ -1927,7 +1758,10 @@ namespace XREngine.Rendering.Commands
             uint sampleCount = Math.Min(gpuVisibleCount, (uint)ValidationSignatureLogLimit);
             for (uint i = 0; i < sampleCount; ++i)
             {
-                GPUIndirectRenderCommand cmd = _culledSceneToRenderBuffer.GetDataRawAtIndex<GPUIndirectRenderCommand>(i);
+                uint drawId = _culledSceneToRenderBuffer.GetDataRawAtIndex<uint>(i);
+                if (drawId >= scene.CullControlBuffer.ElementCount)
+                    continue;
+                DrawMetadata cmd = scene.CullControlBuffer.GetDataRawAtIndex<DrawMetadata>(drawId);
                 signatures.Add(BuildVisibilitySignature(cmd));
             }
 
@@ -1940,7 +1774,7 @@ namespace XREngine.Rendering.Commands
                 return;
 
             List<(uint MeshId, uint MaterialId, uint Pass)> cpu = BuildCpuVisibilitySignatures(scene, copyCount, out uint cpuVisibleCount);
-            List<(uint MeshId, uint MaterialId, uint Pass)> gpu = BuildGpuVisibilitySignatures(gpuVisibleCount);
+            List<(uint MeshId, uint MaterialId, uint Pass)> gpu = BuildGpuVisibilitySignatures(scene, gpuVisibleCount);
 
             if (cpuVisibleCount != gpuVisibleCount)
                 Debug.MeshesWarning($"{FormatDebugPrefix("Validation")} GPU/CPU visible count mismatch: gpu={gpuVisibleCount} cpu={cpuVisibleCount} (copyCount={copyCount}, pass={RenderPass})");
@@ -1982,7 +1816,7 @@ namespace XREngine.Rendering.Commands
             }
         }
 
-        private static bool IsCulledCommandValid(GPUScene scene, in GPUIndirectRenderCommand cmd, ISet<uint> missingMaterialIds, out string? reason)
+        private static bool IsCulledCommandValid(GPUScene scene, in DrawMetadata cmd, ISet<uint> missingMaterialIds, out string? reason)
         {
             if (cmd.MaterialID == 0u || cmd.MaterialID == uint.MaxValue)
             {
@@ -2013,7 +1847,7 @@ namespace XREngine.Rendering.Commands
             return true;
         }
 
-        private static string BuildSanitizerSummary(uint originalCount, IReadOnlyCollection<(uint index, GPUIndirectRenderCommand command, string reason)> invalidCommands, IReadOnlyDictionary<string, SoftIssueInfo> softIssues, int expectedPass)
+        private static string BuildSanitizerSummary(uint originalCount, IReadOnlyCollection<(uint index, DrawMetadata metadata, BoundsGpu bounds, string reason)> invalidCommands, IReadOnlyDictionary<string, SoftIssueInfo> softIssues, int expectedPass)
         {
             var sb = new StringBuilder();
             sb.Append($"SanitizeCulledCommands dropped {invalidCommands.Count} of {originalCount} commands");
@@ -2021,7 +1855,7 @@ namespace XREngine.Rendering.Commands
             if (invalidCommands.Count > 0)
             {
                 var reasonCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-                foreach (var (index, command, reason) in invalidCommands)
+                foreach (var (_, _, _, reason) in invalidCommands)
                 {
                     string key = reason;
                     if (reasonCounts.TryGetValue(key, out int existing))
@@ -2034,7 +1868,7 @@ namespace XREngine.Rendering.Commands
                 sb.Append(string.Join(", ", reasonCounts.Select(kvp => $"{kvp.Key}={kvp.Value}")));
 
                 var first = invalidCommands.First();
-                sb.Append($" | first idx={first.index} mesh={first.command.MeshID} material={first.command.MaterialID} pass={first.command.RenderPass}");
+                sb.Append($" | first idx={first.index} mesh={first.metadata.MeshID} material={first.metadata.MaterialID} pass={first.metadata.RenderPass}");
                 if (expectedPass >= 0)
                     sb.Append($" expectedPass={expectedPass}");
             }
@@ -2071,18 +1905,18 @@ namespace XREngine.Rendering.Commands
 
                 if (reason.Equals("render-pass-mismatch", StringComparison.OrdinalIgnoreCase))
                 {
-                    descriptor += $"={info.Count}(first idx={info.FirstIndex} actualPass={info.FirstCommand.RenderPass}";
+                    descriptor += $"={info.Count}(first idx={info.FirstIndex} actualPass={info.FirstMetadata.RenderPass}";
                     if (expectedPass >= 0)
                         descriptor += $" expectedPass={expectedPass}";
-                    descriptor += $" mesh={info.FirstCommand.MeshID} material={info.FirstCommand.MaterialID})";
+                    descriptor += $" mesh={info.FirstMetadata.MeshID} material={info.FirstMetadata.MaterialID})";
                 }
                 else if (reason.Equals("instance-count-zero", StringComparison.OrdinalIgnoreCase))
                 {
-                    descriptor += $"={info.Count}(first idx={info.FirstIndex} mesh={info.FirstCommand.MeshID} material={info.FirstCommand.MaterialID})";
+                    descriptor += $"={info.Count}(first idx={info.FirstIndex} mesh={info.FirstMetadata.MeshID} material={info.FirstMetadata.MaterialID})";
                 }
                 else
                 {
-                    descriptor += $"={info.Count}(first idx={info.FirstIndex} mesh={info.FirstCommand.MeshID} material={info.FirstCommand.MaterialID})";
+                    descriptor += $"={info.Count}(first idx={info.FirstIndex} mesh={info.FirstMetadata.MeshID} material={info.FirstMetadata.MaterialID})";
                 }
 
                 parts.Add(descriptor);
@@ -2141,87 +1975,6 @@ namespace XREngine.Rendering.Commands
             Dbg(sb.ToString(), "Materials");
         }
 
-        //public void SetHiZDepthPyramid(XRTexture? tex, int maxMip) { _hiZDepthPyramid = tex; HiZMaxMip = maxMip; }
-
-        private void SoACull(XRCamera camera, GPUScene scene)
-        {
-            Dbg("SoACull begin","SoA");
-
-            if (_culledCountBuffer == null)
-                return;
-
-            uint count = scene.TotalCommandCount;
-            if (count == 0)
-                return;
-
-            EnsureIndexList(count);
-
-            if (_soaIndexList is null)
-            {
-                Dbg("SoACull missing index list", "SoA");
-                return;
-            }
-
-            var spheres = _useBufferAForRender
-                ? _soaBoundingSpheresA
-                : _soaBoundingSpheresB;
-
-            var meta = _useBufferAForRender
-                ? _soaMetadataA
-                : _soaMetadataB;
-
-            if (spheres is null || meta is null)
-                return;
-
-            _soaIndexList.SetDataRawAtIndex(0, 0u);
-            _soaIndexList.PushSubData();
-
-            var shader = 
-                //UseHiZ
-            //    ? HiZSoACullingComputeShader
-            //    : 
-                _soACullingComputeShader;
-
-            if (shader is null)
-                return;
-
-            shader.Uniform("CameraPosition", camera.Transform.RenderTranslation);
-            shader.Uniform("MaxRenderDistance", camera.FarZ * camera.FarZ);
-            shader.Uniform("CameraLayerMask", unchecked((uint)camera.CullingMask.Value));
-            shader.Uniform("CurrentRenderPass", RenderPass);
-            shader.Uniform("DisabledFlagsMask", ResolveDisabledFlagsMask());
-            shader.Uniform("InputCommandCount", (int)count);
-
-            var planes = camera.WorldFrustum().Planes.Select(x => x.AsVector4()).ToArray();
-            if (planes.Length >= 6)
-                shader.Uniform("FrustumPlanes", planes);
-
-            //if (UseHiZ)
-            //{
-            //    shader.Uniform("HiZMaxMip", HiZMaxMip);
-            //    if (_hiZDepthPyramid != null)
-            //        shader.Sampler(_hiZDepthPyramid.Name ?? "HiZDepthPyramid", _hiZDepthPyramid, 0);
-            //}
-
-            scene.DrawMetadataBuffer.BindTo(shader, 0);
-            scene.BoundsBuffer.BindTo(shader, 1);
-            shader.BindBuffer(_soaIndexList, 2);
-            BindStorageBuffer(shader, _culledCountBuffer, 3);
-
-            if (_cullingOverflowFlagBuffer != null)
-                shader.BindBuffer(_cullingOverflowFlagBuffer, 4);
-
-            if (_statsBuffer != null)
-                shader.BindBuffer(_statsBuffer, 8);
-
-            uint groups = (count + ComputeWorkGroupSize - 1) / ComputeWorkGroupSize;
-            shader.DispatchCompute(groups, 1, 1, EMemoryBarrierMask.ShaderStorage);
-
-            UpdateVisibleCountersFromBuffer();
-
-            Dbg($"SoACull visible={VisibleCommandCount} instances={VisibleInstanceCount}","SoA");
-        }
-
         public void DebugDraw(XRCamera camera, GPUScene scene)
         {
             Dbg("DebugDraw begin","Stats");
@@ -2240,7 +1993,7 @@ namespace XREngine.Rendering.Commands
             _debugDrawProgram.Uniform("CulledCommandCount", (int)ReadUInt(_culledCountBuffer));
 
             _debugDrawProgram.BindBuffer(_culledSceneToRenderBuffer, 0);
-            _debugDrawProgram.BindBuffer(scene.AllLoadedCommandsBuffer, 1);
+            _debugDrawProgram.BindBuffer(scene.CullControlBuffer, 1);
             BindStorageBuffer(_debugDrawProgram, _culledCountBuffer, 2);
 
             uint numGroups = (count + ComputeWorkGroupSize - 1) / ComputeWorkGroupSize;

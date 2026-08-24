@@ -138,11 +138,16 @@ namespace XREngine.Components.Lights
             public readonly ulong[] AtlasRequestContentHashes = new ulong[MaxCascadeRenderCount];
             public readonly ulong[] PreviousAtlasRequestContentHashes = new ulong[MaxCascadeRenderCount];
             public readonly int[] StableAtlasRequestFrameCounts = new int[MaxCascadeRenderCount];
+            public readonly int[] AtlasCascadeStaleFrameCounts = new int[MaxCascadeRenderCount];
             public readonly ulong[] AtlasCollectedContentHashes = new ulong[MaxCascadeRenderCount];
             public readonly bool[] AtlasCascadeRenderRequested = new bool[MaxCascadeRenderCount];
             public readonly bool[] AtlasCascadeCollectVisibleNeeded = new bool[MaxCascadeRenderCount];
             public readonly bool[] AtlasCascadeSwapNeeded = new bool[MaxCascadeRenderCount];
             public readonly bool[] AtlasCascadeVisibleSetCached = new bool[MaxCascadeRenderCount];
+            public XRCamera? LastCascadeSourceCamera;
+            public Matrix4x4 LastCascadeSourceCameraRenderMatrix;
+            public ulong LastCascadeSourceCameraPoseFrame;
+            public int StableCascadeSourceCameraPoseFrameCount;
             public float RangeNear;
             public float RangeFar;
             public XRTexture2DArray? ShadowMapTexture;
@@ -313,27 +318,25 @@ namespace XREngine.Components.Lights
                     -1.0f, -1.0f, -1.0f, -1.0f);
 
             ShadowRequestSource source = GetCascadeSourceForCamera(camera);
-            ulong frameId = RuntimeEngine.Rendering.State.RenderFrameId;
             lock (_cascadeDataLock)
             {
                 DirectionalCascadeSourceState state =
                     GetCascadeSourceState(source);
                 return new(
-                    ResolvePublishedCascadeStaleAge(state, 0, frameId),
-                    ResolvePublishedCascadeStaleAge(state, 1, frameId),
-                    ResolvePublishedCascadeStaleAge(state, 2, frameId),
-                    ResolvePublishedCascadeStaleAge(state, 3, frameId),
-                    ResolvePublishedCascadeStaleAge(state, 4, frameId),
-                    ResolvePublishedCascadeStaleAge(state, 5, frameId),
-                    ResolvePublishedCascadeStaleAge(state, 6, frameId),
-                    ResolvePublishedCascadeStaleAge(state, 7, frameId));
+                    ResolvePublishedCascadeStaleAge(state, 0),
+                    ResolvePublishedCascadeStaleAge(state, 1),
+                    ResolvePublishedCascadeStaleAge(state, 2),
+                    ResolvePublishedCascadeStaleAge(state, 3),
+                    ResolvePublishedCascadeStaleAge(state, 4),
+                    ResolvePublishedCascadeStaleAge(state, 5),
+                    ResolvePublishedCascadeStaleAge(state, 6),
+                    ResolvePublishedCascadeStaleAge(state, 7));
             }
         }
 
         private static float ResolvePublishedCascadeStaleAge(
             DirectionalCascadeSourceState state,
-            int cascadeIndex,
-            ulong frameId)
+            int cascadeIndex)
         {
             if ((uint)cascadeIndex >= (uint)state.Slices.Count)
                 return -1.0f;
@@ -343,8 +346,7 @@ namespace XREngine.Components.Lights
             return atlasSlot.HasCascadeUniformData &&
                 IsDirectionalAtlasSlotSampleable(atlasSlot)
                 ? ResolveRenderedCascadeStaleAge(
-                    frameId,
-                    atlasSlot.LastRenderedFrame,
+                    state.AtlasCascadeStaleFrameCounts[cascadeIndex],
                     atlasSlot.Fallback)
                 : -1.0f;
         }
@@ -1251,8 +1253,6 @@ namespace XREngine.Components.Lights
                 return;
             }
 
-            ulong frameId = RuntimeEngine.Rendering.State.RenderFrameId;
-
             lock (_cascadeDataLock)
             {
                 DirectionalCascadeSourceState state = GetCascadeSourceState(source);
@@ -1273,8 +1273,7 @@ namespace XREngine.Components.Lights
                             receiverOffsets[i] = atlasSlot.ReceiverOffset;
                             matrices[i] = atlasSlot.WorldToLightSpaceMatrix;
                             staleAges[i] = ResolveRenderedCascadeStaleAge(
-                                frameId,
-                                atlasSlot.LastRenderedFrame,
+                                state.AtlasCascadeStaleFrameCounts[i],
                                 atlasSlot.Fallback);
                         }
                         else
@@ -1304,22 +1303,17 @@ namespace XREngine.Components.Lights
         }
 
         private static float ResolveRenderedCascadeStaleAge(
-            ulong currentFrame,
-            ulong renderedFrame,
+            int staleFrameCount,
             ShadowFallbackMode fallback)
         {
-            // Render age and stale age are different contracts. A resident tile
-            // whose content still matches the current request stays valid without
-            // being redrawn; only an explicitly preserved StaleTile ages toward
-            // the shader's bounded stale-data rejection threshold.
+            // Physical render age and stale age are different contracts. A tile
+            // can remain correct for thousands of frames while the camera is
+            // stationary. Age only the consecutive frames whose desired cascade
+            // content differs from the sample that is actually resident.
             if (fallback != ShadowFallbackMode.StaleTile)
                 return 0.0f;
 
-            if (renderedFrame == 0u || currentFrame < renderedFrame)
-                return 0.0f;
-
-            ulong age = currentFrame - renderedFrame;
-            return age > 1_000_000u ? 1_000_000.0f : (float)age;
+            return Math.Clamp(staleFrameCount, 0, 1_000_000);
         }
 
         internal void BeginDirectionalAtlasSlotPublish()
@@ -1550,6 +1544,40 @@ namespace XREngine.Components.Lights
             }
         }
 
+        /// <summary>
+        /// Gets the number of consecutive render frames for which the actual
+        /// source-camera pose has remained unchanged.
+        /// </summary>
+        internal int GetDirectionalCascadeSourceCameraStableFrameCount(
+            ShadowRequestSource source)
+        {
+            ShadowRequestSource resolvedSource = source == ShadowRequestSource.Default
+                ? ShadowRequestSource.Desktop
+                : source;
+
+            lock (_cascadeDataLock)
+                return GetCascadeSourceState(resolvedSource).StableCascadeSourceCameraPoseFrameCount;
+        }
+
+        /// <summary>
+        /// Gets the number of consecutive requests that have differed from the
+        /// cascade sample currently resident in the atlas.
+        /// </summary>
+        internal int GetDirectionalCascadeStaleRequestFrameCount(
+            ShadowRequestSource source,
+            int index)
+        {
+            if ((uint)index >= (uint)MaxCascadeRenderCount)
+                return 0;
+
+            ShadowRequestSource resolvedSource = source == ShadowRequestSource.Default
+                ? ShadowRequestSource.Desktop
+                : source;
+
+            lock (_cascadeDataLock)
+                return GetCascadeSourceState(resolvedSource).AtlasCascadeStaleFrameCounts[index];
+        }
+
         internal void BeginDirectionalCascadeAtlasRequestFrame(ShadowRequestSource source, int activeCascadeCount)
         {
             ShadowRequestSource resolvedSource = source == ShadowRequestSource.Default
@@ -1573,6 +1601,7 @@ namespace XREngine.Components.Lights
                     state.AtlasCascadeVisibleSetCached[i] = false;
                     state.PreviousAtlasRequestContentHashes[i] = 0u;
                     state.StableAtlasRequestFrameCounts[i] = 0;
+                    state.AtlasCascadeStaleFrameCounts[i] = 0;
                 }
             }
         }
@@ -1609,6 +1638,20 @@ namespace XREngine.Components.Lights
                 {
                     state.PreviousAtlasRequestContentHashes[index] = contentHash;
                     state.StableAtlasRequestFrameCounts[index] = contentHash == 0u ? 0 : 1;
+                }
+
+                DirectionalCascadeSampleState renderedSample = state.RenderedSamples[index];
+                if (contentHash != 0u &&
+                    renderedSample.IsValid &&
+                    renderedSample.ContentHash == contentHash)
+                {
+                    state.AtlasCascadeStaleFrameCounts[index] = 0;
+                }
+                else
+                {
+                    state.AtlasCascadeStaleFrameCounts[index] = Math.Min(
+                        1_000_000,
+                        state.AtlasCascadeStaleFrameCounts[index] + 1);
                 }
 
                 state.AtlasCascadeRenderRequested[index] = renderRequested;
@@ -1663,6 +1706,30 @@ namespace XREngine.Components.Lights
                 state.AtlasCascadeVisibleSetCached[index] = state.AtlasCollectedContentHashes[index] != 0u;
                 state.AtlasCascadeCollectVisibleNeeded[index] = false;
                 state.AtlasCascadeSwapNeeded[index] = true;
+            }
+        }
+
+        /// <summary>
+        /// Completes a cascade visibility request whose caster membership will
+        /// be resolved from the GPU scene. No CPU command buffer was produced,
+        /// so the viewport must not swap a stale updating buffer into authority.
+        /// </summary>
+        private void MarkDirectionalCascadeAtlasGpuVisibilityReady(ShadowRequestSource source, int index)
+        {
+            if ((uint)index >= (uint)MaxCascadeRenderCount)
+                return;
+
+            ShadowRequestSource resolvedSource = source == ShadowRequestSource.Default
+                ? ShadowRequestSource.Desktop
+                : source;
+
+            lock (_cascadeDataLock)
+            {
+                DirectionalCascadeSourceState state = GetCascadeSourceState(resolvedSource);
+                state.AtlasCollectedContentHashes[index] = state.AtlasRequestContentHashes[index];
+                state.AtlasCascadeVisibleSetCached[index] = state.AtlasCollectedContentHashes[index] != 0u;
+                state.AtlasCascadeCollectVisibleNeeded[index] = false;
+                state.AtlasCascadeSwapNeeded[index] = false;
             }
         }
 
@@ -2071,6 +2138,27 @@ namespace XREngine.Components.Lights
                 DirectionalCascadeSourceState state = GetCascadeSourceState(source);
                 DirectionalCascadeAtlasSlot[] targetSlots = GetAtlasSlotWriteTarget(state);
                 DirectionalCascadeSampleState renderedSample = state.RenderedSamples[index];
+                DirectionalCascadeAtlasSlot previous = state.PreviousAtlasSlots[index];
+                if (allocation.SkipReason == SkipReason.StaleTileReused &&
+                    ShouldPreserveCascadeAtlasUniformData(allocation, previous))
+                {
+                    // A motion-cadence hold must keep the shader-visible light
+                    // generation exactly stable. Re-labeling the same physical
+                    // tile as StaleTile changes lighting uniform signatures and
+                    // invalidates every persistent mesh binding artifact even
+                    // though its matrix, UVs, and resident contents are unchanged.
+                    targetSlots[index] = previous;
+                    LogDirectionalCascadeProvenance(
+                        state,
+                        index,
+                        allocation,
+                        requestSample,
+                        renderedSample,
+                        previous,
+                        "HeldPrevious");
+                    return;
+                }
+
                 if (DoesRenderedSampleMatchAllocation(renderedSample, allocation))
                 {
                     ShadowAtlasAllocation renderedAllocation = CreateRenderedSampleAllocation(allocation, renderedSample);
@@ -2117,7 +2205,6 @@ namespace XREngine.Components.Lights
                     return;
                 }
 
-                DirectionalCascadeAtlasSlot previous = state.PreviousAtlasSlots[index];
                 if (ShouldPreserveCascadeAtlasUniformData(allocation, previous))
                 {
                     DirectionalCascadeAtlasSlot slot = RefreshStaleAtlasSlotAllocation(
@@ -2310,6 +2397,10 @@ namespace XREngine.Components.Lights
 
             DirectionalCascadeSourceState state = GetCascadeSourceState(resolvedSource);
             state.RenderedSamples[index] = sample;
+            state.AtlasCascadeStaleFrameCounts[index] =
+                state.AtlasRequestContentHashes[index] == sample.ContentHash
+                    ? 0
+                    : ResolveCompletedCascadeStaleFrameCount(sample.RenderedFrame);
             DirectionalCascadeAtlasSlot renderedSlot = CreateAtlasSlot(
                 renderedAllocation,
                 commit.RecordIndex,
@@ -2328,6 +2419,15 @@ namespace XREngine.Components.Lights
             {
                 state.PendingAtlasSlots[index] = renderedSlot;
             }
+        }
+
+        private static int ResolveCompletedCascadeStaleFrameCount(ulong renderedFrame)
+        {
+            ulong currentFrame = RuntimeEngine.Rendering.State.RenderFrameId;
+            if (renderedFrame == 0u || currentFrame <= renderedFrame)
+                return 1;
+
+            return (int)Math.Min(1_000_000u, currentFrame - renderedFrame);
         }
 
         internal void SetCascadeAtlasSlot(
@@ -3171,6 +3271,58 @@ namespace XREngine.Components.Lights
                 state.RangeFar = 0.0f;
                 unchecked { state.ContentRevision++; }
                 InvalidateLegacyCascadeRender(state);
+                ResetCascadeSourceCameraPoseTracking(state);
+            }
+        }
+
+        private static void ResetCascadeSourceCameraPoseTracking(DirectionalCascadeSourceState state)
+        {
+            state.LastCascadeSourceCamera = null;
+            state.LastCascadeSourceCameraRenderMatrix = default;
+            state.LastCascadeSourceCameraPoseFrame = 0u;
+            state.StableCascadeSourceCameraPoseFrameCount = 0;
+        }
+
+        private void TrackCascadeSourceCameraPose(
+            DirectionalCascadeSourceState state,
+            XRCamera playerCamera)
+        {
+            Matrix4x4 renderMatrix = playerCamera.Transform.RenderMatrix;
+            ulong frameId = RuntimeEngine.Rendering.State.RenderFrameId;
+
+            lock (_cascadeDataLock)
+            {
+                bool poseUnchanged =
+                    ReferenceEquals(state.LastCascadeSourceCamera, playerCamera) &&
+                    state.LastCascadeSourceCameraRenderMatrix == renderMatrix;
+
+                if (state.LastCascadeSourceCameraPoseFrame == frameId)
+                {
+                    // Multiple cascade preparation paths may observe the same source
+                    // in one render frame. Do not count those calls as stable frames,
+                    // but do preserve a later pose change if one occurs.
+                    if (!poseUnchanged)
+                    {
+                        state.LastCascadeSourceCamera = playerCamera;
+                        state.LastCascadeSourceCameraRenderMatrix = renderMatrix;
+                        state.StableCascadeSourceCameraPoseFrameCount = 0;
+                    }
+
+                    return;
+                }
+
+                state.LastCascadeSourceCameraPoseFrame = frameId;
+                if (poseUnchanged)
+                {
+                    state.StableCascadeSourceCameraPoseFrameCount = Math.Min(
+                        int.MaxValue - 1,
+                        state.StableCascadeSourceCameraPoseFrameCount + 1);
+                    return;
+                }
+
+                state.LastCascadeSourceCamera = playerCamera;
+                state.LastCascadeSourceCameraRenderMatrix = renderMatrix;
+                state.StableCascadeSourceCameraPoseFrameCount = 0;
             }
         }
 
@@ -3199,6 +3351,7 @@ namespace XREngine.Components.Lights
 
             EnsureCascadeShadowResources(source);
             DirectionalCascadeSourceState state = GetCascadeSourceState(source);
+            TrackCascadeSourceCameraPose(state, playerCamera);
 
             // Snapshot the cascade resource arrays so iteration is stable against
             // concurrent Ensure/Release calls from property changes on other threads.
@@ -3474,21 +3627,6 @@ namespace XREngine.Components.Lights
             if (requestedMode == EDirectionalCascadeShadowRenderMode.Sequential)
                 return CreateSequentialCascadeShadowRenderPlan(state, requestedMode, DirectionalCascadeShadowBackend.AtlasPage, cascadeCount, DirectionalCascadeShadowFallbackReason.SequentialRequested);
 
-            if (RuntimeRenderingHostServices.FrameTiming.CurrentRenderBackend == RuntimeGraphicsApiKind.Vulkan)
-            {
-                // Vulkan keeps the atomic atlas allocation, but records one culled
-                // command set per cascade. Replaying the union caster set into every
-                // indexed viewport multiplies shadow work by the cascade count and
-                // exposes indexed dynamic state to unrelated frame-graph passes when
-                // a grouped recording is rejected and retried.
-                return CreateSequentialCascadeShadowRenderPlan(
-                    state,
-                    requestedMode,
-                    DirectionalCascadeShadowBackend.AtlasPage,
-                    cascadeCount,
-                    DirectionalCascadeShadowFallbackReason.VulkanCascadeAtlasGroupedRenderingDisabled);
-            }
-
             if (!hasGroupedAtlasAllocation)
                 return CreateSequentialCascadeShadowRenderPlan(state, requestedMode, DirectionalCascadeShadowBackend.AtlasPage, cascadeCount, DirectionalCascadeShadowFallbackReason.MissingGroupedAtlasAllocation);
 
@@ -3709,6 +3847,20 @@ namespace XREngine.Components.Lights
             if (atlasPage && !hasAtlasRenderRequest)
                 return;
 
+            if (atlasPage && RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy().IsGpuZeroReadbackStrategy())
+            {
+                // GPU-driven shadow passes cull the global GPU scene against the
+                // active cascade camera. Walking the CPU octree four times and
+                // publishing four command collections only duplicates that work.
+                for (int i = 0; i < cascadeCount; i++)
+                {
+                    if (ShouldCollectDirectionalCascadeAtlasViewport(source, i))
+                        MarkDirectionalCascadeAtlasGpuVisibilityReady(source, i);
+                }
+
+                return;
+            }
+
             if (plan.IsLayered || prepareAtlasGroupedCommands)
             {
                 if (atlasPage && !HasDirectionalCascadeAtlasCollectionRequest(source, cascadeCount))
@@ -3928,13 +4080,6 @@ namespace XREngine.Components.Lights
 
         private bool SupportsDirectionalCascadeAtlasGroupedRendering(int cascadeCount)
         {
-            // Atlas allocation remains grouped on Vulkan so every cascade generation
-            // is published atomically. Rendering is deliberately per cascade: the
-            // grouped path duplicates a union caster set across all tiles and mutates
-            // indexed viewport/scissor state across deferred command recording.
-            if (RuntimeRenderingHostServices.FrameTiming.CurrentRenderBackend == RuntimeGraphicsApiKind.Vulkan)
-                return false;
-
             if (cascadeCount <= 1 ||
                 _cascadeShadowRenderMode == EDirectionalCascadeShadowRenderMode.Sequential ||
                 !RuntimeEngine.Rendering.State.SupportsOpenGLViewportScissorArray ||

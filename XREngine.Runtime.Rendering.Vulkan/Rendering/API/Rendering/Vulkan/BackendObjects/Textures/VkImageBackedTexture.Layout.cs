@@ -21,7 +21,7 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
     /// </summary>
     internal void TransitionImageLayout(ImageLayout oldLayout, ImageLayout newLayout)
     {
-        if (Renderer.IsDeviceLost || Image.Handle == 0)
+        if (!BackendContext.IsDeviceOperational || Image.Handle == 0)
             return;
 
         RefreshPhysicalGroupImageIfStale();
@@ -33,8 +33,12 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
         oldLayout = CoerceLayoutForUsage(oldLayout);
         newLayout = CoerceLayoutForUsage(newLayout);
         AssembleTransitionImageLayout(oldLayout, newLayout, out ImageMemoryBarrier barrier, out PipelineStageFlags src, out PipelineStageFlags dst);
-        using var scope = Renderer.NewCommandScope();
-        Renderer.CmdPipelineBarrierTracked(scope.CommandBuffer, src, dst, 0, 0, null, 0, null, 1, &barrier);
+        ResourceCommandPort.PipelineBarrier(
+            src,
+            dst,
+            1,
+            &barrier,
+            "VkImageBackedTexture.TransitionImageLayout");
         _currentImageLayout = newLayout;
         if (_physicalGroup is not null)
             _physicalGroup.LastKnownLayout = newLayout;
@@ -42,9 +46,10 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
     }
 
     /// <summary>
-    /// Coerces <see cref="ImageLayout.ShaderReadOnlyOptimal"/> to a valid layout when the
-    /// image lacks <see cref="ImageUsageFlags.SampledBit"/>. Falls back to
-    /// <see cref="ImageLayout.General"/> (if storage) or <see cref="ImageLayout.TransferSrcOptimal"/>.
+    /// Coerces <see cref="ImageLayout.ShaderReadOnlyOptimal"/> to the stable descriptor
+    /// layout required by the image usage. Sampled/storage images remain in
+    /// <see cref="ImageLayout.General"/> so upload, descriptor publication, and later
+    /// storage dispatches all agree on one whole-image layout.
     /// </summary>
     private ImageLayout CoerceLayoutForUsage(ImageLayout requested)
     {
@@ -52,6 +57,10 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
             return requested;
 
         bool canSample = (Usage & (ImageUsageFlags.SampledBit | ImageUsageFlags.InputAttachmentBit)) != 0;
+        bool canStore = (Usage & ImageUsageFlags.StorageBit) != 0;
+        if (canSample && canStore)
+            return ImageLayout.General;
+
         bool isDepthOrStencil = (AspectFlags & (ImageAspectFlags.DepthBit | ImageAspectFlags.StencilBit)) != 0 ||
             VkFormatConversions.IsDepthStencilFormat(ResolvedFormat);
         if (canSample && isDepthOrStencil)
@@ -60,7 +69,7 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
         if (canSample)
             return requested;
 
-        if ((Usage & ImageUsageFlags.StorageBit) != 0)
+        if (canStore)
             return ImageLayout.General;
 
         return ImageLayout.TransferSrcOptimal;
@@ -69,7 +78,7 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
     /// <summary>
     /// Builds the <see cref="ImageMemoryBarrier"/> and selects appropriate pipeline stages
     /// for transitioning from <paramref name="oldLayout"/> to <paramref name="newLayout"/>.
-    /// Common transitions (undefined→transfer-dst, transfer-dst→shader-read) use precise
+    /// Common transitions (undefinedâ†’transfer-dst, transfer-dstâ†’shader-read) use precise
     /// stages; other pairs derive stages/access per layout role, falling back to
     /// <c>AllCommands</c> only for unrecognized layouts.
     /// </summary>

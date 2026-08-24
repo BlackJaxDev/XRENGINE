@@ -9,7 +9,7 @@ using XREngine.Data.Rendering;
 
 namespace XREngine.Rendering;
 
-internal sealed class ImportedTextureStreamingManager
+internal sealed partial class ImportedTextureStreamingManager
 {
     private const int MaxResidentTransitionsPerFrame = 2;
     private const int MaxPromotionTransitionsPerFrame = 1;
@@ -54,9 +54,13 @@ internal sealed class ImportedTextureStreamingManager
     private static ITextureStreamingBackendProvider VulkanProvider
         => TextureStreamingBackendRegistry.GetRequired(RuntimeGraphicsApiKind.Vulkan);
 
-    private static ITextureResidencyBackend _tieredBackend => OpenGlProvider.DefaultBackend;
-    private static ITextureResidencyBackend _sparseBackend => OpenGlProvider.SparseBackend;
-    private static ITextureResidencyBackend _vulkanDenseBackend => VulkanProvider.DefaultBackend;
+    private static ITextureStreamingBackendProvider CurrentProvider
+        => TextureStreamingBackendRegistry.GetRequired(
+            RuntimeRenderingHostServices.FrameTiming.CurrentRenderBackend);
+
+    private static ITextureResidencyBackend OpenGlDenseBackend => OpenGlProvider.DefaultBackend;
+    private static ITextureResidencyBackend OpenGlSparseBackend => OpenGlProvider.SparseBackend;
+    private static ITextureResidencyBackend VulkanDenseBackend => VulkanProvider.DefaultBackend;
     private readonly TextureStreamingRegistry _registry = new();
     private readonly TextureTransitionQueue _transitionQueue = new();
     private readonly List<ImportedTextureStreamingSnapshot> _evaluateSnapshotScratch = new();
@@ -95,16 +99,20 @@ internal sealed class ImportedTextureStreamingManager
     {
         int activeImportScopes = Volatile.Read(ref _activeImportedModelImports);
         int pendingTransitions = _registry.CountPendingTransitions();
-        int activeDecodes = _tieredBackend.ActiveDecodeCount + _sparseBackend.ActiveDecodeCount + _vulkanDenseBackend.ActiveDecodeCount;
-        int queuedDecodes = _tieredBackend.QueuedDecodeCount + _sparseBackend.QueuedDecodeCount + _vulkanDenseBackend.QueuedDecodeCount;
-        int activeGpuUploads = _tieredBackend.ActiveGpuUploadCount + _sparseBackend.ActiveGpuUploadCount + _vulkanDenseBackend.ActiveGpuUploadCount;
-        bool hasVulkanUploadWork = VulkanProvider.TryDescribeActiveUploadWork(out string vulkanUploadReason);
+        ITextureStreamingBackendProvider provider = CurrentProvider;
+        TextureStreamingBackendActivity activity = provider.GetActivity();
+        int activeDecodes = activity.ActiveDecodeCount;
+        int queuedDecodes = activity.QueuedDecodeCount;
+        int activeGpuUploads = activity.ActiveGpuUploadCount;
+        bool hasProviderUploadWork = provider.TryDescribeActiveUploadWork(out string providerUploadReason);
 
-        if (pendingTransitions <= 0 &&
+        if (activeImportScopes <= 0 &&
+            pendingTransitions <= 0 &&
             activeDecodes <= 0 &&
             queuedDecodes <= 0 &&
             activeGpuUploads <= 0 &&
-            !hasVulkanUploadWork)
+            !activity.HasUploadServiceWork &&
+            !hasProviderUploadWork)
         {
             reason = string.Empty;
             return false;
@@ -112,44 +120,24 @@ internal sealed class ImportedTextureStreamingManager
 
         reason =
             $"imported texture streaming has startup-blocking work (imports={activeImportScopes}, pendingTransitions={pendingTransitions}, activeGpuUploads={activeGpuUploads}, activeDecodes={activeDecodes}, queuedDecodes={queuedDecodes}";
-        if (hasVulkanUploadWork)
-            reason += $"; {vulkanUploadReason}";
+        if (hasProviderUploadWork)
+            reason += $"; {providerUploadReason}";
         reason += ")";
         return true;
     }
 
     internal bool TryDescribeBlockingOpenXrEyeTextureWork(out string reason)
     {
-        int activeGpuUploads = _tieredBackend.ActiveGpuUploadCount + _sparseBackend.ActiveGpuUploadCount;
-        bool hasVulkanBlockingWork = VulkanProvider.TryDescribeBlockingOpenXrEyeUploadWork(out string vulkanUploadReason);
-
-        if (activeGpuUploads <= 0 && !hasVulkanBlockingWork)
+        if (!TextureStreamingBackendRegistry.TryGet(
+                RuntimeRenderingHostServices.FrameTiming.CurrentRenderBackend,
+                out ITextureStreamingBackendProvider? provider)
+            || provider is null)
         {
             reason = string.Empty;
             return false;
         }
 
-        reason = $"imported texture streaming has render-blocking work (activeGpuUploads={activeGpuUploads}";
-        if (hasVulkanBlockingWork)
-            reason += $"; {vulkanUploadReason}";
-        reason += ")";
-        return true;
-    }
-
-    private sealed class ImportedTextureStreamingScope(ImportedTextureStreamingManager owner) : IDisposable
-    {
-        private readonly ImportedTextureStreamingManager _owner = owner;
-        private int _disposed;
-
-        public void Dispose()
-        {
-            if (Interlocked.Exchange(ref _disposed, 1) != 0)
-                return;
-
-            int remaining = Interlocked.Decrement(ref _owner._activeImportedModelImports);
-            if (remaining < 0)
-                Interlocked.Exchange(ref _owner._activeImportedModelImports, 0);
-        }
+        return provider.TryDescribeBlockingOpenXrEyeUploadWork(out reason);
     }
 
     public IDisposable EnterScope()
@@ -348,15 +336,17 @@ internal sealed class ImportedTextureStreamingManager
             }
         }
 
+        TextureStreamingBackendActivity activity = CurrentProvider.GetActivity();
+
         return new ImportedTextureStreamingTelemetry(
             backendName,
             displayBackendName,
             Volatile.Read(ref _activeImportedModelImports),
             snapshots.Count,
             pendingTransitions,
-            _tieredBackend.ActiveDecodeCount + _sparseBackend.ActiveDecodeCount + _vulkanDenseBackend.ActiveDecodeCount,
-            _tieredBackend.QueuedDecodeCount + _sparseBackend.QueuedDecodeCount + _vulkanDenseBackend.QueuedDecodeCount,
-            _tieredBackend.ActiveGpuUploadCount + _sparseBackend.ActiveGpuUploadCount + _vulkanDenseBackend.ActiveGpuUploadCount,
+            activity.ActiveDecodeCount,
+            activity.QueuedDecodeCount,
+            activity.ActiveGpuUploadCount,
             Volatile.Read(ref _queuedTransitionsThisFrame),
             Volatile.Read(ref _queuedPromotionTransitionsThisFrame),
             Volatile.Read(ref _queuedDemotionTransitionsThisFrame),
@@ -364,7 +354,7 @@ internal sealed class ImportedTextureStreamingManager
             Volatile.Read(ref _lastCurrentManagedBytes),
             Volatile.Read(ref _lastAvailableManagedBytes),
             Volatile.Read(ref _lastAssignedManagedBytes),
-            _tieredBackend.UploadBytesScheduledThisFrame + _sparseBackend.UploadBytesScheduledThisFrame + _vulkanDenseBackend.UploadBytesScheduledThisFrame,
+            activity.UploadBytesScheduledThisFrame,
             Volatile.Read(ref _activeImportedModelImports) > 0,
             vulkanFrozenCount > 0,
             freezeReason);
@@ -473,8 +463,8 @@ internal sealed class ImportedTextureStreamingManager
         int sparseNumLevels = 0)
     {
         backend ??= RuntimeRenderingHostServices.FrameTiming.CurrentRenderBackend == RuntimeGraphicsApiKind.Vulkan
-            ? _vulkanDenseBackend
-            : _tieredBackend;
+            ? VulkanDenseBackend
+            : OpenGlDenseBackend;
         return TextureResidencyPolicy.FitResidentSizeToBudget(input, desiredResidentSize, availableManagedBytes, backend, format, sparseNumLevels);
     }
 
@@ -497,30 +487,30 @@ internal sealed class ImportedTextureStreamingManager
     {
         RuntimeGraphicsApiKind backend = RuntimeRenderingHostServices.FrameTiming.CurrentRenderBackend;
         if (backend == RuntimeGraphicsApiKind.Vulkan)
-            return _vulkanDenseBackend;
+            return VulkanDenseBackend;
 
         // The source dimensions are not known until preview decoding completes. Publish the
         // first OpenGL preview through dense storage so an existing filler allocation is
         // replaced atomically and immediately sampleable. Once dimensions are known,
         // SchedulePreviewJob promotes record.Backend through ResolveBackendForTexture, so
         // later residency changes can still use sparse pages when the source is eligible.
-        return _tieredBackend;
+        return OpenGlDenseBackend;
     }
 
     private ITextureResidencyBackend ResolveBackendForTexture(uint sourceWidth, uint sourceHeight, ESizedInternalFormat format)
     {
         RuntimeGraphicsApiKind backend = RuntimeRenderingHostServices.FrameTiming.CurrentRenderBackend;
         if (backend == RuntimeGraphicsApiKind.Vulkan)
-            return _vulkanDenseBackend;
+            return VulkanDenseBackend;
 
         if (backend != RuntimeGraphicsApiKind.OpenGL)
-            return _tieredBackend;
+            return OpenGlDenseBackend;
 
         SparseTextureStreamingSupport support = RuntimeRenderingHostServices.Assets.GetSparseTextureStreamingSupport(format);
         if (!support.IsAvailable || !support.IsPageAligned(sourceWidth, sourceHeight))
-            return _tieredBackend;
+            return OpenGlDenseBackend;
 
-        return _sparseBackend;
+        return OpenGlSparseBackend;
     }
 
     private void EnsureCallbacksSubscribed()
@@ -796,17 +786,12 @@ internal sealed class ImportedTextureStreamingManager
         // Recovery pass: detect and force-clear stuck pending transitions. The
         // manager cannot distinguish a record whose callback was dropped from a
         // legitimate decode waiting behind other texture work. Never cancel a
-        // pending record while either backend still reports queued/active work;
+        // pending record while the current backend still reports queued/active work;
         // doing so makes high-frame-rate scenes repeatedly cancel valid jobs before
         // they reach the decode gate and prevents large material sets from ever
         // converging beyond their placeholder textures.
-        bool anyDecodeActive = _tieredBackend.ActiveDecodeCount > 0
-            || _tieredBackend.QueuedDecodeCount > 0
-            || _sparseBackend.ActiveDecodeCount > 0
-            || _sparseBackend.QueuedDecodeCount > 0;
-        bool anyGpuUploadActive = _tieredBackend.ActiveGpuUploadCount > 0
-            || _sparseBackend.ActiveGpuUploadCount > 0;
-        bool globalStuckRecoveryAllowed = !anyDecodeActive && !anyGpuUploadActive;
+        TextureStreamingBackendActivity backendActivity = CurrentProvider.GetActivity();
+        bool globalStuckRecoveryAllowed = !backendActivity.HasWork;
         for (int i = 0; i < snapshots.Count; i++)
         {
             ImportedTextureStreamingSnapshot snapshot = snapshots[i];

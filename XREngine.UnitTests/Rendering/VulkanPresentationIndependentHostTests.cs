@@ -66,11 +66,9 @@ public sealed unsafe class VulkanPresentationIndependentHostTests
             new() { QueueFlags = QueueFlags.TransferBit, QueueCount = 1 },
         ];
 
-        VulkanRenderer.QueueFamilyIndices indices = VulkanQueueFamilySelector.Select(
+        QueueFamilyIndices indices = VulkanQueueFamilySelector.Select(
             families,
-            surfaceApi: null,
-            physicalDevice: default,
-            surface: default);
+            VulkanOutputDeviceProbeFacts.Presentationless);
 
         indices.IsComplete(requirePresentQueue: false).ShouldBeTrue();
         indices.GraphicsFamilyIndex.ShouldBe(0u);
@@ -79,6 +77,18 @@ public sealed unsafe class VulkanPresentationIndependentHostTests
         indices.ComputeFamilyIndex.ShouldBe(1u);
         indices.TransferFamilyIndex.ShouldBe(2u);
         indices.PresentFamilyIndex.ShouldBeNull();
+    }
+
+    [Test]
+    public void OutputRuntime_PropagatesPresentationQueryFailureBeforeQueueSelection()
+    {
+        string source = SourceContractWorkspace.ReadFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/Output/Authority/VulkanOutputRuntime.DeviceSelection.cs");
+
+        source.ShouldContain("GetPhysicalDeviceSurfaceSupport(");
+        source.ShouldContain("if (result != Result.Success)");
+        source.ShouldContain("Vulkan presentation support query failed");
+        source.ShouldContain("new VulkanOutputDeviceProbeFacts(");
     }
 
     [Test]
@@ -101,7 +111,9 @@ public sealed unsafe class VulkanPresentationIndependentHostTests
             renderer.GraphicsQueue.Handle.ShouldNotBe(0);
             renderer.PresentQueue.Handle.ShouldBe(0);
             renderer.HasInitializedMemoryAllocator.ShouldBeTrue();
-            renderer.BackendObjectRegistry.ShouldNotBeNull();
+            SourceContractWorkspace.ReadFile(
+                "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Resources/Authority/VulkanResourceRuntime.cs")
+                .ShouldContain("BackendObjects = new VulkanBackendObjectRegistry()");
             renderer.EnabledInstanceExtensions.ShouldNotContain("VK_KHR_surface");
             renderer.EnabledDeviceExtensions.ShouldNotContain("VK_KHR_swapchain");
         }

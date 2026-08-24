@@ -10,7 +10,9 @@ public static class AuxiliaryOutputGraphBuilder
         ulong viewKey,
         int renderedEyeNode,
         bool independentCamera,
-        int sharedPublicationNode)
+        int sharedPublicationNode,
+        uint maximumContentAgeFrames = 1u,
+        bool cacheLastResult = false)
     {
         int node = graph.AddNode(new(
             nodeKey,
@@ -19,8 +21,8 @@ public static class AuxiliaryOutputGraphBuilder
             independentCamera ? ERenderOutputDataClass.ViewDependent : ERenderOutputDataClass.ViewIndependent,
             independentCamera ? viewKey : 0UL,
             outputKey,
-            1u,
-            Cacheable: false,
+            maximumContentAgeFrames,
+            Cacheable: cacheLastResult,
             Resumable: false,
             independentCamera ? "Independent desktop scene" : "Composed desktop VR mirror"));
         if (node >= 0)
@@ -139,7 +141,9 @@ public static class AuxiliaryOutputGraphBuilder
         ulong nodeKey,
         ulong outputKey,
         int sourceNode,
-        bool enabled)
+        bool enabled,
+        uint maximumContentAgeFrames = 0u,
+        bool cacheLastResult = false)
     {
         if (!enabled)
             return sourceNode;
@@ -150,8 +154,8 @@ public static class AuxiliaryOutputGraphBuilder
             ERenderOutputDataClass.ViewDependent,
             outputKey,
             0UL,
-            0u,
-            Cacheable: false,
+            maximumContentAgeFrames,
+            Cacheable: cacheLastResult,
             Resumable: false,
             "Output-local post process"));
         if (sourceNode >= 0 && node >= 0)

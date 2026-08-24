@@ -13,8 +13,14 @@ using Image = Silk.NET.Vulkan.Image;
 namespace XREngine.Rendering.Vulkan;
 
 internal readonly record struct VulkanImportedTextureUploadStagingResource(
-    Buffer Buffer,
-    DeviceMemory Memory,
+    VulkanFrameDataSlice Slice,
+    Buffer PooledBuffer,
+    DeviceMemory PooledMemory,
     BufferImageCopy CopyRegion,
-    ulong SizeBytes);
+    ulong SizeBytes)
+{
+    /// <summary>Persistent arena slice or pooled whole-buffer storage containing the source range.</summary>
+    public Buffer Buffer => Slice.IsValid ? Slice.Buffer : PooledBuffer;
+    public DeviceMemory Memory => Slice.IsValid ? Slice.Memory : PooledMemory;
+}
 

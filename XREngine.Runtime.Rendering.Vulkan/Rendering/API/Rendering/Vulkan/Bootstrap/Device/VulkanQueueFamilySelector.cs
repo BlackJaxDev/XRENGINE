@@ -1,22 +1,18 @@
-using Silk.NET.Core;
 using Silk.NET.Vulkan;
-using Silk.NET.Vulkan.Extensions.KHR;
 
 namespace XREngine.Rendering.Vulkan.DeviceBootstrap;
 
 /// <summary>
 /// Selects the queue families used by the engine from one immutable physical
-/// device snapshot and the active presentation surface.
+/// device snapshot and output-published presentation facts.
 /// </summary>
 internal static class VulkanQueueFamilySelector
 {
-    public static VulkanRenderer.QueueFamilyIndices Select(
+    public static QueueFamilyIndices Select(
         ReadOnlySpan<QueueFamilyProperties> queueFamilies,
-        KhrSurface? surfaceApi,
-        PhysicalDevice physicalDevice,
-        SurfaceKHR surface)
+        VulkanOutputDeviceProbeFacts outputProbe)
     {
-        VulkanRenderer.QueueFamilyIndices indices = default;
+        QueueFamilyIndices indices = default;
 
         for (uint i = 0; i < queueFamilies.Length; i++)
         {
@@ -49,15 +45,10 @@ internal static class VulkanQueueFamilySelector
                 indices.TransferFamilyIndex = i;
             }
 
-            if (surfaceApi is not null)
+            if (outputProbe.SupportsPresentation(i) &&
+                !indices.PresentFamilyIndex.HasValue)
             {
-                surfaceApi.GetPhysicalDeviceSurfaceSupport(
-                    physicalDevice,
-                    i,
-                    surface,
-                    out Bool32 presentSupport);
-                if (presentSupport && !indices.PresentFamilyIndex.HasValue)
-                    indices.PresentFamilyIndex = i;
+                indices.PresentFamilyIndex = i;
             }
         }
 

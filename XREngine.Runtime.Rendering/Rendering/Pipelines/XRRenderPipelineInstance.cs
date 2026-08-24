@@ -91,6 +91,8 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
     public EAntiAliasingMode? EffectiveAntiAliasingModeThisFrame { get; private set; }
     public uint? EffectiveMsaaSampleCountThisFrame { get; private set; }
     public float? EffectiveTsrRenderScaleThisFrame { get; private set; }
+    /// <summary>Gets the backend-neutral final output captured for the current or most recent frame.</summary>
+    public RenderFrameOutputDescription? FinalOutput { get; private set; }
 
     public XRRenderPipelineInstance(RenderPipeline pipeline) : this()
     {
@@ -123,6 +125,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
     private long _pendingGenerationFirstResizeRequestTimestamp;
     private ResourceGenerationKey? _lastFailedGenerationKey;
     private long _failedGenerationRetryAfterTimestamp;
+    private string? _lastResourceGenerationFailure;
     private ulong _resizeCatchUpSkippedFrameId = ulong.MaxValue;
 
     /// <summary>
@@ -137,11 +140,17 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
     /// </summary>
     public long ResourceGenerationDivergenceCount
         => System.Threading.Interlocked.Read(ref _resourceGenerationDivergenceCount);
+    /// <summary>
+    /// Retains the most recent resource-generation failure until a generation commits successfully.
+    /// </summary>
+    public string? LastResourceGenerationFailure => _lastResourceGenerationFailure;
     internal IRenderResourceGenerationBackend? ResourceGenerationBackendOverride { get; set; }
 
     internal bool TryGetLastResourceFeatureMask(XRViewport? viewport, out ulong featureMask)
     {
-        RenderPipelineExternalTargetKind outputKind = viewport?.RendersToExternalSwapchainTarget == true
+        RenderPipelineExternalTargetKind outputKind = FinalOutput is not null
+            ? RenderPipelineExternalTargetKind.PresentationTarget
+            : viewport?.RendersToExternalSwapchainTarget == true
             ? RenderPipelineExternalTargetKind.ExternalSwapchain
             : RenderState.OutputFBO is not null
                 ? RenderPipelineExternalTargetKind.CallerProvidedFrameBuffer
@@ -199,6 +208,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
     IRuntimeRenderCamera? IRuntimeRenderPipelineFrameContext.LastSceneCamera => LastSceneCamera;
     IRuntimeRenderCamera? IRuntimeRenderPipelineFrameContext.LastRenderingCamera => LastRenderingCamera;
     IRuntimeViewportHost? IRuntimeRenderPipelineFrameContext.LastWindowViewport => LastWindowViewport;
+    RenderFrameOutputDescription? IRuntimeRenderPipelineFrameContext.FinalOutput => FinalOutput;
 
     public string DebugName
         => _pipeline?.DebugName ?? _pipeline?.GetType().Name ?? "UnknownPipeline";
@@ -536,6 +546,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         LastSceneCamera = camera;
         LastRenderingCamera = camera ?? stereoRightEyeCamera;
         LastWindowViewport = viewport;
+        FinalOutput = AbstractRenderer.Current?.CurrentFrameOutput;
         XRCamera? effectiveAntiAliasingCamera = camera ?? stereoRightEyeCamera;
         EAntiAliasingMode effectiveAntiAliasingMode =
             effectiveAntiAliasingCamera?.AntiAliasingModeOverride
@@ -545,7 +556,9 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             ?? frameTiming.DefaultOutputHDR;
         EffectiveAntiAliasingModeThisFrame = effectiveAntiAliasingMode;
         EffectiveMsaaSampleCountThisFrame = Math.Max(1u,
-            effectiveAntiAliasingCamera?.MsaaSampleCountOverride ?? frameTiming.DefaultMsaaSampleCount);
+            FinalOutput?.Properties.SampleCount ??
+            effectiveAntiAliasingCamera?.MsaaSampleCountOverride ??
+            frameTiming.DefaultMsaaSampleCount);
         EffectiveTsrRenderScaleThisFrame = effectiveAntiAliasingMode == EAntiAliasingMode.Tsr
             ? Math.Clamp(
                 effectiveAntiAliasingCamera?.TsrRenderScaleOverride ?? frameTiming.DefaultTsrRenderScale,
@@ -571,11 +584,6 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         // Honor any internal resolution request from the pipeline before executing commands.
         if (viewport is not null)
         {
-            // Keep the last complete internal resource generation while the native window is
-            // being dragged. The viewport's presentation region still follows every WM_SIZING
-            // position, so camera/UI layout remains live, but changing the internal resolution
-            // here would invalidate that stable generation before the interactive-resize
-            // resource freeze can reuse it.
             if (viewport.AllowAutomaticInternalResolution &&
                 !ShouldDeferResourceGenerationForInteractiveWindowResize(viewport))
             {
@@ -689,6 +697,13 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             Pipeline?.PassMetadata is RenderPassMetadataSnapshot snapshot
                 ? snapshot.RevisionStamp
                 : 0;
+        bool allowViewportResizeLag =
+            viewport?.Window?.IsInteractiveResizeInProgress == true &&
+            ActiveGeneration is { } activeGeneration &&
+            identity.ViewportWidth == checked((int)activeGeneration.Key.DisplayWidth) &&
+            identity.ViewportHeight == checked((int)activeGeneration.Key.DisplayHeight) &&
+            identity.InternalWidth == checked((int)activeGeneration.Key.InternalWidth) &&
+            identity.InternalHeight == checked((int)activeGeneration.Key.InternalHeight);
         BackendReadyFramePackageValidationContext context = new(
             RuntimeRenderingHostServices.FrameTiming.ConsumedCollectGeneration,
             Pipeline?.CommandGeneration ?? 0UL,
@@ -698,7 +713,8 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             viewport?.Width ?? identity.ViewportWidth,
             viewport?.Height ?? identity.ViewportHeight,
             viewport?.InternalWidth ?? identity.InternalWidth,
-            viewport?.InternalHeight ?? identity.InternalHeight);
+            viewport?.InternalHeight ?? identity.InternalHeight,
+            allowViewportResizeLag);
         BackendReadyFramePackageValidationResult result =
             BackendReadyFramePackageValidator.Validate(package, in context);
         bool accepted = result.Accepted;
@@ -752,18 +768,36 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
     /// <returns>True if resource generation is ensured; false otherwise.</returns>
     private bool EnsureResourceGenerationForCurrentFrame(XRViewport? viewport)
     {
-        DrainRetiredGenerations();
-
-        if (Pipeline is null || viewport is null)
+        if (Pipeline is null)
+        {
+            DrainRetiredGenerations();
             return true;
+        }
 
-        if (ShouldDeferResourceGenerationForInteractiveWindowResize(viewport) && ActiveGeneration is not null)
+        RenderFrameOutputDescription? frameOutput = FinalOutput;
+        if (viewport is null && frameOutput is null)
+        {
+            DrainRetiredGenerations();
+            return true;
+        }
+
+        if (viewport is not null &&
+            ShouldDeferResourceGenerationForInteractiveWindowResize(viewport) &&
+            ActiveGeneration is not null)
         {
             DiscardPendingGeneration("InteractiveResize");
             return true;
         }
 
-        var dimensions = ResolvePipelineResourceDimensions(viewport);
+        // Retiring an old physical generation is intentionally outside the
+        // Win32 modal-resize path. The drag keeps the complete published scene,
+        // shadow, UI, and presentation resource tuple alive until the settled
+        // catch-up generation is prepared after WM_EXITSIZEMOVE.
+        DrainRetiredGenerations();
+
+        var dimensions = frameOutput is not null
+            ? ResolvePipelineResourceDimensions(frameOutput.Value)
+            : ResolvePipelineResourceDimensions(viewport!);
         ResourceGenerationKey key = BuildResourceGenerationKey(
             dimensions.DisplayWidth,
             dimensions.DisplayHeight,
@@ -771,7 +805,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             dimensions.InternalHeight,
             viewport);
 
-        if (viewport.RendersToExternalSwapchainTarget)
+        if (viewport?.RendersToExternalSwapchainTarget == true)
             return EnsureExternalSwapchainResourceGenerationForCurrentFrame(viewport, key);
 
         if (ActiveGeneration is null && PendingGeneration is null)
@@ -905,6 +939,14 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             : dimensions;
     }
 
+    private (int DisplayWidth, int DisplayHeight, int InternalWidth, int InternalHeight) ResolvePipelineResourceDimensions(
+        in RenderFrameOutputDescription output)
+    {
+        int width = checked((int)output.Properties.Width);
+        int height = checked((int)output.Properties.Height);
+        return (width, height, width, height);
+    }
+
     /// <summary>
     /// Resolves the display and internal dimensions for a given viewport, ensuring that they are valid and non-zero. This method takes into account the viewport's properties and any external swapchain targets to determine the appropriate dimensions for resource generation. It guarantees that the returned dimensions are at least 1x1, preventing invalid resource sizes.
     /// </summary>
@@ -933,11 +975,6 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             resolvedInternalHeight);
     }
 
-    /// <summary>
-    /// Determines whether resource generation should be deferred during an interactive window resize operation. This is used to avoid unnecessary resource regeneration while the user is actively resizing the window, which can lead to performance issues or visual artifacts. The method checks if the viewport does not render to an external swapchain target and if the associated window is currently undergoing an interactive resize.
-    /// </summary>
-    /// <param name="viewport">The viewport to check for interactive window resize.</param>
-    /// <returns>True if resource generation should be deferred; otherwise, false.</returns>
     private static bool ShouldDeferResourceGenerationForInteractiveWindowResize(XRViewport viewport)
         => !viewport.RendersToExternalSwapchainTarget &&
            viewport.Window?.IsInteractiveResizeInProgress == true;
@@ -1332,7 +1369,9 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             settings.ReservedViewCount,
             settings.ReservedEyeIndex,
             settings.ExternalTargetKind,
-            settings.Revision);
+            settings.Revision,
+            settings.OutputColorFormat,
+            settings.OutputDepthFormat);
     }
 
     private ResourceGenerationSettingsSnapshot CaptureResourceGenerationSettingsSnapshot(
@@ -1355,7 +1394,9 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
                 ?? viewportCamera?.MsaaSampleCountOverride
                 ?? RuntimeRenderingHostServices.FrameTiming.DefaultMsaaSampleCount);
         ulong featureMask = pipeline?.BuildResourceFeatureMaskForGenerationKey(this, viewport) ?? 0UL;
-        RenderPipelineExternalTargetKind externalTargetKind = viewport?.RendersToExternalSwapchainTarget == true
+        RenderPipelineExternalTargetKind externalTargetKind = FinalOutput is not null
+            ? RenderPipelineExternalTargetKind.PresentationTarget
+            : viewport?.RendersToExternalSwapchainTarget == true
             ? RenderPipelineExternalTargetKind.ExternalSwapchain
             : RenderState.OutputFBO is not null
                 ? RenderPipelineExternalTargetKind.CallerProvidedFrameBuffer
@@ -1367,10 +1408,13 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             msaaSamples,
             stereo,
             featureMask,
-            stereo ? 2u : 1u,
-            0u,
+            FinalOutput?.Properties.Layers ?? (stereo ? 2u : 1u),
+            FinalOutput?.ViewIndex ?? 0u,
             externalTargetKind,
-            0UL);
+            0UL,
+            FinalOutput?.Properties.ColorFormat ??
+                (outputHdr ? EPixelInternalFormat.Rgba16f : EPixelInternalFormat.Rgba8),
+            FinalOutput?.Properties.DepthFormat ?? EPixelInternalFormat.Depth24Stencil8);
 
         lock (_resourceSettingsSnapshotLock)
         {
@@ -1466,7 +1510,10 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
 
         if (!_resourceManager.MaterializeIncremental(this, pending, maxDuration, maxSpecsPerSlice, out bool completed))
         {
-            RegisterPendingGenerationFailure(pending.Key, reason);
+            string failure = pending.Diagnostics.Count > 0
+                ? pending.Diagnostics[^1]
+                : reason;
+            RegisterPendingGenerationFailure(pending.Key, failure);
             PendingGeneration = null;
             ClearPendingGenerationDebounce();
             pending.Dispose();
@@ -1549,6 +1596,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         _lastFailedGenerationKey = key;
         _failedGenerationRetryAfterTimestamp = System.Diagnostics.Stopwatch.GetTimestamp()
             + StopwatchTicksFromMilliseconds(FailedGenerationRetryBackoffMilliseconds);
+        SetField(ref _lastResourceGenerationFailure, reason, nameof(LastResourceGenerationFailure));
 
         Debug.RenderingWarning(
             "[RenderResources] Generation retry backoff armed. Pipeline={0} Reason={1} Target={2} RetryAfterMs={3:F0}",
@@ -1666,6 +1714,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
 
             ClearPendingGenerationDebounce();
             ClearFailedGenerationBackoff(ActiveGeneration.Key);
+            SetField(ref _lastResourceGenerationFailure, null, nameof(LastResourceGenerationFailure));
 
             if (old is not null)
                 RetireGeneration(old, $"Committed replacement generation: {reason}");
@@ -1752,6 +1801,17 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             EGpuFenceStatus fenceStatus = retired.PollRetirementFence();
             if (!force && fenceStatus == EGpuFenceStatus.Pending)
                 return;
+
+            XRViewport? viewport = RenderState.WindowViewport ?? LastWindowViewport;
+            if (!force &&
+                fenceStatus == EGpuFenceStatus.Failed &&
+                viewport?.Window?.IsInteractiveResizeInProgress == true)
+            {
+                // The active generation remains the drag-time presentation source.
+                // A failed generic fence must not globally release descriptor references
+                // underneath it; defer the destructive cleanup until the resize settles.
+                return;
+            }
 
             if (fenceStatus == EGpuFenceStatus.Failed)
             {

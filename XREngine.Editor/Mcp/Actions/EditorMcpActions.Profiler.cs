@@ -4,8 +4,12 @@ using System.Linq;
 using System.Threading.Tasks;
 using XREngine;
 using XREngine.Data.Core;
+using XREngine.Data.Rendering;
 using XREngine.Rendering;
+using XREngine.Rendering.Commands;
 using XREngine.Rendering.Occlusion;
+using XREngine.Rendering.Vulkan;
+using McpCapability = XREngine.Runtime.Automation.Mcp.McpCapability;
 using GpuDrivenStats = XREngine.RuntimeEngine.Rendering.Stats.GpuDriven;
 using GpuPipelineStats = XREngine.RuntimeEngine.Rendering.Stats.GpuPipelineProfiler;
 using OcclusionTelemetry = XREngine.Rendering.Occlusion.OcclusionTelemetry;
@@ -17,6 +21,7 @@ namespace XREngine.Editor.Mcp
     public sealed partial class EditorMcpActions
     {
         [XRMcp(Name = "dump_cpu_frame_profile", Permission = McpPermissionLevel.ReadOnly)]
+        [McpRequiredCapabilities(McpCapability.ProfilerSession)]
         [Description("Dump the latest CPU profiler frame snapshot to an LLM-readable log file in the current Build/Logs run directory.")]
         public static Task<McpToolResponse> DumpCpuFrameProfileAsync(McpToolContext context)
         {
@@ -34,6 +39,7 @@ namespace XREngine.Editor.Mcp
         }
 
         [XRMcp(Name = "dump_gpu_render_pipeline_profile", Permission = McpPermissionLevel.ReadOnly)]
+        [McpRequiredCapabilities(McpCapability.ProfilerSession)]
         [Description("Dump retained GPU timing history for one render pipeline, or all captured pipelines when pipeline_name is omitted.")]
         public static Task<McpToolResponse> DumpGpuRenderPipelineProfileAsync(
             McpToolContext context,
@@ -67,6 +73,11 @@ namespace XREngine.Editor.Mcp
         [Description("Return the latest render-profiler counters, including Vulkan frame lifecycle timings and command-buffer cache state.")]
         public static Task<McpToolResponse> GetRenderProfilerStatsAsync(McpToolContext context)
         {
+            VulkanFrameTelemetryPublication vulkanFrame = VulkanStats.LatestVulkanFrameTelemetry;
+            RvcFrameProfileSnapshot rvcFrameProfile = RuntimeEngine.Rendering.Stats.Rvc.FrameProfile;
+            var gpuScene = context.WorldInstance.VisualScene.GPUCommands;
+            GpuMeshletEligibilitySnapshot meshletEligibility =
+                gpuScene.CaptureMeshletEligibilitySnapshot((int)EDefaultRenderPass.OpaqueDeferred);
             return Task.FromResult(new McpToolResponse(
                 "Retrieved render profiler stats.",
                 new
@@ -103,14 +114,60 @@ namespace XREngine.Editor.Mcp
                         status = GpuPipelineStats.GpuRenderPipelineStatusMessage,
                         frame_ms = GpuPipelineStats.GpuRenderPipelineFrameMs,
                     },
+                    submission_accounting = new
+                    {
+                        requested_draws = VulkanStats.VulkanRequestedDraws,
+                        culled_draws = VulkanStats.VulkanCulledDraws,
+                        emitted_indirect_draws = VulkanStats.VulkanEmittedIndirectDraws,
+                        consumed_draws = VulkanStats.VulkanConsumedDraws,
+                        overflow_count = VulkanStats.VulkanOverflowCount,
+                        cpu_fallback_events = RuntimeEngine.Rendering.Stats.GpuFallback.GpuCpuFallbackEvents,
+                        cpu_fallback_recovered_commands = RuntimeEngine.Rendering.Stats.GpuFallback.GpuCpuFallbackRecoveredCommands,
+                        forbidden_fallback_events = RuntimeEngine.Rendering.Stats.GpuFallback.ForbiddenGpuFallbackEvents,
+                    },
                     scene = new
                     {
                         tracked_renderables = context.WorldInstance.VisualScene.Renderables.Count,
                         gpu_commands = new
                         {
-                            total_count = context.WorldInstance.VisualScene.GPUCommands.TotalCommandCount,
-                            allocated_capacity = context.WorldInstance.VisualScene.GPUCommands.AllocatedMaxCommandCount,
-                            skinned_count = context.WorldInstance.VisualScene.GPUCommands.SkinnedCommandCount,
+                            total_count = gpuScene.TotalCommandCount,
+                            allocated_capacity = gpuScene.AllocatedMaxCommandCount,
+                            skinned_count = gpuScene.SkinnedCommandCount,
+                            meshlet_eligibility = new
+                            {
+                                total_commands = meshletEligibility.TotalCommands,
+                                active_commands = meshletEligibility.ActiveCommands,
+                                opaque_deferred_commands = meshletEligibility.PassCommands,
+                                eligible_commands = meshletEligibility.EligibleCommands,
+                                eligible_meshlets = meshletEligibility.EligibleMeshlets,
+                                missing_metadata = meshletEligibility.MissingMetadata,
+                                rejected_instance_count = meshletEligibility.RejectedInstanceCount,
+                                rejected_skin = meshletEligibility.RejectedSkin,
+                                rejected_state_class = meshletEligibility.RejectedStateClass,
+                                rejected_flags = meshletEligibility.RejectedFlags,
+                                missing_meshlet_range = meshletEligibility.MissingMeshletRange,
+                                flag_breakdown = new
+                                {
+                                    transparent = meshletEligibility.TransparentFlags,
+                                    skinned = meshletEligibility.SkinnedFlags,
+                                    dynamic_transform = meshletEligibility.DynamicTransformFlags,
+                                    double_sided = meshletEligibility.DoubleSidedFlags,
+                                    instanced = meshletEligibility.InstancedFlags,
+                                    animated = meshletEligibility.AnimatedFlags,
+                                    blend_shapes = meshletEligibility.BlendShapeFlags,
+                                    custom_shader = meshletEligibility.CustomShaderFlags,
+                                    cpu_fallback_only = meshletEligibility.CpuFallbackOnlyFlags,
+                                    non_canonical_raster_state = meshletEligibility.NonCanonicalRasterStateFlags,
+                                },
+                                state_class_breakdown = new
+                                {
+                                    opaque_forward = meshletEligibility.OpaqueForwardStateClassCommands,
+                                    alpha_tested = meshletEligibility.AlphaTestedStateClassCommands,
+                                    transparent = meshletEligibility.TransparentStateClassCommands,
+                                    custom = meshletEligibility.CustomStateClassCommands,
+                                },
+                                material_override_commands = meshletEligibility.MaterialOverrideCommands,
+                            },
                         },
                     },
                     gpu_driven = new
@@ -149,7 +206,59 @@ namespace XREngine.Editor.Mcp
                         gpu_compaction_rung = GpuDrivenStats.GpuCompactionRung,
                         gpu_compaction_rung_reason = GpuDrivenStats.GpuCompactionRungReason,
                     },
+                    meshlets = new
+                    {
+                        cold_import_builder_calls = RuntimeEngine.Rendering.Stats.GpuMeshlets.ColdImportBuilderCalls,
+                        cold_import_build_ms = RuntimeEngine.Rendering.Stats.GpuMeshlets.ColdImportBuildTime.TotalMilliseconds,
+                        cold_import_allocated_bytes = RuntimeEngine.Rendering.Stats.GpuMeshlets.ColdImportAllocatedBytes,
+                        generated_lod_count = RuntimeEngine.Rendering.Stats.GpuMeshlets.GeneratedLodCount,
+                        cooked_payload_count = RuntimeEngine.Rendering.Stats.GpuMeshlets.CookedPayloadCount,
+                        cooked_meshlet_count = RuntimeEngine.Rendering.Stats.GpuMeshlets.CookedMeshletCount,
+                        warm_payload_hydrations = RuntimeEngine.Rendering.Stats.GpuMeshlets.WarmPayloadHydrations,
+                        render_path_source_hash_calls = RuntimeEngine.Rendering.Stats.GpuMeshlets.RenderPathSourceHashCalls,
+                        render_path_disk_calls = RuntimeEngine.Rendering.Stats.GpuMeshlets.RenderPathDiskCalls,
+                        render_path_cooker_calls = RuntimeEngine.Rendering.Stats.GpuMeshlets.RenderPathCookerCalls,
+                        requested_submission = RuntimeEngine.Rendering.Stats.GpuMeshlets.RequestedSubmission,
+                        primitive_preference = RuntimeEngine.Rendering.Stats.GpuMeshlets.PrimitivePreference,
+                        resolved_pass = RuntimeEngine.Rendering.Stats.GpuMeshlets.ResolvedPass,
+                        resolved_route = RuntimeEngine.Rendering.Stats.GpuMeshlets.ResolvedRoute,
+                        primary_route_reason = RuntimeEngine.Rendering.Stats.GpuMeshlets.PrimaryRouteReason,
+                        resolved_meshlet_rows = RuntimeEngine.Rendering.Stats.GpuMeshlets.ResolvedMeshletRows,
+                        resolved_task_groups = RuntimeEngine.Rendering.Stats.GpuMeshlets.ResolvedTaskGroups,
+                        buffer_live_bytes = RuntimeEngine.Rendering.Stats.GpuMeshlets.BufferLiveBytes,
+                        buffer_retired_bytes = RuntimeEngine.Rendering.Stats.GpuMeshlets.BufferRetiredBytes,
+                        buffer_rebuild_count = RuntimeEngine.Rendering.Stats.GpuMeshlets.BufferRebuildCount,
+                        buffer_retire_count = RuntimeEngine.Rendering.Stats.GpuMeshlets.BufferRetireCount,
+                        dispatch_calls = RuntimeEngine.Rendering.Stats.GpuMeshlets.DispatchCallCount,
+                        dispatch_groups = RuntimeEngine.Rendering.Stats.GpuMeshlets.DispatchGroupCount,
+                        mapped_bytes = RuntimeEngine.Rendering.Stats.GpuMeshlets.MappedBytes,
+                        task_records_emitted = RuntimeEngine.Rendering.Stats.GpuMeshlets.GpuMeshletTaskRecordsEmitted,
+                        task_records_frustum_culled = RuntimeEngine.Rendering.Stats.GpuMeshlets.GpuMeshletTaskRecordsFrustumCulled,
+                        task_records_cone_culled = RuntimeEngine.Rendering.Stats.GpuMeshlets.GpuMeshletTaskRecordsConeCulled,
+                        task_records_hiz_culled = RuntimeEngine.Rendering.Stats.GpuMeshlets.GpuMeshletTaskRecordsHiZCulled,
+                        latest_task_records_emitted = RuntimeEngine.Rendering.Stats.GpuMeshlets.LatestGpuMeshletTaskRecordsEmitted,
+                        latest_task_records_frustum_culled = RuntimeEngine.Rendering.Stats.GpuMeshlets.LatestGpuMeshletTaskRecordsFrustumCulled,
+                        latest_task_records_cone_culled = RuntimeEngine.Rendering.Stats.GpuMeshlets.LatestGpuMeshletTaskRecordsConeCulled,
+                        latest_task_records_hiz_culled = RuntimeEngine.Rendering.Stats.GpuMeshlets.LatestGpuMeshletTaskRecordsHiZCulled,
+                        delayed_dispatch_group_count = RuntimeEngine.Rendering.Stats.GpuMeshlets.DelayedDispatchGroupCount,
+                        diagnostic_readback_bytes = RuntimeEngine.Rendering.Stats.GpuMeshlets.DiagnosticReadbackBytes,
+                        stereo_hiz_left_eye_bypass_submissions = RuntimeEngine.Rendering.Stats.GpuMeshlets.StereoHiZLeftEyeBypassSubmissions,
+                        stereo_hiz_right_eye_bypass_submissions = RuntimeEngine.Rendering.Stats.GpuMeshlets.StereoHiZRightEyeBypassSubmissions,
+                        overflow_count = RuntimeEngine.Rendering.Stats.GpuMeshlets.GpuMeshletExpansionOverflowCount,
+                        readback_bytes = RuntimeEngine.Rendering.Stats.GpuMeshlets.LastReadbackBytes,
+                        vulkan_capability_ladder = RuntimeEngine.Rendering.Stats.GpuMeshlets.VulkanCapabilityLadder,
+                        vulkan_capability_failed_rung = RuntimeEngine.Rendering.Stats.GpuMeshlets.VulkanCapabilityFailedRung,
+                        requested_strategy = RuntimeEngine.Rendering.ResolveRequestedMeshSubmissionStrategy().ToString(),
+                        effective_strategy = RuntimeEngine.Rendering.LastResolvedMeshSubmissionStrategy.ToString(),
+                        renderer_backend = RuntimeEngine.Rendering.LastResolvedRendererBackend.ToString(),
+                        shader_dialect = RuntimeEngine.Rendering.LastResolvedMeshShaderDialect.ToString(),
+                        renderer_dispatch_ready = RuntimeEngine.Rendering.LastResolvedSupportsMeshletDispatch,
+                        downgrade_requested = RuntimeEngine.Rendering.LastMeshletDowngradeRequested?.ToString() ?? string.Empty,
+                        downgrade_resolved = RuntimeEngine.Rendering.LastMeshletDowngradeResolved?.ToString() ?? string.Empty,
+                        downgrade_reason = RuntimeEngine.Rendering.LastMeshletDowngradeReason ?? string.Empty,
+                    },
                     frame_outputs = BuildFrameOutputManifest(RuntimeEngine.Rendering.Stats.FrameOutputs.LastManifest),
+                    rvc_frame_profile = BuildRvcFrameProfile(rvcFrameProfile),
                     occlusion = new
                     {
                         effective_mode = OcclusionTelemetry.LastEffectiveMode.ToString(),
@@ -243,23 +352,49 @@ namespace XREngine.Editor.Mcp
                     {
                         frame_lifecycle = new
                         {
-                            total_ms = VulkanStats.VulkanFrameTotalMs,
+                            authority_id = vulkanFrame.AuthorityId,
+                            publication_sequence = vulkanFrame.PublicationSequence,
+                            engine_frame_number = vulkanFrame.Identity.EngineFrameNumber,
+                            render_frame_number = vulkanFrame.Identity.RenderFrameNumber,
+                            frame_slot = vulkanFrame.Identity.FrameSlot,
+                            output_index = vulkanFrame.Identity.Output.OutputIndex,
+                            output_generation = vulkanFrame.Identity.Output.OutputGeneration,
+                            outcome = vulkanFrame.Outcome.ToString(),
+                            total_ms = vulkanFrame.TotalElapsed.TotalMilliseconds,
                             gpu_command_buffer_ms = VulkanStats.VulkanFrameGpuCommandBufferMs,
-                            wait_fence_ms = VulkanStats.VulkanFrameWaitFenceMs,
-                            sample_timing_queries_ms = VulkanStats.VulkanFrameSampleTimingQueriesMs,
-                            drain_retired_resources_ms = VulkanStats.VulkanFrameDrainRetiredResourcesMs,
-                            acquire_image_ms = VulkanStats.VulkanFrameAcquireImageMs,
-                            acquire_bridge_submit_ms = VulkanStats.VulkanFrameAcquireBridgeSubmitMs,
-                            wait_swapchain_image_ms = VulkanStats.VulkanFrameWaitSwapchainImageMs,
-                            reset_dynamic_uniform_ring_ms = VulkanStats.VulkanFrameResetDynamicUniformRingMs,
-                            record_command_buffer_ms = VulkanStats.VulkanFrameRecordCommandBufferMs,
-                            snapshot_imgui_overlay_ms = VulkanStats.VulkanFrameSnapshotImGuiOverlayMs,
-                            record_scene_command_buffer_ms = VulkanStats.VulkanFrameRecordSceneCommandBufferMs,
-                            record_imgui_overlay_ms = VulkanStats.VulkanFrameRecordImGuiOverlayMs,
-                            record_dynamic_ui_text_overlay_ms = VulkanStats.VulkanFrameRecordDynamicUiTextOverlayMs,
-                            submit_ms = VulkanStats.VulkanFrameSubmitMs,
-                            trim_ms = VulkanStats.VulkanFrameTrimMs,
-                            present_ms = VulkanStats.VulkanFramePresentMs,
+                            stages = new
+                            {
+                                frame_pacing = VulkanFrameStage(vulkanFrame.FramePacing),
+                                snapshot_handoff = VulkanFrameStage(vulkanFrame.SnapshotHandoff),
+                                completion_maintenance = VulkanFrameStage(vulkanFrame.CompletionMaintenance),
+                                output_acquire = VulkanFrameStage(vulkanFrame.OutputAcquire),
+                                plan_build = VulkanFrameStage(vulkanFrame.PlanBuild),
+                                resource_prepare = VulkanFrameStage(vulkanFrame.ResourcePrepare),
+                                work_schedule = VulkanFrameStage(vulkanFrame.WorkSchedule),
+                                command_record = VulkanFrameStage(vulkanFrame.CommandRecord),
+                                submit_prepare = VulkanFrameStage(vulkanFrame.SubmitPrepare),
+                                queue_submit = VulkanFrameStage(vulkanFrame.QueueSubmit),
+                                output_complete = VulkanFrameStage(vulkanFrame.OutputComplete),
+                                frame_settlement = VulkanFrameStage(vulkanFrame.FrameSettlement),
+                            },
+                            detail = new
+                            {
+                                wait_frame_slot_ms = vulkanFrame.Detail.WaitFrameSlot.TotalMilliseconds,
+                                sample_timing_queries_ms = vulkanFrame.Detail.SampleTimingQueries.TotalMilliseconds,
+                                drain_retired_resources_ms = vulkanFrame.Detail.DrainRetiredResources.TotalMilliseconds,
+                                acquire_image_ms = vulkanFrame.Detail.AcquireImage.TotalMilliseconds,
+                                acquire_bridge_submit_ms = vulkanFrame.Detail.AcquireBridgeSubmit.TotalMilliseconds,
+                                wait_swapchain_image_ms = vulkanFrame.Detail.WaitSwapchainImage.TotalMilliseconds,
+                                reset_dynamic_uniform_ring_ms = vulkanFrame.Detail.ResetDynamicUniformRing.TotalMilliseconds,
+                                record_command_buffer_ms = vulkanFrame.Detail.RecordCommandBuffer.TotalMilliseconds,
+                                snapshot_imgui_overlay_ms = vulkanFrame.Detail.SnapshotImGuiOverlay.TotalMilliseconds,
+                                record_scene_command_buffer_ms = vulkanFrame.Detail.RecordSceneCommandBuffer.TotalMilliseconds,
+                                record_imgui_overlay_ms = vulkanFrame.Detail.RecordImGuiOverlay.TotalMilliseconds,
+                                record_dynamic_ui_text_overlay_ms = vulkanFrame.Detail.RecordDynamicUiTextOverlay.TotalMilliseconds,
+                                submit_ms = vulkanFrame.Detail.SubmitQueue.TotalMilliseconds,
+                                trim_ms = vulkanFrame.Detail.TrimStaging.TotalMilliseconds,
+                                present_ms = vulkanFrame.Detail.PresentQueue.TotalMilliseconds,
+                            },
                         },
                         cpu_stages = new
                         {
@@ -284,6 +419,20 @@ namespace XREngine.Editor.Mcp
                             command_chain_fast_signature = VulkanCpuStage(EVulkanCpuStage.CommandChainFastSignature),
                             command_chain_packet_lowering = VulkanCpuStage(EVulkanCpuStage.CommandChainPacketLowering),
                             command_chain_schedule_evaluation = VulkanCpuStage(EVulkanCpuStage.CommandChainScheduleEvaluation),
+                            command_chain_compatibility_scan = VulkanCpuStage(EVulkanCpuStage.CommandChainCompatibilityScan),
+                            command_chain_capacity_planning = VulkanCpuStage(EVulkanCpuStage.CommandChainCapacityPlanning),
+                            command_chain_dependency_aggregation = VulkanCpuStage(EVulkanCpuStage.CommandChainDependencyAggregation),
+                            command_chain_recorded_key_capture = VulkanCpuStage(EVulkanCpuStage.CommandChainRecordedKeyCapture),
+                            scheduled_secondary_run = VulkanCpuStage(EVulkanCpuStage.ScheduledSecondaryRun),
+                            scheduled_secondary_preflight = VulkanCpuStage(EVulkanCpuStage.ScheduledSecondaryPreflight),
+                            scheduled_secondary_classification = VulkanCpuStage(EVulkanCpuStage.ScheduledSecondaryClassification),
+                            primary_encoding_setup = VulkanCpuStage(EVulkanCpuStage.PrimaryEncodingSetup),
+                            primary_operation_loop = VulkanCpuStage(EVulkanCpuStage.PrimaryOperationLoop),
+                            primary_operation_preparation = VulkanCpuStage(EVulkanCpuStage.PrimaryOperationPreparation),
+                            primary_mesh_operation = VulkanCpuStage(EVulkanCpuStage.PrimaryMeshOperation),
+                            primary_non_mesh_operation = VulkanCpuStage(EVulkanCpuStage.PrimaryNonMeshOperation),
+                            primary_finalization = VulkanCpuStage(EVulkanCpuStage.PrimaryFinalization),
+                            primary_end_command_buffer = VulkanCpuStage(EVulkanCpuStage.PrimaryEndCommandBuffer),
                             primary_frame_data_manifest = VulkanCpuStage(EVulkanCpuStage.PrimaryFrameDataManifest),
                             primary_prewarm = VulkanCpuStage(EVulkanCpuStage.PrimaryPrewarm),
                             primary_command_encoding = VulkanCpuStage(EVulkanCpuStage.PrimaryCommandEncoding),
@@ -305,15 +454,20 @@ namespace XREngine.Editor.Mcp
                             command_dirty_propagation = VulkanCpuStage(EVulkanCpuStage.CommandDirtyPropagation),
                             command_cache_scanning = VulkanCpuStage(EVulkanCpuStage.CommandCacheScanning),
                             frame_op_drain = VulkanCpuStage(EVulkanCpuStage.FrameOpDrain),
+                            raw_mesh_request_drain = VulkanCpuStage(EVulkanCpuStage.RawMeshRequestDrain),
                             frame_op_scheduling = VulkanCpuStage(EVulkanCpuStage.FrameOpScheduling),
                             frame_op_sort = VulkanCpuStage(EVulkanCpuStage.FrameOpSort),
                             frame_op_cohort = VulkanCpuStage(EVulkanCpuStage.FrameOpCohort),
+                            prepared_mesh_binding_validation = VulkanCpuStage(EVulkanCpuStage.PreparedMeshBindingValidation),
+                            prepared_mesh_hole_materialization = VulkanCpuStage(EVulkanCpuStage.PreparedMeshHoleMaterialization),
+                            frame_op_resource_use_lowering = VulkanCpuStage(EVulkanCpuStage.FrameOpResourceUseLowering),
                             frame_op_split = VulkanCpuStage(EVulkanCpuStage.FrameOpSplit),
                             frame_op_signature = VulkanCpuStage(EVulkanCpuStage.FrameOpSignature),
                             frame_op_plan = VulkanCpuStage(EVulkanCpuStage.FrameOpPlan),
                             mesh_draw_publisher_state = VulkanCpuStage(EVulkanCpuStage.MeshDrawPublisherState),
                             mesh_draw_artifact_eligibility = VulkanCpuStage(EVulkanCpuStage.MeshDrawArtifactEligibility),
                             mesh_draw_artifact_lookup = VulkanCpuStage(EVulkanCpuStage.MeshDrawArtifactLookup),
+                            worker_wait = VulkanCpuStage(EVulkanCpuStage.WorkerWait),
                         },
                         command_buffer_cache = new
                         {
@@ -350,6 +504,19 @@ namespace XREngine.Editor.Mcp
                             unique_visible_materials = VulkanStats.VulkanUniqueVisibleMaterials,
                             prepared_mesh_draws = VulkanStats.VulkanPreparedMeshDraws,
                             recorded_command_artifact_retirements = VulkanStats.VulkanRecordedCommandArtifactRetirements,
+                            prepared_mesh_operation_cohort_hits = VulkanStats.VulkanPreparedMeshOperationCohortHits,
+                            prepared_mesh_operation_cohort_builds = VulkanStats.VulkanPreparedMeshOperationCohortBuilds,
+                            prepared_mesh_operation_full_materializations = VulkanStats.VulkanPreparedMeshOperationFullMaterializations,
+                            prepared_mesh_operation_reuses = VulkanStats.VulkanPreparedMeshOperationReuses,
+                            prepared_mesh_operation_legacy_hole_materializations = VulkanStats.VulkanPreparedMeshOperationLegacyHoleMaterializations,
+                            resident_draw_template_hits = VulkanStats.VulkanResidentDrawTemplateHits,
+                            resident_draw_template_misses = VulkanStats.VulkanResidentDrawTemplateMisses,
+                            resident_draw_template_creates = VulkanStats.VulkanResidentDrawTemplateCreates,
+                            resident_draw_template_replacements = VulkanStats.VulkanResidentDrawTemplateReplacements,
+                            resident_draw_template_evictions = VulkanStats.VulkanResidentDrawTemplateEvictions,
+                            resident_draw_template_structural_comparisons = VulkanStats.VulkanResidentDrawTemplateStructuralComparisons,
+                            resident_draw_template_dependency_rejects = VulkanStats.VulkanResidentDrawTemplateDependencyRejects,
+                            resident_draw_template_capacity_failures = VulkanStats.VulkanResidentDrawTemplateCapacityFailures,
                         },
                         binding_data = new
                         {
@@ -778,17 +945,85 @@ namespace XREngine.Editor.Mcp
             };
         }
 
-        private static object VulkanCpuStage(EVulkanCpuStage stage)
+        private static object BuildRvcFrameProfile(in RvcFrameProfileSnapshot snapshot)
+        {
+            int viewCount = Math.Clamp(snapshot.ViewCount, 0, 4);
+            object[] views = new object[viewCount];
+            for (int index = 0; index < viewCount; index++)
+            {
+                RvcFrameViewDiagnostics view = snapshot.GetView(index);
+                RvcFrameViewProjectionDiagnostics projection = snapshot.GetProjection(index);
+                views[index] = new
+                {
+                    view_id = view.ViewId,
+                    view_kind = view.ViewKind.ToString(),
+                    runtime_width = view.RuntimeWidth,
+                    runtime_height = view.RuntimeHeight,
+                    horizontal_fov_degrees = view.HorizontalFovDegrees,
+                    vertical_fov_degrees = view.VerticalFovDegrees,
+                    runtime_view_index = projection.RuntimeViewIndex,
+                    view_matrix = Matrix(projection.ViewMatrix),
+                    projection_matrix = Matrix(projection.ProjectionMatrix),
+                    view_projection_matrix = Matrix(projection.ViewProjectionMatrix),
+                };
+            }
+
+            return new
+            {
+                frame_id = snapshot.FrameId,
+                predicted_display_time = snapshot.PredictedDisplayTime,
+                view_count = viewCount,
+                fallback_reason = snapshot.FallbackReason.ToString(),
+                diagnostic = snapshot.Diagnostic,
+                views,
+            };
+        }
+
+        private static object Matrix(System.Numerics.Matrix4x4 value)
             => new
             {
-                elapsed_ms = VulkanStats.VulkanCpuStageMs(stage),
-                allocated_bytes = VulkanStats.VulkanCpuStageAllocatedBytes(stage),
-                allocation_high_water_bytes = VulkanStats.VulkanCpuStageAllocationHighWaterBytes(stage),
-                boundary_allocated_bytes = VulkanStats.VulkanCpuStageBoundaryAllocatedBytes(stage),
-                boundary_allocation_high_water_bytes = VulkanStats.VulkanCpuStageBoundaryAllocationHighWaterBytes(stage),
-                process_invocation_count = VulkanStats.VulkanCpuStageInvocationCount(stage),
-                process_elapsed_ms = VulkanStats.VulkanCpuStageCumulativeMs(stage),
-                process_peak_ms = VulkanStats.VulkanCpuStagePeakMs(stage),
+                m11 = value.M11,
+                m12 = value.M12,
+                m13 = value.M13,
+                m14 = value.M14,
+                m21 = value.M21,
+                m22 = value.M22,
+                m23 = value.M23,
+                m24 = value.M24,
+                m31 = value.M31,
+                m32 = value.M32,
+                m33 = value.M33,
+                m34 = value.M34,
+                m41 = value.M41,
+                m42 = value.M42,
+                m43 = value.M43,
+                m44 = value.M44,
+            };
+
+        private static object VulkanCpuStage(EVulkanCpuStage stage)
+        {
+            VulkanCpuStageTelemetry telemetry = VulkanStats.GetVulkanCpuStageTelemetry(stage);
+            return new
+            {
+                elapsed_ms = telemetry.Elapsed.TotalMilliseconds,
+                allocated_bytes = telemetry.AllocatedBytes,
+                allocation_high_water_bytes = telemetry.AllocationHighWaterBytes,
+                boundary_allocated_bytes = telemetry.BoundaryAllocatedBytes,
+                boundary_allocation_high_water_bytes = telemetry.BoundaryAllocationHighWaterBytes,
+                process_invocation_count = telemetry.InvocationCount,
+                process_elapsed_ms = telemetry.CumulativeElapsed.TotalMilliseconds,
+                process_peak_ms = telemetry.PeakElapsed.TotalMilliseconds,
+            };
+        }
+
+        private static object VulkanFrameStage(VulkanFrameStageTiming stage)
+            => new
+            {
+                elapsed_ms = stage.Elapsed.TotalMilliseconds,
+                interval_count = stage.IntervalCount,
+                interval_class = stage.IntervalClass.ToString(),
+                outcome = stage.Outcome.ToString(),
+                wait_reason = stage.WaitReason.ToString(),
             };
 
         private static object VulkanFrequencyPublication(int frequency)

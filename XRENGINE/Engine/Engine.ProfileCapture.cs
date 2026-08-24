@@ -81,7 +81,7 @@ public static partial class Engine
         private const string ManifestFileName = "profiler-capture-manifest.json";
         private const string SummaryFileName = "profiler-capture-summary.json";
         private const string RuntimeCaptureDirectoryName = "speed-profiles";
-        private const int ProfileCaptureSchemaVersion = 5;
+        private const int ProfileCaptureSchemaVersion = 7;
         private const int RuntimeCaptureRetentionCount = 3;
         private const int FlushIntervalMilliseconds = 1000;
         private const int MaxBufferedCharacters = 256 * 1024;
@@ -119,6 +119,8 @@ public static partial class Engine
         private static long s_startTicks;
         private static long s_lastFlushTicks;
         private static int s_sampleCount;
+        private static int s_snapshotCount;
+        private static int s_sampleIntervalFrames;
         private static bool s_manifestWritten;
         private static bool s_shutdown;
         private static RunMetadata? s_metadata;
@@ -127,6 +129,7 @@ public static partial class Engine
         internal static EOutputVerbosity? OutputVerbosityOverride { get; private set; }
         internal static bool? GpuIndirectDebugLoggingOverride { get; private set; }
         internal static bool? GpuIndirectValidationLoggingOverride { get; private set; }
+        internal static EVulkanGpuDrivenProfile? VulkanGpuDrivenProfileOverride { get; private set; }
 
         public static bool IsRuntimeCaptureActive
         {
@@ -173,6 +176,12 @@ public static partial class Engine
         public static void ApplyPerformanceProfileContract()
         {
             string profileMode = ResolvePerformanceProfileMode();
+            VulkanGpuDrivenProfileOverride = Enum.TryParse(
+                Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.ProfileVulkanGpuDrivenProfile),
+                ignoreCase: true,
+                out EVulkanGpuDrivenProfile requestedGpuDrivenProfile)
+                    ? requestedGpuDrivenProfile
+                    : null;
             if (!IsCleanPerformanceProfile(profileMode))
             {
                 OutputVerbosityOverride = null;
@@ -357,11 +366,16 @@ public static partial class Engine
                     s_lastFlushTicks = nowTicks;
                 }
 
-                AppendSampleLineNoLock(metadata, nowTicks);
-                s_sampleCount++;
+                int sampleIntervalFrames = GetSampleIntervalFramesNoLock();
+                int snapshotCount = ++s_snapshotCount;
+                if (snapshotCount == 1 || snapshotCount % sampleIntervalFrames == 0)
+                {
+                    AppendSampleLineNoLock(metadata, nowTicks);
+                    s_sampleCount++;
 
-                if (ShouldFlushNoLock(nowTicks))
-                    FlushSamplesNoLock();
+                    if (ShouldFlushNoLock(nowTicks))
+                        FlushSamplesNoLock();
+                }
 
                 if (s_runtimeCaptureEnabled && nowTicks >= s_runtimeCaptureEndTicks)
                     completedRuntimeCapture = CompleteRuntimeCaptureStateNoLock();
@@ -516,7 +530,7 @@ public static partial class Engine
                 RunLabel: runLabel,
                 WorldMode: Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.WorldMode) ?? string.Empty,
                 ForcedStrategy: Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.ForceMeshSubmissionStrategy) ?? string.Empty,
-                EffectiveStrategy: CaptureString(() => RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy().ToString()),
+                EffectiveStrategy: CaptureString(() => RuntimeEngine.Rendering.LastResolvedMeshSubmissionStrategy.ToString()),
                 ZeroReadbackMaterialDrawPath: CaptureString(() => Engine.EffectiveSettings.ZeroReadbackMaterialDrawPath.ToString()),
                 ZeroReadbackMaterialDrawPathEnv: Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.ZeroReadbackMaterialDrawPath) ?? string.Empty,
                 Backend: CaptureString(() => RuntimeEngine.Rendering.Stats.RendererState.ActiveRenderBackend),
@@ -580,12 +594,14 @@ public static partial class Engine
                 XrRuntime: CaptureString(() => RuntimeEngine.VRState.ActiveRuntime.ToString()),
                 XrRuntimeManifest: Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.XrRuntimeJson) ?? string.Empty,
                 ActiveRenderFeatures: activeRenderFeatures,
+                VulkanGpuDrivenProfile: CaptureString(() => Engine.EffectiveSettings.VulkanGpuDrivenProfile.ToString()),
                 GpuClockPolicy: Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.GpuClockPolicy) ?? string.Empty,
                 TargetRefreshHz: targetRefreshHz,
                 XrFrameBudgetMs: xrFrameBudgetMs,
                 BenchmarkPhase: Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.ProfilePhase) ?? string.Empty,
                 WarmupSeconds: TryParsePositiveDouble(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.ProfileWarmupSeconds)),
                 CaptureSeconds: TryParsePositiveDouble(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.ProfileCaptureSeconds)),
+                SampleIntervalFrames: GetSampleIntervalFramesNoLock(),
                 BenchmarkEnvironmentValid: string.IsNullOrWhiteSpace(benchmarkErrors),
                 BenchmarkEnvironmentErrors: benchmarkErrors,
                 GpuTimestampDenseMode: IsEnvFlagEnabled(XREngineEnvironmentVariables.GpuTimestampDense),
@@ -612,9 +628,11 @@ public static partial class Engine
             var manifest = new
             {
                 capture_file = FrameStatsFileName,
-                schema = "xrengine.profile_capture.render_stats.v5",
+                schema = "xrengine.profile_capture.render_stats.v7",
                 schema_version = ProfileCaptureSchemaVersion,
-                fields_note = "One JSON object per completed render frame. CPU frame timings are wall-clock thread loop durations; GPU pipeline timings are backend timestamp-query snapshots when ready.",
+                fields_note = metadata.SampleIntervalFrames == 1
+                    ? "One JSON object per completed render frame. CPU frame timings are wall-clock thread loop durations; GPU pipeline timings are backend timestamp-query snapshots when ready."
+                    : $"One JSON object for the first completed render frame and then every {metadata.SampleIntervalFrames} completed render frames. CPU frame timings are wall-clock thread loop durations; GPU pipeline timings are backend timestamp-query snapshots when ready.",
                 run = metadata,
             };
 
@@ -653,7 +671,14 @@ public static partial class Engine
             AppendStringField(s_lineBuilder, "run_label", metadata.RunLabel, ref first);
             AppendStringField(s_lineBuilder, "world_mode", metadata.WorldMode, ref first);
             AppendStringField(s_lineBuilder, "forced_strategy", metadata.ForcedStrategy, ref first);
-            AppendStringField(s_lineBuilder, "effective_strategy", metadata.EffectiveStrategy, ref first);
+            AppendStringField(s_lineBuilder, "requested_strategy", RuntimeEngine.Rendering.ResolveRequestedMeshSubmissionStrategy().ToString(), ref first);
+            AppendStringField(s_lineBuilder, "effective_strategy", RuntimeEngine.Rendering.LastResolvedMeshSubmissionStrategy.ToString(), ref first);
+            AppendStringField(s_lineBuilder, "meshlet_renderer_backend", RuntimeEngine.Rendering.LastResolvedRendererBackend.ToString(), ref first);
+            AppendStringField(s_lineBuilder, "meshlet_shader_dialect", RuntimeEngine.Rendering.LastResolvedMeshShaderDialect.ToString(), ref first);
+            AppendBoolField(s_lineBuilder, "meshlet_renderer_dispatch_ready", RuntimeEngine.Rendering.LastResolvedSupportsMeshletDispatch, ref first);
+            AppendStringField(s_lineBuilder, "meshlet_downgrade_requested", RuntimeEngine.Rendering.LastMeshletDowngradeRequested?.ToString() ?? string.Empty, ref first);
+            AppendStringField(s_lineBuilder, "meshlet_downgrade_resolved", RuntimeEngine.Rendering.LastMeshletDowngradeResolved?.ToString() ?? string.Empty, ref first);
+            AppendStringField(s_lineBuilder, "meshlet_downgrade_reason", RuntimeEngine.Rendering.LastMeshletDowngradeReason ?? string.Empty, ref first);
             AppendStringField(s_lineBuilder, "zero_readback_material_draw_path", metadata.ZeroReadbackMaterialDrawPath, ref first);
             AppendStringField(s_lineBuilder, "zero_readback_material_draw_path_env", metadata.ZeroReadbackMaterialDrawPathEnv, ref first);
             AppendStringField(s_lineBuilder, "p3_logging", metadata.P3Logging, ref first);
@@ -1001,6 +1026,40 @@ public static partial class Engine
             AppendNumberField(s_lineBuilder, "gpu_meshlet_cache_hits", RuntimeEngine.Rendering.Stats.GpuMeshlets.GpuMeshletCacheHits, ref first);
             AppendNumberField(s_lineBuilder, "gpu_meshlet_cache_misses", RuntimeEngine.Rendering.Stats.GpuMeshlets.GpuMeshletCacheMisses, ref first);
             AppendNumberField(s_lineBuilder, "gpu_meshlet_cache_stale", RuntimeEngine.Rendering.Stats.GpuMeshlets.GpuMeshletCacheStale, ref first);
+            // Lifetime meshlet cook evidence is deliberately emitted alongside every
+            // sample: cold import completes before the steady-state capture window.
+            AppendNumberField(s_lineBuilder, "meshlet_cold_import_builder_calls", RuntimeEngine.Rendering.Stats.GpuMeshlets.ColdImportBuilderCalls, ref first);
+            AppendNumberField(s_lineBuilder, "meshlet_cold_import_build_ms", RuntimeEngine.Rendering.Stats.GpuMeshlets.ColdImportBuildTime.TotalMilliseconds, ref first);
+            AppendNumberField(s_lineBuilder, "meshlet_cold_import_allocated_bytes", RuntimeEngine.Rendering.Stats.GpuMeshlets.ColdImportAllocatedBytes, ref first);
+            AppendNumberField(s_lineBuilder, "meshlet_generated_lod_count", RuntimeEngine.Rendering.Stats.GpuMeshlets.GeneratedLodCount, ref first);
+            AppendNumberField(s_lineBuilder, "meshlet_cooked_payload_count", RuntimeEngine.Rendering.Stats.GpuMeshlets.CookedPayloadCount, ref first);
+            AppendNumberField(s_lineBuilder, "meshlet_cooked_meshlet_count", RuntimeEngine.Rendering.Stats.GpuMeshlets.CookedMeshletCount, ref first);
+            AppendNumberField(s_lineBuilder, "meshlet_source_parser_calls", RuntimeEngine.Rendering.Stats.GpuMeshlets.SourceParserCalls, ref first);
+            AppendNumberField(s_lineBuilder, "meshlet_warm_payload_hydrations", RuntimeEngine.Rendering.Stats.GpuMeshlets.WarmPayloadHydrations, ref first);
+            AppendNumberField(s_lineBuilder, "meshlet_render_path_source_hash_calls", RuntimeEngine.Rendering.Stats.GpuMeshlets.RenderPathSourceHashCalls, ref first);
+            AppendNumberField(s_lineBuilder, "meshlet_render_path_disk_calls", RuntimeEngine.Rendering.Stats.GpuMeshlets.RenderPathDiskCalls, ref first);
+            AppendNumberField(s_lineBuilder, "meshlet_render_path_cooker_calls", RuntimeEngine.Rendering.Stats.GpuMeshlets.RenderPathCookerCalls, ref first);
+            AppendStringField(s_lineBuilder, "meshlet_requested_submission", RuntimeEngine.Rendering.Stats.GpuMeshlets.RequestedSubmission, ref first);
+            AppendStringField(s_lineBuilder, "meshlet_primitive_preference", RuntimeEngine.Rendering.Stats.GpuMeshlets.PrimitivePreference, ref first);
+            AppendStringField(s_lineBuilder, "meshlet_resolved_pass", RuntimeEngine.Rendering.Stats.GpuMeshlets.ResolvedPass, ref first);
+            AppendStringField(s_lineBuilder, "meshlet_resolved_route", RuntimeEngine.Rendering.Stats.GpuMeshlets.ResolvedRoute, ref first);
+            AppendStringField(s_lineBuilder, "meshlet_primary_route_reason", RuntimeEngine.Rendering.Stats.GpuMeshlets.PrimaryRouteReason, ref first);
+            AppendStringField(s_lineBuilder, "meshlet_last_post_seal_failure_pass", RuntimeEngine.Rendering.Stats.GpuMeshlets.LastPostSealFailurePass, ref first);
+            AppendStringField(s_lineBuilder, "meshlet_last_post_seal_failure_reason", RuntimeEngine.Rendering.Stats.GpuMeshlets.LastPostSealFailureReason, ref first);
+            AppendStringField(s_lineBuilder, "meshlet_eligible_pass_pre_seal_reason", RuntimeEngine.Rendering.Stats.GpuMeshlets.EligiblePassPreSealReason, ref first);
+            AppendNumberField(s_lineBuilder, "meshlet_resolved_meshlet_rows", RuntimeEngine.Rendering.Stats.GpuMeshlets.ResolvedMeshletRows, ref first);
+            AppendNumberField(s_lineBuilder, "meshlet_resolved_task_groups", RuntimeEngine.Rendering.Stats.GpuMeshlets.ResolvedTaskGroups, ref first);
+            AppendNumberField(s_lineBuilder, "meshlet_buffer_live_bytes", RuntimeEngine.Rendering.Stats.GpuMeshlets.BufferLiveBytes, ref first);
+            AppendNumberField(s_lineBuilder, "meshlet_buffer_retired_bytes", RuntimeEngine.Rendering.Stats.GpuMeshlets.BufferRetiredBytes, ref first);
+            AppendNumberField(s_lineBuilder, "meshlet_buffer_rebuild_count", RuntimeEngine.Rendering.Stats.GpuMeshlets.BufferRebuildCount, ref first);
+            AppendNumberField(s_lineBuilder, "meshlet_buffer_retire_count", RuntimeEngine.Rendering.Stats.GpuMeshlets.BufferRetireCount, ref first);
+            AppendNumberField(s_lineBuilder, "meshlet_dispatch_calls", RuntimeEngine.Rendering.Stats.GpuMeshlets.DispatchCallCount, ref first);
+            AppendNumberField(s_lineBuilder, "meshlet_dispatch_groups", RuntimeEngine.Rendering.Stats.GpuMeshlets.DispatchGroupCount, ref first);
+            AppendNumberField(s_lineBuilder, "gpu_meshlet_delayed_dispatch_group_count", RuntimeEngine.Rendering.Stats.GpuMeshlets.DelayedDispatchGroupCount, ref first);
+            AppendNumberField(s_lineBuilder, "gpu_meshlet_diagnostic_readback_bytes", RuntimeEngine.Rendering.Stats.GpuMeshlets.DiagnosticReadbackBytes, ref first);
+            AppendNumberField(s_lineBuilder, "meshlet_mapped_bytes", RuntimeEngine.Rendering.Stats.GpuMeshlets.MappedBytes, ref first);
+            AppendStringField(s_lineBuilder, "meshlet_vulkan_capability_ladder", RuntimeEngine.Rendering.Stats.GpuMeshlets.VulkanCapabilityLadder, ref first);
+            AppendStringField(s_lineBuilder, "meshlet_vulkan_capability_failed_rung", RuntimeEngine.Rendering.Stats.GpuMeshlets.VulkanCapabilityFailedRung, ref first);
             AppendNumberField(s_lineBuilder, "fbo_bind_count", RuntimeEngine.Rendering.Stats.Vram.FBOBindCount, ref first);
             AppendNumberField(s_lineBuilder, "fbo_bandwidth_bytes", RuntimeEngine.Rendering.Stats.Vram.FBOBandwidthBytes, ref first);
             AppendNumberField(s_lineBuilder, "allocated_vram_bytes", RuntimeEngine.Rendering.Stats.Vram.AllocatedVRAMBytes, ref first);
@@ -1017,23 +1076,44 @@ public static partial class Engine
             AppendNumberField(s_lineBuilder, "vulkan_requested_draws", RuntimeEngine.Rendering.Stats.Vulkan.VulkanRequestedDraws, ref first);
             AppendNumberField(s_lineBuilder, "vulkan_consumed_draws", RuntimeEngine.Rendering.Stats.Vulkan.VulkanConsumedDraws, ref first);
             AppendNumberField(s_lineBuilder, "vulkan_oom_fallback_count", RuntimeEngine.Rendering.Stats.Vulkan.VulkanOomFallbackCount, ref first);
-            AppendNumberField(s_lineBuilder, "vulkan_frame_total_ms", RuntimeEngine.Rendering.Stats.Vulkan.VulkanFrameTotalMs, ref first);
+            VulkanFrameTelemetryPublication vulkanFrame = RuntimeEngine.Rendering.Stats.Vulkan.LatestVulkanFrameTelemetry;
+            AppendNumberField(s_lineBuilder, "vulkan_frame_authority_id", vulkanFrame.AuthorityId, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_frame_publication_sequence", vulkanFrame.PublicationSequence, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_frame_engine_frame_number", vulkanFrame.Identity.EngineFrameNumber, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_frame_render_frame_number", vulkanFrame.Identity.RenderFrameNumber, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_frame_slot", vulkanFrame.Identity.FrameSlot, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_frame_output_index", vulkanFrame.Identity.Output.OutputIndex, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_frame_output_generation", vulkanFrame.Identity.Output.OutputGeneration, ref first);
+            AppendStringField(s_lineBuilder, "vulkan_frame_outcome", vulkanFrame.Outcome.ToString(), ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_frame_total_ms", vulkanFrame.TotalElapsed.TotalMilliseconds, ref first);
             AppendNumberField(s_lineBuilder, "vulkan_frame_gpu_command_buffer_ms", RuntimeEngine.Rendering.Stats.Vulkan.VulkanFrameGpuCommandBufferMs, ref first);
-            AppendNumberField(s_lineBuilder, "vulkan_frame_wait_fence_ms", RuntimeEngine.Rendering.Stats.Vulkan.VulkanFrameWaitFenceMs, ref first);
-            AppendNumberField(s_lineBuilder, "vulkan_frame_sample_timing_queries_ms", RuntimeEngine.Rendering.Stats.Vulkan.VulkanFrameSampleTimingQueriesMs, ref first);
-            AppendNumberField(s_lineBuilder, "vulkan_frame_drain_retired_resources_ms", RuntimeEngine.Rendering.Stats.Vulkan.VulkanFrameDrainRetiredResourcesMs, ref first);
-            AppendNumberField(s_lineBuilder, "vulkan_frame_acquire_image_ms", RuntimeEngine.Rendering.Stats.Vulkan.VulkanFrameAcquireImageMs, ref first);
-            AppendNumberField(s_lineBuilder, "vulkan_frame_acquire_bridge_submit_ms", RuntimeEngine.Rendering.Stats.Vulkan.VulkanFrameAcquireBridgeSubmitMs, ref first);
-            AppendNumberField(s_lineBuilder, "vulkan_frame_wait_swapchain_image_ms", RuntimeEngine.Rendering.Stats.Vulkan.VulkanFrameWaitSwapchainImageMs, ref first);
-            AppendNumberField(s_lineBuilder, "vulkan_frame_reset_dynamic_uniform_ring_ms", RuntimeEngine.Rendering.Stats.Vulkan.VulkanFrameResetDynamicUniformRingMs, ref first);
-            AppendNumberField(s_lineBuilder, "vulkan_frame_record_command_buffer_ms", RuntimeEngine.Rendering.Stats.Vulkan.VulkanFrameRecordCommandBufferMs, ref first);
-            AppendNumberField(s_lineBuilder, "vulkan_frame_snapshot_imgui_overlay_ms", RuntimeEngine.Rendering.Stats.Vulkan.VulkanFrameSnapshotImGuiOverlayMs, ref first);
-            AppendNumberField(s_lineBuilder, "vulkan_frame_record_scene_command_buffer_ms", RuntimeEngine.Rendering.Stats.Vulkan.VulkanFrameRecordSceneCommandBufferMs, ref first);
-            AppendNumberField(s_lineBuilder, "vulkan_frame_record_imgui_overlay_ms", RuntimeEngine.Rendering.Stats.Vulkan.VulkanFrameRecordImGuiOverlayMs, ref first);
-            AppendNumberField(s_lineBuilder, "vulkan_frame_record_dynamic_ui_text_overlay_ms", RuntimeEngine.Rendering.Stats.Vulkan.VulkanFrameRecordDynamicUiTextOverlayMs, ref first);
-            AppendNumberField(s_lineBuilder, "vulkan_frame_submit_ms", RuntimeEngine.Rendering.Stats.Vulkan.VulkanFrameSubmitMs, ref first);
-            AppendNumberField(s_lineBuilder, "vulkan_frame_trim_ms", RuntimeEngine.Rendering.Stats.Vulkan.VulkanFrameTrimMs, ref first);
-            AppendNumberField(s_lineBuilder, "vulkan_frame_present_ms", RuntimeEngine.Rendering.Stats.Vulkan.VulkanFramePresentMs, ref first);
+            AppendVulkanFrameStageFields(s_lineBuilder, "frame_pacing", vulkanFrame.FramePacing, ref first);
+            AppendVulkanFrameStageFields(s_lineBuilder, "snapshot_handoff", vulkanFrame.SnapshotHandoff, ref first);
+            AppendVulkanFrameStageFields(s_lineBuilder, "completion_maintenance", vulkanFrame.CompletionMaintenance, ref first);
+            AppendVulkanFrameStageFields(s_lineBuilder, "output_acquire", vulkanFrame.OutputAcquire, ref first);
+            AppendVulkanFrameStageFields(s_lineBuilder, "plan_build", vulkanFrame.PlanBuild, ref first);
+            AppendVulkanFrameStageFields(s_lineBuilder, "resource_prepare", vulkanFrame.ResourcePrepare, ref first);
+            AppendVulkanFrameStageFields(s_lineBuilder, "work_schedule", vulkanFrame.WorkSchedule, ref first);
+            AppendVulkanFrameStageFields(s_lineBuilder, "command_record", vulkanFrame.CommandRecord, ref first);
+            AppendVulkanFrameStageFields(s_lineBuilder, "submit_prepare", vulkanFrame.SubmitPrepare, ref first);
+            AppendVulkanFrameStageFields(s_lineBuilder, "queue_submit", vulkanFrame.QueueSubmit, ref first);
+            AppendVulkanFrameStageFields(s_lineBuilder, "output_complete", vulkanFrame.OutputComplete, ref first);
+            AppendVulkanFrameStageFields(s_lineBuilder, "frame_settlement", vulkanFrame.FrameSettlement, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_frame_wait_fence_ms", vulkanFrame.Detail.WaitFrameSlot.TotalMilliseconds, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_frame_sample_timing_queries_ms", vulkanFrame.Detail.SampleTimingQueries.TotalMilliseconds, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_frame_drain_retired_resources_ms", vulkanFrame.Detail.DrainRetiredResources.TotalMilliseconds, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_frame_acquire_image_ms", vulkanFrame.Detail.AcquireImage.TotalMilliseconds, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_frame_acquire_bridge_submit_ms", vulkanFrame.Detail.AcquireBridgeSubmit.TotalMilliseconds, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_frame_wait_swapchain_image_ms", vulkanFrame.Detail.WaitSwapchainImage.TotalMilliseconds, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_frame_reset_dynamic_uniform_ring_ms", vulkanFrame.Detail.ResetDynamicUniformRing.TotalMilliseconds, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_frame_record_command_buffer_ms", vulkanFrame.Detail.RecordCommandBuffer.TotalMilliseconds, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_frame_snapshot_imgui_overlay_ms", vulkanFrame.Detail.SnapshotImGuiOverlay.TotalMilliseconds, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_frame_record_scene_command_buffer_ms", vulkanFrame.Detail.RecordSceneCommandBuffer.TotalMilliseconds, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_frame_record_imgui_overlay_ms", vulkanFrame.Detail.RecordImGuiOverlay.TotalMilliseconds, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_frame_record_dynamic_ui_text_overlay_ms", vulkanFrame.Detail.RecordDynamicUiTextOverlay.TotalMilliseconds, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_frame_submit_ms", vulkanFrame.Detail.SubmitQueue.TotalMilliseconds, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_frame_trim_ms", vulkanFrame.Detail.TrimStaging.TotalMilliseconds, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_frame_present_ms", vulkanFrame.Detail.PresentQueue.TotalMilliseconds, ref first);
             AppendNumberField(s_lineBuilder, "vulkan_frame_op_total_count", RuntimeEngine.Rendering.Stats.Vulkan.VulkanFrameOpTotalCount, ref first);
             AppendNumberField(s_lineBuilder, "vulkan_frame_op_clear_count", RuntimeEngine.Rendering.Stats.Vulkan.VulkanFrameOpClearCount, ref first);
             AppendNumberField(s_lineBuilder, "vulkan_frame_op_mesh_draw_count", RuntimeEngine.Rendering.Stats.Vulkan.VulkanFrameOpMeshDrawCount, ref first);
@@ -1189,6 +1269,11 @@ public static partial class Engine
             AppendNumberField(s_lineBuilder, "vulkan_unique_visible_materials", RuntimeEngine.Rendering.Stats.Vulkan.VulkanUniqueVisibleMaterials, ref first);
             AppendNumberField(s_lineBuilder, "vulkan_prepared_mesh_draws", RuntimeEngine.Rendering.Stats.Vulkan.VulkanPreparedMeshDraws, ref first);
             AppendNumberField(s_lineBuilder, "vulkan_recorded_command_artifact_retirements", RuntimeEngine.Rendering.Stats.Vulkan.VulkanRecordedCommandArtifactRetirements, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_prepared_mesh_operation_cohort_hits", RuntimeEngine.Rendering.Stats.Vulkan.VulkanPreparedMeshOperationCohortHits, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_prepared_mesh_operation_cohort_builds", RuntimeEngine.Rendering.Stats.Vulkan.VulkanPreparedMeshOperationCohortBuilds, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_prepared_mesh_operation_full_materializations", RuntimeEngine.Rendering.Stats.Vulkan.VulkanPreparedMeshOperationFullMaterializations, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_prepared_mesh_operation_reuses", RuntimeEngine.Rendering.Stats.Vulkan.VulkanPreparedMeshOperationReuses, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_prepared_mesh_operation_legacy_hole_materializations", RuntimeEngine.Rendering.Stats.Vulkan.VulkanPreparedMeshOperationLegacyHoleMaterializations, ref first);
             AppendVulkanCpuStageFields(s_lineBuilder, "frame_op_preparation", EVulkanCpuStage.FrameOpPreparation, ref first);
             AppendVulkanCpuStageFields(s_lineBuilder, "resource_planning", EVulkanCpuStage.ResourcePlanning, ref first);
             AppendVulkanCpuStageFields(s_lineBuilder, "frame_data_refresh", EVulkanCpuStage.FrameDataRefresh, ref first);
@@ -1210,6 +1295,20 @@ public static partial class Engine
             AppendVulkanCpuStageFields(s_lineBuilder, "command_chain_fast_signature", EVulkanCpuStage.CommandChainFastSignature, ref first);
             AppendVulkanCpuStageFields(s_lineBuilder, "command_chain_packet_lowering", EVulkanCpuStage.CommandChainPacketLowering, ref first);
             AppendVulkanCpuStageFields(s_lineBuilder, "command_chain_schedule_evaluation", EVulkanCpuStage.CommandChainScheduleEvaluation, ref first);
+            AppendVulkanCpuStageFields(s_lineBuilder, "command_chain_compatibility_scan", EVulkanCpuStage.CommandChainCompatibilityScan, ref first);
+            AppendVulkanCpuStageFields(s_lineBuilder, "command_chain_capacity_planning", EVulkanCpuStage.CommandChainCapacityPlanning, ref first);
+            AppendVulkanCpuStageFields(s_lineBuilder, "command_chain_dependency_aggregation", EVulkanCpuStage.CommandChainDependencyAggregation, ref first);
+            AppendVulkanCpuStageFields(s_lineBuilder, "command_chain_recorded_key_capture", EVulkanCpuStage.CommandChainRecordedKeyCapture, ref first);
+            AppendVulkanCpuStageFields(s_lineBuilder, "scheduled_secondary_run", EVulkanCpuStage.ScheduledSecondaryRun, ref first);
+            AppendVulkanCpuStageFields(s_lineBuilder, "scheduled_secondary_preflight", EVulkanCpuStage.ScheduledSecondaryPreflight, ref first);
+            AppendVulkanCpuStageFields(s_lineBuilder, "scheduled_secondary_classification", EVulkanCpuStage.ScheduledSecondaryClassification, ref first);
+            AppendVulkanCpuStageFields(s_lineBuilder, "primary_encoding_setup", EVulkanCpuStage.PrimaryEncodingSetup, ref first);
+            AppendVulkanCpuStageFields(s_lineBuilder, "primary_operation_loop", EVulkanCpuStage.PrimaryOperationLoop, ref first);
+            AppendVulkanCpuStageFields(s_lineBuilder, "primary_operation_preparation", EVulkanCpuStage.PrimaryOperationPreparation, ref first);
+            AppendVulkanCpuStageFields(s_lineBuilder, "primary_mesh_operation", EVulkanCpuStage.PrimaryMeshOperation, ref first);
+            AppendVulkanCpuStageFields(s_lineBuilder, "primary_non_mesh_operation", EVulkanCpuStage.PrimaryNonMeshOperation, ref first);
+            AppendVulkanCpuStageFields(s_lineBuilder, "primary_finalization", EVulkanCpuStage.PrimaryFinalization, ref first);
+            AppendVulkanCpuStageFields(s_lineBuilder, "primary_end_command_buffer", EVulkanCpuStage.PrimaryEndCommandBuffer, ref first);
             AppendVulkanCpuStageFields(s_lineBuilder, "primary_frame_data_manifest", EVulkanCpuStage.PrimaryFrameDataManifest, ref first);
             AppendVulkanCpuStageFields(s_lineBuilder, "primary_prewarm", EVulkanCpuStage.PrimaryPrewarm, ref first);
             AppendVulkanCpuStageFields(s_lineBuilder, "primary_command_encoding", EVulkanCpuStage.PrimaryCommandEncoding, ref first);
@@ -1219,9 +1318,13 @@ public static partial class Engine
             AppendVulkanCpuStageFields(s_lineBuilder, "command_dirty_propagation", EVulkanCpuStage.CommandDirtyPropagation, ref first);
             AppendVulkanCpuStageFields(s_lineBuilder, "command_cache_scanning", EVulkanCpuStage.CommandCacheScanning, ref first);
             AppendVulkanCpuStageFields(s_lineBuilder, "frame_op_drain", EVulkanCpuStage.FrameOpDrain, ref first);
+            AppendVulkanCpuStageFields(s_lineBuilder, "raw_mesh_request_drain", EVulkanCpuStage.RawMeshRequestDrain, ref first);
             AppendVulkanCpuStageFields(s_lineBuilder, "frame_op_scheduling", EVulkanCpuStage.FrameOpScheduling, ref first);
             AppendVulkanCpuStageFields(s_lineBuilder, "frame_op_sort", EVulkanCpuStage.FrameOpSort, ref first);
             AppendVulkanCpuStageFields(s_lineBuilder, "frame_op_cohort", EVulkanCpuStage.FrameOpCohort, ref first);
+            AppendVulkanCpuStageFields(s_lineBuilder, "prepared_mesh_binding_validation", EVulkanCpuStage.PreparedMeshBindingValidation, ref first);
+            AppendVulkanCpuStageFields(s_lineBuilder, "prepared_mesh_hole_materialization", EVulkanCpuStage.PreparedMeshHoleMaterialization, ref first);
+            AppendVulkanCpuStageFields(s_lineBuilder, "frame_op_resource_use_lowering", EVulkanCpuStage.FrameOpResourceUseLowering, ref first);
             AppendVulkanCpuStageFields(s_lineBuilder, "frame_op_split", EVulkanCpuStage.FrameOpSplit, ref first);
             AppendVulkanCpuStageFields(s_lineBuilder, "frame_op_signature", EVulkanCpuStage.FrameOpSignature, ref first);
             AppendVulkanCpuStageFields(s_lineBuilder, "frame_op_plan", EVulkanCpuStage.FrameOpPlan, ref first);
@@ -1239,6 +1342,7 @@ public static partial class Engine
             AppendVulkanCpuStageFields(s_lineBuilder, "frame_data_auto_uniform_upload", EVulkanCpuStage.FrameDataAutoUniformUpload, ref first);
             AppendVulkanCpuStageFields(s_lineBuilder, "queue_lock_acquisition", EVulkanCpuStage.QueueLockAcquisition, ref first);
             AppendVulkanCpuStageFields(s_lineBuilder, "auxiliary_fence_wait", EVulkanCpuStage.AuxiliaryFenceWait, ref first);
+            AppendVulkanCpuStageFields(s_lineBuilder, "worker_wait", EVulkanCpuStage.WorkerWait, ref first);
             AppendVulkanCpuStageFields(s_lineBuilder, "context_pass_transitions", EVulkanCpuStage.ContextPassTransitions, ref first);
             AppendVulkanCpuStageFields(s_lineBuilder, "barrier_planning_emission", EVulkanCpuStage.BarrierPlanningEmission, ref first);
             AppendVulkanCpuStageFields(s_lineBuilder, "op_dispatch", EVulkanCpuStage.OpDispatch, ref first);
@@ -1381,6 +1485,8 @@ public static partial class Engine
             s_startTicks = 0L;
             s_lastFlushTicks = 0L;
             s_sampleCount = 0;
+            s_snapshotCount = 0;
+            s_sampleIntervalFrames = 0;
             s_manifestWritten = false;
             s_metadata = null;
             s_sampleBuffer.Clear();
@@ -1393,6 +1499,18 @@ public static partial class Engine
             => string.IsNullOrWhiteSpace(s_outputDirectory)
                 ? Debug.EnsureLogRunDirectory()
                 : s_outputDirectory!;
+
+        private static int GetSampleIntervalFramesNoLock()
+        {
+            if (s_sampleIntervalFrames > 0)
+                return s_sampleIntervalFrames;
+
+            string? value = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.ProfileSampleIntervalFrames);
+            s_sampleIntervalFrames = int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out int intervalFrames)
+                ? Math.Clamp(intervalFrames, 1, 10_000)
+                : 1;
+            return s_sampleIntervalFrames;
+        }
 
         private static bool TryCreateRuntimeCaptureDirectory(string label, out string outputDirectory, out string? error)
         {
@@ -1631,14 +1749,29 @@ public static partial class Engine
             EVulkanCpuStage stage,
             ref bool first)
         {
-            AppendNumberField(builder, $"vulkan_cpu_{name}_ms", RuntimeEngine.Rendering.Stats.Vulkan.VulkanCpuStageMs(stage), ref first);
-            AppendNumberField(builder, $"vulkan_cpu_{name}_allocated_bytes", RuntimeEngine.Rendering.Stats.Vulkan.VulkanCpuStageAllocatedBytes(stage), ref first);
-            AppendNumberField(builder, $"vulkan_cpu_{name}_allocation_high_water_bytes", RuntimeEngine.Rendering.Stats.Vulkan.VulkanCpuStageAllocationHighWaterBytes(stage), ref first);
-            AppendNumberField(builder, $"vulkan_cpu_{name}_boundary_allocated_bytes", RuntimeEngine.Rendering.Stats.Vulkan.VulkanCpuStageBoundaryAllocatedBytes(stage), ref first);
-            AppendNumberField(builder, $"vulkan_cpu_{name}_boundary_allocation_high_water_bytes", RuntimeEngine.Rendering.Stats.Vulkan.VulkanCpuStageBoundaryAllocationHighWaterBytes(stage), ref first);
-            AppendNumberField(builder, $"vulkan_cpu_{name}_process_invocation_count", RuntimeEngine.Rendering.Stats.Vulkan.VulkanCpuStageInvocationCount(stage), ref first);
-            AppendNumberField(builder, $"vulkan_cpu_{name}_process_elapsed_ms", RuntimeEngine.Rendering.Stats.Vulkan.VulkanCpuStageCumulativeMs(stage), ref first);
-            AppendNumberField(builder, $"vulkan_cpu_{name}_process_peak_ms", RuntimeEngine.Rendering.Stats.Vulkan.VulkanCpuStagePeakMs(stage), ref first);
+            VulkanCpuStageTelemetry telemetry = RuntimeEngine.Rendering.Stats.Vulkan.GetVulkanCpuStageTelemetry(stage);
+            AppendNumberField(builder, $"vulkan_cpu_{name}_ms", telemetry.Elapsed.TotalMilliseconds, ref first);
+            AppendNumberField(builder, $"vulkan_cpu_{name}_allocated_bytes", telemetry.AllocatedBytes, ref first);
+            AppendNumberField(builder, $"vulkan_cpu_{name}_allocation_high_water_bytes", telemetry.AllocationHighWaterBytes, ref first);
+            AppendNumberField(builder, $"vulkan_cpu_{name}_boundary_allocated_bytes", telemetry.BoundaryAllocatedBytes, ref first);
+            AppendNumberField(builder, $"vulkan_cpu_{name}_boundary_allocation_high_water_bytes", telemetry.BoundaryAllocationHighWaterBytes, ref first);
+            AppendNumberField(builder, $"vulkan_cpu_{name}_process_invocation_count", telemetry.InvocationCount, ref first);
+            AppendNumberField(builder, $"vulkan_cpu_{name}_process_elapsed_ms", telemetry.CumulativeElapsed.TotalMilliseconds, ref first);
+            AppendNumberField(builder, $"vulkan_cpu_{name}_process_peak_ms", telemetry.PeakElapsed.TotalMilliseconds, ref first);
+        }
+
+        private static void AppendVulkanFrameStageFields(
+            StringBuilder builder,
+            string name,
+            VulkanFrameStageTiming stage,
+            ref bool first)
+        {
+            string prefix = $"vulkan_frame_stage_{name}";
+            AppendNumberField(builder, $"{prefix}_ms", stage.Elapsed.TotalMilliseconds, ref first);
+            AppendNumberField(builder, $"{prefix}_interval_count", stage.IntervalCount, ref first);
+            AppendStringField(builder, $"{prefix}_interval_class", stage.IntervalClass.ToString(), ref first);
+            AppendStringField(builder, $"{prefix}_outcome", stage.Outcome.ToString(), ref first);
+            AppendStringField(builder, $"{prefix}_wait_reason", stage.WaitReason.ToString(), ref first);
         }
 
         private static void AppendVulkanSecondaryRecordingFields(
@@ -2355,7 +2488,7 @@ public static partial class Engine
                 "renderTargetEnv=" + renderTargetModeEnv,
                 "renderTargetSetting=" + renderTargetModeSetting,
                 "renderScale=" + CaptureString(() => RuntimeEngine.Rendering.Settings.TsrRenderScale.ToString(CultureInfo.InvariantCulture)),
-                "strategy=" + CaptureString(() => RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy().ToString()),
+                "strategy=" + CaptureString(() => RuntimeEngine.Rendering.LastResolvedMeshSubmissionStrategy.ToString()),
                 "vrMode=" + CaptureString(() => RuntimeEngine.Rendering.Settings.VrViewRenderMode.ToString()),
                 "foveation=" + CaptureString(() => RuntimeEngine.Rendering.Settings.VrFoveationMode.ToString()),
                 "mirror=" + CaptureString(() => RuntimeEngine.Rendering.Settings.VrMirrorMode.ToString()),
@@ -2519,12 +2652,14 @@ public static partial class Engine
             string XrRuntime,
             string XrRuntimeManifest,
             ActiveRenderFeaturesMetadata ActiveRenderFeatures,
+            string VulkanGpuDrivenProfile,
             string GpuClockPolicy,
             double? TargetRefreshHz,
             double? XrFrameBudgetMs,
             string BenchmarkPhase,
             double? WarmupSeconds,
             double? CaptureSeconds,
+            int SampleIntervalFrames,
             bool BenchmarkEnvironmentValid,
             string BenchmarkEnvironmentErrors,
             bool GpuTimestampDenseMode,

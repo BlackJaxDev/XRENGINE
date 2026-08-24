@@ -1,6 +1,7 @@
 using XREngine;
 using XREngine.Data;
 using XREngine.Data.Rendering;
+using XREngine.Data.Vectors;
 using XREngine.Rendering;
 using XREngine.Rendering.Models.Materials;
 
@@ -187,13 +188,9 @@ namespace XREngine.Rendering.Commands
             _lodSelectComputeShader = CreateDeferredComputeProgram("Compute/Indirect/GPURenderLODSelect.comp", "GPURenderLODSelect");
             //RadixIndexSortComputeShader = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/Sorting/GPURenderRadixIndexSort.comp", EShaderType.Compute));
             _indirectRenderTaskShader = CreateDeferredComputeProgram("Compute/Indirect/GPURenderIndirect.comp", "GPURenderIndirect");
-            _buildHotCommandsProgram = CreateDeferredComputeProgram("Compute/Indirect/GPURenderBuildHotCommands.comp", "GPURenderBuildHotCommands");
             _resetCountersComputeShader = CreateDeferredComputeProgram("Compute/Indirect/GPURenderResetCounters.comp", "GPURenderResetCounters");
             _expandMeshletsComputeShader = CreateDeferredComputeProgram("Compute/Indirect/GPURenderExpandMeshlets.comp", "GPURenderExpandMeshlets");
             _clearUIntsComputeShader = CreateDeferredComputeProgram("Compute/Indirect/GPURenderClearUInts.comp", "GPURenderClearUInts");
-            _extractSoAComputeShader = CreateDeferredComputeProgram("Compute/Culling/GPURenderExtractSoA.comp", "GPURenderExtractSoA");
-            _soACullingComputeShader = CreateDeferredComputeProgram("Compute/Culling/GPURenderCullingSoA.comp", "GPURenderCullingSoA");
-            //HiZSoACullingComputeShader = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/Culling/GPURenderHiZSoACulling.comp", EShaderType.Compute));
             //_gatherProgram = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/Debug/GPURenderGather.comp", EShaderType.Compute));
             _copyCommandsProgram = CreateDeferredComputeProgram("Compute/Indirect/GPURenderCopyCommands.comp", "GPURenderCopyCommands");
             _bvhFrustumCullProgram = CreateDeferredComputeProgram("Scene3D/RenderPipeline/bvh_frustum_cull.comp", "BvhFrustumCull");
@@ -214,12 +211,9 @@ namespace XREngine.Rendering.Commands
                 _classifyTransparencyComputeShader,
                 _lodSelectComputeShader,
                 _indirectRenderTaskShader,
-                _buildHotCommandsProgram,
                 _resetCountersComputeShader,
                 _expandMeshletsComputeShader,
                 _clearUIntsComputeShader,
-                _extractSoAComputeShader,
-                _soACullingComputeShader,
                 _copyCommandsProgram,
                 _bvhFrustumCullProgram,
                 _hiZInitProgram,
@@ -294,7 +288,13 @@ namespace XREngine.Rendering.Commands
 
         private void VerifyBufferLengths(GPUScene scene, uint max)
         {
-            if (max == _lastMaxCommands)
+            uint residentMeshletCount = checked((uint)Math.Max(scene.MeshletDescriptorCount, 0));
+            uint requiredMeshletTaskCapacity = ComputeMeshletTaskCapacity(max, residentMeshletCount);
+            bool commandCapacityChanged = max != _lastMaxCommands;
+            bool meshletTaskCapacityChanged =
+                _visibleMeshletTaskBuffer is null ||
+                _visibleMeshletTaskBuffer.ElementCount != requiredMeshletTaskCapacity;
+            if (!commandCapacityChanged && !meshletTaskCapacityChanged)
                 return;
 
             _lastMaxCommands = max;
@@ -303,7 +303,9 @@ namespace XREngine.Rendering.Commands
             if (remapNeeded || !_buffersMapped)
                 MapBuffers();
 
-            Dbg($"Capacity change -> RegenerateBuffers newMax={max}", "Buffers");
+            Dbg(
+                $"Capacity change -> RegenerateBuffers commands={max} meshlets={residentMeshletCount} taskRecords={requiredMeshletTaskCapacity}",
+                "Buffers");
         }
 
         private void Initialize(GPUScene scene, uint max)
@@ -488,33 +490,6 @@ namespace XREngine.Rendering.Commands
                     "TwoPassPhaseOneCommands");
             }
 
-            if (IsHotCommandLayoutEnabled())
-            {
-                if (_sourceHotCommandBuffer is null || _sourceHotCommandBuffer.ElementCount != capacity)
-                {
-                    _sourceHotCommandBuffer?.Destroy();
-                    _sourceHotCommandBuffer = MakeHotCommandBuffer("SourceHotCommands", capacity);
-                }
-
-                if (_culledHotCommandBuffer is null || _culledHotCommandBuffer.ElementCount != capacity)
-                {
-                    _culledHotCommandBuffer?.Destroy();
-                    _culledHotCommandBuffer = MakeHotCommandBuffer("CulledHotCommands", capacity);
-                }
-
-                if (_occlusionCulledHotBuffer is null || _occlusionCulledHotBuffer.ElementCount != capacity)
-                {
-                    _occlusionCulledHotBuffer?.Destroy();
-                    _occlusionCulledHotBuffer = MakeHotCommandBuffer("OcclusionCulledHotCommands", capacity);
-                }
-
-                if (_twoPassPhaseOneHotCommandBuffer is null || _twoPassPhaseOneHotCommandBuffer.ElementCount != capacity)
-                {
-                    _twoPassPhaseOneHotCommandBuffer?.Destroy();
-                    _twoPassPhaseOneHotCommandBuffer = MakeHotCommandBuffer("TwoPassPhaseOneHotCommands", capacity);
-                }
-            }
-
             // Track remap needs per-buffer
             EnsureIndirectDrawBuffer(MaxIndirectDrawCapacity);
             _culledCountNeedsMap = EnsureParameterBuffer(ref _culledCountBuffer, "CulledCount", GPUScene.VisibleCountComponents);
@@ -554,10 +529,12 @@ namespace XREngine.Rendering.Commands
             EnsureGpuDrivenBatchingBuffers(capacity);
             EnsureTransparencyDomainBuffers(capacity);
             EnsureViewSetBuffers(capacity);
-            EnsureMeshletExpansionBuffers(capacity);
+            EnsureMeshletExpansionBuffers(
+                capacity,
+                checked((uint)Math.Max(gpuScene.MeshletDescriptorCount, 0)));
             _statsNeedsMap |= EnsureStatsBuffer();
 
-            // Phase 3: occlusion ping-pong buffer (same layout as CulledSceneToRenderBuffer)
+            // Phase 3: occlusion ping-pong buffer (same compact visible draw-ID layout).
             if (_occlusionCulledBuffer is null || _occlusionCulledBuffer.ElementCount != capacity)
             {
                 _occlusionCulledBuffer?.Destroy();
@@ -565,8 +542,8 @@ namespace XREngine.Rendering.Commands
                     $"CulledCommandsBuffer_Occlusion",
                     EBufferTarget.ShaderStorageBuffer,
                     capacity,
-                    EComponentType.Float,
-                    GPUScene.CommandFloatCount,
+                    EComponentType.UInt,
+                    1,
                     false,
                     false)
                 {
@@ -603,9 +580,9 @@ namespace XREngine.Rendering.Commands
             return anyRemapPending;
         }
 
-        private void EnsureMeshletExpansionBuffers(uint commandCapacity)
+        private void EnsureMeshletExpansionBuffers(uint commandCapacity, uint residentMeshletCount)
         {
-            uint taskCapacity = ComputeMeshletTaskCapacity(commandCapacity);
+            uint taskCapacity = ComputeMeshletTaskCapacity(commandCapacity, residentMeshletCount);
 
             if (_visibleMeshletTaskBuffer is null ||
                 _visibleMeshletTaskBuffer.ElementCount != taskCapacity ||
@@ -616,10 +593,55 @@ namespace XREngine.Rendering.Commands
                 _visibleMeshletTaskBuffer = MakeVisibleMeshletTaskBuffer(taskCapacity);
             }
 
-            EnsureParameterBuffer(ref _visibleMeshletTaskCountBuffer, "VisibleMeshletTaskCount");
-            EnsureParameterBuffer(ref _meshletDispatchCountBuffer, "MeshletDispatchCount");
+            EnsureParameterBuffer(
+                ref _visibleMeshletTaskCountBuffer,
+                "VisibleMeshletTaskCount",
+                target: EBufferTarget.ParameterBuffer);
+            EnsureParameterBuffer(
+                ref _meshletDispatchCountBuffer,
+                "MeshletDispatchCount",
+                target: EBufferTarget.ParameterBuffer);
             EnsureMeshletDispatchIndirectBuffer();
+            EnsureMeshletDiagnosticsSnapshotBuffers();
             _meshletExpansionOverflowNeedsMap |= EnsureFlagBuffer(ref _meshletExpansionOverflowFlagBuffer, "MeshletExpansionOverflowFlag");
+        }
+
+        private void EnsureMeshletDiagnosticsSnapshotBuffers()
+        {
+            _meshletDispatchDiagnosticsSnapshotBuffer ??= MakeMeshletDiagnosticsSnapshotBuffer(
+                "MeshletDispatchDiagnosticsSnapshot",
+                GPUMeshletLayout.MeshTaskIndirectDiagnosticsUIntCount);
+            _meshletStatsDiagnosticsSnapshotBuffer ??= MakeMeshletDiagnosticsSnapshotBuffer(
+                "MeshletStatsDiagnosticsSnapshot",
+                GpuStatsLayout.FieldCount);
+            _meshletDispatchDiagnosticsRefreshSnapshotBuffer ??= MakeMeshletDiagnosticsSnapshotBuffer(
+                "MeshletDispatchDiagnosticsRefreshSnapshot",
+                GPUMeshletLayout.MeshTaskIndirectDiagnosticsUIntCount);
+            _meshletStatsDiagnosticsRefreshSnapshotBuffer ??= MakeMeshletDiagnosticsSnapshotBuffer(
+                "MeshletStatsDiagnosticsRefreshSnapshot",
+                GpuStatsLayout.FieldCount);
+        }
+
+        private static XRDataBuffer MakeMeshletDiagnosticsSnapshotBuffer(string name, uint uintCount)
+        {
+            XRDataBuffer buffer = new(
+                name,
+                EBufferTarget.ShaderStorageBuffer,
+                uintCount,
+                EComponentType.UInt,
+                1u,
+                false,
+                true)
+            {
+                Usage = EBufferUsage.DynamicCopy,
+                DisposeOnPush = false,
+                Resizable = false,
+                PadEndingToVec4 = false,
+            };
+            buffer.Generate();
+            buffer.SetDataRaw(new uint[uintCount], checked((int)uintCount));
+            buffer.PushSubData();
+            return buffer;
         }
 
         private static XRDataBuffer MakeVisibleMeshletTaskBuffer(uint capacity)
@@ -669,6 +691,11 @@ namespace XREngine.Rendering.Commands
                 PadEndingToVec4 = false,
             };
             _meshletDispatchIndirectBuffer.Generate();
+            // VkDrawMeshTasksIndirectCommandEXT requires all three group counts.
+            // Initialize a valid no-op command so an untouched allocation can
+            // never be interpreted as GPU-produced dispatch evidence.
+            _meshletDispatchIndirectBuffer.Set(0u, new UVector3(0u, 1u, 1u));
+            _meshletDispatchIndirectBuffer.PushSubData();
         }
 
         private bool EnsureIndirectDrawBuffer(uint capacity)
@@ -714,7 +741,12 @@ namespace XREngine.Rendering.Commands
             return recreated;
         }
 
-        private bool EnsureParameterBuffer(ref XRDataBuffer? buffer, string name, uint elementCount = 1, uint componentCount = 1)
+        private bool EnsureParameterBuffer(
+            ref XRDataBuffer? buffer,
+            string name,
+            uint elementCount = 1,
+            uint componentCount = 1,
+            EBufferTarget target = EBufferTarget.DrawIndirectBuffer)
         {
             const EBufferMapStorageFlags requiredStorage =
                 EBufferMapStorageFlags.DynamicStorage | EBufferMapStorageFlags.Read |
@@ -726,7 +758,7 @@ namespace XREngine.Rendering.Commands
 
             if (buffer is not null)
             {
-                bool invalidLayout = buffer.Target != EBufferTarget.DrawIndirectBuffer ||
+                bool invalidLayout = buffer.Target != target ||
                     buffer.ElementCount != elementCount ||
                     buffer.ComponentType != EComponentType.UInt ||
                     buffer.ComponentCount != componentCount;
@@ -746,7 +778,7 @@ namespace XREngine.Rendering.Commands
             {
                 // Persistent+Coherent MUST be set before Generate() because OpenGL
                 // requires GL_MAP_PERSISTENT_BIT at glBufferStorage allocation time.
-                buffer = new XRDataBuffer(name, EBufferTarget.DrawIndirectBuffer, elementCount, EComponentType.UInt, componentCount, false, true)
+                buffer = new XRDataBuffer(name, target, elementCount, EComponentType.UInt, componentCount, false, true)
                 {
                     Usage = EBufferUsage.DynamicCopy,
                     DisposeOnPush = false,
@@ -948,72 +980,6 @@ namespace XREngine.Rendering.Commands
 
         //    Dbg("EnsureSortBuffers complete", "Buffers");
         //}
-
-        private void EnsureSoABuffers(uint capacity)
-        {
-            Dbg($"EnsureSoABuffers capacity = {capacity}", "SoA");
-
-            uint sphereStride = 4;
-            uint metaStride = 4;
-
-            if (_soaBoundingSpheresA is null)
-            {
-                _soaBoundingSpheresA = new XRDataBuffer("SoA_Spheres_A", EBufferTarget.ShaderStorageBuffer, capacity, EComponentType.Float, sphereStride, false, false)
-                {
-                    Usage = EBufferUsage.DynamicCopy,
-                    DisposeOnPush = false
-                };
-                _soaBoundingSpheresA.Generate();
-            }
-
-            if (_soaMetadataA is null)
-            {
-                _soaMetadataA = new XRDataBuffer("SoA_Metadata_A", EBufferTarget.ShaderStorageBuffer, capacity, EComponentType.UInt, metaStride, false, false)
-                {
-                    Usage = EBufferUsage.DynamicCopy,
-                    DisposeOnPush = false
-                };
-                _soaMetadataA.Generate();
-            }
-
-            if (_soaBoundingSpheresB is null)
-            {
-                _soaBoundingSpheresB = new XRDataBuffer("SoA_Spheres_B", EBufferTarget.ShaderStorageBuffer, capacity, EComponentType.Float, sphereStride, false, false)
-                {
-                    Usage = EBufferUsage.DynamicCopy,
-                    DisposeOnPush=false
-                };
-                _soaBoundingSpheresB.Generate();
-            }
-
-            if (_soaMetadataB is null)
-            {
-                _soaMetadataB = new XRDataBuffer("SoA_Metadata_B", EBufferTarget.ShaderStorageBuffer, capacity, EComponentType.UInt, metaStride, false, false)
-                {
-                    Usage=EBufferUsage.DynamicCopy,
-                    DisposeOnPush=false
-                };
-                _soaMetadataB.Generate();
-            }
-            
-            Dbg("EnsureSoABuffers complete", "SoA");
-        }
-
-        private void EnsureIndexList(uint capacity)
-        {
-            if (_soaIndexList != null)
-                return;
-            
-            _soaIndexList = new XRDataBuffer("SoA_IndexList", EBufferTarget.ShaderStorageBuffer, capacity + 1, EComponentType.UInt, 1, false, true)
-            {
-                Usage = EBufferUsage.DynamicCopy,
-                DisposeOnPush = false
-            };
-
-            _soaIndexList.Generate();
-
-            Dbg($"EnsureIndexList created capacity = {capacity}", "SoA");
-        }
 
         private void EnsureMaterialIDs(uint capacity)
         {

@@ -28,6 +28,10 @@
       "type": "boolean",
       "description": "Enables or disables VisualizeQuadtree."
     },
+    "MeshletDebugDisplay": {
+      "type": "boolean",
+      "description": "Colors production mesh-shader geometry by meshlet on the unit-test camera; unsupported passes remain on their planned traditional GPU route."
+    },
     "EditorType": {
       "$ref": "#/definitions/UnitTestEditorType",
       "description": "Selects which editor UI pipeline to create for unit testing.",
@@ -258,8 +262,8 @@
       "items": {
         "$ref": "#/definitions/ModelImportSettings"
       },
-      "description": "Startup model imports processed when the Unit Testing World boots. Each array item is a ModelImportSettings object with Enabled, Kind, MaterialMode, ImporterBackend, Path, ImportFlags, Scale, ZUp, PostImportFlags, and optional YawPitchRoll/Translation objects. Paths are relative to the process working directory unless absolute.",
-      "markdownDescription": "Startup model imports are an array of objects. Each item uses this shape:\n\n```json\n{\n  \"Enabled\": true,\n  \"Kind\": \"Static\",\n  \"MaterialMode\": \"Deferred\",\n  \"UseForwardForTransparent\": false,\n  \"ImporterBackend\": \"PreferNativeThenAssimp\",\n  \"Path\": \"XREngine.UnitTests\\\\TestData\\\\Gltf\\\\external-static-scene.gltf\",\n  \"ImportFlags\": \"Triangulate, FlipUVs, GenerateNormals\",\n  \"Scale\": 1.0,\n  \"ZUp\": false,\n  \"PostImportFlags\": \"None\",\n  \"YawPitchRoll\": null,\n  \"Translation\": null\n}\n```\n\n`Kind` is `Static` or `Animated`; `MaterialMode` is `Deferred`, `Forward`, or `Uber`; `ImporterBackend` is `PreferNativeThenAssimp` or `AssimpOnly`. `ImportFlags` is a comma-separated list of Assimp `PostProcessSteps` flag names. `PostImportFlags` is a comma-separated list of model post-import flag names. `YawPitchRoll` uses `{ \"Yaw\": 0.0, \"Pitch\": 0.0, \"Roll\": 0.0 }`; `Translation` uses `{ \"X\": 0.0, \"Y\": 0.0, \"Z\": 0.0 }`.",
+      "description": "Startup model imports processed when the Unit Testing World boots. Each array item is a ModelImportSettings object with Enabled, Kind, MaterialMode, ImporterBackend, Path, optional UnityProjectRoot, ImportFlags, Scale, ZUp, InstanceCount, GenerateMeshletLods, MeshletAdditionalLodCount, PostImportFlags, and optional YawPitchRoll/Translation objects. Unity prefab entries use the Unity converter; recognized Poiyomi materials are converted to the forward-plus Uber shader. Paths are relative to the process working directory unless absolute.",
+      "markdownDescription": "Startup model imports are an array of objects. Each item uses this shape:\n\n```json\n{\n  \"Enabled\": true,\n  \"Kind\": \"Static\",\n  \"MaterialMode\": \"Deferred\",\n  \"UseForwardForTransparent\": false,\n  \"ImporterBackend\": \"PreferNativeThenAssimp\",\n  \"Path\": \"XREngine.UnitTests\\\\TestData\\\\Gltf\\\\external-static-scene.gltf\",\n  \"UnityProjectRoot\": null,\n  \"ImportFlags\": \"Triangulate, FlipUVs, GenerateNormals\",\n  \"Scale\": 1.0,\n  \"ZUp\": false,\n  \"PostImportFlags\": \"None\",\n  \"YawPitchRoll\": null,\n  \"Translation\": null\n}\n```\n\n`Kind` is `Static` or `Animated`; `MaterialMode` is `Deferred`, `Forward`, or `Uber`; `ImporterBackend` is `PreferNativeThenAssimp` or `AssimpOnly`. A `.prefab` path uses the Unity project converter; use `Kind: Animated` for avatar setup. The Unity converter ignores the generic material factory and converts recognized Poiyomi materials to the native Uber shader. `UnityProjectRoot` optionally identifies the Unity project root or Assets directory when it cannot be inferred from the prefab path. `ImportFlags` is a comma-separated list of Assimp `PostProcessSteps` flag names. `PostImportFlags` is a comma-separated list of model post-import flag names. `YawPitchRoll` uses `{ \"Yaw\": 0.0, \"Pitch\": 0.0, \"Roll\": 0.0 }`; `Translation` uses `{ \"X\": 0.0, \"Y\": 0.0, \"Z\": 0.0 }`.",
       "examples": [
         [
           {
@@ -269,7 +273,25 @@
             "UseForwardForTransparent": false,
             "ImporterBackend": "PreferNativeThenAssimp",
             "Path": "XREngine.UnitTests\\TestData\\Gltf\\external-static-scene.gltf",
+            "UnityProjectRoot": null,
             "ImportFlags": "Triangulate, FlipUVs, GenerateNormals",
+            "Scale": 1.0,
+            "ZUp": false,
+            "PostImportFlags": "None",
+            "YawPitchRoll": null,
+            "Translation": null
+          }
+        ],
+        [
+          {
+            "Enabled": true,
+            "Kind": "Animated",
+            "MaterialMode": "Uber",
+            "UseForwardForTransparent": false,
+            "ImporterBackend": "PreferNativeThenAssimp",
+            "Path": "C:\\UnityProjects\\AvatarProject\\Assets\\Avatars\\Avatar.prefab",
+            "UnityProjectRoot": "C:\\UnityProjects\\AvatarProject",
+            "ImportFlags": "None",
             "Scale": 1.0,
             "ZUp": false,
             "PostImportFlags": "None",
@@ -290,7 +312,29 @@
               "UseForwardForTransparent": false,
               "ImporterBackend": "PreferNativeThenAssimp",
               "Path": "XREngine.UnitTests\\TestData\\Gltf\\external-static-scene.gltf",
+              "UnityProjectRoot": null,
               "ImportFlags": "Triangulate, FlipUVs, GenerateNormals",
+              "Scale": 1.0,
+              "ZUp": false,
+              "PostImportFlags": "None",
+              "YawPitchRoll": null,
+              "Translation": null
+            }
+          ]
+        },
+        {
+          "label": "Unity avatar prefab import",
+          "description": "Convert a Unity prefab as an avatar, including Poiyomi-to-Uber materials.",
+          "body": [
+            {
+              "Enabled": true,
+              "Kind": "Animated",
+              "MaterialMode": "Uber",
+              "UseForwardForTransparent": false,
+              "ImporterBackend": "PreferNativeThenAssimp",
+              "Path": "C:\\UnityProjects\\AvatarProject\\Assets\\Avatars\\Avatar.prefab",
+              "UnityProjectRoot": "C:\\UnityProjects\\AvatarProject",
+              "ImportFlags": "None",
               "Scale": 1.0,
               "ZUp": false,
               "PostImportFlags": "None",
@@ -309,6 +353,7 @@
         "  \"UseForwardForTransparent\": false,",
         "  \"ImporterBackend\": \"PreferNativeThenAssimp\",",
         "  \"Path\": \"XREngine.UnitTests\\\\TestData\\\\Gltf\\\\external-static-scene.gltf\",",
+        "  \"UnityProjectRoot\": null,",
         "  \"ImportFlags\": \"Triangulate, FlipUVs, GenerateNormals\",",
         "  \"Scale\": 1.0,",
         "  \"ZUp\": false,",
@@ -318,6 +363,8 @@
         "}",
         "Use comma-separated Assimp PostProcessSteps names for ImportFlags.",
         "Use comma-separated ModelPostImportFlags names for PostImportFlags.",
+        "A .prefab path uses the Unity converter. Kind Animated enables avatar setup; recognized Poiyomi materials convert to the native Uber shader.",
+        "UnityProjectRoot may name the Unity project root or Assets directory when it cannot be inferred from Path.",
         "YawPitchRoll is { \"Yaw\": 0.0, \"Pitch\": 0.0, \"Roll\": 0.0 }; Translation is { \"X\": 0.0, \"Y\": 0.0, \"Z\": 0.0 }."
       ]
     },
@@ -464,7 +511,7 @@
     },
     "OpenGLProgramCompileLinkWorkerCount": {
       "type": "integer",
-      "description": "Number of shared-context worker threads used to compile and link uncached OpenGL shader programs. XRE_DISABLE_OPENGL_COMPILE_LINK_WORKER_POOL=1 forces the single-worker compatibility path."
+      "description": "Number of shared-context workers used for uncached OpenGL shader programs. XRE_DISABLE_OPENGL_COMPILE_LINK_WORKER_POOL=1 forces the single-worker compatibility path."
     },
     "MaxAsyncShaderProgramsPerFrame": {
       "type": "integer",
@@ -558,19 +605,23 @@
     },
     "UnitBoxCount": {
       "type": "integer",
+      "description": "Number of unit-box renderables to create. Values greater than one are intended for deterministic submission-scaling benchmarks.",
       "minimum": 1,
-      "maximum": 16384,
-      "description": "Number of unit-box renderables to create."
+      "maximum": 16384
     },
     "UnitBoxMaterialCount": {
       "type": "integer",
+      "description": "Number of distinct materials shared across the unit boxes.",
       "minimum": 1,
-      "maximum": 16384,
-      "description": "Number of distinct materials shared across the unit boxes."
+      "maximum": 16384
     },
     "UnitBoxDeferredMaterial": {
       "type": "boolean",
-      "description": "Uses the deferred lit-color material for unit boxes."
+      "description": "Uses the deferred lit-color material for unit boxes. The default keeps the existing forward unlit unit-box behavior."
+    },
+    "UnitBoxDoubleSided": {
+      "type": "boolean",
+      "description": "Disables face culling on unit boxes. Set false when a fixture needs the boxes to reach the missing-meshlet-payload classification instead of the two-sided-state classification."
     },
     "VSyncOverride": {
       "oneOf": [
@@ -990,12 +1041,16 @@
         },
         "MaterialMode": {
           "$ref": "#/definitions/ModelImportMaterialMode",
-          "markdownDescription": "Supported values: `Deferred`, `Forward`, `Uber`.",
-          "description": "Selects the MaterialMode enum value."
+          "description": "Selects the generic model material factory. Unity prefabs use their source-aware material converter instead; recognized Poiyomi materials are always converted to XRENGINE's forward-plus Uber shader.",
+          "markdownDescription": "Supported values: `Deferred`, `Forward`, `Uber`."
         },
         "UseForwardForTransparent": {
           "type": "boolean",
           "description": "When true and  is , materials whose textures have alpha channels will use forward (lit) shaders instead of deferred shaders, giving proper transparency blending for those meshes. Materials without alpha stay in the deferred pipeline."
+        },
+        "UseSourceMaterialAsOverride": {
+          "type": "boolean",
+          "description": "Publishes each imported renderable's source material as an explicit local material override. This keeps the visual result unchanged while exercising the local-override submission contract."
         },
         "ImporterBackend": {
           "$ref": "#/definitions/ModelImportBackendPreference",
@@ -1005,6 +1060,13 @@
         "Path": {
           "type": "string",
           "description": "Generated from Path on ModelImportSettings."
+        },
+        "UnityProjectRoot": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Optional Unity project root (or its Assets directory) for .prefab imports. When omitted, the importer locates the owning project from the prefab path. Relative paths are resolved from the process working directory."
         },
         "ImportFlags": {
           "type": "string",
@@ -1043,6 +1105,14 @@
         "InstanceCount": {
           "type": "integer",
           "description": "Number of independent scene instances to create from the imported hierarchy. The source asset is imported once."
+        },
+        "GenerateMeshletLods": {
+          "type": "boolean",
+          "description": "Enables deterministic import-time LOD generation for this model. Meshlets are cooked for every resulting LOD before the model becomes renderable."
+        },
+        "MeshletAdditionalLodCount": {
+          "type": "integer",
+          "description": "Additional LOD levels requested when  is enabled."
         },
         "PostImportFlags": {
           "type": "string",

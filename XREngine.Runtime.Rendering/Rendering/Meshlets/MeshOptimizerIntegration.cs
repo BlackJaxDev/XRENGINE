@@ -1,4 +1,5 @@
 using System.Numerics;
+using System.Collections.Immutable;
 using System.Runtime.InteropServices;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Models;
@@ -29,10 +30,19 @@ public static class MeshOptimizerIntegration
     public static void ResetMeshletBuildDiagnosticsForTests()
         => Interlocked.Exchange(ref s_meshletBuildInvocationCount, 0);
 
-    public static MeshletBuildResult BuildMeshlets(XRMesh mesh, MeshletGenerationSettings settings)
-        => BuildMeshlets(mesh, settings, null, null);
+    /// <summary>
+    /// Builds the meshlet payload for exactly one already-finalized mesh.
+    /// This method never generates or reconciles model LODs.
+    /// </summary>
+    public static MeshletBuildResult BuildMeshletPayloadForMesh(XRMesh mesh, MeshletGenerationSettings settings)
+        => BuildMeshletPayloadForMesh(mesh, settings, null, null);
 
-    public static MeshletBuildResult BuildMeshlets(
+    /// <summary>
+    /// Builds the meshlet payload for exactly one already-finalized mesh while
+    /// recording the effective LOD policy as cook provenance. The caller owns
+    /// LOD generation and must invoke this once for every renderable LOD.
+    /// </summary>
+    public static MeshletBuildResult BuildMeshletPayloadForMesh(
         XRMesh mesh,
         MeshletGenerationSettings settings,
         MeshLodGenerationSettings? lodSettings,
@@ -56,8 +66,6 @@ public static class MeshOptimizerIntegration
                 Payload = disabledPayload,
             };
         }
-
-        Interlocked.Increment(ref s_meshletBuildInvocationCount);
 
         int[] indices = mesh.GetIndices(EPrimitiveType.Triangles) ?? [];
         if (indices.Length == 0 || mesh.VertexCount == 0)
@@ -86,7 +94,15 @@ public static class MeshOptimizerIntegration
 
         uint[] sourceIndices = new uint[indices.Length];
         for (int i = 0; i < indices.Length; i++)
-            sourceIndices[i] = (uint)indices[i];
+        {
+            int sourceIndex = indices[i];
+            if ((uint)sourceIndex >= (uint)mesh.VertexCount)
+                throw new InvalidDataException($"Meshlet source index {sourceIndex} at element {i} is outside vertex range [0, {mesh.VertexCount}).");
+
+            sourceIndices[i] = (uint)sourceIndex;
+        }
+
+        ValidateNativeBuildSettings(settings, sourceIndices.Length);
 
         MeshletVertex[] vertices = BuildMeshletVertices(mesh);
 
@@ -123,7 +139,11 @@ public static class MeshOptimizerIntegration
         uint[] meshletVertices = new uint[CheckedScratchElementCount(maxMeshlets, settings.MaxVertices, "meshletVertices")];
         byte[] meshletTriangles = new byte[CheckedTriangleScratchByteCount(maxMeshlets, settings.MaxTriangles)];
 
-        nuint meshletCount = MeshOptimizerNative.BuildMeshlets(
+        // Count at the only real meshoptimizer builder entry. Import and
+        // cache-repair callers must not infer this from payload outcomes.
+        Interlocked.Increment(ref s_meshletBuildInvocationCount);
+        RuntimeEngine.Rendering.Stats.GpuMeshlets.RecordMeshletNativeBuilderEntry();
+        nuint meshletCount = MeshOptimizerNative.BuildNativeMeshletClusters(
             settings.BuildMode,
             meshoptMeshlets,
             meshletVertices,
@@ -162,6 +182,14 @@ public static class MeshOptimizerIntegration
             };
         }
 
+        ValidateNativeMeshletBuildOutput(
+            meshoptMeshlets,
+            meshletVertices,
+            meshletTriangles,
+            meshletCount,
+            mesh.VertexCount,
+            settings);
+
         int finalMeshletCount = (int)meshletCount;
         if (settings.OptimizeMeshlets)
         {
@@ -178,7 +206,10 @@ public static class MeshOptimizerIntegration
 
         MeshOptimizerNative.MeshoptMeshlet last = meshoptMeshlets[finalMeshletCount - 1];
         int vertexReferenceCount = (int)(last.VertexOffset + last.VertexCount);
-        int triangleByteCount = (int)last.TriangleOffset + GetTriangleByteCount(last.TriangleCount);
+        // meshoptimizer's per-meshlet spans are tightly sized. The persisted GPU stream,
+        // however, retains the final four-byte padding required by descriptor offsets and
+        // the shader's byte-addressed loads.
+        int triangleByteCount = checked((int)AlignToFour((ulong)last.TriangleOffset + (last.TriangleCount * 3UL)));
 
         Array.Resize(ref meshletVertices, vertexReferenceCount);
         Array.Resize(ref meshletTriangles, triangleByteCount);
@@ -249,26 +280,32 @@ public static class MeshOptimizerIntegration
         ulong meshletSettingsHash = MeshletPayloadUtility.ComputeHash(meshletSnapshot);
         ulong lodSettingsHash = MeshletPayloadUtility.ComputeHash(lodSnapshot);
         string versionKey = MeshOptimizerVersionKey;
+        string provenanceKey = MeshletPayloadUtility.CurrentCookProvenanceKey;
 
-        return new MeshletPayload
+        MeshletPayload payload = new()
         {
             GenerationEnabled = settings.Enabled,
+            State = descriptors.Length == 0 ? MeshletPayloadState.Empty : MeshletPayloadState.Present,
             MeshOptimizerVersionKey = versionKey,
+            CookProvenanceKey = provenanceKey,
+            RuntimeCompatibilityToken = MeshletPayloadUtility.ComputeRuntimeCompatibilityToken(meshletSnapshot),
             SourceMeshIdentity = identity,
             SourceVertexCount = mesh.VertexCount,
             SourceTriangleCount = (mesh.GetIndices(EPrimitiveType.Triangles)?.Length ?? 0) / 3,
             SourceMeshHash = sourceHash,
             MeshletSettingsHash = meshletSettingsHash,
             LodSettingsHash = lodSettingsHash,
-            FreshnessHash = MeshletPayloadUtility.ComputeFreshnessHash(identity, sourceHash, meshletSettingsHash, lodSettingsHash, versionKey),
+            FreshnessHash = MeshletPayloadUtility.ComputeFreshnessHash(identity, sourceHash, meshletSettingsHash, lodSettingsHash, provenanceKey),
             MeshletSettings = meshletSnapshot,
             LodSettings = lodSnapshot,
-            Meshlets = descriptors,
-            VertexIndices = vertexIndices,
-            TriangleIndices = triangleIndices,
-            Vertices = vertices,
+            Meshlets = descriptors.ToImmutableArray(),
+            VertexIndices = vertexIndices.ToImmutableArray(),
+            TriangleIndices = triangleIndices.ToImmutableArray(),
+            Vertices = vertices.ToImmutableArray(),
             Stats = stats,
         };
+        payload.ValidatePortablePayload();
+        return payload;
     }
 
     private static int CheckedMeshletCount(nuint maxMeshlets)
@@ -286,6 +323,77 @@ public static class MeshOptimizerIntegration
             throw new InvalidOperationException($"Meshlet scratch buffer '{bufferName}' exceeds supported array length: {count}.");
 
         return (int)count;
+    }
+
+    private static void ValidateNativeBuildSettings(MeshletGenerationSettings settings, int indexCount)
+    {
+        if (indexCount < 3 || indexCount % 3 != 0)
+            throw new InvalidDataException($"Meshlet source index count must be a non-empty triangle list; received {indexCount} indices.");
+
+        if (settings.MaxVertices is < 3u or > 256u)
+            throw new InvalidDataException($"meshoptimizer requires MaxVertices in [3, 256]; received {settings.MaxVertices}.");
+
+        if (settings.MaxTriangles is 0u or > 512u || settings.MaxTriangles % 4u != 0u)
+            throw new InvalidDataException($"The bundled meshoptimizer ABI requires MaxTriangles in [4, 512] and divisible by four; received {settings.MaxTriangles}.");
+
+        if (settings.BuildMode is MeshletBuildMode.Flex or MeshletBuildMode.Spatial)
+        {
+            if (settings.MinTriangles > settings.MaxTriangles || settings.MinTriangles % 4u != 0u)
+                throw new InvalidDataException($"The bundled meshoptimizer ABI requires MinTriangles <= MaxTriangles and divisible by four for {settings.BuildMode}; received {settings.MinTriangles}/{settings.MaxTriangles}.");
+        }
+    }
+
+    private static void ValidateNativeMeshletBuildOutput(
+        MeshOptimizerNative.MeshoptMeshlet[] meshlets,
+        uint[] vertexReferences,
+        byte[] triangleReferences,
+        nuint meshletCount,
+        int sourceVertexCount,
+        MeshletGenerationSettings settings)
+    {
+        if (meshletCount > (nuint)meshlets.Length)
+            throw new InvalidDataException($"meshoptimizer returned {meshletCount} meshlets for a bound of {meshlets.Length}.");
+
+        ulong priorVertexEnd = 0UL;
+        ulong priorTriangleEnd = 0UL;
+        for (nuint meshletIndex = 0; meshletIndex < meshletCount; meshletIndex++)
+        {
+            MeshOptimizerNative.MeshoptMeshlet meshlet = meshlets[(int)meshletIndex];
+            ulong vertexEnd = checked((ulong)meshlet.VertexOffset + meshlet.VertexCount);
+            ulong triangleEnd = checked((ulong)meshlet.TriangleOffset + ((ulong)meshlet.TriangleCount * 3UL));
+            ulong paddedTriangleEnd = AlignToFour(triangleEnd);
+            if (meshlet.VertexCount is 0u || meshlet.VertexCount > settings.MaxVertices ||
+                meshlet.TriangleCount is 0u || meshlet.TriangleCount > settings.MaxTriangles)
+            {
+                throw new InvalidDataException(
+                    $"meshoptimizer returned invalid meshlet {meshletIndex} counts: vertices={meshlet.VertexCount}/{settings.MaxVertices}, triangles={meshlet.TriangleCount}/{settings.MaxTriangles}.");
+            }
+
+            if (vertexEnd > (ulong)vertexReferences.Length || paddedTriangleEnd > (ulong)triangleReferences.Length)
+            {
+                throw new InvalidDataException(
+                    $"meshoptimizer returned out-of-range meshlet {meshletIndex}: vertexEnd={vertexEnd}/{vertexReferences.Length}, paddedTriangleEnd={paddedTriangleEnd}/{triangleReferences.Length}.");
+            }
+
+            if ((meshlet.TriangleOffset & 3u) != 0u ||
+                (ulong)meshlet.VertexOffset < priorVertexEnd ||
+                (ulong)meshlet.TriangleOffset < priorTriangleEnd)
+                throw new InvalidDataException($"meshoptimizer returned overlapping or non-monotonic ranges at meshlet {meshletIndex}.");
+
+            int vertexOffset = (int)meshlet.VertexOffset;
+            for (uint vertexIndex = 0; vertexIndex < meshlet.VertexCount; vertexIndex++)
+                if (vertexReferences[vertexOffset + (int)vertexIndex] >= (uint)sourceVertexCount)
+                    throw new InvalidDataException($"Meshlet {meshletIndex} references source vertex {vertexReferences[vertexOffset + (int)vertexIndex]} outside [0, {sourceVertexCount}).");
+
+            int triangleOffset = (int)meshlet.TriangleOffset;
+            int triangleByteCount = GetTriangleByteCount(meshlet.TriangleCount);
+            for (int triangleByteIndex = 0; triangleByteIndex < triangleByteCount; triangleByteIndex++)
+                if (triangleReferences[triangleOffset + triangleByteIndex] >= meshlet.VertexCount)
+                    throw new InvalidDataException($"Meshlet {meshletIndex} local triangle index {triangleReferences[triangleOffset + triangleByteIndex]} exceeds vertex count {meshlet.VertexCount}.");
+
+            priorVertexEnd = vertexEnd;
+            priorTriangleEnd = paddedTriangleEnd;
+        }
     }
 
     private static int CheckedTriangleScratchByteCount(nuint maxMeshlets, uint maxTriangles)
@@ -867,7 +975,7 @@ public static class MeshOptimizerIntegration
 internal static class MeshOptimizerNative
 {
     private const string NativeLibraryName = "meshoptimizer";
-    private const int InteropVersion = 1;
+    private const int InteropVersion = 2;
     private const uint SimplifyPermissiveWithSeamsMask = (uint)MeshOptimizerSimplifyOptions.Permissive;
     private static readonly Lazy<nint> s_nativeLibraryHandle = new(LoadNativeLibraryHandle, LazyThreadSafetyMode.ExecutionAndPublication);
     private static readonly Lazy<MeshoptVersionDelegate?> s_version = new(() => TryLoadExport<MeshoptVersionDelegate>("meshopt_version"), LazyThreadSafetyMode.ExecutionAndPublication);
@@ -915,7 +1023,7 @@ internal static class MeshOptimizerNative
     }
 
     [DllImport(NativeLibraryName, CallingConvention = CallingConvention.Cdecl, EntryPoint = "meshopt_buildMeshletsBound")]
-    private static extern nuint MeshoptBuildMeshletsBound(nuint indexCount, uint maxVertices, uint maxTriangles);
+    private static extern nuint MeshoptBuildMeshletsBound(nuint indexCount, nuint maxVertices, nuint maxTriangles);
 
     [DllImport(NativeLibraryName, CallingConvention = CallingConvention.Cdecl, EntryPoint = "meshopt_buildMeshlets")]
     private static extern unsafe nuint MeshoptBuildMeshlets(
@@ -927,8 +1035,8 @@ internal static class MeshOptimizerNative
         float* vertexPositions,
         nuint vertexCount,
         nuint vertexPositionsStride,
-        uint maxVertices,
-        uint maxTriangles,
+        nuint maxVertices,
+        nuint maxTriangles,
         float coneWeight);
 
     [DllImport(NativeLibraryName, CallingConvention = CallingConvention.Cdecl, EntryPoint = "meshopt_buildMeshletsScan")]
@@ -939,8 +1047,8 @@ internal static class MeshOptimizerNative
         uint* indices,
         nuint indexCount,
         nuint vertexCount,
-        uint maxVertices,
-        uint maxTriangles);
+        nuint maxVertices,
+        nuint maxTriangles);
 
     [DllImport(NativeLibraryName, CallingConvention = CallingConvention.Cdecl, EntryPoint = "meshopt_buildMeshletsFlex")]
     private static extern unsafe nuint MeshoptBuildMeshletsFlex(
@@ -952,9 +1060,9 @@ internal static class MeshOptimizerNative
         float* vertexPositions,
         nuint vertexCount,
         nuint vertexPositionsStride,
-        uint maxVertices,
-        uint minTriangles,
-        uint maxTriangles,
+        nuint maxVertices,
+        nuint minTriangles,
+        nuint maxTriangles,
         float coneWeight,
         float splitFactor);
 
@@ -968,9 +1076,9 @@ internal static class MeshOptimizerNative
         float* vertexPositions,
         nuint vertexCount,
         nuint vertexPositionsStride,
-        uint maxVertices,
-        uint minTriangles,
-        uint maxTriangles,
+        nuint maxVertices,
+        nuint minTriangles,
+        nuint maxTriangles,
         float fillWeight);
 
     [DllImport(NativeLibraryName, CallingConvention = CallingConvention.Cdecl, EntryPoint = "meshopt_computeMeshletBounds")]
@@ -1009,9 +1117,9 @@ internal static class MeshOptimizerNative
     }
 
     public static nuint BuildMeshletsBound(nuint indexCount, uint maxVertices, uint maxTriangles)
-        => MeshoptBuildMeshletsBound(indexCount, maxVertices, maxTriangles);
+        => MeshoptBuildMeshletsBound(indexCount, (nuint)maxVertices, (nuint)maxTriangles);
 
-    public static unsafe nuint BuildMeshlets(MeshletBuildMode buildMode, MeshoptMeshlet[] meshlets, uint[] meshletVertices, byte[] meshletTriangles, uint[] indices, float[] vertexPositions, nuint vertexCount, uint maxVertices, uint minTriangles, uint maxTriangles, float coneWeight, float splitFactor, float fillWeight)
+    public static unsafe nuint BuildNativeMeshletClusters(MeshletBuildMode buildMode, MeshoptMeshlet[] meshlets, uint[] meshletVertices, byte[] meshletTriangles, uint[] indices, float[] vertexPositions, nuint vertexCount, uint maxVertices, uint minTriangles, uint maxTriangles, float coneWeight, float splitFactor, float fillWeight)
     {
         fixed (MeshoptMeshlet* meshletPtr = meshlets)
         fixed (uint* meshletVerticesPtr = meshletVertices)
@@ -1021,10 +1129,10 @@ internal static class MeshOptimizerNative
         {
             return buildMode switch
             {
-                MeshletBuildMode.Scan => MeshoptBuildMeshletsScan(meshletPtr, meshletVerticesPtr, meshletTrianglesPtr, indicesPtr, (nuint)indices.Length, vertexCount, maxVertices, maxTriangles),
-                MeshletBuildMode.Flex => MeshoptBuildMeshletsFlex(meshletPtr, meshletVerticesPtr, meshletTrianglesPtr, indicesPtr, (nuint)indices.Length, positionsPtr, vertexCount, sizeof(float) * 3u, maxVertices, minTriangles, maxTriangles, coneWeight, splitFactor),
-                MeshletBuildMode.Spatial => MeshoptBuildMeshletsSpatial(meshletPtr, meshletVerticesPtr, meshletTrianglesPtr, indicesPtr, (nuint)indices.Length, positionsPtr, vertexCount, sizeof(float) * 3u, maxVertices, minTriangles, maxTriangles, fillWeight),
-                _ => MeshoptBuildMeshlets(meshletPtr, meshletVerticesPtr, meshletTrianglesPtr, indicesPtr, (nuint)indices.Length, positionsPtr, vertexCount, sizeof(float) * 3u, maxVertices, maxTriangles, coneWeight),
+                MeshletBuildMode.Scan => MeshoptBuildMeshletsScan(meshletPtr, meshletVerticesPtr, meshletTrianglesPtr, indicesPtr, (nuint)indices.Length, vertexCount, (nuint)maxVertices, (nuint)maxTriangles),
+                MeshletBuildMode.Flex => MeshoptBuildMeshletsFlex(meshletPtr, meshletVerticesPtr, meshletTrianglesPtr, indicesPtr, (nuint)indices.Length, positionsPtr, vertexCount, sizeof(float) * 3u, (nuint)maxVertices, (nuint)minTriangles, (nuint)maxTriangles, coneWeight, splitFactor),
+                MeshletBuildMode.Spatial => MeshoptBuildMeshletsSpatial(meshletPtr, meshletVerticesPtr, meshletTrianglesPtr, indicesPtr, (nuint)indices.Length, positionsPtr, vertexCount, sizeof(float) * 3u, (nuint)maxVertices, (nuint)minTriangles, (nuint)maxTriangles, fillWeight),
+                _ => MeshoptBuildMeshlets(meshletPtr, meshletVerticesPtr, meshletTrianglesPtr, indicesPtr, (nuint)indices.Length, positionsPtr, vertexCount, sizeof(float) * 3u, (nuint)maxVertices, (nuint)maxTriangles, coneWeight),
             };
         }
     }

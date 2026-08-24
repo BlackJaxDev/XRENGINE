@@ -16,91 +16,39 @@ using Buffer = Silk.NET.Vulkan.Buffer;
 
 namespace XREngine.Rendering.Vulkan;
 
-public unsafe partial class VulkanRenderer
+internal sealed partial class VulkanCommandRuntime
 {
-    private long _commandBufferDirtyGeneration;
-    private long _lastCommandBufferDirtyTimestamp;
+    private ref long _commandBufferDirtyGeneration => ref CommandBuffers.DirtyGeneration;
+    private ref long _lastCommandBufferDirtyTimestamp => ref CommandBuffers.LastDirtyTimestamp;
 
     private long SnapshotCommandBufferDirtyGeneration()
-        => Volatile.Read(ref _commandBufferDirtyGeneration);
+        => CommandBuffers.SnapshotDirtyGeneration();
 
     private bool HaveCommandBuffersDirtiedSince(long generation)
-        => Volatile.Read(ref _commandBufferDirtyGeneration) != generation;
+        => CommandBuffers.HaveDirtiedSince(generation);
 
     internal void MarkCommandBuffersDirty([CallerMemberName] string? reason = null)
-    {
-        Volatile.Write(ref _lastCommandBufferDirtyTimestamp, Stopwatch.GetTimestamp());
-        Interlocked.Increment(ref _commandBufferDirtyGeneration);
-
-        if (_commandBufferDirtyFlags is null)
-            return;
-
-        for (int i = 0; i < _commandBufferDirtyFlags.Length; i++)
-            _commandBufferDirtyFlags[i] = true;
-        MarkCommandBufferVariantsDirty(reason);
-
-        RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanCommandBuffersDirty(reason);
-        TrackCommandBufferDirtyReason(reason, _commandBufferDirtyFlags.Length);
-    }
-
-    private void TrackCommandBufferDirtyReason(string? reason, int swapchainImageCount)
-    {
-        string key = string.IsNullOrWhiteSpace(reason) ? "<unknown>" : reason;
-        string? summary = null;
-        lock (_commandBufferDirtyReasonLock)
-        {
-            _commandBufferDirtyReasons.TryGetValue(key, out int count);
-            _commandBufferDirtyReasons[key] = count + 1;
-
-            long now = Stopwatch.GetTimestamp();
-            if (_lastCommandBufferDirtyReasonLogTimestamp == 0)
-            {
-                _lastCommandBufferDirtyReasonLogTimestamp = now;
-                return;
-            }
-
-            if (Stopwatch.GetElapsedTime(_lastCommandBufferDirtyReasonLogTimestamp, now) < TimeSpan.FromSeconds(1))
-                return;
-
-            StringBuilder builder = new();
-            foreach (KeyValuePair<string, int> pair in _commandBufferDirtyReasons.OrderByDescending(static p => p.Value))
-            {
-                if (builder.Length > 0)
-                    builder.Append(", ");
-
-                builder.Append(pair.Key).Append('=').Append(pair.Value);
-            }
-
-            summary = builder.ToString();
-            _commandBufferDirtyReasons.Clear();
-            _lastCommandBufferDirtyReasonLogTimestamp = now;
-        }
-
-        Debug.Vulkan(
-            "[Vulkan] Command buffers marked dirty over the last second. SwapchainImages={0} Reasons={1}",
-            swapchainImageCount,
-            summary);
-    }
+        => CommandBuffers.MarkDirty(reason);
 
     internal void MarkCommandBuffersDirtyForLegacyMeshState([CallerMemberName] string? reason = null)
     {
-        if (VulkanPrimaryCommandBufferReuseEnabled || CommandChainsEnabledForCurrentRecording || _frameOperationQueue.CurrentThread.Capture is not null)
+        if (VulkanPrimaryCommandBufferReuseEnabled || CommandChainsEnabledForCurrentRecording)
             return;
 
         MarkCommandBuffersDirty(reason);
     }
 
-    internal override void NotifyRenderResourcesChanged()
+    internal void NotifyRenderResourcesChanged()
         => InvalidateCommandChainScheduleForResourceChange(nameof(NotifyRenderResourcesChanged));
 
-    internal override void NotifyRenderResourcesChanged(string? reason)
+    internal void NotifyRenderResourcesChanged(string? reason)
         => InvalidateCommandChainScheduleForResourceChange(
             RenderResourceChangeKind.BindingIdentity,
             string.IsNullOrWhiteSpace(reason)
                 ? nameof(NotifyRenderResourcesChanged)
                 : reason);
 
-    internal override void NotifyRenderResourcesChanged(RenderResourceChangeKind kind, string? reason)
+    internal void NotifyRenderResourcesChanged(RenderResourceChangeKind kind, string? reason)
         => InvalidateCommandChainScheduleForResourceChange(
             kind,
             string.IsNullOrWhiteSpace(reason)

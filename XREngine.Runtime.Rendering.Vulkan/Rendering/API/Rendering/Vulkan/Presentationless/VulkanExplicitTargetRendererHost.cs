@@ -1,24 +1,29 @@
 using Silk.NET.Core.Native;
 using Silk.NET.Vulkan;
+using Silk.NET.Vulkan.Extensions.EXT;
 
 namespace XREngine.Rendering.Vulkan;
 
 /// <summary>
-/// Thin runtime-host adapter for a production <see cref="VulkanRenderer"/>
-/// whose target supports explicit deterministic frame submission.
+/// Owns a production Vulkan renderer whose target supports deterministic,
+/// presentation-independent frame submission.
 /// </summary>
-internal sealed unsafe class VulkanExplicitTargetRendererHost : IRuntimeRendererHost, IDisposable
+public sealed unsafe class VulkanExplicitTargetRendererHost :
+    IRuntimeRendererHost,
+    IMaterialTableBackendCapability,
+    IDisposable
 {
     private readonly VulkanRenderer _renderer;
     private bool _disposed;
 
     public VulkanExplicitTargetRendererHost(
         IRendererPresentationTarget target,
-        long backendGeneration)
+        long backendGeneration = 0)
     {
         ArgumentNullException.ThrowIfNull(target);
         _renderer = new VulkanRenderer(
             new RendererHostContext(target, backendGeneration: backendGeneration));
+
         try
         {
             _renderer.Initialize();
@@ -30,15 +35,12 @@ internal sealed unsafe class VulkanExplicitTargetRendererHost : IRuntimeRenderer
         }
         catch
         {
-            try
-            {
-                _renderer.CleanUp();
-            }
+            try { _renderer.CleanUp(); }
             catch
             {
-                // Preserve the initialization failure when partial teardown
-                // cannot safely traverse an incomplete device core.
+                // Preserve the initialization error when partial native teardown also fails.
             }
+
             throw;
         }
     }
@@ -53,7 +55,23 @@ internal sealed unsafe class VulkanExplicitTargetRendererHost : IRuntimeRenderer
     public double LastCompletedGpuFrameNanoseconds => _renderer.ExplicitTargetLastCompletedGpuFrameNanoseconds;
     public string PresentationDescription => _renderer.ExplicitTargetPresentationDescription;
     public bool PresentationUsesDesktopCompositor => false;
-    internal VulkanRenderer Renderer => _renderer;
+    public IReadOnlyList<string> EnabledInstanceExtensions => _renderer.EnabledInstanceExtensions;
+    public IReadOnlyList<string> EnabledDeviceExtensions => _renderer.EnabledDeviceExtensions;
+    public VulkanRenderer Renderer => _renderer;
+    /// <summary>Native API used by prepared deterministic component fixtures.</summary>
+    public Vk Api => _renderer.VulkanApi;
+    /// <summary>Logical device used only to precreate fixture-owned Vulkan objects.</summary>
+    public Device Device => _renderer.Device;
+    /// <summary>Selected physical adapter handle for fixture memory-type selection.</summary>
+    public PhysicalDevice PhysicalDevice => _renderer.PhysicalDevice;
+    public Instance Instance => _renderer.Instance;
+    /// <summary>Loaded debug-label extension, when enabled for this host.</summary>
+    public ExtDebugUtils? DebugUtils => _renderer.DeviceContext.DebugUtils;
+    /// <summary>Graphics queue family used for fixture-owned secondary command pools.</summary>
+    public uint GraphicsQueueFamilyIndex => _renderer.DeviceContext.QueueFamilies.GraphicsFamilyIndex
+        ?? throw new InvalidOperationException("The Vulkan host has no selected graphics queue family.");
+    /// <summary>Whether dynamic rendering is enabled for the selected device.</summary>
+    public bool SupportsDynamicRendering => _renderer.DeviceContext.SupportsDynamicRendering;
 
     public string AdapterName
     {
@@ -66,15 +84,75 @@ internal sealed unsafe class VulkanExplicitTargetRendererHost : IRuntimeRenderer
         }
     }
 
+    public uint DriverVersion
+    {
+        get
+        {
+            _renderer.VulkanApi.GetPhysicalDeviceProperties(
+                _renderer.PhysicalDevice,
+                out PhysicalDeviceProperties properties);
+            return properties.DriverVersion;
+        }
+    }
+
+    public uint VendorId
+    {
+        get
+        {
+            _renderer.VulkanApi.GetPhysicalDeviceProperties(
+                _renderer.PhysicalDevice,
+                out PhysicalDeviceProperties properties);
+            return properties.VendorID;
+        }
+    }
+
+    public uint DeviceId
+    {
+        get
+        {
+            _renderer.VulkanApi.GetPhysicalDeviceProperties(
+                _renderer.PhysicalDevice,
+                out PhysicalDeviceProperties properties);
+            return properties.DeviceID;
+        }
+    }
+
     public bool SupportsIndirectCountDraw() => _renderer.SupportsIndirectCountDraw();
     public bool SupportsDirectMeshTaskDispatch() => _renderer.SupportsDirectMeshTaskDispatch();
     public bool SupportsIndirectCountMeshTaskDispatch() => _renderer.SupportsIndirectCountMeshTaskDispatch();
     public bool SupportsProductionMeshletShaders() => _renderer.SupportsProductionMeshletShaders();
     public bool SupportsMeshletDispatch() => _renderer.SupportsMeshletDispatch();
+    private IMaterialTableBackendCapability MaterialTableCapability => _renderer;
+    bool IMaterialTableBackendCapability.SupportsBufferDeviceAddress
+        => MaterialTableCapability.SupportsBufferDeviceAddress;
+    bool IMaterialTableBackendCapability.SupportsBindlessMaterialTable
+        => MaterialTableCapability.SupportsBindlessMaterialTable;
+    bool IMaterialTableBackendCapability.SupportsBindlessTextureHandles
+        => MaterialTableCapability.SupportsBindlessTextureHandles;
+    string IMaterialTableBackendCapability.BindlessMaterialUnavailableReason
+        => MaterialTableCapability.BindlessMaterialUnavailableReason;
+    bool IMaterialTableBackendCapability.TryEnsureMaterialTextureTable(out string reason)
+        => MaterialTableCapability.TryEnsureMaterialTextureTable(out reason);
+    XREngine.Rendering.Materials.MaterialTextureReferenceResolution IMaterialTableBackendCapability.ResolveMaterialTextureReference(
+        XRTexture texture,
+        string semantic)
+        => MaterialTableCapability.ResolveMaterialTextureReference(texture, semantic);
+    void IMaterialTableBackendCapability.FlushMaterialTextureTableUpdates()
+        => MaterialTableCapability.FlushMaterialTextureTableUpdates();
+    void IMaterialTableBackendCapability.ReleaseMaterialTextureReference(
+        in XREngine.Rendering.Materials.GPUMaterialRetiredHandle retired)
+        => MaterialTableCapability.ReleaseMaterialTextureReference(in retired);
+    bool IMaterialTableBackendCapability.BeginGlobalMaterialTextureDescriptorScope(
+        XRRenderProgram program,
+        string consumer)
+        => MaterialTableCapability.BeginGlobalMaterialTextureDescriptorScope(program, consumer);
+    void IMaterialTableBackendCapability.EndGlobalMaterialTextureDescriptorScope(XRRenderProgram program)
+        => MaterialTableCapability.EndGlobalMaterialTextureDescriptorScope(program);
     public AdvancedRenderPipelineCapabilities GetAdvancedRenderPipelineCapabilities()
         => _renderer.GetAdvancedRenderPipelineCapabilities();
 
     public bool TryDrawMeshTasksIndirectCount(
+        XRRenderProgram program,
         XRDataBuffer indirectBuffer,
         XRDataBuffer countBuffer,
         uint maxDrawCount,
@@ -83,6 +161,7 @@ internal sealed unsafe class VulkanExplicitTargetRendererHost : IRuntimeRenderer
         nuint byteOffset = 0,
         nuint countByteOffset = 0)
         => _renderer.TryDrawMeshTasksIndirectCount(
+            program,
             indirectBuffer,
             countBuffer,
             maxDrawCount,
@@ -99,9 +178,21 @@ internal sealed unsafe class VulkanExplicitTargetRendererHost : IRuntimeRenderer
     }
 
     /// <summary>
-    /// Explicitly reads the last completed final color image, rejecting output
-    /// larger than <paramref name="maxByteCount"/>.
+    /// Runs ordinary viewport/render-pipeline work against an acquired
+    /// presentation-independent output. The callback should invoke the same
+    /// <see cref="XRViewport.Render(XRFrameBuffer?, IRuntimeRenderWorld?, XRCamera?, bool, XRMaterial?)"/>
+    /// path used by a desktop viewport; the host then records and submits the
+    /// resulting production frame operations.
     /// </summary>
+    public void SubmitProductionFrame(
+        Action<RenderFrameOutputDescription> buildFrame)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        ArgumentNullException.ThrowIfNull(buildFrame);
+        _renderer.SubmitExplicitProductionFrame(buildFrame);
+    }
+
+    /// <summary>Reads the last completed color output after the measured interval.</summary>
     public byte[] ReadbackLastSubmittedColor(
         int maxByteCount,
         ImageLayout sourceLayout = ImageLayout.TransferSrcOptimal)
@@ -122,6 +213,7 @@ internal sealed unsafe class VulkanExplicitTargetRendererHost : IRuntimeRenderer
     {
         if (_disposed)
             return;
+
         _disposed = true;
         _renderer.CleanUp();
     }

@@ -59,7 +59,7 @@ namespace XREngine.Rendering.Pipelines.Commands
 
         private const uint GroupSize = 16u;
 
-        private const uint CulledCommandFloats = GPUScene.CommandFloatCount;
+        private const uint CulledCommandFloats = 1u;
 
         // Keep this moderate to avoid memory spikes; 131072 * 64 bytes ~= 8 MB.
         public const uint MaxSurfelsConst = 131072u;

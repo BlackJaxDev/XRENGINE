@@ -61,7 +61,7 @@ internal sealed class VulkanRenderGraphCompiler
         // Build explicit synchronization requirements from the same metadata source.
         RenderGraphSynchronizationInfo synchronization = RenderGraphSynchronizationPlanner.Build(passMetadata);
 
-        // passIndex -> topological order index lookup used by SortFrameOps.
+        // passIndex -> topological order index retained for cold diagnostics.
         Dictionary<int, int> passOrder = new(orderedPasses.Count);
         int screenSpaceUiPassOrder = int.MaxValue;
 

@@ -30,7 +30,7 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
     protected void RecreateImageForFullTextureDataUpload(string reason)
     {
         _ = reason;
-        if (!IsActive || _image.Handle == 0 || Renderer.IsDeviceLost)
+        if (!IsActive || _image.Handle == 0 || !BackendContext.IsDeviceOperational)
             return;
 
         TextureLayout requestedLayout = NormalizeLayout(DescribeTexture());

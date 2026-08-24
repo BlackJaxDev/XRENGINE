@@ -9,6 +9,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using XREngine.Components;
 using XREngine.Data.Core;
+using McpCapability = XREngine.Runtime.Automation.Mcp.McpCapability;
 
 namespace XREngine.Editor.Mcp
 {
@@ -311,7 +312,8 @@ namespace XREngine.Editor.Mcp
                 handler: (context, args, token) => InvokeToolAsync(method, context, args, token),
                 permissionLevel: ResolvePermissionLevel(method, toolName),
                 permissionReason: mcpAttribute?.PermissionReason,
-                threadAffinity: method.GetCustomAttribute<McpThreadAffinityAttribute>()?.Affinity);
+                threadAffinity: method.GetCustomAttribute<McpThreadAffinityAttribute>()?.Affinity,
+                requiredCapabilities: method.GetCustomAttribute<McpRequiredCapabilitiesAttribute>()?.Capabilities ?? McpCapability.World);
         }
 
         private static object BuildParameterSchema(Type parameterType, string title, string? description)

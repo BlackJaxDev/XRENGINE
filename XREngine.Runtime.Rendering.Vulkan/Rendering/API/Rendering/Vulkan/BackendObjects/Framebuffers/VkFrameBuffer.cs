@@ -8,8 +8,16 @@ using Format = Silk.NET.Vulkan.Format;
 
 namespace XREngine.Rendering.Vulkan;
 
-internal unsafe class VkFrameBuffer(VulkanRenderer api, XRFrameBuffer data) : VkObject<XRFrameBuffer>(api, data)
+internal unsafe class VkFrameBuffer(
+    VulkanBackendObjectContext backendContext,
+    XRFrameBuffer data) : VkObject<XRFrameBuffer>(backendContext, data)
 {
+    private VulkanProgramCommandOperations? _commandOperations;
+    private VulkanProgramCommandOperations CommandOperations => _commandOperations ?? throw new InvalidOperationException("Framebuffer command operations have not been bound.");
+
+    protected override void BindOperationPorts(VulkanWrapperPortBinding binding)
+        => _commandOperations = binding.TryGetProgramCommandOperations();
+
     private Framebuffer _frameBuffer = default;
     private RenderPass _renderPass = default;
     private FrameBufferAttachmentSignature[]? _attachmentSignature;
@@ -18,6 +26,7 @@ internal unsafe class VkFrameBuffer(VulkanRenderer api, XRFrameBuffer data) : Vk
     private Extent2D[]? _attachmentExtents;
     private AttachmentBuildInfo[] _attachmentBuildScratch = [];
     private readonly List<CachedFrameBufferState> _cachedFrameBufferStates = [];
+    private VulkanRecordedRenderTargetSnapshot _recordedRenderTargetSnapshot;
 
     public override VkObjectType Type { get; } = VkObjectType.Framebuffer;
     public override bool IsGenerated => IsActive;
@@ -49,6 +58,127 @@ internal unsafe class VkFrameBuffer(VulkanRenderer api, XRFrameBuffer data) : Vk
     public uint MultiviewViewMask { get; private set; }
 
     internal uint AttachmentCount => (uint)(_attachmentSignature?.Length ?? 0);
+
+    /// <summary>
+    /// Captures the exact native objects inherited by command recording without
+    /// creating API wrappers or allocating per-frame storage.
+    /// </summary>
+    internal bool TryCaptureRecordedRenderTargetSnapshot(
+        out VulkanRecordedRenderTargetSnapshot snapshot)
+    {
+        snapshot = default;
+        if (!IsGenerated ||
+            _attachmentViews is null ||
+            _attachmentTargets is null ||
+            _attachmentSignature is null ||
+            _attachmentViews.Length != _attachmentTargets.Length ||
+            _attachmentViews.Length != _attachmentSignature.Length ||
+            _attachmentViews.Length > VulkanRecordedRenderTargetSnapshot.MaxAttachmentCount)
+        {
+            return false;
+        }
+
+        ulong framebufferGeneration = _frameBuffer.Handle == 0
+            ? 0UL
+            : BackendContext.GetResourceGeneration(
+                ObjectType.Framebuffer,
+                _frameBuffer.Handle);
+        Span<VulkanNativeAttachmentIdentity> attachments =
+            stackalloc VulkanNativeAttachmentIdentity[
+                VulkanRecordedRenderTargetSnapshot.MaxAttachmentCount];
+        for (int i = 0; i < _attachmentViews.Length; i++)
+        {
+            AttachmentTargetInfo targetInfo = _attachmentTargets[i];
+            if (!TryResolveRecordedAttachmentImage(targetInfo.Target, out Image image))
+            {
+                snapshot = default;
+                return false;
+            }
+
+            ImageView view = _attachmentViews[i];
+            attachments[i] = new VulkanNativeAttachmentIdentity(
+                image.Handle,
+                BackendContext.GetResourceGeneration(ObjectType.Image, image.Handle),
+                view.Handle,
+                BackendContext.GetResourceGeneration(ObjectType.ImageView, view.Handle),
+                _attachmentSignature[i].ReferenceLayout);
+        }
+
+        if (RecordedRenderTargetSnapshotMatches(
+                in _recordedRenderTargetSnapshot,
+                _frameBuffer.Handle,
+                framebufferGeneration,
+                FramebufferWidth,
+                FramebufferHeight,
+                MultiviewViewMask,
+                attachments[.._attachmentViews.Length]))
+        {
+            snapshot = _recordedRenderTargetSnapshot;
+            return true;
+        }
+
+        snapshot = default;
+        snapshot.Initialize(
+            _frameBuffer.Handle,
+            framebufferGeneration,
+            FramebufferWidth,
+            FramebufferHeight,
+            MultiviewViewMask,
+            _attachmentViews.Length);
+        for (int index = 0; index < _attachmentViews.Length; index++)
+            snapshot.SetAttachment(index, attachments[index]);
+
+        if (snapshot.IsComplete)
+            _recordedRenderTargetSnapshot = snapshot;
+        return snapshot.IsComplete;
+    }
+
+    private static bool RecordedRenderTargetSnapshotMatches(
+        in VulkanRecordedRenderTargetSnapshot snapshot,
+        ulong framebufferHandle,
+        ulong framebufferGeneration,
+        uint width,
+        uint height,
+        uint viewMask,
+        ReadOnlySpan<VulkanNativeAttachmentIdentity> attachments)
+    {
+        if (!snapshot.IsComplete ||
+            snapshot.FramebufferHandle != framebufferHandle ||
+            snapshot.FramebufferGeneration != framebufferGeneration ||
+            snapshot.Width != width ||
+            snapshot.Height != height ||
+            snapshot.ViewMask != viewMask ||
+            snapshot.AttachmentCount != attachments.Length)
+        {
+            return false;
+        }
+
+        for (int index = 0; index < attachments.Length; index++)
+            if (snapshot.GetAttachment(index) != attachments[index])
+                return false;
+
+        return true;
+    }
+
+    private bool TryResolveRecordedAttachmentImage(
+        IFrameBufferAttachement target,
+        out Image image)
+    {
+        image = default;
+        object? apiObject = target switch
+        {
+            XRTexture texture => GetBackendWrapper(texture, generateNow: false),
+            XRRenderBuffer renderBuffer => GetBackendWrapper(renderBuffer, generateNow: false),
+            _ => null,
+        };
+        image = apiObject switch
+        {
+            IVkImageDescriptorSource source => source.DescriptorImage,
+            VkRenderBuffer renderBuffer => renderBuffer.Image,
+            _ => default,
+        };
+        return image.Handle != 0;
+    }
 
     internal void EnsureCurrent()
     {
@@ -91,7 +221,7 @@ internal unsafe class VkFrameBuffer(VulkanRenderer api, XRFrameBuffer data) : Vk
             if (!hasLayoutOverrides)
                 return _attachmentSignature;
 
-            // No metadata but we have layout overrides — apply them to the base signature.
+            // No metadata but we have layout overrides ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â apply them to the base signature.
             return ApplyInitialLayoutOverrides(_attachmentSignature, initialLayoutOverrides!, preserveTrackedClearLoads);
         }
 
@@ -161,7 +291,7 @@ internal unsafe class VkFrameBuffer(VulkanRenderer api, XRFrameBuffer data) : Vk
         if (planned.Length == 0 || SignatureEquals(_attachmentSignature, planned))
             return _renderPass;
 
-        return Renderer.GetOrCreateFrameBufferRenderPass(planned);
+        return BackendContext.Resources.Framebuffers.GetOrCreateRenderPass(BackendContext.Api, Device, planned);
     }
 
     internal bool UsesReadOnlyDepthStencilForPass(
@@ -258,6 +388,67 @@ internal unsafe class VkFrameBuffer(VulkanRenderer api, XRFrameBuffer data) : Vk
 
         view = default;
         return false;
+    }
+
+    /// <summary>
+    /// Resolves the layout used by one attachment in a specific render-graph
+    /// pass without materializing a planned attachment-signature array.
+    /// </summary>
+    internal ImageLayout ResolveAttachmentReferenceLayoutForPass(
+        int attachmentIndex,
+        int passIndex,
+        IReadOnlyCollection<RenderPassMetadata>? passMetadata)
+    {
+        if (_attachmentSignature is not { Length: > 0 } signatures ||
+            (uint)attachmentIndex >= (uint)signatures.Length)
+        {
+            return ImageLayout.Undefined;
+        }
+
+        ImageLayout fallback = signatures[attachmentIndex].ReferenceLayout;
+        if (passMetadata is null || passMetadata.Count == 0 ||
+            string.IsNullOrWhiteSpace(Data.Name) ||
+            FindPassMetadata(passMetadata, passIndex) is not { } pass)
+        {
+            return fallback;
+        }
+
+        bool[] writeCapableDepthStencilAttachments = new bool[signatures.Length];
+        CollectWriteCapableDepthStencilAttachments(
+            signatures,
+            pass,
+            Data.Name!,
+            writeCapableDepthStencilAttachments);
+
+        int[] matchingIndices = new int[signatures.Length];
+        for (int usageIndex = 0; usageIndex < pass.ResourceUsages.Count; usageIndex++)
+        {
+            RenderPassResourceUsage usage = pass.ResourceUsages[usageIndex];
+            if (!usage.IsAttachment ||
+                !TryGetFrameBufferSlot(usage.ResourceName, Data.Name!, out ReadOnlySpan<char> slot))
+            {
+                continue;
+            }
+
+            int matchingCount = ResolveMatchingAttachmentIndices(
+                signatures,
+                slot,
+                usage,
+                pass,
+                matchingIndices);
+            for (int matchIndex = 0; matchIndex < matchingCount; matchIndex++)
+            {
+                if (matchingIndices[matchIndex] != attachmentIndex)
+                    continue;
+
+                return ResolveAttachmentReferenceLayout(
+                    signatures[attachmentIndex],
+                    usage,
+                    writeCapableDepthStencilAttachments[attachmentIndex]);
+            }
+        }
+
+        return fallback;
     }
 
     internal bool TryGetAttachmentTarget(
@@ -435,17 +626,21 @@ internal unsafe class VkFrameBuffer(VulkanRenderer api, XRFrameBuffer data) : Vk
             _ => loadOp
         };
 
-    internal void WriteClearValues(ClearValue* destination, uint clearValueCount)
-        => WriteClearValues(destination, clearValueCount, _attachmentSignature);
-
-    internal void WriteClearValues(ClearValue* destination, uint clearValueCount, FrameBufferAttachmentSignature[]? signatures)
+    /// <summary>
+    /// Writes attachment clear values from the command-recording snapshot.  The
+    /// wrapper deliberately does not read renderer render-state while a worker
+    /// is recording a frame.
+    /// </summary>
+    internal void WriteClearValues(
+        ClearValue* destination,
+        uint clearValueCount,
+        FrameBufferAttachmentSignature[]? signatures,
+        in ColorF4 clearColor,
+        float clearDepth,
+        uint clearStencil)
     {
         if (signatures is null || clearValueCount == 0)
             return;
-
-        var clearColor = Renderer.GetClearColorValue();
-        float clearDepth = Renderer.GetClearDepthValue();
-        uint clearStencil = Renderer.GetClearStencilValue();
 
         uint count = Math.Min(clearValueCount, (uint)signatures.Length);
         for (uint i = 0; i < count; i++)
@@ -565,7 +760,7 @@ internal unsafe class VkFrameBuffer(VulkanRenderer api, XRFrameBuffer data) : Vk
     {
         if (!IsActive) return;
         PreDeleted();
-        // Defer actual VkFramebuffer destruction — the handle may still be
+        // Defer actual VkFramebuffer destruction ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â the handle may still be
         // referenced by an in-flight command buffer.  The retirement queue
         // delays VkDestroyFramebuffer until the frame slot's timeline fence
         // signals that the GPU is done with it.
@@ -644,7 +839,7 @@ internal unsafe class VkFrameBuffer(VulkanRenderer api, XRFrameBuffer data) : Vk
         uint framebufferLayers = ResolveFramebufferLayers(attachments);
         uint multiviewViewMask = ResolveFramebufferMultiviewViewMask(attachments);
 
-        if (Renderer.UseDynamicRenderingRenderTargets)
+        if (BackendContext.UsesDynamicRenderingRenderTargets)
         {
             return new CachedFrameBufferState(
                 default,
@@ -659,7 +854,7 @@ internal unsafe class VkFrameBuffer(VulkanRenderer api, XRFrameBuffer data) : Vk
                 multiviewViewMask);
         }
 
-        RenderPass renderPass = Renderer.GetOrCreateFrameBufferRenderPass(signatures);
+        RenderPass renderPass = BackendContext.Resources.Framebuffers.GetOrCreateRenderPass(BackendContext.Api, Device, signatures);
         Framebuffer frameBuffer = default;
 
         fixed (ImageView* viewsPtr = views)
@@ -679,18 +874,10 @@ internal unsafe class VkFrameBuffer(VulkanRenderer api, XRFrameBuffer data) : Vk
                 throw new Exception("Failed to create framebuffer.");
         }
 
-        Renderer.RegisterVulkanFramebuffer(
+        BackendContext.Resources.Framebuffers.RegisterFramebuffer(
             frameBuffer,
             views,
             $"Framebuffer.{Data?.Name ?? "<unnamed>"}");
-
-        string debugName = string.IsNullOrWhiteSpace(Data?.Name)
-            ? $"FBO.0x{frameBuffer.Handle:X}"
-            : $"FBO.{Data.Name}";
-        Renderer.SetDebugObjectName(
-            ObjectType.Framebuffer,
-            frameBuffer.Handle,
-            $"{debugName}.{fbWidth}x{fbHeight}.Layers{framebufferLayers}");
 
         return new CachedFrameBufferState(
             frameBuffer,
@@ -743,14 +930,14 @@ internal unsafe class VkFrameBuffer(VulkanRenderer api, XRFrameBuffer data) : Vk
             if (frameBuffer.Handle == 0 || !retiredHandles.Add(frameBuffer.Handle))
                 continue;
 
-            Renderer.RetireFramebuffer(frameBuffer);
+            BackendContext.Resources.Framebuffers.RetireFramebuffer(frameBuffer, $"Framebuffer.{Data?.Name ?? "<unnamed>"}");
         }
 
         if (_cachedFrameBufferStates.Count == 0 &&
             _frameBuffer.Handle != 0 &&
             retiredHandles.Add(_frameBuffer.Handle))
         {
-            Renderer.RetireFramebuffer(_frameBuffer);
+            BackendContext.Resources.Framebuffers.RetireFramebuffer(_frameBuffer, $"Framebuffer.{Data?.Name ?? "<unnamed>"}");
         }
 
         _cachedFrameBufferStates.Clear();
@@ -858,9 +1045,9 @@ internal unsafe class VkFrameBuffer(VulkanRenderer api, XRFrameBuffer data) : Vk
         RenderGraphSynchronizationInfo? synchronization)
     {
         FrameBufferAttachmentSignature[] planned = (FrameBufferAttachmentSignature[])_attachmentSignature!.Clone();
-        Span<bool> touchedAttachments = stackalloc bool[planned.Length];
-        Span<bool> writeCapableDepthStencilAttachments = stackalloc bool[planned.Length];
-        Span<int> matchingIndices = stackalloc int[planned.Length];
+        bool[] touchedAttachments = new bool[planned.Length];
+        bool[] writeCapableDepthStencilAttachments = new bool[planned.Length];
+        int[] matchingIndices = new int[planned.Length];
         int touchedAttachmentCount = 0;
         CollectWriteCapableDepthStencilAttachments(
             planned,
@@ -967,7 +1154,7 @@ internal unsafe class VkFrameBuffer(VulkanRenderer api, XRFrameBuffer data) : Vk
         string frameBufferName,
         Span<bool> result)
     {
-        Span<int> matchingIndices = stackalloc int[signatures.Length];
+        int[] matchingIndices = new int[signatures.Length];
         for (int usageIndex = 0; usageIndex < pass.ResourceUsages.Count; usageIndex++)
         {
             RenderPassResourceUsage usage = pass.ResourceUsages[usageIndex];
@@ -1622,7 +1809,7 @@ internal unsafe class VkFrameBuffer(VulkanRenderer api, XRFrameBuffer data) : Vk
 
     private AttachmentSource ResolveRenderBufferAttachment(XRRenderBuffer renderBuffer)
     {
-        if (Renderer.GetOrCreateAPIRenderObject(renderBuffer) is not VkRenderBuffer vkRenderBuffer)
+        if (WrapperLookup.GetOrCreate(renderBuffer) is not VkRenderBuffer vkRenderBuffer)
             throw new InvalidOperationException("Render buffer is not backed by a Vulkan object.");
 
         vkRenderBuffer.Generate();
@@ -1643,7 +1830,7 @@ internal unsafe class VkFrameBuffer(VulkanRenderer api, XRFrameBuffer data) : Vk
 
     private AttachmentSource ResolveTextureAttachment(IFrameBufferAttachement textureAttachment, XRTexture texture, EFrameBufferAttachment attachment, int mipLevel, int layerIndex)
     {
-        if (Renderer.GetOrCreateAPIRenderObject(texture, generateNow: true) is not IVkFrameBufferAttachmentSource source)
+        if (WrapperLookup.GetOrCreate(texture, generateNow: true) is not IVkFrameBufferAttachmentSource source)
             throw new InvalidOperationException($"Texture '{texture.Name ?? texture.GetDescribingName()}' is not backed by a Vulkan texture.");
 
         bool depthStencilAttachment = attachment is EFrameBufferAttachment.DepthAttachment
@@ -1862,7 +2049,7 @@ internal unsafe class VkFrameBuffer(VulkanRenderer api, XRFrameBuffer data) : Vk
         // The reference layout is the layout the attachment holds WHILE the framebuffer
         // is bound for rendering. Depth/stencil attachments must be writable during
         // rendering so the geometry passes that populate them (deferred GBuffer, forward
-        // opaque/masked) can clear and write depth — even when the texture is also sampled
+        // opaque/masked) can clear and write depth ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â even when the texture is also sampled
         // by later passes through a DepthView alias. Forcing a read-only reference layout
         // here silently drops every depth write, which leaves the shared depth buffer empty
         // and lets the forward skybox overwrite all deferred geometry.
@@ -2008,16 +2195,30 @@ internal unsafe class VkFrameBuffer(VulkanRenderer api, XRFrameBuffer data) : Vk
     }
 
     private void BindForReading()
-        => Renderer.BindFrameBuffer(EFramebufferTarget.ReadFramebuffer, Data);
+    {
+        Generate();
+        CommandOperations.SetBoundFrameBufferState(
+            EFramebufferTarget.ReadFramebuffer,
+            Data);
+    }
 
     private void UnbindFromReading()
-        => Renderer.BindFrameBuffer(EFramebufferTarget.ReadFramebuffer, null);
+        => CommandOperations.SetBoundFrameBufferState(
+            EFramebufferTarget.ReadFramebuffer,
+            null);
 
     private void BindForWriting()
-        => Renderer.BindFrameBuffer(EFramebufferTarget.DrawFramebuffer, Data);
+    {
+        Generate();
+        CommandOperations.SetBoundFrameBufferState(
+            EFramebufferTarget.DrawFramebuffer,
+            Data);
+    }
 
     private void UnbindFromWriting()
-        => Renderer.BindFrameBuffer(EFramebufferTarget.DrawFramebuffer, null);
+        => CommandOperations.SetBoundFrameBufferState(
+            EFramebufferTarget.DrawFramebuffer,
+            null);
 
     private void OnFramebufferResized()
         => Destroy();

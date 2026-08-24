@@ -8,6 +8,14 @@ public sealed class InteractiveResizeDiagnostics
     private long _interactiveRenderCount;
     private long _suppressedRenderCount;
     private long _resizeQueueCount;
+    private long _staleReuseCount;
+    private long _deferredDispatchCount;
+    private long _faultedDispatchCount;
+    private long _callbackActiveSinceTimestamp;
+    private long _lastCallbackDurationTicks;
+    private long _maximumCallbackDurationTicks;
+    private int _lastDispatchOutcome;
+    private int _lastDispatchReason;
     private long _latestNativeSnapshotSequence;
     private long _latestConsumedNativeSnapshotSequence;
     private long _droppedNativeSnapshotCount;
@@ -37,6 +45,16 @@ public sealed class InteractiveResizeDiagnostics
     public long InteractiveRenderCount => Interlocked.Read(ref _interactiveRenderCount);
     public long SuppressedRenderCount => Interlocked.Read(ref _suppressedRenderCount);
     public long ResizeQueueCount => Interlocked.Read(ref _resizeQueueCount);
+    public long StaleReuseCount => Interlocked.Read(ref _staleReuseCount);
+    public long DeferredDispatchCount => Interlocked.Read(ref _deferredDispatchCount);
+    public long FaultedDispatchCount => Interlocked.Read(ref _faultedDispatchCount);
+    public long CallbackActiveSinceTimestamp => Interlocked.Read(ref _callbackActiveSinceTimestamp);
+    public long LastCallbackDurationTicks => Interlocked.Read(ref _lastCallbackDurationTicks);
+    public long MaximumCallbackDurationTicks => Interlocked.Read(ref _maximumCallbackDurationTicks);
+    public EInteractiveResizeDispatchOutcome LastDispatchOutcome
+        => (EInteractiveResizeDispatchOutcome)Volatile.Read(ref _lastDispatchOutcome);
+    public EInteractiveResizeDispatchReason LastDispatchReason
+        => (EInteractiveResizeDispatchReason)Volatile.Read(ref _lastDispatchReason);
     public ulong LatestNativeSnapshotSequence => (ulong)Math.Max(0L, Interlocked.Read(ref _latestNativeSnapshotSequence));
     public ulong LatestConsumedNativeSnapshotSequence => (ulong)Math.Max(0L, Interlocked.Read(ref _latestConsumedNativeSnapshotSequence));
     public ulong DroppedNativeSnapshotCount => (ulong)Math.Max(0L, Interlocked.Read(ref _droppedNativeSnapshotCount));
@@ -66,6 +84,44 @@ public sealed class InteractiveResizeDiagnostics
     {
         Interlocked.Increment(ref _callbackCount);
         Volatile.Write(ref _lastResizeReason, reason);
+    }
+
+    public void RecordCallbackEntry(long timestamp)
+        => Interlocked.Exchange(ref _callbackActiveSinceTimestamp, timestamp);
+
+    public void RecordCallbackExit(long elapsedStopwatchTicks)
+    {
+        Interlocked.Exchange(ref _callbackActiveSinceTimestamp, 0L);
+        Interlocked.Exchange(ref _lastCallbackDurationTicks, Math.Max(0L, elapsedStopwatchTicks));
+        long observed = Interlocked.Read(ref _maximumCallbackDurationTicks);
+        while (elapsedStopwatchTicks > observed)
+        {
+            long previous = Interlocked.CompareExchange(
+                ref _maximumCallbackDurationTicks,
+                elapsedStopwatchTicks,
+                observed);
+            if (previous == observed)
+                break;
+            observed = previous;
+        }
+    }
+
+    public void RecordDispatch(in InteractiveResizeDispatchResult result)
+    {
+        Volatile.Write(ref _lastDispatchOutcome, (int)result.Outcome);
+        Volatile.Write(ref _lastDispatchReason, (int)result.Reason);
+        switch (result.Outcome)
+        {
+            case EInteractiveResizeDispatchOutcome.PresentedScaledStale:
+                Interlocked.Increment(ref _staleReuseCount);
+                break;
+            case EInteractiveResizeDispatchOutcome.Deferred:
+                Interlocked.Increment(ref _deferredDispatchCount);
+                break;
+            case EInteractiveResizeDispatchOutcome.Faulted:
+                Interlocked.Increment(ref _faultedDispatchCount);
+                break;
+        }
     }
 
     public void RecordInteractiveRender(string reason)

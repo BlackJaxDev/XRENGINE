@@ -9,27 +9,16 @@ internal sealed record MemoryBarrierOp(
     public EMemoryBarrierMask Mask { get; private set; } = Mask;
     public override EVulkanPrimaryPlanNodeKind Kind => EVulkanPrimaryPlanNodeKind.MemoryBarrier;
 
-    internal override int RecordPrimary(
-        VulkanRenderer renderer,
-        scoped ref VulkanRenderer.PrimaryCommandBufferRecordingState recordingState,
-        in VulkanPrimaryOperationRecordingInfo recordingInfo)
-    {
-        renderer.CmdBeginLabel(recordingState.CommandBuffer, "MemoryBarrier");
-        renderer.EmitMemoryBarrierMask(recordingState.CommandBuffer, Mask);
-        renderer.CmdEndLabel(recordingState.CommandBuffer);
-        return recordingInfo.OperationIndex;
-    }
-
     internal static MemoryBarrierOp Rent(
         int passIndex,
         EMemoryBarrierMask mask,
         in FrameOpContext context)
     {
-        bool frameOwned = TryRentForCurrentFrame(out MemoryBarrierOp? reusable);
+        bool frameOwned = TryRentForCurrentFrame(context, out MemoryBarrierOp? reusable);
         if (reusable is null)
         {
             MemoryBarrierOp created = new(passIndex, mask, context);
-            return frameOwned ? RetainForCurrentFrame(created) : created;
+            return frameOwned ? RetainForCurrentFrame(created, context) : created;
         }
 
         reusable.PassIndex = passIndex;

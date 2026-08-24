@@ -133,20 +133,23 @@ function Persist-CohortFrameStreams {
 }
 
 function Limit-AgentValidationRuns {
+    & (Join-Path $repoRoot 'Tools\Limit-AgentValidation.ps1') -ReserveTaskRun | Out-Null
     $validationRoot = Join-Path $repoRoot 'Build\_AgentValidation'
     New-Item -ItemType Directory -Path $validationRoot -Force | Out-Null
     $directories = @(Get-ChildItem -LiteralPath $validationRoot -Directory |
+        Where-Object { $_.Name -ne '00000000-000000-shared' } |
         Sort-Object LastWriteTimeUtc)
-    while ($directories.Count -ge 10) {
+    while ($directories.Count -ge 4) {
         $owned = @($directories | Where-Object { $_.Name -match '^\d{8}-\d{6}-vulkan-perf-' })
         if ($owned.Count -eq 0) {
-            throw "Build\_AgentValidation already has $($directories.Count) run roots and none are owned by Invoke-VulkanPerf. Remove stale evidence before starting another run."
+            throw "Build\_AgentValidation already has $($directories.Count) task run roots and none are owned by Invoke-VulkanPerf. Remove stale evidence before starting another run."
         }
 
         $target = [System.IO.Path]::GetFullPath($owned[0].FullName)
         Assert-PathInsideRepository -Path $target -Purpose 'Retention target'
         Remove-Item -LiteralPath $target -Recurse -Force
         $directories = @(Get-ChildItem -LiteralPath $validationRoot -Directory |
+            Where-Object { $_.Name -ne '00000000-000000-shared' } |
             Sort-Object LastWriteTimeUtc)
     }
 }

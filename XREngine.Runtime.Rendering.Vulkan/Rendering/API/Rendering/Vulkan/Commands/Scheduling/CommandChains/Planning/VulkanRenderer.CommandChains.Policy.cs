@@ -13,10 +13,11 @@ using XREngine.Rendering.Shadows;
 
 namespace XREngine.Rendering.Vulkan;
 
-public unsafe partial class VulkanRenderer
+internal sealed partial class VulkanCommandRuntime
 {
     internal const string CommandChainsEnvVar = XREngineEnvironmentVariables.VulkanCommandChains;
     internal const string CommandChainsSingleThreadEnvVar = XREngineEnvironmentVariables.VulkanCommandChainsSingleThread;
+    internal const string CommandChainWorkerCountEnvVar = XREngineEnvironmentVariables.VulkanCommandChainWorkerCount;
     internal const string CommandChainValidateEnvVar = XREngineEnvironmentVariables.VulkanCommandChainValidate;
     internal const string CommandChainTraceEnvVar = XREngineEnvironmentVariables.VulkanCommandChainTrace;
     internal const string DisableParallelChainRecordingEnvVar = XREngineEnvironmentVariables.VulkanDisableParallelChainRecording;
@@ -30,35 +31,56 @@ public unsafe partial class VulkanRenderer
     internal const int CommandChainRightEyeViewIndex = 1;
     internal const int CommandChainStereoMultiviewViewIndex = -1;
 
-    private Dictionary<CommandChainKey, CommandChain>[]? _commandChainCaches;
-    private Dictionary<uint, Dictionary<CommandChainKey, CommandChain>>? _externalCommandChainCaches;
-    private readonly List<RenderPacket> _commandChainPacketScratch = [];
-    private readonly List<RenderPacket> _commandChainPacketPool = [];
-    private readonly DrawPacket[] _commandChainDrawPacketScratch = new DrawPacket[MaxMeshDrawsPerRenderPacket];
-    private int _commandChainPacketPoolCursor;
-    private readonly List<RenderPassChainGroup> _commandChainGroupScratch = [];
-    private readonly List<CommandChainKey> _commandChainGroupKeyScratch = [];
-    private readonly Dictionary<ulong, int> _commandChainStructuralOccurrenceScratch = [];
-    private readonly HashSet<RenderViewKey> _commandChainViewKeyScratch = [];
-    private readonly Dictionary<uint, CommandChainStabilityGuardState> _commandChainStabilityGuardStates = [];
-    private int _commandChainTraceDumped;
-    private long _commandChainTraceLastDumpTimestamp;
+    private ref Dictionary<CommandChainKey, CommandChain>[]? _commandChainCaches => ref _commandRuntime.CommandChains.Caches;
+    private ref Dictionary<uint, Dictionary<CommandChainKey, CommandChain>>? _externalCommandChainCaches => ref _commandRuntime.CommandChains.ExternalCaches;
+    private List<RenderPacket> _commandChainPacketScratch => _commandRuntime.CommandChains.PacketScratch;
+    private List<RenderPacket> _commandChainPacketPool => _commandRuntime.CommandChains.PacketPool;
+    // Packets hold only numeric range headers. A publication selects one arena;
+    // retained packet leases keep that arena immutable until every prepared
+    // command chain and worker has retired it.
+    private List<RenderPacketPayloadArena> _commandChainPacketPayloadArenas => _commandRuntime.CommandChains.PacketPayloadArenas;
+    private ref RenderPacketPayloadArena? _activeCommandChainPacketPayloadArena => ref _commandRuntime.CommandChains.ActivePacketPayloadArena;
+    private DrawPacket[] _commandChainDrawPacketScratch => _commandRuntime.CommandChains.DrawPacketScratch;
+    private ref int _commandChainPacketPoolCursor => ref _commandRuntime.CommandChains.PacketPoolCursor;
+    private List<RenderPassChainGroup> _commandChainGroupScratch => _commandRuntime.CommandChains.GroupScratch;
+    private List<CommandChainKey> _commandChainGroupKeyScratch => _commandRuntime.CommandChains.GroupKeyScratch;
+    private Dictionary<ulong, int> _commandChainStructuralOccurrenceScratch => _commandRuntime.CommandChains.StructuralOccurrenceScratch;
+    private HashSet<RenderViewKey> _commandChainViewKeyScratch => _commandRuntime.CommandChains.ViewKeyScratch;
+    private Dictionary<uint, CommandChainStabilityGuardState> _commandChainStabilityGuardStates => _commandRuntime.CommandChains.StabilityGuardStates;
+    private ref int _commandChainTraceDumped => ref _commandRuntime.CommandChains.TraceDumped;
+    private ref long _commandChainTraceLastDumpTimestamp => ref _commandRuntime.CommandChains.TraceLastDumpTimestamp;
     private const int CommandChainZeroReuseBackoffThreshold = 1;
     private const int CommandChainZeroReuseProbeInterval = 120;
     // Correct program-scoped descriptor identity can split a large imported scene into
-    // hundreds of compatible packets. Rejecting the complete schedule at the old 128
-    // ceiling forced every draw back into the primary exactly when camera motion also
-    // refreshed directional shadows. Keep the bound finite, but above the traced
-    // desktop + grouped-cascade workload.
-    private const int MaxCommandChainsPerSchedule = 1024;
+    // thousands of compatible packets. The Sponza desktop view reaches roughly 2.2K
+    // packets while camera motion refreshes directional shadows. A 1K ceiling left
+    // more than half of those draws inline in the primary, then the 2K cache ceiling
+    // evicted the working set on every frame. Keep the bound finite, but large enough
+    // for the traced desktop + grouped-cascade workload.
+    private const int MaxCommandChainsPerSchedule = 4096;
     // Camera and occlusion changes can alternate between two valid schedules. Retain
     // both working sets so the bounded LRU does not destroy one while recording the
     // other, then immediately rebuild the evicted secondary command buffers.
     private const int MaxCachedScheduledCommandChainsPerFrameSlot = MaxCommandChainsPerSchedule * 2;
     internal const int MinMeshDrawsPerRenderPacket = 10;
     internal const int MaxMeshDrawsPerRenderPacket = 64;
-    internal const int MaxShadowMeshDrawsPerRenderPacket = 24;
+    // Directional-cascade membership changes continuously while the camera moves.
+    // Stable buckets limit that churn to one portion of the caster set, while this
+    // deliberately smaller packet cap bounds how many otherwise-stable draws a
+    // membership change can re-record. Per-caster packets made scheduling and
+    // dependency publication O(casters) and were substantially slower in motion.
+    internal const int MaxShadowMeshDrawsPerRenderPacket = 16;
     private const int ShadowCommandChainBucketCount = 8;
+    // Cold secondary publication is retained work, not an all-or-nothing frame
+    // dependency. Once a desktop presentation source exists, bound the number
+    // of new artifacts placed on one frame's critical path and let rejected-
+    // frame recovery keep presenting the last complete scene. The Sponza
+    // working set is roughly 700 chains, but a chain can contain many draws.
+    // Bound both artifacts and the actual draw-preparation work: the old
+    // 32-chain-only limit admitted 144 cold Sponza draws and spent more than
+    // 200 ms preparing their frame data before workers could start.
+    private const int MaxProgressiveDesktopCommandChainRecordJobs = 16;
+    private const int MaxProgressiveDesktopCommandChainRecordOperations = 16;
 
     /// <summary>
     /// Assigns a shadow caster to a stable runtime bucket. Membership changes can
@@ -80,12 +102,6 @@ public unsafe partial class VulkanRenderer
         int materialIdentity)
         => (HashCode.Combine(rendererIdentity, materialIdentity) & int.MaxValue) %
            ShadowCommandChainBucketCount;
-
-    // GPU-zero-readback argument streams remain primary-owned after a reproducible
-    // watchdog reset in the Sponza cohort. Only explicitly producer-complete streams
-    // with frozen buffer/range identities may enter the secondary path.
-    internal const bool MutableIndirectCommandChainSecondaryRecordingSafe =
-        false;
 
     private static bool? CommandChainsEnvironmentOverride
         => XREnvironment.GetBooleanOverride(CommandChainsEnvVar);
@@ -118,16 +134,6 @@ public unsafe partial class VulkanRenderer
            secondaryNeedsRecording ||
            uniformSlotMappingChanged;
 
-    internal static bool CanReuseCachedCommandChainSchedule(
-        bool benchmarkForcedRerecord,
-        bool validationEnabled,
-        bool traceEnabled,
-        bool renderingExternalSwapchainTarget)
-        => !benchmarkForcedRerecord &&
-           !validationEnabled &&
-           !traceEnabled &&
-           !renderingExternalSwapchainTarget;
-
     internal static bool ResolveCommandChainStabilityGuardEnabled(
         bool traceEnabled,
         bool validationEnabled,
@@ -138,13 +144,17 @@ public unsafe partial class VulkanRenderer
            !benchmarkForcedRerecord &&
            !explicitlyDisabled;
     private bool CommandChainsRequested =>
+        !FreshSerialRecordingEnabled &&
         ResolveCommandChainsRequested(
             RuntimeRenderingHostServices.Settings.VulkanCommandRecordingMode,
             CommandChainsEnvironmentOverride);
+    private bool FreshSerialRecordingEnabled =>
+        RuntimeRenderingHostServices.Settings.VulkanCommandRecordingMode ==
+        EVulkanCommandRecordingMode.FreshSerial;
     private static bool CommandChainsExplicitlyRequested =>
         CommandChainsEnvironmentOverride == true;
     private bool CommandChainsEnabledForCurrentRecording =>
-        !IsRenderingExternalSwapchainTarget &&
+        !FreshSerialRecordingEnabled &&
         ((CommandChainsRequested && !ShouldBypassCommandChainsForOpenXrIndependentDesktop) ||
          ShouldUseCommandChainsForOpenXrIndependentDesktop);
 
@@ -220,7 +230,7 @@ public unsafe partial class VulkanRenderer
     }
 
     internal static bool TryResolveCommandChainRecordingRendererFamily(
-        FrameOp[] ops,
+        FrameOperationSequence operations,
         CommandChain chain,
         int frameDataSlot,
         EVulkanMeshFrameDataStreamKind streamKind,
@@ -229,8 +239,8 @@ public unsafe partial class VulkanRenderer
         rendererFamily = default;
         if (chain.SourceStartIndex < 0 ||
             chain.SourceCount <= 0 ||
-            chain.SourceStartIndex > ops.Length - chain.SourceCount ||
-            ops[chain.SourceStartIndex] is not MeshDrawOp firstDraw)
+            chain.SourceStartIndex > operations.Length - chain.SourceCount ||
+            operations.GetHeader(chain.SourceStartIndex).OpCode != EVulkanPrimaryPlanNodeKind.MeshDraw)
         {
             return false;
         }
@@ -238,23 +248,25 @@ public unsafe partial class VulkanRenderer
         VulkanMeshFrameDataFamilyKey firstFamily = VulkanMeshFrameDataFamilyKey.From(
             frameDataSlot,
             streamKind,
-            firstDraw.Context,
-            firstDraw.Draw);
-        rendererFamily = new VulkanMeshFrameDataRendererFamilyKey(firstDraw.Draw.Renderer, firstFamily);
+            operations.GetContext(chain.SourceStartIndex),
+            operations.Stream.GetMeshDraw(chain.SourceStartIndex).Draw);
+        rendererFamily = new VulkanMeshFrameDataRendererFamilyKey(operations.Stream.GetMeshDraw(chain.SourceStartIndex).Draw.Renderer, firstFamily);
 
         VulkanMeshFrameDataRendererFamilyKeyComparer comparer =
             VulkanMeshFrameDataRendererFamilyKeyComparer.Instance;
         for (int drawIndex = 1; drawIndex < chain.SourceCount; drawIndex++)
         {
-            if (ops[chain.SourceStartIndex + drawIndex] is not MeshDrawOp draw)
+            int operationIndex = chain.SourceStartIndex + drawIndex;
+            if (operations.GetHeader(operationIndex).OpCode != EVulkanPrimaryPlanNodeKind.MeshDraw)
                 return false;
+            PendingMeshDraw draw = operations.Stream.GetMeshDraw(operationIndex).Draw;
 
             VulkanMeshFrameDataFamilyKey family = VulkanMeshFrameDataFamilyKey.From(
                 frameDataSlot,
                 streamKind,
-                draw.Context,
-                draw.Draw);
-            VulkanMeshFrameDataRendererFamilyKey candidate = new(draw.Draw.Renderer, family);
+                operations.GetContext(operationIndex),
+                draw);
+            VulkanMeshFrameDataRendererFamilyKey candidate = new(draw.Renderer, family);
             if (!comparer.Equals(rendererFamily, candidate))
                 return false;
         }
@@ -262,18 +274,15 @@ public unsafe partial class VulkanRenderer
         return true;
     }
 
-    private static bool ContainsQueryFrameOp(FrameOp[] ops)
+    private static bool ContainsQueryFrameOp(FrameOperationStream ops)
     {
-        for (int i = 0; i < ops.Length; i++)
+        for (int i = 0; i < ops.Count; i++)
         {
-            if (ops[i] is QueryOp)
+            if (ops.GetHeader(i).OpCode == EVulkanPrimaryPlanNodeKind.Query)
                 return true;
         }
 
         return false;
     }
-
-    private CommandChainResourcePlanReadScope BeginCommandChainResourcePlanReadScope(ulong resourcePlanRevision)
-        => new(this, resourcePlanRevision);
 
 }

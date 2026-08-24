@@ -6,6 +6,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Threading;
 using XREngine.Data.Rendering;
@@ -18,7 +19,7 @@ namespace XREngine.Rendering.Vulkan;
 /// <summary>
 /// Represents a Vulkan-based sidecar for handling upscaling bridge operations, including resource management and queue handling.
 /// </summary>
-internal sealed unsafe class VulkanUpscaleBridgeSidecar : IDisposable
+internal sealed unsafe partial class VulkanUpscaleBridgeSidecar : IDisposable
 {
     private const int FramesInFlight = 2;
     private const uint DuplicateSameAccess = 0x00000002;
@@ -33,14 +34,25 @@ internal sealed unsafe class VulkanUpscaleBridgeSidecar : IDisposable
     private readonly uint _streamlineGraphicsQueueIndex;
     private readonly uint _streamlineComputeQueueIndex;
     private readonly uint _streamlineOpticalFlowQueueIndex;
+    private readonly VulkanUpscaleBridgeVulkanContext _nativeContext;
+    // The sidecar owns a distinct VkDevice and queue domain. Its native submit
+    // gateway must therefore remain isolated from the main renderer's command
+    // authority while preserving the same narrow no-wait lease contract.
     private readonly object _graphicsQueueOperationGate = new();
+    private readonly object _frameSlotLifecycleGate = new();
     private readonly VulkanDeviceStateMachine _deviceState = new();
+    private readonly VulkanFrameTelemetry _telemetry = new();
+    private VulkanUpscaleBridgeDeviceLossRecord? _firstDeviceLoss;
     private bool _disposed;
     private Instance _instance;
     private Device _device;
     private Queue _graphicsQueue;
     private CommandPool _commandPool;
     private VulkanUpscaleBridgeFrameSlot[] _ownedSlots = [];
+    private readonly List<VulkanUpscaleBridgeFrameSlot[]> _retainedRetiredSlotGenerations = [];
+    // This counter belongs solely to the sidecar device. It intentionally does not
+    // participate in the main renderer's lifetime tracker or generation domain.
+    private long _nextResourceAllocationGeneration;
     private NvidiaDlssManager.Native.BridgeSession? _dlssSession;
     private IntelXessManager.Native.BridgeSession? _xessSession;
 
@@ -85,6 +97,15 @@ internal sealed unsafe class VulkanUpscaleBridgeSidecar : IDisposable
         _streamlineOpticalFlowQueueIndex = streamlineOpticalFlowQueueIndex;
         _graphicsQueue = GetGraphicsQueue(_selectedDevice.GraphicsQueueFamilyIndex);
         _commandPool = CreateCommandPool(_selectedDevice.GraphicsQueueFamilyIndex);
+        _nativeContext = new VulkanUpscaleBridgeVulkanContext(
+            _api,
+            _instance,
+            _selectedDevice.Device,
+            _device,
+            _selectedDevice.GraphicsQueueFamilyIndex,
+            _streamlineGraphicsQueueIndex,
+            _streamlineComputeQueueIndex,
+            _streamlineOpticalFlowQueueIndex);
 
         if (!_api.TryGetDeviceExtension(_instance, _device, out _externalMemoryWin32))
             throw new InvalidOperationException("Failed to load VK_KHR_external_memory_win32 for the bridge sidecar.");
@@ -96,15 +117,10 @@ internal sealed unsafe class VulkanUpscaleBridgeSidecar : IDisposable
     public uint VendorId => _selectedDevice.VendorId;
     public uint DeviceId => _selectedDevice.DeviceId;
     public int FrameSlotCount => FramesInFlight;
-    public Instance Instance => _instance;
-    public PhysicalDevice PhysicalDevice => _selectedDevice.Device;
-    public Device Device => _device;
     public Queue GraphicsQueue => _graphicsQueue;
     public uint GraphicsQueueFamilyIndex => _selectedDevice.GraphicsQueueFamilyIndex;
     public uint GraphicsQueueIndex => 0;
-    public uint StreamlineGraphicsQueueIndex => _streamlineGraphicsQueueIndex;
-    public uint StreamlineComputeQueueIndex => _streamlineComputeQueueIndex;
-    public uint StreamlineOpticalFlowQueueIndex => _streamlineOpticalFlowQueueIndex;
+    internal VulkanUpscaleBridgeVulkanContext NativeContext => _nativeContext;
 
     /// <summary>
     /// Waits for the specified frame slot to become available for use.
@@ -114,13 +130,14 @@ internal sealed unsafe class VulkanUpscaleBridgeSidecar : IDisposable
     /// <exception cref="InvalidOperationException">Thrown if the Vulkan upscale bridge device is not operational or if waiting for the frame slot fails.</exception>
     public void WaitForFrameSlotAvailability(VulkanUpscaleBridgeFrameSlot slot)
     {
-        if (_disposed)
-            throw new ObjectDisposedException(nameof(VulkanUpscaleBridgeSidecar));
+        lock (_frameSlotLifecycleGate)
+        {
+            if (_disposed)
+                throw new ObjectDisposedException(nameof(VulkanUpscaleBridgeSidecar));
 
-        if (!_deviceState.IsOperational)
-            throw new InvalidOperationException($"The Vulkan upscale bridge device is {_deviceState.State}.");
-
-        WaitForFrameSlotCompletion(slot, "availability");
+            ThrowIfDeviceOperationNotAdmitted("VulkanUpscaleBridge.WaitForFrameSlotAvailability");
+            WaitForFrameSlotCompletion(slot, "availability");
+        }
     }
 
     /// <summary>
@@ -132,112 +149,40 @@ internal sealed unsafe class VulkanUpscaleBridgeSidecar : IDisposable
     /// <returns>An array of Vulkan upscale bridge frame slots.</returns>
     public VulkanUpscaleBridgeFrameSlot[] CreateFrameSlots(IOpenGlVendorUpscaleBackendCapability renderer, VulkanUpscaleBridgeFrameResources frameResources, string viewportTag)
     {
-        VulkanUpscaleBridgeFrameSlot[] slots = new VulkanUpscaleBridgeFrameSlot[FramesInFlight];
-        for (int slotIndex = 0; slotIndex < slots.Length; slotIndex++)
+        lock (_frameSlotLifecycleGate)
         {
-            string slotTag = $"{viewportTag}.Slot{slotIndex}";
-            CommandBuffer commandBuffer = AllocateCommandBuffer();
-            Fence submitFence = CreateFence();
-
-            VulkanUpscaleBridgeSharedImage sourceColor = CreateSharedImage(
-                renderer,
-                slotTag,
-                EVulkanUpscaleBridgeSurfaceKind.SourceColor,
-                (uint)frameResources.InternalWidth,
-                (uint)frameResources.InternalHeight,
-                EPixelInternalFormat.Rgba16f,
-                EPixelFormat.Rgba,
-                EPixelType.HalfFloat,
-                ESizedInternalFormat.Rgba16f,
-                EFrameBufferAttachment.ColorAttachment0,
-                ImageUsageFlags.TransferDstBit | ImageUsageFlags.TransferSrcBit | ImageUsageFlags.SampledBit | ImageUsageFlags.ColorAttachmentBit | ImageUsageFlags.StorageBit,
-                ImageAspectFlags.ColorBit,
-                ImageAspectFlags.ColorBit,
-                linearFilter: true);
-
-            VulkanUpscaleBridgeSharedImage sourceDepth = CreateSharedImage(
-                renderer,
-                slotTag,
-                EVulkanUpscaleBridgeSurfaceKind.SourceDepth,
-                (uint)frameResources.InternalWidth,
-                (uint)frameResources.InternalHeight,
-                EPixelInternalFormat.Depth24Stencil8,
-                EPixelFormat.DepthStencil,
-                EPixelType.UnsignedInt248,
-                ESizedInternalFormat.Depth24Stencil8,
-                EFrameBufferAttachment.DepthStencilAttachment,
-                ImageUsageFlags.TransferDstBit | ImageUsageFlags.SampledBit | ImageUsageFlags.DepthStencilAttachmentBit,
-                ImageAspectFlags.DepthBit | ImageAspectFlags.StencilBit,
-                ImageAspectFlags.DepthBit,
-                linearFilter: false);
-
-            VulkanUpscaleBridgeSharedImage sourceMotion = CreateSharedImage(
-                renderer,
-                slotTag,
-                EVulkanUpscaleBridgeSurfaceKind.SourceMotion,
-                (uint)frameResources.InternalWidth,
-                (uint)frameResources.InternalHeight,
-                EPixelInternalFormat.RG16f,
-                EPixelFormat.Rg,
-                EPixelType.HalfFloat,
-                ESizedInternalFormat.Rg16f,
-                EFrameBufferAttachment.ColorAttachment0,
-                ImageUsageFlags.TransferDstBit | ImageUsageFlags.TransferSrcBit | ImageUsageFlags.SampledBit | ImageUsageFlags.ColorAttachmentBit,
-                ImageAspectFlags.ColorBit,
-                ImageAspectFlags.ColorBit,
-                linearFilter: false);
-
-            VulkanUpscaleBridgeSharedImage exposure = CreateSharedImage(
-                renderer,
-                slotTag,
-                EVulkanUpscaleBridgeSurfaceKind.Exposure,
-                1u,
-                1u,
-                EPixelInternalFormat.R32f,
-                EPixelFormat.Red,
-                EPixelType.Float,
-                ESizedInternalFormat.R32f,
-                EFrameBufferAttachment.ColorAttachment0,
-                ImageUsageFlags.TransferDstBit | ImageUsageFlags.SampledBit | ImageUsageFlags.ColorAttachmentBit,
-                ImageAspectFlags.ColorBit,
-                ImageAspectFlags.ColorBit,
-                linearFilter: false);
-
-            bool outputHdr = frameResources.OutputHdr;
-            VulkanUpscaleBridgeSharedImage outputColor = CreateSharedImage(
-                renderer,
-                slotTag,
-                EVulkanUpscaleBridgeSurfaceKind.OutputColor,
-                (uint)frameResources.DisplayWidth,
-                (uint)frameResources.DisplayHeight,
-                outputHdr ? EPixelInternalFormat.Rgba16f : EPixelInternalFormat.Rgba8,
-                EPixelFormat.Rgba,
-                outputHdr ? EPixelType.HalfFloat : EPixelType.UnsignedByte,
-                outputHdr ? ESizedInternalFormat.Rgba16f : ESizedInternalFormat.Rgba8,
-                EFrameBufferAttachment.ColorAttachment0,
-                ImageUsageFlags.TransferDstBit | ImageUsageFlags.TransferSrcBit | ImageUsageFlags.SampledBit | ImageUsageFlags.ColorAttachmentBit | ImageUsageFlags.StorageBit,
-                ImageAspectFlags.ColorBit,
-                ImageAspectFlags.ColorBit,
-                linearFilter: true);
-
-            VulkanUpscaleBridgeSharedSemaphore readySemaphore = CreateSharedSemaphore(renderer, $"{slotTag}.Ready");
-            VulkanUpscaleBridgeSharedSemaphore completeSemaphore = CreateSharedSemaphore(renderer, $"{slotTag}.Complete");
-
-            slots[slotIndex] = new VulkanUpscaleBridgeFrameSlot(
-                slotIndex,
-                sourceColor,
-                sourceDepth,
-                sourceMotion,
-                exposure,
-                outputColor,
-                readySemaphore,
-                completeSemaphore,
-                commandBuffer,
-                submitFence);
+            ThrowIfDeviceOperationNotAdmitted("VulkanUpscaleBridge.CreateFrameSlots");
+            VulkanUpscaleBridgeFrameSlot[] slots = PrepareFrameSlots(renderer, frameResources, viewportTag);
+            Volatile.Write(ref _ownedSlots, slots);
+            return slots;
         }
+    }
 
-        _ownedSlots = slots;
-        return slots;
+    /// <summary>
+    /// Prepares a complete, published slot generation without changing the
+    /// generation currently owned by the sidecar. The caller owns the commit.
+    /// </summary>
+    private VulkanUpscaleBridgeFrameSlot[] PrepareFrameSlots(
+        IOpenGlVendorUpscaleBackendCapability renderer,
+        VulkanUpscaleBridgeFrameResources frameResources,
+        string viewportTag)
+    {
+        ThrowIfDeviceOperationNotAdmitted("VulkanUpscaleBridge.PrepareFrameSlots");
+        VulkanUpscaleBridgeFrameSlot[] slots = new VulkanUpscaleBridgeFrameSlot[FramesInFlight];
+        ulong allocationGeneration = AllocateSidecarResourceGeneration();
+        try
+        {
+            for (int slotIndex = 0; slotIndex < slots.Length; slotIndex++)
+                slots[slotIndex] = CreateFrameSlot(renderer, frameResources, $"{viewportTag}.Slot{slotIndex}", slotIndex, allocationGeneration);
+
+            PublishFrameSlots(slots, allocationGeneration);
+            return slots;
+        }
+        catch
+        {
+            DestroyFrameSlots(slots);
+            throw;
+        }
     }
 
     /// <summary>
@@ -251,34 +196,52 @@ internal sealed unsafe class VulkanUpscaleBridgeSidecar : IDisposable
     /// <exception cref="InvalidOperationException">Thrown if the Vulkan upscale bridge sidecar device is unavailable.</exception>
     public VulkanUpscaleBridgeFrameSlot[] RecreateFrameSlots(IOpenGlVendorUpscaleBackendCapability renderer, VulkanUpscaleBridgeFrameResources frameResources, string viewportTag)
     {
+        lock (_frameSlotLifecycleGate)
+            return RecreateFrameSlotsCore(renderer, frameResources, viewportTag);
+    }
+
+    private VulkanUpscaleBridgeFrameSlot[] RecreateFrameSlotsCore(IOpenGlVendorUpscaleBackendCapability renderer, VulkanUpscaleBridgeFrameResources frameResources, string viewportTag)
+    {
         if (_disposed)
             throw new ObjectDisposedException(nameof(VulkanUpscaleBridgeSidecar));
 
         if (_device.Handle == 0)
             throw new InvalidOperationException("The Vulkan upscale bridge sidecar device is unavailable.");
 
-        using VulkanQueueOperationLease lease = VulkanQueueOperationLease.TryEnter(
-            _graphicsQueueOperationGate,
-            _deviceState);
-        if (!lease.Acquired)
-            throw new InvalidOperationException($"The Vulkan upscale bridge device is {_deviceState.State}.");
+        // Prepare the full replacement first. Any failure here leaves the currently
+        // published generation and its vendor sessions untouched.
+        VulkanUpscaleBridgeFrameSlot[] replacement = PrepareFrameSlots(renderer, frameResources, viewportTag);
+        VulkanUpscaleBridgeFrameSlot[] previous = Interlocked.Exchange(ref _ownedSlots, replacement);
 
-        // Every sidecar queue submission is associated with exactly one frame-slot
-        // fence. Waiting those bounded owners is sufficient before their command
-        // buffers and shared images are replaced, and does not idle unrelated work.
-        for (int slotIndex = 0; slotIndex < _ownedSlots.Length; slotIndex++)
-            WaitForFrameSlotCompletion(_ownedSlots[slotIndex], "frame-resource recreate");
+        try
+        {
+            // Every sidecar queue submission is associated with exactly one
+            // frame-slot fence. Retire the former generation only after these
+            // bounded owners complete; do not idle unrelated work.
+            for (int slotIndex = 0; slotIndex < previous.Length; slotIndex++)
+                WaitForFrameSlotCompletion(previous[slotIndex], "frame-resource recreate retirement");
 
-        ResetVendorSessionsForFrameResourceRecreate();
-        DestroyOwnedFrameSlots();
-        return CreateFrameSlots(renderer, frameResources, viewportTag);
+            ResetVendorSessionsForFrameResourceRecreate();
+            DestroyFrameSlots(previous);
+            return replacement;
+        }
+        catch
+        {
+            // Once published, the replacement must remain authoritative. A wait
+            // failure indicates the sidecar device is no longer usable, so retain
+            // both generations for device-loss/shutdown cleanup rather than
+            // destroying resources whose completion state is unknown.
+            _retainedRetiredSlotGenerations.Add(previous);
+            throw;
+        }
     }
 
     private void WaitForFrameSlotCompletion(VulkanUpscaleBridgeFrameSlot slot, string reason)
     {
+        ThrowIfDeviceOperationNotAdmitted("vkWaitForFences.VulkanUpscaleBridge");
         Fence submitFence = slot.SubmitFence;
         Result waitResult = _api.WaitForFences(_device, 1, in submitFence, true, ulong.MaxValue);
-        ObserveDeviceResult(waitResult);
+        ObserveDeviceResult(waitResult, "vkWaitForFences.VulkanUpscaleBridge", slot);
         if (waitResult != Result.Success)
         {
             throw new InvalidOperationException(
@@ -294,9 +257,16 @@ internal sealed unsafe class VulkanUpscaleBridgeSidecar : IDisposable
     /// <exception cref="InvalidOperationException">Thrown if the Vulkan upscale bridge sidecar device is unavailable or if command buffer submission fails.</exception>
     public void SubmitNoOpHandoff(VulkanUpscaleBridgeFrameSlot slot)
     {
+        lock (_frameSlotLifecycleGate)
+            SubmitNoOpHandoffCore(slot);
+    }
+
+    private void SubmitNoOpHandoffCore(VulkanUpscaleBridgeFrameSlot slot)
+    {
         if (_disposed)
             throw new ObjectDisposedException(nameof(VulkanUpscaleBridgeSidecar));
 
+        ThrowIfDeviceOperationNotAdmitted("VulkanUpscaleBridge.SubmitNoOpHandoff");
         Fence submitFence = slot.SubmitFence;
         _api.ResetFences(_device, 1, in submitFence);
         ResetCommandBufferTracked(slot.CommandBuffer);
@@ -307,10 +277,15 @@ internal sealed unsafe class VulkanUpscaleBridgeSidecar : IDisposable
             Flags = CommandBufferUsageFlags.OneTimeSubmitBit,
         };
 
-        if (_api.BeginCommandBuffer(slot.CommandBuffer, in beginInfo) != Result.Success)
+        ThrowIfDeviceOperationNotAdmitted("vkBeginCommandBuffer.VulkanUpscaleBridge.NoOpHandoff");
+        Result beginResult = _api.BeginCommandBuffer(slot.CommandBuffer, in beginInfo);
+        ObserveDeviceResult(beginResult, "vkBeginCommandBuffer.VulkanUpscaleBridge.NoOpHandoff", slot);
+        if (beginResult != Result.Success)
             throw new InvalidOperationException($"Failed to begin bridge handoff command buffer for slot {slot.SlotIndex}.");
 
-        if (_api.EndCommandBuffer(slot.CommandBuffer) != Result.Success)
+        Result endResult = _api.EndCommandBuffer(slot.CommandBuffer);
+        ObserveDeviceResult(endResult, "vkEndCommandBuffer.VulkanUpscaleBridge.NoOpHandoff", slot);
+        if (endResult != Result.Success)
             throw new InvalidOperationException($"Failed to end bridge handoff command buffer for slot {slot.SlotIndex}.");
 
         VkSemaphore waitSemaphore = slot.ReadySemaphore.VulkanSemaphore;
@@ -330,7 +305,7 @@ internal sealed unsafe class VulkanUpscaleBridgeSidecar : IDisposable
             PSignalSemaphores = &signalSemaphore,
         };
 
-        Result submitResult = SubmitToGraphicsQueue(ref submitInfo, slot.SubmitFence);
+        Result submitResult = SubmitToGraphicsQueue(ref submitInfo, slot);
         if (submitResult != Result.Success)
             throw new InvalidOperationException($"Failed to submit bridge handoff for slot {slot.SlotIndex} ({submitResult}).");
     }
@@ -343,9 +318,16 @@ internal sealed unsafe class VulkanUpscaleBridgeSidecar : IDisposable
     /// <exception cref="InvalidOperationException">Thrown if the Vulkan upscale bridge sidecar device is unavailable or if command buffer submission fails.</exception>
     public void SubmitPassthroughBlit(VulkanUpscaleBridgeFrameSlot slot)
     {
+        lock (_frameSlotLifecycleGate)
+            SubmitPassthroughBlitCore(slot);
+    }
+
+    private void SubmitPassthroughBlitCore(VulkanUpscaleBridgeFrameSlot slot)
+    {
         if (_disposed)
             throw new ObjectDisposedException(nameof(VulkanUpscaleBridgeSidecar));
 
+        ThrowIfDeviceOperationNotAdmitted("VulkanUpscaleBridge.SubmitPassthroughBlit");
         Fence submitFence = slot.SubmitFence;
         _api.ResetFences(_device, 1, in submitFence);
         ResetCommandBufferTracked(slot.CommandBuffer);
@@ -356,16 +338,19 @@ internal sealed unsafe class VulkanUpscaleBridgeSidecar : IDisposable
             Flags = CommandBufferUsageFlags.OneTimeSubmitBit,
         };
 
-        if (_api.BeginCommandBuffer(slot.CommandBuffer, in beginInfo) != Result.Success)
+        ThrowIfDeviceOperationNotAdmitted("vkBeginCommandBuffer.VulkanUpscaleBridge.PassthroughBlit");
+        Result beginResult = _api.BeginCommandBuffer(slot.CommandBuffer, in beginInfo);
+        ObserveDeviceResult(beginResult, "vkBeginCommandBuffer.VulkanUpscaleBridge.PassthroughBlit", slot);
+        if (beginResult != Result.Success)
             throw new InvalidOperationException($"Failed to begin bridge passthrough command buffer for slot {slot.SlotIndex}.");
 
-        TransitionImageLayout(
+        _nativeContext.TransitionImageLayout(
             slot.CommandBuffer,
             slot.SourceColor,
             ImageLayout.TransferSrcOptimal,
             PipelineStageFlags.TransferBit,
             AccessFlags.TransferReadBit);
-        TransitionImageLayout(
+        _nativeContext.TransitionImageLayout(
             slot.CommandBuffer,
             slot.OutputColor,
             ImageLayout.TransferDstOptimal,
@@ -404,20 +389,22 @@ internal sealed unsafe class VulkanUpscaleBridgeSidecar : IDisposable
             &region,
             Filter.Linear);
 
-        TransitionImageLayout(
+        _nativeContext.TransitionImageLayout(
             slot.CommandBuffer,
             slot.SourceColor,
             ImageLayout.General,
             PipelineStageFlags.AllCommandsBit,
             AccessFlags.MemoryReadBit | AccessFlags.MemoryWriteBit);
-        TransitionImageLayout(
+        _nativeContext.TransitionImageLayout(
             slot.CommandBuffer,
             slot.OutputColor,
             ImageLayout.General,
             PipelineStageFlags.AllCommandsBit,
             AccessFlags.MemoryReadBit | AccessFlags.MemoryWriteBit);
 
-        if (_api.EndCommandBuffer(slot.CommandBuffer) != Result.Success)
+        Result endResult = _api.EndCommandBuffer(slot.CommandBuffer);
+        ObserveDeviceResult(endResult, "vkEndCommandBuffer.VulkanUpscaleBridge.PassthroughBlit", slot);
+        if (endResult != Result.Success)
             throw new InvalidOperationException($"Failed to end bridge passthrough command buffer for slot {slot.SlotIndex}.");
 
         VkSemaphore waitSemaphore = slot.ReadySemaphore.VulkanSemaphore;
@@ -437,7 +424,7 @@ internal sealed unsafe class VulkanUpscaleBridgeSidecar : IDisposable
             PSignalSemaphores = &signalSemaphore,
         };
 
-        Result submitResult = SubmitToGraphicsQueue(ref submitInfo, slot.SubmitFence);
+        Result submitResult = SubmitToGraphicsQueue(ref submitInfo, slot);
         if (submitResult != Result.Success)
             throw new InvalidOperationException($"Failed to submit bridge passthrough blit for slot {slot.SlotIndex} ({submitResult}).");
     }
@@ -456,10 +443,21 @@ internal sealed unsafe class VulkanUpscaleBridgeSidecar : IDisposable
         in VulkanUpscaleBridgeDispatchParameters parameters,
         out string failureReason)
     {
+        lock (_frameSlotLifecycleGate)
+            return SubmitVendorUpscaleCore(slot, in parameters, out failureReason);
+    }
+
+    private bool SubmitVendorUpscaleCore(
+        VulkanUpscaleBridgeFrameSlot slot,
+        in VulkanUpscaleBridgeDispatchParameters parameters,
+        out string failureReason)
+    {
         if (_disposed)
             throw new ObjectDisposedException(nameof(VulkanUpscaleBridgeSidecar));
 
         failureReason = string.Empty;
+        if (!TryAdmitDeviceOperation("VulkanUpscaleBridge.SubmitVendorUpscale", out failureReason))
+            return false;
 
         Fence submitFence = slot.SubmitFence;
         _api.ResetFences(_device, 1, in submitFence);
@@ -471,7 +469,10 @@ internal sealed unsafe class VulkanUpscaleBridgeSidecar : IDisposable
             Flags = CommandBufferUsageFlags.OneTimeSubmitBit,
         };
 
-        if (_api.BeginCommandBuffer(slot.CommandBuffer, in beginInfo) != Result.Success)
+        ThrowIfDeviceOperationNotAdmitted("vkBeginCommandBuffer.VulkanUpscaleBridge.VendorUpscale");
+        Result beginResult = _api.BeginCommandBuffer(slot.CommandBuffer, in beginInfo);
+        ObserveDeviceResult(beginResult, "vkBeginCommandBuffer.VulkanUpscaleBridge.VendorUpscale", slot, parameters.Vendor);
+        if (beginResult != Result.Success)
         {
             failureReason = $"Failed to begin bridge vendor command buffer for slot {slot.SlotIndex}.";
             return false;
@@ -494,7 +495,9 @@ internal sealed unsafe class VulkanUpscaleBridgeSidecar : IDisposable
             return false;
         }
 
-        if (_api.EndCommandBuffer(slot.CommandBuffer) != Result.Success)
+        Result endResult = _api.EndCommandBuffer(slot.CommandBuffer);
+        ObserveDeviceResult(endResult, "vkEndCommandBuffer.VulkanUpscaleBridge.VendorUpscale", slot, parameters.Vendor);
+        if (endResult != Result.Success)
         {
             ResetVendorSession(parameters.Vendor);
             failureReason = $"Failed to end bridge vendor command buffer for slot {slot.SlotIndex}.";
@@ -518,7 +521,7 @@ internal sealed unsafe class VulkanUpscaleBridgeSidecar : IDisposable
             PSignalSemaphores = &signalSemaphore,
         };
 
-        Result submitResult = SubmitToGraphicsQueue(ref submitInfo, slot.SubmitFence);
+        Result submitResult = SubmitToGraphicsQueue(ref submitInfo, slot, parameters.Vendor);
         if (submitResult != Result.Success)
         {
             ResetVendorSession(parameters.Vendor);
@@ -535,16 +538,22 @@ internal sealed unsafe class VulkanUpscaleBridgeSidecar : IDisposable
     /// <param name="submitInfo">The submit information describing the command buffer submission.</param>
     /// <param name="fence">The fence to signal upon completion of the submission.</param>
     /// <returns>The result of the queue submission operation.</returns>
-    private Result SubmitToGraphicsQueue(ref SubmitInfo submitInfo, Fence fence)
+    private Result SubmitToGraphicsQueue(
+        ref SubmitInfo submitInfo,
+        VulkanUpscaleBridgeFrameSlot slot,
+        EVulkanUpscaleBridgeVendor? dispatchVendor = null)
     {
+        if (!TryAdmitDeviceOperation("vkQueueSubmit.VulkanUpscaleBridge", out _))
+            return Result.ErrorDeviceLost;
         using VulkanQueueOperationLease lease = VulkanQueueOperationLease.TryEnter(
             _graphicsQueueOperationGate,
-            _deviceState);
+            _deviceState,
+            _telemetry);
         if (!lease.Acquired)
             return Result.ErrorDeviceLost;
 
-        Result result = _api.QueueSubmit(_graphicsQueue, 1, ref submitInfo, fence);
-        ObserveDeviceResult(result);
+        Result result = _api.QueueSubmit(_graphicsQueue, 1, ref submitInfo, slot.SubmitFence);
+        ObserveDeviceResult(result, "vkQueueSubmit.VulkanUpscaleBridge", slot, dispatchVendor);
         return result;
     }
 
@@ -552,27 +561,63 @@ internal sealed unsafe class VulkanUpscaleBridgeSidecar : IDisposable
     /// Observes the result of a Vulkan device operation and handles device loss if necessary.
     /// </summary>
     /// <param name="result">The result of the Vulkan device operation.</param>
-    private void ObserveDeviceResult(Result result)
+    private bool TryAdmitDeviceOperation(string operation, out string failureReason)
     {
-        if (result == Result.ErrorDeviceLost && _deviceState.TryBeginLossCollection())
-            _deviceState.CompleteLossCollection();
+        if (!_disposed && _deviceState.IsOperational)
+        {
+            failureReason = string.Empty;
+            return true;
+        }
+
+        failureReason = $"Cannot start Vulkan upscale bridge operation '{operation}' while device state is {_deviceState.State}.";
+        return false;
     }
 
-    /// <summary>
-    /// Records a command to transition the layout of the specified image within the given command buffer.
-    /// </summary>
-    /// <param name="commandBuffer">The command buffer in which to record the layout transition command.</param>
-    /// <param name="image">The image whose layout is to be transitioned.</param>
-    /// <param name="newLayout">The new layout to transition the image to.</param>
-    /// <param name="dstStage">The destination pipeline stage for the layout transition.</param>
-    /// <param name="dstAccessMask">The destination access mask for the layout transition.</param>
-    public void RecordTransitionImageLayout(
-        CommandBuffer commandBuffer,
-        VulkanUpscaleBridgeSharedImage image,
-        ImageLayout newLayout,
-        PipelineStageFlags dstStage,
-        AccessFlags dstAccessMask)
-        => TransitionImageLayout(commandBuffer, image, newLayout, dstStage, dstAccessMask);
+    private void ThrowIfDeviceOperationNotAdmitted(string operation)
+    {
+        if (!TryAdmitDeviceOperation(operation, out string failureReason))
+            throw new InvalidOperationException(failureReason);
+    }
+
+    private void ObserveDeviceResult(
+        Result result,
+        string operation,
+        VulkanUpscaleBridgeFrameSlot? slot = null,
+        EVulkanUpscaleBridgeVendor? dispatchVendor = null,
+        ulong allocationGeneration = 0,
+        int slotIndex = -1,
+        string? resourceName = null)
+    {
+        if (result != Result.ErrorDeviceLost || !_deviceState.TryBeginLossCollection())
+            return;
+
+        VulkanUpscaleBridgeDeviceLossRecord record = new(
+            DateTimeOffset.UtcNow,
+            operation,
+            result,
+            _selectedDevice.DeviceName,
+            _selectedDevice.VendorId,
+            _selectedDevice.DeviceId,
+            slot?.SlotIndex ?? slotIndex,
+            dispatchVendor,
+            slot?.AllocationGeneration ?? allocationGeneration,
+            slot?.PublicationGeneration ?? 0,
+            resourceName);
+        Interlocked.CompareExchange(ref _firstDeviceLoss, record, null);
+        _deviceState.CompleteLossCollection();
+        Debug.VulkanWarning(
+            "[Vulkan.UpscaleBridge] First device loss: operation={0}, result={1}, device={2}, vendorId=0x{3:X4}, deviceId=0x{4:X4}, slot={5}, dispatchVendor={6}, allocationGeneration={7}, publicationGeneration={8}, resource={9}.",
+            record.Operation,
+            record.Result,
+            record.DeviceName,
+            record.VendorId,
+            record.DeviceId,
+            record.SlotIndex,
+            record.DispatchVendor?.ToString() ?? "none",
+            record.AllocationGeneration,
+            record.PublicationGeneration,
+            record.ResourceName ?? "none");
+    }
 
     /// <summary>
     /// Ensures that a DLSS session is available, creating one if necessary.
@@ -586,7 +631,7 @@ internal sealed unsafe class VulkanUpscaleBridgeSidecar : IDisposable
         if (_dlssSession is not null)
             return true;
 
-        if (!NvidiaDlssManager.Native.TryCreateBridgeSession(this, _streamlineViewportId, out _dlssSession, out failureReason)
+        if (!NvidiaDlssManager.Native.TryCreateBridgeSession(_nativeContext, _streamlineViewportId, out _dlssSession, out failureReason)
             || _dlssSession is null)
         {
             _dlssSession = null;
@@ -609,7 +654,7 @@ internal sealed unsafe class VulkanUpscaleBridgeSidecar : IDisposable
         if (_xessSession is not null)
             return true;
 
-        if (!IntelXessManager.Native.TryCreateBridgeSession(this, in parameters, out _xessSession, out failureReason)
+        if (!IntelXessManager.Native.TryCreateBridgeSession(_nativeContext, in parameters, out _xessSession, out failureReason)
             || _xessSession is null)
         {
             _xessSession = null;
@@ -654,13 +699,99 @@ internal sealed unsafe class VulkanUpscaleBridgeSidecar : IDisposable
     /// </summary>
     private void DestroyOwnedFrameSlots()
     {
-        for (int i = _ownedSlots.Length - 1; i >= 0; i--)
-            _ownedSlots[i].Dispose();
-
-        for (int i = _ownedSlots.Length - 1; i >= 0; i--)
-            _ownedSlots[i].DestroyVulkanResources(_api, _device);
-
+        DestroyFrameSlots(_ownedSlots);
         _ownedSlots = [];
+        for (int index = _retainedRetiredSlotGenerations.Count - 1; index >= 0; index--)
+            DestroyFrameSlots(_retainedRetiredSlotGenerations[index]);
+        _retainedRetiredSlotGenerations.Clear();
+    }
+
+    private VulkanUpscaleBridgeFrameSlot CreateFrameSlot(
+        IOpenGlVendorUpscaleBackendCapability renderer,
+        VulkanUpscaleBridgeFrameResources frameResources,
+        string slotTag,
+        int slotIndex,
+        ulong allocationGeneration)
+    {
+        CommandBuffer commandBuffer = default;
+        Fence submitFence = default;
+        VulkanUpscaleBridgeSharedImage? sourceColor = null;
+        VulkanUpscaleBridgeSharedImage? sourceDepth = null;
+        VulkanUpscaleBridgeSharedImage? sourceMotion = null;
+        VulkanUpscaleBridgeSharedImage? exposure = null;
+        VulkanUpscaleBridgeSharedImage? outputColor = null;
+        VulkanUpscaleBridgeSharedSemaphore? readySemaphore = null;
+        VulkanUpscaleBridgeSharedSemaphore? completeSemaphore = null;
+
+        try
+        {
+            commandBuffer = AllocateCommandBuffer(slotIndex, allocationGeneration);
+            submitFence = CreateFence(slotIndex, allocationGeneration);
+            sourceColor = CreateSharedImage(renderer, slotTag, slotIndex, EVulkanUpscaleBridgeSurfaceKind.SourceColor, (uint)frameResources.InternalWidth, (uint)frameResources.InternalHeight, EPixelInternalFormat.Rgba16f, EPixelFormat.Rgba, EPixelType.HalfFloat, ESizedInternalFormat.Rgba16f, EFrameBufferAttachment.ColorAttachment0, ImageUsageFlags.TransferDstBit | ImageUsageFlags.TransferSrcBit | ImageUsageFlags.SampledBit | ImageUsageFlags.ColorAttachmentBit | ImageUsageFlags.StorageBit, ImageAspectFlags.ColorBit, ImageAspectFlags.ColorBit, linearFilter: true, allocationGeneration);
+            sourceDepth = CreateSharedImage(renderer, slotTag, slotIndex, EVulkanUpscaleBridgeSurfaceKind.SourceDepth, (uint)frameResources.InternalWidth, (uint)frameResources.InternalHeight, EPixelInternalFormat.Depth24Stencil8, EPixelFormat.DepthStencil, EPixelType.UnsignedInt248, ESizedInternalFormat.Depth24Stencil8, EFrameBufferAttachment.DepthStencilAttachment, ImageUsageFlags.TransferDstBit | ImageUsageFlags.SampledBit | ImageUsageFlags.DepthStencilAttachmentBit, ImageAspectFlags.DepthBit | ImageAspectFlags.StencilBit, ImageAspectFlags.DepthBit, linearFilter: false, allocationGeneration);
+            sourceMotion = CreateSharedImage(renderer, slotTag, slotIndex, EVulkanUpscaleBridgeSurfaceKind.SourceMotion, (uint)frameResources.InternalWidth, (uint)frameResources.InternalHeight, EPixelInternalFormat.RG16f, EPixelFormat.Rg, EPixelType.HalfFloat, ESizedInternalFormat.Rg16f, EFrameBufferAttachment.ColorAttachment0, ImageUsageFlags.TransferDstBit | ImageUsageFlags.TransferSrcBit | ImageUsageFlags.SampledBit | ImageUsageFlags.ColorAttachmentBit, ImageAspectFlags.ColorBit, ImageAspectFlags.ColorBit, linearFilter: false, allocationGeneration);
+            exposure = CreateSharedImage(renderer, slotTag, slotIndex, EVulkanUpscaleBridgeSurfaceKind.Exposure, 1u, 1u, EPixelInternalFormat.R32f, EPixelFormat.Red, EPixelType.Float, ESizedInternalFormat.R32f, EFrameBufferAttachment.ColorAttachment0, ImageUsageFlags.TransferDstBit | ImageUsageFlags.SampledBit | ImageUsageFlags.ColorAttachmentBit, ImageAspectFlags.ColorBit, ImageAspectFlags.ColorBit, linearFilter: false, allocationGeneration);
+            bool outputHdr = frameResources.OutputHdr;
+            outputColor = CreateSharedImage(renderer, slotTag, slotIndex, EVulkanUpscaleBridgeSurfaceKind.OutputColor, (uint)frameResources.DisplayWidth, (uint)frameResources.DisplayHeight, outputHdr ? EPixelInternalFormat.Rgba16f : EPixelInternalFormat.Rgba8, EPixelFormat.Rgba, outputHdr ? EPixelType.HalfFloat : EPixelType.UnsignedByte, outputHdr ? ESizedInternalFormat.Rgba16f : ESizedInternalFormat.Rgba8, EFrameBufferAttachment.ColorAttachment0, ImageUsageFlags.TransferDstBit | ImageUsageFlags.TransferSrcBit | ImageUsageFlags.SampledBit | ImageUsageFlags.ColorAttachmentBit | ImageUsageFlags.StorageBit, ImageAspectFlags.ColorBit, ImageAspectFlags.ColorBit, linearFilter: true, allocationGeneration);
+            readySemaphore = CreateSharedSemaphore(renderer, $"{slotTag}.Ready", slotIndex, allocationGeneration);
+            completeSemaphore = CreateSharedSemaphore(renderer, $"{slotTag}.Complete", slotIndex, allocationGeneration);
+            return new VulkanUpscaleBridgeFrameSlot(allocationGeneration, slotIndex, sourceColor, sourceDepth, sourceMotion, exposure, outputColor, readySemaphore, completeSemaphore, commandBuffer, submitFence);
+        }
+        catch
+        {
+            DestroyPartialFrameSlot(commandBuffer, submitFence, sourceColor, sourceDepth, sourceMotion, exposure, outputColor, readySemaphore, completeSemaphore);
+            throw;
+        }
+    }
+
+    private void DestroyPartialFrameSlot(CommandBuffer commandBuffer, Fence submitFence, params IDisposable?[] resources)
+    {
+        for (int index = resources.Length - 1; index >= 0; index--)
+            resources[index]?.Dispose();
+
+        for (int index = resources.Length - 1; index >= 0; index--)
+        {
+            switch (resources[index])
+            {
+                case VulkanUpscaleBridgeSharedImage image:
+                    image.DestroyVulkanResources(_api, _device);
+                    break;
+                case VulkanUpscaleBridgeSharedSemaphore semaphore:
+                    semaphore.DestroyVulkanResources(_api, _device);
+                    break;
+            }
+        }
+
+        if (submitFence.Handle != 0)
+            _api.DestroyFence(_device, submitFence, null);
+        if (commandBuffer.Handle != 0 && _commandPool.Handle != 0)
+            _api.FreeCommandBuffers(_device, _commandPool, 1, &commandBuffer);
+    }
+
+    private void DestroyFrameSlots(VulkanUpscaleBridgeFrameSlot[] slots)
+    {
+        for (int index = slots.Length - 1; index >= 0; index--)
+            slots[index]?.Dispose();
+        for (int index = slots.Length - 1; index >= 0; index--)
+            slots[index]?.DestroyVulkanResources(_api, _device, _commandPool);
+    }
+
+    private static void PublishFrameSlots(VulkanUpscaleBridgeFrameSlot[] slots, ulong publicationGeneration)
+    {
+        for (int index = 0; index < slots.Length; index++)
+        {
+            if (slots[index] is null)
+                throw new InvalidOperationException("Cannot publish an incomplete Vulkan upscale bridge frame-slot transaction.");
+            slots[index].Publish(publicationGeneration);
+        }
+    }
+
+    private ulong AllocateSidecarResourceGeneration()
+    {
+        long generation = Interlocked.Increment(ref _nextResourceAllocationGeneration);
+        if (generation <= 0)
+            throw new InvalidOperationException("Vulkan upscale bridge resource allocation generation overflowed.");
+        return unchecked((ulong)generation);
     }
 
     /// <summary>
@@ -673,7 +804,7 @@ internal sealed unsafe class VulkanUpscaleBridgeSidecar : IDisposable
 
         _disposed = true;
 
-        lock (_graphicsQueueOperationGate)
+        lock (_frameSlotLifecycleGate)
         {
             _deviceState.Dispose();
             if (_device.Handle != 0)
@@ -991,7 +1122,8 @@ internal sealed unsafe class VulkanUpscaleBridgeSidecar : IDisposable
             out streamlineComputeQueueIndex,
             out streamlineOpticalFlowQueueIndex);
 
-        float* queuePriorities = stackalloc float[(int)queueCount];
+        using var priorityMemory = GlobalMemory.Allocate(checked((int)queueCount * sizeof(float)));
+        float* queuePriorities = (float*)Unsafe.AsPointer(ref priorityMemory.GetPinnableReference());
         for (int queueIndex = 0; queueIndex < queueCount; queueIndex++)
             queuePriorities[queueIndex] = 1.0f;
 
@@ -1461,6 +1593,7 @@ internal sealed unsafe class VulkanUpscaleBridgeSidecar : IDisposable
     /// <exception cref="InvalidOperationException">Thrown if the command pool cannot be created.</exception>
     private CommandPool CreateCommandPool(uint queueFamilyIndex)
     {
+        ThrowIfDeviceOperationNotAdmitted("vkCreateCommandPool.VulkanUpscaleBridge");
         CommandPoolCreateInfo createInfo = new()
         {
             SType = StructureType.CommandPoolCreateInfo,
@@ -1468,7 +1601,9 @@ internal sealed unsafe class VulkanUpscaleBridgeSidecar : IDisposable
             Flags = CommandPoolCreateFlags.ResetCommandBufferBit,
         };
 
-        if (_api.CreateCommandPool(_device, in createInfo, null, out CommandPool commandPool) != Result.Success)
+        Result result = _api.CreateCommandPool(_device, in createInfo, null, out CommandPool commandPool);
+        ObserveDeviceResult(result, "vkCreateCommandPool.VulkanUpscaleBridge");
+        if (result != Result.Success)
             throw new InvalidOperationException("Failed to create the Vulkan bridge sidecar command pool.");
 
         return commandPool;
@@ -1479,8 +1614,9 @@ internal sealed unsafe class VulkanUpscaleBridgeSidecar : IDisposable
     /// </summary>
     /// <returns>the allocated primary Vulkan command buffer.</returns>
     /// <exception cref="InvalidOperationException">Thrown if the command buffer cannot be allocated.</exception>
-    private CommandBuffer AllocateCommandBuffer()
+    private CommandBuffer AllocateCommandBuffer(int slotIndex, ulong allocationGeneration)
     {
+        ThrowIfDeviceOperationNotAdmitted("vkAllocateCommandBuffers.VulkanUpscaleBridge");
         CommandBufferAllocateInfo allocateInfo = new()
         {
             SType = StructureType.CommandBufferAllocateInfo,
@@ -1494,6 +1630,12 @@ internal sealed unsafe class VulkanUpscaleBridgeSidecar : IDisposable
         RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanAllocateCommandBuffersCall(
             allocateInfo.CommandBufferCount,
             result == Result.Success);
+        ObserveDeviceResult(
+            result,
+            "vkAllocateCommandBuffers.VulkanUpscaleBridge",
+            allocationGeneration: allocationGeneration,
+            slotIndex: slotIndex,
+            resourceName: $"Slot{slotIndex}.CommandBuffer");
         if (result != Result.Success)
             throw new InvalidOperationException("Failed to allocate a Vulkan bridge handoff command buffer.");
 
@@ -1512,15 +1654,23 @@ internal sealed unsafe class VulkanUpscaleBridgeSidecar : IDisposable
     /// </summary>
     /// <returns>A Vulkan fence that is initially signaled.</returns>
     /// <exception cref="InvalidOperationException">Thrown if the fence cannot be created.</exception>
-    private Fence CreateFence()
+    private Fence CreateFence(int slotIndex, ulong allocationGeneration)
     {
+        ThrowIfDeviceOperationNotAdmitted("vkCreateFence.VulkanUpscaleBridge");
         FenceCreateInfo createInfo = new()
         {
             SType = StructureType.FenceCreateInfo,
             Flags = FenceCreateFlags.SignaledBit,
         };
 
-        if (_api.CreateFence(_device, in createInfo, null, out Fence fence) != Result.Success)
+        Result result = _api.CreateFence(_device, in createInfo, null, out Fence fence);
+        ObserveDeviceResult(
+            result,
+            "vkCreateFence.VulkanUpscaleBridge",
+            allocationGeneration: allocationGeneration,
+            slotIndex: slotIndex,
+            resourceName: $"Slot{slotIndex}.SubmitFence");
+        if (result != Result.Success)
             throw new InvalidOperationException("Failed to create a Vulkan bridge submit fence.");
 
         return fence;
@@ -1533,8 +1683,13 @@ internal sealed unsafe class VulkanUpscaleBridgeSidecar : IDisposable
     /// <param name="name">The name of the shared semaphore.</param>
     /// <returns>A VulkanUpscaleBridgeSharedSemaphore representing the shared semaphore.</returns>
     /// <exception cref="InvalidOperationException">Thrown if the shared semaphore cannot be created or imported into OpenGL.</exception>
-    private VulkanUpscaleBridgeSharedSemaphore CreateSharedSemaphore(IOpenGlVendorUpscaleBackendCapability renderer, string name)
+    private VulkanUpscaleBridgeSharedSemaphore CreateSharedSemaphore(
+        IOpenGlVendorUpscaleBackendCapability renderer,
+        string name,
+        int slotIndex,
+        ulong allocationGeneration)
     {
+        ThrowIfDeviceOperationNotAdmitted("vkCreateSemaphore.VulkanUpscaleBridge");
         ExportSemaphoreCreateInfo exportInfo = new()
         {
             SType = StructureType.ExportSemaphoreCreateInfo,
@@ -1547,8 +1702,21 @@ internal sealed unsafe class VulkanUpscaleBridgeSidecar : IDisposable
             PNext = &exportInfo,
         };
 
-        if (_api.CreateSemaphore(_device, in createInfo, null, out VkSemaphore semaphore) != Result.Success)
-            throw new InvalidOperationException($"Failed to create bridge semaphore '{name}'.");
+        VkSemaphore semaphore = default;
+        uint glSemaphore = 0;
+        IntPtr glHandle = IntPtr.Zero;
+        try
+        {
+            ThrowIfDeviceOperationNotAdmitted("vkCreateSemaphore.VulkanUpscaleBridge");
+            Result createResult = _api.CreateSemaphore(_device, in createInfo, null, out semaphore);
+            ObserveDeviceResult(
+                createResult,
+                "vkCreateSemaphore.VulkanUpscaleBridge",
+                allocationGeneration: allocationGeneration,
+                slotIndex: slotIndex,
+                resourceName: name);
+            if (createResult != Result.Success)
+                throw new InvalidOperationException($"Failed to create bridge semaphore '{name}'.");
 
         SemaphoreGetWin32HandleInfoKHR handleInfo = new()
         {
@@ -1557,16 +1725,38 @@ internal sealed unsafe class VulkanUpscaleBridgeSidecar : IDisposable
             HandleType = ExternalSemaphoreHandleTypeFlags.OpaqueWin32Bit,
         };
 
-        IntPtr exportedHandle = IntPtr.Zero;
-        if (_externalSemaphoreWin32.GetSemaphoreWin32Handle(_device, &handleInfo, &exportedHandle) != Result.Success || exportedHandle == IntPtr.Zero)
-            throw new InvalidOperationException($"Failed to export bridge semaphore handle '{name}'.");
+            IntPtr exportedHandle = IntPtr.Zero;
+            ThrowIfDeviceOperationNotAdmitted("vkGetSemaphoreWin32HandleKHR.VulkanUpscaleBridge");
+            Result exportResult = _externalSemaphoreWin32.GetSemaphoreWin32Handle(_device, &handleInfo, &exportedHandle);
+            ObserveDeviceResult(
+                exportResult,
+                "vkGetSemaphoreWin32HandleKHR.VulkanUpscaleBridge",
+                allocationGeneration: allocationGeneration,
+                slotIndex: slotIndex,
+                resourceName: name);
+            if (exportResult != Result.Success || exportedHandle == IntPtr.Zero)
+                throw new InvalidOperationException($"Failed to export bridge semaphore handle '{name}'.");
 
-        IntPtr glHandle = DuplicateHandleForImport(exportedHandle);
-        uint glSemaphore = renderer.CreateImportedSemaphore(glHandle);
-        if (glSemaphore == 0)
-            throw new InvalidOperationException($"Failed to import bridge semaphore '{name}' into OpenGL.");
+            glHandle = DuplicateHandleForImport(exportedHandle);
+            glSemaphore = renderer.CreateImportedSemaphore(glHandle);
+            if (glSemaphore == 0)
+                throw new InvalidOperationException($"Failed to import bridge semaphore '{name}' into OpenGL.");
 
-        return new VulkanUpscaleBridgeSharedSemaphore(name, renderer, semaphore, glSemaphore);
+            // OpenGL consumes the duplicated handle on a successful import.
+            glHandle = IntPtr.Zero;
+
+            return new VulkanUpscaleBridgeSharedSemaphore(allocationGeneration, name, renderer, semaphore, glSemaphore);
+        }
+        catch
+        {
+            if (glSemaphore != 0)
+                renderer.DeleteSemaphore(glSemaphore);
+            if (glHandle != IntPtr.Zero)
+                CloseHandle(glHandle);
+            if (semaphore.Handle != 0)
+                _api.DestroySemaphore(_device, semaphore, null);
+            throw;
+        }
     }
 
     /// <summary>
@@ -1591,6 +1781,7 @@ internal sealed unsafe class VulkanUpscaleBridgeSidecar : IDisposable
     private VulkanUpscaleBridgeSharedImage CreateSharedImage(
         IOpenGlVendorUpscaleBackendCapability renderer,
         string slotTag,
+        int slotIndex,
         EVulkanUpscaleBridgeSurfaceKind kind,
         uint width,
         uint height,
@@ -1602,10 +1793,18 @@ internal sealed unsafe class VulkanUpscaleBridgeSidecar : IDisposable
         ImageUsageFlags usage,
         ImageAspectFlags aspectMask,
         ImageAspectFlags viewAspectMask,
-        bool linearFilter)
+        bool linearFilter,
+        ulong allocationGeneration)
     {
+        ThrowIfDeviceOperationNotAdmitted("vkCreateImage.VulkanUpscaleBridge");
         string name = $"VulkanUpscaleBridge.{slotTag}.{kind}";
         Format vkFormat = MapFormat(internalFormat);
+        Image image = default;
+        DeviceMemory memory = default;
+        ImageView imageView = default;
+        XRTexture2D? texture = null;
+        XRFrameBuffer? frameBuffer = null;
+        IntPtr glHandle = IntPtr.Zero;
 
         ExternalMemoryImageCreateInfo externalImageInfo = new()
         {
@@ -1629,8 +1828,18 @@ internal sealed unsafe class VulkanUpscaleBridgeSidecar : IDisposable
             InitialLayout = ImageLayout.Undefined,
         };
 
-        if (_api.CreateImage(_device, in imageInfo, null, out Image image) != Result.Success)
-            throw new InvalidOperationException($"Failed to create bridge image '{name}'.");
+        try
+        {
+            ThrowIfDeviceOperationNotAdmitted("vkCreateImage.VulkanUpscaleBridge");
+            Result createImageResult = _api.CreateImage(_device, in imageInfo, null, out image);
+            ObserveDeviceResult(
+                createImageResult,
+                "vkCreateImage.VulkanUpscaleBridge",
+                allocationGeneration: allocationGeneration,
+                slotIndex: slotIndex,
+                resourceName: name);
+            if (createImageResult != Result.Success)
+                throw new InvalidOperationException($"Failed to create bridge image '{name}'.");
 
         _api.GetImageMemoryRequirements(_device, image, out MemoryRequirements memoryRequirements);
 
@@ -1655,10 +1864,26 @@ internal sealed unsafe class VulkanUpscaleBridgeSidecar : IDisposable
             MemoryTypeIndex = FindMemoryType(memoryRequirements.MemoryTypeBits, MemoryPropertyFlags.DeviceLocalBit),
         };
 
-        if (_api.AllocateMemory(_device, in allocateInfo, null, out DeviceMemory memory) != Result.Success)
+        ThrowIfDeviceOperationNotAdmitted("vkAllocateMemory.VulkanUpscaleBridge");
+        Result allocateResult = _api.AllocateMemory(_device, in allocateInfo, null, out memory);
+        ObserveDeviceResult(
+            allocateResult,
+            "vkAllocateMemory.VulkanUpscaleBridge",
+            allocationGeneration: allocationGeneration,
+            slotIndex: slotIndex,
+            resourceName: name);
+        if (allocateResult != Result.Success)
             throw new InvalidOperationException($"Failed to allocate bridge memory for '{name}'.");
 
-        if (_api.BindImageMemory(_device, image, memory, 0) != Result.Success)
+        ThrowIfDeviceOperationNotAdmitted("vkBindImageMemory.VulkanUpscaleBridge");
+        Result bindResult = _api.BindImageMemory(_device, image, memory, 0);
+        ObserveDeviceResult(
+            bindResult,
+            "vkBindImageMemory.VulkanUpscaleBridge",
+            allocationGeneration: allocationGeneration,
+            slotIndex: slotIndex,
+            resourceName: name);
+        if (bindResult != Result.Success)
             throw new InvalidOperationException($"Failed to bind bridge memory for '{name}'.");
 
         ImageViewCreateInfo viewInfo = new()
@@ -1677,7 +1902,15 @@ internal sealed unsafe class VulkanUpscaleBridgeSidecar : IDisposable
             },
         };
 
-        if (_api.CreateImageView(_device, in viewInfo, null, out ImageView imageView) != Result.Success)
+        ThrowIfDeviceOperationNotAdmitted("vkCreateImageView.VulkanUpscaleBridge");
+        Result createViewResult = _api.CreateImageView(_device, in viewInfo, null, out imageView);
+        ObserveDeviceResult(
+            createViewResult,
+            "vkCreateImageView.VulkanUpscaleBridge",
+            allocationGeneration: allocationGeneration,
+            slotIndex: slotIndex,
+            resourceName: name);
+        if (createViewResult != Result.Success)
             throw new InvalidOperationException($"Failed to create bridge image view for '{name}'.");
 
         MemoryGetWin32HandleInfoKHR handleInfo = new()
@@ -1688,12 +1921,20 @@ internal sealed unsafe class VulkanUpscaleBridgeSidecar : IDisposable
         };
 
         IntPtr exportedHandle = IntPtr.Zero;
-        if (_externalMemoryWin32.GetMemoryWin32Handle(_device, &handleInfo, &exportedHandle) != Result.Success || exportedHandle == IntPtr.Zero)
+        ThrowIfDeviceOperationNotAdmitted("vkGetMemoryWin32HandleKHR.VulkanUpscaleBridge");
+        Result exportResult = _externalMemoryWin32.GetMemoryWin32Handle(_device, &handleInfo, &exportedHandle);
+        ObserveDeviceResult(
+            exportResult,
+            "vkGetMemoryWin32HandleKHR.VulkanUpscaleBridge",
+            allocationGeneration: allocationGeneration,
+            slotIndex: slotIndex,
+            resourceName: name);
+        if (exportResult != Result.Success || exportedHandle == IntPtr.Zero)
             throw new InvalidOperationException($"Failed to export bridge memory handle for '{name}'.");
 
-        IntPtr glHandle = DuplicateHandleForImport(exportedHandle);
+        glHandle = DuplicateHandleForImport(exportedHandle);
 
-        XRTexture2D texture = XRTexture2D.CreateFrameBufferTexture(width, height, internalFormat, pixelFormat, pixelType, attachment);
+        texture = XRTexture2D.CreateFrameBufferTexture(width, height, internalFormat, pixelFormat, pixelType, attachment);
         texture.Name = name;
         texture.SamplerName = name;
         texture.Resizable = false;
@@ -1704,18 +1945,35 @@ internal sealed unsafe class VulkanUpscaleBridgeSidecar : IDisposable
         texture.VWrap = ETexWrapMode.ClampToEdge;
         texture.AutoGenerateMipmaps = false;
         texture.SetOpenGlExternalMemoryImport(glHandle, memoryRequirements.Size, name, mipLevels: 1);
+        // The texture import consumes the duplicated handle when generation succeeds.
 
         if (!renderer.TryGenerateTexture(texture, out string textureFailure))
             throw new InvalidOperationException(textureFailure);
+        glHandle = IntPtr.Zero;
 
-        XRFrameBuffer frameBuffer = new((texture, attachment, 0, -1))
+        frameBuffer = new((texture, attachment, 0, -1))
         {
             Name = $"{name}.FBO",
         };
         if (!renderer.TryGenerateFrameBuffer(frameBuffer, out string frameBufferFailure))
             throw new InvalidOperationException(frameBufferFailure);
 
-        return new VulkanUpscaleBridgeSharedImage(name, kind, image, memory, imageView, vkFormat, aspectMask, viewAspectMask, usage, texture, frameBuffer);
+        return new VulkanUpscaleBridgeSharedImage(allocationGeneration, name, kind, image, memory, imageView, vkFormat, aspectMask, viewAspectMask, usage, texture, frameBuffer);
+        }
+        catch
+        {
+            frameBuffer?.Destroy(true);
+            texture?.Destroy(true);
+            if (glHandle != IntPtr.Zero)
+                CloseHandle(glHandle);
+            if (imageView.Handle != 0)
+                _api.DestroyImageView(_device, imageView, null);
+            if (image.Handle != 0)
+                _api.DestroyImage(_device, image, null);
+            if (memory.Handle != 0)
+                _api.FreeMemory(_device, memory, null);
+            throw;
+        }
     }
 
     /// <summary>
@@ -1760,106 +2018,6 @@ internal sealed unsafe class VulkanUpscaleBridgeSidecar : IDisposable
             _ => throw new NotSupportedException($"Vulkan upscale bridge does not yet map GL format '{internalFormat}'."),
         };
     }
-
-    /// <summary>
-    /// Transitions the layout of a Vulkan image to a new layout, updating the pipeline stage and access masks accordingly.
-    /// </summary>
-    /// <param name="commandBuffer">The command buffer used to record the pipeline barrier.</param>
-    /// <param name="image">The Vulkan image whose layout is to be transitioned.</param>
-    /// <param name="newLayout">The new layout to transition the image to.</param>
-    /// <param name="dstStage">The destination pipeline stage flags for the transition.</param>
-    /// <param name="dstAccessMask">The destination access mask for the transition.</param>
-    /// <remarks>
-    /// This method records a pipeline barrier into the specified command buffer to transition the image layout.
-    /// It automatically resolves the source pipeline stage and access mask based on the current layout of the image.
-    /// </remarks>
-    private void TransitionImageLayout(
-        CommandBuffer commandBuffer,
-        VulkanUpscaleBridgeSharedImage image,
-        ImageLayout newLayout,
-        PipelineStageFlags dstStage,
-        AccessFlags dstAccessMask)
-    {
-        ImageLayout oldLayout = image.CurrentLayout;
-        if (oldLayout == newLayout)
-            return;
-
-        PipelineStageFlags srcStage = ResolvePipelineStage(oldLayout);
-        AccessFlags srcAccessMask = ResolveAccessMask(oldLayout);
-
-        ImageMemoryBarrier barrier = new()
-        {
-            SType = StructureType.ImageMemoryBarrier,
-            SrcAccessMask = srcAccessMask,
-            DstAccessMask = dstAccessMask,
-            OldLayout = oldLayout,
-            NewLayout = newLayout,
-            SrcQueueFamilyIndex = Vk.QueueFamilyIgnored,
-            DstQueueFamilyIndex = Vk.QueueFamilyIgnored,
-            Image = image.VulkanImage,
-            SubresourceRange = new ImageSubresourceRange
-            {
-                AspectMask = image.AspectMask,
-                BaseMipLevel = 0,
-                LevelCount = 1,
-                BaseArrayLayer = 0,
-                LayerCount = 1,
-            },
-        };
-
-        ImageMemoryBarrier* barrierPtr = stackalloc ImageMemoryBarrier[1];
-        barrierPtr[0] = barrier;
-
-        _api.CmdPipelineBarrier(
-            commandBuffer,
-            srcStage,
-            dstStage,
-            DependencyFlags.None,
-            0,
-            null,
-            0,
-            null,
-            1,
-            barrierPtr);
-
-        image.CurrentLayout = newLayout;
-    }
-
-    /// <summary>
-    /// Resolves the appropriate pipeline stage flags for a given image layout.
-    /// </summary>
-    /// <param name="layout">The image layout for which to resolve the pipeline stage flags.</param>
-    /// <returns>The corresponding pipeline stage flags for the specified image layout.</returns>
-    private static PipelineStageFlags ResolvePipelineStage(ImageLayout layout)
-        => layout switch
-        {
-            ImageLayout.Undefined => PipelineStageFlags.TopOfPipeBit,
-            ImageLayout.TransferSrcOptimal or ImageLayout.TransferDstOptimal => PipelineStageFlags.TransferBit,
-            ImageLayout.ColorAttachmentOptimal => PipelineStageFlags.ColorAttachmentOutputBit,
-            ImageLayout.DepthStencilAttachmentOptimal or ImageLayout.DepthAttachmentOptimal => PipelineStageFlags.EarlyFragmentTestsBit | PipelineStageFlags.LateFragmentTestsBit,
-            ImageLayout.ShaderReadOnlyOptimal => PipelineStageFlags.FragmentShaderBit,
-            _ => PipelineStageFlags.AllCommandsBit,
-        };
-
-    /// <summary>
-    /// Resolves the appropriate pipeline stage flags for a given image layout.
-    /// </summary>
-    /// <param name="layout">The image layout for which to resolve the pipeline stage flags.</param>
-    /// <returns>The corresponding pipeline stage flags for the specified image layout.</returns>
-    private static AccessFlags ResolveAccessMask(ImageLayout layout)
-        => layout switch
-        {
-            ImageLayout.Undefined => 0,
-            ImageLayout.TransferSrcOptimal => AccessFlags.TransferReadBit,
-            ImageLayout.TransferDstOptimal => AccessFlags.TransferWriteBit,
-            ImageLayout.ColorAttachmentOptimal => AccessFlags.ColorAttachmentReadBit | AccessFlags.ColorAttachmentWriteBit,
-            ImageLayout.DepthStencilAttachmentOptimal or ImageLayout.DepthAttachmentOptimal
-                => AccessFlags.DepthStencilAttachmentReadBit | AccessFlags.DepthStencilAttachmentWriteBit,
-            ImageLayout.DepthStencilReadOnlyOptimal or ImageLayout.DepthReadOnlyOptimal
-                => AccessFlags.DepthStencilAttachmentReadBit,
-            ImageLayout.ShaderReadOnlyOptimal => AccessFlags.ShaderReadBit,
-            _ => AccessFlags.MemoryReadBit | AccessFlags.MemoryWriteBit,
-        };
 
     /// <summary>
     /// Duplicates a Win32 handle for import into another API, such as OpenGL. 

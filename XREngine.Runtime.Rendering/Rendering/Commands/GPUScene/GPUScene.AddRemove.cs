@@ -126,7 +126,7 @@ namespace XREngine.Rendering.Commands
                         uint index = UpdatingCommandCount++;
                         uint boundsId = index;
 
-                        var gpuCommand = ConvertToGPUCommand(
+                        var stageNativeRecords = CreateStageNativeDrawRecords(
                             renderInfo,
                             meshCmd,
                             mesh,
@@ -139,12 +139,12 @@ namespace XREngine.Rendering.Commands
                             skinId,
                             stateClassId,
                             boundsId);
-                        if (gpuCommand is null)
+                        if (stageNativeRecords is null)
                         {
                             ReleaseTransformId(transformId);
                             ReleaseSkinId(skinId);
                             --UpdatingCommandCount;
-                            SceneLog($"Skipping adding mesh command submesh {subMeshIndex} due to conversion failure.");
+                            SceneLog($"Skipping mesh-command submesh {subMeshIndex} because stage-native publication failed.");
                             continue;
                         }
 
@@ -154,12 +154,10 @@ namespace XREngine.Rendering.Commands
                         indices.Add(index);
                         _commandIndexLookup.Add(index, (meshCmd, subMeshIndex));
 
-                        GPUIndirectRenderCommand commandValue = gpuCommand.Value;
-                        // Preserve the source command index so post-cull stages can map back to CPU-side data.
-                        commandValue.Reserved1 = index;
-                        UpdatingCommandsBuffer.SetDataRawAtIndex(index, commandValue);
+                        DrawMetadata commandValue = stageNativeRecords.Value.Metadata;
+                        commandValue.DrawID = index;
                         WriteDrawMetadata(index, commandValue);
-                        WriteBounds(boundsId, ComputeRenderCullingBoundsGpu(renderInfo, mesh.Bounds, modelMatrix, 1u));
+                        WriteBounds(boundsId, stageNativeRecords.Value.Bounds);
                         UpdatingTransparencyMetadataBuffer.SetDataRawAtIndex(index, GPUTransparencyMetadata.FromMaterial(m));
                         if (_useInternalBvh)
                             WriteTightCommandAabb(index, renderInfo, mesh.Bounds, modelMatrix);
@@ -173,7 +171,7 @@ namespace XREngine.Rendering.Commands
                                 SceneLog($"[GPUScene/Build] idx={index} mesh={commandValue.MeshID} material={commandValue.MaterialID} pass={commandValue.RenderPass} instances={commandValue.InstanceCount}");
                             }
 
-                            GPUIndirectRenderCommand roundTrip = UpdatingCommandsBuffer.GetDataRawAtIndex<GPUIndirectRenderCommand>(index);
+                            DrawMetadata roundTrip = UpdatingDrawMetadataBuffer.GetDataRawAtIndex<DrawMetadata>(index);
                             bool matches = roundTrip.MeshID == commandValue.MeshID
                                 && roundTrip.MaterialID == commandValue.MaterialID
                                 && roundTrip.RenderPass == commandValue.RenderPass;
@@ -201,16 +199,10 @@ namespace XREngine.Rendering.Commands
                     // Upload only the newly appended command range.
                     // Pushing the full buffer can hitch when high-detail meshes/submeshes stream in later.
                     uint addedCount = UpdatingCommandCount - startCommandCount;
-                    uint elementSize = UpdatingCommandsBuffer.ElementSize;
-                    if (elementSize == 0)
-                        elementSize = (uint)(CommandFloatCount * sizeof(float));
-
-                    uint byteOffset = startCommandCount * elementSize;
-                    uint byteCount = addedCount * elementSize;
-                                        LodTransitionBuffer.PushSubData((int)(startCommandCount * LodTransitionBuffer.ElementSize), addedCount * LodTransitionBuffer.ElementSize);
-                    UpdatingCommandsBuffer.PushSubData((int)byteOffset, byteCount);
+                    FlushDrawIndexedSoARange(startCommandCount, addedCount);
+                    LodTransitionBuffer.PushSubData((int)(startCommandCount * LodTransitionBuffer.ElementSize), addedCount * LodTransitionBuffer.ElementSize);
                     MarkUpdatingCommandsDirty();
-                    SceneLog($"GPUScene.Add: Added commands, total now {UpdatingCommandCount} in UpdatingCommandsBuffer");
+                    SceneLog($"GPUScene.Add: Added commands, total now {UpdatingCommandCount} in draw-indexed streams");
 
                     // Mark BVH dirty so it gets rebuilt before next cull pass
                     if (_gpuBvhTree is not null)
@@ -407,7 +399,10 @@ namespace XREngine.Rendering.Commands
                 return;
 
             if (!_atlasMeshRefCounts.TryGetValue(mesh, out int count))
+            {
                 count = 0;
+                SubscribeMeshletPayloadChanges(mesh);
+            }
 
             _atlasMeshRefCounts[mesh] = count + amount;
         }
@@ -457,6 +452,7 @@ namespace XREngine.Rendering.Commands
             }
 
             _atlasMeshRefCounts.Remove(mesh);
+            UnsubscribeMeshletPayloadChanges(mesh);
 
             // Clear MeshData entry for safety (prevents stale atlas offsets from being consumed).
             EnsureMeshDataCapacity(meshID + 1);
@@ -542,16 +538,9 @@ namespace XREngine.Rendering.Commands
 
         private void EnsureMeshletRangeCapacity(uint requiredEntries)
         {
-            XRDataBuffer buffer = MeshletRangeBuffer;
-            if (requiredEntries <= buffer.ElementCount)
-                return;
-
-            uint oldCount = buffer.ElementCount;
-            EnsureSceneBufferCapacity(buffer, requiredEntries, MinMeshDataEntries);
-            for (uint index = oldCount; index < buffer.ElementCount; index++)
-                buffer.SetDataRawAtIndex(index, default(GpuMeshletRange));
-
-            _meshletRangeDirtyRange.Mark(oldCount, buffer.ElementCount - oldCount);
+            // Capacity belongs to a coherent meshlet-buffer generation. It is sized
+            // and uploaded by SwapCommandBuffers, not resized under an in-flight draw.
+            _ = requiredEntries;
         }
 
         private void EnsureMeshletDescriptorCapacity(uint requiredEntries)
@@ -574,15 +563,8 @@ namespace XREngine.Rendering.Commands
 
         private void FlushMeshletRangeDirtyRange()
         {
-            if (!_meshletRangeDirtyRange.HasValue || _meshletRangeBuffer is null)
-                return;
-
-            uint min = _meshletRangeDirtyRange.Min;
-            uint maxExclusive = _meshletRangeDirtyRange.MaxExclusive.ClampMax(_meshletRangeBuffer.ElementCount);
-            if (min < maxExclusive)
-                PushBufferElementRange(_meshletRangeBuffer, min, maxExclusive - min);
-
-            _meshletRangeDirtyRange.Clear();
+            // See EnsureMeshletRangeCapacity: the range table is published with its
+            // descriptor/index siblings as one generation at the frame boundary.
         }
 
         public bool TryGetMeshletRange(uint meshDataId, out GpuMeshletRange range)
@@ -644,11 +626,13 @@ namespace XREngine.Rendering.Commands
             EnsureMeshletRangeCapacity(meshID + 1u);
             bool changed = !_meshletRangesByMeshId.TryGetValue(meshID, out GpuMeshletRange existing) || !existing.Equals(range);
             _meshletRangesByMeshId[meshID] = range;
+            if (range.HasMeshlets)
+                _meshletIneligibleResidentMeshIds.TryRemove(meshID, out _);
+            else
+                _meshletIneligibleResidentMeshIds.TryAdd(meshID, 0);
             if (!changed)
                 return;
-
-            MeshletRangeBuffer.SetDataRawAtIndex(meshID, range);
-            _meshletRangeDirtyRange.Mark(meshID);
+            _meshletBufferGenerationDirty = true;
         }
 
         private void SetEmptyMeshletRange(uint meshID, ulong freshnessHash)
@@ -669,11 +653,11 @@ namespace XREngine.Rendering.Commands
             bool changed = _meshletRangesByMeshId.TryGetValue(meshID, out GpuMeshletRange existing) && !existing.Equals(default(GpuMeshletRange));
             _meshletRangesByMeshId.Remove(meshID);
             _meshletFreshnessByMeshId.Remove(meshID);
+            _meshletValidationRevisionByMeshId.Remove(meshID);
+            _meshletIneligibleResidentMeshIds.TryRemove(meshID, out _);
             if (!changed)
                 return;
-
-            MeshletRangeBuffer.SetDataRawAtIndex(meshID, default(GpuMeshletRange));
-            _meshletRangeDirtyRange.Mark(meshID);
+            _meshletBufferGenerationDirty = true;
         }
 
         private void EnsureMeshletRangeForMesh(uint meshID, XRMesh mesh)
@@ -683,25 +667,29 @@ namespace XREngine.Rendering.Commands
 
             EnsureMeshletRangeCapacity(meshID + 1u);
 
+            // Meshlet payloads are derived asset data. Import/cache hydration validates
+            // their source identity and compatibility before the mesh reaches GPUScene;
+            // this render-adjacent registration path must remain O(1) and must never
+            // rehash source geometry, touch disk, or invoke the cooker.
             MeshletPayload? payload = mesh.MeshletPayload;
-            bool fresh = payload?.IsFreshForSourceMesh(mesh) == true;
-            if (IsMeshletRangeCurrent(meshID, payload, fresh))
+            bool compatible = payload?.IsValidatedFor(mesh) == true && payload.OwnerValidationToken != 0UL;
+            if (IsMeshletRangeCurrent(meshID, payload, compatible))
             {
                 RuntimeEngine.Rendering.Stats.GpuMeshlets.RecordGpuMeshletCacheHit(1);
                 return;
             }
 
-            if (!fresh || payload is not { HasMeshlets: true })
+            if (payload is not { HasMeshlets: true } || !compatible)
             {
                 if (payload is null)
                 {
                     RuntimeEngine.Rendering.Stats.GpuMeshlets.RecordGpuMeshletCacheMiss(1);
                     Debug.Meshes($"Meshlet.CacheMissing meshDataId={meshID} source='{mesh.Name ?? "<unnamed>"}' cachePath='<runtime-meshlet-payload>' commandCount={TotalCommandCount}");
                 }
-                else if (!fresh)
+                else if (!compatible)
                 {
                     RuntimeEngine.Rendering.Stats.GpuMeshlets.RecordGpuMeshletCacheStale(1);
-                    Debug.Meshes($"Meshlet.CacheStale meshDataId={meshID} source='{mesh.Name ?? "<unnamed>"}' cachePath='<runtime-meshlet-payload>' commandCount={TotalCommandCount}");
+                    Debug.MeshesWarning($"Meshlet.CacheIncompatible meshDataId={meshID} source='{mesh.Name ?? "<unnamed>"}' cachePath='<attached-payload>' commandCount={TotalCommandCount}");
                 }
                 else
                 {
@@ -709,7 +697,8 @@ namespace XREngine.Rendering.Commands
                     Debug.Meshes($"Meshlet.CacheMissing meshDataId={meshID} source='{mesh.Name ?? "<unnamed>"}' cachePath='<runtime-meshlet-payload>' reason='payload has no meshlets' commandCount={TotalCommandCount}");
                 }
 
-                SetEmptyMeshletRange(meshID, fresh && payload is not null ? payload.FreshnessHash : 0UL);
+                SetEmptyMeshletRange(meshID, payload?.FreshnessHash ?? 0UL);
+                _meshletValidationRevisionByMeshId[meshID] = payload?.ValidationRevision ?? 0L;
                 return;
             }
 
@@ -729,30 +718,18 @@ namespace XREngine.Rendering.Commands
             uint vertexIndexCount = (uint)payload.VertexIndices.Length;
             uint triangleByteCount = (uint)payload.TriangleIndices.Length;
 
-            EnsureMeshletDescriptorCapacity(meshletOffset + meshletCount);
-            EnsureMeshletVertexIndexCapacity(vertexIndexOffset + vertexIndexCount);
-            EnsureMeshletTriangleIndexCapacity(triangleByteOffset + triangleByteCount);
-
             for (int index = 0; index < payload.Meshlets.Length; index++)
             {
                 GpuMeshletDescriptor descriptor = ToGpuSceneMeshletDescriptor(payload.Meshlets[index], vertexIndexOffset, triangleByteOffset);
-                MeshletDescriptorBuffer.SetDataRawAtIndex(meshletOffset + (uint)index, descriptor);
                 _meshletDescriptors.Add(descriptor);
             }
 
-            for (int index = 0; index < payload.VertexIndices.Length; index++)
-                MeshletVertexIndexBuffer.SetDataRawAtIndex(vertexIndexOffset + (uint)index, payload.VertexIndices[index]);
             _meshletVertexIndices.AddRange(payload.VertexIndices);
 
-            for (int index = 0; index < payload.TriangleIndices.Length; index++)
-                MeshletTriangleIndexBuffer.SetDataRawAtIndex(triangleByteOffset + (uint)index, payload.TriangleIndices[index]);
             _meshletTriangleIndices.AddRange(payload.TriangleIndices);
 
-            PushBufferElementRange(MeshletDescriptorBuffer, meshletOffset, meshletCount);
-            PushBufferElementRange(MeshletVertexIndexBuffer, vertexIndexOffset, vertexIndexCount);
-            PushBufferElementRange(MeshletTriangleIndexBuffer, triangleByteOffset, triangleByteCount);
-
             _meshletFreshnessByMeshId[meshID] = payload.FreshnessHash;
+            _meshletValidationRevisionByMeshId[meshID] = payload.ValidationRevision;
             SetMeshletRange(meshID, new GpuMeshletRange
             {
                 MeshletOffset = meshletOffset,
@@ -760,6 +737,7 @@ namespace XREngine.Rendering.Commands
                 VertexIndexOffset = vertexIndexOffset,
                 TriangleIndexOffset = triangleByteOffset,
             });
+            _meshletBufferGenerationDirty = true;
             RuntimeEngine.Rendering.Stats.GpuMeshlets.RecordGpuMeshletCacheHit(1);
             RuntimeEngine.Rendering.Stats.GpuMeshlets.RecordGpuMeshletBufferBytesResident(MeshletBufferBytesResident);
             Debug.Meshes(
@@ -777,117 +755,15 @@ namespace XREngine.Rendering.Commands
             if (payload is null)
                 return existingFreshness == 0UL && !existingRange.HasMeshlets;
 
-            if (!fresh || existingFreshness != payload.FreshnessHash)
+            if (!fresh || existingFreshness != payload.FreshnessHash
+                || !_meshletValidationRevisionByMeshId.TryGetValue(meshID, out long existingRevision)
+                || existingRevision != payload.ValidationRevision)
                 return false;
 
             return payload.HasMeshlets
                 ? existingRange.MeshletCount == (uint)payload.Meshlets.Length
                 : !existingRange.HasMeshlets;
         }
-
-        public uint EnsureRuntimeMeshletPayloadsForMeshletDispatch()
-        {
-            uint repaired = 0u;
-            MeshletGenerationSettings? repairSettings = null;
-
-            using (_lock.EnterScope())
-            {
-                foreach ((uint meshID, XRMesh? mesh) in _idToMesh)
-                {
-                    if (meshID == 0u || mesh is null)
-                        continue;
-
-                    if (_activeAtlasTiers.TryGetValue(mesh, out EAtlasTier tier) && tier == EAtlasTier.Streaming)
-                    {
-                        SetEmptyMeshletRange(meshID, 0UL);
-                        continue;
-                    }
-
-                    MeshletPayload? payload = mesh.MeshletPayload;
-                    bool fresh = payload?.IsFreshForSourceMesh(mesh) == true;
-                    if (payload is not null && IsMeshletRangeCurrent(meshID, payload, fresh))
-                        continue;
-
-                    if (payload is null || !fresh)
-                    {
-                        if (_runtimeMeshletRepairFailedMeshIds.ContainsKey(meshID))
-                        {
-                            SetEmptyMeshletRange(meshID, 0UL);
-                            continue;
-                        }
-
-                        repairSettings ??= CreateRuntimeMeshletRepairSettings();
-
-                        // Disk cache: try to load a previously persisted payload
-                        // matching the same identity + settings + meshoptimizer
-                        // version. This avoids the multi-second per-submesh
-                        // meshlet rebuild on shader-pipeline toggle / restart.
-                        if (MeshletPayloadDiskCache.TryLoad(mesh, repairSettings, null, out MeshletPayload? cached) && cached is not null)
-                        {
-                            mesh.MeshletPayload = cached;
-                            payload = cached;
-                            fresh = true;
-                            repaired++;
-                            RuntimeEngine.Rendering.Stats.GpuMeshlets.RecordGpuMeshletCacheHit(1);
-
-                            if (_runtimeMeshletRepairLogBudget > 0 &&
-                                Interlocked.Decrement(ref _runtimeMeshletRepairLogBudget) >= 0)
-                            {
-                                Debug.Meshes(
-                                    $"Meshlet.RuntimePayloadCacheHit meshDataId={meshID} source='{mesh.Name ?? "<unnamed>"}' meshletCount={payload.Meshlets.Length}");
-                            }
-
-                            EnsureMeshletRangeForMesh(meshID, mesh);
-                            continue;
-                        }
-
-                        try
-                        {
-                            payload = mesh.GetOrCreateMeshletPayload(repairSettings);
-                            fresh = payload.IsFreshForSourceMesh(mesh);
-                            repaired++;
-
-                            // Persist freshly built payload for the next run.
-                            MeshletPayloadDiskCache.TryStore(mesh, repairSettings, null, payload);
-
-                            if (_runtimeMeshletRepairLogBudget > 0 &&
-                                Interlocked.Decrement(ref _runtimeMeshletRepairLogBudget) >= 0)
-                            {
-                                Debug.Meshes(
-                                    $"Meshlet.RuntimePayloadBuilt meshDataId={meshID} source='{mesh.Name ?? "<unnamed>"}' meshletCount={payload.Meshlets.Length} vertexIndexCount={payload.VertexIndices.Length} triangleByteCount={payload.TriangleIndices.Length}");
-                            }
-                        }
-                        catch (Exception ex) when (ex is DllNotFoundException or EntryPointNotFoundException or BadImageFormatException or InvalidOperationException or ArgumentException or OverflowException)
-                        {
-                            _runtimeMeshletRepairFailedMeshIds.TryAdd(meshID, 0);
-                            RuntimeEngine.Rendering.Stats.GpuMeshlets.RecordGpuMeshletCacheMiss(1);
-                            if (_runtimeMeshletRepairLogBudget > 0 &&
-                                Interlocked.Decrement(ref _runtimeMeshletRepairLogBudget) >= 0)
-                            {
-                                Debug.MeshesWarning(
-                                    $"Meshlet.RuntimePayloadBuildFailed meshDataId={meshID} source='{mesh.Name ?? "<unnamed>"}' reason='{ex.GetType().Name}: {ex.Message}'");
-                            }
-
-                            SetEmptyMeshletRange(meshID, 0UL);
-                            continue;
-                        }
-                    }
-
-                    EnsureMeshletRangeForMesh(meshID, mesh);
-                }
-
-                FlushMeshletRangeDirtyRange();
-            }
-
-            return repaired;
-        }
-
-        private static MeshletGenerationSettings CreateRuntimeMeshletRepairSettings()
-            => new()
-            {
-                Enabled = true,
-                BuildMode = MeshletBuildMode.Dense,
-            };
 
         /// <summary>
         /// Attempts to get the mesh data entry for a given mesh ID.
@@ -1012,7 +888,7 @@ namespace XREngine.Rendering.Commands
                 VerifyUpdatingBufferSize(UpdatingCommandCount);
                 if (anyRemoved)
                 {
-                    UpdatingCommandsBuffer.PushSubData();
+                    FlushDrawIndexedSoARange(0u, UpdatingCommandCount);
                     FlushCpuLodTransitionWrites();
                     MarkUpdatingCommandsDirty();
 
@@ -1038,7 +914,7 @@ namespace XREngine.Rendering.Commands
             }
 
             // Capture removed command before we overwrite slots (swap-remove).
-            GPUIndirectRenderCommand removedCommand = UpdatingCommandsBuffer.GetDataRawAtIndex<GPUIndirectRenderCommand>(targetIndex);
+            DrawMetadata removedCommand = UpdatingDrawMetadataBuffer.GetDataRawAtIndex<DrawMetadata>(targetIndex);
             uint removedMeshId = removedCommand.MeshID;
             uint removedLogicalMeshId = removedCommand.LogicalMeshID;
             uint removedTransformId = removedCommand.TransformID;
@@ -1050,11 +926,10 @@ namespace XREngine.Rendering.Commands
             _commandIndexLookup.Remove(targetIndex);
             if (targetIndex < lastIndex)
             {
-                GPUIndirectRenderCommand lastCommand = UpdatingCommandsBuffer.GetDataRawAtIndex<GPUIndirectRenderCommand>(lastIndex);
+                DrawMetadata lastCommand = UpdatingDrawMetadataBuffer.GetDataRawAtIndex<DrawMetadata>(lastIndex);
                 GPUTransparencyMetadata lastMetadata = UpdatingTransparencyMetadataBuffer.GetDataRawAtIndex<GPUTransparencyMetadata>(lastIndex);
-                lastCommand.Reserved1 = targetIndex;
+                lastCommand.DrawID = targetIndex;
                 lastCommand.BoundsID = targetIndex;
-                UpdatingCommandsBuffer.SetDataRawAtIndex(targetIndex, lastCommand);
                 WriteDrawMetadata(targetIndex, lastCommand);
 
                 BoundsGpu lastBounds = UpdatingBoundsBuffer.GetDataRawAtIndex<BoundsGpu>(lastIndex);
@@ -1108,21 +983,22 @@ namespace XREngine.Rendering.Commands
         // Command buffers grow at powers of two and never shrink during a scene lifetime.
         private void VerifyUpdatingBufferSize(uint requiredSize)
         {
-            uint currentCapacity = UpdatingCommandsBuffer.ElementCount;
+            uint currentCapacity = UpdatingDrawMetadataBuffer.ElementCount;
             uint nextPowerOfTwo = XRMath.NextPowerOfTwo(requiredSize).ClampMin(MinCommandCount);
             if (nextPowerOfTwo <= currentCapacity)
                 return;
 
-            SceneLog($"Resizing updating command buffer from {currentCapacity} to {nextPowerOfTwo}.");
-            UpdatingCommandsBuffer.Resize(nextPowerOfTwo);
+            SceneLog($"Resizing updating draw-indexed streams from {currentCapacity} to {nextPowerOfTwo}.");
             UpdatingTransparencyMetadataBuffer.Resize(nextPowerOfTwo);
             UpdatingDrawMetadataBuffer.Resize(nextPowerOfTwo);
             UpdatingBoundsBuffer.Resize(nextPowerOfTwo);
+            UpdatingClassificationBuffer.Resize(nextPowerOfTwo);
+            UpdatingVisibilityBuffer.Resize(nextPowerOfTwo);
             EnsureLodTransitionBufferCapacity(nextPowerOfTwo);
-            uint newCapacity = UpdatingCommandsBuffer.ElementCount;
+            uint newCapacity = UpdatingDrawMetadataBuffer.ElementCount;
             if (newCapacity > currentCapacity)
             {
-                ZeroUpdatingCommandRange(currentCapacity, newCapacity - currentCapacity);
+                ZeroUpdatingDrawMetadataRange(currentCapacity, newCapacity - currentCapacity);
                 ZeroUpdatingTransparencyMetadataRange(currentCapacity, newCapacity - currentCapacity);
                 for (uint i = currentCapacity; i < newCapacity; ++i)
                     ClearDrawIndexedSoA(i);
@@ -1130,27 +1006,39 @@ namespace XREngine.Rendering.Commands
             }
         }
 
-        private void ZeroUpdatingCommandRange(uint startIndex, uint count)
+        private void ZeroUpdatingDrawMetadataRange(uint startIndex, uint count)
         {
             if (count == 0)
                 return;
 
-            var blank = default(GPUIndirectRenderCommand);
+            var blank = default(DrawMetadata);
             uint end = startIndex + count;
             for (uint i = startIndex; i < end; ++i)
-                UpdatingCommandsBuffer.SetDataRawAtIndex(i, blank);
+                UpdatingDrawMetadataBuffer.SetDataRawAtIndex(i, blank);
 
-            uint elementSize = UpdatingCommandsBuffer.ElementSize;
-            if (elementSize == 0)
-                elementSize = (uint)(CommandFloatCount * sizeof(float));
+            uint elementSize = UpdatingDrawMetadataBuffer.ElementSize;
 
             uint byteOffset = startIndex * elementSize;
             uint byteCount = count * elementSize;
-            UpdatingCommandsBuffer.PushSubData((int)byteOffset, byteCount);
+            UpdatingDrawMetadataBuffer.PushSubData((int)byteOffset, byteCount);
             MarkUpdatingCommandsDirty();
 
             if (IsGpuSceneLoggingEnabled())
-                SceneLog($"Zeroed updating command buffer range [{startIndex}, {end}) ({byteCount} bytes)");
+                SceneLog($"Zeroed updating draw metadata range [{startIndex}, {end}) ({byteCount} bytes)");
+        }
+
+        private void FlushDrawIndexedSoARange(uint startIndex, uint count)
+        {
+            if (count == 0u)
+                return;
+
+            static void Flush(XRDataBuffer buffer, uint start, uint length)
+                => buffer.PushSubData((int)(start * buffer.ElementSize), length * buffer.ElementSize);
+
+            Flush(UpdatingDrawMetadataBuffer, startIndex, count);
+            Flush(UpdatingBoundsBuffer, startIndex, count);
+            Flush(UpdatingClassificationBuffer, startIndex, count);
+            Flush(UpdatingVisibilityBuffer, startIndex, count);
         }
 
         private void ZeroUpdatingTransparencyMetadataRange(uint startIndex, uint count)
@@ -1176,44 +1064,43 @@ namespace XREngine.Rendering.Commands
         // Command buffers grow at powers of two and never shrink during a scene lifetime.
         private void VerifyCommandBufferSize(uint requiredSize)
         {
-            uint currentCapacity = AllLoadedCommandsBuffer.ElementCount;
+            uint currentCapacity = DrawMetadataBuffer.ElementCount;
             uint nextPowerOfTwo = XRMath.NextPowerOfTwo(requiredSize).ClampMin(MinCommandCount);
             if (nextPowerOfTwo <= currentCapacity)
                 return;
 
-            SceneLog($"Resizing command buffer from {currentCapacity} to {nextPowerOfTwo}.");
-            AllLoadedCommandsBuffer.Resize(nextPowerOfTwo);
+            SceneLog($"Resizing published draw-indexed streams from {currentCapacity} to {nextPowerOfTwo}.");
             AllLoadedTransparencyMetadataBuffer.Resize(nextPowerOfTwo);
             DrawMetadataBuffer.Resize(nextPowerOfTwo);
             BoundsBuffer.Resize(nextPowerOfTwo);
-            uint newCapacity = AllLoadedCommandsBuffer.ElementCount;
+            ClassificationBuffer.Resize(nextPowerOfTwo);
+            VisibilityBuffer.Resize(nextPowerOfTwo);
+            uint newCapacity = DrawMetadataBuffer.ElementCount;
             if (newCapacity > currentCapacity)
             {
-                ZeroCommandRange(currentCapacity, newCapacity - currentCapacity);
+                ZeroDrawMetadataRange(currentCapacity, newCapacity - currentCapacity);
                 ZeroTransparencyMetadataRange(currentCapacity, newCapacity - currentCapacity);
             }
         }
 
-        private void ZeroCommandRange(uint startIndex, uint count)
+        private void ZeroDrawMetadataRange(uint startIndex, uint count)
         {
             if (count == 0)
                 return;
 
-            var blank = default(GPUIndirectRenderCommand);
+            var blank = default(DrawMetadata);
             uint end = startIndex + count;
             for (uint i = startIndex; i < end; ++i)
-                AllLoadedCommandsBuffer.SetDataRawAtIndex(i, blank);
+                DrawMetadataBuffer.SetDataRawAtIndex(i, blank);
 
-            uint elementSize = AllLoadedCommandsBuffer.ElementSize;
-            if (elementSize == 0)
-                elementSize = (uint)(CommandFloatCount * sizeof(float));
+            uint elementSize = DrawMetadataBuffer.ElementSize;
 
             uint byteOffset = startIndex * elementSize;
             uint byteCount = count * elementSize;
-            AllLoadedCommandsBuffer.PushSubData((int)byteOffset, byteCount);
+            DrawMetadataBuffer.PushSubData((int)byteOffset, byteCount);
 
             if (IsGpuSceneLoggingEnabled())
-                SceneLog($"Zeroed command buffer range [{startIndex}, {end}) ({byteCount} bytes)");
+                SceneLog($"Zeroed published draw metadata range [{startIndex}, {end}) ({byteCount} bytes)");
         }
 
         private void ZeroTransparencyMetadataRange(uint startIndex, uint count)

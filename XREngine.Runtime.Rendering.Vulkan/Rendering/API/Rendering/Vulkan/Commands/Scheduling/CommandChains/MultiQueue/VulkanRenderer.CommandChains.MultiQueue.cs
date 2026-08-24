@@ -13,7 +13,7 @@ using XREngine.Rendering.Shadows;
 
 namespace XREngine.Rendering.Vulkan;
 
-public unsafe partial class VulkanRenderer
+internal sealed partial class VulkanCommandRuntime
 {
     internal static CommandChainQueueSchedule BuildCommandChainQueueSchedule(
         CommandChainSchedule schedule,
@@ -118,4 +118,3 @@ public unsafe partial class VulkanRenderer
         }
     }
 }
-

@@ -18,6 +18,7 @@ using XREngine.Data.Core;
 using XREngine.Diagnostics;
 using XREngine.Rendering;
 using XREngine.Rendering.Models;
+using XREngine.Rendering.Models.Caching;
 using XREngine.Scene;
 using XREngine.Scene.Prefabs;
 using XREngine.Serialization;
@@ -475,8 +476,8 @@ namespace XREngine
 
             ReportThirdPartyImportProgress(progress, 0.04f, "Resolved native asset path.", generatedAssetPath);
 
-            var previousOwnedOutputPaths = new List<string>();
             XRAsset? existingGeneratedAsset = null;
+            string? previousGenerationDirectory = null;
             // If the target asset already exists, only overwrite when it's linked to this source.
             if (File.Exists(generatedAssetPath))
             {
@@ -492,7 +493,9 @@ namespace XREngine
                     if (existingGeneratedAsset is XRPrefabSource existingPrefab &&
                         existingPrefab.UnityImportManifest is UnityPrefabImportManifest existingManifest)
                     {
-                        previousOwnedOutputPaths.AddRange(existingManifest.OwnedOutputPaths);
+                        previousGenerationDirectory = TryResolveThirdPartyImportGenerationDirectory(
+                            existingManifest,
+                            generatedAssetPath);
                     }
                 }
                 catch (Exception ex)
@@ -611,13 +614,26 @@ namespace XREngine
 
             ReportThirdPartyImportProgress(progress, 0.65f, "Source asset imported.", sourcePath);
 
-            // For PrefabSource model imports, export generated sub-assets (materials/textures/meshes/models)
-            // into standalone .asset files so the prefab does not embed them.
+            // For prefab imports, publish a complete immutable asset closure. The
+            // generation directory is intentionally created before the root is changed:
+            // until the root swap succeeds, existing scenes can only resolve the prior
+            // generation. This is an output-layout change, not an asset schema change.
+            string? stagedRootAssetPath = null;
+            bool generationPublished = false;
             if (asset is XRPrefabSource)
             {
-                long externalizeStart = Stopwatch.GetTimestamp();
-                ExternalizeEmbeddedAssetsForPrefabImport(asset, generatedAssetPath, progress);
-                LogThirdPartyImportPhase("ExternalizeEmbeddedAssets", externalizeStart, sourcePath, assetType.Name);
+                stagedRootAssetPath = CreateThirdPartyImportGenerationRoot(generatedAssetPath);
+                try
+                {
+                    long externalizeStart = Stopwatch.GetTimestamp();
+                    ExternalizeEmbeddedAssetsForPrefabImport(asset, stagedRootAssetPath, progress);
+                    LogThirdPartyImportPhase("ExternalizeEmbeddedAssets", externalizeStart, sourcePath, assetType.Name);
+                }
+                catch
+                {
+                    DeleteUnpublishedThirdPartyImportGeneration(stagedRootAssetPath, generatedAssetPath);
+                    throw;
+                }
             }
             else
             {
@@ -628,20 +644,45 @@ namespace XREngine
             if (!string.IsNullOrWhiteSpace(directory))
                 Directory.CreateDirectory(directory);
 
-            MarkRecentlySaved(generatedAssetPath);
             long serializeStart = Stopwatch.GetTimestamp();
-            ReportThirdPartyImportProgress(progress, 0.95f, "Serializing native root asset...", generatedAssetPath);
-            SerializeAssetForThirdPartyImport(asset, generatedAssetPath);
-            LogThirdPartyImportPhase("SerializeRootAsset", serializeStart, generatedAssetPath, assetType.Name);
-
-            if (asset is XRPrefabSource generatedPrefab &&
-                generatedPrefab.UnityImportManifest is UnityPrefabImportManifest generatedManifest)
+            ReportThirdPartyImportProgress(progress, 0.95f, "Validating native asset generation...", generatedAssetPath);
+            if (stagedRootAssetPath is not null)
             {
-                RetireUnreachableOwnedOutputs(
-                    previousOwnedOutputPaths,
-                    generatedManifest.OwnedOutputPaths,
-                    generatedAssetPath);
+                try
+                {
+                    PrepareGeneratedPrefabManifestForRootPublication(asset, generatedAssetPath);
+                    SerializeAssetForThirdPartyImport(asset, stagedRootAssetPath);
+                    ValidateThirdPartyImportGeneration(stagedRootAssetPath, generatedAssetPath, assetType);
+                    PublishThirdPartyImportRootLast(stagedRootAssetPath, generatedAssetPath);
+                    generationPublished = true;
+                    try
+                    {
+                        RetireOlderThirdPartyImportGenerations(
+                            generatedAssetPath,
+                            stagedRootAssetPath,
+                            previousGenerationDirectory,
+                            assetType);
+                    }
+                    catch (Exception ex)
+                    {
+                        // Publication is already durable. Retention is deliberately
+                        // best-effort and must never roll a valid root back.
+                        Debug.LogWarning($"[ThirdPartyImport] Generation retirement deferred. {ex.Message}");
+                    }
+                }
+                catch
+                {
+                    if (!generationPublished)
+                        DeleteUnpublishedThirdPartyImportGeneration(stagedRootAssetPath, generatedAssetPath);
+                    throw;
+                }
             }
+            else
+            {
+                // Non-prefab importers do not produce an externalized asset closure.
+                SerializeAssetForThirdPartyImport(asset, generatedAssetPath);
+            }
+            LogThirdPartyImportPhase("SerializeAndPublishRootAsset", serializeStart, generatedAssetPath, assetType.Name);
 
             MarkRecentlySaved(generatedAssetPath);
             ReportThirdPartyImportProgress(progress, 1.0f, "Native asset ready.", generatedAssetPath);
@@ -1018,13 +1059,6 @@ namespace XREngine
                 if (subAsset.ID == Guid.Empty)
                     Debug.MeshesWarning($"[ExternalizeEmbedded] Sub-asset {subAsset.GetType().Name} has empty ID; references to it may fail to resolve.");
 
-                // Shared-asset case: asset already has a valid on-disk .asset file under our control.
-                if (HasValidExistingAssetFile(subAsset))
-                {
-                    claimedPaths.Add(subAsset.FilePath!);
-                    continue;
-                }
-
                 string kindFolder = KindFolderNameFor(subAsset);
                 string kindFolderPath = Path.Combine(prefabFolderPath, kindFolder);
 
@@ -1178,7 +1212,38 @@ namespace XREngine
 
         private static Guid CreateGeneratedAssetPersistentID(string filePath, Type assetType)
             => PersistentObjectID.FromIdentity(
-                $"xrengine:generated-asset:{Path.GetFullPath(filePath).ToLowerInvariant()}:{assetType.FullName}");
+                $"xrengine:generated-asset:{GetStableGeneratedAssetIdentityPath(filePath).ToLowerInvariant()}:{assetType.FullName}");
+
+        /// <summary>
+        /// Generation directories are publication mechanics, not asset identity. Strip
+        /// their volatile generation id before deriving the persistent ID so a warm
+        /// reimport retains cache locality and references remain stable.
+        /// </summary>
+        private static string GetStableGeneratedAssetIdentityPath(string filePath)
+        {
+            string fullPath = Path.GetFullPath(filePath);
+            DirectoryInfo? assetDirectory = new(Path.GetDirectoryName(fullPath) ?? string.Empty);
+            for (DirectoryInfo? directory = assetDirectory; directory?.Parent?.Parent is not null; directory = directory.Parent)
+            {
+                // .../<root>/.<root>.generations/<generation>/<root>/...
+                string generationContainer = directory.Parent!.Parent!.Name;
+                if (!generationContainer.StartsWith(".", StringComparison.Ordinal) ||
+                    !generationContainer.EndsWith(".generations", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                string rootStem = generationContainer[1..^".generations".Length];
+                if (!string.Equals(directory.Name, rootStem, StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                string rootDirectory = directory.Parent.Parent.Parent?.FullName ?? string.Empty;
+                string relative = Path.GetRelativePath(directory.FullName, fullPath);
+                return Path.Combine(rootDirectory, rootStem, relative);
+            }
+
+            return fullPath;
+        }
 
         private static void AssignDeterministicEmbeddedAssetIDs(XRAsset root)
         {
@@ -1353,6 +1418,254 @@ namespace XREngine
                 throw new ArgumentException(
                     $"Native import destination '{destinationAssetPath}' must stay inside the project Assets folder.",
                     nameof(destinationAssetPath));
+            }
+        }
+
+        private static string CreateThirdPartyImportGenerationRoot(string rootAssetPath)
+        {
+            string rootDirectory = Path.GetDirectoryName(rootAssetPath)
+                ?? throw new InvalidOperationException($"Generated root '{rootAssetPath}' has no directory.");
+            string rootStem = Path.GetFileNameWithoutExtension(rootAssetPath);
+            string generationId = $"g-{DateTime.UtcNow:yyyyMMddHHmmssfff}-{Guid.NewGuid():N}";
+            string generationDirectory = Path.Combine(rootDirectory, $".{rootStem}.generations", generationId);
+            Directory.CreateDirectory(generationDirectory);
+            return Path.Combine(generationDirectory, Path.GetFileName(rootAssetPath));
+        }
+
+        private static string GetThirdPartyImportGenerationContainer(string rootAssetPath)
+        {
+            string rootDirectory = Path.GetDirectoryName(Path.GetFullPath(rootAssetPath))
+                ?? throw new InvalidOperationException($"Generated root '{rootAssetPath}' has no directory.");
+            string rootStem = Path.GetFileNameWithoutExtension(rootAssetPath);
+            return Path.Combine(rootDirectory, $".{rootStem}.generations");
+        }
+
+        private static bool IsDirectThirdPartyImportGenerationDirectory(string candidateDirectory, string rootAssetPath)
+        {
+            string container = Path.GetFullPath(GetThirdPartyImportGenerationContainer(rootAssetPath))
+                .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            string candidate = Path.GetFullPath(candidateDirectory)
+                .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            string? parent = Path.GetDirectoryName(candidate)?.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            return string.Equals(parent, container, StringComparison.OrdinalIgnoreCase) &&
+                Path.GetFileName(candidate).StartsWith("g-", StringComparison.Ordinal);
+        }
+
+        private static string? TryResolveThirdPartyImportGenerationDirectory(
+            UnityPrefabImportManifest manifest,
+            string rootAssetPath)
+        {
+            string publicRoot = Path.GetFullPath(rootAssetPath);
+            foreach (string ownedPath in manifest.OwnedOutputPaths)
+            {
+                if (string.IsNullOrWhiteSpace(ownedPath))
+                    continue;
+
+                string fullPath = Path.GetFullPath(ownedPath);
+                if (string.Equals(fullPath, publicRoot, StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                string? generationDirectory = FindThirdPartyImportGenerationDirectory(fullPath, rootAssetPath);
+                if (generationDirectory is not null)
+                    return generationDirectory;
+            }
+
+            return null;
+        }
+
+        private static string? FindThirdPartyImportGenerationDirectory(string filePath, string rootAssetPath)
+        {
+            for (DirectoryInfo? directory = new(Path.GetDirectoryName(Path.GetFullPath(filePath)) ?? string.Empty);
+                 directory is not null;
+                 directory = directory.Parent)
+            {
+                if (IsDirectThirdPartyImportGenerationDirectory(directory.FullName, rootAssetPath))
+                    return directory.FullName;
+
+                string container = Path.GetFullPath(GetThirdPartyImportGenerationContainer(rootAssetPath))
+                    .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+                if (string.Equals(directory.FullName.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar), container, StringComparison.OrdinalIgnoreCase))
+                    return null;
+            }
+
+            return null;
+        }
+
+        private static void DeleteUnpublishedThirdPartyImportGeneration(string stagedRootAssetPath, string rootAssetPath)
+        {
+            string generationDirectory = Path.GetDirectoryName(Path.GetFullPath(stagedRootAssetPath))
+                ?? throw new InvalidOperationException($"Staged root '{stagedRootAssetPath}' has no directory.");
+            if (!IsDirectThirdPartyImportGenerationDirectory(generationDirectory, rootAssetPath))
+            {
+                Debug.LogWarning($"[ThirdPartyImport] Refused to delete non-generation staging directory '{generationDirectory}'.");
+                return;
+            }
+
+            if (Directory.Exists(generationDirectory))
+            {
+                Directory.Delete(generationDirectory, recursive: true);
+                Debug.Log(ELogCategory.Assets, "[ThirdPartyImport] Removed unpublished generation '{0}'.", generationDirectory);
+            }
+        }
+
+        private static void RetireOlderThirdPartyImportGenerations(
+            string rootAssetPath,
+            string currentStagedRootAssetPath,
+            string? previousGenerationDirectory,
+            Type rootAssetType)
+        {
+            string container = GetThirdPartyImportGenerationContainer(rootAssetPath);
+            if (!Directory.Exists(container))
+                return;
+
+            string currentGenerationDirectory = Path.GetDirectoryName(Path.GetFullPath(currentStagedRootAssetPath))
+                ?? throw new InvalidOperationException($"Staged root '{currentStagedRootAssetPath}' has no directory.");
+            var retained = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { currentGenerationDirectory };
+            if (!string.IsNullOrWhiteSpace(previousGenerationDirectory) &&
+                IsDirectThirdPartyImportGenerationDirectory(previousGenerationDirectory, rootAssetPath))
+            {
+                retained.Add(Path.GetFullPath(previousGenerationDirectory));
+            }
+
+            XRAsset? publishedRoot = DeserializeAssetFile(rootAssetPath, rootAssetType);
+            if (publishedRoot is not XRPrefabSource publishedPrefab ||
+                publishedPrefab.UnityImportManifest is not UnityPrefabImportManifest publishedManifest)
+            {
+                Debug.LogWarning("[ThirdPartyImport] Skipped generation retirement because the newly published root could not be read back.");
+                return;
+            }
+
+            var referenced = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (string ownedPath in publishedManifest.OwnedOutputPaths)
+            {
+                if (string.IsNullOrWhiteSpace(ownedPath))
+                    continue;
+                string? generationDirectory = FindThirdPartyImportGenerationDirectory(ownedPath, rootAssetPath);
+                if (generationDirectory is not null)
+                    referenced.Add(Path.GetFullPath(generationDirectory));
+            }
+
+            foreach (string candidate in Directory.EnumerateDirectories(container, "*", SearchOption.TopDirectoryOnly))
+            {
+                string fullCandidate = Path.GetFullPath(candidate);
+                if (!IsDirectThirdPartyImportGenerationDirectory(fullCandidate, rootAssetPath) ||
+                    retained.Contains(fullCandidate) || referenced.Contains(fullCandidate))
+                {
+                    continue;
+                }
+
+                string candidateRoot = Path.Combine(fullCandidate, Path.GetFileName(rootAssetPath));
+                XRAsset? candidateAsset = File.Exists(candidateRoot)
+                    ? DeserializeAssetFile(candidateRoot, rootAssetType)
+                    : null;
+                if (candidateAsset is not XRPrefabSource candidatePrefab ||
+                    candidatePrefab.UnityImportManifest is not UnityPrefabImportManifest)
+                {
+                    Debug.LogWarning($"[ThirdPartyImport] Retained unvalidated generation '{fullCandidate}'.");
+                    continue;
+                }
+
+                Directory.Delete(fullCandidate, recursive: true);
+                Debug.Log(ELogCategory.Assets, "[ThirdPartyImport] Retired obsolete generation '{0}'.", fullCandidate);
+            }
+        }
+
+        private static void PrepareGeneratedPrefabManifestForRootPublication(XRAsset asset, string rootAssetPath)
+        {
+            if (asset is not XRPrefabSource prefab ||
+                prefab.UnityImportManifest is not UnityPrefabImportManifest manifest)
+            {
+                return;
+            }
+
+            // The root remains at its stable public path. All descendants point at the
+            // immutable generation created above, keeping source identities/cache keys
+            // stable while making root publication a one-file atomic operation.
+            manifest.OwnedOutputPaths =
+            [
+                rootAssetPath,
+                .. manifest.OwnedOutputPaths
+                    .Where(path => !string.IsNullOrWhiteSpace(path) &&
+                        !string.Equals(Path.GetFullPath(path), Path.GetFullPath(rootAssetPath), StringComparison.OrdinalIgnoreCase))
+                    .Select(Path.GetFullPath)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .OrderBy(static path => path, StringComparer.OrdinalIgnoreCase),
+            ];
+            asset.FilePath = rootAssetPath;
+            asset.AdoptPersistentID(CreateGeneratedAssetPersistentID(rootAssetPath, asset.GetType()));
+        }
+
+        private static void ValidateThirdPartyImportGeneration(string stagedRootAssetPath, string publicRootAssetPath, Type rootAssetType)
+        {
+            XRAsset? loadedRoot = DeserializeAssetFile(stagedRootAssetPath, rootAssetType);
+            if (loadedRoot is null)
+                throw new InvalidDataException($"Generated root '{stagedRootAssetPath}' could not be read back.");
+
+            if (loadedRoot is not XRPrefabSource prefab ||
+                prefab.UnityImportManifest is not UnityPrefabImportManifest manifest)
+            {
+                throw new InvalidDataException($"Generated root '{stagedRootAssetPath}' did not retain its prefab import manifest.");
+            }
+
+            string generationDirectory = Path.GetDirectoryName(stagedRootAssetPath)
+                ?? throw new InvalidDataException($"Generated root '{stagedRootAssetPath}' has no generation directory.");
+            string normalizedGenerationDirectory = Path.GetFullPath(generationDirectory)
+                .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
+            foreach (string ownedPath in manifest.OwnedOutputPaths)
+            {
+                if (string.IsNullOrWhiteSpace(ownedPath))
+                    throw new InvalidDataException("Generated prefab manifest contains an empty owned output path.");
+
+                string normalizedPath = Path.GetFullPath(ownedPath);
+                // The public root is deliberately outside the generation and has not
+                // been swapped yet. Every descendant must be self-contained under it.
+                if (string.Equals(normalizedPath, Path.GetFullPath(publicRootAssetPath), StringComparison.OrdinalIgnoreCase))
+                    continue;
+                if (!normalizedPath.StartsWith(normalizedGenerationDirectory, StringComparison.OrdinalIgnoreCase) || !File.Exists(normalizedPath))
+                {
+                    throw new InvalidDataException(
+                        $"Generated prefab closure is incomplete: '{normalizedPath}' is not a readable generation-owned asset.");
+                }
+            }
+
+            // Force full reference traversal after deserialization. Mesh assets include
+            // their LOD references and cooked meshlet payloads; this makes a missing or
+            // corrupt nested asset fail before the public root points at it.
+            foreach (XRAsset closureAsset in CollectReachableAssets(prefab))
+            {
+                if (closureAsset is not XRMesh mesh)
+                    continue;
+
+                if (mesh.MeshletPayload is not null && !mesh.MeshletPayload.IsValidatedForRuntime)
+                {
+                    throw new InvalidDataException(
+                        $"Generated meshlet payload for mesh '{mesh.Name ?? "<unnamed>"}' did not validate after read-back.");
+                }
+            }
+        }
+
+        private void PublishThirdPartyImportRootLast(string stagedRootAssetPath, string rootAssetPath)
+        {
+            string rootDirectory = Path.GetDirectoryName(rootAssetPath)
+                ?? throw new InvalidOperationException($"Generated root '{rootAssetPath}' has no directory.");
+            Directory.CreateDirectory(rootDirectory);
+            string temporaryRootPath = Path.Combine(
+                rootDirectory,
+                $".{Path.GetFileName(rootAssetPath)}.{Guid.NewGuid():N}.publish");
+            try
+            {
+                File.Copy(stagedRootAssetPath, temporaryRootPath, overwrite: false);
+                if (File.Exists(rootAssetPath))
+                    File.Replace(temporaryRootPath, rootAssetPath, destinationBackupFileName: null);
+                else
+                    File.Move(temporaryRootPath, rootAssetPath);
+
+                MarkRecentlySaved(rootAssetPath);
+            }
+            finally
+            {
+                if (File.Exists(temporaryRootPath))
+                    File.Delete(temporaryRootPath);
             }
         }
 

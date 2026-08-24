@@ -3,8 +3,7 @@ using Silk.NET.Vulkan;
 namespace XREngine.Rendering.Vulkan;
 
 /// <summary>
-/// Command-emission authority. The renderer facade supplies native services while
-/// this owner transports one explicit recording context through the operation.
+/// Command-emission authority over explicit native and device-lifetime inputs.
 /// </summary>
 internal sealed class VulkanCommandRecorder
 {
@@ -41,7 +40,7 @@ internal sealed class VulkanCommandRecorder
         context.RecordedSwapchainWriteCount = 0;
         context.RecordedSwapchainFinalLayout = ImageLayout.Undefined;
         context.RecordingDeferredReason = string.Empty;
-        context.QueryFrameOpsRequireRerecord = false;
+        context.FrameOpsRequireRerecord = false;
 
         if (context.CommandBuffer.Handle != 0)
             return true;
@@ -53,33 +52,21 @@ internal sealed class VulkanCommandRecorder
     /// <summary>
     /// Begins recording commands into the specified Vulkan command buffer.
     /// </summary>
-    /// <param name="api">The Vulkan API instance used to begin the command buffer.</param>
+    /// <param name="api">The Vulkan API used to begin recording.</param>
     /// <param name="commandBuffer">The Vulkan command buffer to begin recording.</param>
     /// <exception cref="InvalidOperationException">Thrown if beginning the command buffer fails.</exception>
-    public void Begin(Vk api, CommandBuffer commandBuffer)
+    public void Begin(
+        Vk api,
+        CommandBuffer commandBuffer,
+        CommandBufferUsageFlags flags = 0)
     {
         CommandBufferBeginInfo beginInfo = new()
         {
             SType = StructureType.CommandBufferBeginInfo,
+            Flags = flags,
         };
 
         if (api.BeginCommandBuffer(commandBuffer, ref beginInfo) != Result.Success)
             throw new InvalidOperationException("Failed to begin recording command buffer.");
     }
-
-    /// <summary>
-    /// Ends recording commands into the specified Vulkan command buffer and tracks the operation.
-    /// </summary>
-    /// <param name="renderer">The Vulkan renderer instance used to end the command buffer.</param>
-    /// <param name="commandBuffer">The Vulkan command buffer to end recording.</param>
-    /// <param name="trackingFailure">Outputs the reason if tracking the command buffer fails.</param>
-    /// <returns>The result of ending the command buffer.</returns>
-    public Result End(
-        VulkanRenderer renderer,
-        CommandBuffer commandBuffer,
-        out string trackingFailure)
-        => renderer.EndCommandBufferTracked(
-            commandBuffer,
-            cacheVariant: true,
-            out trackingFailure);
 }

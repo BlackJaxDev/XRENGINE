@@ -1,428 +1,507 @@
 using System;
+using Silk.NET.Vulkan;
 
 namespace XREngine.Rendering.Vulkan;
 
-public unsafe partial class VulkanRenderer
+/// <summary>Primary recorder dispatch over the sealed, dense frame-operation stream.</summary>
+internal sealed partial class VulkanCommandRuntime
 {
-    private void RecordPrimaryOperations(
-        scoped ref PrimaryCommandBufferRecordingState recordingState)
+    private bool RecordPrimaryOperations(scoped ref PrimaryCommandBufferRecordingState recordingState)
     {
-        using var mainLoopProfileScope =
-            RuntimeRenderingHostServices.Profiling.StartProfileScope(
-                "Vulkan.RecordPrimary.MainOpLoop");
-
-        for (int operationIndex = 0;
-             operationIndex < recordingState.Ops.Length;
-             operationIndex++)
+        using var mainLoopProfileScope = RuntimeRenderingHostServices.Profiling.StartProfileScope("Vulkan.RecordPrimary.MainOpLoop");
+        for (int operationIndex = 0; operationIndex < recordingState.Ops.Length; operationIndex++)
         {
-            FrameOp operation = recordingState.Ops[operationIndex];
-            if (recordingState.PipelineDeferredOps.Contains(operation))
+            if (recordingState.PipelineDeferredOperationIndices.Contains(operationIndex))
                 continue;
 
-            ref readonly VulkanPrimaryPlanNode primaryNode =
-                ref recordingState.PrimaryCommandPlan.GetNode(operationIndex);
-            if (!ReferenceEquals(primaryNode.Operation, operation))
-            {
-                throw new InvalidOperationException(
-                    "A terminal or mismatched primary-plan node appeared in the frame-operation range.");
-            }
+            ref readonly FrameOperationHeader header = ref recordingState.Ops.GetHeader(operationIndex);
+            ref readonly VulkanPrimaryPlanNode primaryNode = ref recordingState.PrimaryCommandPlan.GetNode(operationIndex);
+            if (primaryNode.OperationIndex != operationIndex)
+                throw new VulkanPlanPreconditionException("A terminal or mismatched primary-plan node appeared in the frame-operation range.");
 
             try
             {
-                if (!operation.RequiresPrimaryRecordingContext)
+                if (!header.RequiresPrimaryRecordingContext)
                 {
-                    operationIndex = RecordContextIndependentPrimaryOperation(
-                        ref recordingState,
-                        in primaryNode,
-                        operation,
-                        operationIndex);
+                    using (VulkanCpuStageScope dispatchStage =
+                           new(
+                               _frameTelemetry,
+                               header.OpCode == EVulkanPrimaryPlanNodeKind.MeshDraw
+                                   ? EVulkanCpuStage.PrimaryMeshOperation
+                                   : EVulkanCpuStage.PrimaryNonMeshOperation))
+                    {
+                        operationIndex = RecordTypedPrimaryOperation(ref recordingState, in primaryNode, in header, operationIndex);
+                    }
+                    if (recordingState.CommandChainPublicationDeferred)
+                        return false;
                     continue;
                 }
 
-                if (!TryPreparePrimaryOperation(
-                        ref recordingState,
-                        in primaryNode,
-                        operation,
-                        operationIndex,
-                        out int passIndex))
-                    continue;
+                int passIndex;
+                using (VulkanCpuStageScope preparationStage =
+                       new(_frameTelemetry, EVulkanCpuStage.PrimaryOperationPreparation))
+                {
+                    if (!TryPreparePrimaryOperation(ref recordingState, in primaryNode, in header, operationIndex, out passIndex))
+                        continue;
+                }
 
-                operationIndex = RecordPreparedPrimaryOperation(
-                    ref recordingState,
-                    in primaryNode,
-                    operation,
-                    operationIndex,
-                    passIndex);
+                using (VulkanCpuStageScope dispatchStage =
+                       new(
+                           _frameTelemetry,
+                           header.OpCode == EVulkanPrimaryPlanNodeKind.MeshDraw
+                               ? EVulkanCpuStage.PrimaryMeshOperation
+                               : EVulkanCpuStage.PrimaryNonMeshOperation))
+                {
+                    operationIndex = RecordTypedPrimaryOperation(ref recordingState, in primaryNode, in header, operationIndex, passIndex);
+                }
+                if (recordingState.CommandChainPublicationDeferred)
+                    return false;
             }
             catch (Exception exception)
             {
-                HandlePrimaryOperationRecordingFailure(
-                    ref recordingState,
-                    operation,
-                    exception);
+                if (exception is VulkanPlanPreconditionException)
+                    throw;
+                HandlePrimaryOperationRecordingFailure(ref recordingState, in header, operationIndex, exception);
             }
         }
-    }
-
-    private int RecordContextIndependentPrimaryOperation(
-        scoped ref PrimaryCommandBufferRecordingState recordingState,
-        in VulkanPrimaryPlanNode primaryNode,
-        FrameOp operation,
-        int operationIndex)
-    {
-        VulkanPrimaryOperationRecordingInfo recordingInfo = new(
-            primaryNode.Actions,
-            operationIndex,
-            operation.PassIndex);
-        return operation.RecordPrimary(this, ref recordingState, in recordingInfo);
-    }
-
-    private bool TryPreparePrimaryOperation(
-        scoped ref PrimaryCommandBufferRecordingState recordingState,
-        in VulkanPrimaryPlanNode primaryNode,
-        FrameOp operation,
-        int operationIndex,
-        out int passIndex)
-    {
-        UpdatePrimaryRecordingContext(ref recordingState, operation);
-        passIndex = operation.PassIndex;
-
-        if (passIndex == int.MinValue)
-        {
-            RecordDroppedPrimaryOperation(ref recordingState, operation);
-            recordingState.Metrics.FirstFailure ??= CaptureFrameOpFailure(
-                operation,
-                new InvalidOperationException(
-                    "No valid render-graph pass index could be resolved."));
-            Debug.VulkanWarningEvery(
-                $"Vulkan.OpDroppedNoPass.{operation.GetType().Name}",
-                TimeSpan.FromSeconds(1),
-                "[Vulkan] Dropping op '{0}' because no valid render-graph pass index could be resolved.",
-                operation.GetType().Name);
-            return false;
-        }
-
-        if (recordingState.SkipUiPipelineOps &&
-            operation.Context.PipelineInstance?.Pipeline is UserInterfaceRenderPipeline)
-        {
-            RecordDroppedPrimaryOperation(ref recordingState, operation);
-            Debug.VulkanEvery(
-                $"Vulkan.SkipUiPipeline.{GetHashCode()}",
-                TimeSpan.FromSeconds(1),
-                "[Vulkan] Skipping UI pipeline op {0} pass={1} pipe={2} due to XRE_SKIP_UI_PIPELINE=1.",
-                operation.GetType().Name,
-                passIndex,
-                operation.Context.PipelineIdentity);
-            return false;
-        }
-
-        if (recordingState.SkipUiBatchTextOps && IsUiBatchTextDrawOp(operation))
-        {
-            recordingState.Metrics.DroppedFrameOps++;
-            recordingState.Metrics.DroppedDrawOps++;
-            Debug.VulkanEvery(
-                $"Vulkan.SkipUiBatchText.{GetHashCode()}",
-                TimeSpan.FromSeconds(1),
-                "[Vulkan] Skipping batched UI text op pass={0} pipe={1} due to XRE_SKIP_UI_BATCH_TEXT=1.",
-                passIndex,
-                operation.Context.PipelineIdentity);
-            return false;
-        }
-
-        TransitionToPrimaryOperationPass(
-            ref recordingState,
-            in primaryNode,
-            operation,
-            operationIndex,
-            passIndex);
         return true;
     }
 
-    private void UpdatePrimaryRecordingContext(
-        scoped ref PrimaryCommandBufferRecordingState recordingState,
-        FrameOp operation)
+    private int RecordTypedPrimaryOperation(scoped ref PrimaryCommandBufferRecordingState state, in VulkanPrimaryPlanNode node, in FrameOperationHeader header, int index, int passIndex = int.MinValue)
     {
-        if (recordingState.HasActiveContext &&
-            FrameOpContextCompatibility.AreRecordingCompatible(
-                recordingState.ActiveContext,
-                operation.Context))
-            return;
+        int resolvedPass = passIndex == int.MinValue ? header.PassIndex : passIndex;
+        VulkanPrimaryOperationRecordingInfo info = new(node.Actions, index, resolvedPass);
+        if (info.EndsRendering && state.RenderScope.IsActive)
+            EndActiveRenderPass(ref state);
 
-        IDisposable? contextChangeProfileScope = null;
-        if (CommandRecordingDetailProfilingEnabled)
+        RecordVulkanCommandDiagnosticMarker(state.CommandBuffer, header.OpCode, resolvedPass, index);
+        if (TryRecordPlannedNonGraphicsSecondaryRange(
+                ref state,
+                in header,
+                in info,
+                out int lastSecondaryOperationIndex))
         {
-            contextChangeProfileScope =
-                RuntimeRenderingHostServices.Profiling.StartProfileScope(
-                    "Vulkan.RecordPrimary.ContextChange");
+            return lastSecondaryOperationIndex;
         }
 
-        try
+        return header.OpCode switch
         {
-            // Query begin/draw/end capture their contexts independently. Resource
-            // generations may advance without splitting an otherwise compatible
-            // query scope. Swapchain scopes are likewise preserved when possible
-            // so a store/layout/load cycle cannot discard composited content.
-            bool preservedRenderPass = recordingState.RenderScope.ShouldPreserveForContextChange(
-                VulkanSwapchainContextCoalescer.TargetsSwapchain(operation),
-                operation.Target,
-                operation.PassIndex,
-                recordingState.ActiveInlineQuery is not null,
-                operation.Context.SchedulingIdentity,
-                recordingState.ActivePassIndex,
-                recordingState.ActiveSchedulingIdentity,
-                FrameOpContextCompatibility.AreQueryScopeCompatible(
-                    recordingState.ActiveContext,
-                    operation.Context));
-
-            if (!preservedRenderPass)
-                EndActiveRenderPass(ref recordingState);
-
-            if (!preservedRenderPass && recordingState.PassIndexLabelActive)
-            {
-                CmdEndLabel(recordingState.CommandBuffer);
-                recordingState.PassIndexLabelActive = false;
-            }
-
-            recordingState.ActiveContext = operation.Context;
-            recordingState.HasActiveContext = true;
-            ApplyPipelineOverride(ref recordingState, recordingState.ActiveContext);
-            UpdatePrimaryResourcePlannerContext(ref recordingState);
-
-            if (preservedRenderPass)
-            {
-                recordingState.ActiveSchedulingIdentity =
-                    operation.Context.SchedulingIdentity;
-            }
-            else
-            {
-                recordingState.ActivePassIndex = int.MinValue;
-                recordingState.ActiveSchedulingIdentity = int.MinValue;
-            }
-        }
-        finally
-        {
-            contextChangeProfileScope?.Dispose();
-        }
+            EVulkanPrimaryPlanNodeKind.TextureUpload => RecordTextureUploadPayload(ref state, in state.Ops.GetTextureUpload(index), in info),
+            EVulkanPrimaryPlanNodeKind.MemoryBarrier => RecordMemoryBarrierPayload(ref state, in state.Ops.GetMemoryBarrier(index), in info),
+            EVulkanPrimaryPlanNodeKind.SubmissionMarker => RecordSubmissionMarkerPayload(ref state, in state.Ops.GetSubmissionMarker(index), in info),
+            EVulkanPrimaryPlanNodeKind.BufferCopy => RecordBufferCopyPayload(ref state, in state.Ops.GetBufferCopy(index), in info),
+            EVulkanPrimaryPlanNodeKind.ComputeDispatch => RecordComputeDispatchPayload(ref state, in state.Ops.GetComputeDispatch(index), in info),
+            EVulkanPrimaryPlanNodeKind.ComputeDispatchIndirect => RecordComputeDispatchIndirectPayload(ref state, in state.Ops.GetComputeDispatchIndirect(index), in info),
+            EVulkanPrimaryPlanNodeKind.Query => RecordQueryPayload(ref state, in state.Ops.GetQuery(index), in info),
+            EVulkanPrimaryPlanNodeKind.TransformFeedback => RecordTransformFeedbackPayload(ref state, in state.Ops.GetTransformFeedback(index), in info),
+            EVulkanPrimaryPlanNodeKind.MeshTaskDispatchIndirectCount => RecordMeshTaskPayload(ref state, in state.Ops.GetMeshTask(index), in info),
+            EVulkanPrimaryPlanNodeKind.PublishFramebufferForSampling => RecordPublishFramebufferPayload(ref state, in state.Ops.GetPublishedFramebuffer(index), in info),
+            EVulkanPrimaryPlanNodeKind.DlssUpscale => RecordDlssUpscalePayload(ref state, in state.Ops.GetDlssUpscale(index), in info),
+            EVulkanPrimaryPlanNodeKind.DlssFrameGeneration => RecordDlssFrameGenerationPayload(ref state, in state.Ops.GetDlssFrameGeneration(index), in info),
+            EVulkanPrimaryPlanNodeKind.MeshDraw => RecordMeshDrawPayload(ref state, in state.Ops.GetMeshDraw(index), in info),
+            EVulkanPrimaryPlanNodeKind.IndirectDraw => RecordIndirectDrawPayload(ref state, in state.Ops.GetIndirectDraw(index), in info),
+            EVulkanPrimaryPlanNodeKind.Clear => RecordClearPayload(ref state, in state.Ops.GetClear(index), in info),
+            EVulkanPrimaryPlanNodeKind.Blit => RecordBlitPayload(ref state, in state.Ops.GetBlit(index), in info),
+            _ => throw new VulkanPlanPreconditionException($"Typed primary dispatch for '{header.OpCode}' has not been published."),
+        };
     }
 
-    private void UpdatePrimaryResourcePlannerContext(
-        scoped ref PrimaryCommandBufferRecordingState recordingState)
+    /// <summary>
+    /// Executes a planned non-graphics secondary range. The dense frame-op
+    /// migration retained secondary buckets and plan actions, so this bridge is
+    /// the authoritative consumer that keeps those publications reachable.
+    /// </summary>
+    private bool TryRecordPlannedNonGraphicsSecondaryRange(
+        scoped ref PrimaryCommandBufferRecordingState state,
+        in FrameOperationHeader header,
+        in VulkanPrimaryOperationRecordingInfo info,
+        out int lastOperationIndex)
     {
-        if (TryActivateFrameOpResourcePlannerState(recordingState.ActiveContext))
+        lastOperationIndex = info.OperationIndex;
+        if (!info.ExecutesSecondaryRange ||
+            header.OpCode is not (
+                EVulkanPrimaryPlanNodeKind.ComputeDispatch or
+                EVulkanPrimaryPlanNodeKind.ComputeDispatchIndirect or
+                EVulkanPrimaryPlanNodeKind.BufferCopy or
+                EVulkanPrimaryPlanNodeKind.MemoryBarrier or
+                EVulkanPrimaryPlanNodeKind.Query) ||
+            !TryGetSecondaryBucketForStart(
+                state.SecondaryBuckets,
+                state.SecondaryBucketByStart,
+                info.OperationIndex,
+                out VulkanSecondaryRecordingBucket bucket))
         {
-            recordingState.PlannerContext = recordingState.ActiveContext;
-            recordingState.HasPlannerContext = true;
-            return;
+            return false;
         }
 
-        if (recordingState.ActiveContext.PipelineInstance is null)
-            return;
-
-        if (!recordingState.HasPlannerContext)
+        string label = header.OpCode switch
         {
-            recordingState.PlannerContext = recordingState.ActiveContext;
-            recordingState.HasPlannerContext = true;
-            return;
+            EVulkanPrimaryPlanNodeKind.ComputeDispatch => "ComputeDispatch",
+            EVulkanPrimaryPlanNodeKind.ComputeDispatchIndirect =>
+                state.Ops.GetComputeDispatchIndirect(info.OperationIndex).Label,
+            EVulkanPrimaryPlanNodeKind.BufferCopy =>
+                state.Ops.GetBufferCopy(info.OperationIndex).Label,
+            EVulkanPrimaryPlanNodeKind.MemoryBarrier => "MemoryBarrier",
+            EVulkanPrimaryPlanNodeKind.Query =>
+                $"Query.{state.Ops.GetQuery(info.OperationIndex).Operation}",
+            _ => throw new VulkanPlanPreconditionException(
+                $"Unsupported non-graphics secondary range kind '{header.OpCode}'."),
+        };
+
+        bool barrierPlanHasPass =
+            state.RenderGraphPlan.CompiledGraph.Plan.Execution.TryGetPassOrder(
+                info.PassIndex,
+                out _) ||
+            info.PassIndex == VulkanBarrierPlanner.SwapchainPassIndex;
+        if (!TryRecordSecondaryBucket(
+                primaryCommandBuffer: state.CommandBuffer,
+                state.FrameDataImageIndex,
+                state.ExecutedCommandChainSecondaryHandles,
+                state.Ops,
+                state.ScheduledCommandChainKeysByOpIndex,
+                state.ScheduledCommandChainCache,
+                info.OperationIndex,
+                bucket,
+                info.PassIndex,
+                barrierPlanHasPass,
+                state.RenderScope.IsActive,
+                state.ActiveInlineQuery is not null,
+                label))
+        {
+            return false;
         }
 
-        if (!RequiresResourcePlannerRebuild(
-                recordingState.PlannerContext,
-                recordingState.ActiveContext))
-            return;
-
-        Debug.VulkanWarningEvery(
-            $"Vulkan.ResourcePlanner.ContextChangeDuringRecord.{recordingState.ActiveContext.PipelineIdentity}.{recordingState.ActiveContext.ViewportIdentity}",
-            TimeSpan.FromSeconds(2),
-            "[VulkanResourcePlanner] Keeping pre-recorded physical plan during command-buffer recording despite context change. OldPipe={0} NewPipe={1} OldVp={2} NewVp={3}.",
-            recordingState.PlannerContext.PipelineIdentity,
-            recordingState.ActiveContext.PipelineIdentity,
-            recordingState.PlannerContext.ViewportIdentity,
-            recordingState.ActiveContext.ViewportIdentity);
+        lastOperationIndex = info.OperationIndex + bucket.Count - 1;
+        return true;
     }
 
-    private void TransitionToPrimaryOperationPass(
-        scoped ref PrimaryCommandBufferRecordingState recordingState,
-        in VulkanPrimaryPlanNode primaryNode,
-        FrameOp operation,
-        int operationIndex,
-        int passIndex)
+    private int RecordTextureUploadPayload(scoped ref PrimaryCommandBufferRecordingState state, in TextureUploadPayload payload, in VulkanPrimaryOperationRecordingInfo info)
     {
-        int schedulingIdentity = operation.Context.SchedulingIdentity;
-        if (!HasPrimaryPlanAction(
-                primaryNode.Actions,
-                EVulkanPrimaryPlanAction.BarrierBatch) ||
-            passIndex == recordingState.ActivePassIndex &&
-            schedulingIdentity == recordingState.ActiveSchedulingIdentity)
-            return;
+        if (info.EndsRendering) EndActiveRenderPass(ref state);
+        if (state.PassIndexLabelActive) { _deviceContext.CmdEndLabel(state.CommandBuffer); state.PassIndexLabelActive = false; }
+        CmdBeginLabel(state.CommandBuffer, "TextureUpload");
+        RecordTextureUploadOp(state.CommandBuffer, payload.Upload);
+        CmdEndLabel(state.CommandBuffer);
+        return info.OperationIndex;
+    }
 
-        IDisposable? passTransitionProfileScope = null;
-        if (CommandRecordingDetailProfilingEnabled)
+    private int RecordMemoryBarrierPayload(scoped ref PrimaryCommandBufferRecordingState state, in MemoryBarrierPayload payload, in VulkanPrimaryOperationRecordingInfo info)
+    {
+        CmdBeginLabel(state.CommandBuffer, "MemoryBarrier");
+        EmitMemoryBarrierMask(state.CommandBuffer, payload.Mask);
+        CmdEndLabel(state.CommandBuffer);
+        return info.OperationIndex;
+    }
+
+    private int RecordSubmissionMarkerPayload(scoped ref PrimaryCommandBufferRecordingState state, in SubmissionMarkerPayload payload, in VulkanPrimaryOperationRecordingInfo info)
+    {
+        RegisterSubmissionMarker(state.CommandBuffer, payload.Fence);
+        return info.OperationIndex;
+    }
+
+    private int RecordBufferCopyPayload(scoped ref PrimaryCommandBufferRecordingState state, in BufferCopyPayload payload, in VulkanPrimaryOperationRecordingInfo info)
+    {
+        CmdBeginLabel(state.CommandBuffer, payload.Label);
+        RecordBufferCopyPayload(state.CommandBuffer, in payload);
+        CmdEndLabel(state.CommandBuffer);
+        return info.OperationIndex;
+    }
+
+    private int RecordComputeDispatchPayload(scoped ref PrimaryCommandBufferRecordingState state, in ComputeDispatchPayload payload, in VulkanPrimaryOperationRecordingInfo info)
+    {
+        CmdBeginLabel(state.CommandBuffer, "ComputeDispatch");
+        EnsureComputeSampledImageLayoutsForDispatch(state.CommandBuffer, payload.Snapshot);
+        ref readonly FrameOperationHeader header = ref state.Ops.GetHeader(info.OperationIndex);
+        ref readonly FrameOpContext context = ref state.Ops.GetContext(info.OperationIndex);
+        ulong descriptorKey = ComputeReusableComputeDescriptorBindingKey(
+            in payload,
+            in header,
+            in context,
+            ResolveCommandChainInlineOperationIndex(state.Ops.Stream, info.OperationIndex));
+        RecordComputeDispatchPayload(state.CommandBuffer, state.FrameDataImageIndex, in payload, descriptorKey);
+        CmdEndLabel(state.CommandBuffer);
+        return info.OperationIndex;
+    }
+
+    private int RecordComputeDispatchIndirectPayload(scoped ref PrimaryCommandBufferRecordingState state, in ComputeDispatchIndirectPayload payload, in VulkanPrimaryOperationRecordingInfo info)
+    {
+        CmdBeginLabel(state.CommandBuffer, payload.Label);
+        EnsureComputeSampledImageLayoutsForDispatch(state.CommandBuffer, payload.Snapshot);
+        RecordComputeDispatchIndirectPayload(state.CommandBuffer, state.FrameDataImageIndex, in payload);
+        CmdEndLabel(state.CommandBuffer);
+        return info.OperationIndex;
+    }
+
+    private int RecordQueryPayload(scoped ref PrimaryCommandBufferRecordingState state, in QueryPayload payload, in VulkanPrimaryOperationRecordingInfo info)
+    {
+        if (payload.Operation == ERenderQueryOperation.CopyResults &&
+            payload.Query.CopyResults(state.CommandBuffer, payload.ResultDestination, payload.ResultDestinationOffset, payload.ResultStride, payload.IncludeAvailability) != ERenderQueryReadStatus.Ready)
+            state.FrameOpsRequireRerecordLocal = true;
+        else if (payload.Operation == ERenderQueryOperation.WriteTimestamp && state.RecordingScratch.PreparedInlineQueries.Contains(payload.Query) &&
+                 payload.Query.WriteTimestamp(state.CommandBuffer, payload.TimestampStage, payload.PointIndex) != ERenderQueryReadStatus.Ready)
+            state.FrameOpsRequireRerecordLocal = true;
+        else if (payload.Operation == ERenderQueryOperation.WriteProperties &&
+                 (!state.RecordingScratch.PreparedInlineQueries.Contains(payload.Query) || payload.Query.WriteProperties(CreateQueryCommandEncoder(), state.CommandBuffer, payload.SourceHandles.Span) != ERenderQueryReadStatus.Ready))
+            state.FrameOpsRequireRerecordLocal = true;
+        else if (payload.Operation is ERenderQueryOperation.Begin or ERenderQueryOperation.End)
         {
-            passTransitionProfileScope =
-                RuntimeRenderingHostServices.Profiling.StartProfileScope(
-                    "Vulkan.RecordPrimary.PassTransition");
+            XRFrameBuffer? target = state.Ops.GetTarget(info.OperationIndex);
+            if (info.BeginsRendering && (!state.RenderScope.IsActive || state.RenderScope.Target != target)) { EndActiveRenderPass(ref state); BeginRenderPassForTarget(ref state, target, info.PassIndex, state.ActiveContext); }
+            bool label = CanRecordCommandBufferDebugLabels && CmdBeginLabel(state.CommandBuffer, $"Query.{payload.Operation}");
+            if (payload.Operation == ERenderQueryOperation.Begin) BeginInlineQueryPayload(ref state, in payload, info.OperationIndex, info.PassIndex);
+            else EndInlineQueryPayload(ref state, in payload, info.OperationIndex, info.PassIndex);
+            if (label) CmdEndLabel(state.CommandBuffer);
         }
+        return info.OperationIndex;
+    }
 
-        try
+    private static void BeginInlineQueryPayload(scoped ref PrimaryCommandBufferRecordingState state, in QueryPayload payload, int index, int pass)
+    {
+        VkRenderQuery query = payload.Query;
+        if (state.ActiveInlineQuery is not null) { state.FrameOpsRequireRerecordLocal = true; query.InvalidateRecordedResultEpoch(state.CommandBuffer); return; }
+        if (state.RecordingScratch.PreparedInlineQueries.Contains(query) && state.RecordingScratch.BegunInlineQueries.Add(query))
         {
-            using VulkanCpuStageScope transitionStage =
-                new(EVulkanCpuStage.ContextPassTransitions);
-            EndActiveRenderPass(ref recordingState);
+            state.ActiveInlineQuery = query.BeginQuery(state.CommandBuffer) == ERenderQueryReadStatus.Ready ? query : null;
+            if (state.ActiveInlineQuery is null) state.FrameOpsRequireRerecordLocal = true;
+            state.ActiveInlineQueryRecordedDraw = false;
+            return;
+        }
+        if (state.RecordingScratch.PreparedInlineQueries.Contains(query)) state.FrameOpsRequireRerecordLocal = true;
+    }
 
-            if (recordingState.PassIndexLabelActive)
+    private static void EndInlineQueryPayload(scoped ref PrimaryCommandBufferRecordingState state, in QueryPayload payload, int index, int pass)
+    {
+        VkRenderQuery query = payload.Query;
+        if (ReferenceEquals(state.ActiveInlineQuery, query))
+        {
+            if (!state.ActiveInlineQueryRecordedDraw) { state.FrameOpsRequireRerecordLocal = true; query.InvalidateRecordedResultEpoch(state.CommandBuffer); }
+            query.EndQuery(state.CommandBuffer); state.ActiveInlineQuery = null; state.ActiveInlineQueryRecordedDraw = false; return;
+        }
+        state.FrameOpsRequireRerecordLocal = true; query.InvalidateRecordedResultEpoch(state.CommandBuffer);
+    }
+
+    private int RecordTransformFeedbackPayload(scoped ref PrimaryCommandBufferRecordingState state, in TransformFeedbackPayload payload, in VulkanPrimaryOperationRecordingInfo info)
+    {
+        XRFrameBuffer? target = state.Ops.GetTarget(info.OperationIndex);
+        if (info.BeginsRendering && (!state.RenderScope.IsActive || state.RenderScope.Target != target)) { EndActiveRenderPass(ref state); BeginRenderPassForTarget(ref state, target, info.PassIndex, state.ActiveContext); }
+        bool labelActive = CanRecordCommandBufferDebugLabels && CmdBeginLabel(state.CommandBuffer, $"TransformFeedback.{payload.Operation}");
+        RecordTransformFeedbackPayload(state.CommandBuffer, in payload);
+        if (labelActive) CmdEndLabel(state.CommandBuffer);
+        return info.OperationIndex;
+    }
+
+    private int RecordMeshTaskPayload(scoped ref PrimaryCommandBufferRecordingState state, in MeshTaskDispatchIndirectCountPayload payload, in VulkanPrimaryOperationRecordingInfo info)
+    {
+        XRFrameBuffer? target = state.Ops.GetTarget(info.OperationIndex);
+        // vkCmdPipelineBarrier is not legal while either a legacy render pass or a
+        // dynamic-rendering scope is active. The mesh-task command/count buffers
+        // are produced by compute or transfer work, so publish their indirect and
+        // shader reads before opening the graphics scope that consumes them.
+        if (state.RenderScope.IsActive)
+            EndActiveRenderPass(ref state);
+        EmitMeshTaskDispatchIndirectCountReadBarrier(ref state);
+        if (info.BeginsRendering)
+            BeginRenderPassForTarget(ref state, target, info.PassIndex, state.ActiveContext);
+        CmdBeginLabel(state.CommandBuffer, "MeshTaskDispatchIndirectCount");
+        RecordMeshTaskDispatchIndirectCountPayload(state.CommandBuffer, state.FrameDataImageIndex, in payload);
+        CmdEndLabel(state.CommandBuffer);
+        if (target is null)
+            state.ActualSwapchainWriteCount++;
+        return info.OperationIndex;
+    }
+
+    private unsafe void EmitMeshTaskDispatchIndirectCountReadBarrier(scoped ref PrimaryCommandBufferRecordingState state)
+    {
+        MemoryBarrier memoryBarrier = new()
+        {
+            SType = StructureType.MemoryBarrier,
+            SrcAccessMask = AccessFlags.ShaderWriteBit | AccessFlags.TransferWriteBit,
+            DstAccessMask = AccessFlags.IndirectCommandReadBit | AccessFlags.ShaderReadBit,
+        };
+
+        CmdPipelineBarrierTracked(
+            state.CommandBuffer,
+            PipelineStageFlags.ComputeShaderBit | PipelineStageFlags.TransferBit,
+            PipelineStageFlags.DrawIndirectBit |
+            PipelineStageFlags.TaskShaderBitNV |
+            PipelineStageFlags.MeshShaderBitNV,
+            DependencyFlags.None,
+            1,
+            &memoryBarrier,
+            0,
+            null,
+            0,
+            null);
+
+        RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanAdhocBarrier(emittedCount: 1, redundantCount: 0);
+    }
+
+    private int RecordPublishFramebufferPayload(scoped ref PrimaryCommandBufferRecordingState state, in PublishFramebufferPayload payload, in VulkanPrimaryOperationRecordingInfo info)
+    {
+        CmdBeginLabel(state.CommandBuffer, "PublishFramebufferForSampling");
+        RecordPublishFramebufferForSamplingPayload(state.CommandBuffer, payload.FrameBuffer);
+        CmdEndLabel(state.CommandBuffer); return info.OperationIndex;
+    }
+
+    private int RecordDlssUpscalePayload(scoped ref PrimaryCommandBufferRecordingState state, in DlssUpscalePayload payload, in VulkanPrimaryOperationRecordingInfo info)
+    {
+        CmdBeginLabel(state.CommandBuffer, "DLSS.SuperResolution");
+        RecordDlssUpscalePayload(state.CommandBuffer, in payload);
+        CmdEndLabel(state.CommandBuffer); return info.OperationIndex;
+    }
+
+    private int RecordDlssFrameGenerationPayload(scoped ref PrimaryCommandBufferRecordingState state, in DlssFrameGenerationPayload payload, in VulkanPrimaryOperationRecordingInfo info)
+    {
+        CmdBeginLabel(state.CommandBuffer, "DLSS.FrameGenerationInputs");
+        RecordDlssFrameGenerationPayload(state.CommandBuffer, state.ImageIndex, in payload);
+        CmdEndLabel(state.CommandBuffer); return info.OperationIndex;
+    }
+
+    private int RecordMeshDrawPayload(scoped ref PrimaryCommandBufferRecordingState state, in MeshDrawPayload payload, in VulkanPrimaryOperationRecordingInfo info)
+    {
+        XRFrameBuffer? target = state.Ops.GetTarget(info.OperationIndex);
+        if (state.CommandChainSchedule is not null &&
+            state.ScheduledCommandChainKeysByOpIndex is not null &&
+            state.ScheduledCommandChainCache is not null &&
+            TryGetScheduledCommandChainForOp(
+                ref state,
+                info.OperationIndex,
+                out _,
+                out _))
+        {
+            int scheduledRunCount = CountContiguousMeshCommandChainRun(
+                ref state,
+                info.OperationIndex,
+                in payload,
+                info.PassIndex);
+            if (scheduledRunCount > 0 &&
+                TryExecuteScheduledMeshCommandChainSecondaryRun(
+                    ref state,
+                    info.OperationIndex,
+                    scheduledRunCount,
+                    info.PassIndex))
             {
-                CmdEndLabel(recordingState.CommandBuffer);
-                recordingState.PassIndexLabelActive = false;
+                if (target is null)
+                    state.ActualSwapchainWriteCount += scheduledRunCount;
+                return info.OperationIndex + scheduledRunCount - 1;
             }
-
-            if (CanRecordCommandBufferDebugLabels)
-            {
-                recordingState.PassIndexLabelActive = CmdBeginLabel(
-                    recordingState.CommandBuffer,
-                    $"Pass={passIndex} Pipe={operation.Context.PipelineIdentity} Vp={operation.Context.ViewportIdentity}");
-            }
-
-            using (VulkanCpuStageScope barrierStage =
-                   new(EVulkanCpuStage.BarrierPlanningEmission))
-            {
-                int emittedQueueOwnershipTransfers =
-                    EmitPassBarriers(ref recordingState, passIndex);
-                bool plannedQueueOwnershipTransfer = HasPrimaryPlanAction(
-                    primaryNode.Actions,
-                    EVulkanPrimaryPlanAction.QueueOwnershipTransfer);
-                if (plannedQueueOwnershipTransfer !=
-                    (emittedQueueOwnershipTransfers > 0))
-                {
-                    throw new InvalidOperationException(
-                        $"Primary plan queue-ownership action mismatch for pass {passIndex}: " +
-                        $"planned={plannedQueueOwnershipTransfer} emitted={emittedQueueOwnershipTransfers}.");
-                }
-            }
-
-            TransitionFrameOpDescriptorSnapshotsForSampling(
-                recordingState.CommandBuffer,
-                recordingState.Ops,
-                operationIndex,
-                passIndex,
-                schedulingIdentity,
-                recordingState.MeshDrawUniformSlotsByOpIndex,
-                recordingState.MeshDrawSlotsByRendererFamily,
-                recordingState.MeshFrameDataFamilyBases,
-                recordingState.CommandBufferImageSlot,
-                recordingState.ScheduledCommandChainKeysByOpIndex,
-                recordingState.ScheduledCommandChainCache);
-            recordingState.ActivePassIndex = passIndex;
-            recordingState.ActiveSchedulingIdentity = schedulingIdentity;
         }
-        finally
+
+        if (info.BeginsRendering && !state.RenderScope.MatchesTarget(target))
         {
-            passTransitionProfileScope?.Dispose();
+            EndActiveRenderPass(ref state);
+            int slot = GetMeshDrawUniformSlot(ref state, info.OperationIndex, payload.Draw.Renderer, state.ActiveContext, payload.Draw);
+            payload.Draw.Renderer.TryTransitionPreparedDescriptorImagesForSampling(state.CommandBuffer, payload.Draw, slot, state.CommandBufferImageSlot, target, info.PassIndex, state.ActiveContext.PassMetadata);
+            BeginRenderPassForTarget(ref state, target, info.PassIndex, state.ActiveContext);
         }
+        int uniformSlot = GetMeshDrawUniformSlot(ref state, info.OperationIndex, payload.Draw.Renderer, state.ActiveContext, payload.Draw);
+        bool recorded = RecordMeshDrawPayloadIntoCommandBuffer(ref state, state.CommandBuffer, in payload, target, state.ActiveContext, info.PassIndex, uniformSlot);
+        if (state.ActiveInlineQuery is not null && recorded) state.ActiveInlineQueryRecordedDraw = true;
+        if (target is null) state.ActualSwapchainWriteCount++;
+        return info.OperationIndex;
     }
 
-    private int RecordPreparedPrimaryOperation(
-        scoped ref PrimaryCommandBufferRecordingState recordingState,
-        in VulkanPrimaryPlanNode primaryNode,
-        FrameOp operation,
-        int operationIndex,
-        int passIndex)
+    private int RecordClearPayload(scoped ref PrimaryCommandBufferRecordingState state, in ClearPayload payload, in VulkanPrimaryOperationRecordingInfo info)
     {
-        RecordVulkanCommandDiagnosticMarker(
-            recordingState.CommandBuffer,
-            operation,
-            passIndex,
-            operationIndex);
-        using var vulkanGpuScope = TryBeginVulkanGpuProfilerScope(
-            recordingState.CommandBuffer,
-            operation,
-            passIndex);
-
-        IDisposable? operationProfileScope = null;
-        if (CommandRecordingDetailProfilingEnabled)
+        XRFrameBuffer? target = state.Ops.GetTarget(info.OperationIndex);
+        if (info.BeginsRendering && (!state.RenderScope.IsActive || state.RenderScope.Target != target)) { EndActiveRenderPass(ref state); BeginRenderPassForTarget(ref state, target, info.PassIndex, state.ActiveContext); }
+        uint layers = state.RenderScope.UsesDynamicRendering ? Math.Max(state.RenderScope.DynamicRenderingFormats.LayerCount, 1u) : 0u;
+        uint viewMask = state.RenderScope.UsesDynamicRendering ? state.RenderScope.DynamicRenderingFormats.ViewMask : 0u;
+        bool recorded = false;
+        if (target is null && state.SwapchainClearedThisFrame && payload.ClearColor)
         {
-            operationProfileScope =
-                RuntimeRenderingHostServices.Profiling.StartProfileScope(
-                    GetRecordPrimaryFrameOpProfileScopeName(operation));
+            if (payload.ClearDepth || payload.ClearStencil) { RecordClearPayload(state.CommandBuffer, state.ImageIndex, in payload, target, state.RenderScope.RenderArea, in state.SwapchainTarget, layers, viewMask, true); recorded = true; }
         }
-
-        try
-        {
-            using VulkanCpuStageScope operationDispatchStage =
-                new(EVulkanCpuStage.OpDispatch);
-            System.Diagnostics.Debug.Assert(
-                HasPrimaryPlanAction(
-                    primaryNode.Actions,
-                    EVulkanPrimaryPlanAction.RecordOperation),
-                "Every semantic primary-plan node must publish an operation-record action.");
-
-            if (HasPrimaryPlanAction(
-                    primaryNode.Actions,
-                    EVulkanPrimaryPlanAction.EndRendering))
-                EndActiveRenderPass(ref recordingState);
-
-            VulkanPrimaryOperationRecordingInfo recordingInfo = new(
-                primaryNode.Actions,
-                operationIndex,
-                passIndex);
-            return operation.RecordPrimary(
-                this,
-                ref recordingState,
-                in recordingInfo);
-        }
-        finally
-        {
-            operationProfileScope?.Dispose();
-        }
+        else { RecordClearPayload(state.CommandBuffer, state.ImageIndex, in payload, target, state.RenderScope.RenderArea, in state.SwapchainTarget, layers, viewMask); recorded = true; }
+        if (target is null && recorded) state.ActualSwapchainWriteCount++;
+        return info.OperationIndex;
     }
 
-    private void HandlePrimaryOperationRecordingFailure(
-        scoped ref PrimaryCommandBufferRecordingState recordingState,
-        FrameOp operation,
-        Exception exception)
+    private int RecordBlitPayload(scoped ref PrimaryCommandBufferRecordingState state, in BlitPayload payload, in VulkanPrimaryOperationRecordingInfo info)
     {
-        RecordDroppedPrimaryOperation(
-            ref recordingState,
-            operation,
-            countIndirectCompute: true);
-        recordingState.Metrics.FirstFailure ??=
-            CaptureFrameOpFailure(operation, exception);
-
-        EndActiveRenderPass(ref recordingState);
-        if (recordingState.RenderPassLabelActive)
-        {
-            CmdEndLabel(recordingState.CommandBuffer);
-            recordingState.RenderPassLabelActive = false;
-        }
-
-        string operationContext = BuildFrameOpFailureContext(operation);
-        Debug.VulkanEvery(
-            $"Vulkan.FrameOpError.{GetHashCode()}",
-            TimeSpan.FromSeconds(1),
-            "[Vulkan] Frame op recording failed for {0}: {1}: {2}{3}{4}",
-            operation.GetType().Name,
-            exception.GetType().Name,
-            exception.Message,
-            operationContext,
-            exception.StackTrace is { Length: > 0 }
-                ? Environment.NewLine + exception.StackTrace
-                : string.Empty);
+        if (payload.ColorBit && (payload.InFbo is null || payload.OutFbo is null)) EnsureSwapchainColorAttachmentLayoutForBlit(ref state);
+        CmdBeginLabel(state.CommandBuffer, "Blit");
+        bool recorded = RecordBlitPayload(state.CommandBuffer, state.ImageIndex, payload, in state.SwapchainTarget, exactColorSource: null);
+        CmdEndLabel(state.CommandBuffer);
+        if (payload.OutFbo is null && (payload.ColorBit || payload.DepthBit || payload.StencilBit) && recorded) { state.SwapchainWrittenOutsideRenderPass = true; if (payload.ColorBit) { state.SwapchainInColorAttachmentLayout = true; state.SwapchainFinalLayout = ImageLayout.ColorAttachmentOptimal; } state.ActualSwapchainWriteCount++; }
+        return info.OperationIndex;
     }
 
-    private static void RecordDroppedPrimaryOperation(
-        scoped ref PrimaryCommandBufferRecordingState recordingState,
-        FrameOp operation,
-        bool countIndirectCompute = false)
+    private int RecordIndirectDrawPayload(scoped ref PrimaryCommandBufferRecordingState state, in IndirectDrawPayload payload, in VulkanPrimaryOperationRecordingInfo info)
     {
-        recordingState.Metrics.DroppedFrameOps++;
-        if (operation is MeshDrawOp or IndirectDrawOp or MeshTaskDispatchIndirectCountOp)
-            recordingState.Metrics.DroppedDrawOps++;
-        if (operation is ComputeDispatchOp ||
-            countIndirectCompute && operation is ComputeDispatchIndirectOp)
-            recordingState.Metrics.DroppedComputeOps++;
+        XRFrameBuffer? target = state.Ops.GetTarget(info.OperationIndex);
+        EmitIndirectDrawRunReadBarrier(ref state);
+        if (info.BeginsRendering) BeginRenderPassForTarget(ref state, target, info.PassIndex, state.ActiveContext);
+        CmdBeginLabel(state.CommandBuffer, "IndirectDraw");
+        RecordIndirectDrawPayloadIntoCommandBuffer(ref state, state.CommandBuffer, in payload, target, state.ActiveContext, info.PassIndex, info.OperationIndex);
+        CmdEndLabel(state.CommandBuffer);
+        RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanIndirectRecordingMode(false, false, 1);
+        if (target is null) state.ActualSwapchainWriteCount++;
+        return info.OperationIndex;
     }
 
-    private static bool HasPrimaryPlanAction(
-        EVulkanPrimaryPlanAction actions,
-        EVulkanPrimaryPlanAction action)
-        => (actions & action) != 0;
+    private bool TryPreparePrimaryOperation(scoped ref PrimaryCommandBufferRecordingState state, in VulkanPrimaryPlanNode node, in FrameOperationHeader header, int operationIndex, out int passIndex)
+    {
+        ref readonly FrameOpContext context = ref state.Ops.GetContext(operationIndex);
+        if (!UpdatePrimaryRecordingContext(ref state, in context, state.Ops.GetTarget(operationIndex), header.PassIndex)) { passIndex = int.MinValue; return false; }
+        passIndex = header.PassIndex;
+        if (passIndex == int.MinValue) { RecordDroppedPrimaryOperation(ref state, header.OpCode); return false; }
+        if (state.SkipUiPipelineOps && context.PipelineInstance?.Pipeline is UserInterfaceRenderPipeline) { RecordDroppedPrimaryOperation(ref state, header.OpCode); return false; }
+        TransitionToPrimaryOperationPass(ref state, in node, in header, operationIndex, passIndex);
+        return true;
+    }
+
+    private bool UpdatePrimaryRecordingContext(scoped ref PrimaryCommandBufferRecordingState state, in FrameOpContext context, XRFrameBuffer? target, int passIndex)
+    {
+        if (state.HasActiveContext && FrameOpContextCompatibility.AreRecordingCompatible(state.ActiveContext, context)) return true;
+        bool preserve = state.RenderScope.ShouldPreserveForContextChange(target is null, target, passIndex, state.ActiveInlineQuery is not null, context.SchedulingIdentity, state.ActivePassIndex, state.ActiveSchedulingIdentity, FrameOpContextCompatibility.AreQueryScopeCompatible(state.ActiveContext, context));
+        if (!preserve) EndActiveRenderPass(ref state);
+        if (!preserve && state.PassIndexLabelActive) { _deviceContext.CmdEndLabel(state.CommandBuffer); state.PassIndexLabelActive = false; }
+        state.ActiveContext = context; state.HasActiveContext = true; ApplyPipelineOverride(ref state, state.ActiveContext);
+        if (!UpdatePrimaryResourcePlannerContext(ref state)) return false;
+        if (preserve) state.ActiveSchedulingIdentity = context.SchedulingIdentity; else { state.ActivePassIndex = int.MinValue; state.ActiveSchedulingIdentity = int.MinValue; }
+        return true;
+    }
+
+    private bool UpdatePrimaryResourcePlannerContext(scoped ref PrimaryCommandBufferRecordingState state)
+    {
+        state.RenderGraphPlan = ResolvePrimaryRenderGraphPlan(ref state, in state.ActiveContext);
+        state.PlannerContext = state.ActiveContext;
+        state.HasPlannerContext = true;
+        return true;
+    }
+
+    private static VulkanRenderGraphPlan ResolvePrimaryRenderGraphPlan(scoped ref PrimaryCommandBufferRecordingState state, in FrameOpContext context)
+    {
+        if (state.FramePlan is not null && state.FramePlan.TryResolveRenderGraphPlan(in context, out VulkanRenderGraphPlan plan)) return plan;
+        if (context.ResourceRegistry is null && context.PassMetadata is not { Count: > 0 }) return state.RenderGraphPlan;
+        throw new VulkanPlanPreconditionException($"Primary recording has no frozen render-graph publication for kind={context.ContextKind} pipe={context.PipelineIdentity} viewport={context.ViewportIdentity} resourceGeneration={context.ResourceGeneration}.");
+    }
+
+    private void TransitionToPrimaryOperationPass(scoped ref PrimaryCommandBufferRecordingState state, in VulkanPrimaryPlanNode node, in FrameOperationHeader header, int operationIndex, int passIndex)
+    {
+        int schedulingIdentity = state.Ops.GetContext(operationIndex).SchedulingIdentity;
+        if (!HasPrimaryPlanAction(node.Actions, EVulkanPrimaryPlanAction.BarrierBatch) || (passIndex == state.ActivePassIndex && schedulingIdentity == state.ActiveSchedulingIdentity)) return;
+        EndActiveRenderPass(ref state);
+        if (state.PassIndexLabelActive) { _deviceContext.CmdEndLabel(state.CommandBuffer); state.PassIndexLabelActive = false; }
+        if (_deviceContext.CanRecordCommandBufferDebugLabels) state.PassIndexLabelActive = _deviceContext.CmdBeginLabel(state.CommandBuffer, $"Pass={passIndex} Pipe={state.ActiveContext.PipelineIdentity} Vp={state.ActiveContext.ViewportIdentity}");
+        EmitPassBarriers(ref state, passIndex);
+        state.ActivePassIndex = passIndex; state.ActiveSchedulingIdentity = schedulingIdentity;
+    }
+
+    private void HandlePrimaryOperationRecordingFailure(scoped ref PrimaryCommandBufferRecordingState state, in FrameOperationHeader header, int operationIndex, Exception exception)
+    {
+        RecordDroppedPrimaryOperation(ref state, header.OpCode, true);
+        EndActiveRenderPass(ref state);
+        Debug.VulkanEvery($"Vulkan.FrameOpError.{GetHashCode()}", TimeSpan.FromSeconds(1), "[Vulkan] Frame op recording failed for {0}: {1}: {2}", header.OpCode, exception.GetType().Name, exception.Message);
+    }
+
+    private static void RecordDroppedPrimaryOperation(scoped ref PrimaryCommandBufferRecordingState state, EVulkanPrimaryPlanNodeKind kind, bool countIndirectCompute = false)
+    {
+        state.Metrics.DroppedFrameOps++;
+        if (kind is EVulkanPrimaryPlanNodeKind.MeshDraw or EVulkanPrimaryPlanNodeKind.IndirectDraw or EVulkanPrimaryPlanNodeKind.MeshTaskDispatchIndirectCount) state.Metrics.DroppedDrawOps++;
+        if (kind == EVulkanPrimaryPlanNodeKind.ComputeDispatch || countIndirectCompute && kind == EVulkanPrimaryPlanNodeKind.ComputeDispatchIndirect) state.Metrics.DroppedComputeOps++;
+    }
+
+    private static bool HasPrimaryPlanAction(EVulkanPrimaryPlanAction actions, EVulkanPrimaryPlanAction action) => (actions & action) != 0;
 }

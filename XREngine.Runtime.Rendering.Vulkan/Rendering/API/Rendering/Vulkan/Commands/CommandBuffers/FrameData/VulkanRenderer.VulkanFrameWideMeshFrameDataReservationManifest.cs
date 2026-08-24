@@ -2,7 +2,7 @@ using System.Runtime.CompilerServices;
 
 namespace XREngine.Rendering.Vulkan;
 
-public unsafe partial class VulkanRenderer
+internal sealed partial class VulkanFrameWideMeshFrameDataReservationManifest
 {
     /// <summary>
     /// Publishes the mesh frame-data capacity shared by every command stream in one
@@ -11,8 +11,6 @@ public unsafe partial class VulkanRenderer
     /// rejected and teaches the next frame's generation instead of mutating state
     /// captured by an already recorded or submitted output.
     /// </summary>
-    internal sealed partial class VulkanFrameWideMeshFrameDataReservationManifest
-    {
         // Draw counts within an output family vary slightly with bounded work such as
         // asynchronous occlusion probes. Publishing the exact first-observed count would
         // relocate that family as soon as a later frame schedules one more probe, leaving
@@ -99,6 +97,7 @@ public unsafe partial class VulkanRenderer
                 if (_isSealed)
                 {
                     string? firstFailure = null;
+                    bool appendOnlyChanged = false;
                     foreach (KeyValuePair<VulkanMeshFrameDataRendererFamilyKey, int> requirement in rendererFamilyDrawSlots)
                     {
                         VulkanMeshFrameDataRendererFamilyKey key = requirement.Key;
@@ -108,28 +107,41 @@ public unsafe partial class VulkanRenderer
                         if (!_publishedRendererFamilies.TryGetValue(key, out FamilyAllocation allocation) ||
                             allocation.SlotCount < requiredStride)
                         {
-                            QueuePendingRendererFamily(key, requiredStride);
-                            firstFailure ??=
-                                $"renderer '{key.Renderer.Data?.Parent?.Mesh?.Name ?? "<unnamed mesh>"}' output family {key.Family} " +
-                                $"requires a {requiredStride}-slot range after frame-wide manifest generation {_generation} was sealed for render frame {frameId}";
-                            continue;
+                            if (!TryPublishRendererFamilyAfterSeal(
+                                    key,
+                                    requiredStride,
+                                    out bool familyChanged))
+                            {
+                                QueuePendingRendererFamily(key, requiredStride);
+                                firstFailure ??=
+                                    $"renderer '{key.Renderer.Data?.Parent?.Mesh?.Name ?? "<unnamed mesh>"}' output family {key.Family} " +
+                                    $"requires a {requiredStride}-slot range that would relocate an existing frame-data family after manifest generation {_generation} was sealed for render frame {frameId}";
+                                continue;
+                            }
+
+                            appendOnlyChanged |= familyChanged;
+                            allocation = _publishedRendererFamilies[key];
                         }
 
                         resolvedFamilyBases[key] = allocation.BaseSlot;
                         int requiredSlots = checked(allocation.BaseSlot + allocation.SlotCount);
                         AccumulateRendererRequirement(requiredDrawSlots, key.Renderer, requiredSlots);
-                        if (_publishedDrawSlots.TryGetValue(key.Renderer, out int published) &&
-                            published >= requiredSlots)
-                        {
-                            continue;
-                        }
-
-                        QueuePendingRendererFamily(key, requiredStride);
-                        firstFailure ??=
-                            $"renderer '{key.Renderer.Data?.Parent?.Mesh?.Name ?? "<unnamed mesh>"}' requires {requiredSlots} draw slots " +
-                            $"after frame-wide manifest generation {_generation} was sealed with {published} for render frame {frameId}";
+                        appendOnlyChanged |= PublishRendererRequirement(
+                            key.Renderer,
+                            requiredSlots);
                     }
 
+                    if (appendOnlyChanged)
+                    {
+                        // Appending a new family or growing one in place preserves
+                        // every previously published base offset. Advance the
+                        // diagnostic publication generation without invalidating
+                        // command buffers; callers observe relocation separately.
+                        _generation++;
+                        _publicationCount++;
+                    }
+
+                    PublishCountsNoLock();
                     generation = _generation;
                     reason = firstFailure ?? string.Empty;
                     if (firstFailure is not null)
@@ -292,6 +304,53 @@ public unsafe partial class VulkanRenderer
             return true;
         }
 
+        /// <summary>
+        /// Extends a sealed manifest only when all existing family base offsets
+        /// remain unchanged. Frame-arena draw-slot capacity is CPU-logical, so a
+        /// new family or an in-place range growth cannot invalidate a command
+        /// buffer already recorded by another output in the same render frame.
+        /// </summary>
+        private bool TryPublishRendererFamilyAfterSeal(
+            VulkanMeshFrameDataRendererFamilyKey key,
+            int requiredStride,
+            out bool changed)
+        {
+            changed = false;
+            requiredStride = Math.Max(requiredStride, 1);
+            if (_publishedRendererFamilies.TryGetValue(
+                    key,
+                    out FamilyAllocation published))
+            {
+                if (published.SlotCount >= requiredStride)
+                    return true;
+
+                int publishedCapacity = ResolveFamilySlotCapacity(requiredStride);
+                int expandedEnd = checked(published.BaseSlot + publishedCapacity);
+                if (WouldOverlapAnotherFamily(
+                        key,
+                        published.BaseSlot,
+                        expandedEnd))
+                {
+                    return false;
+                }
+
+                _publishedRendererFamilies[key] = new FamilyAllocation(
+                    published.BaseSlot,
+                    publishedCapacity);
+                changed = true;
+                return true;
+            }
+
+            int baseSlot = ResolveNextFamilyBaseSlot(key);
+            _publishedRendererFamilies.Add(
+                key,
+                new FamilyAllocation(
+                    baseSlot,
+                    ResolveFamilySlotCapacity(requiredStride)));
+            changed = true;
+            return true;
+        }
+
         private int ResolveNextFamilyBaseSlot(VulkanMeshFrameDataRendererFamilyKey key)
         {
             int baseSlot = 0;
@@ -374,5 +433,4 @@ public unsafe partial class VulkanRenderer
             else
                 requirements.Add(renderer, requiredDrawSlots);
         }
-    }
 }

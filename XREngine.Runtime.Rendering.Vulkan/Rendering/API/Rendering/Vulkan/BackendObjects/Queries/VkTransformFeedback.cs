@@ -3,18 +3,27 @@ using Buffer = Silk.NET.Vulkan.Buffer;
 
 namespace XREngine.Rendering.Vulkan
 {
-    internal unsafe class VkTransformFeedback(VulkanRenderer api, XRTransformFeedback data) :
-        VkObject<XRTransformFeedback>(api, data),
+    internal unsafe class VkTransformFeedback(
+        VulkanBackendObjectContext backendContext,
+        IRenderApiWrapperOwner owner,
+        XRTransformFeedback data) :
+        VkObject<XRTransformFeedback>(backendContext, owner, data),
         IXRTransformFeedbackApi
     {
-        public override VkObjectType Type => VkObjectType.TransformFeedback;
-        public override bool IsGenerated => IsActive && Renderer.SupportsTransformFeedback;
+        private VulkanProgramPlannerPort? _programPlannerPort;
+        private VulkanProgramPlannerPort ProgramPlannerPort => _programPlannerPort ?? throw new InvalidOperationException("Transform-feedback planner port has not been bound.");
 
-        public bool IsSupported => Renderer.SupportsTransformFeedback;
-        public uint MaxBindingCount => Renderer.TransformFeedbackProperties.MaxTransformFeedbackBuffers;
-        public ulong MaxBufferSize => Renderer.TransformFeedbackProperties.MaxTransformFeedbackBufferSize;
-        public bool SupportsQueries => Renderer.SupportsTransformFeedbackQueries;
-        public bool SupportsByteCountDraw => Renderer.SupportsTransformFeedbackDraw;
+        protected override void BindOperationPorts(VulkanWrapperPortBinding binding)
+            => _programPlannerPort = binding.TryGetProgramPlanner();
+
+        public override VkObjectType Type => VkObjectType.TransformFeedback;
+        public override bool IsGenerated => IsActive && BackendContext.SupportsTransformFeedback;
+
+        public bool IsSupported => BackendContext.SupportsTransformFeedback;
+        public uint MaxBindingCount => BackendContext.TransformFeedbackProperties.MaxTransformFeedbackBuffers;
+        public ulong MaxBufferSize => BackendContext.TransformFeedbackProperties.MaxTransformFeedbackBufferSize;
+        public bool SupportsQueries => BackendContext.SupportsTransformFeedbackQueries;
+        public bool SupportsByteCountDraw => BackendContext.SupportsTransformFeedbackDraw;
 
         protected override uint CreateObjectInternal()
         {
@@ -30,7 +39,7 @@ namespace XREngine.Rendering.Vulkan
 
         XRTransformFeedbackCapabilities IXRTransformFeedbackApi.GetCapabilities()
         {
-            if (!Renderer.SupportsTransformFeedback)
+            if (!BackendContext.SupportsTransformFeedback)
                 return XRTransformFeedbackCapabilities.Unsupported(
                     "Vulkan",
                     "Vulkan transform feedback requires VK_EXT_transform_feedback with the transformFeedback feature enabled.");
@@ -40,11 +49,11 @@ namespace XREngine.Rendering.Vulkan
                 EXRTransformFeedbackFeatureFlags.PauseResume |
                 EXRTransformFeedbackFeatureFlags.ShaderDeclaredVaryings;
 
-            if (Renderer.SupportsTransformFeedbackQueries)
+            if (BackendContext.SupportsTransformFeedbackQueries)
                 features |= EXRTransformFeedbackFeatureFlags.PrimitiveCountQueries;
-            if (Renderer.SupportsTransformFeedbackDraw)
+            if (BackendContext.SupportsTransformFeedbackDraw)
                 features |= EXRTransformFeedbackFeatureFlags.DrawIndirectByteCount;
-            if (Renderer.SupportsTransformFeedbackGeometryStreams)
+            if (BackendContext.SupportsTransformFeedbackGeometryStreams)
                 features |= EXRTransformFeedbackFeatureFlags.GeometryStreams;
             if (MaxBindingCount > 1)
                 features |= EXRTransformFeedbackFeatureFlags.MultipleBuffers;
@@ -119,7 +128,7 @@ namespace XREngine.Rendering.Vulkan
             uint instanceCount,
             uint firstInstance)
         {
-            if (!Renderer.SupportsTransformFeedbackDraw)
+            if (!BackendContext.SupportsTransformFeedbackDraw)
                 return XRTransformFeedbackOperationResult.Unsupported(
                     EXRTransformFeedbackOperation.DrawIndirectByteCount,
                     "Vulkan",
@@ -158,7 +167,7 @@ namespace XREngine.Rendering.Vulkan
             uint instanceCount = 1,
             uint firstInstance = 0)
         {
-            if (!Renderer.SupportsTransformFeedback || Renderer._extTransformFeedback is null)
+            if (!BackendContext.SupportsTransformFeedback || BackendContext.TransformFeedbackExtension is null)
                 return XRTransformFeedbackOperationResult.Unsupported(
                     operation,
                     "Vulkan",
@@ -179,15 +188,7 @@ namespace XREngine.Rendering.Vulkan
                 return XRTransformFeedbackOperationResult.Failed(operation, "Vulkan", ex.Message);
             }
 
-            FrameOpContext context = Renderer.CaptureFrameOpContext();
-            int passIndex = Renderer.EnsureValidPassIndex(
-                RuntimeEngine.Rendering.State.CurrentRenderGraphPassIndex,
-                "TransformFeedback",
-                context.PassMetadata);
-
-            Renderer.EnqueueFrameOp(new TransformFeedbackOp(
-                passIndex,
-                Renderer.ResolveCurrentFrameOpDrawTarget(),
+            ProgramPlannerPort.EnqueueTransformFeedback(
                 this,
                 operation,
                 counterBuffer,
@@ -197,8 +198,7 @@ namespace XREngine.Rendering.Vulkan
                 counterOffset,
                 vertexStride,
                 instanceCount,
-                firstInstance,
-                context));
+                firstInstance);
 
             return XRTransformFeedbackOperationResult.Success(operation, "Vulkan");
         }
@@ -221,11 +221,7 @@ namespace XREngine.Rendering.Vulkan
 
             Buffer handle = ResolveBufferHandle(buffer, "transform feedback");
             ulong resolvedSize = ResolveBufferSize(buffer, offset, size);
-            Renderer.TrackVulkanCommandBufferResource(
-                commandBuffer,
-                ObjectType.Buffer,
-                handle.Handle,
-                "TransformFeedback.Buffer");
+            TrackBuffer(commandBuffer, handle, "TransformFeedback.Buffer");
 
             Extension.CmdBindTransformFeedbackBuffers(
                 commandBuffer,
@@ -252,11 +248,7 @@ namespace XREngine.Rendering.Vulkan
             ValidateBindingRange(firstCounterBuffer, 1);
 
             Buffer counterHandle = ResolveBufferHandle(counterBuffer, "transform feedback counter");
-            Renderer.TrackVulkanCommandBufferResource(
-                commandBuffer,
-                ObjectType.Buffer,
-                counterHandle.Handle,
-                "TransformFeedback.BeginCounter");
+            TrackBuffer(commandBuffer, counterHandle, "TransformFeedback.BeginCounter");
             Extension.CmdBeginTransformFeedback(
                 commandBuffer,
                 firstCounterBuffer,
@@ -281,11 +273,7 @@ namespace XREngine.Rendering.Vulkan
             ValidateBindingRange(firstCounterBuffer, 1);
 
             Buffer counterHandle = ResolveBufferHandle(counterBuffer, "transform feedback counter");
-            Renderer.TrackVulkanCommandBufferResource(
-                commandBuffer,
-                ObjectType.Buffer,
-                counterHandle.Handle,
-                "TransformFeedback.EndCounter");
+            TrackBuffer(commandBuffer, counterHandle, "TransformFeedback.EndCounter");
             Extension.CmdEndTransformFeedback(
                 commandBuffer,
                 firstCounterBuffer,
@@ -304,17 +292,13 @@ namespace XREngine.Rendering.Vulkan
             uint vertexStride)
         {
             EnsureSupported();
-            if (!Renderer.SupportsTransformFeedbackDraw)
+            if (!BackendContext.SupportsTransformFeedbackDraw)
                 throw new NotSupportedException("VK_EXT_transform_feedback byte-count draws are not supported by this device.");
             if (vertexStride == 0)
                 throw new ArgumentOutOfRangeException(nameof(vertexStride), "Vertex stride must be non-zero.");
 
             Buffer counterHandle = ResolveBufferHandle(counterBuffer, "transform feedback counter");
-            Renderer.TrackVulkanCommandBufferResource(
-                commandBuffer,
-                ObjectType.Buffer,
-                counterHandle.Handle,
-                "TransformFeedback.DrawCounter");
+            TrackBuffer(commandBuffer, counterHandle, "TransformFeedback.DrawCounter");
             Extension.CmdDrawIndirectByteCount(
                 commandBuffer,
                 instanceCount,
@@ -327,7 +311,7 @@ namespace XREngine.Rendering.Vulkan
 
         private VkDataBuffer GetFeedbackBuffer()
         {
-            if (Renderer.GetOrCreateAPIRenderObject(Data.FeedbackBuffer, generateNow: true) is VkDataBuffer buffer)
+            if (WrapperLookup.GetOrCreate(Data.FeedbackBuffer, generateNow: true) is VkDataBuffer buffer)
                 return buffer;
 
             throw new InvalidOperationException("Failed to resolve transform feedback buffer.");
@@ -338,13 +322,13 @@ namespace XREngine.Rendering.Vulkan
             get
             {
                 EnsureSupported();
-                return Renderer._extTransformFeedback!;
+                return BackendContext.TransformFeedbackExtension!;
             }
         }
 
         private void EnsureSupported()
         {
-            if (Renderer.SupportsTransformFeedback && Renderer._extTransformFeedback is not null)
+            if (BackendContext.SupportsTransformFeedback && BackendContext.TransformFeedbackExtension is not null)
                 return;
 
             throw new NotSupportedException("Vulkan transform feedback requires VK_EXT_transform_feedback with the transformFeedback feature enabled.");
@@ -352,7 +336,7 @@ namespace XREngine.Rendering.Vulkan
 
         private void ValidateBindingRange(uint firstBinding, uint bindingCount)
         {
-            uint maxBindings = Renderer.TransformFeedbackProperties.MaxTransformFeedbackBuffers;
+            uint maxBindings = BackendContext.TransformFeedbackProperties.MaxTransformFeedbackBuffers;
             if (maxBindings == 0)
                 return;
 
@@ -379,6 +363,16 @@ namespace XREngine.Rendering.Vulkan
                 throw new ArgumentOutOfRangeException(nameof(offset), "Transform feedback buffer offset is outside the allocated buffer.");
 
             return buffer.AllocatedByteSize - offset;
+        }
+
+        private void TrackBuffer(CommandBuffer commandBuffer, Buffer buffer, string owner)
+        {
+            VulkanQueryCommandService? commands = BackendContext.Resources.Queries.Commands;
+            if (commands is null)
+                throw new InvalidOperationException(
+                    "Vulkan query command services are unavailable during transform-feedback recording.");
+
+            commands.Track(commandBuffer, ObjectType.Buffer, buffer.Handle, owner);
         }
     }
 }

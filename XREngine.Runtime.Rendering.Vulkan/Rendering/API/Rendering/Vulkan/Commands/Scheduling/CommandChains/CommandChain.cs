@@ -2,12 +2,18 @@ using Silk.NET.Vulkan;
 
 namespace XREngine.Rendering.Vulkan;
 
-internal sealed class CommandChain(CommandChainKey key)
+internal sealed class CommandChain(
+    CommandChainKey key,
+    VulkanCommandChainState? mutationAuthority = null)
 {
+    private RenderPacket? _packetSnapshot;
+    private CommandRecordingDependencySignature _dependencySignature;
+    private VulkanPreparedCommandChainKey _preparedKey;
+
     public CommandChainKey Key { get; } = key;
     public CommandChainState State { get; set; }
     public VulkanRecordedCommandArtifact RecordedArtifact { get; } =
-        new(CommandBufferLevel.Secondary, key.FrameSlot);
+        new(CommandBufferLevel.Secondary, key.FrameSlot, mutationAuthority);
     public CommandBuffer SecondaryCommandBuffer => RecordedArtifact.NativeBuffer;
     public CommandPool SecondaryCommandPool => RecordedArtifact.OwnerPool;
     public bool OwnsSecondaryCommandPool => RecordedArtifact.OwnsPool;
@@ -29,17 +35,45 @@ internal sealed class CommandChain(CommandChainKey key)
     public ulong StructuralSignature { get; set; }
     public ulong FrameDataSignature { get; set; }
     public ulong ResourcePlanRevision { get; set; }
+    /// <summary>
+    /// Combined frame-op/native-allocation identity used by the schedule that
+    /// last authorized this secondary artifact.
+    /// </summary>
+    public ulong ResourceVersionSignature { get; set; }
     public ulong PhysicalImageSignature { get; set; }
     public ulong FramebufferSignature { get; set; }
     public ulong DescriptorGeneration { get; set; }
     public ulong PipelineGeneration { get; set; }
-    public CommandRecordingDependencySignature DependencySignature { get; set; }
+    public CommandRecordingDependencySignature DependencySignature
+    {
+        get => _dependencySignature;
+        set => _dependencySignature = value;
+    }
+    internal ref readonly CommandRecordingDependencySignature DependencySignatureReference
+        => ref _dependencySignature;
+    internal void SetDependencySignature(in CommandRecordingDependencySignature signature)
+        => _dependencySignature = signature;
     public int DrawCount { get; set; }
     public int DispatchCount { get; set; }
     public ulong InstanceCountSignature { get; set; }
     public int DescriptorSetCount { get; set; }
     public ulong DescriptorSetSignature { get; set; }
+    /// <summary>
+    /// Exact prepared native pipeline/layout and descriptor publication state
+    /// used by the executable secondary artifact.
+    /// </summary>
+    public VulkanPreparedCommandChainKey PreparedKey
+    {
+        get => _preparedKey;
+        set => _preparedKey = value;
+    }
+    internal ref readonly VulkanPreparedCommandChainKey PreparedKeyReference
+        => ref _preparedKey;
+    internal void SetPreparedKey(in VulkanPreparedCommandChainKey preparedKey)
+        => _preparedKey = preparedKey;
+    public VulkanPreparedCommandChainAuthority? PreparedAuthority { get; set; }
     public ulong RecordedUniformSlotSignature { get; set; }
+    public VulkanIndirectSecondaryRecordingContract RecordedIndirectSecondaryContract { get; set; }
     public bool FrameDataRefreshTouchedDescriptors { get; set; }
     public int SourceStartIndex { get; set; } = -1;
     public int SourceCount { get; set; }
@@ -48,4 +82,31 @@ internal sealed class CommandChain(CommandChainKey key)
     public bool ScheduledPacket { get; set; }
     public CommandChainDirtyReason DirtyReason { get; set; }
     public EVulkanCommandChainWorkerEligibility WorkerEligibility { get; set; }
+    public VulkanPreparedComputePayload? PreparedComputePayload { get; set; }
+
+    /// <summary>
+    /// The sealed packet that authorized the current dependency publication.
+    /// The chain retains a lease so pooled lowering storage cannot be rewritten
+    /// while native recording or reuse validation still consumes the snapshot.
+    /// </summary>
+    public RenderPacket? PacketSnapshot => _packetSnapshot;
+
+    public void PublishPacketSnapshot(RenderPacket packet)
+    {
+        ArgumentNullException.ThrowIfNull(packet);
+        if (!packet.IsSealed)
+            throw new InvalidOperationException("Only sealed render packets may be published to a command chain.");
+        if (ReferenceEquals(_packetSnapshot, packet))
+            return;
+
+        packet.AcquireLease();
+        _packetSnapshot?.ReleaseLease();
+        _packetSnapshot = packet;
+    }
+
+    public void ReleasePacketSnapshot()
+    {
+        _packetSnapshot?.ReleaseLease();
+        _packetSnapshot = null;
+    }
 }

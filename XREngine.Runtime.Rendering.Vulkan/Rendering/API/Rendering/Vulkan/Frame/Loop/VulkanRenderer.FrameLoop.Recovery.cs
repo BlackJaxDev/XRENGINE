@@ -6,7 +6,7 @@ using XREngine.Data.Rendering;
 
 namespace XREngine.Rendering.Vulkan
 {
-    public unsafe partial class VulkanRenderer
+    internal sealed partial class VulkanFrameLoop
     {
         private void ResolveDesktopAcquireBySwapchainRecreation(
             ref VulkanFrameAttempt attempt,
@@ -31,7 +31,7 @@ namespace XREngine.Rendering.Vulkan
             }
         }
 
-        private void SettleDesktopAcquireAfterUnexpectedFailure(
+        internal void SettleDesktopAcquireAfterUnexpectedFailure(
             ref VulkanFrameAttempt attempt,
             Exception primaryFailure)
         {
@@ -79,11 +79,6 @@ namespace XREngine.Rendering.Vulkan
             }
             catch (Exception recoveryFailure)
             {
-                Debug.VulkanWarning(
-                    "[Vulkan] Desktop frame recovery also failed after {0}: {1}",
-                    primaryFailure.GetType().Name,
-                    recoveryFailure.Message);
-
                 if (!_deviceLost &&
                     attempt.AcquireOwnership is
                         EVulkanDesktopAcquireOwnership
@@ -91,21 +86,13 @@ namespace XREngine.Rendering.Vulkan
                         EVulkanDesktopAcquireOwnership
                             .ConsumedByRecoveryImagePendingPresent)
                 {
-                    try
-                    {
-                        ResolveDesktopAcquireBySwapchainRecreation(
-                            ref attempt,
-                            "Desktop post-submit failure fallback");
-                        CompleteDesktopFrameSlot(ref attempt);
-                    }
-                    catch (Exception invalidationFailure)
-                    {
-                        Debug.VulkanWarning(
-                            "[Vulkan] Desktop swapchain invalidation also failed after {0}: {1}",
-                            primaryFailure.GetType().Name,
-                            invalidationFailure.Message);
-                    }
+                    ResolveDesktopAcquireBySwapchainRecreation(
+                        ref attempt,
+                        "Desktop post-submit failure fallback");
+                    CompleteDesktopFrameSlot(ref attempt);
                 }
+
+                ExceptionDispatchInfo.Capture(recoveryFailure).Throw();
             }
         }
 
@@ -162,29 +149,18 @@ namespace XREngine.Rendering.Vulkan
             if (attempt.CollectReleased)
                 return;
 
-            try
-            {
-                RuntimeRenderingHostServices.Scheduling
-                    .MarkRenderFrameReadyForCollect(XRWindow);
-                attempt.CollectReleased = true;
-            }
-            catch (Exception collectFailure)
-            {
-                Debug.VulkanWarning(
-                    "[Vulkan] Failed to release frame collect before failure settlement: {0}",
-                    collectFailure.Message);
-            }
+            RuntimeRenderingHostServices.Scheduling
+                .MarkRenderFrameReadyForCollect(DesktopWsiOutput.Window);
+            attempt.CollectReleased = true;
         }
 
         private void PresentRecoveredDesktopFrameAfterUnexpectedFailure(
             ref VulkanFrameAttempt attempt)
         {
-            VulkanDesktopPresentDispatchOutcome dispatch =
-                DesktopWsiTarget.PresentFrameTarget(
-                    this,
-                    ref attempt,
-                    "Vulkan.FrameLifecycle.RecoveryFailureQueuePresent",
-                    "settling a recovered desktop frame after an auxiliary failure");
+            VulkanDesktopPresentDispatchOutcome dispatch = QueueDesktopPresentCore(
+                ref attempt,
+                "Vulkan.FrameLifecycle.RecoveryFailureQueuePresent",
+                "settling a recovered desktop frame after an auxiliary failure");
             Result result = dispatch.Result;
             if (!dispatch.Dispatched && result != Result.ErrorDeviceLost)
             {
@@ -197,11 +173,6 @@ namespace XREngine.Rendering.Vulkan
 
             bool accepted =
                 result is Result.Success or Result.SuboptimalKhr;
-            RecordDesktopPresentBookkeeping(
-                ref attempt,
-                result,
-                accepted,
-                hasValidFrameContent: false);
             if (result == Result.ErrorDeviceLost)
             {
                 attempt.TransitionAcquireOwnership(
@@ -214,6 +185,11 @@ namespace XREngine.Rendering.Vulkan
 
             attempt.TransitionAcquireOwnership(
                 EVulkanDesktopAcquireOwnership.ResolvedByPresentation);
+            RecordDesktopPresentBookkeeping(
+                ref attempt,
+                result,
+                accepted,
+                hasValidFrameContent: false);
             Exception? policyFailure = ApplyDesktopPresentPolicy(
                 ref attempt,
                 result,
@@ -236,7 +212,9 @@ namespace XREngine.Rendering.Vulkan
             ref VulkanFrameAttempt attempt,
             string reason)
         {
-            CancelRecordedTextureUploadSubmitBatch(reason);
+            ResourceRuntime.Uploads.CancelRecordedSubmitBatch(
+                IsDeviceLost,
+                reason);
 
             if (attempt.TextureUploadCommandBuffer.Handle == 0 ||
                 attempt.UploadOwnership is
@@ -251,13 +229,17 @@ namespace XREngine.Rendering.Vulkan
                 attempt.TextureUploadCommandBuffer;
             if (attempt.TextureUploadCommandPool.Handle != 0 && !_deviceLost)
             {
-                FreeVulkanCommandBufferTracked(
+                _commandRuntime.FreeTrackedCommandBuffer(
+                    Api,
+                    _deviceContext.Device,
+                    ResourceRuntime,
+                    attempt.FrameSlot,
                     attempt.TextureUploadCommandPool,
                     ref uploadCommandBuffer,
                     "FrameLoop.UploadAbort");
             }
 
-            RemoveCommandBufferBindState(
+            _commandRuntime.RemoveCommandBufferState(
                 attempt.TextureUploadCommandBuffer);
             attempt.TextureUploadCommandBuffer = default;
             attempt.TextureUploadCommandPool = default;
@@ -278,26 +260,23 @@ namespace XREngine.Rendering.Vulkan
                        EVulkanDesktopAcquireOwnership.AcquiredUnresolved;
             }
 
-            ulong signalValue = Math.Max(
-                _graphicsTimelineValue + 1,
-                attempt.AcquireTimelineValue + 1);
+            ulong signalValue;
             long stageStartTimestamp = Stopwatch.GetTimestamp();
-            Result result;
+            VulkanSubmissionReceipt submitReceipt;
             using (RuntimeRenderingHostServices.Profiling.StartProfileScope(
                        "Vulkan.FrameLifecycle.AcquireAbortBridgeSubmit"))
             {
-                result = SubmitAcquireSemaphoreBridge(
+                submitReceipt = SubmitAcquireSemaphoreBridge(
                     attempt.AcquireSemaphore,
-                    signalValue);
+                    attempt.AcquireTimelineValue + 1UL,
+                    out signalValue);
             }
 
             attempt.Timing.AcquireBridgeSubmit +=
                 Stopwatch.GetElapsedTime(stageStartTimestamp);
-            if (result == Result.Success)
+            Result result = submitReceipt.Result;
+            if (submitReceipt.SubmissionAccepted)
             {
-                _graphicsTimelineValue = Math.Max(
-                    _graphicsTimelineValue,
-                    signalValue);
                 attempt.TransitionAcquireOwnership(
                     EVulkanDesktopAcquireOwnership
                         .ConsumedByRecoveryImagePendingPresent);
@@ -330,24 +309,16 @@ namespace XREngine.Rendering.Vulkan
             CommandBuffer commandBuffer)
         {
             if (commandBuffer.Handle == 0 ||
-                _commandBufferVariants is null ||
-                attempt.ImageIndex >= _commandBufferVariants.Length)
+                _primaryCommandArtifactOwners is null ||
+                attempt.ImageIndex >= _primaryCommandArtifactOwners.Length)
             {
                 return 0;
             }
 
-            var variants = _commandBufferVariants[attempt.ImageIndex];
-            for (int i = 0; i < variants.Count; i++)
-            {
-                CommandBufferCacheVariant variant = variants[i];
-                if (variant.PrimaryCommandBuffer.Handle ==
-                    commandBuffer.Handle)
-                {
-                    return variant.RecordedSwapchainWriteCount;
-                }
-            }
-
-            return 0;
+            PrimaryCommandArtifactOwner owner = _primaryCommandArtifactOwners[attempt.ImageIndex];
+            return owner.PrimaryCommandBuffer.Handle == commandBuffer.Handle
+                ? owner.RecordedSwapchainWriteCount
+                : 0;
         }
 
         private bool TryRecoverRejectedDesktopImage(
@@ -357,8 +328,16 @@ namespace XREngine.Rendering.Vulkan
             int recordedSwapchainWriteCount,
             string rejectionStage,
             Result? rejectedSubmitResult,
-            VulkanImGuiFrameSnapshot? recoveryOverlaySnapshot = null)
+            VulkanImGuiFrameSnapshot? recoveryOverlaySnapshot = null,
+            CommandBuffer recoveryDynamicTextSecondaryCommandBuffer = default,
+            int recoveryDynamicTextOperationCount = 0)
         {
+            // Recovery submits an abort/replay primary, never the rejected scene
+            // primary. Terminalize its deferred submission receipts before any
+            // recovery branch can return or recreate the swapchain.
+            _commandRuntime.FailSubmissionMarkersForCommandBuffer(
+                attempt.SceneCommandBuffer);
+
             RejectedDesktopFramePolicyDecision policy =
                 ResolveRejectedDesktopRecoveryPolicy(
                     ref attempt,
@@ -398,6 +377,7 @@ namespace XREngine.Rendering.Vulkan
             CommandPool abortCommandPool = default;
             CommandBuffer abortCommandBuffer = default;
             CommandBuffer recoveryOverlayCommandBuffer = default;
+            CommandBuffer recoveryDynamicTextCommandBuffer = default;
             bool abortSubmitted = false;
             try
             {
@@ -406,7 +386,8 @@ namespace XREngine.Rendering.Vulkan
                     in policy,
                     imageWasEverPresented,
                     out abortCommandPool,
-                    out abortCommandBuffer);
+                    out abortCommandBuffer,
+                    out bool replayedPresentationSource);
                 bool hasRecoveryOverlay =
                     TryRecordRejectedDesktopRecoveryOverlay(
                         ref attempt,
@@ -418,8 +399,28 @@ namespace XREngine.Rendering.Vulkan
                     hasRecoveryOverlay
                         ? recoveryOverlayCommandBuffer
                         : default;
+                bool hasRecoveryDynamicText =
+                    recoveryDynamicTextOperationCount > 0 &&
+                    recoveryDynamicTextSecondaryCommandBuffer.Handle != 0 &&
+                    TryRecordRejectedDesktopDynamicTextOverlay(
+                        ref attempt,
+                        recoveryDynamicTextSecondaryCommandBuffer,
+                        recoveryDynamicTextOperationCount,
+                        hasRecoveryOverlay
+                            ? recoveryOverlayCommandBuffer
+                            : abortCommandBuffer,
+                        out recoveryDynamicTextCommandBuffer);
+                attempt.HasDynamicTextOverlayCommandBuffer =
+                    hasRecoveryDynamicText;
+                attempt.DynamicTextOverlayCommandBuffer =
+                    hasRecoveryDynamicText
+                        ? recoveryDynamicTextCommandBuffer
+                        : default;
                 attempt.RecoverySwapchainWriteCount =
-                    policy.ShouldClearBeforePresent || hasRecoveryOverlay
+                    replayedPresentationSource ||
+                    policy.ShouldClearBeforePresent ||
+                    hasRecoveryOverlay ||
+                    hasRecoveryDynamicText
                         ? 1
                         : 0;
                 if (!TrySubmitRejectedDesktopAbort(
@@ -427,6 +428,7 @@ namespace XREngine.Rendering.Vulkan
                         abortCommandPool,
                         abortCommandBuffer,
                         recoveryOverlayCommandBuffer,
+                        recoveryDynamicTextCommandBuffer,
                         ref abortSubmitted))
                 {
                     ReleaseUnsubmittedDesktopUpload(

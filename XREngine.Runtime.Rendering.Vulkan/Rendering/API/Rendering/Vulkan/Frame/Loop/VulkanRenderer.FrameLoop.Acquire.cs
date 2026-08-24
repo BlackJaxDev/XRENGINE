@@ -5,21 +5,19 @@ using XREngine.Rendering.DLSS;
 
 namespace XREngine.Rendering.Vulkan
 {
-    public unsafe partial class VulkanRenderer
+    internal sealed partial class VulkanFrameLoop
     {
         private const ulong BlockingAcquireTimeoutNanoseconds = ulong.MaxValue;
         private const ulong InteractiveResizeAcquireTimeoutNanoseconds = 0UL;
-
-        private VulkanDesktopAcquireAvailabilityTracker
-            _desktopAcquireAvailability;
 
         internal EDesktopFrameFlow AcquireDesktopSwapchainImageCore(
             ref VulkanFrameAttempt attempt)
         {
             attempt.ImageIndex = 0;
             attempt.AcquireSemaphore =
-                acquireBridgeSemaphores![attempt.FrameSlot];
-            ulong acquireTimeoutNanoseconds = attempt.InteractiveResize
+                _commandRuntime.Synchronization.acquireBridgeSemaphores![attempt.FrameSlot];
+            bool xrOwnsFrameDeadline = RuntimeRenderingHostServices.Presentation.IsOpenXRActive;
+            ulong acquireTimeoutNanoseconds = attempt.InteractiveResize || xrOwnsFrameDeadline
                 ? InteractiveResizeAcquireTimeoutNanoseconds
                 : BlockingAcquireTimeoutNanoseconds;
 
@@ -29,11 +27,12 @@ namespace XREngine.Rendering.Vulkan
             {
                 ThrowIfDesktopFrameFaultInjected(
                     EVulkanDesktopFrameFaultPoint.Acquire);
-                if (_streamlineFrameGenerationSwapchainActive)
+                if (OutputRuntime.Desktop.StreamlineFrameGenerationActive)
                 {
                     if (!NvidiaDlssManager.Native.TryAcquireProxyNextImage(
-                            this,
-                            swapChain,
+                            _outputRuntime.CaptureStreamlineDeviceBinding(
+                                _deviceContext),
+                            OutputRuntime.Desktop.Swapchain,
                             acquireTimeoutNanoseconds,
                             attempt.AcquireSemaphore,
                             default,
@@ -41,6 +40,12 @@ namespace XREngine.Rendering.Vulkan
                             out attempt.AcquireResult,
                             out string failureReason))
                     {
+                        if (attempt.AcquireResult is Result.Success or Result.SuboptimalKhr)
+                        {
+                            VulkanDesktopAcquireOutcome acceptedOutcome =
+                                DesktopWsiOutput.ClassifyAcquire(attempt.AcquireResult);
+                            attempt.TransitionAcquireOwnership(acceptedOutcome.Ownership);
+                        }
                         if (attempt.AcquireResult == Result.ErrorDeviceLost)
                         {
                             attempt.TransitionAcquireOwnership(
@@ -62,9 +67,9 @@ namespace XREngine.Rendering.Vulkan
                 }
                 else
                 {
-                    attempt.AcquireResult = khrSwapChain!.AcquireNextImage(
-                        device,
-                        swapChain,
+                    attempt.AcquireResult = OutputRuntime.Desktop.SwapchainExtension!.AcquireNextImage(
+                        _deviceContext.Device,
+                        OutputRuntime.Desktop.Swapchain,
                         acquireTimeoutNanoseconds,
                         attempt.AcquireSemaphore,
                         default,
@@ -72,10 +77,13 @@ namespace XREngine.Rendering.Vulkan
                 }
             }
 
+            VulkanDesktopAcquireOutcome acquireOutcome =
+                DesktopWsiOutput.ClassifyAcquire(attempt.AcquireResult);
+            if (attempt.AcquireResult is Result.Success or Result.SuboptimalKhr)
+                attempt.TransitionAcquireOwnership(acquireOutcome.Ownership);
+
             attempt.Timing.AcquireImage +=
                 Stopwatch.GetElapsedTime(stageStartTimestamp);
-            VulkanDesktopAcquireOutcome acquireOutcome =
-                DesktopWsiTarget.ClassifyAcquire(attempt.AcquireResult);
 
             if (VulkanFrameDiagnosticsTraceEnabled)
             {
@@ -86,7 +94,7 @@ namespace XREngine.Rendering.Vulkan
                     attempt.FrameNumber,
                     attempt.FrameSlot,
                     attempt.ImageIndex,
-                    _lastPresentedImageIndex);
+                    OutputRuntime.Desktop.LastPresentedImageIndex);
             }
 
             switch (attempt.AcquireResult)
@@ -94,8 +102,7 @@ namespace XREngine.Rendering.Vulkan
                 case Result.Success:
                     break;
                 case Result.SuboptimalKhr:
-                    if (!DesktopWsiTarget.ShouldKeepPresentScalingSwapchain(
-                            this,
+                    if (!ShouldKeepDesktopPresentScalingSwapchainCore(
                             attempt.AcquireResult,
                             attempt.InteractiveResize))
                     {
@@ -130,7 +137,8 @@ namespace XREngine.Rendering.Vulkan
                 case Result.Timeout:
                     return HandleDesktopAcquireUnavailable(
                         ref attempt,
-                        in acquireOutcome);
+                        in acquireOutcome,
+                        xrOwnsFrameDeadline);
                 default:
                     Debug.VulkanWarningEvery(
                         $"Vulkan.Frame.{GetHashCode()}.AcquireFailure.{(int)attempt.AcquireResult}",
@@ -143,19 +151,26 @@ namespace XREngine.Rendering.Vulkan
                         $"Failed to acquire swapchain image ({attempt.AcquireResult}).");
             }
 
-            _desktopAcquireAvailability.Reset();
-            attempt.AcquireTimelineValue = _graphicsTimelineValue;
-            _acquireTimelineValue = attempt.AcquireTimelineValue;
+            _outputRuntime._desktopAcquireAvailability.Reset();
+            attempt.AcquireTimelineValue = _commandRuntime.Synchronization._graphicsTimelineValue;
+            _commandRuntime.Synchronization._acquireTimelineValue = attempt.AcquireTimelineValue;
             attempt.PresentSemaphore =
-                presentBridgeSemaphores![attempt.ImageIndex];
-            attempt.TransitionAcquireOwnership(acquireOutcome.Ownership);
+                OutputRuntime.Desktop.PresentBridgeSemaphores![attempt.ImageIndex];
+            attempt.FrameTargetLease = DesktopWsiOutput.CreateFrameTargetLease(
+                OutputRuntime,
+                attempt.ImageIndex,
+                checked((uint)attempt.FrameSlot),
+                attempt.AcquireResult,
+                attempt.AcquireSemaphore,
+                attempt.PresentSemaphore);
             attempt.AdvanceTo(EDesktopFramePhase.ImageAcquired);
             return EDesktopFrameFlow.Continue;
         }
 
         private EDesktopFrameFlow HandleDesktopAcquireUnavailable(
             ref VulkanFrameAttempt attempt,
-            in VulkanDesktopAcquireOutcome outcome)
+            in VulkanDesktopAcquireOutcome outcome,
+            bool xrOwnsFrameDeadline)
         {
             EDesktopFrameReason reason = outcome.Reason switch
             {
@@ -167,20 +182,26 @@ namespace XREngine.Rendering.Vulkan
                     $"Unexpected acquire-unavailable policy {outcome.Reason}."),
             };
             bool shouldRecreate =
-                _desktopAcquireAvailability.ObserveUnavailable(
+                _outputRuntime._desktopAcquireAvailability.ObserveUnavailable(
                     attempt.InteractiveResize,
                     out int observedCount);
 
-            if (attempt.InteractiveResize)
+            if (attempt.InteractiveResize || xrOwnsFrameDeadline)
             {
                 Debug.VulkanEvery(
-                    $"Vulkan.Frame.{GetHashCode()}.InteractiveAcquireNotReady",
+                    "Vulkan.Frame.NonBlockingAcquireNotReady",
                     TimeSpan.FromMilliseconds(500),
-                    "[Vulkan] AcquireNextImage returned {0} during interactive resize; skipping this repaint tick.",
-                    attempt.AcquireResult);
+                    "[Vulkan] AcquireNextImage returned {0} during {1}; deferring desktop output without blocking the XR/resize critical path.",
+                    attempt.AcquireResult,
+                    xrOwnsFrameDeadline ? "an XR-owned frame" : "interactive resize");
                 DrainSkippedResizeFrameOps(
-                    $"AcquireNextImage returned {attempt.AcquireResult} during interactive resize");
-                MarkSkippedResizeFrameObserved(attempt.StartTimestamp);
+                    xrOwnsFrameDeadline
+                        ? "Nonblocking desktop acquisition was unavailable during an XR-owned frame"
+                        : "Nonblocking desktop acquisition was unavailable during interactive resize");
+                if (attempt.InteractiveResize)
+                    MarkSkippedResizeFrameObserved(attempt.StartTimestamp);
+                RuntimeRenderingHostServices.Presentation.RecordRenderFrameOutputWork(
+                    new FrameOutputWorkTelemetry(CpuBudgetDeferrals: 1));
                 attempt.Stop(reason);
                 return EDesktopFrameFlow.Stop;
             }

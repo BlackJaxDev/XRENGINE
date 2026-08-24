@@ -19,7 +19,7 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
     {
         if (_sampler.Handle != 0)
         {
-            Renderer.RetireSampler(_sampler);
+            BackendContext.Resources.Samplers.Retire(_sampler, GetType().Name);
             _sampler = default;
         }
     }
@@ -227,7 +227,7 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
         // Determine whether anisotropic filtering is available.
         var anisotropyEnable = Vk.False;
         float maxAnisotropy = 1f;
-        if (Renderer.SamplerAnisotropyEnabled)
+        if (BackendContext.Supports(EVulkanDeviceCapability.Anisotropy))
         {
             float requestedAnisotropy = Data is XRTexture2D texture2D ? texture2D.MaxAnisotropy : 1.0f;
             Api!.GetPhysicalDeviceProperties(PhysicalDevice, out PhysicalDeviceProperties props);
@@ -261,7 +261,7 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
         if (Api!.CreateSampler(Device, ref samplerInfo, null, out _sampler) != Result.Success)
             throw new Exception("Failed to create sampler.");
 
-        Renderer.RegisterLiveSampler(_sampler, in samplerInfo);
+        BackendContext.RegisterSampler(_sampler, in samplerInfo, nameof(VkImageBackedTexture<TTexture>));
     }
 
     private (float minLod, float maxLod) ResolveSamplerLodRange()

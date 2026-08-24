@@ -1,7 +1,8 @@
 # Next-Frame Preparation And Collect-Visible Handoff
 
-Last Updated: 2026-08-01
-Status: Package Foundation Complete; Binding/Data Handoff Reopened
+Last Updated: 2026-08-17
+Status: Package Foundation Complete; Render-Thread Prepared-Cohort Bridge
+Validated; Persistent Template/Data Handoff Still Open
 Owner: Rendering / Frame Scheduling / Vulkan
 
 ## Result
@@ -15,6 +16,52 @@ package's pass metadata as its resource-planning input.
 
 The missing producer-side binding/data handoff and its validation are retained
 in the [combined workstreams 03-05 gate](../../testing/rendering/03-05-optimization-validation-todo.md#workstream-04-completion-and-validation).
+
+## 2026-08-17 render-thread prepared-cohort bridge
+
+Vulkan now consumes an exact stable mesh cohort without rebuilding the
+authoring-operation layer on every hit:
+
+- `BackendReadyFramePackage` remains renderer-neutral and continues to own the
+  pure producer-side visibility, order, selection, and revision data.
+- The render thread always drains the current raw request cohort, so transforms,
+  previous transforms, view/shadow relevance, instance counts, billboarding,
+  and auto-uniform publication remain current.
+- A bounded render-thread cache retains only exact, fully materialized Vulkan
+  recipes whose program, material, pass, context, viewport/scissor, fixed state,
+  and owner generations remain valid. Unsafe entries are retained only as
+  structural holes and are materialized normally on a hit.
+- A current-frame `VulkanPreparedMeshIngress` transaction appends successful
+  hits directly to the numeric `FrameOperationStream`; it bypasses
+  `MeshDrawOp` rental, queueing/draining, and object-to-stream conversion.
+- Swapchain context coalescing runs before ingress finalization. Final pass
+  normalization and descriptor/attachment resource-use lowering therefore use
+  the context that recording will actually consume; no lowered resource list is
+  replayed across frames.
+- Immutable program-binding artifacts are candidates only. Every hit reacquires
+  the same artifact from the exact captured program's bounded owner-generation
+  cache. A renderer's mutable active-program slot is deliberately not used as
+  the authority for multi-material/program meshes.
+- Direct ingress is desktop-primary only. Explicit/OpenXR production continues
+  through the existing materialize/enqueue path until it has its own partition,
+  target, and dynamic-overlay contract.
+
+The final dense Sponza Debug/MCP run reused 566 of 625 operations per stable hit
+and materialized 59 safety holes. A 48-hit observation produced 27,168 reuses,
+2,832 holes, zero rebuilds/full materializations, zero skipped draws, zero
+dropped frame operations, and zero reported Vulkan errors. Camera changes each
+produced one expected cold build and then returned to stable hits with correct
+camera-dependent output. This performance session did not enable the Khronos
+validation layer; validation-enabled acceptance remains open in the combined
+03-05 gate.
+
+This bridge closes backend object-lifecycle duplication for exact stable views,
+but it does not complete the producer-side handoff. Its whole-cohort key is
+intentionally conservative and invalidates on visible membership/order changes.
+The remaining target is a persistent per-mesh/submesh/material/pass draw
+template plus compact current-frame instance records and stable numeric bins,
+so camera motion reuses unchanged templates instead of rebuilding the entire
+cohort.
 
 ## Render-Thread Work Classification
 

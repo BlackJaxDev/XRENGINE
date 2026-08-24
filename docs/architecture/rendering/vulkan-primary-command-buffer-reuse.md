@@ -1,6 +1,6 @@
 # Vulkan Primary Command-Buffer Reuse Contract
 
-Last Updated: 2026-07-28
+Last Updated: 2026-08-11
 
 This document is the correctness contract for reusing Vulkan primary and
 secondary command buffers. Reuse is enabled by default for desktop and OpenXR;
@@ -31,6 +31,45 @@ a record or rejects an ordered submission.
 
 Failed, rejected, abandoned, or device-lost frame attempts never publish their
 recorded overlays.
+
+## Current Frame-Data Authority
+
+A reusable command buffer owns frozen command structure. It does not own the
+camera, transform, material, light, or other mutable values for the next frame.
+Those values must be published through a current refresh cohort before reuse is
+accepted.
+
+The cohort is authoritative only when all of these identities match the reuse
+attempt:
+
+- frame-plan generation;
+- render-frame ID;
+- frame-data image index;
+- exact current static/dynamic operation signatures; and
+- the producer-to-recorded operation order captured by the last fresh primary.
+
+Thread-local recording scratch is temporary workspace, not retained frame-data
+authority. Reuse must rebuild the cohort from current operations and project it
+through the recorded order. A missing, stale, differently ordered, or
+differently slotted cohort rejects reuse and falls back to full plan sealing and
+recording.
+
+The acquired command-buffer image index and frame-data image index are separate
+identities even when a desktop path currently assigns them the same value.
+Command artifacts remain owned by the acquired image. Frame-data reservations,
+descriptor refresh writes, cohort stamps, and completion checks use the
+frame-data image index.
+
+Completion domains are likewise explicit:
+
+- frame-in-flight resources use the frame-slot timeline;
+- desktop descriptor/frame-data image slots use the desktop swapchain-image
+  timeline;
+- OpenXR image/frame-data slots use their external-runtime completion authority.
+
+Swapchain recreation carries the strongest retired-image graphics-timeline
+requirement into the replacement image ledger so a mapped slot cannot be
+reopened before accepted work on its old image generation completes.
 
 ## Equality And Synchronization
 

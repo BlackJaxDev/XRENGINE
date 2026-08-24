@@ -27,6 +27,7 @@ public partial class UnitTestingWorldSettings
 
     public bool VisualizeOctree = false;
     public bool VisualizeQuadtree = false;
+    public bool MeshletDebugDisplay = false;
 
     public UnitTestEditorType EditorType { get; set; } = UnitTestEditorType.IMGUI;
     public CameraUIDrawMode CameraUIDrawSpaceOnInit { get; set; } = CameraUIDrawMode.Screen;
@@ -130,7 +131,9 @@ public partial class UnitTestingWorldSettings
     /// <summary>
     /// Startup model imports processed when the Unit Testing World boots. Each array item
     /// is a ModelImportSettings object with Enabled, Kind, MaterialMode, ImporterBackend,
-    /// Path, ImportFlags, Scale, ZUp, PostImportFlags, and optional YawPitchRoll/Translation objects.
+    /// Path, optional UnityProjectRoot, ImportFlags, Scale, ZUp, PostImportFlags, and optional
+    /// YawPitchRoll/Translation objects. Unity prefab entries use the Unity converter; recognized
+    /// Poiyomi materials are converted to the forward-plus Uber shader.
     /// Paths are relative to the process working directory unless absolute.
     /// </summary>
     public List<ModelImportSettings> ModelsToImport { get; set; } = [];
@@ -233,6 +236,12 @@ public partial class UnitTestingWorldSettings
     /// the existing forward unlit unit-box behavior.
     /// </summary>
     public bool UnitBoxDeferredMaterial { get; set; } = false;
+
+    /// <summary>
+    /// Disables face culling on unit boxes. Set false when a fixture needs a
+    /// canonical back-culled missing-meshlet-payload draw.
+    /// </summary>
+    public bool UnitBoxDoubleSided { get; set; } = true;
 
     public VolumetricFogVolumeInitSettings VolumetricFog { get; set; } = new();
 

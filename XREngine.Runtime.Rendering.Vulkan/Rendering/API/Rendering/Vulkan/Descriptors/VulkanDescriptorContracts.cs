@@ -81,19 +81,19 @@ internal static class VulkanDescriptorContracts
         foreach (DescriptorBindingInfo binding in reflectedBindings)
         {
             // Check if the descriptor set index is within the supported range.
-            if (binding.Set >= VulkanRenderer.DescriptorSetTierCount)
+            if (binding.Set >= VulkanDescriptorManager.SetTierCount)
             {
-                error = $"Descriptor binding '{binding.Name}' uses unsupported set={binding.Set}. Expected 0..{VulkanRenderer.DescriptorSetTierCount - 1}.";
+                error = $"Descriptor binding '{binding.Name}' uses unsupported set={binding.Set}. Expected 0..{VulkanDescriptorManager.SetTierCount - 1}.";
                 return false;
             }
 
             // Determine the set of allowed descriptor types for the current descriptor set.
             HashSet<DescriptorType> allowed = binding.Set switch
             {
-                VulkanRenderer.DescriptorSetGlobals => GlobalsAllowedTypes,
-                VulkanRenderer.DescriptorSetCompute => ComputeAllowedTypes,
-                VulkanRenderer.DescriptorSetMaterial => MaterialAllowedTypes,
-                VulkanRenderer.DescriptorSetPerPass => PerPassAllowedTypes,
+                VulkanDescriptorManager.GlobalsSetIndex => GlobalsAllowedTypes,
+                VulkanDescriptorManager.ComputeSetIndex => ComputeAllowedTypes,
+                VulkanDescriptorManager.MaterialSetIndex => MaterialAllowedTypes,
+                VulkanDescriptorManager.PerPassSetIndex => PerPassAllowedTypes,
                 _ => GlobalsAllowedTypes,
             };
 
@@ -113,13 +113,13 @@ internal static class VulkanDescriptorContracts
         }
 
         // Ensure that if the material descriptor set is present, it contains at least one image resource.
-        bool hasMaterialTier = reflectedBindings.Any(x => x.Set == VulkanRenderer.DescriptorSetMaterial);
+        bool hasMaterialTier = reflectedBindings.Any(x => x.Set == VulkanDescriptorManager.MaterialSetIndex);
         if (!hasMaterialTier)
             return true;
 
         // Check if the material descriptor set contains at least one image resource.
         bool hasMaterialResource = reflectedBindings.Any(x =>
-            x.Set == VulkanRenderer.DescriptorSetMaterial &&
+            x.Set == VulkanDescriptorManager.MaterialSetIndex &&
             (x.DescriptorType == DescriptorType.CombinedImageSampler ||
              x.DescriptorType == DescriptorType.SampledImage ||
              x.DescriptorType == DescriptorType.StorageImage));

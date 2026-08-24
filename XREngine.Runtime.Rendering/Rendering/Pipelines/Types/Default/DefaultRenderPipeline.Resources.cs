@@ -486,7 +486,7 @@ public partial class DefaultRenderPipeline
             .Color(3, TransformIdTextureName)
             .DepthStencil(DepthStencilTextureName)
             .Factory(CreateAmbientOcclusionGenFbo)
-            .When(UsesAmbientOcclusionResources)
+            .When(UsesAmbientOcclusionResolveResources)
             .Add();
 
         // ── AmbientOcclusionBlurFBO ── (non-GTAO modes: raw AO or intensity texture)
@@ -510,7 +510,7 @@ public partial class DefaultRenderPipeline
             .DependsOn(DepthViewTextureName, NormalTextureName)
             .Color(0, AmbientOcclusionIntensityTextureName)
             .Factory(CreateAmbientOcclusionBlurFbo)
-            .When(p => UsesAmbientOcclusionResources(p)
+            .When(p => UsesAmbientOcclusionResolveResources(p)
                     && DecodeAoModeFromProfile(p) is 0 or 7 or 9) // disabled, SpatialHash, VoxelAO
             .Add();
 
@@ -985,7 +985,10 @@ public partial class DefaultRenderPipeline
             .When(UsesBloomResources)
             .Add();
 
-        Texture(builder, BloomBlurTextureName, RenderResourceSizePolicy.Absolute(1u, 1u), RenderPipelineResourceUsage.SampledTexture,
+        // Startup initialization clears fallback destinations through their
+        // normal effect FBOs, so these physical images must remain legal color
+        // attachments even when the effects themselves are disabled.
+        Texture(builder, BloomBlurTextureName, RenderResourceSizePolicy.Absolute(1u, 1u), BloomColorTexture,
             ResolvePostProcessIntermediateInternalFormat(), EPixelFormat.Rgba, ResolvePostProcessIntermediatePixelType(), ResolvePostProcessIntermediateSizedInternalFormat(),
             CreateBloomBlurFallbackTexture)
             .Layers(layerCount)
@@ -995,7 +998,7 @@ public partial class DefaultRenderPipeline
 
         DeclareBloomFrameBuffers(builder, internalSize);
 
-        Texture(builder, AtmosphereColorTextureName, RenderResourceSizePolicy.Absolute(1u, 1u), RenderPipelineResourceUsage.SampledTexture,
+        Texture(builder, AtmosphereColorTextureName, RenderResourceSizePolicy.Absolute(1u, 1u), SampledColorAttachment,
             EPixelInternalFormat.Rgba16f, EPixelFormat.Rgba, EPixelType.HalfFloat, ESizedInternalFormat.Rgba16f,
             CreateAtmosphereColorFallbackTexture)
             .Layers(layerCount)
@@ -1003,7 +1006,7 @@ public partial class DefaultRenderPipeline
             .When(UsesAtmosphereFallbackResource)
             .Add();
 
-        Texture(builder, VolumetricFogColorTextureName, RenderResourceSizePolicy.Absolute(1u, 1u), RenderPipelineResourceUsage.SampledTexture,
+        Texture(builder, VolumetricFogColorTextureName, RenderResourceSizePolicy.Absolute(1u, 1u), SampledColorAttachment,
             EPixelInternalFormat.Rgba16f, EPixelFormat.Rgba, EPixelType.HalfFloat, ESizedInternalFormat.Rgba16f,
             CreateVolumetricFogColorFallbackTexture)
             .Layers(layerCount)
@@ -2376,6 +2379,15 @@ public partial class DefaultRenderPipeline
 
     private static bool UsesAmbientOcclusionResources(RenderPipelineResourceProfile profile)
         => (profile.FeatureMask & (ulong)DefaultPipelineResourceFeature.AmbientOcclusionResourcesEnabled) != 0;
+
+    /// <summary>
+    /// The OpenXR Vulkan startup-safe path still runs the disabled-AO resolve so
+    /// the G-buffer AO attachment is initialized deterministically. It therefore
+    /// needs the resolve framebuffers without allocating every AO implementation's
+    /// scratch textures.
+    /// </summary>
+    private static bool UsesAmbientOcclusionResolveResources(RenderPipelineResourceProfile profile)
+        => UsesAmbientOcclusionResources(profile) || UsesOpenXrVulkanDesktopSafePath(profile);
 
     private static bool UsesBloomResources(RenderPipelineResourceProfile profile)
         => (profile.FeatureMask & (ulong)DefaultPipelineResourceFeature.BloomResourcesEnabled) != 0;

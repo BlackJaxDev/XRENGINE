@@ -42,6 +42,7 @@ public unsafe partial class OpenXRAPI
         internal bool PendingFrameUsesTrueSinglePassStereo
             => Volatile.Read(ref owner._pendingXrFrameUsesTrueSinglePassStereo) != 0;
         internal ulong LastRenderedFrameId => owner._openXrLastRenderedFrameId;
+        internal double CurrentRenderDeadlineMs => owner.CurrentRenderDeadlineMs;
         internal OpenXrStrictSpsFailureStage StrictSpsInjectedFailureStage
             => owner._strictSpsInjectedFailureStage;
 

@@ -218,7 +218,7 @@ namespace XREngine.Rendering.Commands
         private bool RebuildInternalBvh()
         {
             uint commandCount = _totalCommandCount;
-            if (commandCount == 0 || _allLoadedCommandsBuffer is null)
+            if (commandCount == 0 || _allLoadedDrawMetadataBuffer is null || _allLoadedBoundsBuffer is null)
             {
                 _bvhReady = false;
                 _bvhNodeCount = 0;
@@ -283,7 +283,7 @@ namespace XREngine.Rendering.Commands
 
         private bool RefitInternalBvh(uint commandCount)
         {
-            if (_gpuBvhTree is null || _allLoadedCommandsBuffer is null || _commandAabbBuffer is null)
+            if (_gpuBvhTree is null || _allLoadedDrawMetadataBuffer is null || _allLoadedBoundsBuffer is null || _commandAabbBuffer is null)
             {
                 _bvhReady = false;
                 return false;
@@ -335,7 +335,7 @@ namespace XREngine.Rendering.Commands
                 MarkBvhDirty(GpuBvhRebuildReason.TopologyChanged);
 
             // If there are no commands or the command buffer is null, reset the BVH state and return early.
-            if (commandCount == 0 || _allLoadedCommandsBuffer is null)
+            if (commandCount == 0 || _allLoadedDrawMetadataBuffer is null || _allLoadedBoundsBuffer is null)
             {
                 _bvhReady = false;
                 _bvhNodeCount = 0;

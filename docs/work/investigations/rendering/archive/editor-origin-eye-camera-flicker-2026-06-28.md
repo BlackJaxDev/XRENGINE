@@ -1,5 +1,10 @@
 # Editor Origin / Eye Camera Flicker Investigation
 
+> Archived multi-incident record. Current desktop cadence guidance is in
+> [Vulkan Desktop Camera Motion, Stale Frames, And CPU Scaling](../vulkan-camera-motion-black-flicker-2026-08-10.md);
+> directional-shadow work is in
+> [Directional Light Vulkan Stability](../directional-light-inspector-shadow-2026-08-03.md).
+
 Status: active
 
 Run root: `Build/_AgentValidation/20260628-150741-editor-origin-flicker`

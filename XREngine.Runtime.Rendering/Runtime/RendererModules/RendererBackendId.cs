@@ -17,6 +17,12 @@ public readonly struct RendererBackendId : IEquatable<RendererBackendId>
     /// </summary>
     public static RendererBackendId Vulkan { get; } = new("vulkan");
 
+    /// <summary>The browser WebGL2 backend identifier.</summary>
+    public static RendererBackendId WebGL2 { get; } = new("webgl2");
+
+    /// <summary>The browser WebGPU backend identifier.</summary>
+    public static RendererBackendId WebGPU { get; } = new("webgpu");
+
     /// <summary>
     /// Creates a normalized renderer backend identifier.
     /// </summary>
@@ -42,6 +48,8 @@ public readonly struct RendererBackendId : IEquatable<RendererBackendId>
         {
             RuntimeGraphicsApiKind.OpenGL => OpenGL,
             RuntimeGraphicsApiKind.Vulkan => Vulkan,
+            RuntimeGraphicsApiKind.WebGL2 => WebGL2,
+            RuntimeGraphicsApiKind.WebGPU => WebGPU,
             _ => throw new ArgumentOutOfRangeException(
                 nameof(apiKind),
                 apiKind,

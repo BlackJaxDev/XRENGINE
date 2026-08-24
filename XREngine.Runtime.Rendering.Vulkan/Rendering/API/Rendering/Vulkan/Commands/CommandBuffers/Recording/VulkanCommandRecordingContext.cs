@@ -12,33 +12,53 @@ internal ref struct VulkanCommandRecordingContext(
     uint imageIndex,
     CommandBuffer commandBuffer,
     CommandBuffer dynamicUiSecondaryCommandBuffer,
-    FrameOp[] operations,
+    FrameOperationSequence operations,
     int dynamicUiOperationCount,
     CommandChainSchedule? commandChainSchedule,
     bool preserveSwapchainForOverlay,
     bool transitionSwapchainToPresent,
     VulkanPrimaryCommandPlan primaryCommandPlan,
     uint? frameDataImageIndexOverride,
-    VulkanRenderer.OpenXrEyeRenderTargetContext? openXrTargetContext,
+    OpenXrEyeRenderTargetContext? openXrTargetContext,
     bool excludeDesktopSwapchainBarriers,
-    VulkanRenderGraphPlan renderGraphPlan)
+    VulkanRenderGraphPlan renderGraphPlan,
+    FramePlan? framePlan,
+    ulong recordingStaticOperationSignature,
+    SwapchainRecordingTarget recordingTarget = default,
+    VulkanPresentationSourceTuple presentationSource = default,
+    VulkanCommandRecordingPolicySnapshot policy = default,
+    VulkanPreparedResourcePlanStamp resourcePlanStamp = default,
+    VulkanCommandClearStateSnapshot clearState = default)
 {
     public readonly uint ImageIndex = imageIndex;
     public readonly CommandBuffer CommandBuffer = commandBuffer;
     public readonly CommandBuffer DynamicUiSecondaryCommandBuffer = dynamicUiSecondaryCommandBuffer;
-    public readonly FrameOp[] Operations = operations;
+    public readonly FrameOperationSequence Operations = operations;
     public readonly int DynamicUiOperationCount = dynamicUiOperationCount;
     public readonly CommandChainSchedule? CommandChainSchedule = commandChainSchedule;
     public readonly bool PreserveSwapchainForOverlay = preserveSwapchainForOverlay;
     public readonly bool TransitionSwapchainToPresent = transitionSwapchainToPresent;
     public readonly VulkanPrimaryCommandPlan PrimaryCommandPlan = primaryCommandPlan;
     public readonly uint? FrameDataImageIndexOverride = frameDataImageIndexOverride;
-    public readonly VulkanRenderer.OpenXrEyeRenderTargetContext? OpenXrTargetContext = openXrTargetContext;
+    public readonly OpenXrEyeRenderTargetContext? OpenXrTargetContext = openXrTargetContext;
     public readonly bool ExcludeDesktopSwapchainBarriers = excludeDesktopSwapchainBarriers;
     public readonly VulkanRenderGraphPlan RenderGraphPlan = renderGraphPlan;
+    public readonly FramePlan? FramePlan = framePlan;
+    public readonly ulong RecordingStaticOperationSignature =
+        recordingStaticOperationSignature;
+    public readonly SwapchainRecordingTarget RecordingTarget = recordingTarget;
+    public readonly VulkanPresentationSourceTuple PresentationSource = presentationSource;
+    public readonly VulkanCommandRecordingPolicySnapshot Policy = policy;
+    public readonly VulkanPreparedResourcePlanStamp ResourcePlanStamp = resourcePlanStamp;
+    public readonly VulkanCommandClearStateSnapshot ClearState = clearState;
 
     public int RecordedSwapchainWriteCount = 0;
     public ImageLayout RecordedSwapchainFinalLayout = ImageLayout.Undefined;
     public string RecordingDeferredReason = string.Empty;
-    public bool QueryFrameOpsRequireRerecord = false;
+    public EVulkanCommandRecordingFailureKind FailureKind = EVulkanCommandRecordingFailureKind.None;
+    /// <summary>
+    /// True when this recording intentionally omitted transient work and therefore
+    /// must not be published as a reusable primary artifact.
+    /// </summary>
+    public bool FrameOpsRequireRerecord = false;
 }

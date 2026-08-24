@@ -285,6 +285,17 @@ public sealed class RenderPassBuilder
     }
 
     /// <summary>
+    /// Excludes this pass from reusable secondary-command ranges for the given
+    /// semantic reason. Multiple calls accumulate flags.
+    /// </summary>
+    public RenderPassBuilder KeepSecondaryDynamic(
+        ERenderPassSecondaryCachePolicy policy)
+    {
+        _metadata.UpdateSecondaryCachePolicy(policy);
+        return this;
+    }
+
+    /// <summary>
     /// Configures the render pass to use a transfer source and destination, which provides read and write access to the resource for transfer operations.
     /// </summary>
     /// <param name="resourceName">The name of the resource.</param>

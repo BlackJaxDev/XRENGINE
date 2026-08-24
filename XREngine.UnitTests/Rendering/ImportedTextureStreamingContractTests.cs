@@ -383,6 +383,7 @@ public sealed class ImportedTextureStreamingContractTests
         VulkanImportedTextureUploadStagingResource invalidCopy = new(
             default,
             default,
+            default,
             new BufferImageCopy
             {
                 ImageSubresource = new ImageSubresourceLayers
@@ -411,6 +412,7 @@ public sealed class ImportedTextureStreamingContractTests
         BufferImageCopy validCopyRegion = invalidCopy.CopyRegion;
         validCopyRegion.ImageExtent = new Extent3D(64u, 64u, 1u);
         VulkanImportedTextureUploadStagingResource validBaseCopy = new(
+            default,
             default,
             default,
             validCopyRegion,
@@ -455,7 +457,7 @@ public sealed class ImportedTextureStreamingContractTests
     {
         string commandBufferSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs")
             + ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/FrameOpDiagnostics.cs");
-        string commandChainSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandChainLowering.cs");
+        string commandChainSource = SourceContractWorkspace.ReadVulkanSourcesContaining("case TextureUploadFrameOp upload:");
 
         commandBufferSource.ShouldContain("private static bool HasTextureUploadFrameOps(FrameOp[] ops)");
         commandBufferSource.ShouldContain("usingCommandChains && variant.FrameOpsSignature != frameOpsSignature");

@@ -1,28 +1,32 @@
 using System.Text;
 using Silk.NET.Vulkan;
 
-namespace XREngine.Rendering.Vulkan
+namespace XREngine.Rendering.Vulkan;
+
+internal sealed partial class CommandBufferRecordingScratch
 {
-    public unsafe partial class VulkanRenderer
-    {
-        internal sealed partial class CommandBufferRecordingScratch
-        {
+            internal const int MaxAdmittedPipelinePreparationSignatures = 16384;
+            internal const int MaxAdmittedFrameDataPreparationSignatures =
+                16384;
             public VulkanRenderScopeController RenderScope { get; } = new();
             public Dictionary<int, VulkanSecondaryRecordingBucket> SecondaryBucketByStart { get; } = new();
             public List<VulkanSecondaryRecordingBucket> SecondaryRecordingBuckets { get; } = new(32);
             public Dictionary<int, int> SwapchainWritesByPipeline { get; } = new();
             public Dictionary<int, string> SwapchainWriterLabelByPipeline { get; } = new();
             public Dictionary<int, string> SwapchainWriterDetailByPipeline { get; } = new();
-            public Dictionary<int, FrameOp> SwapchainWriterOpByPipeline { get; } = new();
             public Dictionary<int, int> SwapchainWriterDynamicUiDrawCountByPipeline { get; } = new();
             public HashSet<nint> ExecutedCommandChainSecondaryHandles { get; } = new();
             public VulkanPrimarySecondaryArtifactSequence ExecutedCommandChainSecondaryArtifactSequence { get; } = new();
-            public HashSet<FrameOp> PipelineDeferredOps { get; } =
-                new(ReferenceEqualityComparer.Instance);
+            public HashSet<int> PipelineDeferredOperationIndices { get; } = [];
             public HashSet<int> PipelineDeferredRequirementIndices { get; } = [];
+            public HashSet<int> PipelineOptionalDeferredRequirementIndices { get; } = [];
+            public HashSet<ulong> AdmittedPipelinePreparationSignatures { get; } =
+                new(MaxAdmittedPipelinePreparationSignatures);
+            public HashSet<ulong> AdmittedFrameDataPreparationSignatures { get; } =
+                new(MaxAdmittedFrameDataPreparationSignatures);
             public ulong PipelineDeferredManifestIdentity { get; set; }
-            public ulong PipelineDeferredActivityGeneration { get; set; }
-            public ulong PipelineDeferredSharedPipelineGeneration { get; set; }
+            public int PipelinePrewarmRequirementCursor { get; set; }
+            public bool PipelinePrewarmInitialScanComplete { get; set; }
             public HashSet<VkRenderQuery> PreparedInlineQueries { get; } = new(ReferenceEqualityComparer.Instance);
             public HashSet<VkRenderQuery> BegunInlineQueries { get; } = new(ReferenceEqualityComparer.Instance);
             public HashSet<object> VisitedResourceRegistries { get; } = new(ReferenceEqualityComparer.Instance);
@@ -64,6 +68,7 @@ namespace XREngine.Rendering.Vulkan
             public Dictionary<XRFrameBuffer, FboAttachmentLayoutScratch> FboAttachmentLayouts { get; } =
                 new(ReferenceEqualityComparer.Instance);
             public CommandChainKey[] ScheduledCommandChainKeysByOpIndex { get; set; } = [];
+            public CommandChain?[] ScheduledCommandChainsByOpIndex { get; set; } = [];
             public List<KeyValuePair<int, int>> SwapchainWriterCountSort { get; } = new();
             public Dictionary<VulkanTrackedImageSubresource, VulkanImageAccessState> SecondaryDescriptorImageRequirementMap { get; } =
                 new(64);
@@ -73,9 +78,28 @@ namespace XREngine.Rendering.Vulkan
             public int RecordPipelineNameCapacityHint { get; set; } = 1;
             public int RecordMeshDrawSlotCapacityHint { get; set; } = 1;
             public int RecordFboLayoutCapacityHint { get; set; } = 1;
+            public VulkanPreparedComputePayload? PreparedComputePayload { get; set; }
+            private CommandBuffer[] _indirectSecondaryBuffers = [];
+            private CommandChain[] _indirectSecondaryChains = [];
+            private int[] _indirectSecondaryUniformSlots = [];
+            private VkMeshRenderer.IndirectDrawRecordingState[] _indirectSecondaryRecordingStates = [];
+            private bool[] _indirectSecondaryRecordingStatePrepared = [];
+            private int[] _meshSecondaryUniformSlots = [];
+            private CommandBuffer[] _nonGraphicsSecondaryBuffers = [];
+            private CommandChain[] _nonGraphicsSecondaryChains = [];
+            public CommandBuffer[] IndirectSecondaryBuffers => _indirectSecondaryBuffers;
+            public CommandChain[] IndirectSecondaryChains => _indirectSecondaryChains;
+            public int[] IndirectSecondaryUniformSlots => _indirectSecondaryUniformSlots;
+            public VkMeshRenderer.IndirectDrawRecordingState[] IndirectSecondaryRecordingStates => _indirectSecondaryRecordingStates;
+            public bool[] IndirectSecondaryRecordingStatePrepared => _indirectSecondaryRecordingStatePrepared;
+            public int[] MeshSecondaryUniformSlots => _meshSecondaryUniformSlots;
+            public CommandBuffer[] NonGraphicsSecondaryBuffers => _nonGraphicsSecondaryBuffers;
+            public CommandChain[] NonGraphicsSecondaryChains => _nonGraphicsSecondaryChains;
             private int[] _primaryMeshDrawUniformSlotsByOpIndex = [];
             private bool[]
                 _primaryScheduledCommandChainFrameDataRefreshedByOpIndex = [];
+            private bool[]
+                _primaryCommandChainRecordingAdmittedByOpIndex = [];
             private VulkanReusableFrameDataRefreshRequest[]
                 _primaryReusableFrameDataRefreshRequests = [];
             private VulkanReusableFrameDataRefreshRequest[]
@@ -94,12 +118,43 @@ namespace XREngine.Rendering.Vulkan
             private int _dynamicUiReusableFrameDataOwnerWorkRequestCount;
             private int _scheduledCommandChainFrameDataRefreshRequestCount;
             private int _scheduledCommandChainFrameDataOwnerWorkRequestCount;
+            private ulong _reusableFrameDataCohortFramePlanGeneration;
+            private ulong _reusableFrameDataCohortRenderFrameId;
+            private uint _reusableFrameDataCohortImageIndex;
+            private bool _reusableFrameDataCohortPublished;
             private readonly HashSet<VulkanReusableFrameOwnerKey>
                 _primaryReusableFrameOwners = [];
             private readonly HashSet<VulkanReusableFrameOwnerKey>
                 _dynamicUiReusableFrameOwners = [];
             private readonly HashSet<VulkanReusableFrameOwnerKey>
                 _scheduledCommandChainFrameDataOwners = [];
+
+            public void EnsureIndirectSecondaryCapacity(int required)
+            {
+                EnsureCapacity(ref _indirectSecondaryBuffers, required);
+                EnsureCapacity(ref _indirectSecondaryChains, required);
+                EnsureCapacity(ref _indirectSecondaryUniformSlots, required);
+                EnsureCapacity(ref _indirectSecondaryRecordingStates, required);
+                EnsureCapacity(ref _indirectSecondaryRecordingStatePrepared, required);
+            }
+
+            public void EnsureMeshSecondaryCapacity(int required)
+                => EnsureCapacity(ref _meshSecondaryUniformSlots, required);
+
+            public void EnsureNonGraphicsSecondaryCapacity(int required)
+            {
+                EnsureCapacity(ref _nonGraphicsSecondaryBuffers, required);
+                EnsureCapacity(ref _nonGraphicsSecondaryChains, required);
+            }
+
+            private static void EnsureCapacity<T>(ref T[] buffer, int required)
+            {
+                if (required <= buffer.Length)
+                    return;
+
+                int capacity = Math.Max(required, Math.Max(buffer.Length * 2, 16));
+                Array.Resize(ref buffer, capacity);
+            }
 
             public VulkanReusableFrameDataRefreshBatchInfo
                 PrimaryReusableFrameDataRefreshBatchInfo { get; private set; }
@@ -152,6 +207,7 @@ namespace XREngine.Rendering.Vulkan
 
             public void BeginReusableFrameDataRefreshRequests()
             {
+                InvalidateReusableFrameDataRefreshCohort();
                 Array.Clear(
                     _primaryReusableFrameDataRefreshRequests,
                     0,
@@ -176,6 +232,45 @@ namespace XREngine.Rendering.Vulkan
                 _dynamicUiReusableFrameOwners.Clear();
                 PrimaryReusableFrameDataRefreshBatchInfo = default;
                 DynamicUiReusableFrameDataRefreshBatchInfo = default;
+            }
+
+            /// <summary>
+            /// Publishes the sealed frame-plan and image-slot identity that produced
+            /// the reusable refresh requests currently stored in this thread-local
+            /// scratch object.
+            /// </summary>
+            public void PublishReusableFrameDataRefreshCohort(
+                ulong framePlanGeneration,
+                ulong renderFrameId,
+                uint imageIndex)
+            {
+                _reusableFrameDataCohortFramePlanGeneration =
+                    framePlanGeneration;
+                _reusableFrameDataCohortRenderFrameId = renderFrameId;
+                _reusableFrameDataCohortImageIndex = imageIndex;
+                _reusableFrameDataCohortPublished = true;
+            }
+
+            /// <summary>
+            /// Verifies that primary reuse will consume requests built from the
+            /// current sealed frame plan for the acquired image slot.
+            /// </summary>
+            public bool IsReusableFrameDataRefreshCohortCurrent(
+                ulong framePlanGeneration,
+                ulong renderFrameId,
+                uint imageIndex)
+                => _reusableFrameDataCohortPublished &&
+                   _reusableFrameDataCohortFramePlanGeneration ==
+                       framePlanGeneration &&
+                   _reusableFrameDataCohortRenderFrameId == renderFrameId &&
+                   _reusableFrameDataCohortImageIndex == imageIndex;
+
+            private void InvalidateReusableFrameDataRefreshCohort()
+            {
+                _reusableFrameDataCohortFramePlanGeneration = 0;
+                _reusableFrameDataCohortRenderFrameId = 0;
+                _reusableFrameDataCohortImageIndex = 0;
+                _reusableFrameDataCohortPublished = false;
             }
 
             public void BeginScheduledCommandChainFrameDataRefreshRequests()
@@ -335,6 +430,31 @@ namespace XREngine.Rendering.Vulkan
                 return _primaryScheduledCommandChainFrameDataRefreshedByOpIndex;
             }
 
+            public bool[] PreparePrimaryCommandChainRecordingAdmissionFlags(
+                int opCount)
+            {
+                if (_primaryCommandChainRecordingAdmittedByOpIndex.Length <
+                    opCount)
+                {
+                    int capacity = Math.Max(
+                        opCount,
+                        Math.Max(
+                            4,
+                            _primaryCommandChainRecordingAdmittedByOpIndex
+                                .Length * 2));
+                    Array.Resize(
+                        ref _primaryCommandChainRecordingAdmittedByOpIndex,
+                        capacity);
+                }
+
+                Array.Fill(
+                    _primaryCommandChainRecordingAdmittedByOpIndex,
+                    true,
+                    0,
+                    opCount);
+                return _primaryCommandChainRecordingAdmittedByOpIndex;
+            }
+
             private static void EnsureReusableFrameDataRefreshRequestCapacity(
                 ref VulkanReusableFrameDataRefreshRequest[] requests,
                 int required)
@@ -348,7 +468,4 @@ namespace XREngine.Rendering.Vulkan
                 Array.Resize(ref requests, capacity);
             }
 
-        }
-
-    }
 }

@@ -2,8 +2,10 @@ using System.Reflection;
 using System.Runtime.CompilerServices;
 using NUnit.Framework;
 using Shouldly;
+using Silk.NET.Vulkan;
 using XREngine.Rendering;
 using XREngine.Rendering.Vulkan;
+using XREngine.Rendering.Vulkan.DeviceBootstrap;
 
 namespace XREngine.UnitTests.Rendering;
 
@@ -80,24 +82,68 @@ public sealed class VulkanBackendObjectRegistryTests
     [Test]
     public void BackendContexts_IsolateDeviceAndPhysicalDeviceIdentity()
     {
-        VulkanDeviceContext firstDevice = new();
-        VulkanDeviceContext secondDevice = new();
-        firstDevice.AttachPhysicalDevice(new Silk.NET.Vulkan.PhysicalDevice(11));
-        secondDevice.AttachPhysicalDevice(new Silk.NET.Vulkan.PhysicalDevice(22));
-        firstDevice.AttachDevice(new Silk.NET.Vulkan.Device(101), createdThroughOpenXr: false);
-        secondDevice.AttachDevice(new Silk.NET.Vulkan.Device(202), createdThroughOpenXr: true);
+        VulkanDeviceContext firstDevice = CreateDeviceContext(11, 101, createdThroughOpenXr: false);
+        VulkanDeviceContext secondDevice = CreateDeviceContext(22, 202, createdThroughOpenXr: true);
 
-        VulkanBackendObjectContext firstContext =
-            new(firstDevice, new VulkanBackendObjectRegistry(), new(), new(), new());
-        VulkanBackendObjectContext secondContext =
-            new(secondDevice, new VulkanBackendObjectRegistry(), new(), new(), new());
+        VulkanResourceRuntime firstResources = new(1);
+        VulkanResourceRuntime secondResources = new(1);
+        VulkanBackendObjectContext firstContext = new(null!, firstDevice, firstResources);
+        VulkanBackendObjectContext secondContext = new(null!, secondDevice, secondResources);
 
         firstContext.Device.Handle.ShouldBe((nint)101);
         secondContext.Device.Handle.ShouldBe((nint)202);
         firstContext.PhysicalDevice.Handle.ShouldBe((nint)11);
         secondContext.PhysicalDevice.Handle.ShouldBe((nint)22);
-        firstContext.Registry.ShouldNotBeSameAs(secondContext.Registry);
-        firstContext.BindingAllocator.ShouldNotBeSameAs(secondContext.BindingAllocator);
+        firstResources.BackendObjects.ShouldNotBeSameAs(secondResources.BackendObjects);
+        firstResources.BackendObjects.BindingAllocator.ShouldNotBeSameAs(
+            secondResources.BackendObjects.BindingAllocator);
+    }
+
+    private static VulkanDeviceContext CreateDeviceContext(
+        nint physicalDeviceHandle,
+        nint deviceHandle,
+        bool createdThroughOpenXr)
+    {
+        QueueFamilyProperties[] queues =
+        [
+            new QueueFamilyProperties
+            {
+                QueueFlags = QueueFlags.GraphicsBit |
+                    QueueFlags.ComputeBit |
+                    QueueFlags.TransferBit,
+                QueueCount = 1,
+            },
+        ];
+        VulkanPhysicalDeviceCapabilitySnapshot snapshot = new(
+            default,
+            default,
+            queues,
+            VulkanDeviceExtensionSet.Empty);
+        QueueFamilyIndices families = new()
+        {
+            GraphicsFamilyIndex = 0,
+            ComputeFamilyIndex = 0,
+            TransferFamilyIndex = 0,
+            GraphicsFamilySupportsCompute = true,
+            GraphicsFamilySupportsTransfer = true,
+        };
+        VulkanDeviceContext context = new();
+        context.AttachInstance(
+            null!,
+            new Instance((nint)0x301),
+            [],
+            Vk.Version13,
+            createdThroughOpenXr: false,
+            openXrBootstrapContext: null);
+        context.AttachPhysicalDevice(
+            new PhysicalDevice(physicalDeviceHandle),
+            snapshot,
+            families);
+        context.AttachDevice(
+            new Device(deviceHandle),
+            createdThroughOpenXr,
+            VulkanDeviceExtensionSet.Empty);
+        return context;
     }
 
     private static VkObject<XRShader> CreateUninitializedShaderWrapper()

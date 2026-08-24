@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Buffers;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
@@ -12,9 +12,21 @@ using XREngine.Data.Rendering;
 
 namespace XREngine.Rendering.Vulkan
 {
-    public unsafe partial class VulkanRenderer
+    internal sealed partial class VulkanCommandRuntime
     {
-        private void StoreFrameOpSignatureDebugParts(CommandBufferCacheVariant variant, FrameOp[] ops)
+        private void StoreFrameOpSignatureDebugParts(
+            PrimaryCommandArtifactOwner variant,
+            ReadOnlySpan<FrameOp> ops)
+        {
+            if (!FrameOpSignatureDiffDiagnosticsEnabled)
+                return;
+
+            variant.SignatureDebugParts = CaptureFrameOpSignatureDebugParts(ops);
+        }
+
+        private void StoreFrameOpSignatureDebugParts(
+            PrimaryCommandArtifactOwner variant,
+            FrameOperationSequence ops)
         {
             if (!FrameOpSignatureDiffDiagnosticsEnabled)
                 return;
@@ -24,9 +36,9 @@ namespace XREngine.Rendering.Vulkan
 
         private void LogFrameOpSignatureDiff(
             uint imageIndex,
-            CommandBufferCacheVariant variant,
+            PrimaryCommandArtifactOwner variant,
             ulong currentSignature,
-            FrameOp[] ops)
+            ReadOnlySpan<FrameOp> ops)
         {
             if (!FrameOpSignatureDiffDiagnosticsEnabled || variant.FrameOpsSignature == ulong.MaxValue)
                 return;
@@ -44,9 +56,30 @@ namespace XREngine.Rendering.Vulkan
                 $"[Vulkan] Frame-op signature mismatch image={imageIndex} previous=0x{variant.FrameOpsSignature:X16} current=0x{currentSignature:X16} ops={ops.Length}: {summary}");
         }
 
+        private void LogFrameOpSignatureDiff(
+            uint imageIndex,
+            PrimaryCommandArtifactOwner variant,
+            ulong currentSignature,
+            FrameOperationSequence ops)
+        {
+            if (!FrameOpSignatureDiffDiagnosticsEnabled || variant.FrameOpsSignature == ulong.MaxValue)
+                return;
+
+            int logIndex = Interlocked.Increment(ref _frameOpSignatureDiffLogCount);
+            if (logIndex > FrameOpSignatureDiffLogLimit)
+                return;
+
+            FrameOpSignatureDebugPart[] currentParts = CaptureFrameOpSignatureDebugParts(ops);
+            string summary = variant.SignatureDebugParts is null
+                ? "no previous component snapshot for this swapchain image"
+                : BuildFrameOpSignatureDiffSummary(variant.SignatureDebugParts, currentParts);
+            Debug.Vulkan(
+                $"[Vulkan] Frame-op signature mismatch image={imageIndex} previous=0x{variant.FrameOpsSignature:X16} current=0x{currentSignature:X16} ops={ops.Length}: {summary}");
+        }
+
         private void LogFrameOpSignatureVariantEvictionDiff(
             uint imageIndex,
-            CommandBufferCacheVariant evicted,
+            PrimaryCommandArtifactOwner evicted,
             ulong currentSignature,
             FrameOp[] ops)
         {
@@ -63,7 +96,7 @@ namespace XREngine.Rendering.Vulkan
                 : BuildFrameOpSignatureDiffSummary(evicted.SignatureDebugParts, currentParts);
 
             Debug.Vulkan(
-                $"[Vulkan] Frame-op variant cache eviction image={imageIndex} previous=0x{evicted.FrameOpsSignature:X16} current=0x{currentSignature:X16} ops={ops.Length} variants={PrimaryCommandBufferVariantCapacity}: {summary}");
+                $"[Vulkan] Frame-op primary artifact replacement image={imageIndex} previous=0x{evicted.FrameOpsSignature:X16} current=0x{currentSignature:X16} ops={ops.Length}: {summary}");
         }
 
         private static string BuildFrameOpSignatureDiffSummary(FrameOpSignatureDebugPart[] previous, FrameOpSignatureDebugPart[] current)
@@ -93,7 +126,8 @@ namespace XREngine.Rendering.Vulkan
         private static string DescribeFrameOpSignaturePart(in FrameOpSignatureDebugPart part)
             => $"op={part.OpIndex}:{part.OpType}.{part.Component} sig=0x{part.Signature:X16} {part.Detail}";
 
-        private static FrameOpSignatureDebugPart[] CaptureFrameOpSignatureDebugParts(FrameOp[] ops)
+        private static FrameOpSignatureDebugPart[] CaptureFrameOpSignatureDebugParts(
+            ReadOnlySpan<FrameOp> ops)
         {
             List<FrameOpSignatureDebugPart> parts = new(Math.Max(ops.Length * 5, 8));
             for (int i = 0; i < ops.Length; i++)
@@ -158,12 +192,40 @@ namespace XREngine.Rendering.Vulkan
             return [.. parts];
         }
 
+        private static FrameOpSignatureDebugPart[] CaptureFrameOpSignatureDebugParts(
+            FrameOperationSequence ops)
+        {
+            List<FrameOpSignatureDebugPart> parts = new(Math.Max(ops.Length * 5, 8));
+            for (int index = 0; index < ops.Length; index++)
+            {
+                ref readonly FrameOperationHeader header = ref ops.GetHeader(index);
+                ref readonly FrameOpContext context = ref ops.GetContext(index);
+                string opType = header.OpCode.ToString();
+                HashCode hash = new();
+                hash.Add(opType, StringComparer.Ordinal);
+                hash.Add(header.PassIndex);
+                hash.Add(header.TargetIdentity);
+                hash.Add(context.PipelineIdentity);
+                hash.Add(context.ViewportIdentity);
+                hash.Add(context.OutputTargetIdentity);
+                AddSignaturePart(
+                    parts,
+                    index,
+                    opType,
+                    "base",
+                    hash,
+                    $"pass={header.PassIndex} target='{ops.GetTarget(index)?.Name ?? context.OutputTargetName ?? "<swapchain>"}' targetId={header.TargetIdentity} pipe={context.PipelineIdentity} vp={context.ViewportIdentity} sched={context.SchedulingIdentity}");
+            }
+
+            return [.. parts];
+        }
+
         private static void AddFrameOpBaseSignaturePart(List<FrameOpSignatureDebugPart> parts, int opIndex, string opType, FrameOp op)
         {
             HashCode hash = new();
             hash.Add(op.GetType().Name, StringComparer.Ordinal);
             hash.Add(op.PassIndex);
-            hash.Add(ResolveCommandChainTargetIdentity(op));
+            hash.Add(ResolveFrameOpSignatureTargetIdentity(op));
             hash.Add(op.Context.PipelineIdentity);
             hash.Add(op.Context.ViewportIdentity);
             hash.Add(op.Context.OutputTargetIdentity);
@@ -173,8 +235,25 @@ namespace XREngine.Rendering.Vulkan
                 opType,
                 "base",
                 hash,
-                $"pass={op.PassIndex} target='{ResolveCommandChainTargetName(op)}' targetId={ResolveCommandChainTargetIdentity(op)} pipe={op.Context.PipelineIdentity} vp={op.Context.ViewportIdentity} sched={op.Context.SchedulingIdentity}");
+                $"pass={op.PassIndex} target='{ResolveFrameOpSignatureTargetName(op)}' targetId={ResolveFrameOpSignatureTargetIdentity(op)} pipe={op.Context.PipelineIdentity} vp={op.Context.ViewportIdentity} sched={op.Context.SchedulingIdentity}");
         }
+
+        private static int ResolveFrameOpSignatureTargetIdentity(FrameOp op)
+            => op switch
+            {
+                BlitOp blit => blit.OutFbo?.GetHashCode() ??
+                    op.Context.OutputTargetIdentity,
+                _ => op.Target?.GetHashCode() ?? op.Context.OutputTargetIdentity,
+            };
+
+        private static string ResolveFrameOpSignatureTargetName(FrameOp op)
+            => op switch
+            {
+                BlitOp blit => blit.OutFbo?.Name ??
+                    op.Context.OutputTargetName ?? "<swapchain>",
+                _ => op.Target?.Name ??
+                    op.Context.OutputTargetName ?? "<swapchain>",
+            };
 
         private static void AddClearSignaturePart(List<FrameOpSignatureDebugPart> parts, int opIndex, string opType, ClearOp clear)
         {
@@ -423,9 +502,12 @@ namespace XREngine.Rendering.Vulkan
         {
             HashCode hash = new();
             hash.Add(dlssFrameGeneration.Session.GetHashCode());
-            hash.Add(dlssFrameGeneration.Depth.Image.Handle);
-            hash.Add(dlssFrameGeneration.Motion.Image.Handle);
-            hash.Add(dlssFrameGeneration.HudlessColor.Image.Handle);
+            AddStreamlineImageSignature(ref hash, dlssFrameGeneration.Depth);
+            AddStreamlineImageSignature(ref hash, dlssFrameGeneration.Motion);
+            AddStreamlineImageSignature(ref hash, dlssFrameGeneration.HudlessColor);
+            AddStreamlineImageSignature(
+                ref hash,
+                dlssFrameGeneration.UiColorAndAlpha);
             hash.Add(dlssFrameGeneration.Parameters.InputWidth);
             hash.Add(dlssFrameGeneration.Parameters.InputHeight);
             hash.Add(dlssFrameGeneration.Parameters.OutputWidth);
@@ -433,7 +515,28 @@ namespace XREngine.Rendering.Vulkan
             hash.Add(dlssFrameGeneration.Parameters.FrameIndex);
             hash.Add(dlssFrameGeneration.Parameters.ResetHistory);
             hash.Add(dlssFrameGeneration.Parameters.OutputHdr);
-            AddSignaturePart(parts, opIndex, opType, "dlssFrameGen", hash, $"frame={dlssFrameGeneration.Parameters.FrameIndex} reset={dlssFrameGeneration.Parameters.ResetHistory}");
+            AddSignaturePart(
+                parts,
+                opIndex,
+                opType,
+                "dlssFrameGen",
+                hash,
+                $"frame={dlssFrameGeneration.Parameters.FrameIndex} reset={dlssFrameGeneration.Parameters.ResetHistory} ui=0x{dlssFrameGeneration.UiColorAndAlpha.Image.Handle:X}/0x{dlssFrameGeneration.UiColorAndAlpha.View.Handle:X} {dlssFrameGeneration.UiColorAndAlpha.Width}x{dlssFrameGeneration.UiColorAndAlpha.Height} {dlssFrameGeneration.UiColorAndAlpha.Format} {dlssFrameGeneration.UiColorAndAlpha.Layout}");
+        }
+
+        private static void AddStreamlineImageSignature(
+            ref HashCode hash,
+            in VulkanStreamlineImage image)
+        {
+            hash.Add(image.Image.Handle);
+            hash.Add(image.Memory.Handle);
+            hash.Add(image.View.Handle);
+            hash.Add((int)image.Layout);
+            hash.Add((int)image.Format);
+            hash.Add((ulong)image.Usage);
+            hash.Add((int)image.Aspect);
+            hash.Add(image.Width);
+            hash.Add(image.Height);
         }
 
         private static void AddTransformFeedbackSignaturePart(List<FrameOpSignatureDebugPart> parts, int opIndex, string opType, TransformFeedbackOp transformFeedback)
@@ -481,7 +584,9 @@ namespace XREngine.Rendering.Vulkan
             hash.Add(copy.DestinationBuffer.Handle);
             hash.Add(copy.DestinationOffset);
             hash.Add(copy.ByteCount);
-            AddSignaturePart(parts, opIndex, opType, "bufferCopy", hash, $"bytes={copy.ByteCount} src=0x{copy.SourceBuffer.Handle:X}+{copy.SourceOffset} dst=0x{copy.DestinationBuffer.Handle:X}+{copy.DestinationOffset}");
+            hash.Add(copy.RequireGpuWriteVisibility);
+            hash.Add(copy.DiagnosticReceipt?.Sequence ?? 0UL);
+            AddSignaturePart(parts, opIndex, opType, "bufferCopy", hash, $"bytes={copy.ByteCount} src=0x{copy.SourceBuffer.Handle:X}+{copy.SourceOffset} dst=0x{copy.DestinationBuffer.Handle:X}+{copy.DestinationOffset} publishGpuWrites={copy.RequireGpuWriteVisibility} diagnosticReceipt={copy.DiagnosticReceipt?.Sequence ?? 0UL}");
         }
 
         private static void AddSubmissionMarkerSignaturePart(List<FrameOpSignatureDebugPart> parts, int opIndex, string opType, SubmissionMarkerOp marker)
@@ -527,36 +632,36 @@ namespace XREngine.Rendering.Vulkan
                 opIndex,
                 opType,
                 $"{prefix}.uniforms",
-                HashUniformBindingLayout(snapshot.Uniforms),
-                $"count={snapshot.Uniforms.Count} valueHash=0x{unchecked((ulong)HashUniformBindings(snapshot.Uniforms)):X16} stableValueHash=0x{unchecked((ulong)HashUniformBindingsStable(snapshot.Uniforms)):X16} keys=[{SampleKeys(snapshot.Uniforms.Keys)}]");
+                VulkanFrameOpSnapshotSignatures.HashUniformBindingLayout(snapshot.Uniforms),
+                $"count={snapshot.Uniforms.Count} valueHash=0x{VulkanFrameOpSnapshotSignatures.HashUniformBindings(snapshot.Uniforms):X16} keys=[{SampleKeys(snapshot.Uniforms.Keys)}]");
             AddSignaturePart(
                 parts,
                 opIndex,
                 opType,
                 $"{prefix}.samplerUnits",
-                HashSamplerUnitBindingLayout(snapshot.Samplers, snapshot.SamplerNamesByUnit),
-                $"count={snapshot.Samplers.Count} descriptor=0x{HashSamplerUnitBindings(snapshot.Samplers, snapshot.SamplerNamesByUnit, pipeline):X16} stableDescriptor=0x{unchecked((ulong)HashSamplerUnitBindingsStable(snapshot.Samplers, snapshot.SamplerNamesByUnit, pipeline)):X16} keys=[{SampleKeys(snapshot.Samplers.Keys)}]");
+                VulkanFrameOpSnapshotSignatures.HashSamplerUnitBindingLayout(snapshot.Samplers, snapshot.SamplerNamesByUnit),
+                $"count={snapshot.Samplers.Count} descriptor=0x{VulkanFrameOpSnapshotSignatures.HashSamplerUnitBindings(snapshot.Samplers, snapshot.SamplerNamesByUnit, snapshot.DescriptorSignatures, includeMutableFrameSourceDescriptors: false):X16} keys=[{SampleKeys(snapshot.Samplers.Keys)}]");
             AddSignaturePart(
                 parts,
                 opIndex,
                 opType,
                 $"{prefix}.samplerNames",
-                HashSamplerNameBindingLayout(snapshot.SamplersByName),
-                $"count={snapshot.SamplersByName.Count} descriptor=0x{HashSamplerNameBindings(snapshot.SamplersByName, pipeline):X16} stableDescriptor=0x{unchecked((ulong)HashSamplerNameBindingsStable(snapshot.SamplersByName, pipeline)):X16} keys=[{SampleKeys(snapshot.SamplersByName.Keys)}]");
+                VulkanFrameOpSnapshotSignatures.HashSamplerNameBindingLayout(snapshot.SamplersByName),
+                $"count={snapshot.SamplersByName.Count} descriptor=0x{VulkanFrameOpSnapshotSignatures.HashSamplerNameBindings(snapshot.SamplersByName, snapshot.DescriptorSignatures, includeMutableFrameSourceDescriptors: false):X16} keys=[{SampleKeys(snapshot.SamplersByName.Keys)}]");
             AddSignaturePart(
                 parts,
                 opIndex,
                 opType,
                 $"{prefix}.images",
-                HashImageBindingLayout(snapshot.Images),
-                $"count={snapshot.Images.Count} descriptor=0x{unchecked((ulong)HashImageBindings(snapshot.Images)):X16} stableDescriptor=0x{unchecked((ulong)HashImageBindingsStable(snapshot.Images)):X16} keys=[{SampleKeys(snapshot.Images.Keys)}]");
+                VulkanFrameOpSnapshotSignatures.HashImageBindingLayout(snapshot.Images),
+                $"count={snapshot.Images.Count} descriptor=0x{VulkanFrameOpSnapshotSignatures.HashImageBindings(snapshot.Images, snapshot.DescriptorSignatures):X16} keys=[{SampleKeys(snapshot.Images.Keys)}]");
             AddSignaturePart(
                 parts,
                 opIndex,
                 opType,
                 $"{prefix}.buffers",
-                HashBufferBindingLayout(snapshot.Buffers),
-                $"count={snapshot.Buffers.Count} descriptor=0x{unchecked((ulong)HashBufferBindings(snapshot.Buffers)):X16} stableDescriptor=0x{unchecked((ulong)HashBufferBindingsStable(snapshot.Buffers)):X16} keys=[{SampleKeys(snapshot.Buffers.Keys)}]");
+                VulkanFrameOpSnapshotSignatures.HashBufferBindingLayout(snapshot.Buffers),
+                $"count={snapshot.Buffers.Count} descriptor=0x{VulkanFrameOpSnapshotSignatures.HashBufferBindings(snapshot.Buffers):X16} keys=[{SampleKeys(snapshot.Buffers.Keys)}]");
         }
 
         private static void AddSignaturePart(
@@ -585,104 +690,6 @@ namespace XREngine.Rendering.Vulkan
             ulong signature,
             string detail)
             => parts.Add(new FrameOpSignatureDebugPart(opIndex, opType, component, signature, detail));
-
-        private static int HashUniformBindingsStable(Dictionary<string, ProgramUniformValue> uniforms)
-        {
-            HashCode hash = new();
-            hash.Add(uniforms.Count);
-            foreach (var pair in uniforms.OrderBy(p => p.Key, StringComparer.Ordinal))
-            {
-                HashCode item = new();
-                item.Add(pair.Key, StringComparer.Ordinal);
-                item.Add((int)pair.Value.Type);
-                item.Add(pair.Value.IsArray);
-                HashUniformValue(ref item, pair.Value);
-                hash.Add(item.ToHashCode());
-            }
-
-            return hash.ToHashCode();
-        }
-
-        private static int HashSamplerUnitBindingsStable(
-            Dictionary<uint, XRTexture> samplers,
-            Dictionary<uint, string> samplerNamesByUnit,
-            XRRenderPipelineInstance? pipeline)
-        {
-            HashCode hash = new();
-            hash.Add(samplers.Count);
-            foreach (var pair in samplers.OrderBy(p => p.Key))
-            {
-                hash.Add(pair.Key);
-                bool mutableFrameSource = samplerNamesByUnit.TryGetValue(pair.Key, out string? samplerName) &&
-                    IsMutableFrameSourceSamplerNameForSignatureDebug(samplerName, pipeline);
-                hash.Add(mutableFrameSource
-                    ? FrameSourceMutableDescriptorSignature
-                    : ComputeTextureDescriptorSignature(pair.Value));
-            }
-
-            return hash.ToHashCode();
-        }
-
-        private static int HashSamplerNameBindingsStable(Dictionary<string, XRTexture> samplers, XRRenderPipelineInstance? pipeline)
-        {
-            HashCode hash = new();
-            hash.Add(samplers.Count);
-            foreach (var pair in samplers.OrderBy(p => p.Key, StringComparer.Ordinal))
-            {
-                hash.Add(pair.Key, StringComparer.Ordinal);
-                hash.Add(IsMutableFrameSourceSamplerNameForSignatureDebug(pair.Key, pipeline)
-                    ? FrameSourceMutableDescriptorSignature
-                    : ComputeTextureDescriptorSignature(pair.Value));
-            }
-
-            return hash.ToHashCode();
-        }
-
-        private static bool IsMutableFrameSourceSamplerNameForSignatureDebug(string? name, XRRenderPipelineInstance? pipeline)
-        {
-            if (IsFrameSourceSamplerName(name))
-                return true;
-
-            return !string.IsNullOrWhiteSpace(name) &&
-                pipeline is not null &&
-                pipeline.TryGetTexture(name, out XRTexture? texture) &&
-                texture is not null;
-        }
-
-        private static int HashImageBindingsStable(Dictionary<uint, ProgramImageBinding> images)
-        {
-            HashCode hash = new();
-            hash.Add(images.Count);
-            foreach (var pair in images.OrderBy(p => p.Key))
-            {
-                ProgramImageBinding binding = pair.Value;
-                hash.Add(pair.Key);
-                hash.Add(binding.Texture.GetHashCode());
-                hash.Add(ComputeTextureDescriptorSignature(binding.Texture));
-                hash.Add(binding.Level);
-                hash.Add(binding.Layered);
-                hash.Add(binding.Layer);
-                hash.Add((int)binding.Access);
-                hash.Add((int)binding.Format);
-            }
-
-            return hash.ToHashCode();
-        }
-
-        private static int HashBufferBindingsStable(Dictionary<uint, VulkanComputeBufferBinding> buffers)
-        {
-            HashCode hash = new();
-            hash.Add(buffers.Count);
-            foreach (var pair in buffers.OrderBy(p => p.Key))
-            {
-                hash.Add(pair.Key);
-                hash.Add(pair.Value.Data.GetHashCode());
-                hash.Add(pair.Value.Buffer.Handle);
-                hash.Add(pair.Value.Range);
-            }
-
-            return hash.ToHashCode();
-        }
 
         private static string SampleKeys(IEnumerable<string> keys)
             => string.Join(",", keys.OrderBy(k => k, StringComparer.Ordinal).Take(6));
