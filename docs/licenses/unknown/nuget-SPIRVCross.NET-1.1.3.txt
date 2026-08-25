@@ -1,6 +1,0 @@
-﻿License text could not be resolved locally for NuGet package 'SPIRVCross.NET' (1.1.3).
-
-Resolved license: MIT
-RepositoryUrl: https://github.com/FaberSanZ/SPIRV-Cross.NET.git
-ProjectUrl: https://github.com/FaberSanZ/SPIRV-Cross.NET
-

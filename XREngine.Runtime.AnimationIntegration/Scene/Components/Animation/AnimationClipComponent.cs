@@ -23,6 +23,16 @@ namespace XREngine.Components.Animation
         private readonly HashSet<Transform> _animatedQuaternionTargets = [];
         private Transform[] _animatedQuaternionTargetsSnapshot = [];
         private BasePropAnim[] _propertyAnimationsSnapshot = [];
+        private AnimationMember? _rootPositionXMember;
+        private AnimationMember? _rootPositionYMember;
+        private AnimationMember? _rootPositionZMember;
+        private AnimationMember? _rootRotationXMember;
+        private AnimationMember? _rootRotationYMember;
+        private AnimationMember? _rootRotationZMember;
+        private AnimationMember? _rootRotationWMember;
+        private HumanoidImportedBodySample _canonicalImportedBodySample = HumanoidImportedBodySample.Neutral;
+        private bool _hasCachedImportedBodyRootMembers;
+        private bool _loggedMissingHumanoidForRootMotion;
         private int _deferredStartVersion;
         private bool _deferredStartPending;
 
@@ -339,6 +349,40 @@ namespace XREngine.Components.Animation
             }
         }
 
+        /// <summary>
+        /// Captures the exact fixed-point playback clock used by diagnostic evaluation.
+        /// </summary>
+        internal long CaptureDiagnosticPlaybackTimeTicks()
+            => _playbackTimeTicks;
+
+        /// <summary>
+        /// Captures whether member bindings and their baseline values existed before diagnostic evaluation.
+        /// </summary>
+        internal bool CaptureDiagnosticInitializationState()
+            => _initialized;
+
+        /// <summary>
+        /// Restores the playback and property-animation clocks without evaluating or applying a pose.
+        /// </summary>
+        internal void RestoreDiagnosticPlaybackTimeTicks(long playbackTimeTicks)
+        {
+            if (Animation is null)
+                return;
+
+            long restoredTicks = NormalizePlaybackTime(playbackTimeTicks, Animation, wrapLooped: false);
+            SetAllPropertyAnimationTimes(Animation, restoredTicks, wrapLooped: false);
+            SetPlaybackTimeTicks(restoredTicks);
+        }
+
+        /// <summary>
+        /// Removes bindings created only for diagnostics so normal playback captures its own baseline.
+        /// </summary>
+        internal void RestoreDiagnosticInitializationState(bool wasInitialized)
+        {
+            if (!wasInitialized && _initialized)
+                Deinitialize();
+        }
+
         public void Play()
         {
             if (_isPlaying || _isPaused)
@@ -418,6 +462,9 @@ namespace XREngine.Components.Animation
                 if (member.MemberType == EAnimationMemberType.Method)
                     _baselineMethodArguments[member] = (object?[])member.MethodArguments.Clone();
             }
+
+            CacheImportedBodyRootMembers();
+            CacheCanonicalImportedBodySample();
             _initialized = true;
         }
 
@@ -453,7 +500,19 @@ namespace XREngine.Components.Animation
                 return;
 
             var humanoid = GetSiblingHumanoid();
-            humanoid?.ResetRootMotionBaseline();
+            if (humanoid is null)
+            {
+                if (!_loggedMissingHumanoidForRootMotion)
+                {
+                    _loggedMissingHumanoidForRootMotion = true;
+                    Debug.Animation("[RootMotion] Animation clip declares root motion but no sibling HumanoidComponent is available.");
+                }
+                return;
+            }
+
+            // This clip passes its evaluator-owned time-zero sample on every transaction begin.
+            // Do not reset shared humanoid body state here: a sibling state machine may be suspended
+            // for direct playback and must retain its own provisional reference for resume.
         }
 
         private HumanoidComponent? GetSiblingHumanoid()
@@ -461,13 +520,95 @@ namespace XREngine.Components.Animation
 
         private void Deinitialize()
         {
+            GetSiblingHumanoid()?.DiscardCanonicalImportedBodySample(this);
             _animatedMembers.Clear();
             _animatedMembersSnapshot = [];
             _baselineMethodArguments.Clear();
             _animatedQuaternionTargets.Clear();
             _animatedQuaternionTargetsSnapshot = [];
             _propertyAnimationsSnapshot = [];
+            ClearImportedBodyRootMemberCache();
+            _loggedMissingHumanoidForRootMotion = false;
             _initialized = false;
+        }
+
+        private void CacheImportedBodyRootMembers()
+        {
+            ClearImportedBodyRootMemberCache();
+            foreach (var member in _animatedMembersSnapshot)
+            {
+                if (!TryGetImportedBodyRootChannel(member, out var channel))
+                    continue;
+
+                switch (channel)
+                {
+                    case EHumanoidImportedBodySampleChannels.PositionX:
+                        _rootPositionXMember = member;
+                        break;
+                    case EHumanoidImportedBodySampleChannels.PositionY:
+                        _rootPositionYMember = member;
+                        break;
+                    case EHumanoidImportedBodySampleChannels.PositionZ:
+                        _rootPositionZMember = member;
+                        break;
+                    case EHumanoidImportedBodySampleChannels.RotationX:
+                        _rootRotationXMember = member;
+                        break;
+                    case EHumanoidImportedBodySampleChannels.RotationY:
+                        _rootRotationYMember = member;
+                        break;
+                    case EHumanoidImportedBodySampleChannels.RotationZ:
+                        _rootRotationZMember = member;
+                        break;
+                    case EHumanoidImportedBodySampleChannels.RotationW:
+                        _rootRotationWMember = member;
+                        break;
+                }
+            }
+
+            _hasCachedImportedBodyRootMembers = _rootPositionXMember is not null || _rootPositionYMember is not null ||
+                _rootPositionZMember is not null || _rootRotationXMember is not null || _rootRotationYMember is not null ||
+                _rootRotationZMember is not null || _rootRotationWMember is not null;
+        }
+
+        private void CacheCanonicalImportedBodySample()
+        {
+            _canonicalImportedBodySample = HumanoidImportedBodySample.Neutral;
+            if (!_hasCachedImportedBodyRootMembers)
+                return;
+
+            ReadCanonicalImportedBodyComponent(_rootPositionXMember, EHumanoidImportedBodySampleChannels.PositionX);
+            ReadCanonicalImportedBodyComponent(_rootPositionYMember, EHumanoidImportedBodySampleChannels.PositionY);
+            ReadCanonicalImportedBodyComponent(_rootPositionZMember, EHumanoidImportedBodySampleChannels.PositionZ);
+            ReadCanonicalImportedBodyComponent(_rootRotationXMember, EHumanoidImportedBodySampleChannels.RotationX);
+            ReadCanonicalImportedBodyComponent(_rootRotationYMember, EHumanoidImportedBodySampleChannels.RotationY);
+            ReadCanonicalImportedBodyComponent(_rootRotationZMember, EHumanoidImportedBodySampleChannels.RotationZ);
+            ReadCanonicalImportedBodyComponent(_rootRotationWMember, EHumanoidImportedBodySampleChannels.RotationW);
+
+        }
+
+        private void ReadCanonicalImportedBodyComponent(AnimationMember? member, EHumanoidImportedBodySampleChannels channel)
+        {
+            if (member?.Animation is not BasePropAnim animation || animation.GetValueGeneric(0.0f) is not float value)
+                return;
+
+            if ((channel & EHumanoidImportedBodySampleChannels.Position) != 0)
+                _canonicalImportedBodySample.SetPositionComponent(channel, value);
+            else
+                _canonicalImportedBodySample.SetRotationComponent(channel, value);
+        }
+
+        private void ClearImportedBodyRootMemberCache()
+        {
+            _rootPositionXMember = null;
+            _rootPositionYMember = null;
+            _rootPositionZMember = null;
+            _rootRotationXMember = null;
+            _rootRotationYMember = null;
+            _rootRotationZMember = null;
+            _rootRotationWMember = null;
+            _canonicalImportedBodySample = HumanoidImportedBodySample.Neutral;
+            _hasCachedImportedBodyRootMembers = false;
         }
 
         private static void InitializeMembers(
@@ -522,38 +663,88 @@ namespace XREngine.Components.Animation
             var snapshot = _animatedMembersSnapshot;
             float weight = Weight;
             bool fullWeight = weight >= 1.0f;
+            HumanoidComponent? humanoid = _hasCachedImportedBodyRootMembers ? GetSiblingHumanoid() : null;
+            bool ownsImportedBodySampleTransaction = humanoid?.BeginImportedBodySampleTransaction(
+                this,
+                _canonicalImportedBodySample,
+                _hasCachedImportedBodyRootMembers,
+                weight) == true;
 
-            foreach (var member in snapshot)
+            try
             {
-                if (member.Animation is null && member.MemberType != EAnimationMemberType.Method)
+                foreach (var member in snapshot)
                 {
-                    member.ApplyAnimationValue(member.DefaultValue);
-                    continue;
-                }
+                    if (TryApplyImportedBodyRootChannel(member))
+                        continue;
 
-                if (TryApplyTypedAnimatedValue(member, fullWeight, weight))
-                    continue;
+                    if (member.Animation is null && member.MemberType != EAnimationMemberType.Method)
+                    {
+                        member.ApplyAnimationValue(member.DefaultValue);
+                        continue;
+                    }
 
-                object? animatedValue = member.GetAnimationValue();
+                    if (TryApplyTypedAnimatedValue(member, fullWeight, weight))
+                        continue;
 
-                if (fullWeight)
-                {
-                    // Fast path: skip LerpValue entirely � lerp(x, y, 1.0) == y.
-                    // ApplyRuntimeClipRemaps only affects Method members, so skip for field/property.
-                    if (member.MemberType == EAnimationMemberType.Method)
-                        ApplyRuntimeClipRemaps(member, ref animatedValue);
-                    member.ApplyAnimationValue(animatedValue);
-                }
-                else
-                {
-                    object? defaultValue = member.DefaultValue;
-                    object? weightedValue = LerpValue(defaultValue, animatedValue, weight);
-                    ApplyRuntimeClipRemaps(member, ref weightedValue);
-                    member.ApplyAnimationValue(weightedValue);
+                    object? animatedValue = member.GetAnimationValue();
+
+                    if (fullWeight)
+                    {
+                        // Fast path: skip LerpValue entirely � lerp(x, y, 1.0) == y.
+                        // ApplyRuntimeClipRemaps only affects Method members, so skip for field/property.
+                        if (member.MemberType == EAnimationMemberType.Method)
+                            ApplyRuntimeClipRemaps(member, ref animatedValue);
+                        member.ApplyAnimationValue(animatedValue);
+                    }
+                    else
+                    {
+                        object? defaultValue = member.DefaultValue;
+                        object? weightedValue = LerpValue(defaultValue, animatedValue, weight);
+                        ApplyRuntimeClipRemaps(member, ref weightedValue);
+                        member.ApplyAnimationValue(weightedValue);
+                    }
                 }
             }
+            catch
+            {
+                if (ownsImportedBodySampleTransaction)
+                    humanoid!.CancelImportedBodySampleTransaction(this);
+                throw;
+            }
+
+            if (ownsImportedBodySampleTransaction)
+                humanoid!.CommitImportedBodySampleTransaction(this);
 
             NormalizeAnimatedQuaternionTargets();
+        }
+
+        private bool TryApplyImportedBodyRootChannel(AnimationMember member)
+        {
+            if (!TryGetImportedBodyRootChannel(member, out _))
+                return false;
+
+            // RootT/RootQ scalar tracks are imported already mapped into XREngine's basis.
+            // Stage their raw values and apply the clip weight once, atomically, at transaction commit.
+            if (!TryGetAnimatedFloat(member, out float value))
+                return false;
+
+            return member.TryApplyFloat(value);
+        }
+
+        private static bool TryGetImportedBodyRootChannel(AnimationMember member, out EHumanoidImportedBodySampleChannels channel)
+        {
+            channel = member.MemberName switch
+            {
+                "SetRootPositionX" => EHumanoidImportedBodySampleChannels.PositionX,
+                "SetRootPositionY" => EHumanoidImportedBodySampleChannels.PositionY,
+                "SetRootPositionZ" => EHumanoidImportedBodySampleChannels.PositionZ,
+                "SetRootRotationX" => EHumanoidImportedBodySampleChannels.RotationX,
+                "SetRootRotationY" => EHumanoidImportedBodySampleChannels.RotationY,
+                "SetRootRotationZ" => EHumanoidImportedBodySampleChannels.RotationZ,
+                "SetRootRotationW" => EHumanoidImportedBodySampleChannels.RotationW,
+                _ => EHumanoidImportedBodySampleChannels.None,
+            };
+            return channel != EHumanoidImportedBodySampleChannels.None;
         }
 
         private bool ShouldDriveSiblingHumanoidPose()

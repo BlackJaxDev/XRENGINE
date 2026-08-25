@@ -14,17 +14,6 @@ internal sealed class VulkanSamplerResourceService(
     VulkanLifetimeAuthority lifetime)
 {
     private int _frameSlot;
-    private VulkanCommandRuntime? _commandRuntime;
-
-    internal void ConfigureCommandRuntime(VulkanCommandRuntime commandRuntime)
-    {
-        ArgumentNullException.ThrowIfNull(commandRuntime);
-        if (_commandRuntime is not null && !ReferenceEquals(_commandRuntime, commandRuntime))
-            throw new InvalidOperationException(
-                "The Vulkan sampler resource service cannot be rebound to a different command runtime.");
-
-        _commandRuntime = commandRuntime;
-    }
 
     internal void PublishFrameSlot(int frameSlot)
     {
@@ -52,7 +41,6 @@ internal sealed class VulkanSamplerResourceService(
             return;
 
         VulkanResourceLifetimeKey key = new(ObjectType.Sampler, sampler.Handle);
-        CommandRuntime.PublishTrackingDependenciesBeforeResourceRetirement(key);
         VulkanRetirementTicket ticket = resources.CaptureRetirementTicket(key, owner);
         int frameSlot = Volatile.Read(ref _frameSlot);
         lock (lifetime.Retirement.SyncRoot)
@@ -86,8 +74,4 @@ internal sealed class VulkanSamplerResourceService(
 
     private void CompleteDestruction(Sampler sampler)
         => resources.CompleteResourceDestruction(ObjectType.Sampler, sampler.Handle);
-
-    private VulkanCommandRuntime CommandRuntime
-        => _commandRuntime ?? throw new InvalidOperationException(
-            "The Vulkan sampler resource service has not been configured with the command runtime.");
 }

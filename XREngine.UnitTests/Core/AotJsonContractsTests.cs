@@ -104,8 +104,8 @@ public sealed class AotJsonContractsTests
             ulButtonTouched = 11,
         };
 
-        string json = JsonSerializer.Serialize(input, XREngineRuntimeJsonContext.Default.RuntimeVrInputData);
-        RuntimeVrState.VRInputData? roundTrip = JsonSerializer.Deserialize(json, XREngineRuntimeJsonContext.Default.RuntimeVrInputData);
+        string json = JsonSerializer.Serialize(input, XREngineVrRuntimeJsonContext.Default.RuntimeVrInputData);
+        RuntimeVrState.VRInputData? roundTrip = JsonSerializer.Deserialize(json, XREngineVrRuntimeJsonContext.Default.RuntimeVrInputData);
 
         roundTrip.ShouldNotBeNull();
         roundTrip.Value.DeviceClass.ShouldBe(input.DeviceClass);

@@ -13,17 +13,7 @@ internal sealed partial class VulkanCommandRuntime
     private object _computeDescriptorCacheLock => CommandBuffers.BindStateGate;
 
     private Result ResetVulkanCommandBufferTracked(CommandBuffer commandBuffer)
-    {
-        if (!ResourceRuntime.CanResetCommandBuffer(commandBuffer))
-            throw new InvalidOperationException(
-                $"Command buffer 0x{unchecked((ulong)commandBuffer.Handle):X} is not resettable.");
-
-        Result result = Api.ResetCommandBuffer(commandBuffer, 0);
-        RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanResetCommandBufferCall();
-        if (result == Result.Success)
-            ResourceRuntime.CompleteCommandBufferReset(unchecked((ulong)commandBuffer.Handle));
-        return result;
-    }
+        => ResetCommandBufferWithLifetime(commandBuffer, "ResetVulkanCommandBufferTracked");
 
     private void FreeVulkanCommandBufferTracked(
         CommandPool commandPool,

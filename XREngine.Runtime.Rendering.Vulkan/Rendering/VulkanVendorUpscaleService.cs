@@ -14,11 +14,17 @@ internal sealed class VulkanVendorUpscaleService : IRuntimeVendorUpscaleService
     public bool IsDlssSupported => NvidiaDlssManager.IsSupported;
     public string? DlssLastError => NvidiaDlssManager.LastError;
     public bool AreDlssRuntimeLibrariesAvailable => NvidiaDlssManager.RequiredRuntimeDllsAvailable;
+    public string? DlssRuntimeLibrariesUnavailableReason => NvidiaDlssManager.RequiredRuntimeDllsUnavailableReason;
     public bool IsXessSupported => IntelXessManager.IsSupported;
     public string? XessLastError => IntelXessManager.LastError;
     public bool IsDlssFrameGenerationRequested => NvidiaDlssManager.IsFrameGenerationRequested;
     public bool IsDlssFrameGenerationSupported => NvidiaDlssManager.FrameGenerationAvailable;
+    public bool AreDlssFrameGenerationRuntimeLibrariesAvailable => NvidiaDlssManager.FrameGenerationRuntimeDllsAvailable;
+    public string? DlssFrameGenerationRuntimeLibrariesUnavailableReason => NvidiaDlssManager.FrameGenerationRuntimeDllsUnavailableReason;
     public string? DlssFrameGenerationUnavailableReason => NvidiaDlssManager.FrameGenerationUnavailableReason;
+    public uint DlssFrameGenerationMaximumFramesToGenerate => NvidiaDlssManager.FrameGenerationMaximumFramesToGenerate;
+    public uint DlssFrameGenerationFramesActuallyPresented => NvidiaDlssManager.FrameGenerationFramesActuallyPresented;
+    public ulong DlssFrameGenerationFramesActuallyPresentedTotal => NvidiaDlssManager.FrameGenerationFramesActuallyPresentedTotal;
 
     public bool IsDlssFrameGenerationAvailable(out string? failureReason)
         => NvidiaDlssManager.Native.IsFrameGenerationAvailable(out failureReason);

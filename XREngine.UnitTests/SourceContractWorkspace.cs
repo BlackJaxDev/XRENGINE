@@ -50,6 +50,12 @@ internal static class SourceContractWorkspace
 
             if (movedFileMatches.Length == 0)
             {
+                // Legacy VulkanRenderer partials were decomposed into focused files whose
+                // names no longer retain the complete former filename. Resolve those requests
+                // through the owning partial-type family instead of failing filename lookup.
+                if (requestedFileName.StartsWith("VulkanRenderer.", StringComparison.OrdinalIgnoreCase))
+                    return ReadPartialType(relativePath);
+
                 string movedAcrossProject = ResolveFile(relativePath);
                 return NormalizeLineEndings(File.ReadAllText(movedAcrossProject));
             }

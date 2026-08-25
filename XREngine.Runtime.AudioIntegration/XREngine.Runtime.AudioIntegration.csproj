@@ -24,14 +24,22 @@
     <DebugType>embedded</DebugType>
   </PropertyGroup>
 
+  <!-- Keep Meta's optional native lip-sync runtime with the integration that P/Invokes it. -->
+  <PropertyGroup>
+    <MetaOvrLipSyncWinX64Dir Condition="'$(MetaOvrLipSyncWinX64Dir)' == ''">$(MSBuildProjectDirectory)\..\ThirdParty\Meta\OVRLipSync\win-x64\</MetaOvrLipSyncWinX64Dir>
+  </PropertyGroup>
+
   <ItemGroup>
-    <PackageReference Include="SharpFont.Dependencies" Version="2.6.0" />
+    <None Include="$(MetaOvrLipSyncWinX64Dir)OVRLipSync.dll" Condition="Exists('$(MetaOvrLipSyncWinX64Dir)OVRLipSync.dll')">
+      <Link>OVRLipSync.dll</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </None>
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\XREngine.Audio\XREngine.Audio.csproj" />
     <ProjectReference Include="..\XREngine.Data\XREngine.Data.csproj" />
-    <ProjectReference Include="..\XREngine.Runtime.AnimationIntegration\XREngine.Runtime.AnimationIntegration.csproj" />
     <ProjectReference Include="..\XREngine.Runtime.Core\XREngine.Runtime.Core.csproj" />
     <ProjectReference Include="..\XREngine.Runtime.Rendering\XREngine.Runtime.Rendering.csproj" />
   </ItemGroup>

@@ -237,18 +237,21 @@ internal sealed partial class VulkanFrameLoop
             return false;
         }
         CommandBufferAllocateInfo allocateInfo = new() { SType = StructureType.CommandBufferAllocateInfo, CommandPool = pool, Level = CommandBufferLevel.Primary, CommandBufferCount = 1 };
-        Result result;
-        lock (_commandRuntime.Pools.Gate)
-            result = api.AllocateCommandBuffers(_deviceContext.Device, ref allocateInfo, out commandBuffer);
+        Result result = _commandRuntime.AllocateCommandBufferWithLifetime(
+            ref allocateInfo,
+            out commandBuffer,
+            "DesktopAutoExposureReadback.CommandBuffer");
         _deviceContext.ObserveNativeResult("vkAllocateCommandBuffers.DesktopAutoExposureReadback", result);
         if (result != Result.Success || commandBuffer.Handle == 0)
         {
             diagnostic = $"vkAllocateCommandBuffers failed ({result}).";
             return false;
         }
-        _resourceRuntime.RegisterSynchronousCommandBuffer(commandBuffer, pool, CommandBufferLevel.Primary, "DesktopAutoExposureReadback.CommandBuffer");
         CommandBufferBeginInfo beginInfo = new() { SType = StructureType.CommandBufferBeginInfo, Flags = CommandBufferUsageFlags.OneTimeSubmitBit };
-        result = api.BeginCommandBuffer(commandBuffer, ref beginInfo);
+        result = _commandRuntime.BeginTrackedCommandBuffer(
+            commandBuffer,
+            ref beginInfo,
+            "DesktopAutoExposureReadback");
         _deviceContext.ObserveNativeResult("vkBeginCommandBuffer.DesktopAutoExposureReadback", result);
         if (result != Result.Success)
         {
@@ -263,20 +266,47 @@ internal sealed partial class VulkanFrameLoop
             SrcAccessMask = AccessFlags.MemoryReadBit | AccessFlags.MemoryWriteBit | AccessFlags.ShaderReadBit | AccessFlags.ShaderWriteBit,
             DstAccessMask = AccessFlags.TransferReadBit,
         };
-        api.CmdPipelineBarrier(commandBuffer, PipelineStageFlags.AllCommandsBit, PipelineStageFlags.TransferBit, 0, 0, null, 0, null, 1, &toTransfer);
+        VulkanTrackedCommandEncoder encoder = new(_commandRuntime);
+        encoder.PipelineBarrier(
+            commandBuffer,
+            PipelineStageFlags.AllCommandsBit,
+            PipelineStageFlags.TransferBit,
+            0,
+            0,
+            null,
+            0,
+            null,
+            1,
+            &toTransfer);
         BufferImageCopy copy = new()
         {
             BufferOffset = stagingBufferOffset,
             ImageSubresource = new ImageSubresourceLayers { AspectMask = ImageAspectFlags.ColorBit, MipLevel = 0, BaseArrayLayer = 0, LayerCount = 1 },
             ImageExtent = new Extent3D(1, 1, 1),
         };
-        api.CmdCopyImageToBuffer(commandBuffer, sourceImage, ImageLayout.TransferSrcOptimal, stagingBuffer, 1, &copy);
+        _commandRuntime.CopyImageToBufferTracked(
+            commandBuffer,
+            sourceImage,
+            ImageLayout.TransferSrcOptimal,
+            stagingBuffer,
+            1,
+            &copy);
         ImageMemoryBarrier restore = toTransfer;
         restore.OldLayout = ImageLayout.TransferSrcOptimal;
         restore.NewLayout = sourceLayout;
         restore.SrcAccessMask = AccessFlags.TransferReadBit;
         restore.DstAccessMask = AccessFlags.MemoryReadBit | AccessFlags.MemoryWriteBit | AccessFlags.ShaderReadBit | AccessFlags.ShaderWriteBit;
-        api.CmdPipelineBarrier(commandBuffer, PipelineStageFlags.TransferBit, PipelineStageFlags.AllCommandsBit, 0, 0, null, 0, null, 1, &restore);
+        encoder.PipelineBarrier(
+            commandBuffer,
+            PipelineStageFlags.TransferBit,
+            PipelineStageFlags.AllCommandsBit,
+            0,
+            0,
+            null,
+            0,
+            null,
+            1,
+            &restore);
         result = _commandRuntime.EndCommandBufferTracked(commandBuffer);
         _deviceContext.ObserveNativeResult("vkEndCommandBuffer.DesktopAutoExposureReadback", result);
         if (result == Result.Success)
@@ -332,53 +362,15 @@ internal sealed partial class VulkanFrameLoop
         }
         arenaLease.MarkSubmitted(stagingSlice);
         nativeResourcesMayBeReleased = false;
-        try { _resourceRuntime.RecordSynchronousGraphicsSubmission(commandBuffer, fence, _deviceContext.GraphicsQueue, sourceImage, stagingSlice.Buffer); }
-        catch (Exception ex)
-        {
-            Result recoveryWait;
-            fixed (Fence* fencePtr = &fence)
-                recoveryWait = api.WaitForFences(_deviceContext.Device, 1, fencePtr, true, ulong.MaxValue);
-            _deviceContext.ObserveNativeResult("vkWaitForFences.DesktopAutoExposureReadbackReceiptRecovery", recoveryWait);
-            nativeResourcesMayBeReleased = recoveryWait == Result.Success;
-            if (nativeResourcesMayBeReleased)
-            {
-                _resourceRuntime.CompleteSynchronousFence(fence);
-                if (!arenaLease.TryComplete(stagingSlice))
-                {
-                    _commandRuntime.RetireIncompleteSynchronousSubmission(
-                        commandBuffer,
-                        _commandRuntime.Pools.PrimaryGraphics,
-                        fence,
-                        arenaLease.Arena,
-                        in stagingSlice,
-                        removeOneTimeOwner: false,
-                        "DesktopAutoExposureReadback",
-                        completeSynchronousLifetime: true);
-                    nativeResourcesMayBeReleased = false;
-                }
-            }
-            else
-            {
-                _commandRuntime.RetireIncompleteSynchronousSubmission(
-                    commandBuffer,
-                    _commandRuntime.Pools.PrimaryGraphics,
-                    fence,
-                    arenaLease.Arena,
-                    in stagingSlice,
-                    removeOneTimeOwner: false,
-                    "DesktopAutoExposureReadback",
-                    completeSynchronousLifetime: true);
-            }
-            diagnostic = $"Desktop AutoExposureTex submission receipt failed after native acceptance: {ex.Message}";
-            return false;
-        }
         using VulkanCpuStageScope waitStage = new(_telemetry, EVulkanCpuStage.AuxiliaryFenceWait);
         fixed (Fence* fencePtr = &fence)
             result = api.WaitForFences(_deviceContext.Device, 1, fencePtr, true, ulong.MaxValue);
         _deviceContext.ObserveNativeResult("vkWaitForFences.DesktopAutoExposureReadback", result);
         if (result == Result.Success)
         {
-            _resourceRuntime.CompleteSynchronousFence(fence);
+            if (!receipt.LifetimePinsTransferred)
+                _commandRuntime.ReleaseSubmissionResourceLifetimePins(ref submit);
+            _commandRuntime.CompleteTrackedFence(fence);
             if (!arenaLease.TryComplete(stagingSlice))
             {
                 _commandRuntime.RetireIncompleteSynchronousSubmission(
@@ -409,17 +401,14 @@ internal sealed partial class VulkanFrameLoop
         return false;
     }
 
-    private unsafe void DestroyTrackedExposureCommandBuffer(Vk api, ref CommandBuffer commandBuffer)
+    private void DestroyTrackedExposureCommandBuffer(Vk api, ref CommandBuffer commandBuffer)
     {
+        _ = api;
         CommandPool pool = _commandRuntime.Pools.PrimaryGraphics;
-        if (pool.Handle != 0)
-        {
-            fixed (CommandBuffer* commandBufferPtr = &commandBuffer)
-                lock (_commandRuntime.Pools.Gate)
-                    api.FreeCommandBuffers(_deviceContext.Device, pool, 1, commandBufferPtr);
-        }
-        _resourceRuntime.CompleteSynchronousCommandBuffer(commandBuffer);
-        commandBuffer = default;
+        _commandRuntime.FreeCompletedSynchronousCommandBuffer(
+            pool,
+            ref commandBuffer,
+            "DesktopAutoExposureReadback");
     }
 
 }

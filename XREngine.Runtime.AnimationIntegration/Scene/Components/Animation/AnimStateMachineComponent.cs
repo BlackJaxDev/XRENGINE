@@ -17,6 +17,8 @@ namespace XREngine.Components
         private const string ChangeHashPacketId = "CHANGE_HASH";
 
         private int _lastSentSchemaVersion = -1;
+        private HumanoidImportedBodySample _provisionalImportedBodyReference = HumanoidImportedBodySample.Neutral;
+        private bool _hasProvisionalImportedBodyReference;
 
         private AnimStateMachine _stateMachine = new();
         public AnimStateMachine StateMachine
@@ -77,6 +79,12 @@ namespace XREngine.Components
             StateMachine.Initialize(this);
             StateMachine.VariableChanged += VariableChanged;
             if (!SuspendedByClip)
+            {
+                _hasProvisionalImportedBodyReference = false;
+                _provisionalImportedBodyReference = HumanoidImportedBodySample.Neutral;
+                GetHumanoidComponent()?.ResetRootMotionBaseline();
+            }
+            if (!SuspendedByClip)
                 RegisterTick(ETickGroup.Normal, ETickOrder.Animation, EvaluationTick);
 
             ReplicateParameterSchema(force: true);
@@ -96,10 +104,16 @@ namespace XREngine.Components
         {
             base.OnComponentDeactivated();
             UnregisterTick(ETickGroup.Normal, ETickOrder.Animation, EvaluationTick);
-            ResetDrivenPose();
+            if (!SuspendedByClip)
+                ResetDrivenPose();
             StateMachine.Deinitialize();
             StateMachine.VariableChanged -= VariableChanged;
             _changedLastEval.Clear();
+            if (!SuspendedByClip)
+            {
+                _hasProvisionalImportedBodyReference = false;
+                _provisionalImportedBodyReference = HumanoidImportedBodySample.Neutral;
+            }
         }
 
         private void ResetDrivenPose()
@@ -119,7 +133,29 @@ namespace XREngine.Components
             if (humanoid is not null && !humanoid.IsAnimatedPosePreviewActive)
                 return;
 
-            StateMachine.EvaluationTick(this, RuntimeAnimationHostServices.Current.UpdateDeltaTicks);
+            // The state machine currently blends scalar ValueStore channels independently, including
+            // RootQ components. This transaction keeps the resulting sample atomic, but is deliberately
+            // provisional and is not yet full quaternion-blending parity with Unity.
+            bool ownsImportedBodySampleTransaction = humanoid?.BeginImportedBodySampleTransaction(
+                this,
+                _provisionalImportedBodyReference,
+                _hasProvisionalImportedBodyReference) == true;
+            try
+            {
+                StateMachine.EvaluationTick(this, RuntimeAnimationHostServices.Current.UpdateDeltaTicks);
+            }
+            catch
+            {
+                if (ownsImportedBodySampleTransaction)
+                    humanoid!.CancelImportedBodySampleTransaction(this);
+                throw;
+            }
+
+            if (ownsImportedBodySampleTransaction && humanoid!.CommitImportedBodySampleTransaction(this) && !_hasProvisionalImportedBodyReference)
+            {
+                _provisionalImportedBodyReference = humanoid.CanonicalImportedBodySample;
+                _hasProvisionalImportedBodyReference = true;
+            }
 
             // Keep schema in sync before sending any indexed changes.
             ReplicateParameterSchema(force: false);

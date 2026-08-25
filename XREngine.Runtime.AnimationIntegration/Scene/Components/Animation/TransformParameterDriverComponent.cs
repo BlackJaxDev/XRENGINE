@@ -1,5 +1,6 @@
 ﻿using System.ComponentModel;
 using System.Numerics;
+using XREngine.Core.Attributes;
 using XREngine.Data.Transforms.Rotations;
 using XREngine.Scene.Transforms;
 
@@ -161,6 +162,7 @@ namespace XREngine.Components.Animation
     /// (translation, rotation, scale) of the owning scene node. This is useful for procedural animation 
     /// control, such as driving blend trees based on movement direction or speed.
     /// </summary>
+    [XRTypeRedirect("XREngine.Components.Animation.TransformParameterDriverComponent")]
     public class TransformParameterDriverComponent : XRComponent
     {
         private AnimStateMachineComponent? _targetAnimator;

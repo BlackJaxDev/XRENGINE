@@ -47,7 +47,9 @@ internal sealed partial class VulkanFrameLoop
                 return;
 
             Result result = _deviceContext.Api.DeviceWaitIdle(_deviceContext.Device);
-            if (result == Result.ErrorDeviceLost)
+            if (result == Result.Success)
+                _commandRuntime.CompleteTrackedDevice();
+            else if (result == Result.ErrorDeviceLost)
                 MarkDeviceLost("DeviceWaitIdle returned ErrorDeviceLost", "vkDeviceWaitIdle", result);
             else if (result != Result.Success)
                 throw new InvalidOperationException($"vkDeviceWaitIdle failed: {result}.");

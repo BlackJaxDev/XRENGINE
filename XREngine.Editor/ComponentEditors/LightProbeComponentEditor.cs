@@ -10,7 +10,6 @@ using XREngine.Editor;
 using XREngine.Data.Rendering;
 using XREngine.Editor.Services;
 using XREngine.Rendering;
-using XREngine.Rendering.OpenGL;
 using XREngine.Rendering.Vulkan;
 
 namespace XREngine.Editor.ComponentEditors;

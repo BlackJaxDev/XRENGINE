@@ -11,7 +11,6 @@ using XREngine.Data.Rendering;
 using XREngine.Editor.Services;
 using XREngine.Rendering;
 using XREngine.Rendering.Lightmapping;
-using XREngine.Rendering.OpenGL;
 using XREngine.Rendering.Shadows;
 using XREngine.Rendering.Vulkan;
 

@@ -9,14 +9,26 @@ public static class VendorUpscaleRuntime
     public static string? DlssLastError => RuntimeVendorUpscaleService.Current?.DlssLastError;
     public static bool AreDlssRuntimeLibrariesAvailable =>
         RuntimeVendorUpscaleService.Current?.AreDlssRuntimeLibrariesAvailable == true;
+    public static string? DlssRuntimeLibrariesUnavailableReason =>
+        RuntimeVendorUpscaleService.Current?.DlssRuntimeLibrariesUnavailableReason;
     public static bool IsXessSupported => RuntimeVendorUpscaleService.Current?.IsXessSupported == true;
     public static string? XessLastError => RuntimeVendorUpscaleService.Current?.XessLastError;
     public static bool IsDlssFrameGenerationRequested =>
         RuntimeVendorUpscaleService.Current?.IsDlssFrameGenerationRequested == true;
     public static bool IsDlssFrameGenerationSupported =>
         RuntimeVendorUpscaleService.Current?.IsDlssFrameGenerationSupported == true;
+    public static bool AreDlssFrameGenerationRuntimeLibrariesAvailable =>
+        RuntimeVendorUpscaleService.Current?.AreDlssFrameGenerationRuntimeLibrariesAvailable == true;
+    public static string? DlssFrameGenerationRuntimeLibrariesUnavailableReason =>
+        RuntimeVendorUpscaleService.Current?.DlssFrameGenerationRuntimeLibrariesUnavailableReason;
     public static string? DlssFrameGenerationUnavailableReason =>
         RuntimeVendorUpscaleService.Current?.DlssFrameGenerationUnavailableReason;
+    public static uint DlssFrameGenerationMaximumFramesToGenerate =>
+        RuntimeVendorUpscaleService.Current?.DlssFrameGenerationMaximumFramesToGenerate ?? 0;
+    public static uint DlssFrameGenerationFramesActuallyPresented =>
+        RuntimeVendorUpscaleService.Current?.DlssFrameGenerationFramesActuallyPresented ?? 0;
+    public static ulong DlssFrameGenerationFramesActuallyPresentedTotal =>
+        RuntimeVendorUpscaleService.Current?.DlssFrameGenerationFramesActuallyPresentedTotal ?? 0;
 
     public static float GetDlssRecommendedRenderScale(object? settings = null)
         => RuntimeVendorUpscaleService.Current?.GetDlssRecommendedRenderScale(settings) ?? 1.0f;

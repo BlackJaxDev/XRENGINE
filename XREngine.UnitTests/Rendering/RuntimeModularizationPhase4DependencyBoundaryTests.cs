@@ -376,10 +376,11 @@ public sealed class RuntimeModularizationPhase4DependencyBoundaryTests
     {
         string root = ResolveWorkspaceRoot();
         string engineRoot = Path.Combine(root, "XRENGINE", "Engine");
-        string lifecycleSource = File.ReadAllText(Path.Combine(engineRoot, "EngineVrLifecycle.cs"));
+        string bootstrapHostRoot = Path.Combine(root, "XREngine.Runtime.Bootstrap", "SubsystemHost");
+        string lifecycleSource = File.ReadAllText(Path.Combine(bootstrapHostRoot, "EngineVrLifecycle.cs"));
         string networkingSource = File.ReadAllText(Path.Combine(engineRoot, "Engine.Networking.cs"));
         string windowsSource = File.ReadAllText(Path.Combine(engineRoot, "Engine.Windows.cs"));
-        string jsonSource = File.ReadAllText(Path.Combine(root, "XRENGINE", "Core", "Serialization", "XREngineJsonSerialization.cs"));
+        string jsonSource = File.ReadAllText(Path.Combine(bootstrapHostRoot, "VrManifestJsonSerialization.cs"));
 
         File.Exists(Path.Combine(engineRoot, "Engine.VRState.cs")).ShouldBeFalse();
         lifecycleSource.ShouldContain("internal static class EngineVrLifecycle");

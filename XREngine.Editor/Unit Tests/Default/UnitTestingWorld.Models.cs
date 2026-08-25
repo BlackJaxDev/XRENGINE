@@ -1348,6 +1348,7 @@ public static partial class EditorUnitTests
                         if (humanComp is null || humanComp.IsDestroyed)
                             return true;
 
+                        ConfigureUnityHumanoidAvatarProfile(humanComp);
                         humanComp.InitializeSceneNodeBindings();
                         stage++;
                         return false;
@@ -1420,6 +1421,33 @@ public static partial class EditorUnitTests
                         return true;
                 }
             });
+        }
+
+        private static void ConfigureUnityHumanoidAvatarProfile(HumanoidComponent humanoid)
+        {
+            const string environmentVariableName = "XRE_UNITY_HUMANOID_AVATAR_PROFILE";
+            string? profilePath = Environment.GetEnvironmentVariable(environmentVariableName);
+            if (string.IsNullOrWhiteSpace(profilePath))
+                return;
+
+            string fullPath = Path.GetFullPath(profilePath);
+            if (!File.Exists(fullPath))
+            {
+                Debug.LogWarning(
+                    $"[UnitTestingWorld] {environmentVariableName} points to missing avatar profile '{fullPath}'.");
+                return;
+            }
+
+            try
+            {
+                humanoid.LoadUnityHumanoidAvatarProfile(fullPath);
+                Debug.Animation(
+                    $"[UnitTestingWorld] Applied Unity humanoid avatar profile '{fullPath}'.");
+            }
+            catch (Exception ex)
+            {
+                Debug.LogException(ex, $"[UnitTestingWorld] Failed to apply Unity humanoid avatar profile '{fullPath}'.");
+            }
         }
 
         private static void ConfigureAvatarFaceTracking(SceneNode rootNode, AnimStateMachineComponent animator)

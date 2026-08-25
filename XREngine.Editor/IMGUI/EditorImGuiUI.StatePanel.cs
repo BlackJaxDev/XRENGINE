@@ -8,8 +8,8 @@ using XREngine.Input;
 using XREngine.Input.Devices;
 using XREngine.Editor.Services;
 using XREngine.Rendering;
-using XREngine.Rendering.OpenGL;
 using XREngine.Rendering.Vulkan;
+using XREngine.Runtime.Audio;
 
 namespace XREngine.Editor;
 
@@ -314,7 +314,7 @@ public static partial class EditorImGuiUI
                                            lights.DynamicPointLights.Count + 
                                            lights.DynamicDirectionalLights.Count;
                             ImGui.Text($"Dynamic Lights: {lightCount}");
-                            ImGui.Text($"Listeners: {instance.Listeners.Count}");
+                            ImGui.Text($"Listeners: {RuntimeAudioListenerWorldRegistry.GetListenerCount(instance)}");
 
                             ImGui.TreePop();
                         }

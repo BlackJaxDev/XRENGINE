@@ -111,33 +111,14 @@ internal sealed partial class VulkanFrameLoop : IVulkanTargetOutputHost
         }
     }
 
-    public Result AllocateVulkanCommandBufferTracked(ref CommandBufferAllocateInfo allocateInfo, out CommandBuffer commandBuffer, string owner)
-    {
-        commandBuffer = default;
-        ThrowIfVulkanDeviceOperationNotAdmitted(owner);
-        lock (_commandRuntime.Pools.Gate)
-        {
-            Result result = Api.AllocateCommandBuffers(Device, ref allocateInfo, out commandBuffer);
-            ObserveNativeResult(owner, result);
-            if (result != Result.Success || commandBuffer.Handle == 0)
-                return result;
-
-            ulong commandBufferHandle = unchecked((ulong)commandBuffer.Handle);
-            RegisterResource(ObjectType.CommandBuffer, commandBufferHandle, owner);
-            VulkanResourceLifetimeTracker tracker = _resourceRuntime.Lifetime.Tracker;
-            VulkanResourceLifetimeKey poolKey = ResourceKey(ObjectType.CommandPool, allocateInfo.CommandPool.Handle);
-            lock (tracker.SyncRoot)
-            {
-                if (!tracker.CommandBuffersByPool.TryGetValue(poolKey, out HashSet<ulong>? children))
-                {
-                    children = [];
-                    tracker.CommandBuffersByPool.Add(poolKey, children);
-                }
-                children.Add(commandBufferHandle);
-            }
-            return result;
-        }
-    }
+    public Result AllocateVulkanCommandBufferTracked(
+        ref CommandBufferAllocateInfo allocateInfo,
+        out CommandBuffer commandBuffer,
+        string owner)
+        => _commandRuntime.AllocateCommandBufferWithLifetime(
+            ref allocateInfo,
+            out commandBuffer,
+            owner);
 
     public Result ResetVulkanCommandPoolTracked(CommandPool pool, string owner)
     {
@@ -145,28 +126,38 @@ internal sealed partial class VulkanFrameLoop : IVulkanTargetOutputHost
             return Result.Success;
 
         ThrowIfVulkanDeviceOperationNotAdmitted(owner);
-        lock (_commandRuntime.Pools.Gate)
-        {
-            Result result = Api.ResetCommandPool(Device, pool, 0);
-            ObserveNativeResult(owner, result);
-            RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanResetCommandPoolCall();
-            return result;
-        }
+        return _commandRuntime.ResetVulkanCommandPoolTracked(pool, owner);
     }
+
+    public Result BeginCommandBufferTracked(
+        CommandBuffer commandBuffer,
+        ref CommandBufferBeginInfo beginInfo,
+        string owner)
+        => _commandRuntime.BeginTrackedCommandBuffer(
+            commandBuffer,
+            ref beginInfo,
+            owner);
 
     public Result EndCommandBufferTracked(CommandBuffer commandBuffer)
         => _commandRuntime.EndCommandBufferTracked(commandBuffer);
+
+    public void TrackCommandBufferResource(
+        CommandBuffer commandBuffer,
+        ObjectType type,
+        ulong handle,
+        string owner)
+        => _commandRuntime.TrackVulkanCommandBufferResource(
+            commandBuffer,
+            type,
+            handle,
+            owner);
 
     public unsafe void DestroyCommandPoolHostSynchronized(CommandPool pool)
     {
         if (pool.Handle == 0)
             return;
 
-        lock (_commandRuntime.Pools.Gate)
-        {
-            Api.DestroyCommandPool(Device, pool, null);
-            CompleteCommandPoolResources(pool);
-        }
+        _commandRuntime.DestroyCommandPoolHostSynchronized(pool);
     }
 
     public unsafe Result CreateVulkanImageTracked(ref ImageCreateInfo createInfo, out Image image, string owner)

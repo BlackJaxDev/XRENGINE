@@ -122,14 +122,16 @@ internal sealed partial class VulkanCommandRuntime
 
         if (!DeviceContext.StateMachine.IsOperational)
             throw new InvalidOperationException("Vulkan device is not operational for prepared worker recording.");
-        if (Api.BeginCommandBuffer(secondary, ref beginInfo) != Result.Success)
+        if (BeginTrackedCommandBuffer(
+                secondary,
+                ref beginInfo,
+                "PreparedWorkerRecording") != Result.Success)
             throw new InvalidOperationException("Failed to begin Vulkan worker mesh command-chain secondary command buffer.");
         recordingStarted = true;
         }
 
         try
         {
-            ResetBindState(encoder, secondary);
             chain.RecordedArtifact.BeginRecording(CommandBuffers.ResolveRecordingGeneration(secondary));
             for (int drawIndex = 0; drawIndex < chain.SourceCount; drawIndex++)
             {

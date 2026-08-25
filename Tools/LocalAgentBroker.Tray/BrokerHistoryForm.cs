@@ -15,7 +15,13 @@ internal sealed class BrokerHistoryForm : Form
     private readonly ToolStripButton _deleteButton;
     private IReadOnlyList<BrokerHistoryRecord> _allRecords = [];
     private string? _selectedRunId;
-    private string _renderedVersion = string.Empty;
+    private string? _renderedRunId;
+    private string _renderedResponseText = string.Empty;
+    private string _renderedFailureText = string.Empty;
+    private string _renderedListVersion = string.Empty;
+    private bool _renderedWasActive;
+    private bool _forceFullRender;
+    private bool _isDarkTheme;
     private bool _allowClose;
 
     public BrokerHistoryForm()
@@ -36,7 +42,7 @@ internal sealed class BrokerHistoryForm : Form
         };
         toolbar.Items.Add(new ToolStripLabel("Search"));
         _searchBox = new TextBox { Width = 260, PlaceholderText = "Prompt, response, model..." };
-        _searchBox.TextChanged += (_, _) => RebuildList();
+        _searchBox.TextChanged += (_, _) => HandleSearchChanged();
         toolbar.Items.Add(new ToolStripControlHost(_searchBox) { Margin = new Padding(6, 0, 12, 0) });
         toolbar.Items.Add(new ToolStripSeparator());
         _deleteButton = new ToolStripButton("Delete selected") { Enabled = false };
@@ -126,9 +132,28 @@ internal sealed class BrokerHistoryForm : Form
     {
         _allRecords = records;
         string? currentSelection = _selectedRunId;
-        RebuildList();
-        if (currentSelection is not null)
+        bool listChanged = RebuildList();
+        if (listChanged && currentSelection is not null)
             SelectRun(currentSelection);
+        RenderSelected();
+    }
+
+    public void SetTheme(BrokerUiThemePreference preference)
+    {
+        bool isDarkTheme = BrokerTheme.ResolveDark(preference);
+        if (isDarkTheme == _isDarkTheme && IsHandleCreated)
+            return;
+
+        _isDarkTheme = isDarkTheme;
+        BrokerTheme.Apply(this, _isDarkTheme);
+        _titleLabel.ForeColor = BrokerTheme.TextColor(_isDarkTheme);
+        _metadataLabel.ForeColor = BrokerTheme.MutedTextColor(_isDarkTheme);
+        _conversation.BackColor = BrokerTheme.SurfaceColor(_isDarkTheme);
+        _conversation.ForeColor = BrokerTheme.TextColor(_isDarkTheme);
+        _forceFullRender = true;
+        RebuildList(force: true);
+        if (_selectedRunId is not null)
+            SelectRun(_selectedRunId);
         RenderSelected();
     }
 
@@ -154,7 +179,13 @@ internal sealed class BrokerHistoryForm : Form
         Close();
     }
 
-    private void RebuildList()
+    protected override void OnHandleCreated(EventArgs eventArgs)
+    {
+        base.OnHandleCreated(eventArgs);
+        BrokerTheme.ApplyTitleBar(this, _isDarkTheme);
+    }
+
+    private bool RebuildList(bool force = false)
     {
         string filter = _searchBox.Text.Trim();
         BrokerHistoryRecord[] filtered = _allRecords
@@ -162,6 +193,13 @@ internal sealed class BrokerHistoryForm : Form
             .OrderByDescending(static record => record.IsActive)
             .ThenByDescending(static record => record.CreatedUtc)
             .ToArray();
+        string listVersion = filter + "\n" + string.Join(
+            '\n',
+            filtered.Select(static record =>
+                $"{record.RunId}:{record.Status}:{record.CreatedUtc.UtcTicks}:{record.Objective}"));
+        if (!force && string.Equals(listVersion, _renderedListVersion, StringComparison.Ordinal))
+            return false;
+        _renderedListVersion = listVersion;
 
         _runList.BeginUpdate();
         try
@@ -172,7 +210,7 @@ internal sealed class BrokerHistoryForm : Form
                 var item = new ListViewItem(StatusLabel(record))
                 {
                     Tag = record.RunId,
-                    ForeColor = StatusColor(record.Status),
+                    ForeColor = StatusColor(record.Status, _isDarkTheme),
                 };
                 item.SubItems.Add(OneLine(record.Objective));
                 item.SubItems.Add(record.CreatedUtc.ToLocalTime().ToString("g"));
@@ -183,14 +221,26 @@ internal sealed class BrokerHistoryForm : Form
         {
             _runList.EndUpdate();
         }
+        return true;
+    }
+
+    private void HandleSearchChanged()
+    {
+        string? currentSelection = _selectedRunId;
+        RebuildList(force: true);
+        if (currentSelection is not null)
+            SelectRun(currentSelection);
+        RenderSelected();
     }
 
     private void SelectFromList()
     {
         if (_runList.SelectedItems.Count == 0)
             return;
-        _selectedRunId = _runList.SelectedItems[0].Tag as string;
-        _renderedVersion = string.Empty;
+        string? selectedRunId = _runList.SelectedItems[0].Tag as string;
+        if (!string.Equals(selectedRunId, _selectedRunId, StringComparison.Ordinal))
+            ResetRenderedConversation();
+        _selectedRunId = selectedRunId;
         RenderSelected();
     }
 
@@ -203,6 +253,8 @@ internal sealed class BrokerHistoryForm : Form
             item.Selected = true;
             item.Focused = true;
             item.EnsureVisible();
+            if (!string.Equals(runId, _selectedRunId, StringComparison.Ordinal))
+                ResetRenderedConversation();
             _selectedRunId = runId;
             RenderSelected();
             return;
@@ -221,60 +273,154 @@ internal sealed class BrokerHistoryForm : Form
                 : string.Empty;
             _conversation.Clear();
             _deleteButton.Enabled = false;
+            ResetRenderedConversation();
             return;
         }
 
-        string version = $"{record.RunId}:{record.UpdatedUtc.UtcTicks}:{record.ResponseText.Length}";
-        if (string.Equals(version, _renderedVersion, StringComparison.Ordinal))
-            return;
-        _renderedVersion = version;
         _titleLabel.Text = string.IsNullOrWhiteSpace(record.Objective)
             ? "Untitled broker prompt"
             : record.Objective.Trim();
         string model = string.IsNullOrWhiteSpace(record.ActualModel)
             ? record.RequestedModel
             : $"{record.RequestedModel} → {record.ActualModel}";
+        string status = StatusLabel(record);
+        if (record.Status == AgentRunStatus.Running
+            && !string.IsNullOrWhiteSpace(record.ProgressMessage))
+        {
+            status += $" ({record.ProgressMessage.Replace('_', ' ')})";
+        }
         _metadataLabel.Text =
-            $"{StatusLabel(record)}  ·  {model}  ·  {record.CreatedUtc.ToLocalTime():g}  ·  "
+            $"{status}  ·  {model}  ·  {record.CreatedUtc.ToLocalTime():g}  ·  "
             + $"{record.Usage.InputTokens:N0} in / {record.Usage.OutputTokens:N0} out";
         _deleteButton.Enabled = !record.IsActive;
 
+        string response = record.ResponseText;
+        string failure = BuildFailureText(record);
+        bool isSameRun = string.Equals(record.RunId, _renderedRunId, StringComparison.Ordinal);
+        bool canAppendResponse = isSameRun
+            && !_forceFullRender
+            && _renderedResponseText.Length > 0
+            && response.Length > _renderedResponseText.Length
+            && response.StartsWith(_renderedResponseText, StringComparison.Ordinal)
+            && string.Equals(failure, _renderedFailureText, StringComparison.Ordinal);
+        if (canAppendResponse)
+        {
+            AppendResponseDelta(response[_renderedResponseText.Length..]);
+            _renderedResponseText = response;
+            _renderedWasActive = record.IsActive;
+            return;
+        }
+
+        bool conversationUnchanged = isSameRun
+            && !_forceFullRender
+            && string.Equals(response, _renderedResponseText, StringComparison.Ordinal)
+            && string.Equals(failure, _renderedFailureText, StringComparison.Ordinal)
+            && (response.Length > 0 || record.IsActive == _renderedWasActive);
+        if (conversationUnchanged)
+            return;
+
+        bool followTail = isSameRun && RichTextBoxScrollHelper.IsAtBottom(_conversation);
+        Point scrollPosition = RichTextBoxScrollHelper.Capture(_conversation);
+        int selectionStart = _conversation.SelectionStart;
+        int selectionLength = _conversation.SelectionLength;
         _conversation.SuspendLayout();
         _conversation.Clear();
         if (!string.IsNullOrWhiteSpace(record.SystemInstructions))
-            AppendSection("SYSTEM", record.SystemInstructions, Color.FromArgb(112, 86, 155));
-        AppendSection("PROMPT", record.PromptText, Color.FromArgb(38, 101, 175));
-        string response = record.ResponseText;
-        if (string.IsNullOrWhiteSpace(response))
-        {
-            response = record.IsActive
-                ? $"Waiting for output…\n\nCurrent stage: {record.ProgressMessage.Replace('_', ' ')}"
-                : "No response text was returned.";
-        }
-        AppendSection("RESPONSE", response, Color.FromArgb(36, 128, 82));
-        if (!string.IsNullOrWhiteSpace(record.FailureSummary))
-        {
-            string failure = record.FailureSummary;
-            if (!string.IsNullOrWhiteSpace(record.FailureDetail))
-                failure += $"\n\n{record.FailureDetail}";
-            AppendSection("FAILURE", failure, Color.FromArgb(180, 54, 54));
-        }
+            AppendSection("SYSTEM", record.SystemInstructions, SystemHeadingColor());
+        AppendSection("PROMPT", record.PromptText, PromptHeadingColor());
+        AppendResponseSection(record, response);
+        if (failure.Length > 0)
+            AppendSection("FAILURE", failure, FailureHeadingColor());
         _conversation.ResumeLayout();
-        if (record.IsActive)
+
+        _renderedRunId = record.RunId;
+        _renderedResponseText = response;
+        _renderedFailureText = failure;
+        _renderedWasActive = record.IsActive;
+        _forceFullRender = false;
+
+        if (!isSameRun)
         {
-            _conversation.SelectionStart = _conversation.TextLength;
+            _conversation.Select(record.IsActive ? _conversation.TextLength : 0, 0);
             _conversation.ScrollToCaret();
+            return;
         }
+
+        if (followTail)
+        {
+            ScrollToResponseTail();
+            return;
+        }
+
+        _conversation.Select(
+            Math.Min(selectionStart, _conversation.TextLength),
+            Math.Min(selectionLength, Math.Max(0, _conversation.TextLength - selectionStart)));
+        RichTextBoxScrollHelper.Restore(_conversation, scrollPosition);
     }
 
     private void AppendSection(string heading, string body, Color headingColor)
     {
+        AppendHeading(heading, headingColor);
+        _conversation.AppendText(body.TrimEnd() + Environment.NewLine + Environment.NewLine);
+    }
+
+    private void AppendHeading(string heading, Color headingColor)
+    {
         _conversation.SelectionColor = headingColor;
-        _conversation.SelectionFont = new Font(_conversation.Font, FontStyle.Bold);
+        using var headingFont = new Font(_conversation.Font, FontStyle.Bold);
+        _conversation.SelectionFont = headingFont;
         _conversation.AppendText(heading + Environment.NewLine);
         _conversation.SelectionColor = _conversation.ForeColor;
         _conversation.SelectionFont = _conversation.Font;
-        _conversation.AppendText(body.TrimEnd() + Environment.NewLine + Environment.NewLine);
+    }
+
+    private void AppendResponseSection(BrokerHistoryRecord record, string response)
+    {
+        AppendHeading("RESPONSE", ResponseHeadingColor());
+        if (response.Length > 0)
+            _conversation.AppendText(response);
+        else
+            _conversation.AppendText(record.IsActive ? "Waiting for output…" : "No response text was returned.");
+        if (!record.IsActive)
+            _conversation.AppendText(Environment.NewLine + Environment.NewLine);
+    }
+
+    private void AppendResponseDelta(string delta)
+    {
+        bool followTail = RichTextBoxScrollHelper.IsAtBottom(_conversation);
+        Point scrollPosition = RichTextBoxScrollHelper.Capture(_conversation);
+        int selectionStart = _conversation.SelectionStart;
+        int selectionLength = _conversation.SelectionLength;
+
+        _conversation.SelectionStart = _conversation.TextLength;
+        _conversation.SelectionLength = 0;
+        _conversation.SelectionColor = _conversation.ForeColor;
+        _conversation.SelectionFont = _conversation.Font;
+        _conversation.AppendText(delta);
+
+        if (followTail)
+        {
+            ScrollToResponseTail();
+            return;
+        }
+
+        _conversation.Select(selectionStart, selectionLength);
+        RichTextBoxScrollHelper.Restore(_conversation, scrollPosition);
+    }
+
+    private void ScrollToResponseTail()
+    {
+        _conversation.Select(_conversation.TextLength, 0);
+        _conversation.ScrollToCaret();
+    }
+
+    private void ResetRenderedConversation()
+    {
+        _renderedRunId = null;
+        _renderedResponseText = string.Empty;
+        _renderedFailureText = string.Empty;
+        _renderedWasActive = false;
+        _forceFullRender = true;
     }
 
     private void RequestDeleteSelected()
@@ -320,16 +466,37 @@ internal sealed class BrokerHistoryForm : Form
             _ => record.Status.ToString(),
         };
 
-    private static Color StatusColor(AgentRunStatus status)
+    private static string BuildFailureText(BrokerHistoryRecord record)
+    {
+        if (string.IsNullOrWhiteSpace(record.FailureSummary))
+            return string.Empty;
+        return string.IsNullOrWhiteSpace(record.FailureDetail)
+            ? record.FailureSummary
+            : $"{record.FailureSummary}\n\n{record.FailureDetail}";
+    }
+
+    private static Color StatusColor(AgentRunStatus status, bool dark)
         => status switch
         {
-            AgentRunStatus.Queued => Color.FromArgb(166, 111, 21),
-            AgentRunStatus.Running => Color.FromArgb(35, 105, 185),
-            AgentRunStatus.Completed => Color.FromArgb(42, 132, 82),
-            AgentRunStatus.Failed => Color.FromArgb(185, 53, 53),
-            AgentRunStatus.Cancelled => Color.FromArgb(110, 110, 118),
-            _ => Color.FromArgb(55, 60, 70),
+            AgentRunStatus.Queued => dark ? Color.FromArgb(224, 174, 76) : Color.FromArgb(166, 111, 21),
+            AgentRunStatus.Running => dark ? Color.FromArgb(105, 169, 245) : Color.FromArgb(35, 105, 185),
+            AgentRunStatus.Completed => dark ? Color.FromArgb(91, 190, 127) : Color.FromArgb(42, 132, 82),
+            AgentRunStatus.Failed => dark ? Color.FromArgb(242, 112, 112) : Color.FromArgb(185, 53, 53),
+            AgentRunStatus.Cancelled => dark ? Color.FromArgb(165, 169, 178) : Color.FromArgb(110, 110, 118),
+            _ => BrokerTheme.TextColor(dark),
         };
+
+    private Color SystemHeadingColor()
+        => _isDarkTheme ? Color.FromArgb(190, 154, 230) : Color.FromArgb(112, 86, 155);
+
+    private Color PromptHeadingColor()
+        => _isDarkTheme ? Color.FromArgb(105, 169, 245) : Color.FromArgb(38, 101, 175);
+
+    private Color ResponseHeadingColor()
+        => _isDarkTheme ? Color.FromArgb(91, 190, 127) : Color.FromArgb(36, 128, 82);
+
+    private Color FailureHeadingColor()
+        => _isDarkTheme ? Color.FromArgb(242, 112, 112) : Color.FromArgb(180, 54, 54);
 
     private static string OneLine(string text)
     {

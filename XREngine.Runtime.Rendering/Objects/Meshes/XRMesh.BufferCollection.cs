@@ -215,14 +215,14 @@ namespace XREngine.Rendering
             public bool Remove(KeyValuePair<string, XRDataBuffer> item) => ((ICollection<KeyValuePair<string, XRDataBuffer>>)_buffers).Remove(item);
             public void Add(object key, object? value) => ((IDictionary)_buffers).Add(key, value);
             public bool Contains(object key) => ((IDictionary)_buffers).Contains(key);
-            public IDictionaryEnumerator GetEnumerator() => ((IDictionary)_buffers).GetEnumerator();
+            public IEnumerator<KeyValuePair<string, XRDataBuffer>> GetEnumerator() => _buffers.GetEnumerator();
             public void Remove(object key) => ((IDictionary)_buffers).Remove(key);
             public void CopyTo(Array array, int index) => ((ICollection)_buffers).CopyTo(array, index);
             #pragma warning disable SYSLIB0050
             public void GetObjectData(SerializationInfo info, StreamingContext context) => ((ISerializable)_buffers).GetObjectData(info, context);
             #pragma warning restore SYSLIB0050
             public void OnDeserialization(object? sender) => ((IDeserializationCallback)_buffers).OnDeserialization(sender);
-            IEnumerator<KeyValuePair<string, XRDataBuffer>> IEnumerable<KeyValuePair<string, XRDataBuffer>>.GetEnumerator() => ((IEnumerable<KeyValuePair<string, XRDataBuffer>>)_buffers).GetEnumerator();
+            IEnumerator<KeyValuePair<string, XRDataBuffer>> IEnumerable<KeyValuePair<string, XRDataBuffer>>.GetEnumerator() => GetEnumerator();
             IEnumerator IEnumerable.GetEnumerator() => ((IEnumerable)_buffers).GetEnumerator();
 
             public BufferCollection Clone()

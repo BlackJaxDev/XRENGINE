@@ -16,7 +16,7 @@ public static class RuntimeRenderingBootstrap
     /// Installs concrete render-object, shader, renderer, VR-rendering, and video services.
     /// This must run before <see cref="Engine.Run(GameStartupSettings, GameState)"/>.
     /// </summary>
-    public static void InstallEngineHostServices()
+    public static void InstallEngineHostServices(RuntimeAdapterProfile adapterProfile = RuntimeAdapterProfile.All)
     {
         lock (Sync)
         {
@@ -32,6 +32,7 @@ public static class RuntimeRenderingBootstrap
             RuntimeRenderingHostServices.GameCachePath = ConvexHullDiskCache.ResolveCacheRoot();
             RuntimeVrRenderingServices.Current = new EngineRuntimeVrRenderingServices();
             RuntimeVideoStreamingServices.Current = new EngineRuntimeVideoStreamingServices();
+            RuntimeAdapterBootstrap.InstallEngineHostServices(adapterProfile);
 
             previousRenderingHost?.Dispose();
         }

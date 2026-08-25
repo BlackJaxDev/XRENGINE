@@ -301,6 +301,7 @@ namespace XREngine.Animation
                     HasIKGoals = imported.HasIKGoals;
                     SourceMaterialBindings = imported.SourceMaterialBindings;
                     MaterialBindingDiagnostics = imported.MaterialBindingDiagnostics;
+                    UnityHumanoidRootMotionSettings = imported.UnityHumanoidRootMotionSettings;
                     SampleRate = imported.SampleRate;
                     RootMember = imported.RootMember;
                     return true;

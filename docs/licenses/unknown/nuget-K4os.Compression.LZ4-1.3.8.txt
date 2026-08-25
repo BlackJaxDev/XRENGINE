@@ -1,6 +1,0 @@
-﻿License text could not be resolved locally for NuGet package 'K4os.Compression.LZ4' (1.3.8).
-
-Resolved license: https://github.com/MiloszKrajewski/K4os.Compression.LZ4/blob/master/LICENSE?raw=true
-RepositoryUrl: https://github.com/MiloszKrajewski/K4os.Compression.LZ4
-ProjectUrl: https://github.com/MiloszKrajewski/K4os.Compression.LZ4
-

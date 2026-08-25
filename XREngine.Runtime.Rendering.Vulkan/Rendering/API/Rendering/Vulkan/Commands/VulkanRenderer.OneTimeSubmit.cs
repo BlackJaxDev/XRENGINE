@@ -94,15 +94,16 @@ namespace XREngine.Rendering.Vulkan
                 Flags = CommandBufferUsageFlags.OneTimeSubmitBit,
             };
 
-            Result beginResult = Api.BeginCommandBuffer(commandBuffer, ref beginInfo);
+            Result beginResult = BeginTrackedCommandBuffer(
+                commandBuffer,
+                ref beginInfo,
+                "OneTimeSubmit");
             DeviceContext.ObserveNativeResult("vkBeginCommandBuffer.OneTimeSubmit", beginResult);
             if (beginResult != Result.Success)
             {
                 FreeVulkanCommandBufferTracked(pool, ref commandBuffer, "OneTimeSubmit.BeginFailure");
                 throw new InvalidOperationException($"Failed to begin a Vulkan one-shot command buffer ({beginResult}).");
             }
-            ResetCommandBufferBindState(commandBuffer);
-
             lock (_oneTimeCommandPoolsLock)
                 _oneTimeCommandPools[commandBuffer.Handle] = new OneTimeCommandOwner(pool, useTransferQueue);
 

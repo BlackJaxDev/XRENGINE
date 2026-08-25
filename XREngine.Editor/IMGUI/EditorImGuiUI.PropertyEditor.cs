@@ -15,7 +15,6 @@ using XREngine.Data.Core;
 using XREngine.Editor.ComponentEditors;
 using XREngine.Editor.UI;
 using XREngine.Rendering;
-using XREngine.Rendering.DLSS;
 using XREngine.Rendering.UI;
 using XREngine.Components;
 using XREngine.Scene;
@@ -3823,10 +3822,10 @@ public static partial class EditorImGuiUI
             if (!member.Name.Contains("Dlss", StringComparison.OrdinalIgnoreCase))
                 return false;
 
-            if (!NvidiaDlssManager.RequiredRuntimeDllsAvailable)
+            if (!VendorUpscaleRuntime.AreDlssRuntimeLibrariesAvailable)
             {
                 warning = "This DLSS setting will not do anything because the NVIDIA Streamline/DLSS runtime DLLs are not deployed. "
-                    + NvidiaDlssManager.RequiredRuntimeDllsUnavailableReason;
+                    + VendorUpscaleRuntime.DlssRuntimeLibrariesUnavailableReason;
                 return true;
             }
 
@@ -3841,14 +3840,14 @@ public static partial class EditorImGuiUI
             if (IsNvidiaDlssFrameGenerationMember(member)
                 && Engine.EffectiveSettings.EnableNvidiaDlssFrameGeneration
                 && Engine.EffectiveSettings.NvidiaDlssFrameGenerationMode != ENvidiaDlssFrameGenerationMode.Off
-                && !NvidiaDlssManager.FrameGenerationAvailable)
+                && !VendorUpscaleRuntime.IsDlssFrameGenerationSupported)
             {
                 warning = "DLSS frame generation is requested, but it is not available. "
-                    + NvidiaDlssManager.FrameGenerationUnavailableReason;
+                    + VendorUpscaleRuntime.DlssFrameGenerationUnavailableReason;
                 return true;
             }
 
-            uint maximumGeneratedFrames = NvidiaDlssManager.FrameGenerationMaximumFramesToGenerate;
+            uint maximumGeneratedFrames = VendorUpscaleRuntime.DlssFrameGenerationMaximumFramesToGenerate;
             uint requestedGeneratedFrames = (uint)Engine.EffectiveSettings.NvidiaDlssFrameGenerationMode;
             if (IsNvidiaDlssFrameGenerationMember(member)
                 && Engine.EffectiveSettings.EnableNvidiaDlssFrameGeneration

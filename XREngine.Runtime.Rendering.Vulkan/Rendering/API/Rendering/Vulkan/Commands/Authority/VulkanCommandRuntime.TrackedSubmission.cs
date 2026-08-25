@@ -639,9 +639,9 @@ internal sealed partial class VulkanCommandRuntime
 
                 if (CommandBuffers.TrackingBatches.TryGetValue(handle, out VulkanCommandBufferTrackingBatch? batch))
                     lock (batch)
-                        if (batch.QueuedSubmissionCount != 0)
+                        if (batch.IsRecording || batch.QueuedSubmissionCount != 0)
                         {
-                            failureReason = $"command buffer 0x{handle:X} tracking batch is already queued";
+                            failureReason = $"command buffer 0x{handle:X} tracking batch is still recording or already queued";
                             return false;
                         }
             }
@@ -661,7 +661,6 @@ internal sealed partial class VulkanCommandRuntime
                 if (CommandBuffers.TrackingBatches.TryGetValue(handle, out VulkanCommandBufferTrackingBatch? batch))
                     lock (batch)
                     {
-                        batch.IsRecording = false;
                         batch.QueuedSubmissionCount++;
                     }
             }

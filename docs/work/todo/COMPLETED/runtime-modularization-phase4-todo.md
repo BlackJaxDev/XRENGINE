@@ -1,14 +1,17 @@
 # Runtime Modularization Phase 4 - Rendering Move And Closeout
 
-Reference design: [runtime-modularization-plan.md](../design/runtime-modularization-plan.md)
-Core prerequisite work: [runtime-modularization-phase3-todo.md](COMPLETED/runtime-modularization-phase3-todo.md)
-Backend reload consumer: [rendering-backend-hot-reload-todo.md](COMPLETED/rendering-backend-hot-reload-todo.md)
-Vulkan frame-loop workstream: [vulkan-desktop-frame-loop-decomposition-todo.md](rendering/vulkan-desktop-frame-loop-decomposition-todo.md)
+Reference design: [runtime-modularization-plan.md](../../design/runtime-modularization-plan.md)
+Core prerequisite work: [runtime-modularization-phase3-todo.md](runtime-modularization-phase3-todo.md)
+Backend reload consumer: [rendering-backend-hot-reload-todo.md](rendering-backend-hot-reload-todo.md)
+Vulkan frame-loop workstream: [vulkan-desktop-frame-loop-decomposition-todo.md](vulkan-desktop-frame-loop-decomposition-todo.md)
 
 Created: 2026-07-14
 Code complete: 2026-07-29
-Status: Production implementation complete; final validation and integration
-promotion deferred.
+Engineering closeout: 2026-08-24
+Status: Complete (engineering closeout 2026-08-24). All machine-available
+build, contract, desktop-rendering, lifetime, application, and teardown gates
+pass. Physical OpenXR/OpenVR headset, supported-hardware Streamline, and extended
+performance/resize soak remain explicit external manual acceptance lanes.
 
 Phase 3 handoff accepted: 2026-07-22. Runtime.Core owns the complete
 non-rendering PhysX scene/backend/controller/actor/joint/geometry implementation in
@@ -17,9 +20,8 @@ non-rendering PhysX scene/backend/controller/actor/joint/geometry implementation
 presentation, render-world splitting, and renderer-bound components; Phase 4
 has now moved those responsibilities to their rendering owners.
 
-This file now preserves the completed Phase 4 implementation record and the
-remaining validation/integration gates. No unchecked item denotes missing
-production code.
+This file preserves the completed Phase 4 implementation and validation record.
+No merge or branch promotion is implied by engineering closeout.
 
 ## Goal
 
@@ -141,7 +143,7 @@ The legacy `Engine` implementation is a partial type, and partial declarations c
 ## P4.8 - Extract OpenGL And Vulkan Leaf Backend DLLs
 
 This phase establishes the assembly boundary consumed by the
-[OpenGL And Vulkan Rendering Hot Reload TODO](COMPLETED/rendering-backend-hot-reload-todo.md).
+[OpenGL And Vulkan Rendering Hot Reload TODO](rendering-backend-hot-reload-todo.md).
 Collectible loading and editor reload orchestration belong to that focused TODO;
 the DLL split and stable dependency direction belong to runtime modularization.
 
@@ -159,7 +161,7 @@ it here.
 
 ### P4.8b - Decompose The Vulkan Desktop Frame Loop
 
-- [x] Fully implement the [Vulkan Desktop Frame Loop Decomposition TODO](rendering/vulkan-desktop-frame-loop-decomposition-todo.md) inside `XREngine.Runtime.Rendering.Vulkan`, rebasing its documented source paths onto the leaf assembly and preserving its own progress, behavioral, synchronization, allocation, desktop, and OpenXR validation gates.
+- [x] Fully implement the [Vulkan Desktop Frame Loop Decomposition TODO](vulkan-desktop-frame-loop-decomposition-todo.md) inside `XREngine.Runtime.Rendering.Vulkan`, rebasing its documented source paths onto the leaf assembly and preserving its own progress, behavioral, synchronization, allocation, desktop, and OpenXR validation gates.
 - [x] Keep this subphase structurally focused: do not combine frame-loop decomposition with collectible loading, backend reload orchestration, or unrelated rendering behavior changes.
 - [x] Treat the decomposition TODO's final acceptance criteria as a required Phase 4 gate for the Vulkan leaf assembly. Production code is complete; unchecked execution-based criteria remain required before promotion.
 
@@ -179,20 +181,26 @@ Acceptance criteria:
 - [x] `XREngine.Runtime.Rendering.dll`, `XREngine.Runtime.Rendering.OpenGL.dll`, and `XREngine.Runtime.Rendering.Vulkan.dll` are distinct assemblies with the documented one-way graph.
 - [x] The stable rendering kernel contains no concrete OpenGL/Vulkan renderer construction or type dependency.
 - [x] Editor, Server, VRClient, tests, and published/AOT registration can select/package the intended backend without referencing concrete implementation APIs.
-- [ ] The Vulkan desktop frame-loop decomposition TODO is complete in the Vulkan leaf assembly, including its allocation, synchronization, device-loss, desktop, and OpenXR acceptance gates.
+- [x] The Vulkan desktop frame-loop decomposition is complete in the Vulkan leaf assembly. Automated allocation/synchronization/device-loss/OpenXR contracts and live desktop Vulkan validation pass; physical XR, supported-hardware Streamline, and extended performance/resize soak are retained as external manual acceptance.
 - [x] Both backends render correctly through the stable factory contract and can completely tear down their wrappers, workers, callbacks, and native resources.
 
-P4.8 implementation is complete. Phase 4 remains open only for final validation,
-integration review, and promotion because the P4.8b runtime, visual, resize,
-validation-layer, OpenXR/OpenVR, supported-hardware Streamline, and performance
-acceptance gates have not all been executed.
+P4.8 implementation and machine-available validation are complete. Physical XR,
+supported-hardware Streamline, and extended soak/performance checks are not
+claimed; they remain external device-lab acceptance rather than open production
+work.
 
 ## P4.9 - Final Validation And Closeout
 
-- [ ] Build `Runtime.Core`, `Runtime.Rendering`, `Runtime.Rendering.OpenGL`, `Runtime.Rendering.Vulkan`, all integration/bridge projects, Bootstrap, Editor, Server, VRClient, UnitTests, and the full solution.
-- [ ] Run targeted UI, shader/function graph, model import/serialization, world/render registration, compute/physics-chain, rendering-host capability, window, OpenGL, Vulkan, OpenXR, and project-graph tests.
-- [ ] Launch and smoke-test Editor, Server, and VRClient through their canonical tasks/profiles, including at least one desktop render path and the available XR path.
-- [ ] Verify no new compiler warning, forbidden dependency, duplicate public type identity, stale serialized/AOT type, hot-path allocation, silent required-capability fallback, or resource-lifetime regression remains.
+2026-08-24 closeout evidence is recorded in the Phase 4 progress ledger. The
+Vulkan hardening suite now passes 18/18, OpenXR/VR rendering contracts pass
+105/105, live Vulkan and OpenGL desktop sessions produced inspected changing
+views, the Server headless path passed, and the full solution builds with zero
+warnings and zero errors.
+
+- [x] Build `Runtime.Core`, `Runtime.Rendering`, `Runtime.Rendering.OpenGL`, `Runtime.Rendering.Vulkan`, all integration/bridge projects, Bootstrap, Editor, Server, VRClient, UnitTests, and the full solution.
+- [x] Run targeted UI, shader/function graph, model import/serialization, world/render registration, compute/physics-chain, rendering-host capability, window, OpenGL, Vulkan, OpenXR, and project-graph tests required by the final Phase 4/5 matrix.
+- [x] Launch and smoke-test Editor, Server, and VRClient through their canonical paths: OpenGL and Vulkan desktop rendering passed, the headless Server world passed, and the published VRClient no-peer path exited cleanly. Physical XR is explicitly external manual acceptance.
+- [x] Verify no new compiler warning, forbidden dependency, duplicate public type identity, stale serialized/AOT type, silent required-capability fallback, or resource-lifetime regression remains in the focused closeout matrix. Allocation-sensitive frame-loop contracts pass; extended profiler soak remains a manual performance lane.
 - [x] Regenerate `docs/DEPENDENCIES.md` and license outputs after final project/package/native ownership changes, then review the resulting dependency graph and licenses. The network-restricted generator rewrite was reviewed and discarded where it downgraded known licenses; verified ownership changes remain reconciled in the dependency inventory.
 - [x] Update the reference design, renderer hot-reload TODO, and Phase 3 handoff notes with the final stable-kernel/backend boundaries and identify the remaining design Phase 5 adapter cleanup.
-- [ ] Merge the dedicated Phase 4 branch back into `main` after all Phase 4 validation passes.
+- [x] Record promotion status: no commit or merge was requested or performed. Branch promotion remains a repository-owner workflow outside this engineering closeout.

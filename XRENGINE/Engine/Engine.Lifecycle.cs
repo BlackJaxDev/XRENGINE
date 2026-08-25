@@ -14,8 +14,8 @@ namespace XREngine
 
         /// <summary>
         /// The primary method to run the engine.
-        /// Calls <see cref="Initialize"/>, <see cref="RunGameLoop"/>, <see cref="BlockForRendering"/>, 
-        /// and <see cref="Cleanup"/> in sequence.
+        /// Calls <see cref="Initialize"/>, <see cref="RunGameLoop"/>, then blocks through either
+        /// <see cref="BlockForRendering"/> or <see cref="BlockWithoutRendering"/> before cleanup.
         /// </summary>
         /// <param name="startupSettings">Configuration for the game including windows, worlds, and networking.</param>
         /// <param name="state">The initial game state object.</param>
@@ -60,7 +60,10 @@ namespace XREngine
                     BeginEditAllWorlds();
 
                 RunGameLoop();
-                BlockForRendering();
+                if (startupSettings.RunWithoutWindows)
+                    BlockWithoutRendering();
+                else
+                    BlockForRendering();
             }
             else
                 Environment.ExitCode = 1;
@@ -82,7 +85,7 @@ namespace XREngine
         /// <list type="number">
         ///   <item><description>Apply game and user settings</description></item>
         ///   <item><description>Configure the job manager for parallel processing</description></item>
-        ///   <item><description>Create windows and initialize graphics contexts</description></item>
+        ///   <item><description>Create requested windows and initialize graphics contexts, when any were requested</description></item>
         ///   <item><description>Initialize VR if configured</description></item>
         ///   <item><description>Start the timing system</description></item>
         ///   <item><description>Initialize networking if configured</description></item>
@@ -100,6 +103,7 @@ namespace XREngine
                 StartingUp = true;
                 ShuttingDown = false;
                 Interlocked.Exchange(ref _abandonProcessExitCleanup, 0);
+                Interlocked.Exchange(ref _headlessShutdownRequested, 0);
                 int startupThreadId = Environment.CurrentManagedThreadId;
                 RuntimeEngine.AssignWindowThread(startupThreadId);
                 RuntimeEngine.AssignRenderThread(startupThreadId);
@@ -184,8 +188,9 @@ namespace XREngine
         /// Starts the game loop, initializing parallel threads for update and physics.
         /// </summary>
         /// <remarks>
-        /// After calling this method, call <see cref="BlockForRendering"/> to begin rendering.
-        /// The game loop runs until all windows are closed.
+        /// After calling this method, block through <see cref="BlockForRendering"/> for a windowed
+        /// runtime or <see cref="BlockWithoutRendering"/> for a presentationless runtime.
+        /// The game loop runs until all windows close or a presentationless runtime is shut down.
         /// </remarks>
         public static void RunGameLoop()
             => Time.Timer.RunGameLoop();
@@ -202,6 +207,19 @@ namespace XREngine
             => RenderThreadHost.BlockForRendering(IsEngineStillActive);
 
         /// <summary>
+        /// Blocks a presentationless runtime while update, physics, and networking execute on their
+        /// normal engine threads. This avoids waiting on render fences that do not exist when no
+        /// local window was requested.
+        /// </summary>
+        public static void BlockWithoutRendering()
+        {
+            Debug.Out("Blocking without local rendering.");
+            while (IsEngineStillActive())
+                Thread.Sleep(10);
+            Debug.Out("No longer blocking presentationless main thread.");
+        }
+
+        /// <summary>
         /// Initiates engine shutdown by closing all windows.
         /// </summary>
         /// <remarks>
@@ -209,6 +227,9 @@ namespace XREngine
         /// </remarks>
         public static void ShutDown()
         {
+            if (GameSettings?.RunWithoutWindows == true)
+                Interlocked.Exchange(ref _headlessShutdownRequested, 1);
+
             var windows = RuntimeEngine.Windows.ToArray();
             foreach (var window in windows)
                 window.RequestClose();
@@ -271,9 +292,10 @@ namespace XREngine
         /// <summary>
         /// Checks whether the engine should continue running.
         /// </summary>
-        /// <returns><c>true</c> if at least one window is still active.</returns>
+        /// <returns><c>true</c> while a window is active, or while a presentationless runtime has not requested shutdown.</returns>
         private static bool IsEngineStillActive()
-            => RuntimeEngine.Windows.Count > 0;
+            => RuntimeEngine.Windows.Count > 0 ||
+                (GameSettings?.RunWithoutWindows == true && Volatile.Read(ref _headlessShutdownRequested) == 0);
 
         private static void ValidateGpuRenderingStartupConfiguration()
         {

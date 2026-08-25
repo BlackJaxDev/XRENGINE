@@ -352,10 +352,12 @@ namespace XREngine.Rendering.Vulkan
             try
             {
                 ThrowIfVulkanDeviceOperationNotAdmitted("vkBeginCommandBuffer.DynamicUiSecondary");
-                if (Api!.BeginCommandBuffer(secondaryCommandBuffer, ref beginInfo) != Result.Success)
+                if (BeginTrackedCommandBuffer(
+                        secondaryCommandBuffer,
+                        ref beginInfo,
+                        "DynamicUiSecondary") != Result.Success)
                     throw new Exception("Failed to begin dynamic UI text secondary command buffer.");
 
-                ResetCommandBufferBindState(secondaryCommandBuffer);
                 recordingStarted = true;
                 meshDrawSlotsByRendererFamily.Clear();
 
@@ -811,11 +813,13 @@ namespace XREngine.Rendering.Vulkan
             {
                 ThrowIfVulkanDeviceOperationNotAdmitted(
                     "vkBeginCommandBuffer.CommandChainSecondary");
-                if (Api!.BeginCommandBuffer(secondary, ref beginInfo) != Result.Success)
+                if (BeginTrackedCommandBuffer(
+                        secondary,
+                        ref beginInfo,
+                        "CommandChainSecondary") != Result.Success)
                     throw new InvalidOperationException(
                         "Failed to begin Vulkan non-graphics secondary command buffer.");
 
-                ResetCommandBufferBindState(secondary);
                 recordingStarted = true;
                 MarkCommandChainSecondaryRecording(chain, secondary);
                 CommandBufferRecordingScratch recordingScratch =

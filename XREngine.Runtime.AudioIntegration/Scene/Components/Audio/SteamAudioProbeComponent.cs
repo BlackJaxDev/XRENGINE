@@ -2,6 +2,7 @@
 using System.Numerics;
 using XREngine.Audio;
 using XREngine.Audio.Steam;
+using XREngine.Runtime.Audio;
 using YamlDotNet.Serialization;
 
 namespace XREngine.Components;
@@ -389,7 +390,7 @@ public class SteamAudioProbeComponent : XRComponent
         if (World is null)
             return null;
 
-        foreach (ListenerContext listener in ((World as IRuntimeAudioListenerWorld)?.AudioListeners ?? []).OfType<ListenerContext>())
+        foreach (ListenerContext listener in RuntimeAudioListenerWorldRegistry.GetListeners(World))
         {
             if (listener.EffectsProcessor is SteamAudioProcessor processor)
                 return processor;

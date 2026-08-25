@@ -236,23 +236,6 @@ namespace XREngine.Rendering.Vulkan
             return true;
         }
 
-        internal void ResetCommandBufferBindState(CommandBuffer commandBuffer)
-        {
-            if (!ResourceRuntime.CanResetCommandBuffer(commandBuffer))
-                throw new InvalidOperationException(
-                    $"Command buffer 0x{unchecked((ulong)commandBuffer.Handle):X} is not resettable.");
-            ResourceRuntime.CompleteCommandBufferReset(unchecked((ulong)commandBuffer.Handle));
-            ulong key = (ulong)commandBuffer.Handle;
-            CommandBufferBindState state = new()
-            {
-                RecordingGeneration = unchecked((ulong)Interlocked.Increment(ref _commandBufferRecordingGeneration)),
-            };
-            lock (_commandBindStateLock)
-                _commandBindStates[key] = state;
-            BeginCommandBufferTrackingBatch(commandBuffer);
-            _commandRuntime.ResetCommandBufferImageLayoutJournal(commandBuffer);
-        }
-
         internal ulong ResolveCommandBufferRecordingGeneration(CommandBuffer commandBuffer)
             => _commandRuntime.CommandBuffers.ResolveRecordingGeneration(commandBuffer);
 

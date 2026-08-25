@@ -13,7 +13,6 @@ using XREngine.Data.Core;
 using XREngine.Data.Rendering;
 using XREngine.Editor.Services;
 using XREngine.Rendering;
-using XREngine.Rendering.OpenGL;
 using XREngine.Rendering.PostProcessing;
 using XREngine.Rendering.Resources;
 using XREngine.Rendering.Vulkan;

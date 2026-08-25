@@ -81,21 +81,21 @@ namespace XREngine.Input.Devices
         public abstract void RegisterVRFloatAction<TCategory, TName>(
             TCategory category,
             TName name,
-            ScalarAction.ValueChangedHandler func)
+            RuntimeVrScalarChanged func)
             where TCategory : struct, Enum
             where TName : struct, Enum;
 
         public abstract void RegisterVRVector2Action<TCategory, TName>(
             TCategory category,
             TName name,
-            Vector2Action.ValueChangedHandler func)
+            RuntimeVrVector2Changed func)
             where TCategory : struct, Enum
             where TName : struct, Enum;
 
         public abstract void RegisterVRVector3Action<TCategory, TName>(
             TCategory category,
             TName name,
-            Vector3Action.ValueChangedHandler func)
+            RuntimeVrVector3Changed func)
             where TCategory : struct, Enum
             where TName : struct, Enum;
 

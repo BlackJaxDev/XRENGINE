@@ -215,6 +215,7 @@ internal sealed partial class VulkanResourceRuntime
             return VulkanRetirementTicket.None;
 
         Lifetime.Tracker.FenceResourceRecordingAdmission(key, owner);
+        Lifetime.PublishTrackingDependenciesBeforeRetirement(key);
         if (key.Type == ObjectType.Image)
             Images.RetireViewsForBackingImage(key.Handle, owner);
 

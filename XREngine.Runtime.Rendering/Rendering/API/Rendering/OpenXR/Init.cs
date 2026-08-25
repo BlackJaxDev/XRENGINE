@@ -21,7 +21,7 @@ namespace XREngine.Rendering.API.Rendering.OpenXR;
 /// Provides an implementation of XR functionality using the OpenXR standard.
 /// Handles initialization, session management, swapchain creation, and frame rendering.
 /// </summary>
-public unsafe partial class OpenXRAPI : XRBase
+public unsafe partial class OpenXRAPI : XRBase, IOpenXrApplicationLifecycle
 {
     public OpenXRAPI()
     {

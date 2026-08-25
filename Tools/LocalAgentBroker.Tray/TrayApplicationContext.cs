@@ -13,6 +13,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
     private readonly BrokerHistoryStore _store;
     private readonly NotifyIcon _notifyIcon;
     private readonly System.Windows.Forms.Timer _refreshTimer;
+    private readonly FileSystemWatcher _historyWatcher;
     private readonly DateTimeOffset _startedUtc = DateTimeOffset.UtcNow;
     private readonly HashSet<string> _knownRunIds = new(StringComparer.Ordinal);
     private BrokerHistoryForm? _historyForm;
@@ -21,11 +22,14 @@ internal sealed class TrayApplicationContext : ApplicationContext
     private DateTimeOffset _lastCleanupUtc = DateTimeOffset.MinValue;
     private string _activeMenuSignature = string.Empty;
     private string? _notificationRunId;
+    private bool? _appliedDarkTheme;
+    private int _historyRefreshScheduled;
     private bool _exiting;
 
     public TrayApplicationContext(string repositoryRoot)
     {
-        _store = new BrokerHistoryStore(new BrokerUiPaths(repositoryRoot));
+        var paths = new BrokerUiPaths(repositoryRoot);
+        _store = new BrokerHistoryStore(paths);
         _settings = _store.LoadSettings();
         _notifyIcon = new NotifyIcon
         {
@@ -35,6 +39,17 @@ internal sealed class TrayApplicationContext : ApplicationContext
         };
         _notifyIcon.DoubleClick += (_, _) => ShowHistory();
         _notifyIcon.BalloonTipClicked += (_, _) => ShowHistory(_notificationRunId);
+
+        _historyWatcher = new FileSystemWatcher(paths.RunsDirectory, "*.json")
+        {
+            IncludeSubdirectories = false,
+            NotifyFilter = NotifyFilters.FileName | NotifyFilters.LastWrite | NotifyFilters.Size,
+        };
+        _historyWatcher.Created += HandleHistoryFileChanged;
+        _historyWatcher.Changed += HandleHistoryFileChanged;
+        _historyWatcher.Deleted += HandleHistoryFileChanged;
+        _historyWatcher.Renamed += HandleHistoryFileChanged;
+        _historyWatcher.EnableRaisingEvents = true;
 
         _refreshTimer = new System.Windows.Forms.Timer
         {
@@ -50,6 +65,8 @@ internal sealed class TrayApplicationContext : ApplicationContext
         if (_exiting)
             return;
         _exiting = true;
+        _historyWatcher.EnableRaisingEvents = false;
+        _historyWatcher.Dispose();
         _refreshTimer.Stop();
         _refreshTimer.Dispose();
         _notifyIcon.Visible = false;
@@ -69,7 +86,8 @@ internal sealed class TrayApplicationContext : ApplicationContext
         ShowNewPromptNotifications(refreshedRecords);
         _records = refreshedRecords;
         _historyForm?.UpdateRecords(_records);
-        UpdateTrayMenu(forceMenu);
+        bool themeChanged = RefreshTheme();
+        UpdateTrayMenu(forceMenu || themeChanged);
         ApplyIdleExitPolicy();
     }
 
@@ -122,6 +140,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
         var exitItem = new ToolStripMenuItem("Exit");
         exitItem.Click += (_, _) => ExitThread();
         menu.Items.Add(exitItem);
+        BrokerTheme.Apply(menu, _appliedDarkTheme == true);
 
         ContextMenuStrip? previousMenu = _notifyIcon.ContextMenuStrip;
         _notifyIcon.ContextMenuStrip = menu;
@@ -138,6 +157,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
             _historyForm = new BrokerHistoryForm();
             _historyForm.DeleteRecordRequested += DeleteRecord;
             _historyForm.SettingsRequested += ShowSettings;
+            _historyForm.SetTheme(_settings.Theme);
             _historyForm.UpdateRecords(_records);
         }
 
@@ -153,6 +173,48 @@ internal sealed class TrayApplicationContext : ApplicationContext
         _store.SaveSettings(_settings);
         _lastCleanupUtc = DateTimeOffset.MinValue;
         RefreshState(forceMenu: true);
+    }
+
+    private bool RefreshTheme()
+    {
+        bool isDarkTheme = BrokerTheme.ResolveDark(_settings.Theme);
+        if (_appliedDarkTheme == isDarkTheme)
+            return false;
+
+        _appliedDarkTheme = isDarkTheme;
+        _historyForm?.SetTheme(_settings.Theme);
+        return true;
+    }
+
+    private void HandleHistoryFileChanged(object sender, FileSystemEventArgs eventArgs)
+    {
+        if (_exiting
+            || !eventArgs.FullPath.EndsWith(".json", StringComparison.OrdinalIgnoreCase)
+            || Interlocked.Exchange(ref _historyRefreshScheduled, 1) != 0)
+        {
+            return;
+        }
+
+        BrokerHistoryForm? historyForm = _historyForm;
+        if (historyForm is null || historyForm.IsDisposed || !historyForm.IsHandleCreated)
+        {
+            Interlocked.Exchange(ref _historyRefreshScheduled, 0);
+            return;
+        }
+
+        try
+        {
+            historyForm.BeginInvoke((Action)(() =>
+            {
+                Interlocked.Exchange(ref _historyRefreshScheduled, 0);
+                if (!_exiting && historyForm.Visible)
+                    RefreshState();
+            }));
+        }
+        catch (InvalidOperationException)
+        {
+            Interlocked.Exchange(ref _historyRefreshScheduled, 0);
+        }
     }
 
     private void DeleteRecord(string runId)

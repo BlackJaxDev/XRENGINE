@@ -1,6 +1,0 @@
-﻿License text could not be resolved locally for NuGet package 'ZstdSharp.Port' (0.8.8).
-
-Resolved license: MIT
-RepositoryUrl: https://github.com/oleg-st/ZstdSharp.git
-ProjectUrl: https://github.com/oleg-st/ZstdSharp
-

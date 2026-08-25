@@ -11,6 +11,7 @@ using System.Numerics;
 using System.Threading;
 using System.Threading.Tasks;
 using XREngine.Components.Scene.Mesh;
+using XREngine.Core.Attributes;
 using XREngine.Components.Scene.Transforms;
 using XREngine.Data.Colors;
 using XREngine.Data.Rendering;
@@ -32,6 +33,7 @@ namespace XREngine
     /// This class is used to import models from various formats using the Assimp library.
     /// Returns a SceneNode hierarchy populated with ModelComponents, and outputs generated materials and meshes.
     /// </summary>
+    [XRTypeRedirect("XREngine.ModelImporter")]
     public class ModelImporter : IDisposable
     {
         private sealed class ImportOptionsScope(ModelImportOptions? previous) : IDisposable
@@ -285,7 +287,10 @@ namespace XREngine
             path = ResolveTextureFilePath(modelFilePath, path, out bool textureExists);
             textureList[i] = textureExists
                 ? _texturePathCache.GetOrAdd(path, MakeTextureAction)
-                : _texturePathCache.GetOrAdd(path, static missingPath => TextureFactoryInternal(missingPath, schedulePreviewLoad: false));
+                : _texturePathCache.GetOrAdd(path, static missingPath => TextureFactoryInternal(
+                    missingPath,
+                    schedulePreviewLoad: false,
+                    registerStreamingPlaceholder: false));
         }
 
         private readonly ConcurrentDictionary<string, bool> _missingTexturePathWarnings = new();
@@ -481,9 +486,12 @@ namespace XREngine
         public Func<string, XRTexture2D> MakeTextureAction { get; set; } = TextureFactoryInternal;
 
         private static XRTexture2D TextureFactoryInternal(string path)
-            => TextureFactoryInternal(path, schedulePreviewLoad: false);
+            => TextureFactoryInternal(path, schedulePreviewLoad: false, registerStreamingPlaceholder: true);
 
-        private static XRTexture2D TextureFactoryInternal(string path, bool schedulePreviewLoad)
+        private static XRTexture2D TextureFactoryInternal(
+            string path,
+            bool schedulePreviewLoad,
+            bool registerStreamingPlaceholder = true)
         {
             string textureName = Path.GetFileNameWithoutExtension(path);
             XRTexture2D placeholder = new()
@@ -527,8 +535,10 @@ namespace XREngine
                     onError: ex => LogImportException(ex, $"[TextureFactory] Texture import job FAILED for '{path}'."),
                     priority: JobPriority.Low);
             }
-            else
+            else if (registerStreamingPlaceholder)
             {
+                // Missing sources cannot stream. Keep their filler-only placeholders
+                // independent from renderer leaf registration.
                 XRTexture2D.RegisterImportedTextureStreamingPlaceholder(path, placeholder);
             }
 

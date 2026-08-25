@@ -228,6 +228,26 @@ namespace XREngine.Animation.Importers
             float startTime = GetScalarFloatOrNull(settingsMap, "m_StartTime") ?? 0.0f;
             float stopTime = GetScalarFloatOrNull(settingsMap, "m_StopTime") ?? 0.0f;
             bool looped = (GetScalarIntOrNull(settingsMap, "m_LoopTime") ?? 0) != 0;
+            UnityHumanoidClipRootMotionSettings? rootMotionSettings = settingsMap is null
+                ? null
+                : new UnityHumanoidClipRootMotionSettings
+                {
+                    StartTime = startTime,
+                    StopTime = stopTime,
+                    OrientationOffsetY = GetScalarFloatOrNull(settingsMap, "m_OrientationOffsetY") ?? 0.0f,
+                    Level = GetScalarFloatOrNull(settingsMap, "m_Level") ?? 0.0f,
+                    CycleOffset = GetScalarFloatOrNull(settingsMap, "m_CycleOffset") ?? 0.0f,
+                    LoopTime = looped,
+                    LoopPose = (GetScalarIntOrNull(settingsMap, "m_LoopBlend") ?? 0) != 0,
+                    BakeOrientationIntoPose = (GetScalarIntOrNull(settingsMap, "m_LoopBlendOrientation") ?? 0) != 0,
+                    BakePositionYIntoPose = (GetScalarIntOrNull(settingsMap, "m_LoopBlendPositionY") ?? 0) != 0,
+                    BakePositionXZIntoPose = (GetScalarIntOrNull(settingsMap, "m_LoopBlendPositionXZ") ?? 0) != 0,
+                    KeepOriginalOrientation = (GetScalarIntOrNull(settingsMap, "m_KeepOriginalOrientation") ?? 0) != 0,
+                    KeepOriginalPositionY = (GetScalarIntOrNull(settingsMap, "m_KeepOriginalPositionY") ?? 0) != 0,
+                    KeepOriginalPositionXZ = (GetScalarIntOrNull(settingsMap, "m_KeepOriginalPositionXZ") ?? 0) != 0,
+                    HeightFromFeet = (GetScalarIntOrNull(settingsMap, "m_HeightFromFeet") ?? 0) != 0,
+                    Mirror = (GetScalarIntOrNull(settingsMap, "m_Mirror") ?? 0) != 0,
+                };
 
             var curves = new List<ScalarCurve>();
             var vecCurves = new List<VectorCurve>();
@@ -258,6 +278,7 @@ namespace XREngine.Animation.Importers
                 LengthInSeconds = length,
                 Looped = looped,
                 SampleRate = sampleRate,
+                UnityHumanoidRootMotionSettings = rootMotionSettings,
                 RootMember = new AnimationMember("Root", EAnimationMemberType.Group),
             };
 

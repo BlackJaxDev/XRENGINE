@@ -47,21 +47,23 @@ public sealed class VulkanCoreHardeningPhase4Tests
     [Test]
     public void PipelineLayoutsUseExactTicketDeferredRetirementInsteadOfShutdownRetention()
     {
-        string layouts = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Resources/Pipelines/VulkanRenderer.PipelineLayoutLifetime.cs");
+        string resources = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Resources/Authority/VulkanResourceRuntime.cs");
         string frameSlots = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/Loop/VulkanRenderer.FrameLoop.FrameSlots.cs");
         string openXrResources = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/OpenXR/VulkanRenderer.OpenXR.ResourcesPressure.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/Loop/Authority/VulkanFrameLoop.OpenXR.ResourcesPressure.cs");
 
-        layouts.ShouldContain("RetiredPipelineLayout(");
-        layouts.ShouldContain("CaptureVulkanRetirementTicket(");
-        layouts.ShouldContain("IsVulkanRetirementReady(candidate.Ticket)");
-        layouts.ShouldContain("DrainRetiredPipelineLayouts(int frameSlot, int maxItems)");
-        layouts.ShouldContain("CompleteVulkanResourceDestruction(\n                ObjectType.PipelineLayout");
-        layouts.ShouldNotContain("Pipeline-layout destruction deferred until shutdown");
-        frameSlots.ShouldContain("DrainRetiredPipelineLayouts();");
-        openXrResources.ShouldContain("DrainRetiredPipelineLayouts(i, int.MaxValue)");
+        resources.ShouldContain("internal bool TryBeginDestroyPipelineLayout(");
+        resources.ShouldContain("tracker.FenceResourceRecordingAdmission(key, owner);");
+        resources.ShouldContain("Lifetime.PublishTrackingDependenciesBeforeRetirement(key);");
+        resources.ShouldContain("new VulkanRetiredPipelineLayout(pipelineLayout, ticket");
+        resources.ShouldContain("Lifetime.Tracker.IsRetirementReady(candidate.Ticket)");
+        resources.ShouldContain("internal unsafe void DrainRetiredPipelineLayouts(");
+        resources.ShouldContain("CompleteSimpleResourceDestruction(\n                ObjectType.PipelineLayout");
+        resources.ShouldNotContain("Pipeline-layout destruction deferred until shutdown");
+        frameSlots.ShouldContain("ResourceRuntime.DrainRetiredPipelineLayouts(");
+        openXrResources.ShouldContain("ResourceRuntime.DrainRetiredPipelineLayouts(Api!, _deviceContext.Device, i, retirementBudgetPerType)");
     }
 
     [Test]
@@ -113,21 +115,24 @@ public sealed class VulkanCoreHardeningPhase4Tests
     [Test]
     public void QueueGateway_ValidatesDependenciesBeforeDispatchAndRecordsSuccessfulUse()
     {
-        string synchronization = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/Synchronization/VulkanRenderer.Synchronization.cs");
+        string submission = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/Authority/VulkanCommandRuntime.TrackedSubmission.cs");
         string method = SliceBetween(
-            synchronization,
-            "private Result SubmitToQueueTracked(",
-            "internal Result WaitForQueueIdleTracked(");
+            submission,
+            "internal VulkanSubmissionReceipt SubmitToQueueTrackedWithDisposition(",
+            "internal unsafe VulkanSubmissionReceipt SubmitToGraphicsTimelineTrackedWithDisposition(");
 
-        int validation = method.IndexOf("ValidateVulkanSubmissionResourceLifetimes", StringComparison.Ordinal);
-        int dispatch = method.IndexOf("Api!.QueueSubmit", StringComparison.Ordinal);
-        int successfulUse = method.IndexOf("RecordSuccessfulVulkanSubmissionLifetime", StringComparison.Ordinal);
+        int imageValidation = method.IndexOf("ValidateOrderedCommandBufferImageStateContracts", StringComparison.Ordinal);
+        int lifetimeValidation = method.IndexOf("TryAcquireSubmissionLifetimePins", StringComparison.Ordinal);
+        int dispatch = method.IndexOf("SubmitNative", StringComparison.Ordinal);
+        int successfulUse = method.IndexOf("PublishSuccessfulSubmissionLifetime", StringComparison.Ordinal);
 
-        validation.ShouldBeGreaterThanOrEqualTo(0);
-        dispatch.ShouldBeGreaterThan(validation);
+        imageValidation.ShouldBeGreaterThanOrEqualTo(0);
+        lifetimeValidation.ShouldBeGreaterThan(imageValidation);
+        dispatch.ShouldBeGreaterThan(lifetimeValidation);
         successfulUse.ShouldBeGreaterThan(dispatch);
-        method.ShouldContain("submit-rejected-resource-lifetime");
+        method.ShouldContain("submit-rejected-validation");
+        method.ShouldContain("lifetimePinsTransferred = true;");
     }
 
     [Test]
@@ -135,33 +140,36 @@ public sealed class VulkanCoreHardeningPhase4Tests
     {
         string commandPools = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/Allocation/VulkanRenderer.CommandPool.cs");
-        string lifetime = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/Resources/Lifetime/VulkanRenderer.ResourceLifetimeTracking.cs");
-        string retirement = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/Resources/Retirement/VulkanRenderer.ResourceRetirement.cs");
+        string lifetimeNative = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/Authority/VulkanCommandRuntime.LifetimeNativeServices.cs");
+        string commandRuntime = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/Authority/VulkanCommandRuntime.cs");
 
-        commandPools.ShouldContain("private Result AllocateCommandBuffersHostSynchronized(");
-        commandPools.ShouldContain("private void FreeCommandBuffersHostSynchronized(");
         commandPools.ShouldContain("internal void DestroyCommandPoolHostSynchronized(CommandPool pool)");
-        commandPools.ShouldContain("lock (_commandPoolsLock)");
-        lifetime.ShouldContain("AllocateCommandBuffersHostSynchronized(ref allocateInfo, commandBuffers)");
-        lifetime.ShouldContain("FreeCommandBuffersHostSynchronized(commandPool, 1, &commandBuffer)");
-        retirement.ShouldContain("FreeCommandBuffersHostSynchronized(entry.CommandPool, 1, &commandBuffer)");
+        commandPools.ShouldContain("internal Result ResetVulkanCommandPoolTracked(CommandPool pool, string owner)");
+        commandPools.ShouldContain("lock (CommandPoolsGate)");
+        commandPools.ShouldContain("batch.IsRecording ||\n                                            batch.QueuedSubmissionCount != 0");
+        lifetimeNative.ShouldContain("internal unsafe Result AllocateCommandBuffersWithLifetime(");
+        lifetimeNative.ShouldContain("lock (Pools.Gate)");
+        int nativeAllocation = lifetimeNative.IndexOf("Api.AllocateCommandBuffers(", StringComparison.Ordinal);
+        int registration = lifetimeNative.IndexOf("ResourceRuntime.RegisterAllocatedCommandBuffer(", StringComparison.Ordinal);
+        registration.ShouldBeGreaterThan(nativeAllocation);
+        commandRuntime.ShouldContain("internal Result BeginTrackedCommandBuffer(");
+        commandRuntime.ShouldContain("lock (Pools.Gate)");
+        commandRuntime.ShouldContain("Api.BeginCommandBuffer(commandBuffer, ref beginInfo)");
     }
 
     [Test]
     public void CommandBufferRetirement_WaitsForCpuRecordingAndQueueOwnership()
     {
-        string lifetime = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/Resources/Lifetime/VulkanRenderer.ResourceLifetimeTracking.cs");
-        string retirement = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/Resources/Retirement/VulkanRenderer.ResourceRetirement.cs");
+        string commandRuntime = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/Authority/VulkanCommandRuntime.cs");
 
-        lifetime.ShouldContain("private bool IsVulkanCommandBufferRetirementReady(");
-        lifetime.ShouldContain("batch.IsRecording || batch.QueuedSubmissionCount != 0");
-        lifetime.ShouldContain("lifetime.QueuedSubmissionCount != 0");
-        lifetime.ShouldContain("if (!IsVulkanCommandBufferRetirementReady(commandBuffer, ticket))");
-        retirement.ShouldContain("IsVulkanCommandBufferRetirementReady(\n                            candidate.CommandBuffer,");
+        commandRuntime.ShouldContain("private bool IsCommandBufferRetirementReady(");
+        commandRuntime.ShouldContain("batch.IsRecording || batch.QueuedSubmissionCount != 0");
+        commandRuntime.ShouldContain("lifetime.QueuedSubmissionCount != 0");
+        commandRuntime.ShouldContain("if (!IsCommandBufferRetirementReady(\n                        resourceRuntime,");
+        commandRuntime.ShouldContain("return tracker.IsRetirementReadyNoLock(ticket);");
     }
 
     [Test]
@@ -182,49 +190,51 @@ public sealed class VulkanCoreHardeningPhase4Tests
     [Test]
     public void CompletionTracking_CoversTimelineFenceQueueAndDeviceIdlePaths()
     {
-        string lifetime = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/Resources/Lifetime/VulkanRenderer.ResourceLifetimeTracking.cs");
-        string syncObjects = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/Synchronization/VulkanRenderer.SyncObjects.cs");
-        string synchronization = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/Synchronization/VulkanRenderer.Synchronization.cs");
-        string initialization = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Bootstrap/VulkanRenderer.Initialization.cs");
+        string trackedSubmission = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/Authority/VulkanCommandRuntime.TrackedSubmission.cs");
+        string rendererApi = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/Loop/Authority/VulkanFrameLoop.RendererApi.cs");
+        string openXrCompatibility = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/Loop/Authority/VulkanFrameLoop.OpenXRCompatibility.cs");
         string openXrSubmission = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/OpenXR/VulkanRenderer.OpenXR.Submission.cs");
-        string presentationless = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Bootstrap/Targets/VulkanPresentationlessTargetDriver.cs");
-        string transfer = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Resources/Uploads/VulkanRenderer.TextureUploadTransfer.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/OpenXR/VulkanCommandRuntime.OpenXrSubmission.cs");
+        string queueIdle = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/Loop/Authority/VulkanFrameLoop.ImGuiOutputHost.cs");
+        string synchronous = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Resources/Uploads/VulkanSynchronousResourceCommandSession.cs");
 
-        lifetime.ShouldContain("NotifyVulkanTimelineCompleted");
-        lifetime.ShouldContain("NotifyVulkanFenceCompleted");
-        lifetime.ShouldContain("NotifyVulkanQueueIdle");
-        lifetime.ShouldContain("NotifyVulkanDeviceIdle");
-        syncObjects.ShouldContain("NotifyVulkanTimelineCompleted(semaphore, currentValue)");
-        synchronization.ShouldContain("NotifyVulkanQueueIdle(queue)");
-        initialization.ShouldContain("NotifyVulkanDeviceIdle()");
-        openXrSubmission.ShouldContain("NotifyVulkanFenceCompleted(fence)");
-        presentationless.ShouldContain("NotifyVulkanFenceCompleted(fence)");
-        transfer.ShouldContain("NotifyVulkanFenceCompleted(submitted.Fence)");
+        trackedSubmission.ShouldContain("internal void CompleteTrackedTimeline(");
+        trackedSubmission.ShouldContain("internal void CompleteTrackedFence(");
+        trackedSubmission.ShouldContain("internal void CompleteTrackedQueue(");
+        trackedSubmission.ShouldContain("internal void CompleteTrackedDevice()");
+        rendererApi.ShouldContain("if (result == Result.Success)\n            {\n                _commandRuntime.CompleteTrackedDevice();");
+        openXrCompatibility.ShouldContain("if (result == Result.Success)\n                _commandRuntime.CompleteTrackedDevice();");
+        openXrSubmission.ShouldContain("CompleteTrackedTimeline(");
+        queueIdle.ShouldContain("_commandRuntime.CompleteTrackedQueue(queue);");
+        synchronous.ShouldContain("_commands.CompleteTrackedFence(fence);");
     }
 
     [Test]
     public void RetirementQueues_CoverEveryPhase4ObjectFamily()
     {
-        string retirement = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/Resources/Retirement/VulkanRenderer.ResourceRetirement.cs");
+        string queue = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Resources/Retirement/VulkanResourceRetirementQueue.cs");
+        string drains = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Resources/Authority/VulkanResourceRuntime.cs");
 
-        retirement.ShouldContain("RetiredImageResourceEntry");
-        retirement.ShouldContain("RetiredFramebuffer");
-        retirement.ShouldContain("RetiredBuffer");
-        retirement.ShouldContain("RetiredBufferView");
-        retirement.ShouldContain("RetiredDescriptorSet");
-        retirement.ShouldContain("RetiredDescriptorPool");
-        retirement.ShouldContain("RetiredCommandBuffer");
-        retirement.ShouldContain("RetiredPipeline");
-        retirement.ShouldContain("RetiredQueryPool");
-        retirement.ShouldContain("IsVulkanRetirementReady(candidate.Ticket)");
+        queue.ShouldContain("List<RetiredImageResourceEntry>[] Images");
+        queue.ShouldContain("List<RetiredFramebuffer>[] Framebuffers");
+        queue.ShouldContain("List<RetiredBuffer>[] Buffers");
+        queue.ShouldContain("List<RetiredBufferView>[] BufferViews");
+        queue.ShouldContain("List<RetiredDescriptorSet>[] DescriptorSets");
+        queue.ShouldContain("List<RetiredDescriptorPool>[] DescriptorPools");
+        queue.ShouldContain("List<RetiredCommandBuffer>[] CommandBuffers");
+        queue.ShouldContain("List<RetiredCommandPool>[] CommandPools");
+        queue.ShouldContain("List<RetiredPipeline>[] Pipelines");
+        queue.ShouldContain("List<VulkanRetiredPipelineLayout>[] PipelineLayouts");
+        queue.ShouldContain("List<VulkanRetiredDescriptorSetLayout>[] DescriptorSetLayouts");
+        queue.ShouldContain("List<RetiredQueryPool>[] QueryPools");
+        drains.ShouldContain("Lifetime.Tracker.IsRetirementReady(candidate.Ticket)");
     }
 
     [Test]
@@ -232,114 +242,117 @@ public sealed class VulkanCoreHardeningPhase4Tests
     {
         AssertRawVulkanCallOnlyIn(
             "DestroyFramebuffer(device",
-            "Frame/Resources/Retirement/VulkanRenderer.ResourceRetirement.cs");
+            "Resources/Authority/VulkanResourceRuntime.cs");
         AssertRawVulkanCallOnlyIn(
             "FreeDescriptorSets(device",
-            "Frame/Resources/Retirement/VulkanRenderer.ResourceRetirement.cs");
-        AssertRawVulkanCallOnlyIn(
-            "ResetDescriptorPool(device",
-            "Frame/Resources/Lifetime/VulkanRenderer.ResourceLifetimeTracking.cs");
+            "Resources/Authority/VulkanResourceRuntime.cs");
         AssertRawVulkanCallOnlyIn(
             "DestroyQueryPool(device",
-            "Frame/Resources/Retirement/VulkanRenderer.ResourceRetirement.cs",
+            "Resources/Authority/VulkanResourceRuntime.cs",
             "Bootstrap/Targets/VulkanPresentationlessTargetDriver.cs");
         AssertRawVulkanCallOnlyIn(
             "DestroyBufferView(device",
-            "Frame/Resources/Retirement/VulkanRenderer.ResourceRetirement.cs");
+            "Resources/Authority/VulkanResourceRuntime.cs");
     }
 
     [Test]
     public void DescriptorLifetime_PreventsIllegalMutationAndTracksPoolChildren()
     {
-        string lifetime = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/Resources/Lifetime/VulkanRenderer.ResourceLifetimeTracking.cs");
-        string descriptorSets = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Descriptors/VulkanRenderer.DescriptorSets.cs");
-        string commandState = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/State/VulkanRenderer.CommandBufferState.cs");
+        string authority = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Descriptors/VulkanDescriptorLifetimeAuthority.cs");
 
-        lifetime.ShouldContain("Cannot update in-flight Vulkan descriptor set");
-        lifetime.ShouldContain("CaptureVulkanDescriptorPoolRetirementTicket");
-        lifetime.ShouldContain("CanMutateVulkanDescriptorPool");
-        descriptorSets.ShouldContain("ValidateAndRecordVulkanDescriptorWrites");
-        commandState.ShouldContain("ResetVulkanDescriptorPoolTracked");
+        authority.ShouldContain("Cannot update in-flight Vulkan descriptor set");
+        authority.ShouldContain("CaptureDescriptorPoolRetirementTicket(");
+        authority.ShouldContain("ValidateAndRecordWritesNoLock(");
+        authority.ShouldContain("tracker.DescriptorSetsByPool");
+        authority.ShouldContain("RemoveRetiredDescriptorSetsForPoolNoLock(");
+        authority.ShouldContain("_lifetime.PublishTrackingDependenciesBeforeRetirement(key);");
     }
 
     [Test]
     public void DeviceLossTeardown_ForcesDestructionWithoutCompletingTimelines()
     {
+        string deviceLoss = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/Loop/Authority/VulkanFrameLoop.DeviceLoss.cs");
+        string lifecycle = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/Loop/Authority/VulkanFrameLoop.Lifecycle.cs");
         string lifetime = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/Resources/Lifetime/VulkanRenderer.ResourceLifetimeTracking.cs");
-        string retirement = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/Resources/Retirement/VulkanRenderer.ResourceRetirement.cs");
-        string initialization = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Bootstrap/VulkanRenderer.Initialization.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Resources/Authority/VulkanResourceRuntime.LifetimeLedger.cs");
+        string tracker = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Resources/Lifetime/VulkanResourceLifetimeTracker.cs");
 
-        lifetime.ShouldContain("NotifyVulkanResourceLifetimeDeviceLost");
-        lifetime.ShouldContain("_resourceLifetimeTracker.ForcedResourceDestructionCount");
-        retirement.ShouldContain("Force-destroying retired resources after device loss without waiting");
-        initialization.ShouldContain("BeginForcedVulkanRetirementDrain");
-        initialization.ShouldContain("EndForcedVulkanRetirementDrain");
+        deviceLoss.ShouldContain("_resourceRuntime.Lifetime.Tracker.DeviceLost = true;");
+        deviceLoss.ShouldNotContain("CompleteTrackedDevice");
+        lifecycle.ShouldContain("_resourceRuntime.BeginForcedRetirementDrain();");
+        lifecycle.ShouldContain("_resourceRuntime.EndForcedRetirementDrain();");
+        lifetime.ShouldContain("internal void MarkDeviceLost()");
+        tracker.ShouldContain("ForcedResourceDestructionCount");
     }
 
     [Test]
     public void DescriptorSetLayout_DuplicateReleaseIsSkipped()
     {
         string lifetime = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Descriptors/VulkanRenderer.DescriptorSetLayoutLifetime.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Resources/Authority/VulkanResourceRuntime.DescriptorSetLayoutLifetime.cs");
         string cache = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Descriptors/VulkanDescriptorLayoutCache.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Resources/Authority/VulkanDescriptorLayoutCache.cs");
 
-        lifetime.ShouldContain("Skipping stale descriptor-set-layout destroy");
-        lifetime.ShouldContain("_descriptorManager.LiveDescriptorSetLayoutHandles.TryRemove");
-        cache.ShouldContain("TryBeginDestroyDescriptorSetLayout(layout, \"DescriptorLayoutCache.UncachedRelease\")");
-        cache.ShouldNotContain("if (!_descriptorSetLayoutsByHandle.TryGetValue(layout.Handle, out CachedDescriptorSetLayout? cached))\n            {\n                Api!.DestroyDescriptorSetLayout");
+        lifetime.ShouldContain("!Descriptors.LiveDescriptorSetLayoutHandles.TryRemove(layout.Handle, out _)");
+        lifetime.ShouldContain("Lifetime.Retirement.AllDescriptorSetLayoutHandles.Contains(layout.Handle)");
+        lifetime.ShouldContain("VulkanResourceRetirementQueue.TryEnqueueUniqueNoLock(");
+        cache.ShouldContain("ResourceRuntime.DestroyDescriptorSetLayout(");
+        cache.ShouldNotContain("Api.DestroyDescriptorSetLayout");
     }
 
     [Test]
     public void CommandRecording_TracksSecondaryCopyBlitAndDescriptorDependencies()
     {
-        string lifetime = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/Resources/Lifetime/VulkanRenderer.ResourceLifetimeTracking.cs");
-        string commandState = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/State/VulkanRenderer.CommandBufferState.cs");
+        string encoder = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/Authority/VulkanTrackedCommandEncoder.cs");
+        string native = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/Authority/VulkanCommandRuntime.NativeRecordingServices.cs");
+        string coordination = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/Authority/VulkanCommandRuntime.ResourceCoordination.cs");
+        string resources = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Resources/Authority/VulkanResourceRuntime.cs");
 
-        lifetime.ShouldContain("CmdExecuteCommandsTracked");
-        lifetime.ShouldContain("CmdCopyBufferTracked");
-        lifetime.ShouldContain("CmdCopyBufferToImageTracked");
-        lifetime.ShouldContain("CmdCopyImageToBufferTracked");
-        lifetime.ShouldContain("CmdCopyImageTracked");
-        lifetime.ShouldContain("CmdBlitImageTracked");
-        lifetime.ShouldContain("CommandBuffer.SecondaryExecution");
-        lifetime.ShouldContain("RegisterVulkanFramebuffer");
-        lifetime.ShouldContain("Framebuffer.Attachment");
-        commandState.ShouldContain("TrackVulkanDescriptorSetBinding");
-        commandState.ShouldContain("TrackVulkanCommandBufferResource");
+        encoder.ShouldContain("Runtime.TrackCommandBufferResource(");
+        encoder.ShouldContain("Runtime.TrackExecutedCommandBuffers(");
+        native.ShouldContain("CmdExecuteCommandsTracked");
+        native.ShouldContain("CmdCopyBufferTracked");
+        coordination.ShouldContain("internal void TrackCommandBufferResource(");
+        coordination.ShouldContain("internal void TrackExecutedCommandBuffers(");
+        coordination.ShouldContain("PublishCommandBufferDependencyAfterGenerationRace(");
+        coordination.ShouldContain("tracker.GetPublishedGeneration(resourceKey) == observedGeneration");
+        coordination.ShouldContain("!batch.IsRecording || batch.QueuedSubmissionCount != 0");
+        resources.ShouldContain("internal void RegisterFramebuffer(");
+        int fence = resources.IndexOf("tracker.FenceResourceRecordingAdmission(key, owner);", StringComparison.Ordinal);
+        int publish = resources.IndexOf("Lifetime.PublishTrackingDependenciesBeforeRetirement(key);", fence, StringComparison.Ordinal);
+        publish.ShouldBeGreaterThan(fence);
+        AssertRawVulkanCallOnlyIn(
+            "BeginCommandBuffer(",
+            "Commands/Authority/VulkanCommandRuntime.cs");
     }
 
     [Test]
     public void PipelineCreation_RegistersEverySuccessfulNativeHandleGeneration()
     {
-        string[] files =
+        (string File, string CreationPattern, string RegistrationPattern)[] contracts =
         [
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/UI/VulkanRenderer.ImGui.cs",
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Programs/VkRenderProgram.cs",
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Programs/VkRenderProgramPipeline.cs",
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Pipeline.cs",
+            ("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/UI/VulkanImGuiOutputPipelineService.cs", @"CreateGraphicsPipelines\(", @"ObjectType\.Pipeline\b"),
+            ("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Programs/VkRenderProgram.Compute.cs", @"CreateComputePipelinesSynchronized\(", @"ProgramCreationPort\.RegisterPipeline\("),
+            ("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Programs/VkRenderProgram.GraphicsPipelines.cs", @"CreateGraphicsPipelinesSynchronized\(", @"ProgramCreationPort\.RegisterPipeline\("),
+            ("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Programs/VkRenderProgramPipeline.cs", @"Create(?:Graphics|Compute)PipelinesSynchronized\(", @"ProgramCreationPort\.RegisterPipeline\("),
+            ("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Pipelines/VulkanGraphicsPipelineFactory.cs", @"CreateGraphicsPipelineWithCachePolicy\(", @"request\.ProgramServices\.RegisterPipeline\("),
         ];
 
-        foreach (string file in files)
+        foreach ((string file, string creationPattern, string registrationPattern) in contracts)
         {
             string source = ReadWorkspaceFile(file);
-            int nativeCreates = Regex.Matches(
-                source,
-                @"(?:Api!?\.Create(?:Graphics|Compute)Pipelines|Renderer\.Create(?:Graphics|Compute)PipelinesSynchronized|Renderer\.CreateGraphicsPipelineWithCachePolicy)\(",
-                RegexOptions.CultureInvariant).Count;
-            int registrations = Regex.Matches(
-                source,
-                @"RegisterVulkanPipeline\(",
-                RegexOptions.CultureInvariant).Count;
+            int nativeCreates = Regex.Matches(source, creationPattern, RegexOptions.CultureInvariant).Count;
+            int registrations = Regex.Matches(source, registrationPattern, RegexOptions.CultureInvariant).Count;
 
+            nativeCreates.ShouldBeGreaterThan(0, $"Expected a pipeline creation site in {file}.");
             registrations.ShouldBe(
                 nativeCreates,
                 $"Every successful pipeline creation site in {file} must register its native handle generation.");
@@ -349,33 +362,27 @@ public sealed class VulkanCoreHardeningPhase4Tests
     [Test]
     public void ParentChildAndDescriptorOwnership_AreRetainedUntilSafeDestruction()
     {
-        string lifetime = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/Resources/Lifetime/VulkanRenderer.ResourceLifetimeTracking.cs");
-        string retirement = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/Resources/Retirement/VulkanRenderer.ResourceRetirement.cs");
+        string tracker = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Resources/Lifetime/VulkanResourceLifetimeTracker.cs");
+        string resources = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Resources/Authority/VulkanResourceRuntime.cs");
+        string descriptors = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Descriptors/VulkanDescriptorLifetimeAuthority.cs");
         string retirementQueue = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Resources/Retirement/VulkanResourceRetirementQueue.cs");
 
-        lifetime.ShouldContain("HasUndestroyedVulkanBufferViewReference");
-        lifetime.ShouldContain("HasUndestroyedVulkanImageDependency");
-        lifetime.ShouldContain("PropagateVulkanDescriptorSetSubmission_NoLock");
-        lifetime.ShouldContain("UpdateVulkanResourceCompletionState_NoLock");
-        retirement.ShouldContain("RemoveRetiredDescriptorSetsForPool_NoLock");
-        retirement.ShouldContain("_resourceRetirementQueue.AllPipelineHandles");
-        retirement.ShouldContain("_resourceRetirementQueue.AllImageViewHandles");
+        tracker.ShouldContain("CommandBuffersByPool");
+        tracker.ShouldContain("DescriptorSetsByPool");
+        tracker.ShouldContain("FramebufferAttachments");
+        resources.ShouldContain("HasUndestroyedBufferView(");
+        resources.ShouldContain("HasUndestroyedImageDependency(");
+        resources.ShouldContain("UpdateResourceCompletionStateNoLock(");
+        descriptors.ShouldContain("RemoveRetiredDescriptorSetsForPoolNoLock(");
         retirementQueue.ShouldContain("internal HashSet<ulong> AllPipelineHandles");
-        retirementQueue.ShouldContain("internal HashSet<VulkanRenderer.VulkanPinnedResourceGeneration> AllImageViewHandles");
+        retirementQueue.ShouldContain("internal HashSet<VulkanPinnedResourceGeneration> AllImageViewHandles");
         AssertRawVulkanCallOnlyIn(
-            "AllocateCommandBuffers(device",
-            "Commands/CommandBuffers/Allocation/VulkanRenderer.CommandPool.cs");
-        AssertRawVulkanCallOnlyIn(
-            "CreateImage(device",
-            "Frame/Resources/Lifetime/VulkanRenderer.ResourceLifetimeTracking.cs");
-        AssertRawVulkanCallOnlyIn(
-            "DestroyImage(device",
-            "Frame/Resources/Lifetime/VulkanRenderer.ResourceLifetimeTracking.cs",
-            "Frame/Resources/Retirement/VulkanRenderer.ResourceRetirement.cs",
-            "Features/Upscaling/VulkanUpscaleBridgeSharedImage.cs");
+            "AllocateCommandBuffers(",
+            "Commands/Authority/VulkanCommandRuntime.LifetimeNativeServices.cs");
     }
 
     [Test]
@@ -383,13 +390,18 @@ public sealed class VulkanCoreHardeningPhase4Tests
     {
         string texture = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Textures/VkImageBackedTexture.Mipmaps.cs");
+        string wrapper = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Resources/Uploads/VulkanResourceCommandWrapperPort.cs");
         string mipmapMethod = SliceBetween(
             texture,
             "protected void GenerateMipmapsWithBlit()",
             "private ImageBlit CreateMipBlit");
 
-        mipmapMethod.ShouldContain("Renderer.CmdPipelineBarrierTracked");
-        mipmapMethod.ShouldNotContain("Api.CmdPipelineBarrier(");
+        mipmapMethod.ShouldContain("ResourceCommandPort.GenerateMipmaps(");
+        wrapper.ShouldContain("using VulkanSynchronousResourceCommandSession session = Begin(owner);");
+        wrapper.ShouldContain("session.Encoder.PipelineBarrier(");
+        wrapper.ShouldContain("session.Encoder.BlitImage(");
+        wrapper.ShouldNotContain("Api.CmdPipelineBarrier(");
     }
 
     private static void AssertRawVulkanCallOnlyIn(string token, params string[] allowedRelativePaths)

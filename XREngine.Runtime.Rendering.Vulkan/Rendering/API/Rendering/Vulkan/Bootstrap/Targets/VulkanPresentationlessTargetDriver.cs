@@ -170,8 +170,16 @@ internal sealed unsafe class VulkanPresentationlessTargetDriver :
             Flags = CommandBufferUsageFlags.OneTimeSubmitBit,
         };
         ThrowIfDeviceFailure(
-            renderer.VulkanApi.BeginCommandBuffer(commandBuffer, in begin),
+            renderer.BeginCommandBufferTracked(
+                commandBuffer,
+                ref begin,
+                "Presentationless.BeginFrameRecording"),
             "begin presentationless command buffer");
+        renderer.TrackCommandBufferResource(
+            commandBuffer,
+            ObjectType.QueryPool,
+            slot.TimestampQueryPool.Handle,
+            "Presentationless.TimestampQueryPool");
         renderer.VulkanApi.CmdResetQueryPool(commandBuffer, slot.TimestampQueryPool, 0, 2);
         renderer.VulkanApi.CmdWriteTimestamp(
             commandBuffer,
@@ -264,13 +272,34 @@ internal sealed unsafe class VulkanPresentationlessTargetDriver :
             Flags = CommandBufferUsageFlags.OneTimeSubmitBit,
         };
         renderer.ThrowIfVulkanDeviceOperationNotAdmitted("vkBeginCommandBuffer.Presentationless.Readback");
-        ThrowIfDeviceFailure(api.BeginCommandBuffer(slot.CommandBuffer, in begin), "begin presentationless readback command buffer");
+        ThrowIfDeviceFailure(
+            renderer.BeginCommandBufferTracked(
+                slot.CommandBuffer,
+                ref begin,
+                "Presentationless.Readback"),
+            "begin presentationless readback command buffer");
         BufferImageCopy copy = new()
         {
             ImageSubresource = new ImageSubresourceLayers(ImageAspectFlags.ColorBit, 0, 0, _output.Layers),
             ImageExtent = new Extent3D(_output.Width, _output.Height, 1),
         };
-        api.CmdCopyImageToBuffer(slot.CommandBuffer, slot.ColorImage, sourceLayout, slot.ReadbackBuffer, 1, in copy);
+        renderer.TrackCommandBufferResource(
+            slot.CommandBuffer,
+            ObjectType.Image,
+            slot.ColorImage.Handle,
+            "Presentationless.Readback.Source");
+        renderer.TrackCommandBufferResource(
+            slot.CommandBuffer,
+            ObjectType.Buffer,
+            slot.ReadbackBuffer.Handle,
+            "Presentationless.Readback.Destination");
+        api.CmdCopyImageToBuffer(
+            slot.CommandBuffer,
+            slot.ColorImage,
+            sourceLayout,
+            slot.ReadbackBuffer,
+            1,
+            in copy);
         ThrowIfDeviceFailure(renderer.EndCommandBufferTracked(slot.CommandBuffer), "end presentationless readback command buffer");
 
         CommandBuffer commandBuffer = slot.CommandBuffer;

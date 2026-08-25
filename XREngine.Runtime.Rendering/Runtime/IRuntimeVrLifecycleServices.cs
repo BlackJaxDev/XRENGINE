@@ -1,4 +1,3 @@
-using OpenVR.NET.Manifest;
 using XREngine.Rendering;
 
 namespace XREngine;
@@ -9,9 +8,9 @@ namespace XREngine;
 public interface IRuntimeVrLifecycleServices
 {
     bool InitializeOpenXR(XRWindow? window);
-    Task<bool> InitializeLocal(IActionManifest actionManifest, VrManifest vrManifest, XRWindow window);
+    Task<bool> InitializeLocal(object actionManifest, object vrManifest, XRWindow window);
     void InitRenderEmulated(XRWindow window);
-    Task<bool> InitializeClient(IActionManifest actionManifest, VrManifest vrManifest);
+    Task<bool> InitializeClient(object actionManifest, object vrManifest);
     bool InitializeServer();
     void StartInputClient();
     void StopInputServer();

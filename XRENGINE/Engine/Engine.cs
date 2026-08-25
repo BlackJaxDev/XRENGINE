@@ -84,6 +84,7 @@ namespace XREngine
         /// The process then exits without racing GPU/asset cleanup against live engine work.
         /// </summary>
         private static int _abandonProcessExitCleanup;
+        private static int _headlessShutdownRequested;
 
         // ═══════════════════════════════════════════════════════════════════════════════════════════
         // THREADING AND TASK QUEUES
@@ -306,26 +307,16 @@ namespace XREngine
             // Wire up timer events for deferred processing
             Time.Timer.PostUpdateFrame += Timer_PostUpdateFrame;
             RuntimeWorldObjectServices.Current = new EngineRuntimeWorldObjectServices();
-            RuntimeGameModeHostServices.Current = new EngineRuntimeGameModeHostServices();
-            RuntimePawnHostServices.Current = new EngineRuntimePawnHostServices();
-            GameModeCompositionBootstrap.RegisterBuiltInGameModes();
             RuntimeThreadServices.Current = new EngineRuntimeThreadServices();
-            RuntimeModelImportServices.Current = new EngineRuntimeModelImportServices();
             RuntimeSceneImportServices.Current = new UnityEditorImportBridge();
 
-            RuntimeAnimationHostServices.Current = new EngineRuntimeAnimationHostServices();
             RuntimePhysicsServices.Current = new EngineRuntimePhysicsServices();
             RuntimeStaticColliderAuthoringServices.Current = new EngineRuntimeStaticColliderAuthoringServices();
             RuntimeMaintenanceServices.Current = new EngineRuntimeMaintenanceServices();
-            RuntimeInputServices.Current = new EngineRuntimeInputServices();
-            RuntimeAudioIntegrationServices.Current = new EngineRuntimeAudioIntegrationServices();
             XREngine.Networking.RuntimeNetworkDiscoveryHostServices.Current = new EngineRuntimeNetworkDiscoveryHostServices();
             XREngine.Scene.RuntimeSceneNodeServices.Current = new EngineRuntimeSceneNodeServices();
             XREngine.Components.Scene.Volumes.RuntimeSceneStreamingHostServices.Current = new EngineRuntimeSceneStreamingHostServices();
             RuntimeTransformServices.Current = new EngineRuntimeTransformServices();
-            RuntimePlayerControllerServices.Current = new EngineRuntimePlayerControllerServices();
-            RuntimeVrInputServices.Current = new EngineRuntimeVrInputServices();
-            RuntimeVrStateServices.Current = new EngineRuntimeVrStateServices();
 
             // Connect external profiling hooks for subsystems
             XREvent.ProfilingHook = ExternalProfilingHook;

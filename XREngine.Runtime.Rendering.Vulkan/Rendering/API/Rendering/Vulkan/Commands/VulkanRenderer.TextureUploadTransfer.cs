@@ -86,7 +86,6 @@ internal sealed partial class VulkanCommandRuntime
                 return false;
             }
 
-            ResetCommandBufferBindState(commandBuffer);
             RecordImportedTextureTransferUpload(commandBuffer, upload);
 
             Result endResult = EndCommandBufferTracked(commandBuffer);

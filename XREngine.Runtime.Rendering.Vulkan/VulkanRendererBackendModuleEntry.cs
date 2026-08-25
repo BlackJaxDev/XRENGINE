@@ -36,18 +36,23 @@ public sealed class VulkanRendererBackendModuleEntry : IRendererBackendModule
             RuntimeGraphicsApiKind.Vulkan,
             VulkanTextureStreamingBackendProvider.Instance);
         IDisposable? vendorLease = null;
+        IDisposable? shaderCompilerLease = null;
         try
         {
             vendorLease = RuntimeVendorUpscaleService.Register(VulkanVendorUpscaleService.Instance);
+            shaderCompilerLease = RuntimeShaderCrossCompiler.Register(VulkanShaderCrossCompiler.Instance);
             IDisposable openXrLease = OpenXrGraphicsBindingRegistry.Register(
                 RendererBackendId.Vulkan,
                 static () => new VulkanXrGraphicsBinding());
             _registrations = new CompositeModuleRegistrationLease(
                 textureLease,
-                new CompositeModuleRegistrationLease(vendorLease, openXrLease));
+                new CompositeModuleRegistrationLease(
+                    vendorLease,
+                    new CompositeModuleRegistrationLease(shaderCompilerLease, openXrLease)));
         }
         catch
         {
+            shaderCompilerLease?.Dispose();
             vendorLease?.Dispose();
             textureLease.Dispose();
             throw;

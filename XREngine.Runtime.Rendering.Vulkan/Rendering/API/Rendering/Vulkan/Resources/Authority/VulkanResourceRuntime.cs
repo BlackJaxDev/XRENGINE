@@ -239,6 +239,7 @@ internal sealed partial class VulkanResourceRuntime
         VulkanResourceLifetimeKey key = new(ObjectType.Framebuffer, framebuffer.Handle);
         VulkanResourceLifetimeTracker tracker = Lifetime.Tracker;
         tracker.FenceResourceRecordingAdmission(key, owner);
+        Lifetime.PublishTrackingDependenciesBeforeRetirement(key);
         VulkanRetirementTicket ticket;
         lock (tracker.SyncRoot)
         {
@@ -284,6 +285,7 @@ internal sealed partial class VulkanResourceRuntime
         VulkanResourceLifetimeKey key = new(ObjectType.QueryPool, queryPool.Handle);
         VulkanResourceLifetimeTracker tracker = Lifetime.Tracker;
         tracker.FenceResourceRecordingAdmission(key, owner);
+        Lifetime.PublishTrackingDependenciesBeforeRetirement(key);
         VulkanRetirementTicket ticket;
         lock (tracker.SyncRoot)
         {
@@ -382,112 +384,6 @@ internal sealed partial class VulkanResourceRuntime
         }
     }
 
-    /// <summary>
-    /// Publishes a native-accepted synchronous graphics submission to the same
-    /// lifetime receipt stream used by asynchronous command work.
-    /// </summary>
-    internal void RecordSynchronousGraphicsSubmission(
-        CommandBuffer commandBuffer,
-        Fence fence,
-        Queue queue,
-        Image sourceImage,
-        Silk.NET.Vulkan.Buffer stagingBuffer)
-    {
-        if (commandBuffer.Handle == 0 || fence.Handle == 0 || queue.Handle == 0 || sourceImage.Handle == 0 || stagingBuffer.Handle == 0)
-            throw new ArgumentException("A synchronous readback submission requires live command, fence, queue, image, and buffer handles.");
-
-        VulkanResourceLifetimeTracker tracker = Lifetime.Tracker;
-        lock (tracker.SyncRoot)
-        {
-            ulong commandHandle = unchecked((ulong)commandBuffer.Handle);
-            VulkanCommandBufferLifetimeRecord lifetime = tracker.CommandBufferLifetimes.TryGetValue(
-                commandHandle,
-                out VulkanCommandBufferLifetimeRecord? existing)
-                ? existing
-                : throw new InvalidOperationException($"Synchronous command buffer 0x{commandHandle:X} was not registered.");
-            if (lifetime.QueuedSubmissionCount != 0)
-                throw new InvalidOperationException($"Synchronous command buffer 0x{commandHandle:X} is already queued.");
-
-            VulkanResourceLifetimeRecord command = tracker.GetOrRegisterResourceNoLock(
-                new VulkanResourceLifetimeKey(ObjectType.CommandBuffer, commandHandle),
-                "SynchronousReadback.CommandBuffer");
-            VulkanResourceLifetimeRecord image = tracker.GetOrRegisterResourceNoLock(
-                new VulkanResourceLifetimeKey(ObjectType.Image, sourceImage.Handle),
-                "SynchronousReadback.SourceImage");
-            VulkanResourceLifetimeRecord buffer = tracker.GetOrRegisterResourceNoLock(
-                new VulkanResourceLifetimeKey(ObjectType.Buffer, stagingBuffer.Handle),
-                "SynchronousReadback.StagingBuffer");
-            AddSynchronousRecordedDependency(tracker, commandHandle, lifetime, image);
-            AddSynchronousRecordedDependency(tracker, commandHandle, lifetime, buffer);
-
-            ulong sequence = ++tracker.LastGraphicsSequence;
-            lifetime.QueuedSubmissionCount++;
-            MarkSynchronousResourceSubmitted(command, sequence);
-            MarkSynchronousResourceSubmitted(image, sequence);
-            MarkSynchronousResourceSubmitted(buffer, sequence);
-            tracker.LifetimeSubmissions.Add(new VulkanLifetimeSubmission(
-                QueueHandle: unchecked((ulong)queue.Handle),
-                QueueDomain: EVulkanLifetimeQueueDomain.Graphics,
-                QueueSequence: sequence,
-                TimelineSemaphoreHandle: 0,
-                TimelineValue: 0,
-                FenceHandle: unchecked((ulong)fence.Handle)));
-        }
-    }
-
-    /// <summary>
-    /// Publishes every dependency recorded by a synchronous wrapper command
-    /// buffer. Uploads and layout transitions do not have one canonical
-    /// image/buffer pair, so the encoder-owned dependency set is the receipt.
-    /// </summary>
-    internal void RecordSynchronousGraphicsSubmission(
-        CommandBuffer commandBuffer,
-        Fence fence,
-        Queue queue)
-    {
-        if (commandBuffer.Handle == 0 || fence.Handle == 0 || queue.Handle == 0)
-            throw new ArgumentException("A synchronous submission requires live command, fence, and queue handles.");
-
-        VulkanResourceLifetimeTracker tracker = Lifetime.Tracker;
-        lock (tracker.SyncRoot)
-        {
-            ulong commandHandle = unchecked((ulong)commandBuffer.Handle);
-            VulkanCommandBufferLifetimeRecord lifetime = tracker.CommandBufferLifetimes.TryGetValue(
-                commandHandle,
-                out VulkanCommandBufferLifetimeRecord? existing)
-                ? existing
-                : throw new InvalidOperationException($"Synchronous command buffer 0x{commandHandle:X} was not registered.");
-            if (lifetime.QueuedSubmissionCount != 0)
-                throw new InvalidOperationException($"Synchronous command buffer 0x{commandHandle:X} is already queued.");
-
-            VulkanResourceLifetimeRecord command = tracker.GetOrRegisterResourceNoLock(
-                new VulkanResourceLifetimeKey(ObjectType.CommandBuffer, commandHandle),
-                "SynchronousResourceCommand.CommandBuffer");
-            ulong sequence = ++tracker.LastGraphicsSequence;
-            lifetime.QueuedSubmissionCount++;
-            MarkSynchronousResourceSubmitted(command, sequence);
-            foreach ((VulkanResourceLifetimeKey key, ulong generation) in lifetime.Dependencies)
-            {
-                if (!tracker.ResourceLifetimes.TryGetValue(key, out VulkanResourceLifetimeRecord? resource) ||
-                    resource.Generation != generation)
-                {
-                    throw new InvalidOperationException(
-                        $"Synchronous command buffer 0x{commandHandle:X} retained an invalid dependency {key} generation {generation}.");
-                }
-
-                MarkSynchronousResourceSubmitted(resource, sequence);
-            }
-
-            tracker.LifetimeSubmissions.Add(new VulkanLifetimeSubmission(
-                QueueHandle: unchecked((ulong)queue.Handle),
-                QueueDomain: EVulkanLifetimeQueueDomain.Graphics,
-                QueueSequence: sequence,
-                TimelineSemaphoreHandle: 0,
-                TimelineValue: 0,
-                FenceHandle: unchecked((ulong)fence.Handle)));
-        }
-    }
-
     internal void CompleteSynchronousFence(Fence fence)
     {
         if (fence.Handle == 0)
@@ -550,35 +446,6 @@ internal sealed partial class VulkanResourceRuntime
             handle,
             GetPublishedGeneration(ObjectType.CommandBuffer, handle),
             forced: false);
-    }
-
-    private static void AddSynchronousRecordedDependency(
-        VulkanResourceLifetimeTracker tracker,
-        ulong commandHandle,
-        VulkanCommandBufferLifetimeRecord lifetime,
-        VulkanResourceLifetimeRecord resource)
-    {
-        if (lifetime.Dependencies.TryGetValue(resource.Key, out ulong generation) && generation == resource.Generation)
-            return;
-
-        lifetime.Dependencies[resource.Key] = resource.Generation;
-        resource.Pins.AddRecordedReference();
-        resource.State |= EVulkanResourceLifetimeState.Recorded;
-        if (!tracker.ResourceCommandBufferDependencies.TryGetValue(resource.Key, out HashSet<ulong>? commandBuffers))
-        {
-            commandBuffers = [];
-            tracker.ResourceCommandBufferDependencies.Add(resource.Key, commandBuffers);
-        }
-        commandBuffers.Add(commandHandle);
-    }
-
-    private static void MarkSynchronousResourceSubmitted(
-        VulkanResourceLifetimeRecord resource,
-        ulong sequence)
-    {
-        resource.State &= ~EVulkanResourceLifetimeState.Completed;
-        resource.State |= EVulkanResourceLifetimeState.Submitted;
-        resource.Pins.MarkSubmitted(EVulkanLifetimeQueueDomain.Graphics, sequence);
     }
 
     /// <summary>
@@ -699,7 +566,7 @@ internal sealed partial class VulkanResourceRuntime
         }
     }
 
-    private bool TryValidateCommandBufferDependencyNoLock(
+    internal bool TryValidateCommandBufferDependencyNoLock(
         ulong commandBufferHandle,
         VulkanResourceLifetimeKey key,
         out string reason)
@@ -737,7 +604,7 @@ internal sealed partial class VulkanResourceRuntime
         return true;
     }
 
-    private void PublishCommandBufferDependencyNoLock(
+    internal void PublishCommandBufferDependencyNoLock(
         ulong commandBufferHandle,
         VulkanCommandBufferLifetimeRecord lifetime,
         VulkanResourceLifetimeKey key)
@@ -875,41 +742,99 @@ internal sealed partial class VulkanResourceRuntime
             return false;
 
         lock (Lifetime.Tracker.SyncRoot)
+            return CanResetCommandBufferNoLock(handle);
+    }
+
+    internal bool CanResetCommandBufferNoLock(ulong handle)
+    {
+        if (handle == 0)
+            return false;
+
+        if (Lifetime.Tracker.CommandBufferLifetimes.TryGetValue(
+                handle,
+                out VulkanCommandBufferLifetimeRecord? lifetime))
         {
-            if (Lifetime.Tracker.CommandBufferLifetimes.TryGetValue(
-                    handle,
-                    out VulkanCommandBufferLifetimeRecord? lifetime))
-            {
-                if (lifetime.QueuedSubmissionCount != 0)
-                    return false;
+            if (lifetime.QueuedSubmissionCount != 0)
+                return false;
 
-                VulkanResourceLifetimeKey poolKey = lifetime.AllocatingCommandPool;
-                if (poolKey.IsValid &&
-                    (!Lifetime.Tracker.ResourceLifetimes.TryGetValue(
-                        poolKey,
-                        out VulkanResourceLifetimeRecord? pool) ||
-                     pool.Generation != lifetime.AllocatingCommandPoolGeneration ||
-                     (pool.State & (EVulkanResourceLifetimeState.PendingRetirement |
-                                    EVulkanResourceLifetimeState.Destroyed)) != 0))
-                {
-                    return false;
-                }
-            }
-
-            VulkanResourceLifetimeRecord commandRecord =
-                Lifetime.Tracker.GetOrRegisterResourceNoLock(
-                    new VulkanResourceLifetimeKey(ObjectType.CommandBuffer, handle),
-                    "CommandBuffer.Reset");
-            if ((commandRecord.State &
-                 (EVulkanResourceLifetimeState.PendingRetirement |
-                  EVulkanResourceLifetimeState.Destroyed)) != 0 ||
-                commandRecord.Pins.HasRecordedReferences)
+            VulkanResourceLifetimeKey poolKey = lifetime.AllocatingCommandPool;
+            if (poolKey.IsValid &&
+                (!Lifetime.Tracker.ResourceLifetimes.TryGetValue(
+                    poolKey,
+                    out VulkanResourceLifetimeRecord? pool) ||
+                 pool.Generation != lifetime.AllocatingCommandPoolGeneration ||
+                 (pool.State & (EVulkanResourceLifetimeState.PendingRetirement |
+                                EVulkanResourceLifetimeState.Destroyed)) != 0))
             {
                 return false;
             }
-
-            return UpdateResourceCompletionStateNoLock(commandRecord);
         }
+
+        VulkanResourceLifetimeRecord commandRecord =
+            Lifetime.Tracker.GetOrRegisterResourceNoLock(
+                new VulkanResourceLifetimeKey(ObjectType.CommandBuffer, handle),
+                "CommandBuffer.Reset");
+        if ((commandRecord.State &
+             (EVulkanResourceLifetimeState.PendingRetirement |
+              EVulkanResourceLifetimeState.Destroyed)) != 0 ||
+            commandRecord.Pins.HasRecordedReferences)
+        {
+            return false;
+        }
+
+        return UpdateResourceCompletionStateNoLock(commandRecord);
+    }
+
+    internal bool TryValidateCommandBufferRecordingAdmissionNoLock(
+        ulong handle,
+        out string reason)
+    {
+        reason = string.Empty;
+        if (handle == 0)
+        {
+            reason = "A live command buffer is required.";
+            return false;
+        }
+
+        VulkanResourceLifetimeRecord commandRecord =
+            Lifetime.Tracker.GetOrRegisterResourceNoLock(
+                new VulkanResourceLifetimeKey(ObjectType.CommandBuffer, handle),
+                "CommandBuffer.RecordingAdmission");
+        if ((commandRecord.State &
+             (EVulkanResourceLifetimeState.PendingRetirement |
+              EVulkanResourceLifetimeState.Destroyed)) != 0)
+        {
+            reason = $"Command buffer 0x{handle:X} is {commandRecord.State}.";
+            return false;
+        }
+
+        if (!Lifetime.Tracker.CommandBufferLifetimes.TryGetValue(
+                handle,
+                out VulkanCommandBufferLifetimeRecord? lifetime))
+            return true;
+
+        if (lifetime.QueuedSubmissionCount != 0)
+        {
+            reason = $"Command buffer 0x{handle:X} is queued for submission.";
+            return false;
+        }
+
+        VulkanResourceLifetimeKey poolKey = lifetime.AllocatingCommandPool;
+        if (!poolKey.IsValid)
+            return true;
+
+        if (!Lifetime.Tracker.ResourceLifetimes.TryGetValue(
+                poolKey,
+                out VulkanResourceLifetimeRecord? pool) ||
+            pool.Generation != lifetime.AllocatingCommandPoolGeneration ||
+            (pool.State & (EVulkanResourceLifetimeState.PendingRetirement |
+                           EVulkanResourceLifetimeState.Destroyed)) != 0)
+        {
+            reason = $"Command buffer 0x{handle:X} allocating pool {poolKey} is no longer live.";
+            return false;
+        }
+
+        return true;
     }
 
     internal void CompleteCommandBufferReset(ulong handle)
@@ -928,67 +853,6 @@ internal sealed partial class VulkanResourceRuntime
             lifetime.FrameDataLease.Reset();
             lifetime.RecordingGeneration++;
         }
-    }
-
-    internal bool IsCommandBufferRetirementReady(
-        CommandBuffer commandBuffer,
-        in VulkanRetirementTicket ticket)
-    {
-        ulong handle = unchecked((ulong)commandBuffer.Handle);
-        if (handle == 0)
-            return false;
-
-        lock (Lifetime.Tracker.SyncRoot)
-        {
-            if (Lifetime.Tracker.ForcedRetirementDrainDepth > 0)
-                return true;
-
-            if (Lifetime.Tracker.CommandBufferLifetimes.TryGetValue(
-                    handle,
-                    out VulkanCommandBufferLifetimeRecord? lifetime) &&
-                lifetime.QueuedSubmissionCount != 0)
-                return false;
-
-            return Lifetime.Tracker.IsRetirementReadyNoLock(ticket);
-        }
-    }
-
-    internal bool AreCommandPoolChildrenRetirementReady(CommandPool commandPool)
-    {
-        if (commandPool.Handle == 0)
-            return true;
-
-        VulkanResourceLifetimeKey poolKey = new(
-            ObjectType.CommandPool,
-            commandPool.Handle);
-        CommandBuffer[] children;
-        lock (Lifetime.Tracker.SyncRoot)
-        {
-            if (!Lifetime.Tracker.CommandBuffersByPool.TryGetValue(
-                    poolKey,
-                    out HashSet<ulong>? ownedChildren) ||
-                ownedChildren.Count == 0)
-                return true;
-
-            List<CommandBuffer> trackedChildren = [];
-            foreach (ulong childHandle in ownedChildren)
-                if (Lifetime.Tracker.CommandBufferLifetimes.ContainsKey(childHandle))
-                    trackedChildren.Add(new CommandBuffer
-                    {
-                        Handle = unchecked((nint)childHandle),
-                    });
-            children = [.. trackedChildren];
-        }
-
-        for (int index = 0; index < children.Length; index++)
-        {
-            CommandBuffer child = children[index];
-            if (IsCommandBufferPendingRetirement(child) ||
-                !IsCommandBufferRetirementReady(child, VulkanRetirementTicket.None))
-                return false;
-        }
-
-        return true;
     }
 
     internal void CompleteCommandBufferDestruction(CommandBuffer commandBuffer)
@@ -1098,6 +962,7 @@ internal sealed partial class VulkanResourceRuntime
             ObjectType.CommandBuffer,
             handle);
         Lifetime.Tracker.FenceResourceRecordingAdmission(key, owner);
+        Lifetime.PublishTrackingDependenciesBeforeRetirement(key);
         lock (Lifetime.Tracker.SyncRoot)
         {
             VulkanResourceLifetimeRecord resource =
@@ -1140,7 +1005,7 @@ internal sealed partial class VulkanResourceRuntime
                 Lifetime.Retirement.AllCommandBufferHandles);
     }
 
-    private bool IsCommandBufferPendingRetirement(CommandBuffer commandBuffer)
+    internal bool IsCommandBufferPendingRetirement(CommandBuffer commandBuffer)
     {
         if (commandBuffer.Handle == 0)
             return false;
@@ -1278,6 +1143,8 @@ internal sealed partial class VulkanResourceRuntime
 
         VulkanResourceLifetimeKey key = new(ObjectType.PipelineLayout, pipelineLayout.Handle);
         VulkanResourceLifetimeTracker tracker = Lifetime.Tracker;
+        tracker.FenceResourceRecordingAdmission(key, owner);
+        Lifetime.PublishTrackingDependenciesBeforeRetirement(key);
         VulkanRetirementTicket ticket;
         lock (tracker.SyncRoot)
         {
@@ -1325,6 +1192,8 @@ internal sealed partial class VulkanResourceRuntime
 
         VulkanResourceLifetimeKey key = new(ObjectType.Pipeline, pipeline.Handle);
         VulkanResourceLifetimeTracker tracker = Lifetime.Tracker;
+        tracker.FenceResourceRecordingAdmission(key, owner);
+        Lifetime.PublishTrackingDependenciesBeforeRetirement(key);
         VulkanRetirementTicket ticket;
         lock (tracker.SyncRoot)
         {

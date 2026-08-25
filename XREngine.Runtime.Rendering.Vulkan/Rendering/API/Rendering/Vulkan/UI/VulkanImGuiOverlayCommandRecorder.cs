@@ -33,8 +33,7 @@ internal sealed unsafe class VulkanImGuiOverlayCommandRecorder
         if (reset != Result.Success)
             throw new InvalidOperationException($"Failed to reset ImGui overlay command buffer: {reset}.");
 
-        encoder.Runtime.ResetBindState(encoder, input.OverlayCommandBuffer);
-        bool trackingStarted = true;
+        bool trackingStarted = false;
         try
         {
             encoder.Runtime.BeginRecording(
@@ -43,6 +42,7 @@ internal sealed unsafe class VulkanImGuiOverlayCommandRecorder
                 input.OverlayCommandBuffer,
                 "vkBeginCommandBuffer.ImGuiOverlay",
                 CommandBufferUsageFlags.OneTimeSubmitBit);
+            trackingStarted = true;
 
             encoder.Runtime.SeedRecordedImageLayoutState(
                 input.OverlayCommandBuffer,

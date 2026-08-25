@@ -108,9 +108,10 @@ internal sealed partial class VulkanCommandRuntime
                 }
                 else if (debt.CompleteSynchronousLifetime)
                 {
-                    lock (Pools.Gate)
-                        Api.FreeCommandBuffers(DeviceContext.Device, debt.CommandPool, 1, ref commandBuffer);
-                    ResourceRuntime.CompleteSynchronousCommandBuffer(debt.CommandBuffer);
+                    FreeCompletedSynchronousCommandBuffer(
+                        debt.CommandPool,
+                        ref commandBuffer,
+                        $"{debt.Owner}.RetiredCompleted");
                 }
                 else
                 {

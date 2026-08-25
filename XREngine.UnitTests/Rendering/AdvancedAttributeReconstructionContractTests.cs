@@ -370,7 +370,7 @@ public sealed class AdvancedAttributeReconstructionContractTests
             EAdvancedReconstructionInvalidReason
                 .StaleDependencyGeneration);
 
-        database.Scene.Draws.Remove(drawHandle).ShouldBeTrue();
+        database.Scene.Draws.TryRemoveImmediatelyBeforePublication(drawHandle).ShouldBeTrue();
         database.PublishHandleLookups().ShouldBeTrue();
         AdvancedReconstructionDecoder.TryResolve(
                 encoded,

@@ -212,13 +212,13 @@ public sealed class RuntimeVrState
     public bool InitializeOpenXR(XRWindow? window)
         => LifecycleServices.InitializeOpenXR(window);
 
-    public Task<bool> InitializeLocal(IActionManifest actionManifest, VrManifest vrManifest, XRWindow window)
+    public Task<bool> InitializeLocal(object actionManifest, object vrManifest, XRWindow window)
         => LifecycleServices.InitializeLocal(actionManifest, vrManifest, window);
 
     public void InitRenderEmulated(XRWindow window)
         => LifecycleServices.InitRenderEmulated(window);
 
-    public Task<bool> IninitializeClient(IActionManifest actionManifest, VrManifest vrManifest)
+    public Task<bool> IninitializeClient(object actionManifest, object vrManifest)
         => LifecycleServices.InitializeClient(actionManifest, vrManifest);
 
     public bool InitializeServer()

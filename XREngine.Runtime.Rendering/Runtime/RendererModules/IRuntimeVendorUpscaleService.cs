@@ -10,11 +10,17 @@ internal interface IRuntimeVendorUpscaleService
     bool IsDlssSupported { get; }
     string? DlssLastError { get; }
     bool AreDlssRuntimeLibrariesAvailable { get; }
+    string? DlssRuntimeLibrariesUnavailableReason { get; }
     bool IsXessSupported { get; }
     string? XessLastError { get; }
     bool IsDlssFrameGenerationRequested { get; }
     bool IsDlssFrameGenerationSupported { get; }
+    bool AreDlssFrameGenerationRuntimeLibrariesAvailable { get; }
+    string? DlssFrameGenerationRuntimeLibrariesUnavailableReason { get; }
     string? DlssFrameGenerationUnavailableReason { get; }
+    uint DlssFrameGenerationMaximumFramesToGenerate { get; }
+    uint DlssFrameGenerationFramesActuallyPresented { get; }
+    ulong DlssFrameGenerationFramesActuallyPresentedTotal { get; }
     bool IsDlssFrameGenerationAvailable(out string? failureReason);
     bool IsTerminalBridgeFailureMessage(string? failureReason);
 

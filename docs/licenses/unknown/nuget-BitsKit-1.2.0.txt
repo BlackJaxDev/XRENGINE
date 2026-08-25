@@ -1,6 +1,0 @@
-﻿License text could not be resolved locally for NuGet package 'BitsKit' (1.2.0).
-
-Resolved license: MIT
-RepositoryUrl: https://github.com/barncastle/BitsKit
-ProjectUrl: https://github.com/barncastle/BitsKit
-

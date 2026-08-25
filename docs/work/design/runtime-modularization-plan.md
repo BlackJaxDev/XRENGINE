@@ -15,18 +15,27 @@ Implementation companions:
 
 - Phase 2 is complete and its implementation record has been retired from `docs/work`.
 - [Runtime Modularization Phase 3 TODO](../todo/COMPLETED/runtime-modularization-phase3-todo.md) (completed Runtime.Core carve-out and non-rendering prerequisites)
-- [Runtime Modularization Phase 4 TODO](../todo/runtime-modularization-phase4-todo.md) (code-complete rendering move with deferred final validation)
-- [Runtime Modularization Phase 5 TODO](../todo/runtime/runtime-modularization-phase5-todo.md) (subsystem adapter ownership, composition, and dependency cleanup)
+- [Runtime Modularization Phase 4 TODO](../todo/COMPLETED/runtime-modularization-phase4-todo.md) (completed rendering move, backend split, and engineering validation)
+- [Runtime Modularization Phase 5 TODO](../todo/COMPLETED/runtime-modularization-phase5-todo.md) (completed subsystem adapter ownership, composition, compatibility, and dependency cleanup)
+- [Runtime Modularization Phase 6 TODO](../todo/runtime/runtime-modularization-phase6-todo.md) (planned final facade-consumer migration and removal of `XRENGINE`/`XREngine.dll`)
 - [OpenGL And Vulkan Rendering Hot Reload TODO](../todo/COMPLETED/rendering-backend-hot-reload-todo.md) (completed backend DLL extraction, collectible editor loading, and renderer replacement)
 
-> Status note (2026-07-29): Production code for Phases 0 through 4 is
+> Status note (2026-08-24): Engineering work for Phases 0 through 5 is
 > complete. Phase 4 moved the stable rendering kernel and concrete OpenGL/Vulkan
 > leaves, split host capabilities, completed selectable static/AOT and
 > collectible module composition, and decomposed the Vulkan desktop frame loop.
-> Its final runtime/hardware validation and integration promotion remain
-> deferred. Subsystem-adapter cleanup is design Phase 5, and final `XRENGINE`
-> deletion or reduction remains design Phase 6. Some historical baseline
-> sections below intentionally no longer match the repository.
+> Phase 5 moved subsystem host composition and AOT registration to Bootstrap,
+> finalized adapter cargo ownership, and locked the adapter graph. The model
+> importer remains one deliberate aggregate adapter over Animation, FBX, glTF,
+> Modeling, Data, and Runtime.Rendering because its format importers construct
+> runtime scene, mesh, material, skinning, and animation objects as one atomic
+> publication pipeline. Final `XRENGINE` deletion and the remaining facade-bound
+> gameplay/import consumers are Phase 6. Physical XR and supported-hardware
+> Streamline checks remain external manual acceptance and are not claimed as
+> executed. Some historical baseline sections below intentionally no longer
+> match the repository. The Phase 6 tracker adopts Option A as the target:
+> migrate every remaining consumer and delete the facade assembly rather than
+> preserving it as a permanent compatibility layer.
 
 ## Why This Refactor Exists
 
@@ -226,7 +235,8 @@ XREngine.Runtime.InputIntegration
     -> XREngine.Runtime.Core, XREngine.Runtime.Rendering, XREngine.Input, XREngine.Data, XREngine.Extensions
 
 XREngine.Runtime.ModelingBridge
-    -> XREngine.Runtime.Rendering, XREngine.Modeling, XREngine.Data
+    -> XREngine.Runtime.Rendering, XREngine.Animation, XREngine.Fbx,
+       XREngine.Gltf, XREngine.Modeling, XREngine.Data
 
 XREngine.Runtime.Bootstrap
     -> XREngine.Runtime.Core, XREngine.Runtime.Rendering,
@@ -390,8 +400,15 @@ Owns:
 - `XRMesh <-> ModelingMeshDocument` conversion,
 - runtime boolean operation entry points,
 - import/export helpers that bridge render/runtime mesh types and modeling types.
+- the aggregate FBX/glTF runtime scene-import pipeline, including skinning,
+  blendshape, material, texture, and animation-component reconstruction.
 
-Should depend on `XREngine.Modeling`, not vice versa.
+The bridge deliberately depends on `XREngine.Animation`, `XREngine.Fbx`,
+`XREngine.Gltf`, `XREngine.Modeling`, `XREngine.Data`, and
+`XREngine.Runtime.Rendering`; none of those lower libraries may depend on the
+bridge. Splitting one format into a separate adapter is appropriate only after
+the importer exchanges an ownership-correct runtime scene-publication contract,
+not by moving runtime scene types into Data or adding adapter-to-adapter edges.
 
 ### XREngine.Runtime.Bootstrap
 
@@ -645,8 +662,10 @@ contracts; OpenGL and Vulkan are one-way leaf assemblies; Bootstrap is the
 explicit static/AOT composition root; Editor collectible loading uses the same
 factory contract; and application/editor long-lived state no longer owns
 concrete backend wrappers, callbacks, workers, types, or native handles.
-Runtime/hardware validation remains tracked in the Phase 4 and Vulkan frame-loop
-documents rather than being inferred from structural completion.
+Machine-available contract, desktop-rendering, lifetime, and application
+validation is complete. Physical XR, supported-hardware Streamline, and extended
+performance/resize soak remain explicit external manual acceptance rather than
+being inferred from structural completion.
 
 ### Phase 5 - Move Subsystem Adapters
 
@@ -659,7 +678,18 @@ Move runtime-facing integration code into the adapter assemblies:
 
 At the end of this phase, the feature libraries remain leaf libraries and the runtime integration logic sits above them.
 
+Completion note (2026-08-24): subsystem host services, VR lifecycle/startup
+composition, and static factory generation are Bootstrap-owned and explicitly
+installed through adapter profiles. Audio no longer references the animation
+adapter; their ARKit channel contract is Data-owned. OpenVR cargo is Input-owned,
+OVR LipSync cargo is AudioIntegration-owned, and OpenAL native licenses are
+Audio-owned. The aggregate ModelingBridge graph above is intentional and is
+enforced together with the other adapter and public-API boundaries by the Phase
+5 dependency contract suite.
+
 ### Phase 6 - Delete Or Re-scope XRENGINE
+
+Execution tracker: [Runtime Modularization Phase 6 - Remove The XRENGINE Facade](../todo/runtime/runtime-modularization-phase6-todo.md)
 
 Once apps reference the new projects directly, choose one of these end states:
 

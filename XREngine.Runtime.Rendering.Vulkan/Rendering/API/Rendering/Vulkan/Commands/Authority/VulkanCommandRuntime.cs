@@ -19,6 +19,7 @@ internal sealed partial class VulkanCommandRuntime
     private VulkanResourceRuntime? _configuredResourceRuntime;
     private VulkanFrameTelemetry? _configuredFrameTelemetry;
     private VulkanQueryCommandService? _queryCommandService;
+    private VulkanRetirementDependencyPublicationPort? _retirementDependencyPublications;
     private CommandChainSchedule?[]? _scheduleCache;
     private readonly VulkanCommandThreadWorkspace _threadWorkspace;
     private readonly VulkanFrameOperationScheduler _primaryOperationScheduler = new();
@@ -111,8 +112,10 @@ internal sealed partial class VulkanCommandRuntime
         CommandBuffers.DeviceQueueAdmissionGate = deviceContext.QueueAdmissionGate;
         _configuredResourceRuntime = resourceRuntime;
         _configuredFrameTelemetry = telemetry;
+        resourceRuntime.Lifetime.ConfigureRetirementDependencyPublications(
+            _retirementDependencyPublications ??=
+                new VulkanRetirementDependencyPublicationPort(this));
         resourceRuntime.Images.ConfigureCommandRuntime(this);
-        resourceRuntime.Samplers.ConfigureCommandRuntime(this);
         _queryCommandService ??= new VulkanQueryCommandService(this);
         resourceRuntime.Queries.BindCommands(_queryCommandService);
         OpenXrRecording.Configure(this, resourceRuntime, deviceContext);
@@ -184,27 +187,119 @@ internal sealed partial class VulkanCommandRuntime
                 $"Cannot start Vulkan operation '{operation}' while device state is {deviceState.State}.");
         }
 
-        Recorder.Begin(api, commandBuffer, flags);
+        CommandBufferBeginInfo beginInfo = new()
+        {
+            SType = StructureType.CommandBufferBeginInfo,
+            Flags = flags,
+        };
+        Result result = BeginTrackedCommandBuffer(
+            api,
+            commandBuffer,
+            ref beginInfo,
+            operation);
+        if (result != Result.Success)
+            throw new InvalidOperationException($"Failed to begin Vulkan operation '{operation}': {result}.");
     }
 
     /// <summary>
-    /// Resets renderer-independent bind and dependency state for a newly begun
-    /// command buffer. The caller supplies the encoder that owns lifetime
-    /// tracking, so no renderer facade participates in the recording path.
+    /// Owns command-buffer recording admission and the native begin call as one
+    /// externally synchronized host transaction.
     /// </summary>
-    internal void ResetBindState(VulkanTrackedCommandEncoder encoder, CommandBuffer commandBuffer)
+    internal Result BeginTrackedCommandBuffer(
+        CommandBuffer commandBuffer,
+        ref CommandBufferBeginInfo beginInfo,
+        string owner)
+        => BeginTrackedCommandBuffer(Api, commandBuffer, ref beginInfo, owner);
+
+    private Result BeginTrackedCommandBuffer(
+        Vk api,
+        CommandBuffer commandBuffer,
+        ref CommandBufferBeginInfo beginInfo,
+        string owner)
+    {
+        if (!DeviceContext.IsOperational)
+            return Result.ErrorDeviceLost;
+
+        lock (Pools.Gate)
+        {
+            ulong recordingGeneration = InitializeCommandBufferBindState(commandBuffer);
+            try
+            {
+                BeginCommandBufferTrackingCore(
+                    commandBuffer,
+                    recordingGeneration,
+                    owner);
+            }
+            catch
+            {
+                CommandBuffers.RemoveBindState(commandBuffer);
+                throw;
+            }
+
+            Result result = api.BeginCommandBuffer(commandBuffer, ref beginInfo);
+            if (result == Result.Success)
+                return result;
+
+            TryAbandonCommandBufferRecording(commandBuffer);
+            CommandBuffers.RemoveBindState(commandBuffer);
+            Synchronization.RemoveRecordedImageLayouts(commandBuffer);
+            return result;
+        }
+    }
+
+    private ulong InitializeCommandBufferBindState(CommandBuffer commandBuffer)
+    {
+        ulong handle = unchecked((ulong)commandBuffer.Handle);
+        if (handle == 0)
+            throw new ArgumentException("A live command buffer is required.", nameof(commandBuffer));
+
+        ulong recordingGeneration = unchecked(
+            (ulong)Interlocked.Increment(ref CommandBuffers.RecordingGeneration));
+        lock (CommandBuffers.BindStateGate)
+        {
+            CommandBuffers.BindStates[handle] = new CommandBufferBindState
+            {
+                RecordingGeneration = recordingGeneration,
+            };
+        }
+        return recordingGeneration;
+    }
+
+    private void BeginCommandBufferTrackingCore(
+        CommandBuffer commandBuffer,
+        ulong recordingGeneration,
+        string owner)
     {
         ulong handle = unchecked((ulong)commandBuffer.Handle);
         if (handle == 0)
             return;
 
-        CommandBufferBindState state = new()
+        VulkanResourceLifetimeTracker tracker = ResourceRuntime.Lifetime.Tracker;
+        lock (tracker.SyncRoot)
         {
-            RecordingGeneration = unchecked((ulong)Interlocked.Increment(ref CommandBuffers.RecordingGeneration)),
-        };
-        lock (CommandBuffers.BindStateGate)
-            CommandBuffers.BindStates[handle] = state;
-        encoder.BeginTracking(commandBuffer);
+            if (!ResourceRuntime.TryValidateCommandBufferRecordingAdmissionNoLock(
+                    handle,
+                    out string reason))
+            {
+                throw new InvalidOperationException(
+                    $"Cannot begin command buffer 0x{handle:X} for {owner}: {reason}");
+            }
+
+            VulkanCommandBufferTrackingBatch batch =
+                CommandBuffers.TrackingBatches.GetOrAdd(handle, static _ => new());
+            lock (batch)
+            {
+                if (batch.IsRecording || batch.QueuedSubmissionCount != 0)
+                {
+                    throw new InvalidOperationException(
+                        $"Command buffer 0x{handle:X} cannot begin {owner} while its prior recording or submission is active.");
+                }
+
+                batch.Reset(recordingGeneration);
+            }
+        }
+
+        ResetCommandBufferImageLayoutJournal(commandBuffer);
     }
 
     /// <summary>Returns a generation-owned graphics command pool for the calling thread.</summary>
@@ -244,7 +339,7 @@ internal sealed partial class VulkanCommandRuntime
         }
     }
 
-    internal CommandBuffer AllocateTrackedCommandBuffer(
+    internal unsafe CommandBuffer AllocateTrackedCommandBuffer(
         Vk api,
         VulkanDeviceContext deviceContext,
         VulkanResourceRuntime resources,
@@ -264,17 +359,15 @@ internal sealed partial class VulkanCommandRuntime
             Level = level,
             CommandBufferCount = 1,
         };
-        if (api.AllocateCommandBuffers(deviceContext.Device, ref allocateInfo, out CommandBuffer commandBuffer) != Result.Success ||
-            commandBuffer.Handle == 0)
+        CommandBuffer commandBuffer = default;
+        Result result = AllocateCommandBuffersWithLifetime(
+            ref allocateInfo,
+            &commandBuffer,
+            owner);
+        if (result != Result.Success || commandBuffer.Handle == 0)
         {
             throw new InvalidOperationException($"Failed to allocate Vulkan command buffer for {owner}.");
         }
-
-        resources.RegisterSynchronousCommandBuffer(
-            commandBuffer,
-            pool,
-            level,
-            owner);
         return commandBuffer;
     }
 
@@ -468,20 +561,79 @@ internal sealed partial class VulkanCommandRuntime
             {
                 Handle = unchecked((nint)handle),
             };
-            if (!resourceRuntime.CanResetCommandBuffer(commandBuffer))
+            if (!TryResetCommandBufferWithLifetime(
+                    commandBuffer,
+                    "InvalidatedCommandBufferDrain",
+                    out Result result))
                 continue;
-
-            Result result = api.ResetCommandBuffer(commandBuffer, 0);
-            RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanResetCommandBufferCall();
             if (result != Result.Success)
                 continue;
-
-            resourceRuntime.CompleteCommandBufferReset(handle);
-            CommandBuffers.TrackingBatches.TryRemove(handle, out _);
-            lock (Synchronization._vulkanImageLayoutLock)
-                Synchronization._recordedImageLayoutsByCommandBuffer.Remove(handle);
             CommandBuffers.InvalidatedBuffersPendingReset.TryRemove(handle, out _);
             resetCount++;
+        }
+    }
+
+    internal Result ResetCommandBufferWithLifetime(
+        CommandBuffer commandBuffer,
+        string owner)
+    {
+        if (!TryResetCommandBufferWithLifetime(commandBuffer, owner, out Result result))
+        {
+            throw new InvalidOperationException(
+                $"Command buffer 0x{unchecked((ulong)commandBuffer.Handle):X} is not resettable for {owner}.");
+        }
+
+        return result;
+    }
+
+    private bool TryResetCommandBufferWithLifetime(
+        CommandBuffer commandBuffer,
+        string owner,
+        out Result result)
+    {
+        result = Result.ErrorUnknown;
+        ulong handle = unchecked((ulong)commandBuffer.Handle);
+        if (handle == 0)
+            return false;
+
+        lock (Pools.Gate)
+        {
+            VulkanResourceLifetimeTracker tracker = ResourceRuntime.Lifetime.Tracker;
+            VulkanCommandBufferTrackingBatch batch;
+            lock (tracker.SyncRoot)
+            {
+                batch = CommandBuffers.TrackingBatches.GetOrAdd(handle, static _ => new());
+                lock (batch)
+                {
+                    if (batch.IsRecording || batch.QueuedSubmissionCount != 0 ||
+                        !ResourceRuntime.CanResetCommandBufferNoLock(handle))
+                    {
+                        return false;
+                    }
+
+                    // Submission admission observes this host-use marker while
+                    // the native reset executes without the lifetime lock held.
+                    batch.IsRecording = true;
+                }
+            }
+
+            result = Api.ResetCommandBuffer(commandBuffer, 0);
+            RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanResetCommandBufferCall();
+            if (result == Result.Success)
+            {
+                ResourceRuntime.CompleteCommandBufferReset(handle);
+                RemoveCommandBufferState(commandBuffer);
+            }
+
+            lock (tracker.SyncRoot)
+            lock (batch)
+            {
+                batch.IsRecording = false;
+                if (result == Result.Success)
+                    CommandBuffers.TrackingBatches.TryRemove(handle, out _);
+            }
+
+            return true;
         }
     }
 
@@ -501,7 +653,8 @@ internal sealed partial class VulkanCommandRuntime
                  index < list.Count && ready.Count < maxItems;)
             {
                 RetiredCommandBuffer candidate = list[index];
-                if (!resourceRuntime.IsCommandBufferRetirementReady(
+                if (!IsCommandBufferRetirementReady(
+                        resourceRuntime,
                         candidate.CommandBuffer,
                         candidate.Ticket))
                 {
@@ -538,7 +691,7 @@ internal sealed partial class VulkanCommandRuntime
                     entry.CommandBuffer,
                     out CommandPool poolReadyForRetirement))
             {
-                resourceRuntime.QueueCommandPoolRetirement(
+                QueueCommandPoolRetirementTracked(
                     poolReadyForRetirement,
                     frameSlot);
             }
@@ -566,7 +719,9 @@ internal sealed partial class VulkanCommandRuntime
                 RetiredCommandPool candidate = list[index];
                 if (!resourceRuntime.Lifetime.Tracker.IsRetirementReady(
                         candidate.Ticket) ||
-                    !resourceRuntime.AreCommandPoolChildrenRetirementReady(candidate.CommandPool))
+                    !AreCommandPoolChildrenRetirementReady(
+                        resourceRuntime,
+                        candidate.CommandPool))
                 {
                     index++;
                     continue;
@@ -609,7 +764,8 @@ internal sealed partial class VulkanCommandRuntime
             resourceRuntime.PrepareCommandBufferRetirement(
                 retiring,
                 owner);
-        if (!resourceRuntime.IsCommandBufferRetirementReady(
+        if (!IsCommandBufferRetirementReady(
+                resourceRuntime,
                 retiring,
                 ticket))
         {
@@ -631,12 +787,95 @@ internal sealed partial class VulkanCommandRuntime
                 retiring,
                 out CommandPool poolReadyForRetirement))
         {
-            resourceRuntime.QueueCommandPoolRetirement(
+            QueueCommandPoolRetirementTracked(
                 poolReadyForRetirement,
                 frameSlot);
         }
 
         commandBuffer = default;
+    }
+
+    private bool IsCommandBufferRetirementReady(
+        VulkanResourceRuntime resourceRuntime,
+        CommandBuffer commandBuffer,
+        in VulkanRetirementTicket ticket)
+    {
+        ulong handle = unchecked((ulong)commandBuffer.Handle);
+        if (handle == 0)
+            return false;
+
+        VulkanResourceLifetimeTracker tracker = resourceRuntime.Lifetime.Tracker;
+        lock (tracker.SyncRoot)
+        {
+            if (tracker.ForcedRetirementDrainDepth > 0)
+                return true;
+
+            if (CommandBuffers.TrackingBatches.TryGetValue(
+                    handle,
+                    out VulkanCommandBufferTrackingBatch? batch))
+            {
+                lock (batch)
+                    if (batch.IsRecording || batch.QueuedSubmissionCount != 0)
+                        return false;
+            }
+
+            if (tracker.CommandBufferLifetimes.TryGetValue(
+                    handle,
+                    out VulkanCommandBufferLifetimeRecord? lifetime) &&
+                lifetime.QueuedSubmissionCount != 0)
+            {
+                return false;
+            }
+
+            return tracker.IsRetirementReadyNoLock(ticket);
+        }
+    }
+
+    private bool AreCommandPoolChildrenRetirementReady(
+        VulkanResourceRuntime resourceRuntime,
+        CommandPool commandPool)
+    {
+        if (commandPool.Handle == 0)
+            return true;
+
+        VulkanResourceLifetimeTracker tracker = resourceRuntime.Lifetime.Tracker;
+        VulkanResourceLifetimeKey poolKey = new(
+            ObjectType.CommandPool,
+            commandPool.Handle);
+        CommandBuffer[] children;
+        lock (tracker.SyncRoot)
+        {
+            if (!tracker.CommandBuffersByPool.TryGetValue(
+                    poolKey,
+                    out HashSet<ulong>? ownedChildren) ||
+                ownedChildren.Count == 0)
+            {
+                return true;
+            }
+
+            children = new CommandBuffer[ownedChildren.Count];
+            int index = 0;
+            foreach (ulong childHandle in ownedChildren)
+                children[index++] = new CommandBuffer
+                {
+                    Handle = unchecked((nint)childHandle),
+                };
+        }
+
+        for (int index = 0; index < children.Length; index++)
+        {
+            CommandBuffer child = children[index];
+            if (resourceRuntime.IsCommandBufferPendingRetirement(child) ||
+                !IsCommandBufferRetirementReady(
+                    resourceRuntime,
+                    child,
+                    VulkanRetirementTicket.None))
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     internal void RemoveCommandBufferState(CommandBuffer commandBuffer)

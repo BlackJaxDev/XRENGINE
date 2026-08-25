@@ -4,8 +4,10 @@ using System.Collections.Concurrent;
 using System.ComponentModel;
 using System.Numerics;
 using XREngine.Audio;
+using XREngine.Core.Attributes;
 using XREngine.Data;
 using XREngine.Data.Core;
+using XREngine.Runtime.Audio;
 using YamlDotNet.Serialization;
 using static XREngine.Audio.AudioSource;
 
@@ -14,6 +16,7 @@ namespace XREngine.Components
     [Category("Audio")]
     [DisplayName("Audio Source")]
     [Description("Plays positional audio with full control over attenuation, looping, and 3D spatialization.")]
+    [XRTypeRedirect("XREngine.Components.AudioSourceComponent")]
     public class AudioSourceComponent : XRComponent, IAudioStreamingComponent
     {
         private ESourceState _state = ESourceState.Initial;
@@ -806,7 +809,7 @@ namespace XREngine.Components
                 _lastExistenceCheckTime = DateTime.Now;
                 //There will usually only be one listener, but we support multiple for future-proofing
                 //Check if listener is within range, add and remove sources as needed
-                foreach (ListenerContext listener in ((World as IRuntimeAudioListenerWorld)?.AudioListeners ?? []).OfType<ListenerContext>())
+                foreach (ListenerContext listener in RuntimeAudioListenerWorldRegistry.GetListeners(World))
                 {
                     if (RelativeToListener)
                         AddSourceToListener(listener);

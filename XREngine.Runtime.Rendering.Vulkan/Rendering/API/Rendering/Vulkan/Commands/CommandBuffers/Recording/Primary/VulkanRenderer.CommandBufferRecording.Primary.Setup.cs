@@ -38,7 +38,6 @@ namespace XREngine.Rendering.Vulkan
                 BeginFrameTimingQueries(recordingState.CommandBuffer, recordingState.CommandBufferImageSlot);
                 BeginVulkanGpuProfilerQueries(recordingState.CommandBuffer, recordingState.CommandBufferImageSlot);
 
-                ResetCommandBufferBindState(recordingState.CommandBuffer);
                 recordingState.RecordingScratch.PreparedInlineQueries.Clear();
                 recordingState.RecordingScratch.BegunInlineQueries.Clear();
 

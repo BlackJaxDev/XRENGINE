@@ -215,6 +215,8 @@ internal unsafe sealed class VulkanMappedFrameArenaBackend(
             _deviceContext.QueueAdmissionGate.ExitWriteLock();
         }
         ObserveResult("vkDeviceWaitIdle.MappedFrameArena", result);
+        if (result == Result.Success)
+            _resourceRuntime.CompleteDevice();
         return result == Result.Success;
     }
 

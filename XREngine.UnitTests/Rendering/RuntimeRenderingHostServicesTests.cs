@@ -128,12 +128,16 @@ public sealed class RuntimeRenderingHostServicesTests
     [NonParallelizable]
     public void EffectiveCpuSceneCullingStructure_UsesRuntimeRenderingHostServicesAndEnvOverride()
     {
-        string? previousStructure = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.CpuSceneCullingStructure);
+        bool hadRuntimeOverride = XREnvironment.TryGetRuntimeOverride(
+            XREngineEnvironmentVariables.CpuSceneCullingStructure,
+            out string? previousRuntimeOverride);
 
         try
         {
-            Environment.SetEnvironmentVariable(XREngineEnvironmentVariables.CpuSceneCullingStructure, null);
-            EffectiveSettingsEnvOverrides.ReloadForTests();
+            // Effective settings use XREnvironment's layered process facade rather than
+            // re-reading Environment directly. Mask any launch value through that facade
+            // so the host fallback is actually under test.
+            XREnvironment.SetRuntimeOverride(XREngineEnvironmentVariables.CpuSceneCullingStructure, null);
 
             RuntimeRenderingHostServices.Current = new TestRuntimeRenderingHostServices
             {
@@ -142,14 +146,21 @@ public sealed class RuntimeRenderingHostServicesTests
 
             RuntimeEngine.EffectiveSettings.CpuSceneCullingStructure.ShouldBe(ECpuSceneCullingStructure.Bvh);
 
-            Environment.SetEnvironmentVariable(XREngineEnvironmentVariables.CpuSceneCullingStructure, "Octree");
-            EffectiveSettingsEnvOverrides.ReloadForTests();
+            XREnvironment.SetRuntimeOverride(XREngineEnvironmentVariables.CpuSceneCullingStructure, "Octree");
             RuntimeEngine.EffectiveSettings.CpuSceneCullingStructure.ShouldBe(ECpuSceneCullingStructure.Octree);
         }
         finally
         {
-            Environment.SetEnvironmentVariable(XREngineEnvironmentVariables.CpuSceneCullingStructure, previousStructure);
-            EffectiveSettingsEnvOverrides.ReloadForTests();
+            if (hadRuntimeOverride)
+            {
+                XREnvironment.SetRuntimeOverride(
+                    XREngineEnvironmentVariables.CpuSceneCullingStructure,
+                    previousRuntimeOverride);
+            }
+            else
+            {
+                XREnvironment.ClearRuntimeOverride(XREngineEnvironmentVariables.CpuSceneCullingStructure);
+            }
         }
     }
 

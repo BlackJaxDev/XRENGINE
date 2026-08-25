@@ -44,7 +44,7 @@ public sealed class AdvancedGpuSceneRecordContractTests
         AdvancedGpuRecordTable<uint> table = new(3u);
         table.TryAdd(10u, out AdvancedGpuHandle first).ShouldBeTrue();
         table.TryAdd(20u, out AdvancedGpuHandle stale).ShouldBeTrue();
-        table.Remove(stale).ShouldBeTrue();
+        table.TryRemoveImmediatelyBeforePublication(stale).ShouldBeTrue();
         table.ClearPublishedRemaps();
         table.TryAdd(30u, out AdvancedGpuHandle replacement).ShouldBeTrue();
 
@@ -75,9 +75,9 @@ public sealed class AdvancedGpuSceneRecordContractTests
         stale.Index.ShouldBe(1u);
         stale.Generation.ShouldBe(1u);
 
-        table.Remove(stale).ShouldBeTrue();
+        table.TryRemoveImmediatelyBeforePublication(stale).ShouldBeTrue();
         table.TryGet(stale, out _).ShouldBeFalse();
-        table.Remove(stale).ShouldBeFalse();
+        table.TryRemoveImmediatelyBeforePublication(stale).ShouldBeFalse();
 
         table.ClearPublishedRemaps();
         table.TryAdd(22u, out AdvancedGpuHandle current).ShouldBeTrue();
@@ -111,7 +111,7 @@ public sealed class AdvancedGpuSceneRecordContractTests
         table.ClearDirtyRange();
         table.ClearPublishedRemaps();
 
-        table.Remove(removed).ShouldBeTrue();
+        table.TryRemoveImmediatelyBeforePublication(removed).ShouldBeTrue();
         table.IsPacked.ShouldBeFalse();
         table.Compact().ShouldBe(1);
         table.IsPacked.ShouldBeTrue();
@@ -161,7 +161,7 @@ public sealed class AdvancedGpuSceneRecordContractTests
         Span<uint> dependentIndices = stackalloc uint[] { 0u, 1u, 2u };
 
         long before = GC.GetAllocatedBytesForCurrentThread();
-        bool didRemove = measured.Remove(removed);
+        bool didRemove = measured.TryRemoveImmediatelyBeforePublication(removed);
         int moves = measured.Compact();
         measured.ApplyPublishedRemaps(dependentIndices);
         long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
@@ -270,7 +270,7 @@ public sealed class AdvancedGpuSceneRecordContractTests
         snapshot.GeometryResidency.ShouldBe(EAdvancedGeometryResidency.Resident);
         snapshot.DrawDenseIndex.ShouldBe(0u);
 
-        database.EditorIdentities.Remove(editorIdentity).ShouldBeTrue();
+        database.EditorIdentities.TryRemoveImmediatelyBeforePublication(editorIdentity).ShouldBeTrue();
         database.TryResolveDraw(draw, out _).ShouldBeFalse();
     }
 
@@ -280,7 +280,7 @@ public sealed class AdvancedGpuSceneRecordContractTests
         table.TryAdd(2u, out AdvancedGpuHandle removed);
         table.TryAdd(3u, out _);
         table.ClearPublishedRemaps();
-        table.Remove(removed);
+        table.TryRemoveImmediatelyBeforePublication(removed);
         table.Compact();
         Span<uint> dependentIndices = stackalloc uint[] { 0u, 1u, 2u };
         table.ApplyPublishedRemaps(dependentIndices);
@@ -295,7 +295,7 @@ public sealed class AdvancedGpuSceneRecordContractTests
         table.TryAdd(value, out _).ShouldBeTrue();
         table.TryAdd(value, out AdvancedGpuHandle removed).ShouldBeTrue();
         table.TryAdd(value, out movedHandle).ShouldBeTrue();
-        table.Remove(removed).ShouldBeTrue();
+        table.TryRemoveImmediatelyBeforePublication(removed).ShouldBeTrue();
     }
 
     private static void AssertPublishedMove<T>(

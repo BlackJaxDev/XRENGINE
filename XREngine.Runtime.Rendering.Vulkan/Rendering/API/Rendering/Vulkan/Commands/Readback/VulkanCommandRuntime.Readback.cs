@@ -184,7 +184,6 @@ internal sealed partial class VulkanCommandRuntime
                 commandBuffer,
                 "vkBeginCommandBuffer.Readback.Depth",
                 CommandBufferUsageFlags.OneTimeSubmitBit);
-            ResetCommandBufferBindState(commandBuffer);
 
             RecordDepthPixelCopy(
                 commandBuffer,

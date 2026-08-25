@@ -57,21 +57,14 @@
       "notes": "Part of FFmpeg LGPL binary distribution."
     },
 
-    "binary-item|XREngine.csproj|openvr_api.dll": {
+    "binary-item|XREngine.Input.csproj|..\\Build\\Submodules\\OpenVR.NET\\OpenVR.NET\\openvr_api.dll": {
       "license": "BSD-3-Clause",
       "owner": "Valve (OpenVR/SteamVR)",
       "licenseLink": "https://github.com/ValveSoftware/openvr/blob/master/LICENSE",
       "notes": "Assumes this is the standard OpenVR SDK binary from Valve."
     },
 
-    "binary-item|XREngine.csproj|OVRLipSync.dll": {
-      "license": "Proprietary (Oculus SDK License Agreement)",
-      "owner": "Meta Platforms, Inc.",
-      "licenseLink": "https://developers.meta.com/horizon/licenses/oculussdk/",
-      "notes": "Redistributable in binary form under the Oculus SDK License. Keep it as a separately licensed proprietary component and satisfy both the Oculus SDK terms and XRENGINE's Community Source License or applicable commercial license."
-    },
-
-    "binary-item|XREngine.csproj|$(MetaOvrLipSyncWinX64Dir)OVRLipSync.dll": {
+    "binary-item|XREngine.Runtime.AudioIntegration.csproj|$(MetaOvrLipSyncWinX64Dir)OVRLipSync.dll": {
       "license": "Proprietary (Oculus SDK License Agreement)",
       "owner": "Meta Platforms, Inc.",
       "licenseLink": "https://developers.meta.com/horizon/licenses/oculussdk/",
@@ -118,20 +111,6 @@
       "owner": "Valve (OpenVR/SteamVR)",
       "licenseLink": "https://github.com/ValveSoftware/openvr/blob/master/LICENSE",
       "notes": "Same OpenVR SDK binary family as other openvr_api.dll entries."
-    },
-
-    "checked-binary|XRENGINE/openvr_api.dll": {
-      "license": "BSD-3-Clause",
-      "owner": "Valve (OpenVR/SteamVR)",
-      "licenseLink": "https://github.com/ValveSoftware/openvr/blob/master/LICENSE",
-      "notes": "Checked binary; confirm hash matches the official OpenVR SDK build you rely on."
-    },
-
-    "checked-binary|XRENGINE/OVRLipSync.dll": {
-      "license": "Proprietary (Oculus SDK License Agreement)",
-      "owner": "Meta Platforms, Inc.",
-      "licenseLink": "https://developers.meta.com/horizon/licenses/oculussdk/",
-      "notes": "Binary redistribution permitted under the Oculus SDK License. Keep it separately licensed from XRENGINE and satisfy both the Oculus SDK terms and the applicable XRENGINE license when redistributing it."
     },
 
     "checked-binary|XRENGINE/RestirGI.Native.dll": {

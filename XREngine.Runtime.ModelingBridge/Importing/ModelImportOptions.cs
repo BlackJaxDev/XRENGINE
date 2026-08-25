@@ -2,6 +2,7 @@ using Assimp;
 using System;
 using System.ComponentModel;
 using XREngine.Data;
+using XREngine.Core.Attributes;
 using XREngine.Fbx;
 using XREngine.Rendering;
 using YamlDotNet.Serialization;
@@ -45,6 +46,7 @@ public enum GltfImportBackend
     AssimpLegacy = Assimp,
 }
 
+[XRTypeRedirect("XREngine.Rendering.Models.ModelImportOptions")]
 public sealed class ModelImportOptions : IXR3rdPartyImportOptions
 {
     private ModelCookSettings _cookSettings = new();

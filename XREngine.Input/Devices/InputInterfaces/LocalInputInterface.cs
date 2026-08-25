@@ -302,9 +302,6 @@ namespace XREngine.Input.Devices
         public void ClearMouseScrollBuffer()
             => Mouse?.ClearScrollBuffer();
 
-        private readonly Dictionary<(string Category, string Name, Delegate Callback), RuntimeVrScalarChanged> _runtimeFloatCallbacks = [];
-        private readonly Dictionary<(string Category, string Name, Delegate Callback), RuntimeVrVector2Changed> _runtimeVector2Callbacks = [];
-        private readonly Dictionary<(string Category, string Name, Delegate Callback), RuntimeVrVector3Changed> _runtimeVector3Callbacks = [];
         private readonly Dictionary<object, RuntimeVrPoseChanged> _runtimePoseCallbacks = [];
         private readonly Dictionary<(string Category, string Name, bool LeftHand, Delegate Callback), RuntimeVrSkeletonSummaryChanged> _runtimeSkeletonSummaryCallbacks = [];
 
@@ -318,67 +315,25 @@ namespace XREngine.Input.Devices
             RuntimeVrInputServices.RegisterBoolAction(c, n, func, Unregister);
         }
 
-        public override void RegisterVRFloatAction<TCategory, TName>(TCategory category, TName name, ScalarAction.ValueChangedHandler func)
+        public override void RegisterVRFloatAction<TCategory, TName>(TCategory category, TName name, RuntimeVrScalarChanged func)
         {
             string c = RuntimeActionPart(category);
             string n = RuntimeActionPart(name);
-            var key = (c, n, (Delegate)func);
-            if (Unregister)
-            {
-                if (_runtimeFloatCallbacks.TryGetValue(key, out RuntimeVrScalarChanged? callback))
-                {
-                    RuntimeVrInputServices.RegisterFloatAction(c, n, callback, unregister: true);
-                    _runtimeFloatCallbacks.Remove(key);
-                }
-                return;
-            }
-
-            if (!_runtimeFloatCallbacks.TryGetValue(key, out RuntimeVrScalarChanged? runtimeCallback))
-                _runtimeFloatCallbacks.Add(key, runtimeCallback = func.Invoke);
-
-            RuntimeVrInputServices.RegisterFloatAction(c, n, runtimeCallback, unregister: false);
+            RuntimeVrInputServices.RegisterFloatAction(c, n, func, Unregister);
         }
 
-        public override void RegisterVRVector2Action<TCategory, TName>(TCategory category, TName name, Vector2Action.ValueChangedHandler func)
+        public override void RegisterVRVector2Action<TCategory, TName>(TCategory category, TName name, RuntimeVrVector2Changed func)
         {
             string c = RuntimeActionPart(category);
             string n = RuntimeActionPart(name);
-            var key = (c, n, (Delegate)func);
-            if (Unregister)
-            {
-                if (_runtimeVector2Callbacks.TryGetValue(key, out RuntimeVrVector2Changed? callback))
-                {
-                    RuntimeVrInputServices.RegisterVector2Action(c, n, callback, unregister: true);
-                    _runtimeVector2Callbacks.Remove(key);
-                }
-                return;
-            }
-
-            if (!_runtimeVector2Callbacks.TryGetValue(key, out RuntimeVrVector2Changed? runtimeCallback))
-                _runtimeVector2Callbacks.Add(key, runtimeCallback = func.Invoke);
-
-            RuntimeVrInputServices.RegisterVector2Action(c, n, runtimeCallback, unregister: false);
+            RuntimeVrInputServices.RegisterVector2Action(c, n, func, Unregister);
         }
 
-        public override void RegisterVRVector3Action<TCategory, TName>(TCategory category, TName name, Vector3Action.ValueChangedHandler func)
+        public override void RegisterVRVector3Action<TCategory, TName>(TCategory category, TName name, RuntimeVrVector3Changed func)
         {
             string c = RuntimeActionPart(category);
             string n = RuntimeActionPart(name);
-            var key = (c, n, (Delegate)func);
-            if (Unregister)
-            {
-                if (_runtimeVector3Callbacks.TryGetValue(key, out RuntimeVrVector3Changed? callback))
-                {
-                    RuntimeVrInputServices.RegisterVector3Action(c, n, callback, unregister: true);
-                    _runtimeVector3Callbacks.Remove(key);
-                }
-                return;
-            }
-
-            if (!_runtimeVector3Callbacks.TryGetValue(key, out RuntimeVrVector3Changed? runtimeCallback))
-                _runtimeVector3Callbacks.Add(key, runtimeCallback = func.Invoke);
-
-            RuntimeVrInputServices.RegisterVector3Action(c, n, runtimeCallback, unregister: false);
+            RuntimeVrInputServices.RegisterVector3Action(c, n, func, Unregister);
         }
 
         public override bool VibrateVRAction<TCategory, TName>(TCategory category, TName name, double duration, double frequency = 40, double amplitude = 1, double delay = 0) 

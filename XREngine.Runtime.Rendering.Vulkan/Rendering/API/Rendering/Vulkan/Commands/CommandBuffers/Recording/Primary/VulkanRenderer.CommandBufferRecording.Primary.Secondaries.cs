@@ -637,11 +637,13 @@ namespace XREngine.Rendering.Vulkan
                 };
 
                 ThrowIfVulkanDeviceOperationNotAdmitted("vkBeginCommandBuffer.PrimarySecondaryRange");
-                if (Api!.BeginCommandBuffer(secondary, ref beginInfo) != Result.Success)
+                if (BeginTrackedCommandBuffer(
+                        secondary,
+                        ref beginInfo,
+                        "PrimarySecondaryRange") != Result.Success)
                     throw new Exception("Failed to begin Vulkan indirect secondary command buffer.");
                 }
 
-                ResetCommandBufferBindState(secondary);
                 MarkCommandChainSecondaryRecording(chain, secondary);
 
                 int opIndex = startIndex + relativeIndex;
@@ -2317,11 +2319,13 @@ namespace XREngine.Rendering.Vulkan
                 };
 
                 ThrowIfVulkanDeviceOperationNotAdmitted("vkBeginCommandBuffer.PreparedCommandChain");
-                if (Api!.BeginCommandBuffer(secondary, ref beginInfo) != Result.Success)
+                if (BeginTrackedCommandBuffer(
+                        secondary,
+                        ref beginInfo,
+                        "PreparedCommandChain") != Result.Success)
                     throw new Exception("Failed to begin Vulkan mesh command-chain secondary command buffer.");
                 }
 
-                ResetCommandBufferBindState(secondary);
                 MarkCommandChainSecondaryRecording(chain, secondary);
 
                 bool savedActiveDynamicRendering = recordingState.RenderScope.UsesDynamicRendering;

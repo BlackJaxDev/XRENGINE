@@ -10,7 +10,6 @@ using XREngine.Data.Geometry;
 using XREngine.Rendering;
 using XREngine.Rendering.Compute;
 using XREngine.Rendering.Info;
-using XREngine.Rendering.OpenGL;
 using XREngine.Rendering.UI;
 using XREngine.Scene;
 using XREngine.Scene.Transforms;
