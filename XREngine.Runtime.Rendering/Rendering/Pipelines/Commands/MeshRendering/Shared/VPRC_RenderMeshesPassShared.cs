@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using XREngine.Rendering.RenderGraph;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Vulkan;
@@ -74,6 +75,7 @@ public class VPRC_RenderMeshesPassShared : ViewportPopStateRenderCommand
     }
 
     private int _resolvedRenderGraphPassIndex = int.MinValue;
+    private IReadOnlyList<string> _sampledTextureNames = [];
 
     /// <summary>
     /// Returns the pass index that backend operations emitted by this command should use.
@@ -82,6 +84,12 @@ public class VPRC_RenderMeshesPassShared : ViewportPopStateRenderCommand
         => _resolvedRenderGraphPassIndex != int.MinValue
             ? _resolvedRenderGraphPassIndex
             : RenderPass;
+
+    /// <summary>
+    /// Declares textures sampled by dynamically selected mesh material variants in this pass.
+    /// </summary>
+    public void SetSampledTextures(params string[] textureNames)
+        => _sampledTextureNames = textureNames;
 
     private EMeshRenderingPathIntent _pathIntent = EMeshRenderingPathIntent.Traditional;
     public EMeshRenderingPathIntent PathIntent
@@ -309,6 +317,9 @@ public class VPRC_RenderMeshesPassShared : ViewportPopStateRenderCommand
         builder
             .UseEngineDescriptors()
             .UseMaterialDescriptors();
+
+        for (int i = 0; i < _sampledTextureNames.Count; i++)
+            builder.SampleTexture(MakeTextureResource(_sampledTextureNames[i]));
 
         if (context.CurrentRenderTarget is { } target)
         {

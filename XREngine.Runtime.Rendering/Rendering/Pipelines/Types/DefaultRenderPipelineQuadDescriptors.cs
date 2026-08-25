@@ -60,8 +60,8 @@ internal static class DefaultRenderPipelineQuadDescriptors
         if (!disabled)
         {
             descriptor
-                .SampleTexture(DefaultRenderPipeline.NormalTextureName)
-                .SampleTexture(DefaultRenderPipeline.DepthViewTextureName)
+                .SampleTexture(DefaultRenderPipeline.ForwardPrePassNormalTextureName)
+                .SampleTexture(DefaultRenderPipeline.ForwardContactDepthViewTextureName)
                 .SampleTexture(DefaultRenderPipeline.AmbientOcclusionNoiseTextureName);
         }
 
@@ -106,8 +106,8 @@ internal static class DefaultRenderPipelineQuadDescriptors
         string? variant)
         => new VPRC_RenderQuadToFBO.RenderGraphResourceDescriptor()
             .SampleTexture(inputTextureName)
-            .SampleTexture(DefaultRenderPipeline.DepthViewTextureName)
-            .SampleTexture(DefaultRenderPipeline.NormalTextureName)
+            .SampleTexture(DefaultRenderPipeline.ForwardContactDepthViewTextureName)
+            .SampleTexture(DefaultRenderPipeline.ForwardPrePassNormalTextureName)
             .UseColorTexture(outputTextureName)
             .DependsOnQuadBlit(
                 DefaultRenderPipeline.AmbientOcclusionFBOName,
@@ -127,8 +127,8 @@ internal static class DefaultRenderPipelineQuadDescriptors
         string? variant)
         => new VPRC_RenderQuadToFBO.RenderGraphResourceDescriptor()
             .SampleTexture(inputTextureName)
-            .SampleTexture(DefaultRenderPipeline.DepthViewTextureName)
-            .SampleTexture(DefaultRenderPipeline.NormalTextureName)
+            .SampleTexture(DefaultRenderPipeline.ForwardContactDepthViewTextureName)
+            .SampleTexture(DefaultRenderPipeline.ForwardPrePassNormalTextureName)
             .UseColorTexture(DefaultRenderPipeline.AmbientOcclusionIntensityTextureName)
             .DependsOnQuadBlit(
                 DefaultRenderPipeline.AmbientOcclusionBlurFBOName,

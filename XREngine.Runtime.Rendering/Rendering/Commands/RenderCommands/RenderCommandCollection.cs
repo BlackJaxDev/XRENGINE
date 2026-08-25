@@ -1866,15 +1866,29 @@ namespace XREngine.Rendering.Commands
             => RenderGPU(renderPass, RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy(true));
 
         public void RenderGPU(int renderPass, EMeshSubmissionStrategy meshSubmissionStrategy)
+            => RenderGPU(renderPass, meshSubmissionStrategy, int.MinValue);
+
+        public void RenderGPU(
+            int renderPass,
+            EMeshSubmissionStrategy meshSubmissionStrategy,
+            int renderGraphPassIndex)
             => RenderGPU(
                 renderPass,
                 meshSubmissionStrategy.ToSubmissionMode(),
-                meshSubmissionStrategy.ToPrimitivePathPreference());
+                meshSubmissionStrategy.ToPrimitivePathPreference(),
+                renderGraphPassIndex);
 
         public void RenderGPU(
             int renderPass,
             EMeshSubmissionStrategy meshSubmissionMode,
             EMeshPrimitivePathPreference primitivePathPreference)
+            => RenderGPU(renderPass, meshSubmissionMode, primitivePathPreference, int.MinValue);
+
+        public void RenderGPU(
+            int renderPass,
+            EMeshSubmissionStrategy meshSubmissionMode,
+            EMeshPrimitivePathPreference primitivePathPreference,
+            int renderGraphPassIndex)
         {
             using var renderingBufferScope = EnterRenderingBufferReadScope();
 
@@ -1905,6 +1919,7 @@ namespace XREngine.Rendering.Commands
 
             bool meshletStrategy = primitivePathPreference != EMeshPrimitivePathPreference.TraditionalOnly;
             bool previousUseMeshletPipeline = gpuPass.UseMeshletPipeline;
+            int previousRenderGraphPassIndexOverride = gpuPass.RenderGraphPassIndexOverride;
             if (meshletStrategy)
                 gpuPass.UseMeshletPipeline = true;
 
@@ -1912,6 +1927,7 @@ namespace XREngine.Rendering.Commands
             {
                 gpuPass.MeshSubmissionStrategy = meshSubmissionMode;
                 gpuPass.MeshPrimitivePathPreference = primitivePathPreference;
+                gpuPass.RenderGraphPassIndexOverride = renderGraphPassIndex;
                 RenderFrameViewSet configuredViewSet = ConfigureGpuViewSet(gpuPass, renderState, camera);
                 gpuPass.ConfigureStableHiZViewSet(
                     configuredViewSet,
@@ -1937,6 +1953,7 @@ namespace XREngine.Rendering.Commands
             {
                 if (meshletStrategy)
                     gpuPass.UseMeshletPipeline = previousUseMeshletPipeline;
+                gpuPass.RenderGraphPassIndexOverride = previousRenderGraphPassIndexOverride;
             }
         }
 

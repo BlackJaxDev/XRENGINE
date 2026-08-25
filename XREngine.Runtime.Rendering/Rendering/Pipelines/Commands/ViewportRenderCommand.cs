@@ -145,6 +145,12 @@ namespace XREngine.Rendering.Pipelines.Commands
             => RenderGraphResourceNames.MakeFboColor(fboName);
 
         /// <summary>
+        /// Creates a render graph resource name for a specific framebuffer color attachment.
+        /// </summary>
+        protected static string MakeFboColorResource(string fboName, int colorAttachmentIndex)
+            => RenderGraphResourceNames.MakeFboColor(fboName, colorAttachmentIndex);
+
+        /// <summary>
         /// Creates a render graph resource name for a color attachment based on the provided target name.
         /// If the target name is "OutputRenderTarget", it will return "OutputRenderTarget" instead of a framebuffer color resource.
         /// </summary>

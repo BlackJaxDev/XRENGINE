@@ -124,7 +124,10 @@ namespace XREngine.Rendering.Commands
                 SealMeshletDirectPipelineReadiness(meshletPipelineReady, readinessFailure);
             }
 
-            using var renderGraphPassScope = RuntimeEngine.Rendering.State.PushRenderGraphPassIndex(RenderPass);
+            int renderGraphPassIndex = RenderGraphPassIndexOverride != int.MinValue
+                ? RenderGraphPassIndexOverride
+                : RenderPass;
+            using var renderGraphPassScope = RuntimeEngine.Rendering.State.PushRenderGraphPassIndex(renderGraphPassIndex);
             ResetZeroReadbackProgramPendingState();
             bool useTwoPassGpuHiZ = TryPrepareGpuHiZTwoPass(scene, camera, out GpuHiZDepthInput twoPassDepthInput);
             Stopwatch resetStopwatch = Stopwatch.StartNew();

@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Pipelines.Commands;
+using XREngine.Rendering.RenderGraph;
 
 namespace XREngine.Rendering.Pipelines.Commands
 {
@@ -15,6 +16,7 @@ namespace XREngine.Rendering.Pipelines.Commands
     {
         private IReadOnlyList<int> _renderPasses = [];
         private bool _gpuDispatch;
+        private int _resolvedRenderGraphPassIndex = int.MinValue;
 
         public void SetOptions(IReadOnlyList<int> renderPasses, bool gpuDispatch)
         {
@@ -43,6 +45,10 @@ namespace XREngine.Rendering.Pipelines.Commands
             var commands = ActivePipelineInstance.ActiveMeshRenderCommands;
             if (commands is null)
                 return;
+
+            using var renderGraphPassScope = _resolvedRenderGraphPassIndex != int.MinValue
+                ? RuntimeEngine.Rendering.State.PushRenderGraphPassIndex(_resolvedRenderGraphPassIndex)
+                : null;
 
             // Resolve the active mesh submission strategy once per execution so the prepass
             // uses the same culling/draw path the lit pass will use later this frame. The
@@ -80,13 +86,15 @@ namespace XREngine.Rendering.Pipelines.Commands
                             pass,
                             static command => command is IRenderCommandMesh mesh && IsGpuPathCpuFallbackMesh(mesh));
                     }
-                    commands.RenderGPU(pass, prepassStrategy);
+                    commands.RenderGPU(pass, prepassStrategy, _resolvedRenderGraphPassIndex);
                 }
                 else
                 {
                     commands.RenderCPUMeshOnly(pass);
                 }
             }
+
+            ActivePipelineInstance.MarkForwardContactPrePassAvailable();
         }
 
         private static bool IsGpuPathCpuFallbackMesh(IRenderCommandMesh meshCommand)
@@ -103,6 +111,32 @@ namespace XREngine.Rendering.Pipelines.Commands
             return strategy == EMeshSubmissionStrategy.GpuMeshletInstrumented
                 ? EMeshSubmissionStrategy.GpuIndirectInstrumented
                 : EMeshSubmissionStrategy.GpuIndirectZeroReadback;
+        }
+
+        internal override void DescribeRenderPass(RenderGraphDescribeContext context)
+        {
+            base.DescribeRenderPass(context);
+
+            if (_renderPasses.Count == 0 || context.CurrentRenderTarget is not { } target)
+                return;
+
+            var builder = context.GetOrCreateSyntheticPass(
+                $"ForwardDepthNormalPrePass_{target.Name}",
+                ERenderGraphPassStage.Graphics);
+            _resolvedRenderGraphPassIndex = builder.PassIndex;
+            builder
+                .UseEngineDescriptors()
+                .UseMaterialDescriptors()
+                .UseColorAttachment(
+                    MakeFboColorResource(target.Name),
+                    target.ColorAccess,
+                    target.ConsumeColorLoadOp(),
+                    target.GetColorStoreOp());
+            UseRenderTargetDepthStencilAttachments(
+                builder,
+                target,
+                target.ConsumeDepthLoadOp(),
+                target.ConsumeStencilLoadOp());
         }
     }
 }

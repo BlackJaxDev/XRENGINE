@@ -91,6 +91,11 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
     public EAntiAliasingMode? EffectiveAntiAliasingModeThisFrame { get; private set; }
     public uint? EffectiveMsaaSampleCountThisFrame { get; private set; }
     public float? EffectiveTsrRenderScaleThisFrame { get; private set; }
+    /// <summary>
+    /// Gets whether the current frame produced the forward contact-shadow
+    /// depth/normal inputs before forward lighting bindings were published.
+    /// </summary>
+    public bool ForwardContactPrePassAvailableThisFrame { get; private set; }
     /// <summary>Gets the backend-neutral final output captured for the current or most recent frame.</summary>
     public RenderFrameOutputDescription? FinalOutput { get; private set; }
 
@@ -565,6 +570,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
                 0.5f,
                 1.0f)
             : null;
+        ForwardContactPrePassAvailableThisFrame = false;
 
 /*
         Debug.RenderingEvery(
@@ -679,6 +685,9 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             }
         }
     }
+
+    internal void MarkForwardContactPrePassAvailable()
+        => ForwardContactPrePassAvailableThisFrame = true;
 
     private bool TryValidateBackendReadyFramePackage(
         RenderCommandCollection commands,

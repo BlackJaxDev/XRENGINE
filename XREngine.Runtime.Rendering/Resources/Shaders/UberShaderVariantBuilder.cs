@@ -331,7 +331,11 @@ internal static partial class UberShaderVariantBuilder
     private static bool RequiresForwardShadows(XRMaterial material)
         => HasTruthyParameter(material, "_ForwardShadowsEnabled", "ForwardShadowsEnabled");
 
-    private static bool RequiresForwardContactShadows(XRMaterial material)
+    /// <summary>
+    /// Determines whether the material explicitly requests the forward
+    /// screen-space contact-shadow inputs.
+    /// </summary>
+    internal static bool RequiresForwardContactShadows(XRMaterial material)
         => HasTruthyParameter(material, "_ForwardContactShadowsEnabled", "ForwardContactShadowsEnabled");
 
     private static bool RequiresForwardPbrResources(XRMaterial material)
