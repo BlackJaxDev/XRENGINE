@@ -8,6 +8,24 @@ namespace XREngine.Rendering.API.Rendering.OpenXR;
 
 public unsafe partial class OpenXRAPI
 {
+    void IOpenXrApplicationLifecycle.EnableRuntimeMonitoring()
+        => EnableRuntimeMonitoring();
+
+    void IOpenXrApplicationLifecycle.UpdateRuntimeState()
+        => UpdateRuntimeState();
+
+    void IOpenXrApplicationLifecycle.CollectVisible()
+        => EngineCollectVisibleTick();
+
+    void IOpenXrApplicationLifecycle.SwapBuffers()
+        => EngineSwapBuffersTick();
+
+    void IOpenXrApplicationLifecycle.Render()
+        => EngineRenderTick();
+
+    void IOpenXrApplicationLifecycle.PostRender()
+        => EnginePostRenderTick();
+
     #region Public API + window binding
 
     /// <summary>

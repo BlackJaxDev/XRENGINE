@@ -316,21 +316,22 @@ function Add-RegistrationLine {
 
 $projectFullPath = [System.IO.Path]::GetFullPath($ProjectDir)
 $sourceRoots = New-Object System.Collections.Generic.List[string]
-[void]$sourceRoots.Add($projectFullPath)
+$sourceRootNames = @(
+    '.',
+    '..\XRENGINE',
+    '..\XREngine.Runtime.Core',
+    '..\XREngine.Runtime.Rendering',
+    '..\XREngine.Runtime.AnimationIntegration',
+    '..\XREngine.Runtime.AudioIntegration',
+    '..\XREngine.Runtime.InputIntegration',
+    '..\XREngine.Runtime.ModelingBridge'
+)
 
-$runtimeCoreRoot = [System.IO.Path]::GetFullPath((Join-Path $projectFullPath '..\XREngine.Runtime.Core'))
-if (Test-Path $runtimeCoreRoot) {
-    [void]$sourceRoots.Add($runtimeCoreRoot)
-}
-
-$inputIntegrationRoot = [System.IO.Path]::GetFullPath((Join-Path $projectFullPath '..\XREngine.Runtime.InputIntegration'))
-if (Test-Path $inputIntegrationRoot) {
-    [void]$sourceRoots.Add($inputIntegrationRoot)
-}
-
-$runtimeRenderingRoot = [System.IO.Path]::GetFullPath((Join-Path $projectFullPath '..\XREngine.Runtime.Rendering'))
-if (Test-Path $runtimeRenderingRoot) {
-    [void]$sourceRoots.Add($runtimeRenderingRoot)
+foreach ($sourceRootName in $sourceRootNames) {
+    $sourceRoot = [System.IO.Path]::GetFullPath((Join-Path $projectFullPath $sourceRootName))
+    if (Test-Path $sourceRoot) {
+        [void]$sourceRoots.Add($sourceRoot)
+    }
 }
 
 $classes = @{}

@@ -410,7 +410,10 @@ internal sealed partial class VulkanFrameLoop
             };
 
             _deviceContext.ThrowIfVulkanDeviceOperationNotAdmitted("vkBeginCommandBuffer.OpenXR.Blit");
-            Result beginResult = Api!.BeginCommandBuffer(commandBuffer, ref beginInfo);
+            Result beginResult = _commandRuntime.BeginTrackedCommandBuffer(
+                commandBuffer,
+                ref beginInfo,
+                "OpenXR.Blit");
             if (beginResult != Result.Success)
             {
                 Debug.VulkanWarning($"[OpenXR] Failed to begin stereo layer publish command buffer: {beginResult}");
@@ -422,7 +425,6 @@ internal sealed partial class VulkanFrameLoop
             }
 
             begun = true;
-            _commandRuntime.ResetCommandBufferBindState(commandBuffer);
             RecordStereoLayerBlits(commandBuffer, in plan);
 
             Result endResult = _commandRuntime.EndCommandBufferTracked(commandBuffer);

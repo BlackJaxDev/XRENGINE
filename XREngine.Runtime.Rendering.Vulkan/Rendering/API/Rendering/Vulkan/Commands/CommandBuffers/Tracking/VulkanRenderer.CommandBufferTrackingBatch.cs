@@ -6,24 +6,7 @@ namespace XREngine.Rendering.Vulkan;
 internal sealed partial class VulkanCommandRuntime
 {
     internal Result ResetTrackedCommandBuffer(CommandBuffer commandBuffer)
-    {
-        if (!ResourceRuntime.CanResetCommandBuffer(commandBuffer))
-        {
-            throw new InvalidOperationException(
-                $"Command buffer 0x{unchecked((ulong)commandBuffer.Handle):X} cannot be reset while recording, queued, submitted, retired, or referenced.");
-        }
-
-        Result result = Api.ResetCommandBuffer(commandBuffer, 0);
-        RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanResetCommandBufferCall();
-        if (result == Result.Success)
-        {
-            ulong handle = unchecked((ulong)commandBuffer.Handle);
-            CommandBuffers.InvalidatedBuffersPendingReset.TryRemove(handle, out _);
-            ResourceRuntime.CompleteCommandBufferReset(handle);
-            ResetCommandBufferImageLayoutJournal(commandBuffer);
-        }
-        return result;
-    }
+        => ResetCommandBufferWithLifetime(commandBuffer, "ResetTrackedCommandBuffer");
 
 
 
@@ -32,45 +15,6 @@ internal sealed partial class VulkanCommandRuntime
 
     private ConcurrentDictionary<ulong, VulkanCommandBufferTrackingBatch> CommandBufferTrackingBatches
         => _commandBufferTrackingBatches;
-
-    private void BeginCommandBufferTrackingBatch(CommandBuffer commandBuffer)
-    {
-        ulong handle = unchecked((ulong)commandBuffer.Handle);
-        if (handle == 0)
-            return;
-
-        ulong recordingGeneration = ResolveCommandBufferRecordingGeneration(commandBuffer);
-        lock (ResourceRuntime.Lifetime.Tracker.SyncRoot)
-        {
-            if (ResourceRuntime.Lifetime.Tracker.CommandBufferLifetimes.TryGetValue(
-                    handle,
-                    out VulkanCommandBufferLifetimeRecord? lifetime) &&
-                lifetime.QueuedSubmissionCount != 0)
-            {
-                throw new InvalidOperationException(
-                    $"Command buffer 0x{handle:X} cannot begin recording while queued for submission.");
-            }
-
-            if (CommandBufferTrackingBatches.TryGetValue(handle, out VulkanCommandBufferTrackingBatch? existing))
-            {
-                lock (existing)
-                {
-                    if (existing.QueuedSubmissionCount != 0)
-                    {
-                        throw new InvalidOperationException(
-                            $"Command buffer 0x{handle:X} cannot replace tracking while queued for submission.");
-                    }
-
-                    existing.Reset(recordingGeneration);
-                    return;
-                }
-            }
-
-            VulkanCommandBufferTrackingBatch batch = new();
-            batch.Reset(recordingGeneration);
-            CommandBufferTrackingBatches[handle] = batch;
-        }
-    }
 
     private void RemoveCommandBufferTrackingBatch(CommandBuffer commandBuffer)
     {
@@ -143,37 +87,6 @@ internal sealed partial class VulkanCommandRuntime
         return abandoned;
     }
 
-    private bool TryRecordCommandBufferDependency(CommandBuffer commandBuffer, ObjectType type, ulong handle)
-    {
-        ulong commandBufferHandle = unchecked((ulong)commandBuffer.Handle);
-        if (commandBufferHandle == 0 || handle == 0)
-            return false;
-
-        if (!CommandBufferTrackingBatches.TryGetValue(
-                commandBufferHandle,
-                out VulkanCommandBufferTrackingBatch? batch))
-        {
-            return false;
-        }
-
-        lock (batch)
-        {
-            if (!CommandBufferTrackingBatches.TryGetValue(commandBufferHandle, out var currentBatch) ||
-                !ReferenceEquals(batch, currentBatch))
-            {
-                return false;
-            }
-            if (batch.QueuedSubmissionCount != 0)
-            {
-                throw new InvalidOperationException(
-                    $"Command buffer 0x{commandBufferHandle:X} cannot record resource dependencies while queued for submission.");
-            }
-
-            batch.RecordDependency(ResourceKey(type, handle));
-            return true;
-        }
-    }
-
     private bool TryRecordImageAccessDelta(
         CommandBuffer commandBuffer,
         Image image,
@@ -201,10 +114,10 @@ internal sealed partial class VulkanCommandRuntime
             {
                 return false;
             }
-            if (batch.QueuedSubmissionCount != 0)
+            if (!batch.IsRecording || batch.QueuedSubmissionCount != 0)
             {
                 throw new InvalidOperationException(
-                    $"Command buffer 0x{commandBufferHandle:X} cannot record image access while queued for submission.");
+                    $"Command buffer 0x{commandBufferHandle:X} cannot record image access outside an active, unqueued recording.");
             }
 
             ImageAspectFlags primaryAspect = (range.AspectMask & ImageAspectFlags.ColorBit) != 0
@@ -344,10 +257,10 @@ internal sealed partial class VulkanCommandRuntime
             {
                 return false;
             }
-            if (batch.QueuedSubmissionCount != 0)
+            if (!batch.IsRecording || batch.QueuedSubmissionCount != 0)
             {
                 throw new InvalidOperationException(
-                    $"Command buffer 0x{commandBufferHandle:X} cannot record queue-ownership requirements while queued for submission.");
+                    $"Command buffer 0x{commandBufferHandle:X} cannot record queue-ownership requirements outside an active, unqueued recording.");
             }
 
             batch.RecordQueueOwnershipTransfer(requirement);
@@ -378,6 +291,7 @@ internal sealed partial class VulkanCommandRuntime
                     commandBufferHandle,
                     out VulkanCommandBufferTrackingBatch? currentBatch) ||
                 !ReferenceEquals(batch, currentBatch) ||
+                !batch.IsRecording ||
                 batch.QueuedSubmissionCount != 0 ||
                 !batch.LatestImageAccessStates.TryGet(
                     image.Handle,

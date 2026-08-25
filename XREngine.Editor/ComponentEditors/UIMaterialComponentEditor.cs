@@ -6,7 +6,6 @@ using XREngine.Components;
 using XREngine.Editor.Services;
 using XREngine.Editor.UI;
 using XREngine.Rendering;
-using XREngine.Rendering.OpenGL;
 using XREngine.Rendering.Vulkan;
 using XREngine.Rendering.UI;
 

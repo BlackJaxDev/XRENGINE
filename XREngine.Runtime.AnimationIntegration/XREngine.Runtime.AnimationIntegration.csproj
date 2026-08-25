@@ -25,10 +25,6 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="SharpFont.Dependencies" Version="2.6.0" />
-  </ItemGroup>
-
-  <ItemGroup>
     <ProjectReference Include="..\Build\Submodules\OscCore-NET9\OscCore.csproj" />
     <ProjectReference Include="..\XREngine.Animation\XREngine.Animation.csproj" />
     <ProjectReference Include="..\XREngine.Data\XREngine.Data.csproj" />

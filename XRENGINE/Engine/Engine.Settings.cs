@@ -745,6 +745,11 @@ namespace XREngine
 
         private static void ApplyAudioPreferences()
         {
+            // A presentationless dedicated server has no local listener/device ownership. Do not
+            // materialize or configure an audio backend merely because cascading settings changed.
+            if (GameSettings?.RunWithoutWindows == true)
+                return;
+
             bool v2 = EffectiveSettings.AudioArchitectureV2;
             var transport = EffectiveSettings.AudioTransport;
             var effects = EffectiveSettings.AudioEffects;

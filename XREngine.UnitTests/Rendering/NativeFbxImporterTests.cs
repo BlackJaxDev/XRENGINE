@@ -191,6 +191,8 @@ public sealed class NativeFbxImporterTests
                 ModelComponent? component = rootNode!.FindDescendantByName("MeshNode")?.GetComponent<ModelComponent>();
                 component.ShouldNotBeNull();
                 component!.Model.ShouldNotBeNull();
+                importer.LastProducerReport.ShouldNotBeNull();
+                importer.LastProducerReport!.BackendSelection.ProducerId.ShouldBe(ModelImportBackendIds.NativeFbx);
                 return component.Model!.Meshes[0].LODs.Min!.Mesh!;
             }
 
@@ -248,6 +250,8 @@ public sealed class NativeFbxImporterTests
             rootNode.ShouldNotBeNull();
             ModelComponent? component = rootNode!.FindDescendantByName("MeshNode")?.GetComponent<ModelComponent>();
             component.ShouldNotBeNull();
+            importer.LastProducerReport.ShouldNotBeNull();
+            importer.LastProducerReport!.BackendSelection.ProducerId.ShouldBe(ModelImportBackendIds.NativeFbx);
 
             XRMaterial material = component!.Model!.Meshes[0].LODs.Min!.Material!;
             material.Textures.Count.ShouldBe(1);
@@ -746,6 +750,11 @@ public sealed class NativeFbxImporterTests
         =>
             """
             ; FBX 7.4.0 project file
+            FBXHeaderExtension:  {
+                FBXHeaderVersion: 1003
+                FBXVersion: 7400
+                Creator: "XRENGINE NativeFbxImporterTests"
+            }
             Definitions:  {
                 Version: 100
                 Count: 5
@@ -841,6 +850,11 @@ public sealed class NativeFbxImporterTests
         =>
             """
             ; FBX 7.4.0 project file
+            FBXHeaderExtension:  {
+                FBXHeaderVersion: 1003
+                FBXVersion: 7400
+                Creator: "XRENGINE NativeFbxImporterTests"
+            }
             Definitions:  {
                 Version: 100
             }

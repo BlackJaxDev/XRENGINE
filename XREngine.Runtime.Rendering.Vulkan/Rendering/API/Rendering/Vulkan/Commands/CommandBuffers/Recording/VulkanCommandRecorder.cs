@@ -49,24 +49,4 @@ internal sealed class VulkanCommandRecorder
         return false;
     }
 
-    /// <summary>
-    /// Begins recording commands into the specified Vulkan command buffer.
-    /// </summary>
-    /// <param name="api">The Vulkan API used to begin recording.</param>
-    /// <param name="commandBuffer">The Vulkan command buffer to begin recording.</param>
-    /// <exception cref="InvalidOperationException">Thrown if beginning the command buffer fails.</exception>
-    public void Begin(
-        Vk api,
-        CommandBuffer commandBuffer,
-        CommandBufferUsageFlags flags = 0)
-    {
-        CommandBufferBeginInfo beginInfo = new()
-        {
-            SType = StructureType.CommandBufferBeginInfo,
-            Flags = flags,
-        };
-
-        if (api.BeginCommandBuffer(commandBuffer, ref beginInfo) != Result.Success)
-            throw new InvalidOperationException("Failed to begin recording command buffer.");
-    }
 }

@@ -11,7 +11,6 @@ using XREngine.Components;
 using XREngine.Data.Core;
 using XREngine.Editor.Mcp;
 using XREngine.Rendering;
-using XREngine.Rendering.OpenGL;
 using XREngine.Rendering.Vulkan;
 using XREngine.Scene;
 using XREngine.Rendering.UI;

@@ -2,7 +2,7 @@
 
 Reference design: [runtime-modularization-plan.md](../../design/runtime-modularization-plan.md)
 
-Rendering follow-on: [runtime-modularization-phase4-todo.md](../runtime-modularization-phase4-todo.md)
+Rendering follow-on: [runtime-modularization-phase4-todo.md](runtime-modularization-phase4-todo.md)
 
 Progress and validation record: [runtime-modularization-phase3-progress-2026-07-19.md](../../progress/runtime/runtime-modularization-phase3-progress-2026-07-19.md)
 

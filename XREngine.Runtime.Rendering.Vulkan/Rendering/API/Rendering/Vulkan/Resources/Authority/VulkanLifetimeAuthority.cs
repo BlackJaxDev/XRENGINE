@@ -12,10 +12,31 @@ internal sealed class VulkanLifetimeAuthority(
     VulkanResourceLifetimeTracker tracker,
     VulkanResourceRetirementQueue retirement)
 {
+    private VulkanRetirementDependencyPublicationPort? _retirementDependencyPublications;
+
     internal VulkanResourceLifetimeTracker Tracker { get; } =
         tracker ?? throw new ArgumentNullException(nameof(tracker));
     internal VulkanResourceRetirementQueue Retirement { get; } =
         retirement ?? throw new ArgumentNullException(nameof(retirement));
     internal System.Collections.Concurrent.ConcurrentDictionary<ulong, string> LivePipelineLayoutHandles { get; } = new();
     internal VulkanImageViewLifetimeState ImageViews { get; } = new();
+
+    internal void ConfigureRetirementDependencyPublications(
+        VulkanRetirementDependencyPublicationPort publications)
+    {
+        ArgumentNullException.ThrowIfNull(publications);
+        VulkanRetirementDependencyPublicationPort? current = Interlocked.CompareExchange(
+            ref _retirementDependencyPublications,
+            publications,
+            null);
+        if (current is not null && !ReferenceEquals(current, publications))
+        {
+            throw new InvalidOperationException(
+                "The Vulkan lifetime authority already owns a different retirement dependency publication port.");
+        }
+    }
+
+    internal void PublishTrackingDependenciesBeforeRetirement(
+        VulkanResourceLifetimeKey resourceKey)
+        => Volatile.Read(ref _retirementDependencyPublications)?.Publish(resourceKey);
 }

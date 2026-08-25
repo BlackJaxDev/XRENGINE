@@ -1,6 +1,0 @@
-﻿License text could not be resolved locally for NuGet package 'NDILibDotNetCoreBase' (2024.7.22.1).
-
-Resolved license: MIT
-RepositoryUrl: https://github.com/eliaspuurunen/NdiLibDotNetCoreBase
-ProjectUrl: https://github.com/eliaspuurunen/NdiLibDotNetCoreBase
-

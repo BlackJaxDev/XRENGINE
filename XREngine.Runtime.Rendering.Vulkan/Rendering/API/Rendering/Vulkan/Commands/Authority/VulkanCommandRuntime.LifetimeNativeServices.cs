@@ -12,25 +12,46 @@ internal sealed partial class VulkanCommandRuntime
         if (!DeviceContext.IsOperational)
             return Result.ErrorDeviceLost;
 
-        Result result;
         lock (Pools.Gate)
-            result = Api.AllocateCommandBuffers(
+        {
+            Result result = Api.AllocateCommandBuffers(
                 DeviceContext.Device,
                 ref allocateInfo,
                 commandBuffers);
-        RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanAllocateCommandBuffersCall(
-            allocateInfo.CommandBufferCount,
-            result == Result.Success);
-        if (result != Result.Success || commandBuffers is null)
-            return result;
+            RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanAllocateCommandBuffersCall(
+                allocateInfo.CommandBufferCount,
+                result == Result.Success);
+            if (result != Result.Success || commandBuffers is null)
+                return result;
 
-        for (int index = 0; index < allocateInfo.CommandBufferCount; index++)
-            ResourceRuntime.RegisterAllocatedCommandBuffer(
-                commandBuffers[index],
-                allocateInfo.CommandPool,
-                allocateInfo.Level,
-                owner);
-        return result;
+            try
+            {
+                for (int index = 0; index < allocateInfo.CommandBufferCount; index++)
+                {
+                    ResourceRuntime.RegisterAllocatedCommandBuffer(
+                        commandBuffers[index],
+                        allocateInfo.CommandPool,
+                        allocateInfo.Level,
+                        owner);
+                }
+                return result;
+            }
+            catch
+            {
+                Api.FreeCommandBuffers(
+                    DeviceContext.Device,
+                    allocateInfo.CommandPool,
+                    allocateInfo.CommandBufferCount,
+                    commandBuffers);
+                for (int index = 0; index < allocateInfo.CommandBufferCount; index++)
+                {
+                    ResourceRuntime.CompleteCommandBufferDestruction(
+                        commandBuffers[index]);
+                    commandBuffers[index] = default;
+                }
+                throw;
+            }
+        }
     }
 
     internal unsafe Result AllocateCommandBufferWithLifetime(
@@ -65,6 +86,71 @@ internal sealed partial class VulkanCommandRuntime
                 commandPool,
                 ref commandBuffers[index],
                 owner);
+    }
+
+    /// <summary>
+    /// Releases a command buffer whose synchronous submission has completed,
+    /// removing every command-owned registry before the native handle is freed.
+    /// </summary>
+    internal void FreeCompletedSynchronousCommandBuffer(
+        CommandPool commandPool,
+        ref CommandBuffer commandBuffer,
+        string owner)
+    {
+        if (commandBuffer.Handle == 0)
+            return;
+
+        ulong handle = unchecked((ulong)commandBuffer.Handle);
+        lock (Pools.Gate)
+        {
+            VulkanResourceLifetimeTracker tracker = ResourceRuntime.Lifetime.Tracker;
+            lock (tracker.SyncRoot)
+            {
+                if (CommandBuffers.TrackingBatches.TryGetValue(
+                        handle,
+                        out VulkanCommandBufferTrackingBatch? batch))
+                {
+                    lock (batch)
+                    {
+                        if (batch.IsRecording || batch.QueuedSubmissionCount != 0)
+                        {
+                            throw new InvalidOperationException(
+                                $"Cannot free synchronous command buffer 0x{handle:X} for {owner} while recording={batch.IsRecording}, queued={batch.QueuedSubmissionCount}.");
+                        }
+
+                        CommandBuffers.TrackingBatches.TryRemove(handle, out _);
+                    }
+                }
+
+                if (tracker.CommandBufferLifetimes.TryGetValue(
+                        handle,
+                        out VulkanCommandBufferLifetimeRecord? lifetime) &&
+                    lifetime.QueuedSubmissionCount != 0)
+                {
+                    throw new InvalidOperationException(
+                        $"Cannot free synchronous command buffer 0x{handle:X} for {owner} while {lifetime.QueuedSubmissionCount} lifetime submission(s) remain queued.");
+                }
+            }
+
+            RemoveCommandBufferState(commandBuffer);
+            CommandBuffer releasing = commandBuffer;
+            if (DeviceContext.IsOperational && commandPool.Handle != 0)
+                Api.FreeCommandBuffers(
+                    DeviceContext.Device,
+                    commandPool,
+                    1,
+                    ref releasing);
+            ResourceRuntime.CompleteSynchronousCommandBuffer(commandBuffer);
+            commandBuffer = default;
+        }
+    }
+
+    internal void QueueCommandPoolRetirementTracked(
+        CommandPool commandPool,
+        int frameSlot)
+    {
+        lock (Pools.Gate)
+            ResourceRuntime.QueueCommandPoolRetirement(commandPool, frameSlot);
     }
 
     internal void EnsureImageViewAvailableForCommandRecording(

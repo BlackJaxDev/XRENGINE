@@ -18,7 +18,6 @@ using XREngine.Editor.UI.Components;
 using XREngine.Editor.UI.Toolbar;
 using XREngine.Editor.UI.Tools;
 using XREngine.Rendering;
-using XREngine.Rendering.DLSS;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.UI;
 using XREngine.Scene;
@@ -156,15 +155,15 @@ public static partial class EditorUnitTests
 
             if (Engine.EffectiveSettings.EnableNvidiaDlssFrameGeneration)
             {
-                uint generatedPresented = NvidiaDlssManager.FrameGenerationFramesActuallyPresented;
-                uint maximumGenerated = NvidiaDlssManager.FrameGenerationMaximumFramesToGenerate;
+                uint generatedPresented = VendorUpscaleRuntime.DlssFrameGenerationFramesActuallyPresented;
+                uint maximumGenerated = VendorUpscaleRuntime.DlssFrameGenerationMaximumFramesToGenerate;
                 float estimatedPresentedHz = averageHz * (1.0f + generatedPresented);
                 builder.Append("\ndlss-g: presented ");
                 AppendFixed(builder, estimatedPresentedHz, "F0", 3);
                 builder.Append("hz est | generated +");
                 builder.Append(generatedPresented);
                 builder.Append(" | total ");
-                builder.Append(NvidiaDlssManager.FrameGenerationFramesActuallyPresentedTotal);
+                builder.Append(VendorUpscaleRuntime.DlssFrameGenerationFramesActuallyPresentedTotal);
                 builder.Append(" | max ");
                 builder.Append(maximumGenerated);
             }

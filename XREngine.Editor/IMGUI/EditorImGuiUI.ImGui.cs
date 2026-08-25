@@ -20,7 +20,6 @@ using XREngine.Data;
 using XREngine.Data.Colors;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
-using XREngine.Rendering.OpenGL;
 using XREngine.Core.Files;
 using XREngine.Scene;
 using XREngine.Scene.Transforms;

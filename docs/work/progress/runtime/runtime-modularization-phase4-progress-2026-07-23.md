@@ -1,13 +1,17 @@
 # Runtime Modularization Phase 4 Progress
 
-Started: 2026-07-23  
-Branch: `codex/runtime-modularization-phase4`  
+Started: 2026-07-23
+
+Branch: `codex/runtime-modularization-phase4`
+
 Integration base: `3a4e695e` (`rendering-vulkan-core-hardening`)
+
+Final closeout branch: `codex/runtime-modularization-phase5`
 
 ## Scope
 
 This ledger tracks implementation of P4.0 through P4.8c from
-[runtime-modularization-phase4-todo.md](../../todo/runtime-modularization-phase4-todo.md).
+[runtime-modularization-phase4-todo.md](../../todo/COMPLETED/runtime-modularization-phase4-todo.md).
 The working tree already contained line-ending-only modifications to the Phase 4
 and Vulkan frame-loop TODOs, a modified `OscCore-NET9` submodule worktree, and
 untracked repository-managed dependency directories. Those pre-existing changes
@@ -274,11 +278,12 @@ The accepted Phase 3 ownership contract remains:
 - The final source map and automated/runtime evidence are recorded in
   [Vulkan Desktop Frame Loop Decomposition Progress](../rendering/vulkan-desktop-frame-loop-decomposition-progress-2026-07-24.md).
 
-P4.8b implementation and focused automated validation are present, but its
-runtime, visual, resize, validation-layer, OpenXR/OpenVR, supported-hardware
-Streamline, and performance gates remain explicitly unvalidated. P4.8c remains
-the owner of final consumer migration, collectible registration/retention
-rules, packaging orchestration, and static-load validation.
+At the P4.8b milestone, implementation and focused automated validation were
+present while runtime, visual, resize, validation-layer, OpenXR/OpenVR,
+supported-hardware Streamline, and performance gates were still explicitly
+unvalidated. P4.8c then owned final consumer migration, collectible
+registration/retention rules, packaging orchestration, and static-load
+validation.
 
 ## P4.8c Consumer Migration, Registration, Packaging, And Validation
 
@@ -347,8 +352,9 @@ P4.8c completed on 2026-07-29.
   preserved and `docs/DEPENDENCIES.md` was reconciled to the verified project
   ownership changes.
 
-P4.8c is complete. Phase 4 remains open for the explicitly outstanding P4.8b
-runtime/visual/hardware acceptance gates and P4.9 final validation.
+At the P4.8c milestone, consumer migration was complete while the P4.8b
+runtime/visual/hardware acceptance lanes and P4.9 final validation were still
+outstanding. The final closeout below supersedes that state.
 
 ## Phase 4 Production-Code Closeout
 
@@ -366,7 +372,44 @@ The remaining P4.8b production seams completed on 2026-07-29:
 - callback-tick observation uses an explicitly named timestamp distinct from
   GPU submission and presentation readiness.
 
-All Phase 4 production code and required architecture/handoff documentation are
-complete. Per the code-completion scope, no new test, runtime, hardware, or
-performance execution is claimed for this final pass. P4.9 now contains only
-deferred validation, integration review, and branch-promotion work.
+At this production-code milestone, all Phase 4 implementation and required
+architecture/handoff documentation were complete, while P4.9 validation and
+promotion were still deferred. The final closeout below supersedes that
+intermediate state.
+
+## Phase 4 Final Closeout - 2026-08-24
+
+Phase 5 execution completed the inherited Phase 4 closeout instead of carrying
+its blockers forward:
+
+- Editor's direct OpenGL/Vulkan project references are removed. DLSS UI/MCP
+  diagnostics use `VendorUpscaleRuntime`, and generic shader cross-compilation
+  uses the stable kernel facade backed by the registered Vulkan leaf service.
+- The Phase 4/5 modularization set passes 58/58, including 24/24 serialization
+  compatibility checks and 28/28 dependency-boundary checks.
+- `VulkanCoreHardeningPhase4Tests` passes 18/18. Obsolete physical-file
+  assertions were re-based onto the owning decomposed command, lifetime,
+  resource, frame-loop, and output authorities. The closeout also corrected
+  synchronous upload/readback lifetime publication so a command buffer is not
+  published through both tracked and legacy recording paths.
+- OpenXR timing, stereo temporal-isolation completion, and VR view-mode
+  contracts pass 105/105.
+- A named isolated Vulkan Editor session
+  (`20260824-130327-runtime-p45-vulkan2`) rendered two visually inspected,
+  camera-dependent frames. Screenshot readback succeeded and its logs contained
+  no validation-layer VUID, device-loss, command/resource lifetime, or teardown
+  error. The earlier isolated OpenGL session also produced inspected changing
+  frames and reported no GL error.
+- The bounded live headless Server run entered play and networking without a
+  window or local audio/input/VR adapter and stopped cleanly. VRClient Release
+  publish completed with the intended backend/adapter/native cargo; its
+  canonical no-peer launch path exited cleanly before XR initialization.
+- The final `dotnet build XRENGINE.slnx --no-restore -m:1 -nr:false -v:minimal`
+  passes with zero warnings and zero errors.
+
+Phase 4 is engineering-complete. A physical OpenXR/OpenVR headset, supported
+Streamline frame-generation hardware, and an extended resize/performance soak
+were unavailable on the closeout machine, so no result is claimed for those
+device-lab lanes. They remain external manual acceptance, not hidden production
+or contract work. No commit, merge, or branch promotion was requested or
+performed.

@@ -128,6 +128,7 @@ internal sealed partial class VulkanCommandRuntime
 
     internal unsafe void DestroyOpenXrEyeCommandPools()
     {
+        List<CommandPool> retiring = [];
         lock (_openXrEyeCommandPoolsGate)
             lock (CommandBuffers.SubmissionStateGate)
             {
@@ -138,12 +139,17 @@ internal sealed partial class VulkanCommandRuntime
                         continue;
 
                     RemoveOpenXrPrimaryOwnersForPool(pool);
-                    Api.DestroyCommandPool(DeviceContext.Device, pool, null);
-                    ResourceRuntime.CompleteCommandPoolChildDestructions(pool);
-                    ResourceRuntime.CompleteCommandPoolDestruction(pool);
+                    retiring.Add(pool);
                     _openXrEyeCommandPools[index] = default;
                 }
             }
+
+        for (int index = 0; index < retiring.Count; index++)
+        {
+            QueueCommandPoolRetirementTracked(
+                retiring[index],
+                ResourceRuntime.FramebufferRetirementFrameSlot);
+        }
     }
 
     private void RemoveOpenXrPrimaryOwnersForPool(CommandPool pool)

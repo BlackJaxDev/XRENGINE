@@ -52,9 +52,9 @@ namespace XREngine.Input.Devices
         }
 
         public override void RegisterVRBoolAction<TCategory, TName>(TCategory category, TName name, Action<bool> func) { }
-        public override void RegisterVRFloatAction<TCategory, TName>(TCategory category, TName name, ScalarAction.ValueChangedHandler func) { }
-        public override void RegisterVRVector2Action<TCategory, TName>(TCategory category, TName name, Vector2Action.ValueChangedHandler func) { }
-        public override void RegisterVRVector3Action<TCategory, TName>(TCategory category, TName name, Vector3Action.ValueChangedHandler func) { }
+        public override void RegisterVRFloatAction<TCategory, TName>(TCategory category, TName name, RuntimeVrScalarChanged func) { }
+        public override void RegisterVRVector2Action<TCategory, TName>(TCategory category, TName name, RuntimeVrVector2Changed func) { }
+        public override void RegisterVRVector3Action<TCategory, TName>(TCategory category, TName name, RuntimeVrVector3Changed func) { }
         public override bool VibrateVRAction<TCategory, TName>(TCategory category, TName name, double duration, double frequency = 40, double amplitude = 1, double delay = 0) => false;
         public override void RegisterVRHandSkeletonQuery<TCategory, TName>(TCategory category, TName name, bool left, EVRSkeletalTransformSpace transformSpace = EVRSkeletalTransformSpace.Model, EVRSkeletalMotionRange motionRange = EVRSkeletalMotionRange.WithController, EVRSkeletalReferencePose? overridePose = null) { }
         public override void RegisterVRHandSkeletonSummaryAction<TCategory, TName>(TCategory category, TName name, bool left, DelVRSkeletonSummary func, EVRSummaryType type) { }

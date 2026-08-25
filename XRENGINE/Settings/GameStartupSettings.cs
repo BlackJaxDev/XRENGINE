@@ -39,6 +39,7 @@ namespace XREngine
         private float? _unfocusedTargetFramesPerSecond = null;
         private bool _runVRInPlace = true;
         private bool _gpuRenderDispatch = false;
+        private bool _runWithoutWindows;
 
         private string _udpMulticastGroupIP = "239.0.0.222";
         private int _udpMulticastPort = 5000;
@@ -58,6 +59,19 @@ namespace XREngine
         {
             get => _startupWindows;
             set => SetField(ref _startupWindows, value);
+        }
+
+        /// <summary>
+        /// Keeps the engine lifecycle alive when startup intentionally creates no local windows.
+        /// Dedicated servers use this mode to run world simulation and networking without a graphics,
+        /// audio, input, or local-device requirement.
+        /// </summary>
+        [Category("Windows")]
+        [Description("Runs simulation and networking without creating a local window. Intended for dedicated server processes.")]
+        public bool RunWithoutWindows
+        {
+            get => _runWithoutWindows;
+            set => SetField(ref _runWithoutWindows, value);
         }
 
         [Category("Logging")]

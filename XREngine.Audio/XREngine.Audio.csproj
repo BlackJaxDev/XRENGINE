@@ -60,6 +60,29 @@
     <ProjectReference Include="..\XREngine.Data\XREngine.Data.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <None Include="..\docs\licenses\nuget\Silk.NET.OpenAL.Soft.Native-1.23.1-LGPL-2.0-or-later.txt" Condition="Exists('..\docs\licenses\nuget\Silk.NET.OpenAL.Soft.Native-1.23.1-LGPL-2.0-or-later.txt')">
+      <Link>licenses\OpenAL-Soft-LGPL-2.0-or-later.txt</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </None>
+    <None Include="..\docs\licenses\copyleft\LGPL-2.0-or-later.txt" Condition="Exists('..\docs\licenses\copyleft\LGPL-2.0-or-later.txt')">
+      <Link>licenses\LGPL-2.0-or-later.txt</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </None>
+    <None Include="..\docs\licenses\copyleft\LGPL-2.1-or-later.txt" Condition="Exists('..\docs\licenses\copyleft\LGPL-2.1-or-later.txt')">
+      <Link>licenses\LGPL-2.1-or-later.txt</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </None>
+    <None Include="..\docs\licenses\copyleft\LGPL-3.0.txt" Condition="Exists('..\docs\licenses\copyleft\LGPL-3.0.txt')">
+      <Link>licenses\LGPL-3.0.txt</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </None>
+  </ItemGroup>
+
   <!-- Steam Audio (Phonon) native library. Fetched via Tools\Dependencies\Get-Phonon.ps1 -->
   <ItemGroup Condition="Exists('runtimes\win-x64\native\phonon.dll')">
     <None Include="runtimes\win-x64\native\phonon.dll">

@@ -1,6 +1,0 @@
-﻿License text could not be resolved locally for NuGet package 'Shouldly' (4.3.0).
-
-Resolved license: BSD-3-Clause
-RepositoryUrl: https://github.com/shouldly/shouldly.git
-ProjectUrl: https://docs.shouldly.org/
-

@@ -7,7 +7,6 @@ using XREngine.Components.Scene.Mesh;
 using XREngine.Data.Geometry;
 using XREngine.Editor.Services;
 using XREngine.Rendering;
-using XREngine.Rendering.OpenGL;
 using XREngine.Rendering.Picking;
 using XREngine.Rendering.Vulkan;
 

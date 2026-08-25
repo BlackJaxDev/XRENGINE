@@ -42,7 +42,8 @@ namespace XREngine.Networking
 
         private static void Main(string[] args)
         {
-            RuntimeRenderingBootstrap.InstallEngineHostServices();
+            RuntimeRenderingBootstrap.InstallEngineHostServices(
+                RuntimeAdapterProfile.Animation | RuntimeAdapterProfile.Modeling);
             // Apply engine settings
             RuntimeEngine.Rendering.Settings.OutputVerbosity = EOutputVerbosity.Verbose;
             Engine.EditorPreferences.Debug.UseDebugOpaquePipeline = false;
@@ -61,11 +62,27 @@ namespace XREngine.Networking
             // accidentally pick unsupported/undesired values and render a black screen.
             var settings = UnitTestingWorldSettingsStore.Load(false);
             UnitTestingWorldSettingsStore.ApplyWorldKindOverride(settings);
-            UnitTestingWorldSettingsStore.ApplyAudioOverrides(settings);
             ConfigureFbxTraceLogging(settings);
             XRWorld targetWorld = BootstrapWorldFactory.CreateServerDefaultWorld();
+            Action<GameStartupSettings, GameState> initializeServerWorld = (_, _) =>
+                XRWorldInstance.GetOrInitWorld(targetWorld);
+            ConsoleCancelEventHandler cancelHandler = (_, eventArgs) =>
+            {
+                eventArgs.Cancel = true;
+                Engine.ShutDown();
+            };
 
-            Engine.Run(GetEngineSettings(targetWorld), Engine.LoadOrGenerateGameState());
+            Engine.BeforeCreateWindows += initializeServerWorld;
+            Console.CancelKeyPress += cancelHandler;
+            try
+            {
+                Engine.Run(GetEngineSettings(targetWorld), Engine.LoadOrGenerateGameState());
+            }
+            finally
+            {
+                Console.CancelKeyPress -= cancelHandler;
+                Engine.BeforeCreateWindows -= initializeServerWorld;
+            }
         }
 
         private static void ConfigureFbxTraceLogging(UnitTestingWorldSettings settings)
@@ -389,33 +406,14 @@ namespace XREngine.Networking
 
         static GameStartupSettings GetEngineSettings(XRWorld? targetWorld = null, bool enableDevRendering = true)
         {
-            int w = 1920;
-            int h = 1080;
             UnitTestingWorldSettings unitTestSettings = RuntimeBootstrapState.Settings;
-
-            int primaryX = NativeMethods.GetSystemMetrics(0);
-            int primaryY = NativeMethods.GetSystemMetrics(1);
 
             var settings = new GameStartupSettings()
             {
-                // Always create a visible window so it's obvious the server launched.
-                // Dev rendering may add extra UI, but a window should exist in all modes.
-                StartupWindows =
-                [
-                    new()
-                    {
-                        WindowTitle = "XRE Server",
-                        TargetWorld = targetWorld ?? new XRWorld(),
-                        // Ensure at least one viewport exists so the window actually renders.
-                        // Rendering is gated by: Viewports.Count > 0 && TargetWorldInstance != null.
-                        LocalPlayers = ELocalPlayerIndexMask.One,
-                        WindowState = EWindowState.Windowed,
-                        X = primaryX / 2 - w / 2,
-                        Y = primaryY / 2 - h / 2,
-                        Width = w,
-                        Height = h,
-                    }
-                ],
+                // The server initializes its world during the lifecycle's pre-window hook and
+                // intentionally creates no graphics or local-device surface.
+                StartupWindows = [],
+                RunWithoutWindows = true,
                 OutputVerbosityOverride = new XREngine.Data.Core.OverrideableSetting<EOutputVerbosity>(EOutputVerbosity.Verbose, true),
                 UdpClientRecievePort = 5001,
                 UdpServerBindPort = _udpBindPort,

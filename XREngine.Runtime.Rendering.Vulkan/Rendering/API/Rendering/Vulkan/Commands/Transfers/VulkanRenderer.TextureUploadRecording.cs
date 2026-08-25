@@ -47,11 +47,13 @@ namespace XREngine.Rendering.Vulkan
                 };
 
                 ThrowIfVulkanDeviceOperationNotAdmitted("vkBeginCommandBuffer.TextureUploadRecording");
-                if (Api!.BeginCommandBuffer(commandBuffer, ref beginInfo) != Result.Success)
+                if (BeginTrackedCommandBuffer(
+                        commandBuffer,
+                        ref beginInfo,
+                        "TextureUploadRecording") != Result.Success)
                     throw new Exception("Failed to begin texture upload command buffer.");
 
                 commandBufferBegun = true;
-                ResetCommandBufferBindState(commandBuffer);
 
                 bool uploadBatchLabelActive = _deviceContext.CmdBeginLabel(commandBuffer, "TextureUploads");
                 int queuedBefore = _textureUploadPublicationState.RecordedForSubmit.Count;

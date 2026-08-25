@@ -1,6 +1,8 @@
 ﻿using System.ComponentModel;
 using System.Numerics;
 using XREngine.Audio;
+using XREngine.Core.Attributes;
+using XREngine.Runtime.Audio;
 using YamlDotNet.Serialization;
 
 namespace XREngine.Components
@@ -8,6 +10,7 @@ namespace XREngine.Components
     [Category("Audio")]
     [DisplayName("Audio Listener")]
     [Description("Defines the listener position, orientation, and audio settings used for spatial mixing.")]
+    [XRTypeRedirect("XREngine.Components.AudioListenerComponent")]
     public class AudioListenerComponent : XRComponent
     {
         [Browsable(false)]
@@ -95,13 +98,12 @@ namespace XREngine.Components
                 return;
 
             Listener = RuntimeAudioIntegrationServices.Current.NewListener(Name);
-            (World as IRuntimeAudioListenerWorld)?.AddAudioListener(Listener);
+            RuntimeAudioListenerWorldRegistry.AddListener(World, Listener);
         }
 
         private void DestroyListener()
         {
-            if (Listener is not null)
-                (World as IRuntimeAudioListenerWorld)?.RemoveAudioListener(Listener);
+            RuntimeAudioListenerWorldRegistry.RemoveListener(World, Listener);
 
             Listener?.Dispose();
             Listener = null;

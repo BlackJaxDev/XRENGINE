@@ -17,7 +17,6 @@ using XREngine.Diagnostics;
 using XREngine.Editor.Services;
 using XREngine.Rendering;
 using XREngine.Rendering.Models;
-using XREngine.Rendering.OpenGL;
 using XREngine.Rendering.Vulkan;
 
 namespace XREngine.Editor.IMGUI;

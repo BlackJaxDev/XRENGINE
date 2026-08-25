@@ -59,7 +59,6 @@
     <PackageReference Include="NDILibDotNetCoreBase" Version="2024.7.22.1" />
     <PackageReference Include="Newtonsoft.Json" Version="13.0.4" />
     <PackageReference Include="SharpCompress" Version="0.50.3" />
-    <PackageReference Include="SharpFont.Dependencies" Version="2.6.0" />
     <PackageReference Include="Silk.NET" Version="2.23.0" />
     <PackageReference Include="Silk.NET.Core" Version="2.23.0" />
     <PackageReference Include="Silk.NET.Core.Win32Extras" Version="2.23.0" />
@@ -71,12 +70,6 @@
     <PackageReference Include="Silk.NET.Input.Extensions" Version="2.23.0" />
     <PackageReference Include="Silk.NET.Input.Glfw" Version="2.23.0" />
     <PackageReference Include="Silk.NET.Input.Sdl" Version="2.23.0" />
-    <PackageReference Include="Silk.NET.OpenAL" Version="2.23.0" />
-    <PackageReference Include="Silk.NET.OpenAL.Extensions.Creative" Version="2.23.0" />
-    <PackageReference Include="Silk.NET.OpenAL.Extensions.Enumeration" Version="2.23.0" />
-    <PackageReference Include="Silk.NET.OpenAL.Extensions.EXT" Version="2.23.0" />
-    <PackageReference Include="Silk.NET.OpenAL.Extensions.Soft" Version="2.23.0" />
-    <PackageReference Include="Silk.NET.OpenAL.Soft.Native" Version="1.23.1" />
     <PackageReference Include="Silk.NET.OpenXR" Version="2.23.0" />
     <PackageReference Include="Silk.NET.OpenXR.Extensions.EXT" Version="2.23.0" />
     <PackageReference Include="Silk.NET.OpenXR.Extensions.HTC" Version="2.23.0" />
@@ -106,9 +99,8 @@
     <ProjectReference Include="..\XREngine.Profiler.UI\XREngine.Profiler.UI.csproj" />
     <ProjectReference Include="..\XREngine.Runtime.Bootstrap\XREngine.Runtime.Bootstrap.csproj" />
     <ProjectReference Include="..\XREngine.Runtime.Automation\XREngine.Runtime.Automation.csproj" />
+    <ProjectReference Include="..\XREngine.Runtime.AudioIntegration\XREngine.Runtime.AudioIntegration.csproj" />
     <ProjectReference Include="..\XREngine.Runtime.InputIntegration\XREngine.Runtime.InputIntegration.csproj" />
-    <ProjectReference Include="..\XREngine.Runtime.Rendering.OpenGL\XREngine.Runtime.Rendering.OpenGL.csproj" />
-    <ProjectReference Include="..\XREngine.Runtime.Rendering.Vulkan\XREngine.Runtime.Rendering.Vulkan.csproj" />
     <ProjectReference Include="..\XREngine\XREngine.csproj" />
   </ItemGroup>
 

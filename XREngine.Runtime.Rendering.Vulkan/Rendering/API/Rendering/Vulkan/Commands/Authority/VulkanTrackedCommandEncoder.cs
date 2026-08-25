@@ -15,32 +15,7 @@ internal readonly unsafe struct VulkanTrackedCommandEncoder(VulkanCommandRuntime
     private Vk Api => Runtime.Api;
 
     internal Result Reset(CommandBuffer commandBuffer)
-    {
-        if (!Runtime.ResourceRuntime.CanResetCommandBuffer(commandBuffer))
-            throw new InvalidOperationException($"Command buffer 0x{unchecked((ulong)commandBuffer.Handle):X} cannot be reset.");
-
-        Result result = Api.ResetCommandBuffer(commandBuffer, 0);
-        RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanResetCommandBufferCall();
-        if (result == Result.Success)
-            Runtime.ResourceRuntime.CompleteCommandBufferReset(unchecked((ulong)commandBuffer.Handle));
-        return result;
-    }
-
-    internal void BeginTracking(CommandBuffer commandBuffer)
-    {
-        ulong handle = unchecked((ulong)commandBuffer.Handle);
-        if (handle == 0)
-            return;
-
-        VulkanCommandBufferTrackingBatch batch = Runtime.CommandBuffers.TrackingBatches.GetOrAdd(handle, static _ => new());
-        lock (batch)
-        {
-            if (batch.QueuedSubmissionCount != 0)
-                throw new InvalidOperationException($"Command buffer 0x{handle:X} is queued for submission.");
-            batch.Reset(Runtime.CommandBuffers.ResolveRecordingGeneration(commandBuffer));
-        }
-        Runtime.ResetCommandBufferImageLayoutJournal(commandBuffer);
-    }
+        => Runtime.ResetCommandBufferWithLifetime(commandBuffer, "TrackedCommandEncoder.Reset");
 
     internal Result End(CommandBuffer commandBuffer, bool cacheVariant = true)
     {
@@ -100,19 +75,10 @@ internal readonly unsafe struct VulkanTrackedCommandEncoder(VulkanCommandRuntime
     }
 
     internal void Track(CommandBuffer commandBuffer, ObjectType type, ulong handle)
-    {
-        ulong commandBufferHandle = unchecked((ulong)commandBuffer.Handle);
-        if (commandBufferHandle == 0 || handle == 0 ||
-            !Runtime.CommandBuffers.TrackingBatches.TryGetValue(commandBufferHandle, out VulkanCommandBufferTrackingBatch? batch))
-            return;
-
-        lock (batch)
-        {
-            if (batch.QueuedSubmissionCount != 0)
-                throw new InvalidOperationException($"Command buffer 0x{commandBufferHandle:X} cannot record dependencies while queued.");
-            batch.RecordDependency(new VulkanResourceLifetimeKey(type, handle));
-        }
-    }
+        => Runtime.TrackCommandBufferResource(
+            commandBuffer,
+            new VulkanResourceLifetimeKey(type, handle),
+            $"TrackedCommandEncoder.{type}");
 
     /// <summary>
     /// Records the secondary command buffers executed by one primary command in
@@ -123,37 +89,10 @@ internal readonly unsafe struct VulkanTrackedCommandEncoder(VulkanCommandRuntime
     internal void TrackCommandBuffers(
         CommandBuffer commandBuffer,
         ReadOnlySpan<CommandBuffer> secondaryCommandBuffers)
-    {
-        ulong commandBufferHandle = unchecked((ulong)commandBuffer.Handle);
-        if (commandBufferHandle == 0 || secondaryCommandBuffers.IsEmpty ||
-            !Runtime.CommandBuffers.TrackingBatches.TryGetValue(
-                commandBufferHandle,
-                out VulkanCommandBufferTrackingBatch? batch))
-        {
-            return;
-        }
-
-        lock (batch)
-        {
-            if (batch.QueuedSubmissionCount != 0)
-            {
-                throw new InvalidOperationException(
-                    $"Command buffer 0x{commandBufferHandle:X} cannot record dependencies while queued.");
-            }
-
-            foreach (CommandBuffer secondary in secondaryCommandBuffers)
-            {
-                ulong secondaryHandle = unchecked((ulong)secondary.Handle);
-                if (secondaryHandle != 0)
-                {
-                    batch.RecordDependency(
-                        new VulkanResourceLifetimeKey(
-                            ObjectType.CommandBuffer,
-                            secondaryHandle));
-                }
-            }
-        }
-    }
+        => Runtime.TrackExecutedCommandBuffers(
+            commandBuffer,
+            secondaryCommandBuffers,
+            "TrackedCommandEncoder.ExecuteCommands");
 
     /// <summary>
     /// Publishes a recorded image-access delta for the current command-buffer
@@ -177,9 +116,9 @@ internal readonly unsafe struct VulkanTrackedCommandEncoder(VulkanCommandRuntime
 
         lock (batch)
         {
-            if (batch.QueuedSubmissionCount != 0)
+            if (!batch.IsRecording || batch.QueuedSubmissionCount != 0)
                 throw new InvalidOperationException(
-                    $"Command buffer 0x{commandBufferHandle:X} cannot record image access while queued.");
+                    $"Command buffer 0x{commandBufferHandle:X} cannot record image access outside an active, unqueued recording.");
             batch.RecordImageAccess(new VulkanImageAccessRangeDelta(
                 image.Handle,
                 range,

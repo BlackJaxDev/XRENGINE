@@ -1,6 +1,0 @@
-﻿License text could not be resolved locally for NuGet package 'MIConvexHull' (1.1.19.1019).
-
-Resolved license: https://github.com/DesignEngrLab/MIConvexHull/blob/master/LICENSE.txt
-RepositoryUrl: https://github.com/DesignEngrLab/MIConvexHull.git
-ProjectUrl: https://designengrlab.github.io/MIConvexHull/
-

@@ -50,13 +50,14 @@ namespace XREngine.Rendering.Vulkan
                 Flags = CommandBufferUsageFlags.OneTimeSubmitBit,
             };
             ThrowIfVulkanDeviceOperationNotAdmitted("vkBeginCommandBuffer.FrameRecovery");
-            if (Api!.BeginCommandBuffer(commandBuffer, ref beginInfo) !=
+            if (_commandRuntime.BeginTrackedCommandBuffer(
+                    commandBuffer,
+                    ref beginInfo,
+                    "FrameRecovery") !=
                 Result.Success)
                 throw new InvalidOperationException(
                     "Failed to begin swapchain abort-present transition command buffer.");
 
-            VulkanTrackedCommandEncoder encoder = CreateRecoveryCommandEncoder();
-            _commandRuntime.ResetBindState(encoder, commandBuffer);
             if (policy.Disposition == ERejectedDesktopFrameDisposition.PresentLastCompletedContent)
                 replayedPresentationSource = TryRecordRejectedDesktopPresentationReplay(
                     ref attempt,
@@ -68,6 +69,7 @@ namespace XREngine.Rendering.Vulkan
                     commandBuffer,
                     imageWasEverPresented);
 
+            VulkanTrackedCommandEncoder encoder = CreateRecoveryCommandEncoder();
             if (encoder.End(commandBuffer, cacheVariant: false) != Result.Success)
                 throw new InvalidOperationException(
                     "Failed to end swapchain abort-present transition command buffer.");

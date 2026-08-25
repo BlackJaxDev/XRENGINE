@@ -1,4 +1,5 @@
 using System;
+using System.Buffers;
 using System.Collections.Generic;
 using Silk.NET.Vulkan;
 
@@ -12,26 +13,6 @@ namespace XREngine.Rendering.Vulkan
         private Dictionary<int, CommandPool> ThreadCommandPools => _commandRuntime.Pools.GraphicsByThread;
         private Dictionary<int, CommandPool> ThreadTransferCommandPools => _commandRuntime.Pools.TransferByThread;
 
-        private unsafe Result AllocateCommandBuffersHostSynchronized(
-            ref CommandBufferAllocateInfo allocateInfo,
-            CommandBuffer* commandBuffers)
-        {
-            if (!DeviceContext.IsOperational)
-                return Result.ErrorDeviceLost;
-
-            lock (CommandPoolsGate)
-                return Api.AllocateCommandBuffers(DeviceContext.Device, ref allocateInfo, commandBuffers);
-        }
-
-        private unsafe void FreeCommandBuffersHostSynchronized(
-            CommandPool pool,
-            uint commandBufferCount,
-            CommandBuffer* commandBuffers)
-        {
-            lock (CommandPoolsGate)
-                Api.FreeCommandBuffers(DeviceContext.Device, pool, commandBufferCount, commandBuffers);
-        }
-
         internal void DestroyCommandPoolHostSynchronized(CommandPool pool)
         {
             if (pool.Handle == 0)
@@ -40,15 +21,9 @@ namespace XREngine.Rendering.Vulkan
             // Pool destruction is always routed through the resource authority. It
             // captures the command-buffer children atomically and delays the native
             // destroy until their recording/submission pins have completed.
-            ResourceRuntime.QueueCommandPoolRetirement(
+            QueueCommandPoolRetirementTracked(
                 pool,
                 ResourceRuntime.FramebufferRetirementFrameSlot);
-        }
-
-        private unsafe void DestroyCommandPoolNativeHostSynchronized(CommandPool pool)
-        {
-            lock (CommandPoolsGate)
-                Api.DestroyCommandPool(DeviceContext.Device, pool, null);
         }
 
         internal void DestroyCommandPool()
@@ -223,17 +198,10 @@ namespace XREngine.Rendering.Vulkan
             CommandBuffer* commandBuffers,
             string owner)
         {
-            Result result = AllocateCommandBuffersHostSynchronized(ref allocateInfo, commandBuffers);
-            if (result != Result.Success)
-                return result;
-
-            for (uint index = 0; index < allocateInfo.CommandBufferCount; index++)
-                ResourceRuntime.RegisterSynchronousCommandBuffer(
-                    commandBuffers[index],
-                    allocateInfo.CommandPool,
-                    allocateInfo.Level,
-                    owner);
-            return result;
+            return AllocateCommandBuffersWithLifetime(
+                ref allocateInfo,
+                commandBuffers,
+                owner);
         }
 
         /// <summary>
@@ -248,38 +216,135 @@ namespace XREngine.Rendering.Vulkan
             lock (CommandPoolsGate)
             {
                 VulkanResourceLifetimeKey poolKey = ResourceKey(ObjectType.CommandPool, pool.Handle);
-                CommandBuffer[] children;
-                lock (ResourceRuntime.Lifetime.Tracker.SyncRoot)
+                VulkanResourceLifetimeTracker tracker = ResourceRuntime.Lifetime.Tracker;
+                CommandBuffer[]? children = null;
+                int childCount = 0;
+                bool hostUseMarked = false;
+                bool nativeResetSucceeded = false;
+                try
                 {
-                    if (!ResourceRuntime.Lifetime.Tracker.CommandBuffersByPool.TryGetValue(poolKey, out HashSet<ulong>? ownedChildren) ||
-                        ownedChildren.Count == 0)
+                    lock (tracker.SyncRoot)
                     {
-                        children = [];
+                        if (tracker.ResourceLifetimes.TryGetValue(
+                                poolKey,
+                                out VulkanResourceLifetimeRecord? poolRecord) &&
+                            (poolRecord.State &
+                             (EVulkanResourceLifetimeState.PendingRetirement |
+                              EVulkanResourceLifetimeState.Destroyed)) != 0)
+                        {
+                            throw new InvalidOperationException(
+                                $"Cannot reset command pool 0x{pool.Handle:X} for {owner} while it is {poolRecord.State}.");
+                        }
+
+                        if (tracker.CommandBuffersByPool.TryGetValue(
+                                poolKey,
+                                out HashSet<ulong>? ownedChildren) &&
+                            ownedChildren.Count != 0)
+                        {
+                            children = ArrayPool<CommandBuffer>.Shared.Rent(
+                                ownedChildren.Count);
+                            foreach (ulong childHandle in ownedChildren)
+                            {
+                                if (!ResourceRuntime.CanResetCommandBufferNoLock(
+                                        childHandle))
+                                {
+                                    throw new InvalidOperationException(
+                                        $"Cannot reset command pool 0x{pool.Handle:X} for {owner}: child command buffer 0x{childHandle:X} is not resettable.");
+                                }
+
+                                if (CommandBuffers.TrackingBatches.TryGetValue(
+                                        childHandle,
+                                        out VulkanCommandBufferTrackingBatch? batch))
+                                {
+                                    lock (batch)
+                                    {
+                                        if (batch.IsRecording ||
+                                            batch.QueuedSubmissionCount != 0)
+                                        {
+                                            throw new InvalidOperationException(
+                                                $"Cannot reset command pool 0x{pool.Handle:X} for {owner}: child command buffer 0x{childHandle:X} is recording or queued.");
+                                        }
+                                    }
+                                }
+
+                                children[childCount++] = new CommandBuffer
+                                {
+                                    Handle = unchecked((nint)childHandle),
+                                };
+                            }
+
+                            for (int index = 0; index < childCount; index++)
+                            {
+                                ulong childHandle = unchecked(
+                                    (ulong)children[index].Handle);
+                                if (CommandBuffers.TrackingBatches.TryGetValue(
+                                        childHandle,
+                                        out VulkanCommandBufferTrackingBatch? batch))
+                                {
+                                    lock (batch)
+                                        batch.IsRecording = true;
+                                }
+                            }
+                            hostUseMarked = true;
+                        }
                     }
-                    else
+
+                    Result result = Api.ResetCommandPool(
+                        DeviceContext.Device,
+                        pool,
+                        0);
+                    RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanResetCommandPoolCall();
+                    nativeResetSucceeded = result == Result.Success;
+                    if (!nativeResetSucceeded)
+                        return result;
+
+                    for (int index = 0; index < childCount; index++)
                     {
-                        children = new CommandBuffer[ownedChildren.Count];
-                        int index = 0;
-                        foreach (ulong childHandle in ownedChildren)
-                            children[index++] = new CommandBuffer { Handle = unchecked((nint)childHandle) };
+                        CommandBuffer child = children![index];
+                        ResourceRuntime.CompleteCommandBufferReset(
+                            unchecked((ulong)child.Handle));
+                        RemoveCommandBufferState(child);
+                    }
+                    return result;
+                }
+                finally
+                {
+                    if (children is not null)
+                    {
+                        if (hostUseMarked)
+                        {
+                            lock (tracker.SyncRoot)
+                            {
+                                for (int index = 0; index < childCount; index++)
+                                {
+                                    ulong childHandle = unchecked(
+                                        (ulong)children[index].Handle);
+                                    if (!CommandBuffers.TrackingBatches.TryGetValue(
+                                            childHandle,
+                                            out VulkanCommandBufferTrackingBatch? batch))
+                                    {
+                                        continue;
+                                    }
+
+                                    lock (batch)
+                                    {
+                                        batch.IsRecording = false;
+                                        if (nativeResetSucceeded)
+                                        {
+                                            CommandBuffers.TrackingBatches.TryRemove(
+                                                childHandle,
+                                                out _);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        ArrayPool<CommandBuffer>.Shared.Return(
+                            children,
+                            clearArray: false);
                     }
                 }
-
-                for (int i = 0; i < children.Length; i++)
-                    if (!ResourceRuntime.CanResetCommandBuffer(children[i]))
-                        throw new InvalidOperationException(
-                            $"Cannot reset command pool 0x{pool.Handle:X} for {owner}: child command buffer " +
-                            $"0x{unchecked((ulong)children[i].Handle):X} is not resettable.");
-
-                Result result = Api.ResetCommandPool(DeviceContext.Device, pool, 0);
-                RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanResetCommandPoolCall();
-                if (result != Result.Success)
-                    return result;
-
-                for (int i = 0; i < children.Length; i++)
-                    ResourceRuntime.CompleteCommandBufferReset(
-                        unchecked((ulong)children[i].Handle));
-                return result;
             }
         }
     }

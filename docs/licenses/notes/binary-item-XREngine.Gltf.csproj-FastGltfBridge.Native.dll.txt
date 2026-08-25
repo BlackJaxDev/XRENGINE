@@ -1,4 +1,4 @@
-﻿Resolved license summary for referenced binary item.
+Resolved license summary for referenced binary item.
 
 Project: XREngine.Gltf.csproj
 Path: runtimes\win-x64\native\FastGltfBridge.Native.dll

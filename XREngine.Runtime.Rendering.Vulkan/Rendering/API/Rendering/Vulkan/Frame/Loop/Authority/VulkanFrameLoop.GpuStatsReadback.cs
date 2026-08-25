@@ -295,14 +295,15 @@ internal sealed partial class VulkanFrameLoop
                 Flags = CommandBufferUsageFlags.OneTimeSubmitBit,
             };
             _deviceContext.ThrowIfVulkanDeviceOperationNotAdmitted("vkBeginCommandBuffer.GpuStatsReadback");
-            if (Api.BeginCommandBuffer(slot.CommandBuffer, in beginInfo) != Result.Success)
+            if (_commandRuntime.BeginTrackedCommandBuffer(
+                    slot.CommandBuffer,
+                    ref beginInfo,
+                    "GpuStatsReadback") != Result.Success)
             {
                 ReadbackOutputResources.CancelGpuStatsSliceSubmission(slot.DataSlice);
                 slot.DataSlice = default;
                 return false;
             }
-
-            _commandRuntime.ResetCommandBufferBindState(slot.CommandBuffer);
 
             BufferMemoryBarrier sourceBarrier = new()
             {

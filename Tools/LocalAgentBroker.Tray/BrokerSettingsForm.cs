@@ -3,14 +3,16 @@ using XREngine.LocalAgentBroker.Shared;
 
 namespace XREngine.LocalAgentBroker.Tray;
 
-/// <summary>Edits tray idle-exit and terminal-record cleanup preferences.</summary>
+/// <summary>Edits tray appearance, notification, lifetime, and history preferences.</summary>
 internal sealed class BrokerSettingsForm : Form
 {
+    private readonly ComboBox _theme;
     private readonly CheckBox _neverExit;
     private readonly NumericUpDown _idleMinutes;
     private readonly CheckBox _neverCleanup;
     private readonly NumericUpDown _retentionHours;
     private readonly CheckBox _notificationsEnabled;
+    private bool _isDarkTheme;
 
     public BrokerSettingsForm(BrokerUiSettings settings)
     {
@@ -20,25 +22,38 @@ internal sealed class BrokerSettingsForm : Form
         MaximizeBox = false;
         MinimizeBox = false;
         ShowInTaskbar = false;
-        ClientSize = new Size(470, 300);
+        ClientSize = new Size(470, 380);
         Font = new Font("Segoe UI", 9F);
 
         var layout = new TableLayoutPanel
         {
             Dock = DockStyle.Fill,
             ColumnCount = 1,
-            RowCount = 7,
+            RowCount = 9,
             Padding = new Padding(18),
         };
-        layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        for (int index = 0; index < 8; index++)
+            layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
 
-        layout.Controls.Add(Heading("Notifications"));
+        layout.Controls.Add(Heading("Appearance"));
+        _theme = new ComboBox
+        {
+            DropDownStyle = ComboBoxStyle.DropDownList,
+            Width = 180,
+            Margin = new Padding(0, 4, 0, 6),
+        };
+        _theme.Items.AddRange(["Use Windows setting", "Light", "Dark"]);
+        _theme.SelectedIndex = settings.Theme switch
+        {
+            BrokerUiThemePreference.Light => 1,
+            BrokerUiThemePreference.Dark => 2,
+            _ => 0,
+        };
+        _theme.SelectedIndexChanged += (_, _) => ApplySelectedTheme();
+        layout.Controls.Add(_theme);
+
+        layout.Controls.Add(Heading("Notifications", new Padding(0, 12, 0, 3)));
         _notificationsEnabled = new CheckBox
         {
             Text = "Show a Windows notification when a new prompt starts",
@@ -111,17 +126,39 @@ internal sealed class BrokerSettingsForm : Form
         Controls.Add(layout);
         AcceptButton = save;
         CancelButton = cancel;
+        ApplySelectedTheme();
     }
 
     public BrokerUiSettings Settings
         => new()
         {
             NotificationsEnabled = _notificationsEnabled.Checked,
+            Theme = SelectedTheme,
             IdleExitMinutes = _neverExit.Checked ? null : decimal.ToInt32(_idleMinutes.Value),
             RecordRetentionHours = _neverCleanup.Checked
                 ? null
                 : decimal.ToInt32(_retentionHours.Value),
         };
+
+    protected override void OnHandleCreated(EventArgs eventArgs)
+    {
+        base.OnHandleCreated(eventArgs);
+        BrokerTheme.ApplyTitleBar(this, _isDarkTheme);
+    }
+
+    private BrokerUiThemePreference SelectedTheme
+        => _theme.SelectedIndex switch
+        {
+            1 => BrokerUiThemePreference.Light,
+            2 => BrokerUiThemePreference.Dark,
+            _ => BrokerUiThemePreference.System,
+        };
+
+    private void ApplySelectedTheme()
+    {
+        _isDarkTheme = BrokerTheme.ResolveDark(SelectedTheme);
+        BrokerTheme.Apply(this, _isDarkTheme);
+    }
 
     private static Label Heading(string text, Padding? margin = null)
         => new()

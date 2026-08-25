@@ -41,6 +41,18 @@ namespace XREngine.Components.Animation
         public bool TryGetNeutralPoseBoneRotation(string boneName, out Quaternion rotation)
             => NeutralPoseBoneRotations.TryGetValue(boneName, out rotation);
 
+        private UnityHumanoidAvatarProfile? _unityAvatarProfile;
+        /// <summary>
+        /// Optional avatar-specific Unity Mecanim calibration. When assigned,
+        /// measured neutral and muscle responses replace geometry-only guessing
+        /// for the profiled humanoid bones.
+        /// </summary>
+        public UnityHumanoidAvatarProfile? UnityAvatarProfile
+        {
+            get => _unityAvatarProfile;
+            set => SetField(ref _unityAvatarProfile, value);
+        }
+
         private Vector2 _leftEyeDownUpRange = new(-1.0f, 1.0f);
         public Vector2 LeftEyeDownUpRange
         {
@@ -76,6 +88,37 @@ namespace XREngine.Components.Animation
         {
             get => _muscleInputScale;
             set => SetField(ref _muscleInputScale, value);
+        }
+
+        // Unity HumanDescription twist factors default to 0.5. They control how
+        // much of each normalized limb-twist muscle reaches the primary bone;
+        // the remaining twist is distributed through the avatar's twist chain.
+        private float _armTwistDistribution = 0.5f;
+        public float ArmTwistDistribution
+        {
+            get => _armTwistDistribution;
+            set => SetField(ref _armTwistDistribution, Math.Clamp(value, 0.0f, 1.0f));
+        }
+
+        private float _forearmTwistDistribution = 0.5f;
+        public float ForearmTwistDistribution
+        {
+            get => _forearmTwistDistribution;
+            set => SetField(ref _forearmTwistDistribution, Math.Clamp(value, 0.0f, 1.0f));
+        }
+
+        private float _upperLegTwistDistribution = 0.5f;
+        public float UpperLegTwistDistribution
+        {
+            get => _upperLegTwistDistribution;
+            set => SetField(ref _upperLegTwistDistribution, Math.Clamp(value, 0.0f, 1.0f));
+        }
+
+        private float _lowerLegTwistDistribution = 0.5f;
+        public float LowerLegTwistDistribution
+        {
+            get => _lowerLegTwistDistribution;
+            set => SetField(ref _lowerLegTwistDistribution, Math.Clamp(value, 0.0f, 1.0f));
         }
 
         private Dictionary<EHumanoidValue, Vector2> _muscleRotationDegRanges = [];

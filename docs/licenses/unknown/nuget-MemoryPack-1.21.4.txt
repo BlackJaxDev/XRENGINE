@@ -1,6 +1,0 @@
-﻿License text could not be resolved locally for NuGet package 'MemoryPack' (1.21.4).
-
-Resolved license: MIT
-RepositoryUrl: https://github.com/Cysharp/MemoryPack
-ProjectUrl: https://github.com/Cysharp/MemoryPack
-

@@ -1,6 +1,0 @@
-﻿License text could not be resolved locally for NuGet package 'Silk.NET.OpenAL.Soft.Native' (1.23.1).
-
-Resolved license: LGPL-2.0-or-later
-RepositoryUrl: https://github.com/kcat/openal-soft
-ProjectUrl: https://github.com/dotnet/Silk.NET
-

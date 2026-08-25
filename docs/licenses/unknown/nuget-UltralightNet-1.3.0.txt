@@ -1,6 +1,0 @@
-﻿License text could not be resolved locally for NuGet package 'UltralightNet' (1.3.0).
-
-Resolved license: MIT
-RepositoryUrl: https://github.com/SupinePandora43/UltralightNet
-ProjectUrl: https://github.com/SupinePandora43/UltralightNet
-

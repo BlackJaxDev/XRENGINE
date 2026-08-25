@@ -16,7 +16,6 @@ using XREngine.Input;
 using XREngine.Input.Devices;
 using XREngine.Rendering;
 using XREngine.Rendering.Commands;
-using XREngine.Rendering.DLSS;
 using XREngine.Scene;
 using XREngine.Scene.Prefabs;
 using XREngine.Scene.Transforms;
@@ -906,23 +905,23 @@ namespace XREngine.Editor.Mcp
                 },
                 nvidiaDlss = new
                 {
-                    runtimeDllsAvailable = NvidiaDlssManager.RequiredRuntimeDllsAvailable,
-                    runtimeDllsUnavailableReason = NvidiaDlssManager.RequiredRuntimeDllsAvailable
+                    runtimeDllsAvailable = VendorUpscaleRuntime.AreDlssRuntimeLibrariesAvailable,
+                    runtimeDllsUnavailableReason = VendorUpscaleRuntime.AreDlssRuntimeLibrariesAvailable
                         ? string.Empty
-                        : NvidiaDlssManager.RequiredRuntimeDllsUnavailableReason,
-                    supported = NvidiaDlssManager.IsSupported,
-                    lastError = NvidiaDlssManager.LastError,
+                        : VendorUpscaleRuntime.DlssRuntimeLibrariesUnavailableReason,
+                    supported = VendorUpscaleRuntime.IsDlssSupported,
+                    lastError = VendorUpscaleRuntime.DlssLastError,
                     effectiveEnabled = Engine.EffectiveSettings.EnableNvidiaDlss,
                     effectiveQuality = Engine.EffectiveSettings.DlssQuality.ToString(),
-                    frameGenerationRuntimeDllsAvailable = NvidiaDlssManager.FrameGenerationRuntimeDllsAvailable,
-                    frameGenerationRuntimeDllsUnavailableReason = NvidiaDlssManager.FrameGenerationRuntimeDllsAvailable
+                    frameGenerationRuntimeDllsAvailable = VendorUpscaleRuntime.AreDlssFrameGenerationRuntimeLibrariesAvailable,
+                    frameGenerationRuntimeDllsUnavailableReason = VendorUpscaleRuntime.AreDlssFrameGenerationRuntimeLibrariesAvailable
                         ? string.Empty
-                        : NvidiaDlssManager.FrameGenerationRuntimeDllsUnavailableReason,
-                    frameGenerationAvailable = NvidiaDlssManager.FrameGenerationAvailable,
-                    frameGenerationUnavailableReason = NvidiaDlssManager.FrameGenerationUnavailableReason,
-                    frameGenerationMaximumFramesToGenerate = NvidiaDlssManager.FrameGenerationMaximumFramesToGenerate,
-                    frameGenerationFramesActuallyPresented = NvidiaDlssManager.FrameGenerationFramesActuallyPresented,
-                    frameGenerationFramesActuallyPresentedTotal = NvidiaDlssManager.FrameGenerationFramesActuallyPresentedTotal,
+                        : VendorUpscaleRuntime.DlssFrameGenerationRuntimeLibrariesUnavailableReason,
+                    frameGenerationAvailable = VendorUpscaleRuntime.IsDlssFrameGenerationSupported,
+                    frameGenerationUnavailableReason = VendorUpscaleRuntime.DlssFrameGenerationUnavailableReason,
+                    frameGenerationMaximumFramesToGenerate = VendorUpscaleRuntime.DlssFrameGenerationMaximumFramesToGenerate,
+                    frameGenerationFramesActuallyPresented = VendorUpscaleRuntime.DlssFrameGenerationFramesActuallyPresented,
+                    frameGenerationFramesActuallyPresentedTotal = VendorUpscaleRuntime.DlssFrameGenerationFramesActuallyPresentedTotal,
                     effectiveFrameGenerationEnabled = Engine.EffectiveSettings.EnableNvidiaDlssFrameGeneration,
                     effectiveFrameGenerationMode = Engine.EffectiveSettings.NvidiaDlssFrameGenerationMode.ToString(),
                     effectiveFrameGenerationRequested = Engine.EffectiveSettings.EnableNvidiaDlssFrameGeneration

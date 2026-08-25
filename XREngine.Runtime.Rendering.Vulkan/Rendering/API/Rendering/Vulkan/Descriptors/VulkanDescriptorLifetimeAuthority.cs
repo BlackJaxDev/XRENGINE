@@ -1240,10 +1240,9 @@ internal sealed unsafe class VulkanDescriptorLifetimeAuthority
         // Descriptor lifetime does not retain command ownership. Resolve the
         // generation-local command port only for this retirement operation,
         // after fencing new recordings and before mutating the ledger.
-        VulkanCommandRuntime commandRuntime = _resources.SynchronousCommands.CommandRuntime;
         VulkanResourceLifetimeTracker tracker = _lifetime.Tracker;
         tracker.FenceResourceRecordingAdmission(key, owner);
-        commandRuntime.PublishTrackingDependenciesBeforeResourceRetirement(key);
+        _lifetime.PublishTrackingDependenciesBeforeRetirement(key);
 
         ulong[] dependentCommandBuffers = [];
         VulkanRetirementTicket ticket;
@@ -1280,7 +1279,8 @@ internal sealed unsafe class VulkanDescriptorLifetimeAuthority
 
         if (dependentCommandBuffers.Length != 0)
         {
-            VulkanExactInvalidationResult result = commandRuntime.InvalidateCachedCommandBuffers(
+            VulkanExactInvalidationResult result =
+                _resources.SynchronousCommands.CommandRuntime.InvalidateCachedCommandBuffers(
                 dependentCommandBuffers,
                 $"retiring {key} generation {generation}");
             RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanExactResourceInvalidation(

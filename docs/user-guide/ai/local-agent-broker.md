@@ -89,6 +89,10 @@ broker processes. Click a task to open its prompt and watch response text update
 while it streams. Double-click the tray icon, or choose **Open prompt history**,
 to browse and search all retained prompts and responses.
 
+The viewer appends streamed response text as it arrives. It follows the response
+tail only while the view is already at the bottom; scrolling upward keeps that
+position stable so earlier prompt or response text remains readable.
+
 Each newly accepted prompt also shows a Windows notification containing its
 objective. Clicking the notification opens that prompt in the history viewer.
 Notifications are enabled by default and can be disabled in **Settings**.
@@ -96,8 +100,10 @@ Notifications are enabled by default and can be disabled in **Settings**.
 Closing the history window hides it back to the tray and does not cancel runs.
 Choose **Exit** from the tray menu to close only the companion; the next
 accepted prompt starts it again. The **Settings** dialog controls prompt
-notifications and provides two independent lifecycle policies:
+notifications, appearance, and two independent lifecycle policies:
 
+- follow the Windows app theme by default, or override the viewer with a fixed
+  light or dark theme;
 - auto-close after a chosen number of minutes with no queued or running prompts,
   or never; and
 - auto-delete terminal prompt records after a chosen number of hours, or never.

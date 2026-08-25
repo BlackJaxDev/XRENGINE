@@ -2,6 +2,7 @@ using NUnit.Framework;
 using XREngine.Rendering;
 using XREngine.Rendering.Pipelines.Commands;
 using XREngine.Rendering.PostProcessing;
+using XREngine.Runtime.Bootstrap;
 using XREngine.Scene.Transforms;
 
 namespace XREngine.UnitTests.Core;
@@ -12,6 +13,7 @@ public sealed class AotFactoryRegistrationTests
     [Test]
     public void GeneratedFactories_RegisterRuntimeActivationTypes()
     {
+        _ = typeof(RuntimeAdapterBootstrap);
         bool createdTransform = TransformFactoryRegistry.TryCreate(typeof(RigidBodyTransform), out TransformBase? transform);
         bool createdCommand = ViewportRenderCommandContainer.TryCreateRegisteredCommand(typeof(VPRC_Clear), out ViewportRenderCommand? command);
         bool createdBacking = PostProcessBackingFactoryRegistry.TryCreate(typeof(TonemappingSettings), out object? backing);

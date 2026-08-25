@@ -1,4 +1,4 @@
-﻿License text not detected for assembly reference.
+License text not detected for assembly reference.
 
 Project: XREngine.Runtime.Rendering.csproj
 Reference: RiveSharp

@@ -1,6 +1,0 @@
-﻿License text could not be resolved locally for NuGet package 'Silk.NET.Input.Common' (2.23.0).
-
-Resolved license: MIT
-RepositoryUrl: https://github.com/dotnet/Silk.NET.git
-ProjectUrl: 
-

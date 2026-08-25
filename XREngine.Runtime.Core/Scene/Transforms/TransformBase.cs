@@ -207,6 +207,8 @@ namespace XREngine.Scene.Transforms
         private static int _hierarchyMutationBatchDepth;
         [ThreadStatic]
         private static TransformBase? _hierarchyMutationTarget;
+        [ThreadStatic]
+        private static int _diagnosticEvaluationDepth;
         private Guid _serializedReferenceId;
 
         #endregion
@@ -1252,6 +1254,41 @@ namespace XREngine.Scene.Transforms
         public TransformHierarchyMutationBatch BeginHierarchyMutationBatch()
             => new(this);
 
+        /// <summary>
+        /// Begins a temporary diagnostic evaluation that must restore all touched transform state.
+        /// World dirty-queue registration is suppressed until the scope is disposed.
+        /// </summary>
+        public static TransformDiagnosticEvaluationScope BeginDiagnosticEvaluation()
+            => new(active: true);
+
+        internal static void EnterDiagnosticEvaluation()
+        {
+            if (_diagnosticEvaluationDepth != 0)
+                throw new InvalidOperationException("Transform diagnostic evaluation scopes cannot be nested on the same thread.");
+
+            _diagnosticEvaluationDepth = 1;
+        }
+
+        internal static void ExitDiagnosticEvaluation()
+        {
+            if (_diagnosticEvaluationDepth != 1)
+                throw new InvalidOperationException("No transform diagnostic evaluation scope is active on this thread.");
+
+            _diagnosticEvaluationDepth = 0;
+        }
+
+        /// <summary>Captures dirty flags that temporary diagnostic evaluation must restore.</summary>
+        public TransformDiagnosticInvalidationState CaptureDiagnosticInvalidationState()
+            => new(IsLocalMatrixDirty, IsWorldMatrixDirty, HasChanged);
+
+        /// <summary>Restores dirty flags captured before temporary diagnostic evaluation.</summary>
+        public void RestoreDiagnosticInvalidationState(TransformDiagnosticInvalidationState state)
+        {
+            Volatile.Write(ref _localChanged, state.IsLocalMatrixDirty);
+            Volatile.Write(ref _worldChanged, state.IsWorldMatrixDirty);
+            HasChanged = state.HasChanged;
+        }
+
         internal static void EnterHierarchyMutationBatch()
         {
             if (_hierarchyMutationBatchDepth != 0)
@@ -1323,7 +1360,7 @@ namespace XREngine.Scene.Transforms
         protected void MarkWorldModified()
         {
             Volatile.Write(ref _worldChanged, true);
-            if (!ReferenceEquals(_hierarchyMutationTarget, this))
+            if (_diagnosticEvaluationDepth == 0 && !ReferenceEquals(_hierarchyMutationTarget, this))
                 ((RuntimeWorldObjectBase)this).World?.AddDirtyRuntimeObject(this);
             HasChanged = true;
         }

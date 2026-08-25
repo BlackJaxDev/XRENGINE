@@ -1,4 +1,4 @@
-﻿MIT License
+MIT License
 
 Copyright (c) 2010-2019 SharpDX - Alexandre Mutel
 Copyright (c) 2021 Leszek Pomianowski & DX .NET Contributors

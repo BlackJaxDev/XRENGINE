@@ -12,6 +12,9 @@ public sealed record BrokerUiSettings
     /// <summary>Shows a Windows notification when a broker accepts a new prompt.</summary>
     public bool NotificationsEnabled { get; init; } = true;
 
+    /// <summary>Controls whether the tray follows the Windows app theme or overrides it.</summary>
+    public BrokerUiThemePreference Theme { get; init; } = BrokerUiThemePreference.System;
+
     /// <summary>
     /// Minutes without a queued or running prompt before the tray process exits.
     /// A null value keeps the process open until the user exits it.
@@ -27,6 +30,7 @@ public sealed record BrokerUiSettings
     public BrokerUiSettings Normalize()
         => this with
         {
+            Theme = Enum.IsDefined(Theme) ? Theme : BrokerUiThemePreference.System,
             IdleExitMinutes = NormalizeValue(IdleExitMinutes, MaximumIdleExitMinutes),
             RecordRetentionHours = NormalizeValue(
                 RecordRetentionHours,

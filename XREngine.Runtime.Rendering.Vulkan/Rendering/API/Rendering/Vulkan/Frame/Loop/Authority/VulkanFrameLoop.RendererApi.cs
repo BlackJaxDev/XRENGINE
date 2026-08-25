@@ -158,7 +158,7 @@ internal sealed partial class VulkanFrameLoop
             Result result = _deviceContext.Api.DeviceWaitIdle(_deviceContext.Device);
             if (result == Result.Success)
             {
-                _resourceRuntime.Lifetime.Tracker.MarkDeviceIdleCompleted();
+                _commandRuntime.CompleteTrackedDevice();
                 return;
             }
             if (result == Result.ErrorDeviceLost)

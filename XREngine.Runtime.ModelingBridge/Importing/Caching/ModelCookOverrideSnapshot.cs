@@ -11,6 +11,14 @@ public sealed class ModelCookOverrideSnapshot
     private readonly ReadOnlyCollection<ModelCookOverrideEntry> _entries;
     private readonly byte[] _canonicalBytes;
 
+    /// <summary>
+    /// Creates an empty snapshot for serializers that require a parameterless construction path.
+    /// </summary>
+    public ModelCookOverrideSnapshot()
+        : this(null)
+    {
+    }
+
     public ModelCookOverrideSnapshot(IEnumerable<ModelCookOverrideEntry>? entries = null)
     {
         ModelCookOverrideEntry[] ordered = (entries ?? [])

@@ -571,7 +571,6 @@ internal unsafe sealed class VulkanImageResourceService(
 
     private VulkanRetirementTicket CaptureTicket(VulkanResourceLifetimeKey key, string owner)
     {
-        RequireCommandRuntime().PublishTrackingDependenciesBeforeResourceRetirement(key);
         return RequireResourceRuntime().CaptureRetirementTicket(key, owner);
     }
 

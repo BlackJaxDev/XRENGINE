@@ -1,6 +1,0 @@
-﻿License text could not be resolved locally for NuGet package 'JoltPhysicsSharp' (2.22.0).
-
-Resolved license: MIT
-RepositoryUrl: https://github.com/amerkoleci/JoltPhysicsSharp
-ProjectUrl: https://github.com/amerkoleci/JoltPhysicsSharp
-

@@ -1,6 +1,0 @@
-﻿License text could not be resolved locally for NuGet package 'MagicPhysX' (1.0.0).
-
-Resolved license: MIT
-RepositoryUrl: https://github.com/Cysharp/MagicPhysX
-ProjectUrl: https://github.com/Cysharp/MagicPhysX
-

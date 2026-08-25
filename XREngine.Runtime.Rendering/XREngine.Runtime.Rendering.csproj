@@ -43,7 +43,8 @@
     <PackageReference Include="MIConvexHull" Version="1.1.19.1019" />
     <PackageReference Include="Raylib-cs" Version="8.0.0" />
     <PackageReference Include="SharpFont.NetStandard" Version="1.0.5" />
-    <PackageReference Include="SharpFont.Dependencies" Version="2.6.0" />
+    <!-- This project explicitly publishes the selected x64 FreeType binary below. -->
+    <PackageReference Include="SharpFont.Dependencies" Version="2.6.0" ExcludeAssets="build" />
     <PackageReference Include="Silk.NET" Version="2.23.0" />
     <PackageReference Include="Silk.NET.Core" Version="2.23.0" />
     <PackageReference Include="Silk.NET.Core.Win32Extras" Version="2.23.0" />

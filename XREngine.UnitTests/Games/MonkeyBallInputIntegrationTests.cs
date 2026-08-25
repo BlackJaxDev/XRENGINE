@@ -7,6 +7,7 @@ using XREngine.Components;
 using XREngine.Input;
 using XREngine.Input.Devices;
 using XREngine.Rendering;
+using XREngine.Runtime.Bootstrap;
 using XREngine.Runtime.InputIntegration;
 using XREngine.Scene;
 using XREngine.Scene.Transforms;
@@ -19,8 +20,8 @@ public sealed class MonkeyBallInputIntegrationTests
     [Test]
     public void CookedPawn_PossessionRoutesKeyboardGamepadVrAndLateActionRefresh()
     {
-        System.Runtime.CompilerServices.RuntimeHelpers.RunClassConstructor(typeof(Engine).TypeHandle);
-        IRuntimeVrInputServices previousVrServices = RuntimeVrInputServices.Current;
+        using IDisposable adapterLease = RuntimeAdapterBootstrap.InstallEngineHostServices(RuntimeAdapterProfile.Input);
+        IRuntimeVrInputServices installedVrServices = RuntimeVrInputServices.Current;
         RecordingVrInputServices vrServices = new();
         LocalPlayerController? controller = null;
 
@@ -176,7 +177,7 @@ public sealed class MonkeyBallInputIntegrationTests
                 controller.Destroy(now: true);
             }
 
-            RuntimeVrInputServices.Current = previousVrServices;
+            RuntimeVrInputServices.Current = installedVrServices;
         }
     }
 

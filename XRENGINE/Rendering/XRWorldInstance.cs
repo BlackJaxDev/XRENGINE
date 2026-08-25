@@ -7,7 +7,6 @@ using System.Numerics;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using XREngine.Extensions;
-using XREngine.Audio;
 using XREngine.Components;
 using XREngine.Components.Animation;
 using XREngine.Components.Physics;
@@ -41,8 +40,7 @@ namespace XREngine.Rendering
           IRuntimeWorldContext,
           IRuntimePhysicsWorldContext,
           IRuntimeRenderInfo3DRegistrationTarget,
-          IRuntimeRenderWorld,
-          IRuntimeAudioListenerWorld
+          IRuntimeRenderWorld
     {
         private const float EdgeBarycentricThreshold = 0.12f;
         private const float VertexBarycentricThreshold = 0.08f;
@@ -73,21 +71,6 @@ namespace XREngine.Rendering
 
         private readonly Dictionary<XRScene, HashSet<SceneNode>> _editorOnlyNodesByScene = [];
 
-        [RuntimeOnly]
-        [YamlIgnore]
-        public EventList<ListenerContext> Listeners { get; private set; } = [];
-        IEnumerable<object> IRuntimeAudioListenerWorld.AudioListeners => Listeners;
-        void IRuntimeAudioListenerWorld.AddAudioListener(object listener)
-        {
-            if (listener is ListenerContext context)
-                Listeners.Add(context);
-        }
-        void IRuntimeAudioListenerWorld.RemoveAudioListener(object listener)
-        {
-            if (listener is ListenerContext context)
-                Listeners.Remove(context);
-        }
-        
         public XREventGroup<GameMode> CurrentGameModeChanged;
         public XREvent<XRWorldInstance>? PreBeginPlay;
         public XREvent<XRWorldInstance>? PostBeginPlay;
@@ -2219,12 +2202,6 @@ namespace XREngine.Rendering
         case nameof(WorldSettings.Bounds):
           VisualScene.SetBounds(settings.Bounds);
           break;
-         case nameof(WorldSettings.MasterVolume):
-      case nameof(WorldSettings.SpeedOfSound):
-     case nameof(WorldSettings.DopplerFactor):
-    case nameof(WorldSettings.DefaultAudioAttenuation):
-     ApplyAudioSettings(settings);
-   break;
    // For other properties, they are automatically picked up by rendering systems
     // that query the settings directly
         }
@@ -2240,7 +2217,6 @@ namespace XREngine.Rendering
                 return;
 
      ApplyPhysicsSettings(settings);
-    ApplyAudioSettings(settings);
  ApplyBoundsSettings(settings);
       }
 
@@ -2258,22 +2234,6 @@ namespace XREngine.Rendering
    // PhysicsScene.DefaultAngularDamping = settings.DefaultAngularDamping;
             // PhysicsScene.EnableContinuousCollision = settings.EnableContinuousCollision;
         }
-
-        /// <summary>
-        /// Applies audio-related settings to audio systems.
-        /// </summary>
-        private void ApplyAudioSettings(WorldSettings settings)
-        {
-            // Apply audio settings to listeners in this world
-         foreach (var listener in Listeners)
-       {
- // listener.SpeedOfSound = settings.SpeedOfSound;
-          // listener.DopplerFactor = settings.DopplerFactor;
-     }
-            
-            // Engine-level audio settings could be applied via Engine.Audio
-      // Engine.Audio?.SetMasterVolume(settings.MasterVolume);
- }
 
         /// <summary>
         /// Applies world bounds settings to the visual scene.

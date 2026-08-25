@@ -1,6 +1,0 @@
-﻿License text could not be resolved locally for NuGet package 'YamlDotNet' (18.1.0).
-
-Resolved license: MIT
-RepositoryUrl: https://github.com/aaubry/YamlDotNet
-ProjectUrl: https://github.com/aaubry/YamlDotNet/wiki
-

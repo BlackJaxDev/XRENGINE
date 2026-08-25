@@ -24,7 +24,6 @@ using XREngine.Rendering.Models;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.Models.Materials.Shaders.Parameters;
 using XREngine.Rendering.Meshlets;
-using XREngine.Rendering.OpenGL;
 using XREngine.Rendering.Tools;
 using XREngine.Rendering.Vulkan;
 using AssetFieldOptions = XREngine.Editor.IMGUI.ImGuiAssetUtilities.AssetFieldOptions;

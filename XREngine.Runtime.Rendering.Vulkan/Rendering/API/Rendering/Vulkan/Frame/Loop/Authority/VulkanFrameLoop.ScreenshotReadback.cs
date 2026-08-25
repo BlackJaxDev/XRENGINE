@@ -146,7 +146,10 @@ internal sealed partial class VulkanFrameLoop
                 Flags = CommandBufferUsageFlags.OneTimeSubmitBit,
             };
             _deviceContext.ThrowIfVulkanDeviceOperationNotAdmitted("vkBeginCommandBuffer.ScreenshotReadback");
-            Result beginResult = Api.BeginCommandBuffer(slot.CommandBuffer, in beginInfo);
+            Result beginResult = _commandRuntime.BeginTrackedCommandBuffer(
+                slot.CommandBuffer,
+                ref beginInfo,
+                "ScreenshotReadback");
             if (beginResult != Result.Success)
             {
                 return RejectPreparedScreenshotReadback(
@@ -155,7 +158,6 @@ internal sealed partial class VulkanFrameLoop
                     out failure);
             }
 
-            _commandRuntime.ResetCommandBufferBindState(slot.CommandBuffer);
             RecordScreenshotReadbackCommands(
                 slot,
                 source,

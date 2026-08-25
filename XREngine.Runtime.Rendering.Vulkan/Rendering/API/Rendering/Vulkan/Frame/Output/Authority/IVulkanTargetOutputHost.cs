@@ -32,7 +32,9 @@ internal interface IVulkanTargetOutputHost
     Result CreateVulkanCommandPoolTracked(ref CommandPoolCreateInfo createInfo, out CommandPool pool, string owner);
     Result AllocateVulkanCommandBufferTracked(ref CommandBufferAllocateInfo allocateInfo, out CommandBuffer commandBuffer, string owner);
     Result ResetVulkanCommandPoolTracked(CommandPool pool, string owner);
+    Result BeginCommandBufferTracked(CommandBuffer commandBuffer, ref CommandBufferBeginInfo beginInfo, string owner);
     Result EndCommandBufferTracked(CommandBuffer commandBuffer);
+    void TrackCommandBufferResource(CommandBuffer commandBuffer, ObjectType type, ulong handle, string owner);
     void DestroyCommandPoolHostSynchronized(CommandPool pool);
     Result CreateVulkanImageTracked(ref ImageCreateInfo createInfo, out Image image, string owner);
     void DestroyVulkanImageImmediateTracked(Image image, string owner);

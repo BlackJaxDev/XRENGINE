@@ -22,6 +22,14 @@ Internet-facing editor bridge.
 and tray companion share only provider-neutral contracts and the file-backed
 history project. No NuGet package was added for this feature.
 
+The broker coalesces high-frequency observer deltas into atomic history-record
+writes. The tray watches those record replacements and incrementally appends new
+response suffixes; its slower periodic refresh remains a fallback for dropped
+filesystem notifications. The viewer preserves its scroll position unless it
+was already following the response tail. Theme selection is stored in the
+shared UI settings as system, light, or dark; system mode resolves the Windows
+app theme.
+
 ## Run Contract
 
 `AgentRunRequest` carries the objective, success criteria, constraints, exact

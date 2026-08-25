@@ -8,35 +8,12 @@
     <PublishAot>false</PublishAot>
     <Platforms>AnyCPU;x64</Platforms>
     <BaseOutputPath Condition="'$(UseArtifactsOutput)' != 'true'">$(SolutionDir)Build\Engine\$(Configuration)\$(Platform)</BaseOutputPath>
-    <AotFactoryRegistrationGenerator>$(MSBuildProjectDirectory)\..\Tools\Generate-AotFactoryRegistrations.ps1</AotFactoryRegistrationGenerator>
-    <GeneratedAotFactoryRegistrations Condition="'$(UseArtifactsOutput)' != 'true'">$(MSBuildProjectDirectory)\obj\$(Configuration)\$(TargetFramework)\Generated\AotFactoryRegistrations.g.cs</GeneratedAotFactoryRegistrations>
-    <GeneratedAotFactoryRegistrations Condition="'$(UseArtifactsOutput)' == 'true'">$(BaseIntermediateOutputPath)$(Configuration)\$(TargetFramework)\Generated\AotFactoryRegistrations.g.cs</GeneratedAotFactoryRegistrations>
-    <AotFactoryRegistrationStamp Condition="'$(UseArtifactsOutput)' != 'true'">$(MSBuildProjectDirectory)\obj\$(Configuration)\$(TargetFramework)\Generated\AotFactoryRegistrations.stamp</AotFactoryRegistrationStamp>
-    <AotFactoryRegistrationStamp Condition="'$(UseArtifactsOutput)' == 'true'">$(BaseIntermediateOutputPath)$(Configuration)\$(TargetFramework)\Generated\AotFactoryRegistrations.stamp</AotFactoryRegistrationStamp>
-    <AotFactoryRegistrationCoreRoot>$(MSBuildProjectDirectory)\..\XREngine.Runtime.Core</AotFactoryRegistrationCoreRoot>
-    <AotFactoryRegistrationInputIntegrationRoot>$(MSBuildProjectDirectory)\..\XREngine.Runtime.InputIntegration</AotFactoryRegistrationInputIntegrationRoot>
-    <AotFactoryRegistrationRenderingRoot>$(MSBuildProjectDirectory)\..\XREngine.Runtime.Rendering</AotFactoryRegistrationRenderingRoot>
   </PropertyGroup>
-
-  <ItemGroup Condition="'$(DesignTimeBuild)' != 'true'">
-    <Compile Include="$(GeneratedAotFactoryRegistrations)" />
-    <AotFactoryRegistrationInput Include="$(MSBuildProjectDirectory)\**\*.cs;$(AotFactoryRegistrationCoreRoot)\**\*.cs;$(AotFactoryRegistrationInputIntegrationRoot)\**\*.cs;$(AotFactoryRegistrationRenderingRoot)\**\*.cs" Exclude="$(MSBuildProjectDirectory)\bin\**;$(MSBuildProjectDirectory)\obj\**;$(AotFactoryRegistrationCoreRoot)\bin\**;$(AotFactoryRegistrationCoreRoot)\obj\**;$(AotFactoryRegistrationInputIntegrationRoot)\bin\**;$(AotFactoryRegistrationInputIntegrationRoot)\obj\**;$(AotFactoryRegistrationRenderingRoot)\bin\**;$(AotFactoryRegistrationRenderingRoot)\obj\**;**\*.g.cs" />
-  </ItemGroup>
 
   <ItemGroup>
     <InternalsVisibleTo Include="XREngine.UnitTests" />
     <InternalsVisibleTo Include="XREngine.Runtime.Bootstrap" />
   </ItemGroup>
-
-  <Target Name="InvalidateMissingAotFactoryRegistrationOutput" BeforeTargets="GenerateAotFactoryRegistrations" Condition="'$(DesignTimeBuild)' != 'true' and !Exists('$(GeneratedAotFactoryRegistrations)') and Exists('$(AotFactoryRegistrationStamp)')">
-    <Delete Files="$(AotFactoryRegistrationStamp)" />
-  </Target>
-
-  <Target Name="GenerateAotFactoryRegistrations" BeforeTargets="CoreCompile" Inputs="$(AotFactoryRegistrationGenerator);$(MSBuildProjectFullPath);@(AotFactoryRegistrationInput)" Outputs="$(AotFactoryRegistrationStamp)" Condition="'$(DesignTimeBuild)' != 'true' and Exists('$(AotFactoryRegistrationGenerator)')">
-    <MakeDir Directories="$([System.IO.Path]::GetDirectoryName('$(GeneratedAotFactoryRegistrations)'))" />
-    <Exec Command="powershell -NoProfile -ExecutionPolicy Bypass -File &quot;$(AotFactoryRegistrationGenerator)&quot; -ProjectDir &quot;$(MSBuildProjectDirectory)&quot; -OutputFile &quot;$(GeneratedAotFactoryRegistrations)&quot;" />
-    <Touch Files="$(AotFactoryRegistrationStamp)" AlwaysCreate="true" ForceTouch="true" />
-  </Target>
 
   <PropertyGroup>
     <CoACDBuildScript Condition="'$(CoACDBuildScript)' == ''">$(SolutionDir)Tools\Dependencies\Build-CoACD.ps1</CoACDBuildScript>
@@ -73,15 +50,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <None Remove="openvr_api.dll" />
-    <None Remove="OVRLipSync.dll" />
     <None Remove="RestirGI.Native.dll" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <Content Include="openvr_api.dll">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </Content>
   </ItemGroup>
 
   <ItemGroup>
@@ -91,7 +60,6 @@
     <PackageReference Include="MagicPhysX" Version="1.0.0" />
     <PackageReference Include="MemoryPack" Version="1.21.4" />
     <PackageReference Include="Newtonsoft.Json" Version="13.0.4" />
-    <PackageReference Include="SharpFont.Dependencies" Version="2.6.0" />
     <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="10.0.10" />
     <PackageReference Include="Silk.NET.Core" Version="2.23.0" />
     <PackageReference Include="Silk.NET.DirectStorage" Version="2.23.0" />
@@ -113,38 +81,17 @@
     <ProjectReference Include="..\XREngine.Data\XREngine.Data.csproj" />
     <ProjectReference Include="..\XREngine.Extensions\XREngine.Extensions.csproj" />
     <ProjectReference Include="..\XREngine.Fbx\XREngine.Fbx.csproj" />
-    <ProjectReference Include="..\XREngine.Gltf\XREngine.Gltf.csproj" />
     <ProjectReference Include="..\XREngine.Input\XREngine.Input.csproj" />
-    <ProjectReference Include="..\XREngine.Modeling\XREngine.Modeling.csproj" />
     <ProjectReference Include="..\XREngine.Runtime.Core\XREngine.Runtime.Core.csproj" />
+    <ProjectReference Include="..\XREngine.Runtime.AnimationIntegration\XREngine.Runtime.AnimationIntegration.csproj" />
+    <ProjectReference Include="..\XREngine.Runtime.AudioIntegration\XREngine.Runtime.AudioIntegration.csproj" />
     <ProjectReference Include="..\XREngine.Runtime.InputIntegration\XREngine.Runtime.InputIntegration.csproj" />
     <ProjectReference Include="..\XREngine.Runtime.ModelingBridge\XREngine.Runtime.ModelingBridge.csproj" />
     <ProjectReference Include="..\XREngine.Runtime.Rendering\XREngine.Runtime.Rendering.csproj" />
   </ItemGroup>
 
   <ItemGroup>
-    <Reference Include="OpenVR.NET">
-      <HintPath>..\Build\Submodules\OpenVR.NET\OpenVR.NET\bin\$(Configuration)\net6.0\OpenVR.NET.dll</HintPath>
-    </Reference>
-  </ItemGroup>
-
-  <ItemGroup>
-    <None Include="..\Build\Submodules\OpenVR.NET\OpenVR.NET\bin\$(Configuration)\net6.0\OpenVR.NET.dll" Pack="true" PackagePath="lib\$(TargetFramework)\" Visible="false" Condition="Exists('..\Build\Submodules\OpenVR.NET\OpenVR.NET\bin\$(Configuration)\net6.0\OpenVR.NET.dll')" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <None Update="nis.license.txt">
-      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
-    </None>
-    <None Include="$(MetaOvrLipSyncWinX64Dir)OVRLipSync.dll" Condition="Exists('$(MetaOvrLipSyncWinX64Dir)OVRLipSync.dll')">
-      <Link>OVRLipSync.dll</Link>
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
-    </None>
     <None Update="runtimes\win-x64\native\lib_coacd.dll">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
-    <None Update="runtimes\win-x64\native\nis.license.txt">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
     <None Include="$(NvidiaRtxgiWinX64Dir)RestirGI.Native.dll" Condition="Exists('$(NvidiaRtxgiWinX64Dir)RestirGI.Native.dll')">
@@ -158,36 +105,12 @@
     <PackageReference Update="StirlingLabs.assimp.native.win-x64" Version="5.2.5.4" />
   </ItemGroup>
 
-  <ItemGroup>
-    <None Include="..\docs\licenses\nuget\Silk.NET.OpenAL.Soft.Native-1.23.1-LGPL-2.0-or-later.txt" Condition="Exists('..\docs\licenses\nuget\Silk.NET.OpenAL.Soft.Native-1.23.1-LGPL-2.0-or-later.txt')">
-      <Link>licenses\OpenAL-Soft-LGPL-2.0-or-later.txt</Link>
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
-    </None>
-    <None Include="..\docs\licenses\copyleft\LGPL-2.0-or-later.txt" Condition="Exists('..\docs\licenses\copyleft\LGPL-2.0-or-later.txt')">
-      <Link>licenses\LGPL-2.0-or-later.txt</Link>
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
-    </None>
-    <None Include="..\docs\licenses\copyleft\LGPL-2.1-or-later.txt" Condition="Exists('..\docs\licenses\copyleft\LGPL-2.1-or-later.txt')">
-      <Link>licenses\LGPL-2.1-or-later.txt</Link>
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
-    </None>
-    <None Include="..\docs\licenses\copyleft\LGPL-3.0.txt" Condition="Exists('..\docs\licenses\copyleft\LGPL-3.0.txt')">
-      <Link>licenses\LGPL-3.0.txt</Link>
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
-    </None>
-  </ItemGroup>
-
   <Target Name="EnsureCoACD" BeforeTargets="PrepareForBuild" Condition="'$(OS)' == 'Windows_NT' and Exists('$(CoACDBuildScript)') and ('$(CoACDRid)' != '') and ('$(ForceCoACDBuild)' == 'true' or !Exists('$(MSBuildProjectDirectory)\\runtimes\\$(CoACDRid)\\native\\lib_coacd.dll'))">
     <Message Text="Ensuring CoACD native library ($(CoACDRid))" Importance="High" />
     <Exec Command="powershell -NoProfile -ExecutionPolicy Bypass -File &quot;$(CoACDBuildScript)&quot; -Rid $(CoACDRid) -Ref $(CoACDRef) -Configuration $(Configuration) $(ForceCoACDBuildSwitch)" />
   </Target>
 
   <PropertyGroup>
-    <MetaOvrLipSyncWinX64Dir Condition="'$(MetaOvrLipSyncWinX64Dir)' == ''">$(MSBuildProjectDirectory)\..\ThirdParty\Meta\OVRLipSync\win-x64\</MetaOvrLipSyncWinX64Dir>
     <NvidiaRtxgiWinX64Dir Condition="'$(NvidiaRtxgiWinX64Dir)' == ''">$(MSBuildProjectDirectory)\..\ThirdParty\NVIDIA\RTXGI\win-x64\</NvidiaRtxgiWinX64Dir>
   </PropertyGroup>
 

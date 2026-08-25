@@ -1,5 +1,4 @@
 using Silk.NET.Vulkan;
-using System.Runtime.ExceptionServices;
 
 namespace XREngine.Rendering.Vulkan;
 
@@ -12,7 +11,6 @@ internal unsafe sealed class VulkanSynchronousResourceCommandSession : IDisposab
 {
     private readonly VulkanBackendObjectContext _context;
     private readonly VulkanCommandRuntime _commands;
-    private readonly VulkanResourceRuntime _resources;
     private readonly VulkanFrameTelemetry _telemetry;
     private readonly CommandPool _pool;
     private readonly string _owner;
@@ -29,7 +27,6 @@ internal unsafe sealed class VulkanSynchronousResourceCommandSession : IDisposab
     {
         _context = context;
         _commands = commands;
-        _resources = resources;
         _telemetry = telemetry;
         _owner = owner;
         _pool = commands.GetThreadGraphicsCommandPool(context.Api, context.DeviceContext, resources);
@@ -41,13 +38,15 @@ internal unsafe sealed class VulkanSynchronousResourceCommandSession : IDisposab
             CommandBufferLevel.Primary,
             owner);
         Encoder = new VulkanTrackedCommandEncoder(commands);
-        commands.ResetBindState(Encoder, CommandBuffer);
         CommandBufferBeginInfo beginInfo = new()
         {
             SType = StructureType.CommandBufferBeginInfo,
             Flags = CommandBufferUsageFlags.OneTimeSubmitBit,
         };
-        Result result = context.Api.BeginCommandBuffer(CommandBuffer, ref beginInfo);
+        Result result = commands.BeginTrackedCommandBuffer(
+            CommandBuffer,
+            ref beginInfo,
+            owner);
         context.DeviceContext.ObserveNativeResult($"vkBeginCommandBuffer.{owner}", result);
         if (result != Result.Success)
         {
@@ -119,18 +118,6 @@ internal unsafe sealed class VulkanSynchronousResourceCommandSession : IDisposab
                 arenaSubmitted = true;
             }
 
-            Exception? publicationFailure = null;
-            try
-            {
-                _resources.RecordSynchronousGraphicsSubmission(
-                    CommandBuffer,
-                    fence,
-                    _context.DeviceContext.GraphicsQueue);
-            }
-            catch (Exception failure)
-            {
-                publicationFailure = failure;
-            }
             Fence* fencePtr = &fence;
             result = _context.Api.WaitForFences(_context.Device, 1, fencePtr, true, ulong.MaxValue);
             _context.DeviceContext.ObserveNativeResult($"vkWaitForFences.{_owner}", result);
@@ -150,6 +137,8 @@ internal unsafe sealed class VulkanSynchronousResourceCommandSession : IDisposab
             }
             try
             {
+                if (!receipt.LifetimePinsTransferred)
+                    _commands.ReleaseSubmissionResourceLifetimePins(ref submit);
                 _commands.CompleteTrackedFence(fence);
                 if (arena is not null &&
                     !arena.TryResetFrameSlot(0, slice.Generation, submissionCompletionProven: true))
@@ -173,8 +162,6 @@ internal unsafe sealed class VulkanSynchronousResourceCommandSession : IDisposab
                 throw;
             }
             _completed = true;
-            if (publicationFailure is not null)
-                ExceptionDispatchInfo.Capture(publicationFailure).Throw();
         }
         finally
         {
@@ -199,9 +186,9 @@ internal unsafe sealed class VulkanSynchronousResourceCommandSession : IDisposab
             return;
         _commandBufferReleased = true;
         CommandBuffer commandBuffer = CommandBuffer;
-        if (commandBuffer.Handle != 0)
-            lock (_commands.Pools.Gate)
-                _context.Api.FreeCommandBuffers(_context.Device, _pool, 1, ref commandBuffer);
-        _resources.CompleteSynchronousCommandBuffer(CommandBuffer);
+        _commands.FreeCompletedSynchronousCommandBuffer(
+            _pool,
+            ref commandBuffer,
+            _owner);
     }
 }

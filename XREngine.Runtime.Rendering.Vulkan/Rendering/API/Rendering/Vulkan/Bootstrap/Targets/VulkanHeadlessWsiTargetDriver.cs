@@ -215,7 +215,10 @@ internal sealed unsafe class VulkanHeadlessWsiTargetDriver :
             Flags = CommandBufferUsageFlags.OneTimeSubmitBit,
         };
         ThrowIfDeviceFailure(
-            renderer.VulkanApi.BeginCommandBuffer(commandBuffer, in begin),
+            renderer.BeginCommandBufferTracked(
+                commandBuffer,
+                ref begin,
+                "HeadlessWsi.BeginFrameRecording"),
             "begin headless WSI command buffer");
     }
 

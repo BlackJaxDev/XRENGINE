@@ -8,9 +8,9 @@ internal sealed class NullRuntimeVrLifecycleServices : IRuntimeVrLifecycleServic
     public static NullRuntimeVrLifecycleServices Instance { get; } = new();
 
     public bool InitializeOpenXR(XRWindow? window) => false;
-    public Task<bool> InitializeLocal(IActionManifest actionManifest, VrManifest vrManifest, XRWindow window) => Task.FromResult(false);
+    public Task<bool> InitializeLocal(object actionManifest, object vrManifest, XRWindow window) => Task.FromResult(false);
     public void InitRenderEmulated(XRWindow window) { }
-    public Task<bool> InitializeClient(IActionManifest actionManifest, VrManifest vrManifest) => Task.FromResult(false);
+    public Task<bool> InitializeClient(object actionManifest, object vrManifest) => Task.FromResult(false);
     public bool InitializeServer() => false;
     public void StartInputClient() { }
     public void StopInputServer() { }

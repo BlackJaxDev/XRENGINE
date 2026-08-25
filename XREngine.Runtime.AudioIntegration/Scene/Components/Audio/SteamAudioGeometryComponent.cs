@@ -4,6 +4,7 @@ using XREngine.Audio;
 using XREngine.Audio.Steam;
 using XREngine.Components.Scene.Mesh;
 using XREngine.Rendering;
+using XREngine.Runtime.Audio;
 using XREngine.Scene.Transforms;
 using YamlDotNet.Serialization;
 
@@ -267,7 +268,7 @@ public class SteamAudioGeometryComponent : XRComponent
         if (World is null)
             return null;
 
-        foreach (ListenerContext listener in ((World as IRuntimeAudioListenerWorld)?.AudioListeners ?? []).OfType<ListenerContext>())
+        foreach (ListenerContext listener in RuntimeAudioListenerWorldRegistry.GetListeners(World))
         {
             if (listener.EffectsProcessor is not SteamAudioProcessor processor)
                 continue;

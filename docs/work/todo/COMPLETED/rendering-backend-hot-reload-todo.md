@@ -11,7 +11,7 @@ Completed: 2026-07-25
 Related design, execution, and architecture documents:
 
 - [Runtime Modularization And Bootstrap Extraction Plan](../../design/runtime-modularization-plan.md)
-- [Runtime Modularization Phase 4 - Remaining Rendering Move](../runtime-modularization-phase4-todo.md)
+- [Runtime Modularization Phase 4 - Complete](runtime-modularization-phase4-todo.md)
 - [Vulkan Runtime Code Organization TODO](../rendering/vulkan-runtime-code-organization-todo.md)
 - [OpenGL Renderer](../../../architecture/rendering/opengl-renderer.md)
 - [Vulkan Renderer](../../../architecture/rendering/vulkan-renderer.md)

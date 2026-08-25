@@ -103,18 +103,17 @@ internal sealed partial class VulkanCommandRuntime
         if (commandBuffer.Handle == 0)
             return;
 
-        RemoveCommandBufferState(commandBuffer);
         if (!owned || !DeviceContext.IsOperational || pool.Handle == 0)
+        {
+            RemoveCommandBufferState(commandBuffer);
             return;
+        }
 
         CommandBuffer releasing = commandBuffer;
-        lock (Pools.Gate)
-            Api.FreeCommandBuffers(
-                DeviceContext.Device,
-                pool,
-                1,
-                ref releasing);
-        ResourceRuntime.CompleteSynchronousCommandBuffer(commandBuffer);
+        FreeCompletedSynchronousCommandBuffer(
+            pool,
+            ref releasing,
+            "OpenXR.OwnedPrimaryArtifact");
     }
 
     internal bool TryRecordPreparedOpenXrMirror(
@@ -508,18 +507,17 @@ internal sealed partial class VulkanCommandRuntime
         if (commandBuffer.Handle == 0)
             return;
 
-        RemoveCommandBufferState(commandBuffer);
         if (disposition == EVulkanQueueSubmissionDisposition.SubmittedIncomplete)
+        {
+            RemoveCommandBufferState(commandBuffer);
             return;
+        }
 
         CommandBuffer releasing = commandBuffer;
-        lock (Pools.Gate)
-            Api.FreeCommandBuffers(
-                DeviceContext.Device,
-                Pools.PrimaryGraphics,
-                1,
-                ref releasing);
-        ResourceRuntime.CompleteSynchronousCommandBuffer(commandBuffer);
+        FreeCompletedSynchronousCommandBuffer(
+            Pools.PrimaryGraphics,
+            ref releasing,
+            "OpenXR.TemporaryCommandBuffer");
     }
 
     internal void TransitionOpenXrMirrorImage(
@@ -562,14 +560,15 @@ internal sealed partial class VulkanCommandRuntime
             Pools.PrimaryGraphics,
             CommandBufferLevel.Primary,
             owner);
-        encoder.BeginTracking(commandBuffer);
-        ResetBindState(encoder, commandBuffer);
         CommandBufferBeginInfo beginInfo = new()
         {
             SType = StructureType.CommandBufferBeginInfo,
             Flags = CommandBufferUsageFlags.OneTimeSubmitBit,
         };
-        Result result = Api.BeginCommandBuffer(commandBuffer, ref beginInfo);
+        Result result = BeginTrackedCommandBuffer(
+            commandBuffer,
+            ref beginInfo,
+            owner);
         DeviceContext.ObserveNativeResult($"vkBeginCommandBuffer.{owner}", result);
         if (result == Result.Success)
             return true;

@@ -1,6 +1,0 @@
-﻿License text could not be resolved locally for NuGet package 'Silk.NET.Vulkan.Loader.Native' (2025.9.12).
-
-Resolved license: Apache-2.0
-RepositoryUrl: https://github.com/KhronosGroup/Vulkan-Loader
-ProjectUrl: https://github.com/dotnet/Silk.NET
-

@@ -3,7 +3,6 @@ using System.Reflection;
 using XREngine.Data.Colors;
 using XREngine.Rendering;
 using XREngine.Rendering.Models.Materials;
-using XREngine.Rendering.OpenGL;
 using XREngine.Rendering.UI;
 using XREngine.Scene;
 

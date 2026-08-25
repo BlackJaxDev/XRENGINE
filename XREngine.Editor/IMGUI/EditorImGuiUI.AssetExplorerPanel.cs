@@ -16,7 +16,6 @@ using XREngine.Data;
 using XREngine.Diagnostics;
 using XREngine.Editor.Services;
 using XREngine.Rendering;
-using XREngine.Rendering.OpenGL;
 using XREngine.Scene;
 using XREngine.Scene.Prefabs;
 using YamlDotNet.Core;

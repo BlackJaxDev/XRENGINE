@@ -855,13 +855,19 @@ public sealed class VrViewRenderModeContractTests
         window.ShouldContain("TryRenderDesktopMirrorComposition");
         packet.ShouldContain("FrameOutputManifestData");
         profileCapture.ShouldContain("\"frame_outputs\"");
-        profileCapture.ShouldContain("ProfileCaptureSchemaVersion = 5");
+        profileCapture.ShouldContain("ProfileCaptureSchemaVersion = 7");
     }
 
     [Test]
     public void SourceContracts_SurfaceViewModeAndFoveationSettings()
     {
-        string settings = ReadWorkspaceFile("XREngine.Runtime.Bootstrap/UnitTestingWorldSettings.cs");
+        string settings = string.Join("\n", new[]
+        {
+            ReadWorkspaceFile("XREngine.Runtime.Bootstrap/Settings/UnitTestingWorldSettings.cs"),
+            ReadWorkspaceFile("XREngine.Runtime.Bootstrap/Settings/UnitTestingVrSettings.cs"),
+            ReadWorkspaceFile("XREngine.Runtime.Bootstrap/Settings/UnitTestingVrFoveationSettings.cs"),
+            ReadWorkspaceFile("XREngine.Runtime.Bootstrap/Settings/UnitTestingOpenXrEyeResolutionSettings.cs"),
+        });
         string store = ReadWorkspaceFile("XREngine.Runtime.Bootstrap/UnitTestingWorldSettingsStore.cs");
         string bootstrap = ReadWorkspaceFile("XREngine.Runtime.Bootstrap/BootstrapRenderSettings.cs");
         string contracts = string.Join("\n", new[]
@@ -1010,7 +1016,13 @@ public sealed class VrViewRenderModeContractTests
         schema.ShouldContain("never falls back to per-eye rendering");
         schema.ShouldContain("unavailable capabilities are logged and the XR output is not rendered");
 
-        string vulkanOpenXr = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/OpenXR/VulkanRenderer.OpenXR.cs");
+        string vulkanOpenXr = SourceContractWorkspace.ReadVulkanSourcesContaining(
+            "TryBlitTextureArrayLayerToOpenXrSwapchainImage",
+            "BaseArrayLayer = sourceLayer",
+            "CreateOpenXrPrewarmRenderStateTracker",
+            "ViewFoveationContext Foveation",
+            "FoveationResourceKey: request.Foveation.BackendResourceKey",
+            "hash.Add((int)targetContext.FoveationAttachmentKind)");
         string vulkanOpenXrMirrorRequest = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/OpenXR/VulkanRenderer.OpenXrEyeMirrorRenderRequest.cs");
         openXr.ShouldContain("if (!trueSinglePassStereo)");
@@ -1051,7 +1063,8 @@ public sealed class VrViewRenderModeContractTests
     public void VulkanSinglePassStereo_FinalShaderAndLayeredViewContractsStayWired()
     {
         string compiler = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Shaders/VulkanShaderCompiler.cs");
-        string imageTexture = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Textures/VkImageBackedTexture.cs");
+        string imageTexture = SourceContractWorkspace.ReadPartialType(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Textures/VkImageBackedTexture.cs");
         string textureView = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Textures/VkTextureView.cs");
 
         compiler.ShouldContain("MultiviewNumViewsLayoutDeclarationRegex");

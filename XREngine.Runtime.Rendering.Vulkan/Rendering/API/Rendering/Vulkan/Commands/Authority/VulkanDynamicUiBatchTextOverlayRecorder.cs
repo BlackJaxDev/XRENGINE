@@ -27,8 +27,7 @@ internal sealed unsafe class VulkanDynamicUiBatchTextOverlayRecorder
                 $"Failed to reset dynamic UI text overlay command buffer: {resetResult}.");
         }
 
-        encoder.Runtime.ResetBindState(encoder, input.OverlayCommandBuffer);
-        bool trackingStarted = true;
+        bool trackingStarted = false;
         try
         {
             encoder.Runtime.BeginRecording(
@@ -37,6 +36,7 @@ internal sealed unsafe class VulkanDynamicUiBatchTextOverlayRecorder
                 input.OverlayCommandBuffer,
                 "vkBeginCommandBuffer.DynamicUiTextOverlay",
                 CommandBufferUsageFlags.OneTimeSubmitBit);
+            trackingStarted = true;
 
             encoder.Runtime.SeedRecordedImageLayoutState(
                 input.OverlayCommandBuffer,

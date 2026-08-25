@@ -5,7 +5,6 @@ using System.Numerics;
 using XREngine;
 using XREngine.Core.Files;
 using XREngine.Rendering;
-using XREngine.Rendering.OpenGL;
 
 namespace XREngine.Editor;
 

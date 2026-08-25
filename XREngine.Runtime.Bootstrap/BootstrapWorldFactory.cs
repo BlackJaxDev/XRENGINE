@@ -241,10 +241,19 @@ public static class BootstrapWorldFactory
         }
     }
 
+    /// <summary>
+    /// Creates the simulation-only world used by a dedicated server. The server must not create a
+    /// local pawn, camera, audio listener, or VR/input component because it has no local device
+    /// ownership and accepts remote players through the networking layer.
+    /// </summary>
     public static XRWorld CreateServerDefaultWorld()
-        => RuntimeBootstrapState.Settings.WorldKind == UnitTestWorldKind.NetworkingPose
-            ? CreateSelectedWorld(false, true)
-            : CreateDefaultEmptyWorld(false, true);
+    {
+        var scene = new XRScene("Server Scene");
+        var rootNode = new SceneNode("Server Root");
+        scene.RootNodes.Add(rootNode);
+        rootNode.AddComponent<NetworkDiscoveryComponent>("Network Discovery");
+        return CreateBootstrapWorld("Server World", scene);
+    }
 
     private static XRWorld CreateNetworkingPoseWorld(bool setUI, bool isServer)
     {

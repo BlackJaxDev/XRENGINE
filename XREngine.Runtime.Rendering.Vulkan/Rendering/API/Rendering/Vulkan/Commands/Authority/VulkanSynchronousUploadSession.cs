@@ -13,7 +13,6 @@ internal unsafe sealed class VulkanSynchronousUploadSession : IDisposable
     private readonly Vk _api;
     private readonly VulkanDeviceContext _deviceContext;
     private readonly VulkanCommandRuntime _commands;
-    private readonly VulkanResourceRuntime _resources;
     private readonly CommandPool _pool;
     private bool _completed;
 
@@ -27,7 +26,6 @@ internal unsafe sealed class VulkanSynchronousUploadSession : IDisposable
         _api = api;
         _deviceContext = deviceContext;
         _commands = commands;
-        _resources = resources;
         _pool = commands.GetThreadGraphicsCommandPool(api, deviceContext, resources);
         CommandBuffer = commands.AllocateTrackedCommandBuffer(
             api,
@@ -37,13 +35,15 @@ internal unsafe sealed class VulkanSynchronousUploadSession : IDisposable
             CommandBufferLevel.Primary,
             owner);
         Encoder = new VulkanTrackedCommandEncoder(commands);
-        Encoder.BeginTracking(CommandBuffer);
         CommandBufferBeginInfo beginInfo = new()
         {
             SType = StructureType.CommandBufferBeginInfo,
             Flags = CommandBufferUsageFlags.OneTimeSubmitBit,
         };
-        Result result = api.BeginCommandBuffer(CommandBuffer, ref beginInfo);
+        Result result = commands.BeginTrackedCommandBuffer(
+            CommandBuffer,
+            ref beginInfo,
+            owner);
         deviceContext.ObserveNativeResult($"vkBeginCommandBuffer.{owner}", result);
         if (result != Result.Success)
         {
@@ -79,29 +79,27 @@ internal unsafe sealed class VulkanSynchronousUploadSession : IDisposable
                 CommandBufferCount = 1,
                 PCommandBuffers = &commandBuffer,
             };
-            result = _commands.SubmitToQueueTracked(
-                _api,
-                _deviceContext,
-                _commands.FrameTelemetry,
+            VulkanSubmissionDiagnosticContext diagnosticContext = default;
+            VulkanSubmissionReceipt receipt = _commands.SubmitToQueueTrackedWithDisposition(
                 _deviceContext.GraphicsQueue,
                 ref submit,
                 fence,
-                $"vkQueueSubmit.{owner}");
-            if (result != Result.Success)
+                in diagnosticContext,
+                out _,
+                out _,
+                owner);
+            result = receipt.Result;
+            if (!receipt.SubmissionAccepted)
                 throw new InvalidOperationException($"Failed to submit synchronous upload ({result}).");
 
-            _resources.RecordSynchronousGraphicsSubmission(
-                CommandBuffer,
-                fence,
-                _deviceContext.GraphicsQueue,
-                image,
-                stagingBuffer);
             Fence* fencePtr = &fence;
             result = _api.WaitForFences(_deviceContext.Device, 1, fencePtr, true, ulong.MaxValue);
             _deviceContext.ObserveNativeResult($"vkWaitForFences.{owner}", result);
             if (result != Result.Success)
                 throw new InvalidOperationException($"Failed to wait for synchronous upload ({result}).");
-            _resources.CompleteSynchronousFence(fence);
+            if (!receipt.LifetimePinsTransferred)
+                _commands.ReleaseSubmissionResourceLifetimePins(ref submit);
+            _commands.CompleteTrackedFence(fence);
             _completed = true;
         }
         finally
@@ -121,11 +119,9 @@ internal unsafe sealed class VulkanSynchronousUploadSession : IDisposable
     private void ReleaseCommandBuffer()
     {
         CommandBuffer commandBuffer = CommandBuffer;
-        if (commandBuffer.Handle != 0)
-        {
-            lock (_commands.Pools.Gate)
-                _api.FreeCommandBuffers(_deviceContext.Device, _pool, 1, ref commandBuffer);
-        }
-        _resources.CompleteSynchronousCommandBuffer(CommandBuffer);
+        _commands.FreeCompletedSynchronousCommandBuffer(
+            _pool,
+            ref commandBuffer,
+            "SynchronousUploadSession");
     }
 }

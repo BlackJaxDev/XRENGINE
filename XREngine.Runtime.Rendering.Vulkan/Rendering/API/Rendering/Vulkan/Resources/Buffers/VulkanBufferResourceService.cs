@@ -828,6 +828,7 @@ internal unsafe sealed class VulkanBufferResourceService(VulkanAllocationAuthori
     private static VulkanRetirementTicket CaptureTicket(VulkanLifetimeAuthority lifetime, VulkanResourceLifetimeKey key, string owner)
     {
         lifetime.Tracker.FenceResourceRecordingAdmission(key, owner);
+        lifetime.PublishTrackingDependenciesBeforeRetirement(key);
         lock (lifetime.Tracker.SyncRoot)
         {
             VulkanResourceLifetimeRecord record = lifetime.Tracker.GetOrRegisterResourceNoLock(key, owner);

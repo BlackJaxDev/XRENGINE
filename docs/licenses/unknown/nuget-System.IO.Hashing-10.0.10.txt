@@ -1,6 +1,0 @@
-﻿License text could not be resolved locally for NuGet package 'System.IO.Hashing' (10.0.10).
-
-Resolved license: MIT
-RepositoryUrl: https://github.com/dotnet/dotnet
-ProjectUrl: https://dot.net/
-

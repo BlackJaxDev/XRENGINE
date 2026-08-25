@@ -14,7 +14,6 @@ using XREngine.Data.Rendering;
 using XREngine.Core.Files;
 using XREngine.Editor.Services;
 using XREngine.Rendering;
-using XREngine.Rendering.OpenGL;
 using XREngine.Rendering.Pipelines.Commands;
 using XREngine.Rendering.Resources;
 using XREngine.Rendering.RenderGraph;

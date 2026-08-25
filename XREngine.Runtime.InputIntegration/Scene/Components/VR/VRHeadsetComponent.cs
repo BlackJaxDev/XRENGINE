@@ -7,6 +7,7 @@ using XREngine.Scene.Transforms;
 namespace XREngine.Data.Components.Scene
 {
     [RequireComponents(typeof(VRHeadsetTransform))]
+    [XRTypeRedirect("XREngine.Data.Components.Scene.VRHeadsetComponent")]
     public class VRHeadsetComponent : XRComponent
     {
         private const string LeftEyeNodeName = "Left Eye";

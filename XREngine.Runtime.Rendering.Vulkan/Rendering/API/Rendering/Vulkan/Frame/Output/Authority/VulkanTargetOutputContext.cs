@@ -48,8 +48,21 @@ internal sealed class VulkanTargetOutputContext
     internal Result ResetVulkanCommandPoolTracked(CommandPool pool, string owner)
         => _host.ResetVulkanCommandPoolTracked(pool, owner);
 
+    internal Result BeginCommandBufferTracked(
+        CommandBuffer commandBuffer,
+        ref CommandBufferBeginInfo beginInfo,
+        string owner)
+        => _host.BeginCommandBufferTracked(commandBuffer, ref beginInfo, owner);
+
     internal Result EndCommandBufferTracked(CommandBuffer commandBuffer)
         => _host.EndCommandBufferTracked(commandBuffer);
+
+    internal void TrackCommandBufferResource(
+        CommandBuffer commandBuffer,
+        ObjectType type,
+        ulong handle,
+        string owner)
+        => _host.TrackCommandBufferResource(commandBuffer, type, handle, owner);
 
     internal void DestroyCommandPoolHostSynchronized(CommandPool pool)
         => _host.DestroyCommandPoolHostSynchronized(pool);
