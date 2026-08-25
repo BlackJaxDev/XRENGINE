@@ -23,12 +23,14 @@ and tray companion share only provider-neutral contracts and the file-backed
 history project. No NuGet package was added for this feature.
 
 The broker coalesces high-frequency observer deltas into atomic history-record
-writes. The tray watches those record replacements and incrementally appends new
-response suffixes; its slower periodic refresh remains a fallback for dropped
-filesystem notifications. The viewer preserves its scroll position unless it
-was already following the response tail. Theme selection is stored in the
-shared UI settings as system, light, or dark; system mode resolves the Windows
-app theme.
+writes. The tray watches those record replacements and incrementally replaces
+only the changing line of its BCL-only Markdown preview; its slower periodic
+refresh remains a fallback for dropped filesystem notifications. Rich-text
+updates run with redraw suspended, then preserve the reader's viewport or ease
+toward the current scroll maximum when tail-following is active. Newly visible
+text fades from the surface color to its themed Markdown color. Theme selection
+is stored in the shared UI settings as system, light, or dark; system mode
+resolves the Windows app theme.
 
 ## Run Contract
 

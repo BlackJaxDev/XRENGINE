@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
+using System.Numerics;
 using ImGuiNET;
+using XREngine.Animation.Importers;
 using XREngine.Components;
 using XREngine.Components.Animation;
 using static XREngine.Editor.EditorImGuiUI;
@@ -25,6 +27,7 @@ public sealed class AnimationClipComponentEditor : IXRComponentEditor
         }
 
         DrawPlaybackSection(clipComponent);
+        DrawUnityImportReport(clipComponent);
         DrawAdvancedSection(clipComponent, visited);
         ComponentEditorLayout.DrawActivePreviewDialog();
     }
@@ -127,6 +130,110 @@ public sealed class AnimationClipComponentEditor : IXRComponentEditor
         float targetTime = targetFrame * frameDuration;
         return Math.Clamp(targetTime, 0.0f, clipLength);
     }
+
+    private static void DrawUnityImportReport(AnimationClipComponent component)
+    {
+        if (!ImGui.CollapsingHeader("Unity Import / Playback Report", ImGuiTreeNodeFlags.DefaultOpen))
+            return;
+
+        var clip = component.Animation;
+        UnityAnimationImportManifest? manifest = clip?.UnityImportManifest;
+        if (clip is null)
+        {
+            ImGui.TextDisabled("No animation clip is assigned.");
+            return;
+        }
+
+        if (manifest is null)
+        {
+            ImGui.TextDisabled("This clip was not imported from a Unity .anim source.");
+            return;
+        }
+
+        Vector4 statusColor = manifest.IsExecutable
+            ? new Vector4(0.60f, 0.85f, 0.60f, 1.00f)
+            : new Vector4(0.95f, 0.65f, 0.30f, 1.00f);
+        ImGui.TextColored(statusColor, manifest.IsExecutable
+            ? "Native path: all present source domains are executable"
+            : "Native path: playback is blocked; source data was preserved");
+        ImGui.TextDisabled($"Manifest schema: {manifest.SchemaVersion}");
+        ImGui.TextDisabled($"Unity serializedVersion: {manifest.SourceIdentity.SerializedVersion}");
+        ImGui.TextDisabled($"Source SHA-256: {AbbreviateHash(manifest.SourceIdentity.SourceContentSha256)}");
+        ImGui.TextDisabled($"Import settings SHA-256: {AbbreviateHash(manifest.SourceIdentity.ImportSettingsSha256)}");
+        ImGui.TextDisabled($"Coordinate contract: {manifest.CoordinateContract.ContractId}");
+        ImGui.TextDisabled($"Humanoid target required: {manifest.RequiresHumanoidAvatar}");
+
+        if (!string.IsNullOrWhiteSpace(component.PlaybackCapabilityDiagnostic))
+            ImGui.TextWrapped($"Playback blocked: {component.PlaybackCapabilityDiagnostic}");
+
+        if (component.FlipMuscleLeftRight
+            || component.FlipMuscleZ
+            || component.FlipIKPositionLeftRight
+            || component.FlipIKPositionZ
+            || component.FlipIKRotationLeftRight
+            || component.FlipIKRotationZ)
+        {
+            ImGui.TextWrapped(
+                "Diagnostic override active: one or more manual muscle/IK flips modify the persisted coordinate contract at playback time.");
+        }
+
+        if (ImGui.Button("Validate Playback Now"))
+            EnqueueSceneEdit(() => component.TryValidatePlaybackCapabilities(out _));
+
+        if (ImGui.BeginTable(
+            "UnityAnimationDomains",
+            5,
+            ImGuiTableFlags.SizingStretchProp | ImGuiTableFlags.RowBg | ImGuiTableFlags.BordersInnerH))
+        {
+            ImGui.TableSetupColumn("Domain");
+            ImGui.TableSetupColumn("State");
+            ImGui.TableSetupColumn("Source");
+            ImGui.TableSetupColumn("Applied");
+            ImGui.TableSetupColumn("Preserved");
+            ImGui.TableHeadersRow();
+            for (int i = 0; i < manifest.Domains.Length; i++)
+            {
+                UnityAnimationDomainCapability domain = manifest.Domains[i];
+                ImGui.TableNextRow();
+                ImGui.TableSetColumnIndex(0);
+                ImGui.TextUnformatted(domain.Domain.ToString());
+                ImGui.TableSetColumnIndex(1);
+                ImGui.TextUnformatted(domain.State.ToString());
+                ImGui.TableSetColumnIndex(2);
+                ImGui.TextUnformatted(domain.SourceItemCount.ToString());
+                ImGui.TableSetColumnIndex(3);
+                ImGui.TextUnformatted(domain.AppliedItemCount.ToString());
+                ImGui.TableSetColumnIndex(4);
+                ImGui.TextUnformatted(domain.PreservedItemCount.ToString());
+            }
+            ImGui.EndTable();
+        }
+
+        if (ImGui.TreeNode($"Diagnostics ({CountDiagnostics(manifest)})"))
+        {
+            for (int i = 0; i < manifest.Domains.Length; i++)
+            {
+                UnityAnimationDomainCapability domain = manifest.Domains[i];
+                for (int j = 0; j < domain.Diagnostics.Length; j++)
+                    ImGui.BulletText($"{domain.Domain}: {domain.Diagnostics[j]}");
+            }
+            ImGui.TreePop();
+        }
+
+        ImGui.TextDisabled(
+            $"Bindings: {manifest.Bindings.Length}; preserved payloads: {manifest.PreservedPayloads.Length}");
+    }
+
+    private static int CountDiagnostics(UnityAnimationImportManifest manifest)
+    {
+        int count = 0;
+        for (int i = 0; i < manifest.Domains.Length; i++)
+            count += manifest.Domains[i].Diagnostics.Length;
+        return count;
+    }
+
+    private static string AbbreviateHash(string value)
+        => value.Length <= 16 ? value : $"{value[..12]}...{value[^4..]}";
 
     private static void DrawAdvancedSection(AnimationClipComponent component, HashSet<object> visited)
     {

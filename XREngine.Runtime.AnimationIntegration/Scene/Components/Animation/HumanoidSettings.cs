@@ -43,9 +43,9 @@ namespace XREngine.Components.Animation
 
         private UnityHumanoidAvatarProfile? _unityAvatarProfile;
         /// <summary>
-        /// Optional avatar-specific Unity Mecanim calibration. When assigned,
-        /// measured neutral and muscle responses replace geometry-only guessing
-        /// for the profiled humanoid bones.
+        /// Legacy v3 profile migration input retained so older serialized scenes
+        /// can be upgraded. <see cref="HumanoidComponent"/> consumes and clears
+        /// this value during initialization; production evaluation never reads it.
         /// </summary>
         public UnityHumanoidAvatarProfile? UnityAvatarProfile
         {

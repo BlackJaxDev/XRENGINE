@@ -98,7 +98,7 @@ namespace XREngine
 
             return Environment.OSVersion.Platform switch
             {
-                PlatformID.Win32NT => new WFileMap(stream.SafeFileHandle.DangerousGetHandle(), prot, offset, length) { _path = stream.Name },
+                PlatformID.Win32NT => new XREngine.Data.WFileMap(stream.SafeFileHandle.DangerousGetHandle(), prot, offset, length) { _path = stream.Name },
                 _ => new CFileMap(stream, prot, offset, length) { _path = stream.Name },
             };
         }
@@ -114,7 +114,7 @@ namespace XREngine
 
             return Environment.OSVersion.Platform switch
             {
-                PlatformID.Win32NT => new WFileMap(stream.SafeFileHandle.DangerousGetHandle(), prot, offset, length) { _baseStream = stream, _path = stream.Name },
+                PlatformID.Win32NT => new XREngine.Data.WFileMap(stream.SafeFileHandle.DangerousGetHandle(), prot, offset, length) { _baseStream = stream, _path = stream.Name },
                 _ => new CFileMap(stream, prot, offset, length) { _baseStream = stream, _path = stream.Name },
             };
         }

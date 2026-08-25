@@ -44,8 +44,8 @@ namespace XREngine
         private string McpServerAuthTokenSerialized
         {
             get => string.IsNullOrEmpty(_mcpServerAuthTokenEnvVar)
-                ? SecretCipher.Protect(_mcpServerAuthToken)
-                : SecretCipher.ReferenceEnv(_mcpServerAuthTokenEnvVar);
+                ? SecretCipherServices.Current.Protect(_mcpServerAuthToken)
+                : SecretCipherServices.Current.ReferenceEnvironmentVariable(_mcpServerAuthTokenEnvVar);
             set => AcceptSecretSerialized(value, ref _mcpServerAuthToken, ref _mcpServerAuthTokenEnvVar, "McpServerAuthToken");
         }
 
@@ -69,8 +69,8 @@ namespace XREngine
         private string McpAssistantOpenAiApiKeySerialized
         {
             get => string.IsNullOrEmpty(_mcpAssistantOpenAiApiKeyEnvVar)
-                ? SecretCipher.Protect(_mcpAssistantOpenAiApiKey)
-                : SecretCipher.ReferenceEnv(_mcpAssistantOpenAiApiKeyEnvVar);
+                ? SecretCipherServices.Current.Protect(_mcpAssistantOpenAiApiKey)
+                : SecretCipherServices.Current.ReferenceEnvironmentVariable(_mcpAssistantOpenAiApiKeyEnvVar);
             set => AcceptSecretSerialized(value, ref _mcpAssistantOpenAiApiKey, ref _mcpAssistantOpenAiApiKeyEnvVar, "McpAssistantOpenAiApiKey");
         }
 
@@ -94,8 +94,8 @@ namespace XREngine
         private string McpAssistantAnthropicApiKeySerialized
         {
             get => string.IsNullOrEmpty(_mcpAssistantAnthropicApiKeyEnvVar)
-                ? SecretCipher.Protect(_mcpAssistantAnthropicApiKey)
-                : SecretCipher.ReferenceEnv(_mcpAssistantAnthropicApiKeyEnvVar);
+                ? SecretCipherServices.Current.Protect(_mcpAssistantAnthropicApiKey)
+                : SecretCipherServices.Current.ReferenceEnvironmentVariable(_mcpAssistantAnthropicApiKeyEnvVar);
             set => AcceptSecretSerialized(value, ref _mcpAssistantAnthropicApiKey, ref _mcpAssistantAnthropicApiKeyEnvVar, "McpAssistantAnthropicApiKey");
         }
 
@@ -119,8 +119,8 @@ namespace XREngine
         private string McpAssistantGeminiApiKeySerialized
         {
             get => string.IsNullOrEmpty(_mcpAssistantGeminiApiKeyEnvVar)
-                ? SecretCipher.Protect(_mcpAssistantGeminiApiKey)
-                : SecretCipher.ReferenceEnv(_mcpAssistantGeminiApiKeyEnvVar);
+                ? SecretCipherServices.Current.Protect(_mcpAssistantGeminiApiKey)
+                : SecretCipherServices.Current.ReferenceEnvironmentVariable(_mcpAssistantGeminiApiKeyEnvVar);
             set => AcceptSecretSerialized(value, ref _mcpAssistantGeminiApiKey, ref _mcpAssistantGeminiApiKeyEnvVar, "McpAssistantGeminiApiKey");
         }
 
@@ -144,8 +144,8 @@ namespace XREngine
         private string McpAssistantGitHubModelsTokenSerialized
         {
             get => string.IsNullOrEmpty(_mcpAssistantGitHubModelsTokenEnvVar)
-                ? SecretCipher.Protect(_mcpAssistantGitHubModelsToken)
-                : SecretCipher.ReferenceEnv(_mcpAssistantGitHubModelsTokenEnvVar);
+                ? SecretCipherServices.Current.Protect(_mcpAssistantGitHubModelsToken)
+                : SecretCipherServices.Current.ReferenceEnvironmentVariable(_mcpAssistantGitHubModelsTokenEnvVar);
             set => AcceptSecretSerialized(value, ref _mcpAssistantGitHubModelsToken, ref _mcpAssistantGitHubModelsTokenEnvVar, "McpAssistantGitHubModelsToken");
         }
 
@@ -166,7 +166,7 @@ namespace XREngine
                 return;
             }
 
-            if (SecretCipher.IsEnvReference(serialized, out string envName))
+            if (SecretCipherServices.Current.IsEnvironmentReference(serialized, out string envName))
             {
                 envVarField = envName;
                 plaintextField = string.Empty;
@@ -175,14 +175,14 @@ namespace XREngine
 
             envVarField = string.Empty;
 
-            if (SecretCipher.IsLegacyPlaintext(serialized))
+            if (SecretCipherServices.Current.IsLegacyPlaintext(serialized))
             {
                 LogSecretMigrationOnce(preferenceName);
                 plaintextField = serialized;
                 return;
             }
 
-            plaintextField = SecretCipher.Resolve(serialized);
+            plaintextField = SecretCipherServices.Current.Resolve(serialized);
         }
 
         private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, bool> _migrationNoticeLogged = new();

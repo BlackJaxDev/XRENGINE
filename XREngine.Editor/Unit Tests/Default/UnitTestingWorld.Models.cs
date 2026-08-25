@@ -437,7 +437,10 @@ public static partial class EditorUnitTests
                                         if (importedRoot.Transform.Parent != characterParentNode.Transform)
                                             characterParentNode.Transform.AddChild(importedRoot.Transform, false, EParentAssignmentMode.Immediate);
 
-                                        OnFinishedImportingAvatar(importedRoot, characterParentNode);
+                                        OnFinishedImportingAvatar(
+                                            importedRoot,
+                                            characterParentNode,
+                                            result.SourceContentSha256);
                                         StageUnityPrefabModelPublication(
                                             importedRoot,
                                             suspendedModels);
@@ -514,13 +517,17 @@ public static partial class EditorUnitTests
                             model.ImportFlags,
                             onFinished: result =>
                             {
+                                string? sourceContentSha256 = TryComputeSourceModelContentSha256(resolvedPath);
                                 _ = Engine.InvokeOnAppThread(() =>
                                 {
                                     SceneNode? importedNode = result.RootNode;
                                     if (characterParentNode != null && importedNode != null && importedNode.Transform.Parent != characterParentNode.Transform)
                                         characterParentNode.Transform.AddChild(importedNode.Transform, false, EParentAssignmentMode.Immediate);
 
-                                    OnFinishedImportingAvatar(importedNode, characterParentNode);
+                                    OnFinishedImportingAvatar(
+                                        importedNode,
+                                        characterParentNode,
+                                        sourceContentSha256);
                                     CompleteAllModelImportSlot();
                                 }, $"UnitTestingWorld: Finish animated avatar import '{Path.GetFileName(resolvedPath)}'", executeNowIfAlreadyAppThread: true);
                             },
@@ -1039,6 +1046,29 @@ public static partial class EditorUnitTests
             writer.Write(digest);
         }
 
+        private static string? TryComputeSourceModelContentSha256(string path)
+        {
+            try
+            {
+                using FileStream source = File.OpenRead(path);
+                return Convert.ToHexString(SHA256.HashData(source));
+            }
+            catch (IOException exception)
+            {
+                Debug.MeshesWarning(
+                    $"[UnitTestingWorld] Could not fingerprint imported model source '{path}'. " +
+                    $"Humanoid playback will remain blocked until a source fingerprint is supplied. {exception.Message}");
+                return null;
+            }
+            catch (UnauthorizedAccessException exception)
+            {
+                Debug.MeshesWarning(
+                    $"[UnitTestingWorld] Could not fingerprint imported model source '{path}'. " +
+                    $"Humanoid playback will remain blocked until a source fingerprint is supplied. {exception.Message}");
+                return null;
+            }
+        }
+
         private static Matrix4x4 CreateUnitTestImportRootMatrix(Settings.ModelImportSettings model)
         {
             Matrix4x4 matrix = Matrix4x4.Identity;
@@ -1311,17 +1341,42 @@ public static partial class EditorUnitTests
         }
 
         public static void OnFinishedImportingAvatar(SceneNode? rootNode, SceneNode? characterParentNode)
-            => OnFinishedImportingAvatar(rootNode, characterParentNode, startupClips: null);
+            => OnFinishedImportingAvatar(
+                rootNode,
+                characterParentNode,
+                sourceModelContentSha256: null);
 
-        private static void OnFinishedImportingAvatar(SceneNode? rootNode, SceneNode? characterParentNode, AvatarStartupClipLoadResult? startupClips)
+        private static void OnFinishedImportingAvatar(
+            SceneNode? rootNode,
+            SceneNode? characterParentNode,
+            string? sourceModelContentSha256)
+            => OnFinishedImportingAvatar(
+                rootNode,
+                characterParentNode,
+                startupClips: null,
+                sourceModelContentSha256);
+
+        private static void OnFinishedImportingAvatar(
+            SceneNode? rootNode,
+            SceneNode? characterParentNode,
+            AvatarStartupClipLoadResult? startupClips,
+            string? sourceModelContentSha256)
         {
             if (rootNode is null)
                 return;
 
-            QueueAvatarPostImportSetup(rootNode, characterParentNode, startupClips);
+            QueueAvatarPostImportSetup(
+                rootNode,
+                characterParentNode,
+                startupClips,
+                sourceModelContentSha256);
         }
 
-        private static void QueueAvatarPostImportSetup(SceneNode rootNode, SceneNode? characterParentNode, AvatarStartupClipLoadResult? startupClips)
+        private static void QueueAvatarPostImportSetup(
+            SceneNode rootNode,
+            SceneNode? characterParentNode,
+            AvatarStartupClipLoadResult? startupClips,
+            string? sourceModelContentSha256)
         {
             HumanoidComponent? humanComp = null;
             HeightScaleBaseComponent? heightScale = null;
@@ -1341,6 +1396,9 @@ public static partial class EditorUnitTests
                         using (HumanoidComponent.BeginDeferredSceneNodeInitialization())
                             humanComp = rootNode.AddComponent<HumanoidComponent>()!;
 
+                        if (humanComp is not null && !string.IsNullOrWhiteSpace(sourceModelContentSha256))
+                            humanComp.SetSourceModelContentSha256(sourceModelContentSha256);
+
                         stage++;
                         return false;
 
@@ -1348,7 +1406,6 @@ public static partial class EditorUnitTests
                         if (humanComp is null || humanComp.IsDestroyed)
                             return true;
 
-                        ConfigureUnityHumanoidAvatarProfile(humanComp);
                         humanComp.InitializeSceneNodeBindings();
                         stage++;
                         return false;
@@ -1421,33 +1478,6 @@ public static partial class EditorUnitTests
                         return true;
                 }
             });
-        }
-
-        private static void ConfigureUnityHumanoidAvatarProfile(HumanoidComponent humanoid)
-        {
-            const string environmentVariableName = "XRE_UNITY_HUMANOID_AVATAR_PROFILE";
-            string? profilePath = Environment.GetEnvironmentVariable(environmentVariableName);
-            if (string.IsNullOrWhiteSpace(profilePath))
-                return;
-
-            string fullPath = Path.GetFullPath(profilePath);
-            if (!File.Exists(fullPath))
-            {
-                Debug.LogWarning(
-                    $"[UnitTestingWorld] {environmentVariableName} points to missing avatar profile '{fullPath}'.");
-                return;
-            }
-
-            try
-            {
-                humanoid.LoadUnityHumanoidAvatarProfile(fullPath);
-                Debug.Animation(
-                    $"[UnitTestingWorld] Applied Unity humanoid avatar profile '{fullPath}'.");
-            }
-            catch (Exception ex)
-            {
-                Debug.LogException(ex, $"[UnitTestingWorld] Failed to apply Unity humanoid avatar profile '{fullPath}'.");
-            }
         }
 
         private static void ConfigureAvatarFaceTracking(SceneNode rootNode, AnimStateMachineComponent animator)

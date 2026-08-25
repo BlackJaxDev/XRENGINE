@@ -17,14 +17,14 @@ public sealed class XRShaderScalarYamlNodeDeserializer : INodeDeserializer
         out object? value,
         ObjectDeserializer rootDeserializer)
     {
-        RenderAssetSerializationServices.Current.EnsureYamlAssetRuntimeSupported();
+        AssetSerializationServices.Current.EnsureYamlAssetRuntimeSupported();
 
         value = null;
 
         if (expectedType != typeof(XRShader) || !reader.Accept<Scalar>(out var scalar))
             return false;
 
-        return RenderAssetSerializationServices.Current.TryHandleScalarAsset(
+        return AssetSerializationServices.Current.TryHandleScalarAsset(
             reader,
             expectedType,
             scalar,
@@ -41,7 +41,7 @@ public sealed class XRShaderCollectionYamlNodeDeserializer : INodeDeserializer
         out object? value,
         ObjectDeserializer rootDeserializer)
     {
-        RenderAssetSerializationServices.Current.EnsureYamlAssetRuntimeSupported();
+        AssetSerializationServices.Current.EnsureYamlAssetRuntimeSupported();
 
         value = null;
 
@@ -84,7 +84,7 @@ public sealed class XRShaderCollectionYamlTypeConverter : IYamlTypeConverter
 
     internal static object? ReadShaderCollection(IParser parser, Type type, ObjectDeserializer rootDeserializer)
     {
-        RenderAssetSerializationServices.Current.EnsureYamlAssetRuntimeSupported();
+        AssetSerializationServices.Current.EnsureYamlAssetRuntimeSupported();
 
         List<XRShader> shaders = [];
 
@@ -148,7 +148,7 @@ public sealed class XRShaderCollectionYamlTypeConverter : IYamlTypeConverter
 
     private static void AddScalarShaderIfResolved(IParser parser, Scalar scalar, List<XRShader> shaders)
     {
-        if (RenderAssetSerializationServices.Current.TryHandleScalarAsset(
+        if (AssetSerializationServices.Current.TryHandleScalarAsset(
                 parser,
                 typeof(XRShader),
                 scalar,

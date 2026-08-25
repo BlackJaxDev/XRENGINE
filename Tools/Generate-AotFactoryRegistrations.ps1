@@ -318,7 +318,8 @@ $projectFullPath = [System.IO.Path]::GetFullPath($ProjectDir)
 $sourceRoots = New-Object System.Collections.Generic.List[string]
 $sourceRootNames = @(
     '.',
-    '..\XRENGINE',
+    '..\XREngine.Data',
+    '..\XREngine.Animation',
     '..\XREngine.Runtime.Core',
     '..\XREngine.Runtime.Rendering',
     '..\XREngine.Runtime.AnimationIntegration',

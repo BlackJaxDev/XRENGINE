@@ -1,26 +1,24 @@
-using System.Diagnostics.CodeAnalysis;
-using System.Runtime.CompilerServices;
 using XREngine.Rendering;
+using XREngine.Data;
 
 namespace XREngine.Core.Files;
 
-[SuppressMessage("Usage", "CA2255:The 'ModuleInitializer' attribute is only intended to be used in application code or advanced source generator scenarios", Justification = "Published cooked asset serializers must register when the runtime-rendering assembly loads.")]
-internal static class PublishedCookedAssetRegistryRegistration
+public static class RenderingPublishedCookedAssetRegistration
 {
-    [ModuleInitializer]
-    internal static void Register()
-    {
-        RuntimeCookedBinarySerializer.RegisterRuntimeFactory(typeof(XRMesh), static () => new XRMesh());
-        RuntimeCookedBinarySerializer.RegisterRuntimeFactory(typeof(XRTexture2D), static () => new XRTexture2D());
-
-        PublishedCookedAssetRegistry.Register(
-            typeof(XRMesh),
-            static asset => RuntimeCookedBinarySerializer.Serialize((XRMesh)asset),
-            static (payload, assetType) => RuntimeCookedBinarySerializer.Deserialize(assetType, payload));
-
-        PublishedCookedAssetRegistry.Register(
-            typeof(XRTexture2D),
-            static asset => RuntimeCookedBinarySerializer.Serialize((XRTexture2D)asset),
-            static (payload, assetType) => RuntimeCookedBinarySerializer.Deserialize(assetType, payload));
-    }
+    public static IDisposable Install()
+        => RegistrationLeaseGroup.Create(static leases =>
+        {
+            leases.Add(RuntimeCookedBinarySerializer.RegisterRuntimeFactory(typeof(XRMesh), static () => new XRMesh()));
+            leases.Add(RuntimeCookedBinarySerializer.RegisterRuntimeFactory(typeof(XRTexture2D), static () => new XRTexture2D()));
+            leases.Add(PublishedCookedAssetRegistry.Register(
+                typeof(XRMesh),
+                static asset => RuntimeCookedBinarySerializer.Serialize((XRMesh)asset),
+                static (payload, assetType) => RuntimeCookedBinarySerializer.Deserialize(assetType, payload),
+                "XREngine.Runtime.Rendering"));
+            leases.Add(PublishedCookedAssetRegistry.Register(
+                typeof(XRTexture2D),
+                static asset => RuntimeCookedBinarySerializer.Serialize((XRTexture2D)asset),
+                static (payload, assetType) => RuntimeCookedBinarySerializer.Deserialize(assetType, payload),
+                "XREngine.Runtime.Rendering"));
+        });
 }

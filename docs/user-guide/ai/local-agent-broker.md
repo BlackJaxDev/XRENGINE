@@ -89,9 +89,13 @@ broker processes. Click a task to open its prompt and watch response text update
 while it streams. Double-click the tray icon, or choose **Open prompt history**,
 to browse and search all retained prompts and responses.
 
-The viewer appends streamed response text as it arrives. It follows the response
-tail only while the view is already at the bottom; scrolling upward keeps that
-position stable so earlier prompt or response text remains readable.
+The viewer renders streamed responses as a Markdown preview. Headings, emphasis,
+links, lists, quotes, rules, inline code, and fenced code blocks are styled as
+they arrive. New text fades in, and the viewer scrolls smoothly only while it is
+already following the response tail. Scrolling upward keeps that position stable
+so earlier prompt or response text remains readable. Windows animation settings
+are respected; when animations are disabled, updates and tail movement are
+immediate.
 
 Each newly accepted prompt also shows a Windows notification containing its
 objective. Clicking the notification opens that prompt in the history viewer.

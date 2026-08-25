@@ -21,7 +21,9 @@ public static class RuntimeRenderingBootstrap
         lock (Sync)
         {
             EngineRuntimeRenderingHostServices renderingHost =
-                new(registerRendererBackends: true);
+                new(
+                    registerRendererBackends: true,
+                    installAssetServices: true);
             EngineRuntimeRenderingHostServices? previousRenderingHost =
                 _installedRenderingHost;
             _installedRenderingHost = renderingHost;
@@ -42,9 +44,13 @@ public static class RuntimeRenderingBootstrap
     /// Creates an isolated concrete rendering host for focused tests. Renderer modules are
     /// omitted by default so a test can install exactly the backend generation it exercises.
     /// Pass <paramref name="registerRendererBackends"/> only for tests that need the static
-    /// production composition. The returned host is also <see cref="IDisposable"/>.
+    /// production composition. Asset services remain the caller's composition-root
+    /// responsibility so creating a focused host cannot retain process-global registrations.
+    /// The returned host is also <see cref="IDisposable"/>.
     /// </summary>
     public static IRuntimeRenderingHostServices CreateEngineHostServices(
         bool registerRendererBackends = false)
-        => new EngineRuntimeRenderingHostServices(registerRendererBackends);
+        => new EngineRuntimeRenderingHostServices(
+            registerRendererBackends,
+            installAssetServices: false);
 }

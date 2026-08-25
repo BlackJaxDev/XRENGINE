@@ -1,5 +1,7 @@
 using System.Globalization;
 using System.Numerics;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.RegularExpressions;
 using Unity;
 using XREngine.Animation;
@@ -156,6 +158,8 @@ namespace XREngine.Animation.Importers
         private static bool ImportHumanoidRootMotionCurves => true;
 
         private sealed record ScalarCurve(
+            string SourceField,
+            string SourcePayload,
             string? Path,
             string Attribute,
             int? ClassId,
@@ -164,6 +168,8 @@ namespace XREngine.Animation.Importers
             int PostInfinity);
 
         private sealed record VectorCurve(
+            string SourceField,
+            string SourcePayload,
             string? Path,
             string Attribute,
             int? ClassId,
@@ -171,7 +177,15 @@ namespace XREngine.Animation.Importers
             int PreInfinity,
             int PostInfinity);
 
-        private sealed record CurveKey(float Time, float Value, float InSlope, float OutSlope, int CombinedTangentMode)
+        private sealed record CurveKey(
+            float Time,
+            float Value,
+            float InSlope,
+            float OutSlope,
+            int CombinedTangentMode,
+            int WeightedMode,
+            float InWeight,
+            float OutWeight)
         {
             /// <summary>
             /// Gets the left (in) tangent mode from the tangentMode bitmask.
@@ -215,11 +229,36 @@ namespace XREngine.Animation.Importers
         {
             ArgumentNullException.ThrowIfNull(filePath);
 
-            using var reader = new StreamReader(filePath);
+            byte[] sourceBytes = File.ReadAllBytes(filePath);
+            string sourceContentHash = Convert.ToHexString(SHA256.HashData(sourceBytes));
+            using var sourceStream = new MemoryStream(sourceBytes, writable: false);
+            using var reader = new StreamReader(sourceStream, detectEncodingFromByteOrderMarks: true);
             var yaml = new YamlStream();
             yaml.Load(reader);
 
             var clipMap = GetAnimationClipMapping(yaml);
+            int serializedVersion = GetScalarInt(clipMap, "serializedVersion") ?? 0;
+            bool recognizedSerializedVersion = IsRecognizedSerializedVersion(serializedVersion);
+            var manifestBuilder = new UnityAnimationImportManifestBuilder
+            {
+                SourceIdentity = new UnityAnimationSourceIdentity
+                {
+                    SerializedVersion = serializedVersion,
+                    SourceContentSha256 = sourceContentHash,
+                },
+            };
+            manifestBuilder.RecordSection(
+                EUnityAnimationDataDomain.SourceEncoding,
+                recognizedSerializedVersion
+                    ? EUnityAnimationCapabilityState.SupportedAndApplied
+                    : EUnityAnimationCapabilityState.Unsupported,
+                "AnimationClip.serializedVersion",
+                recognizedSerializedVersion
+                    ? $"Unity YAML AnimationClip serializedVersion {serializedVersion}."
+                    : serializedVersion > 0
+                        ? $"Unity YAML AnimationClip serializedVersion {serializedVersion} is not in the currently declared source-version contract."
+                        : "AnimationClip.serializedVersion is missing; the source schema cannot be identified safely.",
+                serializedYaml: string.Empty);
 
             string name = GetScalarString(clipMap, "m_Name") ?? Path.GetFileNameWithoutExtension(filePath);
             int sampleRate = GetScalarInt(clipMap, "m_SampleRate") ?? 30;
@@ -248,6 +287,21 @@ namespace XREngine.Animation.Importers
                     HeightFromFeet = (GetScalarIntOrNull(settingsMap, "m_HeightFromFeet") ?? 0) != 0,
                     Mirror = (GetScalarIntOrNull(settingsMap, "m_Mirror") ?? 0) != 0,
                 };
+            manifestBuilder.SourceIdentity.ImportSettingsSha256 = ComputeImportSettingsHash(rootMotionSettings);
+            if (settingsMap is not null)
+            {
+                bool settingsExecutable = AreRootMotionSettingsCurrentlyExecutable(rootMotionSettings!);
+                manifestBuilder.RecordSection(
+                    EUnityAnimationDataDomain.RootMotionSettings,
+                    settingsExecutable
+                        ? EUnityAnimationCapabilityState.SupportedAndApplied
+                        : EUnityAnimationCapabilityState.PreservedNotExecutable,
+                    "m_AnimationClipSettings",
+                    settingsExecutable
+                        ? "All authored root-motion settings are executable by the current native evaluator."
+                        : BuildUnsupportedRootMotionSettingsDiagnostic(rootMotionSettings!),
+                    settingsExecutable ? string.Empty : settingsMap.ToString());
+            }
 
             var curves = new List<ScalarCurve>();
             var vecCurves = new List<VectorCurve>();
@@ -257,16 +311,41 @@ namespace XREngine.Animation.Importers
             // Some exporters duplicate data between m_FloatCurves and m_EditorCurves.
             // Prefer m_FloatCurves when present; fall back to m_EditorCurves.
             bool addedAny = false;
-            addedAny |= TryReadCurveList(clipMap, "m_FloatCurves", curves, vecCurves);
+            addedAny |= TryReadCurveList(clipMap, "m_FloatCurves", curves, vecCurves, manifestBuilder);
             if (!addedAny)
-                TryReadCurveList(clipMap, "m_EditorCurves", curves, vecCurves);
+                TryReadCurveList(clipMap, "m_EditorCurves", curves, vecCurves, manifestBuilder);
+            else if (GetSequenceOrNull(clipMap, "m_EditorCurves") is { Children.Count: > 0 })
+                manifestBuilder.RecordNotice(
+                    EUnityAnimationDataDomain.SourceEncoding,
+                    "m_EditorCurves was present alongside authoritative m_FloatCurves and was treated as Unity's editor duplicate representation.");
 
             // Also attempt to read other curve lists (some exporters store transform curves there).
-            TryReadCurveList(clipMap, "m_PositionCurves", curves, vecCurves);
-            TryReadCurveList(clipMap, "m_ScaleCurves", curves, vecCurves);
-            TryReadCurveList(clipMap, "m_EulerCurves", curves, vecCurves);
-            TryReadCurveList(clipMap, "m_RotationCurves", curves, vecCurves);
+            TryReadCurveList(clipMap, "m_PositionCurves", curves, vecCurves, manifestBuilder);
+            TryReadCurveList(clipMap, "m_ScaleCurves", curves, vecCurves, manifestBuilder);
+            TryReadCurveList(clipMap, "m_EulerCurves", curves, vecCurves, manifestBuilder);
+            TryReadCurveList(clipMap, "m_RotationCurves", curves, vecCurves, manifestBuilder);
             ReadMaterialObjectReferenceBindings(clipMap, materialBindings, materialBindingDiagnostics);
+            RecordPreservedSequence(
+                clipMap,
+                "m_PPtrCurves",
+                EUnityAnimationDataDomain.ObjectReference,
+                "Object-reference key values are preserved but do not have a complete typed runtime resolver yet.",
+                manifestBuilder);
+            RecordPreservedSequence(
+                clipMap,
+                "m_Events",
+                EUnityAnimationDataDomain.AnimationEvent,
+                "Animation events are preserved but are not executed by the native evaluator yet.",
+                manifestBuilder);
+            RecordPreservedSequence(
+                clipMap,
+                "m_CompressedRotationCurves",
+                EUnityAnimationDataDomain.SourceEncoding,
+                "Compressed rotation curves are preserved but are not decoded yet.",
+                manifestBuilder);
+            RecordPreservedMuscleClipEncoding(clipMap, manifestBuilder);
+            RemoveUnsupportedCurveEncodings(curves, manifestBuilder);
+            RemoveUnsupportedCurveEncodings(vecCurves, manifestBuilder);
 
             float length = Math.Max(0.0f, stopTime - startTime);
             if (length <= 0.0f)
@@ -291,7 +370,23 @@ namespace XREngine.Animation.Importers
             foreach (var c in curves)
             {
                 string nodePath = NormalizePath(c.Path);
-                scalarByTarget[(nodePath, c.Attribute)] = c;
+                var key = (nodePath, c.Attribute);
+                if (scalarByTarget.TryAdd(key, c))
+                    continue;
+
+                manifestBuilder.RecordBinding(
+                    EUnityAnimationDataDomain.SourceEncoding,
+                    EUnityAnimationCapabilityState.Unsupported,
+                    c.SourceField,
+                    nodePath,
+                    c.Attribute,
+                    c.ClassId,
+                    runtimeTarget: string.Empty,
+                    "Multiple authoritative scalar curves target the same path and attribute.");
+                manifestBuilder.PreservePayload(
+                    EUnityAnimationDataDomain.SourceEncoding,
+                    $"{c.SourceField}:{nodePath}:{c.Attribute}",
+                    c.SourcePayload);
             }
 
             // Group transform component curves into Translation/Rotation/Scale
@@ -351,6 +446,11 @@ namespace XREngine.Animation.Importers
                 {
                     foreach (var component in group.Components.OrderBy(x => x.Key))
                     {
+                        RecordAppliedBinding(
+                            manifestBuilder,
+                            EUnityAnimationDataDomain.GenericTransform,
+                            component.Value,
+                            $"{nodePath}:Transform.Translation.{component.Key}");
                         var anim = BuildFloatAnim(component.Value, length, looped, sampleRate, GetPositionComponentScale(component.Key), startTime);
                         builder.AddTransformComponentAnimation(nodePath, group.Kind, component.Key, anim);
                     }
@@ -359,6 +459,11 @@ namespace XREngine.Animation.Importers
                 {
                     foreach (var component in group.Components.OrderBy(x => x.Key))
                     {
+                        RecordAppliedBinding(
+                            manifestBuilder,
+                            EUnityAnimationDataDomain.GenericTransform,
+                            component.Value,
+                            $"{nodePath}:Transform.Scale.{component.Key}");
                         var anim = BuildFloatAnim(component.Value, length, looped, sampleRate, 1.0f, startTime);
                         builder.AddTransformComponentAnimation(nodePath, group.Kind, component.Key, anim);
                     }
@@ -367,6 +472,11 @@ namespace XREngine.Animation.Importers
                 {
                     foreach (var component in group.Components.OrderBy(x => x.Key))
                     {
+                        RecordAppliedBinding(
+                            manifestBuilder,
+                            EUnityAnimationDataDomain.GenericTransform,
+                            component.Value,
+                            $"{nodePath}:Transform.Rotation.{component.Key}");
                         var anim = BuildFloatAnim(component.Value, length, looped, sampleRate, GetRotationComponentScale(component.Key), startTime);
                         builder.AddTransformComponentAnimation(nodePath, group.Kind, component.Key, anim);
                     }
@@ -381,6 +491,11 @@ namespace XREngine.Animation.Importers
                     foreach (var component in rootPosGroup.Components.OrderBy(x => x.Key))
                     {
                         char targetComponent = GetHumanoidRootMotionPositionTargetComponent(component.Key);
+                        RecordAppliedBinding(
+                            manifestBuilder,
+                            EUnityAnimationDataDomain.HumanoidBody,
+                            component.Value,
+                            $"HumanoidComponent.ImportedBody.Position.{targetComponent}");
                         var anim = BuildFloatAnim(component.Value, length, looped, sampleRate, GetHumanoidRootMotionPositionComponentScale(component.Key), startTime);
                         builder.AddRootMotionComponentAnimation(targetComponent, anim);
                     }
@@ -390,6 +505,11 @@ namespace XREngine.Animation.Importers
                 {
                     foreach (var component in rootRotGroup.Components.OrderBy(x => x.Key))
                     {
+                        RecordAppliedBinding(
+                            manifestBuilder,
+                            EUnityAnimationDataDomain.HumanoidBody,
+                            component.Value,
+                            $"HumanoidComponent.ImportedBody.Rotation.{component.Key}");
                         var anim = BuildFloatAnim(component.Value, length, looped, sampleRate, GetHumanoidBodyRotationComponentScale(component.Key), startTime);
                         builder.AddRootMotionRotationComponentAnimation(component.Key, anim);
                     }
@@ -435,6 +555,11 @@ namespace XREngine.Animation.Importers
                         foreach (var component in posGroup.Components.OrderBy(x => x.Key))
                         {
                             char targetComponent = GetHumanoidBodyPositionTargetComponent(component.Key);
+                            RecordAppliedBinding(
+                                manifestBuilder,
+                                EUnityAnimationDataDomain.HumanoidIK,
+                                component.Value,
+                                $"HumanoidIK.{goalName}.Position.{targetComponent}");
                             var anim = BuildFloatAnim(component.Value, length, looped, sampleRate, GetHumanoidBodyPositionComponentScale(component.Key), startTime);
                             builder.AddIKGoalPositionComponentAnimation(goalName, targetComponent, anim);
                         }
@@ -444,6 +569,11 @@ namespace XREngine.Animation.Importers
                     {
                         foreach (var component in rotGroup.Components.OrderBy(x => x.Key))
                         {
+                            RecordAppliedBinding(
+                                manifestBuilder,
+                                EUnityAnimationDataDomain.HumanoidIK,
+                                component.Value,
+                                $"HumanoidIK.{goalName}.Rotation.{component.Key}");
                             var anim = BuildFloatAnim(component.Value, length, looped, sampleRate, GetHumanoidBodyRotationComponentScale(component.Key), startTime);
                             builder.AddIKGoalRotationComponentAnimation(goalName, component.Key, anim);
                         }
@@ -477,6 +607,11 @@ namespace XREngine.Animation.Importers
                     c.ClassId,
                     out UnityMaterialAnimationBinding materialBinding))
                 {
+                    RecordAppliedBinding(
+                        manifestBuilder,
+                        EUnityAnimationDataDomain.GenericProperty,
+                        c,
+                        $"Material[{materialBinding.MaterialSlot}].{materialBinding.SemanticProperty}");
                     var anim = BuildFloatAnim(c, length, looped, sampleRate, valueScale: 1.0f, startTime);
                     builder.AddMaterialFloatAnimation(materialBinding, anim);
                     materialBindings.Add(materialBinding);
@@ -489,8 +624,20 @@ namespace XREngine.Animation.Importers
                 if (IsHumanoidMuscleCurve(c))
                 {
                     if (!TryMapUnityHumanoidAttributeToValue(c.Attribute, out EHumanoidValue humanoidValue))
+                    {
+                        RecordPreservedBinding(
+                            manifestBuilder,
+                            EUnityAnimationDataDomain.HumanoidMuscle,
+                            c,
+                            "The Unity humanoid muscle name is not in the declared native HumanTrait map.");
                         continue;
+                    }
 
+                    RecordAppliedBinding(
+                        manifestBuilder,
+                        EUnityAnimationDataDomain.HumanoidMuscle,
+                        c,
+                        $"HumanoidComponent.{humanoidValue}");
                     var anim = BuildFloatAnim(c, length, looped, sampleRate, valueScale: 1.0f, startTime);
                     builder.AddHumanoidValueAnimation(humanoidValue, anim);
                     humanoidMuscleCount++;
@@ -500,6 +647,11 @@ namespace XREngine.Animation.Importers
                 if (c.Attribute.StartsWith("blendShape.", StringComparison.Ordinal))
                 {
                     string blendshapeName = c.Attribute["blendShape.".Length..];
+                    RecordAppliedBinding(
+                        manifestBuilder,
+                        EUnityAnimationDataDomain.GenericProperty,
+                        c,
+                        $"{nodePath}:BlendShape.{blendshapeName}");
                     // Blendshape weights are typically 0..100; engine normalized is 0..1.
                     var anim = BuildFloatAnim(c, length, looped, sampleRate, valueScale: 1.0f / 100.0f, startTime);
                     builder.AddBlendshapeAnimation(nodePath, blendshapeName, anim);
@@ -510,9 +662,24 @@ namespace XREngine.Animation.Importers
                 // If attribute matches a known Transform property, map it; otherwise store it as a property name.
                 if (TryMapScalarTransformProperty(c.Attribute, out string transformPropertyName))
                 {
+                    RecordAppliedBinding(
+                        manifestBuilder,
+                        EUnityAnimationDataDomain.GenericProperty,
+                        c,
+                        $"{nodePath}:Transform.{transformPropertyName}");
                     var anim = BuildFloatAnim(c, length, looped, sampleRate, valueScale: 1.0f, startTime);
                     builder.AddTransformScalarPropertyAnimation(nodePath, transformPropertyName, anim);
+                    continue;
                 }
+
+                EUnityAnimationDataDomain unhandledDomain = string.IsNullOrWhiteSpace(c.Path) && c.ClassId is 95
+                    ? EUnityAnimationDataDomain.HumanoidMuscle
+                    : EUnityAnimationDataDomain.GenericProperty;
+                RecordPreservedBinding(
+                    manifestBuilder,
+                    unhandledDomain,
+                    c,
+                    "No typed native binding resolver accepted this serialized curve.");
             }
 
             // 2) Handle explicit vector curves (if any were present in the YAML)
@@ -531,8 +698,13 @@ namespace XREngine.Animation.Importers
                             float valueScale = kind == "translation"
                                 ? GetPositionComponentScale(component.Key)
                                 : 1.0f;
+                            RecordAppliedBinding(
+                                manifestBuilder,
+                                EUnityAnimationDataDomain.GenericTransform,
+                                vc,
+                                $"{nodePath}:Transform.{kind}.{component.Key}");
                             var anim = BuildFloatAnim(
-                                new ScalarCurve(vc.Path, $"{vc.Attribute}.{component.Key}", vc.ClassId, component.Value, vc.PreInfinity, vc.PostInfinity),
+                                new ScalarCurve(vc.SourceField, vc.SourcePayload, vc.Path, $"{vc.Attribute}.{component.Key}", vc.ClassId, component.Value, vc.PreInfinity, vc.PostInfinity),
                                 length,
                                 looped,
                                 sampleRate,
@@ -548,8 +720,13 @@ namespace XREngine.Animation.Importers
                             if (component.Key is not ('x' or 'y' or 'z' or 'w'))
                                 continue;
 
+                            RecordAppliedBinding(
+                                manifestBuilder,
+                                EUnityAnimationDataDomain.GenericTransform,
+                                vc,
+                                $"{nodePath}:Transform.Rotation.{component.Key}");
                             var anim = BuildFloatAnim(
-                                new ScalarCurve(vc.Path, $"{vc.Attribute}.{component.Key}", vc.ClassId, component.Value, vc.PreInfinity, vc.PostInfinity),
+                                new ScalarCurve(vc.SourceField, vc.SourcePayload, vc.Path, $"{vc.Attribute}.{component.Key}", vc.ClassId, component.Value, vc.PreInfinity, vc.PostInfinity),
                                 length,
                                 looped,
                                 sampleRate,
@@ -558,7 +735,14 @@ namespace XREngine.Animation.Importers
                             builder.AddTransformComponentAnimation(nodePath, kind, component.Key, anim);
                         }
                     }
+                    continue;
                 }
+
+                RecordPreservedBinding(
+                    manifestBuilder,
+                    EUnityAnimationDataDomain.GenericProperty,
+                    vc,
+                    "No typed native vector/quaternion binding resolver accepted this serialized curve.");
             }
 
             // ── Clip classification ──────────────────────────────────────────
@@ -570,6 +754,7 @@ namespace XREngine.Animation.Importers
                 : EAnimationClipKind.GenericTransform;
             clip.SourceMaterialBindings = [.. materialBindings.Distinct()];
             clip.MaterialBindingDiagnostics = [.. materialBindingDiagnostics];
+            clip.UnityImportManifest = manifestBuilder.Build();
 
             return clip;
         }
@@ -868,7 +1053,8 @@ namespace XREngine.Animation.Importers
             YamlMappingNode clipMap,
             string key,
             List<ScalarCurve> scalarCurves,
-            List<VectorCurve> vectorCurves)
+            List<VectorCurve> vectorCurves,
+            UnityAnimationImportManifestBuilder manifestBuilder)
         {
             var seq = GetSequenceOrNull(clipMap, key);
             if (seq is null || seq.Children.Count == 0)
@@ -878,18 +1064,27 @@ namespace XREngine.Animation.Importers
             foreach (var itemNode in seq.Children)
             {
                 if (itemNode is not YamlMappingNode item)
+                {
+                    manifestBuilder.RecordSection(
+                        EUnityAnimationDataDomain.SourceEncoding,
+                        EUnityAnimationCapabilityState.Unsupported,
+                        key,
+                        $"{key} contains a non-mapping curve entry.",
+                        itemNode.ToString());
                     continue;
+                }
 
                 string? path = GetScalarString(item, "path");
                 string? attribute = GetScalarString(item, "attribute");
                 int? classId = GetScalarInt(item, "classID");
+                string sourcePayload = item.ToString();
 
                 // Case 1: Float curve item (attribute + curve.m_Curve)
                 if (!string.IsNullOrEmpty(attribute))
                 {
                     if (TryParseCurveData(item, out var keys, out int scalarPreInfinity, out int scalarPostInfinity))
                     {
-                        scalarCurves.Add(new ScalarCurve(path, attribute!, classId, keys, scalarPreInfinity, scalarPostInfinity));
+                        scalarCurves.Add(new ScalarCurve(key, sourcePayload, path, attribute!, classId, keys, scalarPreInfinity, scalarPostInfinity));
                         addedAny = true;
                         continue;
                     }
@@ -899,9 +1094,17 @@ namespace XREngine.Animation.Importers
                 // These are not present in your current samples, but this keeps the importer usable for more exporter variants.
                 if (TryParseVectorCurveData(item, out var vecAttribute, out var components, out int vectorPreInfinity, out int vectorPostInfinity))
                 {
-                    vectorCurves.Add(new VectorCurve(path, vecAttribute, classId, components, vectorPreInfinity, vectorPostInfinity));
+                    vectorCurves.Add(new VectorCurve(key, sourcePayload, path, vecAttribute, classId, components, vectorPreInfinity, vectorPostInfinity));
                     addedAny = true;
+                    continue;
                 }
+
+                manifestBuilder.RecordSection(
+                    EUnityAnimationDataDomain.SourceEncoding,
+                    EUnityAnimationCapabilityState.Unsupported,
+                    key,
+                    $"Could not decode curve binding '{attribute ?? "(missing attribute)"}' in {key}.",
+                    sourcePayload);
             }
 
             return addedAny;
@@ -936,7 +1139,10 @@ namespace XREngine.Animation.Importers
                 float inSlope = GetScalarFloat(km, "inSlope") ?? 0.0f;
                 float outSlope = GetScalarFloat(km, "outSlope") ?? 0.0f;
                 int tangentMode = GetScalarInt(km, "tangentMode") ?? 0;
-                list.Add(new CurveKey(time, value, inSlope, outSlope, tangentMode));
+                int weightedMode = GetScalarInt(km, "weightedMode") ?? 0;
+                float inWeight = GetScalarFloat(km, "inWeight") ?? 0.0f;
+                float outWeight = GetScalarFloat(km, "outWeight") ?? 0.0f;
+                list.Add(new CurveKey(time, value, inSlope, outSlope, tangentMode, weightedMode, inWeight, outWeight));
             }
 
             keys = list;
@@ -984,7 +1190,10 @@ namespace XREngine.Animation.Importers
                     float inSlope = GetScalarFloat(km, "inSlope") ?? 0.0f;
                     float outSlope = GetScalarFloat(km, "outSlope") ?? 0.0f;
                     int tangentMode = GetScalarInt(km, "tangentMode") ?? 0;
-                    list.Add(new CurveKey(time, value, inSlope, outSlope, tangentMode));
+                    int weightedMode = GetScalarInt(km, "weightedMode") ?? 0;
+                    float inWeight = GetScalarFloat(km, "inWeight") ?? 0.0f;
+                    float outWeight = GetScalarFloat(km, "outWeight") ?? 0.0f;
+                    list.Add(new CurveKey(time, value, inSlope, outSlope, tangentMode, weightedMode, inWeight, outWeight));
                 }
 
                 comps[c] = list;
@@ -1304,6 +1513,267 @@ namespace XREngine.Animation.Importers
             return false;
         }
 
+        private static void RecordAppliedBinding(
+            UnityAnimationImportManifestBuilder manifestBuilder,
+            EUnityAnimationDataDomain domain,
+            ScalarCurve curve,
+            string runtimeTarget)
+            => manifestBuilder.RecordBinding(
+                domain,
+                EUnityAnimationCapabilityState.SupportedAndApplied,
+                curve.SourceField,
+                NormalizePath(curve.Path),
+                curve.Attribute,
+                curve.ClassId,
+                runtimeTarget);
+
+        private static void RecordAppliedBinding(
+            UnityAnimationImportManifestBuilder manifestBuilder,
+            EUnityAnimationDataDomain domain,
+            VectorCurve curve,
+            string runtimeTarget)
+            => manifestBuilder.RecordBinding(
+                domain,
+                EUnityAnimationCapabilityState.SupportedAndApplied,
+                curve.SourceField,
+                NormalizePath(curve.Path),
+                curve.Attribute,
+                curve.ClassId,
+                runtimeTarget);
+
+        private static void RecordPreservedBinding(
+            UnityAnimationImportManifestBuilder manifestBuilder,
+            EUnityAnimationDataDomain domain,
+            ScalarCurve curve,
+            string diagnostic)
+        {
+            manifestBuilder.RecordBinding(
+                domain,
+                EUnityAnimationCapabilityState.PreservedNotExecutable,
+                curve.SourceField,
+                NormalizePath(curve.Path),
+                curve.Attribute,
+                curve.ClassId,
+                runtimeTarget: string.Empty,
+                diagnostic);
+            manifestBuilder.PreservePayload(
+                domain,
+                $"{curve.SourceField}:{NormalizePath(curve.Path)}:{curve.Attribute}",
+                curve.SourcePayload);
+        }
+
+        private static void RecordPreservedBinding(
+            UnityAnimationImportManifestBuilder manifestBuilder,
+            EUnityAnimationDataDomain domain,
+            VectorCurve curve,
+            string diagnostic)
+        {
+            manifestBuilder.RecordBinding(
+                domain,
+                EUnityAnimationCapabilityState.PreservedNotExecutable,
+                curve.SourceField,
+                NormalizePath(curve.Path),
+                curve.Attribute,
+                curve.ClassId,
+                runtimeTarget: string.Empty,
+                diagnostic);
+            manifestBuilder.PreservePayload(
+                domain,
+                $"{curve.SourceField}:{NormalizePath(curve.Path)}:{curve.Attribute}",
+                curve.SourcePayload);
+        }
+
+        private static void RemoveUnsupportedCurveEncodings(
+            List<ScalarCurve> curves,
+            UnityAnimationImportManifestBuilder manifestBuilder)
+        {
+            for (int i = curves.Count - 1; i >= 0; i--)
+            {
+                ScalarCurve curve = curves[i];
+                if (!TryGetUnsupportedCurveEncoding(curve.Keys, curve.PreInfinity, curve.PostInfinity, out string diagnostic))
+                    continue;
+
+                RecordPreservedBinding(
+                    manifestBuilder,
+                    EUnityAnimationDataDomain.SourceEncoding,
+                    curve,
+                    diagnostic);
+                curves.RemoveAt(i);
+            }
+        }
+
+        private static void RemoveUnsupportedCurveEncodings(
+            List<VectorCurve> curves,
+            UnityAnimationImportManifestBuilder manifestBuilder)
+        {
+            for (int i = curves.Count - 1; i >= 0; i--)
+            {
+                VectorCurve curve = curves[i];
+                string diagnostic = string.Empty;
+                foreach (IReadOnlyList<CurveKey> keys in curve.ComponentKeys.Values)
+                {
+                    if (TryGetUnsupportedCurveEncoding(keys, curve.PreInfinity, curve.PostInfinity, out diagnostic))
+                        break;
+                }
+
+                if (string.IsNullOrEmpty(diagnostic))
+                    continue;
+
+                RecordPreservedBinding(
+                    manifestBuilder,
+                    EUnityAnimationDataDomain.SourceEncoding,
+                    curve,
+                    diagnostic);
+                curves.RemoveAt(i);
+            }
+        }
+
+        private static bool TryGetUnsupportedCurveEncoding(
+            IReadOnlyList<CurveKey> keys,
+            int preInfinity,
+            int postInfinity,
+            out string diagnostic)
+        {
+            if (!IsCurrentlyExecutableInfinityMode(preInfinity)
+                || !IsCurrentlyExecutableInfinityMode(postInfinity))
+            {
+                diagnostic = $"Unity infinity modes pre={preInfinity}, post={postInfinity} are not both implemented.";
+                return true;
+            }
+
+            for (int i = 0; i < keys.Count; i++)
+            {
+                CurveKey key = keys[i];
+                if (key.WeightedMode == 0)
+                    continue;
+
+                diagnostic =
+                    $"Weighted tangent key at t={key.Time.ToString("R", CultureInfo.InvariantCulture)} " +
+                    $"(mode={key.WeightedMode}, inWeight={key.InWeight.ToString("R", CultureInfo.InvariantCulture)}, " +
+                    $"outWeight={key.OutWeight.ToString("R", CultureInfo.InvariantCulture)}) is preserved but not executable.";
+                return true;
+            }
+
+            diagnostic = string.Empty;
+            return false;
+        }
+
+        private static bool IsCurrentlyExecutableInfinityMode(int mode)
+            => mode is 0 or 1 or 2 or 8;
+
+        private static void RecordPreservedSequence(
+            YamlMappingNode clipMap,
+            string key,
+            EUnityAnimationDataDomain domain,
+            string diagnostic,
+            UnityAnimationImportManifestBuilder manifestBuilder)
+        {
+            YamlSequenceNode? sequence = GetSequenceOrNull(clipMap, key);
+            if (sequence is null || sequence.Children.Count == 0)
+                return;
+
+            manifestBuilder.RecordSection(
+                domain,
+                EUnityAnimationCapabilityState.PreservedNotExecutable,
+                key,
+                diagnostic,
+                sequence.ToString());
+        }
+
+        private static void RecordPreservedMuscleClipEncoding(
+            YamlMappingNode clipMap,
+            UnityAnimationImportManifestBuilder manifestBuilder)
+        {
+            YamlMappingNode? muscleClip = GetMappingOrNull(clipMap, "m_MuscleClip");
+            YamlMappingNode? serializedClip = GetMappingOrNull(muscleClip, "m_Clip");
+            if (serializedClip is null)
+                return;
+
+            RecordPreservedEncodingNode(serializedClip, "m_StreamedClip", manifestBuilder);
+            RecordPreservedEncodingNode(serializedClip, "m_DenseClip", manifestBuilder);
+            RecordPreservedEncodingNode(serializedClip, "m_ConstantClip", manifestBuilder);
+        }
+
+        private static void RecordPreservedEncodingNode(
+            YamlMappingNode parent,
+            string key,
+            UnityAnimationImportManifestBuilder manifestBuilder)
+        {
+            if (!parent.Children.TryGetValue(new YamlScalarNode(key), out YamlNode? node)
+                || !ContainsSerializedSamples(node))
+                return;
+
+            manifestBuilder.RecordSection(
+                EUnityAnimationDataDomain.SourceEncoding,
+                EUnityAnimationCapabilityState.PreservedNotExecutable,
+                $"m_MuscleClip.m_Clip.{key}",
+                $"{key} data is preserved but is not decoded by the native evaluator yet.",
+                node.ToString());
+        }
+
+        private static bool ContainsSerializedSamples(YamlNode node)
+        {
+            if (node is YamlSequenceNode sequence)
+                return sequence.Children.Count > 0;
+
+            if (node is not YamlMappingNode mapping)
+                return node is YamlScalarNode scalar
+                    && !string.IsNullOrWhiteSpace(scalar.Value)
+                    && scalar.Value is not "0";
+
+            foreach ((YamlNode keyNode, YamlNode valueNode) in mapping.Children)
+            {
+                string key = (keyNode as YamlScalarNode)?.Value ?? string.Empty;
+                if (key.Contains("data", StringComparison.OrdinalIgnoreCase)
+                    || key.Contains("sample", StringComparison.OrdinalIgnoreCase)
+                    || key.Contains("curve", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (ContainsSerializedSamples(valueNode))
+                        return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static string ComputeImportSettingsHash(UnityHumanoidClipRootMotionSettings? settings)
+        {
+            string rootSettings = settings is null
+                ? "none"
+                : string.Create(
+                    CultureInfo.InvariantCulture,
+                    $"{settings.StartTime:R}|{settings.StopTime:R}|{settings.OrientationOffsetY:R}|{settings.Level:R}|{settings.CycleOffset:R}|{settings.LoopTime}|{settings.LoopPose}|{settings.BakeOrientationIntoPose}|{settings.BakePositionYIntoPose}|{settings.BakePositionXZIntoPose}|{settings.KeepOriginalOrientation}|{settings.KeepOriginalPositionY}|{settings.KeepOriginalPositionXZ}|{settings.HeightFromFeet}|{settings.Mirror}");
+            string canonical = string.Create(
+                CultureInfo.InvariantCulture,
+                $"manifest={UnityAnimationImportManifest.CurrentSchemaVersion}|coordinate={UnityAnimationCoordinateContract.CurrentContractId}|constrained={Constrained}|lerpConstrained={LerpConstrained}|humanoidIK={ImportHumanoidIKGoalCurves}|humanoidRoot={ImportHumanoidRootMotionCurves}|rootSettings={rootSettings}");
+            return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(canonical)));
+        }
+
+        private static bool IsRecognizedSerializedVersion(int serializedVersion)
+            => serializedVersion == 6;
+
+        private static bool AreRootMotionSettingsCurrentlyExecutable(UnityHumanoidClipRootMotionSettings settings)
+            => settings.OrientationOffsetY == 0.0f
+            && settings.Level == 0.0f
+            && settings.CycleOffset == 0.0f
+            && !settings.LoopPose
+            && !settings.KeepOriginalPositionY
+            && !settings.HeightFromFeet
+            && !settings.Mirror;
+
+        private static string BuildUnsupportedRootMotionSettingsDiagnostic(UnityHumanoidClipRootMotionSettings settings)
+        {
+            List<string> unsupported = [];
+            if (settings.OrientationOffsetY != 0.0f) unsupported.Add(nameof(settings.OrientationOffsetY));
+            if (settings.Level != 0.0f) unsupported.Add(nameof(settings.Level));
+            if (settings.CycleOffset != 0.0f) unsupported.Add(nameof(settings.CycleOffset));
+            if (settings.LoopPose) unsupported.Add(nameof(settings.LoopPose));
+            if (settings.KeepOriginalPositionY) unsupported.Add(nameof(settings.KeepOriginalPositionY));
+            if (settings.HeightFromFeet) unsupported.Add(nameof(settings.HeightFromFeet));
+            if (settings.Mirror) unsupported.Add(nameof(settings.Mirror));
+            return $"The current native root-motion evaluator does not completely execute: {string.Join(", ", unsupported)}.";
+        }
+
         private static bool TrySplitComponent(string attribute, string prefix, out char component)
         {
             component = '\0';
@@ -1352,8 +1822,8 @@ namespace XREngine.Animation.Importers
             return true;
         }
 
-        private static YamlMappingNode? GetMappingOrNull(YamlMappingNode map, string key)
-            => TryGetMapping(map, key, out var m) ? m : null;
+        private static YamlMappingNode? GetMappingOrNull(YamlMappingNode? map, string key)
+            => map is not null && TryGetMapping(map, key, out var m) ? m : null;
 
         private static bool TryGetSequence(YamlMappingNode map, string key, out YamlSequenceNode seq)
         {

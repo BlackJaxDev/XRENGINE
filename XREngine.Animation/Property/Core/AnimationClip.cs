@@ -302,6 +302,7 @@ namespace XREngine.Animation
                     SourceMaterialBindings = imported.SourceMaterialBindings;
                     MaterialBindingDiagnostics = imported.MaterialBindingDiagnostics;
                     UnityHumanoidRootMotionSettings = imported.UnityHumanoidRootMotionSettings;
+                    UnityImportManifest = imported.UnityImportManifest;
                     SampleRate = imported.SampleRate;
                     RootMember = imported.RootMember;
                     return true;

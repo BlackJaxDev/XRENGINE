@@ -26,9 +26,11 @@ namespace XREngine.Components.Animation
             public float OverallConfidence { get; init; }
 
             /// <summary>
-            /// Per-bone detail entries keyed by bone name.
+            /// Per-bone detail entries keyed by the resolved scene node. Node
+            /// identity avoids collisions between duplicate display names.
             /// </summary>
-            public IReadOnlyDictionary<string, BoneProfileEntry> BoneEntries { get; init; } = new Dictionary<string, BoneProfileEntry>();
+            public IReadOnlyDictionary<SceneNode, BoneProfileEntry> BoneEntries { get; init; } =
+                new Dictionary<SceneNode, BoneProfileEntry>(ReferenceEqualityComparer.Instance);
 
             /// <summary>
             /// Number of bones that were successfully profiled.
@@ -76,23 +78,27 @@ namespace XREngine.Components.Animation
         public static ProfileResult BuildProfile(HumanoidComponent component)
         {
             var settings = component.Settings;
-            var entries = new Dictionary<string, BoneProfileEntry>(StringComparer.OrdinalIgnoreCase);
+            var entries = new Dictionary<SceneNode, BoneProfileEntry>(ReferenceEqualityComparer.Instance);
+            var authoredMappings = new Dictionary<string, BoneAxisMapping>(
+                settings.BoneAxisMappings,
+                StringComparer.OrdinalIgnoreCase);
             GetBindBodyBasis(component, out Vector3 bodyLeft, out Vector3 bodyUp, out Vector3 bodyForward);
 
             // ── Spine chain ─────────────────────────────────────────────
-            ProfileBone(entries, settings, component.Hips, component.Spine, null);
-            ProfileBone(entries, settings, component.Spine, component.Chest, component.Hips);
+            ProfileBone(entries, authoredMappings, settings, component.Hips, component.Spine, null);
+            ProfileBone(entries, authoredMappings, settings, component.Spine, component.Chest, component.Hips);
             var chestChild = component.UpperChest.Node is not null ? component.UpperChest : component.Neck;
-            ProfileBone(entries, settings, component.Chest, chestChild, component.Spine);
+            ProfileBone(entries, authoredMappings, settings, component.Chest, chestChild, component.Spine);
             if (component.UpperChest.Node is not null)
-                ProfileBone(entries, settings, component.UpperChest, component.Neck, component.Chest);
-            ProfileBone(entries, settings, component.Neck, component.Head, component.Chest);
+                ProfileBone(entries, authoredMappings, settings, component.UpperChest, component.Neck, component.Chest);
+            ProfileBone(entries, authoredMappings, settings, component.Neck, component.Head, component.Chest);
+            ProfileBone(entries, authoredMappings, settings, component.Head, null, component.Neck.Node is not null ? component.Neck : component.Chest);
 
             // ── Left side ───────────────────────────────────────────────
-            ProfileLimbs(entries, settings, component.Left, component, isLeft: true, bodyLeft, bodyUp, bodyForward);
+            ProfileLimbs(entries, authoredMappings, settings, component.Left, component, isLeft: true, bodyLeft, bodyUp, bodyForward);
 
             // ── Right side ──────────────────────────────────────────────
-            ProfileLimbs(entries, settings, component.Right, component, isLeft: false, bodyLeft, bodyUp, bodyForward);
+            ProfileLimbs(entries, authoredMappings, settings, component.Right, component, isLeft: false, bodyLeft, bodyUp, bodyForward);
 
             // ── Aggregate confidence ────────────────────────────────────
             int totalBones = entries.Count;
@@ -124,7 +130,8 @@ namespace XREngine.Components.Animation
         }
 
         private static void ProfileLimbs(
-            Dictionary<string, BoneProfileEntry> entries,
+            Dictionary<SceneNode, BoneProfileEntry> entries,
+            IReadOnlyDictionary<string, BoneAxisMapping> authoredMappings,
             HumanoidSettings settings,
             HumanoidComponent.BodySide side,
             HumanoidComponent component,
@@ -139,30 +146,32 @@ namespace XREngine.Components.Animation
             Vector3 legRollAxisWorld = isLeft ? -bodyForward : bodyForward;
 
             // Arm chain
-            ProfileBone(entries, settings, side.Shoulder, side.Arm, null, armPitchAxisWorld, armRollAxisWorld);
-            ProfileBone(entries, settings, side.Arm, side.Elbow, side.Shoulder, armPitchAxisWorld, armRollAxisWorld);
-            ProfileBone(entries, settings, side.Elbow, side.Wrist, side.Arm, armPitchAxisWorld, armRollAxisWorld);
+            ProfileBone(entries, authoredMappings, settings, side.Shoulder, side.Arm, null, armPitchAxisWorld, armRollAxisWorld);
+            ProfileBone(entries, authoredMappings, settings, side.Arm, side.Elbow, side.Shoulder, armPitchAxisWorld, armRollAxisWorld);
+            ProfileBone(entries, authoredMappings, settings, side.Elbow, side.Wrist, side.Arm, armPitchAxisWorld, armRollAxisWorld);
+            ProfileBone(entries, authoredMappings, settings, side.Wrist, null, side.Elbow, armPitchAxisWorld, armRollAxisWorld);
 
             // Leg chain
-            ProfileBone(entries, settings, side.Leg, side.Knee, component.Hips, legPitchAxisWorld, legRollAxisWorld);
-            ProfileBone(entries, settings, side.Knee, side.Foot, side.Leg, legPitchAxisWorld, legRollAxisWorld);
-            ProfileBone(entries, settings, side.Foot, side.Toes, side.Knee, legPitchAxisWorld, legRollAxisWorld);
+            ProfileBone(entries, authoredMappings, settings, side.Leg, side.Knee, component.Hips, legPitchAxisWorld, legRollAxisWorld);
+            ProfileBone(entries, authoredMappings, settings, side.Knee, side.Foot, side.Leg, legPitchAxisWorld, legRollAxisWorld);
+            ProfileBone(entries, authoredMappings, settings, side.Foot, side.Toes, side.Knee, legPitchAxisWorld, legRollAxisWorld);
 
             // Fingers  
-            ProfileFingerChain(entries, settings, side.Hand.Index);
-            ProfileFingerChain(entries, settings, side.Hand.Middle);
-            ProfileFingerChain(entries, settings, side.Hand.Ring);
-            ProfileFingerChain(entries, settings, side.Hand.Pinky);
-            ProfileFingerChain(entries, settings, side.Hand.Thumb);
+            ProfileFingerChain(entries, authoredMappings, settings, side.Hand.Index);
+            ProfileFingerChain(entries, authoredMappings, settings, side.Hand.Middle);
+            ProfileFingerChain(entries, authoredMappings, settings, side.Hand.Ring);
+            ProfileFingerChain(entries, authoredMappings, settings, side.Hand.Pinky);
+            ProfileFingerChain(entries, authoredMappings, settings, side.Hand.Thumb);
         }
 
         private static void ProfileFingerChain(
-            Dictionary<string, BoneProfileEntry> entries,
+            Dictionary<SceneNode, BoneProfileEntry> entries,
+            IReadOnlyDictionary<string, BoneAxisMapping> authoredMappings,
             HumanoidSettings settings,
             HumanoidComponent.BodySide.Fingers.Finger finger)
         {
-            ProfileBone(entries, settings, finger.Proximal, finger.Intermediate, null);
-            ProfileBone(entries, settings, finger.Intermediate, finger.Distal, finger.Proximal);
+            ProfileBone(entries, authoredMappings, settings, finger.Proximal, finger.Intermediate, null);
+            ProfileBone(entries, authoredMappings, settings, finger.Intermediate, finger.Distal, finger.Proximal);
         }
 
         /// <summary>
@@ -170,32 +179,40 @@ namespace XREngine.Components.Animation
         /// and stores the result both in the entries dictionary and in <paramref name="settings"/>.
         /// </summary>
         private static void ProfileBone(
-            Dictionary<string, BoneProfileEntry> entries,
+            Dictionary<SceneNode, BoneProfileEntry> entries,
+            IReadOnlyDictionary<string, BoneAxisMapping> authoredMappings,
             HumanoidSettings settings,
             HumanoidComponent.BoneDef bone,
-            HumanoidComponent.BoneDef childBone,
+            HumanoidComponent.BoneDef? childBone,
             HumanoidComponent.BoneDef? parentBone,
             Vector3? preferredPitchAxisWorld = null,
             Vector3? preferredRollAxisWorld = null)
         {
-            if (bone.Node?.Name is null)
+            if (bone.Node is not SceneNode node || node.Name is not string boneName)
+                return;
+            if (entries.ContainsKey(node))
                 return;
 
-            string boneName = bone.Node.Name;
-
             // Don't override user-configured mappings — they have maximum confidence.
-            if (settings.TryGetBoneAxisMapping(boneName, out var existingMapping))
+            if (authoredMappings.TryGetValue(boneName, out var existingMapping))
             {
                 // Legacy migration: older mappings may have no sign fields (0).
                 // Preserve user-selected axes, but upgrade missing polarity signs automatically.
                 if (NeedsSignUpgrade(existingMapping))
                 {
-                    var (detected, _, _) = DetectAxisMapping(bone, childBone, parentBone, settings, preferredPitchAxisWorld, preferredRollAxisWorld);
+                    var (detected, _, _) = DetectAxisMapping(
+                        entries,
+                        authoredMappings,
+                        bone,
+                        childBone,
+                        parentBone,
+                        preferredPitchAxisWorld,
+                        preferredRollAxisWorld);
                     existingMapping = UpgradeMissingSigns(existingMapping, detected);
                     settings.BoneAxisMappings[boneName] = existingMapping;
                 }
 
-                entries[boneName] = new BoneProfileEntry
+                entries[node] = new BoneProfileEntry
                 {
                     BoneName = boneName,
                     Mapping = existingMapping,
@@ -206,10 +223,17 @@ namespace XREngine.Components.Animation
             }
 
             // Attempt geometry-based detection
-            var (mapping, confidence, reason) = DetectAxisMapping(bone, childBone, parentBone, settings, preferredPitchAxisWorld, preferredRollAxisWorld);
+            var (mapping, confidence, reason) = DetectAxisMapping(
+                entries,
+                authoredMappings,
+                bone,
+                childBone,
+                parentBone,
+                preferredPitchAxisWorld,
+                preferredRollAxisWorld);
 
             settings.BoneAxisMappings[boneName] = mapping;
-            entries[boneName] = new BoneProfileEntry
+            entries[node] = new BoneProfileEntry
             {
                 BoneName = boneName,
                 Mapping = mapping,
@@ -261,46 +285,61 @@ namespace XREngine.Components.Animation
         }
 
         private static (BoneAxisMapping mapping, float confidence, string reason) DetectAxisMapping(
+            IReadOnlyDictionary<SceneNode, BoneProfileEntry> entries,
+            IReadOnlyDictionary<string, BoneAxisMapping> authoredMappings,
             HumanoidComponent.BoneDef bone,
-            HumanoidComponent.BoneDef childBone,
+            HumanoidComponent.BoneDef? childBone,
             HumanoidComponent.BoneDef? parentBone,
-            HumanoidSettings settings,
             Vector3? preferredPitchAxisWorld,
             Vector3? preferredRollAxisWorld)
         {
-            if (childBone.Node is null)
+            Vector3 dirWorld;
+            string directionDescription;
+            if (childBone?.Node is not null)
             {
-                // No child bone — try to inherit from parent
-                return InheritOrDefault(bone, parentBone, settings, "no child bone");
+                dirWorld = childBone.WorldBindPose.Translation - bone.WorldBindPose.Translation;
+                directionDescription = "bone-to-child";
             }
-
-            Vector3 boneWorldPos = bone.WorldBindPose.Translation;
-            Vector3 childWorldPos = childBone.WorldBindPose.Translation;
-            Vector3 dirWorld = childWorldPos - boneWorldPos;
+            else if (parentBone?.Node is not null)
+            {
+                // Terminal semantic joints such as Head and Hand still need a
+                // validated local basis. Their incoming chain direction is a
+                // stable geometry signal even when they have no semantic child.
+                dirWorld = bone.WorldBindPose.Translation - parentBone.WorldBindPose.Translation;
+                directionDescription = "parent-to-terminal";
+            }
+            else
+                return InheritOrDefault(parentBone, entries, authoredMappings, "no child or parent direction");
 
             if (dirWorld.LengthSquared() < 1e-8f)
             {
-                // Near-zero distance — can't determine axis from geometry
-                return InheritOrDefault(bone, parentBone, settings, "near-zero bone→child distance");
+                return InheritOrDefault(parentBone, entries, authoredMappings, $"near-zero {directionDescription} distance");
             }
 
             dirWorld = Vector3.Normalize(dirWorld);
 
             if (!Matrix4x4.Invert(bone.WorldBindPose, out Matrix4x4 invBind))
             {
-                return InheritOrDefault(bone, parentBone, settings, "bind matrix not invertible");
+                return InheritOrDefault(parentBone, entries, authoredMappings, "bind matrix not invertible");
             }
 
             Vector3 dirLocal = Vector3.TransformNormal(dirWorld, invBind);
             float localLen = dirLocal.Length();
             if (localLen < 1e-8f)
             {
-                return InheritOrDefault(bone, parentBone, settings, "degenerate local direction");
+                return InheritOrDefault(parentBone, entries, authoredMappings, "degenerate local direction");
             }
             dirLocal /= localLen;
 
             if (preferredPitchAxisWorld.HasValue && preferredRollAxisWorld.HasValue)
-                return DetectLimbAxisMapping(bone, childBone, parentBone, settings, dirLocal, preferredPitchAxisWorld.Value, preferredRollAxisWorld.Value);
+                return DetectLimbAxisMapping(
+                    entries,
+                    authoredMappings,
+                    bone,
+                    parentBone,
+                    dirLocal,
+                    preferredPitchAxisWorld.Value,
+                    preferredRollAxisWorld.Value);
 
             float ax = MathF.Abs(dirLocal.X);
             float ay = MathF.Abs(dirLocal.Y);
@@ -334,8 +373,8 @@ namespace XREngine.Components.Animation
             // The two swing axes are perpendicular to that direction, so inferring their sign from
             // tiny off-axis bind-pose noise produces unstable left/right mirroring bugs. Reuse the
             // parent/avatar basis for swing polarity instead.
-            int frontBackSign = ResolveSwingAxisSign(parentBone, settings, frontBackAxis);
-            int leftRightSign = ResolveSwingAxisSign(parentBone, settings, leftRightAxis);
+            int frontBackSign = ResolveSwingAxisSign(parentBone, entries, authoredMappings, frontBackAxis);
+            int leftRightSign = ResolveSwingAxisSign(parentBone, entries, authoredMappings, leftRightAxis);
 
             // Compute confidence based on how clearly one axis dominates
             float confidence;
@@ -371,16 +410,16 @@ namespace XREngine.Components.Animation
         }
 
         private static (BoneAxisMapping mapping, float confidence, string reason) DetectLimbAxisMapping(
+            IReadOnlyDictionary<SceneNode, BoneProfileEntry> entries,
+            IReadOnlyDictionary<string, BoneAxisMapping> authoredMappings,
             HumanoidComponent.BoneDef bone,
-            HumanoidComponent.BoneDef childBone,
             HumanoidComponent.BoneDef? parentBone,
-            HumanoidSettings settings,
             Vector3 twistLocal,
             Vector3 preferredPitchAxisWorld,
             Vector3 preferredRollAxisWorld)
         {
             if (!Matrix4x4.Invert(bone.WorldBindPose, out Matrix4x4 invBind))
-                return InheritOrDefault(bone, parentBone, settings, "bind matrix not invertible");
+                return InheritOrDefault(parentBone, entries, authoredMappings, "bind matrix not invertible");
 
             Vector3 pitchLocal = Vector3.TransformNormal(preferredPitchAxisWorld, invBind);
             Vector3 rollLocal = Vector3.TransformNormal(preferredRollAxisWorld, invBind);
@@ -388,7 +427,7 @@ namespace XREngine.Components.Animation
             float pitchLen = pitchLocal.Length();
             float rollLen = rollLocal.Length();
             if (pitchLen < 1e-8f || rollLen < 1e-8f)
-                return InheritOrDefault(bone, parentBone, settings, "degenerate limb body-basis axis");
+                return InheritOrDefault(parentBone, entries, authoredMappings, "degenerate limb body-basis axis");
 
             pitchLocal /= pitchLen;
             rollLocal /= rollLen;
@@ -422,17 +461,23 @@ namespace XREngine.Components.Animation
         }
 
         private static (BoneAxisMapping mapping, float confidence, string reason) InheritOrDefault(
-            HumanoidComponent.BoneDef bone,
             HumanoidComponent.BoneDef? parentBone,
-            HumanoidSettings settings,
+            IReadOnlyDictionary<SceneNode, BoneProfileEntry> entries,
+            IReadOnlyDictionary<string, BoneAxisMapping> authoredMappings,
             string detailReason)
         {
-            // Attempt parent-bone inheritance
-            if (parentBone?.Node?.Name is string parentName &&
-                settings.TryGetBoneAxisMapping(parentName, out var parentMapping))
+            if (parentBone?.Node is SceneNode parentNode
+                && entries.TryGetValue(parentNode, out BoneProfileEntry parentEntry))
+            {
+                return (parentEntry.Mapping, 0.5f,
+                    $"Inherited from parent '{parentNode.Name}' ({detailReason})");
+            }
+
+            if (parentBone?.Node?.Name is string parentName
+                && authoredMappings.TryGetValue(parentName, out BoneAxisMapping parentMapping))
             {
                 return (parentMapping, 0.5f,
-                    $"Inherited from parent '{parentName}' ({detailReason})");
+                    $"Inherited from authored parent '{parentName}' ({detailReason})");
             }
 
             // Fall back to default
@@ -512,14 +557,17 @@ namespace XREngine.Components.Animation
 
         private static int ResolveSwingAxisSign(
             HumanoidComponent.BoneDef? parentBone,
-            HumanoidSettings settings,
+            IReadOnlyDictionary<SceneNode, BoneProfileEntry> entries,
+            IReadOnlyDictionary<string, BoneAxisMapping> authoredMappings,
             int axis)
         {
-            if (parentBone?.Node?.Name is string parentName &&
-                settings.TryGetBoneAxisMapping(parentName, out var parentMapping))
-            {
+            if (parentBone?.Node is SceneNode parentNode
+                && entries.TryGetValue(parentNode, out BoneProfileEntry parentEntry))
+                return SignForAxis(parentEntry.Mapping, axis);
+
+            if (parentBone?.Node?.Name is string parentName
+                && authoredMappings.TryGetValue(parentName, out BoneAxisMapping parentMapping))
                 return SignForAxis(parentMapping, axis);
-            }
 
             return 1;
         }

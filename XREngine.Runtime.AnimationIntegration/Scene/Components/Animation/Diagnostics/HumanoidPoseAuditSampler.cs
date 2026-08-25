@@ -68,7 +68,7 @@ namespace XREngine.Components.Animation
                 DurationSeconds = duration,
                 SampleRate = sampleRate,
                 SampleCount = sampleCount,
-                AvatarHumanScale = humanoid.Settings.UnityAvatarProfile?.HumanScale ?? 0.0f,
+                AvatarHumanScale = humanoid.AvatarDefinition.HumanScale,
                 EngineUnitsPerUnityMeter = humanoid.UnityProfileUnitsPerMeter,
             };
 

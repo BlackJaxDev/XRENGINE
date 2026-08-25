@@ -9,11 +9,12 @@ using XREngine.Scene.Prefabs;
 
 namespace XREngine
 {
-    public partial class AssetManager
+    public static class AssetManagerPrefabExtensions
     {
         #region Prefab helpers
 
-        public SceneNode? InstantiatePrefab(
+        public static SceneNode? InstantiatePrefab(
+            this AssetManager assets,
             XRPrefabSource prefab,
             XRWorldInstance? world = null,
             SceneNode? parent = null,
@@ -23,7 +24,7 @@ namespace XREngine
             return SceneNodePrefabUtility.Instantiate(prefab, world, parent, maintainWorldTransform);
         }
 
-        public SceneNode? InstantiatePrefab(Guid prefabAssetId,
+        public static SceneNode? InstantiatePrefab(this AssetManager assets, Guid prefabAssetId,
                                             XRWorldInstance? world = null,
                                             SceneNode? parent = null,
                                             bool maintainWorldTransform = false)
@@ -31,12 +32,12 @@ namespace XREngine
             if (prefabAssetId == Guid.Empty)
                 return null;
 
-            return GetAssetByID(prefabAssetId) is XRPrefabSource prefab
-                ? InstantiatePrefab(prefab, world, parent, maintainWorldTransform)
+            return assets.GetAssetByID(prefabAssetId) is XRPrefabSource prefab
+                ? assets.InstantiatePrefab(prefab, world, parent, maintainWorldTransform)
                 : null;
         }
 
-        public SceneNode? InstantiatePrefab(string assetPath,
+        public static SceneNode? InstantiatePrefab(this AssetManager assets, string assetPath,
                                             XRWorldInstance? world = null,
                                             SceneNode? parent = null,
                                             bool maintainWorldTransform = false)
@@ -44,13 +45,13 @@ namespace XREngine
             if (string.IsNullOrWhiteSpace(assetPath))
                 return null;
 
-            var prefab = Load<XRPrefabSource>(assetPath);
+            var prefab = assets.Load<XRPrefabSource>(assetPath);
             return prefab is null
                 ? null
-                : InstantiatePrefab(prefab, world, parent, maintainWorldTransform);
+                : assets.InstantiatePrefab(prefab, world, parent, maintainWorldTransform);
         }
 
-        public async Task<SceneNode?> InstantiatePrefabAsync(string assetPath,
+        public static async Task<SceneNode?> InstantiatePrefabAsync(this AssetManager assets, string assetPath,
                                                              XRWorldInstance? world = null,
                                                              SceneNode? parent = null,
                                                              bool maintainWorldTransform = false)
@@ -58,14 +59,14 @@ namespace XREngine
             if (string.IsNullOrWhiteSpace(assetPath))
                 return null;
 
-            var prefab = await LoadAsync<XRPrefabSource>(assetPath).ConfigureAwait(false);
+            var prefab = await assets.LoadAsync<XRPrefabSource>(assetPath).ConfigureAwait(false);
             return prefab is null
                 ? null
-                : InstantiatePrefab(prefab, world, parent, maintainWorldTransform);
+                : assets.InstantiatePrefab(prefab, world, parent, maintainWorldTransform);
         }
 
         [RequiresUnreferencedCode("Prefab override reflection requires runtime metadata.")]
-        public SceneNode? InstantiateVariant(XRPrefabVariant variant,
+        public static SceneNode? InstantiateVariant(this AssetManager assets, XRPrefabVariant variant,
                                              XRWorldInstance? world = null,
                                              SceneNode? parent = null,
                                              bool maintainWorldTransform = false)
@@ -75,7 +76,7 @@ namespace XREngine
         }
 
         [RequiresUnreferencedCode("Prefab override reflection requires runtime metadata.")]
-        public SceneNode? InstantiateVariant(Guid variantAssetId,
+        public static SceneNode? InstantiateVariant(this AssetManager assets, Guid variantAssetId,
                                              XRWorldInstance? world = null,
                                              SceneNode? parent = null,
                                              bool maintainWorldTransform = false)
@@ -83,13 +84,13 @@ namespace XREngine
             if (variantAssetId == Guid.Empty)
                 return null;
 
-            return GetAssetByID(variantAssetId) is XRPrefabVariant variant
-                ? InstantiateVariant(variant, world, parent, maintainWorldTransform)
+            return assets.GetAssetByID(variantAssetId) is XRPrefabVariant variant
+                ? assets.InstantiateVariant(variant, world, parent, maintainWorldTransform)
                 : null;
         }
 
         [RequiresUnreferencedCode("Prefab override reflection requires runtime metadata.")]
-        public SceneNode? InstantiateVariant(string assetPath,
+        public static SceneNode? InstantiateVariant(this AssetManager assets, string assetPath,
                                              XRWorldInstance? world = null,
                                              SceneNode? parent = null,
                                              bool maintainWorldTransform = false)
@@ -97,14 +98,15 @@ namespace XREngine
             if (string.IsNullOrWhiteSpace(assetPath))
                 return null;
 
-            var variant = Load<XRPrefabVariant>(assetPath);
+            var variant = assets.Load<XRPrefabVariant>(assetPath);
             return variant is null
                 ? null
-                : InstantiateVariant(variant, world, parent, maintainWorldTransform);
+                : assets.InstantiateVariant(variant, world, parent, maintainWorldTransform);
         }
 
         [RequiresUnreferencedCode("Prefab override reflection requires runtime metadata.")]
-        public async Task<SceneNode?> InstantiateVariantAsync(
+        public static async Task<SceneNode?> InstantiateVariantAsync(
+            this AssetManager assets,
             string assetPath,
             XRWorldInstance? world = null,
             SceneNode? parent = null,
@@ -113,10 +115,10 @@ namespace XREngine
             if (string.IsNullOrWhiteSpace(assetPath))
                 return null;
 
-            var variant = await LoadAsync<XRPrefabVariant>(assetPath).ConfigureAwait(false);
+            var variant = await assets.LoadAsync<XRPrefabVariant>(assetPath).ConfigureAwait(false);
             return variant is null
                 ? null
-                : InstantiateVariant(variant, world, parent, maintainWorldTransform);
+                : assets.InstantiateVariant(variant, world, parent, maintainWorldTransform);
         }
 
         #endregion

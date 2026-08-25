@@ -1,254 +1,202 @@
-using System;
-using System.Collections.Generic;
-using System.Diagnostics.CodeAnalysis;
-using System.IO;
-using System.Threading;
-using System.Threading.Tasks;
 using XREngine.Core.Engine;
 using XREngine.Core.Files;
-using XREngine.Data;
 using XREngine.Data.Core;
 using XREngine.Scene.Prefabs;
-using XRAsset = XREngine.Core.Files.XRAsset;
 
-namespace XREngine
+namespace XREngine;
+
+/// <summary>Prefab-specific staged loading layered over Runtime.Core's generic asset manager.</summary>
+public static class AssetManagerPrefabLoadingExtensions
 {
-    public partial class AssetManager
+    public static async Task<PrefabPartialLoadPlan?> PreparePrefabPartialLoadAsync(
+        this AssetManager assets,
+        string filePath,
+        JobPriority priority = JobPriority.Normal,
+        bool bypassJobThread = false)
     {
-        public Task<T?> LoadAsync<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] T>(string filePath, JobPriority priority = JobPriority.Normal, bool bypassJobThread = false) where T : XRAsset, new()
-            => LoadAsync<T>(filePath, progressCallback: null, priority, bypassJobThread);
+        ArgumentNullException.ThrowIfNull(assets);
 
-        public async Task<T?> LoadAsync<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] T>(string filePath, Action<AssetLoadProgress>? progressCallback, JobPriority priority = JobPriority.Normal, bool bypassJobThread = false) where T : XRAsset, new()
+        if (!File.Exists(filePath))
+            _ = await assets.LoadAsync<XRPrefabSource>(filePath, priority, bypassJobThread).ConfigureAwait(false);
+        if (!File.Exists(filePath))
+            return null;
+
+        return bypassJobThread
+            ? PreparePrefabPartialLoad(assets, filePath)
+            : await Task.Run(() => PreparePrefabPartialLoad(assets, filePath)).ConfigureAwait(false);
+    }
+
+    public static async Task<XRPrefabSource?> LoadPrefabWithReferencesAsync(
+        this AssetManager assets,
+        string filePath,
+        JobPriority priority = JobPriority.Normal,
+        bool bypassJobThread = false,
+        CancellationToken cancellationToken = default,
+        int maxConcurrentReferenceLoads = 4)
+    {
+        if (maxConcurrentReferenceLoads <= 0)
+            throw new ArgumentOutOfRangeException(nameof(maxConcurrentReferenceLoads));
+
+        cancellationToken.ThrowIfCancellationRequested();
+        PrefabPartialLoadPlan? plan = await assets.PreparePrefabPartialLoadAsync(
+            filePath,
+            priority,
+            bypassJobThread).ConfigureAwait(false);
+        if (plan is null)
+            return null;
+
+        IReadOnlyList<DeferredAssetLoadReference> references = plan.ExternalReferences;
+        if (references.Count > 0)
         {
-            if (!File.Exists(filePath) && ShouldAttemptRemoteAssetDownload())
-                await TryDownloadAssetFromRemoteAsync(filePath, typeof(T), priority, CancellationToken.None, additionalMetadata: null).ConfigureAwait(false);
-
-            return await RunOnJobThreadAsync(() =>
+            int nextReferenceIndex = -1;
+            int workerCount = Math.Min(maxConcurrentReferenceLoads, references.Count);
+            Task[] workers = new Task[workerCount];
+            for (int workerIndex = 0; workerIndex < workerCount; workerIndex++)
             {
-                using var progressScope = AssetLoadProgressContext.Begin(filePath, progressCallback);
-                return LoadCore<T>(filePath);
-            }, priority, bypassJobThread).ConfigureAwait(false);
-        }
-
-        public Task<XRAsset?> LoadAsync(string filePath, Type type, JobPriority priority = JobPriority.Normal, bool bypassJobThread = false)
-            => LoadAsync(filePath, type, progressCallback: null, priority, bypassJobThread);
-
-        public async Task<XRAsset?> LoadAsync(string filePath, Type type, Action<AssetLoadProgress>? progressCallback, JobPriority priority = JobPriority.Normal, bool bypassJobThread = false)
-        {
-            if (!File.Exists(filePath) && ShouldAttemptRemoteAssetDownload())
-                await TryDownloadAssetFromRemoteAsync(filePath, type, priority, CancellationToken.None, additionalMetadata: null).ConfigureAwait(false);
-
-            return await RunOnJobThreadAsync(() =>
-            {
-                using var progressScope = AssetLoadProgressContext.Begin(filePath, progressCallback);
-                return LoadCore(filePath, type);
-            }, priority, bypassJobThread).ConfigureAwait(false);
-        }
-
-        public async Task<PrefabPartialLoadPlan?> PreparePrefabPartialLoadAsync(string filePath, JobPriority priority = JobPriority.Normal, bool bypassJobThread = false)
-        {
-            if (!File.Exists(filePath) && ShouldAttemptRemoteAssetDownload())
-                await TryDownloadAssetFromRemoteAsync(filePath, typeof(XRPrefabSource), priority, CancellationToken.None, additionalMetadata: null).ConfigureAwait(false);
-
-            return await RunOnJobThreadAsync(() => PreparePrefabPartialLoad(filePath), priority, bypassJobThread).ConfigureAwait(false);
-        }
-
-        /// <summary>
-        /// Loads a prefab after hydrating every external asset reference
-        /// discovered by the lightweight partial-prefab pass.
-        /// </summary>
-        /// <remarks>
-        /// Loading the root YAML first would bind compact <c>{ID}</c> references
-        /// to empty placeholders. Preloading the referenced assets and then
-        /// parsing the root makes the final hierarchy bind the populated cache
-        /// instances instead.
-        /// </remarks>
-        public async Task<XRPrefabSource?> LoadPrefabWithReferencesAsync(
-            string filePath,
-            JobPriority priority = JobPriority.Normal,
-            bool bypassJobThread = false,
-            CancellationToken cancellationToken = default,
-            int maxConcurrentReferenceLoads = 4)
-        {
-            if (maxConcurrentReferenceLoads <= 0)
-                throw new ArgumentOutOfRangeException(
-                    nameof(maxConcurrentReferenceLoads),
-                    maxConcurrentReferenceLoads,
-                    "Reference-load concurrency must be positive.");
-
-            cancellationToken.ThrowIfCancellationRequested();
-            PrefabPartialLoadPlan? plan = await PreparePrefabPartialLoadAsync(
-                filePath,
-                priority,
-                bypassJobThread).ConfigureAwait(false);
-            if (plan is null)
-                return null;
-
-            IReadOnlyList<DeferredAssetLoadReference> references = plan.ExternalReferences;
-            if (references.Count > 0)
-            {
-                int nextReferenceIndex = -1;
-                int workerCount = Math.Min(maxConcurrentReferenceLoads, references.Count);
-                Task[] workers = new Task[workerCount];
-                for (int workerIndex = 0; workerIndex < workerCount; workerIndex++)
+                workers[workerIndex] = Task.Run(async () =>
                 {
-                    workers[workerIndex] = Task.Run(async () =>
+                    while (true)
                     {
-                        while (true)
+                        cancellationToken.ThrowIfCancellationRequested();
+                        int referenceIndex = Interlocked.Increment(ref nextReferenceIndex);
+                        if (referenceIndex >= references.Count)
+                            return;
+
+                        DeferredAssetLoadReference reference = references[referenceIndex];
+                        if (assets.TryGetAssetByPath(reference.AssetPath, out _))
+                            continue;
+
+                        XRAsset? loaded = await assets.LoadAsync(
+                            reference.AssetPath,
+                            reference.AssetType,
+                            priority,
+                            bypassJobThread: true).ConfigureAwait(false);
+                        if (loaded is null)
                         {
-                            cancellationToken.ThrowIfCancellationRequested();
-                            int referenceIndex = Interlocked.Increment(ref nextReferenceIndex);
-                            if (referenceIndex >= references.Count)
-                                return;
-
-                            DeferredAssetLoadReference reference = references[referenceIndex];
-                            if (TryGetAssetByPath(reference.AssetPath, out _))
-                                continue;
-
-                            XRAsset? loaded = await LoadAsync(
-                                reference.AssetPath,
-                                reference.AssetType,
-                                priority,
-                                bypassJobThread: true).ConfigureAwait(false);
-                            if (loaded is null)
-                            {
-                                throw new InvalidDataException(
-                                    $"Referenced asset '{reference.AssetPath}' could not be loaded as '{reference.AssetType.FullName}'.");
-                            }
+                            throw new InvalidDataException(
+                                $"Referenced asset '{reference.AssetPath}' could not be loaded as '{reference.AssetType.FullName}'.");
                         }
-                    }, cancellationToken);
-                }
-
-                await Task.WhenAll(workers).ConfigureAwait(false);
+                    }
+                }, cancellationToken);
             }
 
-            cancellationToken.ThrowIfCancellationRequested();
-            return await LoadAsync<XRPrefabSource>(
-                filePath,
-                priority,
-                bypassJobThread).ConfigureAwait(false);
+            await Task.WhenAll(workers).ConfigureAwait(false);
         }
 
-        public XRAsset? Load(string filePath, Type type, JobPriority priority = JobPriority.Normal, bool bypassJobThread = false)
-        {
-            if (!File.Exists(filePath) && ShouldAttemptRemoteAssetDownload())
-                TryDownloadAssetFromRemoteAsync(filePath, type, priority, CancellationToken.None, additionalMetadata: null).GetAwaiter().GetResult();
+        cancellationToken.ThrowIfCancellationRequested();
+        return await assets.LoadAsync<XRPrefabSource>(filePath, priority, bypassJobThread).ConfigureAwait(false);
+    }
 
-            return RunOnJobThreadBlocking(() => LoadCore(filePath, type), priority, bypassJobThread);
-        }
-
-        public T? Load<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] T>(string filePath, JobPriority priority = JobPriority.Normal, bool bypassJobThread = false) where T : XRAsset, new()
-        {
-            if (!File.Exists(filePath) && ShouldAttemptRemoteAssetDownload())
-                TryDownloadAssetFromRemoteAsync(filePath, typeof(T), priority, CancellationToken.None, additionalMetadata: null).GetAwaiter().GetResult();
-
-            return RunOnJobThreadBlocking(() => LoadCore<T>(filePath), priority, bypassJobThread);
-        }
-
-        public T LoadEngineAsset<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] T>(params string[] relativePathFolders) where T : XRAsset, new()
-            => LoadEngineAsset<T>(JobPriority.Normal, relativePathFolders);
-
-        public T LoadEngineAsset<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] T>(JobPriority priority, bool bypassJobThread, params string[] relativePathFolders) where T : XRAsset, new()
-        {
-            string path = ResolveEngineAssetPath(relativePathFolders);
-            return Load<T>(path, priority, bypassJobThread) ?? throw new FileNotFoundException($"Unable to find engine file at {path}");
-        }
-
-        public T LoadEngineAsset<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] T>(JobPriority priority, params string[] relativePathFolders) where T : XRAsset, new()
-        {
-            string path = ResolveEngineAssetPath(relativePathFolders);
-            return Load<T>(path, priority) ?? throw new FileNotFoundException($"Unable to find engine file at {path}");
-        }
-
-        public Task<T> LoadEngineAssetAsync<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] T>(params string[] relativePathFolders) where T : XRAsset, new()
-            => LoadEngineAssetAsync<T>(JobPriority.Normal, relativePathFolders);
-
-        public async Task<T> LoadEngineAssetAsync<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] T>(JobPriority priority, bool bypassJobThread, params string[] relativePathFolders) where T : XRAsset, new()
-        {
-            string path = ResolveEngineAssetPath(relativePathFolders);
-            return await LoadAsync<T>(path, priority, bypassJobThread) ?? throw new FileNotFoundException($"Unable to find engine file at {path}");
-        }
-
-        public async Task<T> LoadEngineAssetAsync<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] T>(JobPriority priority, params string[] relativePathFolders) where T : XRAsset, new()
-        {
-            string path = ResolveEngineAssetPath(relativePathFolders);
-            return await LoadAsync<T>(path, priority) ?? throw new FileNotFoundException($"Unable to find engine file at {path}");
-        }
-
-        public T LoadEngineAssetRemote<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] T>(RemoteAssetLoadMode mode = RemoteAssetLoadMode.RequestFromRemote, JobPriority priority = JobPriority.Normal, IReadOnlyDictionary<string, string>? metadata = null, params string[] relativePathFolders) where T : XRAsset, new()
-            => LoadEngineAssetRemoteAsync<T>(mode, priority, metadata, relativePathFolders).GetAwaiter().GetResult();
-
-        public T? LoadGameAssetRemote<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] T>(RemoteAssetLoadMode mode = RemoteAssetLoadMode.RequestFromRemote, JobPriority priority = JobPriority.Normal, IReadOnlyDictionary<string, string>? metadata = null, params string[] relativePathFolders) where T : XRAsset, new()
-            => LoadGameAssetRemoteAsync<T>(mode, priority, metadata, relativePathFolders).GetAwaiter().GetResult();
-
-        public async Task<T> LoadEngineAssetRemoteAsync<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] T>(RemoteAssetLoadMode mode = RemoteAssetLoadMode.RequestFromRemote, JobPriority priority = JobPriority.Normal, IReadOnlyDictionary<string, string>? metadata = null, params string[] relativePathFolders) where T : XRAsset, new()
-        {
-            string path = ResolveEngineAssetPath(relativePathFolders);
-            return await LoadAssetRemoteAsync<T>(path, mode, priority, CancellationToken.None, metadata).ConfigureAwait(false)
-                ?? throw new FileNotFoundException($"Unable to load engine file at {path} via remote path.");
-        }
-
-        public T? LoadGameAsset<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] T>(params string[] relativePathFolders) where T : XRAsset, new()
-        {
-            string path = ResolveGameAssetPath(relativePathFolders);
-            return Load<T>(path);
-        }
-
-        public T? LoadGameAsset<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] T>(JobPriority priority, bool bypassJobThread, params string[] relativePathFolders) where T : XRAsset, new()
-        {
-            string path = ResolveGameAssetPath(relativePathFolders);
-            return Load<T>(path, priority, bypassJobThread);
-        }
-
-        public async Task<T?> LoadGameAssetAsync<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] T>(params string[] relativePathFolders) where T : XRAsset, new()
-        {
-            string path = ResolveGameAssetPath(relativePathFolders);
-            return await LoadAsync<T>(path);
-        }
-
-        public async Task<T?> LoadGameAssetRemoteAsync<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] T>(RemoteAssetLoadMode mode = RemoteAssetLoadMode.RequestFromRemote, JobPriority priority = JobPriority.Normal, IReadOnlyDictionary<string, string>? metadata = null, params string[] relativePathFolders) where T : XRAsset, new()
-        {
-            string path = ResolveGameAssetPath(relativePathFolders);
-            return await LoadAssetRemoteAsync<T>(path, mode, priority, CancellationToken.None, metadata).ConfigureAwait(false);
-        }
-
-        public T? LoadByIdRemote<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] T>(Guid assetId, RemoteAssetLoadMode mode = RemoteAssetLoadMode.RequestFromRemote, JobPriority priority = JobPriority.Normal, IReadOnlyDictionary<string, string>? metadata = null) where T : XRAsset, new()
-            => LoadByIdRemoteAsync<T>(assetId, mode, priority, metadata, CancellationToken.None).GetAwaiter().GetResult();
-
-        public async Task<T?> LoadByIdRemoteAsync<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] T>(Guid assetId, RemoteAssetLoadMode mode = RemoteAssetLoadMode.RequestFromRemote, JobPriority priority = JobPriority.Normal, IReadOnlyDictionary<string, string>? metadata = null, CancellationToken cancellationToken = default) where T : XRAsset, new()
-        {
-            if (assetId == Guid.Empty)
-                return null;
-
-            if (TryGetAssetByID(assetId, out var existing) && existing is T typed)
-                return typed;
-
-            if (TryResolveAssetPathById(assetId, out var localPath) && File.Exists(localPath))
-                return await LoadAsync<T>(localPath, priority).ConfigureAwait(false);
-
-            if (mode == RemoteAssetLoadMode.None)
-                return null;
-
-            bool downloaded = await TryDownloadAssetFromRemoteByIdAsync(assetId, typeof(T), priority, cancellationToken, metadata).ConfigureAwait(false);
-            if (!downloaded)
-                return null;
-
-            if (TryResolveAssetPathById(assetId, out var downloadedPath) && File.Exists(downloadedPath))
-                return await LoadAsync<T>(downloadedPath, priority).ConfigureAwait(false);
-
+    private static PrefabPartialLoadPlan? PreparePrefabPartialLoad(AssetManager assets, string filePath)
+    {
+        AssetManager.EnsureYamlAssetRuntimeSupported(filePath);
+        filePath = Path.GetFullPath(filePath);
+        if (!File.Exists(filePath))
             return null;
-        }
 
-        public T LoadEngineAssetImmediate<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] T>(params string[] relativePathFolders) where T : XRAsset, new()
+        PrefabPartialLoadPlan? plan = DeserializePartialPrefab(filePath);
+        if (plan is null || !EnsureMissingOwnedOutputMetadata(assets, plan.PartialPrefab))
+            return plan;
+
+        return DeserializePartialPrefab(filePath);
+    }
+
+    private static PrefabPartialLoadPlan? DeserializePartialPrefab(string filePath)
+    {
+        using FileStream stream = new(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+        using StreamReader reader = new(stream);
+        using IDisposable pathScope = AssetDeserializationContext.Push(filePath);
+        using IDisposable cacheSuppression = XRObjectBase.SuppressObjectCacheRegistration();
+        using DeferredAssetReferenceContext.Collector collector = new();
+        YamlDefaultTypeContext.ResetReadState();
+        YamlTransformReferenceContext.ResetReadState();
+
+        XRPrefabSource? partialPrefab = AssetManager.Deserializer.Deserialize<XRPrefabSource>(reader);
+        if (partialPrefab is null)
+            return null;
+
+        partialPrefab.FilePath = filePath;
+        partialPrefab.SourceAsset = partialPrefab;
+        return new PrefabPartialLoadPlan(partialPrefab, collector.References);
+    }
+
+    private static bool EnsureMissingOwnedOutputMetadata(AssetManager assets, XRPrefabSource partialPrefab)
+    {
+        if (partialPrefab.UnityImportManifest?.OwnedOutputPaths is not { Count: > 0 } ownedOutputPaths)
+            return false;
+
+        bool createdMetadata = false;
+        foreach (string serializedPath in ownedOutputPaths)
         {
-            string path = ResolveEngineAssetPath(relativePathFolders);
-            return Load<T>(path, JobPriority.Normal, bypassJobThread: true) ?? throw new FileNotFoundException($"Unable to find engine file at {path}");
+            if (!TryResolveOwnedOutputPath(assets, serializedPath, out string? assetPath)
+                || assetPath is null
+                || !string.Equals(Path.GetExtension(assetPath), $".{AssetManager.AssetExtension}", StringComparison.OrdinalIgnoreCase)
+                || !assets.TryGetMetadataPath(assetPath, out string metadataPath, out _)
+                || File.Exists(metadataPath))
+            {
+                continue;
+            }
+
+            assets.EnsureMetadataForAssetPath(assetPath, isDirectory: false);
+            createdMetadata |= File.Exists(metadataPath);
         }
 
-        public T? LoadImmediate<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] T>(string filePath) where T : XRAsset, new()
-            => Load<T>(filePath, JobPriority.Normal, bypassJobThread: true);
+        return createdMetadata;
+    }
 
-        public XRAsset? LoadImmediate(string filePath, Type type)
-            => Load(filePath, type, JobPriority.Normal, bypassJobThread: true);
+    private static bool TryResolveOwnedOutputPath(
+        AssetManager assets,
+        string serializedPath,
+        out string? assetPath)
+    {
+        assetPath = null;
+        if (string.IsNullOrWhiteSpace(serializedPath) || string.IsNullOrWhiteSpace(assets.GameAssetsPath))
+            return false;
+
+        try
+        {
+            if (!Path.IsPathRooted(serializedPath))
+            {
+                string reference = string.Concat(AssetReferencePath.GamePrefix, serializedPath.Replace('\\', '/'));
+                return AssetReferencePath.TryResolve(
+                    reference,
+                    assets.GameAssetsPath,
+                    assets.EngineAssetsPath,
+                    out assetPath)
+                    && File.Exists(assetPath);
+            }
+
+            string candidate = Path.GetFullPath(serializedPath);
+            if (File.Exists(candidate)
+                && AssetReferencePath.TryCreate(
+                    assets.GameAssetsPath,
+                    candidate,
+                    AssetReferencePath.GamePrefix,
+                    out _))
+            {
+                assetPath = candidate;
+                return true;
+            }
+
+            string normalizedPath = serializedPath.Replace('\\', '/');
+            int assetsSegment = normalizedPath.LastIndexOf("/Assets/", StringComparison.OrdinalIgnoreCase);
+            if (assetsSegment < 0)
+                return false;
+
+            string rebasedReference = string.Concat(
+                AssetReferencePath.GamePrefix,
+                normalizedPath[(assetsSegment + "/Assets/".Length)..]);
+            return AssetReferencePath.TryResolve(
+                rebasedReference,
+                assets.GameAssetsPath,
+                assets.EngineAssetsPath,
+                out assetPath)
+                && File.Exists(assetPath);
+        }
+        catch
+        {
+            assetPath = null;
+            return false;
+        }
     }
 }
