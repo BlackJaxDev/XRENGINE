@@ -41,4 +41,8 @@
     <ProjectReference Include="..\XREngine.Data\XREngine.Data.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="XREngine.UnitTests" />
+  </ItemGroup>
+
 </Project>

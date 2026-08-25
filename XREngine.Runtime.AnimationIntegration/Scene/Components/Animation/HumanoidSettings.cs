@@ -81,8 +81,9 @@ namespace XREngine.Components.Animation
             set => SetField(ref _rightEyeInOutRange, value);
         }
 
-        // Humanoid muscle curves are normalized in [-1, 1].
-        // We first scale the muscle values by this multiplier, then map them into per-channel rotation ranges.
+        // Humanoid muscle curves use a nominal [-1, 1] authoring range but imported
+        // clips can overshoot it. Scale the authored value without clamping so calibrated
+        // avatar responses can extrapolate in the same direction as Unity.
         private float _muscleInputScale = 1.0f;
         public float MuscleInputScale
         {
@@ -664,6 +665,40 @@ namespace XREngine.Components.Animation
             set => SetField(ref _isIKCalibrated, value);
         }
 
+        private EHumanoidContactCompensationMode _contactCompensationMode = EHumanoidContactCompensationMode.Disabled;
+        /// <summary>
+        /// Optional post-pose contact correction. Disabled preserves ordinary Unity clip playback.
+        /// </summary>
+        public EHumanoidContactCompensationMode ContactCompensationMode
+        {
+            get => _contactCompensationMode;
+            set => SetField(ref _contactCompensationMode, value);
+        }
+
+        private float _contactPlaneHeight;
+        /// <summary>World-space Y coordinate of the diagnostic contact plane.</summary>
+        public float ContactPlaneHeight
+        {
+            get => _contactPlaneHeight;
+            set => SetField(ref _contactPlaneHeight, float.IsFinite(value) ? value : 0.0f);
+        }
+
+        private float _contactClearance;
+        /// <summary>Minimum offset maintained above the contact plane, in engine world units.</summary>
+        public float ContactClearance
+        {
+            get => _contactClearance;
+            set => SetField(ref _contactClearance, float.IsFinite(value) ? MathF.Max(0.0f, value) : 0.0f);
+        }
+
+        private float _contactCompensationWeight = 1.0f;
+        /// <summary>Blend weight for the post-pose contact offset.</summary>
+        public float ContactCompensationWeight
+        {
+            get => _contactCompensationWeight;
+            set => SetField(ref _contactCompensationWeight, float.IsFinite(value) ? Math.Clamp(value, 0.0f, 1.0f) : 1.0f);
+        }
+
         // ── Profile confidence ──────────────────────────────────────────
         private float _profileConfidence;
         /// <summary>
@@ -689,75 +724,4 @@ namespace XREngine.Components.Animation
         }
     }
 
-    /// <summary>
-    /// Controls how animation-driven IK goal channels are applied at runtime.
-    /// </summary>
-    public enum EHumanoidIKGoalPolicy
-    {
-        /// <summary>
-        /// IK goal channels from animation clips are ignored entirely.
-        /// </summary>
-        Ignore = 0,
-
-        /// <summary>
-        /// IK goal channels are applied only when the avatar has valid calibration data.
-        /// This is the safe default: prevents broken IK when avatar-space conversion is unavailable.
-        /// </summary>
-        ApplyIfCalibrated,
-
-        /// <summary>
-        /// IK goal channels are always applied regardless of calibration state.
-        /// Use only when you know the IK targets are in the correct space.
-        /// </summary>
-        AlwaysApply,
-    }
-
-    /// <summary>
-    /// Defines how a bone's local axes map to humanoid twist/front-back/left-right rotation axes.
-    /// </summary>
-    public struct BoneAxisMapping
-    {
-        /// <summary>
-        /// Which Euler component to use for twist (yaw). 0=X, 1=Y, 2=Z.
-        /// </summary>
-        public int TwistAxis { get; set; }
-
-        /// <summary>
-        /// Sign for twist axis contribution. Use +1 or -1.
-        /// </summary>
-        public int TwistSign { get; set; }
-
-        /// <summary>
-        /// Which Euler component to use for front-back (pitch). 0=X, 1=Y, 2=Z.
-        /// </summary>
-        public int FrontBackAxis { get; set; }
-
-        /// <summary>
-        /// Sign for front-back axis contribution. Use +1 or -1.
-        /// </summary>
-        public int FrontBackSign { get; set; }
-
-        /// <summary>
-        /// Which Euler component to use for left-right (roll). 0=X, 1=Y, 2=Z.
-        /// </summary>
-        public int LeftRightAxis { get; set; }
-
-        /// <summary>
-        /// Sign for left-right axis contribution. Use +1 or -1.
-        /// </summary>
-        public int LeftRightSign { get; set; }
-
-        /// <summary>
-        /// Default mapping: Yaw=Y(1), Pitch=X(0), Roll=Z(2).
-        /// </summary>
-        public static BoneAxisMapping Default => new()
-        {
-            TwistAxis = 1,
-            TwistSign = 1,
-            FrontBackAxis = 0,
-            FrontBackSign = 1,
-            LeftRightAxis = 2,
-            LeftRightSign = 1,
-        };
-    }
 }

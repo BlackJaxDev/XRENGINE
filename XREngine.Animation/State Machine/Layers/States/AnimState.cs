@@ -111,6 +111,15 @@ namespace XREngine.Animation
                 component.StateExited(this, variables);
         }
 
+        internal void RestartMotionPlayback()
+            => Motion?.RestartPlayback(StartSecond);
+
+        internal void SeekMotionPlayback(float timeSeconds)
+            => Motion?.SeekPlayback(timeSeconds);
+
+        internal void StopMotionPlayback()
+            => Motion?.StopPlayback();
+
         public void Initialize(AnimLayer layer, AnimStateMachine owner, object? rootObject)
         {
             OwningLayer = layer;

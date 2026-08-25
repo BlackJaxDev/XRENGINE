@@ -662,10 +662,23 @@ AnimationClip:
         ikTarget.ShouldNotBeNull();
         ShouldBeApproximately(ikTarget!.WorldTranslation, new Vector3(0.0f, 2.0f, 2.0f));
 
-        humanoid.SetRootPosition(new Vector3(0.0f, 1.0f, 0.0f));
+        object bodyOwner = new();
+        var canonical = new HumanoidImportedBodySample
+        {
+            Position = new Vector3(0.0f, 1.0f, 0.0f),
+            Rotation = Quaternion.Identity,
+            Channels = EHumanoidImportedBodySampleChannels.All,
+        };
+        humanoid.BeginImportedBodySampleTransaction(bodyOwner, canonical, hasCanonicalSample: true).ShouldBeTrue();
+        humanoid.SetRootPosition(canonical.Position);
+        humanoid.SetRootRotation(canonical.Rotation);
+        humanoid.CommitImportedBodySampleTransaction(bodyOwner).ShouldBeTrue();
         ShouldBeApproximately(hipsTransform.Translation, new Vector3(0.0f, 1.0f, 0.0f));
 
+        humanoid.BeginImportedBodySampleTransaction(bodyOwner, canonical, hasCanonicalSample: true).ShouldBeTrue();
         humanoid.SetRootPosition(new Vector3(0.0f, 1.5f, 1.0f));
+        humanoid.SetRootRotation(Quaternion.Identity);
+        humanoid.CommitImportedBodySampleTransaction(bodyOwner).ShouldBeTrue();
         ShouldBeApproximately(hipsTransform.Translation, new Vector3(0.0f, 2.0f, 2.0f));
     }
 
@@ -688,25 +701,40 @@ AnimationClip:
         humanoid.Right.Foot.Node = rightFoot;
         var hipsTransform = hips.GetTransformAs<Transform>(true)!;
 
-        humanoid.SetRootPosition(new Vector3(1.0f, 2.0f, 3.0f));
-        humanoid.SetRootPosition(new Vector3(1.0f, 2.5f, 4.0f));
-        ShouldBeApproximately(hipsTransform.Translation, new Vector3(0.0f, 2.0f, 2.0f));
-
         Quaternion ninety = Quaternion.CreateFromAxisAngle(Vector3.UnitY, MathF.PI * 0.5f);
         Quaternion oneEighty = Quaternion.CreateFromAxisAngle(Vector3.UnitY, MathF.PI);
-
-        humanoid.SetRootRotation(ninety);
+        object bodyOwner = new();
+        var canonical = new HumanoidImportedBodySample
+        {
+            Position = new Vector3(1.0f, 2.0f, 3.0f),
+            Rotation = ninety,
+            Channels = EHumanoidImportedBodySampleChannels.All,
+        };
+        humanoid.BeginImportedBodySampleTransaction(bodyOwner, canonical, hasCanonicalSample: true).ShouldBeTrue();
+        humanoid.SetRootPosition(canonical.Position);
+        humanoid.SetRootRotation(canonical.Rotation);
+        humanoid.CommitImportedBodySampleTransaction(bodyOwner).ShouldBeTrue();
+        ShouldBeApproximately(hipsTransform.Translation, new Vector3(0.0f, 1.0f, 0.0f));
         ShouldBeApproximately(hipsTransform.Rotation, Quaternion.Identity);
 
+        humanoid.BeginImportedBodySampleTransaction(bodyOwner, canonical, hasCanonicalSample: true).ShouldBeTrue();
+        humanoid.SetRootPosition(new Vector3(1.0f, 2.5f, 4.0f));
         humanoid.SetRootRotation(oneEighty);
+        humanoid.CommitImportedBodySampleTransaction(bodyOwner).ShouldBeTrue();
+        ShouldBeApproximately(hipsTransform.Translation, new Vector3(0.0f, 2.0f, 2.0f));
         ShouldBeApproximately(hipsTransform.Rotation, ninety);
 
         humanoid.ResetRootMotionBaseline();
 
+        object resetOwner = new();
+        humanoid.BeginImportedBodySampleTransaction(
+            resetOwner,
+            HumanoidImportedBodySample.Neutral,
+            hasCanonicalSample: false).ShouldBeTrue();
         humanoid.SetRootPosition(new Vector3(10.0f, 20.0f, 30.0f));
-        ShouldBeApproximately(hipsTransform.Translation, new Vector3(0.0f, 1.0f, 0.0f));
-
         humanoid.SetRootRotation(oneEighty);
+        humanoid.CommitImportedBodySampleTransaction(resetOwner).ShouldBeTrue();
+        ShouldBeApproximately(hipsTransform.Translation, new Vector3(0.0f, 1.0f, 0.0f));
         ShouldBeApproximately(hipsTransform.Rotation, Quaternion.Identity);
     }
 

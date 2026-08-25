@@ -46,6 +46,13 @@ namespace XREngine.Components.Animation
         private bool _animatedLeftHandGoalRotationOffsetInitialized;
         private bool _animatedRightHandGoalRotationOffsetInitialized;
         private bool _ikGoalWarningLogged;
+        private readonly HumanoidIKGoalDiagnosticState[] _animatedGoalDiagnostics =
+        [
+            HumanoidIKGoalDiagnosticState.Empty(ELimbEndEffector.LeftFoot),
+            HumanoidIKGoalDiagnosticState.Empty(ELimbEndEffector.RightFoot),
+            HumanoidIKGoalDiagnosticState.Empty(ELimbEndEffector.LeftHand),
+            HumanoidIKGoalDiagnosticState.Empty(ELimbEndEffector.RightHand),
+        ];
 
         public bool UpdateLeftFootTarget { get; set; } = true;
         public bool UpdateRightFootTarget { get; set; } = true;
@@ -160,6 +167,14 @@ namespace XREngine.Components.Animation
         public float GetIKRotationWeight(ELimbEndEffector goal)
             => GetGoalIK(goal)?.IKRotationWeight ?? 0f;
 
+        public HumanoidIKGoalDiagnosticState GetAnimatedIKGoalDiagnostic(ELimbEndEffector goal)
+        {
+            int index = GetAnimatedGoalDiagnosticIndex(goal);
+            return index >= 0
+                ? _animatedGoalDiagnostics[index]
+                : HumanoidIKGoalDiagnosticState.Empty(goal);
+        }
+
         public void SetIKPositionWeight(ELimbEndEffector goal, float weight)
         {
             var ik = GetGoalIK(goal);
@@ -252,6 +267,25 @@ namespace XREngine.Components.Animation
             SetSpineWeight(0.0f);
         }
 
+        /// <summary>
+        /// Configures the optional post-pose contact layer used by animation-driven IK goals.
+        /// Authored body-relative goal data remains unchanged; only the final world-space target
+        /// receives the configured contact offset.
+        /// </summary>
+        public void ConfigureAnimatedGoalContactCompensation(
+            EHumanoidContactCompensationMode mode,
+            float planeHeight,
+            float clearance,
+            float weight)
+        {
+            HumanoidSettings settings = Humanoid.Settings;
+            settings.ContactCompensationMode = mode;
+            settings.ContactPlaneHeight = planeHeight;
+            settings.ContactClearance = clearance;
+            settings.ContactCompensationWeight = weight;
+            RefreshAnimatedGoalTransforms(captureRotationOffsets: false);
+        }
+
         public void ClearAnimatedIKGoals()
         {
             ClearAnimatedIKGoal(ELimbEndEffector.LeftFoot);
@@ -262,7 +296,7 @@ namespace XREngine.Components.Animation
 
         public void SetAnimatedIKPosition(ELimbEndEffector goal, Vector3 position)
         {
-            if (!ShouldApplyAnimatedIKGoal())
+            if (!ShouldApplyAnimatedIKGoal(goal))
                 return;
 
             SetAnimatedGoalLocalPosition(goal, position);
@@ -271,7 +305,7 @@ namespace XREngine.Components.Animation
 
         public void SetAnimatedIKPositionX(ELimbEndEffector goal, float x)
         {
-            if (!ShouldApplyAnimatedIKGoal())
+            if (!ShouldApplyAnimatedIKGoal(goal))
                 return;
 
             Vector3 position = GetAnimatedGoalLocalPosition(goal);
@@ -281,7 +315,7 @@ namespace XREngine.Components.Animation
 
         public void SetAnimatedIKPositionY(ELimbEndEffector goal, float y)
         {
-            if (!ShouldApplyAnimatedIKGoal())
+            if (!ShouldApplyAnimatedIKGoal(goal))
                 return;
 
             Vector3 position = GetAnimatedGoalLocalPosition(goal);
@@ -291,7 +325,7 @@ namespace XREngine.Components.Animation
 
         public void SetAnimatedIKPositionZ(ELimbEndEffector goal, float z)
         {
-            if (!ShouldApplyAnimatedIKGoal())
+            if (!ShouldApplyAnimatedIKGoal(goal))
                 return;
 
             Vector3 position = GetAnimatedGoalLocalPosition(goal);
@@ -302,7 +336,7 @@ namespace XREngine.Components.Animation
 
         public void SetAnimatedIKRotation(ELimbEndEffector goal, Quaternion rotation)
         {
-            if (!ShouldApplyAnimatedIKGoal())
+            if (!ShouldApplyAnimatedIKGoal(goal))
                 return;
 
             SetAnimatedGoalLocalRotation(goal, rotation);
@@ -311,7 +345,7 @@ namespace XREngine.Components.Animation
 
         public void SetAnimatedIKRotationX(ELimbEndEffector goal, float x)
         {
-            if (!ShouldApplyAnimatedIKGoal())
+            if (!ShouldApplyAnimatedIKGoal(goal))
                 return;
 
             Quaternion rotation = GetAnimatedGoalLocalRotation(goal);
@@ -321,7 +355,7 @@ namespace XREngine.Components.Animation
 
         public void SetAnimatedIKRotationY(ELimbEndEffector goal, float y)
         {
-            if (!ShouldApplyAnimatedIKGoal())
+            if (!ShouldApplyAnimatedIKGoal(goal))
                 return;
 
             Quaternion rotation = GetAnimatedGoalLocalRotation(goal);
@@ -331,7 +365,7 @@ namespace XREngine.Components.Animation
 
         public void SetAnimatedIKRotationZ(ELimbEndEffector goal, float z)
         {
-            if (!ShouldApplyAnimatedIKGoal())
+            if (!ShouldApplyAnimatedIKGoal(goal))
                 return;
 
             Quaternion rotation = GetAnimatedGoalLocalRotation(goal);
@@ -341,7 +375,7 @@ namespace XREngine.Components.Animation
 
         public void SetAnimatedIKRotationW(ELimbEndEffector goal, float w)
         {
-            if (!ShouldApplyAnimatedIKGoal())
+            if (!ShouldApplyAnimatedIKGoal(goal))
                 return;
 
             Quaternion rotation = GetAnimatedGoalLocalRotation(goal);
@@ -447,7 +481,7 @@ namespace XREngine.Components.Animation
                 Limbs[i].Update();
         }
 
-        private bool ShouldApplyAnimatedIKGoal()
+        private bool ShouldApplyAnimatedIKGoal(ELimbEndEffector goal)
         {
             switch (Humanoid.Settings.IKGoalPolicy)
             {
@@ -462,8 +496,10 @@ namespace XREngine.Components.Animation
                         _ikGoalWarningLogged = true;
                         Debug.Animation("[HumanoidIKSolverComponent] IK goal channels present but avatar is not calibrated; skipping animation-driven IK goals.");
                     }
+                    RecordAnimatedGoalStatus(goal, EHumanoidIKGoalApplicationStatus.SkippedUncalibrated);
                     return false;
                 default:
+                    RecordAnimatedGoalStatus(goal, EHumanoidIKGoalApplicationStatus.IgnoredByPolicy);
                     return false;
             }
         }
@@ -486,6 +522,10 @@ namespace XREngine.Components.Animation
             SetAnimatedGoalLocalPosition(goal, Vector3.Zero);
             SetAnimatedGoalLocalRotation(goal, Quaternion.Identity);
             ResetAnimatedGoalRotationOffset(goal);
+
+            int diagnosticIndex = GetAnimatedGoalDiagnosticIndex(goal);
+            if (diagnosticIndex >= 0)
+                _animatedGoalDiagnostics[diagnosticIndex] = HumanoidIKGoalDiagnosticState.Empty(goal);
         }
 
         private void UpdateAnimatedIKGoal(ELimbEndEffector goal)
@@ -521,7 +561,8 @@ namespace XREngine.Components.Animation
                 return;
 
             float scale = Humanoid.EstimateAnimatedMotionScale();
-            Vector3 localPosition = GetAnimatedGoalLocalPosition(goal) * scale;
+            Vector3 authoredLocalPosition = GetAnimatedGoalLocalPosition(goal);
+            Vector3 localPosition = authoredLocalPosition * scale;
             Quaternion localRotation = GetAnimatedGoalLocalRotation(goal);
             Matrix4x4 bodyMatrix = GetAnimatedGoalBodyMatrix();
             Quaternion bodyRotation = GetAnimatedGoalBodyRotation();
@@ -534,9 +575,75 @@ namespace XREngine.Components.Animation
                 ? Quaternion.Normalize(bodyRotation * localRotation * goalRotationOffset)
                 : Quaternion.Normalize(bodyRotation * localRotation);
 
-            Humanoid.SetIKTargetWorldPose(GetAnimatedGoalTarget(goal), Vector3.Transform(localPosition, bodyMatrix), worldRotation);
+            Vector3 bodyFrameWorldPosition = Vector3.Transform(localPosition, bodyMatrix);
+            Vector3 contactOffset = CalculateContactCompensationOffset(goal, bodyFrameWorldPosition);
+            Vector3 finalWorldPosition = bodyFrameWorldPosition + contactOffset;
+            EHumanoidIKGoalApplicationStatus status = contactOffset == Vector3.Zero
+                ? EHumanoidIKGoalApplicationStatus.AppliedAuthored
+                : EHumanoidIKGoalApplicationStatus.AppliedWithContactCompensation;
+
+            int diagnosticIndex = GetAnimatedGoalDiagnosticIndex(goal);
+            if (diagnosticIndex >= 0)
+            {
+                _animatedGoalDiagnostics[diagnosticIndex] = new HumanoidIKGoalDiagnosticState(
+                    goal,
+                    authoredLocalPosition,
+                    localRotation,
+                    bodyFrameWorldPosition,
+                    worldRotation,
+                    contactOffset,
+                    finalWorldPosition,
+                    worldRotation,
+                    status);
+            }
+
+            Humanoid.SetIKTargetWorldPose(GetAnimatedGoalTarget(goal), finalWorldPosition, worldRotation);
             target.RecalculateMatrices(forceWorldRecalc: true, setRenderMatrixNow: false);
         }
+
+        private Vector3 CalculateContactCompensationOffset(ELimbEndEffector goal, Vector3 worldPosition)
+        {
+            EHumanoidContactCompensationMode mode = Humanoid.Settings.ContactCompensationMode;
+            bool eligible = mode switch
+            {
+                EHumanoidContactCompensationMode.GroundPlaneFeet
+                    => goal is ELimbEndEffector.LeftFoot or ELimbEndEffector.RightFoot,
+                EHumanoidContactCompensationMode.GroundPlaneFeetAndHands
+                    => goal is ELimbEndEffector.LeftFoot
+                    or ELimbEndEffector.RightFoot
+                    or ELimbEndEffector.LeftHand
+                    or ELimbEndEffector.RightHand,
+                _ => false,
+            };
+            if (!eligible)
+                return Vector3.Zero;
+
+            float minimumY = Humanoid.Settings.ContactPlaneHeight + Humanoid.Settings.ContactClearance;
+            float penetration = minimumY - worldPosition.Y;
+            if (!float.IsFinite(penetration) || penetration <= 0.0f)
+                return Vector3.Zero;
+
+            return Vector3.UnitY * (penetration * Humanoid.Settings.ContactCompensationWeight);
+        }
+
+        private void RecordAnimatedGoalStatus(ELimbEndEffector goal, EHumanoidIKGoalApplicationStatus status)
+        {
+            int index = GetAnimatedGoalDiagnosticIndex(goal);
+            if (index < 0)
+                return;
+
+            HumanoidIKGoalDiagnosticState previous = _animatedGoalDiagnostics[index];
+            _animatedGoalDiagnostics[index] = previous with { Status = status };
+        }
+
+        private static int GetAnimatedGoalDiagnosticIndex(ELimbEndEffector goal) => goal switch
+        {
+            ELimbEndEffector.LeftFoot => 0,
+            ELimbEndEffector.RightFoot => 1,
+            ELimbEndEffector.LeftHand => 2,
+            ELimbEndEffector.RightHand => 3,
+            _ => -1,
+        };
 
         private Quaternion EnsureAnimatedGoalRotationOffset(ELimbEndEffector goal, Quaternion bodyRotation, Quaternion localRotation)
         {

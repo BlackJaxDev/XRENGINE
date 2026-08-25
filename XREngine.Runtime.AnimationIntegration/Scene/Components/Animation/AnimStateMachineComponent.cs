@@ -133,16 +133,40 @@ namespace XREngine.Components
             if (humanoid is not null && !humanoid.IsAnimatedPosePreviewActive)
                 return;
 
-            // The state machine currently blends scalar ValueStore channels independently, including
-            // RootQ components. This transaction keeps the resulting sample atomic, but is deliberately
-            // provisional and is not yet full quaternion-blending parity with Unity.
-            bool ownsImportedBodySampleTransaction = humanoid?.BeginImportedBodySampleTransaction(
-                this,
-                _provisionalImportedBodyReference,
-                _hasProvisionalImportedBodyReference) == true;
+            EvaluateAndApply(RuntimeAnimationHostServices.Current.UpdateDeltaTicks, humanoid);
+        }
+
+        /// <summary>
+        /// Seeks active state motions to an exact time and atomically applies the resulting pose.
+        /// Temporal root-motion continuity is intentionally reset at this discontinuity.
+        /// </summary>
+        public void EvaluateAtTime(float timeSeconds)
+        {
+            var humanoid = GetHumanoidComponent();
+            if (humanoid is not null && !humanoid.IsAnimatedPosePreviewActive)
+                return;
+
+            StateMachine.SeekActiveMotions(timeSeconds);
+            humanoid?.ResetRootMotionBaseline();
+            EvaluateAndApply(0L, humanoid);
+        }
+
+        private void EvaluateAndApply(long deltaTicks, HumanoidComponent? humanoid)
+        {
+            bool ownsImportedBodySampleTransaction = false;
             try
             {
-                StateMachine.EvaluationTick(this, RuntimeAnimationHostServices.Current.UpdateDeltaTicks);
+                StateMachine.EvaluateAnimationValues(this, deltaTicks);
+                StateMachine.TryResolveHumanoidRootMotionProjection(
+                    out var projectionSettings,
+                    out string? projectionCalibrationClipName);
+                ownsImportedBodySampleTransaction = humanoid?.BeginImportedBodySampleTransaction(
+                    this,
+                    _provisionalImportedBodyReference,
+                    _hasProvisionalImportedBodyReference,
+                    projectionSettings: projectionSettings,
+                    projectionCalibrationClipName: projectionCalibrationClipName) == true;
+                StateMachine.ApplyAnimationValues();
             }
             catch
             {

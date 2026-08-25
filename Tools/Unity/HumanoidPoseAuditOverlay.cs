@@ -21,6 +21,8 @@ public sealed class HumanoidPoseAuditOverlay : MonoBehaviour
         public float DurationSeconds;
         public int SampleRate;
         public int SampleCount;
+        public float AvatarHumanScale = 1.0f;
+        public ClipRootMotionSettings RootMotionSettings = new();
         public List<NamedFloatRange> MuscleDefaultRanges = new();
         public List<PoseAuditSample> Samples = new();
     }
@@ -32,9 +34,22 @@ public sealed class HumanoidPoseAuditOverlay : MonoBehaviour
         public float TimeSeconds;
         public PoseVector3 BodyPosition = new();
         public PoseQuaternion BodyRotation = new();
+        public PoseVector3 ProjectedRootPosition = new();
+        public PoseQuaternion ProjectedRootRotation = new();
+        public PoseVector3 HipsLocalPosition = new();
+        public PoseQuaternion HipsLocalRotation = new();
         public List<NamedFloat> Muscles = new();
         public List<RawCurveSample> RawCurves = new();
         public List<BoneSample> Bones = new();
+    }
+
+    [Serializable]
+    private sealed class ClipRootMotionSettings
+    {
+        public bool BakeOrientationIntoPose;
+        public bool BakePositionYIntoPose;
+        public bool BakePositionXZIntoPose;
+        public bool HeightFromFeet;
     }
 
     [Serializable]
@@ -212,6 +227,12 @@ public sealed class HumanoidPoseAuditOverlay : MonoBehaviour
     public Vector3 MuscleDebugTextOffset = new(0.08f, 0.06f, 0.0f);
     public float PointRadius = 0.015f;
     public Camera RuntimeLabelCamera;
+    public bool ShowBodyTrajectory = true;
+    public bool ShowProjectedRoot = true;
+    public bool ShowHipsLocalTransform = true;
+    public bool ShowAuthoredIKGoals = true;
+    public bool ShowCompensationSource = true;
+    public int TrajectorySampleStride = 4;
 
     private string _loadedReferenceKey;
     private PoseAuditReport _referenceReport;
@@ -229,6 +250,7 @@ public sealed class HumanoidPoseAuditOverlay : MonoBehaviour
         BoneBasisAxisLength = Mathf.Max(0.001f, BoneBasisAxisLength);
         MuscleDebugThreshold = Mathf.Max(0.0f, MuscleDebugThreshold);
         PointRadius = Mathf.Max(0.001f, PointRadius);
+        TrajectorySampleStride = Mathf.Max(1, TrajectorySampleStride);
         InvalidateReferenceCache();
     }
 
@@ -348,7 +370,120 @@ public sealed class HumanoidPoseAuditOverlay : MonoBehaviour
             }
         }
 
+        RenderBodyAndRootDiagnostics(animator, report, sample, root, referenceScale);
+
         RenderMuscleDebugText(animator);
+    }
+
+    private void RenderBodyAndRootDiagnostics(
+        Animator animator,
+        PoseAuditReport report,
+        PoseAuditSample sample,
+        Transform root,
+        float referenceScale)
+    {
+        float humanScale = report.AvatarHumanScale > 0.0f ? report.AvatarHumanScale : 1.0f;
+        if (ShowBodyTrajectory)
+        {
+            Vector3? previous = null;
+            for (int i = 0; i < report.Samples.Count; i += Mathf.Max(1, TrajectorySampleStride))
+            {
+                PoseAuditSample trajectorySample = report.Samples[i];
+                Vector3 point = root.TransformPoint(
+                    trajectorySample.BodyPosition.ToUnity() * (humanScale * referenceScale));
+                if (previous.HasValue)
+                    DrawLine(previous.Value, point, Color.yellow);
+                previous = point;
+            }
+
+            Vector3 bodyWorld = root.TransformPoint(sample.BodyPosition.ToUnity() * (humanScale * referenceScale));
+            DrawPoint(bodyWorld, Color.yellow);
+        }
+
+        if (ShowProjectedRoot)
+        {
+            Vector3 projectedRootWorld = root.TransformPoint(sample.ProjectedRootPosition.ToUnity() * referenceScale);
+            Quaternion projectedRootWorldRotation = root.rotation * sample.ProjectedRootRotation.ToUnity();
+            DrawPoint(projectedRootWorld, Color.magenta);
+            DrawRotationBasis(projectedRootWorld, projectedRootWorldRotation, BoneBasisAxisLength * 1.25f);
+        }
+
+        Transform hips = animator.GetBoneTransform(HumanBodyBones.Hips);
+        if (ShowHipsLocalTransform && hips != null && hips.parent != null)
+        {
+            Vector3 hipsWorld = hips.parent.TransformPoint(sample.HipsLocalPosition.ToUnity());
+            Quaternion hipsWorldRotation = hips.parent.rotation * sample.HipsLocalRotation.ToUnity();
+            DrawPoint(hipsWorld, new Color(1.0f, 0.5f, 0.0f, 1.0f));
+            DrawRotationBasis(hipsWorld, hipsWorldRotation, BoneBasisAxisLength);
+        }
+
+        if (ShowAuthoredIKGoals)
+        {
+            RenderAuthoredIKGoal(sample, root, humanScale, referenceScale, "LeftFoot", Color.green);
+            RenderAuthoredIKGoal(sample, root, humanScale, referenceScale, "RightFoot", Color.green);
+            RenderAuthoredIKGoal(sample, root, humanScale, referenceScale, "LeftHand", Color.cyan);
+            RenderAuthoredIKGoal(sample, root, humanScale, referenceScale, "RightHand", Color.cyan);
+        }
+
+        if (ShowCompensationSource && hips != null)
+        {
+            string projection =
+                $"root: XZ={(report.RootMotionSettings.BakePositionXZIntoPose ? "baked" : "projected")}, " +
+                $"Y={(report.RootMotionSettings.BakePositionYIntoPose ? "baked" : "projected")}, " +
+                $"yaw={(report.RootMotionSettings.BakeOrientationIntoPose ? "baked" : "projected")}";
+            DrawWorldLabel(
+                hips.position + Vector3.up * 0.15f,
+                projection + "\nIK: authored body-frame goals\ncontact: separate runtime post-pose compensation");
+        }
+    }
+
+    private void RenderAuthoredIKGoal(
+        PoseAuditSample sample,
+        Transform root,
+        float humanScale,
+        float referenceScale,
+        string goalName,
+        Color color)
+    {
+        if (!TryReadRawVector3(sample.RawCurves, goalName + "T", out Vector3 goalBodyLocal))
+            return;
+
+        Vector3 bodyPosition = sample.BodyPosition.ToUnity() * humanScale;
+        Quaternion bodyRotation = sample.BodyRotation.ToUnity();
+        Vector3 goalRootLocal = bodyPosition + bodyRotation * (goalBodyLocal * humanScale);
+        Vector3 goalWorld = root.TransformPoint(goalRootLocal * referenceScale);
+        DrawPoint(goalWorld, color);
+        DrawLine(root.TransformPoint(bodyPosition * referenceScale), goalWorld, color);
+        DrawWorldLabel(goalWorld, goalName + " authored IK");
+    }
+
+    private static bool TryReadRawVector3(
+        IReadOnlyList<RawCurveSample> curves,
+        string propertyPrefix,
+        out Vector3 value)
+    {
+        value = Vector3.zero;
+        int mask = 0;
+        for (int i = 0; i < curves.Count; i++)
+        {
+            RawCurveSample curve = curves[i];
+            if (string.Equals(curve.PropertyName, propertyPrefix + ".x", StringComparison.Ordinal))
+            {
+                value.x = curve.Value;
+                mask |= 1;
+            }
+            else if (string.Equals(curve.PropertyName, propertyPrefix + ".y", StringComparison.Ordinal))
+            {
+                value.y = curve.Value;
+                mask |= 2;
+            }
+            else if (string.Equals(curve.PropertyName, propertyPrefix + ".z", StringComparison.Ordinal))
+            {
+                value.z = curve.Value;
+                mask |= 4;
+            }
+        }
+        return mask == 7;
     }
 
     private PoseAuditReport EnsureReferenceReportLoaded()
@@ -579,6 +714,13 @@ public sealed class HumanoidPoseAuditOverlay : MonoBehaviour
         Gizmos.DrawSphere(origin + bone.right * axisLength, axisLength * 0.08f);
         Gizmos.color = Color.blue;
         Gizmos.DrawSphere(origin + bone.forward * axisLength, axisLength * 0.08f);
+    }
+
+    private static void DrawRotationBasis(Vector3 origin, Quaternion rotation, float axisLength)
+    {
+        DrawLine(origin, origin + rotation * Vector3.right * axisLength, Color.red);
+        DrawLine(origin, origin + rotation * Vector3.up * axisLength, Color.green);
+        DrawLine(origin, origin + rotation * Vector3.forward * axisLength, Color.blue);
     }
 
     private void RenderMuscleDebugText(Animator animator)

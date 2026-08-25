@@ -13,6 +13,13 @@ namespace XREngine.Components.Animation
         public float DurationSeconds { get; set; }
         public int SampleRate { get; set; }
         public int SampleCount { get; set; }
+        public float AvatarHumanScale { get; set; }
+        /// <summary>
+        /// XRENGINE world units represented by one Unity meter for the calibrated avatar.
+        /// Unity reference reports leave this at zero; cross-runtime comparison reads it
+        /// from the XRENGINE report.
+        /// </summary>
+        public float EngineUnitsPerUnityMeter { get; set; }
         public string BodyChannelSpace { get; set; } = "Importer-mapped normalized humanoid body space";
         public string BoneRootSpace { get; set; } = "Humanoid component scene-node local space";
         public string BoneWorldSpace { get; set; } = "XRENGINE world space";
@@ -46,8 +53,22 @@ namespace XREngine.Components.Animation
         public int CanonicalImportedMappedBodyChannels { get; set; }
         public HumanoidPoseAuditVector3 ConvertedBodyTranslationDelta { get; set; } = new();
         public HumanoidPoseAuditQuaternion ConvertedBodyRotationDelta { get; set; } = HumanoidPoseAuditQuaternion.Identity;
+        public HumanoidPoseAuditVector3 ProjectedRootPosition { get; set; } = new();
+        public HumanoidPoseAuditQuaternion ProjectedRootRotation { get; set; } = HumanoidPoseAuditQuaternion.Identity;
+        public int ProjectedRootChannels { get; set; }
+        public HumanoidPoseAuditVector3 TemporalRootMotionTranslation { get; set; } = new();
+        public HumanoidPoseAuditQuaternion TemporalRootMotionRotation { get; set; } = HumanoidPoseAuditQuaternion.Identity;
+        public int TemporalRootMotionChannels { get; set; }
+        /// <summary>Unity exporter compatibility alias for temporal root translation.</summary>
+        public HumanoidPoseAuditVector3? RootMotionDeltaPosition { get; set; }
+        /// <summary>Unity exporter compatibility alias for temporal root rotation.</summary>
+        public HumanoidPoseAuditQuaternion? RootMotionDeltaRotation { get; set; }
         public HumanoidPoseAuditVector3? ComposedHipsLocalPosition { get; set; }
         public HumanoidPoseAuditQuaternion? ComposedHipsLocalRotation { get; set; }
+        /// <summary>Unity exporter compatibility alias for the composed Hips local position.</summary>
+        public HumanoidPoseAuditVector3? HipsLocalPosition { get; set; }
+        /// <summary>Unity exporter compatibility alias for the composed Hips local rotation.</summary>
+        public HumanoidPoseAuditQuaternion? HipsLocalRotation { get; set; }
         public HumanoidPoseAuditVector3 CharacterRootLocalPosition { get; set; } = new();
         public HumanoidPoseAuditQuaternion CharacterRootLocalRotation { get; set; } = HumanoidPoseAuditQuaternion.Identity;
         public HumanoidPoseAuditVector3 CharacterRootWorldPosition { get; set; } = new();
@@ -151,7 +172,14 @@ namespace XREngine.Components.Animation
         public List<string> Warnings { get; set; } = [];
         public HumanoidPoseAuditMetric BodyPositionError { get; set; } = new();
         public HumanoidPoseAuditMetric BodyRotationErrorDegrees { get; set; } = new();
+        public HumanoidPoseAuditMetric ProjectedRootPositionError { get; set; } = new();
+        public HumanoidPoseAuditMetric ProjectedRootRotationErrorDegrees { get; set; } = new();
+        public HumanoidPoseAuditMetric TemporalRootMotionTranslationError { get; set; } = new();
+        public HumanoidPoseAuditMetric TemporalRootMotionRotationErrorDegrees { get; set; } = new();
+        public HumanoidPoseAuditMetric ComposedHipsLocalPositionError { get; set; } = new();
+        public HumanoidPoseAuditMetric ComposedHipsLocalRotationErrorDegrees { get; set; } = new();
         public List<HumanoidPoseAuditMetricEntry> MuscleAbsoluteError { get; set; } = [];
+        public List<HumanoidPoseAuditMetricEntry> BoneLocalPositionError { get; set; } = [];
         public List<HumanoidPoseAuditMetricEntry> BoneLocalRotationErrorDegrees { get; set; } = [];
         public List<HumanoidPoseAuditMetricEntry> BoneRootSpacePositionError { get; set; } = [];
     }
@@ -167,5 +195,15 @@ namespace XREngine.Components.Animation
         public int Count { get; set; }
         public float Average { get; set; }
         public float Max { get; set; }
+        public HumanoidPoseAuditWorstSample? WorstSample { get; set; }
+    }
+
+    /// <summary>Identifies the aligned sample pair that produced a metric's maximum error.</summary>
+    public sealed class HumanoidPoseAuditWorstSample
+    {
+        public int ReferenceIndex { get; set; }
+        public float ReferenceTimeSeconds { get; set; }
+        public int ActualIndex { get; set; }
+        public float ActualTimeSeconds { get; set; }
     }
 }

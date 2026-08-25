@@ -422,14 +422,20 @@ namespace XREngine
 
             if (hasTimestamp && hasCachePath && TryLoadCachedAsset(cachePath, filePath, timestampUtc, out T? cachedAsset))
             {
-                if (typeof(T) == typeof(XRTexture2D))
-                    LogTextureCacheEvent("Texture.CacheHit", filePath, cachePath, "fresh cached asset loaded");
+                if (!IsIncompleteThirdPartyCache(cachedAsset!, ext))
+                {
+                    if (typeof(T) == typeof(XRTexture2D))
+                        LogTextureCacheEvent("Texture.CacheHit", filePath, cachePath, "fresh cached asset loaded");
+
+                    if (traceAnimClipLoad)
+                        Debug.Out($"[AssetManager] Animation clip cache hit for '{filePath}'.");
+
+                    cachedAsset!.OriginalLastWriteTimeUtc = timestampUtc;
+                    return cachedAsset;
+                }
 
                 if (traceAnimClipLoad)
-                    Debug.Out($"[AssetManager] Animation clip cache hit for '{filePath}'.");
-
-                cachedAsset!.OriginalLastWriteTimeUtc = timestampUtc;
-                return cachedAsset;
+                    Debug.Out($"[AssetManager] Animation clip cache for '{filePath}' predates imported root-motion metadata; reimporting source.");
             }
 
             if (hasTimestamp && hasCachePath)
@@ -483,11 +489,14 @@ namespace XREngine
 
             if (hasTimestamp && hasCachePath && TryLoadCachedAsset(cachePath, filePath, timestampUtc, type, out XRAsset? cachedAsset))
             {
-                if (type == typeof(XRTexture2D))
-                    LogTextureCacheEvent("Texture.CacheHit", filePath, cachePath, "fresh cached asset loaded");
+                if (!IsIncompleteThirdPartyCache(cachedAsset!, ext))
+                {
+                    if (type == typeof(XRTexture2D))
+                        LogTextureCacheEvent("Texture.CacheHit", filePath, cachePath, "fresh cached asset loaded");
 
-                cachedAsset!.OriginalLastWriteTimeUtc = timestampUtc;
-                return cachedAsset;
+                    cachedAsset!.OriginalLastWriteTimeUtc = timestampUtc;
+                    return cachedAsset;
+                }
             }
 
             if (hasTimestamp && hasCachePath)
@@ -529,7 +538,7 @@ namespace XREngine
             if (hasTimestamp && hasCachePath)
             {
                 var cached = await TryLoadCachedAssetAsync<T>(cachePath, filePath, timestampUtc).ConfigureAwait(false);
-                if (cached is not null)
+                if (cached is not null && !IsIncompleteThirdPartyCache(cached, ext))
                 {
                     if (typeof(T) == typeof(XRTexture2D))
                         LogTextureCacheEvent("Texture.CacheHit", filePath, cachePath, "fresh cached asset loaded");
@@ -558,6 +567,14 @@ namespace XREngine
 
             return asset;
         }
+
+        private static bool IsIncompleteThirdPartyCache(XRAsset asset, string extension)
+            => asset is AnimationClip
+            {
+                HasRootMotion: true,
+                UnityHumanoidRootMotionSettings: null
+            }
+            && string.Equals(extension, "anim", StringComparison.OrdinalIgnoreCase);
 
         /// <summary>
         /// Attempts to get the last write time of the source file.

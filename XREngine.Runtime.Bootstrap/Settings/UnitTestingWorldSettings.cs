@@ -1,5 +1,6 @@
 using Newtonsoft.Json;
 using XREngine.Audio;
+using XREngine.Components.Animation;
 using XREngine.Rendering.UI;
 
 namespace XREngine.Runtime.Bootstrap;
@@ -158,8 +159,11 @@ public partial class UnitTestingWorldSettings
 
     public bool AnimationClipVMD = false;
     public bool AnimationClipAnim = false;
+    public bool AnimationClipAnimUseStateMachine = false;
     public string AnimClipPath { get; set; } = "Assets\\Walks\\Basic Walk.anim";
     public bool AnimLooped { get; set; } = true;
+    public EHumanoidRootMotionApplicationMode HumanoidRootMotionApplicationMode { get; set; }
+        = EHumanoidRootMotionApplicationMode.ExtractOnly;
     public bool HumanoidPoseAuditEnabled = false;
     public string HumanoidPoseAuditOutputPath { get; set; } = "Build\\Logs\\pose_audit\\xrengine_humanoid_pose.json";
     public string? HumanoidPoseAuditReferencePath { get; set; } = null;

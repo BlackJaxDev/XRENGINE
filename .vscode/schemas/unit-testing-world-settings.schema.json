@@ -425,6 +425,10 @@
       "type": "boolean",
       "description": "Imports a .anim clip for testing."
     },
+    "AnimationClipAnimUseStateMachine": {
+      "type": "boolean",
+      "description": "Routes the startup .anim through a one-state AnimStateMachine instead of a direct clip component."
+    },
     "AnimClipPath": {
       "type": "string",
       "description": "Generated from AnimClipPath on Settings."
@@ -432,6 +436,11 @@
     "AnimLooped": {
       "type": "boolean",
       "description": "Enables or disables AnimLooped."
+    },
+    "HumanoidRootMotionApplicationMode": {
+      "$ref": "#/definitions/EHumanoidRootMotionApplicationMode",
+      "markdownDescription": "Supported values: `ExtractOnly`, `ApplyToExplicitTarget`, `ExternalConsumer`.",
+      "description": "Selects the HumanoidRootMotionApplicationMode enum value."
     },
     "HumanoidPoseAuditEnabled": {
       "type": "boolean",
@@ -1207,6 +1216,15 @@
         "Passthrough"
       ],
       "markdownDescription": "Supported values: `OpenAL_EFX`, `SteamAudio`, `Passthrough`."
+    },
+    "EHumanoidRootMotionApplicationMode": {
+      "type": "string",
+      "enum": [
+        "ExtractOnly",
+        "ApplyToExplicitTarget",
+        "ExternalConsumer"
+      ],
+      "markdownDescription": "Supported values: `ExtractOnly`, `ApplyToExplicitTarget`, `ExternalConsumer`."
     },
     "EAntiAliasingMode": {
       "type": "string",

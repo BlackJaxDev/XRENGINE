@@ -84,4 +84,67 @@ public sealed class HumanoidIKSolverComponentTests
         targetNode.Transform.WorldTranslation.ShouldBe(Vector3.Zero);
         solver._leftHand.TargetIKTransform.ShouldBeSameAs(targetNode.Transform);
     }
+
+    [Test]
+    public void AnimatedGoalPolicy_ReportsIgnoredAndUncalibratedGoalsWithoutCreatingTargets()
+    {
+        var root = new SceneNode("Root", new Transform());
+        var humanoid = root.AddComponent<HumanoidComponent>()!;
+        var solver = root.AddComponent<HumanoidIKSolverComponent>()!;
+
+        humanoid.Settings.IKGoalPolicy = EHumanoidIKGoalPolicy.ApplyIfCalibrated;
+        humanoid.Settings.IsIKCalibrated = false;
+        solver.SetAnimatedIKPosition(ELimbEndEffector.LeftFoot, new Vector3(1.0f, 2.0f, 3.0f));
+
+        solver.GetAnimatedIKGoalDiagnostic(ELimbEndEffector.LeftFoot).Status
+            .ShouldBe(EHumanoidIKGoalApplicationStatus.SkippedUncalibrated);
+        humanoid.GetIKTargetTransform(EHumanoidIKTarget.LeftFoot).ShouldBeNull();
+
+        humanoid.Settings.IKGoalPolicy = EHumanoidIKGoalPolicy.Ignore;
+        solver.SetAnimatedIKPosition(ELimbEndEffector.RightHand, new Vector3(4.0f, 5.0f, 6.0f));
+
+        solver.GetAnimatedIKGoalDiagnostic(ELimbEndEffector.RightHand).Status
+            .ShouldBe(EHumanoidIKGoalApplicationStatus.IgnoredByPolicy);
+        humanoid.GetIKTargetTransform(EHumanoidIKTarget.RightHand).ShouldBeNull();
+    }
+
+    [Test]
+    public void ContactCompensation_IsPostPoseAndCanTargetFeetSeparatelyFromHands()
+    {
+        var root = new SceneNode("Root", new Transform());
+        var humanoid = root.AddComponent<HumanoidComponent>()!;
+        var solver = root.AddComponent<HumanoidIKSolverComponent>()!;
+        humanoid.Settings.IKGoalPolicy = EHumanoidIKGoalPolicy.AlwaysApply;
+
+        solver.ConfigureAnimatedGoalContactCompensation(
+            EHumanoidContactCompensationMode.GroundPlaneFeet,
+            planeHeight: 0.0f,
+            clearance: 1.0f,
+            weight: 0.5f);
+        solver.SetAnimatedIKPosition(ELimbEndEffector.LeftFoot, new Vector3(0.0f, -1.0f, 0.0f));
+        solver.SetAnimatedIKPosition(ELimbEndEffector.LeftHand, new Vector3(0.0f, -1.0f, 0.0f));
+
+        HumanoidIKGoalDiagnosticState foot = solver.GetAnimatedIKGoalDiagnostic(ELimbEndEffector.LeftFoot);
+        foot.Status.ShouldBe(EHumanoidIKGoalApplicationStatus.AppliedWithContactCompensation);
+        foot.AuthoredBodyLocalPosition.ShouldBe(new Vector3(0.0f, -1.0f, 0.0f));
+        foot.BodyFrameWorldPosition.ShouldBe(new Vector3(0.0f, -1.0f, 0.0f));
+        foot.ContactCompensationOffset.ShouldBe(new Vector3(0.0f, 1.0f, 0.0f));
+        foot.FinalWorldPosition.ShouldBe(Vector3.Zero);
+
+        HumanoidIKGoalDiagnosticState hand = solver.GetAnimatedIKGoalDiagnostic(ELimbEndEffector.LeftHand);
+        hand.Status.ShouldBe(EHumanoidIKGoalApplicationStatus.AppliedAuthored);
+        hand.ContactCompensationOffset.ShouldBe(Vector3.Zero);
+        hand.FinalWorldPosition.ShouldBe(new Vector3(0.0f, -1.0f, 0.0f));
+
+        solver.ConfigureAnimatedGoalContactCompensation(
+            EHumanoidContactCompensationMode.GroundPlaneFeetAndHands,
+            planeHeight: 0.0f,
+            clearance: 1.0f,
+            weight: 1.0f);
+
+        hand = solver.GetAnimatedIKGoalDiagnostic(ELimbEndEffector.LeftHand);
+        hand.Status.ShouldBe(EHumanoidIKGoalApplicationStatus.AppliedWithContactCompensation);
+        hand.ContactCompensationOffset.ShouldBe(new Vector3(0.0f, 2.0f, 0.0f));
+        hand.FinalWorldPosition.ShouldBe(new Vector3(0.0f, 1.0f, 0.0f));
+    }
 }

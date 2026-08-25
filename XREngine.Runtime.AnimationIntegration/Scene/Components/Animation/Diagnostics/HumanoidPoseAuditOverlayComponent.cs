@@ -1,6 +1,7 @@
 using System.Numerics;
 using XREngine.Components;
 using XREngine.Components.Scene.Transforms;
+using XREngine.Animation.IK;
 using XREngine.Core.Reflection.Attributes;
 using XREngine.Data;
 using XREngine.Data.Colors;
@@ -43,6 +44,14 @@ namespace XREngine.Components.Animation
             ("RightUpperLeg", "RightLowerLeg"),
             ("RightLowerLeg", "RightFoot"),
             ("RightFoot", "RightToes"),
+        ];
+
+        private static readonly ELimbEndEffector[] DiagnosticGoals =
+        [
+            ELimbEndEffector.LeftFoot,
+            ELimbEndEffector.RightFoot,
+            ELimbEndEffector.LeftHand,
+            ELimbEndEffector.RightHand,
         ];
 
         private readonly record struct MuscleDebugLabel(
@@ -165,6 +174,46 @@ namespace XREngine.Components.Animation
             set => SetField(ref _showBoneRotationBasis, value);
         }
 
+        private bool _showBodyTrajectory = true;
+        /// <summary>Draws the reference Body-position path in the avatar root frame.</summary>
+        public bool ShowBodyTrajectory
+        {
+            get => _showBodyTrajectory;
+            set => SetField(ref _showBodyTrajectory, value);
+        }
+
+        private bool _showProjectedRoot = true;
+        /// <summary>Draws reference and live projected-root position and yaw independently of Hips.</summary>
+        public bool ShowProjectedRoot
+        {
+            get => _showProjectedRoot;
+            set => SetField(ref _showProjectedRoot, value);
+        }
+
+        private bool _showHipsLocalTransform = true;
+        /// <summary>Draws the reference composed Hips local transform against the live Hips.</summary>
+        public bool ShowHipsLocalTransform
+        {
+            get => _showHipsLocalTransform;
+            set => SetField(ref _showHipsLocalTransform, value);
+        }
+
+        private bool _showAuthoredIKGoals = true;
+        /// <summary>Draws authored body-frame IK targets and their final world-space targets.</summary>
+        public bool ShowAuthoredIKGoals
+        {
+            get => _showAuthoredIKGoals;
+            set => SetField(ref _showAuthoredIKGoals, value);
+        }
+
+        private bool _showCompensationSource = true;
+        /// <summary>Labels IK policy/contact status and draws the post-pose compensation vector.</summary>
+        public bool ShowCompensationSource
+        {
+            get => _showCompensationSource;
+            set => SetField(ref _showCompensationSource, value);
+        }
+
         private float _boneBasisAxisLength = 0.12f;
         /// <summary>
         /// World-space length of the red/green/blue bone basis axes.
@@ -220,7 +269,7 @@ namespace XREngine.Components.Animation
             _renderInfo.Layer = DefaultLayers.GizmosIndex;
         }
 
-private void Render()
+        private void Render()
         {
             var humanoid = TargetHumanoid ?? GetSiblingComponent<HumanoidComponent>();
             if (humanoid is null)
@@ -289,19 +338,196 @@ private void Render()
                 }
             }
 
-            if (!ShowReferenceSkeleton)
-                return;
+            RenderBodyRootAndIKDiagnostics(humanoid, report, sample, rootWorld, referenceScale);
 
-            foreach ((string parentName, string childName) in BoneLinks)
+            if (ShowReferenceSkeleton)
             {
-                if (!referenceByName.TryGetValue(parentName, out Vector3 parent) || !referenceByName.TryGetValue(childName, out Vector3 child))
-                    continue;
+                foreach ((string parentName, string childName) in BoneLinks)
+                {
+                    if (!referenceByName.TryGetValue(parentName, out Vector3 parent) || !referenceByName.TryGetValue(childName, out Vector3 child))
+                        continue;
 
-                RuntimeAnimationHostServices.Current.RenderLine(parent, child, ColorF4.Blue);
+                    RuntimeAnimationHostServices.Current.RenderLine(parent, child, ColorF4.Blue);
+                }
             }
 
             RenderMuscleDebugText(humanoid);
         }
+
+        private void RenderBodyRootAndIKDiagnostics(
+            HumanoidComponent humanoid,
+            HumanoidPoseAuditReport report,
+            HumanoidPoseAuditSample sample,
+            Matrix4x4 rootWorld,
+            float referenceScale)
+        {
+            if (ShowBodyTrajectory)
+            {
+                Vector3 previousWorld = default;
+                bool hasPrevious = false;
+                for (int i = 0; i < report.Samples.Count; i++)
+                {
+                    Vector3 rootSpace = GetReferenceBodyTrajectoryRootPosition(report, report.Samples[i], referenceScale);
+                    Vector3 world = Vector3.Transform(rootSpace, rootWorld);
+                    if (hasPrevious)
+                        RuntimeAnimationHostServices.Current.RenderLine(previousWorld, world, ColorF4.Yellow);
+                    previousWorld = world;
+                    hasPrevious = true;
+                }
+
+                Vector3 bodyWorld = Vector3.Transform(
+                    GetReferenceBodyTrajectoryRootPosition(report, sample, referenceScale),
+                    rootWorld);
+                RuntimeAnimationHostServices.Current.RenderPoint(bodyWorld, ColorF4.Yellow);
+            }
+
+            if (ShowProjectedRoot)
+            {
+                Vector3 referenceRootSpace = ConvertReferencePosition(
+                    report,
+                    sample.ProjectedRootPosition.Value,
+                    referenceScale);
+                Quaternion referenceRootRotation = ConvertReferenceRotation(
+                    report,
+                    sample.ProjectedRootRotation.Value);
+                Vector3 referenceWorld = Vector3.Transform(referenceRootSpace, rootWorld);
+                Quaternion referenceWorldRotation = Quaternion.Normalize(
+                    humanoid.SceneNode.Transform.WorldRotation * referenceRootRotation);
+                RuntimeAnimationHostServices.Current.RenderPoint(referenceWorld, ColorF4.Magenta);
+                DrawRotationBasis(referenceWorld, referenceWorldRotation, BoneBasisAxisLength * 1.25f);
+
+                HumanoidProjectedRootPose live = humanoid.CurrentProjectedRootPose;
+                if (live.Channels != EHumanoidProjectedRootChannels.None)
+                {
+                    Vector3 liveWorld = Vector3.Transform(live.Position, rootWorld);
+                    Quaternion liveWorldRotation = Quaternion.Normalize(
+                        humanoid.SceneNode.Transform.WorldRotation * live.Rotation);
+                    RuntimeAnimationHostServices.Current.RenderPoint(liveWorld, ColorF4.White);
+                    RuntimeAnimationHostServices.Current.RenderLine(liveWorld, referenceWorld, ColorF4.Magenta);
+                    DrawRotationBasis(liveWorld, liveWorldRotation, BoneBasisAxisLength);
+                }
+            }
+
+            if (ShowHipsLocalTransform)
+                RenderHipsLocalTransform(humanoid, report, sample, referenceScale);
+
+            if (ShowAuthoredIKGoals || ShowCompensationSource)
+                RenderIKGoalDiagnostics(humanoid);
+        }
+
+        private static Vector3 GetReferenceBodyTrajectoryRootPosition(
+            HumanoidPoseAuditReport report,
+            HumanoidPoseAuditSample sample,
+            float referenceScale)
+        {
+            if (!IsUnityReport(report))
+                return sample.ConvertedBodyTranslationDelta.Value;
+
+            float humanScale = float.IsFinite(report.AvatarHumanScale) && report.AvatarHumanScale > 0.0f
+                ? report.AvatarHumanScale
+                : 1.0f;
+            return ConvertUnityPosition(sample.BodyPosition.Value) * (humanScale * referenceScale);
+        }
+
+        private void RenderHipsLocalTransform(
+            HumanoidComponent humanoid,
+            HumanoidPoseAuditReport report,
+            HumanoidPoseAuditSample sample,
+            float referenceScale)
+        {
+            Transform? hips = humanoid.Hips.Node?.GetTransformAs<Transform>(true);
+            if (hips is null)
+                return;
+
+            HumanoidPoseAuditVector3? referencePosition = sample.ComposedHipsLocalPosition
+                ?? sample.HipsLocalPosition
+                ?? FindBone(sample, "Hips")?.LocalPosition;
+            HumanoidPoseAuditQuaternion? referenceRotation = sample.ComposedHipsLocalRotation
+                ?? sample.HipsLocalRotation
+                ?? FindBone(sample, "Hips")?.LocalRotation;
+            if (referencePosition is null || referenceRotation is null)
+                return;
+
+            TransformBase parent = hips.Parent ?? humanoid.SceneNode.Transform;
+            Vector3 localPosition = ConvertReferencePosition(report, referencePosition.Value, referenceScale);
+            Quaternion localRotation = ConvertReferenceRotation(report, referenceRotation.Value);
+            Vector3 referenceWorld = parent.TransformPoint(localPosition, render: true);
+            Quaternion referenceWorldRotation = Quaternion.Normalize(parent.WorldRotation * localRotation);
+            RuntimeAnimationHostServices.Current.RenderPoint(referenceWorld, ColorF4.Orange);
+            RuntimeAnimationHostServices.Current.RenderPoint(hips.WorldTranslation, ColorF4.White);
+            RuntimeAnimationHostServices.Current.RenderLine(hips.WorldTranslation, referenceWorld, ColorF4.Orange);
+            DrawRotationBasis(referenceWorld, referenceWorldRotation, BoneBasisAxisLength);
+        }
+
+        private void RenderIKGoalDiagnostics(HumanoidComponent humanoid)
+        {
+            HumanoidIKSolverComponent? solver = humanoid.SceneNode.GetComponent<HumanoidIKSolverComponent>();
+            if (solver is null)
+                return;
+
+            for (int i = 0; i < DiagnosticGoals.Length; i++)
+            {
+                HumanoidIKGoalDiagnosticState diagnostic = solver.GetAnimatedIKGoalDiagnostic(DiagnosticGoals[i]);
+                if (diagnostic.Status == EHumanoidIKGoalApplicationStatus.None)
+                    continue;
+
+                if (ShowAuthoredIKGoals)
+                {
+                    RuntimeAnimationHostServices.Current.RenderPoint(diagnostic.BodyFrameWorldPosition, ColorF4.Cyan);
+                    RuntimeAnimationHostServices.Current.RenderPoint(diagnostic.FinalWorldPosition, ColorF4.Green);
+                    DrawRotationBasis(
+                        diagnostic.FinalWorldPosition,
+                        diagnostic.FinalWorldRotation,
+                        BoneBasisAxisLength * 0.75f);
+                }
+
+                if (!ShowCompensationSource)
+                    continue;
+
+                if (diagnostic.ContactCompensationOffset != Vector3.Zero)
+                {
+                    RuntimeAnimationHostServices.Current.RenderLine(
+                        diagnostic.BodyFrameWorldPosition,
+                        diagnostic.FinalWorldPosition,
+                        ColorF4.Orange);
+                }
+
+                // This text is an opt-in diagnostic overlay; formatting allocation is outside
+                // normal animation ticks and makes the policy/contact source explicit on screen.
+                RuntimeAnimationHostServices.Current.RenderText(
+                    diagnostic.FinalWorldPosition + Vector3.UnitY * MuscleDebugTextOffset.Y,
+                    $"{diagnostic.Goal}: {diagnostic.Status}",
+                    ColorF4.White,
+                    MuscleDebugTextScale);
+            }
+        }
+
+        private static HumanoidPoseAuditBoneSample? FindBone(HumanoidPoseAuditSample sample, string name)
+        {
+            for (int i = 0; i < sample.Bones.Count; i++)
+                if (string.Equals(sample.Bones[i].Name, name, StringComparison.Ordinal))
+                    return sample.Bones[i];
+            return null;
+        }
+
+        private static Vector3 ConvertReferencePosition(
+            HumanoidPoseAuditReport report,
+            Vector3 value,
+            float referenceScale)
+            => IsUnityReport(report) ? ConvertUnityPosition(value) * referenceScale : value;
+
+        private static Quaternion ConvertReferenceRotation(
+            HumanoidPoseAuditReport report,
+            Quaternion value)
+            => IsUnityReport(report)
+                ? Quaternion.Normalize(new Quaternion(value.X, -value.Y, -value.Z, value.W))
+                : Quaternion.Normalize(value);
+
+        private static Vector3 ConvertUnityPosition(Vector3 value)
+            => new(-value.X, value.Y, value.Z);
+
+        private static bool IsUnityReport(HumanoidPoseAuditReport report)
+            => report.Source.StartsWith("Unity", StringComparison.OrdinalIgnoreCase);
 
         private HumanoidPoseAuditReport? EnsureReferenceReportLoaded()
         {
@@ -460,6 +686,19 @@ private void Render()
             RuntimeAnimationHostServices.Current.RenderPoint(origin + transform.WorldUp * axisLength, ColorF4.Red);
             RuntimeAnimationHostServices.Current.RenderPoint(origin + transform.WorldRight * axisLength, ColorF4.Green);
             RuntimeAnimationHostServices.Current.RenderPoint(origin + transform.WorldForward * axisLength, ColorF4.Blue);
+        }
+
+        private static void DrawRotationBasis(Vector3 origin, Quaternion rotation, float axisLength)
+        {
+            Vector3 right = Vector3.Transform(Vector3.UnitX * axisLength, rotation);
+            Vector3 up = Vector3.Transform(Vector3.UnitY * axisLength, rotation);
+            Vector3 forward = Vector3.Transform(Vector3.UnitZ * axisLength, rotation);
+            RuntimeAnimationHostServices.Current.RenderLine(origin, origin + right, ColorF4.Red);
+            RuntimeAnimationHostServices.Current.RenderLine(origin, origin + up, ColorF4.Green);
+            RuntimeAnimationHostServices.Current.RenderLine(origin, origin + forward, ColorF4.Blue);
+            RuntimeAnimationHostServices.Current.RenderPoint(origin + right, ColorF4.Red);
+            RuntimeAnimationHostServices.Current.RenderPoint(origin + up, ColorF4.Green);
+            RuntimeAnimationHostServices.Current.RenderPoint(origin + forward, ColorF4.Blue);
         }
 
         private void RenderMuscleDebugText(HumanoidComponent humanoid)

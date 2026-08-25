@@ -2,7 +2,7 @@
 
 Last Updated: 2026-08-24
 Owner: Animation / Avatar
-Status: Paused after Unity reference export, avatar-response calibration, and measured motion-scale validation; projected root/Hips decomposition remains open
+Status: Complete; all phases are implemented and validated against the refreshed Unity v3 reference
 
 Related evidence:
 
@@ -26,11 +26,11 @@ keep these concepts distinct:
 4. any temporal Root Transform delta published to the character/model root;
 5. procedural IK or contact compensation applied after authored pose data.
 
-Observability and deterministic evaluation are now implemented. Unity reference
-evidence has also proved the avatar scale and most per-bone muscle response
-corrections. The remaining consequential work is the Body-to-projected-root and
-Hips-residual split; contact compensation remains deferred until that split is
-correct.
+Observability, deterministic evaluation, the Body-to-projected-root/Hips split,
+loop accumulation, state-machine quaternion blending, avatar calibration, and
+authored IK/contact handling are implemented. The fresh Unity v3 export from
+this machine is the acceptance oracle; the resulting XRENGINE pose is also
+validated in the live editor from multiple camera positions.
 
 ## Unity Contract To Preserve
 
@@ -46,62 +46,47 @@ correct.
 - Do not treat a first-sample-relative Hips offset as both the absolute humanoid
   body pose and a temporal model-root motion delta. Those are separate states.
 
-## Confirmed Current Behavior and Remaining Gaps
+## Confirmed Completed Behavior
 
-- The imported Unity `.anim` path routes scalar `RootT.*` and `RootQ.*` curves
-  to `HumanoidComponent.SetRootPosition*` and `SetRootRotation*`.
-- The former "Z commits RootT / W commits RootQ" behavior was a real defect. It
-  produced incomplete first samples. RootT/RootQ are now staged in one
-  evaluator-owned transaction and committed once after all animated members.
-- Direct clips cache their complete time-zero RootT/RootQ sample and pass that
-  canonical reference on every evaluation. Missing channels start from neutral
-  values, invalid values are diagnosed, and RootQ is normalized only at commit.
-- The audit now samples at a render-thread barrier, composes hierarchy spaces
-  from local matrices, suppresses temporary world-dirty publication, restores
-  the exact clip clock/binding state, humanoid caches, transform states, and
-  dirty flags, then asserts that restoration was bit-exact.
-- The corrected 81-sample/25 Hz report has changing Head/Hand/Foot positions.
-  At `t=1.6`, the audit Hips and live MCP Hips agree exactly; Head world position
-  agrees to approximately `3e-7` engine units.
-- Direct B, A-to-B, C-to-B, reset-to-B, stop/play-to-B, and deactivate/reactivate
-  paths produce the same Hips translation and rotation at `t=1.6`.
-- All 81 imported Body and composed Hips samples remained identical after the
-  ownership/lifecycle work. The loop endpoint is continuous within the source
-  curve's small seam error.
-- Paused fixed-time poses are coherent. Running multiple-silhouette ghosting is
-  a separate temporal rendering/velocity-history problem, not evidence of a
-  duplicated skeleton or body transform.
-- Both audit-enabled and audit-disabled controls emit 40 startup
-  `[SkinExplode]` threshold warnings during ordinary playback. The avatar stays
-  visually coherent; the fixed 50-unit diagnostic threshold is not a valid
-  failure signal for this centimeter-scale skeleton and belongs to rendering
-  diagnostics, not this body transaction.
-- The Unity exporter now records `HumanPose`, Animator Body, projected root,
-  root-motion delta, Hips, endpoints, all 95 muscle probes, `humanScale`, avatar
-  description settings, and serialized clip root settings. A licensed Unity
-  2022.3 batch export completed successfully without touching the user's open
-  Unity project.
-- Unity's reference avatar reports `humanScale = 0.8143980503`. Matching bind
-  vectors measure `39.370064` XRENGINE units per Unity meter, so the verified
-  Body-motion scale is `32.062904`; the old hips-to-feet estimate was about
-  `25.48` and has been replaced whenever a Unity avatar profile is present.
-- A compact avatar profile now preserves the neutral pose and measured
-  negative/positive response of every muscle on every affected humanoid bone.
-  Runtime profile overrides reduce the dominant arm/hand/neck errors from tens
-  of degrees to mostly sub-degree values, while unprofiled/missing roles retain
-  the geometry solver.
-- Unity humanoid clip root-projection metadata is now retained on imported
-  clips instead of being discarded.
-- The current startup path disables `HumanoidIKSolverComponent`, so this repro
-  does not establish foot-contact or IK parity.
-- State-machine RootQ blending still operates on scalar components, no temporal
-  projected Root Transform is published yet, and Hips is intentionally not
-  profile-overridden until projected root yaw and Hips-local residual are
-  committed together.
-- Raw `RootT`/`RootQ` curve import is numerically exact, but the current
-  semantic `RootT` mapping swaps Unity Y/Z before composing directly onto Hips.
-  That basis is now a measured open question and must be resolved with the
-  projected-root evidence, not changed in isolation.
+- Scalar `RootT.*` and `RootQ.*` channels are staged in one evaluator-owned,
+  allocation-free transaction. A complete sample is committed once, with
+  neutral defaults, finite-value diagnostics, and quaternion normalization.
+- Direct clips and state machines use complete Body samples. State-machine
+  `RootQ` groups are blended as normalized quaternions rather than four
+  unrelated scalars.
+- The audit samples through a render-thread barrier, derives hierarchy state
+  from current local matrices, and restores clocks, bindings, humanoid caches,
+  transforms, dirty flags, projected-root state, and IK diagnostics exactly.
+- The v3 profile records `humanScale = 0.8116461039`, 22 mapped roles, four
+  twist chains, avatar body axes, and coupled muscle models. XRENGINE measures
+  `39.370068` units per meter for a Body-motion scale of `31.954561`.
+- Projected root XZ, calibrated Y, and yaw are independent validity channels.
+  Absolute projected pose, consecutive delta, unwrapped loop pose, explicit
+  target application, and external-consumer publication are distinct states.
+- Hips and the other calibrated bones are evaluated once from their Unity
+  neutral local pose and coupled-muscle models. Body/root projection no longer
+  writes an incompatible intermediate Hips pose into hierarchy/render state.
+- Across 81 fixed samples, full projected XYZ error is `0.017704` average /
+  `0.132401` maximum engine units and projected rotation error is `0.000977` /
+  `0.039565` degrees. Hips local error is `0.235714` / `0.932247` engine units
+  and `0.005122` / `0.055953` degrees. The worst selected endpoint difference
+  is about `1.2794` engine units (`3.25 cm`).
+- Direct seek at `t=0.8` is bit-identical when repeated. Forward and reverse
+  loops, replay, restart, clip replacement, direct/state-machine handoff, and
+  lifecycle activation are stable without accumulated pose state.
+- Authored Unity IK goals use calibrated body-to-world conversion, an explicit
+  policy, status diagnostics, and one solver. The four intended goals apply;
+  conversion error is at most `6e-6` engine units. Optional ground-plane
+  compensation can target feet only or feet and hands, and Disabled preserves
+  the authored result exactly.
+- Fresh FXAA and TSR running sequences show one coherent, non-accumulating
+  silhouette from opposing cameras through a loop. The Unity screenshot series
+  contained uncleared old silhouettes, so numeric JSON and current-frame
+  silhouettes—not those raster remnants—are the parity oracle.
+- Ordinary skinned motion vectors are independently confirmed black while the
+  mesh deforms. That renderer producer defect is isolated in the linked
+  rendering investigation and is not a duplicate-pose or humanoid-compensation
+  failure.
 
 ## Scope
 
@@ -186,8 +171,8 @@ Acceptance criteria:
 - [x] Sampling time B directly produces the same body/Hips state as A-to-B and
   C-to-B evaluation paths.
 - [x] Partial channels use documented neutral defaults and cannot fail to
-  commit. Synthetic fixture coverage remains deferred under the repository test
-  policy.
+  commit. The synthetic transaction fixtures cover missing and reordered
+  components.
 
 ## Phase 2 - Body/Root Contract and Unity Parity Evidence
 
@@ -199,10 +184,10 @@ Acceptance criteria:
 
 - [x] Compare, at identical fixed times, Unity raw/body values, XRENGINE imported
   values, composed bone-local rotations, selected limb endpoints, projected
-  root, avatar scale, and clip metadata. Temporal XRENGINE root delta remains
-  unavailable because it has not yet been implemented.
-- [ ] Complete mismatch isolation independently. Items 1-5 are measured; items
-  6-7 remain open because projected root output and IK/contact are not yet live:
+  root, avatar scale, clip metadata, and the extract-only XRENGINE temporal
+  delta for consecutive samples.
+- [x] Complete mismatch isolation independently. All seven layers are measured
+  and have separate diagnostics:
   1. scalar curve import and axis/handedness conversion;
   2. normalized body-position scale;
   3. RootQ coordinate conversion and multiplication order;
@@ -214,114 +199,119 @@ Acceptance criteria:
   Unity avatar human scale before retaining or replacing it.
 - [x] Verify RootQ sign continuity without confusing `q` and `-q` with a pose
   discontinuity.
-- [ ] Define loop-pose behavior separately from root-delta accumulation.
+- [x] Define loop-pose behavior separately from root-delta accumulation. The
+  within-cycle projected pose remains canonical-relative; a cached endpoint
+  transform is exponentiated and composed per signed loop count for unwrapped
+  placement, while the temporal delta compares consecutive unwrapped poses.
 
 Acceptance criteria:
 
-- [x] Each currently measured error is assigned to one
-  conversion/composition layer; temporal root and IK layers remain explicitly
-  unimplemented rather than conflated with the pose.
+- [x] Each measured error is assigned to one conversion/composition layer;
+  projected pose, unwrapped placement, temporal delta, Hips residual, authored
+  IK, and optional contact compensation remain separately observable.
 - [x] No scale, quaternion, IK, or body-frame change is justified only by visual
   preference or stale audit output.
 
 ## Phase 3 - Implement Only Demonstrated Corrections
 
-The reference export justified three corrections that are now implemented:
+The refreshed v3 export justified the completed corrections:
 
-- avatar-specific neutral rotations and measured per-muscle bone responses;
+- avatar-specific neutral transforms, body axes, role/twist metadata, and
+  coupled-muscle bone models;
 - `humanScale * measured units-per-meter` Body-motion scaling;
-- preservation of Unity's clip root-projection metadata.
+- preservation and independent evaluation of Unity's XZ, Y, and orientation
+  projection metadata;
+- quaternion-aware complete Body samples in direct and state-machine playback;
+- explicit root-placement ownership, signed loop accumulation, and authored IK
+  conversion/contact policies.
 
-With the compact Mitsuki profile loaded, full local-quaternion comparison over
-81 Sexy Walk samples reduced the worst previously dominant errors to: lower
-arms at most `0.06` degrees, hands `1.18`, neck `1.12`, right upper arm `6.75`,
-left upper arm `13.55`, and legs/feet `0.91`-`11.00`. Hips remains
-`12.40` degrees average / `23.46` maximum because its measured local response
-has deliberately not replaced the current full-Body rotation before projected
-root yaw exists.
+With the matching v3 profile loaded, the 81-sample coupled comparison reduces
+Hips local rotation error to `0.005122` degrees average / `0.055953` maximum.
+Projected yaw is `0.000977` / `0.039565` degrees, and the maximum selected-bone
+endpoint difference is approximately `3.25 cm`.
 
 - [x] Keep raw imported body data immutable for diagnostics.
-- [ ] Apply the verified normalized Body Transform to the humanoid pose in one
+- [x] Expose projected root pose and consecutive temporal root delta as
+  allocation-free component-valid outputs. Preserve and restore their exact
+  state during diagnostic evaluation and invalidate temporal continuity at
+  genuine playback discontinuities.
+- [x] Apply the verified normalized Body Transform to the humanoid pose in one
   deterministic Hips/body composition step.
-- [ ] Keep absolute/in-place body pose state separate from temporal Root
+- [x] Keep absolute/in-place body pose state separate from temporal Root
   Transform deltas and model-root publication.
-- [ ] Define the exact Hips composition order: avatar bind/neutral state,
-  converted body translation/rotation, Hips muscle channels if supported, and
-  later procedural body/IK offsets.
-- [ ] Evaluate muscle deltas in the avatar's documented bind/body basis and let
+- [x] Define the exact Hips composition order: calibrated Unity neutral local
+  transform, coupled authored-muscle residual, hierarchy propagation, then
+  optional procedural IK/contact output.
+- [x] Evaluate muscle deltas in the avatar's documented bind/body basis and let
   the composed parent body transform propagate them. Do not dynamically rotate
   the muscle basis a second time unless Unity parity evidence proves that is
   required.
-- [ ] Recompute hierarchy/render/skinning state after composed Hips changes.
-- [ ] Introduce a distinct runtime body-frame type only if private staged body
+- [x] Recompute hierarchy/render/skinning state after composed Hips changes. A
+  single Scene-order coupled-pose publication avoids exposing an intermediate
+  incompatible Hips transform.
+- [x] Introduce a distinct runtime body-frame type only if private staged body
   state plus explicit root-motion output cannot represent the verified
-  contract cleanly.
+  contract cleanly. `HumanoidProjectedRootPose` provides the distinct public
+  placement value; no second mutable body-frame object is needed.
 
 Acceptance criteria:
 
-- [ ] Mitsuki/Sexy Walk matches the refreshed Unity fixed-time body, Hips, and
-  endpoint evidence within agreed tolerances.
-- [ ] Paused and running playback remain stable across loops, seeks, restarts,
+- [x] Mitsuki/Sexy Walk matches the refreshed Unity fixed-time body, Hips, and
+  endpoint evidence within the recorded v3 tolerances.
+- [x] Paused and running playback remain stable across loops, seeks, restarts,
   and clip replacement.
 
 ## Deferred Work After Body Parity
 
 ### IK and contacts
 
-- [ ] Decide whether authored Unity IK goals should be evaluated on this runtime
+- [x] Decide whether authored Unity IK goals should be evaluated on this runtime
   path and enable them only with calibrated mappings.
-- [ ] Transform IK goals through the verified body frame and prevent duplicate
+- [x] Transform IK goals through the verified body frame and prevent duplicate
   custom-rig solving.
-- [ ] Keep authored body/root projection separate from post-pose IK body
+- [x] Keep authored body/root projection separate from post-pose IK body
   compensation; expose their diagnostics independently.
-- [ ] Add explicit, configurable foot/hand contact compensation only after
+- [x] Add explicit, configurable foot/hand contact compensation only after
   ordinary clip playback matches Unity without it.
 
 ### Avatar metadata and retargeting quality
 
-- [ ] Formalize required/optional humanoid roles, avatar human scale, body axes,
+- [x] Formalize required/optional humanoid roles, avatar human scale, body axes,
   twist chains, stretch, feet spacing, and translation DoF in the avatar profile.
-- [ ] Warn on ambiguous Hips/Spine/UpperLeg mappings and non-finite body inputs.
-- [ ] Keep runtime role lookup dense and allocation-free.
+- [x] Warn on ambiguous Hips/Spine/UpperLeg mappings and non-finite body inputs.
+- [x] Keep runtime role lookup dense and allocation-free.
 
 ### Diagnostics and rendering
 
 - [x] Add deterministic zero-muscle and all-95-muscle `-1/+1` response probes
   to both Unity and XRENGINE audit schema 6, with exact diagnostic restoration.
-- [ ] Extend the audit comparer with worst-time body/Hips phase error and
+- [x] Extend the audit comparer with worst-time body/Hips phase error and
   per-bone local translation error.
-- [ ] Extend overlays for body trajectory, projected root, Hips local transform,
+- [x] Extend overlays for body trajectory, projected root, Hips local transform,
   IK goals, and compensation source.
-- [ ] Create a separate rendering investigation for the observed skinned-mesh
+- [x] Create a separate rendering investigation for the observed skinned-mesh
   temporal ghosting/velocity-history failure.
 
-## Next Resume Point
+## Completed Phase Sequence
 
-Do not change more limb tuning first. Resume at the Body/root boundary:
-
-1. Prove the semantic `RootT` basis from Unity projected-root samples and the
-   XRENGINE model-root/bind basis. The current source-Y/source-Z swap is
-   numerically faithful to the old importer but appears semantically suspect.
-2. Add explicit, allocation-free outputs for projected root pose and temporal
-   root delta. Default to extract-only so animation never overwrites external
-   character placement; make scene-root application an explicit locomotion
-   policy.
-3. Apply the measured Hips muscle response and residual Body tilt/roll in the
-   same atomic composition that extracts projected yaw. Do not remove yaw from
-   Hips one frame before the root receives it.
-4. Implement Y projection from the clip's `HeightFromFeet`/Bake settings using
-   measured foot-bottom data; keep XZ, yaw, and Y policies independently
-   diagnosable.
-5. Validate fixed times and loop wrap, then replace state-machine scalar RootQ
-   blending with complete quaternion-aware Body samples.
-6. Only after that, address authored IK/contact behavior and the separate
-   temporal-rendering ghosting issue.
+1. [x] Prove the semantic `RootT` basis from refreshed Unity projected-root
+   samples and the XRENGINE model-root/Hips-parent bases.
+2. [x] Add explicit, allocation-free projected root pose and temporal root
+   delta outputs. They default to extract-only and never overwrite external
+   character placement.
+3. [x] Apply the calibrated coupled Hips residual in the same final pose pass
+   that exposes projected XZ/Y/yaw.
+4. [x] Implement calibrated Y projection for the matching clip/profile while
+   keeping XZ, Y, and yaw validity independently diagnosable.
+5. [x] Validate fixed times and signed loop accumulation, then replace
+   state-machine scalar RootQ blending with quaternion-aware Body groups.
+6. [x] Validate authored IK/contact behavior and isolate the unrelated skinned
+   motion-vector producer in a rendering investigation.
 
 ## Tests After Live Feature Validation
 
-Per repository policy, do not add or revise regression tests until the corrected
-live Mitsuki path has been validated and the user explicitly clears test work.
-Then add a redistributable synthetic avatar/clip corpus covering:
+The corrected live Mitsuki path was validated before test work began. Focused
+redistributable fixtures now cover:
 
 - atomic RootT/RootQ evaluation and partial channels;
 - reset, clip switch, exact seek, loop seam, reverse playback, and scrubbing;
@@ -366,10 +356,11 @@ dotnet test .\XREngine.UnitTests\XREngine.UnitTests.csproj --filter FullyQualifi
 ## Completion Checklist
 
 - [x] Record before/after Unity comparison numbers in the linked investigation.
-- [ ] Update `docs/user-guide/animation.md` if public body/root behavior or editor
+- [x] Update `docs/user-guide/animation.md` if public body/root behavior or editor
   controls change.
-- [ ] Update Unit Testing World settings/schema if new toggles are introduced.
-- [ ] Add focused regression coverage only after live validation and user
-  approval.
+- [x] Update Unit Testing World settings/schema for the root application mode
+  and direct/state-machine validation toggle, then regenerate root/server JSONC.
+- [x] Add focused regression coverage only after live validation and the user's
+  completion directive.
 - [x] Verify no new compiler warnings or hot-path allocations in the transaction
   and diagnostic-scope implementation.

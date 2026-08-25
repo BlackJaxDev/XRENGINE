@@ -3,6 +3,7 @@ using System.Numerics;
 using MemoryPack;
 using XREngine.Core.Files;
 using XREngine.Data.Core;
+using XREngine.Animation.Importers;
 using static XREngine.Animation.AnimLayer;
 
 namespace XREngine.Animation
@@ -99,23 +100,25 @@ namespace XREngine.Animation
         private void AssignSlots()
         {
             var layout = new AnimationSlotLayout();
-            var uniqueMembers = new HashSet<AnimationMember>();
+            var slotsByPath = new Dictionary<string, AnimSlot>(StringComparer.Ordinal);
 
-            // Pass 1: assign slots to each unique member
+            // Logical paths, rather than AnimationMember object identity, define slots. Different
+            // clips commonly own distinct member instances for the same target path and must write
+            // into the same state-machine slot when they blend.
             foreach (var kvp in _animatedCurves)
             {
                 var member = kvp.Value;
-                if (!uniqueMembers.Add(member))
-                    continue; // Already assigned
-
                 var type = member.DetermineValueType();
-                member.Slot = layout.AllocateSlot(type);
+                AnimSlot slot = layout.AllocateSlot(type);
+                member.Slot = slot;
+                slotsByPath.Add(kvp.Key, slot);
             }
 
+            layout.QuaternionFloatGroups = BuildQuaternionFloatSlotGroups(slotsByPath);
             SlotLayout = layout;
 
             // Build dense member array for ApplyAnimationValues
-            _animatedMembersArray = [.. uniqueMembers];
+            _animatedMembersArray = [.. _animatedCurves.Values.Distinct()];
 
             // Size our own store
             ValueStore.Resize(layout);
@@ -130,14 +133,21 @@ namespace XREngine.Animation
                 layer.ValueStore.Resize(layout);
 
                 foreach (var state in layer.States)
-                    PropagateLayoutToMotion(state?.Motion, layout);
+                    PropagateLayoutToMotion(state?.Motion, layout, slotsByPath);
             }
         }
 
-        private static void PropagateLayoutToMotion(MotionBase? motion, AnimationSlotLayout layout)
+        private static void PropagateLayoutToMotion(
+            MotionBase? motion,
+            AnimationSlotLayout layout,
+            IReadOnlyDictionary<string, AnimSlot> slotsByPath)
         {
             if (motion is null)
                 return;
+
+            foreach ((string path, AnimationMember member) in motion.AnimatedCurves)
+                if (slotsByPath.TryGetValue(path, out AnimSlot slot))
+                    member.Slot = slot;
 
             motion.SlotLayout = layout;
             motion.ValueStore.Resize(layout);
@@ -148,17 +158,87 @@ namespace XREngine.Animation
             {
                 case BlendTree1D bt1d:
                     foreach (var child in bt1d.Children)
-                        PropagateLayoutToMotion(child.Motion, layout);
+                        PropagateLayoutToMotion(child.Motion, layout, slotsByPath);
                     break;
                 case BlendTree2D bt2d:
                     foreach (var child in bt2d.Children)
-                        PropagateLayoutToMotion(child.Motion, layout);
+                        PropagateLayoutToMotion(child.Motion, layout, slotsByPath);
                     break;
                 case BlendTreeDirect btd:
                     foreach (var child in btd.Children)
-                        PropagateLayoutToMotion(child.Motion, layout);
+                        PropagateLayoutToMotion(child.Motion, layout, slotsByPath);
                     break;
             }
+        }
+
+        internal static AnimationQuaternionFloatSlotGroup[] BuildQuaternionFloatSlotGroups(
+            IReadOnlyDictionary<string, AnimSlot> slotsByPath)
+        {
+            var groupsByTargetPath = new Dictionary<string, int[]>(StringComparer.Ordinal);
+            foreach ((string path, AnimSlot slot) in slotsByPath)
+            {
+                if (slot.Type != EAnimValueType.Float
+                    || !TryGetImportedBodyRotationComponent(path, out string targetPath, out int componentIndex))
+                    continue;
+
+                if (!groupsByTargetPath.TryGetValue(targetPath, out int[]? indices))
+                {
+                    indices = [-1, -1, -1, -1];
+                    groupsByTargetPath.Add(targetPath, indices);
+                }
+                indices[componentIndex] = slot.TypeIndex;
+            }
+
+            var result = new List<AnimationQuaternionFloatSlotGroup>(groupsByTargetPath.Count);
+            foreach (int[] indices in groupsByTargetPath.Values)
+            {
+                var group = new AnimationQuaternionFloatSlotGroup(
+                    indices[0],
+                    indices[1],
+                    indices[2],
+                    indices[3]);
+                if (group.IsValid)
+                    result.Add(group);
+            }
+            return [.. result];
+        }
+
+        private static bool TryGetImportedBodyRotationComponent(
+            string path,
+            out string targetPath,
+            out int componentIndex)
+        {
+            string methodName;
+            if (path.Contains("SetRootRotationX:<AnimatedValue>", StringComparison.Ordinal))
+            {
+                methodName = "SetRootRotationX";
+                componentIndex = 0;
+            }
+            else if (path.Contains("SetRootRotationY:<AnimatedValue>", StringComparison.Ordinal))
+            {
+                methodName = "SetRootRotationY";
+                componentIndex = 1;
+            }
+            else if (path.Contains("SetRootRotationZ:<AnimatedValue>", StringComparison.Ordinal))
+            {
+                methodName = "SetRootRotationZ";
+                componentIndex = 2;
+            }
+            else if (path.Contains("SetRootRotationW:<AnimatedValue>", StringComparison.Ordinal))
+            {
+                methodName = "SetRootRotationW";
+                componentIndex = 3;
+            }
+            else
+            {
+                targetPath = string.Empty;
+                componentIndex = -1;
+                return false;
+            }
+
+            int methodIndex = path.LastIndexOf(methodName, StringComparison.Ordinal);
+            targetPath = methodIndex >= 0 ? path[..methodIndex] : string.Empty;
+            return methodIndex >= 0;
         }
 
         public void Deinitialize()
@@ -210,25 +290,185 @@ namespace XREngine.Animation
 
         public void EvaluationTick(object? rootObject, float delta)
         {
+            EvaluateAnimationValues(rootObject, delta);
+            ApplyAnimationValues();
+        }
+
+        /// <summary>
+        /// Evaluates layers and blends their typed values without applying them to bound members.
+        /// This lets runtime integrations establish one atomic humanoid body transaction around
+        /// the final, already-blended sample.
+        /// </summary>
+        public void EvaluateAnimationValues(object? rootObject, float delta)
+        {
+            ValueStore.Clear();
             for (int i = 0; i < Layers.Count; ++i)
             {
                 AnimLayer layer = Layers[i];
                 layer.EvaluationTick(rootObject, delta, Variables);
                 CombineAnimationValues(layer);
             }
-            ApplyAnimationValues();
         }
 
         public void EvaluationTick(object? rootObject, long deltaTicks)
         {
+            EvaluateAnimationValues(rootObject, deltaTicks);
+            ApplyAnimationValues();
+        }
+
+        /// <inheritdoc cref="EvaluateAnimationValues(object?, float)"/>
+        public void EvaluateAnimationValues(object? rootObject, long deltaTicks)
+        {
+            ValueStore.Clear();
             for (int i = 0; i < Layers.Count; ++i)
             {
                 AnimLayer layer = Layers[i];
                 layer.EvaluationTick(rootObject, deltaTicks, Variables);
                 CombineAnimationValues(layer);
             }
-            ApplyAnimationValues();
         }
+
+        /// <summary>
+        /// Seeks the current and transitioning motions on every layer to one exact time.
+        /// </summary>
+        public void SeekActiveMotions(float timeSeconds)
+        {
+            for (int i = 0; i < Layers.Count; i++)
+                Layers[i]?.SeekActiveMotionPlayback(timeSeconds);
+        }
+
+        /// <summary>
+        /// Resolves a root-projection policy for the currently contributing state motions.
+        /// Multiple clips may contribute only when their projection settings agree; a clip name
+        /// is returned only when every contributing leaf has the same calibration identity.
+        /// </summary>
+        public bool TryResolveHumanoidRootMotionProjection(
+            out UnityHumanoidClipRootMotionSettings? settings,
+            out string? calibrationClipName)
+        {
+            settings = null;
+            calibrationClipName = null;
+            bool found = false;
+            bool mixedClipNames = false;
+            bool incompatibleSettings = false;
+
+            for (int i = 0; i < Layers.Count; i++)
+            {
+                AnimLayer? layer = Layers[i];
+                AccumulateHumanoidRootMotionProjection(
+                    layer?.CurrentState?.Motion,
+                    ref settings,
+                    ref calibrationClipName,
+                    ref found,
+                    ref mixedClipNames,
+                    ref incompatibleSettings);
+                AccumulateHumanoidRootMotionProjection(
+                    layer?.NextState?.Motion,
+                    ref settings,
+                    ref calibrationClipName,
+                    ref found,
+                    ref mixedClipNames,
+                    ref incompatibleSettings);
+            }
+
+            if (mixedClipNames)
+                calibrationClipName = null;
+            if (incompatibleSettings)
+            {
+                settings = null;
+                calibrationClipName = null;
+                return false;
+            }
+            return found && settings is not null;
+        }
+
+        private static void AccumulateHumanoidRootMotionProjection(
+            MotionBase? motion,
+            ref UnityHumanoidClipRootMotionSettings? settings,
+            ref string? calibrationClipName,
+            ref bool found,
+            ref bool mixedClipNames,
+            ref bool incompatibleSettings)
+        {
+            if (motion is null || incompatibleSettings)
+                return;
+
+            switch (motion)
+            {
+                case AnimationClip clip:
+                    if (!clip.HasRootMotion || clip.UnityHumanoidRootMotionSettings is not { } clipSettings)
+                        return;
+
+                    if (!found)
+                    {
+                        settings = clipSettings;
+                        calibrationClipName = clip.Name;
+                        found = true;
+                        return;
+                    }
+
+                    if (!HaveEquivalentRootMotionProjectionSettings(settings!, clipSettings))
+                    {
+                        incompatibleSettings = true;
+                        return;
+                    }
+                    if (!string.Equals(calibrationClipName, clip.Name, StringComparison.Ordinal))
+                        mixedClipNames = true;
+                    return;
+
+                case BlendTree1D tree1D:
+                    foreach (BlendTree1D.Child child in tree1D.Children)
+                        AccumulateHumanoidRootMotionProjection(
+                            child.Motion,
+                            ref settings,
+                            ref calibrationClipName,
+                            ref found,
+                            ref mixedClipNames,
+                            ref incompatibleSettings);
+                    return;
+
+                case BlendTree2D tree2D:
+                    foreach (BlendTree2D.Child child in tree2D.Children)
+                        AccumulateHumanoidRootMotionProjection(
+                            child.Motion,
+                            ref settings,
+                            ref calibrationClipName,
+                            ref found,
+                            ref mixedClipNames,
+                            ref incompatibleSettings);
+                    return;
+
+                case BlendTreeDirect directTree:
+                    foreach (BlendTreeDirect.Child child in directTree.Children)
+                        AccumulateHumanoidRootMotionProjection(
+                            child.Motion,
+                            ref settings,
+                            ref calibrationClipName,
+                            ref found,
+                            ref mixedClipNames,
+                            ref incompatibleSettings);
+                    return;
+            }
+        }
+
+        private static bool HaveEquivalentRootMotionProjectionSettings(
+            UnityHumanoidClipRootMotionSettings a,
+            UnityHumanoidClipRootMotionSettings b)
+            => a.StartTime == b.StartTime
+            && a.StopTime == b.StopTime
+            && a.OrientationOffsetY == b.OrientationOffsetY
+            && a.Level == b.Level
+            && a.CycleOffset == b.CycleOffset
+            && a.LoopTime == b.LoopTime
+            && a.LoopPose == b.LoopPose
+            && a.BakeOrientationIntoPose == b.BakeOrientationIntoPose
+            && a.BakePositionYIntoPose == b.BakePositionYIntoPose
+            && a.BakePositionXZIntoPose == b.BakePositionXZIntoPose
+            && a.KeepOriginalOrientation == b.KeepOriginalOrientation
+            && a.KeepOriginalPositionY == b.KeepOriginalPositionY
+            && a.KeepOriginalPositionXZ == b.KeepOriginalPositionXZ
+            && a.HeightFromFeet == b.HeightFromFeet
+            && a.Mirror == b.Mirror;
 
         private void CombineAnimationValues(AnimLayer layer)
         {
