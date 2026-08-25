@@ -28,6 +28,11 @@ public sealed partial class BackendReadyFramePackage
     public int MeshCommandCount { get; private set; }
     public ulong DependencySignature { get; private set; }
     public ulong ShadowCasterCommandSetSignature { get; private set; }
+    /// <summary>
+    /// Gets whether enabled forward mesh work requests the contact-shadow
+    /// depth-normal prepass for this immutable frame package.
+    /// </summary>
+    public bool RequiresForwardContactPrePass { get; private set; }
     public IReadOnlyCollection<RenderPassMetadata>? PassMetadata => _passMetadata;
     public ReadOnlySpan<BackendReadyRenderPass> Passes => _passes.AsSpan(0, _passCount);
     public ReadOnlySpan<BackendReadyMeshSelection> MeshSelections
@@ -84,6 +89,7 @@ public sealed partial class BackendReadyFramePackage
         _meshSelectionIndices.Clear();
         _meshSelectionIndices.EnsureCapacity(meshCommandCount);
         int meshSelectionCount = 0;
+        bool requiresForwardContactPrePass = false;
         ulong packageDependencySignature = 14695981039346656037UL;
         for (int passIndex = 0; passIndex < passCount; passIndex++)
         {
@@ -104,6 +110,15 @@ public sealed partial class BackendReadyFramePackage
                 XRMaterial? material = meshCommand.MaterialOverride ?? meshCommand.Mesh?.Material;
                 BackendReadyMeshSelection selection =
                     CreateOrReuseMeshSelection(pass.PassIndex, meshCommand, material);
+                if (!requiresForwardContactPrePass &&
+                    meshCommand.Enabled &&
+                    material is not null &&
+                    pass.PassIndex is (int)EDefaultRenderPass.OpaqueForward or
+                        (int)EDefaultRenderPass.MaskedForward &&
+                    UberShaderVariantBuilder.RequiresForwardContactShadows(material))
+                {
+                    requiresForwardContactPrePass = true;
+                }
                 _meshSelections[meshSelectionCount] = selection;
                 _meshSelectionIndices[meshCommand.StableQueryKey] = meshSelectionCount;
                 meshSelectionCount++;
@@ -120,6 +135,7 @@ public sealed partial class BackendReadyFramePackage
         _passCount = passCount;
         _meshSelectionCount = meshSelectionCount;
         ShadowCasterCommandSetSignature = ComputeShadowCasterCommandSetSignature();
+        RequiresForwardContactPrePass = requiresForwardContactPrePass;
         _passMetadata = passMetadata;
         State = EBackendReadyFramePackageState.Prepared;
 
@@ -153,6 +169,7 @@ public sealed partial class BackendReadyFramePackage
         MeshCommandCount = 0;
         DependencySignature = 0UL;
         ShadowCasterCommandSetSignature = 0UL;
+        RequiresForwardContactPrePass = false;
         _passMetadata = null;
         _passCount = 0;
         _meshSelectionCount = 0;

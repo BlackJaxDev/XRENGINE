@@ -62,7 +62,7 @@ public partial class DefaultRenderPipeline : RenderPipeline, ISceneRenderPipelin
     [RenderPipelineCameraSetting(Order = 100)]
     [Category("Forward Pre-Pass")]
     [DisplayName("Forward Depth Pre-Pass")]
-    [Description("Renders forward opaque and masked geometry into depth+normal pre-pass targets before ambient occlusion and lighting.")]
+    [Description("Allows contact-shadow consumers to request the complete-scene depth+normal pre-pass. Ambient occlusion always includes forward geometry when enabled.")]
     public bool ForwardDepthPrePassEnabled
     {
         get => _forwardDepthPrePassEnabled;
@@ -73,7 +73,7 @@ public partial class DefaultRenderPipeline : RenderPipeline, ISceneRenderPipelin
     [RenderPipelineCameraSetting(Order = 110)]
     [Category("Forward Pre-Pass")]
     [DisplayName("Share GBuffer Targets")]
-    [Description("When enabled, the forward pre-pass writes directly into the main GBuffer depth and normal textures instead of only using dedicated forward pre-pass targets.")]
+    [Description("Retained for camera-settings compatibility. The default pipeline now preserves deferred material attachments and uses a separate complete-scene depth+normal surface.")]
     public bool ForwardPrePassSharesGBufferTargets
     {
         get => _forwardPrePassSharesGBufferTargets;
@@ -84,7 +84,7 @@ public partial class DefaultRenderPipeline : RenderPipeline, ISceneRenderPipelin
     [RenderPipelineCameraSetting(Order = 120)]
     [Category("Forward Pre-Pass")]
     [DisplayName("Depth+Normal Resolution")]
-    [Description("Resolution for the dedicated forward depth+normal pre-pass and contact-shadow copy targets. Shared GBuffer writes remain at the main internal resolution.")]
+    [Description("Retained for camera-settings compatibility. The default pipeline complete-scene depth+normal surface is always full internal resolution.")]
     public EDepthNormalPrePassResolution ForwardDepthNormalPrePassResolution
     {
         get => _forwardDepthNormalPrePassResolution;
@@ -1344,49 +1344,6 @@ public partial class DefaultRenderPipeline : RenderPipeline, ISceneRenderPipelin
         }
     }
 
-    private (uint x, uint y) GetDesiredFBOSizeForwardDepthNormalPrePass()
-    {
-        uint divisor = ForwardDepthNormalPrePassResolution switch
-        {
-            EDepthNormalPrePassResolution.Half => 2u,
-            EDepthNormalPrePassResolution.Quarter => 4u,
-            _ => 1u,
-        };
-
-        return (ScaleInternalExtent(InternalWidth, divisor), ScaleInternalExtent(InternalHeight, divisor));
-    }
-
-    private bool NeedsRecreateTextureForwardDepthNormalPrePassSize(XRTexture t)
-    {
-        (uint w, uint h) = GetDesiredFBOSizeForwardDepthNormalPrePass();
-        switch (t)
-        {
-            case XRTexture2D t2d:
-                return t2d.Width != w || t2d.Height != h;
-            case XRTexture2DArray t2da:
-                return t2da.Width != w || t2da.Height != h;
-            case XRTexture2DView:
-            case XRTexture2DArrayView:
-                return false;
-            default:
-                return true;
-        }
-    }
-
-    private void ResizeTextureForwardDepthNormalPrePassSize(XRTexture t)
-    {
-        (uint w, uint h) = GetDesiredFBOSizeForwardDepthNormalPrePass();
-        switch (t)
-        {
-            case XRTexture2D t2d:
-                t2d.Resize(w, h);
-                break;
-            case XRTexture2DArray t2da:
-                t2da.Resize(w, h);
-                break;
-        }
-    }
-
     private bool NeedsRecreateDeferredGBufferFbo(XRFrameBuffer fbo)
     {
         if (!fbo.IsLastCheckComplete || fbo.EffectiveSampleCount != 1u)
@@ -1550,9 +1507,6 @@ public partial class DefaultRenderPipeline : RenderPipeline, ISceneRenderPipelin
     public const string DepthOfFieldFBOName = "DepthOfFieldFBO";
     public const string DepthPreloadFBOName = "DepthPreloadFBO";
     public const string ForwardDepthPrePassFBOName = "ForwardDepthPrePassFBO";
-    public const string ForwardDepthPrePassMergeFBOName = "ForwardDepthPrePassMergeFBO";
-    public const string ForwardContactPrePassCopyFBOName = "ForwardContactPrePassCopyFBO";
-    public const string DeferredGBufferPreForwardCopyFBOName = "DeferredGBufferPreForwardCopyFBO";
     public const string FxaaOutputTextureName = "FxaaOutputTexture";
     public const string SmaaOutputTextureName = "SmaaOutputTexture";
     public const string SmaaEdgeTextureName = SmaaFBOName + "_EdgeTexture";
@@ -1580,8 +1534,6 @@ public partial class DefaultRenderPipeline : RenderPipeline, ISceneRenderPipelin
     public const string HBAOPlusBlurIntermediateTextureName = "HBAOPlusBlurIntermediateTexture";
     public const string NormalTextureName = "Normal";
     public const string ForwardPrePassNormalTextureName = "ForwardPrePassNormal";
-    public const string ForwardContactNormalTextureName = "ForwardContactNormal";
-    public const string DeferredGBufferPreForwardNormalTextureName = "DeferredGBufferPreForwardNormal";
     public const string DepthViewTextureName = "DepthView";
     public const string ForwardContactDepthViewTextureName = "ForwardContactDepthView";
     public const string StencilViewTextureName = "StencilView";
@@ -1590,8 +1542,6 @@ public partial class DefaultRenderPipeline : RenderPipeline, ISceneRenderPipelin
     public const string TransformIdTextureName = "TransformId";
     public const string DepthStencilTextureName = "DepthStencil";
     public const string ForwardPrePassDepthStencilTextureName = "ForwardPrePassDepthStencil";
-    public const string ForwardContactDepthStencilTextureName = "ForwardContactDepthStencil";
-    public const string DeferredGBufferPreForwardDepthStencilTextureName = "DeferredGBufferPreForwardDepthStencil";
     public const string ForwardPassMsaaDepthStencilTextureName = "ForwardPassMsaaDepthStencil";
     public const string ForwardPassMsaaDepthViewTextureName = "ForwardPassMsaaDepthView";
     public const string LightingAccumTextureName = "LightingAccumTexture";
@@ -2303,43 +2253,13 @@ public partial class DefaultRenderPipeline : RenderPipeline, ISceneRenderPipelin
     }
 
     /// <summary>
-    /// Creates the forward pre-pass commands that render into both a dedicated
-    /// forward-only FBO and into the shared GBuffer attachments (separate + merge).
-    /// </summary>
-    private ViewportRenderCommandContainer CreateForwardPrePassSeparateCommands()
-    {
-        var c = new ViewportRenderCommandContainer(this);
-
-        using (c.AddUsing<VPRC_BindFBOByName>(x => x.SetOptions(ForwardDepthPrePassFBOName)))
-        {
-            c.Add<VPRC_DepthTest>().Enable = true;
-            c.Add<VPRC_DepthWrite>().Allow = true;
-            c.Add<VPRC_ForwardDepthNormalPrePass>().SetOptions(
-                [(int)EDefaultRenderPass.OpaqueForward, (int)EDefaultRenderPass.MaskedForward],
-                GPURenderDispatch);
-        }
-
-        using (c.AddUsing<VPRC_BindFBOByName>(x => x.SetOptions(ForwardDepthPrePassMergeFBOName, true, false, false, false)))
-        {
-            c.Add<VPRC_DepthTest>().Enable = true;
-            c.Add<VPRC_DepthWrite>().Allow = true;
-            c.Add<VPRC_ForwardDepthNormalPrePass>().SetOptions(
-                [(int)EDefaultRenderPass.OpaqueForward, (int)EDefaultRenderPass.MaskedForward],
-                GPURenderDispatch);
-        }
-
-        return c;
-    }
-
-    /// <summary>
-    /// Creates the forward pre-pass commands that render directly into the GBuffer
-    /// normal and depth attachments, skipping the dedicated forward-only FBO.
+    /// Overlays forward surfaces into the complete-scene depth and normal target.
     /// </summary>
     private ViewportRenderCommandContainer CreateForwardPrePassSharedCommands()
     {
         var c = new ViewportRenderCommandContainer(this);
 
-        using (c.AddUsing<VPRC_BindFBOByName>(x => x.SetOptions(ForwardDepthPrePassMergeFBOName, true, false, false, false)))
+        using (c.AddUsing<VPRC_BindFBOByName>(x => x.SetOptions(ForwardDepthPrePassFBOName, true, false, false, false)))
         {
             c.Add<VPRC_DepthTest>().Enable = true;
             c.Add<VPRC_DepthWrite>().Allow = true;
@@ -2383,11 +2303,11 @@ public partial class DefaultRenderPipeline : RenderPipeline, ISceneRenderPipelin
             Stereo);
 
         pass.SetGBufferInputTextureNames(
-            NormalTextureName,
-            DepthViewTextureName,
+            ForwardPrePassNormalTextureName,
+            ForwardContactDepthViewTextureName,
             AlbedoOpacityTextureName,
             RMSETextureName,
-            DepthStencilTextureName);
+            ForwardPrePassDepthStencilTextureName);
 
         pass.SetOutputNames(
             AmbientOcclusionNoiseTextureName,
@@ -2410,11 +2330,11 @@ public partial class DefaultRenderPipeline : RenderPipeline, ISceneRenderPipelin
             Stereo);
 
         pass.SetGBufferInputTextureNames(
-            NormalTextureName,
-            DepthViewTextureName,
+            ForwardPrePassNormalTextureName,
+            ForwardContactDepthViewTextureName,
             AlbedoOpacityTextureName,
             RMSETextureName,
-            DepthStencilTextureName);
+            ForwardPrePassDepthStencilTextureName);
 
         pass.SetOutputNames(
             AmbientOcclusionNoiseTextureName,
@@ -2431,11 +2351,11 @@ public partial class DefaultRenderPipeline : RenderPipeline, ISceneRenderPipelin
         pass.SetOptions(Stereo);
 
         pass.SetGBufferInputTextureNames(
-            NormalTextureName,
-            DepthViewTextureName,
+            ForwardPrePassNormalTextureName,
+            ForwardContactDepthViewTextureName,
             AlbedoOpacityTextureName,
             RMSETextureName,
-            DepthStencilTextureName,
+            ForwardPrePassDepthStencilTextureName,
             TransformIdTextureName);
 
         pass.SetOutputNames(
@@ -2452,11 +2372,11 @@ public partial class DefaultRenderPipeline : RenderPipeline, ISceneRenderPipelin
         pass.SetStubInfo(null, null);
 
         pass.SetGBufferInputTextureNames(
-            NormalTextureName,
-            DepthViewTextureName,
+            ForwardPrePassNormalTextureName,
+            ForwardContactDepthViewTextureName,
             AlbedoOpacityTextureName,
             RMSETextureName,
-            DepthStencilTextureName,
+            ForwardPrePassDepthStencilTextureName,
             TransformIdTextureName);
 
         pass.SetOutputNames(
@@ -2480,11 +2400,11 @@ public partial class DefaultRenderPipeline : RenderPipeline, ISceneRenderPipelin
         pass.SetOptions(Stereo);
 
         pass.SetGBufferInputTextureNames(
-            NormalTextureName,
-            DepthViewTextureName,
+            ForwardPrePassNormalTextureName,
+            ForwardContactDepthViewTextureName,
             AlbedoOpacityTextureName,
             RMSETextureName,
-            DepthStencilTextureName,
+            ForwardPrePassDepthStencilTextureName,
             TransformIdTextureName);
 
         pass.SetOutputNames(
@@ -2503,11 +2423,11 @@ public partial class DefaultRenderPipeline : RenderPipeline, ISceneRenderPipelin
         pass.SetOptions(Stereo);
 
         pass.SetGBufferInputTextureNames(
-            NormalTextureName,
-            DepthViewTextureName,
+            ForwardPrePassNormalTextureName,
+            ForwardContactDepthViewTextureName,
             AlbedoOpacityTextureName,
             RMSETextureName,
-            DepthStencilTextureName,
+            ForwardPrePassDepthStencilTextureName,
             TransformIdTextureName);
 
         pass.SetOutputNames(
@@ -2540,11 +2460,11 @@ public partial class DefaultRenderPipeline : RenderPipeline, ISceneRenderPipelin
             Stereo);
 
         pass.SetGBufferInputTextureNames(
-            NormalTextureName,
-            DepthViewTextureName,
+            ForwardPrePassNormalTextureName,
+            ForwardContactDepthViewTextureName,
             AlbedoOpacityTextureName,
             RMSETextureName,
-            DepthStencilTextureName);
+            ForwardPrePassDepthStencilTextureName);
 
         pass.SetOutputNames(
             AmbientOcclusionIntensityTextureName,

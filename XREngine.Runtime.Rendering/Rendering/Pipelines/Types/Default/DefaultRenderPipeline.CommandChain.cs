@@ -149,12 +149,11 @@ public partial class DefaultRenderPipeline
         var fullSceneCommands = new ViewportRenderCommandContainer(this);
         using (fullSceneCommands.AddUsing<VPRC_PushViewportRenderArea>(t => t.UseInternalResolution = true))
         {
-            AppendAmbientOcclusionSwitch(fullSceneCommands, enableComputePasses);
             AppendDeferredGBufferPass(fullSceneCommands);
             AppendForwardDepthPrePass(fullSceneCommands);
             fullSceneCommands.Add<VPRC_DepthTest>().Enable = false;
+            AppendAmbientOcclusionSwitch(fullSceneCommands, enableComputePasses);
             AppendAmbientOcclusionResolve(fullSceneCommands);
-            AppendForwardDepthPrePassGBufferRestore(fullSceneCommands);
             AppendLightingPass(fullSceneCommands);
             AppendForwardPass(fullSceneCommands, enableComputePasses);
             AppendTransparencyPasses(fullSceneCommands);
@@ -247,9 +246,15 @@ public partial class DefaultRenderPipeline
 
     private bool ShouldRunForwardDepthPrePass()
         => !UseOpenXrVulkanDesktopStartupSafePath
-        && ForwardDepthPrePassEnabled
         && (HasRenderPassMeshCommands((int)EDefaultRenderPass.OpaqueForward)
-            || HasRenderPassMeshCommands((int)EDefaultRenderPass.MaskedForward));
+            || HasRenderPassMeshCommands((int)EDefaultRenderPass.MaskedForward))
+        && (ShouldUseAmbientOcclusion()
+            || (ForwardDepthPrePassEnabled
+                && CurrentRenderingPipeline?.ActiveMeshRenderCommands
+                    .RenderingBackendReadyPackage.RequiresForwardContactPrePass == true));
+
+    private bool ShouldPrepareForwardSceneSurface()
+        => ShouldUseAmbientOcclusion() || ShouldRunForwardDepthPrePass();
 
     private bool ShouldRunTransparencyPasses()
         => ShouldRunWeightedBlendedOitPasses()
@@ -325,13 +330,12 @@ public partial class DefaultRenderPipeline
 
     private void AppendAmbientOcclusionSwitch(ViewportRenderCommandContainer c, bool enableComputePasses)
     {
-        if (UseOpenXrVulkanDesktopStartupSafePath)
-        {
-            ConfigureAmbientOcclusionDisabledPass(c.Add<VPRC_AODisabledPass>());
-            return;
-        }
+        var aoChoice = c.Add<VPRC_IfElse>();
+        aoChoice.Label = "AmbientOcclusionProducerActive";
+        aoChoice.ConditionEvaluator = ShouldUseAmbientOcclusion;
 
-        var aoSwitch = c.Add<VPRC_Switch>();
+        var aoCommands = new ViewportRenderCommandContainer(this);
+        var aoSwitch = aoCommands.Add<VPRC_Switch>();
         aoSwitch.SwitchEvaluator = EvaluateAmbientOcclusionMode;
         aoSwitch.Cases = enableComputePasses
             ? new()
@@ -355,6 +359,7 @@ public partial class DefaultRenderPipeline
                 [(int)AmbientOcclusionSettings.EType.SpatialHashAmbientOcclusion] = CreateSSAOPassCommands(),
             };
         aoSwitch.DefaultCase = CreateAmbientOcclusionDisabledPassCommands();
+        aoChoice.TrueCommands = aoCommands;
     }
 
     private void AppendDeferredGBufferPass(ViewportRenderCommandContainer c)
@@ -399,77 +404,39 @@ public partial class DefaultRenderPipeline
 
     private void AppendForwardDepthPrePass(ViewportRenderCommandContainer c)
     {
-        var prePassChoice = c.Add<VPRC_IfElse>();
-        prePassChoice.Label = "ForwardDepthPrePassActive";
-        prePassChoice.ConditionEvaluator = ShouldRunForwardDepthPrePass;
+        var surfaceChoice = c.Add<VPRC_IfElse>();
+        surfaceChoice.Label = "ForwardSceneSurfaceActive";
+        surfaceChoice.ConditionEvaluator = ShouldPrepareForwardSceneSurface;
         {
-            var shareChoice = new ViewportRenderCommandContainer(this);
-            shareChoice.Add<VPRC_BlitFrameBuffer>().SetOptions(
-                ForwardDepthPrePassMergeFBOName,
-                DeferredGBufferPreForwardCopyFBOName,
-                EReadBufferMode.ColorAttachment0,
+            var surfaceCommands = new ViewportRenderCommandContainer(this);
+            // Seed a separate complete-scene surface once, then overlay forward geometry.
+            // This keeps deferred-only material attachments coherent while eliminating the
+            // former forward replay plus GBuffer backup/restore and contact-copy blits.
+            surfaceCommands.Add<VPRC_BlitFrameBuffer>().SetOptions(
+                DeferredGBufferFBOName,
+                ForwardDepthPrePassFBOName,
+                EReadBufferMode.ColorAttachment1,
                 blitColor: true,
                 blitDepth: true,
                 blitStencil: false,
                 linearFilter: false);
 
-            var shareIfElse = shareChoice.Add<VPRC_IfElse>();
-            shareIfElse.ConditionEvaluator = () => ForwardPrePassSharesGBufferTargets;
-            shareIfElse.TrueCommands = CreateForwardPrePassSharedCommands();
-            shareIfElse.FalseCommands = CreateForwardPrePassSeparateCommands();
-            shareChoice.Add<VPRC_BlitFrameBuffer>().SetOptions(
-                ForwardDepthPrePassMergeFBOName,
-                ForwardContactPrePassCopyFBOName,
-                EReadBufferMode.ColorAttachment0,
-                blitColor: true,
-                blitDepth: true,
-                blitStencil: false,
-                linearFilter: false);
-            prePassChoice.TrueCommands = shareChoice;
-        }
-    }
-
-    private void AppendForwardDepthPrePassGBufferRestore(ViewportRenderCommandContainer c)
-    {
-        var restoreChoice = c.Add<VPRC_IfElse>();
-        restoreChoice.Label = "ForwardDepthPrePassRestoreActive";
-        restoreChoice.ConditionEvaluator = ShouldRunForwardDepthPrePass;
-        {
-            var restoreCommands = new ViewportRenderCommandContainer(this);
-            restoreCommands.Add<VPRC_BlitFrameBuffer>().SetOptions(
-                DeferredGBufferPreForwardCopyFBOName,
-                ForwardDepthPrePassMergeFBOName,
-                EReadBufferMode.ColorAttachment0,
-                blitColor: true,
-                blitDepth: true,
-                blitStencil: false,
-                linearFilter: false);
-            restoreChoice.TrueCommands = restoreCommands;
+            var prePassChoice = surfaceCommands.Add<VPRC_IfElse>();
+            prePassChoice.Label = "ForwardDepthPrePassActive";
+            prePassChoice.ConditionEvaluator = ShouldRunForwardDepthPrePass;
+            prePassChoice.TrueCommands = CreateForwardPrePassSharedCommands();
+            surfaceChoice.TrueCommands = surfaceCommands;
         }
     }
 
     private void AppendAmbientOcclusionResolve(ViewportRenderCommandContainer c)
     {
-        if (UseOpenXrVulkanDesktopStartupSafePath)
-        {
-            c.Add<VPRC_RenderQuadToFBO>()
-                .SetTargets(AmbientOcclusionFBOName, AmbientOcclusionBlurFBOName)
-                .SetRenderGraphPassVariant(DefaultRenderPipelineQuadDescriptors.AmbientOcclusionResolveVariantDisabled)
-                .SetRenderGraphResources(DefaultRenderPipelineQuadDescriptors.AmbientOcclusionGenerate(
-                    AmbientOcclusionIntensityTextureName,
-                    disabled: true));
-            c.Add<VPRC_RenderQuadToFBO>()
-                .SetTargets(AmbientOcclusionBlurFBOName, GBufferFBOName)
-                .SetRenderGraphPassVariant(DefaultRenderPipelineQuadDescriptors.AmbientOcclusionResolveVariantDisabled)
-                .SetRenderGraphResources(DefaultRenderPipelineQuadDescriptors.AmbientOcclusionFinal(
-                    AmbientOcclusionIntensityTextureName,
-                    DefaultRenderPipelineQuadDescriptors.AmbientOcclusionResolveVariantDisabled,
-                    disabled: true));
-            AppendDiagnosticTextureCapture(c, "04_AmbientOcclusion", AmbientOcclusionIntensityTextureName);
-            return;
-        }
+        var aoChoice = c.Add<VPRC_IfElse>();
+        aoChoice.Label = "AmbientOcclusionResolveActive";
+        aoChoice.ConditionEvaluator = ShouldUseAmbientOcclusion;
 
-        var aoResolveSwitch = c.Add<VPRC_Switch>();
+        var aoCommands = new ViewportRenderCommandContainer(this);
+        var aoResolveSwitch = aoCommands.Add<VPRC_Switch>();
         aoResolveSwitch.SwitchEvaluator = EvaluateAmbientOcclusionMode;
         aoResolveSwitch.Cases = new()
         {
@@ -480,12 +447,18 @@ public partial class DefaultRenderPipeline
         };
         aoResolveSwitch.DefaultCase = CreateAmbientOcclusionResolveCommands();
 
-        AppendDiagnosticTextureCapture(c, "04_AmbientOcclusion", AmbientOcclusionIntensityTextureName);
+        AppendDiagnosticTextureCapture(aoCommands, "04_AmbientOcclusion", AmbientOcclusionIntensityTextureName);
+        aoChoice.TrueCommands = aoCommands;
     }
 
     private void AppendLightingPass(ViewportRenderCommandContainer c)
     {
-        c.Add<VPRC_SyncLightProbeResources>();
+        var probeSync = c.Add<VPRC_IfElse>();
+        probeSync.Label = "LightProbeSyncActive";
+        probeSync.ConditionEvaluator = () => UsesLightProbeGI;
+        var probeCommands = new ViewportRenderCommandContainer(this);
+        probeCommands.Add<VPRC_SyncLightProbeResources>();
+        probeSync.TrueCommands = probeCommands;
 
         c.Add<VPRC_SetClears>().Set(ColorF4.Black, null, null);
 
@@ -620,8 +593,8 @@ public partial class DefaultRenderPipeline
             c.Add<VPRC_DepthWrite>().Allow = true;
             if (enableComputePasses)
                 c.Add<VPRC_ForwardPlusLightCullingPass>();
-            c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.OpaqueForward, MeshSubmissionStrategy);
-            c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.MaskedForward, MeshSubmissionStrategy);
+            AddForwardLitMeshPass(c, EDefaultRenderPass.OpaqueForward);
+            AddForwardLitMeshPass(c, EDefaultRenderPass.MaskedForward);
 
             if (enableComputePasses)
             {
@@ -684,7 +657,7 @@ public partial class DefaultRenderPipeline
     {
         var velocityChoice = c.Add<VPRC_IfElse>();
         velocityChoice.Label = "Velocity Buffer";
-        velocityChoice.ConditionEvaluator = ShouldGenerateVelocityBufferForWorkload;
+        velocityChoice.ConditionEvaluator = ShouldGenerateVelocityBuffer;
 
         ViewportRenderCommandContainer velocityCommands = new(this);
         AppendVelocityPass(velocityCommands);
@@ -696,11 +669,15 @@ public partial class DefaultRenderPipeline
         c.Add<VPRC_SetClears>().Set(ColorF4.Black, null, null);
         using (c.AddUsing<VPRC_BindFBOByName>(x => x.SetOptions(VelocityFBOName, true, true, false, false)))
         {
-            c.Add<VPRC_DepthTest>().Enable = true;
-            c.Add<VPRC_DepthWrite>().Allow = false;
-            c.Add<VPRC_RenderMotionVectorsPass>().SetOptions(GPURenderDispatch,
-                new[]
-                {
+            var drawChoice = c.Add<VPRC_IfElse>();
+            drawChoice.Label = "Velocity Mesh Draws";
+            drawChoice.ConditionEvaluator = ShouldGenerateVelocityBufferForWorkload;
+
+            ViewportRenderCommandContainer drawCommands = new(this);
+            drawCommands.Add<VPRC_DepthTest>().Enable = true;
+            drawCommands.Add<VPRC_DepthWrite>().Allow = false;
+            drawCommands.Add<VPRC_RenderMotionVectorsPass>().SetOptions(GPURenderDispatch,
+                [
                     (int)EDefaultRenderPass.OpaqueDeferred,
                     (int)EDefaultRenderPass.DeferredDecals,
                     (int)EDefaultRenderPass.OpaqueForward,
@@ -708,12 +685,29 @@ public partial class DefaultRenderPipeline
                     (int)EDefaultRenderPass.WeightedBlendedOitForward,
                     (int)EDefaultRenderPass.PerPixelLinkedListForward,
                     (int)EDefaultRenderPass.DepthPeelingForward,
-                });
-            c.Add<VPRC_DepthWrite>().Allow = true;
+                ]);
+            drawCommands.Add<VPRC_DepthWrite>().Allow = true;
+            drawChoice.TrueCommands = drawCommands;
         }
         c.Add<VPRC_SetClears>().Set(ColorF4.Transparent, 1.0f, 0);
         AppendDiagnosticTextureCapture(c, "07_Velocity", VelocityTextureName);
         AppendDiagnosticFboCapture(c, "07b_VelocityFBO", VelocityFBOName);
+    }
+
+    private void AddForwardLitMeshPass(ViewportRenderCommandContainer c, EDefaultRenderPass renderPass)
+    {
+        var command = c.Add<VPRC_RenderMeshesPass>();
+        command.SetOptions((int)renderPass, MeshSubmissionStrategy);
+
+        // Forward contact shadows sample the complete-scene surface dynamically from
+        // material variants. Declare those reads on the real consuming pass so Vulkan
+        // can transition the attachments even when AO is disabled.
+        if (ForwardDepthPrePassEnabled || ShouldUseAmbientOcclusion())
+        {
+            command.SetSampledTextures(
+                ForwardPrePassNormalTextureName,
+                ForwardContactDepthViewTextureName);
+        }
     }
 
     private void AppendBloomPass(ViewportRenderCommandContainer c)

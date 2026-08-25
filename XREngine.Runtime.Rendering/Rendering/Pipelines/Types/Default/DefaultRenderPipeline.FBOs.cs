@@ -1424,68 +1424,23 @@ public partial class DefaultRenderPipeline
     }
 
     /// <summary>
-    /// Dedicated forward-only depth+normal FBO for inspection/debugging.
-    /// This target is cleared before the forward pre-pass, so it contains only
-    /// opaque/masked forward geometry.
+    /// Complete-scene depth and normal target seeded from deferred geometry and
+    /// overlaid once by the forward depth-normal prepass.
     /// </summary>
     private XRFrameBuffer CreateForwardDepthPrePassFBO()
     {
-        var dsAttach = EnsureTextureAttachment(ForwardPrePassDepthStencilTextureName, CreateForwardPrePassDepthStencilTexture);
-        var normalAttach = EnsureTextureAttachment(ForwardPrePassNormalTextureName, CreateForwardPrePassNormalTexture);
+        IFrameBufferAttachement dsAttach = EnsureTextureAttachment(
+            ForwardPrePassDepthStencilTextureName,
+            CreateForwardPrePassDepthStencilTexture);
+        IFrameBufferAttachement normalAttach = EnsureTextureAttachment(
+            ForwardPrePassNormalTextureName,
+            CreateForwardPrePassNormalTexture);
 
         return new XRFrameBuffer(
             (normalAttach, EFrameBufferAttachment.ColorAttachment0, 0, -1),
             (dsAttach, EFrameBufferAttachment.DepthStencilAttachment, 0, -1))
         {
             Name = ForwardDepthPrePassFBOName
-        };
-    }
-
-    /// <summary>
-    /// Shared depth+normal FBO that reuses the main GBuffer Normal + DepthStencil textures.
-    /// The forward pre-pass is replayed into this target without clearing so AO still sees
-    /// both deferred and forward geometry.
-    /// </summary>
-    private XRFrameBuffer CreateForwardDepthPrePassMergeFBO()
-    {
-        IFrameBufferAttachement dsAttach = EnsureTextureAttachment(DepthStencilTextureName, CreateDepthStencilTexture);
-        IFrameBufferAttachement normalAttach = EnsureTextureAttachment(NormalTextureName, CreateNormalTexture);
-
-        return new XRFrameBuffer(
-            (normalAttach, EFrameBufferAttachment.ColorAttachment0, 0, -1),
-            (dsAttach, EFrameBufferAttachment.DepthStencilAttachment, 0, -1))
-        {
-            Name = ForwardDepthPrePassMergeFBOName
-        };
-    }
-
-    private XRFrameBuffer CreateDeferredGBufferPreForwardCopyFBO()
-    {
-        IFrameBufferAttachement dsAttach = EnsureTextureAttachment(
-            DeferredGBufferPreForwardDepthStencilTextureName,
-            CreateDeferredGBufferPreForwardDepthStencilTexture);
-        IFrameBufferAttachement normalAttach = EnsureTextureAttachment(
-            DeferredGBufferPreForwardNormalTextureName,
-            CreateDeferredGBufferPreForwardNormalTexture);
-
-        return new XRFrameBuffer(
-            (normalAttach, EFrameBufferAttachment.ColorAttachment0, 0, -1),
-            (dsAttach, EFrameBufferAttachment.DepthStencilAttachment, 0, -1))
-        {
-            Name = DeferredGBufferPreForwardCopyFBOName
-        };
-    }
-
-    private XRFrameBuffer CreateForwardContactPrePassCopyFBO()
-    {
-        IFrameBufferAttachement dsAttach = EnsureTextureAttachment(ForwardContactDepthStencilTextureName, CreateForwardContactDepthStencilTexture);
-        IFrameBufferAttachement normalAttach = EnsureTextureAttachment(ForwardContactNormalTextureName, CreateForwardContactNormalTexture);
-
-        return new XRFrameBuffer(
-            (normalAttach, EFrameBufferAttachment.ColorAttachment0, 0, -1),
-            (dsAttach, EFrameBufferAttachment.DepthStencilAttachment, 0, -1))
-        {
-            Name = ForwardContactPrePassCopyFBOName
         };
     }
 

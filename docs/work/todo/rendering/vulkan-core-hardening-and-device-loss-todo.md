@@ -57,14 +57,36 @@ Completed implementation history remains in the
 
 ### 6. Simplify The Forward+ Render Graph
 
-- [ ] Co-produce or reuse depth, normals, and velocity where possible; skip the
+- [x] Co-produce or reuse depth, normals, and velocity where possible; skip the
   depth prepass when no consumer requires it.
-- [ ] Remove redundant opaque/masked geometry replay, full-resolution
+- [x] Remove redundant opaque/masked geometry replay, full-resolution
   color/depth copies, paired blits, transitions, and barriers.
-- [ ] Model attachment lifetime, aliasing, input attachments, and explicit
+- [x] Model attachment lifetime, aliasing, input attachments, and explicit
   transitions in backend-neutral graph intent with Vulkan realization.
-- [ ] Conditionally allocate and execute AO, bloom, probe, shadow, temporal,
+- [x] Conditionally allocate and execute AO, bloom, probe, shadow, temporal,
   and post-process producers only when their consumers are enabled.
+
+Implementation note (2026-08-25): the default pipeline now seeds one
+generation-owned complete-scene normal/depth target from deferred attachment 1
+plus depth, overlays forward opaque/masked surfaces once, and feeds AO and
+contact shadows from that target. The main deferred G-buffer remains coherent;
+the former separate/merge replay, backup/restore pair, and contact-copy pair are
+gone. Render-graph color bindings now retain their attachment index, and the
+forward prepass declares its attachment load/store intent so Vulkan can realize
+the transfer, attachment, and sampled-image transitions. Auxiliary CPU-direct
+and GPU-driven mesh submission now execute under that synthetic pass identity,
+and the real forward lighting passes explicitly declare the dynamic contact-
+shadow texture reads. AO forces the forward overlay independently of the legacy
+contact-prepass toggle, while contact-only workloads still respect the toggle.
+Velocity consumers always receive a freshly cleared neutral buffer even when no
+mesh emits motion. Physical image aliasing
+remains deliberately fail-closed until asynchronous lifetime proof exists;
+sampled attachments are used instead of introducing a Vulkan-only input-
+attachment contract. AO, bloom, temporal/velocity, atmospheric, fog, debug, and
+probe work/resources are gated by active consumers with neutral one-pixel
+fallbacks where the final composite requires a stable binding. Shadow producers
+remain light/request driven. Live evidence is recorded in
+`docs/work/investigations/rendering/vulkan-forward-plus-phase6-2026-08-25.md`.
 
 ### 7. Bound Shadow, Streaming, And Render-Thread Tail Work
 

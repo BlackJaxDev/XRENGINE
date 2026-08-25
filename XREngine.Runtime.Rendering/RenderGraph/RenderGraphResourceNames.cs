@@ -5,6 +5,7 @@ namespace XREngine.Rendering.RenderGraph;
 public static class RenderGraphResourceNames
 {
     private static readonly ConcurrentDictionary<string, string> FboColorNames = new(StringComparer.Ordinal);
+    private static readonly ConcurrentDictionary<(string Name, int Index), string> FboIndexedColorNames = new();
     private static readonly ConcurrentDictionary<string, string> FboDepthNames = new(StringComparer.Ordinal);
     private static readonly ConcurrentDictionary<string, string> FboStencilNames = new(StringComparer.Ordinal);
     private static readonly ConcurrentDictionary<string, string> TextureNames = new(StringComparer.Ordinal);
@@ -21,6 +22,17 @@ public static class RenderGraphResourceNames
     /// <returns>The render graph resource name for the color attachment.</returns>
     public static string MakeFboColor(string fboName)
         => FboColorNames.GetOrAdd(fboName, static name => $"fbo::{name}::color");
+
+    /// <summary>
+    /// Returns the logical name for a specific framebuffer color attachment.
+    /// Attachment zero retains the legacy unindexed name.
+    /// </summary>
+    public static string MakeFboColor(string fboName, int colorAttachmentIndex)
+        => colorAttachmentIndex <= 0
+            ? MakeFboColor(fboName)
+            : FboIndexedColorNames.GetOrAdd(
+                (fboName, colorAttachmentIndex),
+                static key => $"fbo::{key.Name}::color{key.Index}");
 
     /// <summary>
     /// The name of the output depth buffer.

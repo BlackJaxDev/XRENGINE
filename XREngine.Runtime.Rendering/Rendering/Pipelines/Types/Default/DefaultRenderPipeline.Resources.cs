@@ -14,9 +14,6 @@ public partial class DefaultRenderPipeline
         None = 0,
         DeferredMsaaEnabled = 1UL << 0,
         ForwardDepthPrePassEnabled = 1UL << 1,
-        ForwardPrePassSharesGBufferTargets = 1UL << 2,
-        ForwardDepthPrePassHalfResolution = 1UL << 3,
-        ForwardDepthPrePassQuarterResolution = 1UL << 4,
         VendorUpscalePreferred = 1UL << 5,
         GtaoFullResolution = 1UL << 6,
         GtaoQuarterResolution = 1UL << 7,
@@ -44,6 +41,7 @@ public partial class DefaultRenderPipeline
         AoModeFieldBit1 = 1UL << 27,
         AoModeFieldBit2 = 1UL << 28,
         AoModeFieldBit3 = 1UL << 29,
+        VelocityResourcesEnabled = 1UL << 30,
     }
 
     private const ulong AoModeFieldMask = 0xFUL << 26;
@@ -89,18 +87,19 @@ public partial class DefaultRenderPipeline
             mask |= DefaultPipelineResourceFeature.DeferredMsaaEnabled;
         if (!useOpenXrVulkanSafePath && ResolveEffectiveAntiAliasingModeForGeneration(instance, viewport) == EAntiAliasingMode.Msaa)
             mask |= DefaultPipelineResourceFeature.MsaaTargetsEnabled;
-        bool useForwardPrePassResources = ForwardDepthPrePassEnabled && !useOpenXrVulkanSafePath;
+        bool useForwardPrePassResources = !useOpenXrVulkanSafePath
+            && (ForwardDepthPrePassEnabled || generationAoSettings?.Enabled == true);
         if (useForwardPrePassResources)
             mask |= DefaultPipelineResourceFeature.ForwardDepthPrePassEnabled;
-        if (useForwardPrePassResources && ForwardPrePassSharesGBufferTargets)
-            mask |= DefaultPipelineResourceFeature.ForwardPrePassSharesGBufferTargets;
-        if (!useOpenXrVulkanSafePath && RuntimeEnableVendorUpscale)
+        bool useVendorUpscale = !useOpenXrVulkanSafePath && RuntimeEnableVendorUpscale;
+        if (useVendorUpscale)
             mask |= DefaultPipelineResourceFeature.VendorUpscalePreferred;
         if (!useOpenXrVulkanSafePath && EnableWeightedBlendedOitPasses)
             mask |= DefaultPipelineResourceFeature.WeightedBlendedOitEnabled;
         if (!useOpenXrVulkanSafePath && ExactTransparencyEnabled)
             mask |= DefaultPipelineResourceFeature.ExactTransparencyEnabled;
-        if (!useOpenXrVulkanSafePath && ShouldUseMotionBlur())
+        bool useMotionBlur = !useOpenXrVulkanSafePath && ShouldUseMotionBlur();
+        if (useMotionBlur)
             mask |= DefaultPipelineResourceFeature.MotionBlurEnabled;
         if (!useOpenXrVulkanSafePath && ShouldUseDepthOfField())
             mask |= DefaultPipelineResourceFeature.DepthOfFieldEnabled;
@@ -113,25 +112,33 @@ public partial class DefaultRenderPipeline
         }
         else
         {
-            // Keep non-safe-path runtime toggles behaving as before: these
-            // resources remain available when users flip AO/bloom/temporal
-            // settings without rebuilding the command chain.
-            mask |= DefaultPipelineResourceFeature.AmbientOcclusionResourcesEnabled;
-            // Encode effective AO type in bits 26-29 so mode changes rebuild the generation.
-            if (generationAoSettings?.Enabled == true)
+            if (generationAoSettings is { Enabled: true } activeAoSettings)
             {
-                int encodedMode = (int)AmbientOcclusionSettings.NormalizeType(generationAoSettings.Type) + 1;
+                mask |= DefaultPipelineResourceFeature.AmbientOcclusionResourcesEnabled;
+                // Encode the effective mode so changes replace the immutable resource generation.
+                int encodedMode = (int)AmbientOcclusionSettings.NormalizeType(activeAoSettings.Type) + 1;
                 mask |= (DefaultPipelineResourceFeature)((ulong)encodedMode << AoModeFieldShift);
             }
-            else if (generationAoSettings is null && instance.TryGetLastResourceFeatureMask(viewport, out ulong previousFeatureMask))
-                mask |= (DefaultPipelineResourceFeature)(previousFeatureMask & AoModeFieldMask);
-            mask |= DefaultPipelineResourceFeature.BloomResourcesEnabled;
-            mask |= DefaultPipelineResourceFeature.TemporalResourcesEnabled;
+
+            if (ShouldUseBloomForGeneration(instance, viewport))
+                mask |= DefaultPipelineResourceFeature.BloomResourcesEnabled;
+
+            EAntiAliasingMode antiAliasingMode = ResolveEffectiveAntiAliasingModeForGeneration(instance, viewport);
+            bool useTemporalResources = !useVendorUpscale
+                && !DisableHistoryBasedVrEffects()
+                && antiAliasingMode is EAntiAliasingMode.Taa or EAntiAliasingMode.Tsr or EAntiAliasingMode.Dlaa;
+            if (useTemporalResources)
+                mask |= DefaultPipelineResourceFeature.TemporalResourcesEnabled;
+            if (useVendorUpscale || useTemporalResources || useMotionBlur)
+                mask |= DefaultPipelineResourceFeature.VelocityResourcesEnabled;
             if (!usesStereoResources)
             {
-                mask |= DefaultPipelineResourceFeature.AtmosphereResourcesEnabled;
-                mask |= DefaultPipelineResourceFeature.VolumetricFogResourcesEnabled;
-                mask |= DefaultPipelineResourceFeature.DebugVisualizationResourcesEnabled;
+                if (ShouldRunAtmosphericScattering())
+                    mask |= DefaultPipelineResourceFeature.AtmosphereResourcesEnabled;
+                if (ShouldRunVolumetricFog())
+                    mask |= DefaultPipelineResourceFeature.VolumetricFogResourcesEnabled;
+                if (HasFullPipelineDebugVisualization())
+                    mask |= DefaultPipelineResourceFeature.DebugVisualizationResourcesEnabled;
             }
 
             mask |= GlobalIlluminationMode switch
@@ -144,13 +151,6 @@ public partial class DefaultRenderPipeline
                 _ => DefaultPipelineResourceFeature.None,
             };
         }
-
-        mask |= ForwardDepthNormalPrePassResolution switch
-        {
-            EDepthNormalPrePassResolution.Half => DefaultPipelineResourceFeature.ForwardDepthPrePassHalfResolution,
-            EDepthNormalPrePassResolution.Quarter => DefaultPipelineResourceFeature.ForwardDepthPrePassQuarterResolution,
-            _ => DefaultPipelineResourceFeature.None,
-        };
 
         GroundTruthAmbientOcclusionSettings.EResolution gtaoResolution = generationAoSettings?.GroundTruth.Resolution
             ?? (instance.TryGetLastResourceFeatureMask(viewport, out ulong previousMask)
@@ -229,6 +229,28 @@ public partial class DefaultRenderPipeline
             ?? instance.LastRenderingCamera?.AntiAliasingModeOverride
             ?? viewport?.ActiveCamera?.AntiAliasingModeOverride
             ?? RuntimeRenderingHostServices.FrameTiming.DefaultAntiAliasingMode;
+
+    private bool ShouldUseBloomForGeneration(XRRenderPipelineInstance instance, XRViewport? viewport)
+    {
+        if (RuntimeEngine.Rendering.State.IsLightProbePass ||
+            RuntimeEngine.Rendering.State.IsSceneCapturePass)
+        {
+            return false;
+        }
+
+        XRCamera? camera = instance.RenderState.SceneCamera
+            ?? instance.RenderState.RenderingCamera
+            ?? instance.LastSceneCamera
+            ?? instance.LastRenderingCamera
+            ?? viewport?.ActiveCamera;
+        if (camera?.GetPostProcessStageState<BloomSettings>() is not { } stage ||
+            !stage.TryGetBacking(out BloomSettings? settings))
+        {
+            return true;
+        }
+
+        return settings?.Enabled != false;
+    }
 
     private static void DeclareImportedResources(RenderPipelineResourceLayoutBuilder builder)
     {
@@ -342,6 +364,15 @@ public partial class DefaultRenderPipeline
             .Layers(layerCount)
             .StereoCompatible(builder.Profile.Stereo)
             .History(RenderResourceHistoryPolicy.ClearOnCommit)
+            .When(UsesAmbientOcclusionResources)
+            .Add();
+
+        Texture(builder, AmbientOcclusionIntensityTextureName, RenderResourceSizePolicy.Absolute(1u, 1u), RenderPipelineResourceUsage.SampledTexture,
+            EPixelInternalFormat.R16f, EPixelFormat.Red, EPixelType.HalfFloat, ESizedInternalFormat.R16f,
+            CreateAmbientOcclusionFallbackTexture)
+            .Layers(layerCount)
+            .StereoCompatible(builder.Profile.Stereo)
+            .When(UsesAmbientOcclusionFallbackResource)
             .Add();
 
         Texture(builder, LightingAccumTextureName, internalSize, SampledColorAttachment,
@@ -479,12 +510,12 @@ public partial class DefaultRenderPipeline
             .Size(internalSize)
             .Lifetime(RenderResourceLifetime.Persistent)
             .Usage(RenderPipelineResourceUsage.ColorAttachment | RenderPipelineResourceUsage.DepthStencilAttachment)
-            .DependsOn(DepthViewTextureName)
+            .DependsOn(ForwardContactDepthViewTextureName)
             .Color(0, AlbedoOpacityTextureName)
-            .Color(1, NormalTextureName)
+            .Color(1, ForwardPrePassNormalTextureName)
             .Color(2, RMSETextureName)
             .Color(3, TransformIdTextureName)
-            .DepthStencil(DepthStencilTextureName)
+            .DepthStencil(ForwardPrePassDepthStencilTextureName)
             .Factory(CreateAmbientOcclusionGenFbo)
             .When(UsesAmbientOcclusionResolveResources)
             .Add();
@@ -495,7 +526,7 @@ public partial class DefaultRenderPipeline
             .Size(internalSize)
             .Lifetime(RenderResourceLifetime.Persistent)
             .Usage(RenderPipelineResourceUsage.ColorAttachment)
-            .DependsOn(DepthViewTextureName, NormalTextureName)
+            .DependsOn(ForwardContactDepthViewTextureName, ForwardPrePassNormalTextureName)
             .Color(0, AmbientOcclusionRawTextureName)
             .Factory(CreateAmbientOcclusionBlurFbo)
             .When(p => UsesAmbientOcclusionResources(p)
@@ -507,7 +538,7 @@ public partial class DefaultRenderPipeline
             .Size(internalSize)
             .Lifetime(RenderResourceLifetime.Persistent)
             .Usage(RenderPipelineResourceUsage.ColorAttachment)
-            .DependsOn(DepthViewTextureName, NormalTextureName)
+            .DependsOn(ForwardContactDepthViewTextureName, ForwardPrePassNormalTextureName)
             .Color(0, AmbientOcclusionIntensityTextureName)
             .Factory(CreateAmbientOcclusionBlurFbo)
             .When(p => UsesAmbientOcclusionResolveResources(p)
@@ -519,7 +550,7 @@ public partial class DefaultRenderPipeline
             .Size(internalSize)
             .Lifetime(RenderResourceLifetime.Persistent)
             .Usage(RenderPipelineResourceUsage.ColorAttachment)
-            .DependsOn(DepthViewTextureName, NormalTextureName)
+            .DependsOn(ForwardContactDepthViewTextureName, ForwardPrePassNormalTextureName)
             .Color(0, HBAOPlusRawTextureName)
             .Factory(CreateAmbientOcclusionBlurFbo)
             .When(p => UsesAmbientOcclusionResources(p) && DecodeAoModeFromProfile(p) == 6) // HBAOPlus
@@ -530,7 +561,7 @@ public partial class DefaultRenderPipeline
             .Size(gtaoScratchSize)
             .Lifetime(RenderResourceLifetime.Persistent)
             .Usage(RenderPipelineResourceUsage.ColorAttachment)
-            .DependsOn(DepthViewTextureName, NormalTextureName)
+            .DependsOn(ForwardContactDepthViewTextureName, ForwardPrePassNormalTextureName)
             .Color(0, GTAORawTextureName)
             .Factory(CreateAmbientOcclusionBlurFbo)
             .When(p => UsesAmbientOcclusionResources(p) && DecodeAoModeFromProfile(p) == 8) // GTAO
@@ -541,7 +572,7 @@ public partial class DefaultRenderPipeline
             .Size(gtaoScratchSize)
             .Lifetime(RenderResourceLifetime.Persistent)
             .Usage(RenderPipelineResourceUsage.ColorAttachment)
-            .DependsOn(DepthViewTextureName, NormalTextureName)
+            .DependsOn(ForwardContactDepthViewTextureName, ForwardPrePassNormalTextureName)
             .Color(0, GTAOBlurIntermediateTextureName)
             .Factory(CreateGtaoBlurIntermediateFbo)
             .When(UsesGTAOMode)
@@ -552,7 +583,7 @@ public partial class DefaultRenderPipeline
             .Size(internalSize)
             .Lifetime(RenderResourceLifetime.Persistent)
             .Usage(RenderPipelineResourceUsage.ColorAttachment)
-            .DependsOn(DepthViewTextureName, NormalTextureName)
+            .DependsOn(ForwardContactDepthViewTextureName, ForwardPrePassNormalTextureName)
             .Color(0, HBAOPlusBlurIntermediateTextureName)
             .Factory(CreateHbaoPlusBlurIntermediateFbo)
             .When(UsesHBAOPlusMode)
@@ -797,61 +828,33 @@ public partial class DefaultRenderPipeline
 
     private void DeclareForwardPrePassResources(RenderPipelineResourceLayoutBuilder builder)
     {
-        RenderPipelineResourcePredicate predicate = UsesForwardPrePass;
-        RenderResourceSizePolicy prePassSize = ForwardDepthNormalPrePassSizePolicy();
+        RenderPipelineResourcePredicate predicate = UsesForwardSceneSurface;
         RenderResourceSizePolicy internalSize = RenderResourceSizePolicy.Internal();
         uint layerCount = DeclaredLayerCount(builder);
 
-        Texture(builder, ForwardPrePassDepthStencilTextureName, prePassSize, SampledDepthStencilAttachment,
+        Texture(builder, ForwardPrePassDepthStencilTextureName, internalSize,
+            SampledDepthStencilAttachment | RenderPipelineResourceUsage.TransferDestination,
             EPixelInternalFormat.Depth24Stencil8, EPixelFormat.DepthStencil, EPixelType.UnsignedInt248, ESizedInternalFormat.Depth24Stencil8,
             CreateForwardPrePassDepthStencilTexture)
+            .Lifetime(RenderResourceLifetime.Transient)
             .Layers(layerCount)
             .StereoCompatible(builder.Profile.Stereo)
             .When(predicate)
             .Add();
 
-        Texture(builder, ForwardPrePassNormalTextureName, prePassSize, SampledColorAttachment,
+        Texture(builder, ForwardPrePassNormalTextureName, internalSize,
+            SampledColorAttachment | RenderPipelineResourceUsage.TransferDestination,
             EPixelInternalFormat.RG16f, EPixelFormat.Rg, EPixelType.HalfFloat, ESizedInternalFormat.Rg16f,
             CreateForwardPrePassNormalTexture)
+            .Lifetime(RenderResourceLifetime.Transient)
             .Layers(layerCount)
             .StereoCompatible(builder.Profile.Stereo)
             .When(predicate)
             .Add();
 
-        Texture(builder, ForwardContactDepthStencilTextureName, prePassSize, SampledDepthStencilAttachment,
-            EPixelInternalFormat.Depth24Stencil8, EPixelFormat.DepthStencil, EPixelType.UnsignedInt248, ESizedInternalFormat.Depth24Stencil8,
-            CreateForwardContactDepthStencilTexture)
-            .Layers(layerCount)
-            .StereoCompatible(builder.Profile.Stereo)
-            .When(predicate)
-            .Add();
-
-        Texture(builder, ForwardContactNormalTextureName, prePassSize, SampledColorAttachment,
-            EPixelInternalFormat.RG16f, EPixelFormat.Rg, EPixelType.HalfFloat, ESizedInternalFormat.Rg16f,
-            CreateForwardContactNormalTexture)
-            .Layers(layerCount)
-            .StereoCompatible(builder.Profile.Stereo)
-            .When(predicate)
-            .Add();
-
-        Texture(builder, DeferredGBufferPreForwardDepthStencilTextureName, internalSize, SampledDepthStencilAttachment,
-            EPixelInternalFormat.Depth24Stencil8, EPixelFormat.DepthStencil, EPixelType.UnsignedInt248, ESizedInternalFormat.Depth24Stencil8,
-            CreateDeferredGBufferPreForwardDepthStencilTexture)
-            .Layers(layerCount)
-            .StereoCompatible(builder.Profile.Stereo)
-            .When(predicate)
-            .Add();
-
-        Texture(builder, DeferredGBufferPreForwardNormalTextureName, internalSize, SampledColorAttachment,
-            EPixelInternalFormat.RG16f, EPixelFormat.Rg, EPixelType.HalfFloat, ESizedInternalFormat.Rg16f,
-            CreateDeferredGBufferPreForwardNormalTexture)
-            .Layers(layerCount)
-            .StereoCompatible(builder.Profile.Stereo)
-            .When(predicate)
-            .Add();
-
-        builder.TextureView(ForwardContactDepthViewTextureName, ForwardContactDepthStencilTextureName)
-            .Size(prePassSize)
+        builder.TextureView(ForwardContactDepthViewTextureName, ForwardPrePassDepthStencilTextureName)
+            .Size(internalSize)
+            .Lifetime(RenderResourceLifetime.Transient)
             .Usage(RenderPipelineResourceUsage.SampledTexture)
             .SizedFormat(ESizedInternalFormat.Depth24Stencil8)
             .DepthStencilAspect(EDepthStencilFmt.Depth)
@@ -884,6 +887,7 @@ public partial class DefaultRenderPipeline
             .Usage(RenderPipelineResourceUsage.ColorAttachment)
             .Color(0, AmbientOcclusionIntensityTextureName)
             .Factory(CreateGBufferFBO)
+            .When(UsesAmbientOcclusionResources)
             .Add();
 
         builder.FrameBuffer(LightingAccumFBOName)
@@ -927,7 +931,7 @@ public partial class DefaultRenderPipeline
             .Color(0, VelocityTextureName)
             .DepthStencil(DepthStencilTextureName)
             .Factory(CreateVelocityFBO)
-            .When(UsesTemporalResources)
+            .When(UsesVelocityResources)
             .Add();
 
         builder.FrameBuffer(MsaaGBufferFBOName)
@@ -1134,7 +1138,7 @@ public partial class DefaultRenderPipeline
             CreateVelocityTexture)
             .Layers(layerCount)
             .StereoCompatible(builder.Profile.Stereo)
-            .When(UsesTemporalResources)
+            .When(UsesVelocityResources)
             .Add();
 
         Texture(builder, HistoryColorTextureName, internalSize, SampledColorAttachment,
@@ -1478,13 +1482,12 @@ public partial class DefaultRenderPipeline
 
     private void DeclareRemainingForwardPrePassResources(RenderPipelineResourceLayoutBuilder builder)
     {
-        RenderPipelineResourcePredicate predicate = UsesForwardPrePass;
+        RenderPipelineResourcePredicate predicate = UsesForwardSceneSurface;
         RenderResourceSizePolicy internalSize = RenderResourceSizePolicy.Internal();
-        RenderResourceSizePolicy prePassSize = ForwardDepthNormalPrePassSizePolicy();
 
         builder.FrameBuffer(ForwardDepthPrePassFBOName)
-            .Size(prePassSize)
-            .Lifetime(RenderResourceLifetime.Persistent)
+            .Size(internalSize)
+            .Lifetime(RenderResourceLifetime.Transient)
             .Usage(RenderPipelineResourceUsage.ColorAttachment | RenderPipelineResourceUsage.DepthStencilAttachment)
             .Color(0, ForwardPrePassNormalTextureName)
             .DepthStencil(ForwardPrePassDepthStencilTextureName)
@@ -1492,35 +1495,7 @@ public partial class DefaultRenderPipeline
             .When(predicate)
             .Add();
 
-        builder.FrameBuffer(ForwardDepthPrePassMergeFBOName)
-            .Size(internalSize)
-            .Lifetime(RenderResourceLifetime.Transient)
-            .Usage(RenderPipelineResourceUsage.ColorAttachment | RenderPipelineResourceUsage.DepthStencilAttachment)
-            .Color(0, NormalTextureName)
-            .DepthStencil(DepthStencilTextureName)
-            .Factory(CreateForwardDepthPrePassMergeFBO)
-            .When(predicate)
-            .Add();
 
-        builder.FrameBuffer(DeferredGBufferPreForwardCopyFBOName)
-            .Size(internalSize)
-            .Lifetime(RenderResourceLifetime.Transient)
-            .Usage(RenderPipelineResourceUsage.ColorAttachment | RenderPipelineResourceUsage.DepthStencilAttachment)
-            .Color(0, DeferredGBufferPreForwardNormalTextureName)
-            .DepthStencil(DeferredGBufferPreForwardDepthStencilTextureName)
-            .Factory(CreateDeferredGBufferPreForwardCopyFBO)
-            .When(predicate)
-            .Add();
-
-        builder.FrameBuffer(ForwardContactPrePassCopyFBOName)
-            .Size(prePassSize)
-            .Lifetime(RenderResourceLifetime.Transient)
-            .Usage(RenderPipelineResourceUsage.ColorAttachment | RenderPipelineResourceUsage.DepthStencilAttachment)
-            .Color(0, ForwardContactNormalTextureName)
-            .DepthStencil(ForwardContactDepthStencilTextureName)
-            .Factory(CreateForwardContactPrePassCopyFBO)
-            .When(predicate)
-            .Add();
     }
 
     private void DeclarePostProcessExecutionResources(RenderPipelineResourceLayoutBuilder builder)
@@ -1921,6 +1896,61 @@ public partial class DefaultRenderPipeline
         aoTexture.Name = AmbientOcclusionIntensityTextureName;
         aoTexture.SamplerName = AmbientOcclusionIntensityTextureName;
         return aoTexture;
+    }
+
+    private XRTexture CreateAmbientOcclusionFallbackTexture()
+    {
+        byte[] pixelData = new byte[sizeof(ushort)];
+        BinaryPrimitives.WriteUInt16LittleEndian(
+            pixelData,
+            BitConverter.HalfToUInt16Bits((Half)1.0f));
+
+        if (Stereo)
+        {
+            var texture = new XRTexture2DArray(
+                2u,
+                1u,
+                1u,
+                EPixelInternalFormat.R16f,
+                EPixelFormat.Red,
+                EPixelType.HalfFloat,
+                allocateData: false)
+            {
+                Resizable = false,
+                SizedInternalFormat = ESizedInternalFormat.R16f,
+                AutoGenerateMipmaps = false,
+                MinFilter = ETexMinFilter.Nearest,
+                MagFilter = ETexMagFilter.Nearest,
+                UWrap = ETexWrapMode.ClampToEdge,
+                VWrap = ETexWrapMode.ClampToEdge,
+                Name = AmbientOcclusionIntensityTextureName,
+                SamplerName = AmbientOcclusionIntensityTextureName,
+                OVRMultiViewParameters = new(0, 2u),
+            };
+            for (int layer = 0; layer < texture.Textures.Length; layer++)
+                texture.Textures[layer].Mipmaps[0].Data = new DataSource((byte[])pixelData.Clone());
+            return texture;
+        }
+
+        var fallback = new XRTexture2D(
+            1u,
+            1u,
+            EPixelInternalFormat.R16f,
+            EPixelFormat.Red,
+            EPixelType.HalfFloat)
+        {
+            Resizable = false,
+            SizedInternalFormat = ESizedInternalFormat.R16f,
+            AutoGenerateMipmaps = false,
+            MinFilter = ETexMinFilter.Nearest,
+            MagFilter = ETexMagFilter.Nearest,
+            UWrap = ETexWrapMode.ClampToEdge,
+            VWrap = ETexWrapMode.ClampToEdge,
+            Name = AmbientOcclusionIntensityTextureName,
+            SamplerName = AmbientOcclusionIntensityTextureName,
+        };
+        fallback.Mipmaps[0].Data = new DataSource(pixelData);
+        return fallback;
     }
 
     private XRTexture CreateAmbientOcclusionRawTexture()
@@ -2360,6 +2390,9 @@ public partial class DefaultRenderPipeline
         => (profile.FeatureMask & (ulong)DefaultPipelineResourceFeature.ForwardDepthPrePassEnabled) != 0
         && !UsesOpenXrVulkanDesktopSafePath(profile);
 
+    private bool UsesForwardSceneSurface(RenderPipelineResourceProfile profile)
+        => UsesForwardPrePass(profile) || UsesAmbientOcclusionResources(profile);
+
     private static bool UsesWeightedBlendedOitResources(RenderPipelineResourceProfile profile)
         => (profile.FeatureMask & (ulong)DefaultPipelineResourceFeature.WeightedBlendedOitEnabled) != 0;
 
@@ -2380,6 +2413,9 @@ public partial class DefaultRenderPipeline
     private static bool UsesAmbientOcclusionResources(RenderPipelineResourceProfile profile)
         => (profile.FeatureMask & (ulong)DefaultPipelineResourceFeature.AmbientOcclusionResourcesEnabled) != 0;
 
+    private static bool UsesAmbientOcclusionFallbackResource(RenderPipelineResourceProfile profile)
+        => !UsesAmbientOcclusionResources(profile);
+
     /// <summary>
     /// The OpenXR Vulkan startup-safe path still runs the disabled-AO resolve so
     /// the G-buffer AO attachment is initialized deterministically. It therefore
@@ -2387,7 +2423,7 @@ public partial class DefaultRenderPipeline
     /// scratch textures.
     /// </summary>
     private static bool UsesAmbientOcclusionResolveResources(RenderPipelineResourceProfile profile)
-        => UsesAmbientOcclusionResources(profile) || UsesOpenXrVulkanDesktopSafePath(profile);
+        => UsesAmbientOcclusionResources(profile);
 
     private static bool UsesBloomResources(RenderPipelineResourceProfile profile)
         => (profile.FeatureMask & (ulong)DefaultPipelineResourceFeature.BloomResourcesEnabled) != 0;
@@ -2403,6 +2439,9 @@ public partial class DefaultRenderPipeline
 
     private static bool UsesTemporalResources(RenderPipelineResourceProfile profile)
         => (profile.FeatureMask & (ulong)DefaultPipelineResourceFeature.TemporalResourcesEnabled) != 0;
+
+    private static bool UsesVelocityResources(RenderPipelineResourceProfile profile)
+        => (profile.FeatureMask & (ulong)DefaultPipelineResourceFeature.VelocityResourcesEnabled) != 0;
 
     private static bool UsesMotionBlurResources(RenderPipelineResourceProfile profile)
         => (profile.FeatureMask & (ulong)DefaultPipelineResourceFeature.MotionBlurEnabled) != 0;
@@ -2434,11 +2473,4 @@ public partial class DefaultRenderPipeline
     private static bool UsesDebugVisualizationResources(RenderPipelineResourceProfile profile)
         => (profile.FeatureMask & (ulong)DefaultPipelineResourceFeature.DebugVisualizationResourcesEnabled) != 0;
 
-    private RenderResourceSizePolicy ForwardDepthNormalPrePassSizePolicy()
-        => RenderResourceSizePolicy.Internal(ForwardDepthNormalPrePassResolution switch
-        {
-            EDepthNormalPrePassResolution.Half => 0.5f,
-            EDepthNormalPrePassResolution.Quarter => 0.25f,
-            _ => 1.0f,
-        });
 }

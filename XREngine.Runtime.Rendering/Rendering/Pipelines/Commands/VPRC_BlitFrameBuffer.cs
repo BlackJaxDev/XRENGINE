@@ -130,7 +130,10 @@ namespace XREngine.Rendering.Pipelines.Commands
 
             if (BlitColor)
             {
-                builder.UseTransferSource(MakeFboColorResource(SourceFBOName));
+                int sourceColorIndex = ReadBuffer is >= EReadBufferMode.ColorAttachment0 and <= EReadBufferMode.ColorAttachment31
+                    ? (int)ReadBuffer - (int)EReadBufferMode.ColorAttachment0
+                    : 0;
+                builder.UseTransferSource(MakeFboColorResource(SourceFBOName, sourceColorIndex));
                 builder.UseTransferDestination(MakeFboColorResource(DestinationFBOName));
             }
 

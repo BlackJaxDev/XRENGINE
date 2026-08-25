@@ -70,85 +70,9 @@ public partial class DefaultRenderPipeline
 
     private XRTexture CreateForwardPrePassDepthStencilTexture()
     {
-        (uint width, uint height) = GetDesiredFBOSizeForwardDepthNormalPrePass();
-        if (Stereo)
-        {
-            var t = XRTexture2DArray.CreateFrameBufferTexture(
-                2,
-                width, height,
-                EPixelInternalFormat.Depth24Stencil8,
-                EPixelFormat.DepthStencil,
-                EPixelType.UnsignedInt248,
-                EFrameBufferAttachment.DepthStencilAttachment);
-            t.Resizable = false;
-            t.SizedInternalFormat = ESizedInternalFormat.Depth24Stencil8;
-            t.OVRMultiViewParameters = new(0, 2u);
-            t.MinFilter = ETexMinFilter.Nearest;
-            t.MagFilter = ETexMagFilter.Nearest;
-            t.Name = ForwardPrePassDepthStencilTextureName;
-            t.SamplerName = ForwardPrePassDepthStencilTextureName;
-            return t;
-        }
-        else
-        {
-            var t = XRTexture2D.CreateFrameBufferTexture(width, height,
-                EPixelInternalFormat.Depth24Stencil8,
-                EPixelFormat.DepthStencil,
-                EPixelType.UnsignedInt248,
-                EFrameBufferAttachment.DepthStencilAttachment);
-            t.Resizable = false;
-            t.SizedInternalFormat = ESizedInternalFormat.Depth24Stencil8;
-            t.MinFilter = ETexMinFilter.Nearest;
-            t.MagFilter = ETexMagFilter.Nearest;
-            t.Name = ForwardPrePassDepthStencilTextureName;
-            t.SamplerName = ForwardPrePassDepthStencilTextureName;
-            return t;
-        }
-    }
-
-    private XRTexture CreateForwardContactDepthStencilTexture()
-    {
-        (uint width, uint height) = GetDesiredFBOSizeForwardDepthNormalPrePass();
-        if (Stereo)
-        {
-            var t = XRTexture2DArray.CreateFrameBufferTexture(
-                2,
-                width, height,
-                EPixelInternalFormat.Depth24Stencil8,
-                EPixelFormat.DepthStencil,
-                EPixelType.UnsignedInt248,
-                EFrameBufferAttachment.DepthStencilAttachment);
-            t.Resizable = false;
-            t.SizedInternalFormat = ESizedInternalFormat.Depth24Stencil8;
-            t.OVRMultiViewParameters = new(0, 2u);
-            t.MinFilter = ETexMinFilter.Nearest;
-            t.MagFilter = ETexMagFilter.Nearest;
-            t.Name = ForwardContactDepthStencilTextureName;
-            t.SamplerName = ForwardContactDepthStencilTextureName;
-            return t;
-        }
-        else
-        {
-            var t = XRTexture2D.CreateFrameBufferTexture(width, height,
-                EPixelInternalFormat.Depth24Stencil8,
-                EPixelFormat.DepthStencil,
-                EPixelType.UnsignedInt248,
-                EFrameBufferAttachment.DepthStencilAttachment);
-            t.Resizable = false;
-            t.SizedInternalFormat = ESizedInternalFormat.Depth24Stencil8;
-            t.MinFilter = ETexMinFilter.Nearest;
-            t.MagFilter = ETexMagFilter.Nearest;
-            t.Name = ForwardContactDepthStencilTextureName;
-            t.SamplerName = ForwardContactDepthStencilTextureName;
-            return t;
-        }
-    }
-
-    private XRTexture CreateDeferredGBufferPreForwardDepthStencilTexture()
-    {
         XRTexture texture = CreateDepthStencilTexture();
-        texture.Name = DeferredGBufferPreForwardDepthStencilTextureName;
-        texture.SamplerName = DeferredGBufferPreForwardDepthStencilTextureName;
+        texture.Name = ForwardPrePassDepthStencilTextureName;
+        texture.SamplerName = ForwardPrePassDepthStencilTextureName;
         return texture;
     }
 
@@ -196,7 +120,7 @@ public partial class DefaultRenderPipeline
         if (Stereo)
         {
             return new XRTexture2DArrayView(
-                GetTexture<XRTexture2DArray>(ForwardContactDepthStencilTextureName)!,
+                GetTexture<XRTexture2DArray>(ForwardPrePassDepthStencilTextureName)!,
                 0u, 1u,
                 0u, 2u,
                 ESizedInternalFormat.Depth24Stencil8,
@@ -214,7 +138,7 @@ public partial class DefaultRenderPipeline
         else
         {
             return new XRTexture2DView(
-                GetTexture<XRTexture2D>(ForwardContactDepthStencilTextureName)!,
+                GetTexture<XRTexture2D>(ForwardPrePassDepthStencilTextureName)!,
                 0u, 1u,
                 ESizedInternalFormat.Depth24Stencil8,
                 false, false)
@@ -423,81 +347,9 @@ public partial class DefaultRenderPipeline
 
     private XRTexture CreateForwardPrePassNormalTexture()
     {
-        (uint width, uint height) = GetDesiredFBOSizeForwardDepthNormalPrePass();
-        if (Stereo)
-        {
-            var t = XRTexture2DArray.CreateFrameBufferTexture(
-                2,
-                width, height,
-                EPixelInternalFormat.RG16f,
-                EPixelFormat.Rg,
-                EPixelType.HalfFloat);
-            t.Resizable = false;
-            t.SizedInternalFormat = ESizedInternalFormat.Rg16f;
-            t.OVRMultiViewParameters = new(0, 2u);
-            t.MinFilter = ETexMinFilter.Nearest;
-            t.MagFilter = ETexMagFilter.Nearest;
-            t.Name = ForwardPrePassNormalTextureName;
-            t.SamplerName = ForwardPrePassNormalTextureName;
-            return t;
-        }
-        else
-        {
-            var t = XRTexture2D.CreateFrameBufferTexture(
-                width, height,
-                EPixelInternalFormat.RG16f,
-                EPixelFormat.Rg,
-                EPixelType.HalfFloat);
-            t.SizedInternalFormat = ESizedInternalFormat.Rg16f;
-            t.MinFilter = ETexMinFilter.Nearest;
-            t.MagFilter = ETexMagFilter.Nearest;
-            t.Name = ForwardPrePassNormalTextureName;
-            t.SamplerName = ForwardPrePassNormalTextureName;
-            return t;
-        }
-    }
-
-    private XRTexture CreateForwardContactNormalTexture()
-    {
-        (uint width, uint height) = GetDesiredFBOSizeForwardDepthNormalPrePass();
-        if (Stereo)
-        {
-            var t = XRTexture2DArray.CreateFrameBufferTexture(
-                2,
-                width, height,
-                EPixelInternalFormat.RG16f,
-                EPixelFormat.Rg,
-                EPixelType.HalfFloat);
-            t.Resizable = false;
-            t.SizedInternalFormat = ESizedInternalFormat.Rg16f;
-            t.OVRMultiViewParameters = new(0, 2u);
-            t.MinFilter = ETexMinFilter.Nearest;
-            t.MagFilter = ETexMagFilter.Nearest;
-            t.Name = ForwardContactNormalTextureName;
-            t.SamplerName = ForwardContactNormalTextureName;
-            return t;
-        }
-        else
-        {
-            var t = XRTexture2D.CreateFrameBufferTexture(
-                width, height,
-                EPixelInternalFormat.RG16f,
-                EPixelFormat.Rg,
-                EPixelType.HalfFloat);
-            t.SizedInternalFormat = ESizedInternalFormat.Rg16f;
-            t.MinFilter = ETexMinFilter.Nearest;
-            t.MagFilter = ETexMagFilter.Nearest;
-            t.Name = ForwardContactNormalTextureName;
-            t.SamplerName = ForwardContactNormalTextureName;
-            return t;
-        }
-    }
-
-    private XRTexture CreateDeferredGBufferPreForwardNormalTexture()
-    {
         XRTexture texture = CreateNormalTexture();
-        texture.Name = DeferredGBufferPreForwardNormalTextureName;
-        texture.SamplerName = DeferredGBufferPreForwardNormalTextureName;
+        texture.Name = ForwardPrePassNormalTextureName;
+        texture.SamplerName = ForwardPrePassNormalTextureName;
         return texture;
     }
 

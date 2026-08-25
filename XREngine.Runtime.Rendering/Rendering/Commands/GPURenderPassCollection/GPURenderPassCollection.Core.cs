@@ -59,6 +59,12 @@ namespace XREngine.Rendering.Commands
         }
 
         /// <summary>
+        /// Optional command-local graph pass used when the same mesh collection is replayed
+        /// into an auxiliary target such as a depth-normal prepass.
+        /// </summary>
+        internal int RenderGraphPassIndexOverride { get; set; } = int.MinValue;
+
+        /// <summary>
         /// The resulting compact visible draw-ID stream for this pass.
         /// </summary>
         public XRDataBuffer CulledSceneToRenderBuffer
