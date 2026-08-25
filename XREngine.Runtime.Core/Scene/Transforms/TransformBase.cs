@@ -1261,6 +1261,12 @@ namespace XREngine.Scene.Transforms
         public static TransformDiagnosticEvaluationScope BeginDiagnosticEvaluation()
             => new(active: true);
 
+        /// <summary>
+        /// True while the current thread is evaluating a temporary pose that must not publish
+        /// external placement, events, or other non-transform side effects.
+        /// </summary>
+        public static bool IsDiagnosticEvaluationActive => _diagnosticEvaluationDepth != 0;
+
         internal static void EnterDiagnosticEvaluation()
         {
             if (_diagnosticEvaluationDepth != 0)

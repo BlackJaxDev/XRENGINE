@@ -1,3 +1,5 @@
+using MemoryPack;
+
 namespace XREngine.Animation.Importers;
 
 /// <summary>
@@ -6,7 +8,8 @@ namespace XREngine.Animation.Importers;
 /// parts Unity bakes into the pose and which parts it projects onto the model
 /// root at runtime.
 /// </summary>
-public sealed class UnityHumanoidClipRootMotionSettings
+[MemoryPackable]
+public sealed partial class UnityHumanoidClipRootMotionSettings
 {
     public float StartTime { get; set; }
     public float StopTime { get; set; }

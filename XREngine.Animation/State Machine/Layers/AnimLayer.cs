@@ -172,13 +172,28 @@ namespace XREngine.Animation
             CurrentState = InitialState;
             foreach (var state in States)
                 state.Initialize(this, owner, rootObject);
+
+            CurrentState?.RestartMotionPlayback();
+            CurrentState?.OnEnter(owner.Variables);
         }
 
         public void Deinitialize()
         {
+            foreach (var state in States)
+                state.StopMotionPlayback();
+
+            CurrentState = null;
+            NextState = null;
             OwningStateMachine = null;
             foreach (var state in States)
                 state.Deinitialize();
+        }
+
+        internal void SeekActiveMotionPlayback(float timeSeconds)
+        {
+            CurrentState?.SeekMotionPlayback(timeSeconds);
+            if (NextState is not null && !ReferenceEquals(NextState, CurrentState))
+                NextState.SeekMotionPlayback(timeSeconds);
         }
 
         public void EvaluationTick(object? rootObject, float delta, IDictionary<string, AnimVar> variables)
@@ -195,6 +210,9 @@ namespace XREngine.Animation
                 CurrentState = currState = InitialState;
                 if (currState is null)
                     return; //No states, nothing to do
+
+                currState.RestartMotionPlayback();
+                currState.OnEnter(variables);
             }
 
             CurrentState?.EvaluateValues(variables);
@@ -207,7 +225,10 @@ namespace XREngine.Animation
                 //The blend manager will update animation values
                 if (_blendManager.TickBlend(this, delta))
                 {
+                    AnimState? previousState = CurrentState;
                     CurrentState = nextState;
+                    if (previousState is not null && !ReferenceEquals(previousState, CurrentState))
+                        previousState.StopMotionPlayback();
                     CurrentState?.OnEnter(variables);
                     NextState = null;
                 }
@@ -233,6 +254,9 @@ namespace XREngine.Animation
                 CurrentState = currState = InitialState;
                 if (currState is null)
                     return;
+
+                currState.RestartMotionPlayback();
+                currState.OnEnter(variables);
             }
 
             CurrentState?.EvaluateValues(variables);
@@ -244,7 +268,10 @@ namespace XREngine.Animation
             {
                 if (_blendManager.TickBlend(this, delta))
                 {
+                    AnimState? previousState = CurrentState;
                     CurrentState = nextState;
+                    if (previousState is not null && !ReferenceEquals(previousState, CurrentState))
+                        previousState.StopMotionPlayback();
                     CurrentState?.OnEnter(variables);
                     NextState = null;
                 }
@@ -272,7 +299,7 @@ namespace XREngine.Animation
             }
 
             // Legacy fallback: snapshot + copy
-#pragma warning disable CS0618 // Obsolete GetAnimationValuesSnapshot — legacy path only
+#pragma warning disable CS0618 // Obsolete GetAnimationValuesSnapshot - legacy path only
             CopyAnimationValuesLegacy(motion.GetAnimationValuesSnapshot());
 #pragma warning restore CS0618
         }
@@ -317,6 +344,8 @@ namespace XREngine.Animation
             {
                 Debug.WriteLine($"Transitioning from {CurrentState} to {nextState} with transition {transition}");
                 CurrentState?.OnExit(variables);
+                nextState.RestartMotionPlayback();
+                nextState.EvaluateValues(variables);
                 NextState = nextState;
                 _blendManager.BeginBlend(transition!, CurrentState, nextState);
                 return true;

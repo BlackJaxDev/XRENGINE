@@ -68,6 +68,8 @@ namespace XREngine.Components.Animation
                 DurationSeconds = duration,
                 SampleRate = sampleRate,
                 SampleCount = sampleCount,
+                AvatarHumanScale = humanoid.Settings.UnityAvatarProfile?.HumanScale ?? 0.0f,
+                EngineUnitsPerUnityMeter = humanoid.UnityProfileUnitsPerMeter,
             };
 
             using TransformDiagnosticEvaluationScope diagnosticScope = TransformBase.BeginDiagnosticEvaluation();
@@ -89,6 +91,8 @@ namespace XREngine.Components.Animation
                     clipComponent.EvaluateAtTime(sampleTime);
                     report.Samples.Add(CaptureSample(humanoid, sampleTime, i));
                 }
+
+                DeriveConsecutiveRootMotion(report.Samples);
             }
             finally
             {
@@ -125,6 +129,42 @@ namespace XREngine.Components.Animation
 
             return report;
         }
+
+        /// <summary>
+        /// Exact-time evaluation is a seek and therefore deliberately invalidates the live
+        /// evaluator's temporal baseline. Derive diagnostic deltas from the captured absolute
+        /// projections so the audit can compare consecutive samples without weakening public
+        /// seek semantics or mutating the humanoid's owner state.
+        /// </summary>
+        private static void DeriveConsecutiveRootMotion(IReadOnlyList<HumanoidPoseAuditSample> samples)
+        {
+            if (samples.Count == 0)
+                return;
+
+            HumanoidPoseAuditSample first = samples[0];
+            first.TemporalRootMotionTranslation = new HumanoidPoseAuditVector3();
+            first.TemporalRootMotionRotation = HumanoidPoseAuditQuaternion.Identity;
+            first.TemporalRootMotionChannels = (int)EHumanoidProjectedRootChannels.None;
+
+            for (int i = 1; i < samples.Count; i++)
+            {
+                HumanoidPoseAuditSample previous = samples[i - 1];
+                HumanoidPoseAuditSample current = samples[i];
+                HumanoidRootMotionDelta delta = HumanoidComponent.CalculateProjectedRootDelta(
+                    ToProjectedRootPose(previous),
+                    ToProjectedRootPose(current));
+
+                current.TemporalRootMotionTranslation = HumanoidPoseAuditVector3.From(delta.Translation);
+                current.TemporalRootMotionRotation = HumanoidPoseAuditQuaternion.From(delta.Rotation);
+                current.TemporalRootMotionChannels = (int)delta.Channels;
+            }
+        }
+
+        private static HumanoidProjectedRootPose ToProjectedRootPose(HumanoidPoseAuditSample sample)
+            => new(
+                sample.ProjectedRootPosition.Value,
+                sample.ProjectedRootRotation.Value,
+                (EHumanoidProjectedRootChannels)sample.ProjectedRootChannels);
 
         private static void CaptureMuscleCalibration(
             AnimationClipComponent clipComponent,
@@ -289,6 +329,8 @@ namespace XREngine.Components.Animation
         {
             HumanoidImportedBodySample currentBody = humanoid.CurrentImportedMappedBodySample;
             HumanoidImportedBodySample canonicalBody = humanoid.CanonicalImportedBodySample;
+            HumanoidProjectedRootPose projectedRoot = humanoid.CurrentProjectedRootPose;
+            HumanoidRootMotionDelta rootMotionDelta = humanoid.CurrentRootMotionDelta;
             var sample = new HumanoidPoseAuditSample
             {
                 Index = index,
@@ -303,6 +345,12 @@ namespace XREngine.Components.Animation
                 CanonicalImportedMappedBodyChannels = (int)canonicalBody.Channels,
                 ConvertedBodyTranslationDelta = HumanoidPoseAuditVector3.From(humanoid.CurrentConvertedBodyTranslationDelta),
                 ConvertedBodyRotationDelta = HumanoidPoseAuditQuaternion.From(humanoid.CurrentConvertedBodyRotationDelta),
+                ProjectedRootPosition = HumanoidPoseAuditVector3.From(projectedRoot.Position),
+                ProjectedRootRotation = HumanoidPoseAuditQuaternion.From(projectedRoot.Rotation),
+                ProjectedRootChannels = (int)projectedRoot.Channels,
+                TemporalRootMotionTranslation = HumanoidPoseAuditVector3.From(rootMotionDelta.Translation),
+                TemporalRootMotionRotation = HumanoidPoseAuditQuaternion.From(rootMotionDelta.Rotation),
+                TemporalRootMotionChannels = (int)rootMotionDelta.Channels,
             };
 
             CaptureComposedTransforms(humanoid, sample);

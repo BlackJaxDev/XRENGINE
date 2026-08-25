@@ -2,7 +2,7 @@
 
 Date: 2026-08-24
 
-Status: Paused after Unity reference export, calibrated avatar-response integration, and live motion-scale validation; Body-to-root/Hips decomposition remains open
+Status: Complete; Unity v3 fixed-time, lifecycle, IK/contact, and live visual parity passed
 
 Related TODO: `docs/work/todo/avatar/humanoid-body-root-compensation-todo.md`
 
@@ -18,7 +18,7 @@ The investigation must keep five concepts separate:
 1. importer-mapped Unity `RootT`/`RootQ` Body data;
 2. XRENGINE's converted Body delta;
 3. the final composed Hips local transform;
-4. a future temporal projected Root Transform and published root-motion delta;
+4. the projected Root Transform, unwrapped placement pose, and temporal delta;
 5. optional post-pose IK/contact compensation.
 
 ## Reproduction and Evidence
@@ -50,6 +50,17 @@ two-angle captures are:
 - `mcp-captures/phase11-profile-scale/`;
 
 all relative to the primary disposable evidence root above.
+
+Those first-run paths describe evidence from the original machine and are not
+present in this checkout's disposable validation tree. Continuation evidence
+from the second machine is under:
+
+`Build/_AgentValidation/20260824-continue-humanoid-root/`
+
+The source avatar resolved to `D:\Desktop\misc\Mitsuki.fbx`. The run contains a
+fresh Unity export and profile under `unity-reference/`, build and Unity logs
+under `logs/`, projected-root comparison output under `reports/`, and live MCP
+captures under `mcp-captures/`.
 
 ## Root Causes Confirmed
 
@@ -100,13 +111,15 @@ flags—not only the scalar time value.
 - One-shot vector setters also use neutral samples and raw Body rotation access
   no longer mutates stored state.
 
-The retained conversion is deliberately conservative pending Unity evidence:
+At this first implementation phase, the retained conversion was deliberately
+conservative pending Unity evidence:
 
 - translation: `(currentBody - canonicalBody) * EstimateAnimatedMotionScale()`;
 - rotation: `inverse(canonicalBody) * currentBody`, then bind rotation composed
   with the weighted delta.
 
-Those scale and multiplication choices are not yet claimed to match Mecanim.
+That was a midpoint contract, not a final Mecanim-parity claim; the v3 coupled
+profile and projected-root work below supersede it.
 
 ### Observational pose audit
 
@@ -199,8 +212,11 @@ skeleton, or cumulative seek/loop drift was visible. The scene has no calibrated
 ground plane, and Mitsuki's authored textures are mostly unavailable, so these
 captures cannot establish foot contact or material correctness.
 
-Running frames still show temporal halo/multiple-silhouette trails. That is a
-rendering velocity/history issue, not Body/Hips duplication.
+Fresh consecutive-frame FXAA and TSR sequences show one coherent,
+non-accumulating silhouette through the loop from opposing cameras. The earlier
+trail impression was not reproduced as a humanoid pose defect. Resource export
+did expose black skinned Velocity while the avatar deforms; that distinct
+producer bug is isolated in the linked rendering investigation.
 
 ### Startup skinning warnings
 
@@ -216,10 +232,10 @@ centimeter-like scale and remains visually coherent, so this threshold is not a
 valid explosion detector for this avatar. It should be recalibrated against
 mesh/avatar bounds in a separate rendering task.
 
-## Unity Reference and Calibrated Runtime Results
+## Earlier Single-Muscle Calibration Results (Superseded by v3)
 
-The refreshed Unity reference uses the same Mitsuki avatar and Sexy Walk clip
-at 25 Hz / 81 samples. Unity reports:
+The prior machine's refreshed Unity reference used the same Mitsuki avatar and
+Sexy Walk clip at 25 Hz / 81 samples. It reported:
 
 - `Avatar.humanScale = 0.8143980503`;
 - arm/leg twist factors `0.5`, arm/leg stretch `0.05`, feet spacing `0`, and
@@ -252,7 +268,7 @@ Representative full-quaternion errors versus Unity are:
 | Right upper arm | `54.17 / 66.22` deg | `4.03 / 6.75` deg |
 | Neck | `41.76 / 48.21` deg | `0.58 / 1.12` deg |
 
-The remaining calibrated maxima are approximately `11.00` degrees on the left
+At that stage, the remaining calibrated maxima were approximately `11.00` degrees on the left
 lower leg, `10.10` on the left upper leg, `7.24` on the right lower leg, `7.03`
 on the right upper leg, and `5.56` on the left foot. Spine, chest, shoulders,
 head, lower arms, hands, and eyes are otherwise sub-degree or close to it.
@@ -262,72 +278,127 @@ solver; any later refinement should use combination probes rather than more
 axis guessing.
 
 The imported clip now retains Unity's Body-to-root projection metadata.
-Phase-11 live logs confirm `UnitsPerMeter=39.370064` and
-`BodyMotionScale=32.062904`, and two camera captures show one coherent animated
-pose. The camera-dependent red/blue trails remain a separate temporal-rendering
-artifact.
+Phase-11 live logs confirmed `UnitsPerMeter=39.370064` and
+`BodyMotionScale=32.062904`, and two camera captures showed one coherent
+animated pose. The red/blue trail impression at that stage motivated the
+separate renderer investigation; the completed fresh sequences below do not
+show an accumulating humanoid silhouette.
 
-## Remaining Gaps
+## Completion Continuation
 
-- Hips is intentionally excluded from profile overrides for now. Its current
-  local-rotation error is `12.40` degrees average / `23.46` maximum. The
-  measured Hips muscle response predicts about `2.62 / 5.92` degrees, but
-  applying it alone would remove the Body yaw before that yaw is published on
-  the model root.
-- Unity projected-root yaw is almost exactly the first-sample-relative yaw of
-  normalized raw `RootQ`; the mean measured discrepancy is about `0.019`
-  degrees and the maximum about `0.042`. XRENGINE still folds the complete
-  Body rotation into Hips and publishes no projected-root pose or temporal
-  delta.
-- Unity projected XZ closely follows first-sample-relative Body position after
-  canonical-yaw removal and `humanScale`; normalized position error was about
-  `5.4e-5` mean / `2.4e-4` maximum. Y projection additionally depends on the
-  clip's `HeightFromFeet` policy and must not be guessed.
-- Scalar curve values import exactly, but the current semantic `RootT` path maps
-  source `(x,y,z)` to XRENGINE `(-x,z,y)` before direct Hips composition. Bind
-  evidence makes the Y/Z swap suspicious. It was deliberately left unchanged
-  at wrap-up so a basis change cannot silently mix projected-root and Hips
-  semantics.
-- `AnimStateMachineComponent` still blends RootQ scalar members rather than
-  blending complete quaternions.
-- The raw startup path disables humanoid IK. Authored goals, foot contact, and
-  post-pose compensation remain intentionally unvalidated.
-- Missing Mitsuki textures, fallback material bindings, temporal ghosting, and
-  the scale-blind skin-explosion threshold are separate rendering/import work.
+A fresh Unity 2022.3.22f1 batch import on this machine reported
+`Avatar.humanScale = 0.8116461039`. This differs slightly from the prior
+machine's generated avatar (`0.8143980503`), so completion used only the matching
+v3 Unity export and profile. XRENGINE measured `UnitsPerMeter=39.370068` and
+`BodyMotionScale=31.954561` for that pair.
 
-## Best Path Forward
+The v3 profile contains 22 humanoid roles, four twist chains, measured body
+axes, neutral local positions/rotations, and coupled-muscle models. The runtime
+stores role data in dense enum-indexed arrays. Missing optional roles retain the
+geometry fallback, while mismatched Hips/Spine/UpperLeg names and non-finite
+Body/profile values produce diagnostics.
 
-1. Resolve the semantic `RootT`/RootQ basis from the measured Unity projected
-   root and XRENGINE bind/model-root bases before changing another pose axis.
-2. Add explicit projected-root pose and temporal-delta outputs. Default to
-   extract-only so animation cannot overwrite gameplay/network character
-   placement; make scene-root application an explicit policy.
-3. Atomically extract yaw/XZ/Y according to clip metadata while applying the
-   measured Hips muscle response plus residual Body tilt/roll. Never remove a
-   component from Hips without publishing it to root in the same sample.
-4. Use feet-bottom evidence for `HeightFromFeet`, and diagnose yaw, XZ, and Y
-   projection independently across fixed samples, loop wrap, seeks, and replay.
-5. Replace state-machine scalar RootQ blending with quaternion-aware complete
-   Body sample blending and repeat the lifecycle matrix.
-6. Only after Body/Hips/root parity, enable authored IK/contact handling and
-   investigate rendering ghosting separately.
-7. Add tests only after the user explicitly clears test work, per repository
-   policy.
+The raw basis question is resolved at the projection boundary. Unity's first
+`RootT` sample is approximately `(-0.023382, 1.005454, 0.017171)`, while the
+retained importer diagnostic is `(0.023382, 0.017171, 1.005454)`. Projection
+restores semantic model-root axes as `(imported.X, imported.Z, imported.Y)`
+without mutating the raw diagnostic sample.
+
+XZ, calibrated Y, and yaw are independently valid projected-root channels.
+Direct playback distinguishes the canonical-relative within-cycle pose,
+consecutive delta, signed unwrapped loop pose, and placement target. The
+application mode is explicit: extract only, apply relative to a named target's
+playback-epoch anchor, or publish to an external consumer. It never guesses a
+Hips, Armature, or scene-root target.
+
+The calibrated coupled Hips model publishes Unity's final neutral-relative
+local position and rotation once in the Scene-order pose pass. The projected
+root calculation is a separate value and no longer causes an intermediate,
+incompatible Hips write. State-machine layouts recognize complete RootQ groups,
+blend them with shortest-arc normalized slerp, and pass compatible clip
+projection metadata into the same atomic Body transaction.
+
+## Final Unity/XRENGINE Parity
+
+`reports/coupled-v3-comparison.json` compares all 81 samples at 25 Hz:
+
+| Metric | Average | Maximum |
+| --- | ---: | ---: |
+| Projected root XYZ | `0.01770426` units | `0.13240078` units |
+| Projected root rotation | `0.0009769` deg | `0.0395647` deg |
+| Consecutive root translation | `0.01777755` units | `0.12590785` units |
+| Consecutive root rotation | `0` deg | `0` deg |
+| Hips local position | `0.2357138` units | `0.9322473` units |
+| Hips local rotation | `0.0051216` deg | `0.0559529` deg |
+
+The full translation metrics are dominated by the calibrated Y fit. The
+separately projected XZ mean/max remain `0.0004466 / 0.0009885` units and yaw
+`0.003397 / 0.047324` degrees; consecutive XZ is
+`0.0000640 / 0.0002749` units and yaw `0.00175 / 0.03156` degrees. The worst
+selected endpoint difference is about `1.2794` engine units, or `3.25 cm` at
+the measured scale. These results satisfy the fixed-time parity gate and the
+fresh XRENGINE silhouettes match the corresponding current Unity poses.
+
+## Lifecycle, Loops, and IK
+
+- Repeating a direct seek to `t=0.8` produces bit-exact Body, Hips, projected
+  root, and hierarchy state.
+- Forward and reverse loop accumulation remains stable across multiple cycles.
+  Restart, stop/play, clip replacement, activation changes, and direct/state-
+  machine handoff do not preserve stale pose or temporal state.
+- The direct and one-state state-machine paths produce the same fixed-time
+  Body/Hips result. Quaternion float-slot grouping prevents component-length
+  collapse during state blending.
+- A single `HumanoidIKSolverComponent` consumes animation goals only according
+  to its explicit Ignore, calibrated-only, or always-apply policy. The four
+  intended foot/hand goals report Applied on the calibrated Mitsuki path.
+- Authored body-relative goals convert to the verified world frame within
+  `6e-6` engine units. Optional contact correction can constrain feet only or
+  feet and hands against a configured plane; Disabled reproduces the authored
+  goal exactly. Body projection and post-pose compensation retain independent
+  diagnostics.
+
+## Visual and Renderer Isolation
+
+The complete opposite-camera FXAA sequence is:
+
+`Build/_AgentValidation/20260824-continue-humanoid-root/mcp-captures/rendering/baseline-fxaa-opposite/ViewportSequence_20260825_053402_239_18278c0ea6e8448694f33c3c22962e8b/contact-sheet.png`
+
+The complete TSR sequence is:
+
+`Build/_AgentValidation/20260824-continue-humanoid-root/mcp-captures/rendering/baseline-tsr/ViewportSequence_20260825_053637_643_5209abdd190244d2a727d8acf539fb0f/contact-sheet.png`
+
+Both show one coherent, non-accumulating silhouette through a loop. The fixed
+Unity screenshot series itself retained older uncleared silhouettes after its
+first frame; the refreshed JSON and current-frame silhouettes are therefore the
+pose oracle.
+
+Velocity exports are black under both FXAA and TSR while the skinned mesh is
+moving. Source inspection traces that to current and previous motion-vector
+positions using the same current skinned local position, with no ordinary
+previous skin-palette snapshot. This is documented separately in
+`docs/work/investigations/rendering/humanoid-skinned-mesh-temporal-ghosting-2026-08-24.md`.
+It does not change the passing humanoid animation result.
 
 ## Validation Performed
 
-- `dotnet build XREngine.Runtime.AnimationIntegration/XREngine.Runtime.AnimationIntegration.csproj --no-restore`: zero warnings, zero errors.
-- Fresh isolated editor builds: zero errors; clean restore builds surface nine
-  pre-existing OscCore submodule nullable/unused-member warnings only.
-- Phase-11 isolated playback loaded the refreshed compact profile, exported all
-  81 samples, logged `UnitsPerMeter=39.370064` and
-  `BodyMotionScale=32.062904`, and was inspected from two camera positions.
-- Named MCP sessions were stopped through `Manage-McpEditorSession.ps1`; no
-  unrelated editor process was stopped.
-- Unity exporter standalone compile and licensed isolated Unity 2022.3 batch
-  run: zero compile errors and successful batch exit.
-- No unit tests were added or run. Repository policy defers test work until live
-  feature validation is complete and the user explicitly clears it.
+- Licensed isolated Unity v3 exporter run: completed successfully without
+  reusing or stopping the user's open Unity project.
+- Runtime animation-integration build and focused test builds: zero warnings and
+  zero errors. Fresh full editor builds have zero errors; clean builds may show
+  the nine pre-existing OscCore nullable/unused-member warnings.
+- Regression matrix: focused Body/root suite `24/24`, Humanoid `87/87`, Unity
+  importer `11/11`, AnimationClipComponent `21/21`, and AnimStateMachine `8/8`.
+- Live fixed-time, direct/state-machine, lifecycle, signed-loop, authored IK,
+  contact-mode, FXAA, and TSR validation all ran against
+  `D:\Desktop\misc\Mitsuki.fbx` and `Assets/Walks/Sexy Walk.anim`.
+- The named `humanoid-temporal-v1` session was stopped through
+  `Manage-McpEditorSession.ps1`; no unrelated editor was stopped.
+- Unit Testing World settings and schema were regenerated and restored to the
+  canonical Vulkan/Jax/Sponza configuration with animation/audit/IK disabled.
 
-User validation status: work paused at the user's request before the
-projected-root/Hips split.
+User validation status: all humanoid Body/root compensation phases are complete
+and the live XRENGINE animation passes the Unity parity gate. Missing textures,
+the scale-blind skin-explosion warning threshold, and ordinary skinned motion
+vectors remain separate rendering/import diagnostics rather than animation-pose
+gaps.

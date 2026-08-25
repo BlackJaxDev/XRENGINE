@@ -33,6 +33,22 @@ namespace XREngine.Components.Animation
         private HumanoidImportedBodySample _canonicalImportedBodySample = HumanoidImportedBodySample.Neutral;
         private bool _hasCachedImportedBodyRootMembers;
         private bool _loggedMissingHumanoidForRootMotion;
+        private bool _loggedMissingRootMotionTarget;
+        private const int HumanoidMuscleValueCount = (int)EHumanoidValue.RightHandThumb3Stretched + 1;
+        private readonly float[] _loopProjectionMuscleValues = new float[HumanoidMuscleValueCount];
+        private HumanoidProjectedRootPose _projectedRootLoopPose = HumanoidProjectedRootPose.Identity;
+        private HumanoidProjectedRootPose _appliedRootMotionPose = HumanoidProjectedRootPose.Identity;
+        private HumanoidProjectedRootPose _previousAppliedRootMotionPose = HumanoidProjectedRootPose.Identity;
+        private HumanoidRootMotionDelta _appliedRootMotionDelta = HumanoidRootMotionDelta.Identity;
+        private Transform? _rootMotionAnchorTarget;
+        private Vector3 _rootMotionAnchorTranslation;
+        private Quaternion _rootMotionAnchorRotation = Quaternion.Identity;
+        private long _rootMotionLoopCycle;
+        private ulong _rootMotionEpoch;
+        private ulong _rootMotionSequence;
+        private bool _hasProjectedRootLoopPose;
+        private bool _hasRootMotionAnchor;
+        private bool _hasPreviousAppliedRootMotionPose;
         private int _deferredStartVersion;
         private bool _deferredStartPending;
 
@@ -75,6 +91,46 @@ namespace XREngine.Components.Animation
 
         public bool IsPlaying => _isPlaying;
         public bool IsPaused => _isPaused;
+
+        private EHumanoidRootMotionApplicationMode _rootMotionApplicationMode;
+        /// <summary>
+        /// Selects whether projected humanoid root motion remains extract-only, moves an explicit
+        /// transform, or is published to an external consumer.
+        /// </summary>
+        public EHumanoidRootMotionApplicationMode RootMotionApplicationMode
+        {
+            get => _rootMotionApplicationMode;
+            set => SetField(ref _rootMotionApplicationMode, value);
+        }
+
+        private Transform? _rootMotionTarget;
+        /// <summary>
+        /// Explicit placement target used only by <see cref="EHumanoidRootMotionApplicationMode.ApplyToExplicitTarget"/>.
+        /// Hips and Armature transforms are never inferred as a fallback.
+        /// </summary>
+        public Transform? RootMotionTarget
+        {
+            get => _rootMotionTarget;
+            set => SetField(ref _rootMotionTarget, value);
+        }
+
+        /// <summary>The current root-placement epoch. Playback starts, seeks, and target changes create a new epoch.</summary>
+        public ulong RootMotionEpoch => _rootMotionEpoch;
+
+        /// <summary>The number of root poses published in the current epoch.</summary>
+        public ulong RootMotionSequence => _rootMotionSequence;
+
+        /// <summary>The loop-unwrapped projected pose most recently published by this component.</summary>
+        public HumanoidProjectedRootPose AppliedRootMotionPose => _appliedRootMotionPose;
+
+        /// <summary>The loop-unwrapped temporal delta most recently published by this component.</summary>
+        public HumanoidRootMotionDelta AppliedRootMotionDelta => _appliedRootMotionDelta;
+
+        /// <summary>The signed loop cycle currently composed ahead of the within-cycle projected pose.</summary>
+        public long RootMotionLoopCycle => _rootMotionLoopCycle;
+
+        /// <summary>Raised for <see cref="EHumanoidRootMotionApplicationMode.ExternalConsumer"/> after a complete pose evaluation.</summary>
+        public event Action<HumanoidProjectedRootPose, HumanoidRootMotionDelta>? RootMotionEvaluated;
 
         private bool _suspendSiblingStateMachine = true;
         public bool SuspendSiblingStateMachine
@@ -152,6 +208,11 @@ namespace XREngine.Components.Animation
                 case nameof(StartOnActivate):
                     if (IsActiveInHierarchy && StartOnActivate)
                         Start();
+                    break;
+                case nameof(RootMotionApplicationMode):
+                case nameof(RootMotionTarget):
+                    if (_isPlaying && !TransformBase.IsDiagnosticEvaluationActive)
+                        BeginRootMotionEpoch();
                     break;
             }
         }
@@ -254,6 +315,7 @@ namespace XREngine.Components.Animation
 
             EnsureHumanoidAnimationIKSolver();
             ResetRootMotionBaselineIfNeeded();
+            BeginRootMotionEpoch();
             return true;
         }
 
@@ -269,7 +331,9 @@ namespace XREngine.Components.Animation
         private void CompletePlaybackStartup()
         {
             ApplyAnimatedValues();
+            CacheProjectedRootLoopPose();
             RegisterTick(ETickGroup.Normal, ETickOrder.Animation, TickAnimation);
+            RegisterTick(ETickGroup.Late, ETickOrder.Input, PublishRootMotion);
         }
 
         private void Stop()
@@ -287,6 +351,8 @@ namespace XREngine.Components.Animation
                 RestoreAnimatedState();
 
             UnregisterTick(ETickGroup.Normal, ETickOrder.Animation, TickAnimation);
+            UnregisterTick(ETickGroup.Late, ETickOrder.Input, PublishRootMotion);
+            EndRootMotionEpoch();
 
             if (_suspendedSiblingAnimator is not null)
             {
@@ -329,9 +395,12 @@ namespace XREngine.Components.Animation
                 return;
 
             EnsureHumanoidAnimationIKSolver();
-            if (!_initialized)
-                ResetRootMotionBaselineIfNeeded();
+            ResetRootMotionBaselineIfNeeded();
             EnsureInitialized();
+            // A fixed-time seek is a temporal discontinuity, but it must not move the
+            // placement origin. Re-anchoring from the already-applied target pose would
+            // accumulate the absolute projected pose on every repeated seek.
+            BeginRootMotionEpoch(preserveExistingAnchor: true);
 
             long evaluationTicks = NormalizePlaybackTime(SecondsToStopwatchTicks(timeSeconds), Animation, wrapLooped: false);
             SetAllPropertyAnimationTimes(Animation, evaluationTicks, wrapLooped: false);
@@ -347,6 +416,8 @@ namespace XREngine.Components.Animation
                 var humanoid = GetSiblingHumanoid();
                 humanoid?.ApplyCurrentMusclePose();
             }
+
+            PublishRootMotion();
         }
 
         /// <summary>
@@ -399,6 +470,7 @@ namespace XREngine.Components.Animation
                 return;
             _isPaused = true;
             UnregisterTick(ETickGroup.Normal, ETickOrder.Animation, TickAnimation);
+            UnregisterTick(ETickGroup.Late, ETickOrder.Input, PublishRootMotion);
         }
 
         public void Resume()
@@ -407,6 +479,7 @@ namespace XREngine.Components.Animation
                 return;
             _isPaused = false;
             RegisterTick(ETickGroup.Normal, ETickOrder.Animation, TickAnimation);
+            RegisterTick(ETickGroup.Late, ETickOrder.Input, PublishRootMotion);
         }
 
         private void TickAnimation()
@@ -417,11 +490,15 @@ namespace XREngine.Components.Animation
             using var sample = RuntimeAnimationHostServices.Current.StartProfileScope("AnimationClipComponent.TickAnimation");
 
             long deltaTicks;
+            long unwrappedPlaybackTimeTicks;
             long playbackTimeTicks;
             using (RuntimeAnimationHostServices.Current.StartProfileScope("AnimationClipComponent.TickAnimation.AdvanceTime"))
             {
                 deltaTicks = ScaleStopwatchTicks(SecondsToStopwatchTicks(RuntimeAnimationHostServices.Current.DilatedUpdateDeltaSeconds), Speed);
-                playbackTimeTicks = NormalizePlaybackTime(_playbackTimeTicks + deltaTicks, Animation, wrapLooped: Animation.Looped);
+                unwrappedPlaybackTimeTicks = _playbackTimeTicks + deltaTicks;
+                playbackTimeTicks = NormalizePlaybackTime(unwrappedPlaybackTimeTicks, Animation, wrapLooped: Animation.Looped);
+                if (Animation.Looped && playbackTimeTicks != unwrappedPlaybackTimeTicks)
+                    _rootMotionLoopCycle += CountWrappedCycles(unwrappedPlaybackTimeTicks, GetClipLengthTicks(Animation));
                 SetPlaybackTimeTicks(playbackTimeTicks);
             }
 
@@ -510,10 +587,345 @@ namespace XREngine.Components.Animation
                 return;
             }
 
-            // This clip passes its evaluator-owned time-zero sample on every transaction begin.
-            // Do not reset shared humanoid body state here: a sibling state machine may be suspended
-            // for direct playback and must retain its own provisional reference for resume.
+            // Invalidate only this evaluator's temporal projection. The canonical Body sample and
+            // sibling state-machine ownership must survive direct playback suspension and resume.
+            humanoid.InvalidateProjectedRootMotionBaseline(this);
         }
+
+        private void BeginRootMotionEpoch(bool preserveExistingAnchor = false)
+        {
+            if (TransformBase.IsDiagnosticEvaluationActive)
+                return;
+
+            Transform? target = RootMotionApplicationMode == EHumanoidRootMotionApplicationMode.ApplyToExplicitTarget
+                ? RootMotionTarget
+                : null;
+            bool canPreserveAnchor = preserveExistingAnchor
+                && target is not null
+                && _hasRootMotionAnchor
+                && ReferenceEquals(_rootMotionAnchorTarget, target);
+            Vector3 preservedAnchorTranslation = _rootMotionAnchorTranslation;
+            Quaternion preservedAnchorRotation = _rootMotionAnchorRotation;
+
+            _rootMotionEpoch = unchecked(_rootMotionEpoch + 1UL);
+            _rootMotionSequence = 0UL;
+            _rootMotionLoopCycle = 0L;
+            _appliedRootMotionPose = HumanoidProjectedRootPose.Identity;
+            _previousAppliedRootMotionPose = HumanoidProjectedRootPose.Identity;
+            _appliedRootMotionDelta = HumanoidRootMotionDelta.Identity;
+            _hasPreviousAppliedRootMotionPose = false;
+            _hasRootMotionAnchor = false;
+            _rootMotionAnchorTarget = null;
+            _loggedMissingRootMotionTarget = false;
+
+            if (target is not null)
+            {
+                if (canPreserveAnchor)
+                {
+                    _rootMotionAnchorTarget = target;
+                    _rootMotionAnchorTranslation = preservedAnchorTranslation;
+                    _rootMotionAnchorRotation = preservedAnchorRotation;
+                    _hasRootMotionAnchor = true;
+                }
+                else
+                {
+                    CaptureRootMotionAnchor(target);
+                }
+            }
+
+            GetSiblingHumanoid()?.InvalidateProjectedRootMotionBaseline(this);
+        }
+
+        private void EndRootMotionEpoch()
+        {
+            _hasRootMotionAnchor = false;
+            _rootMotionAnchorTarget = null;
+            _rootMotionLoopCycle = 0L;
+            _hasPreviousAppliedRootMotionPose = false;
+            _appliedRootMotionDelta = HumanoidRootMotionDelta.Identity;
+        }
+
+        private void CaptureRootMotionAnchor(Transform target)
+        {
+            _rootMotionAnchorTarget = target;
+            _rootMotionAnchorTranslation = target.Translation;
+            Quaternion rotation = target.Rotation;
+            _rootMotionAnchorRotation = IsFiniteNonZero(rotation)
+                ? Quaternion.Normalize(rotation)
+                : Quaternion.Identity;
+            _hasRootMotionAnchor = true;
+        }
+
+        private void PublishRootMotion()
+        {
+            if (TransformBase.IsDiagnosticEvaluationActive || Animation?.HasRootMotion != true)
+                return;
+
+            HumanoidComponent? humanoid = GetSiblingHumanoid();
+            if (humanoid is null)
+                return;
+
+            HumanoidProjectedRootPose withinCyclePose = humanoid.CurrentProjectedRootPose;
+            if (withinCyclePose.Channels == EHumanoidProjectedRootChannels.None)
+                return;
+
+            HumanoidProjectedRootPose unwrappedPose = _rootMotionLoopCycle != 0L && _hasProjectedRootLoopPose
+                ? ComposeProjectedRootPoses(
+                    PowProjectedRootPose(_projectedRootLoopPose, _rootMotionLoopCycle),
+                    withinCyclePose)
+                : withinCyclePose;
+
+            _appliedRootMotionDelta = _hasPreviousAppliedRootMotionPose
+                ? HumanoidComponent.CalculateProjectedRootDelta(_previousAppliedRootMotionPose, unwrappedPose)
+                : HumanoidRootMotionDelta.Identity;
+            _appliedRootMotionPose = unwrappedPose;
+            _previousAppliedRootMotionPose = unwrappedPose;
+            _hasPreviousAppliedRootMotionPose = true;
+            _rootMotionSequence = unchecked(_rootMotionSequence + 1UL);
+
+            switch (RootMotionApplicationMode)
+            {
+                case EHumanoidRootMotionApplicationMode.ExtractOnly:
+                    return;
+
+                case EHumanoidRootMotionApplicationMode.ExternalConsumer:
+                    RootMotionEvaluated?.Invoke(unwrappedPose, _appliedRootMotionDelta);
+                    return;
+
+                case EHumanoidRootMotionApplicationMode.ApplyToExplicitTarget:
+                    ApplyProjectedRootPoseToTarget(unwrappedPose);
+                    return;
+            }
+        }
+
+        private void ApplyProjectedRootPoseToTarget(HumanoidProjectedRootPose pose)
+        {
+            Transform? target = RootMotionTarget;
+            if (target is null)
+            {
+                if (!_loggedMissingRootMotionTarget)
+                {
+                    _loggedMissingRootMotionTarget = true;
+                    Debug.Animation("[RootMotion] ApplyToExplicitTarget requires RootMotionTarget; no Hips or Armature fallback was inferred.");
+                }
+                return;
+            }
+
+            if (!_hasRootMotionAnchor || !ReferenceEquals(_rootMotionAnchorTarget, target))
+                CaptureRootMotionAnchor(target);
+
+            Vector3 projectedPosition = SelectValidProjectedPosition(pose);
+            Quaternion projectedRotation = (pose.Channels & EHumanoidProjectedRootChannels.RotationYaw) != 0
+                && IsFiniteNonZero(pose.Rotation)
+                    ? Quaternion.Normalize(pose.Rotation)
+                    : Quaternion.Identity;
+            Vector3 translation = _rootMotionAnchorTranslation
+                + Vector3.Transform(projectedPosition, _rootMotionAnchorRotation);
+            Quaternion rotation = Quaternion.Normalize(_rootMotionAnchorRotation * projectedRotation);
+            target.SetLocalTranslationRotation(translation, rotation);
+        }
+
+        private void CacheProjectedRootLoopPose()
+        {
+            _projectedRootLoopPose = HumanoidProjectedRootPose.Identity;
+            _hasProjectedRootLoopPose = false;
+            AnimationClip? clip = Animation;
+            HumanoidComponent? humanoid = GetSiblingHumanoid();
+            if (clip?.Looped != true
+                || clip.HasRootMotion != true
+                || !_hasCachedImportedBodyRootMembers
+                || humanoid is null)
+                return;
+
+            float endpointSeconds = clip.LengthInSeconds;
+            HumanoidImportedBodySample endpointSample = HumanoidImportedBodySample.Neutral;
+            ReadImportedBodyComponentAtTime(
+                _rootPositionXMember,
+                EHumanoidImportedBodySampleChannels.PositionX,
+                endpointSeconds,
+                ref endpointSample);
+            ReadImportedBodyComponentAtTime(
+                _rootPositionYMember,
+                EHumanoidImportedBodySampleChannels.PositionY,
+                endpointSeconds,
+                ref endpointSample);
+            ReadImportedBodyComponentAtTime(
+                _rootPositionZMember,
+                EHumanoidImportedBodySampleChannels.PositionZ,
+                endpointSeconds,
+                ref endpointSample);
+            ReadImportedBodyComponentAtTime(
+                _rootRotationXMember,
+                EHumanoidImportedBodySampleChannels.RotationX,
+                endpointSeconds,
+                ref endpointSample);
+            ReadImportedBodyComponentAtTime(
+                _rootRotationYMember,
+                EHumanoidImportedBodySampleChannels.RotationY,
+                endpointSeconds,
+                ref endpointSample);
+            ReadImportedBodyComponentAtTime(
+                _rootRotationZMember,
+                EHumanoidImportedBodySampleChannels.RotationZ,
+                endpointSeconds,
+                ref endpointSample);
+            ReadImportedBodyComponentAtTime(
+                _rootRotationWMember,
+                EHumanoidImportedBodySampleChannels.RotationW,
+                endpointSeconds,
+                ref endpointSample);
+
+            CaptureProjectedLoopMuscles(endpointSeconds);
+            _projectedRootLoopPose = humanoid.CalculateProjectedRootPose(
+                endpointSample,
+                _canonicalImportedBodySample,
+                Weight,
+                clip.UnityHumanoidRootMotionSettings,
+                clip.Name,
+                _loopProjectionMuscleValues);
+            _hasProjectedRootLoopPose = _projectedRootLoopPose.Channels != EHumanoidProjectedRootChannels.None;
+        }
+
+        private static void ReadImportedBodyComponentAtTime(
+            AnimationMember? member,
+            EHumanoidImportedBodySampleChannels channel,
+            float timeSeconds,
+            ref HumanoidImportedBodySample sample)
+        {
+            if (member?.Animation is not BasePropAnim animation
+                || animation.GetValueGeneric(timeSeconds) is not float value)
+                return;
+
+            if ((channel & EHumanoidImportedBodySampleChannels.Position) != 0)
+                sample.SetPositionComponent(channel, value);
+            else
+                sample.SetRotationComponent(channel, value);
+        }
+
+        private void CaptureProjectedLoopMuscles(float timeSeconds)
+        {
+            Array.Clear(_loopProjectionMuscleValues);
+            float weight = float.IsFinite(Weight) ? Math.Clamp(Weight, 0.0f, 1.0f) : 1.0f;
+            foreach (AnimationMember member in _animatedMembersSnapshot)
+            {
+                if (member.MemberName is not ("SetImportedRawValue" or "SetValue")
+                    || member.Animation is not BasePropAnim animation
+                    || animation.GetValueGeneric(timeSeconds) is not float amount)
+                    continue;
+
+                object?[] arguments = _baselineMethodArguments.TryGetValue(member, out object?[]? baseline)
+                    ? baseline
+                    : member.MethodArguments;
+                if (arguments.Length == 0 || !TryGetHumanoidValue(arguments[0], out EHumanoidValue value))
+                    continue;
+
+                if (weight < 1.0f)
+                {
+                    float defaultAmount = member.DefaultValue is float defaultValue ? defaultValue : 0.0f;
+                    amount = Interp.Lerp(defaultAmount, amount, weight);
+                }
+
+                if (FlipMuscleLeftRight)
+                    value = SwapHumanoidLeftRight(value);
+                if (member.MemberName == "SetImportedRawValue")
+                    amount = HumanoidComponent.ConvertImportedHumanoidAmount(value, amount, FlipMuscleZ);
+
+                int index = (int)value;
+                if ((uint)index < (uint)_loopProjectionMuscleValues.Length)
+                    _loopProjectionMuscleValues[index] = amount;
+            }
+        }
+
+        internal static long CountWrappedCycles(long unwrappedTicks, long lengthTicks)
+        {
+            if (lengthTicks <= 0L)
+                return 0L;
+
+            long quotient = unwrappedTicks / lengthTicks;
+            if (unwrappedTicks % lengthTicks < 0L)
+                quotient--;
+            return quotient;
+        }
+
+        internal static HumanoidProjectedRootPose PowProjectedRootPose(
+            HumanoidProjectedRootPose pose,
+            long exponent)
+        {
+            if (exponent == 0L)
+                return new HumanoidProjectedRootPose(
+                    Vector3.Zero,
+                    Quaternion.Identity,
+                    pose.Channels);
+
+            HumanoidProjectedRootPose factor = exponent < 0L
+                ? InvertProjectedRootPose(pose)
+                : pose;
+            ulong remaining = exponent < 0L
+                ? (ulong)(-(exponent + 1L)) + 1UL
+                : (ulong)exponent;
+            HumanoidProjectedRootPose result = new(
+                Vector3.Zero,
+                Quaternion.Identity,
+                pose.Channels);
+            while (remaining != 0UL)
+            {
+                if ((remaining & 1UL) != 0UL)
+                    result = ComposeProjectedRootPoses(result, factor);
+                remaining >>= 1;
+                if (remaining != 0UL)
+                    factor = ComposeProjectedRootPoses(factor, factor);
+            }
+            return result;
+        }
+
+        internal static HumanoidProjectedRootPose InvertProjectedRootPose(HumanoidProjectedRootPose pose)
+        {
+            Quaternion rotation = (pose.Channels & EHumanoidProjectedRootChannels.RotationYaw) != 0
+                && IsFiniteNonZero(pose.Rotation)
+                    ? Quaternion.Normalize(Quaternion.Inverse(pose.Rotation))
+                    : Quaternion.Identity;
+            Vector3 position = Vector3.Transform(-SelectValidProjectedPosition(pose), rotation);
+            return new HumanoidProjectedRootPose(position, rotation, pose.Channels);
+        }
+
+        internal static HumanoidProjectedRootPose ComposeProjectedRootPoses(
+            HumanoidProjectedRootPose first,
+            HumanoidProjectedRootPose second)
+        {
+            Quaternion firstRotation = (first.Channels & EHumanoidProjectedRootChannels.RotationYaw) != 0
+                && IsFiniteNonZero(first.Rotation)
+                    ? Quaternion.Normalize(first.Rotation)
+                    : Quaternion.Identity;
+            Quaternion secondRotation = (second.Channels & EHumanoidProjectedRootChannels.RotationYaw) != 0
+                && IsFiniteNonZero(second.Rotation)
+                    ? Quaternion.Normalize(second.Rotation)
+                    : Quaternion.Identity;
+            Vector3 position = SelectValidProjectedPosition(first)
+                + Vector3.Transform(SelectValidProjectedPosition(second), firstRotation);
+            Quaternion rotation = Quaternion.Normalize(firstRotation * secondRotation);
+            return new HumanoidProjectedRootPose(position, rotation, first.Channels | second.Channels);
+        }
+
+        private static Vector3 SelectValidProjectedPosition(HumanoidProjectedRootPose pose)
+        {
+            Vector3 position = Vector3.Zero;
+            if ((pose.Channels & EHumanoidProjectedRootChannels.PositionXZ) != 0)
+            {
+                position.X = float.IsFinite(pose.Position.X) ? pose.Position.X : 0.0f;
+                position.Z = float.IsFinite(pose.Position.Z) ? pose.Position.Z : 0.0f;
+            }
+            if ((pose.Channels & EHumanoidProjectedRootChannels.PositionY) != 0)
+                position.Y = float.IsFinite(pose.Position.Y) ? pose.Position.Y : 0.0f;
+            return position;
+        }
+
+        private static bool IsFiniteNonZero(Quaternion value)
+            => float.IsFinite(value.X)
+            && float.IsFinite(value.Y)
+            && float.IsFinite(value.Z)
+            && float.IsFinite(value.W)
+            && float.IsFinite(value.LengthSquared())
+            && value.LengthSquared() > 1.0e-8f;
 
         private HumanoidComponent? GetSiblingHumanoid()
             => TryGetSiblingComponent<HumanoidComponent>(out var humanoid) ? humanoid : null;
@@ -528,7 +940,11 @@ namespace XREngine.Components.Animation
             _animatedQuaternionTargetsSnapshot = [];
             _propertyAnimationsSnapshot = [];
             ClearImportedBodyRootMemberCache();
+            _projectedRootLoopPose = HumanoidProjectedRootPose.Identity;
+            _hasProjectedRootLoopPose = false;
+            Array.Clear(_loopProjectionMuscleValues);
             _loggedMissingHumanoidForRootMotion = false;
+            _loggedMissingRootMotionTarget = false;
             _initialized = false;
         }
 
@@ -668,7 +1084,9 @@ namespace XREngine.Components.Animation
                 this,
                 _canonicalImportedBodySample,
                 _hasCachedImportedBodyRootMembers,
-                weight) == true;
+                weight,
+                Animation.UnityHumanoidRootMotionSettings,
+                Animation.Name) == true;
 
             try
             {

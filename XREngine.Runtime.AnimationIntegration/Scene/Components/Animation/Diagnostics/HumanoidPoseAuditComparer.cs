@@ -9,12 +9,23 @@ namespace XREngine.Components.Animation
             public int Count;
             public float Sum;
             public float Max;
+            public HumanoidPoseAuditWorstSample? WorstSample;
 
-            public void Add(float value)
+            public void Add(float value, HumanoidPoseAuditSample referenceSample, HumanoidPoseAuditSample actualSample)
             {
                 Count++;
                 Sum += value;
-                Max = Math.Max(Max, value);
+                if (Count > 1 && value <= Max)
+                    return;
+
+                Max = value;
+                WorstSample = new HumanoidPoseAuditWorstSample
+                {
+                    ReferenceIndex = referenceSample.Index,
+                    ReferenceTimeSeconds = referenceSample.TimeSeconds,
+                    ActualIndex = actualSample.Index,
+                    ActualTimeSeconds = actualSample.TimeSeconds,
+                };
             }
 
             public HumanoidPoseAuditMetric ToMetric()
@@ -23,6 +34,7 @@ namespace XREngine.Components.Animation
                     Count = Count,
                     Average = Count > 0 ? Sum / Count : 0.0f,
                     Max = Max,
+                    WorstSample = WorstSample,
                 };
         }
 
@@ -48,9 +60,26 @@ namespace XREngine.Components.Animation
 
             var bodyPosition = new MetricAccumulator();
             var bodyRotation = new MetricAccumulator();
+            var projectedRootPosition = new MetricAccumulator();
+            var projectedRootRotation = new MetricAccumulator();
+            var temporalRootTranslation = new MetricAccumulator();
+            var temporalRootRotation = new MetricAccumulator();
+            var composedHipsPosition = new MetricAccumulator();
+            var composedHipsRotation = new MetricAccumulator();
             var muscles = new Dictionary<string, MetricAccumulator>(StringComparer.Ordinal);
+            var boneLocalPositions = new Dictionary<string, MetricAccumulator>(StringComparer.Ordinal);
             var boneRotations = new Dictionary<string, MetricAccumulator>(StringComparer.Ordinal);
-            var bonePositions = new Dictionary<string, MetricAccumulator>(StringComparer.Ordinal);
+            var boneRootSpacePositions = new Dictionary<string, MetricAccumulator>(StringComparer.Ordinal);
+            bool convertUnityReferenceToXre = IsUnityToXreComparison(reference, actual);
+            float referencePositionScale = convertUnityReferenceToXre
+                ? ResolveEngineUnitsPerUnityMeter(actual)
+                : 1.0f;
+            if (convertUnityReferenceToXre)
+            {
+                report.Warnings.Add(
+                    "Raw BodyPosition/BodyRotation metrics are omitted for Unity-to-XRENGINE comparisons because " +
+                    "Unity HumanPose body values and importer-mapped RootT/RootQ are different diagnostic layers.");
+            }
 
             bool timeMismatchLogged = false;
             bool missingTimeMatchLogged = false;
@@ -83,21 +112,159 @@ namespace XREngine.Components.Animation
                     report.Warnings.Add($"Sample time mismatch at index {i}: reference={referenceSample.TimeSeconds:F6}, actual={actualSample.TimeSeconds:F6}.");
                 }
 
-                bodyPosition.Add(Vector3.Distance(referenceSample.BodyPosition.Value, actualSample.BodyPosition.Value));
-                bodyRotation.Add(QuaternionAngleDegrees(referenceSample.BodyRotation.Value, actualSample.BodyRotation.Value));
+                if (!convertUnityReferenceToXre)
+                {
+                    bodyPosition.Add(
+                        Vector3.Distance(referenceSample.BodyPosition.Value, actualSample.BodyPosition.Value),
+                        referenceSample,
+                        actualSample);
+                    bodyRotation.Add(
+                        QuaternionAngleDegrees(referenceSample.BodyRotation.Value, actualSample.BodyRotation.Value),
+                        referenceSample,
+                        actualSample);
+                }
 
-                AccumulateNamedFloatErrors(referenceSample.Muscles, actualSample.Muscles, muscles);
-                AccumulateBoneErrors(referenceSample.Bones, actualSample.Bones, boneRotations, bonePositions);
+                projectedRootPosition.Add(
+                    Vector3.Distance(
+                        ConvertReferencePosition(
+                            referenceSample.ProjectedRootPosition.Value,
+                            convertUnityReferenceToXre,
+                            referencePositionScale),
+                        actualSample.ProjectedRootPosition.Value),
+                    referenceSample,
+                    actualSample);
+                projectedRootRotation.Add(
+                    QuaternionAngleDegrees(
+                        ConvertReferenceRotation(referenceSample.ProjectedRootRotation.Value, convertUnityReferenceToXre),
+                        actualSample.ProjectedRootRotation.Value),
+                    referenceSample,
+                    actualSample);
+
+                AccumulateTemporalRootErrors(
+                    referenceSample,
+                    actualSample,
+                    convertUnityReferenceToXre,
+                    referencePositionScale,
+                    temporalRootTranslation,
+                    temporalRootRotation);
+
+                AccumulateComposedHipsErrors(
+                    referenceSample,
+                    actualSample,
+                    convertUnityReferenceToXre,
+                    referencePositionScale,
+                    composedHipsPosition,
+                    composedHipsRotation);
+                AccumulateNamedFloatErrors(referenceSample, actualSample, muscles);
+                AccumulateBoneErrors(
+                    referenceSample,
+                    actualSample,
+                    boneLocalPositions,
+                    boneRotations,
+                    boneRootSpacePositions,
+                    convertUnityReferenceToXre,
+                    referencePositionScale);
             }
 
             report.ComparedSamples = comparedSamples;
 
             report.BodyPositionError = bodyPosition.ToMetric();
             report.BodyRotationErrorDegrees = bodyRotation.ToMetric();
+            report.ProjectedRootPositionError = projectedRootPosition.ToMetric();
+            report.ProjectedRootRotationErrorDegrees = projectedRootRotation.ToMetric();
+            report.TemporalRootMotionTranslationError = temporalRootTranslation.ToMetric();
+            report.TemporalRootMotionRotationErrorDegrees = temporalRootRotation.ToMetric();
+            report.ComposedHipsLocalPositionError = composedHipsPosition.ToMetric();
+            report.ComposedHipsLocalRotationErrorDegrees = composedHipsRotation.ToMetric();
             report.MuscleAbsoluteError = ToMetricEntries(muscles);
+            report.BoneLocalPositionError = ToMetricEntries(boneLocalPositions);
             report.BoneLocalRotationErrorDegrees = ToMetricEntries(boneRotations);
-            report.BoneRootSpacePositionError = ToMetricEntries(bonePositions);
+            report.BoneRootSpacePositionError = ToMetricEntries(boneRootSpacePositions);
             return report;
+        }
+
+        private static void AccumulateComposedHipsErrors(
+            HumanoidPoseAuditSample referenceSample,
+            HumanoidPoseAuditSample actualSample,
+            bool convertUnityReferenceToXre,
+            float referencePositionScale,
+            MetricAccumulator positionAccumulator,
+            MetricAccumulator rotationAccumulator)
+        {
+            HumanoidPoseAuditVector3? referencePosition = referenceSample.ComposedHipsLocalPosition
+                ?? referenceSample.HipsLocalPosition
+                ?? FindBone(referenceSample, "Hips")?.LocalPosition;
+            HumanoidPoseAuditVector3? actualPosition = actualSample.ComposedHipsLocalPosition
+                ?? actualSample.HipsLocalPosition
+                ?? FindBone(actualSample, "Hips")?.LocalPosition;
+            if (referencePosition is not null && actualPosition is not null)
+            {
+                positionAccumulator.Add(
+                    Vector3.Distance(
+                        ConvertReferencePosition(
+                            referencePosition.Value,
+                            convertUnityReferenceToXre,
+                            referencePositionScale),
+                        actualPosition.Value),
+                    referenceSample,
+                    actualSample);
+            }
+
+            HumanoidPoseAuditQuaternion? referenceRotation = referenceSample.ComposedHipsLocalRotation
+                ?? referenceSample.HipsLocalRotation
+                ?? FindBone(referenceSample, "Hips")?.LocalRotation;
+            HumanoidPoseAuditQuaternion? actualRotation = actualSample.ComposedHipsLocalRotation
+                ?? actualSample.HipsLocalRotation
+                ?? FindBone(actualSample, "Hips")?.LocalRotation;
+            if (referenceRotation is not null && actualRotation is not null)
+            {
+                rotationAccumulator.Add(
+                    QuaternionAngleDegrees(
+                        ConvertReferenceRotation(referenceRotation.Value, convertUnityReferenceToXre),
+                        actualRotation.Value),
+                    referenceSample,
+                    actualSample);
+            }
+        }
+
+        private static void AccumulateTemporalRootErrors(
+            HumanoidPoseAuditSample referenceSample,
+            HumanoidPoseAuditSample actualSample,
+            bool convertUnityReferenceToXre,
+            float referencePositionScale,
+            MetricAccumulator translationAccumulator,
+            MetricAccumulator rotationAccumulator)
+        {
+            HumanoidPoseAuditVector3? referenceTranslation = referenceSample.RootMotionDeltaPosition;
+            HumanoidPoseAuditQuaternion? referenceRotation = referenceSample.RootMotionDeltaRotation;
+            if (!convertUnityReferenceToXre)
+            {
+                referenceTranslation ??= referenceSample.TemporalRootMotionTranslation;
+                referenceRotation ??= referenceSample.TemporalRootMotionRotation;
+            }
+
+            if (referenceTranslation is not null)
+            {
+                translationAccumulator.Add(
+                    Vector3.Distance(
+                        ConvertReferencePosition(
+                            referenceTranslation.Value,
+                            convertUnityReferenceToXre,
+                            referencePositionScale),
+                        actualSample.TemporalRootMotionTranslation.Value),
+                    referenceSample,
+                    actualSample);
+            }
+
+            if (referenceRotation is not null)
+            {
+                rotationAccumulator.Add(
+                    QuaternionAngleDegrees(
+                        ConvertReferenceRotation(referenceRotation.Value, convertUnityReferenceToXre),
+                        actualSample.TemporalRootMotionRotation.Value),
+                    referenceSample,
+                    actualSample);
+            }
         }
 
         private static bool TryFindClosestSampleAtTime(
@@ -147,39 +314,100 @@ namespace XREngine.Components.Animation
         }
 
         private static void AccumulateNamedFloatErrors(
-            IReadOnlyList<HumanoidPoseAuditNamedFloat> reference,
-            IReadOnlyList<HumanoidPoseAuditNamedFloat> actual,
+            HumanoidPoseAuditSample referenceSample,
+            HumanoidPoseAuditSample actualSample,
             Dictionary<string, MetricAccumulator> accumulators)
         {
-            var actualByName = ToCanonicalNamedFloatDictionary(actual);
-            foreach (var entry in reference)
+            var actualByName = ToCanonicalNamedFloatDictionary(actualSample.Muscles);
+            foreach (var entry in referenceSample.Muscles)
             {
                 string canonicalName = CanonicalizeMuscleName(entry.Name);
                 if (!actualByName.TryGetValue(canonicalName, out float actualValue))
                     continue;
 
-                GetOrAdd(accumulators, canonicalName).Add(Math.Abs(entry.Value - actualValue));
+                GetOrAdd(accumulators, canonicalName).Add(
+                    Math.Abs(entry.Value - actualValue),
+                    referenceSample,
+                    actualSample);
             }
         }
 
         private static void AccumulateBoneErrors(
-            IReadOnlyList<HumanoidPoseAuditBoneSample> reference,
-            IReadOnlyList<HumanoidPoseAuditBoneSample> actual,
+            HumanoidPoseAuditSample referenceSample,
+            HumanoidPoseAuditSample actualSample,
+            Dictionary<string, MetricAccumulator> localPositionAccumulators,
             Dictionary<string, MetricAccumulator> rotationAccumulators,
-            Dictionary<string, MetricAccumulator> positionAccumulators)
+            Dictionary<string, MetricAccumulator> rootSpacePositionAccumulators,
+            bool convertUnityReferenceToXre,
+            float referencePositionScale)
         {
-            var actualByName = actual.ToDictionary(static x => x.Name, StringComparer.Ordinal);
-            foreach (var entry in reference)
+            var actualByName = actualSample.Bones.ToDictionary(static x => x.Name, StringComparer.Ordinal);
+            foreach (var entry in referenceSample.Bones)
             {
                 if (!actualByName.TryGetValue(entry.Name, out var actualBone))
                     continue;
 
+                GetOrAdd(localPositionAccumulators, entry.Name)
+                    .Add(
+                        Vector3.Distance(
+                            ConvertReferencePosition(
+                                entry.LocalPosition.Value,
+                                convertUnityReferenceToXre,
+                                referencePositionScale),
+                            actualBone.LocalPosition.Value),
+                        referenceSample,
+                        actualSample);
                 GetOrAdd(rotationAccumulators, entry.Name)
-                    .Add(QuaternionAngleDegrees(entry.LocalRotation.Value, actualBone.LocalRotation.Value));
-                GetOrAdd(positionAccumulators, entry.Name)
-                    .Add(Vector3.Distance(entry.RootSpacePosition.Value, actualBone.RootSpacePosition.Value));
+                    .Add(
+                        QuaternionAngleDegrees(
+                            ConvertReferenceRotation(entry.LocalRotation.Value, convertUnityReferenceToXre),
+                            actualBone.LocalRotation.Value),
+                        referenceSample,
+                        actualSample);
+                GetOrAdd(rootSpacePositionAccumulators, entry.Name)
+                    .Add(
+                        Vector3.Distance(
+                            ConvertReferencePosition(
+                                entry.RootSpacePosition.Value,
+                                convertUnityReferenceToXre,
+                                referencePositionScale),
+                            actualBone.RootSpacePosition.Value),
+                        referenceSample,
+                        actualSample);
             }
         }
+
+        private static HumanoidPoseAuditBoneSample? FindBone(HumanoidPoseAuditSample sample, string name)
+        {
+            for (int i = 0; i < sample.Bones.Count; i++)
+                if (string.Equals(sample.Bones[i].Name, name, StringComparison.Ordinal))
+                    return sample.Bones[i];
+            return null;
+        }
+
+        private static bool IsUnityToXreComparison(
+            HumanoidPoseAuditReport reference,
+            HumanoidPoseAuditReport actual)
+            => reference.Source.StartsWith("Unity", StringComparison.OrdinalIgnoreCase)
+            && actual.Source.StartsWith("XREngine", StringComparison.OrdinalIgnoreCase);
+
+        private static float ResolveEngineUnitsPerUnityMeter(HumanoidPoseAuditReport report)
+            => float.IsFinite(report.EngineUnitsPerUnityMeter) && report.EngineUnitsPerUnityMeter > 0.0f
+                ? report.EngineUnitsPerUnityMeter
+                : 39.370064f;
+
+        private static Vector3 ConvertReferencePosition(
+            Vector3 value,
+            bool convertUnityReferenceToXre,
+            float scale)
+            => convertUnityReferenceToXre
+                ? new Vector3(-value.X, value.Y, value.Z) * scale
+                : value;
+
+        private static Quaternion ConvertReferenceRotation(Quaternion value, bool convertUnityReferenceToXre)
+            => convertUnityReferenceToXre
+                ? Quaternion.Normalize(new Quaternion(value.X, -value.Y, -value.Z, value.W))
+                : value;
 
         private static List<HumanoidPoseAuditMetricEntry> ToMetricEntries(Dictionary<string, MetricAccumulator> accumulators)
             => accumulators

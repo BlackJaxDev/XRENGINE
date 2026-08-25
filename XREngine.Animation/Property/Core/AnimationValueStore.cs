@@ -53,6 +53,7 @@ namespace XREngine.Animation
         private Quaternion[] _quaternions = [];
         private bool[] _bools = [];
         private object?[] _discrete = [];
+        private AnimationQuaternionFloatSlotGroup[] _quaternionFloatGroups = [];
 
         public int FloatCount => _floats.Length;
         public int Vector2Count => _vectors2.Length;
@@ -76,6 +77,8 @@ namespace XREngine.Animation
             _quaternions = layout.QuaternionCount > 0 ? new Quaternion[layout.QuaternionCount] : [];
             _bools = layout.BoolCount > 0 ? new bool[layout.BoolCount] : [];
             _discrete = layout.DiscreteCount > 0 ? new object?[layout.DiscreteCount] : [];
+            _quaternionFloatGroups = layout.QuaternionFloatGroups;
+            InitializeQuaternionFloatGroupsToIdentity();
         }
 
         // ── Typed getters ────────────────────────────────────────────────
@@ -205,6 +208,7 @@ namespace XREngine.Animation
             _quaternions.AsSpan().Clear();
             _bools.AsSpan().Clear();
             _discrete.AsSpan().Clear();
+            InitializeQuaternionFloatGroupsToIdentity();
         }
 
         // ── Blend / Lerp ────────────────────────────────────────────────
@@ -217,6 +221,7 @@ namespace XREngine.Animation
         public static void Lerp(AnimationValueStore a, AnimationValueStore b, float t, AnimationValueStore result)
         {
             LerpFloats(a._floats, b._floats, t, result._floats);
+            SlerpQuaternionFloatGroups(a, b, t, result);
             LerpVectors2(a._vectors2, b._vectors2, t, result._vectors2);
             LerpVectors3(a._vectors3, b._vectors3, t, result._vectors3);
             LerpVectors4(a._vectors4, b._vectors4, t, result._vectors4);
@@ -235,6 +240,7 @@ namespace XREngine.Animation
         {
             // Floats — SIMD
             WeightedSum3Simd(a._floats, b._floats, c._floats, w1, w2, w3, result._floats);
+            BlendQuaternionFloatGroups(a, b, c, w1, w2, w3, result);
             // Vector2 — reinterpret as flat floats for SIMD
             WeightedSum3Simd(
                 MemoryMarshal.Cast<Vector2, float>(a._vectors2.AsSpan()),
@@ -294,6 +300,7 @@ namespace XREngine.Animation
         {
             // Floats — SIMD
             WeightedSum4Simd(a._floats, b._floats, c._floats, d._floats, w1, w2, w3, w4, result._floats);
+            BlendQuaternionFloatGroups(a, b, c, d, w1, w2, w3, w4, result);
             // Vector2 — reinterpret as flat floats for SIMD
             WeightedSum4Simd(
                 MemoryMarshal.Cast<Vector2, float>(a._vectors2.AsSpan()),
@@ -363,6 +370,7 @@ namespace XREngine.Animation
             {
                 var src = source._floats.AsSpan(); var dst = _floats.AsSpan();
                 AddFloatsSimd(src, dst);
+                MultiplyQuaternionFloatGroupsAfterScalarAdd(source);
             }
             {
                 // Vector2 = 2 floats — reinterpret and SIMD-add as flat float spans
@@ -398,6 +406,177 @@ namespace XREngine.Animation
         }
 
         // ── Private helpers ──────────────────────────────────────────────
+
+        private void InitializeQuaternionFloatGroupsToIdentity()
+        {
+            for (int i = 0; i < _quaternionFloatGroups.Length; i++)
+                WriteQuaternion(_floats, _quaternionFloatGroups[i], Quaternion.Identity);
+        }
+
+        private static void SlerpQuaternionFloatGroups(
+            AnimationValueStore a,
+            AnimationValueStore b,
+            float t,
+            AnimationValueStore result)
+        {
+            for (int i = 0; i < result._quaternionFloatGroups.Length; i++)
+            {
+                AnimationQuaternionFloatSlotGroup group = result._quaternionFloatGroups[i];
+                Quaternion blended = Quaternion.Slerp(
+                    ReadNormalizedQuaternion(a._floats, group),
+                    ReadNormalizedQuaternion(b._floats, group),
+                    t);
+                WriteQuaternion(result._floats, group, NormalizeOrIdentity(blended));
+            }
+        }
+
+        private static void BlendQuaternionFloatGroups(
+            AnimationValueStore a,
+            AnimationValueStore b,
+            AnimationValueStore c,
+            float w1,
+            float w2,
+            float w3,
+            AnimationValueStore result)
+        {
+            NormalizeWeights(ref w1, ref w2, ref w3);
+            for (int i = 0; i < result._quaternionFloatGroups.Length; i++)
+            {
+                AnimationQuaternionFloatSlotGroup group = result._quaternionFloatGroups[i];
+                Quaternion ab = WeightedSlerp(
+                    ReadNormalizedQuaternion(a._floats, group),
+                    w1,
+                    ReadNormalizedQuaternion(b._floats, group),
+                    w2);
+                Quaternion blended = WeightedSlerp(
+                    ab,
+                    w1 + w2,
+                    ReadNormalizedQuaternion(c._floats, group),
+                    w3);
+                WriteQuaternion(result._floats, group, blended);
+            }
+        }
+
+        private static void BlendQuaternionFloatGroups(
+            AnimationValueStore a,
+            AnimationValueStore b,
+            AnimationValueStore c,
+            AnimationValueStore d,
+            float w1,
+            float w2,
+            float w3,
+            float w4,
+            AnimationValueStore result)
+        {
+            NormalizeWeights(ref w1, ref w2, ref w3, ref w4);
+            for (int i = 0; i < result._quaternionFloatGroups.Length; i++)
+            {
+                AnimationQuaternionFloatSlotGroup group = result._quaternionFloatGroups[i];
+                Quaternion ab = WeightedSlerp(
+                    ReadNormalizedQuaternion(a._floats, group),
+                    w1,
+                    ReadNormalizedQuaternion(b._floats, group),
+                    w2);
+                Quaternion abc = WeightedSlerp(
+                    ab,
+                    w1 + w2,
+                    ReadNormalizedQuaternion(c._floats, group),
+                    w3);
+                Quaternion blended = WeightedSlerp(
+                    abc,
+                    w1 + w2 + w3,
+                    ReadNormalizedQuaternion(d._floats, group),
+                    w4);
+                WriteQuaternion(result._floats, group, blended);
+            }
+        }
+
+        private void MultiplyQuaternionFloatGroupsAfterScalarAdd(AnimationValueStore source)
+        {
+            for (int i = 0; i < _quaternionFloatGroups.Length; i++)
+            {
+                AnimationQuaternionFloatSlotGroup group = _quaternionFloatGroups[i];
+                Quaternion previous = NormalizeOrIdentity(new Quaternion(
+                    _floats[group.XIndex] - source._floats[group.XIndex],
+                    _floats[group.YIndex] - source._floats[group.YIndex],
+                    _floats[group.ZIndex] - source._floats[group.ZIndex],
+                    _floats[group.WIndex] - source._floats[group.WIndex]));
+                Quaternion added = ReadNormalizedQuaternion(source._floats, group);
+                WriteQuaternion(_floats, group, NormalizeOrIdentity(previous * added));
+            }
+        }
+
+        private static Quaternion WeightedSlerp(Quaternion a, float aWeight, Quaternion b, float bWeight)
+        {
+            float pairWeight = aWeight + bWeight;
+            if (!float.IsFinite(pairWeight) || MathF.Abs(pairWeight) <= float.Epsilon)
+                return Quaternion.Identity;
+
+            return NormalizeOrIdentity(Quaternion.Slerp(a, b, bWeight / pairWeight));
+        }
+
+        private static Quaternion ReadNormalizedQuaternion(
+            float[] values,
+            AnimationQuaternionFloatSlotGroup group)
+            => NormalizeOrIdentity(new Quaternion(
+                values[group.XIndex],
+                values[group.YIndex],
+                values[group.ZIndex],
+                values[group.WIndex]));
+
+        private static Quaternion NormalizeOrIdentity(Quaternion value)
+            => float.IsFinite(value.X)
+                && float.IsFinite(value.Y)
+                && float.IsFinite(value.Z)
+                && float.IsFinite(value.W)
+                && value.LengthSquared() > 1e-12f
+                    ? Quaternion.Normalize(value)
+                    : Quaternion.Identity;
+
+        private static void WriteQuaternion(
+            float[] values,
+            AnimationQuaternionFloatSlotGroup group,
+            Quaternion value)
+        {
+            values[group.XIndex] = value.X;
+            values[group.YIndex] = value.Y;
+            values[group.ZIndex] = value.Z;
+            values[group.WIndex] = value.W;
+        }
+
+        private static void NormalizeWeights(ref float w1, ref float w2, ref float w3)
+        {
+            float total = w1 + w2 + w3;
+            if (!float.IsFinite(total) || MathF.Abs(total) <= float.Epsilon)
+            {
+                w1 = 1.0f;
+                w2 = 0.0f;
+                w3 = 0.0f;
+                return;
+            }
+
+            w1 /= total;
+            w2 /= total;
+            w3 /= total;
+        }
+
+        private static void NormalizeWeights(ref float w1, ref float w2, ref float w3, ref float w4)
+        {
+            float total = w1 + w2 + w3 + w4;
+            if (!float.IsFinite(total) || MathF.Abs(total) <= float.Epsilon)
+            {
+                w1 = 1.0f;
+                w2 = 0.0f;
+                w3 = 0.0f;
+                w4 = 0.0f;
+                return;
+            }
+
+            w1 /= total;
+            w2 /= total;
+            w3 /= total;
+            w4 /= total;
+        }
 
         private static void LerpFloats(float[] a, float[] b, float t, float[] result)
         {
@@ -574,6 +753,11 @@ namespace XREngine.Animation
         public int QuaternionCount { get; set; }
         public int BoolCount { get; set; }
         public int DiscreteCount { get; set; }
+
+        /// <summary>
+        /// Scalar slot quartets that blend as complete shortest-arc quaternions.
+        /// </summary>
+        public AnimationQuaternionFloatSlotGroup[] QuaternionFloatGroups { get; internal set; } = [];
 
         /// <summary>
         /// Creates a new <see cref="AnimationValueStore"/> sized to this layout.

@@ -1734,9 +1734,50 @@ public static partial class EditorUnitTests
 
                         bool runPoseAudit = startupClips.RunPoseAudit;
 
+                        if (Toggles.AnimationClipAnimUseStateMachine)
+                        {
+                            AnimStateMachineComponent? animator = rootNode.GetComponent<AnimStateMachineComponent>();
+                            if (animator is null)
+                            {
+                                Debug.LogWarning($"[UnitTestingWorld] Cannot route '{clip.Name}' through a state machine because the avatar has no AnimStateMachineComponent.");
+                                return true;
+                            }
+
+                            var state = new AnimState(clip, "Startup .anim Clip");
+                            var layer = new AnimLayer(state) { InitialStateIndex = 0 };
+                            var stateMachine = new AnimStateMachine { Layers = [layer] };
+
+                            // The component was activated earlier with its empty default graph. Cycle it
+                            // through its ordinary lifecycle so the replacement graph binds every member,
+                            // assigns quaternion-aware slots, and captures a fresh humanoid baseline.
+                            animator.IsActive = false;
+                            animator.StateMachine = stateMachine;
+                            animator.Humanoid = humanComp;
+                            animator.SetSuspendedByClip(false);
+                            animator.IsActive = true;
+
+                            if (runPoseAudit)
+                            {
+                                Debug.LogWarning(
+                                    "[UnitTestingWorld] HumanoidPoseAudit targets direct AnimationClipComponent evaluation; " +
+                                    "disable AnimationClipAnimUseStateMachine for an exact-time audit export.");
+                            }
+
+                            Debug.Out($"[UnitTestingWorld] Routed startup .anim clip '{clip.Name}' through a one-state AnimStateMachine on '{rootNode.Name}'.");
+                            return true;
+                        }
+
                         animClipComponent = rootNode.AddComponent<AnimationClipComponent>()!;
                         animClipComponent.Name = "Startup .anim Clip";
                         animClipComponent.StartOnActivate = false;
+                        animClipComponent.RootMotionApplicationMode = Toggles.HumanoidRootMotionApplicationMode;
+                        if (Toggles.HumanoidRootMotionApplicationMode == EHumanoidRootMotionApplicationMode.ApplyToExplicitTarget)
+                        {
+                            if (rootNode.Transform is Transform rootMotionTarget)
+                                animClipComponent.RootMotionTarget = rootMotionTarget;
+                            else
+                                Debug.LogWarning($"[UnitTestingWorld] Cannot apply root motion to '{rootNode.Name}' because its root transform is not a standard Transform.");
+                        }
                         animClipComponent.Animation = clip;
 
                         Debug.Out($"[UnitTestingWorld] Attached startup .anim clip '{clip.Name}' to '{rootNode.Name}'.");
@@ -1747,11 +1788,20 @@ public static partial class EditorUnitTests
                         }
 
                         if (clip.ClipKind == EAnimationClipKind.UnityHumanoidMuscle
+                            && clip.HasIKGoals
                             && rootNode.TryGetComponent<HumanoidIKSolverComponent>(out var humanoidIK)
                             && humanoidIK is not null)
                         {
-                            humanoidIK.IsActive = false;
-                            Debug.Out($"[UnitTestingWorld] Disabled HumanoidIKSolverComponent for humanoid clip '{clip.Name}' to inspect raw muscle playback.");
+                            bool canApplyAuthoredGoals = humanComp.Settings.IKGoalPolicy switch
+                            {
+                                EHumanoidIKGoalPolicy.AlwaysApply => true,
+                                EHumanoidIKGoalPolicy.ApplyIfCalibrated => humanComp.Settings.IsIKCalibrated,
+                                _ => false,
+                            };
+                            humanoidIK.IsActive = canApplyAuthoredGoals;
+                            Debug.Out(canApplyAuthoredGoals
+                                ? $"[UnitTestingWorld] Enabled calibrated authored IK goals for humanoid clip '{clip.Name}'."
+                                : $"[UnitTestingWorld] Kept authored IK goals disabled for humanoid clip '{clip.Name}' because policy/calibration did not authorize them.");
                         }
 
                         if (runPoseAudit)

@@ -6,6 +6,7 @@ using System.Reflection;
 using System.Runtime.CompilerServices;
 using MemoryPack;
 using XREngine.Animation;
+using XREngine.Animation.Importers;
 using XREngine.Core.Files;
 using XREngine.Data;
 using XREngine.Serialization;
@@ -167,6 +168,8 @@ public sealed class AnimationClipYamlTypeConverter : IYamlTypeConverter
 
         public AnimationMemberSerializedModel? RootMember { get; set; }
 
+        public UnityHumanoidClipRootMotionSettings? UnityHumanoidRootMotionSettings { get; set; }
+
         public AnimationClipSerializedModel ToLegacyModel()
             => new()
             {
@@ -184,6 +187,7 @@ public sealed class AnimationClipYamlTypeConverter : IYamlTypeConverter
                 HasIKGoals = HasIKGoals,
                 SampleRate = SampleRate,
                 RootMember = RootMember,
+                UnityHumanoidRootMotionSettings = UnityHumanoidRootMotionSettings,
             };
     }
 }
@@ -214,7 +218,8 @@ internal static class AnimationClipSerialization
             HasRootMotion = clip.HasRootMotion,
             HasIKGoals = clip.HasIKGoals,
             SampleRate = clip.SampleRate,
-            RootMember = CreateModel(clip.RootMember)
+            RootMember = CreateModel(clip.RootMember),
+            UnityHumanoidRootMotionSettings = clip.UnityHumanoidRootMotionSettings,
         };
     }
 
@@ -241,6 +246,7 @@ internal static class AnimationClipSerialization
         clip.HasRootMotion = model.HasRootMotion;
         clip.HasIKGoals = model.HasIKGoals;
         clip.SampleRate = model.SampleRate ?? 30;
+        clip.UnityHumanoidRootMotionSettings = model.UnityHumanoidRootMotionSettings;
 
         AnimationMember? rootMember = CreateRuntimeMember(model.RootMember);
         clip.RootMember = rootMember;
@@ -403,6 +409,8 @@ internal sealed partial class AnimationClipSerializedModel
     public int? SampleRate { get; set; }
 
     public AnimationMemberSerializedModel? RootMember { get; set; }
+
+    public UnityHumanoidClipRootMotionSettings? UnityHumanoidRootMotionSettings { get; set; }
 }
 
 [MemoryPackable]

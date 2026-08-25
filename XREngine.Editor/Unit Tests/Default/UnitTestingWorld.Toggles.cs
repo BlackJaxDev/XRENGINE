@@ -3,6 +3,7 @@ using Newtonsoft.Json;
 using System.Collections.Generic;
 using System.Linq;
 using XREngine.Audio;
+using XREngine.Components.Animation;
 using XREngine.Rendering.UI;
 using XREngine.Runtime.Bootstrap;
 
@@ -415,8 +416,11 @@ public static partial class EditorUnitTests
         //Animation
         public bool AnimationClipVMD = false; //Imports a VMD animation clip for testing.
         public bool AnimationClipAnim = false; //Imports a .anim clip for testing.
+        public bool AnimationClipAnimUseStateMachine = false; //Routes the startup .anim through a one-state AnimStateMachine instead of a direct clip component.
         public string AnimClipPath { get; set; } = "Assets\\Walks\\Basic Walk.anim";
         public bool AnimLooped { get; set; } = true;
+        public EHumanoidRootMotionApplicationMode HumanoidRootMotionApplicationMode { get; set; }
+            = EHumanoidRootMotionApplicationMode.ExtractOnly;
         public bool HumanoidPoseAuditEnabled = false; //Exports raw humanoid playback samples for Unity/XREngine comparison.
         public string HumanoidPoseAuditOutputPath { get; set; } = "Build\\Logs\\pose_audit\\xrengine_humanoid_pose.json";
         public string? HumanoidPoseAuditReferencePath { get; set; } = null;

@@ -549,6 +549,78 @@ namespace XREngine.Animation
                 curve.Animation?.Tick(deltaTicks);
         }
 
+        /// <summary>
+        /// Restarts every property animation owned by this motion at one deterministic time.
+        /// This is a state-lifecycle operation, not a per-frame path.
+        /// </summary>
+        internal void RestartPlayback(float startSeconds)
+        {
+            var visited = new HashSet<BasePropAnim>();
+            VisitPropertyAnimations(this, visited, animation =>
+            {
+                animation.Stop();
+                animation.Start();
+                animation.Seek(startSeconds, wrapLooped: animation.Looped);
+            });
+        }
+
+        /// <summary>
+        /// Seeks every property animation owned by this motion without changing playback state.
+        /// </summary>
+        internal void SeekPlayback(float timeSeconds)
+        {
+            var visited = new HashSet<BasePropAnim>();
+            VisitPropertyAnimations(
+                this,
+                visited,
+                animation => animation.Seek(timeSeconds, wrapLooped: animation.Looped));
+        }
+
+        /// <summary>
+        /// Stops every property animation owned by this motion.
+        /// </summary>
+        internal void StopPlayback()
+        {
+            var visited = new HashSet<BasePropAnim>();
+            VisitPropertyAnimations(this, visited, static animation => animation.Stop());
+        }
+
+        private static void VisitPropertyAnimations(
+            MotionBase motion,
+            HashSet<BasePropAnim> visited,
+            Action<BasePropAnim> visitor)
+        {
+            switch (motion)
+            {
+                case AnimationClip clip:
+                    foreach (AnimationMember member in clip._animatedCurves.Values)
+                    {
+                        BasePropAnim? animation = member.Animation;
+                        if (animation is not null && visited.Add(animation))
+                            visitor(animation);
+                    }
+                    break;
+
+                case BlendTree1D tree1D:
+                    foreach (BlendTree1D.Child child in tree1D.Children)
+                        if (child.Motion is not null)
+                            VisitPropertyAnimations(child.Motion, visited, visitor);
+                    break;
+
+                case BlendTree2D tree2D:
+                    foreach (BlendTree2D.Child child in tree2D.Children)
+                        if (child.Motion is not null)
+                            VisitPropertyAnimations(child.Motion, visited, visitor);
+                    break;
+
+                case BlendTreeDirect directTree:
+                    foreach (BlendTreeDirect.Child child in directTree.Children)
+                        if (child.Motion is not null)
+                            VisitPropertyAnimations(child.Motion, visited, visitor);
+                    break;
+            }
+        }
+
         public virtual void Tick(long deltaTicks)
             => Tick(StopwatchTicksToSeconds(deltaTicks));
 

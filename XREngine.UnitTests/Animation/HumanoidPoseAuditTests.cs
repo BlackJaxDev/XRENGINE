@@ -4,6 +4,7 @@ using Newtonsoft.Json;
 using NUnit.Framework;
 using Shouldly;
 using XREngine.Animation;
+using XREngine.Animation.Importers;
 using XREngine.Components.Animation;
 using XREngine.Scene;
 using XREngine.Scene.Transforms;
@@ -25,7 +26,7 @@ public sealed class HumanoidPoseAuditTests
     {
         var reference = new HumanoidPoseAuditReport
         {
-            Source = "UnityMecanim",
+            Source = "SyntheticReference",
             SampleRate = 30,
             Samples =
             [
@@ -35,6 +36,12 @@ public sealed class HumanoidPoseAuditTests
                     TimeSeconds = 0.0f,
                     BodyPosition = HumanoidPoseAuditVector3.From(new Vector3(0.0f, 0.0f, 0.0f)),
                     BodyRotation = HumanoidPoseAuditQuaternion.From(Quaternion.Identity),
+                    ProjectedRootPosition = HumanoidPoseAuditVector3.From(Vector3.Zero),
+                    ProjectedRootRotation = HumanoidPoseAuditQuaternion.From(Quaternion.Identity),
+                    TemporalRootMotionTranslation = HumanoidPoseAuditVector3.From(Vector3.Zero),
+                    TemporalRootMotionRotation = HumanoidPoseAuditQuaternion.From(Quaternion.Identity),
+                    ComposedHipsLocalPosition = HumanoidPoseAuditVector3.From(Vector3.Zero),
+                    ComposedHipsLocalRotation = HumanoidPoseAuditQuaternion.From(Quaternion.Identity),
                     Muscles =
                     [
                         new HumanoidPoseAuditNamedFloat { Name = "Left Arm Down-Up", Value = 0.5f },
@@ -44,6 +51,7 @@ public sealed class HumanoidPoseAuditTests
                         new HumanoidPoseAuditBoneSample
                         {
                             Name = "LeftHand",
+                            LocalPosition = HumanoidPoseAuditVector3.From(Vector3.Zero),
                             LocalRotation = HumanoidPoseAuditQuaternion.From(Quaternion.Identity),
                             RootSpacePosition = HumanoidPoseAuditVector3.From(new Vector3(0.0f, 0.0f, 0.0f)),
                             WorldPosition = HumanoidPoseAuditVector3.From(new Vector3(1.0f, 2.0f, 3.0f)),
@@ -55,7 +63,7 @@ public sealed class HumanoidPoseAuditTests
 
         var actual = new HumanoidPoseAuditReport
         {
-            Source = "XREngine",
+            Source = "SyntheticActual",
             SampleRate = 30,
             Samples =
             [
@@ -65,6 +73,12 @@ public sealed class HumanoidPoseAuditTests
                     TimeSeconds = 0.0f,
                     BodyPosition = HumanoidPoseAuditVector3.From(new Vector3(0.0f, 3.0f, 4.0f)),
                     BodyRotation = HumanoidPoseAuditQuaternion.From(Quaternion.CreateFromAxisAngle(Vector3.UnitY, MathF.PI * 0.5f)),
+                    ProjectedRootPosition = HumanoidPoseAuditVector3.From(new Vector3(0.0f, 0.0f, 2.0f)),
+                    ProjectedRootRotation = HumanoidPoseAuditQuaternion.From(Quaternion.CreateFromAxisAngle(Vector3.UnitY, MathF.PI * 0.25f)),
+                    TemporalRootMotionTranslation = HumanoidPoseAuditVector3.From(new Vector3(0.0f, 0.0f, 3.0f)),
+                    TemporalRootMotionRotation = HumanoidPoseAuditQuaternion.From(Quaternion.CreateFromAxisAngle(Vector3.UnitY, MathF.PI / 6.0f)),
+                    ComposedHipsLocalPosition = HumanoidPoseAuditVector3.From(new Vector3(0.0f, 4.0f, 0.0f)),
+                    ComposedHipsLocalRotation = HumanoidPoseAuditQuaternion.From(Quaternion.CreateFromAxisAngle(Vector3.UnitY, MathF.PI / 3.0f)),
                     Muscles =
                     [
                         new HumanoidPoseAuditNamedFloat { Name = "Left Arm Down-Up", Value = 0.25f },
@@ -74,6 +88,7 @@ public sealed class HumanoidPoseAuditTests
                         new HumanoidPoseAuditBoneSample
                         {
                             Name = "LeftHand",
+                            LocalPosition = HumanoidPoseAuditVector3.From(new Vector3(3.0f, 0.0f, 0.0f)),
                             LocalRotation = HumanoidPoseAuditQuaternion.From(Quaternion.CreateFromAxisAngle(Vector3.UnitX, MathF.PI * 0.5f)),
                             RootSpacePosition = HumanoidPoseAuditVector3.From(new Vector3(0.0f, 0.0f, 1.0f)),
                             WorldPosition = HumanoidPoseAuditVector3.From(new Vector3(1.0f, 2.0f, 4.0f)),
@@ -88,6 +103,14 @@ public sealed class HumanoidPoseAuditTests
         comparison.ComparedSamples.ShouldBe(1);
         comparison.BodyPositionError.Max.ShouldBe(5.0f, 0.0001f);
         comparison.BodyRotationErrorDegrees.Max.ShouldBe(90.0f, 0.0001f);
+        comparison.ProjectedRootPositionError.Max.ShouldBe(2.0f, 0.0001f);
+        comparison.ProjectedRootRotationErrorDegrees.Max.ShouldBe(45.0f, 0.0001f);
+        comparison.TemporalRootMotionTranslationError.Max.ShouldBe(3.0f, 0.0001f);
+        comparison.TemporalRootMotionRotationErrorDegrees.Max.ShouldBe(30.0f, 0.0001f);
+        comparison.ComposedHipsLocalPositionError.Max.ShouldBe(4.0f, 0.0001f);
+        comparison.ComposedHipsLocalRotationErrorDegrees.Max.ShouldBe(60.0f, 0.0001f);
+        comparison.ComposedHipsLocalPositionError.WorstSample.ShouldNotBeNull();
+        comparison.ComposedHipsLocalPositionError.WorstSample!.ReferenceTimeSeconds.ShouldBe(0.0f);
 
         comparison.MuscleAbsoluteError.ShouldContain(x =>
             x.Name == "Left Arm Down-Up" &&
@@ -96,6 +119,12 @@ public sealed class HumanoidPoseAuditTests
         comparison.BoneLocalRotationErrorDegrees.ShouldContain(x =>
             x.Name == "LeftHand" &&
             Math.Abs(x.Metric.Max - 90.0f) < 0.0001f);
+
+        comparison.BoneLocalPositionError.ShouldContain(x =>
+            x.Name == "LeftHand" &&
+            Math.Abs(x.Metric.Max - 3.0f) < 0.0001f &&
+            x.Metric.WorstSample != null &&
+            x.Metric.WorstSample.ActualIndex == 0);
 
         comparison.BoneRootSpacePositionError.ShouldContain(x =>
             x.Name == "LeftHand" &&
@@ -378,21 +407,91 @@ public sealed class HumanoidPoseAuditTests
     public void Sample_UsesHumanTraitMuscleNamesAndExportsRawCurveInputs()
     {
         var root = new SceneNode("Root", new Transform());
-        var clip = new AnimationClip
-        {
-            Name = "Audit",
-            LengthInSeconds = 0.0f,
-            RootMember = new AnimationMember("Root", EAnimationMemberType.Group),
-        };
+        const string yaml = """
+AnimationClip:
+  m_Name: Audit
+  m_SampleRate: 30
+  m_AnimationClipSettings:
+    m_StartTime: 0
+    m_StopTime: 0
+    m_LoopTime: 0
+  m_FloatCurves:
+    - path: ''
+      attribute: LeftHand.Index.Spread
+      classID: 95
+      curve:
+        m_Curve:
+          - time: 0
+            value: 0.5
+    - path: ''
+      attribute: Left Eye Down-Up
+      classID: 95
+      curve:
+        m_Curve:
+          - time: 0
+            value: 0.25
+    - path: ''
+      attribute: RootT.x
+      classID: 95
+      curve:
+        m_Curve:
+          - time: 0
+            value: -1
+    - path: ''
+      attribute: RootT.z
+      classID: 95
+      curve:
+        m_Curve:
+          - time: 0
+            value: 2
+    - path: ''
+      attribute: RootT.y
+      classID: 95
+      curve:
+        m_Curve:
+          - time: 0
+            value: 3
+    - path: ''
+      attribute: RootQ.x
+      classID: 95
+      curve:
+        m_Curve:
+          - time: 0
+            value: 0
+    - path: ''
+      attribute: RootQ.y
+      classID: 95
+      curve:
+        m_Curve:
+          - time: 0
+            value: -0.70710677
+    - path: ''
+      attribute: RootQ.z
+      classID: 95
+      curve:
+        m_Curve:
+          - time: 0
+            value: 0
+    - path: ''
+      attribute: RootQ.w
+      classID: 95
+      curve:
+        m_Curve:
+          - time: 0
+            value: 0.70710677
+""";
+        string clipPath = Path.Combine(
+            TestContext.CurrentContext.WorkDirectory,
+            "HumanoidPoseAuditTests",
+            $"{Guid.NewGuid():N}.anim");
+        Directory.CreateDirectory(Path.GetDirectoryName(clipPath)!);
+        File.WriteAllText(clipPath, yaml);
+        AnimationClip clip = AnimYamlImporter.Import(clipPath);
 
         var clipComponent = root.AddComponent<AnimationClipComponent>()!;
         clipComponent.Animation = clip;
 
         var humanoid = root.AddComponent<HumanoidComponent>()!;
-        humanoid.SetValue(EHumanoidValue.LeftHandIndexSpread, 0.5f);
-    humanoid.SetValue(EHumanoidValue.LeftEyeDownUp, 0.25f);
-        humanoid.SetRootPosition(new Vector3(1.0f, 2.0f, 3.0f));
-        humanoid.SetRootRotation(Quaternion.CreateFromAxisAngle(Vector3.UnitY, MathF.PI * 0.5f));
 
         HumanoidPoseAuditReport report = HumanoidPoseAuditSampler.Sample(clipComponent, humanoid, sampleRateOverride: 30);
 
