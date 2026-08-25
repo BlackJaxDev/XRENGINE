@@ -23,7 +23,8 @@ public static partial class EditorUnitTests
             int ModelCount,
             int MaterialCount,
             int PoiyomiMaterialCount,
-            int PoiyomiDowngradeCount);
+            int PoiyomiDowngradeCount,
+            string SourceContentSha256);
 
         private static bool IsUnityPrefabPath(string path)
             => string.Equals(Path.GetExtension(path), ".prefab", StringComparison.OrdinalIgnoreCase);
@@ -108,7 +109,8 @@ public static partial class EditorUnitTests
                     modelCount,
                     materialCount,
                     poiyomiCount,
-                    downgradeCount);
+                    downgradeCount,
+                    manifest.ComputeSourceContentSha256());
                 yield return new JobProgress(1.0f, result);
             }
 

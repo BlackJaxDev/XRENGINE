@@ -7,12 +7,11 @@ Prerequisites:
 - [Runtime Modularization Phase 4 - Complete](../COMPLETED/runtime-modularization-phase4-todo.md)
 - [Runtime Modularization Phase 5 - Complete](../COMPLETED/runtime-modularization-phase5-todo.md)
 - [Runtime Modularization Phase 5 Progress](../../progress/runtime/runtime-modularization-phase5-progress-2026-08-24.md)
+- [Runtime Modularization Phase 6 Progress](../../progress/runtime/runtime-modularization-phase6-progress-2026-08-25.md)
 
 Created: 2026-08-24
 
-Status: Ready for implementation after the completed Phase 5 work is captured
-on an unambiguous integration base. No Phase 6 implementation is claimed by
-this document.
+Status: In progress. P6.0 and P6.1 completed on 2026-08-25; P6.2 is next.
 
 ## Architectural Decision
 
@@ -283,20 +282,20 @@ Out of scope:
 
 ## P6.0 - Accept Phase 5 And Lock The End State
 
-- [ ] Start from an exact commit containing the completed Phase 4/5 work, record the branch/base commit, and separate unrelated dirty-worktree changes.
-- [ ] Create the Phase 6 progress ledger under `docs/work/progress/runtime/` and record every validation result, compatibility decision, and deferred external hardware lane there.
-- [ ] Recount all facade C# files, public types, generated sources, project references, package references, native/content items, licenses, build targets, friend assemblies, type forwards, redirects, serializers, reflection roots, and AOT registrations.
-- [ ] Build a checked-in file/type-to-owner manifest for every facade source file; no entry may be `miscellaneous`, `temporary`, or unclassified.
-- [ ] Inventory every production and test consumer of facade public/internal APIs, including static `Engine`, `AssetManager`, `XRWorldInstance`, settings, physics components, prefabs, and game modes.
-- [ ] Inventory checked-in assets, generated settings, test fixtures, docs, templates, and build artifacts containing assembly-qualified `XREngine` identities.
-- [ ] Capture the direct and source/API-level dependency graph for every intended destination project before moving code.
-- [ ] Confirm Option A removal as the accepted end state. If an owner instead requires Option B, update the reference design with an explicit compatibility scope and expiry before implementation.
-- [ ] Define the supported repository asset migration path and the intentional external pre-v1 compatibility break before removing any type forward.
-- [ ] Record baseline builds for all destination projects and the seven direct facade consumers.
-- [ ] Record baseline targeted serialization, asset, physics, networking, world, input/gameplay, rendering, import, AOT, and project-graph tests.
-- [ ] Record baseline Editor OpenGL/Vulkan, headless Server, and VRClient startup behavior using canonical isolated paths.
-- [ ] Record package/native publish layouts for Editor, Server, and VRClient so cargo loss or duplication is detectable.
-- [ ] Add Phase 6 dependency/source tests that initially describe the desired graph and can be enabled slice-by-slice without passing merely because a source directory disappeared.
+- [x] Start from an exact commit containing the completed Phase 4/5 work, record the branch/base commit, and separate unrelated dirty-worktree changes.
+- [x] Create the Phase 6 progress ledger under `docs/work/progress/runtime/` and record every validation result, compatibility decision, and deferred external hardware lane there.
+- [x] Recount all facade C# files, public types, generated sources, project references, package references, native/content items, licenses, build targets, friend assemblies, type forwards, redirects, serializers, reflection roots, and AOT registrations.
+- [x] Build a checked-in file/type-to-owner manifest for every facade source file; no entry may be `miscellaneous`, `temporary`, or unclassified.
+- [x] Inventory every production and test consumer of facade public/internal APIs, including static `Engine`, `AssetManager`, `XRWorldInstance`, settings, physics components, prefabs, and game modes.
+- [x] Inventory checked-in assets, generated settings, test fixtures, docs, templates, and build artifacts containing assembly-qualified `XREngine` identities.
+- [x] Capture the direct and source/API-level dependency graph for every intended destination project before moving code.
+- [x] Confirm Option A removal as the accepted end state. If an owner instead requires Option B, update the reference design with an explicit compatibility scope and expiry before implementation.
+- [x] Define the supported repository asset migration path and the intentional external pre-v1 compatibility break before removing any type forward.
+- [x] Record baseline builds for all destination projects and the seven direct facade consumers.
+- [x] Record baseline targeted serialization, asset, physics, networking, world, input/gameplay, rendering, import, AOT, and project-graph tests.
+- [x] Record baseline Editor OpenGL/Vulkan, headless Server, and VRClient startup behavior using canonical isolated paths.
+- [x] Record package/native publish layouts for Editor, Server, and VRClient so cargo loss or duplication is detectable.
+- [x] Add Phase 6 dependency/source tests that initially describe the desired graph and can be enabled slice-by-slice without passing merely because a source directory disappeared.
 
 ## P6.1 - Extract Serialization And Asset Foundations
 
@@ -304,21 +303,21 @@ This slice must precede feature and application migration because
 `AssetManager`, cooked binary, YAML converters, model cache, and type identity
 currently bind otherwise independent ownership areas together.
 
-- [ ] Classify all 38 `Core/Files` sources and all 36 `Core/Engine` asset/serialization sources as Data, Runtime.Core, Animation, Runtime.Rendering, ModelingBridge, Bootstrap, Editor, or deletion.
-- [ ] Move format-neutral serialization contracts, type-name rewriting, asset metadata, snapshot/reference primitives, and cooked-binary core modules to Data when they preserve the lower dependency graph.
-- [ ] Move runtime asset loading, publication, file watching, project-relative path resolution, remote loading, save orchestration, and runtime cache coordination to Runtime.Core behind focused services rather than one cross-layer `AssetManager` partial.
-- [ ] Move animation-specific cooked/YAML serializers to Animation and register them from the composition layer without adding `Animation -> Runtime.Core` or adapter edges.
-- [ ] Keep render-asset serializers in Runtime.Rendering and expose only lower registration/value contracts to the asset runtime.
-- [ ] Move model-cache codecs, import-option snapshots, third-party model load policy, and model publication to ModelingBridge; keep editor preference selection in Editor.
-- [ ] Move editor-only file watching, secrets, authoring metadata, import prompts, and project UX to Editor.
-- [ ] Decide the owner of asset packing, compression, DirectStorage IO, hashing, and protected-data helpers from their real consumers; do not preserve facade packages through transitive use.
-- [ ] Replace static cross-layer callbacks with explicit installation leases that reset deterministically for tests, shutdown, and collectible editor generations.
-- [ ] Preserve YAML, JSON, cooked-binary, MemoryPack, prefab, scene, project, and snapshot semantics for the repository corpus.
-- [ ] Ensure unknown serializer/importer kinds fail with the asset path and missing owner/registration name.
-- [ ] Update generated/AOT registration inputs so each final owner contributes its own factories and converters without scanning `XRENGINE`.
-- [ ] Build Data, Animation, Runtime.Core, Runtime.Rendering, ModelingBridge, Bootstrap, and UnitTests with no new warnings.
-- [ ] Run the relevant live asset load/import path, then update and run deterministic round-trip, legacy-resolution, cooked-binary, YAML/JSON, snapshot, AOT, and missing-registration tests.
-- [ ] Update the reference design if a new lower serialization assembly is proven necessary; include its exact dependency set and reject a generic utility assembly.
+- [x] Classify all 38 `Core/Files` sources and all 36 `Core/Engine` asset/serialization sources as Data, Runtime.Core, Animation, Runtime.Rendering, ModelingBridge, Bootstrap, Editor, or deletion.
+- [x] Move format-neutral serialization contracts, type-name rewriting, asset metadata, snapshot/reference primitives, and cooked-binary core modules to Data when they preserve the lower dependency graph.
+- [x] Move runtime asset loading, publication, file watching, project-relative path resolution, remote loading, save orchestration, and runtime cache coordination to Runtime.Core behind focused services rather than one cross-layer `AssetManager` partial.
+- [x] Move animation-specific cooked/YAML serializers to Animation and register them from the composition layer without adding `Animation -> Runtime.Core` or adapter edges.
+- [x] Keep render-asset serializers in Runtime.Rendering and expose only lower registration/value contracts to the asset runtime.
+- [x] Move model-cache codecs, import-option snapshots, third-party model load policy, and model publication to ModelingBridge; keep editor preference selection in Editor.
+- [x] Move editor-only file watching, secrets, authoring metadata, import prompts, and project UX to Editor.
+- [x] Decide the owner of asset packing, compression, DirectStorage IO, hashing, and protected-data helpers from their real consumers; do not preserve facade packages through transitive use.
+- [x] Replace static cross-layer callbacks with explicit installation leases that reset deterministically for tests, shutdown, and collectible editor generations.
+- [x] Preserve YAML, JSON, cooked-binary, MemoryPack, prefab, scene, project, and snapshot semantics for the repository corpus.
+- [x] Ensure unknown serializer/importer kinds fail with the asset path and missing owner/registration name.
+- [x] Update generated/AOT registration inputs so each final owner contributes its own factories and converters without scanning `XRENGINE`.
+- [x] Build Data, Animation, Runtime.Core, Runtime.Rendering, ModelingBridge, Bootstrap, and UnitTests with no new warnings.
+- [x] Run the relevant live asset load/import path, then update and run deterministic round-trip, legacy-resolution, cooked-binary, YAML/JSON, snapshot, AOT, and missing-registration tests.
+- [x] Update the reference design if a new lower serialization assembly is proven necessary; include its exact dependency set and reject a generic utility assembly. No new assembly was necessary, so the accepted graph remains unchanged.
 
 ## P6.2 - Move Core Engine, Physics, Networking, And World Ownership
 

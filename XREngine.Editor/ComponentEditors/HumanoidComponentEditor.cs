@@ -102,23 +102,30 @@ public sealed class HumanoidComponentEditor : IXRComponentEditor
     private static void DrawActionButtons(HumanoidComponent humanoid)
     {
         if (ImGui.Button("Reset Bind Pose"))
-            RunSceneEdit(humanoid.ResetAllTransformsToBindPose);
+            RunSceneEdit("Reset Humanoid Bind Pose", humanoid, humanoid.ResetAllTransformsToBindPose);
 
         ImGui.SameLine();
         if (ImGui.Button("Reset Pose"))
-            RunSceneEdit(humanoid.ResetPose);
+            RunSceneEdit("Reset Humanoid Pose", humanoid, humanoid.ResetPose);
 
         ImGui.SameLine();
         if (ImGui.Button("Auto Detect Rig"))
-            RunSceneEdit(humanoid.ReinitializeSceneNodeBindings);
+            RunSceneEdit("Auto-map Humanoid Rig", humanoid, humanoid.ReinitializeSceneNodeBindings);
 
         ImGui.SameLine();
         if (ImGui.Button("Apply Neutral Preset"))
-            RunSceneEdit(humanoid.ReloadNeutralPosePreset);
+            RunSceneEdit("Apply Humanoid Neutral Preset", humanoid, humanoid.ReloadNeutralPosePreset);
 
         ImGui.SameLine();
         if (ImGui.Button("Clear Neutral Pose"))
-            RunSceneEdit(humanoid.ClearNeutralPoseOffsets);
+            RunSceneEdit("Clear Humanoid Neutral Pose", humanoid, humanoid.ClearNeutralPoseOffsets);
+
+        if (ImGui.Button("Refresh Avatar Definition"))
+            RunSceneEdit("Refresh Avatar Definition", humanoid, humanoid.RefreshAvatarDefinition);
+
+        ImGui.SameLine();
+        if (ImGui.Button("Confirm Reviewed Definition"))
+            RunSceneEdit("Confirm Avatar Definition", humanoid, () => humanoid.ConfirmAvatarDefinition(out _));
 
         ImGui.Spacing();
     }
@@ -170,7 +177,7 @@ public sealed class HumanoidComponentEditor : IXRComponentEditor
         if (neutralPreset == EHumanoidNeutralPosePreset.None)
             ImGui.TextDisabled("Neutral pose preset disabled.");
         else if (neutralRotationCount == 0)
-            ImGui.TextDisabled("Selected preset has no embedded rotations yet. Populate HumanoidNeutralPosePresets from the Unity exporter output.");
+            ImGui.TextDisabled("Selected preset has no embedded rotations yet. Author or import canonical-pose corrections into the avatar definition.");
         else
             ImGui.TextWrapped($"Neutral preset rotations: {neutralRotationCount}");
 
@@ -180,24 +187,190 @@ public sealed class HumanoidComponentEditor : IXRComponentEditor
             using var _ = Undo.TrackChange("Toggle Debug Skeleton", humanoid);
             humanoid.RenderInfo.IsVisible = debugVisibility;
         }
+
+        if (ImGui.Button("Preview Canonical Pose"))
+            RunSceneEdit(
+                "Preview Humanoid Canonical Pose",
+                humanoid,
+                () => humanoid.PosePreviewMode = EHumanoidPosePreviewMode.NeutralMusclePose);
+
+        ImGui.SameLine();
+        bool showAxes = humanoid.ShowAvatarAxes;
+        if (ImGui.Checkbox("Preview Body Axes", ref showAxes))
+        {
+            bool capturedShowAxes = showAxes;
+            RunSceneEdit(
+                "Toggle Humanoid Body Axes",
+                humanoid,
+                () =>
+                {
+                    humanoid.ShowAvatarAxes = capturedShowAxes;
+                    if (capturedShowAxes)
+                        humanoid.RenderInfo.IsVisible = true;
+                });
+        }
+
+        DrawAvatarDefinitionReport(humanoid);
     }
 
     private static void DrawBoneMappingSection(HumanoidComponent humanoid)
     {
         using var profilerScope = Engine.Profiler.Start("UI.ComponentEditor.HumanoidComponent.BoneMapping");
-        DrawBoneGroup("Core", [("Hips", humanoid.Hips), ("Spine", humanoid.Spine), ("Chest", humanoid.Chest), ("Neck", humanoid.Neck), ("Head", humanoid.Head), ("Jaw", humanoid.Jaw)]);
+        DrawBoneGroup(humanoid, "Core",
+        [
+            ("Hips", humanoid.Hips, EHumanoidAvatarBoneRole.Hips),
+            ("Spine", humanoid.Spine, EHumanoidAvatarBoneRole.Spine),
+            ("Chest", humanoid.Chest, EHumanoidAvatarBoneRole.Chest),
+            ("Upper Chest", humanoid.UpperChest, EHumanoidAvatarBoneRole.UpperChest),
+            ("Neck", humanoid.Neck, EHumanoidAvatarBoneRole.Neck),
+            ("Head", humanoid.Head, EHumanoidAvatarBoneRole.Head),
+            ("Jaw", humanoid.Jaw, EHumanoidAvatarBoneRole.Jaw),
+        ]);
 
         if (ImGui.TreeNode("Eyes"))
         {
-            DrawBoneDef("Eyes Target", humanoid.EyesTarget);
-            DrawBoneDef("Left Eye", humanoid.Left.Eye);
-            DrawBoneDef("Right Eye", humanoid.Right.Eye);
+            DrawBoneDef(humanoid, "Eyes Target", humanoid.EyesTarget, role: null);
+            DrawBoneDef(humanoid, "Left Eye", humanoid.Left.Eye, EHumanoidAvatarBoneRole.LeftEye);
+            DrawBoneDef(humanoid, "Right Eye", humanoid.Right.Eye, EHumanoidAvatarBoneRole.RightEye);
             ImGui.TreePop();
         }
 
-        DrawBodySide("Left Side", humanoid.Left);
-        DrawBodySide("Right Side", humanoid.Right);
+        DrawBodySide("Left Side", humanoid, humanoid.Left, isLeft: true);
+        DrawBodySide("Right Side", humanoid, humanoid.Right, isLeft: false);
     }
+
+    private static void DrawAvatarDefinitionReport(HumanoidComponent humanoid)
+    {
+        if (!ImGui.CollapsingHeader("Avatar Definition Report", ImGuiTreeNodeFlags.DefaultOpen))
+            return;
+
+        HumanoidAvatarDefinitionMetadata definition = humanoid.AvatarDefinition;
+        Vector4 statusColor = definition.Status switch
+        {
+            EHumanoidAvatarDefinitionStatus.Valid => AssignedColor,
+            EHumanoidAvatarDefinitionStatus.NeedsReview => new Vector4(0.95f, 0.70f, 0.30f, 1.00f),
+            _ => MissingColor,
+        };
+        ImGui.TextColored(statusColor, $"Status: {definition.Status}");
+        ImGui.TextDisabled(
+            $"Schema {definition.SchemaVersion}; revision {definition.DefinitionRevision}; source {definition.Source}");
+        ImGui.TextDisabled($"Source provenance: {definition.SourceProvenance}");
+        ImGui.TextDisabled($"Coordinate contract: {definition.CoordinateContractId}");
+        ImGui.TextDisabled(
+            $"Human scale: {definition.HumanScale:0.######}; model units/m: {definition.ModelUnitsPerMeter:0.######}");
+        ImGui.TextDisabled($"Skeleton SHA-256: {AbbreviateHash(definition.SkeletonContentSha256)}");
+        ImGui.TextDisabled($"Definition SHA-256: {AbbreviateHash(definition.DefinitionContentSha256)}");
+        ImGui.TextDisabled(
+            string.IsNullOrEmpty(definition.SourceModelContentSha256)
+                ? definition.SourceProvenance == EHumanoidAvatarSourceProvenance.RuntimeAuthoredSkeleton
+                    ? "Model source SHA-256: not applicable (runtime-authored skeleton)"
+                    : "Model source SHA-256: not supplied by importer"
+                : $"Model source SHA-256: {AbbreviateHash(definition.SourceModelContentSha256)}");
+
+        if (definition.SourceProvenance == EHumanoidAvatarSourceProvenance.Unknown
+            && ImGui.Button("Mark as Runtime-Authored Skeleton"))
+        {
+            using var _ = Undo.TrackChange("Set Avatar Source Provenance", humanoid);
+            EnqueueSceneEdit(humanoid.SetRuntimeAuthoredAvatarSource);
+        }
+
+        if (!string.IsNullOrWhiteSpace(humanoid.AvatarDefinitionPlaybackDiagnostic))
+            ImGui.TextWrapped($"Playback blocked: {humanoid.AvatarDefinitionPlaybackDiagnostic}");
+
+        for (int i = 0; i < definition.Diagnostics.Length; i++)
+        {
+            string message = definition.Diagnostics[i];
+            Vector4 color = message.StartsWith("Error:", StringComparison.Ordinal)
+                ? MissingColor
+                : new Vector4(0.95f, 0.70f, 0.30f, 1.00f);
+            ImGui.TextColored(color, message);
+        }
+
+        if (ImGui.Button("Validate Definition Now"))
+            EnqueueSceneEdit(() => humanoid.TryValidateAvatarDefinitionForPlayback(out _));
+
+        if (!ImGui.TreeNode($"Role Bindings ({definition.Bones.Length})"))
+            return;
+
+        if (ImGui.BeginTable(
+            "HumanoidAvatarRoleBindings",
+            7,
+            ImGuiTableFlags.SizingStretchProp | ImGuiTableFlags.RowBg | ImGuiTableFlags.BordersInnerH))
+        {
+            ImGui.TableSetupColumn("Role");
+            ImGui.TableSetupColumn("Node");
+            ImGui.TableSetupColumn("Source");
+            ImGui.TableSetupColumn("Confidence");
+            ImGui.TableSetupColumn("Evidence");
+            ImGui.TableSetupColumn("Locked");
+            ImGui.TableSetupColumn("Actions");
+            ImGui.TableHeadersRow();
+            for (int i = 0; i < definition.Bones.Length; i++)
+            {
+                HumanoidAvatarBoneBinding binding = definition.Bones[i];
+                SceneNode? node = humanoid.GetAvatarBoneNode(binding.Role);
+                ImGui.PushID($"AvatarBinding_{(int)binding.Role}");
+                ImGui.TableNextRow();
+                ImGui.TableSetColumnIndex(0);
+                ImGui.TextUnformatted(binding.Role.ToString());
+                if (binding.Required)
+                {
+                    ImGui.SameLine();
+                    ImGui.TextDisabled("*");
+                }
+                ImGui.TableSetColumnIndex(1);
+                ImGui.TextUnformatted(string.IsNullOrEmpty(binding.NodeName) ? "<unassigned>" : binding.NodeName);
+                ImGui.TableSetColumnIndex(2);
+                ImGui.TextUnformatted(binding.MappingSource.ToString());
+                ImGui.TableSetColumnIndex(3);
+                Vector4 confidenceColor = binding.Confidence >= 0.75f
+                    ? AssignedColor
+                    : binding.Confidence >= 0.55f
+                        ? new Vector4(0.95f, 0.70f, 0.30f, 1.00f)
+                        : MissingColor;
+                ImGui.TextColored(confidenceColor, $"{binding.Confidence:P0}");
+                ImGui.TableSetColumnIndex(4);
+                string evidence = string.IsNullOrWhiteSpace(binding.MappingEvidence)
+                    ? "No mapping evidence recorded."
+                    : binding.MappingEvidence;
+                ImGui.TextWrapped(evidence);
+                if (ImGui.IsItemHovered())
+                {
+                    ImGui.SetTooltip(
+                        $"Imported {binding.ImportedMetadataScore:P0}; topology {binding.TopologyScore:P0}; " +
+                        $"geometry {binding.GeometryScore:P0}; axes {binding.AxisScore:P0}; " +
+                        $"symmetry {binding.SymmetryScore:P0}; aliases {binding.AliasScore:P0}");
+                }
+                ImGui.TableSetColumnIndex(5);
+                bool locked = binding.Locked;
+                if (ImGui.Checkbox("##Locked", ref locked))
+                {
+                    bool capturedLocked = locked;
+                    RunSceneEdit(
+                        capturedLocked ? $"Lock {binding.Role} Mapping" : $"Unlock {binding.Role} Mapping",
+                        humanoid,
+                        () => humanoid.SetAvatarBoneLock(binding.Role, capturedLocked));
+                }
+                ImGui.TableSetColumnIndex(6);
+                if (node is null)
+                    ImGui.BeginDisabled();
+                if (ImGui.SmallButton("Select"))
+                    Selection.SceneNodes = node is null ? [] : [node];
+                ImGui.SameLine();
+                if (ImGui.SmallButton("Focus") && node is not null)
+                    FocusCameraOnNode(node);
+                if (node is null)
+                    ImGui.EndDisabled();
+                ImGui.PopID();
+            }
+            ImGui.EndTable();
+        }
+
+        ImGui.TreePop();
+    }
+
+    private static string AbbreviateHash(string value)
+        => value.Length <= 16 ? value : $"{value[..12]}...{value[^4..]}";
 
     // ── Per-Muscle Settings (degree ranges) ─────────────────────────
 
@@ -670,30 +843,51 @@ public sealed class HumanoidComponentEditor : IXRComponentEditor
         ImGui.TextUnformatted($"{amount:0.###}");
     }
 
-    private static void DrawBoneGroup(string label, (string name, HumanoidComponent.BoneDef def)[] bones)
+    private static void DrawBoneGroup(
+        HumanoidComponent humanoid,
+        string label,
+        (string name, HumanoidComponent.BoneDef def, EHumanoidAvatarBoneRole role)[] bones)
     {
         if (!ImGui.TreeNodeEx(label, ImGuiTreeNodeFlags.DefaultOpen))
             return;
 
-        foreach (var (name, def) in bones)
-            DrawBoneDef(name, def);
+        foreach (var (name, def, role) in bones)
+            DrawBoneDef(humanoid, name, def, role);
 
         ImGui.TreePop();
     }
 
-    private static void DrawBoneDef(string label, HumanoidComponent.BoneDef def)
+    private static void DrawBoneDef(
+        HumanoidComponent humanoid,
+        string label,
+        HumanoidComponent.BoneDef def,
+        EHumanoidAvatarBoneRole? role)
     {
         ImGui.PushID($"{label}_{def.GetHashCode()}");
 
         string nodeName = def.Node?.Name ?? "<unassigned>";
-        Vector4 color = def.Node is null ? MissingColor : AssignedColor;
+        HumanoidAvatarBoneBinding? binding = role.HasValue
+            ? FindAvatarBinding(humanoid.AvatarDefinition, role.Value)
+            : null;
+        Vector4 color = def.Node is null
+            ? MissingColor
+            : binding is not null && binding.Confidence < 0.55f
+                ? new Vector4(0.95f, 0.70f, 0.30f, 1.00f)
+                : AssignedColor;
         ImGui.TextColored(color, $"{label}: {nodeName}");
+        if (binding is not null)
+        {
+            ImGui.SameLine();
+            ImGui.TextDisabled($"{binding.Confidence:P0} {binding.MappingSource}");
+            if (ImGui.IsItemHovered() && !string.IsNullOrWhiteSpace(binding.MappingEvidence))
+                ImGui.SetTooltip(binding.MappingEvidence);
+        }
         Vector2 labelRectMin = ImGui.GetItemRectMin();
         Vector2 labelRectMax = ImGui.GetItemRectMax();
         TryHandleSceneNodeDrop(sceneNode =>
         {
             var captured = sceneNode;
-            RunSceneEdit(() => def.Node = captured);
+            RunSceneEdit($"Assign {label} Bone", humanoid, () => AssignBone(humanoid, def, role, captured));
             return true;
         }, out bool bonePreviewActive);
         if (bonePreviewActive)
@@ -712,7 +906,7 @@ public sealed class HumanoidComponentEditor : IXRComponentEditor
             if (selectedNode is not null)
             {
                 var capturedNode = selectedNode;
-                RunSceneEdit(() => def.Node = capturedNode);
+                RunSceneEdit($"Assign {label} Bone", humanoid, () => AssignBone(humanoid, def, role, capturedNode));
             }
         }
         if (!selectionAvailable)
@@ -720,48 +914,123 @@ public sealed class HumanoidComponentEditor : IXRComponentEditor
 
         ImGui.SameLine();
         if (ImGui.SmallButton("Clear"))
-            RunSceneEdit(() => def.Node = null);
+            RunSceneEdit($"Clear {label} Bone", humanoid, () => AssignBone(humanoid, def, role, node: null));
+
+        ImGui.SameLine();
+        if (def.Node is null)
+            ImGui.BeginDisabled();
+        if (ImGui.SmallButton("Select") && def.Node is SceneNode selected)
+            Selection.SceneNodes = [selected];
+        ImGui.SameLine();
+        if (ImGui.SmallButton("Focus") && def.Node is SceneNode focused)
+            FocusCameraOnNode(focused);
+        if (def.Node is null)
+            ImGui.EndDisabled();
+
+        if (binding is not null)
+        {
+            ImGui.SameLine();
+            bool locked = binding.Locked;
+            if (ImGui.Checkbox("Lock", ref locked))
+            {
+                bool capturedLocked = locked;
+                RunSceneEdit(
+                    capturedLocked ? $"Lock {label} Bone" : $"Unlock {label} Bone",
+                    humanoid,
+                    () => humanoid.SetAvatarBoneLock(binding.Role, capturedLocked));
+            }
+        }
 
         ImGui.PopID();
     }
 
-    private static void DrawBodySide(string label, HumanoidComponent.BodySide side)
+    private static void DrawBodySide(
+        string label,
+        HumanoidComponent humanoid,
+        HumanoidComponent.BodySide side,
+        bool isLeft)
     {
         if (!ImGui.TreeNode(label))
             return;
 
-        DrawBoneDef("Shoulder", side.Shoulder);
-        DrawBoneDef("Arm", side.Arm);
-        DrawBoneDef("Elbow", side.Elbow);
-        DrawBoneDef("Wrist", side.Wrist);
-        DrawBoneDef("Leg", side.Leg);
-        DrawBoneDef("Knee", side.Knee);
-        DrawBoneDef("Foot", side.Foot);
-        DrawBoneDef("Toes", side.Toes);
+        DrawBoneDef(humanoid, "Shoulder", side.Shoulder, isLeft ? EHumanoidAvatarBoneRole.LeftShoulder : EHumanoidAvatarBoneRole.RightShoulder);
+        DrawBoneDef(humanoid, "Arm", side.Arm, isLeft ? EHumanoidAvatarBoneRole.LeftUpperArm : EHumanoidAvatarBoneRole.RightUpperArm);
+        DrawBoneDef(humanoid, "Elbow", side.Elbow, isLeft ? EHumanoidAvatarBoneRole.LeftLowerArm : EHumanoidAvatarBoneRole.RightLowerArm);
+        DrawBoneDef(humanoid, "Wrist", side.Wrist, isLeft ? EHumanoidAvatarBoneRole.LeftHand : EHumanoidAvatarBoneRole.RightHand);
+        DrawBoneDef(humanoid, "Leg", side.Leg, isLeft ? EHumanoidAvatarBoneRole.LeftUpperLeg : EHumanoidAvatarBoneRole.RightUpperLeg);
+        DrawBoneDef(humanoid, "Knee", side.Knee, isLeft ? EHumanoidAvatarBoneRole.LeftLowerLeg : EHumanoidAvatarBoneRole.RightLowerLeg);
+        DrawBoneDef(humanoid, "Foot", side.Foot, isLeft ? EHumanoidAvatarBoneRole.LeftFoot : EHumanoidAvatarBoneRole.RightFoot);
+        DrawBoneDef(humanoid, "Toes", side.Toes, isLeft ? EHumanoidAvatarBoneRole.LeftToes : EHumanoidAvatarBoneRole.RightToes);
 
         if (ImGui.TreeNode("Fingers"))
         {
-            DrawFinger("Thumb", side.Hand.Thumb);
-            DrawFinger("Index", side.Hand.Index);
-            DrawFinger("Middle", side.Hand.Middle);
-            DrawFinger("Ring", side.Hand.Ring);
-            DrawFinger("Pinky", side.Hand.Pinky);
+            if (isLeft)
+            {
+                DrawFinger(humanoid, "Thumb", side.Hand.Thumb, EHumanoidAvatarBoneRole.LeftThumbProximal, EHumanoidAvatarBoneRole.LeftThumbIntermediate, EHumanoidAvatarBoneRole.LeftThumbDistal);
+                DrawFinger(humanoid, "Index", side.Hand.Index, EHumanoidAvatarBoneRole.LeftIndexProximal, EHumanoidAvatarBoneRole.LeftIndexIntermediate, EHumanoidAvatarBoneRole.LeftIndexDistal);
+                DrawFinger(humanoid, "Middle", side.Hand.Middle, EHumanoidAvatarBoneRole.LeftMiddleProximal, EHumanoidAvatarBoneRole.LeftMiddleIntermediate, EHumanoidAvatarBoneRole.LeftMiddleDistal);
+                DrawFinger(humanoid, "Ring", side.Hand.Ring, EHumanoidAvatarBoneRole.LeftRingProximal, EHumanoidAvatarBoneRole.LeftRingIntermediate, EHumanoidAvatarBoneRole.LeftRingDistal);
+                DrawFinger(humanoid, "Pinky", side.Hand.Pinky, EHumanoidAvatarBoneRole.LeftLittleProximal, EHumanoidAvatarBoneRole.LeftLittleIntermediate, EHumanoidAvatarBoneRole.LeftLittleDistal);
+            }
+            else
+            {
+                DrawFinger(humanoid, "Thumb", side.Hand.Thumb, EHumanoidAvatarBoneRole.RightThumbProximal, EHumanoidAvatarBoneRole.RightThumbIntermediate, EHumanoidAvatarBoneRole.RightThumbDistal);
+                DrawFinger(humanoid, "Index", side.Hand.Index, EHumanoidAvatarBoneRole.RightIndexProximal, EHumanoidAvatarBoneRole.RightIndexIntermediate, EHumanoidAvatarBoneRole.RightIndexDistal);
+                DrawFinger(humanoid, "Middle", side.Hand.Middle, EHumanoidAvatarBoneRole.RightMiddleProximal, EHumanoidAvatarBoneRole.RightMiddleIntermediate, EHumanoidAvatarBoneRole.RightMiddleDistal);
+                DrawFinger(humanoid, "Ring", side.Hand.Ring, EHumanoidAvatarBoneRole.RightRingProximal, EHumanoidAvatarBoneRole.RightRingIntermediate, EHumanoidAvatarBoneRole.RightRingDistal);
+                DrawFinger(humanoid, "Pinky", side.Hand.Pinky, EHumanoidAvatarBoneRole.RightLittleProximal, EHumanoidAvatarBoneRole.RightLittleIntermediate, EHumanoidAvatarBoneRole.RightLittleDistal);
+            }
             ImGui.TreePop();
         }
 
         ImGui.TreePop();
     }
 
-    private static void DrawFinger(string label, HumanoidComponent.BodySide.Fingers.Finger finger)
+    private static void DrawFinger(
+        HumanoidComponent humanoid,
+        string label,
+        HumanoidComponent.BodySide.Fingers.Finger finger,
+        EHumanoidAvatarBoneRole proximalRole,
+        EHumanoidAvatarBoneRole intermediateRole,
+        EHumanoidAvatarBoneRole distalRole)
     {
         if (!ImGui.TreeNode(label))
             return;
 
-        DrawBoneDef("Proximal", finger.Proximal);
-        DrawBoneDef("Intermediate", finger.Intermediate);
-        DrawBoneDef("Distal", finger.Distal);
+        DrawBoneDef(humanoid, "Proximal", finger.Proximal, proximalRole);
+        DrawBoneDef(humanoid, "Intermediate", finger.Intermediate, intermediateRole);
+        DrawBoneDef(humanoid, "Distal", finger.Distal, distalRole);
 
         ImGui.TreePop();
+    }
+
+    private static void AssignBone(
+        HumanoidComponent humanoid,
+        HumanoidComponent.BoneDef definition,
+        EHumanoidAvatarBoneRole? role,
+        SceneNode? node)
+    {
+        if (role is EHumanoidAvatarBoneRole semanticRole)
+            humanoid.SetAvatarBoneMapping(semanticRole, node);
+        else
+            definition.Node = node;
+    }
+
+    private static HumanoidAvatarBoneBinding? FindAvatarBinding(
+        HumanoidAvatarDefinitionMetadata definition,
+        EHumanoidAvatarBoneRole role)
+    {
+        for (int i = 0; i < definition.Bones.Length; i++)
+            if (definition.Bones[i].Role == role)
+                return definition.Bones[i];
+        return null;
+    }
+
+    private static void FocusCameraOnNode(SceneNode node)
+    {
+        var player = Engine.State.MainPlayer ?? Engine.State.GetOrCreateLocalPlayer(ELocalPlayerIndex.One);
+        if (player?.ControlledPawnComponent is EditorFlyingCameraPawnComponent pawn)
+            pawn.FocusOnNode(node);
     }
 
     private static bool TryHandleSceneNodeDrop(Func<SceneNode, bool> onDrop, out bool previewActive)
@@ -859,12 +1128,15 @@ public sealed class HumanoidComponentEditor : IXRComponentEditor
             ImGui.PopStyleColor();
     }
 
-    private static void RunSceneEdit(Action edit)
+    private static void RunSceneEdit(string description, object target, Action edit)
     {
         if (edit is null)
             return;
 
-        edit();
-        EnqueueSceneEdit(edit);
+        EnqueueSceneEdit(() =>
+        {
+            using var _ = Undo.TrackChange(description, target);
+            edit();
+        });
     }
 }

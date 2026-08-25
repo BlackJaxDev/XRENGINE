@@ -1,6 +1,6 @@
 # Dependency Inventory
 
-Generated: 2026-08-24T11:53:20-07:00
+Generated: 2026-08-25T13:45:02-07:00
 Commit: (not a git repo)
 
 Best-effort inventory of dependencies referenced by the XRENGINE solution: NuGet packages, git submodules, vendored source snapshots, and native/managed binaries that are referenced or shipped.
@@ -74,12 +74,12 @@ Notes:
 | SharpZipLib | 1.4.2 | icsharpcode | [MIT](licenses/nuget/SharpZipLib-1.4.2-MIT.txt) | XREngine.Data.csproj |
 | Shouldly | 4.3.0 | shouldly | [BSD-3-Clause](licenses/nuget/Shouldly-4.3.0-BSD-3-Clause.txt) | XREngine.UnitTests.csproj |
 | Silk.NET | 2.23.0 | dotnet | [MIT](licenses/nuget/Silk.NET-2.23.0-MIT.txt) | XREngine.Editor.csproj, XREngine.Input.csproj, XREngine.Runtime.Rendering.csproj |
-| Silk.NET.Core | 2.23.0 | dotnet | [MIT](licenses/nuget/Silk.NET.Core-2.23.0-MIT.txt) | XREngine.csproj, XREngine.Editor.csproj, XREngine.Runtime.Rendering.csproj, XREngine.Runtime.Rendering.OpenGL.csproj, XREngine.Runtime.Rendering.Vulkan.csproj, XREngine.UnitTests.csproj |
+| Silk.NET.Core | 2.23.0 | dotnet | [MIT](licenses/nuget/Silk.NET.Core-2.23.0-MIT.txt) | XREngine.csproj, XREngine.Data.csproj, XREngine.Editor.csproj, XREngine.Runtime.Core.csproj, XREngine.Runtime.Rendering.csproj, XREngine.Runtime.Rendering.OpenGL.csproj, XREngine.Runtime.Rendering.Vulkan.csproj, XREngine.UnitTests.csproj |
 | Silk.NET.Core.Win32Extras | 2.23.0 | dotnet | [MIT](licenses/nuget/Silk.NET.Core.Win32Extras-2.23.0-MIT.txt) | XREngine.Editor.csproj, XREngine.Runtime.Rendering.csproj, XREngine.Runtime.Rendering.Vulkan.csproj |
 | Silk.NET.Direct3D.Compilers | 2.23.0 | dotnet | [MIT](licenses/nuget/Silk.NET.Direct3D.Compilers-2.23.0-MIT.txt) | XREngine.Runtime.Rendering.csproj |
 | Silk.NET.Direct3D12 | 2.23.0 | dotnet | [MIT](licenses/nuget/Silk.NET.Direct3D12-2.23.0-MIT.txt) | XREngine.Runtime.Rendering.csproj |
-| Silk.NET.DirectStorage | 2.23.0 | dotnet | [MIT](licenses/nuget/Silk.NET.DirectStorage-2.23.0-MIT.txt) | XREngine.csproj, XREngine.Data.csproj, XREngine.Editor.csproj, XREngine.Runtime.Rendering.csproj |
-| Silk.NET.DirectStorage.Native | 1.3.0 | microsoft | [LICENSE.txt](licenses/nuget/Silk.NET.DirectStorage.Native-1.3.0-LICENSE.txt.txt) | XREngine.csproj, XREngine.Data.csproj, XREngine.Editor.csproj, XREngine.Runtime.Rendering.csproj |
+| Silk.NET.DirectStorage | 2.23.0 | dotnet | [MIT](licenses/nuget/Silk.NET.DirectStorage-2.23.0-MIT.txt) | XREngine.Data.csproj, XREngine.Runtime.Core.csproj |
+| Silk.NET.DirectStorage.Native | 1.3.0 | microsoft | [LICENSE.txt](licenses/nuget/Silk.NET.DirectStorage.Native-1.3.0-LICENSE.txt.txt) | XREngine.Data.csproj, XREngine.Runtime.Core.csproj |
 | Silk.NET.GLFW | 2.23.0 | dotnet | [MIT](licenses/nuget/Silk.NET.GLFW-2.23.0-MIT.txt) | XREngine.Editor.csproj, XREngine.Runtime.Rendering.csproj |
 | Silk.NET.Input | 2.23.0 | dotnet | [MIT](licenses/nuget/Silk.NET.Input-2.23.0-MIT.txt) | XREngine.csproj, XREngine.Editor.csproj, XREngine.Input.csproj, XREngine.Profiler.csproj, XREngine.Runtime.Rendering.csproj, XREngine.Runtime.Rendering.OpenGL.csproj, XREngine.Runtime.Rendering.Vulkan.csproj |
 | Silk.NET.Input.Common | 2.23.0 | dotnet | [MIT](licenses/nuget/Silk.NET.Input.Common-2.23.0-MIT.txt) | XREngine.Editor.csproj, XREngine.Input.csproj, XREngine.Runtime.Rendering.csproj |
@@ -140,9 +140,9 @@ Notes:
 | Svg.Skia | 5.1.1 | wieslawsoltes | [MIT](licenses/nuget/Svg.Skia-5.1.1-MIT.txt) | XREngine.Runtime.Rendering.csproj |
 | System.Drawing.Common | 10.0.10 | dotnet | [MIT](licenses/nuget/System.Drawing.Common-10.0.10-MIT.txt) | XREngine.Data.csproj |
 | System.IdentityModel.Tokens.Jwt | 8.22.0 | AzureAD | [MIT](licenses/nuget/System.IdentityModel.Tokens.Jwt-8.22.0-MIT.txt) | XREngine.Server.csproj |
-| System.IO.Hashing | 10.0.10 | dotnet | [MIT](licenses/nuget/System.IO.Hashing-10.0.10-MIT.txt) | XREngine.csproj, XREngine.Runtime.ModelingBridge.csproj, XREngine.Runtime.Rendering.csproj |
+| System.IO.Hashing | 10.0.10 | dotnet | [MIT](licenses/nuget/System.IO.Hashing-10.0.10-MIT.txt) | XREngine.csproj, XREngine.Data.csproj, XREngine.Runtime.ModelingBridge.csproj, XREngine.Runtime.Rendering.csproj |
 | System.Management | 10.0.10 | dotnet | [MIT](licenses/nuget/System.Management-10.0.10-MIT.txt) | XREngine.Runtime.Rendering.csproj |
-| System.Security.Cryptography.ProtectedData | 10.0.10 | dotnet | [MIT](licenses/nuget/System.Security.Cryptography.ProtectedData-10.0.10-MIT.txt) | XREngine.csproj |
+| System.Security.Cryptography.ProtectedData | 10.0.10 | dotnet | [MIT](licenses/nuget/System.Security.Cryptography.ProtectedData-10.0.10-MIT.txt) | XREngine.Editor.csproj |
 | UltralightNet | 1.3.0 | SupinePandora43 | [MIT](licenses/nuget/UltralightNet-1.3.0-MIT.txt) | XREngine.Runtime.Rendering.csproj |
 | UltralightNet.AppCore | 1.3.0 | SupinePandora43 | [MIT](licenses/nuget/UltralightNet.AppCore-1.3.0-MIT.txt) | XREngine.Runtime.Rendering.csproj |
 | Vecc.YamlDotNet.Analyzers.StaticGenerator | 18.1.0 | aaubry | [MIT](licenses/nuget/Vecc.YamlDotNet.Analyzers.StaticGenerator-18.1.0-MIT.txt) | XREngine.csproj |

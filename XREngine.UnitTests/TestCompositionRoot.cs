@@ -13,13 +13,19 @@ public sealed class TestCompositionRoot
 {
     private IRuntimeRenderingHostServices? _previousRenderingHostServices;
     private IRuntimeShaderServices? _previousShaderServices;
+    private IDisposable? _assetServices;
+    private IDisposable? _testRenderingHost;
 
     [OneTimeSetUp]
     public void InstallRuntimeServices()
     {
         _previousRenderingHostServices = RuntimeRenderingHostServices.Current;
         _previousShaderServices = RuntimeShaderServices.Current;
-        RuntimeRenderingHostServices.Current = RuntimeRenderingBootstrap.CreateEngineHostServices();
+        _assetServices = RuntimeAssetBootstrap.InstallEngineAssetServices();
+        IRuntimeRenderingHostServices renderingHost =
+            RuntimeRenderingBootstrap.CreateEngineHostServices();
+        _testRenderingHost = renderingHost as IDisposable;
+        RuntimeRenderingHostServices.Current = renderingHost;
         RuntimeShaderServices.Current = new GltfImportTestUtilities.TestRuntimeShaderServices();
     }
 
@@ -28,5 +34,9 @@ public sealed class TestCompositionRoot
     {
         RuntimeShaderServices.Current = _previousShaderServices;
         RuntimeRenderingHostServices.Current = _previousRenderingHostServices!;
+        _testRenderingHost?.Dispose();
+        _testRenderingHost = null;
+        _assetServices?.Dispose();
+        _assetServices = null;
     }
 }

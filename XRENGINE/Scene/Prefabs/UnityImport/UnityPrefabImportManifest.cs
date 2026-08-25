@@ -74,6 +74,40 @@ public sealed class UnityPrefabImportManifest
     public bool HasDependencyChanges()
         => GetChangedDependencyPaths().Count > 0;
 
+    /// <summary>
+    /// Computes a path-independent digest of the exact source dependency graph
+    /// used by this conversion. File locations and timestamps are deliberately
+    /// excluded so a move does not invalidate identical content.
+    /// </summary>
+    public string ComputeSourceContentSha256()
+    {
+        var canonical = new System.Text.StringBuilder(Dependencies.Count * 160);
+        canonical.Append(FormatVersion).Append('\n');
+        foreach (UnityImportDependencyManifestEntry dependency in Dependencies
+            .OrderBy(static item => item.SourceGuid ?? string.Empty, StringComparer.Ordinal)
+            .ThenBy(static item => item.LocalFileId ?? long.MinValue)
+            .ThenBy(static item => item.Kind)
+            .ThenBy(static item => item.Sha256, StringComparer.OrdinalIgnoreCase))
+        {
+            AppendCanonical(canonical, dependency.SourceGuid);
+            canonical.Append(dependency.LocalFileId ?? long.MinValue).Append('\n');
+            canonical.Append((int)dependency.Kind).Append('\n');
+            AppendCanonical(canonical, dependency.ReferringProperty);
+            AppendCanonical(canonical, dependency.Sha256.ToUpperInvariant());
+            canonical.Append((int)dependency.Outcome).Append('\n');
+        }
+
+        return Convert.ToHexString(
+            System.Security.Cryptography.SHA256.HashData(
+                System.Text.Encoding.UTF8.GetBytes(canonical.ToString())));
+    }
+
+    private static void AppendCanonical(System.Text.StringBuilder builder, string? value)
+    {
+        value ??= string.Empty;
+        builder.Append(value.Length).Append(':').Append(value).Append('\n');
+    }
+
     public string? ResolveDependencySourcePath(string normalizedPath)
     {
         if (Path.IsPathRooted(normalizedPath))

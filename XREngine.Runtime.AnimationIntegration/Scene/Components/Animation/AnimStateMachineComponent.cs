@@ -19,6 +19,8 @@ namespace XREngine.Components
         private int _lastSentSchemaVersion = -1;
         private HumanoidImportedBodySample _provisionalImportedBodyReference = HumanoidImportedBodySample.Neutral;
         private bool _hasProvisionalImportedBodyReference;
+        private bool _stateMachineInitialized;
+        private bool _playbackCapabilitiesValid;
 
         private AnimStateMachine _stateMachine = new();
         public AnimStateMachine StateMachine
@@ -41,6 +43,17 @@ namespace XREngine.Components
             private set => SetField(ref _suspendedByClip, value);
         }
 
+        private string _playbackCapabilityDiagnostic = string.Empty;
+        /// <summary>
+        /// Last source-capability or avatar-definition reason that prevented
+        /// state-machine evaluation.
+        /// </summary>
+        public string PlaybackCapabilityDiagnostic
+        {
+            get => _playbackCapabilityDiagnostic;
+            private set => SetField(ref _playbackCapabilityDiagnostic, value);
+        }
+
         public void SetSuspendedByClip(bool suspended)
         {
             if (SuspendedByClip == suspended)
@@ -57,7 +70,8 @@ namespace XREngine.Components
             }
             else
             {
-                RegisterTick(ETickGroup.Normal, ETickOrder.Animation, EvaluationTick);
+                if (_playbackCapabilitiesValid)
+                    RegisterTick(ETickGroup.Normal, ETickOrder.Animation, EvaluationTick);
             }
         }
 
@@ -76,8 +90,13 @@ namespace XREngine.Components
         protected override void OnComponentActivated()
         {
             base.OnComponentActivated();
-            StateMachine.Initialize(this);
-            StateMachine.VariableChanged += VariableChanged;
+            if (!TryPrepareStateMachinePlayback())
+            {
+                Debug.Animation(
+                    $"[AnimStateMachineComponent] Playback rejected on '{SceneNode.Name}': {PlaybackCapabilityDiagnostic}");
+                return;
+            }
+
             if (!SuspendedByClip)
             {
                 _hasProvisionalImportedBodyReference = false;
@@ -86,8 +105,6 @@ namespace XREngine.Components
             }
             if (!SuspendedByClip)
                 RegisterTick(ETickGroup.Normal, ETickOrder.Animation, EvaluationTick);
-
-            ReplicateParameterSchema(force: true);
         }
 
         private readonly HashSet<AnimVar> _changedLastEval = [];
@@ -106,8 +123,13 @@ namespace XREngine.Components
             UnregisterTick(ETickGroup.Normal, ETickOrder.Animation, EvaluationTick);
             if (!SuspendedByClip)
                 ResetDrivenPose();
-            StateMachine.Deinitialize();
-            StateMachine.VariableChanged -= VariableChanged;
+            if (_stateMachineInitialized)
+            {
+                StateMachine.Deinitialize();
+                StateMachine.VariableChanged -= VariableChanged;
+                _stateMachineInitialized = false;
+            }
+            _playbackCapabilitiesValid = false;
             _changedLastEval.Clear();
             if (!SuspendedByClip)
             {
@@ -126,7 +148,7 @@ namespace XREngine.Components
         }
         protected internal void EvaluationTick()
         {
-            if (SuspendedByClip)
+            if (SuspendedByClip || !_playbackCapabilitiesValid)
                 return;
 
             var humanoid = GetHumanoidComponent();
@@ -142,6 +164,9 @@ namespace XREngine.Components
         /// </summary>
         public void EvaluateAtTime(float timeSeconds)
         {
+            if (!_playbackCapabilitiesValid && !TryPrepareStateMachinePlayback())
+                return;
+
             var humanoid = GetHumanoidComponent();
             if (humanoid is not null && !humanoid.IsAnimatedPosePreviewActive)
                 return;
@@ -149,6 +174,58 @@ namespace XREngine.Components
             StateMachine.SeekActiveMotions(timeSeconds);
             humanoid?.ResetRootMotionBaseline();
             EvaluateAndApply(0L, humanoid);
+        }
+
+        /// <summary>
+        /// Runs graph-wide Unity import and target-avatar validation before any
+        /// state motion is initialized or evaluated.
+        /// </summary>
+        public bool TryValidatePlaybackCapabilities(out string diagnostic)
+        {
+            if (!StateMachine.TryValidateUnityImportCapabilities(out diagnostic, out bool requiresHumanoidAvatar))
+            {
+                PlaybackCapabilityDiagnostic = diagnostic;
+                _playbackCapabilitiesValid = false;
+                return false;
+            }
+
+            if (requiresHumanoidAvatar)
+            {
+                HumanoidComponent? humanoid = GetHumanoidComponent();
+                if (humanoid is null)
+                {
+                    diagnostic = "The state machine contains Unity humanoid data, but no HumanoidComponent owns the target avatar definition.";
+                    PlaybackCapabilityDiagnostic = diagnostic;
+                    _playbackCapabilitiesValid = false;
+                    return false;
+                }
+
+                if (!humanoid.TryValidateAvatarDefinitionForPlayback(out diagnostic))
+                {
+                    PlaybackCapabilityDiagnostic = diagnostic;
+                    _playbackCapabilitiesValid = false;
+                    return false;
+                }
+            }
+
+            PlaybackCapabilityDiagnostic = string.Empty;
+            _playbackCapabilitiesValid = true;
+            diagnostic = string.Empty;
+            return true;
+        }
+
+        private bool TryPrepareStateMachinePlayback()
+        {
+            if (!TryValidatePlaybackCapabilities(out _))
+                return false;
+            if (_stateMachineInitialized)
+                return true;
+
+            StateMachine.Initialize(this);
+            StateMachine.VariableChanged += VariableChanged;
+            _stateMachineInitialized = true;
+            ReplicateParameterSchema(force: true);
+            return true;
         }
 
         private void EvaluateAndApply(long deltaTicks, HumanoidComponent? humanoid)

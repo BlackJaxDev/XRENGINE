@@ -25,7 +25,7 @@
 
   <ItemGroup Condition="'$(DesignTimeBuild)' != 'true'">
     <Compile Include="$(GeneratedAotFactoryRegistrations)" />
-    <AotFactoryRegistrationInput Include="$(MSBuildProjectDirectory)\**\*.cs;$(MSBuildProjectDirectory)\..\XRENGINE\**\*.cs;$(MSBuildProjectDirectory)\..\XREngine.Runtime.Core\**\*.cs;$(MSBuildProjectDirectory)\..\XREngine.Runtime.Rendering\**\*.cs;$(MSBuildProjectDirectory)\..\XREngine.Runtime.AnimationIntegration\**\*.cs;$(MSBuildProjectDirectory)\..\XREngine.Runtime.AudioIntegration\**\*.cs;$(MSBuildProjectDirectory)\..\XREngine.Runtime.InputIntegration\**\*.cs;$(MSBuildProjectDirectory)\..\XREngine.Runtime.ModelingBridge\**\*.cs" Exclude="**\bin\**;**\obj\**;**\*.g.cs" />
+    <AotFactoryRegistrationInput Include="$(MSBuildProjectDirectory)\**\*.cs;$(MSBuildProjectDirectory)\..\XREngine.Data\**\*.cs;$(MSBuildProjectDirectory)\..\XREngine.Animation\**\*.cs;$(MSBuildProjectDirectory)\..\XREngine.Runtime.Core\**\*.cs;$(MSBuildProjectDirectory)\..\XREngine.Runtime.Rendering\**\*.cs;$(MSBuildProjectDirectory)\..\XREngine.Runtime.AnimationIntegration\**\*.cs;$(MSBuildProjectDirectory)\..\XREngine.Runtime.AudioIntegration\**\*.cs;$(MSBuildProjectDirectory)\..\XREngine.Runtime.InputIntegration\**\*.cs;$(MSBuildProjectDirectory)\..\XREngine.Runtime.ModelingBridge\**\*.cs" Exclude="**\bin\**;**\obj\**;**\*.g.cs" />
   </ItemGroup>
 
   <Target Name="InvalidateMissingAotFactoryRegistrationOutput" BeforeTargets="GenerateAotFactoryRegistrations" Condition="'$(DesignTimeBuild)' != 'true' and !Exists('$(GeneratedAotFactoryRegistrations)') and Exists('$(AotFactoryRegistrationStamp)')">

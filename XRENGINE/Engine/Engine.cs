@@ -399,7 +399,7 @@ namespace XREngine
         /// <remarks>
         /// Use this to load, cache, and manage the lifecycle of game assets.
         /// </remarks>
-        public static AssetManager Assets { get; } = new();
+        public static AssetManager Assets { get; } = new(jobManagerProvider: static () => Jobs);
 
         /// <summary>
         /// Thread-safe random number generator for general use.

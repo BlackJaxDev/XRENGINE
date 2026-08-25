@@ -65,7 +65,9 @@ public sealed class ModelCacheAssetManagerIdentityTests
                 ModelComponent component =
                     meshNode.AddComponent<ModelComponent>().ShouldNotBeNull();
                 SubMesh subMesh = new();
-                subMesh.MeshOptimizer.Meshlets.Enabled = true;
+                // ModelCookSettings enables meshlets by default. Author the
+                // opposite value so this fixture contributes a real override.
+                subMesh.MeshOptimizer.Meshlets.Enabled = false;
                 component.Model = new Model(subMesh);
                 XRPrefabSource projectPrefab = new()
                 {

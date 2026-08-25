@@ -12,6 +12,8 @@ internal sealed class BrokerHistoryForm : Form
     private readonly Label _titleLabel;
     private readonly Label _metadataLabel;
     private readonly RichTextBox _conversation;
+    private readonly MarkdownRichTextRenderer _markdownRenderer;
+    private readonly RichTextBoxMotionController _motionController;
     private readonly ToolStripButton _deleteButton;
     private IReadOnlyList<BrokerHistoryRecord> _allRecords = [];
     private string? _selectedRunId;
@@ -19,6 +21,9 @@ internal sealed class BrokerHistoryForm : Form
     private string _renderedResponseText = string.Empty;
     private string _renderedFailureText = string.Empty;
     private string _renderedListVersion = string.Empty;
+    private MarkdownPreviewDocument _renderedResponsePreview = MarkdownPreviewDocument.Empty;
+    private int _responsePreviewStart;
+    private int _responsePreviewLength;
     private bool _renderedWasActive;
     private bool _forceFullRender;
     private bool _isDarkTheme;
@@ -113,6 +118,9 @@ internal sealed class BrokerHistoryForm : Form
             DetectUrls = true,
             Font = new Font("Segoe UI", 10F),
         };
+        _markdownRenderer = new MarkdownRichTextRenderer(_conversation);
+        _motionController = new RichTextBoxMotionController(_conversation);
+        _conversation.LinkClicked += OpenConversationLink;
         details.Controls.Add(_titleLabel, 0, 0);
         details.Controls.Add(_metadataLabel, 0, 1);
         details.Controls.Add(_conversation, 0, 2);
@@ -150,6 +158,7 @@ internal sealed class BrokerHistoryForm : Form
         _metadataLabel.ForeColor = BrokerTheme.MutedTextColor(_isDarkTheme);
         _conversation.BackColor = BrokerTheme.SurfaceColor(_isDarkTheme);
         _conversation.ForeColor = BrokerTheme.TextColor(_isDarkTheme);
+        _markdownRenderer.SetTheme(_isDarkTheme);
         _forceFullRender = true;
         RebuildList(force: true);
         if (_selectedRunId is not null)
@@ -271,6 +280,7 @@ internal sealed class BrokerHistoryForm : Form
             _metadataLabel.Text = _allRecords.Count == 0
                 ? "Accepted broker prompts will appear here automatically."
                 : string.Empty;
+            _motionController.Reset(followTail: false);
             _conversation.Clear();
             _deleteButton.Enabled = false;
             ResetRenderedConversation();
@@ -299,13 +309,13 @@ internal sealed class BrokerHistoryForm : Form
         bool isSameRun = string.Equals(record.RunId, _renderedRunId, StringComparison.Ordinal);
         bool canAppendResponse = isSameRun
             && !_forceFullRender
-            && _renderedResponseText.Length > 0
+            && HasValidResponsePreviewRange()
             && response.Length > _renderedResponseText.Length
             && response.StartsWith(_renderedResponseText, StringComparison.Ordinal)
             && string.Equals(failure, _renderedFailureText, StringComparison.Ordinal);
         if (canAppendResponse)
         {
-            AppendResponseDelta(response[_renderedResponseText.Length..]);
+            AppendResponseDelta(response);
             _renderedResponseText = response;
             _renderedWasActive = record.IsActive;
             return;
@@ -319,43 +329,47 @@ internal sealed class BrokerHistoryForm : Form
         if (conversationUnchanged)
             return;
 
-        bool followTail = isSameRun && RichTextBoxScrollHelper.IsAtBottom(_conversation);
-        Point scrollPosition = RichTextBoxScrollHelper.Capture(_conversation);
-        int selectionStart = _conversation.SelectionStart;
-        int selectionLength = _conversation.SelectionLength;
-        _conversation.SuspendLayout();
-        _conversation.Clear();
-        if (!string.IsNullOrWhiteSpace(record.SystemInstructions))
-            AppendSection("SYSTEM", record.SystemInstructions, SystemHeadingColor());
-        AppendSection("PROMPT", record.PromptText, PromptHeadingColor());
-        AppendResponseSection(record, response);
-        if (failure.Length > 0)
-            AppendSection("FAILURE", failure, FailureHeadingColor());
-        _conversation.ResumeLayout();
-
-        _renderedRunId = record.RunId;
-        _renderedResponseText = response;
-        _renderedFailureText = failure;
-        _renderedWasActive = record.IsActive;
-        _forceFullRender = false;
-
         if (!isSameRun)
+            _motionController.Reset(record.IsActive);
+        RichTextUpdateState updateState = _motionController.BeginContentUpdate();
+        try
         {
-            _conversation.Select(record.IsActive ? _conversation.TextLength : 0, 0);
-            _conversation.ScrollToCaret();
-            return;
-        }
+            _conversation.SuspendLayout();
+            try
+            {
+                _conversation.Clear();
+                if (!string.IsNullOrWhiteSpace(record.SystemInstructions))
+                    AppendSection("SYSTEM", record.SystemInstructions, SystemHeadingColor());
+                AppendSection("PROMPT", record.PromptText, PromptHeadingColor());
+                AppendResponseSection(record, response);
+                if (failure.Length > 0)
+                    AppendSection("FAILURE", failure, FailureHeadingColor());
+            }
+            finally
+            {
+                _conversation.ResumeLayout();
+            }
 
-        if (followTail)
+            _renderedRunId = record.RunId;
+            _renderedResponseText = response;
+            _renderedFailureText = failure;
+            _renderedWasActive = record.IsActive;
+            _forceFullRender = false;
+
+            RichTextUpdateState completionState = isSameRun
+                ? updateState
+                : new RichTextUpdateState(
+                    Point.Empty,
+                    record.IsActive ? _conversation.TextLength : 0,
+                    0,
+                    record.IsActive);
+            _motionController.EndContentUpdate(completionState);
+        }
+        catch
         {
-            ScrollToResponseTail();
-            return;
+            _motionController.AbortContentUpdate(updateState);
+            throw;
         }
-
-        _conversation.Select(
-            Math.Min(selectionStart, _conversation.TextLength),
-            Math.Min(selectionLength, Math.Max(0, _conversation.TextLength - selectionStart)));
-        RichTextBoxScrollHelper.Restore(_conversation, scrollPosition);
     }
 
     private void AppendSection(string heading, string body, Color headingColor)
@@ -377,41 +391,51 @@ internal sealed class BrokerHistoryForm : Form
     private void AppendResponseSection(BrokerHistoryRecord record, string response)
     {
         AppendHeading("RESPONSE", ResponseHeadingColor());
-        if (response.Length > 0)
-            _conversation.AppendText(response);
-        else
-            _conversation.AppendText(record.IsActive ? "Waiting for output…" : "No response text was returned.");
+        _responsePreviewStart = _conversation.TextLength;
+        _renderedResponsePreview = response.Length > 0
+            ? MarkdownPreviewParser.Parse(response)
+            : new MarkdownPreviewDocument(
+                record.IsActive ? "Waiting for output…" : "No response text was returned.",
+                []);
+        _conversation.AppendText(_renderedResponsePreview.Text);
+        _responsePreviewLength = _renderedResponsePreview.Text.Length;
+        _markdownRenderer.Apply(
+            _renderedResponsePreview,
+            _responsePreviewStart,
+            previewStart: 0,
+            fadeFromPreviewOffset: int.MaxValue);
         if (!record.IsActive)
             _conversation.AppendText(Environment.NewLine + Environment.NewLine);
     }
 
-    private void AppendResponseDelta(string delta)
+    private void AppendResponseDelta(string response)
     {
-        bool followTail = RichTextBoxScrollHelper.IsAtBottom(_conversation);
-        Point scrollPosition = RichTextBoxScrollHelper.Capture(_conversation);
-        int selectionStart = _conversation.SelectionStart;
-        int selectionLength = _conversation.SelectionLength;
+        MarkdownPreviewDocument preview = MarkdownPreviewParser.Parse(response);
+        int commonPrefix = CommonPrefixLength(_renderedResponsePreview.Text, preview.Text);
+        int replacementStart = StartOfLine(preview.Text, commonPrefix);
+        replacementStart = Math.Min(replacementStart, _renderedResponsePreview.Text.Length);
 
-        _conversation.SelectionStart = _conversation.TextLength;
-        _conversation.SelectionLength = 0;
-        _conversation.SelectionColor = _conversation.ForeColor;
-        _conversation.SelectionFont = _conversation.Font;
-        _conversation.AppendText(delta);
-
-        if (followTail)
+        RichTextUpdateState updateState = _motionController.BeginContentUpdate();
+        try
         {
-            ScrollToResponseTail();
-            return;
+            _conversation.Select(
+                _responsePreviewStart + replacementStart,
+                _responsePreviewLength - replacementStart);
+            _conversation.SelectedText = preview.Text[replacementStart..];
+            _responsePreviewLength = preview.Text.Length;
+            IReadOnlyList<RichTextFadeRun> fadeRuns = _markdownRenderer.Apply(
+                preview,
+                _responsePreviewStart,
+                replacementStart,
+                commonPrefix);
+            _renderedResponsePreview = preview;
+            _motionController.EndContentUpdate(updateState, fadeRuns);
         }
-
-        _conversation.Select(selectionStart, selectionLength);
-        RichTextBoxScrollHelper.Restore(_conversation, scrollPosition);
-    }
-
-    private void ScrollToResponseTail()
-    {
-        _conversation.Select(_conversation.TextLength, 0);
-        _conversation.ScrollToCaret();
+        catch
+        {
+            _motionController.AbortContentUpdate(updateState);
+            throw;
+        }
     }
 
     private void ResetRenderedConversation()
@@ -420,7 +444,67 @@ internal sealed class BrokerHistoryForm : Form
         _renderedResponseText = string.Empty;
         _renderedFailureText = string.Empty;
         _renderedWasActive = false;
+        _renderedResponsePreview = MarkdownPreviewDocument.Empty;
+        _responsePreviewStart = 0;
+        _responsePreviewLength = 0;
         _forceFullRender = true;
+    }
+
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing)
+        {
+            _motionController.Dispose();
+            _markdownRenderer.Dispose();
+        }
+        base.Dispose(disposing);
+    }
+
+    private static int CommonPrefixLength(string first, string second)
+    {
+        int length = Math.Min(first.Length, second.Length);
+        int index = 0;
+        while (index < length && first[index] == second[index])
+            index++;
+        return index;
+    }
+
+    private static int StartOfLine(string text, int offset)
+    {
+        int searchStart = Math.Min(offset, text.Length) - 1;
+        if (searchStart < 0)
+            return 0;
+        int newline = text.LastIndexOf('\n', searchStart);
+        return newline < 0 ? 0 : newline + 1;
+    }
+
+    private bool HasValidResponsePreviewRange()
+    {
+        if (_responsePreviewStart < 0
+            || _responsePreviewLength < 0
+            || _responsePreviewStart + _responsePreviewLength > _conversation.TextLength
+            || _responsePreviewLength != _renderedResponsePreview.Text.Length)
+        {
+            return false;
+        }
+
+        return _conversation.Text.AsSpan(
+            _responsePreviewStart,
+            _responsePreviewLength).SequenceEqual(_renderedResponsePreview.Text);
+    }
+
+    private static void OpenConversationLink(object? sender, LinkClickedEventArgs eventArgs)
+    {
+        if (!Uri.TryCreate(eventArgs.LinkText, UriKind.Absolute, out Uri? uri)
+            || uri.Scheme is not ("http" or "https"))
+        {
+            return;
+        }
+
+        System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(uri.AbsoluteUri)
+        {
+            UseShellExecute = true,
+        });
     }
 
     private void RequestDeleteSelected()

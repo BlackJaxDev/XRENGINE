@@ -41,7 +41,7 @@ namespace XREngine
                 return false;
             }
 
-            var project = XRProject.Load(projectFilePath);
+            var project = XRProject.Load(projectFilePath, Assets);
             if (project is null)
             {
                 Debug.LogWarning($"Failed to load project from: {projectFilePath}");
@@ -1053,7 +1053,7 @@ namespace XREngine
 
             try
             {
-                var project = XRProject.CreateNew(projectDirectoryPath, projectName);
+                var project = XRProject.CreateNew(projectDirectoryPath, projectName, Assets);
                 
                 // Save the project file
                 if (Assets is not null && !string.IsNullOrWhiteSpace(project.FilePath))

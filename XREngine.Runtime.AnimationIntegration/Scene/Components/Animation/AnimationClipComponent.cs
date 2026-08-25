@@ -7,6 +7,7 @@ using XREngine.Data.Animation;
 using XREngine.Scene.Transforms;
 using XREngine.Extensions;
 using System.Diagnostics;
+using XREngine.Animation.Importers;
 
 namespace XREngine.Components.Animation
 {
@@ -91,6 +92,17 @@ namespace XREngine.Components.Animation
 
         public bool IsPlaying => _isPlaying;
         public bool IsPaused => _isPaused;
+
+        private string _playbackCapabilityDiagnostic = string.Empty;
+        /// <summary>
+        /// Last capability, coordinate-contract, or avatar-definition reason
+        /// that prevented this component from evaluating its clip.
+        /// </summary>
+        public string PlaybackCapabilityDiagnostic
+        {
+            get => _playbackCapabilityDiagnostic;
+            private set => SetField(ref _playbackCapabilityDiagnostic, value);
+        }
 
         private EHumanoidRootMotionApplicationMode _rootMotionApplicationMode;
         /// <summary>
@@ -205,6 +217,10 @@ namespace XREngine.Components.Animation
             switch (propName)
             {
                 case nameof(Animation):
+                    PlaybackCapabilityDiagnostic = string.Empty;
+                    if (IsActiveInHierarchy && StartOnActivate)
+                        Start();
+                    break;
                 case nameof(StartOnActivate):
                     if (IsActiveInHierarchy && StartOnActivate)
                         Start();
@@ -304,6 +320,12 @@ namespace XREngine.Components.Animation
             if (Animation is null || _isPlaying)
                 return false;
 
+            if (!TryValidatePlaybackCapabilities(out string diagnostic))
+            {
+                Debug.Animation($"[AnimationClipComponent] Playback rejected for '{Animation.Name}': {diagnostic}");
+                return false;
+            }
+
             _isPlaying = true;
 
             if (SuspendSiblingStateMachine && _suspendedSiblingAnimator is null && TryGetSiblingComponent<AnimStateMachineComponent>(out var animator) && animator is not null)
@@ -394,6 +416,12 @@ namespace XREngine.Components.Animation
             if (Animation is null)
                 return;
 
+            if (!TryValidatePlaybackCapabilities(out string diagnostic))
+            {
+                Debug.Animation($"[AnimationClipComponent] Evaluation rejected for '{Animation.Name}': {diagnostic}");
+                return;
+            }
+
             EnsureHumanoidAnimationIKSolver();
             ResetRootMotionBaselineIfNeeded();
             EnsureInitialized();
@@ -418,6 +446,53 @@ namespace XREngine.Components.Animation
             }
 
             PublishRootMotion();
+        }
+
+        /// <summary>
+        /// Runs the same preflight used by direct and deferred playback without
+        /// changing component state.
+        /// </summary>
+        public bool TryValidatePlaybackCapabilities(out string diagnostic)
+        {
+            AnimationClip? clip = Animation;
+            if (clip is null)
+            {
+                PlaybackCapabilityDiagnostic = "No animation clip is assigned.";
+                diagnostic = PlaybackCapabilityDiagnostic;
+                return false;
+            }
+
+            if (!clip.TryValidateUnityPlaybackCapabilities(out diagnostic))
+            {
+                PlaybackCapabilityDiagnostic = diagnostic;
+                return false;
+            }
+
+            UnityAnimationImportManifest? manifest = clip.UnityImportManifest;
+            bool requiresHumanoid = manifest?.RequiresHumanoidAvatar == true
+                || clip.HasMuscleChannels
+                || clip.HasRootMotion
+                || clip.HasIKGoals;
+            if (requiresHumanoid)
+            {
+                HumanoidComponent? humanoid = GetSiblingHumanoid();
+                if (humanoid is null)
+                {
+                    diagnostic = "The Unity clip contains humanoid data, but no sibling HumanoidComponent owns the target avatar definition.";
+                    PlaybackCapabilityDiagnostic = diagnostic;
+                    return false;
+                }
+
+                if (!humanoid.TryValidateAvatarDefinitionForPlayback(out diagnostic))
+                {
+                    PlaybackCapabilityDiagnostic = diagnostic;
+                    return false;
+                }
+            }
+
+            PlaybackCapabilityDiagnostic = string.Empty;
+            diagnostic = string.Empty;
+            return true;
         }
 
         /// <summary>

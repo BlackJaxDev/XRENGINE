@@ -51,7 +51,7 @@ public sealed class XRTexture2DYamlTypeConverter : IYamlTypeConverter
 
     private static XRTexture2D? ResolveExternalReference(Guid id)
     {
-        IRenderAssetSerializationServices services = RenderAssetSerializationServices.Current;
+        IAssetSerializationServices services = AssetSerializationServices.Current;
         if (services.TryGetAssetById(id, out XRAsset? loadedAsset) && loadedAsset is XRTexture2D loadedTexture)
             return loadedTexture;
 

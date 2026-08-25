@@ -23,7 +23,9 @@ using XREngine.Data.Core;
 using XREngine.Data.Geometry;
 using XREngine.Core.Files;
 using XREngine.Editor;
+using XREngine.Editor.Assets;
 using XREngine.Editor.Mcp;
+using XREngine.Editor.Settings;
 using XREngine.Fbx;
 using XREngine.Native;
 using XREngine.Rendering;
@@ -34,6 +36,7 @@ using XREngine.Runtime.Bootstrap;
 using XREngine.Runtime.Bootstrap.Builders;
 using XREngine.Scene;
 using XREngine.Scene.Transforms;
+using XREngine.Settings;
 using static XREngine.Engine;
 using static XREngine.Rendering.XRWorldInstance;
 
@@ -82,8 +85,11 @@ internal partial class Program
     [STAThread]
     private static void Main(string[] args)
     {
+        using IDisposable editorSecretCipherServices =
+            SecretCipherServices.Install(new EditorSecretCipherServices());
         XREnvironment.Initialize();
         RuntimeRenderingBootstrap.InstallEngineHostServices();
+        using IDisposable editorThirdPartyAssetWatcher = EditorThirdPartyAssetWatcher.Install(Engine.Assets);
         WriteBootstrapTrace("Editor process entry.");
         InstallGlobalCrashDiagnostics();
 

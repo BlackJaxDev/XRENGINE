@@ -56,7 +56,6 @@ namespace XREngine.Scene.Prefabs
         "md5mesh",
         "mdc",
         "mdl",
-        "mesh",
         "mesh.xml",
         "mot",
         "ms3d",
@@ -91,7 +90,7 @@ namespace XREngine.Scene.Prefabs
         "zgl")]
     [XRAssetInspector("XREngine.Editor.AssetEditors.XRPrefabSourceInspector")]
     [MemoryPackable(GenerateType.NoGenerate)]
-    public partial class XRPrefabSource : XRAsset
+    public partial class XRPrefabSource : XRAsset, IModelCacheAsset
     {
         private sealed class RestoreProcessMeshesAsyncScope(ModelImportOptions options, bool? requestedProcessMeshesAsynchronously) : IDisposable
         {

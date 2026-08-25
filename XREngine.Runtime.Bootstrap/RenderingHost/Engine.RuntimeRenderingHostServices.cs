@@ -20,6 +20,7 @@ using XREngine.Rendering.Occlusion;
 using XREngine.Rendering.Compute;
 using XREngine.Rendering.Shadows;
 using XREngine.Rendering.Vulkan;
+using XREngine.Runtime.Bootstrap;
 using XREngine.Scene;
 using XREngine.Scene.Physics;
 using XREngine.Scene.Physics.Jitter2;
@@ -35,6 +36,7 @@ internal sealed class EngineRuntimeRenderingHostServices :
     private const int MaxConsecutiveVrDesktopBudgetSkips = 2;
 
     private readonly RendererBackendCatalog _rendererBackends = new();
+    private IDisposable? _assetServices;
     private IDisposable? _rendererBackendRegistrations;
     private readonly object _vrDesktopPressureLock = new();
     private readonly object _renderOutputGraphLock = new();
@@ -47,10 +49,23 @@ internal sealed class EngineRuntimeRenderingHostServices :
     private ulong _vrDesktopPressureFrameId;
     private bool _vrDesktopPressureHoldCurrentFrame;
 
-    public EngineRuntimeRenderingHostServices(bool registerRendererBackends)
+    public EngineRuntimeRenderingHostServices(
+        bool registerRendererBackends,
+        bool installAssetServices)
     {
-        if (registerRendererBackends)
-            _rendererBackendRegistrations = BuiltInRendererBackendModules.RegisterAll(_rendererBackends);
+        if (installAssetServices)
+            _assetServices = RuntimeAssetBootstrap.InstallEngineAssetServices();
+
+        try
+        {
+            if (registerRendererBackends)
+                _rendererBackendRegistrations = BuiltInRendererBackendModules.RegisterAll(_rendererBackends);
+        }
+        catch
+        {
+            Interlocked.Exchange(ref _assetServices, null)?.Dispose();
+            throw;
+        }
     }
 
     public IRendererBackendCatalog RendererBackends => _rendererBackends;
@@ -59,6 +74,7 @@ internal sealed class EngineRuntimeRenderingHostServices :
     {
         Interlocked.Exchange(ref _rendererBackendRegistrations, null)?.Dispose();
         _rendererBackends.Dispose();
+        Interlocked.Exchange(ref _assetServices, null)?.Dispose();
     }
 
     public IDisposable? StartProfileScope(string? scopeName)
