@@ -30,6 +30,17 @@ public interface IRuntimeWorldContext
     void EnqueueRuntimeWorldMatrixChange(RuntimeWorldObjectBase worldObject, Matrix4x4 worldMatrix);
 }
 
+/// <summary>
+/// Resolves optional world services without making scene objects depend on a
+/// concrete cross-layer world aggregate.  Capability owners are responsible
+/// for attaching and detaching themselves with the lifetime of their host.
+/// </summary>
+public interface IRuntimeWorldCapabilityProvider
+{
+    bool TryGetCapability<TCapability>(out TCapability? capability)
+        where TCapability : class;
+}
+
 public interface IRuntimeWorldObjectServices
 {
     bool IsClient { get; }
@@ -93,8 +104,16 @@ public abstract class XRWorldObjectBase : XRObjectBase
         internal protected set => SetField(ref _world, value);
     }
 
-    public TWorld? WorldAs<TWorld>() where TWorld : class, IRuntimeWorldContext
-        => World as TWorld;
+    public TWorld? WorldAs<TWorld>() where TWorld : class
+    {
+        if (World is TWorld direct)
+            return direct;
+
+        return World is IRuntimeWorldCapabilityProvider capabilities
+            && capabilities.TryGetCapability<TWorld>(out TWorld? attached)
+            ? attached
+            : null;
+    }
 
     [YamlIgnore]
     [Browsable(false)]

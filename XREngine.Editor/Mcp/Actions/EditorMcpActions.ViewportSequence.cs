@@ -51,7 +51,7 @@ public sealed partial class EditorMcpActions
                 out string? validationError))
             return Task.FromResult(new McpToolResponse(validationError ?? "Invalid viewport sequence capture options.", isError: true));
 
-        XRViewport? viewport = ResolveViewport(context.WorldInstance, cameraNodeId, windowIndex, viewportIndex);
+        XRViewport? viewport = ResolveViewport(context.World, cameraNodeId, windowIndex, viewportIndex);
         if (viewport is null)
             return Task.FromResult(new McpToolResponse("No viewport found to capture.", isError: true));
 

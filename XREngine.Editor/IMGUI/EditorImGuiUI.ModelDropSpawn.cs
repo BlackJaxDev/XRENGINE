@@ -17,7 +17,7 @@ public static partial class EditorImGuiUI
 {
     private static SceneNode? _prefabPreviewNode;
     private static XRPrefabSource? _prefabPreviewPrefab;
-    private static XRWorldInstance? _prefabPreviewWorld;
+    private static RuntimeWorld? _prefabPreviewWorld;
     private static SceneNode? _prefabPreviewParent;
     private static bool _prefabPreviewActive;
     private static bool _prefabPreviewHoveredThisFrame;
@@ -439,7 +439,7 @@ public static partial class EditorImGuiUI
     /// viewport drag/drop. Kept internal so editor automation can exercise the
     /// user-facing workflow without duplicating its loading or prefab logic.
     /// </summary>
-    internal static bool TryHandleDroppedSpawnableAsset(XRWorldInstance world, SceneNode? parent, string path, Vector3? worldPosition = null)
+    internal static bool TryHandleDroppedSpawnableAsset(RuntimeWorld world, SceneNode? parent, string path, Vector3? worldPosition = null)
     {
         if (world is null || string.IsNullOrWhiteSpace(path))
             return false;
@@ -457,7 +457,7 @@ public static partial class EditorImGuiUI
         return true;
     }
 
-    private static bool TryHandleDroppedAsset(XRWorldInstance world, SceneNode? parent, string path, Vector3? worldPosition = null)
+    private static bool TryHandleDroppedAsset(RuntimeWorld world, SceneNode? parent, string path, Vector3? worldPosition = null)
     {
         if (world is null || string.IsNullOrWhiteSpace(path))
             return false;
@@ -487,7 +487,7 @@ public static partial class EditorImGuiUI
         return true;
     }
 
-    private static bool SpawnDroppedPrefab(XRWorldInstance world, SceneNode? parent, XRPrefabSource prefab, Vector3? worldPosition, bool enqueueSceneEdit)
+    private static bool SpawnDroppedPrefab(RuntimeWorld world, SceneNode? parent, XRPrefabSource prefab, Vector3? worldPosition, bool enqueueSceneEdit)
     {
         if (prefab is null)
             return false;
@@ -509,7 +509,7 @@ public static partial class EditorImGuiUI
         return true;
     }
 
-    private static bool SpawnDroppedModel(XRWorldInstance world, SceneNode? parent, Model model, string path, Vector3? worldPosition, bool enqueueSceneEdit)
+    private static bool SpawnDroppedModel(RuntimeWorld world, SceneNode? parent, Model model, string path, Vector3? worldPosition, bool enqueueSceneEdit)
     {
         if (model is null)
             return false;
@@ -527,13 +527,13 @@ public static partial class EditorImGuiUI
         return true;
     }
 
-    private static void QueueDroppedSpawnableAssetSpawn(XRWorldInstance world, SceneNode? parent, string path, Vector3? worldPosition)
+    private static void QueueDroppedSpawnableAssetSpawn(RuntimeWorld world, SceneNode? parent, string path, Vector3? worldPosition)
     {
         Guid trackingId = EditorJobTracker.TrackOperation($"Spawn {Path.GetFileName(path)}", "Loading dropped asset...");
         _ = SpawnDroppedAssetWhenReadyAsync(world, parent, path, worldPosition, trackingId);
     }
 
-    private static async Task SpawnDroppedAssetWhenReadyAsync(XRWorldInstance world, SceneNode? parent, string path, Vector3? worldPosition, Guid trackingId)
+    private static async Task SpawnDroppedAssetWhenReadyAsync(RuntimeWorld world, SceneNode? parent, string path, Vector3? worldPosition, Guid trackingId)
     {
         string? error = await TrySpawnDroppedAssetThroughDropPathAsync(
             world,
@@ -552,7 +552,7 @@ public static partial class EditorImGuiUI
     /// automation share this loader and the same final spawn methods.
     /// </summary>
     internal static async Task<string?> TrySpawnDroppedAssetThroughDropPathAsync(
-        XRWorldInstance world,
+        RuntimeWorld world,
         SceneNode? parent,
         string path,
         Vector3? worldPosition)
@@ -594,13 +594,13 @@ public static partial class EditorImGuiUI
         }
     }
 
-    private static void QueueDroppedAssetApply(XRWorldInstance world, SceneNode? parent, string path, Vector3? worldPosition)
+    private static void QueueDroppedAssetApply(RuntimeWorld world, SceneNode? parent, string path, Vector3? worldPosition)
     {
         Guid trackingId = EditorJobTracker.TrackOperation($"Drop {Path.GetFileName(path)}", "Loading dropped asset...");
         _ = ApplyDroppedAssetWhenReadyAsync(world, parent, path, worldPosition, trackingId);
     }
 
-    private static async Task ApplyDroppedAssetWhenReadyAsync(XRWorldInstance world, SceneNode? parent, string path, Vector3? worldPosition, Guid trackingId)
+    private static async Task ApplyDroppedAssetWhenReadyAsync(RuntimeWorld world, SceneNode? parent, string path, Vector3? worldPosition, Guid trackingId)
     {
         try
         {
@@ -653,19 +653,19 @@ public static partial class EditorImGuiUI
         }
     }
 
-    private static bool SpawnPrefabNode(XRWorldInstance world, SceneNode? parent, XRPrefabSource prefab, Vector3? worldPosition = null)
+    private static bool SpawnPrefabNode(RuntimeWorld world, SceneNode? parent, XRPrefabSource prefab, Vector3? worldPosition = null)
     {
         if (world is null || prefab is null)
             return false;
 
-        SceneNode instance = world.InstantiatePrefab(prefab, parent, maintainWorldTransform: false);
+        SceneNode instance = SceneNodePrefabUtility.Instantiate(prefab, world, parent, maintainWorldTransform: false);
 
         ApplySpawnWorldPosition(instance, worldPosition);
         FinalizeSpawnedPrefabNode(world, instance);
         return true;
     }
 
-    private static void FinalizeSpawnedPrefabNode(XRWorldInstance world, SceneNode instance)
+    private static void FinalizeSpawnedPrefabNode(RuntimeWorld world, SceneNode instance)
     {
         if (world is null || instance is null)
             return;
@@ -726,7 +726,7 @@ public static partial class EditorImGuiUI
         MarkSceneHierarchyDirty(instance, owningScene, world);
     }
 
-    private static XRScene? ResolveDefaultSpawnScene(XRWorldInstance world)
+    private static XRScene? ResolveDefaultSpawnScene(RuntimeWorld world)
     {
         var scenes = world.TargetWorld?.Scenes;
         if (scenes is null || scenes.Count == 0)
@@ -737,7 +737,7 @@ public static partial class EditorImGuiUI
             ?? scenes.FirstOrDefault();
     }
 
-    private static void UpdatePrefabPreview(XRWorldInstance world, SceneNode? parent, XRPrefabSource prefab, Vector3? worldPosition = null)
+    private static void UpdatePrefabPreview(RuntimeWorld world, SceneNode? parent, XRPrefabSource prefab, Vector3? worldPosition = null)
     {
         if (world is null || prefab is null)
             return;
@@ -756,7 +756,7 @@ public static partial class EditorImGuiUI
 
         RevertPrefabPreview();
 
-        SceneNode? instance = world.InstantiatePrefab(prefab, parent, maintainWorldTransform: false);
+        SceneNode? instance = SceneNodePrefabUtility.Instantiate(prefab, world, parent, maintainWorldTransform: false);
         if (instance is null)
             return;
 
@@ -769,7 +769,7 @@ public static partial class EditorImGuiUI
         MarkSceneHierarchyDirty(instance, owningScene: null, world);
     }
 
-    private static bool TryFinalizePrefabPreview(XRWorldInstance world, SceneNode? parent, XRPrefabSource prefab)
+    private static bool TryFinalizePrefabPreview(RuntimeWorld world, SceneNode? parent, XRPrefabSource prefab)
     {
         if (!_prefabPreviewActive || _prefabPreviewNode is null)
             return false;
@@ -796,9 +796,9 @@ public static partial class EditorImGuiUI
         }
 
         SceneNode node = _prefabPreviewNode;
-        XRWorldInstance? world = _prefabPreviewWorld is not null
+        RuntimeWorld? world = _prefabPreviewWorld is not null
             ? _prefabPreviewWorld
-            : node.World as XRWorldInstance;
+            : node.World as RuntimeWorld;
         var parentTransform = node.Transform.Parent;
 
         if (parentTransform is not null)
@@ -820,7 +820,7 @@ public static partial class EditorImGuiUI
         _prefabPreviewActive = false;
     }
 
-    private static void SpawnModelNode(XRWorldInstance world, SceneNode? parent, Model model, string modelAssetPath, Vector3? worldPosition = null)
+    private static void SpawnModelNode(RuntimeWorld world, SceneNode? parent, Model model, string modelAssetPath, Vector3? worldPosition = null)
     {
         if (world is null || model is null)
             return;

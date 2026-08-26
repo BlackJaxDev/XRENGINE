@@ -1,7 +1,10 @@
 using System.Numerics;
+using System.Diagnostics;
 using MemoryPack;
 using XREngine.Animation.IK;
+using XREngine.Animation.Importers;
 using XREngine.Core.Files;
+using XREngine.Components.Animation;
 using XREngine.Data;
 using XREngine.Data.MMD;
 using YamlDotNet.Serialization;
@@ -141,6 +144,42 @@ namespace XREngine.Animation
         private AnimationMember? _rootMember;
 
         [MemoryPackIgnore]
+        private readonly Dictionary<AnimationMember, object?[]> _unityHumanoidMethodArgumentBaselines = [];
+
+        [MemoryPackIgnore]
+        private long _unityHumanoidStatePlaybackTicks;
+
+        [MemoryPackIgnore]
+        private long _unityHumanoidStateLoopCycle;
+
+        [MemoryPackIgnore]
+        private bool _unityHumanoidStateClockInitialized;
+
+        [MemoryPackIgnore]
+        private bool _unityHumanoidSourceWrapped;
+
+        [MemoryPackIgnore]
+        private float _unityHumanoidStateSampleTime;
+
+        [MemoryPackIgnore]
+        private float _unityHumanoidStateSamplePhase;
+
+        /// <summary>Signed loop epoch for this clip when evaluated as a state-machine leaf.</summary>
+        [MemoryPackIgnore]
+        public long UnityHumanoidStateLoopCycle => _unityHumanoidStateLoopCycle;
+
+        /// <summary>
+        /// True when CycleOffset crossed the source endpoint inside the current logical cycle.
+        /// The runtime evaluator prefixes one conjugated generator in this case.
+        /// </summary>
+        [MemoryPackIgnore]
+        public bool UnityHumanoidSourceWrapped => _unityHumanoidSourceWrapped;
+
+        /// <summary>Effective source phase after CycleOffset for this state-machine leaf.</summary>
+        [MemoryPackIgnore]
+        public float UnityHumanoidStateSamplePhase => _unityHumanoidStateSamplePhase;
+
+        [MemoryPackIgnore]
         [YamlIgnore]
         public AnimationMember? RootMember
         {
@@ -225,6 +264,11 @@ namespace XREngine.Animation
 
         public override void GetAnimationValues(MotionBase? parentMotion, IDictionary<string, AnimVar> variables, float weight)
         {
+            bool hasUnityHumanoidPolicy = TryGetUnityHumanoidEvaluationContext(
+                out UnityHumanoidRootMotionPolicy unityPolicy,
+                out float unitySampleTime,
+                out float unitySamplePhase);
+
             // Typed store path: write directly to ValueStore via slot indices (no boxing)
             if (SlotLayout is not null)
             {
@@ -238,6 +282,14 @@ namespace XREngine.Animation
                         member.WriteDefaultToStore(ValueStore);
                         continue;
                     }
+
+                    if (hasUnityHumanoidPolicy
+                        && TryWriteUnityHumanoidValueToStore(
+                            member,
+                            unityPolicy,
+                            unitySampleTime,
+                            unitySamplePhase))
+                        continue;
 
                     member.WriteCurrentValueToStore(ValueStore);
                 }
@@ -254,10 +306,469 @@ namespace XREngine.Animation
                     continue;
                 }
                 
-                object? animatedValue = kvp.Value.GetAnimationValue();
+                object? animatedValue = hasUnityHumanoidPolicy
+                    ? GetUnityHumanoidValueLegacy(
+                        kvp.Value,
+                        unityPolicy,
+                        unitySampleTime,
+                        unitySamplePhase)
+                    : kvp.Value.GetAnimationValue();
                 SetAnimValue(kvp.Key, animatedValue);
             }
             parentMotion?.CopyAnimationValuesFrom(this);
+        }
+
+        private bool TryGetUnityHumanoidEvaluationContext(
+            out UnityHumanoidRootMotionPolicy policy,
+            out float sampleTime,
+            out float samplePhase)
+        {
+            policy = default;
+            sampleTime = 0.0f;
+            samplePhase = 0.0f;
+            if (UnityHumanoidRootMotionSettings is not { } settings
+                || !UnityHumanoidRootMotionPolicy.TryCreate(settings, out policy, out _))
+                return false;
+
+            if (!_unityHumanoidStateClockInitialized)
+            {
+                float initialPlaybackTime = 0.0f;
+                AnimationMember[] members = AnimatedMembersArray;
+                for (int i = 0; i < members.Length; i++)
+                {
+                    if (members[i].Animation is BasePropAnim animation)
+                    {
+                        initialPlaybackTime = animation.CurrentTime;
+                        break;
+                    }
+                }
+                _unityHumanoidStatePlaybackTicks = SecondsToUnityHumanoidTicks(initialPlaybackTime);
+                _unityHumanoidStateLoopCycle = 0L;
+                _unityHumanoidStateClockInitialized = true;
+            }
+
+            float playbackTime = UnityHumanoidTicksToSeconds(_unityHumanoidStatePlaybackTicks);
+
+            if (!(LengthInSeconds > 0.0f) || !float.IsFinite(LengthInSeconds))
+            {
+                _unityHumanoidStateSampleTime = 0.0f;
+                _unityHumanoidStateSamplePhase = 0.0f;
+                _unityHumanoidSourceWrapped = false;
+                return true;
+            }
+
+            float shiftedTime = playbackTime + policy.NormalizedCycleOffset * LengthInSeconds;
+            sampleTime = policy.LoopTime
+                ? WrapUnityHumanoidSampleTime(shiftedTime, LengthInSeconds)
+                : Math.Clamp(shiftedTime, 0.0f, LengthInSeconds);
+            samplePhase = Math.Clamp(sampleTime / LengthInSeconds, 0.0f, 1.0f);
+            _unityHumanoidStateSampleTime = sampleTime;
+            _unityHumanoidStateSamplePhase = samplePhase;
+            _unityHumanoidSourceWrapped = policy.LoopTime
+                && policy.NormalizedCycleOffset > 0.0f
+                && playbackTime + policy.NormalizedCycleOffset * LengthInSeconds >= LengthInSeconds;
+            return true;
+        }
+
+        private static float WrapUnityHumanoidSampleTime(float time, float length)
+        {
+            float wrapped = time % length;
+            return wrapped < 0.0f ? wrapped + length : wrapped;
+        }
+
+        private bool TryWriteUnityHumanoidValueToStore(
+            AnimationMember member,
+            UnityHumanoidRootMotionPolicy policy,
+            float sampleTime,
+            float samplePhase)
+        {
+            if (!member.Slot.IsValid || member.Animation is null)
+                return false;
+
+            RestoreUnityHumanoidMethodArguments(member);
+            switch (member.Slot.Type)
+            {
+                case EAnimValueType.Float when TrySampleFloat(member.Animation, sampleTime, out float floatValue):
+                    floatValue = ApplyUnityHumanoidLoopPose(member, policy, samplePhase, floatValue);
+                    ApplyUnityHumanoidMirror(member, policy, ref floatValue);
+                    ValueStore.SetFloat(member.Slot.TypeIndex, floatValue);
+                    return true;
+
+                case EAnimValueType.Vector2 when member.Animation is PropAnimVector2 vector2Animation:
+                    ValueStore.SetVector2(member.Slot.TypeIndex, vector2Animation.GetValue(sampleTime));
+                    return true;
+
+                case EAnimValueType.Vector3 when member.Animation is PropAnimVector3 vector3Animation:
+                    Vector3 vector3Value = vector3Animation.GetValue(sampleTime);
+                    vector3Value = ApplyUnityHumanoidLoopPose(member, policy, samplePhase, vector3Value);
+                    ApplyUnityHumanoidMirror(member, policy, ref vector3Value);
+                    ValueStore.SetVector3(member.Slot.TypeIndex, vector3Value);
+                    return true;
+
+                case EAnimValueType.Vector4 when member.Animation is PropAnimVector4 vector4Animation:
+                    ValueStore.SetVector4(member.Slot.TypeIndex, vector4Animation.GetValue(sampleTime));
+                    return true;
+
+                case EAnimValueType.Quaternion when member.Animation is PropAnimQuaternion quaternionAnimation:
+                    Quaternion quaternionValue = quaternionAnimation.GetValue(sampleTime);
+                    quaternionValue = ApplyUnityHumanoidLoopPose(member, policy, samplePhase, quaternionValue);
+                    ApplyUnityHumanoidMirror(member, policy, ref quaternionValue);
+                    ValueStore.SetQuaternion(member.Slot.TypeIndex, quaternionValue);
+                    return true;
+
+                case EAnimValueType.Bool when member.Animation is PropAnimBool boolAnimation:
+                    ValueStore.SetBool(member.Slot.TypeIndex, boolAnimation.GetValue(sampleTime));
+                    return true;
+
+                default:
+                    ValueStore.SetValue(member.Slot, member.Animation.GetValueGeneric(sampleTime));
+                    return true;
+            }
+        }
+
+        private object? GetUnityHumanoidValueLegacy(
+            AnimationMember member,
+            UnityHumanoidRootMotionPolicy policy,
+            float sampleTime,
+            float samplePhase)
+        {
+            RestoreUnityHumanoidMethodArguments(member);
+            object? value = member.Animation?.GetValueGeneric(sampleTime) ?? member.DefaultValue;
+            switch (value)
+            {
+                case float floatValue:
+                    floatValue = ApplyUnityHumanoidLoopPose(member, policy, samplePhase, floatValue);
+                    ApplyUnityHumanoidMirror(member, policy, ref floatValue);
+                    return floatValue;
+                case Vector3 vector3Value:
+                    vector3Value = ApplyUnityHumanoidLoopPose(member, policy, samplePhase, vector3Value);
+                    ApplyUnityHumanoidMirror(member, policy, ref vector3Value);
+                    return vector3Value;
+                case Quaternion quaternionValue:
+                    quaternionValue = ApplyUnityHumanoidLoopPose(member, policy, samplePhase, quaternionValue);
+                    ApplyUnityHumanoidMirror(member, policy, ref quaternionValue);
+                    return quaternionValue;
+                default:
+                    return value;
+            }
+        }
+
+        private static bool TrySampleFloat(BasePropAnim animation, float sampleTime, out float value)
+        {
+            switch (animation)
+            {
+                case PropAnimFloat floatAnimation:
+                    value = floatAnimation.GetValue(sampleTime);
+                    return true;
+                case PropAnimMethod<float> methodAnimation when methodAnimation.GetValue is { } getValue:
+                    value = getValue(sampleTime);
+                    return true;
+                case PropAnimMethod<float> methodAnimation when methodAnimation.DefaultValue is float defaultValue:
+                    value = defaultValue;
+                    return true;
+                default:
+                    value = 0.0f;
+                    return false;
+            }
+        }
+
+        private float ApplyUnityHumanoidLoopPose(
+            AnimationMember member,
+            UnityHumanoidRootMotionPolicy policy,
+            float phase,
+            float value)
+        {
+            if (!policy.LoopPose
+                || !IsUnityHumanoidPoseMember(member)
+                || member.Animation is null
+                || !TrySampleFloat(member.Animation, 0.0f, out float start)
+                || !TrySampleFloat(member.Animation, LengthInSeconds, out float end))
+                return value;
+
+            return value + (start - end) * phase;
+        }
+
+        private Vector3 ApplyUnityHumanoidLoopPose(
+            AnimationMember member,
+            UnityHumanoidRootMotionPolicy policy,
+            float phase,
+            Vector3 value)
+        {
+            if (!policy.LoopPose
+                || !IsUnityHumanoidPoseMember(member)
+                || member.Animation is not PropAnimVector3 animation)
+                return value;
+
+            return value + (animation.GetValue(0.0f) - animation.GetValue(LengthInSeconds)) * phase;
+        }
+
+        private Quaternion ApplyUnityHumanoidLoopPose(
+            AnimationMember member,
+            UnityHumanoidRootMotionPolicy policy,
+            float phase,
+            Quaternion value)
+        {
+            if (!policy.LoopPose
+                || !IsUnityHumanoidPoseMember(member)
+                || member.Animation is not PropAnimQuaternion animation)
+                return value;
+
+            Quaternion start = Quaternion.Normalize(animation.GetValue(0.0f));
+            Quaternion end = Quaternion.Normalize(animation.GetValue(LengthInSeconds));
+            if (Quaternion.Dot(start, end) < 0.0f)
+                end = new Quaternion(-end.X, -end.Y, -end.Z, -end.W);
+            Quaternion correction = Quaternion.Slerp(
+                Quaternion.Identity,
+                Quaternion.Normalize(Quaternion.Inverse(end) * start),
+                phase);
+            return Quaternion.Normalize(value * correction);
+        }
+
+        private static bool IsUnityHumanoidPoseMember(AnimationMember member)
+            => member.MemberType == EAnimationMemberType.Method
+            && member.MemberName is "SetValue"
+                or "SetImportedRawValue"
+                or "SetAnimatedIKPosition"
+                or "SetAnimatedIKPositionX"
+                or "SetAnimatedIKPositionY"
+                or "SetAnimatedIKPositionZ"
+                or "SetAnimatedIKRotation"
+                or "SetAnimatedIKRotationX"
+                or "SetAnimatedIKRotationY"
+                or "SetAnimatedIKRotationZ"
+                or "SetAnimatedIKRotationW";
+
+        private void ApplyUnityHumanoidMirror(
+            AnimationMember member,
+            UnityHumanoidRootMotionPolicy policy,
+            ref float value)
+        {
+            if (!policy.Mirror || member.MemberType != EAnimationMemberType.Method)
+                return;
+
+            if (member.MemberName is "SetValue" or "SetImportedRawValue"
+                && TryGetUnityHumanoidMuscleArgument(member, out EHumanoidValue muscle))
+            {
+                member.MethodArguments[0] = UnityHumanoidMirrorOperator.MirrorMuscle(muscle, out float parity);
+                value *= parity;
+                return;
+            }
+
+            if (IsUnityHumanoidIKMember(member)
+                && TryGetUnityHumanoidGoalArgument(member, out ELimbEndEffector goal))
+                member.MethodArguments[0] = UnityHumanoidMirrorOperator.MirrorGoal(goal);
+
+            // RootT/RootQ remain in their imported basis here. The shared humanoid
+            // evaluator mirrors the complete Body sample once, after atomic staging.
+            if (member.MemberName is "SetAnimatedIKPositionX"
+                or "SetAnimatedIKRotationY" or "SetAnimatedIKRotationZ")
+                value = -value;
+        }
+
+        private void ApplyUnityHumanoidMirror(
+            AnimationMember member,
+            UnityHumanoidRootMotionPolicy policy,
+            ref Vector3 value)
+        {
+            if (!policy.Mirror || member.MemberType != EAnimationMemberType.Method)
+                return;
+
+            if (IsUnityHumanoidIKMember(member)
+                && TryGetUnityHumanoidGoalArgument(member, out ELimbEndEffector goal))
+            {
+                member.MethodArguments[0] = UnityHumanoidMirrorOperator.MirrorGoal(goal);
+                value = UnityHumanoidMirrorOperator.MirrorPosition(value);
+            }
+        }
+
+        private void ApplyUnityHumanoidMirror(
+            AnimationMember member,
+            UnityHumanoidRootMotionPolicy policy,
+            ref Quaternion value)
+        {
+            if (!policy.Mirror || member.MemberType != EAnimationMemberType.Method)
+                return;
+
+            if (IsUnityHumanoidIKMember(member)
+                && TryGetUnityHumanoidGoalArgument(member, out ELimbEndEffector goal))
+            {
+                member.MethodArguments[0] = UnityHumanoidMirrorOperator.MirrorGoal(goal);
+                value = UnityHumanoidMirrorOperator.MirrorRotation(value);
+            }
+        }
+
+        private static bool IsUnityHumanoidIKMember(AnimationMember member)
+            => member.MemberName.StartsWith("SetAnimatedIK", StringComparison.Ordinal);
+
+        private static bool TryGetUnityHumanoidMuscleArgument(
+            AnimationMember member,
+            out EHumanoidValue muscle)
+        {
+            if (member.MethodArguments.Length > 0 && member.MethodArguments[0] is EHumanoidValue value)
+            {
+                muscle = value;
+                return true;
+            }
+
+            muscle = default;
+            return false;
+        }
+
+        private static bool TryGetUnityHumanoidGoalArgument(
+            AnimationMember member,
+            out ELimbEndEffector goal)
+        {
+            if (member.MethodArguments.Length > 0 && member.MethodArguments[0] is ELimbEndEffector value)
+            {
+                goal = value;
+                return true;
+            }
+
+            goal = default;
+            return false;
+        }
+
+        private void RestoreUnityHumanoidMethodArguments(AnimationMember member)
+        {
+            if (member.MemberType != EAnimationMemberType.Method)
+                return;
+
+            if (!_unityHumanoidMethodArgumentBaselines.TryGetValue(member, out object?[]? baseline))
+            {
+                baseline = (object?[])member.MethodArguments.Clone();
+                _unityHumanoidMethodArgumentBaselines.Add(member, baseline);
+            }
+
+            int count = Math.Min(member.MethodArguments.Length, baseline.Length);
+            for (int i = 0; i < count; i++)
+            {
+                if (i != member.AnimatedMethodArgumentIndex)
+                    member.MethodArguments[i] = baseline[i];
+            }
+        }
+
+        internal void ResetUnityHumanoidEvaluationState()
+        {
+            foreach ((AnimationMember member, object?[] baseline) in _unityHumanoidMethodArgumentBaselines)
+            {
+                int count = Math.Min(member.MethodArguments.Length, baseline.Length);
+                for (int i = 0; i < count; i++)
+                {
+                    if (i != member.AnimatedMethodArgumentIndex)
+                        member.MethodArguments[i] = baseline[i];
+                }
+            }
+            _unityHumanoidMethodArgumentBaselines.Clear();
+            ResetUnityHumanoidStateClock(0.0f);
+        }
+
+        internal void ResetUnityHumanoidStateClock(float timeSeconds)
+        {
+            long lengthTicks = SecondsToUnityHumanoidTicks(LengthInSeconds);
+            _unityHumanoidStatePlaybackTicks = Math.Clamp(
+                SecondsToUnityHumanoidTicks(timeSeconds),
+                0L,
+                Math.Max(0L, lengthTicks));
+            _unityHumanoidStateLoopCycle = 0L;
+            _unityHumanoidStateClockInitialized = true;
+            _unityHumanoidSourceWrapped = false;
+            _unityHumanoidStateSampleTime = Math.Clamp(timeSeconds, 0.0f, Math.Max(0.0f, LengthInSeconds));
+            _unityHumanoidStateSamplePhase = LengthInSeconds > 0.0f
+                ? Math.Clamp(_unityHumanoidStateSampleTime / LengthInSeconds, 0.0f, 1.0f)
+                : 0.0f;
+        }
+
+        /// <summary>
+        /// Publishes the current authored muscle sample before Loop Pose correction. Feet-based
+        /// root projection consumes this sample before the corrected pose is committed.
+        /// </summary>
+        public void PublishUnityHumanoidProjectionMuscles(IUnityHumanoidProjectionPoseSink sink)
+            => PublishUnityHumanoidProjectionMusclesAtTime(_unityHumanoidStateSampleTime, sink);
+
+        /// <summary>
+        /// Publishes an authored pre-Loop-Pose muscle sample without changing the state-machine
+        /// clock. Endpoint probes use this to calculate feet-based Body seam correction before
+        /// the first visible evaluation.
+        /// </summary>
+        public void PublishUnityHumanoidProjectionMusclesAtTime(
+            float timeSeconds,
+            IUnityHumanoidProjectionPoseSink sink)
+        {
+            ArgumentNullException.ThrowIfNull(sink);
+            if (UnityHumanoidRootMotionSettings is not { } settings
+                || !UnityHumanoidRootMotionPolicy.TryCreate(
+                    settings,
+                    out UnityHumanoidRootMotionPolicy policy,
+                    out _)
+                || (!policy.LoopPose
+                    && (policy.BakePositionYIntoPose
+                        || policy.PositionYBasis is not EUnityHumanoidRootPositionYBasis.Feet)))
+                return;
+
+            AnimationMember[] members = AnimatedMembersArray;
+            for (int i = 0; i < members.Length; i++)
+            {
+                AnimationMember member = members[i];
+                if (member.MemberType != EAnimationMemberType.Method
+                    || member.MemberName is not ("SetValue" or "SetImportedRawValue")
+                    || member.Animation is not BasePropAnim animation
+                    || !TrySampleFloat(animation, timeSeconds, out float amount))
+                    continue;
+
+                RestoreUnityHumanoidMethodArguments(member);
+                if (!TryGetUnityHumanoidMuscleArgument(member, out EHumanoidValue muscle))
+                    continue;
+
+                if (policy.Mirror)
+                {
+                    muscle = UnityHumanoidMirrorOperator.MirrorMuscle(muscle, out float parity);
+                    amount *= parity;
+                }
+
+                bool flipImportedMuscleZ = member.MemberName == "SetImportedRawValue"
+                    && member.MethodArguments.Length > 2
+                    && member.MethodArguments[2] is true;
+                sink.SetUnityHumanoidProjectionMuscle(muscle, amount, flipImportedMuscleZ);
+            }
+        }
+
+        /// <summary>
+        /// Samples the imported-mapped RootT/RootQ leaf data without mutating its playback clock.
+        /// </summary>
+        public bool TrySampleUnityHumanoidBody(
+            float timeSeconds,
+            out Vector3 position,
+            out Quaternion rotation)
+        {
+            position = Vector3.Zero;
+            rotation = Quaternion.Identity;
+            bool hasPosition = false;
+            bool hasRotation = false;
+            AnimationMember[] members = AnimatedMembersArray;
+            for (int i = 0; i < members.Length; i++)
+            {
+                AnimationMember member = members[i];
+                if (member.Animation is not BasePropAnim animation
+                    || !TrySampleFloat(animation, timeSeconds, out float value))
+                    continue;
+
+                switch (member.MemberName)
+                {
+                    case "SetRootPositionX": position.X = value; hasPosition = true; break;
+                    case "SetRootPositionY": position.Y = value; hasPosition = true; break;
+                    case "SetRootPositionZ": position.Z = value; hasPosition = true; break;
+                    case "SetRootRotationX": rotation.X = value; hasRotation = true; break;
+                    case "SetRootRotationY": rotation.Y = value; hasRotation = true; break;
+                    case "SetRootRotationZ": rotation.Z = value; hasRotation = true; break;
+                    case "SetRootRotationW": rotation.W = value; hasRotation = true; break;
+                }
+            }
+
+            if (hasRotation && rotation.LengthSquared() > 1.0e-8f)
+                rotation = Quaternion.Normalize(rotation);
+            else
+                rotation = Quaternion.Identity;
+            return hasPosition || hasRotation;
         }
 
         private static object? Lerp(object? defaultvalue, object? animatedValue, float weight) => defaultvalue switch
@@ -272,13 +783,59 @@ namespace XREngine.Animation
 
         public override void Tick(float delta)
         {
+            AdvanceUnityHumanoidStateClock(SecondsToUnityHumanoidTicks(delta));
             TickPropertyAnimations(delta);
         }
 
         public override void Tick(long deltaTicks)
         {
+            AdvanceUnityHumanoidStateClock(deltaTicks);
             TickPropertyAnimations(deltaTicks);
         }
+
+        private void AdvanceUnityHumanoidStateClock(long deltaTicks)
+        {
+            if (!_unityHumanoidStateClockInitialized
+                || UnityHumanoidRootMotionSettings is not { } settings
+                || !UnityHumanoidRootMotionPolicy.TryCreate(settings, out UnityHumanoidRootMotionPolicy policy, out _))
+                return;
+
+            long lengthTicks = SecondsToUnityHumanoidTicks(LengthInSeconds);
+            if (lengthTicks <= 0L)
+                return;
+
+            long unwrappedTicks = _unityHumanoidStatePlaybackTicks + deltaTicks;
+            if (!policy.LoopTime)
+            {
+                _unityHumanoidStatePlaybackTicks = Math.Clamp(unwrappedTicks, 0L, lengthTicks);
+                return;
+            }
+
+            _unityHumanoidStateLoopCycle += CountUnityHumanoidWrappedCycles(unwrappedTicks, lengthTicks);
+            _unityHumanoidStatePlaybackTicks = WrapUnityHumanoidTicks(unwrappedTicks, lengthTicks);
+        }
+
+        private static long CountUnityHumanoidWrappedCycles(long unwrappedTicks, long lengthTicks)
+        {
+            long quotient = unwrappedTicks / lengthTicks;
+            if (unwrappedTicks % lengthTicks < 0L)
+                quotient--;
+            return quotient;
+        }
+
+        private static long WrapUnityHumanoidTicks(long ticks, long lengthTicks)
+        {
+            long wrapped = ticks % lengthTicks;
+            return wrapped < 0L ? wrapped + lengthTicks : wrapped;
+        }
+
+        private static long SecondsToUnityHumanoidTicks(double seconds)
+            => !double.IsFinite(seconds) || seconds == 0.0
+                ? 0L
+                : (long)Math.Round(seconds * Stopwatch.Frequency);
+
+        private static float UnityHumanoidTicksToSeconds(long ticks)
+            => (float)(ticks / (double)Stopwatch.Frequency);
 
         public override bool Load3rdParty(string filePath)
         {

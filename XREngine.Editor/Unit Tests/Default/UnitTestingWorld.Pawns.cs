@@ -603,9 +603,9 @@ public static partial class EditorUnitTests
             cameraNode.SuppressTransformDebugLineAndPoint = true;
             cameraNode.SuppressTransformTools = true;
 
-            if (parent.World is XRWorldInstance world)
+            if (parent.World is RuntimeWorld world)
             {
-                world.AddToEditorScene(cameraNode);
+                EditorWorldIntegrationRegistry.GetOrAttach(world).AddToEditorScene(cameraNode);
                 return;
             }
 
@@ -617,10 +617,10 @@ public static partial class EditorUnitTests
                 if (e.PropertyName != nameof(SceneNode.World))
                     return;
 
-                if (parent.World is not XRWorldInstance assignedWorld)
+                if (parent.World is not RuntimeWorld assignedWorld)
                     return;
 
-                assignedWorld.AddToEditorScene(cameraNode);
+                EditorWorldIntegrationRegistry.GetOrAttach(assignedWorld).AddToEditorScene(cameraNode);
                 parent.PropertyChanged -= OnParentWorldAssigned;
             }
 

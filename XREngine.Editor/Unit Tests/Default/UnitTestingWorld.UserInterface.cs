@@ -603,7 +603,8 @@ public static partial class EditorUnitTests
             // while still being part of the world instance for rendering/ticking.
             if (parent.World is not null)
             {
-                (parent.World as XRWorldInstance)?.AddToEditorScene(rootCanvasNode);
+                if (parent.World is RuntimeWorld world)
+                    EditorWorldIntegrationRegistry.GetOrAttach(world).AddToEditorScene(rootCanvasNode);
 
                 // Keep the immediate-world path consistent with the delayed attach path below.
                 // The hidden editor UI owns viewport components whose render callbacks are
@@ -620,7 +621,8 @@ public static partial class EditorUnitTests
 
                     if (parent.World is not null)
                     {
-                        (parent.World as XRWorldInstance)?.AddToEditorScene(rootCanvasNode);
+                        if (parent.World is RuntimeWorld world)
+                            EditorWorldIntegrationRegistry.GetOrAttach(world).AddToEditorScene(rootCanvasNode);
 
                         // In unit-test world construction, UI components are often created before the
                         // root node is attached to a world. When the world arrives later, component

@@ -962,7 +962,7 @@ namespace XREngine.Rendering.Pipelines.Commands
 
         private static Lights3DCollection? ResolveLightsForLight(LightComponent light)
         {
-            Lights3DCollection? lightWorldLights = light.WorldAs<IRuntimeRenderWorld>()?.Lights;
+            Lights3DCollection? lightWorldLights = light.World.GetRenderWorld()?.Lights;
             if (lightWorldLights is not null)
                 return lightWorldLights;
 

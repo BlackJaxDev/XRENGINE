@@ -33,8 +33,8 @@ internal sealed class EngineRuntimeVrRenderingServices : IRuntimeVrRenderingServ
     {
         XRCamera? leftCamera = (leftEyeCamera as EngineRuntimeVrEyeCamera)?.Camera;
         XRCamera? rightCamera = (rightEyeCamera as EngineRuntimeVrEyeCamera)?.Camera;
-        XRWorldInstance? xrWorld = world as XRWorldInstance;
-        RuntimeEngine.VRState.ViewInformation = (leftCamera, rightCamera, xrWorld, hmdNode);
+        IRuntimeRenderWorld? renderWorld = RuntimeRenderWorldRegistry.Get(world);
+        RuntimeEngine.VRState.ViewInformation = (leftCamera, rightCamera, renderWorld, hmdNode);
     }
 
     public bool TryEnsureHeadsetViewInformation(IRuntimeWorldContext? world, SceneNode? hmdNode, float nearPlane, float farPlane)

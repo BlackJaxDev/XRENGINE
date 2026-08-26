@@ -1,5 +1,6 @@
 using XREngine.Components.Animation;
 using XREngine.Input;
+using XREngine.Networking;
 
 namespace XREngine.Runtime.Bootstrap;
 
@@ -53,6 +54,10 @@ public static class RuntimeAdapterBootstrap
         private readonly IRuntimeGameModeHostServices? _previousGameMode;
         private readonly IRuntimePawnHostServices? _previousPawn;
         private readonly IRuntimePlayerControllerServices? _previousPlayerController;
+        private readonly IDisposable _networkingLease;
+        private readonly EngineRuntimeWorldHostServices _worldHost;
+        private readonly IDisposable _worldHostLease;
+        private readonly IDisposable _worldRegistryLease;
         private readonly IRuntimeModelImportServices _previousModeling;
         private readonly EngineRuntimeVrInputServices? _installedVrInput;
         private readonly EngineRuntimePawnHostServices? _installedPawn;
@@ -73,6 +78,9 @@ public static class RuntimeAdapterBootstrap
             _previousPawn = RuntimePawnHostServices.Current;
             _previousPlayerController = RuntimePlayerControllerServices.Current;
             _previousModeling = RuntimeModelImportServices.Current;
+            _worldHost = new EngineRuntimeWorldHostServices();
+            _worldHostLease = RuntimeWorldHostServices.Install(_worldHost);
+            _worldRegistryLease = RuntimeWorldRegistryServices.Install(_worldHost.CoreWorldRegistry);
 
             if (profile.HasFlag(RuntimeAdapterProfile.Animation))
                 RuntimeAnimationHostServices.Current = new EngineRuntimeAnimationHostServices();
@@ -88,6 +96,7 @@ public static class RuntimeAdapterBootstrap
                 RuntimePlayerControllerServices.Current = _installedPlayerController = new EngineRuntimePlayerControllerServices();
                 GameModeCompositionBootstrap.RegisterBuiltInGameModes();
             }
+            _networkingLease = RuntimeNetworkingHostServices.Install(new EngineRuntimeNetworkingHostServices());
             if (profile.HasFlag(RuntimeAdapterProfile.Modeling))
                 RuntimeModelImportServices.Current = new EngineRuntimeModelImportServices();
         }
@@ -107,25 +116,38 @@ public static class RuntimeAdapterBootstrap
             if (Interlocked.Exchange(ref _disposed, 1) != 0)
                 return;
 
-            if (_profile.HasFlag(RuntimeAdapterProfile.Animation))
-                RuntimeAnimationHostServices.Current = _previousAnimation;
-            if (_profile.HasFlag(RuntimeAdapterProfile.Audio))
-                RuntimeAudioIntegrationServices.Current = _previousAudio;
-            if (_profile.HasFlag(RuntimeAdapterProfile.Input))
+            // World teardown must run while every service installed for those
+            // worlds is still current. Component cleanup may resolve input,
+            // networking, rendering, registry, or game-mode capabilities.
+            try
             {
-                RuntimeInputServices.Current = _previousInput;
-                RuntimeVrInputServices.Current = _previousVrInput;
-                RuntimeVrStateServices.Current = _previousVrState;
-                RuntimeEngine.VRState.LifecycleServices = _previousVrLifecycle;
-                RuntimeGameModeHostServices.Current = _previousGameMode;
-                RuntimePawnHostServices.Current = _previousPawn;
-                RuntimePlayerControllerServices.Current = _previousPlayerController;
-                _installedVrInput?.Dispose();
-                _installedPawn?.Dispose();
-                _installedPlayerController?.Dispose();
+                _worldHost.Dispose();
             }
-            if (_profile.HasFlag(RuntimeAdapterProfile.Modeling))
-                RuntimeModelImportServices.Current = _previousModeling;
+            finally
+            {
+                if (_profile.HasFlag(RuntimeAdapterProfile.Animation))
+                    RuntimeAnimationHostServices.Current = _previousAnimation;
+                if (_profile.HasFlag(RuntimeAdapterProfile.Audio))
+                    RuntimeAudioIntegrationServices.Current = _previousAudio;
+                if (_profile.HasFlag(RuntimeAdapterProfile.Input))
+                {
+                    _installedVrInput?.Dispose();
+                    _installedPawn?.Dispose();
+                    _installedPlayerController?.Dispose();
+                    RuntimeInputServices.Current = _previousInput;
+                    RuntimeVrInputServices.Current = _previousVrInput;
+                    RuntimeVrStateServices.Current = _previousVrState;
+                    RuntimeEngine.VRState.LifecycleServices = _previousVrLifecycle;
+                    RuntimeGameModeHostServices.Current = _previousGameMode;
+                    RuntimePawnHostServices.Current = _previousPawn;
+                    RuntimePlayerControllerServices.Current = _previousPlayerController;
+                }
+                _networkingLease.Dispose();
+                _worldRegistryLease.Dispose();
+                _worldHostLease.Dispose();
+                if (_profile.HasFlag(RuntimeAdapterProfile.Modeling))
+                    RuntimeModelImportServices.Current = _previousModeling;
+            }
         }
     }
 }

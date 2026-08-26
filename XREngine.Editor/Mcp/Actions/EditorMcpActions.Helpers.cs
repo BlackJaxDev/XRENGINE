@@ -17,7 +17,14 @@ namespace XREngine.Editor.Mcp
     {
         private static readonly ConditionalWeakTable<SceneNode, HashSet<string>> NodeTags = [];
 
-        private static bool TryGetNodeById(XRWorldInstance world, string nodeId, out SceneNode? node, out string? error)
+        private static void RetargetWorld(RuntimeWorld runtimeWorld, XRWorld targetWorld)
+        {
+            IRuntimeWorldHostServices host = RuntimeWorldHostServices.Current
+                ?? throw new InvalidOperationException("Runtime world host services are not installed.");
+            host.Retarget(runtimeWorld, targetWorld);
+        }
+
+        private static bool TryGetNodeById(RuntimeWorld world, string nodeId, out SceneNode? node, out string? error)
         {
             node = null;
             error = null;
@@ -55,7 +62,7 @@ namespace XREngine.Editor.Mcp
             return true;
         }
 
-        private static SceneNode? FindNodeInWorld(XRWorldInstance world, Guid nodeId)
+        private static SceneNode? FindNodeInWorld(RuntimeWorld world, Guid nodeId)
         {
             if (world.TargetWorld is not null)
             {
@@ -212,7 +219,7 @@ namespace XREngine.Editor.Mcp
             };
         }
 
-        private static XRScene? ResolveScene(XRWorldInstance world, string? sceneName)
+        private static XRScene? ResolveScene(RuntimeWorld world, string? sceneName)
         {
             var targetWorld = world.TargetWorld;
             if (targetWorld is null)
@@ -224,7 +231,7 @@ namespace XREngine.Editor.Mcp
             return targetWorld.Scenes.FirstOrDefault();
         }
 
-        private static bool TryResolveScene(XRWorldInstance world, string? sceneIdOrName, out XRScene? scene, out string? error)
+        private static bool TryResolveScene(RuntimeWorld world, string? sceneIdOrName, out XRScene? scene, out string? error)
         {
             scene = null;
             error = null;
@@ -297,7 +304,7 @@ namespace XREngine.Editor.Mcp
             return transform?.SceneNode;
         }
 
-        private static XRScene? FindSceneForNode(SceneNode node, XRWorldInstance world)
+        private static XRScene? FindSceneForNode(SceneNode node, RuntimeWorld world)
         {
             var targetWorld = world.TargetWorld;
             if (targetWorld is null)

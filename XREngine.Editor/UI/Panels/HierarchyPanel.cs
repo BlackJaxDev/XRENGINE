@@ -244,7 +244,7 @@ public partial class HierarchyPanel : EditorPanel, IUIScrollReceiver
     {
         using var sample = Engine.Profiler.Start("HierarchyPanel.CreateTree");
 
-        var worldInstance = McpWorldResolver.TryGetActiveWorldInstance();
+        RuntimeWorld? worldInstance = TryGetActiveWorld();
 
         // --- Scrollable list ---
         var listNode = parentNode.NewChild<UIMaterialComponent>(out var menuMat);
@@ -313,7 +313,7 @@ public partial class HierarchyPanel : EditorPanel, IUIScrollReceiver
     /// Adds world info as simple button-style rows at the top of the list.
     /// Uses the same child creation pattern as CreateNodes to guarantee layout compatibility.
     /// </summary>
-    private void CreateWorldHeaderRows(SceneNode listNode, XRWorldInstance? worldInstance, ref int renderedCount)
+    private void CreateWorldHeaderRows(SceneNode listNode, RuntimeWorld? worldInstance, ref int renderedCount)
     {
         var targetWorld = worldInstance?.TargetWorld;
         string worldName = targetWorld?.Name ?? "World";
@@ -418,7 +418,7 @@ public partial class HierarchyPanel : EditorPanel, IUIScrollReceiver
 
     // --- Phase 7B: Scene section headers ---
 
-    private void CreateSceneSectionHeader(SceneNode listNode, XRScene scene, XRWorldInstance worldInstance, bool collapsed)
+    private void CreateSceneSectionHeader(SceneNode listNode, XRScene scene, RuntimeWorld worldInstance, bool collapsed)
     {
         string sceneName = string.IsNullOrWhiteSpace(scene.Name) ? "Untitled Scene" : scene.Name!;
         string dirtyMarker = scene.IsDirty ? " *" : string.Empty;
@@ -639,7 +639,7 @@ public partial class HierarchyPanel : EditorPanel, IUIScrollReceiver
 
     // --- Phase 7B: Scene management helpers ---
 
-    private static List<SceneNode> CollectUnassignedRoots(XRWorldInstance world, IReadOnlyList<XRScene> scenes)
+    private static List<SceneNode> CollectUnassignedRoots(RuntimeWorld world, IReadOnlyList<XRScene> scenes)
     {
         var assigned = new HashSet<SceneNode>();
         foreach (var scene in scenes)
@@ -670,14 +670,14 @@ public partial class HierarchyPanel : EditorPanel, IUIScrollReceiver
         {
             if (root is null)
                 continue;
-            if (!assigned.Contains(root) && !world.IsInEditorScene(root))
+            if (!assigned.Contains(root) && !IsInEditorScene(world, root))
                 unassigned.Add(root);
         }
 
         return unassigned;
     }
 
-    private static void ToggleSceneVisibility(XRScene scene, XRWorldInstance world, bool visible)
+    private static void ToggleSceneVisibility(XRScene scene, RuntimeWorld world, bool visible)
     {
         if (scene.IsVisible == visible)
             return;
@@ -686,7 +686,7 @@ public partial class HierarchyPanel : EditorPanel, IUIScrollReceiver
         scene.MarkDirty();
     }
 
-    private static void UnloadSceneFromWorld(XRScene scene, XRWorldInstance world)
+    private static void UnloadSceneFromWorld(XRScene scene, RuntimeWorld world)
     {
         var targetWorld = world.TargetWorld;
         if (targetWorld is null)
@@ -699,7 +699,7 @@ public partial class HierarchyPanel : EditorPanel, IUIScrollReceiver
         scene.MarkDirty();
     }
 
-    private static void ClearSelectionForScene(XRScene scene, XRWorldInstance world)
+    private static void ClearSelectionForScene(XRScene scene, RuntimeWorld world)
     {
         if (Selection.SceneNodes.Length == 0)
             return;
@@ -714,7 +714,7 @@ public partial class HierarchyPanel : EditorPanel, IUIScrollReceiver
         Selection.SceneNodes = filtered;
     }
 
-    private int CountTotalAvailableNodes(XRWorldInstance? worldInstance)
+    private int CountTotalAvailableNodes(RuntimeWorld? worldInstance)
     {
         var targetWorld = worldInstance?.TargetWorld;
         if (targetWorld?.Scenes.Count > 0)
@@ -1254,7 +1254,7 @@ public partial class HierarchyPanel : EditorPanel, IUIScrollReceiver
         if (node is null)
             return;
 
-        var world = McpWorldResolver.TryGetActiveWorldInstance();
+        RuntimeWorld? world = TryGetActiveWorld();
         var scene = FindSceneForNode(node, world);
         if (scene is not null)
             scene.MarkDirty();
@@ -1262,7 +1262,7 @@ public partial class HierarchyPanel : EditorPanel, IUIScrollReceiver
             world?.TargetWorld?.MarkDirty();
     }
 
-    private static XRScene? FindSceneForNode(SceneNode? node, XRWorldInstance? world)
+    private static XRScene? FindSceneForNode(SceneNode? node, RuntimeWorld? world)
     {
         if (node is null)
             return null;
@@ -1283,6 +1283,19 @@ public partial class HierarchyPanel : EditorPanel, IUIScrollReceiver
 
         return null;
     }
+
+    private static RuntimeWorld? TryGetActiveWorld()
+    {
+        foreach (XRWindow window in RuntimeEngine.Windows)
+            if (window.TargetWorldInstance?.WorldContext is RuntimeWorld world)
+                return world;
+
+        return RuntimeWorldRegistryServices.Current?.Snapshot().Values.FirstOrDefault();
+    }
+
+    private static bool IsInEditorScene(RuntimeWorld world, SceneNode node)
+        => EditorWorldIntegrationRegistry.TryGet(world, out EditorWorldIntegration? integration)
+            && integration?.IsInEditorScene(node) == true;
 
     private static SceneNode? GetHierarchyRoot(SceneNode node)
     {

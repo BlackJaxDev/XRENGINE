@@ -3,7 +3,7 @@ namespace XREngine.Components.Physics;
 /// <summary>
 /// Groups convex-hull inputs from one authored mesh source.
 /// </summary>
-internal readonly record struct ConvexHullInputBatch(
+public readonly record struct ConvexHullInputBatch(
     ConvexHullInputSource Source,
     List<ConvexHullInput> Inputs,
     int SourceMeshCount)

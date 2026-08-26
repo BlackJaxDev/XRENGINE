@@ -1,4 +1,5 @@
 using System.Numerics;
+using XREngine.Animation.Importers;
 using XREngine.Scene;
 
 namespace XREngine.Components.Animation;
@@ -38,7 +39,11 @@ internal sealed class CompiledHumanoidAvatarDefinition
         CompiledHumanoidAvatarTwistChain[] twistChains,
         CompiledHumanoidAvatarAuxiliaryBone[] auxiliaryBones,
         HumanoidAvatarLegacyBoneCalibration?[] legacyCalibrations,
-        string legacyCalibrationClipName)
+        string legacyCalibrationClipName,
+        UnityHumanoidRootMotionPolicy? legacyCalibrationRootMotionPolicy,
+        Matrix4x4 legacyCalibrationRootAllocationFrame,
+        Matrix4x4 inverseLegacyCalibrationRootAllocationFrame,
+        bool hasLegacyCalibrationRootAllocationFrame)
     {
         SchemaVersion = schemaVersion;
         DefinitionRevision = definitionRevision;
@@ -64,6 +69,10 @@ internal sealed class CompiledHumanoidAvatarDefinition
         AuxiliaryBones = auxiliaryBones;
         LegacyCalibrations = legacyCalibrations;
         LegacyCalibrationClipName = legacyCalibrationClipName;
+        LegacyCalibrationRootMotionPolicy = legacyCalibrationRootMotionPolicy;
+        LegacyCalibrationRootAllocationFrame = legacyCalibrationRootAllocationFrame;
+        InverseLegacyCalibrationRootAllocationFrame = inverseLegacyCalibrationRootAllocationFrame;
+        HasLegacyCalibrationRootAllocationFrame = hasLegacyCalibrationRootAllocationFrame;
 
         _rolesByNode = new Dictionary<SceneNode, EHumanoidAvatarBoneRole>(RoleCount);
         for (int i = 0; i < nodes.Length; i++)
@@ -95,6 +104,10 @@ internal sealed class CompiledHumanoidAvatarDefinition
     public CompiledHumanoidAvatarAuxiliaryBone[] AuxiliaryBones { get; }
     public HumanoidAvatarLegacyBoneCalibration?[] LegacyCalibrations { get; }
     public string LegacyCalibrationClipName { get; }
+    public UnityHumanoidRootMotionPolicy? LegacyCalibrationRootMotionPolicy { get; }
+    public Matrix4x4 LegacyCalibrationRootAllocationFrame { get; }
+    public Matrix4x4 InverseLegacyCalibrationRootAllocationFrame { get; }
+    public bool HasLegacyCalibrationRootAllocationFrame { get; }
 
     public bool TryGetRole(SceneNode? node, out EHumanoidAvatarBoneRole role)
     {

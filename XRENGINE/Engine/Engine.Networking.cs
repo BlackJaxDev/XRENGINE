@@ -213,21 +213,21 @@ namespace XREngine
 
         private static WorldAssetIdentity? ResolveLocalWorldAsset()
         {
-            XRWorldInstance? worldInstance = ResolvePrimaryWorldInstance();
+            RuntimeWorld? worldInstance = ResolvePrimaryWorldInstance();
             return worldInstance?.TargetWorld is null
                 ? null
                 : WorldAssetIdentityProvider.Create(worldInstance.TargetWorld, RealtimeJoinHandoff.CurrentProtocolVersion);
         }
 
-        private static XRWorldInstance? ResolvePrimaryWorldInstance()
+        private static RuntimeWorld? ResolvePrimaryWorldInstance()
         {
             foreach (var window in RuntimeEngine.Windows)
             {
-                if (window?.TargetWorldInstance is XRWorldInstance worldInstance)
+                if (window?.TargetWorldInstance?.WorldContext is RuntimeWorld worldInstance)
                     return worldInstance;
             }
 
-            return XRWorldInstance.WorldInstances.Values.FirstOrDefault();
+            return RuntimeWorldRegistryServices.Current?.Snapshot().Values.FirstOrDefault();
         }
 
         #endregion

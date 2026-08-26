@@ -221,7 +221,7 @@ namespace XREngine.Components.Lights
             Viewport = new XRViewport(null, width, height)
             {
                 PipelineRequest = RenderPipelineRequest.OffscreenCapture(),
-                WorldInstanceOverride = WorldAs<XREngine.Rendering.IRuntimeRenderWorld>(),
+                WorldInstanceOverride = World.GetRenderWorld(),
                 Camera = _mirrorCamera,
                 RenderPipeline =
                     RuntimeEngine.Rendering.NewOffscreenCaptureRenderPipeline(),

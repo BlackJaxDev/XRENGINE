@@ -37,6 +37,32 @@ if (Test-Path -LiteralPath $resolvedOutputPath) {
     }
 }
 
+# Keep the checked-in baseline as an immutable source ledger even after `git mv`
+# removes completed facade paths from the index. The working manifest wins when
+# it already contains a row with newer migration state.
+$baselineManifestPath = "docs/work/progress/runtime/runtime-modularization-phase6-source-ownership.tsv"
+$baselineLines = @(& git -C $repositoryRoot show "HEAD:$baselineManifestPath" 2>$null)
+if ($LASTEXITCODE -eq 0 -and $baselineLines.Count -gt 1) {
+    $baselineHeaders = $baselineLines[0].Split("`t", [System.StringSplitOptions]::None)
+    foreach ($line in $baselineLines[1..($baselineLines.Count - 1)]) {
+        if ([string]::IsNullOrWhiteSpace($line)) {
+            continue
+        }
+
+        $values = $line.Split("`t", [System.StringSplitOptions]::None)
+        $row = @{}
+        for ($index = 0; $index -lt $baselineHeaders.Count; $index++) {
+            $row[$baselineHeaders[$index]] = if ($index -lt $values.Count) { $values[$index] } else { "" }
+        }
+
+        $sourcePath = ([string]$row.SourcePath).Replace("\", "/")
+        if (-not [string]::IsNullOrWhiteSpace($sourcePath) -and
+            -not $existingRowsBySource.ContainsKey($sourcePath)) {
+            $existingRowsBySource[$sourcePath] = $row
+        }
+    }
+}
+
 # Completed ownership moves are declared here so regenerating the manifest cannot erase
 # migration state after the tracked facade source has been removed. Every destination is a
 # real owner path and is validated before a Pending row is promoted to Migrated.
@@ -58,9 +84,9 @@ $completedMigrationDestinations = @{
     "XRENGINE/Core/Engine/BlendTreeSerialization.cs" = "XREngine.Animation/Serialization/BlendTreeSerialization.cs"
     "XRENGINE/Core/Engine/InterfaceCollectionYamlNodeDeserializer.cs" = "XREngine.Data/Serialization/Yaml/InterfaceCollectionYamlNodeDeserializer.cs"
     "XRENGINE/Core/Engine/Loading/AssetManager.Loading.Core.cs" = "XREngine.Runtime.Core/Assets/Loading/AssetManager.Loading.Core.cs"
-    "XRENGINE/Core/Engine/Loading/AssetManager.Loading.Remote.cs" = "XREngine.Runtime.Core/Assets/Loading/AssetManager.Loading.Remote.cs"
-    "XRENGINE/Core/Engine/Loading/AssetManager.Loading.SerializationAndCache.cs" = "XREngine.Runtime.Core/Assets/Loading/AssetManager.Loading.SerializationAndCache.cs;XREngine.Animation/Serialization/AnimationClipBinaryCacheCodec.cs;XREngine.Runtime.Rendering/Serialization/TextureStreamingCacheCodec.cs;XREngine.Runtime.ModelingBridge/Importing/Caching/ModelCachePathPolicy.cs"
-    "XRENGINE/Core/Engine/Loading/AssetManager.Loading.ThirdParty.cs" = "XREngine.Runtime.Core/Assets/Loading/AssetManager.Loading.ThirdParty.cs"
+    "XRENGINE/Core/Engine/Loading/AssetManager.Loading.Remote.cs" = "XREngine.Runtime.Core/Assets/Loading/AssetManager.Loading.Api.Core.cs"
+    "XRENGINE/Core/Engine/Loading/AssetManager.Loading.SerializationAndCache.cs" = "XREngine.Runtime.Core/Assets/Loading/AssetManager.Loading.Core.cs;XREngine.Animation/Serialization/AnimationClipBinaryCacheCodec.cs;XREngine.Runtime.Rendering/Serialization/TextureStreamingCacheCodec.cs;XREngine.Runtime.ModelingBridge/Importing/Caching/ModelCachePathPolicy.cs"
+    "XRENGINE/Core/Engine/Loading/AssetManager.Loading.ThirdParty.cs" = "XREngine.Runtime.Core/Assets/Loading/AssetManager.Loading.Api.Core.cs;XREngine.Runtime.Core/Assets/Loading/AssetManager.Loading.Core.cs;XREngine.Runtime.Core/Assets/RuntimeThirdPartyAssetLoadingServices.cs"
     "XRENGINE/Core/Engine/ModelCaching/ModelBinaryCacheCodec.cs" = "XREngine.Runtime.ModelingBridge/Importing/Caching/ModelBinaryCacheCodec.cs"
     "XRENGINE/Core/Engine/MotionSerialization.cs" = "XREngine.Animation/Serialization/MotionSerialization.cs"
     "XRENGINE/Core/Engine/PolymorphicTypeGraphVisitor.cs" = "XREngine.Data/Serialization/Yaml/PolymorphicTypeGraphVisitor.cs"
@@ -110,6 +136,51 @@ $completedMigrationDestinations = @{
     "XRENGINE/Core/Files/XRProject.cs" = "XREngine.Runtime.Core/Assets/XRProject.cs"
     "XRENGINE/Settings/SecretCipher.cs" = "XREngine.Data/Settings/ISecretCipherServices.cs;XREngine.Data/Settings/SecretCipherServices.cs;XREngine.Editor/Settings/EditorSecretCipherServices.cs"
 }
+
+# P6.2 preserves the original facade paths in the ledger while promoting the
+# completed runtime-core, networking, and physics moves to their concrete owners.
+$completedMigrationDestinations["XRENGINE/Core/FrameEventArgs.cs"] = "XREngine.Runtime.Core/Core/FrameEventArgs.cs"
+$completedMigrationDestinations["XRENGINE/Core/Platform/Linux.cs"] = "XREngine.Runtime.Core/Core/Platform/Linux.cs"
+$completedMigrationDestinations["XRENGINE/Core/Platform/OSX.cs"] = "XREngine.Runtime.Core/Core/Platform/OSX.cs"
+$completedMigrationDestinations["XRENGINE/Core/PlayModeConfiguration.cs"] = "XREngine.Runtime.Core/Core/PlayModeConfiguration.cs"
+$completedMigrationDestinations["XRENGINE/Core/Time/CollectVisibleGenerationGate.cs"] = "XREngine.Runtime.Core/Core/Time/CollectVisibleGenerationGate.cs"
+$completedMigrationDestinations["XRENGINE/Engine/Networking/Engine.BaseNetworkingManager.cs"] = "XREngine.Runtime.Core/Networking/BaseNetworkingManager.cs"
+$completedMigrationDestinations["XRENGINE/Engine/Networking/Engine.ClientNetworkingManager.cs"] = "XREngine.Runtime.Core/Networking/ClientNetworkingManager.cs"
+$completedMigrationDestinations["XRENGINE/Engine/Networking/Engine.ServerNetworkingManager.cs"] = "XREngine.Runtime.Core/Networking/ServerNetworkingManager.cs"
+$completedMigrationDestinations["XRENGINE/Engine/Networking/RemoteJobNetworkingTransport.cs"] = "XREngine.Runtime.Core/Networking/RemoteJobNetworkingTransport.cs"
+$completedMigrationDestinations["XRENGINE/Engine/Networking/ServerSessionResolver.cs"] = "XREngine.Runtime.Core/Networking/ServerSessionResolver.cs"
+$completedMigrationDestinations["XRENGINE/Engine/Networking/WorldAssetIdentityProvider.cs"] = "XREngine.Runtime.Core/Networking/WorldAssetIdentityProvider.cs"
+
+# P6.3 removes the world facade after splitting its responsibilities across the
+# canonical Core identity and focused rendering, input, bootstrap, and editor owners.
+$completedMigrationDestinations["XRENGINE/Rendering/XRWorldInstance.cs"] = "XREngine.Runtime.Core/World/RuntimeWorld.cs;XREngine.Runtime.Core/World/RuntimeWorld.Transforms.cs;XREngine.Runtime.Rendering/Rendering/RuntimeWorldRenderer.cs;XREngine.Runtime.Rendering/Rendering/RuntimeWorldRenderer.Picking.cs;XREngine.Runtime.InputIntegration/Input/RuntimeWorldInputIntegration.cs;XREngine.Runtime.Bootstrap/WorldHost/RuntimeWorldHost.cs;XREngine.Editor/World/EditorWorldIntegration.cs"
+$completedMigrationDestinations["XRENGINE/Rendering/XRWorldInstance.PhysicsDebug.cs"] = "XREngine.Runtime.Rendering/Rendering/RuntimeWorldRenderer.cs;XREngine.Runtime.Bootstrap/WorldHost/RuntimeWorldHost.cs"
+$completedMigrationDestinations["XRENGINE/Rendering/XRWorldInstance.PhysicsRaycastRequest.cs"] = "XREngine.Runtime.Core/World/RuntimeWorld.cs;XREngine.Runtime.Rendering/Rendering/RuntimeWorldRenderer.Picking.cs"
+
+foreach ($sourcePath in $existingRowsBySource.Keys) {
+    $physicsPrefix = "XRENGINE/Scene/Components/Physics/"
+    if (-not $sourcePath.StartsWith($physicsPrefix, [System.StringComparison]::Ordinal)) {
+        continue
+    }
+
+    $relativePhysicsPath = $sourcePath.Substring($physicsPrefix.Length)
+    $destinationPath = if ($relativePhysicsPath -eq "PhysicsChainComponent.RenderingCompute.cs") {
+        "XREngine.Runtime.Core/Scene/Components/Physics/IRuntimePhysicsChainRenderingBridge.cs;XREngine.Runtime.Rendering/Rendering/PhysicsCompute/RuntimePhysicsChainRenderingBridge.cs"
+    }
+    elseif ($relativePhysicsPath -eq "GPUSoftbodyComponent.cs" -or
+            $relativePhysicsPath.StartsWith("Joints/", [System.StringComparison]::Ordinal)) {
+        "XREngine.Runtime.Rendering/Scene/Components/Physics/$relativePhysicsPath"
+    }
+    else {
+        "XREngine.Runtime.Core/Scene/Components/Physics/$relativePhysicsPath"
+    }
+
+    $completedMigrationDestinations[$sourcePath] = $destinationPath
+}
+
+$completedDeletions = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
+[void]$completedDeletions.Add("XRENGINE/GlobalUsings.Physics.cs")
+[void]$completedDeletions.Add("XRENGINE/GlobalWorldTypeAliases.cs")
 
 function New-OwnershipDecision {
     param(
@@ -369,6 +440,10 @@ function Get-OwnershipDecision {
         return New-OwnershipDecision Split @("XREngine.Runtime.Core", "XREngine.Runtime.Rendering") "Keep simulation/snapshots in Runtime.Core and move GPU/readback/visual publication to Runtime.Rendering."
     }
 
+    if ($path -like "XRENGINE/Scene/Components/Physics/Joints/*") {
+        return New-OwnershipDecision Move "XREngine.Runtime.Rendering" "Joint components consume renderer-owned transform and debug-visualization services while their lower constraint contracts remain in Runtime.Core."
+    }
+
     if ($path -like "XRENGINE/Scene/Components/Physics/*") {
         return New-OwnershipDecision Move "XREngine.Runtime.Core" "Non-visual physics components, simulation state, queries, controllers, and scheduling belong to Runtime.Core."
     }
@@ -381,7 +456,10 @@ function Get-OwnershipDecision {
 }
 
 $trackedFiles = @(
-    & git -C $repositoryRoot ls-files --cached --others --exclude-standard -- "XRENGINE/*.cs" "XRENGINE/**/*.cs" |
+    @(
+        & git -C $repositoryRoot ls-files --cached --others --exclude-standard -- "XRENGINE/*.cs" "XRENGINE/**/*.cs"
+        $existingRowsBySource.Keys
+    ) |
         ForEach-Object { $_.Replace("\", "/") } |
         Sort-Object -Unique
 )
@@ -408,7 +486,7 @@ $rows = foreach ($relativePath in $trackedFiles) {
         $decision = Get-OwnershipDecision $relativePath
         $migrationStatus = $existingRow.MigrationStatus
         $destinationPaths = $existingRow.DestinationPaths
-        if ($migrationStatus -eq "Pending" -and $completedMigrationDestinations.ContainsKey($relativePath)) {
+        if ($completedMigrationDestinations.ContainsKey($relativePath)) {
             $destinationPaths = $completedMigrationDestinations[$relativePath]
             foreach ($destinationPath in $destinationPaths.Split(';', [System.StringSplitOptions]::RemoveEmptyEntries)) {
                 if (-not (Test-Path -LiteralPath (Join-Path $repositoryRoot $destinationPath))) {
@@ -416,6 +494,10 @@ $rows = foreach ($relativePath in $trackedFiles) {
                 }
             }
             $migrationStatus = "Migrated"
+        }
+        elseif ($migrationStatus -eq "Pending" -and $completedDeletions.Contains($relativePath)) {
+            $migrationStatus = "Deleted"
+            $destinationPaths = ""
         }
 
         [pscustomobject]@{

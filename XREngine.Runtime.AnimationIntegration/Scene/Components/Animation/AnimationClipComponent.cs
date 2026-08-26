@@ -21,6 +21,9 @@ namespace XREngine.Components.Animation
         private readonly List<AnimationMember> _animatedMembers = [];
         private AnimationMember[] _animatedMembersSnapshot = [];
         private readonly Dictionary<AnimationMember, object?[]> _baselineMethodArguments = [];
+        private readonly Dictionary<AnimationMember, float> _loopPoseFloatEndpointDeltas = [];
+        private readonly Dictionary<AnimationMember, Vector3> _loopPoseVectorEndpointDeltas = [];
+        private readonly Dictionary<AnimationMember, Quaternion> _loopPoseQuaternionEndpointCorrections = [];
         private readonly HashSet<Transform> _animatedQuaternionTargets = [];
         private Transform[] _animatedQuaternionTargetsSnapshot = [];
         private BasePropAnim[] _propertyAnimationsSnapshot = [];
@@ -36,8 +39,11 @@ namespace XREngine.Components.Animation
         private bool _loggedMissingHumanoidForRootMotion;
         private bool _loggedMissingRootMotionTarget;
         private const int HumanoidMuscleValueCount = (int)EHumanoidValue.RightHandThumb3Stretched + 1;
-        private readonly float[] _loopProjectionMuscleValues = new float[HumanoidMuscleValueCount];
+        private readonly float[] _canonicalProjectionMuscleValues = new float[HumanoidMuscleValueCount];
+        private readonly float[] _loopProjectionStartMuscleValues = new float[HumanoidMuscleValueCount];
+        private readonly float[] _loopProjectionEndMuscleValues = new float[HumanoidMuscleValueCount];
         private HumanoidProjectedRootPose _projectedRootLoopPose = HumanoidProjectedRootPose.Identity;
+        private HumanoidLoopPoseCorrection _bodyLoopPoseCorrection = HumanoidLoopPoseCorrection.Identity;
         private HumanoidProjectedRootPose _appliedRootMotionPose = HumanoidProjectedRootPose.Identity;
         private HumanoidProjectedRootPose _previousAppliedRootMotionPose = HumanoidProjectedRootPose.Identity;
         private HumanoidRootMotionDelta _appliedRootMotionDelta = HumanoidRootMotionDelta.Identity;
@@ -48,10 +54,14 @@ namespace XREngine.Components.Animation
         private ulong _rootMotionEpoch;
         private ulong _rootMotionSequence;
         private bool _hasProjectedRootLoopPose;
+        private bool _hasBodyLoopPoseCorrection;
+        private bool _cycleOffsetSourceWrapped;
         private bool _hasRootMotionAnchor;
         private bool _hasPreviousAppliedRootMotionPose;
         private int _deferredStartVersion;
         private bool _deferredStartPending;
+        private UnityHumanoidRootMotionPolicy? _rootMotionPolicy;
+        private float _effectiveHumanoidSamplePhase;
 
         private AnimationClip? _animation;
         public AnimationClip? Animation
@@ -346,14 +356,15 @@ namespace XREngine.Components.Animation
             // Bind members to this component/SceneNode via the anim state machine.
             // Seed the underlying property animations to a canonical clip time.
             long initialTicks = GetInitialPlaybackTicks(clip, Speed);
-            StartAllPropertyAnimations(clip, initialTicks);
+            StartAllPropertyAnimations(clip, ResolveEffectiveSampleTimeTicks(clip, initialTicks));
+            UpdateEffectiveHumanoidSamplePhase(clip, initialTicks);
             SetPlaybackTimeTicks(initialTicks);
         }
 
         private void CompletePlaybackStartup()
         {
             ApplyAnimatedValues();
-            CacheProjectedRootLoopPose();
+            GetSiblingHumanoid()?.ApplyCurrentMusclePose();
             RegisterTick(ETickGroup.Normal, ETickOrder.Animation, TickAnimation);
             RegisterTick(ETickGroup.Late, ETickOrder.Input, PublishRootMotion);
         }
@@ -392,10 +403,7 @@ namespace XREngine.Components.Animation
         {
             var humanoid = GetSiblingHumanoid();
             if (humanoid is not null)
-            {
                 humanoid.ResetPose();
-                return;
-            }
 
             foreach (var member in _animatedMembersSnapshot)
             {
@@ -405,10 +413,12 @@ namespace XREngine.Components.Animation
                     continue;
                 }
 
-                member.ApplyAnimationValue(member.DefaultValue);
+                if (humanoid is null)
+                    member.ApplyAnimationValue(member.DefaultValue);
             }
 
-            NormalizeAnimatedQuaternionTargets();
+            if (humanoid is null)
+                NormalizeAnimatedQuaternionTargets();
         }
 
         public void EvaluateAtTime(float timeSeconds)
@@ -431,7 +441,7 @@ namespace XREngine.Components.Animation
             BeginRootMotionEpoch(preserveExistingAnchor: true);
 
             long evaluationTicks = NormalizePlaybackTime(SecondsToStopwatchTicks(timeSeconds), Animation, wrapLooped: false);
-            SetAllPropertyAnimationTimes(Animation, evaluationTicks, wrapLooped: false);
+            SetAllPropertyAnimationTimesForPlayback(Animation, evaluationTicks);
             SetPlaybackTimeTicks(evaluationTicks);
 
             if (!ShouldDriveSiblingHumanoidPose())
@@ -463,6 +473,13 @@ namespace XREngine.Components.Animation
             }
 
             if (!clip.TryValidateUnityPlaybackCapabilities(out diagnostic))
+            {
+                PlaybackCapabilityDiagnostic = diagnostic;
+                return false;
+            }
+
+            if (clip.UnityHumanoidRootMotionSettings is { } serializedRootSettings
+                && !UnityHumanoidRootMotionPolicy.TryCreate(serializedRootSettings, out _, out diagnostic))
             {
                 PlaybackCapabilityDiagnostic = diagnostic;
                 return false;
@@ -516,7 +533,7 @@ namespace XREngine.Components.Animation
                 return;
 
             long restoredTicks = NormalizePlaybackTime(playbackTimeTicks, Animation, wrapLooped: false);
-            SetAllPropertyAnimationTimes(Animation, restoredTicks, wrapLooped: false);
+            SetAllPropertyAnimationTimesForPlayback(Animation, restoredTicks);
             SetPlaybackTimeTicks(restoredTicks);
         }
 
@@ -578,7 +595,7 @@ namespace XREngine.Components.Animation
             }
 
             using (RuntimeAnimationHostServices.Current.StartProfileScope("AnimationClipComponent.TickAnimation.SetPropertyTimes"))
-                SetAllPropertyAnimationTimes(Animation, playbackTimeTicks, wrapLooped: false);
+                SetAllPropertyAnimationTimesForPlayback(Animation, playbackTimeTicks);
 
             if (!ShouldDriveSiblingHumanoidPose())
                 return;
@@ -616,7 +633,13 @@ namespace XREngine.Components.Animation
             }
 
             CacheImportedBodyRootMembers();
+            CacheRootMotionPolicy();
             CacheCanonicalImportedBodySample();
+            // Loop Pose and temporal loop-root endpoints are evaluation inputs, not
+            // results of the first visible pose. Prepare them with the rest of the
+            // evaluator cache so exact-time seeks, audit sampling, deferred startup,
+            // and ordinary playback all correct their very first sample identically.
+            CacheProjectedRootLoopPose();
             _initialized = true;
         }
 
@@ -804,61 +827,131 @@ namespace XREngine.Components.Animation
         {
             _projectedRootLoopPose = HumanoidProjectedRootPose.Identity;
             _hasProjectedRootLoopPose = false;
+            _bodyLoopPoseCorrection = HumanoidLoopPoseCorrection.Identity;
+            _hasBodyLoopPoseCorrection = false;
+            _loopPoseFloatEndpointDeltas.Clear();
+            _loopPoseVectorEndpointDeltas.Clear();
+            _loopPoseQuaternionEndpointCorrections.Clear();
             AnimationClip? clip = Animation;
             HumanoidComponent? humanoid = GetSiblingHumanoid();
-            if (clip?.Looped != true
-                || clip.HasRootMotion != true
+            if (clip?.HasRootMotion != true
                 || !_hasCachedImportedBodyRootMembers
-                || humanoid is null)
+                || humanoid is null
+                || _rootMotionPolicy is not UnityHumanoidRootMotionPolicy policy
+                || clip.UnityHumanoidRootMotionSettings is not { } settings)
                 return;
 
-            float endpointSeconds = clip.LengthInSeconds;
-            HumanoidImportedBodySample endpointSample = HumanoidImportedBodySample.Neutral;
-            ReadImportedBodyComponentAtTime(
-                _rootPositionXMember,
-                EHumanoidImportedBodySampleChannels.PositionX,
-                endpointSeconds,
-                ref endpointSample);
-            ReadImportedBodyComponentAtTime(
-                _rootPositionYMember,
-                EHumanoidImportedBodySampleChannels.PositionY,
-                endpointSeconds,
-                ref endpointSample);
-            ReadImportedBodyComponentAtTime(
-                _rootPositionZMember,
-                EHumanoidImportedBodySampleChannels.PositionZ,
-                endpointSeconds,
-                ref endpointSample);
-            ReadImportedBodyComponentAtTime(
-                _rootRotationXMember,
-                EHumanoidImportedBodySampleChannels.RotationX,
-                endpointSeconds,
-                ref endpointSample);
-            ReadImportedBodyComponentAtTime(
-                _rootRotationYMember,
-                EHumanoidImportedBodySampleChannels.RotationY,
-                endpointSeconds,
-                ref endpointSample);
-            ReadImportedBodyComponentAtTime(
-                _rootRotationZMember,
-                EHumanoidImportedBodySampleChannels.RotationZ,
-                endpointSeconds,
-                ref endpointSample);
-            ReadImportedBodyComponentAtTime(
-                _rootRotationWMember,
-                EHumanoidImportedBodySampleChannels.RotationW,
-                endpointSeconds,
-                ref endpointSample);
+            CacheHumanoidLoopPoseMemberCorrections(clip, policy);
 
-            CaptureProjectedLoopMuscles(endpointSeconds);
-            _projectedRootLoopPose = humanoid.CalculateProjectedRootPose(
-                endpointSample,
-                _canonicalImportedBodySample,
-                Weight,
-                clip.UnityHumanoidRootMotionSettings,
-                clip.Name,
-                _loopProjectionMuscleValues);
+            HumanoidImportedBodySample sourceStart = ReadImportedBodySampleAtTime(0.0f);
+            HumanoidImportedBodySample sourceEnd = ReadImportedBodySampleAtTime(clip.LengthInSeconds);
+            bool needsEndpointMuscles = policy.LoopPose
+                || (policy.LoopTime
+                    && !policy.BakePositionYIntoPose
+                    && policy.PositionYBasis is EUnityHumanoidRootPositionYBasis.Feet);
+            HumanoidProjectedRootPose sourceGenerator;
+            if (needsEndpointMuscles)
+            {
+                CaptureProjectedLoopMuscles(0.0f, _loopProjectionStartMuscleValues);
+                CaptureProjectedLoopMuscles(clip.LengthInSeconds, _loopProjectionEndMuscleValues);
+                humanoid.CalculateLoopEvaluation(
+                    sourceStart,
+                    sourceEnd,
+                    _loopProjectionStartMuscleValues,
+                    _loopProjectionEndMuscleValues,
+                    Weight,
+                    settings,
+                    clip.Name,
+                    out _bodyLoopPoseCorrection,
+                    out sourceGenerator);
+                _hasBodyLoopPoseCorrection = policy.LoopPose;
+            }
+            else
+            {
+                sourceGenerator = humanoid.CalculateProjectedRootPose(
+                    sourceEnd,
+                    sourceStart,
+                    Weight,
+                    settings,
+                    clip.Name,
+                    ReadOnlySpan<float>.Empty);
+            }
+
+            if (!policy.LoopTime)
+                return;
+
+            float offsetSeconds = policy.NormalizedCycleOffset * clip.LengthInSeconds;
+            if (offsetSeconds > 0.0f)
+            {
+                HumanoidImportedBodySample offsetSample = ReadImportedBodySampleAtTime(offsetSeconds);
+                HumanoidProjectedRootPose offsetFromStart = humanoid.CalculateProjectedRootPose(
+                    offsetSample,
+                    sourceStart,
+                    Weight,
+                    settings,
+                    clip.Name,
+                    ReadOnlySpan<float>.Empty);
+                _projectedRootLoopPose = ComposeProjectedRootPoses(
+                    InvertProjectedRootPose(offsetFromStart),
+                    ComposeProjectedRootPoses(sourceGenerator, offsetFromStart));
+            }
+            else
+            {
+                _projectedRootLoopPose = sourceGenerator;
+            }
             _hasProjectedRootLoopPose = _projectedRootLoopPose.Channels != EHumanoidProjectedRootChannels.None;
+        }
+
+        private void CacheHumanoidLoopPoseMemberCorrections(
+            AnimationClip clip,
+            UnityHumanoidRootMotionPolicy policy)
+        {
+            if (!policy.LoopPose)
+                return;
+
+            float endTime = clip.LengthInSeconds;
+            foreach (AnimationMember member in _animatedMembersSnapshot)
+            {
+                if (!SupportsHumanoidLoopPose(member)
+                    || member.Animation?.GetValueGeneric(0.0f) is not { } start
+                    || member.Animation.GetValueGeneric(endTime) is not { } end)
+                    continue;
+
+                switch (start, end)
+                {
+                    case (float startValue, float endValue):
+                        _loopPoseFloatEndpointDeltas[member] = startValue - endValue;
+                        break;
+                    case (Vector3 startValue, Vector3 endValue):
+                        _loopPoseVectorEndpointDeltas[member] = startValue - endValue;
+                        break;
+                    case (Quaternion startValue, Quaternion endValue)
+                        when IsFiniteNonZero(startValue) && IsFiniteNonZero(endValue):
+                    {
+                        startValue = Quaternion.Normalize(startValue);
+                        endValue = Quaternion.Normalize(endValue);
+                        if (Quaternion.Dot(startValue, endValue) < 0.0f)
+                            endValue = new Quaternion(-endValue.X, -endValue.Y, -endValue.Z, -endValue.W);
+
+                        _loopPoseQuaternionEndpointCorrections[member] = Quaternion.Normalize(
+                            Quaternion.Inverse(endValue) * startValue);
+                        break;
+                    }
+                }
+            }
+        }
+
+        private HumanoidImportedBodySample ReadImportedBodySampleAtTime(float timeSeconds)
+        {
+            HumanoidImportedBodySample sample = HumanoidImportedBodySample.Neutral;
+            ReadImportedBodyComponentAtTime(_rootPositionXMember, EHumanoidImportedBodySampleChannels.PositionX, timeSeconds, ref sample);
+            ReadImportedBodyComponentAtTime(_rootPositionYMember, EHumanoidImportedBodySampleChannels.PositionY, timeSeconds, ref sample);
+            ReadImportedBodyComponentAtTime(_rootPositionZMember, EHumanoidImportedBodySampleChannels.PositionZ, timeSeconds, ref sample);
+            ReadImportedBodyComponentAtTime(_rootRotationXMember, EHumanoidImportedBodySampleChannels.RotationX, timeSeconds, ref sample);
+            ReadImportedBodyComponentAtTime(_rootRotationYMember, EHumanoidImportedBodySampleChannels.RotationY, timeSeconds, ref sample);
+            ReadImportedBodyComponentAtTime(_rootRotationZMember, EHumanoidImportedBodySampleChannels.RotationZ, timeSeconds, ref sample);
+            ReadImportedBodyComponentAtTime(_rootRotationWMember, EHumanoidImportedBodySampleChannels.RotationW, timeSeconds, ref sample);
+            return sample;
         }
 
         private static void ReadImportedBodyComponentAtTime(
@@ -877,9 +970,9 @@ namespace XREngine.Components.Animation
                 sample.SetRotationComponent(channel, value);
         }
 
-        private void CaptureProjectedLoopMuscles(float timeSeconds)
+        private void CaptureProjectedLoopMuscles(float timeSeconds, Span<float> destination)
         {
-            Array.Clear(_loopProjectionMuscleValues);
+            destination.Clear();
             float weight = float.IsFinite(Weight) ? Math.Clamp(Weight, 0.0f, 1.0f) : 1.0f;
             foreach (AnimationMember member in _animatedMembersSnapshot)
             {
@@ -888,26 +981,29 @@ namespace XREngine.Components.Animation
                     || animation.GetValueGeneric(timeSeconds) is not float amount)
                     continue;
 
-                object?[] arguments = _baselineMethodArguments.TryGetValue(member, out object?[]? baseline)
-                    ? baseline
-                    : member.MethodArguments;
-                if (arguments.Length == 0 || !TryGetHumanoidValue(arguments[0], out EHumanoidValue value))
-                    continue;
-
                 if (weight < 1.0f)
                 {
                     float defaultAmount = member.DefaultValue is float defaultValue ? defaultValue : 0.0f;
                     amount = Interp.Lerp(defaultAmount, amount, weight);
                 }
 
-                if (FlipMuscleLeftRight)
-                    value = SwapHumanoidLeftRight(value);
+                RestoreBaselineMethodArguments(member);
+                if (ShouldApplyRuntimeClipRemap(member.MemberName))
+                    RemapHumanoidMuscle(member, ref amount);
+
+                if (member.MethodArguments.Length == 0
+                    || !TryGetHumanoidValue(member.MethodArguments[0], out EHumanoidValue value))
+                    continue;
+
+                bool flipImportedMuscleZ = member.MemberName == "SetImportedRawValue"
+                    && member.MethodArguments.Length > 2
+                    && member.MethodArguments[2] is true;
                 if (member.MemberName == "SetImportedRawValue")
-                    amount = HumanoidComponent.ConvertImportedHumanoidAmount(value, amount, FlipMuscleZ);
+                    amount = HumanoidComponent.ConvertImportedHumanoidAmount(value, amount, flipImportedMuscleZ);
 
                 int index = (int)value;
-                if ((uint)index < (uint)_loopProjectionMuscleValues.Length)
-                    _loopProjectionMuscleValues[index] = amount;
+                if ((uint)index < (uint)destination.Length)
+                    destination[index] = amount;
             }
         }
 
@@ -1011,13 +1107,22 @@ namespace XREngine.Components.Animation
             _animatedMembers.Clear();
             _animatedMembersSnapshot = [];
             _baselineMethodArguments.Clear();
+            _loopPoseFloatEndpointDeltas.Clear();
+            _loopPoseVectorEndpointDeltas.Clear();
+            _loopPoseQuaternionEndpointCorrections.Clear();
             _animatedQuaternionTargets.Clear();
             _animatedQuaternionTargetsSnapshot = [];
             _propertyAnimationsSnapshot = [];
+            _rootMotionPolicy = null;
+            _effectiveHumanoidSamplePhase = 0.0f;
+            _cycleOffsetSourceWrapped = false;
             ClearImportedBodyRootMemberCache();
             _projectedRootLoopPose = HumanoidProjectedRootPose.Identity;
             _hasProjectedRootLoopPose = false;
-            Array.Clear(_loopProjectionMuscleValues);
+            _bodyLoopPoseCorrection = HumanoidLoopPoseCorrection.Identity;
+            _hasBodyLoopPoseCorrection = false;
+            Array.Clear(_loopProjectionStartMuscleValues);
+            Array.Clear(_loopProjectionEndMuscleValues);
             _loggedMissingHumanoidForRootMotion = false;
             _loggedMissingRootMotionTarget = false;
             _initialized = false;
@@ -1068,19 +1173,23 @@ namespace XREngine.Components.Animation
             if (!_hasCachedImportedBodyRootMembers)
                 return;
 
-            ReadCanonicalImportedBodyComponent(_rootPositionXMember, EHumanoidImportedBodySampleChannels.PositionX);
-            ReadCanonicalImportedBodyComponent(_rootPositionYMember, EHumanoidImportedBodySampleChannels.PositionY);
-            ReadCanonicalImportedBodyComponent(_rootPositionZMember, EHumanoidImportedBodySampleChannels.PositionZ);
-            ReadCanonicalImportedBodyComponent(_rootRotationXMember, EHumanoidImportedBodySampleChannels.RotationX);
-            ReadCanonicalImportedBodyComponent(_rootRotationYMember, EHumanoidImportedBodySampleChannels.RotationY);
-            ReadCanonicalImportedBodyComponent(_rootRotationZMember, EHumanoidImportedBodySampleChannels.RotationZ);
-            ReadCanonicalImportedBodyComponent(_rootRotationWMember, EHumanoidImportedBodySampleChannels.RotationW);
-
+            float canonicalTime = StopwatchTicksToSeconds(ResolveEffectiveSampleTimeTicks(Animation!, 0L));
+            ReadCanonicalImportedBodyComponent(_rootPositionXMember, EHumanoidImportedBodySampleChannels.PositionX, canonicalTime);
+            ReadCanonicalImportedBodyComponent(_rootPositionYMember, EHumanoidImportedBodySampleChannels.PositionY, canonicalTime);
+            ReadCanonicalImportedBodyComponent(_rootPositionZMember, EHumanoidImportedBodySampleChannels.PositionZ, canonicalTime);
+            ReadCanonicalImportedBodyComponent(_rootRotationXMember, EHumanoidImportedBodySampleChannels.RotationX, canonicalTime);
+            ReadCanonicalImportedBodyComponent(_rootRotationYMember, EHumanoidImportedBodySampleChannels.RotationY, canonicalTime);
+            ReadCanonicalImportedBodyComponent(_rootRotationZMember, EHumanoidImportedBodySampleChannels.RotationZ, canonicalTime);
+            ReadCanonicalImportedBodyComponent(_rootRotationWMember, EHumanoidImportedBodySampleChannels.RotationW, canonicalTime);
+            CaptureProjectedLoopMuscles(canonicalTime, _canonicalProjectionMuscleValues);
         }
 
-        private void ReadCanonicalImportedBodyComponent(AnimationMember? member, EHumanoidImportedBodySampleChannels channel)
+        private void ReadCanonicalImportedBodyComponent(
+            AnimationMember? member,
+            EHumanoidImportedBodySampleChannels channel,
+            float canonicalTime)
         {
-            if (member?.Animation is not BasePropAnim animation || animation.GetValueGeneric(0.0f) is not float value)
+            if (member?.Animation is not BasePropAnim animation || animation.GetValueGeneric(canonicalTime) is not float value)
                 return;
 
             if ((channel & EHumanoidImportedBodySampleChannels.Position) != 0)
@@ -1100,6 +1209,14 @@ namespace XREngine.Components.Animation
             _rootRotationWMember = null;
             _canonicalImportedBodySample = HumanoidImportedBodySample.Neutral;
             _hasCachedImportedBodyRootMembers = false;
+        }
+
+        private void CacheRootMotionPolicy()
+        {
+            _rootMotionPolicy = Animation?.UnityHumanoidRootMotionSettings is { } settings
+                && UnityHumanoidRootMotionPolicy.TryCreate(settings, out UnityHumanoidRootMotionPolicy policy, out _)
+                    ? policy
+                    : null;
         }
 
         private static void InitializeMembers(
@@ -1161,7 +1278,17 @@ namespace XREngine.Components.Animation
                 _hasCachedImportedBodyRootMembers,
                 weight,
                 Animation.UnityHumanoidRootMotionSettings,
-                Animation.Name) == true;
+                Animation.Name,
+                _cycleOffsetSourceWrapped && _hasProjectedRootLoopPose
+                    ? _projectedRootLoopPose
+                    : null,
+                _hasBodyLoopPoseCorrection
+                    ? _bodyLoopPoseCorrection.AtPhase(_effectiveHumanoidSamplePhase)
+                    : null,
+                _canonicalProjectionMuscleValues) == true;
+
+            if (ownsImportedBodySampleTransaction)
+                PublishUnityHumanoidProjectionMuscles(humanoid!, fullWeight, weight);
 
             try
             {
@@ -1204,11 +1331,59 @@ namespace XREngine.Components.Animation
                     humanoid!.CancelImportedBodySampleTransaction(this);
                 throw;
             }
+            finally
+            {
+                // Method arguments live on the shared AnimationClip asset. Runtime
+                // remaps are evaluation-local and must never leak Mirror/IK roles into
+                // another component, state, or later policy evaluation.
+                RestoreAllBaselineMethodArguments();
+            }
 
             if (ownsImportedBodySampleTransaction)
                 humanoid!.CommitImportedBodySampleTransaction(this);
 
             NormalizeAnimatedQuaternionTargets();
+        }
+
+        private void PublishUnityHumanoidProjectionMuscles(
+            HumanoidComponent humanoid,
+            bool fullWeight,
+            float weight)
+        {
+            if (_rootMotionPolicy?.LoopPose != true)
+                return;
+
+            foreach (AnimationMember member in _animatedMembersSnapshot)
+            {
+                if (member.MemberType != EAnimationMemberType.Method
+                    || member.MemberName is not ("SetValue" or "SetImportedRawValue")
+                    || !TryGetAnimatedFloat(member, out float amount))
+                    continue;
+
+                RestoreBaselineMethodArguments(member);
+                if (!fullWeight)
+                {
+                    float defaultAmount = member.DefaultValue is float defaultValue
+                        ? defaultValue
+                        : 0.0f;
+                    amount = Interp.Lerp(defaultAmount, amount, weight);
+                }
+
+                if (ShouldApplyRuntimeClipRemap(member.MemberName))
+                    RemapHumanoidMuscle(member, ref amount);
+
+                if (member.MethodArguments.Length == 0
+                    || !TryGetHumanoidValue(member.MethodArguments[0], out EHumanoidValue value))
+                    continue;
+
+                bool flipImportedMuscleZ = member.MemberName == "SetImportedRawValue"
+                    && member.MethodArguments.Length > 2
+                    && member.MethodArguments[2] is true;
+                humanoid.SetUnityHumanoidProjectionMuscle(
+                    value,
+                    amount,
+                    flipImportedMuscleZ);
+            }
         }
 
         private bool TryApplyImportedBodyRootChannel(AnimationMember member)
@@ -1288,6 +1463,8 @@ namespace XREngine.Components.Animation
             if (!TryGetAnimatedFloat(member, out float animatedValue))
                 return false;
 
+            animatedValue = ApplyHumanoidLoopPoseCorrection(member, animatedValue);
+
             float value = animatedValue;
             if (!fullWeight)
             {
@@ -1359,6 +1536,8 @@ namespace XREngine.Components.Animation
             if (!TryGetAnimatedVector3(member, out Vector3 animatedValue))
                 return false;
 
+            animatedValue = ApplyHumanoidLoopPoseCorrection(member, animatedValue);
+
             Vector3 value = animatedValue;
             if (!fullWeight)
             {
@@ -1397,6 +1576,8 @@ namespace XREngine.Components.Animation
             if (!TryGetAnimatedQuaternion(member, out Quaternion animatedValue))
                 return false;
 
+            animatedValue = ApplyHumanoidLoopPoseCorrection(member, animatedValue);
+
             Quaternion value = animatedValue;
             if (!fullWeight)
             {
@@ -1413,6 +1594,59 @@ namespace XREngine.Components.Animation
 
             return member.TryApplyQuaternion(value);
         }
+
+        private float ApplyHumanoidLoopPoseCorrection(AnimationMember member, float value)
+        {
+            if (_rootMotionPolicy?.LoopPose != true
+                || !_loopPoseFloatEndpointDeltas.TryGetValue(member, out float endpointDelta))
+                return value;
+
+            return value + endpointDelta * _effectiveHumanoidSamplePhase;
+        }
+
+        private Vector3 ApplyHumanoidLoopPoseCorrection(AnimationMember member, Vector3 value)
+        {
+            if (_rootMotionPolicy?.LoopPose != true
+                || !_loopPoseVectorEndpointDeltas.TryGetValue(member, out Vector3 endpointDelta))
+                return value;
+
+            return value + endpointDelta * _effectiveHumanoidSamplePhase;
+        }
+
+        private Quaternion ApplyHumanoidLoopPoseCorrection(AnimationMember member, Quaternion value)
+        {
+            if (_rootMotionPolicy?.LoopPose != true
+                || !_loopPoseQuaternionEndpointCorrections.TryGetValue(
+                    member,
+                    out Quaternion endpointCorrection)
+                || !IsFiniteNonZero(value))
+                return value;
+
+            value = Quaternion.Normalize(value);
+            // Loop Pose corrects a local-space seam. Right-multiplying the shortest
+            // endpoint-to-start residual makes phase one reproduce phase zero while
+            // leaving the projected locomotion root untouched.
+            Quaternion correction = Quaternion.Slerp(
+                Quaternion.Identity,
+                endpointCorrection,
+                _effectiveHumanoidSamplePhase);
+            return Quaternion.Normalize(value * correction);
+        }
+
+        private static bool SupportsHumanoidLoopPose(AnimationMember member)
+            => member.Animation is not null
+            && member.MemberType == EAnimationMemberType.Method
+            && member.MemberName is "SetValue"
+                or "SetImportedRawValue"
+                or "SetAnimatedIKPosition"
+                or "SetAnimatedIKPositionX"
+                or "SetAnimatedIKPositionY"
+                or "SetAnimatedIKPositionZ"
+                or "SetAnimatedIKRotation"
+                or "SetAnimatedIKRotationX"
+                or "SetAnimatedIKRotationY"
+                or "SetAnimatedIKRotationZ"
+                or "SetAnimatedIKRotationW";
 
         private static bool TryGetAnimatedFloat(AnimationMember member, out float value)
         {
@@ -1543,20 +1777,22 @@ namespace XREngine.Components.Animation
             => memberName switch
             {
                 "SetValue" or "SetImportedRawValue"
-                    => FlipMuscleLeftRight || FlipMuscleZ,
+                    => IsClipHumanoidMirrorEnabled || FlipMuscleLeftRight || FlipMuscleZ,
                 "SetAnimatedIKPosition"
                 or "SetAnimatedIKPositionX"
                 or "SetAnimatedIKPositionY"
                 or "SetAnimatedIKPositionZ"
-                    => FlipIKPositionLeftRight || FlipIKPositionZ,
+                    => IsClipHumanoidMirrorEnabled || FlipIKPositionLeftRight || FlipIKPositionZ,
                 "SetAnimatedIKRotation"
                 or "SetAnimatedIKRotationX"
                 or "SetAnimatedIKRotationY"
                 or "SetAnimatedIKRotationZ"
                 or "SetAnimatedIKRotationW"
-                    => FlipIKRotationLeftRight || FlipIKRotationZ,
+                    => IsClipHumanoidMirrorEnabled || FlipIKRotationLeftRight || FlipIKRotationZ,
                 _ => false,
             };
+
+        private bool IsClipHumanoidMirrorEnabled => _rootMotionPolicy?.Mirror == true;
 
         private void RestoreBaselineMethodArguments(AnimationMember member)
         {
@@ -1573,6 +1809,14 @@ namespace XREngine.Components.Animation
             }
         }
 
+        private void RestoreAllBaselineMethodArguments()
+        {
+            AnimationMember[] members = _animatedMembersSnapshot;
+            for (int i = 0; i < members.Length; i++)
+                if (members[i].MemberType == EAnimationMemberType.Method)
+                    RestoreBaselineMethodArguments(members[i]);
+        }
+
         private void RemapHumanoidMuscle(AnimationMember member, ref object? value)
         {
             if (member.MethodArguments.Length == 0)
@@ -1584,6 +1828,12 @@ namespace XREngine.Components.Animation
             object? muscleArg = member.MethodArguments[0];
             if (!TryGetHumanoidValue(muscleArg, out var humanoidValue))
                 return;
+
+            if (IsClipHumanoidMirrorEnabled)
+            {
+                humanoidValue = UnityHumanoidMirrorOperator.MirrorMuscle(humanoidValue, out float parity);
+                amount *= parity;
+            }
 
             if (FlipMuscleLeftRight)
                 humanoidValue = SwapHumanoidLeftRight(humanoidValue);
@@ -1603,6 +1853,12 @@ namespace XREngine.Components.Animation
             if (!TryGetHumanoidValue(muscleArg, out var humanoidValue))
                 return;
 
+            if (IsClipHumanoidMirrorEnabled)
+            {
+                humanoidValue = UnityHumanoidMirrorOperator.MirrorMuscle(humanoidValue, out float parity);
+                value *= parity;
+            }
+
             if (FlipMuscleLeftRight)
                 humanoidValue = SwapHumanoidLeftRight(humanoidValue);
 
@@ -1616,8 +1872,22 @@ namespace XREngine.Components.Animation
             if (member.MethodArguments.Length == 0)
                 return;
 
-            if (TryGetLimbGoal(member.MethodArguments[0], out var goal) && FlipIKPositionLeftRight)
-                member.MethodArguments[0] = SwapLimbGoalArgumentType(member.MethodArguments[0], SwapLimbLeftRight(goal));
+            if (TryGetLimbGoal(member.MethodArguments[0], out var goal))
+            {
+                if (IsClipHumanoidMirrorEnabled)
+                    goal = UnityHumanoidMirrorOperator.MirrorGoal(goal);
+                if (FlipIKPositionLeftRight)
+                    goal = SwapLimbLeftRight(goal);
+                member.MethodArguments[0] = SwapLimbGoalArgumentType(member.MethodArguments[0], goal);
+            }
+
+            if (IsClipHumanoidMirrorEnabled)
+            {
+                if (value is Vector3 mirroredPosition)
+                    value = UnityHumanoidMirrorOperator.MirrorPosition(mirroredPosition);
+                else if (value is float mirroredScalar && member.MemberName == "SetAnimatedIKPositionX")
+                    value = -mirroredScalar;
+            }
 
             if (!FlipIKPositionZ)
                 return;
@@ -1637,8 +1907,17 @@ namespace XREngine.Components.Animation
             if (member.MethodArguments.Length == 0)
                 return;
 
-            if (TryGetLimbGoal(member.MethodArguments[0], out var goal) && FlipIKPositionLeftRight)
-                member.MethodArguments[0] = SwapLimbGoalArgumentType(member.MethodArguments[0], SwapLimbLeftRight(goal));
+            if (TryGetLimbGoal(member.MethodArguments[0], out var goal))
+            {
+                if (IsClipHumanoidMirrorEnabled)
+                    goal = UnityHumanoidMirrorOperator.MirrorGoal(goal);
+                if (FlipIKPositionLeftRight)
+                    goal = SwapLimbLeftRight(goal);
+                member.MethodArguments[0] = SwapLimbGoalArgumentType(member.MethodArguments[0], goal);
+            }
+
+            if (IsClipHumanoidMirrorEnabled)
+                value = UnityHumanoidMirrorOperator.MirrorPosition(value);
 
             if (FlipIKPositionZ)
                 value = new Vector3(value.X, value.Y, -value.Z);
@@ -1649,8 +1928,17 @@ namespace XREngine.Components.Animation
             if (member.MethodArguments.Length == 0)
                 return;
 
-            if (TryGetLimbGoal(member.MethodArguments[0], out var goal) && FlipIKPositionLeftRight)
-                member.MethodArguments[0] = SwapLimbGoalArgumentType(member.MethodArguments[0], SwapLimbLeftRight(goal));
+            if (TryGetLimbGoal(member.MethodArguments[0], out var goal))
+            {
+                if (IsClipHumanoidMirrorEnabled)
+                    goal = UnityHumanoidMirrorOperator.MirrorGoal(goal);
+                if (FlipIKPositionLeftRight)
+                    goal = SwapLimbLeftRight(goal);
+                member.MethodArguments[0] = SwapLimbGoalArgumentType(member.MethodArguments[0], goal);
+            }
+
+            if (IsClipHumanoidMirrorEnabled && member.MemberName == "SetAnimatedIKPositionX")
+                value = -value;
 
             if (FlipIKPositionZ && member.MemberName == "SetAnimatedIKPositionZ")
                 value = -value;
@@ -1661,8 +1949,23 @@ namespace XREngine.Components.Animation
             if (member.MethodArguments.Length == 0)
                 return;
 
-            if (TryGetLimbGoal(member.MethodArguments[0], out var goal) && FlipIKRotationLeftRight)
-                member.MethodArguments[0] = SwapLimbGoalArgumentType(member.MethodArguments[0], SwapLimbLeftRight(goal));
+            if (TryGetLimbGoal(member.MethodArguments[0], out var goal))
+            {
+                if (IsClipHumanoidMirrorEnabled)
+                    goal = UnityHumanoidMirrorOperator.MirrorGoal(goal);
+                if (FlipIKRotationLeftRight)
+                    goal = SwapLimbLeftRight(goal);
+                member.MethodArguments[0] = SwapLimbGoalArgumentType(member.MethodArguments[0], goal);
+            }
+
+            if (IsClipHumanoidMirrorEnabled)
+            {
+                if (value is Quaternion mirroredRotation)
+                    value = UnityHumanoidMirrorOperator.MirrorRotation(mirroredRotation);
+                else if (value is float mirroredScalar
+                    && member.MemberName is "SetAnimatedIKRotationY" or "SetAnimatedIKRotationZ")
+                    value = -mirroredScalar;
+            }
 
             if (!FlipIKRotationZ)
                 return;
@@ -1682,8 +1985,17 @@ namespace XREngine.Components.Animation
             if (member.MethodArguments.Length == 0)
                 return;
 
-            if (TryGetLimbGoal(member.MethodArguments[0], out var goal) && FlipIKRotationLeftRight)
-                member.MethodArguments[0] = SwapLimbGoalArgumentType(member.MethodArguments[0], SwapLimbLeftRight(goal));
+            if (TryGetLimbGoal(member.MethodArguments[0], out var goal))
+            {
+                if (IsClipHumanoidMirrorEnabled)
+                    goal = UnityHumanoidMirrorOperator.MirrorGoal(goal);
+                if (FlipIKRotationLeftRight)
+                    goal = SwapLimbLeftRight(goal);
+                member.MethodArguments[0] = SwapLimbGoalArgumentType(member.MethodArguments[0], goal);
+            }
+
+            if (IsClipHumanoidMirrorEnabled)
+                value = UnityHumanoidMirrorOperator.MirrorRotation(value);
 
             if (FlipIKRotationZ)
                 value = new Quaternion(-value.X, -value.Y, value.Z, value.W);
@@ -1694,8 +2006,18 @@ namespace XREngine.Components.Animation
             if (member.MethodArguments.Length == 0)
                 return;
 
-            if (TryGetLimbGoal(member.MethodArguments[0], out var goal) && FlipIKRotationLeftRight)
-                member.MethodArguments[0] = SwapLimbGoalArgumentType(member.MethodArguments[0], SwapLimbLeftRight(goal));
+            if (TryGetLimbGoal(member.MethodArguments[0], out var goal))
+            {
+                if (IsClipHumanoidMirrorEnabled)
+                    goal = UnityHumanoidMirrorOperator.MirrorGoal(goal);
+                if (FlipIKRotationLeftRight)
+                    goal = SwapLimbLeftRight(goal);
+                member.MethodArguments[0] = SwapLimbGoalArgumentType(member.MethodArguments[0], goal);
+            }
+
+            if (IsClipHumanoidMirrorEnabled
+                && member.MemberName is "SetAnimatedIKRotationY" or "SetAnimatedIKRotationZ")
+                value = -value;
 
             if (FlipIKRotationZ && (member.MemberName == "SetAnimatedIKRotationX" || member.MemberName == "SetAnimatedIKRotationY"))
                 value = -value;
@@ -1820,6 +2142,55 @@ namespace XREngine.Components.Animation
 
         private void SetAllPropertyAnimationTimes(AnimationClip clip, float timeSeconds, bool wrapLooped)
             => SetAllPropertyAnimationTimes(clip, SecondsToStopwatchTicks(timeSeconds), wrapLooped);
+
+        private void SetAllPropertyAnimationTimesForPlayback(AnimationClip clip, long playbackTimeTicks)
+        {
+            long sampleTimeTicks = ResolveEffectiveSampleTimeTicks(clip, playbackTimeTicks);
+            SetAllPropertyAnimationTimes(clip, sampleTimeTicks, wrapLooped: false);
+            UpdateEffectiveHumanoidSamplePhase(clip, playbackTimeTicks);
+        }
+
+        private long ResolveEffectiveSampleTimeTicks(AnimationClip clip, long playbackTimeTicks)
+        {
+            long lengthTicks = GetClipLengthTicks(clip);
+            if (lengthTicks <= 0L || _rootMotionPolicy is not UnityHumanoidRootMotionPolicy policy)
+                return Math.Clamp(playbackTimeTicks, 0L, Math.Max(0L, lengthTicks));
+
+            long cycleOffsetTicks = (long)Math.Round(policy.NormalizedCycleOffset * lengthTicks);
+            if (cycleOffsetTicks == 0L)
+                return Math.Clamp(playbackTimeTicks, 0L, lengthTicks);
+
+            long shiftedTicks = playbackTimeTicks + cycleOffsetTicks;
+            return policy.LoopTime
+                ? WrapStopwatchTicks(shiftedTicks, lengthTicks)
+                : Math.Clamp(shiftedTicks, 0L, lengthTicks);
+        }
+
+        private void UpdateEffectiveHumanoidSamplePhase(AnimationClip clip, long playbackTimeTicks)
+        {
+            long lengthTicks = GetClipLengthTicks(clip);
+            if (lengthTicks <= 0L)
+            {
+                _effectiveHumanoidSamplePhase = 0.0f;
+                _cycleOffsetSourceWrapped = false;
+                return;
+            }
+
+            long sampleTimeTicks = ResolveEffectiveSampleTimeTicks(clip, playbackTimeTicks);
+            _effectiveHumanoidSamplePhase = Math.Clamp(sampleTimeTicks / (float)lengthTicks, 0.0f, 1.0f);
+            if (_rootMotionPolicy is UnityHumanoidRootMotionPolicy policy)
+            {
+                long cycleOffsetTicks = (long)Math.Round(policy.NormalizedCycleOffset * lengthTicks);
+                long logicalTicks = Math.Clamp(playbackTimeTicks, 0L, lengthTicks);
+                _cycleOffsetSourceWrapped = policy.LoopTime
+                    && cycleOffsetTicks > 0L
+                    && logicalTicks + cycleOffsetTicks >= lengthTicks;
+            }
+            else
+            {
+                _cycleOffsetSourceWrapped = false;
+            }
+        }
 
         private void SetAllPropertyAnimationTimes(AnimationClip clip, long timeTicks, bool wrapLooped)
         {

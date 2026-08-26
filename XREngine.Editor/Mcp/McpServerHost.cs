@@ -1236,7 +1236,7 @@ namespace XREngine.Editor.Mcp
             if (!McpToolRegistry.TryGetTool(name, out var tool))
                 return new McpError(-32601, $"Tool '{name}' not found.");
 
-            var world = McpWorldResolver.TryGetActiveWorldInstance();
+            var world = McpWorldResolver.TryGetActiveWorld();
             var context = new McpToolContext(world);
             var missingCapabilities = tool!.RequiredCapabilities & ~context.Capabilities;
             if (missingCapabilities != XREngine.Runtime.Automation.Mcp.McpCapability.None)

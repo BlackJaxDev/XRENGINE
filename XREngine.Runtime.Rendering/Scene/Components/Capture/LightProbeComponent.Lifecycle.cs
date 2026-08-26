@@ -12,7 +12,7 @@ namespace XREngine.Components.Capture.Lights
         {
             base.OnComponentActivated();
 
-            var world = WorldAs<XREngine.Rendering.IRuntimeRenderWorld>();
+            var world = World.GetRenderWorld();
             if (world is not null)
             {
                 if (_registeredWorld is not null && _registeredWorld != world)
@@ -111,7 +111,7 @@ namespace XREngine.Components.Capture.Lights
 
             _startupCaptureTimer.StartSingleFire(() =>
             {
-                var world = WorldAs<XREngine.Rendering.IRuntimeRenderWorld>();
+                var world = World.GetRenderWorld();
                 if (!IsActiveInHierarchy || world is null || RealtimeCapture || !AutoCaptureOnActivate)
                     return;
 

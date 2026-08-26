@@ -1,4 +1,5 @@
 using System.Numerics;
+using XREngine.Animation.Importers;
 
 namespace XREngine.Components.Animation;
 
@@ -8,7 +9,7 @@ namespace XREngine.Components.Animation;
 /// </summary>
 public sealed class UnityHumanoidAvatarProfile
 {
-    public const int CurrentSchemaVersion = 3;
+    public const int CurrentSchemaVersion = 5;
 
     private readonly UnityHumanoidAvatarRoleProfile?[] _rolesByIndex =
         new UnityHumanoidAvatarRoleProfile?[(int)EUnityHumanoidAvatarRole.Count];
@@ -31,6 +32,8 @@ public sealed class UnityHumanoidAvatarProfile
     public string SourcePath { get; set; } = string.Empty;
     public float HumanScale { get; set; }
     public string CalibrationClipName { get; set; } = string.Empty;
+    public UnityHumanoidClipRootMotionSettings? CalibrationRootMotionSettings { get; set; }
+    public UnityHumanoidRootAllocationFrame? RootAllocationFrame { get; set; }
     public UnityHumanoidAvatarDescription AvatarSettings { get; set; } = new();
     public UnityHumanoidBodyAxes BodyAxes { get; set; } = new();
     public List<UnityHumanoidAvatarRoleProfile> Roles { get; set; } = [];

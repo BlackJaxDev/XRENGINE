@@ -283,36 +283,36 @@ public sealed class SnapshotDiagnosticsTests
         IRuntimeShaderServices? previousShaderServices = RuntimeShaderServices.Current;
         RuntimeShaderServices.Current = new GltfImportTestUtilities.TestRuntimeShaderServices();
         XRWorld? world = null;
-        XRWorldInstance? worldInstance = null;
+        RuntimeWorld? runtimeWorld = null;
+        RuntimeWorldRegistry registry = new();
+        using IDisposable registryInstallation = RuntimeWorldRegistryServices.Install(registry);
 
         try
         {
             var sceneRoot = new SceneNode("Serialized Root");
             var scene = new XRScene("Snapshot Runtime Root Scene", sceneRoot);
             world = new XRWorld("Snapshot Runtime Root World", scene);
-            worldInstance = new XRWorldInstance(world, new VisualScene3D(), new JitterScene());
+            runtimeWorld = new RuntimeWorld(new JitterScene(), world);
             var editorRoot = new SceneNode("Editor Runtime Root");
-            worldInstance.RootNodes.Add(editorRoot);
-            XRWorldInstance.WorldInstances.Add(world, worldInstance);
+            runtimeWorld.RootNodes.Add(editorRoot);
+            registry.Register(world, runtimeWorld);
 
             WorldStateSnapshot snapshot = WorldStateSnapshot.Capture(world)!;
             var spawnedRoot = new SceneNode("Play Spawned Root");
-            worldInstance.RootNodes.Add(spawnedRoot);
+            runtimeWorld.RootNodes.Add(spawnedRoot);
 
             Assert.That(snapshot.CapturedRuntimeOnlyRootIds, Does.Contain(editorRoot.ID));
             Assert.That(snapshot.CapturedRuntimeOnlyRootIds, Does.Not.Contain(spawnedRoot.ID));
             Assert.That(snapshot.Restore(), Is.True);
-            Assert.That(worldInstance.RootNodes, Does.Contain(editorRoot));
-            Assert.That(worldInstance.RootNodes, Does.Not.Contain(spawnedRoot));
+            Assert.That(runtimeWorld.RootNodes, Does.Contain(editorRoot));
+            Assert.That(runtimeWorld.RootNodes, Does.Not.Contain(spawnedRoot));
             Assert.That(editorRoot.IsDestroyed, Is.False);
             Assert.That(spawnedRoot.IsDestroyed, Is.True);
         }
         finally
         {
             if (world is not null)
-                XRWorldInstance.WorldInstances.Remove(world);
-            if (worldInstance is not null)
-                worldInstance.TargetWorld = null;
+                registry.Remove(world, out _, dispose: true);
             RuntimeShaderServices.Current = previousShaderServices;
         }
     }

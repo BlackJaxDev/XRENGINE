@@ -1,4 +1,5 @@
 using System.Numerics;
+using XREngine.Scene.Physics;
 using XREngine.Scene.Physics.Physx;
 
 namespace XREngine

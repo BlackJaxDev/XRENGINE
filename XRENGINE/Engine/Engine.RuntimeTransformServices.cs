@@ -89,7 +89,7 @@ internal sealed class EngineRuntimeTransformServices : IRuntimeTransformServices
         public void UpdateWorld(IRuntimeWorldContext? worldContext)
         {
             if (_owner.RenderInfo is not null)
-                _owner.RenderInfo.WorldInstance = worldContext as IRuntimeRenderInfo3DRegistrationTarget;
+                _owner.RenderInfo.WorldInstance = worldContext.GetRenderRegistrationTarget();
         }
 
         public void UpdateBounds(AABB localCullingVolume, Matrix4x4 cullingOffsetMatrix)

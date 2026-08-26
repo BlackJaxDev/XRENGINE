@@ -40,7 +40,7 @@ namespace XREngine.Editor.Mcp
             [McpName("viewport_index"), Description("Optional viewport index to target.")] int viewportIndex = 0)
         {
             XRViewport? viewport = ResolveViewport(
-                context.WorldInstance,
+                context.World,
                 cameraNodeId,
                 vrEye,
                 windowIndex,
@@ -76,7 +76,7 @@ namespace XREngine.Editor.Mcp
             [McpName("viewport_index"), Description("Optional viewport index to target.")] int viewportIndex = 0)
         {
             XRViewport? viewport = ResolveViewport(
-                context.WorldInstance,
+                context.World,
                 cameraNodeId,
                 vrEye,
                 windowIndex,
@@ -252,14 +252,11 @@ namespace XREngine.Editor.Mcp
                 }, iterateChildHierarchy: true);
             }
 
-            foreach (SceneNode root in context.WorldInstance.RootNodes)
+            foreach (SceneNode root in context.World.RootNodes)
                 AddFromRoot(root, "world_root");
 
-            if (context.WorldInstance is XRWorldInstance world)
-            {
-                foreach (SceneNode root in world.EditorScene.RootNodes)
-                    AddFromRoot(root, "editor_scene");
-            }
+            foreach (SceneNode root in context.EditorWorld.EditorScene.RootNodes)
+                AddFromRoot(root, "editor_scene");
 
             for (int windowIndex = 0; windowIndex < RuntimeEngine.Windows.Count; windowIndex++)
             {
@@ -412,7 +409,7 @@ namespace XREngine.Editor.Mcp
             }
 
             XRViewport? viewport = ResolveViewport(
-                context.WorldInstance,
+                context.World,
                 cameraNodeId,
                 vrEye,
                 windowIndex,
@@ -597,7 +594,7 @@ namespace XREngine.Editor.Mcp
             if (texture is null)
                 return new McpToolResponse($"OpenXR {(leftEye ? "left" : "right")} eye preview texture is not available.", isError: true);
 
-            XRViewport? viewport = ResolveViewport(context.WorldInstance, null, windowIndex, viewportIndex);
+            XRViewport? viewport = ResolveViewport(context.World, null, windowIndex, viewportIndex);
             if (viewport is null)
                 return new McpToolResponse("No viewport found.", isError: true);
 
@@ -751,7 +748,7 @@ namespace XREngine.Editor.Mcp
             if (texture is null)
                 return new McpToolResponse("OpenXR desktop mirror texture is not available.", isError: true);
 
-            XRViewport? viewport = ResolveViewport(context.WorldInstance, null, windowIndex, viewportIndex);
+            XRViewport? viewport = ResolveViewport(context.World, null, windowIndex, viewportIndex);
             if (viewport is null)
                 return new McpToolResponse("No viewport found.", isError: true);
 

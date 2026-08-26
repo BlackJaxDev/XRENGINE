@@ -478,7 +478,7 @@ internal static partial class UnitySceneImporter
             result |= channel;
     }
 
-    private static AnimationCurve? ParseUnityCurve(
+    private static PhysicsChainCoefficientCurve? ParseUnityCurve(
         YamlMappingNode fields,
         string key,
         Func<float, float>? valueTransform = null,
@@ -491,8 +491,7 @@ internal static partial class UnitySceneImporter
             return null;
         }
 
-        List<FloatKeyframe> parsedKeyframes = new(keyframes.Children.Count);
-        float lengthInSeconds = 0.0f;
+        List<PhysicsChainCoefficientKeyframe> parsedKeyframes = new(keyframes.Children.Count);
         foreach (YamlNode child in keyframes.Children)
         {
             if (child is not YamlMappingNode keyframe)
@@ -510,26 +509,19 @@ internal static partial class UnitySceneImporter
                 outSlope = -outSlope;
             }
 
-            parsedKeyframes.Add(new FloatKeyframe(
+            parsedKeyframes.Add(new PhysicsChainCoefficientKeyframe(
                 time,
                 value,
                 inSlope,
-                outSlope,
-                EVectorInterpType.Hermite));
-            lengthInSeconds = MathF.Max(lengthInSeconds, time);
+                outSlope));
         }
 
         if (parsedKeyframes.Count == 0)
             return null;
 
-        // KeyframeTrack keeps inserted keys inside its current duration. Establish the
-        // Unity curve duration before insertion so later keys retain their authored time
-        // instead of being clamped onto the first key at t=0.
-        var curve = new AnimationCurve
-        {
-            LengthInSeconds = lengthInSeconds
-        };
-        curve.Keyframes.Add(parsedKeyframes);
+        var curve = new PhysicsChainCoefficientCurve();
+        for (int i = 0; i < parsedKeyframes.Count; i++)
+            curve.Keyframes.Add(parsedKeyframes[i]);
         return curve;
     }
 

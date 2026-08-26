@@ -290,7 +290,10 @@ namespace XREngine.Animation.Importers
             manifestBuilder.SourceIdentity.ImportSettingsSha256 = ComputeImportSettingsHash(rootMotionSettings);
             if (settingsMap is not null)
             {
-                bool settingsExecutable = AreRootMotionSettingsCurrentlyExecutable(rootMotionSettings!);
+                bool settingsExecutable = UnityHumanoidRootMotionPolicy.TryCreate(
+                    rootMotionSettings!,
+                    out _,
+                    out string settingsDiagnostic);
                 manifestBuilder.RecordSection(
                     EUnityAnimationDataDomain.RootMotionSettings,
                     settingsExecutable
@@ -299,7 +302,7 @@ namespace XREngine.Animation.Importers
                     "m_AnimationClipSettings",
                     settingsExecutable
                         ? "All authored root-motion settings are executable by the current native evaluator."
-                        : BuildUnsupportedRootMotionSettingsDiagnostic(rootMotionSettings!),
+                        : settingsDiagnostic,
                     settingsExecutable ? string.Empty : settingsMap.ToString());
             }
 
@@ -1231,7 +1234,10 @@ namespace XREngine.Animation.Importers
 
         private static FloatKeyframe CreateFloatKeyframe(CurveKey key, int fps, float valueScale, float timeOffsetSeconds)
         {
-            float normalizedTime = MathF.Max(0.0f, key.Time - timeOffsetSeconds);
+            // Preserve keys on both sides of a trimmed interval. Evaluating the new time-zero
+            // between a negative and positive key reproduces the authored boundary tangent;
+            // clamping every earlier key onto zero destroyed that interpolation and key order.
+            float normalizedTime = key.Time - timeOffsetSeconds;
             var kf = new FloatKeyframe
             {
                 SyncInOutValues = false,
@@ -1750,29 +1756,10 @@ namespace XREngine.Animation.Importers
         }
 
         private static bool IsRecognizedSerializedVersion(int serializedVersion)
-            => serializedVersion == 6;
-
-        private static bool AreRootMotionSettingsCurrentlyExecutable(UnityHumanoidClipRootMotionSettings settings)
-            => settings.OrientationOffsetY == 0.0f
-            && settings.Level == 0.0f
-            && settings.CycleOffset == 0.0f
-            && !settings.LoopPose
-            && !settings.KeepOriginalPositionY
-            && !settings.HeightFromFeet
-            && !settings.Mirror;
-
-        private static string BuildUnsupportedRootMotionSettingsDiagnostic(UnityHumanoidClipRootMotionSettings settings)
-        {
-            List<string> unsupported = [];
-            if (settings.OrientationOffsetY != 0.0f) unsupported.Add(nameof(settings.OrientationOffsetY));
-            if (settings.Level != 0.0f) unsupported.Add(nameof(settings.Level));
-            if (settings.CycleOffset != 0.0f) unsupported.Add(nameof(settings.CycleOffset));
-            if (settings.LoopPose) unsupported.Add(nameof(settings.LoopPose));
-            if (settings.KeepOriginalPositionY) unsupported.Add(nameof(settings.KeepOriginalPositionY));
-            if (settings.HeightFromFeet) unsupported.Add(nameof(settings.HeightFromFeet));
-            if (settings.Mirror) unsupported.Add(nameof(settings.Mirror));
-            return $"The current native root-motion evaluator does not completely execute: {string.Join(", ", unsupported)}.";
-        }
+            // Unity 2022 may serialize otherwise equivalent editable curve clips as version 7
+            // after changing only object-reference header fields. The curve, humanoid root,
+            // IK, and clip-settings domains consumed above retain the version 6 layout.
+            => serializedVersion is 6 or 7;
 
         private static bool TrySplitComponent(string attribute, string prefix, out char component)
         {

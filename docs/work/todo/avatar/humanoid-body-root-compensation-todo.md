@@ -1,10 +1,10 @@
 # Humanoid Body/Root Parity and Compensation TODO
 
-Last Updated: 2026-08-25
+Last Updated: 2026-08-26
 Owner: Animation / Avatar
-Status: In progress; the Mitsuki/Sexy Walk reference milestone is complete, but
-the single native XRE Unity-compatible `.anim`/humanoid path, complete avatar
-definition, and transition/blend parity remain open
+Status: In progress; Phase 6 complete root-motion settings and the
+Mitsuki/Sexy Walk reference milestone are complete, while the remaining
+corpus/persistence gates and Phase 7+ transition/blend parity remain open
 
 Related evidence:
 
@@ -603,28 +603,28 @@ compatible-reimport plus incompatible-reimport sequence.
 
 ## Phase 6 - Complete Unity Root-Motion Settings
 
-- [ ] Implement and validate `OrientationOffsetY`, `Level`, `CycleOffset`, and
+- [x] Implement and validate `OrientationOffsetY`, `Level`, `CycleOffset`, and
   `LoopPose` in the single native evaluator.
-- [ ] Implement the full Bake Into Pose and Original/Center-of-Mass selection
+- [x] Implement the full Bake Into Pose and Original/Center-of-Mass selection
   semantics for orientation, Y, and XZ rather than treating the flags only as
   channel enable switches.
-- [ ] Implement `KeepOriginalPositionY` and `HeightFromFeet`, including avatars
+- [x] Implement `KeepOriginalPositionY` and `HeightFromFeet`, including avatars
   with different proportions, feet spacing, optional toes, and translation DoF.
-- [ ] Implement true humanoid mirroring across muscles, Body/root trajectories,
+- [x] Implement true humanoid mirroring across muscles, Body/root trajectories,
   IK goals, contacts, and left/right role mappings. Mirror must not disable root
   channels.
-- [ ] Define loop-pose seam correction separately from temporal loop-root
+- [x] Define loop-pose seam correction separately from temporal loop-root
   accumulation, including reverse playback and multiple signed loop epochs.
-- [ ] Define the native evaluation order so every setting is applied exactly
+- [x] Define the native evaluation order so every setting is applied exactly
   once across direct playback, state machines, extraction-only output, and
   model-root application.
 
 Acceptance criteria:
 
-- [ ] Every field in `UnityHumanoidClipRootMotionSettings` is either executed
+- [x] Every field in `UnityHumanoidClipRootMotionSettings` is either executed
   with Unity-reference coverage or rejected as unsupported; none is merely
   stored while parity is claimed.
-- [ ] Nonzero offsets, mirror, height-from-feet, loop-pose, and representative
+- [x] Nonzero offsets, mirror, height-from-feet, loop-pose, and representative
   pairwise setting combinations pass on multiple unrelated avatars and clips.
 
 ## Phase 7 - Per-Motion State-Machine Root/Body Evaluation

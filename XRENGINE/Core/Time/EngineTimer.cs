@@ -8,12 +8,6 @@ using XREngine.Data.Runtime.Memory;
 
 namespace XREngine.Timers
 {
-    public enum ECollectVisibleLatePolicy
-    {
-        BlockUntilFresh = 0,
-        ReusePreviousVisibility = 1,
-    }
-
     public partial class EngineTimer : XRBase
     {
         private static readonly double SecondsPerStopwatchTick = 1.0 / Stopwatch.Frequency;

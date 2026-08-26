@@ -68,6 +68,8 @@ namespace XREngine.Animation
         public void Deinitialize()
         {
             //Unregister all animated curves in the motion
+            if (this is AnimationClip clip)
+                clip.ResetUnityHumanoidEvaluationState();
             _animatedCurves.Clear();
             AnimatedMembersArray = [];
         }
@@ -555,6 +557,7 @@ namespace XREngine.Animation
         /// </summary>
         internal void RestartPlayback(float startSeconds)
         {
+            VisitAnimationClips(this, clip => clip.ResetUnityHumanoidStateClock(startSeconds));
             var visited = new HashSet<BasePropAnim>();
             VisitPropertyAnimations(this, visited, animation =>
             {
@@ -569,6 +572,7 @@ namespace XREngine.Animation
         /// </summary>
         internal void SeekPlayback(float timeSeconds)
         {
+            VisitAnimationClips(this, clip => clip.ResetUnityHumanoidStateClock(timeSeconds));
             var visited = new HashSet<BasePropAnim>();
             VisitPropertyAnimations(
                 this,
@@ -581,6 +585,7 @@ namespace XREngine.Animation
         /// </summary>
         internal void StopPlayback()
         {
+            VisitAnimationClips(this, static clip => clip.ResetUnityHumanoidStateClock(0.0f));
             var visited = new HashSet<BasePropAnim>();
             VisitPropertyAnimations(this, visited, static animation => animation.Stop());
         }
@@ -617,6 +622,31 @@ namespace XREngine.Animation
                     foreach (BlendTreeDirect.Child child in directTree.Children)
                         if (child.Motion is not null)
                             VisitPropertyAnimations(child.Motion, visited, visitor);
+                    break;
+            }
+        }
+
+        private static void VisitAnimationClips(MotionBase motion, Action<AnimationClip> visitor)
+        {
+            switch (motion)
+            {
+                case AnimationClip clip:
+                    visitor(clip);
+                    break;
+                case BlendTree1D tree1D:
+                    foreach (BlendTree1D.Child child in tree1D.Children)
+                        if (child.Motion is not null)
+                            VisitAnimationClips(child.Motion, visitor);
+                    break;
+                case BlendTree2D tree2D:
+                    foreach (BlendTree2D.Child child in tree2D.Children)
+                        if (child.Motion is not null)
+                            VisitAnimationClips(child.Motion, visitor);
+                    break;
+                case BlendTreeDirect directTree:
+                    foreach (BlendTreeDirect.Child child in directTree.Children)
+                        if (child.Motion is not null)
+                            VisitAnimationClips(child.Motion, visitor);
                     break;
             }
         }

@@ -229,7 +229,7 @@ public sealed class GPUPhysicsChainDispatcherTests
         var (replacementNode, replacementRoot, _) = CreateBoneHierarchy(3);
         var original = CreateTestComponent(originalNode, originalRoot, useBatched: false);
         var replacement = CreateTestComponent(replacementNode, replacementRoot, useBatched: false);
-        var originalRequest = new GPUPhysicsChainRequest(original)
+        var originalRequest = new GPUPhysicsChainRequest(original.AsComputeSource())
         {
             ParticleOffset = 32,
             ParticleArenaCapacity = 64,
@@ -242,7 +242,7 @@ public sealed class GPUPhysicsChainDispatcherTests
             UploadedTransformDataVersion = 13,
             UploadedColliderDataVersion = 14,
         };
-        var replacementRequest = new GPUPhysicsChainRequest(replacement);
+        var replacementRequest = new GPUPhysicsChainRequest(replacement.AsComputeSource());
 
         replacementRequest.AdoptArenaAllocationFrom(originalRequest);
 

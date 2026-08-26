@@ -11,12 +11,12 @@ namespace XREngine.Serialization;
 /// </summary>
 public static class RuntimeCoreAssetSerializationRegistration
 {
-    public static IDisposable Install(AssetManager assets)
+    public static IDisposable Install(IAssetSerializationServices services)
     {
-        ArgumentNullException.ThrowIfNull(assets);
+        ArgumentNullException.ThrowIfNull(services);
         return RegistrationLeaseGroup.Create(leases =>
         {
-            leases.Add(AssetSerializationServices.Install(new AssetManagerAssetSerializationServices(assets)));
+            leases.Add(AssetSerializationServices.Install(new RuntimeAssetSerializationServices(services)));
             leases.Add(CookedBinaryObjectLifecycleServices.Install(RuntimeCookedBinaryObjectLifecycleServices.Instance));
             leases.Add(YamlSerializationContributions.Install(new RuntimeCoreYamlContribution()));
             leases.Add(ThirdPartyAssetTypeRegistry.Install("XREngine.Runtime.Core", typeof(XRScene)));

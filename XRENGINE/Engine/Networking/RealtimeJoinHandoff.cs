@@ -1,15 +1,13 @@
-using System.Globalization;
-using System.Text.Json;
 using XREngine.Networking;
 
 namespace XREngine;
 
 public static class RealtimeJoinHandoff
 {
-    public const string PayloadEnvironmentVariable = XREngineEnvironmentVariables.RealtimeJoinPayload;
-    public const string PayloadFileEnvironmentVariable = XREngineEnvironmentVariables.RealtimeJoinPayloadFile;
+    public const string PayloadEnvironmentVariable = RealtimeJoinHandoffContract.PayloadEnvironmentVariable;
+    public const string PayloadFileEnvironmentVariable = RealtimeJoinHandoffContract.PayloadFileEnvironmentVariable;
 
-    public static string CurrentProtocolVersion { get; } = typeof(Engine).Assembly.GetName().Version?.ToString() ?? "dev";
+    public static string CurrentProtocolVersion => RealtimeJoinHandoffContract.CurrentProtocolVersion;
 
     public static bool TryApplyFromEnvironment(
         GameStartupSettings settings,
@@ -18,30 +16,11 @@ public static class RealtimeJoinHandoff
     {
         ArgumentNullException.ThrowIfNull(settings);
 
-        payload = null;
-        source = null;
+        if (!RealtimeJoinHandoffContract.TryReadFromEnvironment(out payload, out source))
+            return false;
 
-        string? payloadPath = GetOptionalEnvironmentValue(PayloadFileEnvironmentVariable);
-        if (!string.IsNullOrWhiteSpace(payloadPath))
-        {
-            string resolvedPath = Path.GetFullPath(payloadPath);
-            if (!File.Exists(resolvedPath))
-                throw new FileNotFoundException("Realtime join handoff payload file was not found.", resolvedPath);
-
-            payload = DeserializePayload(File.ReadAllText(resolvedPath), resolvedPath);
-            source = $"{PayloadFileEnvironmentVariable}={resolvedPath}";
-        }
-        else
-        {
-            string? payloadJson = GetOptionalEnvironmentValue(PayloadEnvironmentVariable);
-            if (string.IsNullOrWhiteSpace(payloadJson))
-                return false;
-
-            payload = DeserializePayload(payloadJson, PayloadEnvironmentVariable);
-            source = PayloadEnvironmentVariable;
-        }
-
-        ApplyToSettings(settings, payload);
+        if (payload is not null)
+            ApplyToSettings(settings, payload);
         return true;
     }
 
@@ -154,49 +133,12 @@ public static class RealtimeJoinHandoff
 
     public static bool IsProtocolCompatible(string? expectedProtocolVersion, string currentProtocolVersion)
     {
-        if (string.IsNullOrWhiteSpace(expectedProtocolVersion))
-            return true;
-
-        if (string.Equals(expectedProtocolVersion, "dev", StringComparison.OrdinalIgnoreCase))
-            return true;
-
-        if (string.Equals(currentProtocolVersion, "dev", StringComparison.OrdinalIgnoreCase))
-            return true;
-
-        return string.Equals(expectedProtocolVersion.Trim(), currentProtocolVersion, StringComparison.OrdinalIgnoreCase);
+        return RealtimeJoinHandoffContract.IsProtocolCompatible(expectedProtocolVersion, currentProtocolVersion);
     }
 
     public static string DescribeWorldAsset(WorldAssetIdentity? asset)
     {
-        if (asset is null)
-            return "<none>";
-
-        string hash = WorldAssetIdentity.NormalizeHash(asset.ContentHash);
-        if (hash.Length > 12)
-            hash = hash[..12];
-
-        if (string.IsNullOrWhiteSpace(hash))
-            hash = "<empty>";
-
-        return string.Create(CultureInfo.InvariantCulture, $"{asset.WorldId}@{asset.RevisionId}; hash={hash}; schema={asset.AssetSchemaVersion}");
+        return RealtimeJoinHandoffContract.DescribeWorldAsset(asset);
     }
 
-    private static RealtimeJoinHandoffPayload DeserializePayload(string json, string source)
-    {
-        try
-        {
-            return JsonSerializer.Deserialize(json, XREngineRuntimeJsonContext.Default.RealtimeJoinHandoffPayload)
-                ?? throw new InvalidOperationException("Realtime handoff payload was empty.");
-        }
-        catch (JsonException ex)
-        {
-            throw new InvalidOperationException($"Realtime handoff payload from {source} is not valid JSON.", ex);
-        }
-    }
-
-    private static string? GetOptionalEnvironmentValue(string name)
-    {
-        string? value = Environment.GetEnvironmentVariable(name);
-        return string.IsNullOrWhiteSpace(value) ? null : value.Trim();
-    }
 }

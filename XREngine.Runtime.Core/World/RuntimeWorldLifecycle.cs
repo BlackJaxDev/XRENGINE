@@ -1,15 +1,13 @@
 using System.Buffers;
 using System.Collections.Concurrent;
 using XREngine.Components;
-using XREngine.Rendering;
 using XREngine.Scene;
 
 namespace XREngine;
 
 /// <summary>
-/// Owns backend-neutral state for a production <c>XRWorldInstance</c>.
-/// The facade instance delegates target-world, play-state, root-node, and tick
-/// lifecycle operations here; rendering state is owned separately.
+/// Owns backend-neutral root, play-state, and tick lifecycle state for one
+/// <see cref="RuntimeWorld"/>; rendering state is owned separately.
 /// </summary>
 public sealed class RuntimeWorldLifecycle
 {
@@ -17,9 +15,10 @@ public sealed class RuntimeWorldLifecycle
 
     public RuntimeWorldLifecycle(
         IRuntimeWorldContext worldContext,
-        Action<SceneNode>? onRootNodeDestroying = null)
+        Action<SceneNode>? onRootNodeDestroying = null,
+        Func<SceneNode, bool>? participatesInPlay = null)
     {
-        RootNodes = new RootNodeCollection(worldContext, onRootNodeDestroying);
+        RootNodes = new RootNodeCollection(worldContext, onRootNodeDestroying, participatesInPlay);
         foreach (ETickGroup group in Enum.GetValues<ETickGroup>())
             _ticks[group] = [];
     }

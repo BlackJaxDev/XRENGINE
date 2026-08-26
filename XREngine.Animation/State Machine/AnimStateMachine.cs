@@ -338,19 +338,21 @@ namespace XREngine.Animation
         }
 
         /// <summary>
-        /// Resolves a root-projection policy for the currently contributing state motions.
-        /// Multiple clips may contribute only when their projection settings agree; a clip name
-        /// is returned only when every contributing leaf has the same calibration identity.
+        /// Resolves the single active humanoid root-motion leaf supported by Phase 6.
+        /// Multi-leaf root blending is rejected explicitly until Phase 7 evaluates and blends
+        /// independent leaf results.
         /// </summary>
         public bool TryResolveHumanoidRootMotionProjection(
             out UnityHumanoidClipRootMotionSettings? settings,
-            out string? calibrationClipName)
+            out string? calibrationClipName,
+            out AnimationClip? contributingClip,
+            out string diagnostic)
         {
             settings = null;
             calibrationClipName = null;
-            bool found = false;
-            bool mixedClipNames = false;
-            bool incompatibleSettings = false;
+            contributingClip = null;
+            diagnostic = string.Empty;
+            int contributorCount = 0;
 
             for (int i = 0; i < Layers.Count; i++)
             {
@@ -359,38 +361,37 @@ namespace XREngine.Animation
                     layer?.CurrentState?.Motion,
                     ref settings,
                     ref calibrationClipName,
-                    ref found,
-                    ref mixedClipNames,
-                    ref incompatibleSettings);
+                    ref contributingClip,
+                    ref contributorCount);
                 AccumulateHumanoidRootMotionProjection(
                     layer?.NextState?.Motion,
                     ref settings,
                     ref calibrationClipName,
-                    ref found,
-                    ref mixedClipNames,
-                    ref incompatibleSettings);
+                    ref contributingClip,
+                    ref contributorCount);
             }
 
-            if (mixedClipNames)
-                calibrationClipName = null;
-            if (incompatibleSettings)
+            if (contributorCount > 1)
             {
                 settings = null;
                 calibrationClipName = null;
+                contributingClip = null;
+                diagnostic =
+                    "Phase 6 supports exactly one active humanoid root-motion leaf; "
+                    + $"the current state-machine sample has {contributorCount}. Multi-leaf root blending belongs to Phase 7.";
                 return false;
             }
-            return found && settings is not null;
+            return true;
         }
 
         private static void AccumulateHumanoidRootMotionProjection(
             MotionBase? motion,
             ref UnityHumanoidClipRootMotionSettings? settings,
             ref string? calibrationClipName,
-            ref bool found,
-            ref bool mixedClipNames,
-            ref bool incompatibleSettings)
+            ref AnimationClip? contributingClip,
+            ref int contributorCount)
         {
-            if (motion is null || incompatibleSettings)
+            if (motion is null)
                 return;
 
             switch (motion)
@@ -399,21 +400,13 @@ namespace XREngine.Animation
                     if (!clip.HasRootMotion || clip.UnityHumanoidRootMotionSettings is not { } clipSettings)
                         return;
 
-                    if (!found)
+                    contributorCount++;
+                    if (contributorCount == 1)
                     {
                         settings = clipSettings;
                         calibrationClipName = clip.Name;
-                        found = true;
-                        return;
+                        contributingClip = clip;
                     }
-
-                    if (!HaveEquivalentRootMotionProjectionSettings(settings!, clipSettings))
-                    {
-                        incompatibleSettings = true;
-                        return;
-                    }
-                    if (!string.Equals(calibrationClipName, clip.Name, StringComparison.Ordinal))
-                        mixedClipNames = true;
                     return;
 
                 case BlendTree1D tree1D:
@@ -422,9 +415,8 @@ namespace XREngine.Animation
                             child.Motion,
                             ref settings,
                             ref calibrationClipName,
-                            ref found,
-                            ref mixedClipNames,
-                            ref incompatibleSettings);
+                            ref contributingClip,
+                            ref contributorCount);
                     return;
 
                 case BlendTree2D tree2D:
@@ -433,9 +425,8 @@ namespace XREngine.Animation
                             child.Motion,
                             ref settings,
                             ref calibrationClipName,
-                            ref found,
-                            ref mixedClipNames,
-                            ref incompatibleSettings);
+                            ref contributingClip,
+                            ref contributorCount);
                     return;
 
                 case BlendTreeDirect directTree:
@@ -444,31 +435,11 @@ namespace XREngine.Animation
                             child.Motion,
                             ref settings,
                             ref calibrationClipName,
-                            ref found,
-                            ref mixedClipNames,
-                            ref incompatibleSettings);
+                            ref contributingClip,
+                            ref contributorCount);
                     return;
             }
         }
-
-        private static bool HaveEquivalentRootMotionProjectionSettings(
-            UnityHumanoidClipRootMotionSettings a,
-            UnityHumanoidClipRootMotionSettings b)
-            => a.StartTime == b.StartTime
-            && a.StopTime == b.StopTime
-            && a.OrientationOffsetY == b.OrientationOffsetY
-            && a.Level == b.Level
-            && a.CycleOffset == b.CycleOffset
-            && a.LoopTime == b.LoopTime
-            && a.LoopPose == b.LoopPose
-            && a.BakeOrientationIntoPose == b.BakeOrientationIntoPose
-            && a.BakePositionYIntoPose == b.BakePositionYIntoPose
-            && a.BakePositionXZIntoPose == b.BakePositionXZIntoPose
-            && a.KeepOriginalOrientation == b.KeepOriginalOrientation
-            && a.KeepOriginalPositionY == b.KeepOriginalPositionY
-            && a.KeepOriginalPositionXZ == b.KeepOriginalPositionXZ
-            && a.HeightFromFeet == b.HeightFromFeet
-            && a.Mirror == b.Mirror;
 
         private void CombineAnimationValues(AnimLayer layer)
         {

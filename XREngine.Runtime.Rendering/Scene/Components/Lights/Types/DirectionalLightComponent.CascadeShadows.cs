@@ -2878,7 +2878,7 @@ namespace XREngine.Components.Lights
             uint height,
             bool createFrameBuffers)
         {
-            IRuntimeRenderWorld? world = WorldAs<IRuntimeRenderWorld>();
+            IRuntimeRenderWorld? world = World.GetRenderWorld();
 
             // Build fully-populated arrays in locals first, then publish the field
             // references atomically. Readers on the render thread snapshot these field
@@ -3101,7 +3101,7 @@ namespace XREngine.Components.Lights
 
             if (source == ShadowRequestSource.Hmd && RuntimeEngine.VRState.IsInVR)
             {
-                IRuntimeRenderWorld? world = WorldAs<IRuntimeRenderWorld>();
+                IRuntimeRenderWorld? world = World.GetRenderWorld();
                 AddCascadeSourceViewportFrustum(RuntimeEngine.VRState.LeftEyeViewport, world, destination, _cascadeSourceCameras, ref count);
                 AddCascadeSourceViewportFrustum(RuntimeEngine.VRState.RightEyeViewport, world, destination, _cascadeSourceCameras, ref count);
                 TryAddHmdCombinedCascadeSourceFrustum(world, destination, ref count);
@@ -3514,7 +3514,7 @@ namespace XREngine.Components.Lights
 
         private void SetCascadeSourceWorldOverride(DirectionalCascadeSourceState state)
         {
-            IRuntimeRenderWorld? world = WorldAs<IRuntimeRenderWorld>();
+            IRuntimeRenderWorld? world = World.GetRenderWorld();
             for (int i = 0; i < state.Viewports.Length; i++)
                 state.Viewports[i].WorldInstanceOverride = world;
         }
@@ -3533,7 +3533,7 @@ namespace XREngine.Components.Lights
 
         private bool ShouldCollectPrimaryShadowViewport()
         {
-            IRuntimeRenderWorld? world = WorldAs<IRuntimeRenderWorld>();
+            IRuntimeRenderWorld? world = World.GetRenderWorld();
             bool hasAnyCascadeReceiver =
                 SelectCascadeReceiverTexture(_desktopCascadeState) is not null ||
                 SelectCascadeReceiverTexture(_hmdCascadeState) is not null;

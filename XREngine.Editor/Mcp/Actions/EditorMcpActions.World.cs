@@ -48,7 +48,7 @@ namespace XREngine.Editor.Mcp
         public static Task<McpToolResponse> ListScenesAsync(
             McpToolContext context)
         {
-            var world = context.WorldInstance;
+            var world = context.World;
             var targetWorld = world.TargetWorld;
             if (targetWorld is null)
                 return Task.FromResult(new McpToolResponse("No active world found.", isError: true));
@@ -74,7 +74,7 @@ namespace XREngine.Editor.Mcp
             [McpName("name"), Description("Scene name.")] string name,
             [McpName("is_visible"), Description("Whether the scene is visible.")] bool isVisible = true)
         {
-            var world = context.WorldInstance;
+            var world = context.World;
             var targetWorld = world.TargetWorld;
             if (targetWorld is null)
                 return Task.FromResult(new McpToolResponse("No active world found.", isError: true));
@@ -101,7 +101,7 @@ namespace XREngine.Editor.Mcp
             McpToolContext context,
             [McpName("scene_name"), Description("Scene name or ID to delete.")] string sceneName)
         {
-            var world = context.WorldInstance;
+            var world = context.World;
             if (!TryResolveScene(world, sceneName, out var scene, out var error) || scene is null)
                 return Task.FromResult(new McpToolResponse(error ?? "Scene not found.", isError: true));
 
@@ -142,7 +142,7 @@ namespace XREngine.Editor.Mcp
             [McpName("scene_name"), Description("Scene name or ID.")] string sceneName,
             [McpName("is_visible"), Description("Whether the scene is visible.")] bool isVisible)
         {
-            var world = context.WorldInstance;
+            var world = context.World;
             if (!TryResolveScene(world, sceneName, out var scene, out var error) || scene is null)
                 return Task.FromResult(new McpToolResponse(error ?? "Scene not found.", isError: true));
 
@@ -165,7 +165,7 @@ namespace XREngine.Editor.Mcp
             McpToolContext context,
             [McpName("scene_name"), Description("Scene name or ID.")] string sceneName)
         {
-            var world = context.WorldInstance;
+            var world = context.World;
             var targetWorld = world.TargetWorld;
             if (targetWorld is null)
                 return Task.FromResult(new McpToolResponse("No active world found.", isError: true));
@@ -223,7 +223,7 @@ namespace XREngine.Editor.Mcp
             [McpName("scene_name"), Description("Scene name or ID to export.")] string sceneName,
             [McpName("output_dir"), Description("Target directory for the exported asset.")] string outputDir)
         {
-            var world = context.WorldInstance;
+            var world = context.World;
             if (!TryResolveScene(world, sceneName, out var scene, out var error) || scene is null)
                 return Task.FromResult(new McpToolResponse(error ?? "Scene not found.", isError: true));
 
@@ -249,7 +249,7 @@ namespace XREngine.Editor.Mcp
             [McpName("asset_path"), Description("Scene asset path to load.")] string assetPath,
             [McpName("force_visible"), Description("Optional visibility override.")] bool? forceVisible = null)
         {
-            var world = context.WorldInstance;
+            var world = context.World;
             var targetWorld = world.TargetWorld;
             if (targetWorld is null)
                 return Task.FromResult(new McpToolResponse("No active world found.", isError: true));
@@ -308,7 +308,7 @@ namespace XREngine.Editor.Mcp
             McpToolContext context,
             [McpName("scene_name"), Description("Scene name or ID to validate.")] string? sceneName = null)
         {
-            var world = context.WorldInstance;
+            var world = context.World;
             if (!TryResolveScene(world, sceneName, out var scene, out var error) || scene is null)
                 return Task.FromResult(new McpToolResponse(error ?? "Scene not found.", isError: true));
 

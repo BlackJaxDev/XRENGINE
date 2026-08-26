@@ -78,7 +78,7 @@ void main()
         {
             _boneDiamondRenderInfo.IsVisible = RenderUtilizedBoneDiamonds;
             _boneDiamondRenderInfo.WorldInstance = IsActiveInHierarchy
-                ? World as IRuntimeRenderInfo3DRegistrationTarget
+                ? World.GetRenderRegistrationTarget()
                 : null;
         }
 

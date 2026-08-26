@@ -126,14 +126,17 @@ public sealed class HumanoidPoseAuditExporter : MonoBehaviour
     private sealed class AvatarProfileReport
     {
         /// <summary>
-        /// Version 3 adds explicit role, body-axis, and twist-chain metadata.
+        /// Version 5 adds Unity's Hips-parent allocation frame so runtime policy
+        /// composition occurs in the same coordinate system as Mecanim.
         /// The pose-audit report intentionally remains schema 6.
         /// </summary>
-        public int SchemaVersion = 3;
+        public int SchemaVersion = 5;
         public string Source = "UnityMecanim";
         public string AvatarName = string.Empty;
         public float HumanScale;
         public string CalibrationClipName = string.Empty;
+        public ClipRootMotionSettings CalibrationRootMotionSettings = new();
+        public AvatarProfileRootAllocationFrame RootAllocationFrame = new();
         public int CalibrationClipTrainingStride = 2;
         public AvatarHumanDescriptionSettings AvatarSettings = new();
         public AvatarProfileBodyAxes BodyAxes = new();
@@ -169,6 +172,14 @@ public sealed class HumanoidPoseAuditExporter : MonoBehaviour
         public PoseVector3 Up = PoseVector3.From(Vector3.up);
         public PoseVector3 Forward = PoseVector3.From(Vector3.forward);
         public string CoordinateSpace = "Unity Animator root local space";
+    }
+
+    [Serializable]
+    private sealed class AvatarProfileRootAllocationFrame
+    {
+        public PoseVector3 HipsParentPositionInAnimatorRoot = new();
+        public PoseQuaternion HipsParentRotationInAnimatorRoot = new();
+        public PoseVector3 HipsParentScaleInAnimatorRoot = PoseVector3.From(Vector3.one);
     }
 
     [Serializable]
@@ -210,7 +221,7 @@ public sealed class HumanoidPoseAuditExporter : MonoBehaviour
         public int CombinationSampleCount;
         public int EndpointSampleCount;
         public int ReferenceMotionSampleCount;
-        public float ReferenceMotionSampleWeight = 256.0f;
+        public float ReferenceMotionSampleWeight = 1.0f;
         public float RidgeLambda;
         public string RotationBaselineContract = "ordered shortest-arc single-muscle endpoint product";
         public string PositionBaselineContract = "ordered signed linear single-muscle endpoint sum";
@@ -483,6 +494,8 @@ public sealed class HumanoidPoseAuditExporter : MonoBehaviour
             AvatarName = report.AvatarName,
             HumanScale = report.AvatarHumanScale,
             CalibrationClipName = report.ClipName,
+            CalibrationRootMotionSettings = report.RootMotionSettings,
+            RootAllocationFrame = CaptureRootAllocationFrame(animator),
             AvatarSettings = report.AvatarSettings,
         };
 
@@ -566,6 +579,23 @@ public sealed class HumanoidPoseAuditExporter : MonoBehaviour
             report);
 
         return profile;
+    }
+
+    private static AvatarProfileRootAllocationFrame CaptureRootAllocationFrame(Animator animator)
+    {
+        Transform hips = animator.GetBoneTransform(HumanBodyBones.Hips);
+        Transform hipsParent = hips != null ? hips.parent : null;
+        if (hipsParent == null)
+            return new AvatarProfileRootAllocationFrame();
+
+        Matrix4x4 parentToAnimatorRoot = animator.transform.worldToLocalMatrix
+            * hipsParent.localToWorldMatrix;
+        return new AvatarProfileRootAllocationFrame
+        {
+            HipsParentPositionInAnimatorRoot = PoseVector3.From(parentToAnimatorRoot.GetColumn(3)),
+            HipsParentRotationInAnimatorRoot = PoseQuaternion.From(parentToAnimatorRoot.rotation),
+            HipsParentScaleInAnimatorRoot = PoseVector3.From(parentToAnimatorRoot.lossyScale),
+        };
     }
 
     private static void AddTwistChain(
@@ -999,7 +1029,7 @@ public sealed class HumanoidPoseAuditExporter : MonoBehaviour
             // would incorrectly attribute unrelated whole-body effects to three
             // local muscle inputs.
             int referenceMotionSampleCount = string.Equals(bone.Name, "Hips", StringComparison.Ordinal)
-                ? AppendReferenceMotionSamples(samples, report, muscles)
+                ? AppendReferenceMotionSamples(samples, sourceAnimator, report, muscles)
                 : 0;
 
             result.Add(FitCoupledMuscleCalibration(
@@ -1138,16 +1168,17 @@ public sealed class HumanoidPoseAuditExporter : MonoBehaviour
     {
         var result = new float[HumanTrait.MuscleCount];
         int scaleBand = useCentralAmplitudeBands ? (sampleIndex - 1) % 3 : 0;
-        int sequenceIndex = useCentralAmplitudeBands ? (sampleIndex - 1) / 3 + 1 : sampleIndex;
+        int sequenceIndex = sampleIndex;
         float amplitude = !useCentralAmplitudeBands || scaleBand == 0
             ? 1.0f
             : scaleBand == 1 ? 0.6f : 0.3f;
         for (int i = 0; i < muscleIndices.Count; i++)
         {
             // A prime-per-dimension Halton sequence is deterministic and avoids
-            // correlated grids without relying on UnityEngine.Random state. Three
-            // amplitude bands preserve full-range coverage while giving the common
-            // central animation range enough weight in a finite polynomial fit.
+            // correlated grids without relying on UnityEngine.Random state. Every
+            // sample keeps its own direction: reusing one direction for all three
+            // amplitude bands leaves the cubic Hips basis rank-deficient. The bands
+            // still preserve full-range coverage while emphasizing ordinary poses.
             float unit = RadicalInverse(sequenceIndex, GetPrime(i));
             result[muscleIndices[i]] = (unit * 2.0f - 1.0f) * amplitude;
         }
@@ -1344,73 +1375,85 @@ public sealed class HumanoidPoseAuditExporter : MonoBehaviour
     }
 
     /// <summary>
-    /// Adds every other sample from the exported reference motion to a much larger
-    /// avatar-generic synthetic calibration set. The remaining samples stay unseen
-    /// so the resulting profile can be validated against the same real motion
-    /// without fitting only that clip.
+    /// Adds every other real-motion muscle vector to the avatar-generic calibration
+    /// set after replaying it with a neutral Body pose. Sampling the final clip Hips
+    /// transform here would bake that clip's Body/root allocation into the muscle
+    /// model and make the profile fail on unrelated motions.
     /// </summary>
     private static int AppendReferenceMotionSamples(
         List<CoupledCalibrationSample> destination,
+        Animator sourceAnimator,
         PoseAuditReport report,
         IReadOnlyList<int> muscleIndices)
     {
         if (report.DefaultMusclePose == null || report.Samples.Count == 0)
             return 0;
 
-        var neutralPositions = new Dictionary<string, Vector3>(StringComparer.Ordinal);
-        for (int i = 0; i < report.DefaultMusclePose.Bones.Count; i++)
+        GameObject clone = UnityEngine.Object.Instantiate(sourceAnimator.gameObject);
+        clone.hideFlags = HideFlags.HideAndDontSave;
+        clone.name = sourceAnimator.gameObject.name + "_ReferenceMuscleProbeClone";
+        try
         {
-            BoneSample bone = report.DefaultMusclePose.Bones[i];
-            neutralPositions[bone.Name] = new Vector3(
-                bone.LocalPosition.X,
-                bone.LocalPosition.Y,
-                bone.LocalPosition.Z);
-        }
+            DisableBehaviours(clone);
+            Animator animator = clone.GetComponent<Animator>();
+            if (animator == null || !animator.isHuman)
+                throw new InvalidOperationException("Reference-muscle probe clone is missing a humanoid Animator.");
 
-        int added = 0;
-        for (int sampleIndex = 0; sampleIndex < report.Samples.Count; sampleIndex += 2)
-        {
-            PoseAuditSample source = report.Samples[sampleIndex];
-            var muscleValuesByName = new Dictionary<string, float>(source.Muscles.Count, StringComparer.Ordinal);
-            for (int i = 0; i < source.Muscles.Count; i++)
-                muscleValuesByName[source.Muscles[i].Name] = source.Muscles[i].Value;
-
-            var muscles = new float[HumanTrait.MuscleCount];
-            string[] humanTraitMuscleNames = HumanTrait.MuscleName;
-            for (int i = 0; i < muscleIndices.Count; i++)
+            animator.cullingMode = AnimatorCullingMode.AlwaysAnimate;
+            var poseHandler = new HumanPoseHandler(animator.avatar, animator.transform);
+            var neutralPose = new HumanPose
             {
-                int muscleIndex = muscleIndices[i];
-                if (muscleIndex >= 0
-                    && muscleIndex < humanTraitMuscleNames.Length
-                    && muscleValuesByName.TryGetValue(humanTraitMuscleNames[muscleIndex], out float value))
-                    muscles[muscleIndex] = value;
-            }
-
-            var sample = new CoupledCalibrationSample
-            {
-                Muscles = muscles,
-                Weight = 256.0f,
-                HasProjectedRootY = true,
-                ProjectedRootY = source.ProjectedRootPosition.Y,
+                bodyPosition = Vector3.zero,
+                bodyRotation = Quaternion.identity,
+                muscles = new float[HumanTrait.MuscleCount],
             };
-            for (int i = 0; i < source.Bones.Count; i++)
+            poseHandler.SetHumanPose(ref neutralPose);
+            Dictionary<string, Quaternion> neutralLocalRotations = CaptureCurrentLocalRotations(animator);
+            Dictionary<string, Vector3> neutralLocalPositions = CaptureCurrentLocalPositions(animator);
+
+            int added = 0;
+            for (int sampleIndex = 0; sampleIndex < report.Samples.Count; sampleIndex += 2)
             {
-                BoneSample bone = source.Bones[i];
-                sample.BonePoseDeltas[bone.Name] = bone.PoseDeltaFromNeutralRotation.ToQuaternion();
-                if (neutralPositions.TryGetValue(bone.Name, out Vector3 neutralPosition))
+                PoseAuditSample source = report.Samples[sampleIndex];
+                var muscleValuesByName = new Dictionary<string, float>(source.Muscles.Count, StringComparer.Ordinal);
+                for (int i = 0; i < source.Muscles.Count; i++)
+                    muscleValuesByName[source.Muscles[i].Name] = source.Muscles[i].Value;
+
+                var muscles = new float[HumanTrait.MuscleCount];
+                string[] humanTraitMuscleNames = HumanTrait.MuscleName;
+                for (int i = 0; i < muscleIndices.Count; i++)
                 {
-                    sample.BonePositionDeltas[bone.Name] = new Vector3(
-                        bone.LocalPosition.X,
-                        bone.LocalPosition.Y,
-                        bone.LocalPosition.Z) - neutralPosition;
+                    int muscleIndex = muscleIndices[i];
+                    if (muscleIndex >= 0
+                        && muscleIndex < humanTraitMuscleNames.Length
+                        && muscleValuesByName.TryGetValue(humanTraitMuscleNames[muscleIndex], out float value))
+                        muscles[muscleIndex] = value;
                 }
+
+                CoupledCalibrationSample sample = CaptureCoupledCalibrationSample(
+                    poseHandler,
+                    animator,
+                    muscles,
+                    neutralLocalRotations,
+                    neutralLocalPositions);
+                // Real animation samples improve coverage of ordinary poses, but
+                // they must not dominate the avatar-wide Halton calibration set.
+                // A clip-heavy weight overfits Hips to the calibration motion and
+                // makes the same avatar profile fail on unrelated clips.
+                sample.Weight = 1.0f;
+                sample.HasProjectedRootY = true;
+                sample.ProjectedRootY = source.ProjectedRootPosition.Y;
+                destination.Add(sample);
+                added++;
             }
 
-            destination.Add(sample);
-            added++;
+            poseHandler.SetHumanPose(ref neutralPose);
+            return added;
         }
-
-        return added;
+        finally
+        {
+            UnityEngine.Object.DestroyImmediate(clone);
+        }
     }
 
     private static void FitProjectedRootY(

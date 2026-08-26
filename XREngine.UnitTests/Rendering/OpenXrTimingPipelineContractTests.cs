@@ -494,7 +494,8 @@ public sealed class OpenXrTimingPipelineContractTests
 
         pipeline.ShouldContain("System.MathF.Round(System.Math.Max(extent, 1u) / (float)System.Math.Max(divisor, 1u))");
         pipeline.ShouldContain("ScaleInternalExtent(InternalHeight, 2u)");
-        pipeline.ShouldContain("ScaleInternalExtent(InternalHeight, divisor)");
+        resources.ShouldContain("MathF.Round(Math.Max(extent, 1u) / (float)Math.Max(divisor, 1))");
+        resources.ShouldContain("ScaleGtaoScratchExtent(internalWidth, divisor)");
         resources.ShouldContain("ScaleGtaoScratchExtent(internalHeight, divisor)");
     }
 
@@ -1788,7 +1789,7 @@ public sealed class OpenXrTimingPipelineContractTests
     [Test]
     public void UnsupportedGpuMeshBvhPicking_UsesCoarseBoundsInsteadOfExactCpuTriangleWalk()
     {
-        string worldInstance = ReadWorkspaceFile("XREngine/Rendering/XRWorldInstance.cs");
+        string worldInstance = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/RuntimeWorldRenderer.Picking.cs");
         string dispatcher = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Compute/BvhRaycastDispatcher.cs");
 
         worldInstance.ShouldContain("using coarse bounds picking");

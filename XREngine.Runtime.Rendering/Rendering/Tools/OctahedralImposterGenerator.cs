@@ -341,7 +341,7 @@ public sealed class OctahedralImposterGenerator
         if (model is null)
             return Fail("Cannot generate impostor: no model assigned.");
 
-        IRuntimeRenderWorld? world = component.WorldAs<IRuntimeRenderWorld>();
+        IRuntimeRenderWorld? world = component.World.GetRenderWorld();
         if (world is null)
             return Fail("Cannot generate impostor: component has no world.");
 

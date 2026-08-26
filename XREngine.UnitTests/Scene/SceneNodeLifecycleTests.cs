@@ -27,6 +27,7 @@ public class SceneNodeLifecycleTests
         BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)!;
     private IRuntimeRenderingHostServices? _previousRenderingServices;
     private IRuntimeShaderServices? _previousShaderServices;
+    private readonly List<(RuntimeWorld World, RuntimeWorldRenderer Renderer)> _ownedRuntimeWorlds = [];
 
     [SetUp]
     public void SetUp()
@@ -40,6 +41,13 @@ public class SceneNodeLifecycleTests
     [TearDown]
     public void TearDown()
     {
+        for (int index = _ownedRuntimeWorlds.Count - 1; index >= 0; --index)
+        {
+            (RuntimeWorld world, RuntimeWorldRenderer renderer) = _ownedRuntimeWorlds[index];
+            world.Dispose();
+            renderer.Dispose();
+        }
+        _ownedRuntimeWorlds.Clear();
         RuntimeRenderingHostServices.Current = _previousRenderingServices!;
         RuntimeShaderServices.Current = _previousShaderServices;
     }
@@ -262,7 +270,7 @@ public class SceneNodeLifecycleTests
             SceneNode root = new("Root");
             _ = new SceneNode(root, "Child");
             XRScene scene = new("Scene", root);
-            XRWorldInstance world = new(new XRWorld("World", scene));
+            RuntimeWorld world = CreateRuntimeWorld(new JitterScene(), new XRWorld("World", scene));
 
             Undo.TrackScene(scene);
             Undo.ClearHistory();
@@ -526,20 +534,20 @@ public class SceneNodeLifecycleTests
     [Test]
     public void AddingRootNodeToEditWorld_RegistersChildDirectionalLightsImmediately()
     {
-        XRWorldInstance world = new(new VisualScene3D(), new JitterScene());
+        RuntimeWorld world = CreateRuntimeWorld(new JitterScene());
         SceneNode root = new("Root");
         SceneNode lightNode = new(root, "DirectionalLight");
         DirectionalLightComponent light = lightNode.AddComponent<DirectionalLightComponent>()!;
 
         world.RootNodes.Add(root);
 
-        Assert.That(world.Lights.DynamicDirectionalLights, Does.Contain(light));
+        Assert.That(GetRenderWorld(world).Lights.DynamicDirectionalLights, Does.Contain(light));
     }
 
     [Test]
     public void ReactivatingDirectionalLight_RecreatesShadowMapAndReregistersIt()
     {
-        XRWorldInstance world = new(new VisualScene3D(), new JitterScene());
+        RuntimeWorld world = CreateRuntimeWorld(new JitterScene());
         SceneNode root = new("Root");
         SceneNode lightNode = new(root, "DirectionalLight");
         DirectionalLightComponent light = lightNode.AddComponent<DirectionalLightComponent>()!;
@@ -549,24 +557,24 @@ public class SceneNodeLifecycleTests
         var initialShadowMap = light.ShadowMap;
 
         Assert.That(initialShadowMap, Is.Not.Null);
-        Assert.That(world.Lights.DynamicDirectionalLights, Does.Contain(light));
+        Assert.That(GetRenderWorld(world).Lights.DynamicDirectionalLights, Does.Contain(light));
 
         light.IsActive = false;
 
         Assert.That(light.ShadowMap, Is.Null);
-        Assert.That(world.Lights.DynamicDirectionalLights, Does.Not.Contain(light));
+        Assert.That(GetRenderWorld(world).Lights.DynamicDirectionalLights, Does.Not.Contain(light));
 
         light.IsActive = true;
 
         Assert.That(light.ShadowMap, Is.Not.Null);
         Assert.That(light.ShadowMap, Is.Not.SameAs(initialShadowMap));
-        Assert.That(world.Lights.DynamicDirectionalLights, Does.Contain(light));
+        Assert.That(GetRenderWorld(world).Lights.DynamicDirectionalLights, Does.Contain(light));
     }
 
     [Test]
     public void ActiveDirectionalLight_RecreatesMissingRuntimeShadowCamera()
     {
-        XRWorldInstance world = new(new VisualScene3D(), new JitterScene());
+        RuntimeWorld world = CreateRuntimeWorld(new JitterScene());
         SceneNode root = new("Root");
         SceneNode lightNode = new(root, "DirectionalLight");
         DirectionalLightComponent light = lightNode.AddComponent<DirectionalLightComponent>()!;
@@ -586,7 +594,7 @@ public class SceneNodeLifecycleTests
     [Test]
     public void DirectionalShadowCollection_RecreatesMissingRuntimeShadowCameraBeforeSubmission()
     {
-        XRWorldInstance world = new(new VisualScene3D(), new JitterScene());
+        RuntimeWorld world = CreateRuntimeWorld(new JitterScene());
         SceneNode root = new("Root");
         SceneNode lightNode = new(root, "DirectionalLight");
         DirectionalLightComponent light = lightNode.AddComponent<DirectionalLightComponent>()!;
@@ -611,7 +619,7 @@ public class SceneNodeLifecycleTests
     [Test]
     public void ReactivatingDirectionalLight_ReplacesDisposedRuntimeShadowViewport()
     {
-        XRWorldInstance world = new(new VisualScene3D(), new JitterScene());
+        RuntimeWorld world = CreateRuntimeWorld(new JitterScene());
         SceneNode root = new("Root");
         SceneNode lightNode = new(root, "DirectionalLight");
         DirectionalLightComponent light = lightNode.AddComponent<DirectionalLightComponent>()!;
@@ -645,7 +653,7 @@ public class SceneNodeLifecycleTests
     [Test]
     public void DeactivatingDirectionalLight_WithdrawsCascadeViewportsBeforeDisposal()
     {
-        XRWorldInstance world = new(new VisualScene3D(), new JitterScene());
+        RuntimeWorld world = CreateRuntimeWorld(new JitterScene());
         SceneNode root = new("Root");
         SceneNode lightNode = new(root, "DirectionalLight");
         DirectionalLightComponent light = lightNode.AddComponent<DirectionalLightComponent>()!;
@@ -674,17 +682,17 @@ public class SceneNodeLifecycleTests
     [Test]
     public void DestroyingEditorSceneRoot_RemovesItFromEditorAndRuntimeRootCollections()
     {
-        XRWorldInstance world = new(new VisualScene3D(), new JitterScene());
+        RuntimeWorld world = CreateRuntimeWorld(new JitterScene());
         SceneNode root = new("EditorOnlyRoot");
         root.AddComponent<DirectionalLightComponent>();
 
-        world.AddToEditorScene(root);
+        GetEditorWorld(world).AddToEditorScene(root);
 
         Assert.Multiple(() =>
         {
-            Assert.That(world.EditorScene.RootNodes, Does.Contain(root));
+            Assert.That(GetEditorWorld(world).EditorScene.RootNodes, Does.Contain(root));
             Assert.That(world.RootNodes, Does.Contain(root));
-            Assert.That(world.Lights.DynamicDirectionalLights.Count, Is.EqualTo(1));
+            Assert.That(GetRenderWorld(world).Lights.DynamicDirectionalLights.Count, Is.EqualTo(1));
         });
 
         root.Destroy();
@@ -693,30 +701,30 @@ public class SceneNodeLifecycleTests
         Assert.Multiple(() =>
         {
             Assert.That(root.IsDestroyed, Is.True);
-            Assert.That(world.EditorScene.RootNodes, Does.Not.Contain(root));
+            Assert.That(GetEditorWorld(world).EditorScene.RootNodes, Does.Not.Contain(root));
             Assert.That(world.RootNodes, Does.Not.Contain(root));
-            Assert.That(world.Lights.DynamicDirectionalLights, Is.Empty);
+            Assert.That(GetRenderWorld(world).Lights.DynamicDirectionalLights, Is.Empty);
         });
     }
 
     [Test]
     public async Task PlayLifecycle_KeepsEditorSceneOutsideGameplayLifecycleAndReactivatesIt()
     {
-        XRWorldInstance world = new(new VisualScene3D(), new JitterScene());
+        RuntimeWorld world = CreateRuntimeWorld(new JitterScene());
         SceneNode gameplayRoot = new("GameplayRoot");
         LifecycleTrackingComponent gameplay = gameplayRoot.AddComponent<LifecycleTrackingComponent>()!;
         SceneNode editorRoot = new("EditorRoot");
         LifecycleTrackingComponent editor = editorRoot.AddComponent<LifecycleTrackingComponent>()!;
 
         world.RootNodes.Add(gameplayRoot);
-        world.AddToEditorScene(editorRoot);
+        GetEditorWorld(world).AddToEditorScene(editorRoot);
 
         int gameplayActivationBaseline = gameplay.ActivationCount;
         int gameplayDeactivationBaseline = gameplay.DeactivationCount;
         int editorActivationBaseline = editor.ActivationCount;
         int editorDeactivationBaseline = editor.DeactivationCount;
 
-        await world.BeginPlay();
+        await world.BeginPlayAsync();
 
         Assert.Multiple(() =>
         {
@@ -741,22 +749,23 @@ public class SceneNodeLifecycleTests
     [Test]
     public async Task BeginEditMode_RestartsStoppedWorldWithoutGameplayPhysics()
     {
-        XRWorldInstance world = new(new VisualScene3D(), new JitterScene());
+        RuntimeWorld world = CreateRuntimeWorld(new JitterScene());
         SceneNode root = new("EditRoot");
         LifecycleTrackingComponent component = root.AddComponent<LifecycleTrackingComponent>()!;
         world.RootNodes.Add(root);
 
         try
         {
-            await world.BeginPlay();
+            await world.BeginPlayAsync();
             world.EndPlay();
             world.PhysicsEnabled = true;
 
-            await world.BeginEditMode();
+            world.PhysicsEnabled = false;
+            await world.BeginPlayAsync();
 
             Assert.Multiple(() =>
             {
-                Assert.That(world.PlayState, Is.EqualTo(XRWorldInstance.EPlayState.Playing));
+                Assert.That(world.PlayState, Is.EqualTo(RuntimeWorldPlayState.Playing));
                 Assert.That(world.PhysicsEnabled, Is.False);
                 Assert.That(root.HasBegunPlay, Is.True);
                 Assert.That(component.BeginPlayCount, Is.EqualTo(2));
@@ -765,7 +774,7 @@ public class SceneNodeLifecycleTests
         }
         finally
         {
-            if (world.PlayState != XRWorldInstance.EPlayState.Stopped)
+            if (world.PlayState != RuntimeWorldPlayState.Stopped)
                 world.EndPlay();
         }
     }
@@ -773,7 +782,7 @@ public class SceneNodeLifecycleTests
     [Test]
     public void ReactivatingPossessedPawn_ReregistersItsLocalInputTick()
     {
-        XRWorldInstance world = new(new VisualScene3D(), new JitterScene());
+        RuntimeWorld world = CreateRuntimeWorld(new JitterScene());
         SceneNode root = new("PawnRoot");
         PawnComponent pawn = root.AddComponent<PawnComponent>()!;
         TrackingLocalPawnController controller = new();
@@ -815,13 +824,13 @@ public class SceneNodeLifecycleTests
 
         XRScene scene = new("RuntimeScene", root);
         XRWorld targetWorld = new("TestWorld", scene);
-        XRWorldInstance world = new(targetWorld, new VisualScene3D(), new JitterScene());
+        RuntimeWorld world = CreateRuntimeWorld(new JitterScene(), targetWorld);
 
         Assert.Multiple(() =>
         {
             Assert.That(scene.RootNodes, Does.Contain(root));
             Assert.That(world.RootNodes, Does.Contain(root));
-            Assert.That(world.Lights.DynamicDirectionalLights.Count, Is.EqualTo(1));
+            Assert.That(GetRenderWorld(world).Lights.DynamicDirectionalLights.Count, Is.EqualTo(1));
         });
 
         root.Destroy();
@@ -832,7 +841,7 @@ public class SceneNodeLifecycleTests
             Assert.That(root.IsDestroyed, Is.True);
             Assert.That(scene.RootNodes, Does.Not.Contain(root));
             Assert.That(world.RootNodes, Does.Not.Contain(root));
-            Assert.That(world.Lights.DynamicDirectionalLights, Is.Empty);
+            Assert.That(GetRenderWorld(world).Lights.DynamicDirectionalLights, Is.Empty);
         });
     }
 
@@ -890,6 +899,33 @@ public class SceneNodeLifecycleTests
             RuntimeSceneNodeServices.Current = previous;
         }
     }
+
+    private RuntimeWorld CreateRuntimeWorld(JitterScene physicsScene, XRWorld? targetWorld = null)
+    {
+        RuntimeWorld world = new(physicsScene);
+        RuntimeWorldRenderer renderer = new(world, new VisualScene3D());
+        renderer.BindWorldState(
+            () => world.TargetWorld,
+            () => world.TargetWorld?.Name,
+            () => world.GameMode,
+            () => world.RootNodes);
+        if (targetWorld is not null)
+            world.RetargetWorld(targetWorld);
+        _ownedRuntimeWorlds.Add((world, renderer));
+        return world;
+    }
+
+    private static RuntimeWorldRenderer GetRenderWorld(RuntimeWorld world)
+    {
+        if (world.TryGetCapability<IRuntimeRenderWorld>(out IRuntimeRenderWorld? renderWorld) &&
+            renderWorld is RuntimeWorldRenderer renderer)
+            return renderer;
+
+        throw new InvalidOperationException("Expected runtime rendering capability.");
+    }
+
+    private static EditorWorldIntegration GetEditorWorld(RuntimeWorld world)
+        => EditorWorldIntegrationRegistry.GetOrAttach(world);
 
     private sealed class LifecycleTrackingComponent : XRComponent
     {

@@ -159,7 +159,7 @@ namespace XREngine.Scene.Prefabs
         /// <summary>
         /// Creates a runtime instance of the prefab hierarchy.
         /// </summary>
-        public SceneNode Instantiate(XRWorldInstance? world = null,
+        public SceneNode Instantiate(IRuntimeWorldContext? world = null,
                                      SceneNode? parent = null,
                                      bool maintainWorldTransform = false)
         {

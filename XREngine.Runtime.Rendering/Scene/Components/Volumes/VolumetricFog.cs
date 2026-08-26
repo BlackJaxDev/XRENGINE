@@ -172,7 +172,7 @@ namespace XREngine.Components.Scene.Volumes
 
         private void RefreshRegistration()
         {
-            var world = WorldAs<IRuntimeRenderWorld>();
+            var world = World.GetRenderWorld();
             bool shouldRegister = world is not null && IsActiveInHierarchy && _volumeEnabled;
 
             if (_registeredWorld is not null && (!shouldRegister || _registeredWorld != world))

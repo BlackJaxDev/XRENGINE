@@ -96,11 +96,10 @@ public partial class HumanoidComponent
         if (hips is null || !byNode.TryGetValue(hips, out HumanoidAvatarAutoMapCandidate? hipsCandidate))
             return;
 
-        List<SceneNode> torsoPath = BuildExtremeDescendantPath(
+        List<SceneNode> torsoPath = BuildTorsoPath(
             hips,
             byNode,
             bodyUp,
-            positiveDirection: true,
             maximumNodes: 16);
         MapTorso(torsoPath, byNode, bodyRight, bodyUp, skeletonHeight, assigned);
         MapLegs(hipsCandidate, candidates, byNode, bodyRight, bodyUp, bodyForward, skeletonHeight, assigned);
@@ -285,6 +284,7 @@ public partial class HumanoidComponent
         float bestGeometry = 0.0f;
         float bestAxis = 0.0f;
         float bestAlias = 0.0f;
+        bool bestIsSemanticAnchor = false;
         for (int i = 0; i < candidates.Count; i++)
         {
             HumanoidAvatarAutoMapCandidate candidate = candidates[i];
@@ -310,9 +310,19 @@ public partial class HumanoidComponent
             float normalizedHeight = (height - minimumHeight) / skeletonHeight;
             float geometry = Math.Clamp(1.0f - MathF.Abs(normalizedHeight - 0.48f) / 0.38f, 0.0f, 1.0f);
             float axis = candidate.JointAxisScore;
-            float alias = AliasScore(candidate.Node.Name, "hips", "pelvis", "root");
+            float semanticAlias = AliasScore(candidate.Node.Name, "hips", "pelvis");
+            float alias = MathF.Max(
+                semanticAlias,
+                AliasScore(candidate.Node.Name, "root") * 0.2f);
+            bool isSemanticAnchor = semanticAlias >= 0.9f
+                && descendingBranches >= 2
+                && ascendingBranches >= 1;
             float score = topology * 0.54f + geometry * 0.30f + axis * 0.08f + alias * 0.08f;
-            if (score > bestScore || score == bestScore && candidate.TraversalIndex < best!.TraversalIndex)
+            bool replaceBest = isSemanticAnchor != bestIsSemanticAnchor
+                ? isSemanticAnchor
+                : score > bestScore
+                    || score == bestScore && candidate.TraversalIndex < best!.TraversalIndex;
+            if (replaceBest)
             {
                 secondScore = bestScore;
                 best = candidate;
@@ -321,8 +331,9 @@ public partial class HumanoidComponent
                 bestGeometry = geometry;
                 bestAxis = axis;
                 bestAlias = alias;
+                bestIsSemanticAnchor = isSemanticAnchor;
             }
-            else if (score > secondScore)
+            else if (isSemanticAnchor == bestIsSemanticAnchor && score > secondScore)
                 secondScore = score;
         }
 
@@ -372,6 +383,20 @@ public partial class HumanoidComponent
         Dictionary<SceneNode, HumanoidAvatarAutoMapCandidate> byNode,
         Vector3 bodyUp)
     {
+        int semanticIndex = -1;
+        float bestSemanticAlias = 0.0f;
+        for (int i = 0; i < path.Count; i++)
+        {
+            float alias = AliasScore(path[i].Name, "head");
+            if (alias >= 0.9f && (alias > bestSemanticAlias || alias == bestSemanticAlias && i > semanticIndex))
+            {
+                semanticIndex = i;
+                bestSemanticAlias = alias;
+            }
+        }
+        if (semanticIndex >= 0)
+            return semanticIndex;
+
         int bestIndex = path.Count - 1;
         float minimum = Vector3.Dot(byNode[path[0]].Position, bodyUp);
         float maximum = Vector3.Dot(byNode[path[^1]].Position, bodyUp);
@@ -401,6 +426,10 @@ public partial class HumanoidComponent
         float skeletonHeight)
     {
         var torsoNodes = new HashSet<SceneNode>(path, ReferenceEqualityComparer.Instance);
+        for (int i = headIndex - 1; i > 0; i--)
+            if (AliasScore(path[i].Name, "chest", "upperchest") >= 0.9f)
+                return i;
+
         int bestIndex = -1;
         float bestReach = 0.0f;
         for (int i = 0; i < headIndex; i++)
@@ -458,7 +487,9 @@ public partial class HumanoidComponent
         float bestGeometry = 0.0f;
         float bestAxis = 0.0f;
         float bestAlias = 0.0f;
+        bool bestIsSemanticAnchor = false;
         float hipsHeight = Vector3.Dot(hips.Position, bodyUp);
+        bool isLeft = sideSign < 0.0f;
         for (int i = 0; i < candidates.Count; i++)
         {
             HumanoidAvatarAutoMapCandidate candidate = candidates[i];
@@ -476,8 +507,18 @@ public partial class HumanoidComponent
             float geometry = proximalHeight * 0.55f + sideScore * 0.45f;
             float axis = candidate.JointAxisScore;
             float alias = AliasScore(candidate.Node.Name, "upleg", "upperleg", "thigh", "leg");
+            float semanticAlias = isLeft
+                ? AliasScore(candidate.Node.Name, "leftupleg", "leftupperleg", "leftthigh", "leftleg")
+                : AliasScore(candidate.Node.Name, "rightupleg", "rightupperleg", "rightthigh", "rightleg");
+            bool isSemanticAnchor = semanticAlias >= 0.9f
+                && HasDescendantAlias(candidate.Node, maximumDepth: 4, "knee", "lowerleg", "calf", "shin")
+                && HasDescendantAlias(candidate.Node, maximumDepth: 5, "foot", "ankle");
             float score = topology * 0.48f + geometry * 0.36f + axis * 0.08f + alias * 0.08f;
-            if (score > bestScore || score == bestScore && candidate.TraversalIndex < best!.TraversalIndex)
+            bool replaceBest = isSemanticAnchor != bestIsSemanticAnchor
+                ? isSemanticAnchor
+                : score > bestScore
+                    || score == bestScore && candidate.TraversalIndex < best!.TraversalIndex;
+            if (replaceBest)
             {
                 second = bestScore;
                 best = candidate;
@@ -486,8 +527,9 @@ public partial class HumanoidComponent
                 bestGeometry = geometry;
                 bestAxis = axis;
                 bestAlias = alias;
+                bestIsSemanticAnchor = isSemanticAnchor;
             }
-            else if (score > second)
+            else if (isSemanticAnchor == bestIsSemanticAnchor && score > second)
                 second = score;
         }
         float margin = float.IsFinite(second) ? Math.Clamp(bestScore - second, 0.0f, 1.0f) : 1.0f;
@@ -561,6 +603,8 @@ public partial class HumanoidComponent
         float bestGeometry = 0.0f;
         float bestAxis = 0.0f;
         float bestAlias = 0.0f;
+        bool bestIsSemanticAnchor = false;
+        bool isLeft = sideSign < 0.0f;
         for (int i = 0; i < torsoPath.Count; i++)
         {
             SceneNode torso = torsoPath[i];
@@ -575,8 +619,18 @@ public partial class HumanoidComponent
                 float topology = Math.Clamp(candidate.SubtreeNodeCount / 4.0f, 0.0f, 1.0f);
                 float axis = candidate.JointAxisScore;
                 float alias = AliasScore(child.Name, "shoulder", "clavicle", "upperarm", "arm");
+                float semanticAlias = isLeft
+                    ? AliasScore(child.Name, "leftshoulder", "leftclavicle", "leftupperarm", "leftarm")
+                    : AliasScore(child.Name, "rightshoulder", "rightclavicle", "rightupperarm", "rightarm");
+                bool isSemanticAnchor = semanticAlias >= 0.9f
+                    && HasDescendantAlias(child, maximumDepth: 4, "elbow", "lowerarm", "forearm")
+                    && HasDescendantAlias(child, maximumDepth: 5, "hand", "wrist", "palm");
                 float score = geometry * 0.54f + topology * 0.30f + axis * 0.08f + alias * 0.08f;
-                if (score > bestScore || score == bestScore && candidate.TraversalIndex < best!.TraversalIndex)
+                bool replaceBest = isSemanticAnchor != bestIsSemanticAnchor
+                    ? isSemanticAnchor
+                    : score > bestScore
+                        || score == bestScore && candidate.TraversalIndex < best!.TraversalIndex;
+                if (replaceBest)
                 {
                     second = bestScore;
                     best = candidate;
@@ -584,8 +638,9 @@ public partial class HumanoidComponent
                     bestGeometry = geometry;
                     bestAxis = axis;
                     bestAlias = alias;
+                    bestIsSemanticAnchor = isSemanticAnchor;
                 }
-                else if (score > second)
+                else if (isSemanticAnchor == bestIsSemanticAnchor && score > second)
                     second = score;
             }
         }
@@ -888,6 +943,113 @@ public partial class HumanoidComponent
             : CalculateDominantAxisAlignment(GetCurrentLocalMatrix(node).Translation);
     }
 
+    /// <summary>
+    /// Prefers a semantically named torso chain only when its ancestry also
+    /// proves that it belongs to the selected hips. This prevents large hair,
+    /// tail, and clothing-bone subtrees from outranking an otherwise ordinary
+    /// humanoid spine while retaining the geometry-only fallback for rigs with
+    /// opaque bone names.
+    /// </summary>
+    private static List<SceneNode> BuildTorsoPath(
+        SceneNode hips,
+        Dictionary<SceneNode, HumanoidAvatarAutoMapCandidate> byNode,
+        Vector3 bodyUp,
+        int maximumNodes)
+    {
+        List<SceneNode> semanticPath = FindSemanticallyAnchoredTorsoPath(hips, byNode, maximumNodes);
+        return semanticPath.Count > 0
+            ? semanticPath
+            : BuildExtremeDescendantPath(
+                hips,
+                byNode,
+                bodyUp,
+                positiveDirection: true,
+                maximumNodes);
+    }
+
+    private static List<SceneNode> FindSemanticallyAnchoredTorsoPath(
+        SceneNode hips,
+        Dictionary<SceneNode, HumanoidAvatarAutoMapCandidate> byNode,
+        int maximumNodes)
+    {
+        List<SceneNode>? bestPath = null;
+        float bestScore = float.NegativeInfinity;
+        int bestTraversalIndex = int.MaxValue;
+        foreach (HumanoidAvatarAutoMapCandidate candidate in byNode.Values)
+        {
+            float headAlias = AliasScore(candidate.Node.Name, "head");
+            if (headAlias < 0.9f || !IsStrictDescendant(hips, candidate.Node))
+                continue;
+
+            var reversePath = new List<SceneNode>(maximumNodes);
+            SceneNode? current = candidate.Node;
+            while (current is not null
+                && !ReferenceEquals(current, hips)
+                && reversePath.Count < maximumNodes)
+            {
+                if (!byNode.ContainsKey(current))
+                    break;
+                reversePath.Add(current);
+                current = current.Parent;
+            }
+            if (!ReferenceEquals(current, hips) || reversePath.Count == 0)
+                continue;
+
+            reversePath.Reverse();
+            float spineAlias = 0.0f;
+            float chestAlias = 0.0f;
+            float neckAlias = 0.0f;
+            for (int i = 0; i < reversePath.Count; i++)
+            {
+                SceneNode node = reversePath[i];
+                spineAlias = MathF.Max(spineAlias, AliasScore(node.Name, "spine"));
+                chestAlias = MathF.Max(chestAlias, AliasScore(node.Name, "chest", "upperchest"));
+                neckAlias = MathF.Max(neckAlias, AliasScore(node.Name, "neck"));
+            }
+            if (MathF.Max(spineAlias, chestAlias) < 0.9f)
+                continue;
+
+            float pathLengthScore = 1.0f - Math.Clamp(MathF.Abs(reversePath.Count - 4) / 8.0f, 0.0f, 1.0f);
+            float score = headAlias * 0.35f
+                + spineAlias * 0.25f
+                + chestAlias * 0.20f
+                + neckAlias * 0.10f
+                + pathLengthScore * 0.10f;
+            if (score > bestScore
+                || score == bestScore && candidate.TraversalIndex < bestTraversalIndex)
+            {
+                bestPath = reversePath;
+                bestScore = score;
+                bestTraversalIndex = candidate.TraversalIndex;
+            }
+        }
+        return bestPath ?? [];
+    }
+
+    private static bool HasDescendantAlias(
+        SceneNode root,
+        int maximumDepth,
+        params string[] aliases)
+    {
+        var stack = new Stack<(SceneNode Node, int Depth)>();
+        foreach (var childTransform in root.Transform.Children)
+            if (childTransform.SceneNode is SceneNode child)
+                stack.Push((child, 1));
+
+        while (stack.Count > 0)
+        {
+            (SceneNode node, int depth) = stack.Pop();
+            if (AliasScore(node.Name, aliases) >= 0.9f)
+                return true;
+            if (depth >= maximumDepth)
+                continue;
+            foreach (var childTransform in node.Transform.Children)
+                if (childTransform.SceneNode is SceneNode child)
+                    stack.Push((child, depth + 1));
+        }
+        return false;
+    }
+
     private static List<SceneNode> BuildExtremeDescendantPath(
         SceneNode root,
         Dictionary<SceneNode, HumanoidAvatarAutoMapCandidate> byNode,
@@ -963,6 +1125,20 @@ public partial class HumanoidComponent
         Dictionary<SceneNode, HumanoidAvatarAutoMapCandidate> byNode,
         Vector3 bodyUp)
     {
+        int semanticIndex = -1;
+        float bestSemanticAlias = 0.0f;
+        for (int i = 0; i < path.Count; i++)
+        {
+            float alias = AliasScore(path[i].Name, "foot", "ankle");
+            if (alias >= 0.9f && alias > bestSemanticAlias)
+            {
+                semanticIndex = i;
+                bestSemanticAlias = alias;
+            }
+        }
+        if (semanticIndex >= 0)
+            return semanticIndex;
+
         int bestIndex = path.Count - 1;
         float bestScore = float.NegativeInfinity;
         float minimumHeight = float.PositiveInfinity;
@@ -991,6 +1167,20 @@ public partial class HumanoidComponent
     {
         if (footIndex <= 0)
             return -1;
+        int semanticIndex = -1;
+        float bestSemanticAlias = 0.0f;
+        for (int i = 0; i < footIndex; i++)
+        {
+            float alias = AliasScore(path[i].Name, "knee", "lowerleg", "calf", "shin");
+            if (alias >= 0.9f && alias > bestSemanticAlias)
+            {
+                semanticIndex = i;
+                bestSemanticAlias = alias;
+            }
+        }
+        if (semanticIndex >= 0)
+            return semanticIndex;
+
         float startHeight = Vector3.Dot(byNode[path[0]].Position, bodyUp);
         float footHeight = Vector3.Dot(byNode[path[footIndex]].Position, bodyUp);
         float range = MathF.Max(MathF.Abs(startHeight - footHeight), 1e-5f);

@@ -2048,7 +2048,7 @@ public sealed class CameraComponentEditor : IXRComponentEditor
         if (component.DirectionalShadowRenderingMode != EDirectionalShadowRenderingMode.Cascaded)
             return;
 
-        XRWorldInstance? world = component.WorldAs<XRWorldInstance>();
+        IRuntimeRenderWorld? world = component.WorldAs<IRuntimeRenderWorld>();
         if (world?.Lights is null)
             return;
 

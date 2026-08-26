@@ -464,7 +464,7 @@ public sealed class GpuMeshBvhPreviewContractTests
     public void GpuMeshBvhClickPick_UsesMortonSortedPackedTriangles()
     {
         string gpuMeshBvhSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Compute/GpuMeshBvh.cs");
-        string pickSource = ReadWorkspaceFile("XRENGINE/Rendering/XRWorldInstance.cs");
+        string pickSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/RuntimeWorldRenderer.Picking.cs");
         string editorSource = ReadWorkspaceFile("XREngine.Editor/EditorFlyingCameraPawnComponent.cs");
         string glDataBufferSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.OpenGL/Rendering/API/Rendering/OpenGL/BackendObjects/Buffers/GLDataBuffer.cs");
         string visualSceneSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/VisualScene3D.cs");
@@ -492,7 +492,7 @@ public sealed class GpuMeshBvhPreviewContractTests
         pickSource.ShouldNotContain("QueueGpuMeshBvhInteractionRefresh");
 
         // The pick setting is a boolean toggle and the CPU triangle-test fallback was removed.
-        pickSource.ShouldContain("GpuMeshBvhClickPickEnabled");
+        pickSource.ShouldContain("GpuMeshBvhPickingEnabled");
         pickSource.ShouldNotContain("EnsureGpuMeshBvhClickPickCpuBvh");
         pickSource.ShouldNotContain("EMeshBvhClickPickMode");
 

@@ -28,13 +28,7 @@ public sealed class PhysicsChainComponentTests
         CreateOpenDelegate<Func<PhysicsChainComponent, bool>>("RequiresGpuReadback");
 
     private static readonly Action<PhysicsChainComponent> PrepareGpuDataMethod =
-        CreateOpenDelegate<Action<PhysicsChainComponent>>("PrepareGPUData");
-
-    private static readonly Action<PhysicsChainComponent, XRMeshRenderer, Dictionary<Transform, int>, Dictionary<int, int>, Dictionary<int, Vector3>> TryAddGpuDrivenRendererStateMethod =
-        CreateOpenDelegate<Action<PhysicsChainComponent, XRMeshRenderer, Dictionary<Transform, int>, Dictionary<int, int>, Dictionary<int, Vector3>>>("TryAddGpuDrivenRendererState");
-
-    private static readonly Action<PhysicsChainComponent> ClearGpuDrivenRendererBindingsMethod =
-        CreateOpenDelegate<Action<PhysicsChainComponent>>("ClearGpuDrivenRendererBindings");
+        CreateOpenDelegate<Action<PhysicsChainComponent>>("PrepareGpuDispatchData");
 
     #region Test Helpers
 
@@ -82,24 +76,22 @@ public sealed class PhysicsChainComponentTests
     private static object GetParticle(PhysicsChainComponent component, int treeIndex, int particleIndex)
         => GetParticles(GetParticleTrees(component)[treeIndex]!)[particleIndex]!;
 
-    private static GPUPhysicsChainDispatcher.GPUParticleData[] CreateReadbackData(PhysicsChainComponent component, Vector3 firstPosition)
+    private static PhysicsChainGpuParticle[] CreateReadbackData(PhysicsChainComponent component, Vector3 firstPosition)
     {
         IList particleTrees = GetParticleTrees(component);
         int particleCount = 0;
         foreach (object particleTree in particleTrees)
             particleCount += GetParticles(particleTree).Count;
 
-        var readback = new GPUPhysicsChainDispatcher.GPUParticleData[particleCount];
+        var readback = new PhysicsChainGpuParticle[particleCount];
         for (int i = 0; i < readback.Length; ++i)
         {
             Vector3 position = i == 0 ? firstPosition : new Vector3(i, -i, i * 0.5f);
-            readback[i] = new GPUPhysicsChainDispatcher.GPUParticleData
-            {
-                Position = position,
-                PrevPosition = position + Vector3.One,
-                PreviousPhysicsPosition = position - Vector3.One,
-                IsColliding = i % 2,
-            };
+            readback[i] = new PhysicsChainGpuParticle(
+                position,
+                position + Vector3.One,
+                i % 2,
+                position - Vector3.One);
         }
 
         return readback;
@@ -305,7 +297,7 @@ public sealed class PhysicsChainComponentTests
     public void AllDistributionCurves_AcceptCurves()
     {
         var component = new PhysicsChainComponent();
-        var curve = new AnimationCurve();
+        var curve = new PhysicsChainCoefficientCurve();
 
         component.DampingDistrib = curve;
         component.ElasticityDistrib = curve;
@@ -409,16 +401,16 @@ public sealed class PhysicsChainComponentTests
         object particle = GetParticle(component, 0, 0);
         Vector3 initialPosition = GetPropertyValue<Vector3>(particle, "Position");
 
-        GPUPhysicsChainDispatcher.GPUParticleData[] staleGeneration = CreateReadbackData(component, new Vector3(10.0f, 0.0f, 0.0f));
-        component.ApplyReadbackData(staleGeneration, generation: 3, submissionId: 8L);
+        PhysicsChainGpuParticle[] staleGeneration = CreateReadbackData(component, new Vector3(10.0f, 0.0f, 0.0f));
+        component.ApplyGpuReadback(staleGeneration, generation: 3, submissionId: 8L);
         GetPropertyValue<Vector3>(particle, "Position").ShouldBe(initialPosition);
 
-        GPUPhysicsChainDispatcher.GPUParticleData[] staleSubmission = CreateReadbackData(component, new Vector3(20.0f, 0.0f, 0.0f));
-        component.ApplyReadbackData(staleSubmission, generation: 4, submissionId: 7L);
+        PhysicsChainGpuParticle[] staleSubmission = CreateReadbackData(component, new Vector3(20.0f, 0.0f, 0.0f));
+        component.ApplyGpuReadback(staleSubmission, generation: 4, submissionId: 7L);
         GetPropertyValue<Vector3>(particle, "Position").ShouldBe(initialPosition);
 
-        GPUPhysicsChainDispatcher.GPUParticleData[] freshReadback = CreateReadbackData(component, new Vector3(30.0f, 0.0f, 0.0f));
-        component.ApplyReadbackData(freshReadback, generation: 4, submissionId: 8L);
+        PhysicsChainGpuParticle[] freshReadback = CreateReadbackData(component, new Vector3(30.0f, 0.0f, 0.0f));
+        component.ApplyGpuReadback(freshReadback, generation: 4, submissionId: 8L);
 
         GetPropertyValue<Vector3>(particle, "Position").ShouldBe(new Vector3(30.0f, 0.0f, 0.0f));
         GetFieldValue<long>(component, "_lastAppliedGpuSubmissionId").ShouldBe(8L);
@@ -439,9 +431,9 @@ public sealed class PhysicsChainComponentTests
         SetFieldValue(component, "_hasPendingGpuBoneSync", false);
 
         object particle = GetParticle(component, 0, 0);
-        GPUPhysicsChainDispatcher.GPUParticleData[] readback = CreateReadbackData(component, new Vector3(5.0f, 6.0f, 7.0f));
+        PhysicsChainGpuParticle[] readback = CreateReadbackData(component, new Vector3(5.0f, 6.0f, 7.0f));
 
-        component.ApplyReadbackData(readback, generation: 2, submissionId: 1L);
+        component.ApplyGpuReadback(readback, generation: 2, submissionId: 1L);
 
         GetPropertyValue<Vector3>(particle, "Position").ShouldBe(new Vector3(5.0f, 6.0f, 7.0f));
         GetFieldValue<bool>(component, "_hasPendingGpuBoneSync").ShouldBeFalse();
@@ -456,9 +448,9 @@ public sealed class PhysicsChainComponentTests
         component.SetupParticles();
 
         PrepareGpuDataMethod(component);
-        int initialSignature = GetFieldValue<int>(component, "_preparedTransformSignature");
+        Matrix4x4 initialTransform = GetFieldValue<List<Matrix4x4>>(component, "_gpuTransforms")[1];
         PrepareGpuDataMethod(component);
-        GetFieldValue<int>(component, "_preparedTransformSignature").ShouldBe(initialSignature);
+        GetFieldValue<List<Matrix4x4>>(component, "_gpuTransforms")[1].ShouldBe(initialTransform);
 
         object particle = GetParticle(component, 0, 1);
         Matrix4x4 updatedMatrix = Matrix4x4.CreateTranslation(new Vector3(0.25f, -0.5f, 0.75f));
@@ -466,7 +458,7 @@ public sealed class PhysicsChainComponentTests
 
         PrepareGpuDataMethod(component);
 
-        GetFieldValue<int>(component, "_preparedTransformSignature").ShouldNotBe(initialSignature);
+        GetFieldValue<List<Matrix4x4>>(component, "_gpuTransforms")[1].ShouldBe(updatedMatrix);
     }
 
     [Test]
@@ -488,47 +480,29 @@ public sealed class PhysicsChainComponentTests
     }
 
     [Test]
-    public void TryAddGpuDrivenRendererState_HonorsGpuDrivenSkinningSelection()
+    public void UseGpuDrivenSkinning_InvalidatesRenderingBridge()
     {
-        var (node, rootBone, childBones) = CreateBoneHierarchy(3);
+        var (node, rootBone, _) = CreateBoneHierarchy(3);
         var component = CreateComponent(node, rootBone);
-        component.UseGPU = true;
-        component.GpuSyncToBones = true;
-        component.UseGpuDrivenSkinning = true;
+        var bridge = new RecordingPhysicsChainRenderingBridge();
+        using IDisposable lease = RuntimePhysicsChainRendering.Install(bridge);
 
-        XRMesh mesh = XRMesh.CreateTriangles(Vector3.Zero, Vector3.UnitX, Vector3.UnitY);
-        mesh.UtilizedBones =
-        [
-            (rootBone, Matrix4x4.Identity),
-            (childBones[0], Matrix4x4.Identity)
-        ];
+        component.UseGpuDrivenSkinning = !component.UseGpuDrivenSkinning;
 
-        var renderer = new XRMeshRenderer(mesh, null);
-        var particleIndexByTransform = new Dictionary<Transform, int>
-        {
-            [rootBone] = 0,
-            [childBones[0]] = 1,
-        };
-        var firstChildIndexByParticle = new Dictionary<int, int>
-        {
-            [0] = 1,
-        };
-        var restDirectionByParticle = new Dictionary<int, Vector3>
-        {
-            [0] = new(0.0f, -0.1f, 0.0f),
-        };
+        bridge.InvalidatedChain.ShouldBeSameAs(component);
+    }
 
-        TryAddGpuDrivenRendererStateMethod(component, renderer, particleIndexByTransform, firstChildIndexByParticle, restDirectionByParticle);
-
-        renderer.HasGpuDrivenBoneSource.ShouldBeTrue();
-
-        component.UseGpuDrivenSkinning = false;
-
-        renderer.HasGpuDrivenBoneSource.ShouldBeFalse();
-
-        TryAddGpuDrivenRendererStateMethod(component, renderer, particleIndexByTransform, firstChildIndexByParticle, restDirectionByParticle);
-
-        renderer.HasGpuDrivenBoneSource.ShouldBeFalse();
+    private sealed class RecordingPhysicsChainRenderingBridge : IRuntimePhysicsChainRenderingBridge
+    {
+        public PhysicsChainGpuBackendState BackendState => PhysicsChainGpuBackendState.Ready;
+        public PhysicsChainComponent? InvalidatedChain { get; private set; }
+        public void Register(PhysicsChainComponent chain) { }
+        public void Unregister(PhysicsChainComponent chain) { }
+        public void Execute(PhysicsChainComponent chain, in PhysicsChainGpuDispatchSnapshot snapshot) { }
+        public void NotifyReadbackUnavailable(PhysicsChainComponent chain, string reason) { }
+        public void InvalidateGpuDrivenRenderers(PhysicsChainComponent chain) => InvalidatedChain = chain;
+        public void RenderDebug(PhysicsChainComponent chain) { }
+        public void RecordHierarchyRecalculationTicks(long ticks) { }
     }
 
     #endregion

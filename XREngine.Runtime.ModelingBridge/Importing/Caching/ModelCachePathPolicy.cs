@@ -34,7 +34,7 @@ internal sealed class ModelCachePathPolicy(
         resolution = null;
         if (!CanHandle(request.AssetType))
             return false;
-        if (string.IsNullOrWhiteSpace(request.Assets.GameCachePath))
+        if (string.IsNullOrWhiteSpace(request.GameCachePath))
             return false;
 
         try
@@ -65,8 +65,8 @@ internal sealed class ModelCachePathPolicy(
             importOptions.CookOverrides = cookOverrides;
             ModelCacheSourceIdentity sourceIdentity = ModelCacheSourceIdentityResolver.Resolve(
                 sourcePath,
-                request.Assets.GameAssetsPath,
-                request.Assets.EngineAssetsPath);
+                request.GameAssetsPath,
+                request.EngineAssetsPath);
             ModelCacheVariantFingerprint fingerprint = ModelCacheVariantFingerprintBuilder.Compute(
                 sourcePath,
                 importOptions,
@@ -75,11 +75,11 @@ internal sealed class ModelCachePathPolicy(
                 request.VariantKey,
                 ResolveEngineBuildIdentity());
             resolution = ModelCachePathResolver.Resolve(
-                request.Assets.GameCachePath!,
+                request.GameCachePath!,
                 sourceIdentity,
                 backendResolution,
                 fingerprint,
-                AssetManager.AssetExtension);
+                request.AssetExtension);
             return true;
         }
         catch (Exception exception) when (exception is not OutOfMemoryException)
@@ -97,7 +97,7 @@ internal sealed class ModelCachePathPolicy(
         DateTime sourceTimestampUtc)
     {
         if (!IsSafeLegacyVariantKey(request.VariantKey)
-            || !request.Assets.TryResolveGenericThirdPartyCachePath(
+            || !request.TryResolveGenericThirdPartyCachePath(
                 request.SourceFilePath,
                 request.AssetType,
                 request.VariantKey,
@@ -127,7 +127,7 @@ internal sealed class ModelCachePathPolicy(
 
     private static string ResolveEngineBuildIdentity()
     {
-        Assembly assembly = typeof(AssetManager).Assembly;
+        Assembly assembly = typeof(ModelCachePathPolicy).Assembly;
         return assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
             ?? assembly.GetName().Version?.ToString()
             ?? "unknown";

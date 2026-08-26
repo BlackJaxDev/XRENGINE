@@ -12,5 +12,6 @@ global using XREngine.Data.Transforms.Rotations;
 global using XREngine.Input;
 global using XREngine.Rendering.Commands;
 global using XREngine.Scene;
+global using XREngine.Scene.Physics;
 global using CameraComponent = XREngine.Components.CameraComponent;
 global using XRComponent = XREngine.Components.XRComponent;

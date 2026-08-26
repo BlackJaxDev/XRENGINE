@@ -271,7 +271,7 @@ namespace XREngine.Components.Capture.Lights.Types
                 }
 
                 _viewports[i].WorldInstanceOverride = IsActiveInHierarchy
-                    ? WorldAs<XREngine.Rendering.IRuntimeRenderWorld>()
+                    ? World.GetRenderWorld()
                     : null;
             }
         }
@@ -805,7 +805,7 @@ namespace XREngine.Components.Capture.Lights.Types
             EnsureShadowResources();
 
             for (int i = 0; i < _viewports.Length; i++)
-                _viewports[i].WorldInstanceOverride = WorldAs<XREngine.Rendering.IRuntimeRenderWorld>();
+                _viewports[i].WorldInstanceOverride = World.GetRenderWorld();
         }
 
         private XRMaterial ShadowAtlasMaterial => _shadowAtlasMaterial ??= CreateShadowAtlasMaterial();

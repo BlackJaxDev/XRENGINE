@@ -185,13 +185,15 @@ public static class BootstrapWorldFactory
 
     private static void RequestStartupShadowAtlasReset(XRWorld world)
     {
-        if (!XRWorldInstance.WorldInstances.TryGetValue(world, out XRWorldInstance? worldInstance))
+        if (RuntimeWorldHostServices.Current is not EngineRuntimeWorldHostServices hosts ||
+            !hosts.TryGetHost(world, out RuntimeWorldHost? worldHost) ||
+            worldHost is null)
         {
             Debug.RenderingWarning("[BootstrapWorldFactory] Startup shadow atlas reset skipped because the render world instance is not available yet.");
             return;
         }
 
-        ShadowAtlasManager shadowAtlas = worldInstance.Lights.ShadowAtlas;
+        ShadowAtlasManager shadowAtlas = worldHost.RenderWorld.Lights.ShadowAtlas;
         shadowAtlas.RequestAtlasKindReset(EShadowAtlasKind.Directional);
         shadowAtlas.RequestAtlasKindReset(EShadowAtlasKind.Spot);
         shadowAtlas.RequestAtlasKindReset(EShadowAtlasKind.Point);

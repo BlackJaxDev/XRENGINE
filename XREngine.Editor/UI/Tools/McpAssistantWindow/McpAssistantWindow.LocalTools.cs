@@ -337,7 +337,7 @@ exception={ex}
         static List<SceneNode> ResolveCandidateNodes(HashSet<Guid> ids)
         {
             List<SceneNode> nodes = [];
-            XRWorldInstance? activeWorld = McpWorldResolver.TryGetActiveWorldInstance();
+            RuntimeWorld? activeWorld = TryGetActiveRuntimeWorld();
             foreach (Guid id in ids)
             {
                 if (!XRObjectBase.ObjectsCache.TryGetValue(id, out var obj) || obj is not SceneNode node)
@@ -365,6 +365,15 @@ exception={ex}
         }
 
         Engine.InvokeOnMainThread(FocusCamera, "MCP Assistant: Auto camera view", executeNowIfAlreadyMainThread: true);
+    }
+
+    private static RuntimeWorld? TryGetActiveRuntimeWorld()
+    {
+        foreach (XRWindow window in RuntimeEngine.Windows)
+            if (window.TargetWorldInstance?.WorldContext is RuntimeWorld world)
+                return world;
+
+        return RuntimeWorldRegistryServices.Current?.Snapshot().Values.FirstOrDefault();
     }
 
     private static bool IsLikelySceneMutationTool(string toolName)

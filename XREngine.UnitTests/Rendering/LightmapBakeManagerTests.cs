@@ -8,6 +8,7 @@ using XREngine.Components.Lights;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
 using XREngine.Scene;
+using XREngine.Scene.Physics.Jitter2;
 using XREngine.Rendering.Lightmapping;
 using XREngine.Timers;
 
@@ -29,9 +30,10 @@ public sealed class LightmapBakeManagerTests
     [Test]
     public void ProcessDynamicCachedAutoBake_IsDisabledByDefault()
     {
-        var world = new XRWorldInstance();
-        var manager = world.Lights.LightmapBaking;
-        var light = CreateStationaryDynamicCachedLight(world, movementVersion: 1u);
+        using RuntimeWorld coreWorld = new(new JitterScene());
+        using RuntimeWorldRenderer renderWorld = new(coreWorld, new VisualScene3D());
+        var manager = renderWorld.Lights.LightmapBaking;
+        var light = CreateStationaryDynamicCachedLight(coreWorld, movementVersion: 1u);
 
         manager.ProcessDynamicCachedAutoBake(light);
 
@@ -41,10 +43,11 @@ public sealed class LightmapBakeManagerTests
     [Test]
     public void ProcessDynamicCachedAutoBake_QueuesOnceWhenEnabled()
     {
-        var world = new XRWorldInstance();
-        var manager = world.Lights.LightmapBaking;
+        using RuntimeWorld coreWorld = new(new JitterScene());
+        using RuntimeWorldRenderer renderWorld = new(coreWorld, new VisualScene3D());
+        var manager = renderWorld.Lights.LightmapBaking;
         manager.AutoBakeDynamicCachedLights = true;
-        var light = CreateStationaryDynamicCachedLight(world, movementVersion: 7u);
+        var light = CreateStationaryDynamicCachedLight(coreWorld, movementVersion: 7u);
 
         manager.ProcessDynamicCachedAutoBake(light);
         GetPendingBakeCount(manager).ShouldBe(1);
@@ -53,7 +56,7 @@ public sealed class LightmapBakeManagerTests
         GetPendingBakeCount(manager).ShouldBe(1);
     }
 
-    private static DirectionalLightComponent CreateStationaryDynamicCachedLight(XRWorldInstance world, uint movementVersion)
+    private static DirectionalLightComponent CreateStationaryDynamicCachedLight(RuntimeWorld world, uint movementVersion)
     {
         var node = new SceneNode(world) { IsActiveSelf = false };
         var light = node.AddComponent<DirectionalLightComponent>()!;

@@ -75,7 +75,7 @@ namespace XREngine.Editor.Mcp
         {
             VulkanFrameTelemetryPublication vulkanFrame = VulkanStats.LatestVulkanFrameTelemetry;
             RvcFrameProfileSnapshot rvcFrameProfile = RuntimeEngine.Rendering.Stats.Rvc.FrameProfile;
-            var gpuScene = context.WorldInstance.VisualScene.GPUCommands;
+            var gpuScene = context.RenderWorld.VisualScene.GPUCommands;
             GpuMeshletEligibilitySnapshot meshletEligibility =
                 gpuScene.CaptureMeshletEligibilitySnapshot((int)EDefaultRenderPass.OpaqueDeferred);
             return Task.FromResult(new McpToolResponse(
@@ -127,7 +127,7 @@ namespace XREngine.Editor.Mcp
                     },
                     scene = new
                     {
-                        tracked_renderables = context.WorldInstance.VisualScene.Renderables.Count,
+                        tracked_renderables = context.RenderWorld.VisualScene.Renderables.Count,
                         gpu_commands = new
                         {
                             total_count = gpuScene.TotalCommandCount,

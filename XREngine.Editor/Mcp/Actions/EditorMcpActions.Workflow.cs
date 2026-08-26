@@ -55,7 +55,7 @@ namespace XREngine.Editor.Mcp
         public static Task<McpToolResponse> DeleteSelectedNodesAsync(McpToolContext context)
         {
             var targets = Selection.SceneNodes
-                .Where(node => node.World == context.WorldInstance)
+                .Where(node => node.World == context.World)
                 .Distinct()
                 .ToArray();
 
@@ -104,7 +104,7 @@ namespace XREngine.Editor.Mcp
             if (string.IsNullOrWhiteSpace(nodeName))
                 return Task.FromResult(new McpToolResponse("node_name must be provided.", isError: true));
 
-            var world = context.WorldInstance;
+            var world = context.World;
             var scene = ResolveScene(world, sceneName);
             if (scene is null)
                 return Task.FromResult(new McpToolResponse("No active scene found.", isError: true));
@@ -145,7 +145,7 @@ namespace XREngine.Editor.Mcp
             [McpName("size"), Description("Uniform size scale for the primitive.")] float size = 1.0f,
             [McpName("color"), Description("Optional color for the default material, e.g. {R:1,G:0,B:0,A:1} or hex '#FF0000'. Defaults to a neutral gray.")] object? color = null)
         {
-            var world = context.WorldInstance;
+            var world = context.World;
             var scene = ResolveScene(world, sceneName);
             if (scene is null)
                 return Task.FromResult(new McpToolResponse("No active scene found.", isError: true));
@@ -263,7 +263,7 @@ namespace XREngine.Editor.Mcp
                     isError: true));
             }
 
-            var world = context.WorldInstance;
+            var world = context.World;
 
             List<SceneNode> sourceNodes = [];
             if (nodeIds is { Length: > 0 })
@@ -380,7 +380,7 @@ namespace XREngine.Editor.Mcp
             McpToolContext context,
             [McpName("output_dir"), Description("Optional target directory.")] string? outputDir = null)
         {
-            var world = context.WorldInstance.TargetWorld;
+            var world = context.World.TargetWorld;
             if (world is null)
                 return Task.FromResult(new McpToolResponse("No active world found.", isError: true));
 
@@ -431,7 +431,7 @@ namespace XREngine.Editor.Mcp
             if (world is null)
                 return Task.FromResult(new McpToolResponse("World asset not found. Provide asset_path or the name of an already-loaded world.", isError: true));
 
-            context.WorldInstance.TargetWorld = world;
+            RetargetWorld(context.World, world);
             Selection.Clear();
 
             return Task.FromResult(new McpToolResponse("Loaded world.", new

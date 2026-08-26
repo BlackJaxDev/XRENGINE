@@ -156,7 +156,7 @@ public sealed class PhysicsChainComponentGpuModeTests
     public void AllDistributionCurves_AcceptCurves()
     {
         var component = new PhysicsChainComponent { UseGPU = true };
-        var curve = new AnimationCurve();
+        var curve = new PhysicsChainCoefficientCurve();
 
         component.DampingDistrib = curve;
         component.ElasticityDistrib = curve;

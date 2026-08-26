@@ -204,7 +204,7 @@ namespace XREngine.Components.Lights
 
         private void RefreshRegistration()
         {
-            IRuntimeRenderWorld? world = WorldAs<IRuntimeRenderWorld>();
+            IRuntimeRenderWorld? world = World.GetRenderWorld();
             bool shouldRegister = world is not null && HasValidCascades;
 
             if (_registeredWorld is not null && (!shouldRegister || _registeredWorld != world))

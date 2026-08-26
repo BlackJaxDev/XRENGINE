@@ -16,9 +16,9 @@ public sealed class PhysicsDebugRendererSourceContractTests
         renderer.ShouldContain("ReusedViewCount++;");
 
         string world = ReadWorkspaceFile(
-            "XRENGINE/Rendering/XRWorldInstance.PhysicsDebug.cs");
-        world.ShouldContain("private PhysicsDebugFrameRenderer _physicsDebugFrameRenderer = new();");
-        world.ShouldContain("_physicsDebugFrameRenderer.Render(PhysicsScene.DebugFrames, depthMode);");
+            "XREngine.Runtime.Rendering/Rendering/RuntimeWorldRenderer.cs");
+        world.ShouldContain("private PhysicsDebugFrameRenderer _physicsDebugRenderer = new();");
+        world.ShouldContain("_physicsDebugRenderer.Render(physicsWorld.PhysicsScene.DebugFrames, depthMode);");
     }
 
     [Test]
@@ -62,12 +62,12 @@ public sealed class PhysicsDebugRendererSourceContractTests
     public void WorldReplacement_DisposesAndRecreatesRetainedDebugResources()
     {
         string world = ReadWorkspaceFile(
-            "XRENGINE/Rendering/XRWorldInstance.PhysicsDebug.cs");
+            "XREngine.Runtime.Rendering/Rendering/RuntimeWorldRenderer.cs");
         string lifecycle = ReadWorkspaceFile(
-            "XRENGINE/Rendering/XRWorldInstance.cs");
-        world.ShouldContain("_physicsDebugFrameRenderer.Dispose();");
-        world.ShouldContain("_physicsDebugFrameRenderer = new PhysicsDebugFrameRenderer();");
-        lifecycle.ShouldContain("ResetPhysicsDebugFrameRenderer();");
+            "XREngine.Runtime.Bootstrap/WorldHost/RuntimeWorldHost.cs");
+        world.ShouldContain("_physicsDebugRenderer.Dispose();");
+        world.ShouldContain("_physicsDebugRenderer = new PhysicsDebugFrameRenderer();");
+        lifecycle.ShouldContain("RenderWorld.ResetPhysicsDebugRenderer();");
     }
 
     private static string ReadWorkspaceFile(string relativePath)

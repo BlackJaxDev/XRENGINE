@@ -120,7 +120,7 @@ public static partial class EditorImGuiUI
         ImGui.End();
     }
 
-    private static void HandleHierarchyModelAssetDrop(XRWorldInstance world)
+    private static void HandleHierarchyModelAssetDrop(RuntimeWorld world)
     {
         var payload = ImGui.GetDragDropPayload();
         if (payload.Data == IntPtr.Zero || payload.DataSize == 0)
@@ -262,9 +262,9 @@ public static partial class EditorImGuiUI
         _lastSelectedHierarchyNode = Selection.LastSceneNode;
     }
 
-    private static void DrawEditorSceneHierarchy(XRWorldInstance world)
+    private static void DrawEditorSceneHierarchy(RuntimeWorld world)
     {
-        var editorScene = world.EditorScene;
+        var editorScene = EditorWorldIntegrationRegistry.GetOrAttach(world).EditorScene;
         if (editorScene is null)
             return;
 
@@ -278,7 +278,7 @@ public static partial class EditorImGuiUI
         ImGui.PopID();
     }
 
-    private static void DrawSceneNodeTree(SceneNode node, XRWorldInstance world, XRScene? owningScene, int depth = 0)
+    private static void DrawSceneNodeTree(SceneNode node, RuntimeWorld world, XRScene? owningScene, int depth = 0)
     {
         int childCount = GetSceneNodeChildCount(node);
         string nodeLabel = GetOrCreateNodeLabel(node, childCount);
@@ -329,7 +329,7 @@ public static partial class EditorImGuiUI
         }
     }
 
-    private static bool DrawSceneNodeEntry(SceneNode node, XRWorldInstance world, string displayLabel, ImGuiTreeNodeFlags flags, XRScene? owningScene, bool canFastSkipWhenClipped = false)
+    private static bool DrawSceneNodeEntry(SceneNode node, RuntimeWorld world, string displayLabel, ImGuiTreeNodeFlags flags, XRScene? owningScene, bool canFastSkipWhenClipped = false)
     {
         bool isRenaming = ReferenceEquals(_nodePendingRename, node);
         bool isSelected = _selectedHierarchyNodesScratch.Contains(node) || ReferenceEquals(_lastSelectedHierarchyNode, node);
@@ -498,7 +498,7 @@ public static partial class EditorImGuiUI
     private static void QueueHierarchyReparent(
         SceneNode droppedNode,
         SceneNode targetNode,
-        XRWorldInstance world,
+        RuntimeWorld world,
         XRScene? owningScene)
         => EnqueueSceneEdit(
             () => ReparentHierarchyNode(droppedNode, targetNode.Transform, world, owningScene));
@@ -507,7 +507,7 @@ public static partial class EditorImGuiUI
         SceneNode node,
         bool activeSelf,
         XRScene? owningScene,
-        XRWorldInstance world)
+        RuntimeWorld world)
         => EnqueueSceneEdit(() =>
         {
             using var _ = Undo.TrackChange("Toggle Node Active", node);
@@ -517,7 +517,7 @@ public static partial class EditorImGuiUI
 
     private static void QueueHierarchyDuplicate(
         IReadOnlyList<SceneNode> targets,
-        XRWorldInstance world)
+        RuntimeWorld world)
         => EnqueueSceneEdit(
             () => DuplicateHierarchyNodes(targets, world, preserveAssetReferences: true));
 
@@ -526,20 +526,20 @@ public static partial class EditorImGuiUI
 
     private static void QueueHierarchyDelete(
         SceneNode node,
-        XRWorldInstance world,
+        RuntimeWorld world,
         XRScene? owningScene)
         => EnqueueSceneEdit(() => DeleteHierarchyNode(node, world, owningScene));
 
     private static void QueueHierarchyCreateChild(
         SceneNode node,
         XRScene? owningScene,
-        XRWorldInstance world)
+        RuntimeWorld world)
         => EnqueueSceneEdit(() => CreateChildSceneNode(node, owningScene, world));
 
     private static void QueueHierarchyFocus(SceneNode node)
         => EnqueueSceneEdit(() => FocusCameraOnHierarchyNode(node));
 
-    private static void HandleHierarchyKeyboardNavigation(XRWorldInstance world)
+    private static void HandleHierarchyKeyboardNavigation(RuntimeWorld world)
     {
         if (_nodePendingRename is not null)
             return;
@@ -677,7 +677,7 @@ public static partial class EditorImGuiUI
         }
     }
 
-    private static void BuildHierarchyVisibleNodeList(XRWorldInstance world, List<SceneNode> output)
+    private static void BuildHierarchyVisibleNodeList(RuntimeWorld world, List<SceneNode> output)
     {
         output.Clear();
 
@@ -706,9 +706,9 @@ public static partial class EditorImGuiUI
                 AddVisibleHierarchyNodes(runtimeRoots[rootIndex], 0, output);
         }
 
-        if (_showEditorSceneHierarchy && world.EditorScene is not null)
+        if (_showEditorSceneHierarchy && EditorWorldIntegrationRegistry.GetOrAttach(world).EditorScene is not null)
         {
-            var editorRoots = world.EditorScene.RootNodes;
+            var editorRoots = EditorWorldIntegrationRegistry.GetOrAttach(world).EditorScene.RootNodes;
             for (int rootIndex = 0; rootIndex < editorRoots.Count; rootIndex++)
                 AddVisibleHierarchyNodes(editorRoots[rootIndex], 0, output);
         }
@@ -761,7 +761,7 @@ public static partial class EditorImGuiUI
             _hierarchyExpandedState.Clear();
     }
 
-    private static void SetHierarchyExpansion(XRWorldInstance world, bool expanded)
+    private static void SetHierarchyExpansion(RuntimeWorld world, bool expanded)
     {
         _hierarchyExpandedState.Clear();
         _expandedLargeHierarchyRootsScratch.Clear();
@@ -791,9 +791,9 @@ public static partial class EditorImGuiUI
                 SetHierarchyNodeExpandedRecursive(runtimeRoots[rootIndex], expanded);
         }
 
-        if (_showEditorSceneHierarchy && world.EditorScene is not null)
+        if (_showEditorSceneHierarchy && EditorWorldIntegrationRegistry.GetOrAttach(world).EditorScene is not null)
         {
-            var editorRoots = world.EditorScene.RootNodes;
+            var editorRoots = EditorWorldIntegrationRegistry.GetOrAttach(world).EditorScene.RootNodes;
             for (int rootIndex = 0; rootIndex < editorRoots.Count; rootIndex++)
                 SetHierarchyNodeExpandedRecursive(editorRoots[rootIndex], expanded);
         }
@@ -1056,7 +1056,7 @@ public static partial class EditorImGuiUI
         }
     }
 
-    private static void DuplicateHierarchyNodes(IReadOnlyList<SceneNode> nodes, XRWorldInstance world, bool preserveAssetReferences)
+    private static void DuplicateHierarchyNodes(IReadOnlyList<SceneNode> nodes, RuntimeWorld world, bool preserveAssetReferences)
     {
         var targets = FilterTopLevelHierarchyNodes(nodes);
         if (targets.Count == 0)
@@ -1112,7 +1112,7 @@ public static partial class EditorImGuiUI
             });
     }
 
-    private static void AttachDuplicatedNode(HierarchyDuplicateOperation operation, XRWorldInstance world)
+    private static void AttachDuplicatedNode(HierarchyDuplicateOperation operation, RuntimeWorld world)
     {
         if (operation.ParentTransform is not null)
         {
@@ -1124,7 +1124,7 @@ public static partial class EditorImGuiUI
         world.RootNodes.Add(operation.DuplicateNode);
     }
 
-    private static void DetachDuplicatedNode(HierarchyDuplicateOperation operation, XRWorldInstance world)
+    private static void DetachDuplicatedNode(HierarchyDuplicateOperation operation, RuntimeWorld world)
     {
         if (operation.ParentTransform is not null)
         {
@@ -1549,7 +1549,7 @@ public static partial class EditorImGuiUI
         PopulateRenameBuffer(node.Name ?? string.Empty);
     }
 
-    private static void DeleteHierarchyNode(SceneNode node, XRWorldInstance world, XRScene? owningScene)
+    private static void DeleteHierarchyNode(SceneNode node, RuntimeWorld world, XRScene? owningScene)
     {
         if (node == _nodePendingRename)
             _nodePendingRename = null;
@@ -1560,7 +1560,7 @@ public static partial class EditorImGuiUI
         MarkSceneHierarchyDirty(node, owningScene, world);
     }
 
-    private static void CreateChildSceneNode(SceneNode parent, XRScene? owningScene, XRWorldInstance world)
+    private static void CreateChildSceneNode(SceneNode parent, XRScene? owningScene, RuntimeWorld world)
     {
         SceneNode child = new(parent);
         Undo.TrackSceneNode(child);
@@ -1639,7 +1639,7 @@ public static partial class EditorImGuiUI
             pawn.FocusOnNode(node, HierarchyFocusCameraDurationSeconds);
     }
 
-    private static void DrawSceneHierarchySection(XRScene scene, XRWorldInstance world)
+    private static void DrawSceneHierarchySection(XRScene scene, RuntimeWorld world)
     {
         if (scene is null)
             return;
@@ -1695,7 +1695,7 @@ public static partial class EditorImGuiUI
         ImGui.PopID();
     }
 
-    private static void DrawSceneHierarchyNodes(IReadOnlyList<SceneNode> roots, XRWorldInstance world, XRScene? owningScene)
+    private static void DrawSceneHierarchyNodes(IReadOnlyList<SceneNode> roots, RuntimeWorld world, XRScene? owningScene)
     {
         if (roots.Count == 0)
         {
@@ -1732,7 +1732,7 @@ public static partial class EditorImGuiUI
         ImGui.PopStyleVar(4);
     }
 
-    private static void DrawUnassignedHierarchy(IReadOnlyList<SceneNode> roots, XRWorldInstance world)
+    private static void DrawUnassignedHierarchy(IReadOnlyList<SceneNode> roots, RuntimeWorld world)
     {
         ImGui.PushID("WorldRootNodes");
         bool open = ImGui.CollapsingHeader("World Root Nodes##WorldRoot", ImGuiTreeNodeFlags.DefaultOpen);
@@ -1741,7 +1741,7 @@ public static partial class EditorImGuiUI
         ImGui.PopID();
     }
 
-    private static bool DrawRuntimeHierarchy(XRWorldInstance world)
+    private static bool DrawRuntimeHierarchy(RuntimeWorld world)
     {
         if (world.RootNodes.Count == 0)
             return false;
@@ -1754,7 +1754,7 @@ public static partial class EditorImGuiUI
         return true;
     }
 
-    private static List<SceneNode> CollectUnassignedRoots(XRWorldInstance world, IReadOnlyList<XRScene> scenes)
+    private static List<SceneNode> CollectUnassignedRoots(RuntimeWorld world, IReadOnlyList<XRScene> scenes)
     {
         var assigned = _assignedRootsScratch;
         assigned.Clear();
@@ -1795,7 +1795,7 @@ public static partial class EditorImGuiUI
         }
 
         // Also exclude nodes in the world instance's editor scene
-        if (world.IsInEditorScene(null) is false) // Just to initialize editor scene reference if needed
+        if (EditorWorldIntegrationRegistry.GetOrAttach(world).IsInEditorScene(null) is false) // Just to initialize editor scene reference if needed
         {
             // Check editor scene nodes
         }
@@ -1808,14 +1808,14 @@ public static partial class EditorImGuiUI
             SceneNode? root = worldRoots[rootIndex];
             if (root is null)
                 continue;
-            if (!assigned.Contains(root) && !world.IsInEditorScene(root))
+            if (!assigned.Contains(root) && !EditorWorldIntegrationRegistry.GetOrAttach(world).IsInEditorScene(root))
                 unassigned.Add(root);
         }
 
         return unassigned;
     }
 
-    private static void ToggleSceneVisibility(XRScene scene, XRWorldInstance world, bool visible)
+    private static void ToggleSceneVisibility(XRScene scene, RuntimeWorld world, bool visible)
     {
         if (scene.IsVisible == visible)
             return;
@@ -1825,7 +1825,7 @@ public static partial class EditorImGuiUI
         scene.MarkDirty();
     }
 
-    private static void UnloadSceneFromWorld(XRScene scene, XRWorldInstance world)
+    private static void UnloadSceneFromWorld(XRScene scene, RuntimeWorld world)
     {
         var targetWorld = world.TargetWorld;
         if (targetWorld is null)
@@ -1858,7 +1858,7 @@ public static partial class EditorImGuiUI
             });
     }
 
-    private static void ClearSelectionForScene(XRScene scene, XRWorldInstance world)
+    private static void ClearSelectionForScene(XRScene scene, RuntimeWorld world)
     {
         if (Selection.SceneNodes.Length == 0)
             return;
@@ -1873,7 +1873,7 @@ public static partial class EditorImGuiUI
         Selection.SceneNodes = filtered;
     }
 
-    private static XRScene? FindSceneForNode(SceneNode? node, XRWorldInstance? world)
+    private static XRScene? FindSceneForNode(SceneNode? node, RuntimeWorld? world)
     {
         if (node is null)
             return null;
@@ -1904,7 +1904,7 @@ public static partial class EditorImGuiUI
         return transform?.SceneNode;
     }
 
-    private static void MarkSceneHierarchyDirty(SceneNode? node, XRScene? owningScene, XRWorldInstance? world)
+    private static void MarkSceneHierarchyDirty(SceneNode? node, XRScene? owningScene, RuntimeWorld? world)
     {
         if (node is null)
             return;
@@ -1923,7 +1923,7 @@ public static partial class EditorImGuiUI
     /// <summary>
     /// Reparent a dragged node under a new parent with structural undo.
     /// </summary>
-    private static void ReparentHierarchyNode(SceneNode droppedNode, TransformBase newParent, XRWorldInstance world, XRScene? owningScene)
+    private static void ReparentHierarchyNode(SceneNode droppedNode, TransformBase newParent, RuntimeWorld world, XRScene? owningScene)
     {
         var draggedTfm = droppedNode.Transform;
         var oldParent = draggedTfm.Parent;
@@ -1987,7 +1987,7 @@ public static partial class EditorImGuiUI
         return false;
     }
 
-    private static void DrawWorldHeader(XRWorldInstance world)
+    private static void DrawWorldHeader(RuntimeWorld world)
     {
         var targetWorld = world.TargetWorld;
         string worldName = targetWorld?.Name ?? "World";

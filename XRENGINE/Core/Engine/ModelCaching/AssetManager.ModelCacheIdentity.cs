@@ -1,4 +1,5 @@
 using XREngine.ModelCaching;
+using XREngine.Core.Files.Caching;
 
 namespace XREngine.Rendering.Models.Caching;
 
@@ -24,11 +25,14 @@ internal static class AssetManagerModelCacheIdentityExtensions
             new FacadeModelCachePolicyServices(assets));
         return policy.TryResolveIdentity(
             new ThirdPartyCachePathRequest(
-                assets,
+                assets.GameCachePath,
+                assets.GameAssetsPath,
+                assets.EngineAssetsPath,
                 sourceFilePath,
                 assetType,
                 callerVariantKey,
-                suppliedImportOptions),
+                suppliedImportOptions,
+                AssetManager.AssetExtension),
             out resolution);
     }
 }

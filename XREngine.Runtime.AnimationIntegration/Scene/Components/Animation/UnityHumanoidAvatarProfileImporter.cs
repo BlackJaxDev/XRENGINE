@@ -1,5 +1,6 @@
 using System.Numerics;
 using Newtonsoft.Json.Linq;
+using XREngine.Animation.Importers;
 
 namespace XREngine.Components.Animation;
 
@@ -24,6 +25,10 @@ public static class UnityHumanoidAvatarProfileImporter
             SourcePath = fullPath,
             HumanScale = ReadFloat(root, "HumanScale", ReadFloat(root, "AvatarHumanScale", 0.0f)),
             CalibrationClipName = ReadString(root, "CalibrationClipName") ?? string.Empty,
+            CalibrationRootMotionSettings = ReadRootMotionSettings(
+                root["CalibrationRootMotionSettings"] as JObject
+                    ?? root["RootMotionSettings"] as JObject),
+            RootAllocationFrame = ReadRootAllocationFrame(root["RootAllocationFrame"] as JObject),
             AvatarSettings = ReadAvatarSettings(root["AvatarSettings"] as JObject),
             BodyAxes = ReadBodyAxes(root["BodyAxes"] as JObject),
         };
@@ -353,6 +358,48 @@ public static class UnityHumanoidAvatarProfileImporter
             HasTranslationDoF = ReadBool(settings, "HasTranslationDoF"),
         };
 
+    private static UnityHumanoidClipRootMotionSettings? ReadRootMotionSettings(JObject? settings)
+    {
+        if (settings is null)
+            return null;
+
+        return new UnityHumanoidClipRootMotionSettings
+        {
+            StartTime = ReadFloat(settings, "StartTime", 0.0f),
+            StopTime = ReadFloat(settings, "StopTime", 0.0f),
+            OrientationOffsetY = ReadFloat(settings, "OrientationOffsetY", 0.0f),
+            Level = ReadFloat(settings, "Level", 0.0f),
+            CycleOffset = ReadFloat(settings, "CycleOffset", 0.0f),
+            LoopTime = ReadBool(settings, "LoopTime"),
+            LoopPose = ReadBool(settings, "LoopPose") || ReadBool(settings, "LoopBlend"),
+            BakeOrientationIntoPose = ReadBool(settings, "BakeOrientationIntoPose"),
+            BakePositionYIntoPose = ReadBool(settings, "BakePositionYIntoPose"),
+            BakePositionXZIntoPose = ReadBool(settings, "BakePositionXZIntoPose"),
+            KeepOriginalOrientation = ReadBool(settings, "KeepOriginalOrientation"),
+            KeepOriginalPositionY = ReadBool(settings, "KeepOriginalPositionY"),
+            KeepOriginalPositionXZ = ReadBool(settings, "KeepOriginalPositionXZ"),
+            HeightFromFeet = ReadBool(settings, "HeightFromFeet"),
+            Mirror = ReadBool(settings, "Mirror"),
+        };
+    }
+
+    private static UnityHumanoidRootAllocationFrame? ReadRootAllocationFrame(JObject? frame)
+    {
+        if (frame is null)
+            return null;
+
+        return new UnityHumanoidRootAllocationFrame
+        {
+            HipsParentPositionInAnimatorRoot = ConvertUnityLocalPosition(
+                ReadVector3(frame["HipsParentPositionInAnimatorRoot"] as JObject)),
+            HipsParentRotationInAnimatorRoot = ConvertUnityLocalRotation(
+                ReadQuaternion(frame["HipsParentRotationInAnimatorRoot"] as JObject ?? new JObject())),
+            HipsParentScaleInAnimatorRoot = ReadVector3WithFallback(
+                frame["HipsParentScaleInAnimatorRoot"] as JObject,
+                Vector3.One),
+        };
+    }
+
     private static void ReadNeutralPose(JObject root, UnityHumanoidAvatarProfile profile)
     {
         JArray? compactBones = root["NeutralPoseBoneRotations"] as JArray;
@@ -512,6 +559,14 @@ public static class UnityHumanoidAvatarProfileImporter
             ReadFloat(value, "X", ReadFloat(value, "x", 0.0f)),
             ReadFloat(value, "Y", ReadFloat(value, "y", 0.0f)),
             ReadFloat(value, "Z", ReadFloat(value, "z", 0.0f)));
+
+    private static Vector3 ReadVector3WithFallback(JObject? value, Vector3 fallback)
+        => value is null
+            ? fallback
+            : new Vector3(
+                ReadFloat(value, "X", ReadFloat(value, "x", fallback.X)),
+                ReadFloat(value, "Y", ReadFloat(value, "y", fallback.Y)),
+                ReadFloat(value, "Z", ReadFloat(value, "z", fallback.Z)));
 
     private static Vector3 ConvertUnitySemanticVector(Vector3 unityVector)
         => new(-unityVector.X, unityVector.Y, unityVector.Z);

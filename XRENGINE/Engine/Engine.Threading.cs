@@ -1,7 +1,6 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
-using System.Runtime.ExceptionServices;
 using XREngine.Data.Core;
 using XREngine.Data.Profiling;
 using XREngine.Data.Runtime.Memory;
@@ -34,7 +33,6 @@ namespace XREngine
         private static readonly long[] _lastRenderThreadJobDurationMicrosByKind = new long[Enum.GetValues<RenderThreadJobKind>().Length];
         private static readonly long[] _lastRenderThreadJobQueueDelayMicrosByKind = new long[Enum.GetValues<RenderThreadJobKind>().Length];
         private static readonly long[] _lastRenderThreadJobOverBudgetMicrosByKind = new long[Enum.GetValues<RenderThreadJobKind>().Length];
-        private static int _frameSwapThreadId;
 
         #region Public Properties - Threading
 
@@ -66,13 +64,13 @@ namespace XREngine
         public static bool IsAppThread
         {
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
-            get => Environment.CurrentManagedThreadId == UpdateThreadId;
+            get => RuntimeThreadDispatcher.IsUpdateThread;
         }
 
         /// <summary>
         /// Gets the managed thread ID of the app/update thread.
         /// </summary>
-        public static int UpdateThreadId { get; private set; }
+        public static int UpdateThreadId => RuntimeThreadDispatcher.UpdateThreadId;
 
         /// <summary>
         /// Gets whether the current thread owns the collect-visible/render
@@ -81,8 +79,7 @@ namespace XREngine
         public static bool IsFrameSwapThread
         {
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
-            get => Environment.CurrentManagedThreadId ==
-                Volatile.Read(ref _frameSwapThreadId);
+            get => RuntimeThreadDispatcher.IsFrameSwapThread;
         }
 
         /// <summary>
@@ -95,30 +92,28 @@ namespace XREngine
         public static bool IsPhysicsThread
         {
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
-            get => Environment.CurrentManagedThreadId == PhysicsThreadId;
+            get => RuntimeThreadDispatcher.IsPhysicsThread;
         }
 
         /// <summary>
         /// Gets the managed thread ID of the physics thread.
         /// </summary>
-        public static int PhysicsThreadId { get; private set; }
+        public static int PhysicsThreadId => RuntimeThreadDispatcher.PhysicsThreadId;
 
         /// <summary>
         /// Sets the physics thread ID. Called internally by the physics system.
         /// </summary>
         internal static void SetPhysicsThreadId(int threadId)
-            => PhysicsThreadId = threadId;
+            => RuntimeThreadDispatcher.AssignPhysicsThread(threadId);
 
         /// <summary>
         /// Sets the app/update thread ID. Called internally by the engine timer.
         /// </summary>
         internal static void SetUpdateThreadId(int threadId)
-            => UpdateThreadId = threadId;
+            => RuntimeThreadDispatcher.AssignUpdateThread(threadId);
 
         internal static void SetFrameSwapThread(bool active)
-            => Volatile.Write(
-                ref _frameSwapThreadId,
-                active ? Environment.CurrentManagedThreadId : 0);
+            => RuntimeThreadDispatcher.SetFrameSwapThreadActive(active);
 
         internal static bool IsDispatchingRenderFrame => Volatile.Read(ref _isDispatchingRenderFrame) != 0;
 
@@ -419,7 +414,7 @@ namespace XREngine
             if (task is null)
                 return;
 
-            _pendingUpdateThreadWork.Enqueue(task);
+            RuntimeThreadDispatcher.EnqueueUpdate(task);
         }
 
         /// <summary>
@@ -434,7 +429,7 @@ namespace XREngine
         {
             if (task is null)
                 return;
-            _pendingPhysicsThreadWork.Enqueue(task);
+            RuntimeThreadDispatcher.EnqueuePhysics(task);
         }
 
         /// <summary>
@@ -447,37 +442,10 @@ namespace XREngine
         /// </remarks>
         public static void InvokePhysicsThreadTask(Action task)
         {
-            ArgumentNullException.ThrowIfNull(task);
-
-            // Unit tests and startup/shutdown paths may not have a physics loop to service
-            // the queue. With no running loop there cannot be a concurrent fixed update.
-            if (IsPhysicsThread || !Time.Timer.IsRunning)
-            {
-                task();
-                return;
-            }
-
-            ExceptionDispatchInfo? exception = null;
-            using ManualResetEventSlim completed = new(false);
-
-            EnqueuePhysicsThreadTask(() =>
-            {
-                try
-                {
-                    task();
-                }
-                catch (Exception ex)
-                {
-                    exception = ExceptionDispatchInfo.Capture(ex);
-                }
-                finally
-                {
-                    completed.Set();
-                }
-            });
-
-            completed.Wait();
-            exception?.Throw();
+            RuntimeThreadDispatcher.InvokePhysics(
+                task,
+                Time.Timer.IsRunning,
+                static exception => Debug.LogException(exception));
         }
 
         /// <summary>
@@ -640,19 +608,9 @@ namespace XREngine
                 ? Allocations.BeginScope("UpdateThreadJobs.Dispatch", AllocationScopeCategory.RuntimeSystem)
                 : default;
 
-            int processed = 0;
-            while (processed < maxTasks && _pendingUpdateThreadWork.TryDequeue(out var task))
-            {
-                try
-                {
-                    task();
-                }
-                catch (Exception ex)
-                {
-                    Debug.LogException(ex);
-                }
-                processed++;
-            }
+            int processed = RuntimeThreadDispatcher.ProcessUpdate(
+                maxTasks,
+                static exception => Debug.LogException(exception));
 
             if (processed < maxTasks)
                 ProcessPendingAppThreadWork(maxTasks - processed);
@@ -668,19 +626,9 @@ namespace XREngine
                 ? Allocations.BeginScope("PhysicsThreadJobs.Dispatch", AllocationScopeCategory.RuntimeSystem)
                 : default;
 
-            int processed = 0;
-            while (processed < maxTasks && _pendingPhysicsThreadWork.TryDequeue(out var task))
-            {
-                try
-                {
-                    task();
-                }
-                catch (Exception ex)
-                {
-                    Debug.LogException(ex);
-                }
-                processed++;
-            }
+            RuntimeThreadDispatcher.ProcessPhysics(
+                maxTasks,
+                static exception => Debug.LogException(exception));
         }
 
         private static void ProcessPendingMainThreadWork()

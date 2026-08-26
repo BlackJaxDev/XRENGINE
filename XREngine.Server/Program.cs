@@ -65,7 +65,7 @@ namespace XREngine.Networking
             ConfigureFbxTraceLogging(settings);
             XRWorld targetWorld = BootstrapWorldFactory.CreateServerDefaultWorld();
             Action<GameStartupSettings, GameState> initializeServerWorld = (_, _) =>
-                XRWorldInstance.GetOrInitWorld(targetWorld);
+                Engine.GetOrCreateWorld(targetWorld);
             ConsoleCancelEventHandler cancelHandler = (_, eventArgs) =>
             {
                 eventArgs.Cancel = true;
@@ -126,7 +126,7 @@ namespace XREngine.Networking
 
         private static ServerSessionContext? ResolveServerSession(PlayerJoinRequest request)
         {
-            XRWorldInstance? worldInstance = ResolvePrimaryWorldInstance();
+            RuntimeWorld? worldInstance = ResolvePrimaryWorldInstance();
             if (worldInstance?.TargetWorld is null)
                 return null;
 
@@ -135,15 +135,15 @@ namespace XREngine.Networking
             return new ServerSessionContext(_serverSessionId, worldInstance, worldAsset);
         }
 
-        private static XRWorldInstance? ResolvePrimaryWorldInstance()
+        private static RuntimeWorld? ResolvePrimaryWorldInstance()
         {
             foreach (var window in RuntimeEngine.Windows)
             {
-                if (window?.TargetWorldInstance is XRWorldInstance worldInstance)
+                if (window?.TargetWorldInstance?.WorldContext is RuntimeWorld worldInstance)
                     return worldInstance;
             }
 
-            return XRWorldInstance.WorldInstances.Values.FirstOrDefault();
+            return Engine.WorldInstances.FirstOrDefault();
         }
 
         private static Guid ResolveConfiguredSessionId()

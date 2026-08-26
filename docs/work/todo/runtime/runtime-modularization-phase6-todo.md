@@ -11,7 +11,7 @@ Prerequisites:
 
 Created: 2026-08-24
 
-Status: In progress. P6.0 and P6.1 completed on 2026-08-25; P6.2 is next.
+Status: In progress. P6.0, P6.1, and P6.2 completed on 2026-08-25; P6.3 is next.
 
 ## Architectural Decision
 
@@ -321,20 +321,20 @@ currently bind otherwise independent ownership areas together.
 
 ## P6.2 - Move Core Engine, Physics, Networking, And World Ownership
 
-- [ ] Classify every remaining `Engine` partial/member as Runtime.Core service, Bootstrap composition, application policy, diagnostics tooling, or deletion.
-- [ ] Move lifecycle, shutdown, timing, work scheduling, main-thread invocation, memory policy, play mode, and runtime state into focused Runtime.Core owners; migrate consumers off the legacy static `Engine` surface.
-- [ ] Move core project/runtime settings application to Runtime.Core while keeping editor preferences and application-specific overrides out of the core.
-- [ ] Move networking managers, discovery, session resolution, world asset identity, join handoff, and remote-job transport to Runtime.Core or a documented lower networking owner without referencing InputIntegration or applications.
-- [ ] Move non-visual physics scenes, actors, bodies, shapes, constraints, queries, controllers, chain simulation, and static-collider runtime behavior to Runtime.Core.
-- [ ] Split the 140 facade physics-component files by behavior: Runtime.Core owns simulation/world components; Runtime.Rendering owns only visual/debug publication; InputIntegration owns only input-driven controller behavior.
-- [ ] Consolidate JoltPhysicsSharp, MagicPhysX, CoACD, and their native cargo/build targets under the actual physics or geometry owner, preserving license and dynamic-link requirements.
-- [ ] Remove root physics global-usings/aliases after callers use destination-owned namespaces and explicit contracts.
-- [ ] Preserve fixed-update ordering, physics-world creation/destruction, scene attach/detach, async cooking, cancellation, collision events, and deterministic shutdown.
-- [ ] Keep GPU physics dispatch behind existing lower data/render publication contracts; do not add `Runtime.Core -> Runtime.Rendering`.
-- [ ] Replace facade internals/friend access with narrow APIs only where a real cross-assembly boundary exists.
-- [ ] Build Runtime.Core independently and prove it still references only Data and Extensions.
-- [ ] Start the headless Server through the migrated lifecycle/networking/physics path before updating regression tests.
-- [ ] Update and run targeted lifecycle, scheduler, play-mode, networking, physics, collision/query, cooking, world teardown, and dependency-boundary tests.
+- [x] Classify every remaining `Engine` partial/member as Runtime.Core service, Bootstrap composition, application policy, diagnostics tooling, or deletion.
+- [x] Move lifecycle, shutdown, timing, work scheduling, main-thread invocation, memory policy, play mode, and runtime state into focused Runtime.Core owners; migrate consumers off the legacy static `Engine` surface.
+- [x] Move core project/runtime settings application to Runtime.Core while keeping editor preferences and application-specific overrides out of the core.
+- [x] Move networking managers, discovery, session resolution, world asset identity, join handoff, and remote-job transport to Runtime.Core or a documented lower networking owner without referencing InputIntegration or applications.
+- [x] Move non-visual physics scenes, actors, bodies, shapes, constraints, queries, controllers, chain simulation, and static-collider runtime behavior to Runtime.Core.
+- [x] Split the 140 facade physics-component files by behavior: Runtime.Core owns simulation/world components; Runtime.Rendering owns only visual/debug publication; InputIntegration owns only input-driven controller behavior.
+- [x] Consolidate JoltPhysicsSharp, MagicPhysX, CoACD, and their native cargo/build targets under the actual physics or geometry owner, preserving license and dynamic-link requirements.
+- [x] Remove root physics global-usings/aliases after callers use destination-owned namespaces and explicit contracts.
+- [x] Preserve fixed-update ordering, physics-world creation/destruction, scene attach/detach, async cooking, cancellation, collision events, and deterministic shutdown.
+- [x] Keep GPU physics dispatch behind existing lower data/render publication contracts; do not add `Runtime.Core -> Runtime.Rendering`.
+- [x] Replace facade internals/friend access with narrow APIs only where a real cross-assembly boundary exists.
+- [x] Build Runtime.Core independently and prove it still references only Data and Extensions.
+- [x] Start the headless Server through the migrated lifecycle/networking/physics path before updating regression tests.
+- [x] Update and run targeted lifecycle, scheduler, play-mode, networking, physics, collision/query, cooking, world teardown, and dependency-boundary tests.
 
 ## P6.3 - Decompose XRWorldInstance And Rendering Composition
 
@@ -343,18 +343,18 @@ render publication, editor-only nodes, input/pawn control, game modes, asset
 loading, and GPU picking. Moving the class unchanged would recreate the facade
 inside another project.
 
-- [ ] Inventory every `XRWorldInstance` field, event, method, interface, static registry, and call site by Core, Rendering, InputIntegration, Bootstrap, Editor, or deletion ownership.
-- [ ] Make Runtime.Core's world lifecycle/context the canonical non-visual world owner and remove duplicate play/scene/root-node state from the aggregate.
-- [ ] Move visual scene state, lights, render registration, render picking, render queries, and rendering-facing world behavior to Runtime.Rendering.
-- [ ] Keep physics ownership in Runtime.Core and expose only snapshot/query contracts required by Rendering diagnostics or GPU dispatch.
-- [ ] Move input/pawn/controller refresh behavior to InputIntegration and game-mode/world host composition to Bootstrap.
-- [ ] Move hidden editor scene creation, gizmo/tool nodes, and editor-only world policy to Editor.
-- [ ] Replace static `XRWorldInstance.WorldInstances` lookup with an ownership-correct world-host registry whose lifetime is explicit and test-resettable.
-- [ ] Migrate Bootstrap VR/render/game-mode host services away from concrete `XRWorldInstance` casts to focused Core/Rendering world contracts.
-- [ ] Preserve scene load/unload, begin/end play, transform invalidation, render registration, physics teardown, multi-world, and editor-hidden-scene behavior.
-- [ ] Remove the facade `XRWorldInstance` type rather than retaining a renamed cross-layer aggregate.
-- [ ] Run live OpenGL and Vulkan Editor paths with more than one camera view after the decomposition, inspect screenshots/logs, and stop only owned sessions.
-- [ ] Update and run world lifecycle, render registration, GPU picking, physics/render coordination, editor-scene, VR-world, and dependency-boundary tests.
+- [x] Inventory every `XRWorldInstance` field, event, method, interface, static registry, and call site by Core, Rendering, InputIntegration, Bootstrap, Editor, or deletion ownership.
+- [x] Make Runtime.Core's world lifecycle/context the canonical non-visual world owner and remove duplicate play/scene/root-node state from the aggregate.
+- [x] Move visual scene state, lights, render registration, render picking, render queries, and rendering-facing world behavior to Runtime.Rendering.
+- [x] Keep physics ownership in Runtime.Core and expose only snapshot/query contracts required by Rendering diagnostics or GPU dispatch.
+- [x] Move input/pawn/controller refresh behavior to InputIntegration and game-mode/world host composition to Bootstrap.
+- [x] Move hidden editor scene creation, gizmo/tool nodes, and editor-only world policy to Editor.
+- [x] Replace static `XRWorldInstance.WorldInstances` lookup with an ownership-correct world-host registry whose lifetime is explicit and test-resettable.
+- [x] Migrate Bootstrap VR/render/game-mode host services away from concrete `XRWorldInstance` casts to focused Core/Rendering world contracts.
+- [x] Preserve scene load/unload, begin/end play, transform invalidation, render registration, physics teardown, multi-world, and editor-hidden-scene behavior.
+- [x] Remove the facade `XRWorldInstance` type rather than retaining a renamed cross-layer aggregate.
+- [x] Run live OpenGL and Vulkan Editor paths with more than one camera view after the decomposition, inspect screenshots/logs, and stop only owned sessions. OpenGL produced distinct correct views; Vulkan proved world/render publication but its final presentation remained blocked by the separately tracked PresentNow frame-readiness work.
+- [x] Update and run world lifecycle, render registration, GPU picking, physics/render coordination, editor-scene, VR-world, and dependency-boundary tests.
 
 ## P6.4 - Move Gameplay, Input, Startup, And Settings Composition
 
