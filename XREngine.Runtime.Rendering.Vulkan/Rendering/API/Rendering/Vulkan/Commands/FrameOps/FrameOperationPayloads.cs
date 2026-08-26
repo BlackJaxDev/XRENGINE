@@ -31,22 +31,70 @@ internal readonly record struct DlssFrameGenerationPayload(NvidiaDlssManager.Nat
 /// </summary>
 internal sealed class FrameOperationPayloadStore
 {
-    internal TextureUploadPayload[] TextureUploads = [];
-    internal BlitPayload[] Blits = [];
-    internal ClearPayload[] Clears = [];
-    internal TransformFeedbackPayload[] TransformFeedbacks = [];
-    internal QueryPayload[] Queries = [];
-    internal MeshDrawPayload[] MeshDraws = [];
-    internal IndirectDrawPayload[] IndirectDraws = [];
-    internal MeshTaskDispatchIndirectCountPayload[] MeshTasks = [];
-    internal ComputeDispatchPayload[] ComputeDispatches = [];
-    internal ComputeDispatchIndirectPayload[] ComputeDispatchIndirects = [];
-    internal BufferCopyPayload[] BufferCopies = [];
-    internal SubmissionMarkerPayload[] SubmissionMarkers = [];
-    internal MemoryBarrierPayload[] MemoryBarriers = [];
-    internal PublishFramebufferPayload[] PublishedFramebuffers = [];
-    internal DlssUpscalePayload[] DlssUpscales = [];
-    internal DlssFrameGenerationPayload[] DlssFrameGenerations = [];
+    private readonly bool _fixedCapacity;
+    private readonly EVulkanAcceptedFrameLane _lane;
+
+    internal TextureUploadPayload[] TextureUploads;
+    internal BlitPayload[] Blits;
+    internal ClearPayload[] Clears;
+    internal TransformFeedbackPayload[] TransformFeedbacks;
+    internal QueryPayload[] Queries;
+    internal MeshDrawPayload[] MeshDraws;
+    internal IndirectDrawPayload[] IndirectDraws;
+    internal MeshTaskDispatchIndirectCountPayload[] MeshTasks;
+    internal ComputeDispatchPayload[] ComputeDispatches;
+    internal ComputeDispatchIndirectPayload[] ComputeDispatchIndirects;
+    internal BufferCopyPayload[] BufferCopies;
+    internal SubmissionMarkerPayload[] SubmissionMarkers;
+    internal MemoryBarrierPayload[] MemoryBarriers;
+    internal PublishFramebufferPayload[] PublishedFramebuffers;
+    internal DlssUpscalePayload[] DlssUpscales;
+    internal DlssFrameGenerationPayload[] DlssFrameGenerations;
+
+    internal FrameOperationPayloadStore()
+        : this(
+            generalCapacity: 0,
+            meshCapacity: 0,
+            textureCapacity: 0,
+            fixedCapacity: false,
+            EVulkanAcceptedFrameLane.MainScene)
+    {
+    }
+
+    /// <summary>
+    /// Allocates the complete payload budget at frame-slot construction time.
+    /// A sealed foreground frame may consume this storage, but never grow it.
+    /// </summary>
+    internal FrameOperationPayloadStore(
+        int generalCapacity,
+        int meshCapacity,
+        int textureCapacity,
+        bool fixedCapacity,
+        EVulkanAcceptedFrameLane lane)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(generalCapacity);
+        ArgumentOutOfRangeException.ThrowIfNegative(meshCapacity);
+        ArgumentOutOfRangeException.ThrowIfNegative(textureCapacity);
+
+        _fixedCapacity = fixedCapacity;
+        _lane = lane;
+        TextureUploads = new TextureUploadPayload[textureCapacity];
+        Blits = new BlitPayload[generalCapacity];
+        Clears = new ClearPayload[generalCapacity];
+        TransformFeedbacks = new TransformFeedbackPayload[generalCapacity];
+        Queries = new QueryPayload[generalCapacity];
+        MeshDraws = new MeshDrawPayload[meshCapacity];
+        IndirectDraws = new IndirectDrawPayload[generalCapacity];
+        MeshTasks = new MeshTaskDispatchIndirectCountPayload[generalCapacity];
+        ComputeDispatches = new ComputeDispatchPayload[generalCapacity];
+        ComputeDispatchIndirects = new ComputeDispatchIndirectPayload[generalCapacity];
+        BufferCopies = new BufferCopyPayload[generalCapacity];
+        SubmissionMarkers = new SubmissionMarkerPayload[generalCapacity];
+        MemoryBarriers = new MemoryBarrierPayload[generalCapacity];
+        PublishedFramebuffers = new PublishFramebufferPayload[generalCapacity];
+        DlssUpscales = new DlssUpscalePayload[generalCapacity];
+        DlssFrameGenerations = new DlssFrameGenerationPayload[generalCapacity];
+    }
 
     internal void EnsureCapacity(EVulkanPrimaryPlanNodeKind kind, int count)
     {
@@ -71,9 +119,18 @@ internal sealed class FrameOperationPayloadStore
         }
     }
 
-    private static void Ensure<T>(ref T[] values, int count)
+    private void Ensure<T>(ref T[] values, int count)
     {
-        if (values.Length < count)
-            Array.Resize(ref values, Math.Max(count, values.Length == 0 ? 4 : values.Length * 2));
+        if (values.Length >= count)
+            return;
+        if (_fixedCapacity)
+            throw new VulkanAcceptedFramePlanCapacityException(
+                _lane,
+                values.Length,
+                count);
+
+        Array.Resize(
+            ref values,
+            Math.Max(count, values.Length == 0 ? 4 : values.Length * 2));
     }
 }

@@ -154,17 +154,21 @@ internal sealed class McpStdioServer(
             ?? throw new ArgumentException("start_agent_run arguments are invalid.");
         request = AgentRunBudgetPolicy.ApplyDefaults(request, arguments);
         string runId = registry.Start(request);
+        AgentRunSnapshot snapshot = registry.Get(runId);
         return new
         {
             runId,
-            status = AgentRunStatus.Queued,
-            requestedModel = request.RequestedModel,
+            status = snapshot.Status,
+            requestedModel = snapshot.RequestedModel,
             actualModel = string.Empty,
-            requestedReasoningEffort = request.ReasoningEffort,
-            requestedTextVerbosity = request.TextVerbosity,
-            maxOutputTokens = request.Budget.MaxOutputTokens,
+            requestedReasoningEffort = snapshot.RequestedReasoningEffort,
+            requestedTextVerbosity = snapshot.RequestedTextVerbosity,
+            maxOutputTokens = snapshot.MaxOutputTokens,
             maxElapsedSeconds = request.Budget.MaxElapsedSeconds,
-            useBackgroundMode = request.UseBackgroundMode,
+            contextFileCount = snapshot.ContextFileCount,
+            contextRawBytes = snapshot.ContextRawBytes,
+            repositoryAccessEnabled = snapshot.RepositoryAccessEnabled,
+            useBackgroundMode = snapshot.UseBackgroundMode,
             message = "Run queued. Poll get_agent_run until status is terminal.",
         };
     }
@@ -206,14 +210,14 @@ internal sealed class McpStdioServer(
             ["serverInfo"] = new JsonObject
             {
                 ["name"] = "XREngine.LocalAgentBroker",
-                ["version"] = "0.7.0",
+                ["version"] = "0.8.0",
             },
             ["capabilities"] = new JsonObject
             {
                 ["tools"] = new JsonObject { ["listChanged"] = false },
             },
             ["instructions"] =
-                "Use for automatic bounded API-worker delegation under the XRENGINE standing authorization. This broker does not switch the current Codex model. Omit editor_session for reasoning-only runs.",
+                "Use for automatic bounded API-worker delegation under the XRENGINE standing authorization. This broker does not switch the current Codex model. Repository context and tools are opt-in and provider-bound content.",
         };
     }
 

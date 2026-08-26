@@ -8,8 +8,9 @@ namespace XREngine.Rendering.Vulkan;
 /// </summary>
 internal sealed class ViewSetPlan
 {
-    private RenderViewKey[] _views = new RenderViewKey[4];
-    private ulong[] _historyKeys = new ulong[4];
+    private readonly bool _fixedCapacity;
+    private RenderViewKey[] _views;
+    private ulong[] _historyKeys;
     private int _viewCount;
     private bool _isSealed;
     private RenderFrameViewSet? _locatedOpenXrViews;
@@ -17,6 +18,19 @@ internal sealed class ViewSetPlan
     internal int Count => _viewCount;
     internal bool IsSealed => _isSealed;
     internal bool HasLocatedOpenXrViews => _locatedOpenXrViews.HasValue;
+
+    internal ViewSetPlan()
+        : this(4, fixedCapacity: false)
+    {
+    }
+
+    internal ViewSetPlan(int capacity, bool fixedCapacity)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(capacity, 1);
+        _fixedCapacity = fixedCapacity;
+        _views = new RenderViewKey[capacity];
+        _historyKeys = new ulong[capacity];
+    }
 
     internal void Reset()
     {
@@ -184,6 +198,11 @@ internal sealed class ViewSetPlan
     {
         if (_views.Length >= required)
             return;
+        if (_fixedCapacity)
+            throw new VulkanAcceptedFramePlanCapacityException(
+                EVulkanAcceptedFrameLane.View,
+                _views.Length,
+                required);
 
         Array.Resize(ref _views, Math.Max(required, _views.Length * 2));
         Array.Resize(ref _historyKeys, _views.Length);

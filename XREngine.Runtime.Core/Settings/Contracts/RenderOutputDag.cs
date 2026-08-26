@@ -17,6 +17,9 @@ public sealed class RenderOutputDag
     private readonly bool[] _executionRoots;
     private readonly bool[] _executable;
     private readonly int[] _criticalPathDepth;
+    private readonly ERenderOutputReadinessPolicy[] _readinessPolicies;
+    private readonly ERenderOutputWorkClass[] _workClasses;
+    private readonly ERenderOutputFallbackPolicy[] _fallbackPolicies;
     private int _slotCount;
     private int _activeCount;
     private int _edgeCount;
@@ -41,6 +44,9 @@ public sealed class RenderOutputDag
         _executionRoots = new bool[nodeCapacity];
         _executable = new bool[nodeCapacity];
         _criticalPathDepth = new int[nodeCapacity];
+        _readinessPolicies = new ERenderOutputReadinessPolicy[nodeCapacity];
+        _workClasses = new ERenderOutputWorkClass[nodeCapacity];
+        _fallbackPolicies = new ERenderOutputFallbackPolicy[nodeCapacity];
     }
 
     public int NodeCount => _activeCount;
@@ -61,6 +67,9 @@ public sealed class RenderOutputDag
         Array.Clear(_executable);
         Array.Clear(_criticalPathDepth);
         Array.Fill(_priorities, ERenderOutputPriority.Diagnostic);
+        Array.Fill(_readinessPolicies, ERenderOutputReadinessPolicy.AllowDeferral);
+        Array.Fill(_workClasses, ERenderOutputWorkClass.Background);
+        Array.Fill(_fallbackPolicies, ERenderOutputFallbackPolicy.None);
         for (int slot = 0; slot < _slotCount; slot++)
         {
             RenderOutputDagNodeStatus previous = _status[slot];
@@ -327,6 +336,47 @@ public sealed class RenderOutputDag
     }
 
     /// <summary>
+    /// Propagates the terminal output's readiness contract through every
+    /// prerequisite. A foreground consumer therefore cannot accidentally
+    /// inherit a deferable publication, upload, or scene node.
+    /// </summary>
+    public void ApplyReadinessToPrerequisites(
+        int terminalNode,
+        ERenderOutputReadinessPolicy readiness,
+        ERenderOutputWorkClass workClass,
+        ERenderOutputFallbackPolicy fallbackPolicy)
+    {
+        ValidateActiveNode(terminalNode);
+        ApplyReadiness(terminalNode, readiness, workClass, fallbackPolicy);
+        for (int pass = 0; pass < _activeCount; pass++)
+        {
+            bool changed = false;
+            for (int edgeIndex = 0; edgeIndex < _edgeCount; edgeIndex++)
+            {
+                Edge edge = _edges[edgeIndex];
+                if (!_active[edge.Prerequisite] || !_active[edge.Dependent])
+                    continue;
+                if (!ReadinessDominates(edge.Dependent, edge.Prerequisite))
+                    continue;
+                changed |= ApplyReadiness(
+                    edge.Prerequisite,
+                    _readinessPolicies[edge.Dependent],
+                    _workClasses[edge.Dependent],
+                    _fallbackPolicies[edge.Dependent]);
+            }
+            if (!changed)
+                break;
+        }
+    }
+
+    public bool IsReadinessCompatible(int nodeIndex, ERenderOutputReadinessPolicy requested)
+    {
+        ValidateActiveNode(nodeIndex);
+        return requested != ERenderOutputReadinessPolicy.BlockForExact ||
+               _readinessPolicies[nodeIndex] == ERenderOutputReadinessPolicy.BlockForExact;
+    }
+
+    /// <summary>
     /// Compiles a stable topological order that reserves acquired OpenXR paths,
     /// then orders by output priority, deadline, reverse critical-path depth,
     /// and stable node identity.
@@ -466,6 +516,56 @@ public sealed class RenderOutputDag
         }
         _xrCriticalPath[nodeIndex] |= xrImagesAcquired;
     }
+
+    private bool ApplyReadiness(
+        int nodeIndex,
+        ERenderOutputReadinessPolicy readiness,
+        ERenderOutputWorkClass workClass,
+        ERenderOutputFallbackPolicy fallbackPolicy)
+    {
+        bool changed = false;
+        if (ReadinessRank(readiness) > ReadinessRank(_readinessPolicies[nodeIndex]))
+        {
+            _readinessPolicies[nodeIndex] = readiness;
+            changed = true;
+        }
+        if (WorkClassRank(workClass) > WorkClassRank(_workClasses[nodeIndex]))
+        {
+            _workClasses[nodeIndex] = workClass;
+            changed = true;
+        }
+        ERenderOutputFallbackPolicy effectiveFallback =
+            _readinessPolicies[nodeIndex] == ERenderOutputReadinessPolicy.BlockForExact
+                ? ERenderOutputFallbackPolicy.None
+                : fallbackPolicy;
+        ERenderOutputFallbackPolicy mergedFallback = _fallbackPolicies[nodeIndex] | effectiveFallback;
+        if (mergedFallback != _fallbackPolicies[nodeIndex])
+        {
+            _fallbackPolicies[nodeIndex] = mergedFallback;
+            changed = true;
+        }
+        return changed;
+    }
+
+    private bool ReadinessDominates(int source, int destination)
+        => ReadinessRank(_readinessPolicies[source]) > ReadinessRank(_readinessPolicies[destination]) ||
+           WorkClassRank(_workClasses[source]) > WorkClassRank(_workClasses[destination]);
+
+    private static int ReadinessRank(ERenderOutputReadinessPolicy policy)
+        => policy switch
+        {
+            ERenderOutputReadinessPolicy.BlockForExact => 3,
+            ERenderOutputReadinessPolicy.MeetDeadlineWithGpuFallback => 2,
+            _ => 1,
+        };
+
+    private static int WorkClassRank(ERenderOutputWorkClass workClass)
+        => workClass switch
+        {
+            ERenderOutputWorkClass.PresentNow => 3,
+            ERenderOutputWorkClass.Prewarm => 2,
+            _ => 1,
+        };
 
     private bool ScheduleDominates(int source, int destination)
         => _xrCriticalPath[source] && !_xrCriticalPath[destination] ||

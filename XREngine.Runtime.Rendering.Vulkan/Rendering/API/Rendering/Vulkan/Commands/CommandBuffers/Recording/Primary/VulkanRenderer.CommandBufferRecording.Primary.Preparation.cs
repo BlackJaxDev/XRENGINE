@@ -129,7 +129,8 @@ namespace XREngine.Rendering.Vulkan
             recordingState.ProgressiveCommandChainAdmittedOperations = 0;
             recordingState.ProgressiveCommandChainDeferredJobs = 0;
 
-            if (recordingState.Policy.IsExternalSwapchainTarget ||
+            if (!recordingState.Policy.AllowsSecondaryDeferral ||
+                recordingState.Policy.IsExternalSwapchainTarget ||
                 !recordingState.PresentationSource.HasLogicalSource ||
                 recordingState.ScheduledCommandChainsByOpIndex is null ||
                 CommandChainBenchmarkForceRerecord ||
@@ -657,6 +658,7 @@ namespace XREngine.Rendering.Vulkan
             int firstPendingRequirementIndex = -1;
             string firstPendingReason = string.Empty;
             long sliceStart = Stopwatch.GetTimestamp();
+            bool foregroundRequired = recordingState.Policy.FreshSerialRecording;
             using (VulkanCpuStageScope cpuStage =
                    new(_frameTelemetry, EVulkanCpuStage.PrimaryPrewarm))
             {
@@ -702,7 +704,7 @@ namespace XREngine.Rendering.Vulkan
                         }
                     }
 
-                    if (Stopwatch.GetTimestamp() - sliceStart >=
+                    if (!foregroundRequired && Stopwatch.GetTimestamp() - sliceStart >=
                         PrimaryPipelinePrewarmSliceTicks)
                     {
                         break;
@@ -926,6 +928,7 @@ namespace XREngine.Rendering.Vulkan
                     depthStencilReadOnly,
                     operationContext.PipelineInstance?.DebugName ??
                         "<no pipeline>",
+                    foregroundRequired: recordingState.Policy.FreshSerialRecording,
                     out string pipelineReason))
             {
                 if (preparationSignature != 0)

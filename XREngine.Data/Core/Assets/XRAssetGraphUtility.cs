@@ -7,6 +7,7 @@ using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Reflection;
 using System.Runtime.CompilerServices;
+using MemoryPack;
 using XREngine.Data.Core;
 using YamlDotNet.Serialization;
 
@@ -24,7 +25,7 @@ namespace XREngine.Core.Files;
 /// </summary>
 public static class XRAssetGraphUtility
 {
-    private static readonly ConcurrentDictionary<Type, List<Func<object, object?>>> AccessorCache = new();
+    private static readonly ConcurrentDictionary<Type, List<AssetGraphAccessor>> AccessorCache = new();
     private static readonly ConcurrentDictionary<Type, bool> LeafTypeCache = new();
     private static readonly ConcurrentDictionary<Type, bool> InspectMemberTypeCache = new();
     private static readonly ConcurrentDictionary<(Type OwnerType, string MemberName), bool> SerializedMemberRefreshCache = new();
@@ -61,11 +62,11 @@ public static class XRAssetGraphUtility
         {
             PropertyInfo? property = current.GetProperty(memberName, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly);
             if (property is not null)
-                return property.GetCustomAttribute<YamlIgnoreAttribute>() is null;
+                return !IsSerializationIgnored(property);
 
             FieldInfo? field = current.GetField(memberName, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly);
             if (field is not null)
-                return field.GetCustomAttribute<YamlIgnoreAttribute>() is null;
+                return !IsSerializationIgnored(field);
         }
 
         return true;
@@ -86,7 +87,13 @@ public static class XRAssetGraphUtility
         var discoveredAssets = new HashSet<XRAsset>(AssetReferenceComparer.Instance);
 
         _traversalCount = 0;
-        TraverseObject(root, root, visitedObjects, discoveredAssets, 0);
+        TraverseObject(
+            root,
+            root,
+            visitedObjects,
+            discoveredAssets,
+            0,
+            root.GetType().Name);
 
         root.EmbeddedAssets.Set(discoveredAssets, reportRemoved: false, reportAdded: false, reportModified: false);
 
@@ -100,7 +107,13 @@ public static class XRAssetGraphUtility
     [ThreadStatic]
     private static int _traversalCount;
 
-    private static void TraverseObject(object? candidate, XRAsset root, HashSet<object> visited, HashSet<XRAsset> embedded, int depth)
+    private static void TraverseObject(
+        object? candidate,
+        XRAsset root,
+        HashSet<object> visited,
+        HashSet<XRAsset> embedded,
+        int depth,
+        string path)
     {
         if (candidate is null)
             return;
@@ -155,12 +168,25 @@ public static class XRAssetGraphUtility
             foreach (DictionaryEntry entry in dictionary)
             {
                 // Don't increment depth for collection iteration - only for property traversal
-                TraverseObject(entry.Key, root, visited, embedded, depth);
-                TraverseObject(entry.Value, root, visited, embedded, depth);
+                TraverseObject(
+                    entry.Key,
+                    root,
+                    visited,
+                    embedded,
+                    depth,
+                    $"{path}[key:{dictCount}]");
+                TraverseObject(
+                    entry.Value,
+                    root,
+                    visited,
+                    embedded,
+                    depth,
+                    $"{path}[value:{dictCount}]");
                 if (++dictCount > 1000)
                 {
-                    Trace.WriteLine($"[XRAssetGraphUtility] Dictionary iteration limit reached for {candidateType.FullName}");
-                    break;
+                    throw new InvalidDataException(
+                        $"Authored asset graph exceeded the 1,000-entry dictionary safety limit at " +
+                        $"'{path}' ({candidateType.FullName}); graph completion was affected.");
                 }
             }
             return;
@@ -172,11 +198,15 @@ public static class XRAssetGraphUtility
             if (elementType is not null && IsLeafType(elementType))
                 return;
             
-            // Skip large arrays (likely pixel data or similar)
+            // Large leaf arrays were returned above. A remaining array can carry
+            // authored assets, so silently skipping it would publish a partial graph.
             if (array.Length > 1000)
             {
-                Trace.WriteLine($"[XRAssetGraphUtility] Skipping large array: {candidateType.FullName} with {array.Length} elements");
-                return;
+                string message =
+                    $"Authored asset graph cannot safely inspect large array at '{path}': " +
+                    $"type={candidateType.FullName} elements={array.Length}; graph completion was affected.";
+                Trace.WriteLine($"[XRAssetGraphUtility] {message}");
+                throw new InvalidDataException(message);
             }
         }
 
@@ -190,24 +220,31 @@ public static class XRAssetGraphUtility
             foreach (var item in enumerable)
             {
                 // Don't increment depth for collection iteration
-                TraverseObject(item, root, visited, embedded, depth);
+                TraverseObject(
+                    item,
+                    root,
+                    visited,
+                    embedded,
+                    depth,
+                    $"{path}[{count}]");
                 
                 // Safety limit for very large collections
                 if (++count > 1000)
                 {
-                    Trace.WriteLine($"[XRAssetGraphUtility] Collection iteration limit reached for {candidateType.FullName}");
-                    break;
+                    throw new InvalidDataException(
+                        $"Authored asset graph exceeded the 1,000-entry collection safety limit at " +
+                        $"'{path}' ({candidateType.FullName}); graph completion was affected.");
                 }
             }
             return;
         }
 
-        foreach (var getter in GetAccessors(candidateType))
+        foreach (AssetGraphAccessor accessor in GetAccessors(candidateType))
         {
             object? value;
             try
             {
-                value = getter(candidate);
+                value = accessor.Getter(candidate);
             }
             catch
             {
@@ -215,7 +252,13 @@ public static class XRAssetGraphUtility
             }
 
             // Increment depth only for property/field traversal
-            TraverseObject(value, root, visited, embedded, depth + 1);
+            TraverseObject(
+                value,
+                root,
+                visited,
+                embedded,
+                depth + 1,
+                $"{path}.{accessor.Name}");
         }
     }
 
@@ -315,12 +358,12 @@ public static class XRAssetGraphUtility
 
     [UnconditionalSuppressMessage("Trimming", "IL2072", Justification = "Graph inspection requires runtime reflection.")]
     [UnconditionalSuppressMessage("Trimming", "IL2075", Justification = "Graph inspection requires runtime reflection.")]
-    private static List<Func<object, object?>> GetAccessors(Type type)
+    private static List<AssetGraphAccessor> GetAccessors(Type type)
         => AccessorCache.GetOrAdd(type, BuildAccessors);
 
-    private static List<Func<object, object?>> BuildAccessors(Type t)
+    private static List<AssetGraphAccessor> BuildAccessors(Type t)
     {
-        var accessors = new List<Func<object, object?>>();
+        var accessors = new List<AssetGraphAccessor>();
         for (Type? current = t; current is not null; current = current.BaseType)
         {
             var typeInfo = current.GetTypeInfo();
@@ -335,12 +378,12 @@ public static class XRAssetGraphUtility
                     continue;
                 if (ShouldSkipMember(property.DeclaringType, property.Name))
                     continue;
-                if (property.GetCustomAttribute<YamlIgnoreAttribute>() is not null)
+                if (IsSerializationIgnored(property))
                     continue;
                 if (!ShouldInspectMemberType(property.PropertyType))
                     continue;
 
-                accessors.Add(property.GetValue);
+                accessors.Add(new AssetGraphAccessor(property.Name, property.GetValue));
             }
 
             foreach (var field in typeInfo.DeclaredFields)
@@ -349,17 +392,21 @@ public static class XRAssetGraphUtility
                     continue;
                 if (ShouldSkipMember(field.DeclaringType, field.Name))
                     continue;
-                if (field.GetCustomAttribute<YamlIgnoreAttribute>() is not null)
+                if (IsSerializationIgnored(field))
                     continue;
                 if (!ShouldInspectMemberType(field.FieldType))
                     continue;
 
-                accessors.Add(field.GetValue);
+                accessors.Add(new AssetGraphAccessor(field.Name, field.GetValue));
             }
         }
 
         return accessors;
     }
+
+    private readonly record struct AssetGraphAccessor(
+        string Name,
+        Func<object, object?> Getter);
 
     private static bool ShouldSkipMember(Type? declaringType, string memberName)
     {
@@ -372,6 +419,17 @@ public static class XRAssetGraphUtility
         return InfrastructureMembers.Contains(memberName);
     }
 
+    /// <summary>
+    /// Returns whether a reflected member is excluded from persisted asset state.
+    /// The graph walker must use the same transient-state boundary as cooked binary
+    /// serialization; otherwise runtime publishers, event handlers, and GPU state
+    /// are mistaken for embedded assets.
+    /// </summary>
+    private static bool IsSerializationIgnored(MemberInfo member)
+        => member.GetCustomAttribute<YamlIgnoreAttribute>() is not null ||
+           member.GetCustomAttribute<MemoryPackIgnoreAttribute>() is not null ||
+           member.GetCustomAttribute<RuntimeOnlyAttribute>() is not null;
+
     private static bool ShouldInspectMemberType(Type? memberType)
     {
         if (memberType is null)
@@ -379,6 +437,9 @@ public static class XRAssetGraphUtility
 
         return InspectMemberTypeCache.GetOrAdd(memberType, static t =>
         {
+            if (t.GetCustomAttribute<RuntimeOnlyAttribute>(inherit: true) is not null)
+                return false;
+
             if (XRAssetType.IsAssignableFrom(t))
                 return true;
 

@@ -531,7 +531,7 @@ namespace XREngine.Rendering
         /// Typed, generation-owned numeric binding publishers eligible for
         /// immutable backend capture and frequency-scoped reuse.
         /// </summary>
-        [MemoryPackIgnore]
+        [RuntimeOnly, YamlIgnore, MemoryPackIgnore]
         public RenderBindingPublisherCollection BindingPublishers { get; } = new();
 
         public delegate void DelPrepareRenderData();

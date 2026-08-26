@@ -5,8 +5,13 @@ internal readonly record struct RejectedDesktopFramePolicyDecision(
     ERejectedDesktopFramePolicyReason Reason)
 {
     public bool ShouldPresent
-        => Disposition != ERejectedDesktopFrameDisposition.SkipPresent;
+        => Disposition is
+            ERejectedDesktopFrameDisposition.PresentLastCompletedContent or
+            ERejectedDesktopFrameDisposition.PresentInitializationClear;
 
     public bool ShouldClearBeforePresent
         => Disposition == ERejectedDesktopFrameDisposition.PresentInitializationClear;
+
+    public bool IsExplicitFailure
+        => Disposition == ERejectedDesktopFrameDisposition.FailPresentNow;
 }

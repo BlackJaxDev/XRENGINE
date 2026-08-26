@@ -151,13 +151,22 @@ internal sealed partial class VulkanFramePlanner
 
 
     internal static FrameOpContext SelectPrimaryPlannerContext(FrameOp[] ops)
+        => SelectPrimaryPlannerContext(ops, ops.Length);
+
+    internal static FrameOpContext SelectPrimaryPlannerContext(
+        FrameOp[] ops,
+        int count)
     {
+        ArgumentNullException.ThrowIfNull(ops);
+        if (count <= 0 || count > ops.Length)
+            throw new ArgumentOutOfRangeException(nameof(count));
         FrameOpContext fallback = ops[0].Context;
         FrameOpContext best = fallback;
         int bestScore = int.MinValue;
 
-        foreach (FrameOp op in ops)
+        for (int index = 0; index < count; index++)
         {
+            FrameOp op = ops[index];
             FrameOpContext context = op.Context;
             if (context.ResourceRegistry is null)
                 continue;

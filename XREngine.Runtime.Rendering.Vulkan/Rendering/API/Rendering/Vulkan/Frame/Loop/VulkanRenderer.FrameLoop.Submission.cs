@@ -39,10 +39,18 @@ namespace XREngine.Rendering.Vulkan
                 const string reason =
                     "immutable output DAG did not admit desktop submission";
                 SettleRejectedDesktopCommandArtifacts(ref attempt, reason);
-                return HandleDesktopRecordingDeferred(
-                    ref attempt,
-                    reason,
-                    recoveryOverlaySnapshot: null);
+                return attempt.WorkClass == ERenderOutputWorkClass.PresentNow
+                    ? HandleDesktopPresentNowFailureAfterAcquire(
+                        ref attempt,
+                        EVulkanPresentNowReadinessStage.FramePlanSeal,
+                        reason,
+                        recoveryOverlaySnapshot: null,
+                        recoveryDynamicTextSecondaryCommandBuffer: default,
+                        recoveryDynamicTextOperationCount: 0)
+                    : HandleDesktopRecordingDeferred(
+                        ref attempt,
+                        reason,
+                        recoveryOverlaySnapshot: null);
             }
             if (!TryValidatePresentationSourceForSubmission(
                     attempt.PresentationSource,
@@ -54,10 +62,20 @@ namespace XREngine.Rendering.Vulkan
                 SettleRejectedDesktopCommandArtifacts(
                     ref attempt,
                     $"submit precondition failed: {presentationSourceFailure}");
-                return HandleDesktopRecordingDeferred(
-                    ref attempt,
-                    $"submit precondition failed: {presentationSourceFailure}",
-                    recoveryOverlaySnapshot: null);
+                string reason =
+                    $"submit precondition failed: {presentationSourceFailure}";
+                return attempt.WorkClass == ERenderOutputWorkClass.PresentNow
+                    ? HandleDesktopPresentNowFailureAfterAcquire(
+                        ref attempt,
+                        EVulkanPresentNowReadinessStage.FramePlanSeal,
+                        reason,
+                        recoveryOverlaySnapshot: null,
+                        recoveryDynamicTextSecondaryCommandBuffer: default,
+                        recoveryDynamicTextOperationCount: 0)
+                    : HandleDesktopRecordingDeferred(
+                        ref attempt,
+                        reason,
+                        recoveryOverlaySnapshot: null);
             }
 
             ThrowIfDesktopFrameFaultInjected(
@@ -142,10 +160,20 @@ namespace XREngine.Rendering.Vulkan
                 SettleRejectedDesktopCommandArtifacts(
                     ref attempt,
                     "mapped frame-data submission preparation failed");
-                return HandleDesktopRecordingDeferred(
-                    ref attempt,
-                    "mapped frame-data submission preparation failed",
-                    recoveryOverlaySnapshot: null);
+                const string reason =
+                    "mapped frame-data submission preparation failed";
+                return attempt.WorkClass == ERenderOutputWorkClass.PresentNow
+                    ? HandleDesktopPresentNowFailureAfterAcquire(
+                        ref attempt,
+                        EVulkanPresentNowReadinessStage.FramePlanSeal,
+                        reason,
+                        recoveryOverlaySnapshot: null,
+                        recoveryDynamicTextSecondaryCommandBuffer: default,
+                        recoveryDynamicTextOperationCount: 0)
+                    : HandleDesktopRecordingDeferred(
+                        ref attempt,
+                        reason,
+                        recoveryOverlaySnapshot: null);
             }
 
             try
@@ -174,6 +202,7 @@ namespace XREngine.Rendering.Vulkan
             }
 
             long stageStartTimestamp = Stopwatch.GetTimestamp();
+            attempt.SubmitStartedTimestamp = stageStartTimestamp;
             Result submitResult;
             VulkanSubmissionReceipt submitReceipt =
                 VulkanSubmissionReceipt.Rejected(Result.ErrorUnknown);
@@ -230,6 +259,7 @@ namespace XREngine.Rendering.Vulkan
                             in diagnosticContext,
                             caller: "RenderFrameCallback");
                         submitResult = submitReceipt.Result;
+                        attempt.SubmitResult = submitResult;
                         if (submitReceipt.SubmissionAccepted)
                         {
                             // The queue owns this frame as soon as vkQueueSubmit accepts it. Set
@@ -250,6 +280,24 @@ namespace XREngine.Rendering.Vulkan
                             if (attempt.UploadOwnership == EVulkanDesktopUploadOwnership.Recorded)
                                 attempt.TransitionUploadOwnership(
                                     EVulkanDesktopUploadOwnership.SubmittedDeferredFree);
+                            if (attempt.WorkClass == ERenderOutputWorkClass.PresentNow &&
+                                attempt.GraphicsSignalValue == 0UL)
+                            {
+                                TimeSpan elapsed =
+                                    Stopwatch.GetElapsedTime(attempt.StartTimestamp);
+                                VulkanPresentNowReadinessException failure = new(
+                                    attempt.FrameNumber,
+                                    EVulkanPresentNowReadinessStage.QueueSubmission,
+                                    "graphics-submission-serial",
+                                    "DesktopScene -> recorded primary -> graphics queue submission",
+                                    elapsed,
+                                    TimeSpan.Zero,
+                                    "The queue accepted new work without publishing a nonzero submission serial.");
+                                _presentNowTerminalFailure ??= failure;
+                                attempt.DeferredFailure ??= failure;
+                                Debug.VulkanError(
+                                    $"[Vulkan][PresentNow][RendererPaused] {failure.Message}");
+                            }
                         }
                     }
                 }
@@ -271,6 +319,7 @@ namespace XREngine.Rendering.Vulkan
 
             attempt.Timing.SubmitQueue +=
                 Stopwatch.GetElapsedTime(stageStartTimestamp);
+            attempt.SubmitCompletedTimestamp = Stopwatch.GetTimestamp();
             if (submitResult != Result.Success)
             {
                 _ = mappedFrameArena?.TryCancelFrameSlotSubmission(

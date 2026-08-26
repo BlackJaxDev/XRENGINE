@@ -33,6 +33,11 @@ internal sealed class VulkanStagingManager
     /// </summary>
     private const int IdleFramesBeforeEviction = 3;
 
+    /// <summary>Maximum individual imported-upload staging allocation.</summary>
+    internal const ulong ForegroundChunkCapacity = 4UL * 1024UL * 1024UL;
+
+    private const int ForegroundReservedBufferCount = 4;
+
     private sealed class StagingBufferEntry
     {
         public Buffer Buffer;
@@ -41,6 +46,7 @@ internal sealed class VulkanStagingManager
         public BufferUsageFlags Usage;
         public MemoryPropertyFlags Properties;
         public bool InUse;
+        public bool ForegroundReserved;
         /// <summary>Number of <see cref="Trim"/> calls this entry has been idle.</summary>
         public int IdleFrames;
     }
@@ -69,46 +75,90 @@ internal sealed class VulkanStagingManager
         ulong requestedSize,
         BufferUsageFlags usage,
         MemoryPropertyFlags properties,
-        VoidPtr data)
+        VoidPtr data,
+        bool foregroundRequired = false)
     {
         if (requestedSize == 0)
             throw new ArgumentOutOfRangeException(nameof(requestedSize), "Staging buffers must be at least 1 byte.");
 
+        StagingBufferEntry? entry;
         lock (_sync)
         {
-            StagingBufferEntry? entry = TryTakeReusable(requestedSize, usage, properties);
-            if (entry is null)
-            {
-                (Buffer buffer, DeviceMemory memory) = context.Resources.Buffers.CreateRaw(
-                    context,
-                    requestedSize,
-                    usage,
-                    properties,
-                    owner: "VulkanStagingManager");
-                entry = new StagingBufferEntry
-                {
-                    Buffer = buffer,
-                    Memory = memory,
-                    Size = requestedSize,
-                    Usage = usage,
-                    Properties = properties,
-                    InUse = true
-                };
-                _entries.Add(entry);
-            }
-            else
+            entry = TryTakeReusable(requestedSize, usage, properties, foregroundRequired);
+            if (entry is not null)
             {
                 entry.InUse = true;
                 entry.IdleFrames = 0;
             }
+        }
 
-            if (data != null)
+        if (entry is null)
+        {
+            // Allocation may wait on Vulkan memory. Never hold the pool lock
+            // across that native boundary; retirement can then progress.
+            (Buffer buffer, DeviceMemory memory) = context.Resources.Buffers.CreateRaw(
+                context,
+                requestedSize,
+                usage,
+                properties,
+                owner: "VulkanStagingManager");
+            entry = new StagingBufferEntry
             {
-                context.Resources.Buffers.UpdateFromVoidPtr(
-                    context, entry.Buffer, entry.Memory, 0, requestedSize, data);
-            }
+                Buffer = buffer,
+                Memory = memory,
+                Size = requestedSize,
+                Usage = usage,
+                Properties = properties,
+                InUse = true,
+                ForegroundReserved = foregroundRequired,
+            };
+            lock (_sync)
+                _entries.Add(entry);
+        }
 
-            return (entry.Buffer, entry.Memory);
+        if (data != null)
+        {
+            context.Resources.Buffers.UpdateFromVoidPtr(
+                context, entry.Buffer, entry.Memory, 0, requestedSize, data);
+        }
+
+        return (entry.Buffer, entry.Memory);
+    }
+
+    /// <summary>
+    /// Establishes a small dedicated PresentNow lane. Background uploads never
+    /// take these buffers, so a streaming burst cannot starve visible content.
+    /// Call only at a safe boundary, before foreground readiness starts.
+    /// </summary>
+    public unsafe void EnsureForegroundReserve(VulkanBackendObjectContext context)
+    {
+        int reserveCount;
+        lock (_sync)
+        {
+            reserveCount = 0;
+            for (int index = 0; index < _entries.Count; index++)
+            {
+                StagingBufferEntry entry = _entries[index];
+                if (entry.ForegroundReserved
+                    && entry.Usage == BufferUsageFlags.TransferSrcBit
+                    && entry.Properties.HasFlag(MemoryPropertyFlags.HostVisibleBit)
+                    && entry.Size >= ForegroundChunkCapacity)
+                {
+                    reserveCount++;
+                }
+            }
+        }
+
+        while (reserveCount++ < ForegroundReservedBufferCount)
+        {
+            (Buffer buffer, DeviceMemory memory) = Acquire(
+                context,
+                ForegroundChunkCapacity,
+                BufferUsageFlags.TransferSrcBit,
+                MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit,
+                null,
+                foregroundRequired: true);
+            TryRelease(buffer, memory);
         }
     }
 
@@ -192,7 +242,7 @@ internal sealed class VulkanStagingManager
             for (int index = _entries.Count - 1; index >= 0; index--)
             {
                 StagingBufferEntry entry = _entries[index];
-                if (entry.InUse)
+                if (entry.InUse || entry.ForegroundReserved)
                 {
                     entry.IdleFrames = 0;
                     continue;
@@ -232,7 +282,8 @@ internal sealed class VulkanStagingManager
     private StagingBufferEntry? TryTakeReusable(
         ulong requestedSize,
         BufferUsageFlags usage,
-        MemoryPropertyFlags properties)
+        MemoryPropertyFlags properties,
+        bool foregroundRequired)
     {
         StagingBufferEntry? best = null;
         ulong bestWaste = ulong.MaxValue;
@@ -240,6 +291,8 @@ internal sealed class VulkanStagingManager
         foreach (StagingBufferEntry entry in _entries)
         {
             if (entry.InUse || entry.Usage != usage || entry.Properties != properties || entry.Size < requestedSize)
+                continue;
+            if (entry.ForegroundReserved && !foregroundRequired)
                 continue;
 
             ulong waste = entry.Size - requestedSize;

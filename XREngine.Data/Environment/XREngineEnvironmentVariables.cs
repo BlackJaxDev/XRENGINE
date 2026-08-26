@@ -240,6 +240,10 @@ public static class XREngineEnvironmentVariables
     public const string VulkanImportedTexturePreviewFreeze = "XRE_VULKAN_IMPORTED_TEXTURE_PREVIEW_FREEZE";
     public const string VulkanPipelinePrewarmCapture = "XRE_VK_PIPELINE_PREWARM_CAPTURE";
     public const string VulkanPipelineCompileWorkers = "XRE_VK_PIPELINE_COMPILE_WORKERS";
+    public const string VulkanPresentNowReadinessWatchdogMs =
+        "XRE_VULKAN_PRESENT_NOW_READINESS_WATCHDOG_MS";
+    public const string VulkanMeshSchedulingCapacity =
+        "XRE_VULKAN_MESH_SCHEDULING_CAPACITY";
     public const string VulkanFrameOpSignatureDiffLimit = "XRE_VULKAN_FRAMEOP_SIGNATURE_DIFF_LIMIT";
     public const string VulkanFrameOpSignatureDiff = "XRE_VULKAN_FRAMEOP_SIGNATURE_DIFF";
     public const string VulkanFrameDataReuseDiag = "XRE_VULKAN_FRAME_DATA_REUSE_DIAG";

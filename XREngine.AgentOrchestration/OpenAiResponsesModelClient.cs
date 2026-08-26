@@ -613,13 +613,24 @@ public sealed class OpenAiResponsesModelClient : IAgentModelClient
         JsonArray input;
         if (string.IsNullOrWhiteSpace(request.ContinuationJson))
         {
-            JsonNode content = string.IsNullOrWhiteSpace(request.Run.InitialImageDataUri)
-                ? JsonValue.Create(request.Prompt)!
-                : new JsonArray
+            var contentBlocks = new JsonArray
+            {
+                new JsonObject { ["type"] = "input_text", ["text"] = request.Prompt },
+            };
+            foreach (AgentContextFileSnapshot snapshot in request.Run.ContextFileSnapshots)
+                contentBlocks.Add(AgentContextFileInputBuilder.Build(snapshot));
+            if (!string.IsNullOrWhiteSpace(request.Run.InitialImageDataUri))
+            {
+                contentBlocks.Add(new JsonObject
                 {
-                    new JsonObject { ["type"] = "input_text", ["text"] = request.Prompt },
-                    new JsonObject { ["type"] = "input_image", ["image_url"] = request.Run.InitialImageDataUri },
-                };
+                    ["type"] = "input_image",
+                    ["image_url"] = request.Run.InitialImageDataUri,
+                });
+            }
+
+            JsonNode content = contentBlocks.Count == 1
+                ? JsonValue.Create(request.Prompt)!
+                : contentBlocks;
             input =
             [
                 new JsonObject

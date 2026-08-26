@@ -26,6 +26,7 @@ internal sealed partial class VulkanFrameLoop
     private readonly IVulkanRendererTargetDriver _targetDriver;
     private readonly int _frameSlotCount;
     private readonly VulkanPrimaryCommandPlan[] _explicitPrimaryPlans;
+    private readonly VulkanAcceptedFramePlanArena _acceptedFramePlans;
     internal VulkanMeshOperationRequestQueue MeshOperationRequests { get; } = new();
     private readonly VulkanMeshRenderRequest[] _meshOperationRequestScratch =
         new VulkanMeshRenderRequest[VulkanMeshOperationRequestQueue.Capacity];
@@ -119,6 +120,7 @@ internal sealed partial class VulkanFrameLoop
             _frameSlotCount = DesktopFrameSlotCount;
             _explicitPrimaryPlans = [];
         }
+        _acceptedFramePlans = new VulkanAcceptedFramePlanArena(_frameSlotCount);
         _window = window;
         _resourcePlannerSessions = new VulkanResourcePlannerSessionService(
             framePlanner,
@@ -614,6 +616,12 @@ internal sealed partial class VulkanFrameLoop
                 ref attempt,
                 EVulkanFrameStage.CompletionMaintenance,
                 PrepareDesktopFrameSlot(ref attempt)).ShouldContinue)
+            return;
+
+        if (!CompleteDesktopFramePhase(
+                ref attempt,
+                EVulkanFrameStage.ResourcePrepare,
+                DriveDesktopPresentNowReadiness(ref attempt)).ShouldContinue)
             return;
 
         if (!CompleteDesktopFramePhase(

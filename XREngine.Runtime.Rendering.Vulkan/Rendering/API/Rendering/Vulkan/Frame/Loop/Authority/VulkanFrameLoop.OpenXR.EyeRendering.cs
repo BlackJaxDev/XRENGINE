@@ -356,12 +356,14 @@ internal sealed partial class VulkanFrameLoop
 
             if (ShouldDeferOpenXrEyeRenderingWork(out string resourceWorkReason))
             {
-                Debug.VulkanWarningEvery(
-                    $"OpenXR.Vulkan.DeferEyeResourceWork.{GetHashCode()}",
-                    TimeSpan.FromSeconds(1),
-                    "[OpenXR] Deferring Vulkan eye command buffer preparation: {0}",
-                    resourceWorkReason);
-                return false;
+                throw new VulkanPresentNowReadinessException(
+                    RuntimeEngine.Rendering.State.RenderFrameId,
+                    EVulkanPresentNowReadinessStage.RequiredUploadCompletion,
+                    "openxr-eye-resource-work",
+                    "OpenXREyeSubmit -> required upload/descriptor publication",
+                    TimeSpan.Zero,
+                    TimeSpan.Zero,
+                    $"XR deadline missed with no declared resident GPU fallback. {resourceWorkReason}");
             }
 
             using (RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.Vulkan.RecordEye.PrepareTargets"))
@@ -521,6 +523,12 @@ internal sealed partial class VulkanFrameLoop
                 return true;
             }
         }
+        catch (VulkanPresentNowReadinessException)
+        {
+            if (!drainedFrameOps)
+                _ = DrainFrameOpsExcludingTextureUploads(out _);
+            throw;
+        }
         catch (Exception ex)
         {
             if (!drainedFrameOps)
@@ -570,6 +578,10 @@ internal sealed partial class VulkanFrameLoop
                     .AddRange(uploads);
             return true;
         }
+        catch (VulkanPresentNowReadinessException)
+        {
+            throw;
+        }
         catch (Exception ex)
         {
             OpenXrEyeRenderTargetContext failedTarget =
@@ -606,13 +618,15 @@ internal sealed partial class VulkanFrameLoop
                 nativeOperations);
         if (!computePreparation.Succeeded)
         {
-            Debug.VulkanWarningEvery(
-                $"OpenXR.Vulkan.EyeComputePreparationFailed.{GetHashCode()}.{targetContext.OpenXrViewIndex}",
-                TimeSpan.FromSeconds(1),
-                "[OpenXR] Deferring eye {0} command recording because sealed compute resources are not ready: {1}",
-                targetContext.OpenXrViewIndex,
+            throw new VulkanPresentNowReadinessException(
+                RuntimeEngine.Rendering.State.RenderFrameId,
+                EVulkanPresentNowReadinessStage.PipelineCompilation,
+                $"openxr-eye-{targetContext.OpenXrViewIndex}-compute",
+                "OpenXREyeSubmit -> sealed compute program",
+                TimeSpan.Zero,
+                TimeSpan.Zero,
+                $"XR deadline missed with no declared resident GPU fallback. " +
                 computePreparation.FormatFailure());
-            return false;
         }
 
         // The paired plan owns both eyes, while native recording consumes only
@@ -690,8 +704,7 @@ internal sealed partial class VulkanFrameLoop
             new VulkanCommandRecordingPolicySnapshot(
                 UseDynamicRenderingRenderTargets,
                 AllowSynchronousResourceUploads,
-                RuntimeRenderingHostServices.Settings.VulkanCommandRecordingMode ==
-                    EVulkanCommandRecordingMode.FreshSerial,
+                FreshSerialRecording: true,
                 IsExternalSwapchainTarget: true,
                 PreserveSwapchainForOverlay: false,
                 TransitionSwapchainToPresent: false),

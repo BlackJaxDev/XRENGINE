@@ -26,6 +26,22 @@ internal sealed partial class VulkanTextureUploadService
     }
 
     private bool DrainQueuedUploadPreparation(VulkanTextureUploadSchedulingContext context)
+        => DrainQueuedUploadPreparation(context, foregroundRequired: false);
+
+    /// <summary>
+    /// Drains visible-now texture preparation without applying the background
+    /// streaming count/time caps. This is a CPU readiness barrier only: transfer
+    /// submission and completion remain ordered through the normal Vulkan timeline.
+    /// </summary>
+    internal bool DrainRequiredUploadPreparation(
+        VulkanTextureUploadSchedulingContext context,
+        VulkanTextureUploadManifest manifest)
+        => DrainQueuedUploadPreparation(context, foregroundRequired: true, manifest);
+
+    private bool DrainQueuedUploadPreparation(
+        VulkanTextureUploadSchedulingContext context,
+        bool foregroundRequired,
+        VulkanTextureUploadManifest? requiredManifest = null)
     {
         if (Interlocked.Increment(ref _activePreparationDrainCount) == 1)
             _preparationDrainsIdle.Reset();
@@ -43,11 +59,11 @@ internal sealed partial class VulkanTextureUploadService
                 return true;
             }
 
-            double prepBudgetMilliseconds = ResolvePrepBudgetMilliseconds();
+            double prepBudgetMilliseconds = foregroundRequired ? 0.0 : ResolvePrepBudgetMilliseconds();
             long drainStart = TextureRuntimeDiagnostics.StartTiming();
             int preparedThisDrain = 0;
 
-            while (TryDequeueBestPrepJob(out VulkanImportedTextureUploadJob job))
+            while (TryDequeueBestPrepJob(out VulkanImportedTextureUploadJob job, foregroundRequired, requiredManifest))
             {
                 if (Volatile.Read(ref _preparationRetirementStarted) != 0)
                 {
@@ -63,7 +79,7 @@ internal sealed partial class VulkanTextureUploadService
                     continue;
                 }
 
-                if (!CanPrepareJobThisFrame(job, preparedThisDrain, drainStart, prepBudgetMilliseconds))
+                if (!CanPrepareJobThisFrame(job, preparedThisDrain, drainStart, prepBudgetMilliseconds, foregroundRequired))
                 {
                     RequeueUploadPreparation(job);
                     RecordState(
@@ -91,11 +107,11 @@ internal sealed partial class VulkanTextureUploadService
                 if (prepResult == VulkanImportedTextureUploadPrepResult.Completed)
                     preparedThisDrain++;
 
-                if (ShouldYieldAfterPreparation(preparedThisDrain, drainStart, prepBudgetMilliseconds))
-                    return HasQueuedPrepWorkOrCompleteDrain();
+                if (ShouldYieldAfterPreparation(preparedThisDrain, drainStart, prepBudgetMilliseconds, foregroundRequired))
+                    return HasQueuedPrepWorkOrCompleteDrain(requiredManifest);
             }
 
-            return HasQueuedPrepWorkOrCompleteDrain();
+            return HasQueuedPrepWorkOrCompleteDrain(requiredManifest);
         }
         finally
         {
@@ -312,6 +328,7 @@ internal sealed partial class VulkanTextureUploadService
 
         if (!vkTexture.TryCreateSynchronizedImportedUploadPreparation(
                 job.Request,
+                job.Ticket,
                 job.ResidentData,
                 job.IncludeMipChain,
                 publicationToken,
@@ -499,20 +516,33 @@ internal sealed partial class VulkanTextureUploadService
         VulkanImportedTextureUploadRequest request = pendingUpload.Request;
         string? transferFailure = null;
         VulkanSubmittedImportedTextureUpload? submitted = null;
-        if (RenderDiagnosticsFlags.VkTextureUploadTransferQueue)
+        bool foregroundRequired =
+            request.PriorityClass == TextureUploadPriorityClass.VisibleNow;
+        if (RenderDiagnosticsFlags.VkTextureUploadTransferQueue ||
+            foregroundRequired)
         {
             lock (_transferQueueSync)
             {
-                // Reserve the durable owner slot before the native acceptance boundary and
-                // keep the collection locked until the non-allocating Add publishes it.
-                _pendingTransferUploads.EnsureCapacity(_pendingTransferUploads.Count + 1);
-                if (context.Commands.TrySubmitImportedTextureUploadToTransferQueue(
-                        pendingUpload,
-                        out submitted,
-                        out transferFailure) &&
-                    submitted is not null)
+                _pendingTransferUploads.EnsureCapacity(
+                    _pendingTransferUploads.Count +
+                    _pendingTransferReservations + 1);
+                _pendingTransferReservations++;
+            }
+            try
+            {
+                _ = context.Commands.TrySubmitImportedTextureUploadToTransferQueue(
+                    pendingUpload,
+                    out submitted,
+                    out transferFailure,
+                    allowGraphicsQueue: foregroundRequired);
+            }
+            finally
+            {
+                lock (_transferQueueSync)
                 {
-                    _pendingTransferUploads.Add(submitted);
+                    _pendingTransferReservations--;
+                    if (submitted is not null)
+                        _pendingTransferUploads.Add(submitted);
                 }
             }
         }

@@ -4,6 +4,123 @@ namespace XREngine.Rendering.Vulkan;
 
 internal sealed partial class VulkanCommandRuntime
 {
+    /// <summary>
+    /// Completes every graphics-pipeline requirement captured by a sealed
+    /// PresentNow frame plan before a desktop image is acquired. The supplied
+    /// target is symbolic compatibility state only: it contains no acquired
+    /// image ownership and is therefore safe to use during pre-acquire work.
+    /// </summary>
+    internal bool TryPreparePresentNowPipelinesForSealedFramePlan(
+        FramePlan framePlan,
+        FrameOperationSequence staticOperations,
+        FrameOperationSequence dynamicOverlayOperations,
+        in SwapchainRecordingTarget compatibilityTarget,
+        in VulkanPreparedResourcePlanStamp resourcePlanStamp,
+        in VulkanRenderGraphPlan renderGraphPlan,
+        bool useDynamicRendering,
+        out string reason)
+    {
+        ArgumentNullException.ThrowIfNull(framePlan);
+        if (!framePlan.IsSealed)
+            throw new VulkanPlanPreconditionException(
+                "PresentNow pipeline readiness requires a sealed frame plan.");
+        if (!compatibilityTarget.IsValid)
+        {
+            reason = "PresentNow pipeline readiness has no symbolic swapchain compatibility target";
+            return false;
+        }
+
+        return TryPreparePresentNowPipelineSequence(
+            framePlan,
+            staticOperations,
+            in compatibilityTarget,
+            in resourcePlanStamp,
+            in renderGraphPlan,
+            useDynamicRendering,
+            framePlan.StaticOperationSignature,
+            out reason) &&
+            TryPreparePresentNowPipelineSequence(
+                framePlan,
+                dynamicOverlayOperations,
+                in compatibilityTarget,
+                in resourcePlanStamp,
+                in renderGraphPlan,
+                useDynamicRendering,
+                framePlan.DynamicOverlaySignature,
+                out reason);
+    }
+
+    private bool TryPreparePresentNowPipelineSequence(
+        FramePlan framePlan,
+        FrameOperationSequence operations,
+        in SwapchainRecordingTarget compatibilityTarget,
+        in VulkanPreparedResourcePlanStamp resourcePlanStamp,
+        in VulkanRenderGraphPlan renderGraphPlan,
+        bool useDynamicRendering,
+        ulong recordingStructuralSignature,
+        out string reason)
+    {
+        reason = string.Empty;
+        if (operations.Length == 0)
+            return true;
+
+        CommandBufferRecordingScratch scratch = _commandBufferRecordingScratch.Value
+            ?? throw new VulkanPlanPreconditionException(
+                "PresentNow pipeline readiness has no command-recording scratch state.");
+        scoped PrimaryCommandBufferRecordingState recordingState = default;
+        recordingState.Ops = operations;
+        recordingState.FramePlan = framePlan;
+        recordingState.SwapchainTarget = compatibilityTarget;
+        recordingState.ResourcePlanStamp = resourcePlanStamp;
+        recordingState.RenderGraphPlan = renderGraphPlan;
+        recordingState.RecordingScratch = scratch;
+        recordingState.Policy = new VulkanCommandRecordingPolicySnapshot(
+            useDynamicRendering,
+            AllowSynchronousResourceUploads: true,
+            FreshSerialRecording: true,
+            IsExternalSwapchainTarget: false,
+            PreserveSwapchainForOverlay: true,
+            TransitionSwapchainToPresent: true);
+        recordingState.PipelineDeferredOperationIndices =
+            scratch.PipelineDeferredOperationIndices;
+        recordingState.PipelineDeferredOperationIndices.Clear();
+
+        EMeshSubmissionStrategy submissionStrategy =
+            RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy();
+        VulkanPipelineVariantManifest manifest = GetOrBuildPipelineVariantManifest(
+            renderGraphPlan.CompiledGraph.Plan,
+            operations,
+            submissionStrategy,
+            useDynamicRendering,
+            recordingStructuralSignature);
+        for (int index = 0; index < manifest.Requirements.Count; index++)
+        {
+            VulkanPipelineVariantRequirement requirement = manifest.Requirements[index];
+            if (TryPreparePrimaryPipelineRequirement(
+                    ref recordingState,
+                    in requirement,
+                    out bool optionalDeferred,
+                    out string pendingReason))
+            {
+                continue;
+            }
+
+            reason = optionalDeferred
+                ? $"optional PresentNow pipeline requirement was not ready: {pendingReason}"
+                : $"required PresentNow pipeline requirement {index} was not ready: {pendingReason}";
+            return false;
+        }
+
+        if (!TryAssociatePrimaryMeshTaskPipelines(ref recordingState, manifest))
+        {
+            reason = recordingState.RecordingDeferredReason;
+            return false;
+        }
+
+        manifest.MarkWarmupCompleted();
+        return true;
+    }
+
     private VulkanPipelineVariantManifest GetOrBuildPipelineVariantManifest(
         VulkanCompiledRenderGraphPlan plan,
         FrameOperationSequence operations,

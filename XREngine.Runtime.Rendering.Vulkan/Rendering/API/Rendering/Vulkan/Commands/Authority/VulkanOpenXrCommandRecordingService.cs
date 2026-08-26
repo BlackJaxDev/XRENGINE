@@ -1,3 +1,5 @@
+using System.Diagnostics;
+
 namespace XREngine.Rendering.Vulkan;
 
 /// <summary>
@@ -60,6 +62,7 @@ internal sealed class VulkanOpenXrCommandRecordingService
         List<VulkanImportedTexturePendingUpload> uploadBatch =
             resourceRuntime.Uploads.PublicationState.RecordedForSubmit;
         uploadBatch.Clear();
+        long recordingStart = Stopwatch.GetTimestamp();
         try
         {
             ResourcePlannerRuntimeState plannerState = prepared.PlannerState;
@@ -71,18 +74,41 @@ internal sealed class VulkanOpenXrCommandRecordingService
                 prepared.CommandInput;
             VulkanPrimaryCommandRecordingResult result =
                 commandRuntime.RecordPrimary(in commandInput);
+            if (commandInput.FramePlan.TryGetPresentNowContract(
+                    out RenderOutputRequest outputContract))
+            {
+                result = result with
+                {
+                    ReadinessPolicy = outputContract.ReadinessPolicy,
+                    WorkClass = outputContract.WorkClass,
+                    SourceFrameId = commandInput.FramePlan.RenderFrameId,
+                };
+            }
             if (!result.Succeeded)
             {
+                resourceRuntime.Uploads.CancelRecordedSubmitBatch(
+                    deviceContext.State != EVulkanDeviceState.Healthy,
+                    result.Reason ?? $"OpenXR eye worker {workerIndex} failed command recording");
+                if (result.WorkClass == ERenderOutputWorkClass.PresentNow)
+                {
+                    TimeSpan elapsed = Stopwatch.GetElapsedTime(recordingStart);
+                    throw new VulkanPresentNowReadinessException(
+                        result.SourceFrameId,
+                        EVulkanPresentNowReadinessStage.PipelineCompilation,
+                        $"openxr-eye-{prepared.OpenXrViewIndex}-primary",
+                        "OpenXREyeSubmit -> sealed primary pipeline/descriptor manifest",
+                        elapsed,
+                        elapsed,
+                        $"XR deadline missed with no declared resident GPU fallback. " +
+                        (result.Reason ?? "Primary recording failed."));
+                }
+
                 Debug.VulkanWarningEvery(
                     $"OpenXR.Vulkan.PrimaryRecordingDeferred.{prepared.OpenXrViewIndex}",
                     TimeSpan.FromSeconds(1),
-                    "[OpenXR] Eye {0} primary command recording deferred on worker {1}: {2}",
-                    prepared.OpenXrViewIndex,
+                    "[OpenXR] Background eye recording deferred on worker {0}: {1}",
                     workerIndex,
                     result.Reason ?? "<no reason>");
-                resourceRuntime.Uploads.CancelRecordedSubmitBatch(
-                    deviceContext.State != EVulkanDeviceState.Healthy,
-                    result.Reason ?? $"OpenXR eye worker {workerIndex} deferred command recording");
                 return false;
             }
 

@@ -10,14 +10,32 @@ namespace XREngine.Rendering.Vulkan;
 /// </summary>
 internal sealed class VulkanMeshOperationRequestQueue
 {
+    internal enum EMeshRequestScheduleResult
+    {
+        Scheduled,
+        AlreadyReady,
+        Backpressured,
+        TerminalFailure,
+    }
     // A frame can contain a full shadow-caster cohort followed by the main-view
     // and composition draws.  Keeping only one 1K cohort allowed the shadow
     // pass to consume the entire queue, dropping the later fullscreen present
     // draw while the camera was moving.  Four cohorts cover the current
     // directional-cascade workload without allocating in the render hot path.
+    /// <summary>
+    /// Declared immutable frame-manifest capacity. This is not the background
+    /// scheduling slice and cannot be tuned to hide readiness bugs.
+    /// </summary>
     internal const int Capacity = 4096;
+    internal const int TerminalCompositionCapacity = 256;
+    internal const int UiCapacity = 256;
+    internal const int MainSceneCapacity = 1536;
+    internal const int ShadowCapacity = 2048;
     private const int PublicationLeaseCapacity = Capacity;
+    private static readonly int BackgroundSchedulingCapacity =
+        ResolveBackgroundSchedulingCapacity();
     private readonly VulkanMeshRenderRequest[] _entries = new VulkanMeshRenderRequest[Capacity];
+    private readonly EVulkanMeshRequestLane[] _lanes = new EVulkanMeshRequestLane[Capacity];
     private readonly object _gate = new();
     private readonly ThreadLocal<ThreadCaptureState> _threadCapture =
         new(static () => new ThreadCaptureState(), trackAllValues: true);
@@ -25,9 +43,13 @@ internal sealed class VulkanMeshOperationRequestQueue
     private readonly CanonicalPublicationLeaseBatch _drainedPublicationLeases = new();
     private int _head;
     private int _count;
-    private bool _publishedCohortRejected;
-
-    internal bool TryEnqueue(in VulkanMeshRenderRequest request)
+    private int _framePlanCapacityExceededCount;
+    private int _terminalCompositionCount;
+    private int _uiCount;
+    private int _mainSceneCount;
+    private int _shadowCount;
+    private VulkanMeshRequestLaneCapacityFailure _lastCapacityFailure;
+    internal EMeshRequestScheduleResult TryEnqueue(in VulkanMeshRenderRequest request)
     {
         ThreadCaptureState capture = _threadCapture.Value
             ?? throw new InvalidOperationException(
@@ -37,39 +59,52 @@ internal sealed class VulkanMeshOperationRequestQueue
             if (capture.Failed || capture.Count == destination.Length)
             {
                 capture.Failed = true;
-                return false;
+                return EMeshRequestScheduleResult.Backpressured;
             }
             if (!capture.TryRetainPublication(
                     request.CanonicalDrawIdentitySnapshot))
             {
                 capture.Failed = true;
-                return false;
+                return EMeshRequestScheduleResult.TerminalFailure;
             }
 
             destination[capture.Count++] = request;
-            return true;
+            return EMeshRequestScheduleResult.Scheduled;
         }
 
         lock (_gate)
         {
-            if (_publishedCohortRejected || _count == Capacity)
+            EVulkanMeshRequestLane lane = ResolveLane(in request);
+            int occupancy = GetLaneOccupancy(lane);
+            int laneCapacity = GetLaneCapacity(lane);
+            if (occupancy >= laneCapacity)
             {
-                _publishedCohortRejected = true;
-                return false;
+                RecordCapacityFailure(lane, laneCapacity, occupancy);
+                return EMeshRequestScheduleResult.TerminalFailure;
             }
+
+            VulkanMeshRenderRequest acceptedRequest = request;
             if (!_publishedPublicationLeases.TryRetain(
                     request.CanonicalDrawIdentitySnapshot))
             {
-                _publishedCohortRejected = true;
-                return false;
+                // The canonical publication bridge is an optimization. Preserve
+                // the immutable draw through the legacy materialization path when
+                // its optional pin cannot be retained; never poison or drop it.
+                acceptedRequest = request with
+                {
+                    CanonicalDrawIdentitySnapshot = default,
+                    ResidentTemplateHandle = default,
+                };
             }
 
             int tail = _head + _count;
             if (tail >= Capacity)
                 tail -= Capacity;
-            _entries[tail] = request;
+            _entries[tail] = acceptedRequest;
+            _lanes[tail] = lane;
             _count++;
-            return true;
+            IncrementLaneOccupancy(lane);
+            return EMeshRequestScheduleResult.Scheduled;
         }
     }
 
@@ -170,11 +205,14 @@ internal sealed class VulkanMeshOperationRequestQueue
             }
 
             request = _entries[_head];
+            EVulkanMeshRequestLane lane = _lanes[_head];
             _entries[_head] = default;
+            _lanes[_head] = default;
             _head++;
             if (_head == Capacity)
                 _head = 0;
             _count--;
+            DecrementLaneOccupancy(lane);
             return true;
         }
     }
@@ -186,31 +224,75 @@ internal sealed class VulkanMeshOperationRequestQueue
     /// runs while the handoff gate is held.
     /// </summary>
     internal int DrainTo(Span<VulkanMeshRenderRequest> destination)
+        => DrainTo(
+            destination,
+            foregroundRequired: false,
+            out _,
+            out _);
+
+    /// <summary>
+    /// Drains one scheduling slice without changing the accepted manifest.
+    /// Foreground drains ignore the background slice cap; both remain bounded by
+    /// the declared arena and report exact overflow instead of truncating.
+    /// </summary>
+    internal int DrainTo(
+        Span<VulkanMeshRenderRequest> destination,
+        bool foregroundRequired,
+        out int acceptedRequestCount,
+        out int capacityExceededCount)
+        => DrainTo(
+            destination,
+            foregroundRequired,
+            out acceptedRequestCount,
+            out capacityExceededCount,
+            out _);
+
+    /// <summary>
+    /// Drains a lane-isolated manifest cohort. Background policy may limit a
+    /// scheduling slice, but foreground never bypasses a real lane capacity.
+    /// </summary>
+    internal int DrainTo(
+        Span<VulkanMeshRenderRequest> destination,
+        bool foregroundRequired,
+        out int acceptedRequestCount,
+        out int capacityExceededCount,
+        out VulkanMeshRequestLaneCapacityFailure capacityFailure)
     {
         lock (_gate)
         {
-            if (_publishedCohortRejected || _count > destination.Length)
-            {
-                _entries.AsSpan().Clear();
-                _publishedPublicationLeases.ReleaseAll();
-                _head = 0;
-                _count = 0;
-                _publishedCohortRejected = false;
-                return -1;
-            }
+            acceptedRequestCount = _count;
+            capacityExceededCount = _framePlanCapacityExceededCount;
+            capacityFailure = _lastCapacityFailure;
+            _framePlanCapacityExceededCount = 0;
+            _lastCapacityFailure = default;
+            if (destination.Length == 0 || _count == 0)
+                return 0;
 
-            _drainedPublicationLeases.ReleaseAll();
-            _publishedPublicationLeases.MoveTo(_drainedPublicationLeases);
-            int drainCount = Math.Min(_count, destination.Length);
+            int schedulingLimit = foregroundRequired
+                ? destination.Length
+                : Math.Min(destination.Length, BackgroundSchedulingCapacity);
+            int drainCount = Math.Min(_count, schedulingLimit);
+            // The lease batch is aggregate rather than per-entry. Transfer it only
+            // when the complete queue is drained; partial drains leave the leases
+            // published until the remaining entries are handed off.
+            if (drainCount == _count)
+            {
+                _drainedPublicationLeases.ReleaseAll();
+                _publishedPublicationLeases.MoveTo(_drainedPublicationLeases);
+            }
             int firstCount = Math.Min(drainCount, Capacity - _head);
             _entries.AsSpan(_head, firstCount).CopyTo(destination);
+            DecrementLaneOccupancies(_lanes.AsSpan(_head, firstCount));
             _entries.AsSpan(_head, firstCount).Clear();
+            _lanes.AsSpan(_head, firstCount).Clear();
 
             int secondCount = drainCount - firstCount;
             if (secondCount > 0)
             {
                 _entries.AsSpan(0, secondCount).CopyTo(destination[firstCount..]);
+                DecrementLaneOccupancies(_lanes.AsSpan(0, secondCount));
                 _entries.AsSpan(0, secondCount).Clear();
+                _lanes.AsSpan(0, secondCount).Clear();
             }
 
             _head += drainCount;
@@ -219,6 +301,88 @@ internal sealed class VulkanMeshOperationRequestQueue
             _count -= drainCount;
             return drainCount;
         }
+    }
+
+    private static int ResolveBackgroundSchedulingCapacity()
+    {
+        string? configured = Environment.GetEnvironmentVariable(
+            XREngineEnvironmentVariables.VulkanMeshSchedulingCapacity);
+        return int.TryParse(configured, out int parsed)
+            ? Math.Clamp(parsed, 1, Capacity)
+            : Capacity;
+    }
+
+    private static EVulkanMeshRequestLane ResolveLane(in VulkanMeshRenderRequest request)
+        => request.Context.ContextKind switch
+        {
+            EVulkanFrameOpContextKind.Shadow => EVulkanMeshRequestLane.Shadow,
+            EVulkanFrameOpContextKind.UiPreview => EVulkanMeshRequestLane.Ui,
+            EVulkanFrameOpContextKind.MainViewport or EVulkanFrameOpContextKind.OpenXrEye => EVulkanMeshRequestLane.MainScene,
+            _ => EVulkanMeshRequestLane.TerminalComposition,
+        };
+
+    private static int GetLaneCapacity(EVulkanMeshRequestLane lane)
+        => lane switch
+        {
+            EVulkanMeshRequestLane.TerminalComposition => TerminalCompositionCapacity,
+            EVulkanMeshRequestLane.Ui => UiCapacity,
+            EVulkanMeshRequestLane.MainScene => MainSceneCapacity,
+            EVulkanMeshRequestLane.Shadow => ShadowCapacity,
+            _ => throw new ArgumentOutOfRangeException(nameof(lane)),
+        };
+
+    private int GetLaneOccupancy(EVulkanMeshRequestLane lane)
+        => lane switch
+        {
+            EVulkanMeshRequestLane.TerminalComposition => _terminalCompositionCount,
+            EVulkanMeshRequestLane.Ui => _uiCount,
+            EVulkanMeshRequestLane.MainScene => _mainSceneCount,
+            EVulkanMeshRequestLane.Shadow => _shadowCount,
+            _ => throw new ArgumentOutOfRangeException(nameof(lane)),
+        };
+
+    private void IncrementLaneOccupancy(EVulkanMeshRequestLane lane)
+    {
+        switch (lane)
+        {
+            case EVulkanMeshRequestLane.TerminalComposition: _terminalCompositionCount++; break;
+            case EVulkanMeshRequestLane.Ui: _uiCount++; break;
+            case EVulkanMeshRequestLane.MainScene: _mainSceneCount++; break;
+            case EVulkanMeshRequestLane.Shadow: _shadowCount++; break;
+            default: throw new ArgumentOutOfRangeException(nameof(lane));
+        }
+    }
+
+    private void DecrementLaneOccupancy(EVulkanMeshRequestLane lane)
+    {
+        switch (lane)
+        {
+            case EVulkanMeshRequestLane.TerminalComposition: _terminalCompositionCount--; break;
+            case EVulkanMeshRequestLane.Ui: _uiCount--; break;
+            case EVulkanMeshRequestLane.MainScene: _mainSceneCount--; break;
+            case EVulkanMeshRequestLane.Shadow: _shadowCount--; break;
+            default: throw new ArgumentOutOfRangeException(nameof(lane));
+        }
+    }
+
+    private void DecrementLaneOccupancies(ReadOnlySpan<EVulkanMeshRequestLane> lanes)
+    {
+        for (int index = 0; index < lanes.Length; index++)
+            DecrementLaneOccupancy(lanes[index]);
+    }
+
+    private void RecordCapacityFailure(
+        EVulkanMeshRequestLane lane,
+        int configuredCapacity,
+        int actualOccupancy)
+    {
+        int overflowCount = ++_framePlanCapacityExceededCount;
+        _lastCapacityFailure = new VulkanMeshRequestLaneCapacityFailure(
+            lane,
+            configuredCapacity,
+            actualOccupancy,
+            actualOccupancy + 1,
+            overflowCount);
     }
 
     internal void ReleaseCanonicalPublicationLeases()

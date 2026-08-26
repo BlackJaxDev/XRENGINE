@@ -22,6 +22,8 @@ namespace XREngine.Rendering.Vulkan
                 "Vulkan.FrameLifecycle.QueuePresent",
                 disableFrameGenerationReason: null);
             Result result = dispatch.Result;
+            attempt.PresentResult = result;
+            attempt.PresentDispatched = dispatch.Dispatched;
             if (dispatch.Dispatched)
             {
                 attempt.TransitionAcquireOwnership(
@@ -53,6 +55,37 @@ namespace XREngine.Rendering.Vulkan
                 DesktopWsiOutput.ClassifyPresent(result);
             bool presentAccepted =
                 presentOutcome.PresentationAccepted;
+            if (presentAccepted)
+            {
+                bool presentedNew =
+                    attempt.ScenePrimaryRecordedThisFrame &&
+                    attempt.Submitted &&
+                    attempt.GraphicsSignalValue != 0UL;
+                if (presentedNew)
+                {
+                    attempt.Presented = true;
+                    attempt.PresentedSourceFrameId = attempt.FrameNumber;
+                }
+                else if (attempt.WorkClass == ERenderOutputWorkClass.PresentNow)
+                {
+                    TimeSpan elapsed =
+                        Stopwatch.GetElapsedTime(attempt.StartTimestamp);
+                    VulkanPresentNowReadinessException failure = new(
+                        attempt.FrameNumber,
+                        EVulkanPresentNowReadinessStage.Presentation,
+                        "presented-source-frame",
+                        "DesktopScene -> new primary -> new submission -> present wait",
+                        elapsed,
+                        TimeSpan.Zero,
+                        $"Presentation was accepted without truthful new-frame identity " +
+                        $"(recorded={attempt.ScenePrimaryRecordedThisFrame}, " +
+                        $"submitted={attempt.Submitted}, serial={attempt.GraphicsSignalValue}).");
+                    _presentNowTerminalFailure ??= failure;
+                    attempt.DeferredFailure ??= failure;
+                    Debug.VulkanError(
+                        $"[Vulkan][PresentNow][RendererPaused] {failure.Message}");
+                }
+            }
             RecordDesktopPresentBookkeeping(
                 ref attempt,
                 result,
@@ -63,10 +96,19 @@ namespace XREngine.Rendering.Vulkan
                 Debug.VulkanEvery(
                     $"Vulkan.Frame.{GetHashCode()}.Present",
                     TimeSpan.FromSeconds(1),
-                    "[Vulkan] Frame={0} PresentedImage={1} Result={2}",
+                    "[Vulkan][PresentNow] frame={0} sceneEpoch={1} outputGeneration={2} " +
+                    "image={3} commandBuffer=0x{4:X} submitSerial={5} " +
+                    "presentedSourceFrame={6} result={7} policy={8} workClass={9}",
                     attempt.FrameNumber,
+                    attempt.AcceptedSceneEpoch,
+                    attempt.OutputGeneration,
                     attempt.ImageIndex,
-                    result);
+                    attempt.SceneCommandBuffer.Handle,
+                    attempt.GraphicsSignalValue,
+                    attempt.PresentedSourceFrameId,
+                    result,
+                    attempt.ReadinessPolicy,
+                    attempt.WorkClass);
             }
 
             if (result == Result.ErrorDeviceLost)
@@ -121,6 +163,11 @@ namespace XREngine.Rendering.Vulkan
             Exception? auxiliaryFailure = null;
             bool dispatched = false;
             Semaphore queuedPresentSemaphore = attempt.PresentSemaphore;
+            attempt.PresentWaitSemaphoreProvenanceValid =
+                queuedPresentSemaphore.Handle != 0 &&
+                attempt.ExpectedPresentWaitSemaphore.Handle != 0 &&
+                queuedPresentSemaphore.Handle == attempt.ExpectedPresentWaitSemaphore.Handle &&
+                attempt.FrameTargetLease.SubmissionWaitSemaphore.Handle == queuedPresentSemaphore.Handle;
             uint queuedImageIndex = attempt.ImageIndex;
             var swapChains = stackalloc[] { OutputRuntime.Desktop.Swapchain };
             PresentInfoKHR presentInfo = new()
@@ -134,6 +181,7 @@ namespace XREngine.Rendering.Vulkan
             };
 
             long stageStartTimestamp = Stopwatch.GetTimestamp();
+            attempt.PresentStartedTimestamp = stageStartTimestamp;
             Result result;
             using (RuntimeRenderingHostServices.Profiling.StartProfileScope(
                        profileScope))
@@ -169,6 +217,7 @@ namespace XREngine.Rendering.Vulkan
                     {
                         attempt.Timing.PresentQueue +=
                             Stopwatch.GetElapsedTime(stageStartTimestamp);
+                        attempt.PresentCompletedTimestamp = Stopwatch.GetTimestamp();
                         return new VulkanDesktopPresentDispatchOutcome(
                             result,
                             dispatched: false,
@@ -182,6 +231,7 @@ namespace XREngine.Rendering.Vulkan
 
             attempt.Timing.PresentQueue +=
                 Stopwatch.GetElapsedTime(stageStartTimestamp);
+            attempt.PresentCompletedTimestamp = Stopwatch.GetTimestamp();
 
             // QueuePresent has returned. Commit presentation bookkeeping before
             // allowing an auxiliary PCL marker failure to propagate.

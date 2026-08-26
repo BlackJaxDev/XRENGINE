@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace XREngine.AgentOrchestration;
 
 /// <summary>
@@ -22,6 +24,24 @@ public sealed record AgentRunRequest
     public string TextVerbosity { get; init; } = "medium";
 
     public AgentEvidencePacket EvidencePacket { get; init; } = new();
+
+    /// <summary>
+    /// Repository text files captured before the run is accepted. Paths are
+    /// resolved by the broker and are never opened by the remote model.
+    /// </summary>
+    public IReadOnlyList<AgentContextFileRequest> ContextFiles { get; init; } = [];
+
+    /// <summary>
+    /// Broker-resolved immutable context. Callers cannot populate this field.
+    /// </summary>
+    [JsonIgnore]
+    public IReadOnlyList<AgentContextFileSnapshot> ContextFileSnapshots { get; init; } = [];
+
+    /// <summary>
+    /// Optional read-only repository tools. This policy is independent from
+    /// the editor tool and mutation policy.
+    /// </summary>
+    public AgentRepositoryAccessPolicy RepositoryAccess { get; init; } = new();
 
     /// <summary>
     /// Names the editor MCP session available to the worker. Leave unset for a

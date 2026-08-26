@@ -201,7 +201,7 @@ namespace XREngine.Scene
         /// The tuple contains the node and the component that was added.
         /// This event is raised after the component has been fully initialized and added to the internal collection.
         /// </remarks>
-        [YamlIgnore]
+        [RuntimeOnly, YamlIgnore, MemoryPackIgnore]
         public XREvent<(SceneNode node, XRComponent comp)>? ComponentAdded;
 
         /// <summary>
@@ -211,7 +211,7 @@ namespace XREngine.Scene
         /// The tuple contains the node and the component that was removed.
         /// This event is raised after the component has been removed from the internal collection.
         /// </remarks>
-        [YamlIgnore]
+        [RuntimeOnly, YamlIgnore, MemoryPackIgnore]
         public XREvent<(SceneNode node, XRComponent comp)>? ComponentRemoved;
 
         /// <summary>
@@ -219,6 +219,7 @@ namespace XREngine.Scene
         /// </summary>
         /// <seealso cref="OnActivated"/>
         /// <seealso cref="IsActiveInHierarchy"/>
+        [field: RuntimeOnly, MemoryPackIgnore]
         public event Action<SceneNode>? Activated;
 
         /// <summary>
@@ -226,6 +227,7 @@ namespace XREngine.Scene
         /// </summary>
         /// <seealso cref="OnDeactivated"/>
         /// <seealso cref="IsActiveInHierarchy"/>
+        [field: RuntimeOnly, MemoryPackIgnore]
         public event Action<SceneNode>? Deactivated;
 
         #endregion

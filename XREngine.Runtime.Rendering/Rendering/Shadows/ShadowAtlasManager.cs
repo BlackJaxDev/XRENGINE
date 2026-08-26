@@ -1680,6 +1680,173 @@ public sealed partial class ShadowAtlasManager
     public ShadowAtlasRenderPlan PublishedRenderPlan
         => _renderPlans[Volatile.Read(ref _publishedRenderPlanIndex)];
 
+    /// <summary>
+    /// Captures the shadow dependency for a terminal output from the currently
+    /// published plan. The lock protects only the scalar scan; it is never held
+    /// while waiting for CPU, GPU, or submission progress.
+    /// </summary>
+    public ShadowAtlasReadinessManifest CaptureReadinessManifest(
+        in ShadowAtlasReadinessContract contract)
+    {
+        int renderPlanIndex = Volatile.Read(ref _publishedRenderPlanIndex);
+        lock (_renderPlanLocks[renderPlanIndex])
+        {
+            ShadowAtlasRenderPlan plan = _renderPlans[renderPlanIndex];
+            if (contract.WorkClass != ERenderOutputWorkClass.PresentNow ||
+                contract.ReadinessPolicy == ERenderOutputReadinessPolicy.AllowDeferral)
+            {
+                return new ShadowAtlasReadinessManifest(
+                    contract,
+                    plan.FrameId,
+                    plan.PlanId,
+                    RequiredTileCount: 0,
+                    ResidentGpuFallbackTileCount: 0,
+                    UnavailableTileCount: 0,
+                    RequestQueueOverflowCount: 0,
+                    EShadowAtlasReadinessSelection.NotRequired);
+            }
+
+            int requiredTiles = 0;
+            int residentFallbackTiles = 0;
+            int coveredRequests = 0;
+            ReadOnlySpan<ShadowAtlasRenderPlanEntry> entries = plan.Entries;
+            for (int i = 0; i < entries.Length; i++)
+            {
+                ref readonly ShadowAtlasRenderPlanEntry entry = ref entries[i];
+                coveredRequests += GetPlanEntryTileCost(entry);
+                if (!entry.RequiresRender)
+                    continue;
+
+                int tileCount = GetPlanEntryTileCost(entry);
+                requiredTiles += tileCount;
+                if (CanUseDeclaredResidentGpuFallback(entry))
+                    residentFallbackTiles += tileCount;
+            }
+
+            int unavailableTiles = Math.Max(0, plan.RequestCount - coveredRequests);
+            int queueOverflow = _queueOverflowCount;
+            EShadowAtlasReadinessSelection selection = contract.RequiresExactCurrentContent
+                ? unavailableTiles == 0 && queueOverflow == 0
+                    ? EShadowAtlasReadinessSelection.ExactCurrentContent
+                    : EShadowAtlasReadinessSelection.Failed
+                : contract.AllowsDeclaredResidentGpuFallback
+                    ? requiredTiles == 0
+                        ? EShadowAtlasReadinessSelection.ExactCurrentContent
+                        : residentFallbackTiles == requiredTiles && unavailableTiles == 0 && queueOverflow == 0
+                            ? EShadowAtlasReadinessSelection.DeclaredResidentGpuFallback
+                            : EShadowAtlasReadinessSelection.Failed
+                    : EShadowAtlasReadinessSelection.Failed;
+
+            return new ShadowAtlasReadinessManifest(
+                contract,
+                plan.FrameId,
+                plan.PlanId,
+                requiredTiles,
+                residentFallbackTiles,
+                unavailableTiles,
+                queueOverflow,
+                selection);
+        }
+    }
+
+    /// <summary>
+    /// Completes a previously captured terminal shadow dependency. Exact work
+    /// bypasses ordinary tile/time/texture budgets; deadline work can only use
+    /// the resident GPU fallback declared by every unresolved request.
+    /// </summary>
+    public ShadowAtlasReadinessResult CompleteReadinessManifest(
+        in ShadowAtlasReadinessManifest manifest,
+        bool collectVisibleNow = true)
+    {
+        if (!manifest.IsSatisfied)
+            return new ShadowAtlasReadinessResult(
+                manifest,
+                RenderedTileCount: 0,
+                FailedTileCount: Math.Max(1, manifest.UnavailableTileCount + manifest.RequestQueueOverflowCount),
+                EShadowAtlasReadinessSelection.Failed);
+
+        if (!manifest.RequiresExactRender)
+            return new ShadowAtlasReadinessResult(manifest, 0, 0, manifest.Selection);
+
+        AssertRenderThread();
+        if (!BeginSubmissionTracking())
+        {
+            return new ShadowAtlasReadinessResult(
+                manifest,
+                RenderedTileCount: 0,
+                FailedTileCount: manifest.RequiredTileCount,
+                EShadowAtlasReadinessSelection.Failed);
+        }
+
+        int renderPlanIndex = Volatile.Read(ref _publishedRenderPlanIndex);
+        lock (_renderPlanLocks[renderPlanIndex])
+        {
+            try
+            {
+                ShadowAtlasRenderPlan plan = _renderPlans[renderPlanIndex];
+                if (plan.FrameId != manifest.AtlasFrameId || plan.PlanId != manifest.RenderPlanId)
+                {
+                    return new ShadowAtlasReadinessResult(
+                        manifest,
+                        RenderedTileCount: 0,
+                        FailedTileCount: manifest.RequiredTileCount,
+                        EShadowAtlasReadinessSelection.Failed);
+                }
+
+                return RenderExactReadinessTiles(plan, manifest, collectVisibleNow);
+            }
+            finally
+            {
+                EndSubmissionTracking();
+            }
+        }
+    }
+
+    private ShadowAtlasReadinessResult RenderExactReadinessTiles(
+        ShadowAtlasRenderPlan plan,
+        in ShadowAtlasReadinessManifest manifest,
+        bool collectVisibleNow)
+    {
+        int rendered = 0;
+        int failed = 0;
+        ReadOnlySpan<ShadowAtlasRenderPlanEntry> entries = plan.Entries;
+        for (int i = 0; i < entries.Length; i++)
+        {
+            ShadowAtlasRenderPlanEntry entry = entries[i];
+            if (!entry.RequiresRender && !RequiresSubmissionRetry(plan, entry))
+                continue;
+
+            int tileCount = GetPlanEntryTileCost(entry);
+            bool didRender = entry.Kind switch
+            {
+                ShadowAtlasRenderPlanEntryKind.DirectionalCascadeGroup =>
+                    TryRenderDirectionalCascadeGroup(plan, entry, collectVisibleNow, out double groupedElapsedMs, out bool usedSequentialFallback) &&
+                    RecordDirectionalGroupedRenderEventAndReturnSuccess(entry, groupedElapsedMs, usedSequentialFallback, criticalDirectionalRefresh: true),
+                ShadowAtlasRenderPlanEntryKind.PointFaceGroup =>
+                    TryRenderPointFaceGroup(plan, entry, collectVisibleNow),
+                _ => TryRenderTile(entry.Request, entry.Allocation, collectVisibleNow, out double tileElapsedMs) &&
+                    RecordTileRenderEventAndReturnSuccess(plan, entry, tileElapsedMs, criticalDirectionalRefresh: true),
+            };
+
+            if (didRender)
+                rendered += tileCount;
+            else
+                failed += tileCount;
+        }
+
+        _tilesScheduledThisFrame = rendered;
+        RenderWorkBudgetCoordinator.RecordShadowAtlasQueue(0);
+        EShadowAtlasReadinessSelection selection = failed == 0
+            ? EShadowAtlasReadinessSelection.ExactCurrentContent
+            : EShadowAtlasReadinessSelection.Failed;
+        return new ShadowAtlasReadinessResult(manifest, rendered, failed, selection);
+    }
+
+    private static bool CanUseDeclaredResidentGpuFallback(in ShadowAtlasRenderPlanEntry entry)
+        => entry.Request.Fallback == ShadowFallbackMode.StaleTile &&
+           entry.Allocation.IsResident &&
+           entry.Allocation.LastRenderedFrame != 0u;
+
     private int GetPendingRenderPlanIndex()
         => 1 - Volatile.Read(ref _publishedRenderPlanIndex);
 

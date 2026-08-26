@@ -31,6 +31,7 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
 
         if (!TryCreateSynchronizedImportedUploadPreparation(
                 request,
+                new VulkanTextureUploadTicket(0, request.StreamingGeneration),
                 residentData,
                 includeMipChain,
                 publicationToken,
@@ -71,6 +72,7 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
 
     internal bool TryCreateSynchronizedImportedUploadPreparation(
         in VulkanImportedTextureUploadRequest request,
+        VulkanTextureUploadTicket ticket,
         TextureStreamingResidentData residentData,
         bool includeMipChain,
         ulong publicationToken,
@@ -122,6 +124,7 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
 
         preparation = new VulkanImportedTextureUploadPreparation(
             request,
+            ticket,
             texture2D,
             residentData,
             includeMipChain,
@@ -230,6 +233,7 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
 
                     pendingUpload = new VulkanImportedTexturePendingUpload(
                         preparation.Request,
+                        preparation.Ticket,
                         preparation.Texture,
                         preparation.Image,
                         preparation.Memory,
@@ -284,39 +288,66 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
             DataSource? uploadData = VkFormatConversions.CreateNormalizedUploadData2D(mip, preparation.Format, out bool ownsUploadData);
             try
             {
-                if (!TryAllocateImportedStagingBuffer(
-                        uploadData,
-                        out Buffer stagingBuffer,
-                        out DeviceMemory stagingMemory))
+                Extent3D mipExtent = new(Math.Max(mip.Width, 1u), Math.Max(mip.Height, 1u), 1u);
+                if (uploadData is null || uploadData.Length == 0)
                 {
-                    failureReason = $"could not create staging buffer for mip {level}";
+                    failureReason = $"mip {level} has no normalized upload bytes";
                     return false;
                 }
 
-
-                Extent3D mipExtent = new(Math.Max(mip.Width, 1u), Math.Max(mip.Height, 1u), 1u);
-                BufferImageCopy region = new()
+                uint rowCount = Math.Max(mipExtent.Height, 1u);
+                if ((ulong)uploadData.Length % rowCount != 0)
                 {
-                    BufferOffset = 0,
-                    BufferRowLength = 0,
-                    BufferImageHeight = 0,
-                    ImageSubresource = new ImageSubresourceLayers
-                    {
-                        AspectMask = preparation.AspectMask,
-                        MipLevel = level,
-                        BaseArrayLayer = 0,
-                        LayerCount = 1,
-                    },
-                    ImageOffset = new Offset3D(0, 0, 0),
-                    ImageExtent = mipExtent,
-                };
+                    failureReason = $"normalized mip {level} byte count {uploadData.Length:N0} cannot be divided into {rowCount} rows for bounded staging";
+                    return false;
+                }
 
-                preparation.StagingResources.Add(new VulkanImportedTextureUploadStagingResource(
-                    default,
-                    stagingBuffer,
-                    stagingMemory,
-                    region,
-                    (ulong)(uploadData?.Length ?? 0u)));
+                ulong bytesPerRow = (ulong)uploadData.Length / rowCount;
+                if (bytesPerRow == 0 || bytesPerRow > VulkanStagingManager.ForegroundChunkCapacity)
+                {
+                    failureReason = $"normalized mip {level} row size {bytesPerRow:N0} exceeds the {VulkanStagingManager.ForegroundChunkCapacity:N0}-byte foreground staging chunk";
+                    return false;
+                }
+
+                uint rowsPerChunk = (uint)Math.Max(1UL, VulkanStagingManager.ForegroundChunkCapacity / bytesPerRow);
+                bool foregroundRequired = preparation.Request.PriorityClass == TextureUploadPriorityClass.VisibleNow;
+                for (uint firstRow = 0; firstRow < rowCount; firstRow += rowsPerChunk)
+                {
+                    uint chunkRows = Math.Min(rowsPerChunk, rowCount - firstRow);
+                    ulong chunkBytes = bytesPerRow * chunkRows;
+                    if (!TryAllocateImportedStagingBuffer(
+                            new DataSource(uploadData.Address + (long)(firstRow * bytesPerRow), checked((uint)chunkBytes)),
+                            out Buffer stagingBuffer,
+                            out DeviceMemory stagingMemory,
+                            foregroundRequired))
+                    {
+                        failureReason = $"could not create bounded staging buffer for mip {level}, rows {firstRow}-{firstRow + chunkRows - 1}";
+                        return false;
+                    }
+
+                    BufferImageCopy region = new()
+                    {
+                        BufferOffset = 0,
+                        BufferRowLength = 0,
+                        BufferImageHeight = 0,
+                        ImageSubresource = new ImageSubresourceLayers
+                        {
+                            AspectMask = preparation.AspectMask,
+                            MipLevel = level,
+                            BaseArrayLayer = 0,
+                            LayerCount = 1,
+                        },
+                        ImageOffset = new Offset3D(0, (int)firstRow, 0),
+                        ImageExtent = new Extent3D(mipExtent.Width, chunkRows, 1u),
+                    };
+
+                    preparation.StagingResources.Add(new VulkanImportedTextureUploadStagingResource(
+                        default,
+                        stagingBuffer,
+                        stagingMemory,
+                        region,
+                        chunkBytes));
+                }
                 return true;
             }
             finally

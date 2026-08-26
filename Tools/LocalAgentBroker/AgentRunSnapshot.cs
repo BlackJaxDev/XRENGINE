@@ -48,6 +48,12 @@ public sealed record AgentRunSnapshot
 
     public string? EditorSession { get; init; }
 
+    public int ContextFileCount { get; init; }
+
+    public long ContextRawBytes { get; init; }
+
+    public bool RepositoryAccessEnabled { get; init; }
+
     public bool UseBackgroundMode { get; init; }
 
     public string IncrementalText { get; init; } = string.Empty;

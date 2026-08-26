@@ -30,6 +30,7 @@ internal sealed partial class VulkanTextureUploadService
     private readonly List<VulkanImportedTextureUploadJob> _pendingPrepJobs = [];
     private readonly List<VulkanSubmittedImportedTextureUpload> _pendingTransferUploads = [];
     private readonly object _transferQueueSync = new();
+    private int _pendingTransferReservations;
     private int _prepDrainScheduled;
     private int _transferDrainScheduled;
     private int _preparationRetirementStarted;
@@ -62,6 +63,58 @@ internal sealed partial class VulkanTextureUploadService
             Volatile.Read(ref s_pendingTransferSubmissions),
             Volatile.Read(ref s_pendingDescriptorPublications),
             Volatile.Read(ref s_transferQueueBytesInFlight));
+
+    /// <summary>
+    /// Advances the foreground upload readiness barrier. Only VisibleNow
+    /// preparation is admitted by the uncapped preparation pass; background
+    /// streaming remains on its normal scheduled budget. Transfer completion is
+    /// still polled through the normal fence/timeline path.
+    /// </summary>
+    internal VulkanTextureUploadManifest CaptureRequiredTextureUploadManifest()
+    {
+        VulkanTextureUploadManifest manifest = new();
+        CaptureRequiredTextureUploadManifest(manifest);
+        return manifest;
+    }
+
+    internal void CaptureRequiredTextureUploadManifest(
+        VulkanTextureUploadManifest manifest)
+    {
+        ArgumentNullException.ThrowIfNull(manifest);
+        manifest.BeginCapture();
+        lock (_prepQueueSync)
+        {
+            for (int index = 0; index < _pendingPrepJobs.Count; index++)
+            {
+                VulkanImportedTextureUploadJob job = _pendingPrepJobs[index];
+                if (job.Request.PriorityClass == TextureUploadPriorityClass.VisibleNow)
+                    manifest.Add(job.Ticket);
+            }
+        }
+
+        lock (_transferQueueSync)
+        {
+            for (int index = 0; index < _pendingTransferUploads.Count; index++)
+            {
+                VulkanSubmittedImportedTextureUpload submitted = _pendingTransferUploads[index];
+                if (submitted.Upload.Request.PriorityClass == TextureUploadPriorityClass.VisibleNow)
+                    manifest.Add(submitted.Upload.Ticket);
+            }
+        }
+    }
+
+    internal bool DrainRequiredTextureUploads(
+        VulkanTextureUploadSchedulingContext context,
+        VulkanTextureUploadManifest manifest)
+    {
+        context.Resources.Allocations.Staging.EnsureForegroundReserve(context.BackendObjects);
+        bool preparationReady = DrainRequiredUploadPreparation(context, manifest);
+        bool transfersReady = DrainRequiredTextureTransfers(context, manifest);
+        return preparationReady && transfersReady;
+    }
+
+    internal bool DrainRequiredTextureUploads(VulkanTextureUploadSchedulingContext context)
+        => DrainRequiredTextureUploads(context, CaptureRequiredTextureUploadManifest());
 
     internal static bool TryDescribeActiveUploadWork(out string reason)
     {
@@ -143,6 +196,7 @@ internal sealed partial class VulkanTextureUploadService
     {
         public VulkanImportedTextureUploadJob(
             VulkanImportedTextureUploadRequest request,
+            VulkanTextureUploadTicket ticket,
             TextureStreamingResidentData residentData,
             bool includeMipChain,
             long sequence,
@@ -152,6 +206,7 @@ internal sealed partial class VulkanTextureUploadService
             Action<Exception>? onError)
         {
             Request = request;
+            Ticket = ticket;
             ResidentData = residentData;
             IncludeMipChain = includeMipChain;
             Sequence = sequence;
@@ -163,6 +218,7 @@ internal sealed partial class VulkanTextureUploadService
         }
 
         public VulkanImportedTextureUploadRequest Request { get; }
+        public VulkanTextureUploadTicket Ticket { get; }
         public TextureStreamingResidentData ResidentData { get; }
         public bool IncludeMipChain { get; }
         public long Sequence { get; }
@@ -306,11 +362,13 @@ internal sealed partial class VulkanTextureUploadService
             return false;
         }
 
+        long sequence = Interlocked.Increment(ref _nextQueuedUploadSequence);
         VulkanImportedTextureUploadJob job = new(
             request,
+            new VulkanTextureUploadTicket(sequence, streamingGeneration),
             residentData,
             includeMipChain,
-            Interlocked.Increment(ref _nextQueuedUploadSequence),
+            sequence,
             shouldAcceptResult,
             onFinished,
             onCanceled,

@@ -14,6 +14,7 @@ namespace XREngine.Rendering.Vulkan;
 
 internal sealed class VulkanImportedTextureUploadPreparation(
     VulkanImportedTextureUploadRequest request,
+    VulkanTextureUploadTicket ticket,
     VkTexture2D texture,
     TextureStreamingResidentData residentData,
     bool includeMipChain,
@@ -30,6 +31,7 @@ internal sealed class VulkanImportedTextureUploadPreparation(
     string debugName)
 {
     public VulkanImportedTextureUploadRequest Request { get; } = request;
+    public VulkanTextureUploadTicket Ticket { get; } = ticket;
     public VkTexture2D Texture { get; } = texture;
     public TextureStreamingResidentData ResidentData { get; } = residentData;
     public bool IncludeMipChain { get; } = includeMipChain;

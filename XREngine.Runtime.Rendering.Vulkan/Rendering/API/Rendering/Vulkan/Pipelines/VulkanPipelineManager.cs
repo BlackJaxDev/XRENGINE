@@ -27,6 +27,8 @@ internal sealed unsafe partial class VulkanPipelineManager
     private VulkanDeviceContext? _deviceContext;
     private VulkanProgramCreationPort? _programServices;
     internal readonly ConcurrentDictionary<VulkanGraphicsPipelineCompileKey, VulkanGraphicsPipelineCompileJob> _vulkanGraphicsPipelineCompileJobs = new();
+    internal readonly Dictionary<VulkanGraphicsPipelineCompileCompletionKey, VulkanGraphicsPipelineCompileResult> _vulkanGraphicsPipelineCompletedResults = [];
+    internal readonly Dictionary<VulkanGraphicsPipelineCompileCompletionKey, string> _vulkanGraphicsPipelinePermanentFailures = [];
     internal readonly Dictionary<ulong, VulkanGraphicsPipelineCompileKey> _vulkanGraphicsPipelineProgramCompileJobs = new();
     internal readonly Lock _vulkanGraphicsPipelineCompileJobsLock = new();
     internal readonly object _vulkanPipelineCompileDependencyMutationLock = new();
@@ -508,7 +510,21 @@ internal sealed unsafe partial class VulkanPipelineManager
                         result.Pipeline);
                     if (published.Handle != result.Pipeline.Handle)
                         _supersededSharedGraphicsPipelines.Enqueue(result.Pipeline);
+                    result = result with { Pipeline = published };
                 }
+
+                StoreCompletedGraphicsPipelineResult(completedJob.Request, result);
+            }
+            else
+            {
+                StoreCompletedGraphicsPipelineResult(
+                    completedJob.Request,
+                    new VulkanGraphicsPipelineCompileResult(
+                        false,
+                        default,
+                        completedJob.Task.Exception?.GetBaseException().Message ??
+                            "graphics pipeline compile task faulted",
+                        0.0));
             }
 
             _vulkanGraphicsPipelineCompileJobs.TryRemove(

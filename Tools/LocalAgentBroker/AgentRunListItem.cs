@@ -36,6 +36,12 @@ public sealed record AgentRunListItem
 
     public string? EditorSession { get; init; }
 
+    public int ContextFileCount { get; init; }
+
+    public long ContextRawBytes { get; init; }
+
+    public bool RepositoryAccessEnabled { get; init; }
+
     public bool UseBackgroundMode { get; init; }
 
     public int AttemptCount { get; init; }

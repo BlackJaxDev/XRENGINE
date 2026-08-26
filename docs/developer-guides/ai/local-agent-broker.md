@@ -2,8 +2,9 @@
 
 The local agent broker is a BCL-only .NET 10 orchestration surface shared with
 the ImGui MCP Assistant. It starts explicit public OpenAI Responses API calls
-as either tool-free reasoning runs or editor-aware runs that proxy model
-function calls to one named, loopback editor MCP session.
+as tool-free reasoning runs, repository-context/read runs, editor-aware runs
+that proxy model function calls to one named loopback editor MCP session, or a
+composition of the read-only repository and editor tool providers.
 
 It is not an in-place Codex model switch, a generic subprocess runner, or an
 Internet-facing editor bridge.
@@ -13,7 +14,7 @@ Internet-facing editor bridge.
 | Project | Owns | Must not own |
 |---|---|---|
 | `XREngine.AgentOrchestration` | Provider-neutral run contracts, prompt packet, budgets, bounded tool loop, Responses transport/SSE parsing, HTTP MCP client | ImGui state, editor globals, process/session lifecycle |
-| `Tools/LocalAgentBroker` | Stdio MCP host, exact model catalog/routing advice, run registry, named-session resolution, leases, trace policy, durable history publishing | Editor implementation, shell/Git execution, API-key persistence |
+| `Tools/LocalAgentBroker` | Stdio MCP host, exact model catalog/routing advice, run registry, repository snapshot/path/read policy, named-session resolution, provider composition, leases, trace policy, durable history publishing | Editor implementation, shell/Git execution, repository mutation, API-key persistence |
 | `Tools/LocalAgentBroker.Shared` | Tray/history contracts, checkout-local paths, atomic record and settings storage | MCP transport, API calls, Windows UI |
 | `Tools/LocalAgentBroker.Tray` | Windows notifications and notification icon, running-task menu, live prompt/response viewer, idle exit, history cleanup | API keys, provider calls, broker process ownership |
 | `XREngine.Editor` | ImGui messages/segments, preferences, local tools, viewport presentation, in-process MCP startup | A second OpenAI function loop |
@@ -35,11 +36,13 @@ resolves the Windows app theme.
 ## Run Contract
 
 `AgentRunRequest` carries the objective, success criteria, constraints, exact
-requested model, reasoning effort, compact evidence packet, optional named
-editor session, tool policy, budget, and the explicit `UseBackgroundMode`
-transport choice. Omitting the editor session selects a reasoning-only run with
-`EmptyAgentToolProvider`; validation rejects mutation, tool policy entries, or
-required tool use in that mode. Its evidence packet has these stable fields:
+requested model, reasoning effort, compact evidence packet, context-file
+requests, repository-access policy, optional named editor session, editor tool
+policy, budget, and the explicit `UseBackgroundMode` transport choice. With
+both repository access and the editor session absent, the run uses
+`EmptyAgentToolProvider`; validation rejects mutation, editor tool-policy
+entries, or required tool use in that mode. Its evidence packet has these
+stable fields:
 
 - relevant files and symbols;
 - current-diff summary;
@@ -47,6 +50,21 @@ required tool use in that mode. Its evidence packet has these stable fields:
 - failed hypotheses;
 - unresolved questions; and
 - next decision.
+
+`context_files` is a path-only admission contract. Before a run is queued,
+`RepositoryContextSnapshotter` resolves every entry through the shared
+`RepositoryPathPolicy`, reads the complete bounded raw file once, validates
+strict UTF-8, hashes the original bytes, selects an optional line range, and
+attaches immutable `AgentContextFileSnapshot` records to the internal request.
+Admission is all-or-nothing. Snapshot content is excluded from JSON status and
+history serialization.
+
+`repository_access` is independent from editor `AgentToolPolicy`. When enabled,
+it requires at least one explicit repository-relative allowed root and a
+positive tool-call budget. `RepositoryAgentToolProvider` exposes only
+`repository_search` and `repository_read_text`. `CompositeAgentToolProvider`
+unions repository and editor tools, rejects name collisions, and dispatches
+each exact name back to its owning provider without merging authorization.
 
 `AgentRunResult` reports the run ID/status, requested and actual models, final
 text and multimodal output items, tool evidence, token usage, turn/tool counts,
@@ -65,6 +83,14 @@ The explicit background path sends `background: true`, creates without
 streaming, polls `GET /v1/responses/{id}` while queued/in-progress, and calls
 `POST /v1/responses/{id}/cancel` on cooperative cancellation. Payloads preserve
 the caller's exact model and output-token limit.
+
+On the first turn, each context snapshot is encoded as a separate JSON-valued
+`input_text` block after the broker-generated objective block. Metadata includes
+the repository-relative path, selected line range, full raw-file size and
+SHA-256, plus an explicit untrusted-data marker. File content cannot contribute
+message roles, tool names, or tool definitions. The broker does not use
+Responses `input_file` uploads, so no separate uploaded-file lifecycle is
+introduced. Continuation requests retain the existing `store: false` replay.
 
 `OpenAiResponsesStreamParser` handles:
 
@@ -85,8 +111,11 @@ contract. A JSON response containing `"error": null` is not an error.
 For a continuation, the next input is the previous `response.output` plus one
 `function_call_output` for each completed call. The orchestrator rejects empty
 or duplicate call IDs. `max_turns`, `max_tool_calls`,
-`max_tool_result_bytes`, `max_output_tokens`, elapsed time, and retry count are
-run-wide request budgets; request text is also capped at 262,144 characters.
+`max_tool_result_bytes`, context-file count/raw/rendered-byte caps,
+`max_output_tokens`, elapsed time, and retry count are run-wide request budgets;
+request text is also capped at 262,144 characters. Repository tools additionally
+enforce per-call time/read/search/result bounds and cumulative run-wide search
+and output budgets.
 Only retryable provider transport/rate-limit failures use exponential backoff
 with jitter; local mutations are never retried. Each attempt records only safe
 metadata: turn/attempt, background flag, outcome, response ID, actual model,
@@ -173,12 +202,20 @@ History snapshots live under
 `Build/_AgentValidation/00000000-000000-shared/local-agent-broker-ui/runs/`.
 They include the provider prompt, optional system instructions, incremental or
 terminal response text, concise run metadata, usage, and failures. Initial
-inline image data, editor tool arguments/results, API keys, headers, and raw
-provider payloads are excluded. Writes are coalesced during streaming and
-flushed immediately at terminal state. The tray's `settings.json` supports a
+inline image data, raw context snapshots, repository/editor tool
+arguments/results, API keys, headers, and raw provider payloads are excluded.
+Writes are coalesced during streaming and flushed immediately at terminal state.
+The tray's `settings.json` supports a
 nullable idle-exit duration and a nullable terminal-record retention duration;
 null means never. It also stores whether new-prompt Windows notifications are
 enabled; they default to enabled. Cleanup never removes queued or running records.
+
+Broker server version `0.8.0` adds atomic `context_files` snapshots and opt-in
+read-only repository tools. Start/get/list metadata reports context-file count,
+aggregate raw bytes, and whether repository access is enabled without exposing
+content. The request advertises separate raw and rendered context budgets.
+Repository and editor providers remain independently authorized and are joined
+only by collision-safe exact-name dispatch.
 
 The supported exact model IDs are `gpt-5.6-luna`, `gpt-5.6-terra`, and
 `gpt-5.6-sol`. Route advice implements the repository policy but has no launch
@@ -188,12 +225,36 @@ rather than silently accepted replacements. Re-check the
 [current GPT-5.6 guidance](https://developers.openai.com/api/docs/guides/latest-model)
 before distribution.
 
-## Editor Tool Security
+## Repository And Editor Tool Security
+
+`RepositoryPathPolicy` is shared by context admission and live repository
+tools. It accepts only repository-relative source-focused text paths; validates
+canonical containment with a trailing root separator; rejects traversal,
+absolute/device/alternate-stream paths, invalid/reserved names, reparse points
+on every existing component, generated/cache/dependency roots, common secret
+files, and non-text extensions. `RepositoryTextFileReader` bounds raw bytes
+before allocation, rechecks length and modification time, hashes the complete
+raw file, decodes strict UTF-8, and rejects NUL/control characters and private
+key markers. Recursive search never descends into reparse-point directories.
+
+`repository_search` supports literal matching, optional validated globs, stable
+path order, at most 50 results, 5,000 files and 64 MiB per call, a 10-second
+tool timeout, and a 256 MiB run-wide scan budget. `repository_read_text` reads
+at most a 1 MiB source file and 400 selected lines, returns provenance and
+pagination metadata, and may require `expected_sha256`. Per-call tool-result
+limits and a 2 MiB run-wide repository-output budget apply to both tools.
+
+Repository policy is a defense-in-depth content eligibility boundary, not a
+guaranteed secret detector. Callers should authorize the narrowest practical
+`allowed_roots`; a trusted checkout and local user remain part of the threat
+model.
 
 When `editor_session` is absent, the registry skips session resolution, leases,
-HTTP MCP construction, and preflight. The orchestrator receives an empty tool
-catalog, so the Responses request is a bounded reasoning-only call over the
-coordinator-supplied evidence packet.
+HTTP MCP construction, and preflight. The orchestrator receives either the
+repository provider when explicitly enabled or an empty catalog for a bounded
+reasoning-only call. When both providers exist, editor mutation verification
+cannot be satisfied by repository tools because their names do not match the
+orchestrator's editor read-back classification.
 
 `EditorSessionResolver` validates the session-name grammar, combines it only
 under `Build/_AgentValidation/00000000-000000-shared/mcp-sessions`, checks full-path containment,
@@ -227,14 +288,15 @@ when truncated.
 |---|---|
 | API-key exposure | Key name may be configured. The value is read from process scope first and, on Windows only when absent, from user scope. It is never accepted in MCP arguments, persisted, echoed, or traced. Errors exclude request headers. |
 | Prompt/tool injection | Workers receive an explicit system safety contract. Broker-side tool policy remains authoritative regardless of model instructions or hostile tool descriptions/results. |
-| Reasoning-only local access | Omitting `editor_session` selects an empty tool provider; validation rejects mutation, tool lists, and required tool use. |
-| Path traversal | Session names use a strict grammar and the resolved manifest must remain under the repository's session root. |
+| Reasoning-only local access | Omitting both repository access and `editor_session` selects an empty tool provider; validation rejects mutation, editor tool lists, and required tool use. |
+| Repository data overreach | Context files are explicit atomic snapshots. Live tools are disabled by default, require explicit roots, remain read-only, use source/secret exclusions, and return no absolute paths. Selected content still leaves the machine and must be treated as provider-bound data. |
+| Path traversal | Session names use a strict grammar. Repository paths reject absolute/device/alternate-stream/traversal forms, validate canonical containment, and reject reparse points; search does not descend into junctions or symlinks. |
 | Arbitrary endpoint | Only the named session manifest is accepted; endpoints must be loopback and exact identity is preflighted. |
 | Duplicate/ambiguous mutation | Duplicate call IDs fail. Mutating tool calls are never transport-retried. Same-session mutations hold an exclusive lease. |
 | Unverified mutation | A later successful read-back or capture is mandatory by default. |
 | Cost exhaustion | Exact model authorization, per-run turn/tool/token/time/retry budgets, bounded concurrency/retention, cancellation, usage reporting, and external API project limits. |
 | Orphaned run | The registry links every run to explicit cancellation and broker shutdown. The caller polls to terminal state and cancels abandoned work. |
-| Secret/content leakage through traces | Tracing is off by default and metadata-only when enabled; prompts and tool payloads are excluded. |
+| Secret/content leakage through traces | Tracing is off by default and metadata-only when enabled; prompts, raw context snapshots, and tool payloads are excluded. Source-focused exclusions reduce accidental secret selection but are not a substitute for narrow roots or secret scanning. |
 | Background-response retention | Background mode is opt-in and disclosed in the MCP schema/user guide. It uses temporary provider storage for polling and is not ZDR compatible even with `store: false`. |
 | Editor process damage | The broker never starts/stops/finds processes. The named session manager owns lifecycle and PID validation. |
 
@@ -285,8 +347,9 @@ read-back, duplicate call IDs, cancellation, MCP error preservation, session
 identity, route advice, and reader/writer leases.
 
 The broker's non-paid protocol validation must also confirm that
-`editor_session` is optional in the advertised schema. Reasoning-only live runs
-must omit it and advertise no function tools.
+`editor_session` is optional and that `context_files`, `repository_access`, and
+their budgets are advertised in the start schema. Reasoning-only live runs must
+omit repository/editor access and advertise no function tools.
 
 Run the deterministic suite:
 
@@ -314,7 +377,10 @@ For release validation, also exercise a user-scoped key with the child process
 variable removed, one successful `use_background_mode` tool turn, a deliberately
 bounded `response.incomplete`, and cancellation after the provider response ID
 appears. Verify exact requested/actual model identity and matching attempt
-metadata in both the broker snapshot and nested terminal result.
+metadata in both the broker snapshot and nested terminal result. Exercise one
+context snapshot plus `repository_search` and a hash-pinned
+`repository_read_text`, then confirm traversal, excluded roots, hash mismatch,
+and malformed UTF-8 are rejected before provider execution.
 
 ### Direct-versus-broker comparison
 
