@@ -1,5 +1,6 @@
 using System.Numerics;
 using System.Text;
+using XREngine.Animation.Importers;
 using XREngine.Scene;
 
 namespace XREngine.Components.Animation;
@@ -422,6 +423,80 @@ public partial class HumanoidComponent
             diagnostics.Add("Error: the avatar definition contains no humanoid muscle limits.");
     }
 
+    private static void ValidateLegacyCalibration(
+        HumanoidAvatarLegacyCalibration? calibration,
+        List<string> diagnostics)
+    {
+        if (calibration is null)
+            return;
+
+        HumanoidAvatarLegacyBoneCalibration? hips = null;
+        HumanoidAvatarLegacyBoneCalibration[] bones = calibration.Bones ?? [];
+        for (int i = 0; i < bones.Length; i++)
+        {
+            if (bones[i].Role is EHumanoidAvatarBoneRole.Hips)
+            {
+                hips = bones[i];
+                break;
+            }
+        }
+
+        if (hips?.CoupledBoneModel is null)
+            return;
+
+        if (calibration.CalibrationRootMotionSettings is not { } settings)
+        {
+            diagnostics.Add(
+                "Error: the migrated coupled Hips calibration does not record the Unity root-motion policy used to train it. Regenerate the avatar profile with schema 4 or newer.");
+            return;
+        }
+
+        if (!UnityHumanoidRootMotionPolicy.TryCreate(
+                settings,
+                out UnityHumanoidRootMotionPolicy policy,
+                out string diagnostic))
+        {
+            diagnostics.Add($"Error: the migrated coupled Hips calibration has an invalid root-motion policy: {diagnostic}");
+            return;
+        }
+
+        UnityHumanoidCoupledBoneModel model = hips.CoupledBoneModel;
+        if (!policy.BakePositionYIntoPose
+            && policy.PositionYBasis is EUnityHumanoidRootPositionYBasis.Feet
+            && model.ProjectedRootYCoefficients.Length != model.ExpectedFeatureCount)
+        {
+            diagnostics.Add(
+                "Error: the migrated coupled Hips calibration uses Height From Feet but has no matching projected-root Y model. Regenerate the avatar profile with schema 4 or newer.");
+        }
+
+        if (calibration.SourceSchemaVersion < 5
+            || calibration.RootAllocationFrame is not UnityHumanoidRootAllocationFrame frame)
+        {
+            diagnostics.Add(
+                "Error: the migrated coupled Hips calibration does not record Unity's Hips-parent allocation frame. Regenerate the avatar profile with schema 5 or newer.");
+            return;
+        }
+
+        Quaternion frameRotation = frame.HipsParentRotationInAnimatorRoot;
+        if (!IsFiniteVector(frame.HipsParentPositionInAnimatorRoot)
+            || !IsFiniteVector(frame.HipsParentScaleInAnimatorRoot)
+            || !float.IsFinite(frameRotation.X)
+            || !float.IsFinite(frameRotation.Y)
+            || !float.IsFinite(frameRotation.Z)
+            || !float.IsFinite(frameRotation.W)
+            || frameRotation.LengthSquared() <= 1e-12f)
+        {
+            diagnostics.Add("Error: the migrated coupled Hips calibration has a non-finite root-allocation frame.");
+            return;
+        }
+
+        Matrix4x4 allocationFrame = Matrix4x4.CreateScale(frame.HipsParentScaleInAnimatorRoot)
+            * Matrix4x4.CreateFromQuaternion(Quaternion.Normalize(frameRotation))
+            * Matrix4x4.CreateTranslation(frame.HipsParentPositionInAnimatorRoot);
+        if (!Matrix4x4.Invert(allocationFrame, out _))
+            diagnostics.Add("Error: the migrated coupled Hips calibration has a non-invertible root-allocation frame.");
+    }
+
     private static bool IsFiniteJointLimit(HumanoidAvatarJointLimit? limit)
         => limit is not null
         && IsFiniteVector(limit.CenterDegrees)
@@ -455,6 +530,8 @@ public partial class HumanoidComponent
         AppendCanonical(canonical, calibration.Source);
         AppendCanonical(canonical, calibration.AvatarName);
         AppendCanonical(canonical, calibration.CalibrationClipName);
+        AppendRootMotionSettings(canonical, calibration.CalibrationRootMotionSettings);
+        AppendRootAllocationFrame(canonical, calibration.RootAllocationFrame);
         HumanoidAvatarLegacyBoneCalibration[] bones = calibration.Bones ?? [];
         for (int i = 0; i < bones.Length; i++)
         {
@@ -467,6 +544,44 @@ public partial class HumanoidComponent
             AppendLegacyResponse(canonical, bone.BoneResponse);
             AppendLegacyCoupledModel(canonical, bone.CoupledBoneModel);
         }
+    }
+
+    private static void AppendRootAllocationFrame(
+        StringBuilder canonical,
+        UnityHumanoidRootAllocationFrame? frame)
+    {
+        AppendCanonical(canonical, frame is not null);
+        if (frame is null)
+            return;
+
+        AppendVector(canonical, frame.HipsParentPositionInAnimatorRoot);
+        AppendQuaternion(canonical, frame.HipsParentRotationInAnimatorRoot);
+        AppendVector(canonical, frame.HipsParentScaleInAnimatorRoot);
+    }
+
+    private static void AppendRootMotionSettings(
+        StringBuilder canonical,
+        UnityHumanoidClipRootMotionSettings? settings)
+    {
+        AppendCanonical(canonical, settings is not null);
+        if (settings is null)
+            return;
+
+        AppendCanonical(canonical, settings.StartTime);
+        AppendCanonical(canonical, settings.StopTime);
+        AppendCanonical(canonical, settings.OrientationOffsetY);
+        AppendCanonical(canonical, settings.Level);
+        AppendCanonical(canonical, settings.CycleOffset);
+        AppendCanonical(canonical, settings.LoopTime);
+        AppendCanonical(canonical, settings.LoopPose);
+        AppendCanonical(canonical, settings.BakeOrientationIntoPose);
+        AppendCanonical(canonical, settings.BakePositionYIntoPose);
+        AppendCanonical(canonical, settings.BakePositionXZIntoPose);
+        AppendCanonical(canonical, settings.KeepOriginalOrientation);
+        AppendCanonical(canonical, settings.KeepOriginalPositionY);
+        AppendCanonical(canonical, settings.KeepOriginalPositionXZ);
+        AppendCanonical(canonical, settings.HeightFromFeet);
+        AppendCanonical(canonical, settings.Mirror);
     }
 
     private static void AppendLegacyResponse(

@@ -578,7 +578,15 @@ function Remove-RebuildableSessionDirectory([string]$Path) {
     }
 
     if (Test-Path -LiteralPath $fullPath -PathType Container) {
-        Remove-Item -LiteralPath $fullPath -Recurse -Force
+        try {
+            Remove-Item -LiteralPath $fullPath -Recurse -Force
+        }
+        catch [System.IO.IOException] {
+            # Retention is best-effort. A compiler or editor from another session may
+            # still hold one rebuildable artifact briefly; that must not block creation
+            # of an otherwise isolated named session.
+            Write-Warning "Deferred cleanup of locked session data '$fullPath': $($_.Exception.Message)"
+        }
     }
 }
 

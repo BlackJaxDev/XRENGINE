@@ -6,19 +6,15 @@ using YamlDotNet.Serialization;
 
 namespace XREngine;
 
-/// <summary>Runtime.Core implementation of the lower asset serialization service contract.</summary>
+/// <summary>Adapts the Runtime.Core asset owner to the lower serialization contract.</summary>
 public sealed class AssetManagerAssetSerializationServices(AssetManager assets) : IAssetSerializationServices
 {
     private readonly AssetManager _assets = assets ?? throw new ArgumentNullException(nameof(assets));
 
     public string AssetExtension => AssetManager.AssetExtension;
-
     public string? GameAssetsPath => _assets.GameAssetsPath;
-
     public string? EngineAssetsPath => _assets.EngineAssetsPath;
-
     public string? CurrentDeserializationPath => AssetDeserializationContext.CurrentFilePath;
-
     public IReadOnlyList<IYamlTypeConverter> YamlTypeConverters => AssetManager.YamlTypeConverters;
 
     public void EnsureYamlAssetRuntimeSupported(string? path = null)

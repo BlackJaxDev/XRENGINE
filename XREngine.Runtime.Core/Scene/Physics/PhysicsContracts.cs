@@ -61,6 +61,16 @@ public interface IRuntimePhysicsStepListener
 public interface IRuntimeDynamicRigidBodyComponent
 {
     IAbstractDynamicRigidBody? RigidBody { get; }
+    (Vector3 position, Quaternion rotation)? KinematicTarget { get; set; }
+    Vector3 LinearVelocity { get; set; }
+    Vector3 AngularVelocity { get; set; }
+
+    /// <summary>
+    /// Immediately aligns the component's scene transform with a backend body
+    /// reset. Implementations must avoid queuing a later physics write that
+    /// could overwrite the restored pose.
+    /// </summary>
+    void SynchronizeSceneTransform(Vector3 position, Quaternion rotation);
 }
 
 /// <summary>Physics capabilities exposed by a runtime world without rendering ownership.</summary>

@@ -681,7 +681,7 @@ public unsafe partial class OpenXRAPI
 
             if (vrInfo.HMDNode is null || vrInfo.LeftEyeCamera is null || vrInfo.RightEyeCamera is null)
             {
-                if (RuntimeVrRenderingServices.TryEnsureHeadsetViewInformation(vrInfo.World, vrInfo.HMDNode, nearPlane, farPlane))
+                if (RuntimeVrRenderingServices.TryEnsureHeadsetViewInformation(vrInfo.World?.WorldContext, vrInfo.HMDNode, nearPlane, farPlane))
                     vrInfo = RuntimeEngine.VRState.ViewInformation;
             }
 
@@ -693,7 +693,7 @@ public unsafe partial class OpenXRAPI
                 out string rigReason);
 
             if (!rigResolved &&
-                RuntimeVrRenderingServices.TryEnsureHeadsetViewInformation(vrInfo.World, null, nearPlane, farPlane))
+                RuntimeVrRenderingServices.TryEnsureHeadsetViewInformation(vrInfo.World?.WorldContext, null, nearPlane, farPlane))
             {
                 Debug.RenderingEvery(
                     "OpenXR.CollectVisible.RepublishedVrRig",

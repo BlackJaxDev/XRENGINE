@@ -542,11 +542,11 @@ namespace XREngine.Components
                     //    break;
                     case nameof(DefaultRenderTarget):
                         if (DefaultRenderTarget is not null && World is not null)
-                            WorldAs<XREngine.Rendering.IRuntimeRenderWorld>()?.FramebufferCameras.Remove(this);
+                            World.GetRenderWorld()?.FramebufferCameras.Remove(this);
                         break;
                     case nameof(World):
                         if (DefaultRenderTarget is not null && World is not null)
-                            WorldAs<XREngine.Rendering.IRuntimeRenderWorld>()?.FramebufferCameras.Remove(this);
+                            World.GetRenderWorld()?.FramebufferCameras.Remove(this);
                         break;
                     case nameof(UserInterface):
                         if (UserInterface is { IsScreenSpace: false } && _camera.IsValueCreated)
@@ -563,13 +563,13 @@ namespace XREngine.Components
             {
                 case nameof(DefaultRenderTarget):
                     if (DefaultRenderTarget is not null && World is not null)
-                        if (!(WorldAs<XREngine.Rendering.IRuntimeRenderWorld>()?.FramebufferCameras.Contains(this) ?? false))
-                            WorldAs<XREngine.Rendering.IRuntimeRenderWorld>()?.FramebufferCameras.Add(this);
+                        if (!(World.GetRenderWorld()?.FramebufferCameras.Contains(this) ?? false))
+                            World.GetRenderWorld()?.FramebufferCameras.Add(this);
                     break;
                 case nameof(World):
                     if (DefaultRenderTarget is not null && World is not null)
-                        if (!(WorldAs<XREngine.Rendering.IRuntimeRenderWorld>()?.FramebufferCameras.Contains(this) ?? false))
-                            WorldAs<XREngine.Rendering.IRuntimeRenderWorld>()?.FramebufferCameras.Add(this);
+                        if (!(World.GetRenderWorld()?.FramebufferCameras.Contains(this) ?? false))
+                            World.GetRenderWorld()?.FramebufferCameras.Add(this);
                     break;
                 case nameof(UserInterface):
                     if (UserInterface is { IsScreenSpace: false } ui)

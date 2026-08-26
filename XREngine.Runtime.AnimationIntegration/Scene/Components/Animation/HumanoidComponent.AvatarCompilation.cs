@@ -1,4 +1,5 @@
 using System.Numerics;
+using XREngine.Animation.Importers;
 using XREngine.Scene;
 
 namespace XREngine.Components.Animation;
@@ -91,6 +92,15 @@ public partial class HumanoidComponent
 
         var legacyCalibrations = new HumanoidAvatarLegacyBoneCalibration?[CompiledHumanoidAvatarDefinition.RoleCount];
         HumanoidAvatarLegacyCalibration? legacy = definition.LegacyCalibration;
+        UnityHumanoidRootMotionPolicy? legacyRootMotionPolicy = legacy?.CalibrationRootMotionSettings is { } legacySettings
+            && UnityHumanoidRootMotionPolicy.TryCreate(legacySettings, out UnityHumanoidRootMotionPolicy compiledLegacyPolicy, out _)
+                ? compiledLegacyPolicy
+                : null;
+        bool hasLegacyRootAllocationFrame = TryCompileLegacyRootAllocationFrame(
+            legacy?.RootAllocationFrame,
+            definition.ModelUnitsPerMeter,
+            out Matrix4x4 legacyRootAllocationFrame,
+            out Matrix4x4 inverseLegacyRootAllocationFrame);
         if (legacy is not null)
         {
             for (int i = 0; i < legacy.Bones.Length; i++)
@@ -140,9 +150,31 @@ public partial class HumanoidComponent
             twistChains,
             auxiliaryBones,
             legacyCalibrations,
-            legacy?.CalibrationClipName ?? string.Empty);
+            legacy?.CalibrationClipName ?? string.Empty,
+            legacyRootMotionPolicy,
+            legacyRootAllocationFrame,
+            inverseLegacyRootAllocationFrame,
+            hasLegacyRootAllocationFrame);
         diagnostic = string.Empty;
         return true;
+    }
+
+    private static bool TryCompileLegacyRootAllocationFrame(
+        UnityHumanoidRootAllocationFrame? source,
+        float modelUnitsPerMeter,
+        out Matrix4x4 frame,
+        out Matrix4x4 inverseFrame)
+    {
+        frame = Matrix4x4.Identity;
+        inverseFrame = Matrix4x4.Identity;
+        if (source is null)
+            return false;
+
+        Quaternion rotation = NormalizeFiniteQuaternion(source.HipsParentRotationInAnimatorRoot);
+        frame = Matrix4x4.CreateScale(source.HipsParentScaleInAnimatorRoot)
+            * Matrix4x4.CreateFromQuaternion(rotation)
+            * Matrix4x4.CreateTranslation(source.HipsParentPositionInAnimatorRoot * modelUnitsPerMeter);
+        return Matrix4x4.Invert(frame, out inverseFrame);
     }
 
     private bool TryCompileAuxiliaryBones(

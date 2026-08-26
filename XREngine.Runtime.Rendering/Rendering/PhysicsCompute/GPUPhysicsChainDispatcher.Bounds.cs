@@ -129,7 +129,7 @@ public sealed partial class GPUPhysicsChainDispatcher
         for (int bindingIndex = 0; bindingIndex < _gpuDrivenPaletteBindings.Count; ++bindingIndex)
         {
             GpuDrivenRendererPaletteBinding binding = _gpuDrivenPaletteBindings[bindingIndex];
-            if (binding.Component.World is not IRuntimeRenderWorld renderWorld)
+            if (binding.Component.World.GetRenderWorld() is not { } renderWorld)
                 continue;
 
             GPUScene scene = renderWorld.VisualScene.GPUCommands;
@@ -145,7 +145,7 @@ public sealed partial class GPUPhysicsChainDispatcher
         for (int bindingIndex = 0; bindingIndex < _gpuDrivenPaletteBindings.Count; ++bindingIndex)
         {
             GpuDrivenRendererPaletteBinding binding = _gpuDrivenPaletteBindings[bindingIndex];
-            if (binding.Component.World is not IRuntimeRenderWorld renderWorld
+            if (binding.Component.World.GetRenderWorld() is not { } renderWorld
                 || !ReferenceEquals(renderWorld.VisualScene.GPUCommands, scene)
                 || !_gpuBoundsSlotByComponent.TryGetValue(binding.Component, out uint sourceSlot)
                 || !scene.TryGetCommandIndicesForRenderer(binding.Renderer, _gpuBoundsCommandScratch))

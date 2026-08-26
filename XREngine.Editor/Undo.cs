@@ -1290,7 +1290,7 @@ public static class Undo
             {
                 // If transform has a world and doesn't force manual recalc, mark dirty
                 // Otherwise, force immediate recalculation
-                if (transform.World is XRWorldInstance world && !transform.ForceManualRecalc)
+                if (transform.World is RuntimeWorld world && !transform.ForceManualRecalc)
                     world.AddDirtyTransform(transform);
                 else
                     transform.RecalculateMatrices(forceWorldRecalc: true, setRenderMatrixNow: false);
@@ -1555,7 +1555,7 @@ public static class Undo
     {
         private readonly byte[] _snapshotPayload;
         private readonly TransformBase? _parentTransform;
-        private readonly XRWorldInstance? _world;
+        private readonly RuntimeWorld? _world;
         private readonly bool _wasWorldRoot;
         private readonly bool _wasEditorSceneRoot;
         private readonly List<SceneRootPlacement> _sceneRootPlacements;
@@ -1565,7 +1565,7 @@ public static class Undo
             byte[] snapshotPayload,
             string displayName,
             TransformBase? parentTransform,
-            XRWorldInstance? world,
+            RuntimeWorld? world,
             bool wasWorldRoot,
             bool wasEditorSceneRoot,
             List<SceneRootPlacement> sceneRootPlacements)
@@ -1584,9 +1584,12 @@ public static class Undo
         public static SceneNodeDestroyUndoState Capture(SceneNode node)
         {
             TransformBase? parentTransform = node.Transform.Parent;
-            XRWorldInstance? world = node.World as XRWorldInstance;
+            RuntimeWorld? world = node.World as RuntimeWorld;
             bool wasWorldRoot = world is not null && ContainsWorldRoot(world, node);
-            bool wasEditorSceneRoot = parentTransform is null && world?.IsInEditorScene(node) == true;
+            bool wasEditorSceneRoot = parentTransform is null &&
+                world is not null &&
+                EditorWorldIntegrationRegistry.TryGet(world, out EditorWorldIntegration? integration) &&
+                integration?.IsInEditorScene(node) == true;
             List<SceneRootPlacement> sceneRootPlacements = parentTransform is null && world is not null
                 ? CaptureSceneRootPlacements(world, node)
                 : [];
@@ -1638,7 +1641,7 @@ public static class Undo
 
             if (_wasEditorSceneRoot)
             {
-                _world.AddToEditorScene(node);
+                EditorWorldIntegrationRegistry.GetOrAttach(_world).AddToEditorScene(node);
                 return;
             }
 
@@ -1649,7 +1652,7 @@ public static class Undo
                 _world.RootNodes.Add(node);
         }
 
-        private static bool ContainsWorldRoot(XRWorldInstance world, SceneNode node)
+        private static bool ContainsWorldRoot(RuntimeWorld world, SceneNode node)
         {
             foreach (SceneNode root in world.RootNodes)
                 if (ReferenceEquals(root, node))
@@ -1658,7 +1661,7 @@ public static class Undo
             return false;
         }
 
-        private static List<SceneRootPlacement> CaptureSceneRootPlacements(XRWorldInstance world, SceneNode node)
+        private static List<SceneRootPlacement> CaptureSceneRootPlacements(RuntimeWorld world, SceneNode node)
         {
             List<SceneRootPlacement> placements = [];
             foreach (XRScene scene in world.TargetWorld?.Scenes ?? [])

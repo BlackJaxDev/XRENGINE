@@ -282,13 +282,13 @@ public static class ImGuiFileBrowser
 
     private static void EnsureWorldInstanceIsRunning(XRWindow window)
     {
-        var instance = window.TargetWorldInstance as XRWorldInstance;
-        if (instance is null || instance.PlayState == XRWorldInstance.EPlayState.Playing)
+        RuntimeWorld? world = window.TargetWorldInstance?.WorldContext as RuntimeWorld;
+        if (world is null || world.PlayState == RuntimeWorldPlayState.Playing)
             return;
 
         try
         {
-            instance.BeginPlay().Wait();
+            RuntimeWorldHostServices.Current?.BeginPlayAsync(world).GetAwaiter().GetResult();
         }
         catch (Exception ex)
         {
@@ -842,20 +842,22 @@ public static class ImGuiFileBrowser
         state.Window = null;
 
         // Clean up world instance
-        if (state.World is not null && XRWorldInstance.WorldInstances.TryGetValue(state.World, out var instance))
+        if (state.World is not null &&
+            RuntimeWorldRegistryServices.Current?.TryGet(state.World, out RuntimeWorld? world) == true &&
+            world is not null)
         {
-            if (instance.PlayState == XRWorldInstance.EPlayState.Playing)
+            if (world.PlayState == RuntimeWorldPlayState.Playing)
             {
                 try
                 {
-                    instance.EndPlay();
+                    RuntimeWorldHostServices.Current?.EndPlay(world);
                 }
                 catch
                 {
                     // Ignore cleanup errors
                 }
             }
-            XRWorldInstance.WorldInstances.Remove(state.World);
+            RuntimeWorldHostServices.Current?.Remove(state.World);
         }
         state.World = null;
     }

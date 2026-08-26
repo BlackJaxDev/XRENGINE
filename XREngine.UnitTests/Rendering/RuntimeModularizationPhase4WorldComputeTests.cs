@@ -1,10 +1,12 @@
 using NUnit.Framework;
 using Shouldly;
 using System.Reflection;
+using XREngine.Components.Lights;
 using XREngine.Data.Geometry;
 using XREngine.Rendering;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Info;
+using XREngine.Runtime.Bootstrap;
 using XREngine.Scene;
 using XREngine.Scene.Physics.Jitter2;
 
@@ -59,17 +61,20 @@ public sealed class RuntimeModularizationPhase4WorldComputeTests
         typeof(RootNodeCollection).Assembly.ShouldBe(typeof(RuntimeWorldLifecycle).Assembly);
         typeof(XRWorldObjectBase).Assembly.ShouldBe(typeof(RuntimeWorldLifecycle).Assembly);
 
-        typeof(RuntimeWorldLifecycle).Assembly.GetType("XREngine.RuntimeWorld").ShouldBeNull();
+        typeof(RuntimeWorldLifecycle).Assembly.GetType("XREngine.XRWorldInstance").ShouldBeNull();
         typeof(RuntimeWorldLifecycle).Assembly.GetType("XREngine.RuntimeWorldInstance").ShouldBeNull();
         typeof(RuntimeWorldLifecycle).Assembly.GetType("XREngine.RuntimeWorldObjectBase").ShouldBeNull();
         typeof(RuntimeWorldRenderState).Assembly
             .GetType("XREngine.Rendering.RuntimeRenderWorldInstance")
             .ShouldBeNull();
+        typeof(RuntimeWorldRenderState).Assembly
+            .GetType("XREngine.XRWorldInstance")
+            .ShouldBeNull();
 
         const BindingFlags instanceFields = BindingFlags.Instance | BindingFlags.NonPublic;
-        typeof(XRWorldInstance).GetField("_lifecycle", instanceFields)!.FieldType
+        typeof(RuntimeWorld).GetField("_lifecycle", instanceFields)!.FieldType
             .ShouldBe(typeof(RuntimeWorldLifecycle));
-        typeof(XRWorldInstance).GetField("_renderState", instanceFields)!.FieldType
+        typeof(RuntimeWorldRenderer).GetField("_state", instanceFields)!.FieldType
             .ShouldBe(typeof(RuntimeWorldRenderState));
 
         File.Exists(Path.Combine(
@@ -83,13 +88,11 @@ public sealed class RuntimeModularizationPhase4WorldComputeTests
     }
 
     [Test]
-    public void ProductionWorldInstance_LoadsAndDestroysRealSceneRoots()
+    public void ProductionRuntimeWorld_LoadsAndDestroysRealSceneRoots()
     {
         SceneNode root = new("LifecycleRoot");
         XRWorld worldAsset = new("LifecycleWorld", new XRScene("Scene", root));
-        XRWorldInstance instance = CreateWorldInstance();
-
-        instance.TargetWorld = worldAsset;
+        using RuntimeWorld instance = new(new JitterScene(), worldAsset);
 
         instance.RootNodes.Count.ShouldBe(1);
         instance.RootNodes[0].ShouldBeSameAs(root);
@@ -102,28 +105,86 @@ public sealed class RuntimeModularizationPhase4WorldComputeTests
     }
 
     [Test]
-    public void ProductionWorldInstance_RegistersAndRemovesRenderableThroughRenderingOwner()
+    public void ProductionRuntimeWorld_RegistersAndRemovesRenderableThroughRenderingOwner()
     {
-        XRWorldInstance instance = CreateWorldInstance();
+        using RuntimeWorld instance = new(new JitterScene());
+        using RuntimeWorldRenderer renderer = new(instance, new VisualScene3D());
         TestRenderable owner = new();
         RenderInfo3D renderInfo = RenderInfo3D.New(
             owner,
             new RenderCommandMethod3D(0, static () => { }));
         renderInfo.LocalCullingVolume = AABB.FromCenterSize(default, System.Numerics.Vector3.One);
         owner.RenderedObjects = [renderInfo];
-        IRuntimeRenderInfo3DRegistrationTarget registration = instance;
+        IRuntimeRenderInfo3DRegistrationTarget registration = renderer;
 
         registration.AddRenderable3D(renderInfo);
-        instance.VisualScene.GlobalCollectVisible();
-        instance.VisualScene.ShouldContain(renderInfo);
+        renderer.VisualScene.GlobalCollectVisible();
+        renderer.VisualScene.ShouldContain(renderInfo);
 
         registration.RemoveRenderable3D(renderInfo);
-        instance.VisualScene.GlobalCollectVisible();
-        instance.VisualScene.ShouldNotContain(renderInfo);
+        renderer.VisualScene.GlobalCollectVisible();
+        renderer.VisualScene.ShouldNotContain(renderInfo);
     }
 
-    private static XRWorldInstance CreateWorldInstance()
-        => new(new VisualScene3D(), new JitterScene());
+    [Test]
+    public void BootstrapHost_AttachesRenderingBeforeInitialSceneActivation_AndDetachesItOnDispose()
+    {
+        SceneNode root = new("ComposedRoot");
+        DirectionalLightComponent light = root.AddComponent<DirectionalLightComponent>()!;
+        XRWorld worldAsset = new("ComposedWorld", new XRScene("Scene", root));
+        RuntimeWorldHost host = new(new JitterScene(), new VisualScene3D());
+
+        host.Initialize(worldAsset);
+
+        RuntimeWorld coreWorld = host.CoreWorld;
+        root.World.ShouldBeSameAs(coreWorld);
+        host.RenderWorld.Lights.DynamicDirectionalLights.ShouldContain(light);
+        coreWorld.TryGetCapability<IRuntimeRenderWorld>(out IRuntimeRenderWorld? capability).ShouldBeTrue();
+        capability.ShouldBeSameAs(host.RenderWorld);
+        RuntimeRenderWorldRegistry.TryGet(coreWorld, out IRuntimeRenderWorld? registered).ShouldBeTrue();
+        registered.ShouldBeSameAs(host.RenderWorld);
+
+        host.Dispose();
+
+        root.World.ShouldBeNull();
+        coreWorld.TryGetCapability<IRuntimeRenderWorld>(out _).ShouldBeFalse();
+        RuntimeRenderWorldRegistry.TryGet(coreWorld, out _).ShouldBeFalse();
+    }
+
+    [Test]
+    public void RuntimeWorldRegistry_RetargetsOneIdentityAmongMultipleWorlds_AndResetsDeterministically()
+    {
+        SceneNode firstRoot = new("FirstRoot");
+        SceneNode secondRoot = new("SecondRoot");
+        XRWorld firstAsset = new("First", new XRScene("FirstScene", firstRoot));
+        XRWorld secondAsset = new("Second", new XRScene("SecondScene", secondRoot));
+        XRWorld otherAsset = new("Other", new XRScene("OtherScene", new SceneNode("OtherRoot")));
+        RuntimeWorldRegistry registry = new();
+        RuntimeWorld retargeted = new(new JitterScene(), firstAsset);
+        RuntimeWorld other = new(new JitterScene(), otherAsset);
+        int disposalCount = 0;
+        retargeted.Disposing += _ => disposalCount++;
+        other.Disposing += _ => disposalCount++;
+        registry.Register(firstAsset, retargeted);
+        registry.Register(otherAsset, other);
+
+        retargeted.RetargetWorld(
+            secondAsset,
+            afterTargetAssigned: () => registry.Retarget(firstAsset, secondAsset, retargeted));
+
+        registry.TryGet(firstAsset, out _).ShouldBeFalse();
+        registry.TryGet(secondAsset, out RuntimeWorld? resolved).ShouldBeTrue();
+        resolved.ShouldBeSameAs(retargeted);
+        registry.Snapshot().Count.ShouldBe(2);
+        firstRoot.World.ShouldBeNull();
+        secondRoot.World.ShouldBeSameAs(retargeted);
+
+        registry.ResetForTests();
+
+        registry.Snapshot().ShouldBeEmpty();
+        disposalCount.ShouldBe(2);
+        secondRoot.World.ShouldBeNull();
+    }
 
     private sealed class TestRenderable : IRenderable
     {

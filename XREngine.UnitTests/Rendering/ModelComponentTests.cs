@@ -168,10 +168,11 @@ public sealed class ModelComponentTests
 
             component.RenderedObjects.Single().WorldInstance.ShouldBeNull();
 
-            XRWorldInstance world = new(new VisualScene3D(), new JitterScene());
+            using RuntimeWorld world = new(new JitterScene());
+            using RuntimeWorldRenderer renderWorld = new(world, new VisualScene3D());
             node.World = world;
 
-            component.RenderedObjects.Single().WorldInstance.ShouldBeSameAs(world);
+            component.RenderedObjects.Single().WorldInstance.ShouldBeSameAs(renderWorld);
 
             node.World = null;
 

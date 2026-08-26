@@ -1783,6 +1783,14 @@ public static partial class EditorUnitTests
                             animator.IsActive = false;
                             animator.StateMachine = stateMachine;
                             animator.Humanoid = humanComp;
+                            animator.RootMotionApplicationMode = Toggles.HumanoidRootMotionApplicationMode;
+                            if (Toggles.HumanoidRootMotionApplicationMode == EHumanoidRootMotionApplicationMode.ApplyToExplicitTarget)
+                            {
+                                if (rootNode.Transform is Transform rootMotionTarget)
+                                    animator.RootMotionTarget = rootMotionTarget;
+                                else
+                                    Debug.LogWarning($"[UnitTestingWorld] Cannot apply state-machine root motion to '{rootNode.Name}' because its root transform is not a standard Transform.");
+                            }
                             animator.SetSuspendedByClip(false);
                             animator.IsActive = true;
 

@@ -287,8 +287,8 @@ namespace XREngine
                     EMeshSubmissionStrategy strategy = RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy();
                     bool useGpu = strategy != EMeshSubmissionStrategy.CpuDirect;
                     
-                    foreach (var worldInstance in Engine.WorldInstances)
-                        worldInstance?.ApplyRenderDispatchPreference(useGpu);
+                    foreach (RuntimeWorld world in Engine.WorldInstances)
+                        world.GetRenderWorld()?.ApplyRenderDispatchPreference(useGpu);
 
                     foreach (XRViewport viewport in RuntimeEngine.EnumerateActiveViewports())
                     {
@@ -312,11 +312,24 @@ namespace XREngine
                 static void Apply()
                 {
                     ECpuSceneCullingStructure structure = Engine.EffectiveSettings.CpuSceneCullingStructure;
-                    foreach (var worldInstance in Engine.WorldInstances)
-                        worldInstance?.ApplyCpuSceneCullingStructurePreference(structure);
+                    foreach (RuntimeWorld world in Engine.WorldInstances)
+                        world.GetRenderWorld()?.ApplyCpuSceneCullingStructurePreference(structure);
                 }
 
                 Engine.InvokeOnMainThread(Apply, "RuntimeEngine.Rendering.ApplyCpuSceneCullingStructurePreference", true);
+            }
+
+            public static void ApplyGpuMeshBvhPickingPreference()
+            {
+                static void Apply()
+                {
+                    bool enabled = Engine.EditorPreferences.GpuMeshBvhClickPickEnabled;
+                    foreach (RuntimeWorld world in Engine.WorldInstances)
+                        if (world.GetRenderWorld() is { } renderWorld)
+                            renderWorld.GpuMeshBvhPickingEnabled = enabled;
+                }
+
+                Engine.InvokeOnMainThread(Apply, "RuntimeEngine.Rendering.ApplyGpuMeshBvhPickingPreference", true);
             }
 
             public static void LogVulkanFeatureProfileFingerprint(bool force = false)

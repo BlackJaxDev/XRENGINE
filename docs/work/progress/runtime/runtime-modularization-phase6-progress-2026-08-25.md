@@ -4,7 +4,7 @@ Started: 2026-08-25
 
 Last updated: 2026-08-25
 
-Status: P6.0 and P6.1 complete. P6.2 is next.
+Status: P6.0 through P6.3 complete. P6.4 is next.
 
 Branch: `codex/runtime-modularization-phase6`
 
@@ -47,7 +47,7 @@ No dependency or submodule version changed.
 
 | Artifact | Rows | Purpose | Generator |
 |---|---:|---|---|
-| [Source ownership manifest](runtime-modularization-phase6-source-ownership.tsv) | 358 baseline / 361 current | Stateful file/type disposition, final owners, migration status, and eventual destination paths; P6.1 added three temporary tracked adapters | `Tools/Reports/Generate-RuntimeModularizationPhase6SourceOwnership.ps1` |
+| [Source ownership manifest](runtime-modularization-phase6-source-ownership.tsv) | 358 baseline / 365 current | Stateful file/type disposition, final owners, migration status, and concrete destination paths; later slices retain newly discovered compatibility adapters and split owners | `Tools/Reports/Generate-RuntimeModularizationPhase6SourceOwnership.ps1` |
 | [Consumer API baseline](runtime-modularization-phase6-consumer-api-baseline.tsv) | 7 | Built-metadata facade type/member references for every direct consumer | `Tools/Reports/Get-RuntimeModularizationPhase6FacadeApiUsage.ps1` |
 | [Project graph baseline](runtime-modularization-phase6-project-graph-baseline.tsv) | 24 | Destination, consumer, and facade project edges and project cargo | `Tools/Reports/Get-RuntimeModularizationPhase6ProjectGraph.ps1` |
 | [Publish layout baseline](runtime-modularization-phase6-publish-layout-baseline.tsv) | 697 | File-level Editor, Server, and VRClient publish manifests with size, category, and SHA-256 | `Tools/Reports/Get-RuntimeModularizationPhase6PublishLayout.ps1` |
@@ -449,6 +449,165 @@ Ignored evidence is under
 - Dependency/license generation completed. Only dependency ownership rows
   changed; fetched license texts remained unchanged.
 
-The next executable slice is P6.2: move remaining core Engine lifecycle,
-physics, networking, and non-visual world ownership out of the facade while
-preserving the lower Runtime.Core dependency boundary.
+## P6.2 Core Engine, Physics, Networking, And World Ownership
+
+P6.2 is complete. The source ledger now contains 364 durable rows: 219 are
+`Migrated`, two deleted facade globals are `Deleted`, and 143 compatibility or
+later-phase sources remain `Pending`. The generator unions the checked-in
+baseline with current sources, so staged moves cannot accidentally erase
+historical ownership rows. Every completed destination is validated before the
+manifest is written.
+
+### Engine Member Classification
+
+| Classification | P6.2 result |
+|---|---|
+| Runtime.Core service | Lifecycle state, shutdown signals, timing, worker scheduling, main-thread dispatch, memory policy, play-mode state, runtime networking, physics services, static-collider behavior, and convex-hull inputs have focused lower owners. |
+| Bootstrap composition | Runtime adapter installation, networking host integration, and join-handoff endpoint composition install reversible lower service leases. |
+| Application policy | Effective editor/application overrides, window pumping, local input, and launch-profile decisions remain facade/host adapters for P6.4 and P6.6; lower runtime effects no longer depend on them. |
+| Diagnostics tooling | Interactive profiler capture, sender, and main-thread log presentation remain facade/editor work scheduled for the application migration. |
+| Deletion | `GlobalUsings.Physics.cs` and `GlobalWorldTypeAliases.cs` were removed; callers use explicit destination namespaces and canonical types. |
+
+The legacy static `Engine` members that applications still compile against are
+compatibility forwarders, not state owners. P6.2-scope consumers use the focused
+Core services; final facade/API removal remains intentionally assigned to P6.6.
+No new broad friend assembly was added.
+
+### Runtime, Networking, And Physics Ownership
+
+- Runtime.Core now owns `RuntimeLifecycleState`, `RuntimePlayModeController`,
+  `RuntimeTimingServices`, `RuntimeWorkScheduler`, `RuntimeThreadDispatcher`,
+  and `RuntimeMemoryPolicy`. Core-safe runtime-setting effects are applied by
+  those owners; editor preferences and application override selection stay out
+  of Core.
+- Networking managers, session resolution, world identity, remote-job
+  transport, and the join-handoff contract moved to Runtime.Core. Bootstrap
+  supplies host operations without adding InputIntegration or application
+  dependencies to the lower contracts.
+- Non-visual physics components and the CPU/GPU-chain simulation state moved
+  from the facade to Runtime.Core. GPU soft-body and joint components whose
+  behavior consumes renderer transforms/debug publication moved to
+  Runtime.Rendering. GPU-chain dispatch crosses
+  `IRuntimePhysicsChainRenderingBridge`; Core contains snapshots and dispatch
+  inputs but has no Rendering project reference.
+- JoltPhysicsSharp, MagicPhysX, System.IO.Hashing, CoACD cargo, and the CoACD
+  build target moved off the facade to Runtime.Core. Dependency versions and
+  license texts did not change; the regenerated inventory records only the new
+  project/native-cargo owners.
+- Timing, networking, physics, static-collider, and physics-chain rendering
+  service installation is lease-based and test-resettable. Snapshot restore
+  also resolves engine-relative assets through the migrated AssetManager path
+  without probing MemoryPack or restoring native physics actors.
+
+### Validation
+
+Ignored evidence is under
+`Build/_AgentValidation/20260825-191909-runtime-modularization-p62/`.
+
+- Runtime.Core, Runtime.Rendering, Bootstrap, the facade, Server, Editor, and
+  UnitTests built in Debug with zero warnings and zero errors. Runtime.Core's
+  evaluated project references remain exactly Data and Extensions.
+- The headless Server was started twice through the migrated lifecycle,
+  networking, asset, and physics initialization path (ports 55062 and 55063),
+  remained healthy for the observation interval, and each owned process was
+  stopped explicitly.
+- The final focused lifecycle, scheduler, play-mode, networking, physics,
+  collision/query, cooking, world teardown, serialization, GPU-dispatch, and
+  Phase 6 boundary matrix passed 291/291.
+- Dependency/license generation completed. JoltPhysicsSharp and MagicPhysX are
+  now solely attributed to Runtime.Core, System.IO.Hashing includes its Core
+  owner, and CoACD native cargo is emitted by Runtime.Core.
+
+The next executable slice is P6.3: decompose `XRWorldInstance` into focused
+Core, Rendering, InputIntegration, Bootstrap, and Editor owners without moving
+the facade aggregate unchanged.
+
+## P6.3 XRWorldInstance Decomposition And Rendering Composition
+
+P6.3 is complete. The cross-layer `XRWorldInstance` aggregate and its two
+partial files were removed. The source ledger now contains 365 durable rows:
+222 are `Migrated`, two are `Deleted`, and 141 remain `Pending` for later
+Phase 6 slices. The three former `XRWorldInstance` rows name their concrete
+Core, Rendering, InputIntegration, Bootstrap, and Editor destinations, and the
+stateful Phase 6 boundary fixture passes 6/6.
+
+### Focused Ownership Implemented
+
+- Runtime.Core's `RuntimeWorld` is the sole non-visual identity stored on scene
+  nodes. It owns target-world identity, scene/root membership, lifecycle,
+  ticks, transform invalidation, physics state/queries, and minimum-Y reset.
+- Runtime.Rendering's `RuntimeWorldRenderer` owns visual-scene publication,
+  lights, render registration, render queries, physics-debug drawing, and CPU
+  and GPU picking. It attaches through typed Core capability leases and the
+  explicit `RuntimeRenderWorldRegistry` rather than becoming a second world
+  identity.
+- Runtime.InputIntegration owns controlled-pawn and input refresh behavior.
+  Bootstrap's `RuntimeWorldHost` composes the Core and Rendering objects,
+  initializes rendering and physics before gameplay activation, and tears down
+  backends between Core node deactivation and persistent-root reactivation.
+- Editor's `EditorWorldIntegration` owns the hidden `__EditorScene__`, editor
+  root routing, render queries, and the policy excluding editor-only roots from
+  gameplay begin/end callbacks. It is eagerly composed before initial scene
+  loading and detaches itself during Core disposal.
+- `RuntimeWorldRegistry`, `EngineRuntimeWorldHostServices`, and
+  `EditorWorldIntegrationRegistry` provide explicit multi-world lifetime,
+  retargeting, reset, and teardown. Bootstrap uses provisional publication and
+  guarded two-phase creation so re-entrant activation cannot create a duplicate
+  host. GPU mesh-BVH picking preferences are propagated to every attached render
+  world and are rechecked at dispatch time.
+
+The migration preserved initial-scene render registration, settings/gravity
+binding, light-cache rebuilds, edit/play transitions, persistent editor roots,
+physics initialization and teardown, retarget identity, and renderer disposal
+ordering. Production and sample C# sources contain no `XRWorldInstance`
+reference. The detailed implementation and live evidence are recorded in the
+[P6.3 investigation](../../investigations/runtime/xrworldinstance-decomposition-p63-2026-08-25.md).
+
+### Validation
+
+Ignored evidence is under
+`Build/_AgentValidation/20260825-205443-runtime-modularization-p63/`.
+
+- Runtime.Core, Runtime.Rendering, Bootstrap, Editor, UnitTests, Server, and
+  VRClient built in Debug with zero warnings and zero errors. Runtime.Core's
+  project-reference boundary remains Data plus Extensions only.
+- The focused world/lifecycle/rendering matrix passed 51/51. It covers canonical
+  identity, initial render composition, multi-world retarget/reset, capability
+  teardown, scene roots, editor-only lifecycle, physics coordination, render
+  registration, GPU picking, settings, snapshots, and migrated source contracts.
+- The complete OpenXR timing/pipeline contract fixture passed 57/57 after its
+  moved GPU-picking source reference and one stale GTAO partial-file assertion
+  were corrected.
+- The regenerated Phase 6 ownership manifest passed its stateful boundary gate
+  6/6. The deleted facade paths cannot silently return or lose their destination
+  records.
+- The Phase 4/5 dependency and physics-backend boundary set passed 35/35 after
+  removing a verified-empty legacy OpenGL directory tree that otherwise looked
+  like a retained backend implementation owner.
+- Named OpenGL session `p63-world-opengl` produced two visually distinct,
+  correct editor views after camera cuts from `(0, 2, 4)` and `(6, 4, 0)`.
+  The Mitsuki hierarchy/model, editor UI, and skybox were visible; the captures
+  have different hashes, and the inspected bootstrap/render/OpenGL logs contain
+  no fatal or unhandled error. Only that named session was stopped.
+- Named Vulkan session `p63-world-vulkan` was run and inspected from multiple
+  camera/focus changes. Runtime evidence proved the P6.3 publication path: 57
+  active commands, 54 opaque deferred meshes, 57 resident draws/instances, and
+  55 CPU-visible draws were attached to the canonical world and active camera.
+  Final presentation nevertheless stayed on the same red/blue image because
+  frame 10 failed in `PresentNow` during pipeline compilation before acquire,
+  record, or submit. There was no VUID or device loss. The same result reproduced
+  after a warm-cache `-NoBuild` restart, and only the named session was stopped.
+  This is the independently paused renderer work tracked by
+  [Vulkan PresentNow frame readiness](../../todo/rendering/vulkan-present-now-frame-readiness-todo.md),
+  not a missing P6.3 world/render registration path; no fallback or unrelated
+  renderer rewrite was introduced here.
+
+An extra non-gating run of `VulkanDeferredProbeGiFixesTests` passed 15/36 and
+failed 21 stale or absent source-contract expectations in the still-changing
+Vulkan frame-op, descriptor, and device-fault work. P6.3 changed only the moved
+picking-source reference in that fixture; its focused picking contracts pass.
+The broader Vulkan contract debt remains with the renderer investigation above.
+
+The next executable slice is P6.4: move gameplay, input, startup, window, and
+settings composition while keeping the headless Server profile free of local
+input, rendering-window, audio, and VR services.

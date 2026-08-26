@@ -255,7 +255,7 @@ namespace XREngine.Scene.Transforms
             }
 
             // Intentionally do NOT force immediate matrix hierarchy recalculation here.
-            // SetPositionAndRotation() already marks the world matrix dirty; XRWorldInstance.PostUpdate
+            // SetPositionAndRotation() already marks the world matrix dirty; RuntimeWorld post-update processing
             // will recalc transforms in a single, predictable place before rendering.
         }
 

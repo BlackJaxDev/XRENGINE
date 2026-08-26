@@ -10,6 +10,7 @@ using XREngine.Editor.Services;
 using XREngine.Rendering;
 using XREngine.Rendering.Vulkan;
 using XREngine.Runtime.Audio;
+using XREngine.Scene;
 
 namespace XREngine.Editor;
 
@@ -107,7 +108,7 @@ public static partial class EditorImGuiUI
                     {
                         ImGui.Text("  World:");
                         ImGui.SameLine();
-                        ImGui.Text((gameMode.WorldInstance as XRWorldInstance)?.TargetWorld?.Name ?? "<unnamed>");
+                        ImGui.Text((gameMode.WorldInstance as RuntimeWorld)?.TargetWorld?.Name ?? "<unnamed>");
                     }
                 }
                 else
@@ -252,7 +253,7 @@ public static partial class EditorImGuiUI
             {
                 ImGui.Indent();
 
-                var worldInstances = XRWorldInstance.WorldInstances;
+                var worldInstances = Engine.WorldInstances;
                 ImGui.Text($"Active Instances: {worldInstances.Count}");
                 ImGui.Spacing();
 
@@ -270,18 +271,17 @@ public static partial class EditorImGuiUI
                         ImGui.TableSetupColumn("GameMode", ImGuiTableColumnFlags.WidthStretch);
                         ImGui.TableHeadersRow();
 
-                        foreach (var kvp in worldInstances)
+                        foreach (RuntimeWorld instance in worldInstances)
                         {
-                            var world = kvp.Key;
-                            var instance = kvp.Value;
+                            XRWorld? world = instance.TargetWorld;
 
                             ImGui.TableNextRow();
                             
                             ImGui.TableNextColumn();
-                            ImGui.Text(world.Name ?? "<unnamed>");
+                            ImGui.Text(world?.Name ?? "<unnamed>");
 
                             ImGui.TableNextColumn();
-                            if (instance.PlayState == XRWorldInstance.EPlayState.Playing)
+                            if (instance.PlayState == RuntimeWorldPlayState.Playing)
                                 ImGui.TextColored(new Vector4(0.3f, 1.0f, 0.3f, 1.0f), "Yes");
                             else
                                 ImGui.TextColored(new Vector4(0.5f, 0.5f, 0.5f, 1.0f), "No");
@@ -301,18 +301,19 @@ public static partial class EditorImGuiUI
 
                     // Detailed view for each world
                     ImGui.Spacing();
-                    foreach (var kvp in worldInstances)
+                    foreach (RuntimeWorld instance in worldInstances)
                     {
-                        var world = kvp.Key;
-                        var instance = kvp.Value;
+                        XRWorld? world = instance.TargetWorld;
                         
-                        if (ImGui.TreeNode($"{world.Name ?? "<unnamed>"} Details"))
+                        if (ImGui.TreeNode($"{world?.Name ?? "<unnamed>"} Details"))
                         {
                             ImGui.Text($"Root Nodes: {instance.RootNodes.Count}");
-                            var lights = instance.Lights;
-                            int lightCount = lights.DynamicSpotLights.Count + 
-                                           lights.DynamicPointLights.Count + 
-                                           lights.DynamicDirectionalLights.Count;
+                            Lights3DCollection? lights = instance.GetRenderWorld()?.Lights;
+                            int lightCount = lights is null
+                                ? 0
+                                : lights.DynamicSpotLights.Count
+                                  + lights.DynamicPointLights.Count
+                                  + lights.DynamicDirectionalLights.Count;
                             ImGui.Text($"Dynamic Lights: {lightCount}");
                             ImGui.Text($"Listeners: {RuntimeAudioListenerWorldRegistry.GetListenerCount(instance)}");
 

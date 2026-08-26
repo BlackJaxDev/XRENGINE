@@ -38,7 +38,7 @@ namespace XREngine.Editor.Mcp
             [McpName("scene_name"), Description("Optional scene name or GUID; defaults to first active scene.")]
             string? sceneName = null)
         {
-            var world = context.WorldInstance;
+            var world = context.World;
             if (!TryResolveScene(world, sceneName, out var scene, out var sceneError) || scene is null)
                 return Task.FromResult(new McpToolResponse(sceneError ?? "Scene not found.", isError: true));
 
@@ -103,7 +103,7 @@ namespace XREngine.Editor.Mcp
             if (nodeIds is null || nodeIds.Length == 0)
                 return Task.FromResult(new McpToolResponse("node_ids must contain at least one node ID.", isError: true));
 
-            var world = context.WorldInstance;
+            var world = context.World;
             var targetScene = ResolveScene(world, sceneName);
             if (targetScene is null)
                 return Task.FromResult(new McpToolResponse("No active scene found.", isError: true));
@@ -182,7 +182,7 @@ namespace XREngine.Editor.Mcp
             [McpName("clear_instance_overrides"), Description("Clear overrides from the instance after successful apply.")]
             bool clearInstanceOverrides = false)
         {
-            if (!TryGetNodeById(context.WorldInstance, nodeId, out var node, out var error) || node is null)
+            if (!TryGetNodeById(context.World, nodeId, out var node, out var error) || node is null)
                 return Task.FromResult(new McpToolResponse(error ?? "Scene node not found.", isError: true));
 
             SceneNode instanceRoot = FindPrefabInstanceRoot(node);
@@ -233,7 +233,7 @@ namespace XREngine.Editor.Mcp
             [McpName("node_id"), Description("Any node within a prefab instance hierarchy.")]
             string nodeId)
         {
-            if (!TryGetNodeById(context.WorldInstance, nodeId, out var node, out var error) || node is null)
+            if (!TryGetNodeById(context.World, nodeId, out var node, out var error) || node is null)
                 return Task.FromResult(new McpToolResponse(error ?? "Scene node not found.", isError: true));
 
             SceneNode instanceRoot = FindPrefabInstanceRoot(node);
@@ -300,7 +300,7 @@ namespace XREngine.Editor.Mcp
             [McpName("name"), Description("Optional snapshot name.")]
             string? name = null)
         {
-            var world = context.WorldInstance.TargetWorld;
+            var world = context.World.TargetWorld;
             if (world is null)
                 return Task.FromResult(new McpToolResponse("No active world found.", isError: true));
 
@@ -346,25 +346,28 @@ namespace XREngine.Editor.Mcp
 
             if (!TryDeserializeYamlForMcp(snapshot.SerializedWorld, "restore_world_state", out XRWorld? restored, out var deserializationError))
                 return Task.FromResult(deserializationError!);
+            if (restored is null)
+                return Task.FromResult(new McpToolResponse("Snapshot did not contain a world.", isError: true));
 
-            var worldInstance = context.WorldInstance;
-            var previous = worldInstance.TargetWorld;
+            var worldInstance = context.World;
+            XRWorld previous = worldInstance.TargetWorld
+                ?? throw new InvalidOperationException("The active runtime world has no target world.");
 
             using var interaction = Undo.BeginUserInteraction();
             using var scope = Undo.BeginChange("MCP Restore World State");
 
-            worldInstance.TargetWorld = restored;
+            RetargetWorld(worldInstance, restored);
             Selection.Clear();
 
             Undo.RecordStructuralChange("Restore World Snapshot",
                 undoAction: () =>
                 {
-                    worldInstance.TargetWorld = previous;
+                    RetargetWorld(worldInstance, previous);
                     Selection.Clear();
                 },
                 redoAction: () =>
                 {
-                    worldInstance.TargetWorld = restored;
+                    RetargetWorld(worldInstance, restored);
                     Selection.Clear();
                 });
 
@@ -511,7 +514,7 @@ namespace XREngine.Editor.Mcp
 
             SceneNode? parent = null;
             if (!string.IsNullOrWhiteSpace(parentId)
-                && (!TryGetNodeById(context.WorldInstance, parentId, out parent, out string? parentError) || parent is null))
+                && (!TryGetNodeById(context.World, parentId, out parent, out string? parentError) || parent is null))
             {
                 return new McpToolResponse(parentError ?? "Parent node not found.", isError: true);
             }
@@ -521,7 +524,7 @@ namespace XREngine.Editor.Mcp
                 : null;
 
             string? error = await EditorImGuiUI.TrySpawnDroppedAssetThroughDropPathAsync(
-                context.WorldInstance,
+                context.World,
                 parent,
                 fullPath,
                 position).ConfigureAwait(false);
@@ -656,7 +659,7 @@ namespace XREngine.Editor.Mcp
             [McpName("include_children"), Description("Include recursive hierarchy comparison.")]
             bool includeChildren = true)
         {
-            var world = context.WorldInstance;
+            var world = context.World;
             if (!TryGetNodeById(world, leftNodeId, out var left, out var leftErr) || left is null)
                 return Task.FromResult(new McpToolResponse(leftErr ?? "Left node not found.", isError: true));
             if (!TryGetNodeById(world, rightNodeId, out var right, out var rightErr) || right is null)
@@ -763,7 +766,7 @@ namespace XREngine.Editor.Mcp
             [McpName("name"), Description("Optional transaction name.")]
             string? name = null)
         {
-            var world = context.WorldInstance.TargetWorld;
+            var world = context.World.TargetWorld;
             if (world is null)
                 return Task.FromResult(new McpToolResponse("No active world found.", isError: true));
 
@@ -834,25 +837,28 @@ namespace XREngine.Editor.Mcp
 
             if (!TryDeserializeYamlForMcp(snapshot.SerializedWorld, "transaction_rollback", out XRWorld? restored, out var deserializationError))
                 return Task.FromResult(deserializationError!);
+            if (restored is null)
+                return Task.FromResult(new McpToolResponse("Transaction snapshot did not contain a world.", isError: true));
 
-            var worldInstance = context.WorldInstance;
-            var previous = worldInstance.TargetWorld;
+            var worldInstance = context.World;
+            XRWorld previous = worldInstance.TargetWorld
+                ?? throw new InvalidOperationException("The active runtime world has no target world.");
 
             using var interaction = Undo.BeginUserInteraction();
             using var scope = Undo.BeginChange("MCP Transaction Rollback");
 
-            worldInstance.TargetWorld = restored;
+            RetargetWorld(worldInstance, restored);
             Selection.Clear();
 
             Undo.RecordStructuralChange("Transaction Rollback",
                 undoAction: () =>
                 {
-                    worldInstance.TargetWorld = previous;
+                    RetargetWorld(worldInstance, previous);
                     Selection.Clear();
                 },
                 redoAction: () =>
                 {
-                    worldInstance.TargetWorld = restored;
+                    RetargetWorld(worldInstance, restored);
                     Selection.Clear();
                 });
 
@@ -881,7 +887,7 @@ namespace XREngine.Editor.Mcp
             SceneNode? NewParent,
             XRScene? NewScene);
 
-        private static void ApplyReparentChange(ReparentChange change, XRWorldInstance world, bool preserveWorldTransform)
+        private static void ApplyReparentChange(ReparentChange change, RuntimeWorld world, bool preserveWorldTransform)
         {
             if (change.NewParent is not null)
             {
@@ -901,7 +907,7 @@ namespace XREngine.Editor.Mcp
             }
         }
 
-        private static void RevertReparentChange(ReparentChange change, XRWorldInstance world, bool preserveWorldTransform)
+        private static void RevertReparentChange(ReparentChange change, RuntimeWorld world, bool preserveWorldTransform)
         {
             if (change.OldParent is not null)
             {
@@ -921,7 +927,7 @@ namespace XREngine.Editor.Mcp
             }
         }
 
-        private static void RemoveNodeFromSceneRoots(SceneNode node, XRScene? scene, XRWorldInstance world)
+        private static void RemoveNodeFromSceneRoots(SceneNode node, XRScene? scene, RuntimeWorld world)
         {
             if (scene is null)
                 scene = FindSceneForNode(node, world);
@@ -944,7 +950,7 @@ namespace XREngine.Editor.Mcp
 
         private static void ValidateNodeRecursive(
             SceneNode node,
-            XRWorldInstance world,
+            RuntimeWorld world,
             HashSet<Guid> visited,
             HashSet<Guid> recursion,
             List<string> errors,
@@ -1215,7 +1221,7 @@ namespace XREngine.Editor.Mcp
             }
 
             var nodeRefs = new List<object>();
-            var world = context.WorldInstance;
+            var world = context.World;
             foreach (var scene in world.TargetWorld?.Scenes ?? [])
             {
                 foreach (var root in scene.RootNodes)

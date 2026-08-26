@@ -1,6 +1,4 @@
 using System;
-using System.Linq;
-using System.Reflection;
 using XREngine.Core.Files;
 using XREngine.Diagnostics;
 
@@ -13,13 +11,6 @@ namespace XREngine;
 [Serializable]
 internal sealed class SnapshotAssetReference
 {
-    private static readonly MethodInfo LoadAssetGenericMethod = typeof(AssetManager)
-        .GetMethods(BindingFlags.Public | BindingFlags.Instance)
-        .First(m => m.Name == nameof(AssetManager.Load)
-                    && m.IsGenericMethodDefinition
-                    && m.GetParameters().Length == 1
-                    && m.GetParameters()[0].ParameterType == typeof(string));
-
     public Guid AssetId { get; set; }
     public string? AssetPath { get; set; }
     public string? AssetType { get; set; }
@@ -98,24 +89,67 @@ internal sealed class SnapshotAssetReference
 
     private XRAsset? LoadAsset(Type targetType)
     {
-        try
+        foreach (string candidatePath in EnumerateCandidatePaths(AssetPath!))
         {
-            var method = LoadAssetGenericMethod.MakeGenericMethod(targetType);
-            if (method.Invoke(Engine.Assets, new object[] { AssetPath! }) is XRAsset asset)
+            try
             {
-                SnapshotDiagnostics.LogAssetResolveAttempt(this, "load-from-path", asset, targetType.FullName ?? targetType.Name);
-                return asset;
-            }
+                if (Engine.Assets.Load(candidatePath, targetType) is XRAsset asset)
+                {
+                    SnapshotDiagnostics.LogAssetResolveAttempt(
+                        this,
+                        "load-from-path",
+                        asset,
+                        $"{targetType.FullName ?? targetType.Name} at '{candidatePath}'");
+                    return asset;
+                }
 
-            SnapshotDiagnostics.LogAssetResolveAttempt(this, "load-from-path", null, $"loader returned non-asset for {targetType.FullName ?? targetType.Name}");
-        }
-        catch (Exception ex)
-        {
-            string displayName = string.IsNullOrEmpty(AssetName) ? AssetPath ?? AssetType ?? "unknown" : AssetName!;
-            Debug.LogWarning($"Snapshot asset reference failed to load '{displayName}': {ex.Message}");
-            SnapshotDiagnostics.LogAssetResolveFailure(this, $"load threw {ex.GetType().Name}: {ex.Message}");
+                if (Activator.CreateInstance(targetType) is XRAsset directAsset
+                    && directAsset.Load3rdParty(candidatePath))
+                {
+                    directAsset.OriginalPath = candidatePath;
+                    SnapshotDiagnostics.LogAssetResolveAttempt(
+                        this,
+                        "load-from-path-direct",
+                        directAsset,
+                        $"{targetType.FullName ?? targetType.Name} at '{candidatePath}'");
+                    return directAsset;
+                }
+
+                SnapshotDiagnostics.LogAssetResolveAttempt(
+                    this,
+                    "load-from-path",
+                    null,
+                    $"loader returned non-asset for {targetType.FullName ?? targetType.Name} at '{candidatePath}'");
+            }
+            catch (Exception ex)
+            {
+                string displayName = string.IsNullOrEmpty(AssetName) ? AssetPath ?? AssetType ?? "unknown" : AssetName!;
+                Debug.LogWarning($"Snapshot asset reference failed to load '{displayName}' from '{candidatePath}': {ex.Message}");
+                SnapshotDiagnostics.LogAssetResolveFailure(this, $"load from '{candidatePath}' threw {ex.GetType().Name}: {ex.Message}");
+            }
         }
 
         return null;
+    }
+
+    private static IEnumerable<string> EnumerateCandidatePaths(string assetPath)
+    {
+        if (Path.IsPathRooted(assetPath))
+        {
+            yield return assetPath;
+            yield break;
+        }
+
+        string engineRelativePath = Path.Combine(Engine.Assets.EngineAssetsPath, assetPath);
+        if (File.Exists(engineRelativePath))
+            yield return engineRelativePath;
+
+        string shaderRelativePath = Path.Combine(Engine.Assets.EngineAssetsPath, "Shaders", assetPath);
+        if (File.Exists(shaderRelativePath))
+            yield return shaderRelativePath;
+
+        string gameRelativePath = Path.Combine(Engine.Assets.GameAssetsPath, assetPath);
+        if (File.Exists(gameRelativePath))
+            yield return gameRelativePath;
     }
 }

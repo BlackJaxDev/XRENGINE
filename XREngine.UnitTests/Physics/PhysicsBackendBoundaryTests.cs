@@ -78,7 +78,7 @@ public sealed class PhysicsBackendBoundaryTests
         string characterMovement = ReadWorkspaceFile(
             "XRENGINE/Scene/Components/Movement/CharacterMovementComponent.cs");
         string dynamicBody = ReadWorkspaceFile(
-            "XRENGINE/Scene/Components/Physics/DynamicRigidBodyComponent.cs");
+            "XREngine.Runtime.Core/Scene/Components/Physics/DynamicRigidBodyComponent.cs");
         string staticBody = ReadWorkspaceFile(
             "XREngine.Runtime.Core/Scene/Components/Physics/StaticRigidBodyComponent.cs");
 
@@ -196,7 +196,7 @@ public sealed class PhysicsBackendBoundaryTests
         string actorComponent = ReadWorkspaceFile(
             "XREngine.Runtime.Core/Scene/Components/Physics/PhysicsActorComponent.cs");
         string jointComponent = ReadWorkspaceFile(
-            "XRENGINE/Scene/Components/Physics/Joints/PhysicsJointComponent.cs");
+            "XREngine.Runtime.Rendering/Scene/Components/Physics/Joints/PhysicsJointComponent.cs");
 
         actorComponent.ShouldContain("public abstract IAbstractPhysicsActor? PhysicsActor { get; }");
         actorComponent.ShouldContain("PhysicsActorChanged;");

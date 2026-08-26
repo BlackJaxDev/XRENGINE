@@ -161,7 +161,7 @@ namespace XREngine
                 window.RenderOwnerThreadId);
 
             EngineRenderingSettingsApplication.ApplyRenderPipelinePreference();
-            window.SetWorld(windowSettings.TargetWorld is null ? null : XRWorldInstance.GetOrInitWorld(windowSettings.TargetWorld));
+            window.SetWorld(windowSettings.TargetWorld is null ? null : GetOrCreateRenderWorld(windowSettings.TargetWorld));
 
             Debug.Rendering(
                 "[StartupWindow] Window world assigned hash={0} targetWorld={1} tickLinked={2}",

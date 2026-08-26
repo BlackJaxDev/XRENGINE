@@ -4,6 +4,7 @@ using MagicPhysX;
 using XREngine.Components.Physics;
 using XREngine.Components.Scene.Mesh;
 using XREngine.Data.Tools;
+using XREngine.Scene.Physics;
 using XREngine.Scene.Physics.Physx;
 
 namespace XREngine;
@@ -82,9 +83,9 @@ internal sealed class EngineRuntimeStaticColliderAuthoringServices : IRuntimeSta
     {
         try
         {
-            ConvexHullInputCollection inputs = models.Count == 1
-                ? ConvexHullUtility.CollectCollisionInputCollection(models[0])
-                : ConvexHullUtility.CollectCollisionInputCollection(models, component.Transform);
+            IConvexHullInputProvider? provider = RuntimePhysicsServices.ConvexHullInputs;
+            if (provider is null || !provider.TryCollect(component, out ConvexHullInputCollection inputs, out _))
+                return;
             List<CoACD.ConvexHullMesh> hulls = [];
             foreach (ConvexHullInputBatch batch in inputs.EnumeratePreferredBatches())
             {

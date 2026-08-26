@@ -15,15 +15,8 @@ namespace XREngine
         /// </summary>
         public static class PlayMode
         {
-            // Default to edit mode so the editor starts in a non-simulating state.
-            private static int _state = (int)EPlayModeState.Edit;
-            private static PlayModeConfiguration _configuration = new();
+            private static RuntimePlayModeController Controller => RuntimePlayModeController.Current;
             private static WorldStateSnapshot? _editModeSnapshot;
-            private static readonly object _stateLock = new();
-            private static GameMode? _activeGameMode;
-            // TEMP flag previously forced physics on without transitions; keep it disabled by default
-            // so editor play/edit toggles behave normally.
-            private static bool _forcePlayWithoutTransitions = false;
             private static bool _editModeSimulationActive;
 
             #region Properties
@@ -33,20 +26,12 @@ namespace XREngine
             /// </summary>
             public static EPlayModeState State
             {
-                get => (EPlayModeState)Volatile.Read(ref _state);
+                get => Controller.State;
                 private set
                 {
-                    EPlayModeState oldState;
-                    lock (_stateLock)
-                    {
-                        EPlayModeState current = (EPlayModeState)_state;
-                        if (current == value)
-                            return;
-                        oldState = current;
-                        Volatile.Write(ref _state, (int)value);
-                    }
-                    Debug.Out($"PlayMode state changed: {oldState} -> {value}");
-                    StateChanged?.Invoke(value);
+                    EPlayModeState oldState = Controller.State;
+                    if (Controller.TransitionTo(value))
+                        Debug.Out($"PlayMode state changed: {oldState} -> {value}");
                 }
             }
 
@@ -76,8 +61,8 @@ namespace XREngine
             /// </summary>
             public static PlayModeConfiguration Configuration
             {
-                get => _configuration;
-                set => _configuration = value ?? new PlayModeConfiguration();
+                get => Controller.Configuration;
+                set => Controller.Configuration = value;
             }
 
             /// <summary>
@@ -86,14 +71,14 @@ namespace XREngine
             /// </summary>
             public static bool ForcePlayWithoutTransitions
             {
-                get => _forcePlayWithoutTransitions;
-                set => _forcePlayWithoutTransitions = value;
+                get => Controller.ForcePlayWithoutTransitions;
+                set => Controller.ForcePlayWithoutTransitions = value;
             }
 
             /// <summary>
             /// The currently active GameMode during play.
             /// </summary>
-            public static GameMode? ActiveGameMode => _activeGameMode;
+            public static GameMode? ActiveGameMode => Controller.ActiveGameMode;
 
             #endregion
 
@@ -102,43 +87,75 @@ namespace XREngine
             /// <summary>
             /// Fired when the play mode state changes.
             /// </summary>
-            public static event Action<EPlayModeState>? StateChanged;
+            public static event Action<EPlayModeState>? StateChanged
+            {
+                add => Controller.StateChanged += value;
+                remove => Controller.StateChanged -= value;
+            }
 
             /// <summary>
             /// Fired before entering play mode. Use to prepare for play.
             /// </summary>
-            public static event Action? PreEnterPlay;
+            public static event Action? PreEnterPlay
+            {
+                add => Controller.PreEnterPlay += value;
+                remove => Controller.PreEnterPlay -= value;
+            }
 
             /// <summary>
             /// Fired after entering play mode. Play is now active.
             /// </summary>
-            public static event Action? PostEnterPlay;
+            public static event Action? PostEnterPlay
+            {
+                add => Controller.PostEnterPlay += value;
+                remove => Controller.PostEnterPlay -= value;
+            }
 
             /// <summary>
             /// Fired after a play-mode snapshot has been restored (SerializeAndRestore), but before BeginPlay starts.
             /// Useful for rebuilding runtime-only wiring that is not serialized (e.g. viewports, caches).
             /// </summary>
-            public static event Action<XRWorld>? PostSnapshotRestore;
+            public static event Action<XRWorld>? PostSnapshotRestore
+            {
+                add => Controller.PostSnapshotRestore += value;
+                remove => Controller.PostSnapshotRestore -= value;
+            }
 
             /// <summary>
             /// Fired before exiting play mode. Play is still active.
             /// </summary>
-            public static event Action? PreExitPlay;
+            public static event Action? PreExitPlay
+            {
+                add => Controller.PreExitPlay += value;
+                remove => Controller.PreExitPlay -= value;
+            }
 
             /// <summary>
             /// Fired after exiting play mode. Now in edit mode.
             /// </summary>
-            public static event Action? PostExitPlay;
+            public static event Action? PostExitPlay
+            {
+                add => Controller.PostExitPlay += value;
+                remove => Controller.PostExitPlay -= value;
+            }
 
             /// <summary>
             /// Fired when play mode is paused.
             /// </summary>
-            public static event Action? Paused;
+            public static event Action? Paused
+            {
+                add => Controller.Paused += value;
+                remove => Controller.Paused -= value;
+            }
 
             /// <summary>
             /// Fired when play mode is resumed from pause.
             /// </summary>
-            public static event Action? Resumed;
+            public static event Action? Resumed
+            {
+                add => Controller.Resumed += value;
+                remove => Controller.Resumed -= value;
+            }
 
             #endregion
 
@@ -149,8 +166,8 @@ namespace XREngine
                 Debug.Out(
                     $"[PlayTransition] {transition}.{phase}: State={State} TargetWorld={targetWorld?.Name ?? "<null>"} " +
                     $"SnapshotMode={Configuration.StateRestorationMode} SnapshotAvailable={_editModeSnapshot is not null} " +
-                    $"Windows={RuntimeEngine.Windows.Count} WorldInstances={XRWorldInstance.WorldInstances.Count} " +
-                    $"ActiveGameMode={_activeGameMode?.GetType().Name ?? "<null>"} TimerRunning={Time.Timer.IsRunning} TimerPaused={Time.Timer.Paused}");
+                    $"Windows={RuntimeEngine.Windows.Count} WorldInstances={Engine.WorldInstances.Count} " +
+                    $"ActiveGameMode={Controller.ActiveGameMode?.GetType().Name ?? "<null>"} TimerRunning={Time.Timer.IsRunning} TimerPaused={Time.Timer.Paused}");
 
                 for (int windowIndex = 0; windowIndex < RuntimeEngine.Windows.Count; windowIndex++)
                 {
@@ -190,12 +207,13 @@ namespace XREngine
                 }
             }
 
-            private static void LogWorldInstanceState(string transition, string phase, XRWorldInstance worldInstance)
+            private static void LogWorldInstanceState(string transition, string phase, RuntimeWorld worldInstance)
             {
+                IRuntimeRenderWorld? renderWorld = worldInstance.GetRenderWorld();
                 Debug.Out(
                     $"[PlayTransition] {transition}.{phase}: WorldInstance={worldInstance.GetHashCode()} World={worldInstance.TargetWorld?.Name ?? "<null>"} " +
                     $"PlayState={worldInstance.PlayState} PhysicsEnabled={worldInstance.PhysicsEnabled} " +
-                    $"VisualScene={worldInstance.VisualScene?.GetType().Name ?? "<null>"} RootNodes={worldInstance.RootNodes.Count} " +
+                    $"VisualScene={renderWorld?.VisualScene.GetType().Name ?? "<null>"} RootNodes={worldInstance.RootNodes.Count} " +
                     $"GameMode={worldInstance.GameMode?.GetType().Name ?? "<null>"}");
             }
 
@@ -217,7 +235,7 @@ namespace XREngine
                     return Task.CompletedTask;
                 }
 
-                if (_forcePlayWithoutTransitions)
+                if (Controller.ForcePlayWithoutTransitions)
                     return BeginPlayWithoutTransitionsAsync();
 
                 if (State != EPlayModeState.Edit)
@@ -241,7 +259,7 @@ namespace XREngine
                     // Ensure the timer is unpaused so update/fixed threads run when play starts
                     Time.Timer.Paused = false;
                     LogTransitionContext("EnterPlay", "BeforePreEnterPlay", targetWorld);
-                    PreEnterPlay?.Invoke();
+                    Controller.RaisePreEnterPlay();
                     LogTransitionContext("EnterPlay", "AfterPreEnterPlay", targetWorld);
 
                     // Step 1: Capture world state for restoration
@@ -257,7 +275,7 @@ namespace XREngine
                         if (targetWorld is not null)
                         {
                             var restoredTarget = targetWorld;
-                            PostSnapshotRestore?.Invoke(restoredTarget);
+                            Controller.RaisePostSnapshotRestore(restoredTarget);
                             LogTransitionContext("EnterPlay", "AfterPostSnapshotRestore", restoredTarget);
                         }
                     }
@@ -271,11 +289,11 @@ namespace XREngine
                     }
 
                     // Step 3: Resolve and initialize GameMode
-                    _activeGameMode = ResolveGameMode(targetWorld);
+                    Controller.SetActiveGameMode(ResolveGameMode(targetWorld));
                     LogTransitionContext("EnterPlay", "AfterResolveGameMode", targetWorld);
                     
                     // Step 4: Begin play on all world instances
-                    foreach (var worldInstance in XRWorldInstance.WorldInstances.Values)
+                    foreach (RuntimeWorld worldInstance in Engine.WorldInstances)
                     {
                         LogWorldInstanceState("EnterPlay", "BeforeBeginPlay", worldInstance);
 
@@ -283,21 +301,20 @@ namespace XREngine
                         worldInstance.PhysicsEnabled = Configuration.SimulatePhysics;
                         
                         // Set the game mode
-                        worldInstance.GameMode = _activeGameMode;
-                        _activeGameMode?.WorldInstance = worldInstance;
-
+                        worldInstance.GameMode = Controller.ActiveGameMode;
                         // Begin play
-                        worldInstance.BeginPlay().GetAwaiter().GetResult();
+                        (RuntimeWorldHostServices.Current?.BeginPlayAsync(worldInstance)
+                            ?? worldInstance.BeginPlayAsync()).GetAwaiter().GetResult();
                         LogWorldInstanceState("EnterPlay", "AfterBeginPlay", worldInstance);
                     }
 
                     // Step 5: Call GameMode.OnBeginPlay
-                    _activeGameMode?.OnBeginPlay();
+                    Controller.ActiveGameMode?.OnBeginPlay();
                     LogTransitionContext("EnterPlay", "AfterGameModeBeginPlay", targetWorld);
 
                     State = EPlayModeState.Play;
                     LogTransitionContext("EnterPlay", "StateSetPlay", targetWorld);
-                    PostEnterPlay?.Invoke();
+                    Controller.RaisePostEnterPlay();
                     LogTransitionContext("EnterPlay", "AfterPostEnterPlay", targetWorld);
 
                     Debug.Out("Entered play mode");
@@ -325,7 +342,7 @@ namespace XREngine
                     return Task.CompletedTask;
                 }
 
-                if (_forcePlayWithoutTransitions)
+                if (Controller.ForcePlayWithoutTransitions)
                 {
                     Debug.LogWarning("Play mode exit ignored: transitions are disabled and physics stays enabled.");
                     return Task.CompletedTask;
@@ -340,32 +357,35 @@ namespace XREngine
                 try
                 {
                     State = EPlayModeState.ExitingPlay;
-                    PreExitPlay?.Invoke();
+                    Controller.RaisePreExitPlay();
 
                     // Make sure we leave the editor with the timer unpaused
                     Time.Timer.Paused = false;
 
                     // Step 1: Call GameMode.OnEndPlay
-                    _activeGameMode?.OnEndPlay();
+                    Controller.ActiveGameMode?.OnEndPlay();
 
                     // Step 2: End play on all world instances
-                    foreach (var worldInstance in XRWorldInstance.WorldInstances.Values)
+                    foreach (RuntimeWorld worldInstance in Engine.WorldInstances)
                     {
                         // Disable physics
                         worldInstance.PhysicsEnabled = false;
 
                         // End play
-                        worldInstance.EndPlay();
+                        if (RuntimeWorldHostServices.Current is { } worldHost)
+                            worldHost.EndPlay(worldInstance);
+                        else
+                            worldInstance.EndPlay();
 
                         // Clear game mode reference
                         worldInstance.GameMode = null;
                     }
 
                     // Step 3: Clear active game mode
-                    if (_activeGameMode is not null)
+                    if (Controller.ActiveGameMode is { } activeGameMode)
                     {
-                        _activeGameMode.WorldInstance = null;
-                        _activeGameMode = null;
+                        activeGameMode.WorldInstance = null;
+                        Controller.SetActiveGameMode(null);
                     }
 
                     // Step 4: Unload gameplay assemblies if they were loaded
@@ -397,22 +417,23 @@ namespace XREngine
                     if (restoredWorld is not null)
                     {
                         var restoredTarget = restoredWorld;
-                        PostSnapshotRestore?.Invoke(restoredTarget);
+                        Controller.RaisePostSnapshotRestore(restoredTarget);
                     }
 
                     // Edit mode is not a stopped world. The editor camera, native UI animations,
-                    // transform propagation, and visible collection all use XRWorldInstance's
+                    // transform propagation, and visible collection all use the world host's
                     // timer callbacks. EndPlay unlinks those callbacks, so explicitly restart
                     // every current world after restoration while keeping gameplay and physics off.
-                    foreach (var worldInstance in XRWorldInstance.WorldInstances.Values.ToArray())
+                    foreach (RuntimeWorld worldInstance in Engine.WorldInstances.ToArray())
                     {
                         LogWorldInstanceState("ExitPlay", "BeforeBeginEditMode", worldInstance);
-                        worldInstance.BeginEditMode().GetAwaiter().GetResult();
+                        (RuntimeWorldHostServices.Current?.BeginEditModeAsync(worldInstance)
+                            ?? worldInstance.BeginPlayAsync()).GetAwaiter().GetResult();
                         LogWorldInstanceState("ExitPlay", "AfterBeginEditMode", worldInstance);
                     }
 
                     State = EPlayModeState.Edit;
-                    PostExitPlay?.Invoke();
+                    Controller.RaisePostExitPlay();
 
                     Debug.Out("Exited play mode");
                 }
@@ -431,7 +452,7 @@ namespace XREngine
             /// </summary>
             public static void TogglePlayMode()
             {
-                if (_forcePlayWithoutTransitions)
+                if (Controller.ForcePlayWithoutTransitions)
                 {
                     _ = EnterPlayModeAsync();
                     return;
@@ -448,7 +469,7 @@ namespace XREngine
             /// </summary>
             public static void Pause()
             {
-                if (_forcePlayWithoutTransitions)
+                if (Controller.ForcePlayWithoutTransitions)
                 {
                     Debug.LogWarning("Pause ignored: physics simulation is forced on while transitions are disabled.");
                     return;
@@ -461,7 +482,7 @@ namespace XREngine
                 }
 
                 // Pause physics on all worlds
-                foreach (var worldInstance in XRWorldInstance.WorldInstances.Values)
+                foreach (RuntimeWorld worldInstance in Engine.WorldInstances)
                 {
                     worldInstance.PhysicsEnabled = false;
                 }
@@ -470,7 +491,7 @@ namespace XREngine
                 Time.Timer.Paused = true;
 
                 State = EPlayModeState.Paused;
-                Paused?.Invoke();
+                Controller.RaisePaused();
 
                 Debug.Out("Game paused");
             }
@@ -480,7 +501,7 @@ namespace XREngine
             /// </summary>
             public static void Resume()
             {
-                if (_forcePlayWithoutTransitions)
+                if (Controller.ForcePlayWithoutTransitions)
                 {
                     Debug.LogWarning("Resume ignored: physics simulation is forced on while transitions are disabled.");
                     return;
@@ -496,13 +517,13 @@ namespace XREngine
                 Time.Timer.Paused = false;
 
                 // Resume physics on all worlds
-                foreach (var worldInstance in XRWorldInstance.WorldInstances.Values)
+                foreach (RuntimeWorld worldInstance in Engine.WorldInstances)
                 {
                     worldInstance.PhysicsEnabled = Configuration.SimulatePhysics;
                 }
 
                 State = EPlayModeState.Play;
-                Resumed?.Invoke();
+                Controller.RaiseResumed();
 
                 Debug.Out("Game resumed");
             }
@@ -512,7 +533,7 @@ namespace XREngine
             /// </summary>
             public static void StepFrame()
             {
-                if (_forcePlayWithoutTransitions)
+                if (Controller.ForcePlayWithoutTransitions)
                 {
                     Debug.LogWarning("StepFrame ignored: physics simulation is forced on while transitions are disabled.");
                     return;
@@ -530,7 +551,7 @@ namespace XREngine
                 // Step physics once if enabled
                 if (Configuration.SimulatePhysics)
                 {
-                    foreach (var worldInstance in XRWorldInstance.WorldInstances.Values)
+                    foreach (RuntimeWorld worldInstance in Engine.WorldInstances)
                     {
                         worldInstance.PhysicsScene.StepSimulation();
                     }
@@ -556,7 +577,7 @@ namespace XREngine
                     return firstWindowWorld;
 
                 // Priority 3: First available world instance
-                var firstInstance = XRWorldInstance.WorldInstances.Values.FirstOrDefault();
+                RuntimeWorld? firstInstance = Engine.WorldInstances.FirstOrDefault();
                 if (firstInstance?.TargetWorld is not null)
                     return firstInstance.TargetWorld;
 
@@ -598,18 +619,17 @@ namespace XREngine
                 State = EPlayModeState.EnteringPlay;
 
                 var targetWorld = ResolveStartupWorld();
-                _activeGameMode = ResolveGameMode(targetWorld);
+                Controller.SetActiveGameMode(ResolveGameMode(targetWorld));
 
-                foreach (var worldInstance in XRWorldInstance.WorldInstances.Values)
+                foreach (RuntimeWorld worldInstance in Engine.WorldInstances)
                 {
                     worldInstance.PhysicsEnabled = true;
-                    worldInstance.GameMode = _activeGameMode;
-                    _activeGameMode?.WorldInstance = worldInstance;
-
-                    await worldInstance.BeginPlay();
+                    worldInstance.GameMode = Controller.ActiveGameMode;
+                    await (RuntimeWorldHostServices.Current?.BeginPlayAsync(worldInstance)
+                        ?? worldInstance.BeginPlayAsync());
                 }
 
-                _activeGameMode?.OnBeginPlay();
+                Controller.ActiveGameMode?.OnBeginPlay();
 
                 State = EPlayModeState.Play;
                 _editModeSimulationActive = true;
@@ -631,12 +651,13 @@ namespace XREngine
                 // A cooked standalone world owns its authored pawn and gameplay components.
                 // Do not synthesize the editor's fallback CustomGameMode here: doing so spawns
                 // a second default pawn after the authored graph has begun play.
-                _activeGameMode = null;
-                foreach (var worldInstance in XRWorldInstance.WorldInstances.Values)
+                Controller.SetActiveGameMode(null);
+                foreach (RuntimeWorld worldInstance in Engine.WorldInstances)
                 {
                     worldInstance.PhysicsEnabled = true;
                     worldInstance.GameMode = null;
-                    worldInstance.BeginPlay().GetAwaiter().GetResult();
+                    (RuntimeWorldHostServices.Current?.BeginPlayAsync(worldInstance)
+                        ?? worldInstance.BeginPlayAsync()).GetAwaiter().GetResult();
                 }
 
                 State = EPlayModeState.Play;
@@ -652,24 +673,21 @@ namespace XREngine
                     return;
 
                 Configuration.SimulatePhysics = true;
-                // XRWorldInstance.PlayState=Playing derives PhysicsEnabled from the engine
-                // play state. Enter the transition before BeginPlay so standalone worlds do
-                // not disable physics again at the end of their own startup lifecycle.
+                // Enter the transition before the Bootstrap host begins world lifecycle.
                 State = EPlayModeState.EnteringPlay;
 
                 var targetWorld = ResolveStartupWorld();
-                _activeGameMode = ResolveGameMode(targetWorld);
+                Controller.SetActiveGameMode(ResolveGameMode(targetWorld));
 
-                foreach (var worldInstance in XRWorldInstance.WorldInstances.Values)
+                foreach (RuntimeWorld worldInstance in Engine.WorldInstances)
                 {
                     worldInstance.PhysicsEnabled = true;
-                    worldInstance.GameMode = _activeGameMode;
-                    _activeGameMode?.WorldInstance = worldInstance;
-
-                    worldInstance.BeginPlay().GetAwaiter().GetResult();
+                    worldInstance.GameMode = Controller.ActiveGameMode;
+                    (RuntimeWorldHostServices.Current?.BeginPlayAsync(worldInstance)
+                        ?? worldInstance.BeginPlayAsync()).GetAwaiter().GetResult();
                 }
 
-                _activeGameMode?.OnBeginPlay();
+                Controller.ActiveGameMode?.OnBeginPlay();
 
                 State = EPlayModeState.Play;
                 _editModeSimulationActive = true;

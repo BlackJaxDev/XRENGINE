@@ -1359,19 +1359,19 @@ namespace XREngine
             public static NamedPipeServerStream? PipeServer { get; private set; }
             public static NamedPipeClientStream? PipeClient { get; private set; }
 
-            private static (XRCamera? left, XRCamera? right, XRWorldInstance? world, SceneNode? HMDNode) _viewInformation
+            private static (XRCamera? left, XRCamera? right, IRuntimeRenderWorld? world, SceneNode? HMDNode) _viewInformation
             {
                 get
                 {
                     var value = RuntimeEngine.VRState.ViewInformation;
-                    return (value.LeftEyeCamera, value.RightEyeCamera, value.World as XRWorldInstance, value.HMDNode);
+                    return (value.LeftEyeCamera, value.RightEyeCamera, value.World, value.HMDNode);
                 }
                 set => RuntimeEngine.VRState.ViewInformation = value;
             }
             /// <summary>
             /// The world instance to render in the VR headset, and the cameras for the left and right eyes.
             /// </summary>
-            public static (XRCamera? LeftEyeCamera, XRCamera? RightEyeCamera, XRWorldInstance? World, SceneNode? HMDNode) ViewInformation
+            public static (XRCamera? LeftEyeCamera, XRCamera? RightEyeCamera, IRuntimeRenderWorld? World, SceneNode? HMDNode) ViewInformation
             {
                 get => _viewInformation;
                 set

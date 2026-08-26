@@ -21,30 +21,32 @@ internal sealed class EngineRuntimeWorldObjectServices : IRuntimeWorldObjectServ
                     && owningPlayerServerIndex == playerInfo.ServerIndex;
             });
 
-    public void OnRuntimeObjectActivated(RuntimeWorldObjectBase worldObject)
+    public void OnRuntimeObjectActivated(XRWorldObjectBase worldObject)
         => SyncRenderableWorldBinding(worldObject, worldObject.World, isActiveInHierarchy: true);
 
-    public void OnRuntimeObjectDeactivated(RuntimeWorldObjectBase worldObject)
+    public void OnRuntimeObjectDeactivated(XRWorldObjectBase worldObject)
         => SyncRenderableWorldBinding(worldObject, worldContext: null, isActiveInHierarchy: false);
 
-    public void OnRuntimeObjectWorldChanged(RuntimeWorldObjectBase worldObject, IRuntimeWorldContext? worldContext, bool isActiveInHierarchy)
+    public void OnRuntimeObjectWorldChanged(XRWorldObjectBase worldObject, IRuntimeWorldContext? worldContext, bool isActiveInHierarchy)
         => SyncRenderableWorldBinding(worldObject, worldContext, isActiveInHierarchy);
 
-    public void ReplicateObject(RuntimeWorldObjectBase worldObject, bool compress, bool resendOnFailedAck, float maxAckWaitSec)
+    public void ReplicateObject(XRWorldObjectBase worldObject, bool compress, bool resendOnFailedAck, float maxAckWaitSec)
         => Engine.Networking?.ReplicateObject(worldObject, compress, resendOnFailedAck, maxAckWaitSec);
 
-    public void ReplicatePropertyUpdated<T>(RuntimeWorldObjectBase worldObject, string? propertyName, T value, bool compress, bool resendOnFailedAck, float maxAckWaitSec)
+    public void ReplicatePropertyUpdated<T>(XRWorldObjectBase worldObject, string? propertyName, T value, bool compress, bool resendOnFailedAck, float maxAckWaitSec)
         => Engine.Networking?.ReplicatePropertyUpdated(worldObject, propertyName, value, compress, resendOnFailedAck, maxAckWaitSec);
 
-    public void ReplicateData(RuntimeWorldObjectBase worldObject, byte[] data, string id, bool compress, bool resendOnFailedAck, float maxAckWaitSec)
+    public void ReplicateData(XRWorldObjectBase worldObject, byte[] data, string id, bool compress, bool resendOnFailedAck, float maxAckWaitSec)
         => Engine.Networking?.ReplicateData(worldObject, data, id, compress, resendOnFailedAck, maxAckWaitSec);
 
-    private static void SyncRenderableWorldBinding(RuntimeWorldObjectBase worldObject, IRuntimeWorldContext? worldContext, bool isActiveInHierarchy)
+    private static void SyncRenderableWorldBinding(XRWorldObjectBase worldObject, IRuntimeWorldContext? worldContext, bool isActiveInHierarchy)
     {
         if (worldObject is not IRenderable renderable)
             return;
 
-        IRuntimeRenderInfo3DRegistrationTarget? worldInstance = isActiveInHierarchy ? worldContext as IRuntimeRenderInfo3DRegistrationTarget : null;
+        IRuntimeRenderInfo3DRegistrationTarget? worldInstance = isActiveInHierarchy
+            ? worldContext.GetRenderRegistrationTarget()
+            : null;
         foreach (var renderInfo in renderable.RenderedObjects)
             renderInfo.WorldInstance = worldInstance;
     }

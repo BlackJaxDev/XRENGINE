@@ -87,7 +87,7 @@ namespace XREngine.Components.Capture.Lights.Types
                 return;
 
             XRViewport viewport = _primaryShadowViewport ??= CreateShadowViewport();
-            viewport.WorldInstanceOverride = WorldAs<XREngine.Rendering.IRuntimeRenderWorld>();
+            viewport.WorldInstanceOverride = World.GetRenderWorld();
             if (viewport.Camera is not null)
                 return;
 

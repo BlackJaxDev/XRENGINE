@@ -1385,7 +1385,7 @@ public class LandscapeComponent : XRComponent, IRenderable
     {
         // Get the active camera's world position
         // In a real implementation, this would query the rendering system
-        if (WorldAs<XREngine.Rendering.IRuntimeRenderWorld>() is { } world)
+        if (World.GetRenderWorld() is { } world)
         {
             foreach (var node in world.RootNodes)
             {
@@ -1490,7 +1490,7 @@ public class LandscapeComponent : XRComponent, IRenderable
     private Vector4[] GetFrustumPlanes()
     {
         // Get frustum from active camera
-        if (WorldAs<XREngine.Rendering.IRuntimeRenderWorld>() is { } world)
+        if (World.GetRenderWorld() is { } world)
         {
             foreach (var node in world.RootNodes)
             {

@@ -280,7 +280,7 @@ namespace XREngine.Components.Capture.Lights.Types
         /// </summary>
         private void SyncDynamicWorldRegistration()
         {
-            IRuntimeRenderWorld? currentWorld = WorldAs<IRuntimeRenderWorld>();
+            IRuntimeRenderWorld? currentWorld = World.GetRenderWorld();
 
             if (_registeredDynamicWorld is not null &&
                 (_registeredDynamicWorld != currentWorld || Type != ELightType.Dynamic || !IsActiveInHierarchy))

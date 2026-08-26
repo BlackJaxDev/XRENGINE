@@ -1,4 +1,5 @@
 using System.Numerics;
+using XREngine.Animation.Importers;
 using XREngine.Scene;
 
 namespace XREngine.Components.Animation;
@@ -89,10 +90,17 @@ public partial class HumanoidComponent
         definition.TwistChains = ConvertLegacyTwistChains(profile.TwistChains);
         definition.LegacyCalibration = ConvertLegacyCalibration(profile);
 
+        // The importer can attach the legacy profile after the component's initial
+        // geometry profile has already run. Profile the completed semantic mapping
+        // here so roles introduced by migration receive validated local axes before
+        // the generic avatar definition is compiled.
+        AvatarHumanoidProfileBuilder.ProfileResult profileResult =
+            AvatarHumanoidProfileBuilder.BuildProfile(this);
+
         // Clear the compatibility input before refreshing. From this point on,
         // only AvatarDefinition owns mapping, scale, axes, and fitted payloads.
         Settings.UnityAvatarProfile = null;
-        RefreshAvatarDefinition();
+        RefreshAvatarDefinition(profileResult);
 
         HumanoidAvatarLegacyBoneCalibration[] migratedBones =
             AvatarDefinition.LegacyCalibration?.Bones ?? [];
@@ -213,7 +221,44 @@ public partial class HumanoidComponent
             Source = profile.Source ?? string.Empty,
             AvatarName = profile.AvatarName ?? string.Empty,
             CalibrationClipName = profile.CalibrationClipName ?? string.Empty,
+            CalibrationRootMotionSettings = CopyRootMotionSettings(
+                profile.CalibrationRootMotionSettings),
+            RootAllocationFrame = CopyRootAllocationFrame(profile.RootAllocationFrame),
             Bones = [.. bones],
         };
     }
+
+    private static UnityHumanoidRootAllocationFrame? CopyRootAllocationFrame(
+        UnityHumanoidRootAllocationFrame? source)
+        => source is null
+            ? null
+            : new UnityHumanoidRootAllocationFrame
+            {
+                HipsParentPositionInAnimatorRoot = source.HipsParentPositionInAnimatorRoot,
+                HipsParentRotationInAnimatorRoot = source.HipsParentRotationInAnimatorRoot,
+                HipsParentScaleInAnimatorRoot = source.HipsParentScaleInAnimatorRoot,
+            };
+
+    private static UnityHumanoidClipRootMotionSettings? CopyRootMotionSettings(
+        UnityHumanoidClipRootMotionSettings? source)
+        => source is null
+            ? null
+            : new UnityHumanoidClipRootMotionSettings
+            {
+                StartTime = source.StartTime,
+                StopTime = source.StopTime,
+                OrientationOffsetY = source.OrientationOffsetY,
+                Level = source.Level,
+                CycleOffset = source.CycleOffset,
+                LoopTime = source.LoopTime,
+                LoopPose = source.LoopPose,
+                BakeOrientationIntoPose = source.BakeOrientationIntoPose,
+                BakePositionYIntoPose = source.BakePositionYIntoPose,
+                BakePositionXZIntoPose = source.BakePositionXZIntoPose,
+                KeepOriginalOrientation = source.KeepOriginalOrientation,
+                KeepOriginalPositionY = source.KeepOriginalPositionY,
+                KeepOriginalPositionXZ = source.KeepOriginalPositionXZ,
+                HeightFromFeet = source.HeightFromFeet,
+                Mirror = source.Mirror,
+            };
 }

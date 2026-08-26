@@ -4,12 +4,16 @@ using XREngine.Components;
 using XREngine.Data.Core;
 using XREngine.Scene;
 
-namespace XREngine.Rendering
+namespace XREngine
 {
-    public class RootNodeCollection(IRuntimeWorldContext world, Action<SceneNode>? onRootNodeDestroying = null) : IReadOnlyList<SceneNode>
+    public class RootNodeCollection(
+        IRuntimeWorldContext world,
+        Action<SceneNode>? onRootNodeDestroying = null,
+        Func<SceneNode, bool>? participatesInPlay = null) : IReadOnlyList<SceneNode>
     {
         private readonly IRuntimeWorldContext _world = world ?? throw new ArgumentNullException(nameof(world));
         private readonly Action<SceneNode>? _onRootNodeDestroying = onRootNodeDestroying;
+        private readonly Func<SceneNode, bool>? _participatesInPlay = participatesInPlay;
 
         public Action<XRComponent>? ComponentCacheAction { get; set; }
         public Action<XRComponent>? ComponentUncacheAction { get; set; }
@@ -48,7 +52,7 @@ namespace XREngine.Rendering
 
             if (_world.IsPlaySessionActive)
             {
-                if (!node.HasBegunPlay)
+                if ((_participatesInPlay?.Invoke(node) ?? true) && !node.HasBegunPlay)
                     node.OnBeginPlay();
                 if (node.IsActiveSelf)
                     node.OnActivated();
@@ -77,7 +81,7 @@ namespace XREngine.Rendering
             {
                 if (node.IsActiveSelf)
                     node.OnDeactivated();
-                if (node.HasBegunPlay)
+                if ((_participatesInPlay?.Invoke(node) ?? true) && node.HasBegunPlay)
                     node.OnEndPlay();
             }
 

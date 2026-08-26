@@ -368,7 +368,7 @@ namespace XREngine.Scene
         /// The components attached to this scene node.
         /// Use AddComponent&lt;T&gt;() and RemoveComponent&lt;T&gt;() or XRComponent.Destroy() to add and remove components.
         /// </summary>
-        [YamlIgnore]
+        [YamlIgnore, MemoryPackIgnore]
         public IEventListReadOnly<XRComponent> Components => ComponentsInternal;
 
         /// <summary>

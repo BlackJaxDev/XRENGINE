@@ -19,20 +19,20 @@ internal sealed class EngineRuntimeSceneStreamingHostServices : IRuntimeSceneStr
 
     public bool AttachScene(IRuntimeWorldContext world, IRuntimeSceneStreamingHandle scene)
     {
-        if (world is not XRWorldInstance worldInstance || scene is not SceneHandle handle)
+        if (world is not RuntimeWorld runtimeWorld || scene is not SceneHandle handle)
             return false;
 
         handle.Scene.IsVisible = true;
-        worldInstance.LoadScene(handle.Scene);
+        runtimeWorld.LoadScene(handle.Scene);
         return true;
     }
 
     public bool DetachScene(IRuntimeWorldContext world, IRuntimeSceneStreamingHandle scene)
     {
-        if (world is not XRWorldInstance worldInstance || scene is not SceneHandle handle)
+        if (world is not RuntimeWorld runtimeWorld || scene is not SceneHandle handle)
             return false;
 
-        worldInstance.UnloadScene(handle.Scene);
+        runtimeWorld.UnloadScene(handle.Scene);
         return true;
     }
 

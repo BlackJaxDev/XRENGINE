@@ -666,7 +666,7 @@ internal static class LightComponentEditorShared
         ImGui.SeparatorText("Baking");
 
         if (ImGui.Button("Bake Lightmaps"))
-            light.WorldAs<XREngine.Rendering.XRWorldInstance>()?.Lights?.LightmapBaking?.RequestBake(light);
+            light.WorldAs<IRuntimeRenderWorld>()?.Lights?.LightmapBaking?.RequestBake(light);
 
         if (ImGui.IsItemHovered())
             ImGui.SetTooltip("Queues a lightmap bake for Static meshes. Hybrid auto-baking is disabled by default, and lightmap rendering remains experimental.");
@@ -740,7 +740,7 @@ internal static class LightComponentEditorShared
 
         ImGui.TextDisabled("Previewing active spot atlas tile and page.");
 
-        XRWorldInstance? world = spotLight.WorldAs<XRWorldInstance>();
+        IRuntimeRenderWorld? world = spotLight.WorldAs<IRuntimeRenderWorld>();
         if (world?.Lights is null)
         {
             ImGui.TextDisabled("Spot atlas preview unavailable until the light belongs to a world.");
@@ -802,7 +802,7 @@ internal static class LightComponentEditorShared
         if (!IsPointShadowAtlasActive(light) || light is not PointLightComponent pointLight)
             return false;
 
-        XRWorldInstance? world = pointLight.WorldAs<XRWorldInstance>();
+        IRuntimeRenderWorld? world = pointLight.WorldAs<IRuntimeRenderWorld>();
         if (world?.Lights is null)
         {
             ImGui.TextDisabled("Point atlas preview unavailable until the light belongs to a world.");
@@ -887,7 +887,7 @@ internal static class LightComponentEditorShared
     }
 
     private static void DrawPointAtlasPagesOverview(
-        XRWorldInstance world,
+        IRuntimeRenderWorld world,
         PointLightComponent light,
         string lightLabel)
     {
@@ -923,7 +923,7 @@ internal static class LightComponentEditorShared
     }
 
     private static void DrawPointAtlasPagePreview(
-        XRWorldInstance world,
+        IRuntimeRenderWorld world,
         PointLightComponent light,
         XRTexture2DArray pageTexture,
         ShadowAtlasPageDescriptor descriptor,
@@ -969,7 +969,7 @@ internal static class LightComponentEditorShared
     }
 
     private static void DrawPointAtlasPageOverlays(
-        XRWorldInstance world,
+        IRuntimeRenderWorld world,
         PointLightComponent light,
         int pageIndex,
         Vector2 pixelSize)
@@ -986,7 +986,7 @@ internal static class LightComponentEditorShared
     }
 
     private static bool TryGetPointFaceAtlasAllocation(
-        XRWorldInstance world,
+        IRuntimeRenderWorld world,
         PointLightComponent light,
         int faceIndex,
         out int recordIndex,
@@ -1009,7 +1009,7 @@ internal static class LightComponentEditorShared
         if (!IsDirectionalShadowAtlasActive(light) || light is not DirectionalLightComponent dirLight)
             return false;
 
-        XRWorldInstance? world = dirLight.WorldAs<XRWorldInstance>();
+        IRuntimeRenderWorld? world = dirLight.WorldAs<IRuntimeRenderWorld>();
         if (world?.Lights is null)
         {
             ImGui.TextDisabled("Directional atlas preview unavailable until the light belongs to a world.");
@@ -1088,7 +1088,7 @@ internal static class LightComponentEditorShared
     }
 
     private static void DrawDirectionalAtlasSlotPreview(
-        XRWorldInstance world,
+        IRuntimeRenderWorld world,
         DirectionalLightComponent.DirectionalCascadeAtlasSlot slot,
         string previewLabel,
         string lightLabel,
@@ -1178,7 +1178,7 @@ internal static class LightComponentEditorShared
     }
 
     private static void DrawDirectionalAtlasPagesOverview(
-        XRWorldInstance world,
+        IRuntimeRenderWorld world,
         DirectionalLightComponent light,
         bool useCascades,
         int activeCascades,

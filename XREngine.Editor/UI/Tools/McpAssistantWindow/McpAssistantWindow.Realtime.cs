@@ -535,7 +535,7 @@ public sealed partial class McpAssistantWindow
 
     private static async Task<RealtimeScreenshotCapture> CaptureRealtimeScreenshotAsync(string? cameraNodeId, string? cameraName, int windowIndex, int viewportIndex, CancellationToken ct)
     {
-        XRWorldInstance? world = McpWorldResolver.TryGetActiveWorldInstance();
+        RuntimeWorld? world = TryGetActiveRuntimeWorld();
         XRViewport? viewport = ResolveRealtimeViewport(world, cameraNodeId, cameraName, windowIndex, viewportIndex, out SceneNode? cameraNode);
         if (viewport is null)
             throw new InvalidOperationException("No viewport found to capture.");
@@ -647,7 +647,7 @@ public sealed partial class McpAssistantWindow
     }
 
     private static XRViewport? ResolveRealtimeViewport(
-        XRWorldInstance? world,
+        RuntimeWorld? world,
         string? cameraNodeId,
         string? cameraName,
         int windowIndex,
@@ -682,7 +682,7 @@ public sealed partial class McpAssistantWindow
         return window.Viewports[viewportIndex];
     }
 
-    private static CameraComponent? ResolveCameraComponent(XRWorldInstance world, string? cameraNodeId, string? cameraName, out SceneNode? cameraNode)
+    private static CameraComponent? ResolveCameraComponent(RuntimeWorld world, string? cameraNodeId, string? cameraName, out SceneNode? cameraNode)
     {
         cameraNode = null;
 
@@ -719,7 +719,7 @@ public sealed partial class McpAssistantWindow
         return null;
     }
 
-    private static IEnumerable<SceneNode> EnumerateWorldNodes(XRWorldInstance world)
+    private static IEnumerable<SceneNode> EnumerateWorldNodes(RuntimeWorld world)
     {
         foreach (var root in world.RootNodes)
         {

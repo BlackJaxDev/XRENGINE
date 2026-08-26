@@ -250,7 +250,7 @@ public sealed class MathOcclusionCullingTestComponent : XRComponent
 
     private string GetGpuValidationStatus()
     {
-        XRWorldInstance? world = WorldAs<XRWorldInstance>();
+        IRuntimeRenderWorld? world = WorldAs<IRuntimeRenderWorld>();
         if (world is null)
             return "WARMING: no render-world instance is assigned.";
 
@@ -292,7 +292,7 @@ public sealed class MathOcclusionCullingTestComponent : XRComponent
 
     private string GetGpuFrameTelemetry()
     {
-        XRWorldInstance? world = WorldAs<XRWorldInstance>();
+        IRuntimeRenderWorld? world = WorldAs<IRuntimeRenderWorld>();
         if (world is null)
             return "No render-world instance is assigned.";
 
@@ -302,7 +302,7 @@ public sealed class MathOcclusionCullingTestComponent : XRComponent
 
     private string GetGpuBvhStatus()
     {
-        XRWorldInstance? world = WorldAs<XRWorldInstance>();
+        IRuntimeRenderWorld? world = WorldAs<IRuntimeRenderWorld>();
         if (world is null)
             return "WARMING: no render-world instance is assigned.";
 

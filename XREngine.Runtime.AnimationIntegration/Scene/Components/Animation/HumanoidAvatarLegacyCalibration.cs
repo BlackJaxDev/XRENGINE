@@ -1,3 +1,5 @@
+using XREngine.Animation.Importers;
+
 namespace XREngine.Components.Animation;
 
 /// <summary>
@@ -10,5 +12,7 @@ public sealed class HumanoidAvatarLegacyCalibration
     public string Source { get; set; } = string.Empty;
     public string AvatarName { get; set; } = string.Empty;
     public string CalibrationClipName { get; set; } = string.Empty;
+    public UnityHumanoidClipRootMotionSettings? CalibrationRootMotionSettings { get; set; }
+    public UnityHumanoidRootAllocationFrame? RootAllocationFrame { get; set; }
     public HumanoidAvatarLegacyBoneCalibration[] Bones { get; set; } = [];
 }

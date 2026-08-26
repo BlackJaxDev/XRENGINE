@@ -5,5 +5,5 @@ using XREngine.Scene;
 [assembly: TypeForwardedTo(typeof(XRWorld))]
 [assembly: TypeForwardedTo(typeof(XRScene))]
 [assembly: TypeForwardedTo(typeof(WorldSettings))]
-[assembly: TypeForwardedTo(typeof(RootNodeCollection))]
+[assembly: TypeForwardedTo(typeof(XREngine.RootNodeCollection))]
 [assembly: TypeForwardedTo(typeof(XREngine.XRWorldObjectBase))]

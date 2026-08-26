@@ -898,7 +898,7 @@ namespace XREngine.Components.Scene.Mesh
         }
 
         private IReadOnlyList<DirectionalLightComponent>? GetSceneDirectionalLights()
-            => (SceneNode?.World as IRuntimeRenderWorld)?.Lights.DynamicDirectionalLights;
+            => SceneNode?.World.GetRenderWorld()?.Lights.DynamicDirectionalLights;
 
         private void ApplyDirectionalLightSync(DirectionalLightComponent light, Vector3 direction, bool temperatureEnabled, float kelvin, float baseIntensity)
         {
@@ -932,7 +932,7 @@ namespace XREngine.Components.Scene.Mesh
             float sunKelvin,
             float moonKelvin)
         {
-            var settings = WorldAs<IRuntimeRenderWorld>()?.AmbientSettings;
+            var settings = World.GetRenderWorld()?.AmbientSettings;
             if (settings is null)
                 return;
 

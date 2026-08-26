@@ -12,6 +12,7 @@ using XREngine.Components.Physics;
 using XREngine.Core.Files;
 using XREngine.Networking;
 using XREngine.Rendering;
+using XREngine.Runtime.Bootstrap;
 using XREngine.Runtime.Bootstrap.Builders;
 using XREngine.Scene;
 using XREngine.Scene.Physics;
@@ -78,7 +79,8 @@ public sealed class PhysicsSceneSerializationTests
         IRuntimePhysicsServices previousPhysicsServices = RuntimePhysicsServices.Current;
         RuntimePhysicsServices.Current = new FixedStepRuntimePhysicsServices();
         XRWorld? world = null;
-        XRWorldInstance? worldInstance = null;
+        RuntimeWorld? worldInstance = null;
+        RuntimeWorldHost? worldHost = null;
 
         try
         {
@@ -102,13 +104,12 @@ public sealed class PhysicsSceneSerializationTests
             var scene = new XRScene("Physics Scene", root);
             world = new XRWorld("Physics World", scene);
             world.Settings.PhysicsResetMinYDist = 1.0f;
-            worldInstance = new XRWorldInstance(world, new VisualScene3D(), new PhysxScene())
-            {
-                PhysicsEnabled = true,
-            };
-            XRWorldInstance.WorldInstances.Add(world, worldInstance);
+            worldHost = new RuntimeWorldHost(new PhysxScene(), new VisualScene3D());
+            worldHost.Initialize(world);
+            worldInstance = worldHost.CoreWorld;
+            worldInstance.PhysicsEnabled = true;
 
-            await worldInstance.BeginPlay();
+            await worldHost.BeginPlayAsync();
             worldInstance.PhysicsEnabled = true;
 
             PhysxStaticRigidBody floorActor = floor.RigidBody.ShouldBeOfType<PhysxStaticRigidBody>();
@@ -152,14 +153,7 @@ public sealed class PhysicsSceneSerializationTests
         }
         finally
         {
-            if (worldInstance is not null &&
-                worldInstance.PlayState != XRWorldInstance.EPlayState.Stopped)
-                worldInstance.EndPlay();
-
-            if (worldInstance is not null)
-                worldInstance.TargetWorld = null;
-            if (world is not null)
-                XRWorldInstance.WorldInstances.Remove(world);
+            worldHost?.Dispose();
 
             RuntimeShaderServices.Current = previousShaderServices;
             RuntimePhysicsServices.Current = previousPhysicsServices;
@@ -179,7 +173,8 @@ public sealed class PhysicsSceneSerializationTests
         var threadServices = new DeferredRuntimeThreadServices();
         RuntimeThreadServices.Current = threadServices;
         XRWorld? world = null;
-        XRWorldInstance? worldInstance = null;
+        RuntimeWorld? worldInstance = null;
+        RuntimeWorldHost? worldHost = null;
 
         try
         {
@@ -195,16 +190,15 @@ public sealed class PhysicsSceneSerializationTests
             var scene = new XRScene("Physics Scene", root);
             world = new XRWorld("Physics World", scene);
             world.Settings.PhysicsResetMinYDist = 1.0f;
-            worldInstance = new XRWorldInstance(world, new VisualScene3D(), new PhysxScene())
-            {
-                PhysicsEnabled = true,
-            };
-            XRWorldInstance.WorldInstances.Add(world, worldInstance);
+            worldHost = new RuntimeWorldHost(new PhysxScene(), new VisualScene3D());
+            worldHost.Initialize(world);
+            worldInstance = worldHost.CoreWorld;
+            worldInstance.PhysicsEnabled = true;
 
             // Components can activate in Edit mode. Move the authored pawn before Play to
             // prove reset uses the Play-start pose rather than the earlier activation pose.
             pawnTransform.SetWorldTranslation(spawnPosition);
-            await worldInstance.BeginPlay();
+            await worldHost.BeginPlayAsync();
             threadServices.DrainPhysicsThread();
             threadServices.DrainUpdateThread();
             worldInstance.PhysicsEnabled = true;
@@ -230,14 +224,7 @@ public sealed class PhysicsSceneSerializationTests
         }
         finally
         {
-            if (worldInstance is not null &&
-                worldInstance.PlayState != XRWorldInstance.EPlayState.Stopped)
-                worldInstance.EndPlay();
-
-            if (worldInstance is not null)
-                worldInstance.TargetWorld = null;
-            if (world is not null)
-                XRWorldInstance.WorldInstances.Remove(world);
+            worldHost?.Dispose();
 
             RuntimeThreadServices.Current = previousThreadServices;
             RuntimeShaderServices.Current = previousShaderServices;
@@ -258,7 +245,8 @@ public sealed class PhysicsSceneSerializationTests
         var threadServices = new DeferredRuntimeThreadServices();
         RuntimeThreadServices.Current = threadServices;
         XRWorld? world = null;
-        XRWorldInstance? worldInstance = null;
+        RuntimeWorld? worldInstance = null;
+        RuntimeWorldHost? worldHost = null;
         IAbstractCharacterController? controller = null;
 
         try
@@ -276,13 +264,12 @@ public sealed class PhysicsSceneSerializationTests
             var scene = new XRScene("Physics Scene", root);
             world = new XRWorld("Physics World", scene);
             var physicsScene = new PhysxScene();
-            worldInstance = new XRWorldInstance(world, new VisualScene3D(), physicsScene)
-            {
-                PhysicsEnabled = true,
-            };
-            XRWorldInstance.WorldInstances.Add(world, worldInstance);
+            worldHost = new RuntimeWorldHost(physicsScene, new VisualScene3D());
+            worldHost.Initialize(world);
+            worldInstance = worldHost.CoreWorld;
+            worldInstance.PhysicsEnabled = true;
 
-            await worldInstance.BeginPlay();
+            await worldHost.BeginPlayAsync();
             threadServices.DrainPhysicsThread();
             threadServices.DrainUpdateThread();
             worldInstance.PhysicsEnabled = true;
@@ -332,14 +319,7 @@ public sealed class PhysicsSceneSerializationTests
         {
             controller?.RequestRelease();
 
-            if (worldInstance is not null &&
-                worldInstance.PlayState != XRWorldInstance.EPlayState.Stopped)
-                worldInstance.EndPlay();
-
-            if (worldInstance is not null)
-                worldInstance.TargetWorld = null;
-            if (world is not null)
-                XRWorldInstance.WorldInstances.Remove(world);
+            worldHost?.Dispose();
 
             RuntimeThreadServices.Current = previousThreadServices;
             RuntimeShaderServices.Current = previousShaderServices;
@@ -360,7 +340,8 @@ public sealed class PhysicsSceneSerializationTests
         var threadServices = new DeferredRuntimeThreadServices();
         RuntimeThreadServices.Current = threadServices;
         XRWorld? world = null;
-        XRWorldInstance? worldInstance = null;
+        RuntimeWorld? worldInstance = null;
+        RuntimeWorldHost? worldHost = null;
 
         try
         {
@@ -384,13 +365,12 @@ public sealed class PhysicsSceneSerializationTests
             var scene = new XRScene("Physics Scene", root);
             world = new XRWorld("Physics World", scene);
             world.Settings.PhysicsResetMinYDist = 0.0f;
-            worldInstance = new XRWorldInstance(world, new VisualScene3D(), new PhysxScene())
-            {
-                PhysicsEnabled = true,
-            };
-            XRWorldInstance.WorldInstances.Add(world, worldInstance);
+            worldHost = new RuntimeWorldHost(new PhysxScene(), new VisualScene3D());
+            worldHost.Initialize(world);
+            worldInstance = worldHost.CoreWorld;
+            worldInstance.PhysicsEnabled = true;
 
-            await worldInstance.BeginPlay();
+            await worldHost.BeginPlayAsync();
             threadServices.DrainPhysicsThread();
             threadServices.DrainUpdateThread();
             worldInstance.PhysicsEnabled = true;
@@ -411,14 +391,7 @@ public sealed class PhysicsSceneSerializationTests
         }
         finally
         {
-            if (worldInstance is not null &&
-                worldInstance.PlayState != XRWorldInstance.EPlayState.Stopped)
-                worldInstance.EndPlay();
-
-            if (worldInstance is not null)
-                worldInstance.TargetWorld = null;
-            if (world is not null)
-                XRWorldInstance.WorldInstances.Remove(world);
+            worldHost?.Dispose();
 
             RuntimeThreadServices.Current = previousThreadServices;
             RuntimeShaderServices.Current = previousShaderServices;
@@ -447,7 +420,8 @@ public sealed class PhysicsSceneSerializationTests
         IRuntimeShaderServices? previousShaderServices = RuntimeShaderServices.Current;
         RuntimeShaderServices.Current = new GltfImportTestUtilities.TestRuntimeShaderServices();
         XRWorld? world = null;
-        XRWorldInstance? worldInstance = null;
+        RuntimeWorld? worldInstance = null;
+        RuntimeWorldHost? worldHost = null;
 
         try
         {
@@ -462,10 +436,11 @@ public sealed class PhysicsSceneSerializationTests
             };
             world = new XRWorld("Physics Testing World", gameMode, scene);
             var physicsScene = new PhysxScene();
-            worldInstance = new XRWorldInstance(world, new VisualScene3D(), physicsScene);
-            XRWorldInstance.WorldInstances.Add(world, worldInstance);
+            worldHost = new RuntimeWorldHost(physicsScene, new VisualScene3D());
+            worldHost.Initialize(world);
+            worldInstance = worldHost.CoreWorld;
 
-            await worldInstance.BeginPlay();
+            await worldHost.BeginPlayAsync();
 
             DynamicRigidBodyComponent[] activeBodies = EnumerateHierarchy(root)
                 .SelectMany(static node => node.Components)
@@ -547,14 +522,7 @@ public sealed class PhysicsSceneSerializationTests
         }
         finally
         {
-            if (worldInstance is not null &&
-                worldInstance.PlayState != XRWorldInstance.EPlayState.Stopped)
-                worldInstance.EndPlay();
-
-            if (worldInstance is not null)
-                worldInstance.TargetWorld = null;
-            if (world is not null)
-                XRWorldInstance.WorldInstances.Remove(world);
+            worldHost?.Dispose();
 
             RuntimeShaderServices.Current = previousShaderServices;
         }

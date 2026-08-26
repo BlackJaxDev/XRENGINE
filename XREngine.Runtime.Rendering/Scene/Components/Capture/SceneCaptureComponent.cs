@@ -300,7 +300,7 @@ namespace XREngine.Components.Lights
 
         private void ConfigureSharedCaptureViewport(XRViewport viewport)
         {
-            viewport.WorldInstanceOverride = WorldAs<XREngine.Rendering.IRuntimeRenderWorld>();
+            viewport.WorldInstanceOverride = World.GetRenderWorld();
             viewport.SetRenderPipelineFromCamera = false;
             viewport.AutomaticallyCollectVisible = false;
             viewport.AutomaticallySwapBuffers = false;
@@ -481,7 +481,7 @@ namespace XREngine.Components.Lights
                 LastRenderCompletedCycle = completedCycle;
 
                 if (!completedCycle)
-                    WorldAs<XREngine.Rendering.IRuntimeRenderWorld>()?.Lights?.QueueForCapture(this);
+                    World.GetRenderWorld()?.Lights.QueueForCapture(this);
 
                 if (completedCycle && _environmentTextureCubemap is not null)
                 {
@@ -730,7 +730,7 @@ namespace XREngine.Components.Lights
         }
 
         public void QueueCapture()
-            => WorldAs<XREngine.Rendering.IRuntimeRenderWorld>()?.Lights?.QueueForCapture(this);
+            => World.GetRenderWorld()?.Lights.QueueForCapture(this);
 
         /// <summary>
         /// Executes a single cubemap face capture: collect visible, swap buffers, and render.

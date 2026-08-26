@@ -121,7 +121,7 @@ public unsafe partial class OpenXRAPI
             worldCameraComponent is not null)
         {
             sourceCamera = worldCameraComponent.Camera;
-            sourceWorld = worldCameraComponent.SceneNode?.World as IRuntimeRenderWorld
+            sourceWorld = worldCameraComponent.SceneNode?.World.GetRenderWorld()
                           ?? Window.TargetWorldInstance;
 
             foreach (var vp in Window.Viewports)
@@ -190,7 +190,7 @@ public unsafe partial class OpenXRAPI
         }
 
         sourceCamera = cameraComponent.Camera;
-        sourceWorld = cameraComponent.SceneNode?.World as IRuntimeRenderWorld
+        sourceWorld = cameraComponent.SceneNode?.World.GetRenderWorld()
                       ?? sourceViewport?.World
                       ?? fallbackWorld;
         if (sourceCamera is null || sourceWorld is null)

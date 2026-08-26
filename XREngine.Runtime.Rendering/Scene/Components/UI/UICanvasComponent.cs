@@ -395,7 +395,7 @@ namespace XREngine.Components
             base.OnComponentActivated();
             EnsureOffscreenResourcesInitialized();
             EnsureRenderPipelineInitialized();
-            // Layout runs on UpdateFrame, BEFORE XRWorldInstance.PostUpdate (PostUpdateFrame).
+            // Layout runs on UpdateFrame, before RuntimeWorld post-update processing (PostUpdateFrame).
             // This way, layout marks dirty transforms via MarkLocalModified, and PostUpdate
             // processes them in the same frame — no 1-frame lag.
             EnsureTimerHooksInstalled();
@@ -453,7 +453,7 @@ namespace XREngine.Components
         /// <summary>
         /// Runs the full layout pass (measure + arrange) for this canvas on the update thread.
         /// Transforms that changed during layout have MarkLocalModified called on them,
-        /// which adds them to the world's dirty queue. XRWorldInstance.PostUpdate (on PostUpdateFrame)
+        /// which adds them to the world's dirty queue. RuntimeWorld post-update processing
         /// then recalculates their matrices and enqueues render matrix changes.
         /// No expensive per-frame recursive recalculation needed.
         /// </summary>
@@ -480,7 +480,7 @@ namespace XREngine.Components
 
             // Always recalculate dirty matrices after layout, regardless of draw space.
             // The Update thread and CollectVisible thread run independently — there is no
-            // guarantee that XRWorldInstance.PostUpdate will process dirty transforms before
+            // guarantee that RuntimeWorld post-update processing will process dirty transforms before
             // CollectVisible reads the quadtree. Walking the tree here ensures the world
             // matrices (and therefore quadtree positions via RemakeAxisAlignedRegion) are
             // correct before the next CollectVisible pass.

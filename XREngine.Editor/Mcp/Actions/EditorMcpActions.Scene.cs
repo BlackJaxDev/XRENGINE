@@ -43,7 +43,7 @@ namespace XREngine.Editor.Mcp
             string? sceneName = null,
             [McpName("max_depth"), Description("Optional max depth to traverse.")] int? maxDepth = null)
         {
-            var scene = ResolveScene(context.WorldInstance, sceneName);
+            var scene = ResolveScene(context.World, sceneName);
             if (scene is null)
                 return Task.FromResult(new McpToolResponse("No active scene found.", isError: true));
 
@@ -80,7 +80,7 @@ namespace XREngine.Editor.Mcp
             McpToolContext context,
             [McpName("node_id"), Description("Scene node ID to inspect.")] string nodeId)
         {
-            if (!TryGetNodeById(context.WorldInstance, nodeId, out var node, out var error) || node is null)
+            if (!TryGetNodeById(context.World, nodeId, out var node, out var error) || node is null)
                 return Task.FromResult(new McpToolResponse(error ?? "Scene node not found.", isError: true));
 
             var transform = node.Transform as Transform;
@@ -127,7 +127,7 @@ namespace XREngine.Editor.Mcp
             [McpName("node_id"), Description("Scene node ID to update.")] string nodeId,
             [McpName("is_active"), Description("Whether the node is active.")] bool isActive)
         {
-            if (!TryGetNodeById(context.WorldInstance, nodeId, out var node, out var error) || node is null)
+            if (!TryGetNodeById(context.World, nodeId, out var node, out var error) || node is null)
                 return Task.FromResult(new McpToolResponse(error ?? "Scene node not found.", isError: true));
 
             using var _ = Undo.TrackChange("MCP Set Node Active", node);
@@ -152,13 +152,13 @@ namespace XREngine.Editor.Mcp
             string? newParentId = null,
             [McpName("preserve_world_transform"), Description("Preserve world transform when reparenting.")] bool preserveWorldTransform = false)
         {
-            if (!TryGetNodeById(context.WorldInstance, nodeId, out var node, out var error) || node is null)
+            if (!TryGetNodeById(context.World, nodeId, out var node, out var error) || node is null)
                 return Task.FromResult(new McpToolResponse(error ?? "Scene node not found.", isError: true));
 
             SceneNode? newParent = null;
             if (!string.IsNullOrWhiteSpace(newParentId))
             {
-                if (!TryGetNodeById(context.WorldInstance, newParentId!, out newParent, out var parentError) || newParent is null)
+                if (!TryGetNodeById(context.World, newParentId!, out newParent, out var parentError) || newParent is null)
                     return Task.FromResult(new McpToolResponse(parentError ?? "Parent node not found.", isError: true));
             }
 
@@ -185,7 +185,7 @@ namespace XREngine.Editor.Mcp
             McpToolContext context,
             [McpName("node_id"), Description("Scene node ID to delete.")] string nodeId)
         {
-            if (!TryGetNodeById(context.WorldInstance, nodeId, out var node, out var error) || node is null)
+            if (!TryGetNodeById(context.World, nodeId, out var node, out var error) || node is null)
                 return Task.FromResult(new McpToolResponse(error ?? "Scene node not found.", isError: true));
 
             node.Destroy();
@@ -217,7 +217,7 @@ namespace XREngine.Editor.Mcp
             [McpName("scene_name"), Description("Optional scene name; defaults to the first active scene.")]
             string? sceneName = null)
         {
-            var world = context.WorldInstance;
+            var world = context.World;
             var scene = ResolveScene(world, sceneName);
             if (scene is null)
                 return Task.FromResult(new McpToolResponse("No active scene found to create the node.", isError: true));
@@ -284,7 +284,7 @@ namespace XREngine.Editor.Mcp
             [McpName("node_id"), Description("Scene node ID to rename.")] string nodeId,
             [McpName("name"), Description("New display name for the node.")] string name)
         {
-            if (!TryGetNodeById(context.WorldInstance, nodeId, out var node, out var error) || node is null)
+            if (!TryGetNodeById(context.World, nodeId, out var node, out var error) || node is null)
                 return Task.FromResult(new McpToolResponse(error ?? "Scene node not found.", isError: true));
 
             if (string.IsNullOrWhiteSpace(name))
@@ -308,7 +308,7 @@ namespace XREngine.Editor.Mcp
             [McpName("include_children"), Description("Whether to duplicate children.")] bool includeChildren = true,
             [McpName("preserve_world_transform"), Description("Preserve world transform when reparenting.")] bool preserveWorldTransform = false)
         {
-            var world = context.WorldInstance;
+            var world = context.World;
             if (!TryGetNodeById(world, nodeId, out var sourceNode, out var error) || sourceNode is null)
                 return Task.FromResult(new McpToolResponse(error ?? "Scene node not found.", isError: true));
 
@@ -392,7 +392,7 @@ namespace XREngine.Editor.Mcp
             [McpName("after_node_id"), Description("Place after this sibling node ID.")]
             string? afterNodeId = null)
         {
-            var world = context.WorldInstance;
+            var world = context.World;
             if (!TryGetNodeById(world, nodeId, out var node, out var error) || node is null)
                 return Task.FromResult(new McpToolResponse(error ?? "Scene node not found.", isError: true));
 
@@ -516,7 +516,7 @@ namespace XREngine.Editor.Mcp
             [McpName("node_id"), Description("Scene node ID to update.")] string nodeId,
             [McpName("is_active"), Description("Whether the node is active.")] bool isActive)
         {
-            if (!TryGetNodeById(context.WorldInstance, nodeId, out var node, out var error) || node is null)
+            if (!TryGetNodeById(context.World, nodeId, out var node, out var error) || node is null)
                 return Task.FromResult(new McpToolResponse(error ?? "Scene node not found.", isError: true));
 
             foreach (var entry in EnumerateHierarchy(node))
@@ -542,7 +542,7 @@ namespace XREngine.Editor.Mcp
             if (string.IsNullOrWhiteSpace(name))
                 return Task.FromResult(new McpToolResponse("Name must be provided.", isError: true));
 
-            var world = context.WorldInstance;
+            var world = context.World;
             var scenes = new List<XRScene>();
 
             if (!string.IsNullOrWhiteSpace(sceneName))
@@ -600,7 +600,7 @@ namespace XREngine.Editor.Mcp
             if (string.IsNullOrWhiteSpace(componentType))
                 return Task.FromResult(new McpToolResponse("Component type must be provided.", isError: true));
 
-            var world = context.WorldInstance;
+            var world = context.World;
             var scenes = new List<XRScene>();
 
             if (!string.IsNullOrWhiteSpace(sceneName))
@@ -655,7 +655,7 @@ namespace XREngine.Editor.Mcp
             [McpName("node_ids"), Description("Optional list of scene node IDs to select.")] string[]? nodeIds = null,
             [McpName("append"), Description("Append to existing selection.")] bool append = false)
         {
-            var world = context.WorldInstance;
+            var world = context.World;
             var targets = new List<SceneNode>();
 
             if (!string.IsNullOrWhiteSpace(nodeId))
@@ -700,10 +700,10 @@ namespace XREngine.Editor.Mcp
             [McpName("node_id"), Description("Scene node ID to focus.")] string nodeId,
             [McpName("duration"), Description("Optional focus duration in seconds.")] float durationSeconds = 0.35f)
         {
-            if (!TryGetNodeById(context.WorldInstance, nodeId, out var node, out var error) || node is null)
+            if (!TryGetNodeById(context.World, nodeId, out var node, out var error) || node is null)
                 return Task.FromResult(new McpToolResponse(error ?? "Scene node not found.", isError: true));
 
-            if (ResolveEditorCameraPawn(context.WorldInstanceOrNull) is not { } pawn)
+            if (ResolveEditorCameraPawn(context.WorldOrNull) is not { } pawn)
                 return Task.FromResult(new McpToolResponse("No editor camera pawn available to focus.", isError: true));
 
             pawn.FocusOnNode(node, durationSeconds);
@@ -732,7 +732,7 @@ namespace XREngine.Editor.Mcp
             [McpName("roll"), Description("Optional camera roll in degrees.")] float? roll = null,
             [McpName("duration"), Description("Optional interpolation duration in seconds.")] float durationSeconds = 0.35f)
         {
-            if (ResolveEditorCameraPawn(context.WorldInstanceOrNull) is not { } pawn)
+            if (ResolveEditorCameraPawn(context.WorldOrNull) is not { } pawn)
                 return Task.FromResult(new McpToolResponse("No editor camera pawn available.", isError: true));
 
             if (pawn.SceneNode?.Transform is not TransformBase cameraTransform)
@@ -799,7 +799,7 @@ namespace XREngine.Editor.Mcp
             [McpName("enabled"), Description("Whether render-on-demand should be enabled.")] bool enabled,
             [McpName("invalidate_view"), Description("Whether to force one fresh render after changing the setting.")] bool invalidateView = true)
         {
-            if (ResolveEditorCameraPawn(context.WorldInstanceOrNull) is not { } pawn)
+            if (ResolveEditorCameraPawn(context.WorldOrNull) is not { } pawn)
                 return Task.FromResult(new McpToolResponse("No editor camera pawn available.", isError: true));
 
             pawn.RenderOnDemand = enabled;
@@ -821,7 +821,7 @@ namespace XREngine.Editor.Mcp
         /// <summary>
         /// Resolves the editor camera controlled by the local player or hosted by an active viewport.
         /// </summary>
-        private static EditorFlyingCameraPawnComponent? ResolveEditorCameraPawn(XRWorldInstance? world)
+        private static EditorFlyingCameraPawnComponent? ResolveEditorCameraPawn(RuntimeWorld? world)
         {
             foreach (XRViewport viewport in RuntimeEngine.EnumerateActiveViewports())
             {
@@ -866,7 +866,7 @@ namespace XREngine.Editor.Mcp
             [McpName("layer_name"), Description("Optional layer name (Dynamic, Static, Gizmos).")]
             string? layerName = null)
         {
-            if (!TryGetNodeById(context.WorldInstance, nodeId, out var node, out var error) || node is null)
+            if (!TryGetNodeById(context.World, nodeId, out var node, out var error) || node is null)
                 return Task.FromResult(new McpToolResponse(error ?? "Scene node not found.", isError: true));
 
             int layer;
@@ -899,7 +899,7 @@ namespace XREngine.Editor.Mcp
         public static Task<McpToolResponse> ListLayersAsync(
             McpToolContext context)
         {
-            var world = context.WorldInstance;
+            var world = context.World;
             var used = new HashSet<int>();
 
             if (world.TargetWorld is not null)
@@ -934,7 +934,7 @@ namespace XREngine.Editor.Mcp
             [McpName("tag"), Description("Tag value to assign.")] string tag,
             [McpName("add"), Description("True to add; false to remove.")] bool add = true)
         {
-            if (!TryGetNodeById(context.WorldInstance, nodeId, out var node, out var error) || node is null)
+            if (!TryGetNodeById(context.World, nodeId, out var node, out var error) || node is null)
                 return Task.FromResult(new McpToolResponse(error ?? "Scene node not found.", isError: true));
 
             if (string.IsNullOrWhiteSpace(tag))
@@ -958,7 +958,7 @@ namespace XREngine.Editor.Mcp
             McpToolContext context,
             [McpName("node_id"), Description("Optional scene node ID to list tags for.")] string? nodeId = null)
         {
-            var world = context.WorldInstance;
+            var world = context.World;
 
             if (!string.IsNullOrWhiteSpace(nodeId))
             {
@@ -1027,7 +1027,7 @@ namespace XREngine.Editor.Mcp
             [McpName("scale_y"), Description("World scale Y.")] float? scaleY = null,
             [McpName("scale_z"), Description("World scale Z.")] float? scaleZ = null)
         {
-            if (!TryGetNodeById(context.WorldInstance, nodeId, out var node, out var error) || node is null)
+            if (!TryGetNodeById(context.World, nodeId, out var node, out var error) || node is null)
                 return Task.FromResult(new McpToolResponse(error ?? "Scene node not found.", isError: true));
 
             if (node.Transform is not Transform transform)
@@ -1076,7 +1076,7 @@ namespace XREngine.Editor.Mcp
             McpToolContext context,
             [McpName("node_id"), Description("Scene node ID to inspect.")] string nodeId)
         {
-            if (!TryGetNodeById(context.WorldInstance, nodeId, out var node, out var error) || node is null)
+            if (!TryGetNodeById(context.World, nodeId, out var node, out var error) || node is null)
                 return Task.FromResult(new McpToolResponse(error ?? "Scene node not found.", isError: true));
 
             var transform = node.Transform;

@@ -1,6 +1,6 @@
 # Dependency Inventory
 
-Generated: 2026-08-25T13:45:02-07:00
+Generated: 2026-08-25T20:37:34-07:00
 Commit: (not a git repo)
 
 Best-effort inventory of dependencies referenced by the XRENGINE solution: NuGet packages, git submodules, vendored source snapshots, and native/managed binaries that are referenced or shipped.
@@ -44,11 +44,11 @@ Notes:
 | ImGui.NET | 1.91.6.1 | mellinoe | [MIT](licenses/nuget/ImGui.NET-1.91.6.1-MIT.txt) | XREngine.Runtime.Rendering.csproj, XREngine.Runtime.Rendering.OpenGL.csproj, XREngine.Runtime.Rendering.Vulkan.csproj |
 | ImmediateReflection | 2.0.0 | KeRNeLith | [MIT](licenses/nuget/ImmediateReflection-2.0.0-MIT.txt) | XREngine.Animation.csproj, XREngine.Runtime.Rendering.csproj |
 | Jitter2 | 2.8.9 | notgiven688 | [MIT](licenses/nuget/Jitter2-2.8.9-MIT.txt) | XREngine.Runtime.Core.csproj |
-| JoltPhysicsSharp | 2.22.0 | amerkoleci | [MIT](licenses/nuget/JoltPhysicsSharp-2.22.0-MIT.txt) | XREngine.csproj, XREngine.Runtime.Core.csproj |
+| JoltPhysicsSharp | 2.22.0 | amerkoleci | [MIT](licenses/nuget/JoltPhysicsSharp-2.22.0-MIT.txt) | XREngine.Runtime.Core.csproj |
 | K4os.Compression.LZ4 | 1.3.8 | MiloszKrajewski | [MIT](licenses/nuget/K4os.Compression.LZ4-1.3.8-MIT.txt) | XREngine.Data.csproj |
 | LZMA-SDK | 22.1.1 | monemihir | [MIT](licenses/nuget/LZMA-SDK-22.1.1-MIT.txt) | XREngine.csproj, XREngine.Data.csproj |
 | Magick.NET-Q16-HDRI-x64 | 14.16.0 | dlemstra | [Apache-2.0](licenses/nuget/Magick.NET-Q16-HDRI-x64-14.16.0-Apache-2.0.txt) | XREngine.Runtime.Core.csproj, XREngine.Runtime.Rendering.csproj, XREngine.UnitTests.csproj |
-| MagicPhysX | 1.0.0 | Cysharp | [MIT](licenses/nuget/MagicPhysX-1.0.0-MIT.txt) | XREngine.csproj, XREngine.Runtime.Core.csproj |
+| MagicPhysX | 1.0.0 | Cysharp | [MIT](licenses/nuget/MagicPhysX-1.0.0-MIT.txt) | XREngine.Runtime.Core.csproj |
 | MathNet.Numerics | 5.0.0 | mathnet | [MIT](licenses/nuget/MathNet.Numerics-5.0.0-MIT.txt) | XREngine.Audio.csproj, XREngine.Editor.csproj, XREngine.Runtime.Rendering.csproj |
 | MathNet.Numerics.Providers.CUDA | 5.0.0 | mathnet | [MIT](licenses/nuget/MathNet.Numerics.Providers.CUDA-5.0.0-MIT.txt) | XREngine.Audio.csproj, XREngine.Editor.csproj, XREngine.Runtime.Rendering.csproj |
 | MemoryPack | 1.21.4 | Cysharp | [MIT](licenses/nuget/MemoryPack-1.21.4-MIT.txt) | XREngine.csproj, XREngine.Data.csproj, XREngine.Editor.csproj, XREngine.Extensions.csproj, XREngine.Modeling.csproj, XREngine.Profiler.csproj, XREngine.Runtime.Core.csproj, XREngine.Runtime.Rendering.csproj, XREngine.Server.csproj |
@@ -140,7 +140,7 @@ Notes:
 | Svg.Skia | 5.1.1 | wieslawsoltes | [MIT](licenses/nuget/Svg.Skia-5.1.1-MIT.txt) | XREngine.Runtime.Rendering.csproj |
 | System.Drawing.Common | 10.0.10 | dotnet | [MIT](licenses/nuget/System.Drawing.Common-10.0.10-MIT.txt) | XREngine.Data.csproj |
 | System.IdentityModel.Tokens.Jwt | 8.22.0 | AzureAD | [MIT](licenses/nuget/System.IdentityModel.Tokens.Jwt-8.22.0-MIT.txt) | XREngine.Server.csproj |
-| System.IO.Hashing | 10.0.10 | dotnet | [MIT](licenses/nuget/System.IO.Hashing-10.0.10-MIT.txt) | XREngine.csproj, XREngine.Data.csproj, XREngine.Runtime.ModelingBridge.csproj, XREngine.Runtime.Rendering.csproj |
+| System.IO.Hashing | 10.0.10 | dotnet | [MIT](licenses/nuget/System.IO.Hashing-10.0.10-MIT.txt) | XREngine.Data.csproj, XREngine.Runtime.Core.csproj, XREngine.Runtime.ModelingBridge.csproj, XREngine.Runtime.Rendering.csproj |
 | System.Management | 10.0.10 | dotnet | [MIT](licenses/nuget/System.Management-10.0.10-MIT.txt) | XREngine.Runtime.Rendering.csproj |
 | System.Security.Cryptography.ProtectedData | 10.0.10 | dotnet | [MIT](licenses/nuget/System.Security.Cryptography.ProtectedData-10.0.10-MIT.txt) | XREngine.Editor.csproj |
 | UltralightNet | 1.3.0 | SupinePandora43 | [MIT](licenses/nuget/UltralightNet-1.3.0-MIT.txt) | XREngine.Runtime.Rendering.csproj |
@@ -167,11 +167,11 @@ Notes:
 |---|---|---|---|---|---|
 | XREngine.Audio.csproj | runtimes\win-x64\native\phonon.dll | Valve (Steam Audio) | [Apache-2.0](https://raw.githubusercontent.com/ValveSoftware/steam-audio/master/LICENSE.md) | phonon.dll | PreserveNewest |
 | XREngine.csproj | $(NvidiaRtxgiWinX64Dir)RestirGI.Native.dll | NVIDIA Corporation | [Proprietary (NVIDIA RTXGI SDK License)](https://developer.nvidia.com/rtxgi) | RestirGI.Native.dll | Always |
-| XREngine.csproj | runtimes\win-x64\native\lib_coacd.dll | SarahWeiii (CoACD) | [MIT (see Build/Submodules/CoACD/LICENSE)](../Build/Submodules/CoACD/LICENSE) |  | PreserveNewest |
 | XREngine.Editor.csproj | C:\Program Files (x86)\Steam\steamapps\common\SteamVR\bin\win64\openxr_loader.dll | Khronos Group (OpenXR loader), distributed via Valve/SteamVR | [Apache-2.0](https://github.com/KhronosGroup/OpenXR-SDK-Source/blob/master/LICENSE) | openxr_loader.dll | PreserveNewest |
 | XREngine.Gltf.csproj | runtimes\win-x64\native\FastGltfBridge.Native.dll | Sean Apeler (fastgltf) / simdjson authors | [MIT (fastgltf) + Apache-2.0 (simdjson)](licenses/notes/binary-item-XREngine.Gltf.csproj-FastGltfBridge.Native.dll.txt) |  | PreserveNewest |
 | XREngine.Input.csproj | ..\Build\Submodules\OpenVR.NET\OpenVR.NET\openvr_api.dll | Valve (OpenVR/SteamVR) | [BSD-3-Clause](licenses/fetched/openvr_api-BSD-3-Clause.txt) | openvr_api.dll | PreserveNewest |
 | XREngine.Runtime.AudioIntegration.csproj | $(MetaOvrLipSyncWinX64Dir)OVRLipSync.dll | Meta Platforms, Inc. | [Proprietary (Oculus SDK License Agreement)](licenses/fetched/OVRLipSync-Proprietary (Oculus SDK License Agreement).txt) | OVRLipSync.dll | PreserveNewest |
+| XREngine.Runtime.Core.csproj | runtimes\win-x64\native\lib_coacd.dll | SarahWeiii (CoACD) | [MIT (see Build/Submodules/CoACD/LICENSE)](../Build/Submodules/CoACD/LICENSE) |  | PreserveNewest |
 | XREngine.Runtime.Core.csproj | runtimes\win-x64\native\libmagicphysx.dll | Cysharp (MagicPhysX) / NVIDIA (PhysX 5) | [MIT (MagicPhysX) + NVIDIA PhysX 5 license](licenses/fetched/libmagicphysx-MIT (MagicPhysX) + NVIDIA PhysX 5 license.txt) |  | PreserveNewest |
 | XREngine.Runtime.Rendering.csproj | ..\Build\Dependencies\FFmpeg\HlsReference\win-x64\*.dll | (unknown) | [(unknown)](licenses/unknown/binary-item-XREngine.Runtime.Rendering.csproj-_.dll.txt) | %(Filename)%(Extension) | PreserveNewest |
 | XREngine.Runtime.Rendering.csproj | runtimes\win-x64\native\rive.dll | Rive (rive-app) | [MIT](licenses/fetched/rive-MIT.txt) |  | PreserveNewest |

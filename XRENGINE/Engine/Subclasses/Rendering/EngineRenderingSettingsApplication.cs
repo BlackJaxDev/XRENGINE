@@ -170,6 +170,9 @@ namespace XREngine
                 if (applyAll || propertyName == nameof(EditorDebugOptions.UseDebugOpaquePipeline))
                     ApplyRenderPipelinePreference();
 
+                if (applyAll || propertyName == nameof(EditorPreferences.GpuMeshBvhClickPickEnabled))
+                    ApplyGpuMeshBvhPickingPreference();
+
                 if (applyAll ||
                     propertyName == nameof(EditorDebugOptions.EnableZeroReadbackMaterialScatter) ||
                     propertyName == nameof(EditorDebugOptions.ZeroReadbackMaterialDrawPath))

@@ -145,7 +145,8 @@ public partial class HumanoidComponent
             humanScale,
             modelUnitsPerMeter,
             muscleInputScale,
-            profileResult);
+            profileResult,
+            legacyCalibration);
 
         string skeletonSignature = ComputeSkeletonSignature(bindings);
         EHumanoidAvatarSourceProvenance sourceProvenance = previous.SourceProvenance;
@@ -489,7 +490,8 @@ public partial class HumanoidComponent
             definition.HumanScale,
             definition.ModelUnitsPerMeter,
             definition.MuscleInputScale,
-            profileResult: null);
+            profileResult: null,
+            definition.LegacyCalibration);
         if (HasDiagnosticPrefix(liveDiagnostics, "Error:"))
         {
             definition.Status = EHumanoidAvatarDefinitionStatus.Invalid;
@@ -689,7 +691,8 @@ public partial class HumanoidComponent
         float humanScale,
         float modelUnitsPerMeter,
         float muscleInputScale,
-        AvatarHumanoidProfileBuilder.ProfileResult? profileResult)
+        AvatarHumanoidProfileBuilder.ProfileResult? profileResult,
+        HumanoidAvatarLegacyCalibration? legacyCalibration)
     {
         List<string> diagnostics = [];
         var assignedNodes = new HashSet<SceneNode>(ReferenceEqualityComparer.Instance);
@@ -760,6 +763,7 @@ public partial class HumanoidComponent
             diagnostics.Add("Error: avatar muscle input scale is missing or non-finite.");
 
         ValidateMuscleLimits(muscleLimits, diagnostics);
+        ValidateLegacyCalibration(legacyCalibration, diagnostics);
 
         float confidence = profileResult?.OverallConfidence ?? Settings.ProfileConfidence;
         if (!float.IsFinite(confidence) || confidence < MinimumAcceptedProfileConfidence)

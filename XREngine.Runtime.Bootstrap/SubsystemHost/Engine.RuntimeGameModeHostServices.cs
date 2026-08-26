@@ -9,7 +9,7 @@ using XREngine.Scene.Transforms;
 namespace XREngine;
 
 /// <summary>
-/// Binds Runtime.Core game-mode policy to the concrete engine world, scene, and camera model.
+/// Binds Runtime.Core game-mode policy to the Bootstrap-composed Core world, scene, and camera model.
 /// </summary>
 internal sealed class EngineRuntimeGameModeHostServices : IRuntimeGameModeHostServices
 {
@@ -18,11 +18,11 @@ internal sealed class EngineRuntimeGameModeHostServices : IRuntimeGameModeHostSe
     public Type? DefaultPawnType => typeof(FlyingCameraPawnComponent);
 
     public string? GetWorldName(object? worldInstance)
-        => (worldInstance as XRWorldInstance)?.TargetWorld?.Name;
+        => (worldInstance as RuntimeWorld)?.TargetWorld?.Name;
 
     public XRComponent? CreatePawn(object worldInstance, string nodeName, Type pawnType)
     {
-        if (worldInstance is not XRWorldInstance world)
+        if (worldInstance is not RuntimeWorld world)
             return null;
 
         SceneNode pawnNode = new(world, nodeName);
@@ -42,7 +42,7 @@ internal sealed class EngineRuntimeGameModeHostServices : IRuntimeGameModeHostSe
         Type userInterfaceType,
         XRComponent pawn)
     {
-        if (worldInstance is not XRWorldInstance world ||
+        if (worldInstance is not RuntimeWorld world ||
             pawn is not PawnComponent concretePawn ||
             !typeof(XRComponent).IsAssignableFrom(userInterfaceType) ||
             !typeof(IRuntimeGameModeUserInterface).IsAssignableFrom(userInterfaceType))

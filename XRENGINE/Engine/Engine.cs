@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using XREngine.Audio;
 using XREngine.Components.Animation;
 using XREngine.Components.Physics;
@@ -10,8 +9,8 @@ using XREngine.Input;
 using XREngine.Rendering;
 using XREngine.Rendering.VideoStreaming;
 using XREngine.Scene;
+using XREngine.Scene.Physics;
 using XREngine.Scene.Transforms;
-using static XREngine.Rendering.XRWorldInstance;
 
 namespace XREngine
 {
@@ -84,21 +83,13 @@ namespace XREngine
         /// The process then exits without racing GPU/asset cleanup against live engine work.
         /// </summary>
         private static int _abandonProcessExitCleanup;
-        private static int _headlessShutdownRequested;
+        private static IDisposable? _runtimeTimingLease;
+        private static IDisposable? _runtimePhysicsLease;
+        private static IDisposable? _runtimeStaticColliderAuthoringLease;
 
         // ═══════════════════════════════════════════════════════════════════════════════════════════
         // THREADING AND TASK QUEUES
         // ═══════════════════════════════════════════════════════════════════════════════════════════
-
-        /// <summary>
-        /// Queue for tasks that must execute on the update thread.
-        /// </summary>
-        private static readonly ConcurrentQueue<Action> _pendingUpdateThreadWork = new();
-
-        /// <summary>
-        /// Queue for tasks that must execute on the physics thread.
-        /// </summary>
-        private static readonly ConcurrentQueue<Action> _pendingPhysicsThreadWork = new();
 
         private static int _isDispatchingRenderFrame;
 
@@ -310,8 +301,7 @@ namespace XREngine
             RuntimeThreadServices.Current = new EngineRuntimeThreadServices();
             RuntimeSceneImportServices.Current = new UnityEditorImportBridge();
 
-            RuntimePhysicsServices.Current = new EngineRuntimePhysicsServices();
-            RuntimeStaticColliderAuthoringServices.Current = new EngineRuntimeStaticColliderAuthoringServices();
+            InstallRuntimePhysicsServices();
             RuntimeMaintenanceServices.Current = new EngineRuntimeMaintenanceServices();
             XREngine.Networking.RuntimeNetworkDiscoveryHostServices.Current = new EngineRuntimeNetworkDiscoveryHostServices();
             XREngine.Scene.RuntimeSceneNodeServices.Current = new EngineRuntimeSceneNodeServices();
@@ -341,6 +331,39 @@ namespace XREngine
 
         #endregion
 
+        private static void InstallRuntimeTimingServices()
+        {
+            _runtimeTimingLease?.Dispose();
+            _runtimeTimingLease = XREngine.Timers.RuntimeTimingServices.Install(
+                new EngineRuntimeTimingServices(Time.Timer));
+        }
+
+        private static void UninstallRuntimeTimingServices()
+        {
+            _runtimeTimingLease?.Dispose();
+            _runtimeTimingLease = null;
+        }
+
+        private static void InstallRuntimePhysicsServices()
+        {
+            _runtimeStaticColliderAuthoringLease?.Dispose();
+            _runtimePhysicsLease?.Dispose();
+
+            var authoringServices = new EngineRuntimeStaticColliderAuthoringServices();
+            _runtimePhysicsLease = RuntimePhysicsServices.Install(
+                new EngineRuntimePhysicsServices(),
+                new EngineConvexHullInputProvider());
+            _runtimeStaticColliderAuthoringLease = RuntimeStaticColliderAuthoringServices.Install(authoringServices);
+        }
+
+        private static void UninstallRuntimePhysicsServices()
+        {
+            _runtimeStaticColliderAuthoringLease?.Dispose();
+            _runtimeStaticColliderAuthoringLease = null;
+            _runtimePhysicsLease?.Dispose();
+            _runtimePhysicsLease = null;
+        }
+
         #region Public Properties - Engine State
 
         /// <summary>
@@ -350,7 +373,7 @@ namespace XREngine
         /// During startup, certain operations may be deferred or behave differently.
         /// Check this property when you need to handle startup-specific logic.
         /// </remarks>
-        public static bool StartingUp { get; private set; }
+        public static bool StartingUp => RuntimeLifecycleState.Current.StartingUp;
 
         /// <summary>
         /// Indicates the engine is currently shutting down and might be disposing of objects.
@@ -358,7 +381,7 @@ namespace XREngine
         /// <remarks>
         /// During shutdown, avoid creating new resources or initiating long-running operations.
         /// </remarks>
-        public static bool ShuttingDown { get; private set; }
+        public static bool ShuttingDown => RuntimeLifecycleState.Current.ShuttingDown;
 
         /// <summary>
         /// Gets whether any engine window currently has focus.
@@ -425,7 +448,8 @@ namespace XREngine
         /// World instances are separate from windows, allowing multiple windows to display the same world.
         /// They are also distinct from <see cref="XRWorld"/>, which is just the serialized data for a world.
         /// </remarks>
-        public static IReadOnlyCollection<XRWorldInstance> WorldInstances => XRWorldInstance.WorldInstances.Values;
+        public static IReadOnlyCollection<RuntimeWorld> WorldInstances
+            => RuntimeWorldRegistryServices.Current?.Snapshot().Values.ToArray() ?? [];
 
         #endregion
 

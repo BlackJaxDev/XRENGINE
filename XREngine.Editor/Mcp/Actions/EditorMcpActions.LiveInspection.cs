@@ -416,7 +416,7 @@ namespace XREngine.Editor.Mcp
             if (string.IsNullOrWhiteSpace(componentId) && string.IsNullOrWhiteSpace(componentName) && string.IsNullOrWhiteSpace(componentTypeName))
                 return Task.FromResult(new McpToolResponse("Provide component_id, component_name, or component_type.", isError: true));
 
-            if (!TryGetNodeById(context.WorldInstance, nodeId, out var node, out var nodeError))
+            if (!TryGetNodeById(context.World, nodeId, out var node, out var nodeError))
                 return Task.FromResult(new McpToolResponse(nodeError ?? "Scene node not found.", isError: true));
 
             XRComponent? component = FindComponent(node!, componentId, componentName, componentTypeName, out var compError);

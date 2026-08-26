@@ -50,7 +50,7 @@ namespace XREngine
 
         public override PawnComponent? CreateDefaultPawn(ELocalPlayerIndex playerIndex)
         {
-            if (WorldInstance is not XRWorldInstance worldInstance)
+            if (WorldInstance is not RuntimeWorld worldInstance)
                 return null;
 
             var pawnNodeName = $"Player{(int)playerIndex + 1}_CharacterPawn";

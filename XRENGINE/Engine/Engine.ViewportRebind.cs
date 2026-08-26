@@ -6,7 +6,6 @@ using XREngine.Rendering;
 using XREngine.Scene;
 using XREngine.Scene.Prefabs;
 using XREngine.Scene.Transforms;
-using static XREngine.Rendering.XRWorldInstance;
 using XRWorld = XREngine.Scene.XRWorld;
 
 namespace XREngine
@@ -33,7 +32,7 @@ namespace XREngine
         /// <summary>
         /// Logs diagnostic information about viewport rebinding during play mode transitions.
         /// </summary>
-        private static void LogViewportRebindSummary(string phase, XRWorldInstance worldInstance)
+        private static void LogViewportRebindSummary(string phase, RuntimeWorld worldInstance)
         {
             string worldName = worldInstance.TargetWorld?.Name ?? "<unknown>";
             Debug.RenderingEvery(
@@ -80,7 +79,7 @@ namespace XREngine
             if (firstWindowWorld is not null)
                 return firstWindowWorld;
 
-            var firstInstanceWorld = XRWorldInstance.WorldInstances.Values.FirstOrDefault()?.TargetWorld;
+            var firstInstanceWorld = WorldInstances.FirstOrDefault()?.TargetWorld;
             return firstInstanceWorld;
         }
 
@@ -103,7 +102,9 @@ namespace XREngine
 
             try
             {
-                XRWorldInstance? worldInstance = XRWorldInstance.GetOrInitWorld(world);
+                RuntimeWorld worldInstance = GetOrCreateWorld(world);
+                IRuntimeRenderWorld renderWorld = worldInstance.GetRenderWorld()
+                    ?? throw new InvalidOperationException($"No render world is attached to '{world.Name ?? "<unnamed>"}'.");
 
                 LogViewportRebindSummary(phase, worldInstance);
 
@@ -119,13 +120,13 @@ namespace XREngine
                         "[ViewportDiag] {0}: WindowHash={1} TargetWorldMatch={2} Viewports={3} PresentationMode={4}",
                         phase,
                         window.GetHashCode(),
-                        ReferenceEquals(window.TargetWorldInstance, worldInstance),
+                        ReferenceEquals(window.TargetWorldInstance, renderWorld),
                         window.Viewports.Count,
                         Engine.EditorPreferences.ViewportPresentationMode);
 
                     // Ensure the window is targeting the restored world instance.
-                    if (!ReferenceEquals(window.TargetWorldInstance, worldInstance))
-                        window.TargetWorldInstance = worldInstance;
+                    if (!ReferenceEquals(window.TargetWorldInstance, renderWorld))
+                        window.TargetWorldInstance = renderWorld;
 
                     // If a window ended up with zero viewports (runtime-only), log it loudly.
                     if (window.Viewports.Count == 0)
@@ -180,8 +181,8 @@ namespace XREngine
                             viewport.AssociatedPlayer.Viewport = viewport;
 
                         // Player viewports should render the active/restored world instance.
-                        if (viewport.AssociatedPlayer is not null && !ReferenceEquals(viewport.WorldInstanceOverride, worldInstance))
-                            viewport.WorldInstanceOverride = worldInstance;
+                        if (viewport.AssociatedPlayer is not null && !ReferenceEquals(viewport.WorldInstanceOverride, renderWorld))
+                            viewport.WorldInstanceOverride = renderWorld;
 
                         // Rebind camera from controlled pawn (may have changed across restore / BeginPlay).
                         var playerForRebind = viewport.AssociatedPlayer;
@@ -258,8 +259,9 @@ namespace XREngine
         /// Used for debugging rendering issues during play mode transitions.
         /// </summary>
         [UnconditionalSuppressMessage("Trimming", "IL2075", Justification = "Debug-only reflection for diagnostics; safe in editor builds.")]
-        private static void DumpWorldRenderablesOncePerPhase(XRWorldInstance worldInstance, string phase)
+        private static void DumpWorldRenderablesOncePerPhase(RuntimeWorld worldInstance, string phase)
         {
+            IRuntimeRenderWorld? renderWorld = worldInstance.GetRenderWorld();
             Debug.RenderingEvery(
                 $"RenderDump.World.{phase}.{worldInstance.GetHashCode()}",
                 TimeSpan.FromDays(1),
@@ -267,8 +269,8 @@ namespace XREngine
                 phase,
                 worldInstance.TargetWorld?.Name ?? "<unknown>",
                 worldInstance.RootNodes.Count,
-                worldInstance.VisualScene?.GetType().Name ?? "<null>",
-                worldInstance.VisualScene?.Renderables?.Count ?? -1);
+                renderWorld?.VisualScene.GetType().Name ?? "<null>",
+                renderWorld?.VisualScene.Renderables?.Count ?? -1);
 
             int nodeCount = 0;
             int renderableComponentCount = 0;
@@ -364,7 +366,7 @@ namespace XREngine
         /// Diagnostic method to dump hierarchy roots for a world instance.
         /// Used for debugging scene graph issues during play mode transitions.
         /// </summary>
-        private static void DumpWorldHierarchyRootsOncePerPhase(XRWorldInstance worldInstance, string phase)
+        private static void DumpWorldHierarchyRootsOncePerPhase(RuntimeWorld worldInstance, string phase)
         {
             Debug.RenderingEvery(
                 $"SnapshotHierarchy.{phase}.{worldInstance.GetHashCode()}",

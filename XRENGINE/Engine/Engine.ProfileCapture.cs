@@ -2469,7 +2469,7 @@ public static partial class Engine
             try
             {
                 string[] worldNames = Engine.WorldInstances
-                    .Select(static world => world.TargetWorldName ?? "<unnamed>")
+                    .Select(static world => world.TargetWorld?.Name ?? "<unnamed>")
                     .OrderBy(static name => name, StringComparer.Ordinal)
                     .ToArray();
                 string configuredScene = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.ProfileScene) ?? string.Empty;

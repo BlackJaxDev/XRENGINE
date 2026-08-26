@@ -766,7 +766,7 @@ namespace XREngine.Editor.Mcp
 
             // Also scan active world scenes for scene nodes using this asset
             var referencingNodes = new List<object>();
-            var world = context.WorldInstance;
+            var world = context.World;
             if (world is not null)
             {
                 // Traverse all scenes and their node trees

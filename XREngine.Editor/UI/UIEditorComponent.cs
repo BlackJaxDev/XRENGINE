@@ -148,7 +148,7 @@ public partial class UIEditorComponent : UIComponent
         HierarchyPanel hierarchy;
         using (Engine.Profiler.Start("UIEditorComponent.RemakeChildren.HierarchyPanel"))
             hierarchyNode.NewChild<HierarchyPanel>(out hierarchy);
-        if (WorldAs<XREngine.Rendering.XRWorldInstance>() is { } world)
+        if (WorldAs<RuntimeWorld>() is { } world)
             hierarchy.RootNodes = [.. world.RootNodes];
         _hierarchy = hierarchy;
 

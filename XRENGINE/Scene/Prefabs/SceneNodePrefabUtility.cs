@@ -220,7 +220,7 @@ namespace XREngine.Scene.Prefabs
         /// </summary>
         public static SceneNode Instantiate(SceneNode template,
                                             Guid prefabAssetId,
-                                            XRWorldInstance? world = null,
+                                            IRuntimeWorldContext? world = null,
                                             SceneNode? parent = null,
                                             bool maintainWorldTransform = false)
         {
@@ -841,7 +841,7 @@ namespace XREngine.Scene.Prefabs
         /// Instantiates the given prefab source into the world/parent provided.
         /// </summary>
         public static SceneNode Instantiate(XRPrefabSource prefab,
-                                            XRWorldInstance? world = null,
+                                            IRuntimeWorldContext? world = null,
                                             SceneNode? parent = null,
                                             bool maintainWorldTransform = false)
         {
@@ -853,7 +853,7 @@ namespace XREngine.Scene.Prefabs
         /// Instantiates a prefab variant by cloning the base prefab and replaying its overrides.
         /// </summary>
         public static SceneNode InstantiateVariant(XRPrefabVariant variant,
-                                                   XRWorldInstance? world = null,
+                                                   IRuntimeWorldContext? world = null,
                                                    SceneNode? parent = null,
                                                    bool maintainWorldTransform = false)
         {

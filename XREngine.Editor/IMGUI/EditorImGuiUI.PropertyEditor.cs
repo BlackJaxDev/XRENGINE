@@ -5013,9 +5013,9 @@ public static partial class EditorImGuiUI
                 ImGui.TableSetupColumn("", ImGuiTableColumnFlags.WidthFixed, 32f);
                 ImGui.TableHeadersRow();
 
-                XRWorldInstance? world = (owner as XRComponent)?.SceneNode?.World as XRWorldInstance
-                    ?? (owner as SceneNode)?.World as XRWorldInstance
-                    ?? Selection.LastSceneNode?.World as XRWorldInstance;
+                RuntimeWorld? world = (owner as XRComponent)?.SceneNode?.World as RuntimeWorld
+                    ?? (owner as SceneNode)?.World as RuntimeWorld
+                    ?? Selection.LastSceneNode?.World as RuntimeWorld;
 
                 for (int i = 0; i < calls.Count; i++)
                 {
@@ -5104,7 +5104,7 @@ public static partial class EditorImGuiUI
             return options;
         }
 
-        private static void DrawPersistentCallNodePickerButton(object owner, XRPersistentCall call, XRWorldInstance? world)
+        private static void DrawPersistentCallNodePickerButton(object owner, XRPersistentCall call, RuntimeWorld? world)
         {
             SceneNode? selectedNode = ResolveSceneNode(call.NodeId);
             string nodeLabel = selectedNode?.Name ?? (call.NodeId == Guid.Empty ? "<Select Node>" : "<Missing Node>");
@@ -5226,7 +5226,7 @@ public static partial class EditorImGuiUI
             return XRObjectBase.ObjectsCache.TryGetValue(id, out var obj) ? obj as SceneNode : null;
         }
 
-        private static void DrawSceneNodePicker(XRWorldInstance world, Action<SceneNode> onSelected)
+        private static void DrawSceneNodePicker(RuntimeWorld world, Action<SceneNode> onSelected)
         {
             ImGui.TextDisabled("Select a Scene Node:");
             ImGui.Separator();

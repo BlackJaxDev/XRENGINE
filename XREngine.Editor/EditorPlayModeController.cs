@@ -154,8 +154,16 @@ public static class EditorPlayModeController
         LogPlayerBindings($"PostSnapshotRestore.BeforeRebind State={Engine.PlayMode.State}");
 
         // Rebuild light caches after deserialization
-        if (world is not null && XRWorldInstance.WorldInstances.TryGetValue(world, out var instance))
-            instance.Lights.RebuildCachesFromWorld();
+        RuntimeWorld? runtimeWorld = null;
+        if (world is not null)
+            RuntimeWorldRegistryServices.Current?.TryGet(world, out runtimeWorld);
+
+        if (runtimeWorld is not null
+            && runtimeWorld.TryGetCapability<IRuntimeRenderWorld>(out IRuntimeRenderWorld? renderWorld)
+            && renderWorld is not null)
+        {
+            renderWorld.Lights.RebuildCachesFromWorld();
+        }
 
         // Only rebind camera transforms when EXITING play mode, not when ENTERING.
         // PostSnapshotRestore fires both when entering (after deserializing the play-mode copy)

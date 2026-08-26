@@ -1,6 +1,7 @@
 using System.Threading;
 using System.Threading.Tasks;
 using XREngine.Data.Profiling;
+using XREngine.Execution;
 using XREngine.Rendering;
 
 namespace XREngine
@@ -100,13 +101,13 @@ namespace XREngine
             bool success = false;
             try
             {
-                StartingUp = true;
-                ShuttingDown = false;
+                RuntimeLifecycleState.Current.BeginStartup();
                 Interlocked.Exchange(ref _abandonProcessExitCleanup, 0);
-                Interlocked.Exchange(ref _headlessShutdownRequested, 0);
                 int startupThreadId = Environment.CurrentManagedThreadId;
                 RuntimeEngine.AssignWindowThread(startupThreadId);
                 RuntimeEngine.AssignRenderThread(startupThreadId);
+                InstallRuntimeTimingServices();
+                InstallRuntimePhysicsServices();
                 Debug.Rendering(
                     "[WindowOwnership] Startup thread owns collapsed window/render mode. WindowThreadId={0} RenderThreadId={1}.",
                     RuntimeEngine.WindowThreadId,
@@ -175,7 +176,7 @@ namespace XREngine
             }
             finally
             {
-                StartingUp = false;
+                RuntimeLifecycleState.Current.CompleteStartup();
             }
 
             if (beginPlayingAllWorlds && success)
@@ -228,7 +229,7 @@ namespace XREngine
         public static void ShutDown()
         {
             if (GameSettings?.RunWithoutWindows == true)
-                Interlocked.Exchange(ref _headlessShutdownRequested, 1);
+                RuntimeLifecycleState.Current.RequestShutdown();
 
             var windows = RuntimeEngine.Windows.ToArray();
             foreach (var window in windows)
@@ -243,10 +244,8 @@ namespace XREngine
         /// </remarks>
         internal static void Cleanup()
         {
-            if (ShuttingDown)
+            if (!RuntimeLifecycleState.Current.TryBeginShutdown())
                 return;
-
-            ShuttingDown = true;
 
             // Stop producers before disposing anything they can still reference. A timeout means
             // the closing window has selected process-exit abandonment instead of unsafe teardown.
@@ -260,11 +259,12 @@ namespace XREngine
                     "[Shutdown] Skipping process-exit resource cleanup because a bounded quiesce/GPU wait failed. " +
                     "The operating system will reclaim resources after foreground engine hosts exit.");
                 WindowPumpHost.Stop();
+                UninstallRuntimeTimingServices();
+                UninstallRuntimePhysicsServices();
                 return;
             }
 
-            bool schedulerStopped = WorkScheduler?.Shutdown(waitForWorkers: true)
-                ?? (_jobs?.Shutdown(waitForWorkers: true) ?? true);
+            bool schedulerStopped = RuntimeWorkScheduler.Shutdown(waitForWorkers: true);
             if (!schedulerStopped)
             {
                 Interlocked.Exchange(ref _abandonProcessExitCleanup, 1);
@@ -272,6 +272,8 @@ namespace XREngine
                     "[Shutdown] Skipping process-exit resource cleanup because the bounded work-scheduler " +
                     "quiesce failed. Executor and backend ownership remains retained until process exit.");
                 WindowPumpHost.Stop();
+                UninstallRuntimeTimingServices();
+                UninstallRuntimePhysicsServices();
                 return;
             }
 
@@ -282,6 +284,9 @@ namespace XREngine
 #endif
 
             ShutdownNetworking();
+
+            UninstallRuntimeTimingServices();
+            UninstallRuntimePhysicsServices();
 
             // TODO: Implement clean shutdown where each window disposes of its own allocated assets
             RuntimeEngine.Rendering.SecondaryContext.Dispose();
@@ -295,7 +300,7 @@ namespace XREngine
         /// <returns><c>true</c> while a window is active, or while a presentationless runtime has not requested shutdown.</returns>
         private static bool IsEngineStillActive()
             => RuntimeEngine.Windows.Count > 0 ||
-                (GameSettings?.RunWithoutWindows == true && Volatile.Read(ref _headlessShutdownRequested) == 0);
+                (GameSettings?.RunWithoutWindows == true && !RuntimeLifecycleState.Current.ShutdownRequested);
 
         private static void ValidateGpuRenderingStartupConfiguration()
         {
@@ -337,7 +342,7 @@ namespace XREngine
         /// </remarks>
         public static void BeginPlayAllWorlds()
             // Standalone startup must enter the engine play state before each world reaches
-            // EPlayState.Playing. XRWorldInstance uses that state to keep physics enabled.
+            // RuntimeWorldPlayState.Playing. The Bootstrap host applies physics policy.
             => PlayMode.BeginStandalonePlay();
 
         /// <summary>
@@ -345,8 +350,13 @@ namespace XREngine
         /// </summary>
         public static void BeginEditAllWorlds()
         {
-            foreach (var world in XRWorldInstance.WorldInstances.Values)
-                world.BeginEditMode().GetAwaiter().GetResult();
+            foreach (RuntimeWorld world in WorldInstances)
+            {
+                if (RuntimeWorldHostServices.Current is { } host)
+                    host.BeginEditModeAsync(world).GetAwaiter().GetResult();
+                else
+                    world.BeginPlayAsync().GetAwaiter().GetResult();
+            }
         }
 
         /// <summary>
@@ -358,8 +368,13 @@ namespace XREngine
         /// </remarks>
         public static void EndPlayAllWorlds()
         {
-            foreach (var world in XRWorldInstance.WorldInstances.Values)
-                world.EndPlay();
+            foreach (RuntimeWorld world in WorldInstances)
+            {
+                if (RuntimeWorldHostServices.Current is { } host)
+                    host.EndPlay(world);
+                else
+                    world.EndPlay();
+            }
         }
 
         #endregion

@@ -43,7 +43,7 @@ namespace XREngine.Editor.Mcp
             [McpName("component_name"), Description("Optional component instance name.")]
             string? componentName = null)
         {
-            if (!TryGetNodeById(context.WorldInstance, nodeId, out var node, out var error))
+            if (!TryGetNodeById(context.World, nodeId, out var node, out var error))
                 return Task.FromResult(new McpToolResponse(error ?? "Scene node not found.", isError: true));
 
             if (!McpToolRegistry.TryResolveComponentType(componentTypeName, out var componentType))
@@ -93,7 +93,7 @@ namespace XREngine.Editor.Mcp
             McpToolContext context,
             [McpName("node_id"), Description("Scene node ID to inspect.")] string nodeId)
         {
-            if (!TryGetNodeById(context.WorldInstance, nodeId, out var node, out var error))
+            if (!TryGetNodeById(context.World, nodeId, out var node, out var error))
                 return Task.FromResult(new McpToolResponse(error ?? "Scene node not found.", isError: true));
 
             var components = node!.Components.Select(comp => new
@@ -136,7 +136,7 @@ namespace XREngine.Editor.Mcp
             if (string.IsNullOrWhiteSpace(componentId) && string.IsNullOrWhiteSpace(componentName) && string.IsNullOrWhiteSpace(componentTypeName))
                 return Task.FromResult(new McpToolResponse("Provide component_id, component_name, or component_type to target a component.", isError: true));
 
-            if (!TryGetNodeById(context.WorldInstance, nodeId, out var node, out var nodeError))
+            if (!TryGetNodeById(context.World, nodeId, out var node, out var nodeError))
                 return Task.FromResult(new McpToolResponse(nodeError ?? "Scene node not found.", isError: true));
 
             XRComponent? component = FindComponent(node!, componentId, componentName, componentTypeName, out var compError);
@@ -177,7 +177,7 @@ namespace XREngine.Editor.Mcp
             if (string.IsNullOrWhiteSpace(componentId) && string.IsNullOrWhiteSpace(componentName) && string.IsNullOrWhiteSpace(componentTypeName))
                 return Task.FromResult(new McpToolResponse("Provide component_id, component_name, or component_type to target a component.", isError: true));
 
-            if (!TryGetNodeById(context.WorldInstance, nodeId, out var node, out var nodeError))
+            if (!TryGetNodeById(context.World, nodeId, out var node, out var nodeError))
                 return Task.FromResult(new McpToolResponse(nodeError ?? "Scene node not found.", isError: true));
 
             XRComponent? component = FindComponent(node!, componentId, componentName, componentTypeName, out var compError);
@@ -222,7 +222,7 @@ namespace XREngine.Editor.Mcp
             if (string.IsNullOrWhiteSpace(componentId) && string.IsNullOrWhiteSpace(componentName) && string.IsNullOrWhiteSpace(componentTypeName))
                 return Task.FromResult(new McpToolResponse("Provide component_id, component_name, or component_type to target a component.", isError: true));
 
-            if (!TryGetNodeById(context.WorldInstance, nodeId, out var node, out var nodeError))
+            if (!TryGetNodeById(context.World, nodeId, out var node, out var nodeError))
                 return Task.FromResult(new McpToolResponse(nodeError ?? "Scene node not found.", isError: true));
 
             XRComponent? component = FindComponent(node!, componentId, componentName, componentTypeName, out var compError);
@@ -328,7 +328,7 @@ namespace XREngine.Editor.Mcp
             if (properties is null || properties.Count == 0)
                 return Task.FromResult(new McpToolResponse("Provide at least one member in properties.", isError: true));
 
-            if (!TryGetNodeById(context.WorldInstance, nodeId, out var node, out var nodeError))
+            if (!TryGetNodeById(context.World, nodeId, out var node, out var nodeError))
                 return Task.FromResult(new McpToolResponse(nodeError ?? "Scene node not found.", isError: true));
 
             XRComponent? component = FindComponent(node!, componentId, componentName, componentTypeName, out var compError);
@@ -563,7 +563,7 @@ namespace XREngine.Editor.Mcp
             if (string.IsNullOrWhiteSpace(assetId) && string.IsNullOrWhiteSpace(assetPath) && string.IsNullOrWhiteSpace(assetName))
                 return Task.FromResult(new McpToolResponse("Provide asset_id, asset_path, or asset_name.", isError: true));
 
-            if (!TryGetNodeById(context.WorldInstance, nodeId, out var node, out var nodeError))
+            if (!TryGetNodeById(context.World, nodeId, out var node, out var nodeError))
                 return Task.FromResult(new McpToolResponse(nodeError ?? "Scene node not found.", isError: true));
 
             XRComponent? component = FindComponent(node!, componentId, componentName, componentTypeName, out var compError);
@@ -905,7 +905,7 @@ namespace XREngine.Editor.Mcp
             if (string.IsNullOrWhiteSpace(componentId) && string.IsNullOrWhiteSpace(componentName) && string.IsNullOrWhiteSpace(componentTypeName))
                 return Task.FromResult(new McpToolResponse("Provide component_id, component_name, or component_type to target a component.", isError: true));
 
-            if (!TryGetNodeById(context.WorldInstance, nodeId, out var node, out var nodeError))
+            if (!TryGetNodeById(context.World, nodeId, out var node, out var nodeError))
                 return Task.FromResult(new McpToolResponse(nodeError ?? "Scene node not found.", isError: true));
 
             XRComponent? component = FindComponent(node!, componentId, componentName, componentTypeName, out var compError);

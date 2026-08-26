@@ -112,7 +112,7 @@ public static partial class EditorImGuiUI
         ImGui.Image(handle, contentSize, uv0, uv1);
 
         // Handle asset drop on the scene image - must be right after ImGui.Image()
-        XRWorldInstance? world = TryGetActiveWorldInstance();
+        RuntimeWorld? world = TryGetActiveWorldInstance();
         if (world is not null)
             HandleScenePanelModelAssetDrop(world);
     }
@@ -195,7 +195,7 @@ public static partial class EditorImGuiUI
         _scenePanelRenderRegion = new BoundingRectangle(x, y, w, h);
     }
 
-    private static void HandleScenePanelModelAssetDrop(XRWorldInstance world)
+    private static void HandleScenePanelModelAssetDrop(RuntimeWorld world)
     {
         // Handle material preview cleanup when drag ends or leaves the target
         if (_materialPreviewActive && !ImGui.IsMouseDown(ImGuiMouseButton.Left))
@@ -255,7 +255,7 @@ public static partial class EditorImGuiUI
         ImGui.EndDragDropTarget();
     }
 
-    private static void UpdateMaterialPreview(XRWorldInstance world, XRMaterial material)
+    private static void UpdateMaterialPreview(RuntimeWorld world, XRMaterial material)
     {
         _ = world;
 
@@ -326,7 +326,7 @@ public static partial class EditorImGuiUI
         _materialPreviewActive = false;
     }
 
-    private static bool TryApplyMaterialDropToHoveredSubmesh(XRWorldInstance world, XRMaterial material)
+    private static bool TryApplyMaterialDropToHoveredSubmesh(RuntimeWorld world, XRMaterial material)
     {
         _ = world;
 

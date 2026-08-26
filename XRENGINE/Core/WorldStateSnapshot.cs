@@ -170,7 +170,7 @@ namespace XREngine
         /// <summary>
         /// Creates a snapshot of a world instance.
         /// </summary>
-        public static WorldStateSnapshot? Capture(XRWorldInstance? worldInstance)
+        public static WorldStateSnapshot? Capture(RuntimeWorld? worldInstance)
         {
             return worldInstance?.TargetWorld is not null 
                 ? Capture(worldInstance.TargetWorld) 
@@ -197,14 +197,20 @@ namespace XREngine
                 SnapshotDiagnostics.LogWorldAssetSummary(SourceWorld, "BeforeRestore");
 
                 // End play on any active world instances first
-                XRWorldInstance? runtimeInstance = null;
-                if (XRWorldInstance.WorldInstances.TryGetValue(SourceWorld, out var instance))
+                RuntimeWorld? runtimeInstance = null;
+                if (RuntimeWorldRegistryServices.Current?.TryGet(SourceWorld, out RuntimeWorld? instance) == true
+                    && instance is not null)
                 {
                     runtimeInstance = instance;
                     SnapshotDiagnostics.Log(
                         $"Runtime instance before restore: hash={instance.GetHashCode()} playState={instance.PlayState} roots={instance.RootNodes.Count} physics={instance.PhysicsEnabled}");
-                    if (instance.PlayState == XRWorldInstance.EPlayState.Playing)
-                        instance.EndPlay();
+                    if (instance.PlayState == RuntimeWorldPlayState.Playing)
+                    {
+                        if (RuntimeWorldHostServices.Current is { } host)
+                            host.EndPlay(instance);
+                        else
+                            instance.EndPlay();
+                    }
                 }
 
                 // Restore settings
@@ -297,7 +303,7 @@ namespace XREngine
                 }
 
                 // IMPORTANT:
-                // Gameplay code can spawn SceneNodes directly into XRWorldInstance.RootNodes without
+                // Gameplay code can spawn SceneNodes directly into RuntimeWorld.RootNodes without
                 // attaching them to any XRScene (e.g. player pawns). Those roots are not tracked by
                 // scene serialization and will survive snapshot restore unless explicitly removed.
                 //
@@ -362,7 +368,8 @@ namespace XREngine
         private static HashSet<Guid> CaptureRuntimeOnlyRootIds(XRWorld world)
         {
             var result = new HashSet<Guid>();
-            if (!XRWorldInstance.WorldInstances.TryGetValue(world, out XRWorldInstance? runtimeInstance))
+            if (RuntimeWorldRegistryServices.Current?.TryGet(world, out RuntimeWorld? runtimeInstance) != true
+                || runtimeInstance is null)
                 return result;
 
             var sceneRoots = new HashSet<SceneNode>(System.Collections.Generic.ReferenceEqualityComparer.Instance);
@@ -419,7 +426,7 @@ namespace XREngine
         private static void RestoreScene(
             XRScene scene,
             byte[] data,
-            XRWorldInstance? runtimeInstance)
+            RuntimeWorld? runtimeInstance)
         {
             SnapshotDiagnostics.Log($"RestoreScene begin: target='{scene.Name ?? "<unnamed>"}' payloadBytes={data.Length} runtimeInstance={(runtimeInstance is null ? "<null>" : runtimeInstance.GetHashCode().ToString())}");
             var restoredScene = DeserializeObject<XRScene>(data);

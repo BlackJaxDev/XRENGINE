@@ -71,7 +71,7 @@ namespace XREngine.Components.Scene.Mesh
                 Volatile.Write(ref _currentLODRenderer, value?.Value.Renderer);
             }
         }
-        public IRuntimeRenderWorld? World => Component.SceneNode.World as IRuntimeRenderWorld;
+        public IRuntimeRenderWorld? World => Component.SceneNode.World.GetRenderWorld();
         public LinkedList<RenderableLOD> LODs { get; private set; } = new();
 
         private bool _renderBounds = RuntimeEngine.EditorPreferences.Debug.RenderMesh3DBounds;

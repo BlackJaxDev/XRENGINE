@@ -210,7 +210,9 @@ public sealed class RuntimeModularizationPhase5DependencyBoundaryTests
     public void AudioListenerWorldAttachment_IsOwnedByAudioIntegration()
     {
         string root = ResolveWorkspaceRoot();
-        string worldSource = File.ReadAllText(Path.Combine(root, "XRENGINE", "Rendering", "XRWorldInstance.cs"));
+        string worldSource = string.Concat(
+            File.ReadAllText(Path.Combine(root, "XREngine.Runtime.Core", "World", "RuntimeWorld.cs")),
+            File.ReadAllText(Path.Combine(root, "XREngine.Runtime.Rendering", "Rendering", "RuntimeWorldRenderer.cs")));
         string registrySource = File.ReadAllText(Path.Combine(
             root,
             "XREngine.Runtime.AudioIntegration",

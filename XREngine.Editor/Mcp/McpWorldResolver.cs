@@ -4,22 +4,16 @@ namespace XREngine.Editor.Mcp
 {
     public static class McpWorldResolver
     {
-        public static XRWorldInstance? TryGetActiveWorldInstance()
+        public static RuntimeWorld? TryGetActiveWorld()
         {
             foreach (var window in RuntimeEngine.Windows)
             {
-                var instance = window?.TargetWorldInstance as XRWorldInstance;
-                if (instance is not null)
-                    return instance;
+                if (window?.TargetWorldInstance is IRuntimeRenderWorld renderWorld
+                    && renderWorld.WorldContext is RuntimeWorld world)
+                    return world;
             }
 
-            foreach (var instance in XRWorldInstance.WorldInstances.Values)
-            {
-                if (instance is not null)
-                    return instance;
-            }
-
-            return null;
+            return RuntimeWorldRegistryServices.Current?.Snapshot().Values.FirstOrDefault();
         }
     }
 }

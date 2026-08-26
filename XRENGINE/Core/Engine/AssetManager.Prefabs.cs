@@ -16,7 +16,7 @@ namespace XREngine
         public static SceneNode? InstantiatePrefab(
             this AssetManager assets,
             XRPrefabSource prefab,
-            XRWorldInstance? world = null,
+            IRuntimeWorldContext? world = null,
             SceneNode? parent = null,
             bool maintainWorldTransform = false)
         {
@@ -25,7 +25,7 @@ namespace XREngine
         }
 
         public static SceneNode? InstantiatePrefab(this AssetManager assets, Guid prefabAssetId,
-                                            XRWorldInstance? world = null,
+                                            IRuntimeWorldContext? world = null,
                                             SceneNode? parent = null,
                                             bool maintainWorldTransform = false)
         {
@@ -38,7 +38,7 @@ namespace XREngine
         }
 
         public static SceneNode? InstantiatePrefab(this AssetManager assets, string assetPath,
-                                            XRWorldInstance? world = null,
+                                            IRuntimeWorldContext? world = null,
                                             SceneNode? parent = null,
                                             bool maintainWorldTransform = false)
         {
@@ -52,7 +52,7 @@ namespace XREngine
         }
 
         public static async Task<SceneNode?> InstantiatePrefabAsync(this AssetManager assets, string assetPath,
-                                                             XRWorldInstance? world = null,
+                                                             IRuntimeWorldContext? world = null,
                                                              SceneNode? parent = null,
                                                              bool maintainWorldTransform = false)
         {
@@ -67,7 +67,7 @@ namespace XREngine
 
         [RequiresUnreferencedCode("Prefab override reflection requires runtime metadata.")]
         public static SceneNode? InstantiateVariant(this AssetManager assets, XRPrefabVariant variant,
-                                             XRWorldInstance? world = null,
+                                             IRuntimeWorldContext? world = null,
                                              SceneNode? parent = null,
                                              bool maintainWorldTransform = false)
         {
@@ -77,7 +77,7 @@ namespace XREngine
 
         [RequiresUnreferencedCode("Prefab override reflection requires runtime metadata.")]
         public static SceneNode? InstantiateVariant(this AssetManager assets, Guid variantAssetId,
-                                             XRWorldInstance? world = null,
+                                             IRuntimeWorldContext? world = null,
                                              SceneNode? parent = null,
                                              bool maintainWorldTransform = false)
         {
@@ -91,7 +91,7 @@ namespace XREngine
 
         [RequiresUnreferencedCode("Prefab override reflection requires runtime metadata.")]
         public static SceneNode? InstantiateVariant(this AssetManager assets, string assetPath,
-                                             XRWorldInstance? world = null,
+                                             IRuntimeWorldContext? world = null,
                                              SceneNode? parent = null,
                                              bool maintainWorldTransform = false)
         {
@@ -108,7 +108,7 @@ namespace XREngine
         public static async Task<SceneNode?> InstantiateVariantAsync(
             this AssetManager assets,
             string assetPath,
-            XRWorldInstance? world = null,
+            IRuntimeWorldContext? world = null,
             SceneNode? parent = null,
             bool maintainWorldTransform = false)
         {

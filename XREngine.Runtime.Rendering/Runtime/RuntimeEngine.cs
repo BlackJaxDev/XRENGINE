@@ -41,7 +41,7 @@ public static partial class RuntimeEngine
     public static ColorF4 StartupPresentationClearColor { get; set; } = ColorF4.Black;
 
     internal static RuntimeTime Time { get; } = new();
-    internal static RuntimePlayMode PlayMode { get; } = new();
+    internal static RuntimePlayModeController PlayMode => RuntimePlayModeController.Current;
     internal static RuntimeGameSettings GameSettings { get; } = new();
     internal static RuntimeEditorPreferences EditorPreferences { get; } = new();
     internal static RuntimeEffectiveSettings EffectiveSettings { get; } = new();

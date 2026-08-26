@@ -266,7 +266,7 @@ public static partial class EditorImGuiUI
         {
             try
             {
-                XRWorldInstance? worldInstance = ResolveEditorWorldInstance();
+                RuntimeWorld? worldInstance = ResolveEditorWorldInstance();
                 if (worldInstance?.TargetWorld is null)
                 {
                     _controlPlaneStatus = "No editor world is loaded for the control-plane server.";
@@ -503,7 +503,7 @@ public static partial class EditorImGuiUI
                         joinResult.Message);
                 }
 
-                XRWorldInstance? worldInstance = ResolveEditorWorldInstance();
+                RuntimeWorld? worldInstance = ResolveEditorWorldInstance();
                 if (worldInstance is null)
                     return new ServerJoinAdmissionResult(null, AdmissionFailureReason.SessionNotFound, "No editor world instance is loaded.");
 
@@ -525,11 +525,11 @@ public static partial class EditorImGuiUI
             _controlPlaneResolverInstalled = false;
         }
 
-        private static XRWorldInstance? ResolveEditorWorldInstance()
+        private static RuntimeWorld? ResolveEditorWorldInstance()
         {
             foreach (var window in RuntimeEngine.Windows)
             {
-                if (window?.TargetWorldInstance is XRWorldInstance worldInstance)
+                if (window?.TargetWorldInstance?.WorldContext is RuntimeWorld worldInstance)
                     return worldInstance;
             }
 

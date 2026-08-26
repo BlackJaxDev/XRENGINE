@@ -10,7 +10,7 @@ namespace XREngine
         private List<GameWindowStartupSettings>? _windows = [];
 
         [MemoryPackIgnore]
-        private List<XRWorldInstance>? _worlds = [];
+        private List<RuntimeWorld>? _worlds = [];
 
         public List<GameWindowStartupSettings>? Windows
         {
@@ -19,7 +19,7 @@ namespace XREngine
         }
 
         [MemoryPackIgnore]
-        public List<XRWorldInstance>? Worlds
+        public List<RuntimeWorld>? Worlds
         {
             get => _worlds;
             set => SetField(ref _worlds, value);

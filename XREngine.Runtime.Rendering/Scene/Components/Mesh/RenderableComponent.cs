@@ -334,7 +334,7 @@ namespace XREngine.Components.Scene.Mesh
         }
 
         private IRuntimeRenderInfo3DRegistrationTarget? ActiveRenderWorld
-            => IsActiveInHierarchy ? World as IRuntimeRenderInfo3DRegistrationTarget : null;
+            => IsActiveInHierarchy ? World.GetRenderRegistrationTarget() : null;
 
         #endregion
 
@@ -365,7 +365,7 @@ namespace XREngine.Components.Scene.Mesh
                     IsActive,
                     Meshes.Count,
                     RenderedObjects.Length,
-                    WorldAs<XREngine.Rendering.IRuntimeRenderWorld>() is null);
+                    World.GetRenderWorld() is null);
             }
         }
 

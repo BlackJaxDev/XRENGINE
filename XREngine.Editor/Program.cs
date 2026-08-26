@@ -38,7 +38,6 @@ using XREngine.Scene;
 using XREngine.Scene.Transforms;
 using XREngine.Settings;
 using static XREngine.Engine;
-using static XREngine.Rendering.XRWorldInstance;
 
 internal partial class Program
 {
@@ -88,6 +87,8 @@ internal partial class Program
         using IDisposable editorSecretCipherServices =
             SecretCipherServices.Install(new EditorSecretCipherServices());
         XREnvironment.Initialize();
+        using IDisposable editorWorldHostCompositionServices =
+            RuntimeWorldHostCompositionServices.Install(new EditorRuntimeWorldHostCompositionServices());
         RuntimeRenderingBootstrap.InstallEngineHostServices();
         using IDisposable editorThirdPartyAssetWatcher = EditorThirdPartyAssetWatcher.Install(Engine.Assets);
         WriteBootstrapTrace("Editor process entry.");
@@ -968,9 +969,9 @@ internal partial class Program
         return EWorldMode.Default;
     }
 
-    private static void TargetWorldInstance_AnyTransformWorldMatrixChanged(XRWorldInstance instance, TransformBase tfm, Matrix4x4 mtx)
+    private static void TargetWorldInstance_AnyTransformWorldMatrixChanged(RuntimeWorld instance, TransformBase tfm, Matrix4x4 mtx)
     {
-        if (!PlayMode.IsEditing || instance.TransitioningPlay || instance.PlayState != EPlayState.Playing)
+        if (!PlayMode.IsEditing || instance.TransitioningPlay || instance.PlayState != RuntimeWorldPlayState.Playing)
             return;
         
         var sceneNode = tfm.SceneNode;

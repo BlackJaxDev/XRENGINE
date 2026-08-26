@@ -47,7 +47,7 @@ namespace XREngine.Scene.Prefabs
         /// <summary>
         /// Instantiates the variant by cloning the base prefab and replaying overrides.
         /// </summary>
-        public SceneNode Instantiate(XRWorldInstance? world = null,
+        public SceneNode Instantiate(IRuntimeWorldContext? world = null,
                                      SceneNode? parent = null,
                                      bool maintainWorldTransform = false)
         {

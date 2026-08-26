@@ -44,7 +44,7 @@ namespace XREngine.Editor.Mcp
             [McpName("scale_z"), Description("Local scale Z.")] float? scaleZ = null,
             [McpName("space"), Description("Transform space: local or world.")] string space = "local")
         {
-            if (!TryGetNodeById(context.WorldInstance, nodeId, out var node, out var error))
+            if (!TryGetNodeById(context.World, nodeId, out var node, out var error))
                 return Task.FromResult(new McpToolResponse(error ?? "Scene node not found.", isError: true));
 
             if (node!.Transform is not Transform transform)
@@ -122,7 +122,7 @@ namespace XREngine.Editor.Mcp
             [McpName("yaw"), Description("Yaw in degrees.")] float yaw,
             [McpName("roll"), Description("Roll in degrees.")] float roll)
         {
-            if (!TryGetNodeById(context.WorldInstance, nodeId, out var node, out var error))
+            if (!TryGetNodeById(context.World, nodeId, out var node, out var error))
                 return Task.FromResult(new McpToolResponse(error ?? "Scene node not found.", isError: true));
 
             if (node!.Transform is not Transform transform)

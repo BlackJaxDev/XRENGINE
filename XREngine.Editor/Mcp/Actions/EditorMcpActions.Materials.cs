@@ -261,7 +261,7 @@ namespace XREngine.Editor.Mcp
                 return false;
             }
 
-            if (!TryGetNodeById(context.WorldInstance, nodeId!, out var node, out var nodeError))
+            if (!TryGetNodeById(context.World, nodeId!, out var node, out var nodeError))
             {
                 error = nodeError ?? "Scene node not found.";
                 return false;

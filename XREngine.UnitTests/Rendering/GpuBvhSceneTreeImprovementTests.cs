@@ -123,7 +123,7 @@ public sealed class GpuBvhSceneTreeImprovementTests
     [Test]
     public void WorldBoundsChanges_ArePublishedThroughVisualSceneSetBounds()
     {
-        string world = ReadWorkspaceFile("XREngine/Rendering/XRWorldInstance.cs");
+        string world = ReadWorkspaceFile("XREngine.Runtime.Bootstrap/WorldHost/RuntimeWorldHost.cs");
 
         world.ShouldContain("case nameof(WorldSettings.Bounds):");
         world.ShouldContain("VisualScene.SetBounds(settings.Bounds)");

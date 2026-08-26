@@ -32,7 +32,8 @@ public class EditorViewCameraToolingTests
     [Test]
     public void ConfigureEditorViewCamera_SuppressesTransformToolAndTransformDebugMarkers()
     {
-        XRWorldInstance world = new(new VisualScene3D(), new JitterScene());
+        using RuntimeWorld world = new(new JitterScene());
+        using RuntimeWorldRenderer renderWorld = new(world, new VisualScene3D());
         SceneNode root = new("Root");
         SceneNode cameraNode = new(root, "Editor View");
 
@@ -53,7 +54,8 @@ public class EditorViewCameraToolingTests
     [Test]
     public void TransformTool3D_ConstructsForSelectableNode()
     {
-        XRWorldInstance world = new(new VisualScene3D(), new JitterScene());
+        using RuntimeWorld world = new(new JitterScene());
+        using RuntimeWorldRenderer renderWorld = new(world, new VisualScene3D());
         SceneNode root = new("Root");
         SceneNode target = new(root, "Target");
 

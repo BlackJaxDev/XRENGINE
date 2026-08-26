@@ -1,4 +1,5 @@
 using XREngine.Extensions;
+using XREngine.Editor;
 using System.Numerics;
 using XREngine.Components;
 using XREngine.Components.Physics;
@@ -110,11 +111,12 @@ namespace XREngine.Scene.Components.Editing
                 return null;
             }
 
-            XRWorldInstance? world = comp?.World as XRWorldInstance;
-            if (world is null)
+            if (comp?.World is not RuntimeWorld runtimeWorld)
                 return null;
 
-            if (_instanceNode?.World != world)
+            EditorWorldIntegration world = EditorWorldIntegrationRegistry.GetOrAttach(runtimeWorld);
+
+            if (_instanceNode?.World != runtimeWorld)
             {
                 _instanceNode?.Destroy();
                 _instanceNode = new SceneNode("TransformTool3D");
@@ -597,7 +599,7 @@ namespace XREngine.Scene.Components.Editing
             if (_targetSocket is not RigidBodyTransform rbt)
                 return;
 
-            AbstractPhysicsScene? physicsScene = (rbt.World as XRWorldInstance)?.PhysicsScene;
+            AbstractPhysicsScene? physicsScene = (rbt.World as IRuntimePhysicsWorldContext)?.PhysicsScene;
             if (physicsScene is null)
                 return;
 
@@ -611,7 +613,7 @@ namespace XREngine.Scene.Components.Editing
             if (_targetSocket is not RigidBodyTransform rbt)
                 return;
 
-            AbstractPhysicsScene? physicsScene = (rbt.World as XRWorldInstance)?.PhysicsScene;
+            AbstractPhysicsScene? physicsScene = (rbt.World as IRuntimePhysicsWorldContext)?.PhysicsScene;
             if (physicsScene is null)
                 return;
 

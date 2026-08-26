@@ -69,7 +69,7 @@ namespace XREngine.Editor.Mcp
             [McpName("node_id"), Description("Scene node ID to inspect.")]
             string nodeId)
         {
-            if (!TryGetNodeById(context.WorldInstance, nodeId, out var node, out var error))
+            if (!TryGetNodeById(context.World, nodeId, out var node, out var error))
                 return Task.FromResult(new McpToolResponse(error ?? "Scene node not found.", isError: true));
 
             var children = node!.Transform.Children
@@ -96,7 +96,7 @@ namespace XREngine.Editor.Mcp
             [McpName("node_id"), Description("Scene node ID to inspect.")]
             string nodeId)
         {
-            if (!TryGetNodeById(context.WorldInstance, nodeId, out var node, out var error))
+            if (!TryGetNodeById(context.World, nodeId, out var node, out var error))
                 return Task.FromResult(new McpToolResponse(error ?? "Scene node not found.", isError: true));
 
             var transform = node!.Transform;
@@ -123,7 +123,7 @@ namespace XREngine.Editor.Mcp
             [McpName("node_id"), Description("Scene node ID to inspect.")]
             string nodeId)
         {
-            if (!TryGetNodeById(context.WorldInstance, nodeId, out var node, out var error))
+            if (!TryGetNodeById(context.World, nodeId, out var node, out var error))
                 return Task.FromResult(new McpToolResponse(error ?? "Scene node not found.", isError: true));
 
             var transform = node!.Transform;
@@ -588,7 +588,7 @@ namespace XREngine.Editor.Mcp
         public static Task<McpToolResponse> GetSelectionAsync(McpToolContext context)
         {
             var selection = Selection.SceneNodes
-                .Where(node => node.World == context.WorldInstance)
+                .Where(node => node.World == context.World)
                 .Select(node => new
                 {
                     id = node.ID,
@@ -828,14 +828,14 @@ namespace XREngine.Editor.Mcp
             [McpName("include_component_types"), Description("Include component type counts per scene.")]
             bool includeComponentTypes = false)
         {
-            var world = context.WorldInstance.TargetWorld;
+            var world = context.World.TargetWorld;
             if (world is null)
                 return Task.FromResult(new McpToolResponse("No active world found.", isError: true));
 
             IEnumerable<XRScene> scenes;
             if (!string.IsNullOrWhiteSpace(sceneIdOrName))
             {
-                if (!TryResolveScene(context.WorldInstance, sceneIdOrName, out var scene, out var error))
+                if (!TryResolveScene(context.World, sceneIdOrName, out var scene, out var error))
                     return Task.FromResult(new McpToolResponse(error ?? "Scene not found.", isError: true));
 
                 scenes = scene is null ? [] : [scene];

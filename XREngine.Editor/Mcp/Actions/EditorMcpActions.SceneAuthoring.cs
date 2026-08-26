@@ -102,12 +102,12 @@ namespace XREngine.Editor.Mcp
             XRScene? scene = null;
             if (!string.IsNullOrWhiteSpace(parentId))
             {
-                if (!TryGetNodeById(context.WorldInstance, parentId!, out parent, out var parentError) || parent is null)
+                if (!TryGetNodeById(context.World, parentId!, out parent, out var parentError) || parent is null)
                     return new McpToolResponse(parentError ?? "Parent node not found.", isError: true);
             }
             else
             {
-                scene = ResolveScene(context.WorldInstance, sceneName);
+                scene = ResolveScene(context.World, sceneName);
                 if (scene is null)
                     return new McpToolResponse("No active scene found.", isError: true);
             }
@@ -116,7 +116,7 @@ namespace XREngine.Editor.Mcp
             SceneNode instance;
             try
             {
-                instance = prefab.Instantiate(context.WorldInstance, parent);
+                instance = prefab.Instantiate(context.World, parent);
             }
             catch (Exception ex)
             {
@@ -132,7 +132,7 @@ namespace XREngine.Editor.Mcp
             {
                 scene.RootNodes.Add(instance);
                 if (scene.IsVisible)
-                    context.WorldInstance.RootNodes.Add(instance);
+                    context.World.RootNodes.Add(instance);
             }
 
             // Apply transform overrides
@@ -141,7 +141,7 @@ namespace XREngine.Editor.Mcp
             // Record undo
             Undo.TrackSceneNode(instance);
             var sceneCapture = scene;
-            var worldCapture = context.WorldInstance;
+            var worldCapture = context.World;
             var parentCapture = parent;
             using var interaction = Undo.BeginUserInteraction();
             using var scope = Undo.BeginChange($"MCP Instantiate {prefab.Name}");
@@ -208,7 +208,7 @@ namespace XREngine.Editor.Mcp
             [McpName("name"), Description("Optional display name for the prefab asset.")]
             string? name = null)
         {
-            if (!TryGetNodeById(context.WorldInstance, nodeId, out var node, out var nodeError) || node is null)
+            if (!TryGetNodeById(context.World, nodeId, out var node, out var nodeError) || node is null)
                 return Task.FromResult(new McpToolResponse(nodeError ?? "Scene node not found.", isError: true));
 
             if (string.IsNullOrWhiteSpace(outputPath))
@@ -276,7 +276,7 @@ namespace XREngine.Editor.Mcp
             if (nodes.ValueKind != JsonValueKind.Array)
                 return Task.FromResult(new McpToolResponse("'nodes' must be a JSON array.", isError: true));
 
-            var world = context.WorldInstance;
+            var world = context.World;
             var scene = ResolveScene(world, sceneName);
             if (scene is null)
                 return Task.FromResult(new McpToolResponse("No active scene found.", isError: true));
@@ -420,7 +420,7 @@ namespace XREngine.Editor.Mcp
             if (operations.ValueKind != JsonValueKind.Array)
                 return Task.FromResult(new McpToolResponse("'operations' must be a JSON array.", isError: true));
 
-            var world = context.WorldInstance;
+            var world = context.World;
             var successes = new List<string>();
             var errors = new List<string>();
 
@@ -504,7 +504,7 @@ namespace XREngine.Editor.Mcp
             [McpName("make_visible"), Description("Whether to make the clone visible immediately.")]
             bool makeVisible = false)
         {
-            var world = context.WorldInstance;
+            var world = context.World;
             if (!TryResolveScene(world, sourceSceneName, out var sourceScene, out var error) || sourceScene is null)
                 return Task.FromResult(new McpToolResponse(error ?? "Source scene not found.", isError: true));
 

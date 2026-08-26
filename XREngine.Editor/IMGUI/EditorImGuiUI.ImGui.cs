@@ -2071,16 +2071,16 @@ public static partial class EditorImGuiUI
             }
         }
 
-        private static XRWorldInstance? TryGetActiveWorldInstance()
+        private static RuntimeWorld? TryGetActiveWorldInstance()
         {
             foreach (var window in RuntimeEngine.Windows)
             {
-                var instance = window?.TargetWorldInstance as XRWorldInstance;
+                var instance = window?.TargetWorldInstance?.WorldContext as RuntimeWorld;
                 if (instance is not null)
                     return instance;
             }
 
-            foreach (var instance in XRWorldInstance.WorldInstances.Values)
+            foreach (RuntimeWorld instance in Engine.WorldInstances)
             {
                 if (instance is not null)
                     return instance;

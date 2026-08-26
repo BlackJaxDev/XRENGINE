@@ -56,7 +56,7 @@ namespace XREngine.Editor.Mcp
             CancellationToken token = default)
         {
             XRViewport? viewport = ResolveViewport(
-                context.WorldInstance,
+                context.World,
                 cameraNodeId,
                 vrEye,
                 windowIndex,
@@ -293,7 +293,7 @@ namespace XREngine.Editor.Mcp
             [McpName("viewport_index"), Description("Optional viewport index to target.")] int viewportIndex = 0,
             CancellationToken token = default)
         {
-            XRViewport? viewport = ResolveViewport(context.WorldInstance, cameraNodeId, windowIndex, viewportIndex);
+            XRViewport? viewport = ResolveViewport(context.World, cameraNodeId, windowIndex, viewportIndex);
             if (viewport is null)
                 return new McpToolResponse("No viewport found.", isError: true);
 
@@ -335,7 +335,7 @@ namespace XREngine.Editor.Mcp
             [McpName("viewport_index"), Description("Optional viewport index to target.")] int viewportIndex = 0,
             CancellationToken token = default)
         {
-            XRViewport? viewport = ResolveViewport(context.WorldInstance, cameraNodeId, windowIndex, viewportIndex);
+            XRViewport? viewport = ResolveViewport(context.World, cameraNodeId, windowIndex, viewportIndex);
             if (viewport is null)
                 return new McpToolResponse("No viewport found.", isError: true);
 
@@ -394,7 +394,7 @@ namespace XREngine.Editor.Mcp
             out XRWindow? window,
             out string? error)
         {
-            viewport = ResolveViewport(context.WorldInstance, cameraNodeId, windowIndex, viewportIndex);
+            viewport = ResolveViewport(context.World, cameraNodeId, windowIndex, viewportIndex);
             pawn = null;
             window = null;
             error = null;
@@ -652,7 +652,7 @@ namespace XREngine.Editor.Mcp
             return tcs.Task;
         }
 
-        private static XRViewport? ResolveViewport(XRWorldInstance world, string? cameraNodeId, int windowIndex, int viewportIndex)
+        private static XRViewport? ResolveViewport(RuntimeWorld world, string? cameraNodeId, int windowIndex, int viewportIndex)
         {
             if (!string.IsNullOrWhiteSpace(cameraNodeId) && TryGetNodeById(world, cameraNodeId, out var node, out _))
             {
@@ -684,7 +684,7 @@ namespace XREngine.Editor.Mcp
         }
 
         private static XRViewport? ResolveViewport(
-            XRWorldInstance world,
+            RuntimeWorld world,
             string? cameraNodeId,
             string? vrEye,
             int windowIndex,

@@ -224,14 +224,20 @@ namespace XREngine.Editor.Mcp
                 || checkType.IsPointer || checkType.IsByRef || checkType.IsByRefLike)
                 return true;
 
-            // Skip complex engine types that don't have JSON serialization support.
-            // Heuristic: if the type is in an XREngine namespace and is not a simple
-            // value type / enum / string, it's very unlikely to roundtrip through JSON.
+            // Engine lifecycle objects carry identity, ownership, and activation state;
+            // constructing one as a side effect of a property edit is never valid. Plain
+            // engine data contracts with a public parameterless constructor are ordinary
+            // System.Text.Json DTOs, however, and must remain editable as structured values.
             string? ns = checkType.Namespace;
             if (ns is not null && ns.StartsWith("XREngine", StringComparison.Ordinal)
                 && !checkType.IsEnum && !checkType.IsValueType
                 && checkType != typeof(string))
-                return true;
+            {
+                if (typeof(XRBase).IsAssignableFrom(checkType))
+                    return true;
+
+                return checkType.GetConstructor(Type.EmptyTypes) is null;
+            }
 
             return false;
         }

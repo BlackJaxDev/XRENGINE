@@ -55,6 +55,12 @@ namespace XREngine.Components.Animation
 
         private static HumanoidPoseAuditReport SampleCore(AnimationClipComponent clipComponent, HumanoidComponent humanoid, int sampleRateOverride)
         {
+            lock (humanoid.PoseEvaluationSyncRoot)
+                return SampleCoreExclusive(clipComponent, humanoid, sampleRateOverride);
+        }
+
+        private static HumanoidPoseAuditReport SampleCoreExclusive(AnimationClipComponent clipComponent, HumanoidComponent humanoid, int sampleRateOverride)
+        {
             var clip = clipComponent.Animation ?? throw new InvalidOperationException("AnimationClipComponent has no assigned clip.");
             int sampleRate = ResolveSampleRate(clip, sampleRateOverride);
             float duration = Math.Max(0.0f, clip.LengthInSeconds);
@@ -69,7 +75,7 @@ namespace XREngine.Components.Animation
                 SampleRate = sampleRate,
                 SampleCount = sampleCount,
                 AvatarHumanScale = humanoid.AvatarDefinition.HumanScale,
-                EngineUnitsPerUnityMeter = humanoid.UnityProfileUnitsPerMeter,
+                EngineUnitsPerUnityMeter = ResolveEngineUnitsPerUnityMeter(humanoid),
             };
 
             using TransformDiagnosticEvaluationScope diagnosticScope = TransformBase.BeginDiagnosticEvaluation();
@@ -128,6 +134,18 @@ namespace XREngine.Components.Animation
             }
 
             return report;
+        }
+
+        private static float ResolveEngineUnitsPerUnityMeter(HumanoidComponent humanoid)
+        {
+            float profileUnits = humanoid.UnityProfileUnitsPerMeter;
+            if (float.IsFinite(profileUnits) && profileUnits > 0.0f)
+                return profileUnits;
+
+            float definitionUnits = humanoid.AvatarDefinition.ModelUnitsPerMeter;
+            return float.IsFinite(definitionUnits) && definitionUnits > 0.0f
+                ? definitionUnits
+                : 1.0f;
         }
 
         /// <summary>

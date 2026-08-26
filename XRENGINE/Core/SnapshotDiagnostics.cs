@@ -153,7 +153,7 @@ internal static class SnapshotDiagnostics
             ELogCategory.Rendering);
     }
 
-    public static void LogWorldInstanceAssetSummary(XRWorldInstance worldInstance, string phase)
+    public static void LogWorldInstanceAssetSummary(RuntimeWorld worldInstance, string phase)
     {
         WorldAssetSummary summary = new();
         Log(

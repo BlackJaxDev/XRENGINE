@@ -2,7 +2,8 @@
 
 Date: 2026-08-24
 
-Status: Complete; Unity v3 fixed-time, lifecycle, IK/contact, and live visual parity passed
+Status: Phase 6 complete; Unity fixed-time, full root-settings matrix, lifecycle,
+IK/contact, determinism, and live visual parity passed
 
 Related TODO: `docs/work/todo/avatar/humanoid-body-root-compensation-todo.md`
 
@@ -358,6 +359,116 @@ fresh XRENGINE silhouettes match the corresponding current Unity poses.
   goal exactly. Body projection and post-pose compensation retain independent
   diagnostics.
 
+## Phase 6 Completion: Unity Root-Motion Settings
+
+Phase 6 now executes the complete
+`UnityHumanoidClipRootMotionSettings` contract. The serialized DTO remains a
+lossless import record, while `UnityHumanoidRootMotionPolicy.TryCreate`
+validates and compiles it into the semantic orientation, Y, and XZ bases used
+by the evaluator. Non-finite numeric values, invalid source intervals, and the
+contradictory Original-Y plus Feet-Y combination are rejected with an explicit
+diagnostic instead of entering a partially supported path.
+
+The native evaluation order is now one transaction:
+
+1. derive the signed source time, normalized cycle offset, loop phase, and
+   temporal loop epoch from `StartTime`, `StopTime`, `CycleOffset`, and
+   `LoopTime`;
+2. evaluate curves into a complete canonical muscle/Body sample;
+3. apply within-cycle Loop Pose endpoint correction independently from signed
+   temporal root accumulation;
+4. mirror semantic muscles, Body/root trajectories, left/right roles, IK goals,
+   contact roles, and sole offsets when requested;
+5. select Original, Center of Mass, or Feet projection independently for
+   orientation, Y, and XZ, then apply Bake Into Pose, orientation offset, and
+   level exactly once;
+6. compose the remaining Body allocation into Hips in the exported
+   Hips-parent-to-Animator-root frame and remove the projected root exactly
+   once;
+7. publish the extracted placement/consecutive delta or apply it to the
+   explicitly configured target; and
+8. run optional IK/contact compensation after the native pose transaction.
+
+Direct clips and the state-machine path feed the same complete Body transaction.
+Extraction-only, explicit-target application, and external-consumer output
+share the same projected value, so changing the output mode does not evaluate
+the root policy a second time. Restart, direct seeks, forward/reverse playback,
+signed multi-loop epochs, and direct/state-machine handoff reset or preserve
+only the state their contracts name.
+
+The avatar profile schema is now version 5. It carries the Unity
+Hips-parent-to-Animator-root allocation frame and its inverse. This is required
+for avatars such as Mitsuki whose imported Armature was normalized to identity
+even though Unity evaluated Body channels in a rotated parent frame. Using the
+exported frame reduced Mitsuki's former roughly `45-50` engine-unit Hips-axis
+error to the coupled-muscle residual below. Older compatible profiles migrate
+through the normal avatar-definition pipeline; incompatible or non-finite
+frames are rejected by validation and included in the canonical definition
+hash.
+
+`HeightFromFeet` first uses the Unity-calibrated projected-Y model. Its
+geometry fallback now composes the current Hips-relative foot/toe FK rather
+than a neutral world offset, retains the measured sole thickness, supports
+missing optional toes, respects authored translation DoF, and mirrors semantic
+roles without double-reflecting the already mirrored live pose. Loop Pose
+float/vector endpoint deltas and quaternion endpoint corrections are cached at
+clip initialization, so the per-frame path performs only allocation-free
+lookups and interpolation. The 33-sample Mitsuki Loop Pose audit fell from more
+than three minutes to `13.34` seconds with bit-equivalent output.
+
+### Phase 6 Unity-reference matrix
+
+Unity 2022.3.22f1 regenerated schema-5 profiles and fixed-time references for
+Mitsuki, Akari, and Jess. XRENGINE runtime coverage used two unrelated avatars
+(Mitsuki and Akari), Sexy Walk and Basic Walk, all ten root-policy variants,
+and a cross-clip profile run. Representative 33/43-sample results are:
+
+| Runtime case | Root position average/max | Hips position average/max | Hips rotation average/max |
+| --- | ---: | ---: | ---: |
+| Mitsuki Sexy base | `0.01963 / 0.06289` units | `1.31075 / 2.10900` units | `0.03291 / 0.09691` deg |
+| Mitsuki Sexy combined | `0.02250 / 0.05625` units | `2.44424 / 3.13325` units | `0.03359 / 0.09691` deg |
+| Akari Sexy base | `0.00044 / 0.00141` units | `0.02785 / 0.04605` units | `0.04870 / 0.11191` deg |
+| Akari Sexy combined | `0.00050 / 0.00126` units | `0.05425 / 0.06921` units | `0.04515 / 0.11191` deg |
+| Akari Basic Walk | `<0.000001 / <0.000001` units | `0.01862 / 0.02306` units | `0.08063 / 0.13706` deg |
+| Akari Basic Walk with the Sexy profile | `0.00805 / 0.01830` units | `0.02114 / 0.03083` units | `2.00313 / 2.55067` deg |
+
+The ten-variant matrices cover nonzero `OrientationOffsetY`, `Level`, and
+`CycleOffset`; each Bake flag; Original, Center-of-Mass, and Feet bases;
+mirror; Loop Pose; and a combined nonzero/mirrored/Loop-Pose case. Unity also
+exported deliberately non-seam references with and without baked XZ so seam
+correction remains a separate oracle from loop-root accumulation. The final
+Mitsuki first eight variants are under
+`reports/runtime-matrix-v55-mitsuki-final-fk/`; final Combined and Loop Pose
+are under `reports/runtime-matrix-v56-mitsuki-loop-final/`; the Akari matrices
+are under `reports/runtime-matrix-v52-akari-basic-final/`,
+`reports/runtime-matrix-v53-akari-cross-clip-final/`, and
+`reports/runtime-matrix-v54-akari-sexy-final/`, all relative to
+`Build/_AgentValidation/20260825-204254-humanoid-root-phase6/`.
+
+Repeating the hardest Mitsuki Combined case produced byte-identical audit JSON
+(`SHA-256 C1EA66254315631F872FC8CA2135B8527C96521AE749A1F387F32EA547BFE1B2`)
+and identical comparison metrics; the comparison files differ only in their
+recorded output path. Direct fixed-time replay is likewise bit-exact, and the
+single-state state-machine result remains identical to direct evaluation.
+
+Mitsuki's remaining base Hips translation average/max is approximately
+`3.33 / 5.36 cm` at its measured `39.370068` units per meter. A Unity
+full-muscle replay shows about `2.96 cm` of Hips translation that is absent from
+the reduced coupled-muscle probe set, explaining this bounded residual. Root
+position and Hips rotation remain substantially tighter, the error does not
+accumulate, and this is no longer a Body/root axis or allocation defect.
+
+The final-binary live sequence is under
+`mcp-captures/mitsuki-phase6-final-runtime/`; the complete earlier 10-frame
+loop is under `mcp-captures/mitsuki-phase6-final-loop/`; and the fresh opposite
+camera checks are under `mcp-captures/mitsuki-phase6-final-opposite/` and
+`mcp-captures/mitsuki-phase6-final-opposite-full/`, relative to the same Phase
+6 run root. Inspected frames show one coherent animated silhouette with no
+stale duplicate or cumulative root drift. OpenGL readback dropped intermediate
+frames in one fresh sequence because its bounded capture queue was saturated;
+the completed frames, explicit opposite-camera captures, animation evaluator,
+and numerical reports were unaffected.
+
 ## Visual and Renderer Isolation
 
 The complete opposite-camera FXAA sequence is:
@@ -396,9 +507,16 @@ It does not change the passing humanoid animation result.
   `Manage-McpEditorSession.ps1`; no unrelated editor was stopped.
 - Unit Testing World settings and schema were regenerated and restored to the
   canonical Vulkan/Jax/Sponza configuration with animation/audit/IK disabled.
+- The Phase 6 continuation regenerated the Unity matrix, produced clean
+  zero-warning/zero-error animation-integration and isolated full-editor
+  builds, repeated the Combined audit byte-exactly, inspected live captures
+  from both sides, and stopped only the named
+  `humanoid-root-phase6-akari-matrix` session. No tests were added, modified, or
+  run during this feature-validation continuation, following the repository's
+  required live-path-first sequencing.
 
-User validation status: all humanoid Body/root compensation phases are complete
-and the live XRENGINE animation passes the Unity parity gate. Missing textures,
-the scale-blind skin-explosion warning threshold, and ordinary skinned motion
-vectors remain separate rendering/import diagnostics rather than animation-pose
-gaps.
+User validation status: humanoid Body/root compensation through Phase 6 is
+complete and the live XRENGINE animation passes the Unity parity gate. Later
+TODO phases remain intentionally open. Missing textures, the scale-blind
+skin-explosion warning threshold, and ordinary skinned motion vectors remain
+separate rendering/import diagnostics rather than animation-pose gaps.

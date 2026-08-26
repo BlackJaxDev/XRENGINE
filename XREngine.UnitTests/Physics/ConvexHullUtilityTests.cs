@@ -18,23 +18,39 @@ namespace XREngine.UnitTests.Physics;
 public sealed class ConvexHullUtilityTests
 {
     private string? _cacheRoot;
+    private IDisposable? _physicsServicesLease;
 
     [SetUp]
     public void SetUp()
     {
         _cacheRoot = Path.Combine(Path.GetTempPath(), $"xre_coacd_cache_test_{Guid.NewGuid():N}");
         ConvexHullDiskCache.CacheRootOverride = _cacheRoot;
+        _physicsServicesLease = RuntimePhysicsServices.Install(
+            RuntimePhysicsServices.Current,
+            new EngineConvexHullInputProvider());
     }
 
     [TearDown]
     public void TearDown()
     {
         ConvexHullDiskCache.CacheRootOverride = null;
+        _physicsServicesLease?.Dispose();
+        _physicsServicesLease = null;
 
         if (!string.IsNullOrWhiteSpace(_cacheRoot) && Directory.Exists(_cacheRoot))
             Directory.Delete(_cacheRoot, recursive: true);
 
         _cacheRoot = null;
+    }
+
+    private static List<ConvexHullInput> CollectCollisionInputs(ModelComponent modelComponent)
+    {
+        var provider = new EngineConvexHullInputProvider();
+        provider.TryCollect(modelComponent, out ConvexHullInputCollection inputs, out _).ShouldBeTrue();
+        foreach (ConvexHullInputBatch batch in inputs.EnumeratePreferredBatches())
+            return batch.Inputs;
+
+        return [];
     }
 
     [Test]
@@ -43,7 +59,7 @@ public sealed class ConvexHullUtilityTests
         var (_, modelComponent) = CreateComponentPair();
         AttachModel(modelComponent);
 
-        var inputs = ConvexHullUtility.CollectCollisionInputs(modelComponent);
+        var inputs = CollectCollisionInputs(modelComponent);
 
         inputs.ShouldNotBeEmpty();
         inputs[0].Positions.Length.ShouldBe(4);
@@ -57,7 +73,7 @@ public sealed class ConvexHullUtilityTests
         AttachModel(modelComponent);
         modelComponent.Meshes.Clear();
 
-        var inputs = ConvexHullUtility.CollectCollisionInputs(modelComponent);
+        var inputs = CollectCollisionInputs(modelComponent);
 
         inputs.ShouldHaveSingleItem();
         inputs[0].Positions.Length.ShouldBe(4);
@@ -175,7 +191,7 @@ public sealed class ConvexHullUtilityTests
                 Vector3.UnitY),
             maxVisibleDistance: 0f)));
 
-        var inputs = ConvexHullUtility.CollectCollisionInputs(modelComponent);
+        var inputs = CollectCollisionInputs(modelComponent);
 
         inputs.ShouldHaveSingleItem();
         inputs[0].Positions.Length.ShouldBe(3);

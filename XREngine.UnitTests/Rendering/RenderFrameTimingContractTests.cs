@@ -11,7 +11,7 @@ public sealed class RenderFrameTimingContractTests
     [Test]
     public void WorldPreCollectVisible_AppliesRenderableMatricesBeforeCpuTreeSwap()
     {
-        string source = ReadWorkspaceFile("XRENGINE/Rendering/XRWorldInstance.cs").Replace("\r\n", "\n");
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/RuntimeWorldRenderer.cs").Replace("\r\n", "\n");
 
         int preCollectStart = source.IndexOf("public void GlobalPreCollectVisible()", StringComparison.Ordinal);
         preCollectStart.ShouldBeGreaterThanOrEqualTo(0);
@@ -55,7 +55,7 @@ public sealed class RenderFrameTimingContractTests
     [Test]
     public void RuntimeWorld_GlobalPreCollectVisible_PublishesPendingMeshMatrices()
     {
-        string source = ReadWorkspaceFile("XRENGINE/Rendering/XRWorldInstance.cs").Replace("\r\n", "\n");
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/RuntimeWorldRenderer.cs").Replace("\r\n", "\n");
 
         int preCollectStart = source.IndexOf("public void GlobalPreCollectVisible()", StringComparison.Ordinal);
         preCollectStart.ShouldBeGreaterThanOrEqualTo(0);

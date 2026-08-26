@@ -1995,16 +1995,14 @@ internal sealed class EngineRuntimeRenderingHostServices :
         Action<SortedDictionary<float, List<(XRComponent? item, object? data)>>?> physicsFinishedCallback,
         bool useUnjitteredProjection)
     {
-        if (viewport.World is XRWorldInstance world)
+        if (viewport.World?.WorldContext is RuntimeWorld world)
         {
             world.RaycastPhysicsAsync(
-                camera,
-                normalizedViewportPosition,
+                camera.Camera.GetWorldSegment(normalizedViewportPosition, useUnjitteredProjection),
                 layerMask,
                 filter as AbstractPhysicsScene.IAbstractQueryFilter,
                 orderedPhysicsResults,
-                physicsFinishedCallback,
-                useUnjitteredProjection);
+                physicsFinishedCallback);
         }
     }
 

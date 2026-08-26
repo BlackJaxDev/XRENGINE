@@ -11,22 +11,38 @@ namespace XREngine.Editor.Mcp
         /// <summary>
         /// Creates a new tool context.
         /// </summary>
-        /// <param name="worldInstance">The optional active world instance for the tool to operate on.</param>
-        public McpToolContext(XRWorldInstance? worldInstance)
+        /// <param name="world">The optional active Core world for the tool to operate on.</param>
+        public McpToolContext(RuntimeWorld? world)
         {
-            WorldInstanceOrNull = worldInstance;
+            WorldOrNull = world;
             Capabilities = McpCapability.ProfilerSession;
-            if (worldInstance is not null)
-                Capabilities |= McpCapability.World | McpCapability.Renderer | McpCapability.RenderTarget;
+            if (world is not null)
+                Capabilities |= McpCapability.World;
+            if (world?.TryGetCapability<IRuntimeRenderWorld>(out _) == true)
+                Capabilities |= McpCapability.Renderer | McpCapability.RenderTarget;
         }
 
         /// <summary>
-        /// The active world instance that the tool should operate on.
+        /// The active Core world that the tool should operate on.
         /// </summary>
-        public XRWorldInstance WorldInstance
-            => WorldInstanceOrNull ?? throw new InvalidOperationException("This MCP tool requires an active world instance.");
+        public RuntimeWorld World
+            => WorldOrNull ?? throw new InvalidOperationException("This MCP tool requires an active runtime world.");
 
-        public XRWorldInstance? WorldInstanceOrNull { get; }
+        public RuntimeWorld? WorldOrNull { get; }
+
+        /// <summary>Resolves the rendering capability only for tools that require it.</summary>
+        public IRuntimeRenderWorld RenderWorld
+            => World.TryGetCapability<IRuntimeRenderWorld>(out IRuntimeRenderWorld? renderWorld)
+                && renderWorld is not null
+                ? renderWorld
+                : throw new InvalidOperationException("This MCP tool requires a rendering capability attached to the active runtime world.");
+
+        /// <summary>Resolves editor-only scene policy explicitly rather than through the Core world.</summary>
+        public EditorWorldIntegration EditorWorld
+            => EditorWorldIntegrationRegistry.TryGet(World, out EditorWorldIntegration? editorWorld)
+                && editorWorld is not null
+                ? editorWorld
+                : throw new InvalidOperationException("This MCP tool requires editor-world integration for the active runtime world.");
 
         public McpCapability Capabilities { get; }
     }

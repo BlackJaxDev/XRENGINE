@@ -348,7 +348,7 @@ public sealed class MonkeyBallGameComponent : XRComponent, IMonkeyBallGameInputT
             !MonkeyBallRuntimeValidation.Enabled)
             return;
 
-        AbstractPhysicsScene? scene = WorldAs<XRWorldInstance>()?.PhysicsScene;
+        AbstractPhysicsScene? scene = WorldAs<RuntimeWorld>()?.PhysicsScene;
         if (ReferenceEquals(_diagnosticPhysicsScene, scene))
             return;
 
@@ -373,7 +373,7 @@ public sealed class MonkeyBallGameComponent : XRComponent, IMonkeyBallGameInputT
 
     private bool RecordPhysicsRuntimeState()
     {
-        if (WorldAs<XRWorldInstance>() is not XRWorldInstance world ||
+        if (WorldAs<RuntimeWorld>() is not RuntimeWorld world ||
             _courseBody is null ||
             _ballBody is null ||
             _ballTransform is null)
@@ -636,7 +636,7 @@ public sealed class MonkeyBallGameComponent : XRComponent, IMonkeyBallGameInputT
         Vector3 velocity = GetBallCachedVelocity();
         IAbstractDynamicRigidBody? ballActor = _ballBody?.RigidBody;
         IAbstractDynamicRigidBody? courseActor = _courseBody?.RigidBody;
-        XRWorldInstance? world = WorldAs<XRWorldInstance>();
+        RuntimeWorld? world = WorldAs<RuntimeWorld>();
         bool courseInScene =
             world is not null && IsActorInScene(courseActor, world.PhysicsScene);
         bool ballInScene =

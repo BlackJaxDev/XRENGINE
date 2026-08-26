@@ -515,7 +515,7 @@ public sealed class AtmosphericScatteringComponent : XRComponent, IRenderable
 
     private void RefreshRegistration()
     {
-        var world = WorldAs<IRuntimeRenderWorld>();
+        var world = World.GetRenderWorld();
         bool shouldRegister = world is not null && IsActiveInHierarchy && _enabled;
 
         if (_registeredWorld is not null && (!shouldRegister || !ReferenceEquals(_registeredWorld, world)))
@@ -572,7 +572,7 @@ public sealed class AtmosphericScatteringComponent : XRComponent, IRenderable
 
     private DirectionalLightComponent? ResolvePrimaryDirectionalLight()
     {
-        var world = WorldAs<IRuntimeRenderWorld>();
+        var world = World.GetRenderWorld();
         var lights = world?.Lights.DynamicDirectionalLights;
         if (lights is null || lights.Count == 0)
             return null;

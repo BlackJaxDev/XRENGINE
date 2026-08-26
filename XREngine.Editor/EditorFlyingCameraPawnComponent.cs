@@ -927,7 +927,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         // Create a temporary node for the debug camera
         _debugCameraNode = SceneNode.Parent is not null 
             ? SceneNode.Parent.NewChild("DebugCameraVisualization")
-            : (SceneNode.World as XRWorldInstance)?.RootNodes.NewRootNode("DebugCameraVisualization");
+            : (SceneNode.World as RuntimeWorld)?.RootNodes.NewRootNode("DebugCameraVisualization");
         if (_debugCameraNode is null)
             return;
             
@@ -2860,8 +2860,10 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
 
     private void ToggleEditorImGuiOverlay()
     {
-        if (SceneNode?.World is not XRWorldInstance world)
+        if (SceneNode?.World is not RuntimeWorld runtimeWorld)
             return;
+
+        EditorWorldIntegration world = EditorWorldIntegrationRegistry.GetOrAttach(runtimeWorld);
 
         // In ImGui-editor mode, F11 should only toggle profiler visibility.
         // Keep the editor renderer attached so we don't lose the editor UI.
@@ -2886,13 +2888,13 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
     internal void ToggleProfilerShortcutFromImGui()
         => ToggleEditorImGuiOverlay();
 
-    private static bool IsEditorImGuiOverlayEnabled(XRWorldInstance world)
+    private static bool IsEditorImGuiOverlayEnabled(EditorWorldIntegration world)
     {
         var node = FindEditorImGuiNode(world);
         return node?.GetComponent<DearImGuiComponent>() is not null;
     }
 
-    private static SceneNode? FindEditorUiRoot(XRWorldInstance world)
+    private static SceneNode? FindEditorUiRoot(EditorWorldIntegration world)
     {
         foreach (var node in world.EditorScene.RootNodes)
         {
@@ -2903,7 +2905,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         return null;
     }
 
-    private static SceneNode? FindEditorImGuiNode(XRWorldInstance world)
+    private static SceneNode? FindEditorImGuiNode(EditorWorldIntegration world)
     {
         var root = FindEditorUiRoot(world);
         if (root is null)
@@ -2923,13 +2925,13 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         return null;
     }
 
-    private static SceneNode EnsureEditorUiRoot(XRWorldInstance world)
+    private static SceneNode EnsureEditorUiRoot(EditorWorldIntegration world)
     {
         var root = FindEditorUiRoot(world);
         if (root is not null)
             return root;
 
-        root = new SceneNode(world, EditorImGuiRootNodeName) { IsEditorOnly = true };
+        root = new SceneNode(world.World, EditorImGuiRootNodeName) { IsEditorOnly = true };
         var canvas = root.AddComponent<UICanvasComponent>();
         var canvasTfm = canvas?.CanvasTransform;
         if (canvasTfm is not null)
@@ -2966,7 +2968,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         return node;
     }
 
-    private DearImGuiComponent? EnsureEditorImGuiOverlayComponent(XRWorldInstance world)
+    private DearImGuiComponent? EnsureEditorImGuiOverlayComponent(EditorWorldIntegration world)
     {
         var root = EnsureEditorUiRoot(world);
         var canvas = root.GetComponent<UICanvasComponent>() ?? root.AddComponent<UICanvasComponent>();
@@ -2989,7 +2991,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         return node.GetComponent<DearImGuiComponent>() ?? node.AddComponent<DearImGuiComponent>();
     }
 
-    private void SetEditorImGuiOverlayEnabled(XRWorldInstance world, bool enable)
+    private void SetEditorImGuiOverlayEnabled(EditorWorldIntegration world, bool enable)
     {
         if (enable)
         {
@@ -3350,7 +3352,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
     private List<SceneNode> CollectFrustumSelection(Frustum frustum, bool containsOnly)
     {
         var selectedNodes = new HashSet<SceneNode>();
-        var scene = WorldAs<XREngine.Rendering.XRWorldInstance>()?.VisualScene as VisualScene3D;
+        var scene = WorldAs<IRuntimeRenderWorld>()?.VisualScene as VisualScene3D;
         if (scene is null)
             return [];
 

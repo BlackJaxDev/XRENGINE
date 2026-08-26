@@ -36,16 +36,34 @@
     <PackageReference Include="Silk.NET.Core" Version="2.23.0" />
     <PackageReference Include="Silk.NET.DirectStorage" Version="2.23.0" />
     <PackageReference Include="Silk.NET.DirectStorage.Native" Version="1.3.0" />
+    <PackageReference Include="System.IO.Hashing" Version="10.0.10" />
     <PackageReference Include="YamlDotNet" Version="18.1.0" />
   </ItemGroup>
 
 
   <ItemGroup>
+    <None Update="runtimes\win-x64\native\lib_coacd.dll">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </None>
     <None Update="runtimes\win-x64\native\libmagicphysx.dll">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
     </None>
   </ItemGroup>
+
+  <PropertyGroup>
+    <CoACDBuildScript Condition="'$(CoACDBuildScript)' == ''">$(SolutionDir)Tools\Dependencies\Build-CoACD.ps1</CoACDBuildScript>
+    <CoACDRef Condition="'$(CoACDRef)' == ''">1.0.7</CoACDRef>
+    <CoACDRid Condition="'$(CoACDRid)' == '' and '$(RuntimeIdentifier)' != ''">$(RuntimeIdentifier)</CoACDRid>
+    <CoACDRid Condition="'$(CoACDRid)' == ''">win-x64</CoACDRid>
+    <ForceCoACDBuildSwitch Condition="'$(ForceCoACDBuild)' == 'true'">-ForceBuild</ForceCoACDBuildSwitch>
+  </PropertyGroup>
+
+  <Target Name="EnsureCoACD" BeforeTargets="PrepareForBuild" Condition="'$(OS)' == 'Windows_NT' and Exists('$(CoACDBuildScript)') and ('$(CoACDRid)' != '') and ('$(ForceCoACDBuild)' == 'true' or !Exists('$(MSBuildProjectDirectory)\\runtimes\\$(CoACDRid)\\native\\lib_coacd.dll'))">
+    <Message Text="Ensuring CoACD native library ($(CoACDRid))" Importance="High" />
+    <Exec Command="powershell -NoProfile -ExecutionPolicy Bypass -File &quot;$(CoACDBuildScript)&quot; -Rid $(CoACDRid) -Ref $(CoACDRef) -Configuration $(Configuration) $(ForceCoACDBuildSwitch)" />
+  </Target>
   <ItemGroup>
     <ProjectReference Include="..\XREngine.Data\XREngine.Data.csproj" />
     <ProjectReference Include="..\XREngine.Extensions\XREngine.Extensions.csproj" />

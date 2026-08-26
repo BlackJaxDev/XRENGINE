@@ -40,7 +40,7 @@ namespace XREngine
 
         public virtual FlyingCameraPawnComponent? EnableNoClip(ELocalPlayerIndex playerIndex)
         {
-            if (WorldInstance is not XRWorldInstance worldInstance)
+            if (WorldInstance is not RuntimeWorld worldInstance)
                 return null;
 
             if (_noClipPawns.TryGetValue(playerIndex, out var existing) && existing is not null && !existing.IsDestroyed)
