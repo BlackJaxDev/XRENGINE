@@ -22,6 +22,7 @@ namespace XREngine.Rendering.Vulkan
                 : BlockingAcquireTimeoutNanoseconds;
 
             long stageStartTimestamp = Stopwatch.GetTimestamp();
+            attempt.AcquireStartedTimestamp = stageStartTimestamp;
             using (RuntimeRenderingHostServices.Profiling.StartProfileScope(
                        "Vulkan.FrameLifecycle.AcquireNextImage"))
             {
@@ -84,6 +85,7 @@ namespace XREngine.Rendering.Vulkan
 
             attempt.Timing.AcquireImage +=
                 Stopwatch.GetElapsedTime(stageStartTimestamp);
+            attempt.AcquireCompletedTimestamp = Stopwatch.GetTimestamp();
 
             if (VulkanFrameDiagnosticsTraceEnabled)
             {
@@ -163,6 +165,8 @@ namespace XREngine.Rendering.Vulkan
                 attempt.AcquireResult,
                 attempt.AcquireSemaphore,
                 attempt.PresentSemaphore);
+            attempt.ExpectedPresentWaitSemaphore =
+                attempt.FrameTargetLease.SubmissionWaitSemaphore;
             attempt.AdvanceTo(EDesktopFramePhase.ImageAcquired);
             return EDesktopFrameFlow.Continue;
         }

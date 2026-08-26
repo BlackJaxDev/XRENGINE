@@ -247,6 +247,26 @@ namespace XREngine.Scene
             RenderShadowMapsInternal(collectVisibleNow, includeAuxiliaryCaptures: false);
         }
 
+        /// <summary>
+        /// Captures the immutable shadow-atlas dependency for a terminal output.
+        /// Callers must capture this after collection/planning and complete it
+        /// before recording the consumer command stream.
+        /// </summary>
+        public ShadowAtlasReadinessManifest CaptureShadowReadiness(
+            in RenderOutputRequest outputRequest)
+            => ShadowAtlas.CaptureReadinessManifest(
+                ShadowAtlasReadinessContract.FromOutputRequest(outputRequest));
+
+        /// <summary>
+        /// Completes a captured terminal shadow dependency. This path never
+        /// applies the ordinary background atlas tile or time budgets to an
+        /// exact PresentNow output.
+        /// </summary>
+        public ShadowAtlasReadinessResult CompleteShadowReadiness(
+            in ShadowAtlasReadinessManifest manifest,
+            bool collectVisibleNow = true)
+            => ShadowAtlas.CompleteReadinessManifest(manifest, collectVisibleNow);
+
         public void RenderShadowMaps(bool collectVisibleNow)
         {
             using var sample = RuntimeEngine.Profiler.Start("Lights3DCollection.RenderShadowMaps");

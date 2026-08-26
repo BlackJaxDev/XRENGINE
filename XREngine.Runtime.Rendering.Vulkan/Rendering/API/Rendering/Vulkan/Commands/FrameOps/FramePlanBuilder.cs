@@ -11,53 +11,92 @@ namespace XREngine.Rendering.Vulkan;
 /// </summary>
 internal sealed class FramePlanBuilder
 {
+    private const int FrameSlotCapacity = 4;
+    private const int StaticOperationCapacity = VulkanAcceptedFramePlan.StaticCapacity;
+    private const int DynamicOperationCapacity = VulkanAcceptedFramePlan.UiCapacity;
+    private const int TextureUploadOperationCapacity = VulkanAcceptedFramePlan.UploadCapacity;
+    private const int TotalPublishedOperationCapacity =
+        StaticOperationCapacity + DynamicOperationCapacity;
+    private const int ResourceUseCapacity = 65536;
+    private const int ResourceDependencyEdgeCapacity = 65536;
+    private const int GeneralStaticPayloadCapacity = 2048;
+    private const int GeneralDynamicPayloadCapacity = 512;
+    private const int GeneralUploadPayloadCapacity = 256;
+    private const int OutputCapacity = 512;
+    private const int OutputNodeCapacity = 4096;
+    private const int PlannerContextCapacity = 256;
+    private const int ViewCapacity = 256;
+
     private readonly record struct ResourceVersionKey(ulong ResourceId, ulong Version);
     private readonly VulkanFrameOperationScheduler _frameScheduler = new();
 
     private sealed class Slot
     {
-        internal readonly ViewSetPlan ViewSet = new();
+        internal readonly ViewSetPlan ViewSet = new(ViewCapacity, fixedCapacity: true);
         internal readonly FramePlan Plan;
-        internal readonly FrameOperationStream Operations = new();
-        internal readonly FrameOperationStream DynamicOverlayOperations = new();
-        internal readonly FrameOperationStream TextureUploadOperations = new();
+        internal readonly FrameOperationStream Operations = new(
+            StaticOperationCapacity,
+            ResourceUseCapacity,
+            GeneralStaticPayloadCapacity,
+            StaticOperationCapacity,
+            texturePayloadCapacity: GeneralStaticPayloadCapacity,
+            lane: EVulkanAcceptedFrameLane.MainScene);
+        internal readonly FrameOperationStream DynamicOverlayOperations = new(
+            DynamicOperationCapacity,
+            ResourceUseCapacity / 8,
+            GeneralDynamicPayloadCapacity,
+            DynamicOperationCapacity,
+            texturePayloadCapacity: GeneralDynamicPayloadCapacity,
+            lane: EVulkanAcceptedFrameLane.Ui);
+        internal readonly FrameOperationStream TextureUploadOperations = new(
+            TextureUploadOperationCapacity,
+            ResourceUseCapacity / 4,
+            GeneralUploadPayloadCapacity,
+            meshPayloadCapacity: GeneralUploadPayloadCapacity,
+            texturePayloadCapacity: TextureUploadOperationCapacity,
+            lane: EVulkanAcceptedFrameLane.Upload);
         internal readonly FrameOperationIngress StaticIngress = new();
         internal readonly FrameOperationIngress DynamicIngress = new();
         internal readonly FrameOperationIngress TextureUploadIngress = new();
         // Authoring arrays are never published. The slot's operation streams
         // are the plan-owned representation after numeric ordering.
-        internal int[] OperationOrderScratch = new int[64];
-        internal int[] OperationDependencyScratch = new int[64];
-        internal int[] OperationTopologicalOrderScratch = new int[64];
-        internal int[] OperationPriorityScratch = new int[64];
-        internal int[] OperationReadyHeapScratch = new int[64];
-        internal int[] ResourceProducerDependencyScratch = new int[64];
-        internal int[] DependencyFirstEdgeScratch = new int[64];
-        internal int[] DependencyEdgeConsumerScratch = new int[256];
-        internal int[] DependencyEdgeNextScratch = new int[256];
-        internal readonly Dictionary<ResourceVersionKey, int> LastResourceWriters = new(256);
-        internal int[] DynamicOverlayOperationOrderScratch = new int[16];
-        internal OutputRequest[] Outputs = new OutputRequest[8];
-        internal RenderOutputRequest[] OutputGraphRequests = new RenderOutputRequest[8];
+        internal int[] OperationOrderScratch = new int[StaticOperationCapacity];
+        internal int[] OperationDependencyScratch = new int[StaticOperationCapacity];
+        internal int[] OperationTopologicalOrderScratch = new int[StaticOperationCapacity];
+        internal int[] OperationPriorityScratch = new int[StaticOperationCapacity];
+        internal int[] OperationReadyHeapScratch = new int[StaticOperationCapacity];
+        internal int[] ResourceProducerDependencyScratch = new int[StaticOperationCapacity];
+        internal int[] DependencyFirstEdgeScratch = new int[StaticOperationCapacity];
+        internal int[] DependencyEdgeConsumerScratch = new int[ResourceDependencyEdgeCapacity];
+        internal int[] DependencyEdgeNextScratch = new int[ResourceDependencyEdgeCapacity];
+        internal readonly Dictionary<ResourceVersionKey, int> LastResourceWriters =
+            new(ResourceDependencyEdgeCapacity);
+        internal int[] DynamicOverlayOperationOrderScratch = new int[DynamicOperationCapacity];
+        internal OutputRequest[] Outputs = new OutputRequest[OutputCapacity];
+        internal RenderOutputRequest[] OutputGraphRequests = new RenderOutputRequest[OutputCapacity];
         internal RenderOutputSchedulingDecision[] OutputDecisions =
-            new RenderOutputSchedulingDecision[8];
-        internal bool[] OutputDue = new bool[8];
-        internal int[] OutputExecutionRanks = new int[8];
+            new RenderOutputSchedulingDecision[OutputCapacity];
+        internal bool[] OutputDue = new bool[OutputCapacity];
+        internal int[] OutputExecutionRanks = new int[OutputCapacity];
         internal RenderOutputDagNodeDescriptor[] OutputExecutionNodes =
-            new RenderOutputDagNodeDescriptor[32];
-        internal int[] OutputNodeOrderScratch = new int[32];
-        internal int[] OutputNodeIndegreeScratch = new int[32];
-        internal FramePlanOperationKey[] OperationKeys = new FramePlanOperationKey[64];
-        internal VulkanFrameOpPlannerStateKey[] StaticPlannerContextKeys = new VulkanFrameOpPlannerStateKey[8];
-        internal FrameOpContext[] StaticPlannerContexts = new FrameOpContext[8];
-        internal VulkanRenderGraphPlan[] StaticPlannerContextPlans = new VulkanRenderGraphPlan[8];
+            new RenderOutputDagNodeDescriptor[OutputNodeCapacity];
+        internal int[] OutputNodeOrderScratch = new int[OutputNodeCapacity];
+        internal int[] OutputNodeIndegreeScratch = new int[OutputNodeCapacity];
+        internal FramePlanOperationKey[] OperationKeys =
+            new FramePlanOperationKey[TotalPublishedOperationCapacity];
+        internal VulkanFrameOpPlannerStateKey[] StaticPlannerContextKeys =
+            new VulkanFrameOpPlannerStateKey[PlannerContextCapacity];
+        internal FrameOpContext[] StaticPlannerContexts =
+            new FrameOpContext[PlannerContextCapacity];
+        internal VulkanRenderGraphPlan[] StaticPlannerContextPlans =
+            new VulkanRenderGraphPlan[PlannerContextCapacity];
 
         internal Slot() => Plan = new FramePlan(ViewSet);
     }
 
-    private Slot[] _slots = [new(), new(), new(), new()];
-    private Slot[] _retiredSlots = new Slot[4];
-    private int _retiredSlotCount;
+    private readonly Slot[] _slots = [new(), new(), new(), new()];
+    private readonly Slot[] _retiredSlots = [new(), new(), new(), new()];
+    private int _retiredSlotCount = FrameSlotCapacity;
     private readonly RenderOutputGraphPlanner _outputGraphPlanner = new();
     private long _nextGeneration;
     internal VulkanFrameOperationScheduler FrameScheduler => _frameScheduler;
@@ -73,12 +112,34 @@ internal sealed class FramePlanBuilder
         uint? openXrViewIndex = null,
         bool openXrImagesAcquired = false,
         FrameOp[]? textureUploadOperations = null,
-        VulkanPreparedMeshIngress? preparedMeshIngress = null)
+        VulkanPreparedMeshIngress? preparedMeshIngress = null,
+        int authoringOperationCount = -1,
+        int authoringDynamicOverlayOperationCount = -1,
+        int authoringTextureUploadOperationCount = -1)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(frameSlot);
         ArgumentNullException.ThrowIfNull(operations);
         ArgumentNullException.ThrowIfNull(dynamicOverlayOperations);
         textureUploadOperations ??= [];
+        authoringOperationCount = authoringOperationCount < 0
+            ? operations.Length
+            : authoringOperationCount;
+        authoringDynamicOverlayOperationCount = authoringDynamicOverlayOperationCount < 0
+            ? dynamicOverlayOperations.Length
+            : authoringDynamicOverlayOperationCount;
+        authoringTextureUploadOperationCount = authoringTextureUploadOperationCount < 0
+            ? textureUploadOperations.Length
+            : authoringTextureUploadOperationCount;
+        if ((uint)authoringOperationCount > (uint)operations.Length)
+            throw new ArgumentOutOfRangeException(nameof(authoringOperationCount));
+        if ((uint)authoringDynamicOverlayOperationCount >
+            (uint)dynamicOverlayOperations.Length)
+            throw new ArgumentOutOfRangeException(
+                nameof(authoringDynamicOverlayOperationCount));
+        if ((uint)authoringTextureUploadOperationCount >
+            (uint)textureUploadOperations.Length)
+            throw new ArgumentOutOfRangeException(
+                nameof(authoringTextureUploadOperationCount));
 
         Slot slot = AcquireWritableSlot(frameSlot);
         slot.Plan.Reset();
@@ -87,9 +148,13 @@ internal sealed class FramePlanBuilder
         EVrOutputViewKind? openXrViewKind = ResolveOpenXrViewKind(
             slot.ViewSet,
             openXrViewIndex);
-        slot.StaticIngress.Populate(operations);
-        slot.DynamicIngress.Populate(dynamicOverlayOperations);
-        slot.TextureUploadIngress.Populate(textureUploadOperations);
+        slot.StaticIngress.Populate(operations, authoringOperationCount);
+        slot.DynamicIngress.Populate(
+            dynamicOverlayOperations,
+            authoringDynamicOverlayOperationCount);
+        slot.TextureUploadIngress.Populate(
+            textureUploadOperations,
+            authoringTextureUploadOperationCount);
         // This is the sole object-to-stream boundary. Everything below,
         // including output ordering and resource-DAG compilation, consumes
         // numeric headers and dense typed payload streams only.
@@ -244,12 +309,10 @@ internal sealed class FramePlanBuilder
             if (exists)
                 continue;
 
-            if (keyCount == slot.StaticPlannerContextKeys.Length)
-            {
-                int newCapacity = Math.Max(8, slot.StaticPlannerContextKeys.Length * 2);
-                Array.Resize(ref slot.StaticPlannerContextKeys, newCapacity);
-                Array.Resize(ref slot.StaticPlannerContexts, newCapacity);
-            }
+            RequireCapacity(
+                slot.StaticPlannerContextKeys,
+                keyCount + 1,
+                EVulkanAcceptedFrameLane.PlannerContext);
 
             slot.StaticPlannerContextKeys[keyCount] = key;
             slot.StaticPlannerContexts[keyCount] = context;
@@ -264,8 +327,10 @@ internal sealed class FramePlanBuilder
         int keyCount,
         in VulkanFramePlanRenderGraphAuthority authority)
     {
-        if (slot.StaticPlannerContextPlans.Length < keyCount)
-            Array.Resize(ref slot.StaticPlannerContextPlans, slot.StaticPlannerContextKeys.Length);
+        RequireCapacity(
+            slot.StaticPlannerContextPlans,
+            keyCount,
+            EVulkanAcceptedFrameLane.PlannerContext);
 
         FrameOpSignatureHasher signature = new();
         signature.Add(keyCount);
@@ -336,26 +401,23 @@ internal sealed class FramePlanBuilder
 
     private Slot AcquireWritableSlot(int frameSlot)
     {
-        EnsureSlotCapacity(frameSlot + 1);
+        if ((uint)frameSlot >= (uint)_slots.Length)
+            throw new VulkanAcceptedFramePlanCapacityException(
+                EVulkanAcceptedFrameLane.FrameSlot,
+                _slots.Length,
+                frameSlot + 1);
         Slot active = _slots[frameSlot];
         if (!active.Plan.IsPinned)
             return active;
 
-        Slot replacement = TakeUnpinnedRetiredSlot() ?? new Slot();
+        Slot replacement = TakeUnpinnedRetiredSlot() ??
+            throw new VulkanAcceptedFramePlanCapacityException(
+                EVulkanAcceptedFrameLane.FrameSlot,
+                _slots.Length + _retiredSlots.Length,
+                _slots.Length + _retiredSlots.Length + 1);
         _slots[frameSlot] = replacement;
         RetireSlot(active);
         return replacement;
-    }
-
-    private void EnsureSlotCapacity(int required)
-    {
-        if (_slots.Length >= required)
-            return;
-
-        int previousLength = _slots.Length;
-        Array.Resize(ref _slots, Math.Max(required, previousLength * 2));
-        for (int index = previousLength; index < _slots.Length; index++)
-            _slots[index] = new Slot();
     }
 
     private Slot? TakeUnpinnedRetiredSlot()
@@ -377,7 +439,10 @@ internal sealed class FramePlanBuilder
 
     private void RetireSlot(Slot slot)
     {
-        EnsureCapacity(ref _retiredSlots, _retiredSlotCount + 1);
+        RequireCapacity(
+            _retiredSlots,
+            _retiredSlotCount + 1,
+            EVulkanAcceptedFrameLane.FrameSlot);
         _retiredSlots[_retiredSlotCount++] = slot;
     }
 
@@ -391,7 +456,12 @@ internal sealed class FramePlanBuilder
         int[] orderScratch = dynamicOverlay
             ? slot.DynamicOverlayOperationOrderScratch
             : slot.OperationOrderScratch;
-        EnsureCapacity(ref orderScratch, source.Count);
+        RequireCapacity(
+            orderScratch,
+            source.Count,
+            dynamicOverlay
+                ? EVulkanAcceptedFrameLane.Ui
+                : EVulkanAcceptedFrameLane.MainScene);
         for (int index = 0; index < source.Count; index++)
             orderScratch[index] = index;
         SortOperationOrder(
@@ -401,8 +471,14 @@ internal sealed class FramePlanBuilder
             source.Count,
             outputCount,
             openXrViewKind);
-        EnsureCapacity(ref slot.OperationDependencyScratch, source.Count);
-        EnsureCapacity(ref slot.OperationTopologicalOrderScratch, source.Count);
+        RequireCapacity(
+            slot.OperationDependencyScratch,
+            source.Count,
+            EVulkanAcceptedFrameLane.Dependency);
+        RequireCapacity(
+            slot.OperationTopologicalOrderScratch,
+            source.Count,
+            EVulkanAcceptedFrameLane.Dependency);
         CompileResourceDependencyOrder(slot, source, orderScratch, source.Count);
         if (dynamicOverlay)
             slot.DynamicOverlayOperationOrderScratch = orderScratch;
@@ -461,10 +537,22 @@ internal sealed class FramePlanBuilder
     {
         int[] indegree = slot.OperationDependencyScratch;
         int[] destination = slot.OperationTopologicalOrderScratch;
-        EnsureCapacity(ref slot.OperationPriorityScratch, operationCount);
-        EnsureCapacity(ref slot.OperationReadyHeapScratch, operationCount);
-        EnsureCapacity(ref slot.ResourceProducerDependencyScratch, operationCount);
-        EnsureCapacity(ref slot.DependencyFirstEdgeScratch, operationCount);
+        RequireCapacity(
+            slot.OperationPriorityScratch,
+            operationCount,
+            EVulkanAcceptedFrameLane.Dependency);
+        RequireCapacity(
+            slot.OperationReadyHeapScratch,
+            operationCount,
+            EVulkanAcceptedFrameLane.Dependency);
+        RequireCapacity(
+            slot.ResourceProducerDependencyScratch,
+            operationCount,
+            EVulkanAcceptedFrameLane.Dependency);
+        RequireCapacity(
+            slot.DependencyFirstEdgeScratch,
+            operationCount,
+            EVulkanAcceptedFrameLane.Dependency);
         int[] priorities = slot.OperationPriorityScratch;
         int[] readyHeap = slot.OperationReadyHeapScratch;
         int[] firstEdges = slot.DependencyFirstEdgeScratch;
@@ -564,8 +652,14 @@ internal sealed class FramePlanBuilder
         int consumer,
         ref int edgeCount)
     {
-        EnsureCapacity(ref slot.DependencyEdgeConsumerScratch, edgeCount + 1);
-        EnsureCapacity(ref slot.DependencyEdgeNextScratch, edgeCount + 1);
+        RequireCapacity(
+            slot.DependencyEdgeConsumerScratch,
+            edgeCount + 1,
+            EVulkanAcceptedFrameLane.Dependency);
+        RequireCapacity(
+            slot.DependencyEdgeNextScratch,
+            edgeCount + 1,
+            EVulkanAcceptedFrameLane.Dependency);
         slot.DependencyEdgeConsumerScratch[edgeCount] = consumer;
         slot.DependencyEdgeNextScratch[edgeCount] = slot.DependencyFirstEdgeScratch[producer];
         slot.DependencyFirstEdgeScratch[producer] = edgeCount++;
@@ -647,7 +741,10 @@ internal sealed class FramePlanBuilder
         int dynamicOperationCount)
     {
         int keyCount = 0;
-        EnsureCapacity(ref slot.OperationKeys, operationCount + dynamicOperationCount);
+        RequireCapacity(
+            slot.OperationKeys,
+            operationCount + dynamicOperationCount,
+            EVulkanAcceptedFrameLane.Dependency);
         for (int index = 0; index < operationCount; index++)
         {
             slot.OperationKeys[keyCount++] = FramePlanOperationKey.FromHeader(
@@ -683,7 +780,10 @@ internal sealed class FramePlanBuilder
                 context,
                 openXrViewKind);
             AddOutput(slot, OutputRequest.FromContext(context, operationViewKind), ref outputCount);
-            EnsureCapacity(ref slot.OperationKeys, operationKeyCount + 1);
+            RequireCapacity(
+                slot.OperationKeys,
+                operationKeyCount + 1,
+                EVulkanAcceptedFrameLane.Dependency);
             slot.OperationKeys[operationKeyCount++] = FramePlanOperationKey.FromHeader(
                 operations.GetHeader(index),
                 context,
@@ -718,7 +818,10 @@ internal sealed class FramePlanBuilder
             return;
         }
 
-        EnsureCapacity(ref slot.Outputs, outputCount + 1);
+        RequireCapacity(
+            slot.Outputs,
+            outputCount + 1,
+            EVulkanAcceptedFrameLane.Output);
         slot.Outputs[outputCount++] = request;
     }
 
@@ -732,9 +835,18 @@ internal sealed class FramePlanBuilder
             return 0;
 
         _outputGraphPlanner.BeginManifest(renderFrameId);
-        EnsureCapacity(ref slot.OutputGraphRequests, outputCount);
-        EnsureCapacity(ref slot.OutputDecisions, outputCount);
-        EnsureCapacity(ref slot.OutputDue, outputCount);
+        RequireCapacity(
+            slot.OutputGraphRequests,
+            outputCount,
+            EVulkanAcceptedFrameLane.Output);
+        RequireCapacity(
+            slot.OutputDecisions,
+            outputCount,
+            EVulkanAcceptedFrameLane.Output);
+        RequireCapacity(
+            slot.OutputDue,
+            outputCount,
+            EVulkanAcceptedFrameLane.Output);
         for (int index = 0; index < outputCount; index++)
         {
             ref readonly OutputRequest output = ref slot.Outputs[index];
@@ -787,9 +899,18 @@ internal sealed class FramePlanBuilder
         }
 
         RenderOutputDag graph = _outputGraphPlanner.Graph;
-        EnsureCapacity(ref slot.OutputExecutionNodes, graph.NodeCount);
-        EnsureCapacity(ref slot.OutputNodeOrderScratch, graph.NodeCount);
-        EnsureCapacity(ref slot.OutputNodeIndegreeScratch, graph.SlotCount);
+        RequireCapacity(
+            slot.OutputExecutionNodes,
+            graph.NodeCount,
+            EVulkanAcceptedFrameLane.Output);
+        RequireCapacity(
+            slot.OutputNodeOrderScratch,
+            graph.NodeCount,
+            EVulkanAcceptedFrameLane.Output);
+        RequireCapacity(
+            slot.OutputNodeIndegreeScratch,
+            graph.SlotCount,
+            EVulkanAcceptedFrameLane.Output);
         if (!graph.TryCompileDeadlineOrder(
                 slot.OutputNodeOrderScratch,
                 slot.OutputNodeIndegreeScratch,
@@ -806,7 +927,10 @@ internal sealed class FramePlanBuilder
                 slot.OutputNodeOrderScratch[index]);
         }
 
-        EnsureCapacity(ref slot.OutputExecutionRanks, outputCount);
+        RequireCapacity(
+            slot.OutputExecutionRanks,
+            outputCount,
+            EVulkanAcceptedFrameLane.Output);
         for (int outputIndex = 0; outputIndex < outputCount; outputIndex++)
         {
             ulong outputId = slot.Outputs[outputIndex].StableOutputId;
@@ -861,7 +985,10 @@ internal sealed class FramePlanBuilder
         if (operations.Count == 0)
             return;
 
-        EnsureCapacity(ref slot.OperationOrderScratch, operations.Count);
+        RequireCapacity(
+            slot.OperationOrderScratch,
+            operations.Count,
+            EVulkanAcceptedFrameLane.MainScene);
         int retainedCount = 0;
         for (int operationIndex = 0; operationIndex < operations.Count; operationIndex++)
         {
@@ -999,12 +1126,18 @@ internal sealed class FramePlanBuilder
         }
     }
 
-    private static void EnsureCapacity<T>(ref T[] storage, int required)
+    private static void RequireCapacity<T>(
+        T[] storage,
+        int required,
+        EVulkanAcceptedFrameLane lane)
     {
         if (storage.Length >= required)
             return;
 
-        Array.Resize(ref storage, Math.Max(required, storage.Length * 2));
+        throw new VulkanAcceptedFramePlanCapacityException(
+            lane,
+            storage.Length,
+            required);
     }
 
 }

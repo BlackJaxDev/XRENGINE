@@ -22,7 +22,7 @@ internal static class BrokerMcpToolCatalog
         new McpToolSpec
         {
             Name = "start_agent_run",
-            Description = "Start one bounded OpenAI Responses API worker with exact model, reasoning, text-verbosity, and output-token controls. Omit editor_session for reasoning-only work, or name a local editor MCP session for controlled editor tools. Returns a run ID immediately. Optional background mode temporarily stores provider response state for polling.",
+            Description = "Start one bounded OpenAI Responses API worker with exact model, response controls, optional snapshotted repository context, opt-in read-only repository tools, and optional controlled editor tools. Returns a run ID immediately. Optional background mode temporarily stores provider response state for polling.",
             InputSchema = StartRunSchema(),
         },
         new McpToolSpec
@@ -92,7 +92,42 @@ internal static class BrokerMcpToolCatalog
                 ["default"] = false,
                 ["description"] = "Opt in to asynchronous Responses API execution and polling. Provider response data is temporarily stored for polling and is not Zero Data Retention compatible.",
             }),
-            ("editor_session", StringSchema("Optional exact session created by Manage-McpEditorSession.ps1. Omit for a reasoning-only run with no local tools.")),
+            ("require_tool_use", new JsonObject
+            {
+                ["type"] = "boolean",
+                ["default"] = false,
+                ["description"] = "Require the first provider turn to call an available tool. Rejected when neither repository nor editor tools are configured.",
+            }),
+            ("editor_session", StringSchema("Optional exact session created by Manage-McpEditorSession.ps1. Omit when no editor tools are needed; repository tools are configured independently.")),
+            ("context_files", new JsonObject
+            {
+                ["type"] = "array",
+                ["description"] = "Repository-relative UTF-8 text files snapshotted before the run is queued. Their contents are sent to the OpenAI API as untrusted context.",
+                ["maxItems"] = 64,
+                ["default"] = new JsonArray(),
+                ["items"] = ObjectSchema(
+                    required: ["path"],
+                    ("path", StringSchema("Repository-relative text-file path. Absolute paths, traversal, reparse points, generated output, and sensitive file types are rejected.")),
+                    ("start_line", IntegerSchema(1, int.MaxValue, defaultValue: null)),
+                    ("end_line", IntegerSchema(1, int.MaxValue, defaultValue: null)),
+                    ("expected_sha256", new JsonObject
+                    {
+                        ["type"] = "string",
+                        ["pattern"] = "^[0-9A-Fa-f]{64}$",
+                        ["description"] = "Optional SHA-256 of the complete raw file; a mismatch rejects the run.",
+                    })),
+            }),
+            ("repository_access", new JsonObject
+            {
+                ["type"] = "object",
+                ["additionalProperties"] = false,
+                ["description"] = "Opt-in read-only repository_search and repository_read_text tools. Content returned by these tools is sent to the OpenAI API.",
+                ["properties"] = new JsonObject
+                {
+                    ["enabled"] = BooleanSchema(false),
+                    ["allowed_roots"] = StringArraySchema("Explicit repository-relative directories visible to repository tools. Use '.' only to authorize the whole eligible source tree."),
+                },
+            }),
             ("evidence_packet", new JsonObject
             {
                 ["type"] = "object",
@@ -134,6 +169,22 @@ internal static class BrokerMcpToolCatalog
                         defaultValue: null,
                         description: "Hard combined visible-output and reasoning-token budget. When omitted, Luna/Terra use 4096; Sol uses 16384, or 32768 at xhigh/max reasoning. An explicit value is never raised."),
                     ["max_tool_result_bytes"] = IntegerSchema(1_024, 4_194_304, 262_144),
+                    ["max_context_files"] = IntegerSchema(0, 64, 16),
+                    ["max_context_file_bytes"] = IntegerSchema(
+                        1_024,
+                        1_048_576,
+                        262_144,
+                        "Maximum raw size of one snapshotted context file."),
+                    ["max_context_bytes"] = IntegerSchema(
+                        1_024,
+                        4_194_304,
+                        1_048_576,
+                        "Maximum aggregate raw size of all snapshotted context files."),
+                    ["max_context_rendered_bytes"] = IntegerSchema(
+                        1_024,
+                        8_388_608,
+                        2_097_152,
+                        "Maximum UTF-8 size after context content and metadata are JSON-escaped into provider input blocks."),
                     ["max_elapsed_seconds"] = IntegerSchema(
                         1,
                         3_600,

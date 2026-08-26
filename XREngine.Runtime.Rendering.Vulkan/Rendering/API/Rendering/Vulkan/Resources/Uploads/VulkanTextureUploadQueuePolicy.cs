@@ -14,7 +14,10 @@ namespace XREngine.Rendering.Vulkan;
 
 internal sealed partial class VulkanTextureUploadService
 {
-    private bool TryDequeueBestPrepJob(out VulkanImportedTextureUploadJob job)
+    private bool TryDequeueBestPrepJob(
+        out VulkanImportedTextureUploadJob job,
+        bool requiredOnly = false,
+        VulkanTextureUploadManifest? requiredManifest = null)
     {
         lock (_prepQueueSync)
         {
@@ -32,6 +35,9 @@ internal sealed partial class VulkanTextureUploadService
             for (int i = 0; i < _pendingPrepJobs.Count; i++)
             {
                 VulkanImportedTextureUploadJob candidate = _pendingPrepJobs[i];
+                if (requiredOnly && (candidate.Request.PriorityClass != TextureUploadPriorityClass.VisibleNow
+                    || requiredManifest is not null && !requiredManifest.Contains(candidate.Ticket)))
+                    continue;
                 if (candidate.NotBeforeTimestamp > now)
                     continue;
 
@@ -205,7 +211,7 @@ internal sealed partial class VulkanTextureUploadService
         Interlocked.Exchange(ref _transferDrainScheduled, 0);
     }
 
-    private bool HasQueuedPrepWorkOrCompleteDrain()
+    private bool HasQueuedPrepWorkOrCompleteDrain(VulkanTextureUploadManifest? requiredManifest = null)
     {
         int depth;
         double oldestWaitMilliseconds;
@@ -217,6 +223,19 @@ internal sealed partial class VulkanTextureUploadService
 
         RenderWorkBudgetCoordinator.RecordTextureQueue(depth, oldestWaitMilliseconds);
         Volatile.Write(ref s_pendingVulkanPrepPackages, depth);
+        if (requiredManifest is not null)
+        {
+            lock (_prepQueueSync)
+            {
+                for (int index = 0; index < _pendingPrepJobs.Count; index++)
+                {
+                    if (requiredManifest.Contains(_pendingPrepJobs[index].Ticket))
+                        return false;
+                }
+            }
+            return true;
+        }
+
         if (depth > 0)
             return false;
 
@@ -236,16 +255,18 @@ internal sealed partial class VulkanTextureUploadService
         VulkanImportedTextureUploadJob job,
         int preparedThisDrain,
         long drainStart,
-        double prepBudgetMilliseconds)
+        double prepBudgetMilliseconds,
+        bool foregroundRequired = false)
     {
-        if (preparedThisDrain >= MaxPreparedUploadsPerDrain)
+        if (!foregroundRequired && preparedThisDrain >= MaxPreparedUploadsPerDrain)
             return false;
 
         double estimate = EstimatePrepMilliseconds(job);
-        if (!RenderWorkBudgetCoordinator.TryConsume(RenderWorkSubsystem.TextureUpload, estimate))
+        if (!foregroundRequired
+            && !RenderWorkBudgetCoordinator.TryConsume(RenderWorkSubsystem.TextureUpload, estimate))
             return false;
 
-        if (prepBudgetMilliseconds <= 0.0 || preparedThisDrain == 0)
+        if (foregroundRequired || prepBudgetMilliseconds <= 0.0 || preparedThisDrain == 0)
             return true;
 
         return TextureRuntimeDiagnostics.ElapsedMilliseconds(drainStart) + estimate <= prepBudgetMilliseconds;
@@ -254,12 +275,13 @@ internal sealed partial class VulkanTextureUploadService
     private static bool ShouldYieldAfterPreparation(
         int preparedThisDrain,
         long drainStart,
-        double prepBudgetMilliseconds)
+        double prepBudgetMilliseconds,
+        bool foregroundRequired = false)
     {
-        if (preparedThisDrain >= MaxPreparedUploadsPerDrain)
+        if (!foregroundRequired && preparedThisDrain >= MaxPreparedUploadsPerDrain)
             return true;
 
-        return prepBudgetMilliseconds > 0.0
+        return !foregroundRequired && prepBudgetMilliseconds > 0.0
             && TextureRuntimeDiagnostics.ElapsedMilliseconds(drainStart) >= prepBudgetMilliseconds;
     }
 

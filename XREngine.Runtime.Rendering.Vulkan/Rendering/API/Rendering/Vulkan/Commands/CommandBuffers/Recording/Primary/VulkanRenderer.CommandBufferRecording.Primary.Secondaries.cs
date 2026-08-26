@@ -1678,6 +1678,12 @@ namespace XREngine.Rendering.Vulkan
             int recordedOperations,
             int deferredJobs)
         {
+            if (!recordingState.Policy.AllowsSecondaryDeferral)
+            {
+                throw new VulkanPlanPreconditionException(
+                    "PresentNow recording attempted to defer command-chain publication.");
+            }
+
             recordingState.ProgressiveCommandChainPublicationPending = true;
             recordingState.CommandChainPublicationDeferred = true;
             recordingState.ProgressiveCommandChainAdmittedJobs = recordedJobs;

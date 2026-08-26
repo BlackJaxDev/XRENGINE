@@ -2,7 +2,122 @@
 
 Last Updated: 2026-08-25
 Owner: Rendering / Vulkan, with Data / Serialization cleanup
-Status: Ready For Implementation; Architecture Decision Recorded; Live Validation Required Before Test Work
+Status: Implementation Checkpoint; Vulkan Build Clean; Live Validation And Remaining Integration Audit Required
+
+## 2026-08-25 Implementation Checkpoint
+
+Work paused at the user's request after reaching a build-clean integration
+boundary. Do not treat this tracker as complete yet. The desktop PresentNow
+architecture and its main foreground adapters are implemented, but no live
+Sponza acceptance run has been performed against this diff and no regression
+tests were added.
+
+Checkbox convention: implementation items are checked from source/build
+evidence. Acceptance, live-validation, allocation, and fault-injection items
+remain unchecked until their stated runtime evidence exists.
+
+Last successful validation:
+
+```powershell
+dotnet build .\XREngine.Runtime.Rendering.Vulkan\XREngine.Runtime.Rendering.Vulkan.csproj --no-restore
+```
+
+Result: 0 warnings, 0 errors on 2026-08-25 at approximately 17:01 local time.
+
+Implementation present in the working tree:
+
+- Runtime-only scene events and light-binding publication state are excluded
+  from MemoryPack/YAML/asset-graph persistence boundaries.
+- Explicit output work-class/readiness contracts propagate through the output
+  DAG. Desktop terminal work uses `PresentNow` plus `BlockForExact`; OpenXR
+  paths expose explicit deadline/failure semantics instead of silent reuse.
+- Desktop frame order is now slot retirement, accepted logical-plan capture,
+  exact foreground readiness, target compatibility revalidation, acquire,
+  native reseal, record, submit, and present. Cold readiness no longer holds an
+  acquired WSI image.
+- A slot-owned `VulkanAcceptedFramePlan` carries bounded operation lanes,
+  prepared mesh ingress, texture manifest, shadow manifest/result, output
+  contract, planner snapshot, and target compatibility.
+- Pipeline compile results are durable by exact pipeline key and dependency
+  generation; PresentNow can synchronously claim/finish a cold compile.
+- Required texture work is tracked by exact texture-generation manifests,
+  uses a reserved foreground staging lane, chunks large mips, and waits only
+  required transfer work. Devices without a dedicated transfer queue have an
+  explicit graphics-queue foreground upload path.
+- Exact shadow readiness bypasses background budgets; deadline fallback is
+  limited to a fallback explicitly selected in the sealed shadow manifest.
+- Mesh request storage has independent terminal, UI, main-scene, and shadow
+  capacities. Foreground bypasses scheduling caps but not physical lane bounds,
+  and overflow reports the precise lane and high-water requirement.
+- Frame-plan slot streams and planning scratch storage are preallocated at
+  lifecycle construction. Active sealing returns typed capacity failures
+  instead of resizing arrays.
+- PresentNow recording policy forbids progressive deferral and artifact/old
+  frame reuse at the source. `RecordedWithGpuFallback` counts as a fresh
+  recording.
+- Final presentation ledger entries now include frame provenance, accepted
+  epoch/output generation, policy and fallback selection, acquire/record/
+  submit/present results and timestamps, timeline serials, lane counts, target
+  compatibility, and present-semaphore provenance.
+
+### Known incomplete work
+
+- Perform the full Phase 7 isolated Vulkan/Sponza live run, inspect changing
+  screenshots and logs, and take a RenderDoc capture only after native submit
+  is confirmed. The reserved scratch root is
+  `Build/_AgentValidation/20260825-160514-present-now-readiness/`.
+- Populate the accepted plan's scalar `VulkanFrameDependencyTicket` array from
+  pipeline, upload, buffer/descriptor, and shadow manifests. The exact
+  subsystem manifests drive readiness today, but `AddDependency` is not yet
+  called, so current-ticket ledger telemetry remains empty.
+- Audit and convert the duplicate post-acquire plan-building flows in
+  `VulkanFrameLoop.ExplicitProduction.cs`, `VulkanFrameLoop.OpenXR.EyeRendering.cs`,
+  and `VulkanFrameLoop.OpenXR.MirrorPreview.cs` to the same logical/native
+  sealing ownership model where their output contract requires PresentNow.
+- Remove the remaining OpenXR hot-path allocation in
+  `FrameOperationStream.CreateLogicalViewSlice`, or replace it with a bounded
+  header view owned by the frame slot.
+- Verify mandatory terminal composition/UI/fallback/error pipelines are
+  compiled during output initialization and fail initialization visibly.
+- Live-tune and record high-water evidence for the new fixed capacities. A
+  capacity miss must remain an affected-frame failure with diagnostics; do not
+  reintroduce active-frame array growth.
+- Confirm the two original serialization warnings are absent in the live logs
+  and that authored scene/component state still round-trips.
+- Do not begin Phase 8 test additions until Phase 7 passes and the user
+  explicitly clears test work, as required by repository policy.
+
+### Exact resume sequence
+
+1. Re-run the Vulkan project build command above and review only the rendering/
+   serialization files associated with this tracker; the working tree contains
+   unrelated pre-existing changes that must be preserved.
+2. Complete the dependency-ticket population and the three duplicate
+   logical/native sealing call paths listed above. Rebuild after each coherent
+   slice.
+3. Create or update
+   `docs/work/investigations/rendering/vulkan-present-now-frame-readiness.md`.
+4. Confirm `Assets/UnitTestingWorldSettings.jsonc` selects Vulkan, Sponza, and
+   validation. Start one named isolated session with:
+
+   ```powershell
+   pwsh Tools/Manage-McpEditorSession.ps1 Start -Name present-now-readiness
+   ```
+
+5. Use MCP to capture away, sparse-cold, dense-cold, rapid-sweep, and warm
+   camera cohorts into the reserved run root's `mcp-captures/` directory.
+   Inspect the PNGs themselves, ledger diagnostics, and session logs.
+6. Stop only that session with:
+
+   ```powershell
+   pwsh Tools/Manage-McpEditorSession.ps1 Stop -Name present-now-readiness
+   ```
+
+7. If native submission is confirmed, follow the repository RenderDoc workflow
+   (`rdc doctor`, capture, inspect/export suspicious targets, visually inspect,
+   and close). Record all evidence paths in the investigation note.
+8. Update acceptance and live-validation checkboxes only from observed runtime
+   evidence. Ask for explicit clearance before starting Phase 8 tests.
 
 Related work:
 
@@ -101,37 +216,37 @@ Current contributing behavior:
 
 ### Foreground result truthfulness
 
-- [ ] Add a distinct foreground work class, such as
+- [x] Add a distinct foreground work class, such as
   `ERenderWorkClass.PresentNow`, rather than deriving urgency only from
   priority, fallback flags, or a nominal completion deadline.
-- [ ] Add an explicit present policy, such as `BlockForExact` and
+- [x] Add an explicit present policy, such as `BlockForExact` and
   `MeetDeadlineWithGpuFallback`.
-- [ ] Keep `Prewarm` or `BackgroundMayDefer` as a separate work class whose
+- [x] Keep `Prewarm` or `BackgroundMayDefer` as a separate work class whose
   pending state cannot propagate into foreground presentation.
-- [ ] Give every frame a stable frame ID, scene epoch, output generation,
+- [x] Give every frame a stable frame ID, scene epoch, output generation,
   submit serial, and presented-source-frame ID.
-- [ ] Define `PresentedNew` to require all of the following:
+- [x] Define `PresentedNew` to require all of the following:
   - a command buffer was recorded for that frame;
   - a new queue submission serial was produced; and
   - presentation waits on the completion signal for that submission.
-- [ ] A frame with `submitResult=not-submitted` must never report
+- [x] A frame with `submitResult=not-submitted` must never report
   `PresentedNew`.
-- [ ] Legal `PresentNow` outcomes are `PresentedNew`, `FailedFrame`,
+- [x] Legal `PresentNow` outcomes are `PresentedNew`, `FailedFrame`,
   `FailedRenderer`, and explicit caller cancellation.
-- [ ] `Deferred`, `Superseded`, and `RepeatedOld` remain legal only for work
+- [x] `Deferred`, `Superseded`, and `RepeatedOld` remain legal only for work
   whose policy explicitly allows them.
 
 ### Atomicity and progress
 
-- [ ] Keep atomicity at the sealed-frame publication and submit boundary, not
+- [x] Keep atomicity at the sealed-frame publication and submit boundary, not
   as an all-or-nothing resource-preparation transaction.
 - [ ] Every successful preparation step must advance durable monotonic state
   for one resource generation.
-- [ ] Queue pressure must not reset resource readiness or remove a draw from an
+- [x] Queue pressure must not reset resource readiness or remove a draw from an
   already accepted foreground frame.
 - [ ] A terminal failure for a `(resource key, generation)` must be cached and
   diagnosed; retry requires a new generation or an explicit recovery action.
-- [ ] Foreground work must not be starved by continually admitted background
+- [x] Foreground work must not be starved by continually admitted background
   work.
 - [ ] Warm steady-state planning, readiness checking, recording, submission,
   and presentation must not allocate on the managed heap.
@@ -146,15 +261,15 @@ state.
 
 Source: `XREngine.Runtime.Core/Scene/SceneNode.cs`
 
-- [ ] Mark `ComponentAdded` and `ComponentRemoved` with `RuntimeOnly`,
+- [x] Mark `ComponentAdded` and `ComponentRemoved` with `RuntimeOnly`,
   `YamlIgnore`, and `MemoryPackIgnore`.
-- [ ] Audit `Activated` and `Deactivated`; if their compiler-generated backing
+- [x] Audit `Activated` and `Deactivated`; if their compiler-generated backing
   fields are visible to any persistence path, apply the corresponding
   field-targeted runtime/serializer ignore attributes.
-- [ ] Do not register a MemoryPack formatter for
+- [x] Do not register a MemoryPack formatter for
   `XREvent<(SceneNode, XRComponent)>`. Its values contain live object/event
   references and are not authored scene data.
-- [ ] Retain the cooked-binary reflection fallback as defensive routing, but
+- [x] Retain the cooked-binary reflection fallback as defensive routing, but
   make the ignore attributes the authoritative semantic contract.
 - [ ] Verify the original `[MEMORYPACK SERIALIZE FAIL]` warning is absent while
   ordinary authored scene/component state still round-trips.
@@ -167,19 +282,19 @@ Sources:
 - `XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/Features/VPRC_LightCombinePass.cs`
 - `XREngine.Data/Core/Assets/XRAssetGraphUtility.cs`
 
-- [ ] Mark `XRMeshRenderer.BindingPublishers` as `RuntimeOnly` and
+- [x] Mark `XRMeshRenderer.BindingPublishers` as `RuntimeOnly` and
   `YamlIgnore` in addition to its existing `MemoryPackIgnore`.
-- [ ] Make `XRAssetGraphUtility.BuildAccessors` and its shared member filter
+- [x] Make `XRAssetGraphUtility.BuildAccessors` and its shared member filter
   honor `RuntimeOnly`, `YamlIgnore`, and `MemoryPackIgnore` consistently on
   fields and properties.
-- [ ] Treat a type marked `RuntimeOnly` as outside the authored asset graph.
-- [ ] Confirm the graph no longer reaches
+- [x] Treat a type marked `RuntimeOnly` as outside the authored asset graph.
+- [x] Confirm the graph no longer reaches
   `DeferredLightBindingPublisher._deferredLights`, whose 1,024 entries are
   transient binding-publication slots rather than 1,024 scene lights.
-- [ ] Keep the `> 1000` array safeguard. Do not raise the threshold as the fix.
-- [ ] Improve any remaining large-array diagnostic to include the owning
+- [x] Keep the `> 1000` array safeguard. Do not raise the threshold as the fix.
+- [x] Improve any remaining large-array diagnostic to include the owning
   member/path and whether graph completion was affected.
-- [ ] If a genuinely serialized asset-bearing collection is skipped, return an
+- [x] If a genuinely serialized asset-bearing collection is skipped, return an
   explicit incomplete/failure result instead of silently accepting a partial
   authored graph.
 
@@ -189,31 +304,31 @@ Primary source:
 
 `XREngine.Runtime.Core/Settings/Contracts/Records/RenderOutputRequest.cs`
 
-- [ ] Add the work-class and present-policy contracts described above without
+- [x] Add the work-class and present-policy contracts described above without
   overloading `ERenderOutputCompletionRequirement` or the current fallback
   flags.
-- [ ] Default `DesktopScene`, `EditorScenePanel`, and terminal `Present` work to
+- [x] Default `DesktopScene`, `EditorScenePanel`, and terminal `Present` work to
   `PresentNow` with `BlockForExact` in the desktop/editor path.
-- [ ] Route OpenXR/OpenVR terminal work through `PresentNow` with an explicit
+- [x] Route OpenXR/OpenVR terminal work through `PresentNow` with an explicit
   deadline policy selected by the runtime integration.
-- [ ] Keep mirrors, probes, thumbnails, and other auxiliary outputs deferable
+- [x] Keep mirrors, probes, thumbnails, and other auxiliary outputs deferable
   only when their own request explicitly permits it.
 - [ ] Propagate the terminal present requirement through its complete producer
   dependency closure: visible meshes, required frame targets, material
   bindings, descriptors, pipelines, uploads, and required shadow work.
-- [ ] Do not let an individual dependency retain `AllowBudgetDeferral` when its
+- [x] Do not let an individual dependency retain `AllowBudgetDeferral` when its
   terminal consumer is `PresentNow` and that dependency has no declared
   fallback.
-- [ ] Publish the selected work class, policy, deadline, and fallback use in
+- [x] Publish the selected work class, policy, deadline, and fallback use in
   frame telemetry.
 
 Acceptance criteria:
 
-- [ ] A foreground desktop output cannot legally select
+- [x] A foreground desktop output cannot legally select
   `ERenderOutputWorkDisposition.Deferred`.
-- [ ] A dependency-policy mismatch is rejected before recording with the exact
+- [x] A dependency-policy mismatch is rejected before recording with the exact
   producer/consumer chain in the diagnostic.
-- [ ] Background deferral behavior remains available and is observably
+- [x] Background deferral behavior remains available and is observably
   separate from foreground readiness.
 
 ## Phase 3 - Build And Seal A Bounded Frame Plan
@@ -230,31 +345,31 @@ BuildFramePlan
   -> Present
 ```
 
-- [ ] Capture an immutable camera, visibility, scene, material, light, and
+- [x] Capture an immutable camera, visibility, scene, material, light, and
   output-generation snapshot for the accepted frame.
 - [ ] Compute the complete required dependency closure from that snapshot.
-- [ ] Keep preparing that accepted frame even if a newer camera or scene epoch
+- [x] Keep preparing that accepted frame even if a newer camera or scene epoch
   appears; the newer state becomes the next frame unless the caller explicitly
   cancels.
-- [ ] Preserve completed resource preparation after cancellation or
+- [x] Preserve completed resource preparation after cancellation or
   supersession so later frames can reuse it.
 - [ ] Store the plan in a frame-slot-owned preallocated arena with declared
   limits for draws, dependencies, passes, descriptor writes, resource pins,
   and recording packets.
-- [ ] Reserve independent capacity for terminal composition/UI, main-scene
+- [x] Reserve independent capacity for terminal composition/UI, main-scene
   work, and shadows so shadow-caster multiplication cannot starve presentation.
 - [ ] Grow arenas only at safe scene/topology or frame-slot boundaries, never
   through managed allocation in the render hot path.
-- [ ] Return `FramePlanCapacityExceeded` with actual/configured counts when a
+- [x] Return `FramePlanCapacityExceeded` with actual/configured counts when a
   declared limit is exceeded. Do not truncate, retry forever, or replay old
   content as success.
 - [ ] Pin the required residency set through GPU retirement. If the declared
   simultaneous working set cannot fit after bounded reclamation, return
   `RequiredWorkingSetTooLarge`.
-- [ ] Move format-independent readiness before desktop swapchain acquisition.
-- [ ] Acquire late, revalidate target-dependent state, and keep the
+- [x] Move format-independent readiness before desktop swapchain acquisition.
+- [x] Acquire late, revalidate target-dependent state, and keep the
   acquire-record-submit-present section short.
-- [ ] On resize or swapchain-generation change, reseal only target-dependent
+- [x] On resize or swapchain-generation change, reseal only target-dependent
   state while retaining already prepared scene resources.
 
 Acceptance criteria:
@@ -288,24 +403,24 @@ Declared
 Any stage -> Failed(error)
 ```
 
-- [ ] Make the request queue a scheduling optimization rather than the
+- [x] Make the request queue a scheduling optimization rather than the
   authority for whether a foreground frame exists.
 - [ ] Replace queue-full/frame-poison behavior with typed scheduling results,
   such as `Scheduled`, `AlreadyScheduled`, `AlreadyReady`, `Backpressured`, and
   `TerminalFailure`.
 - [ ] `Backpressured` must leave the ticket runnable and retain all completed
   progress.
-- [ ] Remove `_publishedCohortRejected`-style whole-cohort poisoning.
-- [ ] Remove the `DrainTo == -1` behavior that clears valid requests because
+- [x] Remove `_publishedCohortRejected`-style whole-cohort poisoning.
+- [x] Remove the `DrainTo == -1` behavior that clears valid requests because
   one publication or lease failed. Dequeue only entries actually returned.
 - [ ] Replace per-operation publication leases with sealed frame-plan slots and
   resource-generation pins where practical.
-- [ ] Deduplicate resource work across foreground and background frames.
+- [x] Deduplicate resource work across foreground and background frames.
 - [ ] Allow a foreground readiness driver to claim, promote, help execute, or
   wait for the exact tickets in its bounded dependency array.
-- [ ] If a scheduling queue is full, drain/help it and retry the same ticket;
+- [x] If a scheduling queue is full, drain/help it and retry the same ticket;
   do not discard the frame.
-- [ ] Prevent workers from waiting for queue space while holding resource,
+- [x] Prevent workers from waiting for queue space while holding resource,
   allocator, or publication locks.
 
 Acceptance criteria:
@@ -328,51 +443,51 @@ correctness gates for `PresentNow`.
 - [ ] Make terminal composition, UI, fallback, and error-reporting pipelines
   mandatory-resident during renderer/output initialization.
 - [ ] Fail initialization visibly if a mandatory pipeline cannot compile.
-- [ ] Keep ordinary material compilation asynchronous for prewarm/background
+- [x] Keep ordinary material compilation asynchronous for prewarm/background
   work.
-- [ ] When a foreground pipeline is cold, deduplicate and promote an in-flight
+- [x] When a foreground pipeline is cold, deduplicate and promote an in-flight
   job, synchronously help/compile it, or wait for its exact job according to
   the foreground policy.
-- [ ] Make pipeline queue capacity limit concurrent workers, not the accepted
+- [x] Make pipeline queue capacity limit concurrent workers, not the accepted
   logical dependency backlog.
-- [ ] Cache permanent compile failures with shader, material, pass, variant
+- [x] Cache permanent compile failures with shader, material, pass, variant
   key, program generation, and `VkResult` diagnostics.
-- [ ] Remove the approximately 2 ms pipeline admission limit from foreground
+- [x] Remove the approximately 2 ms pipeline admission limit from foreground
   readiness; keep it for background prewarm.
-- [ ] Treat secondary command buffers as an optimization. If a secondary
+- [x] Treat secondary command buffers as an optimization. If a secondary
   artifact is unavailable at foreground recording time, encode the same
   resolved operations inline in the primary command buffer while preserving
   order.
 
 ### 5.2 Buffers and textures
 
-- [ ] Classify uploads as required by the declared frame quality or explicitly
+- [x] Classify uploads as required by the declared frame quality or explicitly
   optional streaming work.
-- [ ] Reserve a foreground portion of the staging ring so background texture
+- [x] Reserve a foreground portion of the staging ring so background texture
   streaming cannot consume all upload capacity.
-- [ ] Remove the approximately 0.5 ms preparation budget and one-job drain cap
+- [x] Remove the approximately 0.5 ms preparation budget and one-job drain cap
   from required foreground uploads.
-- [ ] Stream resources larger than the staging ring in bounded chunks instead
+- [x] Stream resources larger than the staging ring in bounded chunks instead
   of requiring an oversized temporary allocation.
-- [ ] Force-flush required transfer batches and express readiness with timeline
+- [x] Force-flush required transfer batches and express readiness with timeline
   dependencies and barriers; avoid a global GPU-idle wait.
-- [ ] Publish buffer/texture generations only after their timeline completion
+- [x] Publish buffer/texture generations only after their timeline completion
   and bind them through the sealed frame snapshot.
-- [ ] Ensure the thread waiting for readiness can pump the exact required jobs
+- [x] Ensure the thread waiting for readiness can pump the exact required jobs
   needed to make progress without spinning or deadlocking.
 
 ### 5.3 Shadows
 
-- [ ] Give shadow updates independent scheduling/arena capacity so Sponza's
+- [x] Give shadow updates independent scheduling/arena capacity so Sponza's
   caster multiplicity cannot consume the main-scene/terminal budget.
-- [ ] Under `BlockForExact`, require current-content shadows unless an existing
+- [x] Under `BlockForExact`, require current-content shadows unless an existing
   atlas entry exactly matches the captured light/caster/transform/quality key.
-- [ ] Under `MeetDeadlineWithGpuFallback`, allow only an explicitly declared
+- [x] Under `MeetDeadlineWithGpuFallback`, allow only an explicitly declared
   resident shadow fallback, such as a last-complete atlas entry with age
   metadata or an unshadowed/dummy tile.
-- [ ] Never select stale/unshadowed shadow behavior merely because a queue is
+- [x] Never select stale/unshadowed shadow behavior merely because a queue is
   full.
-- [ ] Report exact and fallback shadow use in frame telemetry.
+- [x] Report exact and fallback shadow use in frame telemetry.
 
 Acceptance criteria:
 
@@ -393,26 +508,26 @@ Primary surfaces include:
 - `VulkanRejectedDesktopFramePolicy`
 - desktop acquire, frame-slot, submit, and present code
 
-- [ ] Feed primary recording only a sealed plan with no unresolved required
+- [x] Feed primary recording only a sealed plan with no unresolved required
   pipeline, mesh, upload, descriptor, or shadow ticket.
-- [ ] Once foreground readiness succeeds, reach `vkBeginCommandBuffer` or
+- [x] Once foreground readiness succeeds, reach `vkBeginCommandBuffer` or
   return a concrete recording/device/WSI error.
-- [ ] Replace the foreground result surface with `Recorded`,
+- [x] Replace the foreground result surface with `Recorded`,
   `RecordedWithGpuFallback`, or explicit failure. Keep `Deferred` only for
   background work.
-- [ ] Remove `PresentLastCompletedContent` from ordinary foreground cold-work
+- [x] Remove `PresentLastCompletedContent` from ordinary foreground cold-work
   recovery.
-- [ ] Retain old-content reuse only for an output policy that explicitly
+- [x] Retain old-content reuse only for an output policy that explicitly
   authorizes it and report the original source-frame ID.
 - [ ] Distinguish no-image, out-of-date, surface-lost, device-lost, host OOM,
   device OOM, and caller cancellation from admission/readiness outcomes.
-- [ ] Add a configurable liveness watchdog that reports frame stage, active
+- [x] Add a configurable liveness watchdog that reports frame stage, active
   ticket, dependency chain, elapsed time, and last monotonic progress.
-- [ ] On watchdog expiry, fail/pause the renderer explicitly. Do not convert
+- [x] On watchdog expiry, fail/pause the renderer explicitly. Do not convert
   the event to deferred work, old-content replay, or a silent backend switch.
-- [ ] Make arena/residency capacity failure terminal for the affected frame
+- [x] Make arena/residency capacity failure terminal for the affected frame
   with exact high-water information rather than an infinite retry loop.
-- [ ] Make actual `VK_ERROR_DEVICE_LOST` renderer-terminal until explicit
+- [x] Make actual `VK_ERROR_DEVICE_LOST` renderer-terminal until explicit
   Vulkan reinitialization.
 
 Acceptance criteria:
@@ -432,7 +547,7 @@ Repository policy requires the feature to work through the live/runtime path
 before adding tests for this regression. Do not add or modify tests until this
 phase passes and the user explicitly clears test work.
 
-- [ ] Reserve one bounded task run under `Build/_AgentValidation/`.
+- [x] Reserve one bounded task run under `Build/_AgentValidation/`.
 - [ ] Start one uniquely named isolated MCP editor session with the Unit
   Testing World, Vulkan, Sponza, MCP, and Vulkan validation enabled.
 - [ ] Use MCP to capture and inspect at least these camera cohorts:

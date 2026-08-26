@@ -659,7 +659,7 @@ internal unsafe partial class VkMeshRenderer
 	/// cached pipeline matches, a new one is created with the current shader
 	/// program, vertex layout, and fixed-function state.
 	/// </summary>
-	private bool EnsurePipeline(
+	private bool EnsurePipelineCore(
 		XRMaterial material,
 		PrimitiveTopology topology,
 		in PendingMeshDraw draw,
@@ -671,6 +671,7 @@ internal unsafe partial class VkMeshRenderer
 		bool depthStencilReadOnly,
 		string pipelineName,
 		bool allowPipelineCreation,
+		bool foregroundRequired,
 		out Pipeline pipeline)
 	{
 		pipeline = default;
@@ -884,7 +885,7 @@ internal unsafe partial class VkMeshRenderer
 				BackendContext.IsDeviceOperational,
 				RuntimeEngine.Rendering.Settings.AsyncProgramCompilation))
 		{
-			if (BackendContext.Resources.PipelineManager.TryTakeCompletedGraphicsPipeline(request.CompileKey, out VulkanGraphicsPipelineCompileResult asyncResult))
+			if (BackendContext.Resources.PipelineManager.TryTakeCompletedGraphicsPipeline(request.CompileKey, request.DependencyGeneration, out VulkanGraphicsPipelineCompileResult asyncResult))
 			{
 				if (!asyncResult.Success || asyncResult.Pipeline.Handle == 0)
 				{
@@ -914,6 +915,27 @@ internal unsafe partial class VkMeshRenderer
 
 			if (BackendContext.Resources.PipelineManager.IsGraphicsPipelineCompileInFlight(request.CompileKey))
 			{
+				string foregroundReason = "foreground pipeline completion failed";
+				if (foregroundRequired &&
+				BackendContext.Resources.PipelineManager.TryCompleteGraphicsPipelineForForeground(
+					request.CompileKey,
+					request.DependencyGeneration,
+					out VulkanGraphicsPipelineCompileResult foregroundResult,
+					out foregroundReason))
+				{
+					pipeline = BackendContext.Resources.PipelineManager.StoreOrRetireSharedGraphicsPipeline(key, foregroundResult.Pipeline);
+					_pipelines[key] = pipeline;
+					_pipelineDirty = false;
+					return true;
+				}
+
+				if (foregroundRequired)
+					Debug.VulkanWarningEvery(
+						$"Vulkan.Pipeline.ForegroundCompileFailed.{program.Data.Name ?? "UnknownProgram"}",
+						TimeSpan.FromSeconds(2),
+						"[Vulkan] Foreground pipeline admission failed for program='{0}' pipeline='{1}': {2}",
+						program.Data.Name ?? "<unnamed program>", pipelineName, foregroundReason);
+
 				RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanPipelineTelemetry(
 					EVulkanPipelineTelemetryEvent.DrawNotReady,
 					backgroundCompile: true);
@@ -954,6 +976,7 @@ internal unsafe partial class VkMeshRenderer
 					request,
 					BackendContext.IsDeviceOperational,
 					RuntimeEngine.Rendering.Settings.AsyncProgramCompilation,
+					foregroundRequired,
 					out string rejectReason))
 			{
 				RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanPipelineTelemetry(
@@ -968,6 +991,19 @@ internal unsafe partial class VkMeshRenderer
 					rejectReason);
 				_pipelineDirty = true;
 				return false;
+			}
+
+			if (foregroundRequired &&
+				BackendContext.Resources.PipelineManager.TryCompleteGraphicsPipelineForForeground(
+					request.CompileKey,
+					request.DependencyGeneration,
+					out VulkanGraphicsPipelineCompileResult foregroundCompletion,
+					out _))
+			{
+				pipeline = BackendContext.Resources.PipelineManager.StoreOrRetireSharedGraphicsPipeline(key, foregroundCompletion.Pipeline);
+				_pipelines[key] = pipeline;
+				_pipelineDirty = false;
+				return true;
 			}
 
 			_pipelineDirty = true;
@@ -1020,6 +1056,16 @@ internal unsafe partial class VkMeshRenderer
 		_pipelineDirty = false;
 		return pipeline.Handle != 0;
 	}
+
+	private bool EnsurePipeline(
+		XRMaterial material, PrimitiveTopology topology, in PendingMeshDraw draw,
+		RenderPass renderPass, bool useDynamicRendering,
+		DynamicRenderingFormatSignature dynamicRenderingFormats, int passIndex,
+		IReadOnlyCollection<RenderPassMetadata>? passMetadata, bool depthStencilReadOnly,
+		string pipelineName, bool allowPipelineCreation, out Pipeline pipeline)
+		=> EnsurePipelineCore(material, topology, draw, renderPass, useDynamicRendering,
+			dynamicRenderingFormats, passIndex, passMetadata, depthStencilReadOnly,
+			pipelineName, allowPipelineCreation, false, out pipeline);
 
 	private bool RecordGraphicsPipelineCacheMiss(
 		int passIndex,

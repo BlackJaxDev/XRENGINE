@@ -45,6 +45,7 @@ namespace XREngine.Rendering.Vulkan
                 int dynamicTextOverlayOpCount;
 
                 stageStartTimestamp = Stopwatch.GetTimestamp();
+                attempt.RecordStartedTimestamp = stageStartTimestamp;
                 using (RuntimeRenderingHostServices.Profiling.StartProfileScope(
                            "Vulkan.FrameLifecycle.RecordCommandBuffer"))
                 {
@@ -57,6 +58,12 @@ namespace XREngine.Rendering.Vulkan
                                 ref attempt,
                                 attempt.ImageIndex,
                                 attempt.PreserveSwapchainForImGuiOverlay);
+                        attempt.PrimaryRecordingDisposition =
+                            recordingResult.Disposition;
+                        attempt.PrimaryRecordingUsedGpuFallback =
+                            recordingResult.UsedGpuFallback;
+                        attempt.RecordingSourceFrameId =
+                            recordingResult.SourceFrameId;
                         string recordingDeferredReason =
                             recordingResult.Succeeded
                                 ? string.Empty
@@ -78,9 +85,20 @@ namespace XREngine.Rendering.Vulkan
                             recordingResult.CommandBufferDirtyGeneration;
                         attempt.OutputExecutionPlan =
                             recordingResult.OutputExecutionPlan;
+                        if (attempt.OutputExecutionPlan is { } sealedPlan &&
+                            sealedPlan.TryGetPresentNowContract(
+                                out RenderOutputRequest outputContract))
+                        {
+                            attempt.ReadinessPolicy =
+                                outputContract.ReadinessPolicy;
+                            attempt.WorkClass = outputContract.WorkClass;
+                            attempt.OutputGeneration =
+                                outputContract.Target.TargetGeneration;
+                        }
                         _lastEnsureCommandBufferRecordedPrimary =
-                            recordingResult.Disposition ==
-                            EVulkanPrimaryCommandRecordingDisposition.Recorded;
+                            recordingResult.Disposition is
+                                EVulkanPrimaryCommandRecordingDisposition.Recorded or
+                                EVulkanPrimaryCommandRecordingDisposition.RecordedWithGpuFallback;
                         if (attempt.TextureUploadCommandBuffer.Handle != 0)
                         {
                             attempt.TransitionUploadOwnership(
@@ -91,6 +109,32 @@ namespace XREngine.Rendering.Vulkan
                             ResolveRecordedDesktopSwapchainWriteCount(
                                 ref attempt,
                                 attempt.SceneCommandBuffer);
+
+                        if (recordingResult.IsPresentNowFailure)
+                        {
+                            return HandleDesktopPresentNowFailureAfterAcquire(
+                                ref attempt,
+                                EVulkanPresentNowReadinessStage.PipelineCompilation,
+                                recordingResult.Reason ??
+                                    "PresentNow primary recording failed.",
+                                imguiOverlaySnapshot,
+                                dynamicTextSecondaryCommandBuffer,
+                                dynamicTextOverlayOpCount);
+                        }
+
+                        if (attempt.WorkClass == ERenderOutputWorkClass.PresentNow &&
+                            recordingResult.Disposition is
+                                EVulkanPrimaryCommandRecordingDisposition.Deferred or
+                                EVulkanPrimaryCommandRecordingDisposition.Reused)
+                        {
+                            return HandleDesktopPresentNowFailureAfterAcquire(
+                                ref attempt,
+                                EVulkanPresentNowReadinessStage.QueueSubmission,
+                                $"PresentNow source recording invariant violated: {recordingResult.Disposition}; {recordingResult.Reason ?? "<no detail>"}",
+                                imguiOverlaySnapshot,
+                                dynamicTextSecondaryCommandBuffer,
+                                dynamicTextOverlayOpCount);
+                        }
 
                         if (!string.IsNullOrEmpty(recordingDeferredReason))
                         {
@@ -124,6 +168,7 @@ namespace XREngine.Rendering.Vulkan
                             Stopwatch.GetElapsedTime(stageStartTimestamp);
                         attempt.Timing.RecordSceneCommandBuffer += elapsed;
                         attempt.Timing.RecordCommandBuffer += elapsed;
+                        attempt.RecordCompletedTimestamp = Stopwatch.GetTimestamp();
                         long allocatedBytes =
                             GC.GetAllocatedBytesForCurrentThread() -
                             allocationStart;
@@ -244,6 +289,54 @@ namespace XREngine.Rendering.Vulkan
             CompleteDesktopFrameSlot(ref attempt);
             attempt.Stop(
                 EDesktopFrameReason.RecordingDeferred,
+                EDesktopFrameRecoveryAction.RecreateSwapchain);
+            return EDesktopFrameFlow.Stop;
+        }
+
+        private EDesktopFrameFlow HandleDesktopPresentNowFailureAfterAcquire(
+            ref VulkanFrameAttempt attempt,
+            EVulkanPresentNowReadinessStage stage,
+            string reason,
+            VulkanImGuiFrameSnapshot? recoveryOverlaySnapshot,
+            CommandBuffer recoveryDynamicTextSecondaryCommandBuffer,
+            int recoveryDynamicTextOperationCount)
+        {
+            TimeSpan elapsed = Stopwatch.GetElapsedTime(attempt.StartTimestamp);
+            VulkanPresentNowReadinessException failure = new(
+                attempt.FrameNumber,
+                stage,
+                "sealed-primary-recording",
+                "DesktopScene -> sealed FramePlan -> required pipeline/descriptor/target",
+                elapsed,
+                TimeSpan.Zero,
+                reason);
+            PausePresentNowRenderer(ref attempt, failure);
+
+            // This call deliberately resolves to FailPresentNow. It may settle
+            // unsubmitted upload ownership, but it cannot record replay/clear
+            // content or present the acquired image as a successful frame.
+            _ = TryRecoverRejectedDesktopImage(
+                ref attempt,
+                commandBufferDirtyFlagSet: false,
+                commandBuffersDirtiedAfterSceneRecord: true,
+                recordedSwapchainWriteCount: attempt.SceneSwapchainWriteCount,
+                rejectionStage: "PresentNowRecordingFailed",
+                rejectedSubmitResult: null,
+                recoveryOverlaySnapshot: recoveryOverlaySnapshot,
+                recoveryDynamicTextSecondaryCommandBuffer:
+                    recoveryDynamicTextSecondaryCommandBuffer,
+                recoveryDynamicTextOperationCount:
+                    recoveryDynamicTextOperationCount);
+
+            _ = ConsumeDesktopAcquireForRecovery(
+                ref attempt,
+                "PresentNowRecordingFailed");
+            ResolveDesktopAcquireBySwapchainRecreation(
+                ref attempt,
+                "PresentNow recording failed after swapchain acquisition");
+            CompleteDesktopFrameSlot(ref attempt);
+            attempt.Stop(
+                EDesktopFrameReason.PresentNowReadinessFailed,
                 EDesktopFrameRecoveryAction.RecreateSwapchain);
             return EDesktopFrameFlow.Stop;
         }

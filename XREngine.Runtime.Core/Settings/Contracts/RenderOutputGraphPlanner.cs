@@ -58,6 +58,14 @@ public sealed class RenderOutputGraphPlanner
         ulong terminalKey = GetTerminalNodeKey(request);
         if (_graph.TryGetNodeIndex(terminalKey, out int plannedNode))
         {
+            _graph.ApplyReadinessToPrerequisites(
+                plannedNode,
+                request.ReadinessPolicy,
+                request.WorkClass,
+                request.FallbackPolicy);
+            if (!request.Allows(decision.Disposition) ||
+                !_graph.IsReadinessCompatible(plannedNode, request.ReadinessPolicy))
+                return -1;
             ApplyScheduleAndDecision(
                 plannedNode,
                 request,
@@ -86,6 +94,14 @@ public sealed class RenderOutputGraphPlanner
 
         if (terminalNode >= 0)
         {
+            _graph.ApplyReadinessToPrerequisites(
+                terminalNode,
+                request.ReadinessPolicy,
+                request.WorkClass,
+                request.FallbackPolicy);
+            if (!request.Allows(decision.Disposition) ||
+                !_graph.IsReadinessCompatible(terminalNode, request.ReadinessPolicy))
+                return -1;
             ApplyScheduleAndDecision(
                 terminalNode,
                 request,

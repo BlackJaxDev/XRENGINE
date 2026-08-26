@@ -25,7 +25,9 @@ internal sealed partial class VulkanTextureUploadService
             RenderThreadJobKind.TextureUpload);
     }
 
-    private bool DrainSubmittedTextureTransfers(VulkanTextureUploadSchedulingContext context)
+    private bool DrainSubmittedTextureTransfers(
+        VulkanTextureUploadSchedulingContext context,
+        VulkanTextureUploadManifest? requiredManifest = null)
     {
         if (!context.IsDeviceOperational)
         {
@@ -34,7 +36,7 @@ internal sealed partial class VulkanTextureUploadService
             return true;
         }
 
-        while (TryPeekSubmittedTransfer(out VulkanSubmittedImportedTextureUpload? submitted) && submitted is not null)
+        while (TryPeekSubmittedTransfer(requiredManifest, out VulkanSubmittedImportedTextureUpload? submitted) && submitted is not null)
         {
             if (!context.Commands.TryPollImportedTextureTransfer(submitted, out bool complete, out string? pollFailure))
             {
@@ -74,16 +76,36 @@ internal sealed partial class VulkanTextureUploadService
             // that non-preemptible Vulkan work to one texture per render iteration;
             // draining a whole completed avatar batch here previously produced
             // triple-digit millisecond render-thread jobs.
-            return HasSubmittedTransfersOrCompleteDrain();
+            return HasSubmittedTransfersOrCompleteDrain(requiredManifest);
         }
 
-        return HasSubmittedTransfersOrCompleteDrain();
+        return HasSubmittedTransfersOrCompleteDrain(requiredManifest);
     }
 
-    private bool HasSubmittedTransfersOrCompleteDrain()
+    /// <summary>
+    /// Completes one ordered transfer step for a foreground readiness barrier.
+    /// The transfer queue remains asynchronous; callers must repeat until this
+    /// returns true rather than forcing a device-wide idle.
+    /// </summary>
+    internal bool DrainRequiredTextureTransfers(
+        VulkanTextureUploadSchedulingContext context,
+        VulkanTextureUploadManifest manifest)
+        => DrainSubmittedTextureTransfers(context, manifest);
+
+    private bool HasSubmittedTransfersOrCompleteDrain(VulkanTextureUploadManifest? requiredManifest = null)
     {
         lock (_transferQueueSync)
         {
+            if (requiredManifest is not null)
+            {
+                for (int index = 0; index < _pendingTransferUploads.Count; index++)
+                {
+                    if (requiredManifest.Contains(_pendingTransferUploads[index].Upload.Ticket))
+                        return false;
+                }
+                return true;
+            }
+
             if (_pendingTransferUploads.Count > 0)
                 return false;
         }
@@ -100,13 +122,22 @@ internal sealed partial class VulkanTextureUploadService
             : false;
     }
 
-    private bool TryPeekSubmittedTransfer(out VulkanSubmittedImportedTextureUpload? submitted)
+    private bool TryPeekSubmittedTransfer(
+        VulkanTextureUploadManifest? requiredManifest,
+        out VulkanSubmittedImportedTextureUpload? submitted)
     {
         lock (_transferQueueSync)
         {
-            submitted = _pendingTransferUploads.Count == 0
-                ? null
-                : _pendingTransferUploads[0];
+            submitted = null;
+            for (int index = 0; index < _pendingTransferUploads.Count; index++)
+            {
+                VulkanSubmittedImportedTextureUpload candidate = _pendingTransferUploads[index];
+                if (requiredManifest is null || requiredManifest.Contains(candidate.Upload.Ticket))
+                {
+                    submitted = candidate;
+                    break;
+                }
+            }
             return submitted is not null;
         }
     }

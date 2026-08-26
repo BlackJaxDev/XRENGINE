@@ -225,6 +225,47 @@ internal ref struct VulkanFrameAttempt
     /// buffers owned by this attempt.
     /// </summary>
     public FramePlan? OutputExecutionPlan;
+    /// <summary>The immutable scene/render epoch accepted before foreground readiness began.</summary>
+    public ulong AcceptedSceneEpoch;
+    /// <summary>The target generation sealed into the accepted output plan.</summary>
+    public ulong OutputGeneration;
+    /// <summary>The source frame whose newly submitted work was presented.</summary>
+    public ulong PresentedSourceFrameId;
+    /// <summary>Disposition selected by the frozen primary recorder.</summary>
+    public EVulkanPrimaryCommandRecordingDisposition PrimaryRecordingDisposition;
+    /// <summary>Whether the primary recorder explicitly selected a resident GPU fallback.</summary>
+    public bool PrimaryRecordingUsedGpuFallback;
+    /// <summary>Source-frame identity carried by the primary recording result.</summary>
+    public ulong RecordingSourceFrameId;
+    /// <summary>Native queue-submit result for the scene command transaction.</summary>
+    public Result SubmitResult;
+    /// <summary>Native queue-present result for this attempt.</summary>
+    public Result PresentResult;
+    /// <summary>Whether the final vkQueuePresent dispatch was issued.</summary>
+    public bool PresentDispatched;
+    /// <summary>Whether the present wait semaphore was verified against the acquired target lease.</summary>
+    public bool PresentWaitSemaphoreProvenanceValid;
+    /// <summary>Expected present wait semaphore captured from the acquired target lease.</summary>
+    public Semaphore ExpectedPresentWaitSemaphore;
+    /// <summary>Stage timestamps retained for the final presentation ledger.</summary>
+    public long AcquireStartedTimestamp;
+    public long AcquireCompletedTimestamp;
+    public long RecordStartedTimestamp;
+    public long RecordCompletedTimestamp;
+    public long SubmitStartedTimestamp;
+    public long SubmitCompletedTimestamp;
+    public long PresentStartedTimestamp;
+    public long PresentCompletedTimestamp;
+    /// <summary>The explicit readiness contract for this desktop transaction.</summary>
+    public ERenderOutputReadinessPolicy ReadinessPolicy;
+    /// <summary>The explicit work class for this desktop transaction.</summary>
+    public ERenderOutputWorkClass WorkClass;
+    /// <summary>Whether format-independent required work completed before acquire.</summary>
+    public bool PresentNowReadinessCompleted;
+    /// <summary>Number of immutable mesh requests accepted by the pre-acquire barrier.</summary>
+    public int PresentNowMeshRequestCount;
+    /// <summary>Slot-owned logical transaction accepted before WSI acquisition.</summary>
+    public VulkanAcceptedFramePlan? AcceptedFramePlan;
 
     /// <summary>
     /// Indicates whether the resources associated with the current frame attempt have been released,
@@ -284,6 +325,8 @@ internal ref struct VulkanFrameAttempt
         Identity = identity;
         Phase = EDesktopFramePhase.Entered;
         Flow = EDesktopFrameFlow.Continue;
+        ReadinessPolicy = ERenderOutputReadinessPolicy.BlockForExact;
+        WorkClass = ERenderOutputWorkClass.PresentNow;
     }
 
     /// <summary>

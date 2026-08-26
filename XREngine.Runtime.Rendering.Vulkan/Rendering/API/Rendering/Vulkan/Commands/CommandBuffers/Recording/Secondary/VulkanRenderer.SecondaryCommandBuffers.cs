@@ -305,6 +305,7 @@ namespace XREngine.Rendering.Vulkan
                         drawContext.PassMetadata,
                         depthStencilReadOnly: false,
                         drawContext.PipelineInstance?.DebugName ?? "<no pipeline>",
+                        foregroundRequired: false,
                         out string pipelineReason))
                 {
                     continue;

@@ -46,6 +46,37 @@ internal sealed class VulkanPreparedMeshIngress
         LegacyHoleMaterializationCount = 0;
     }
 
+    /// <summary>
+    /// Copies one finalized current-frame transaction into slot-owned storage.
+    /// Both instances are preallocated, so accepting a cold frame does not grow
+    /// engine-managed memory.
+    /// </summary>
+    internal void CopyFrom(VulkanPreparedMeshIngress source)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        if (ReferenceEquals(this, source))
+            return;
+        if (source._count > _entries.Length ||
+            source._resourceUseCount > _resourceUses.Length)
+        {
+            throw new VulkanAcceptedFramePlanCapacityException(
+                EVulkanAcceptedFrameLane.MainScene,
+                Math.Min(_entries.Length, _resourceUses.Length),
+                Math.Max(source._count, source._resourceUseCount));
+        }
+
+        Clear();
+        source._entries.AsSpan(0, source._count).CopyTo(_entries);
+        source._resourceUses.AsSpan(0, source._resourceUseCount)
+            .CopyTo(_resourceUses);
+        _count = source._count;
+        _resourceUseCount = source._resourceUseCount;
+        _dynamicUiCount = source._dynamicUiCount;
+        IsCohortHit = source.IsCohortHit;
+        ReusedOperationCount = source.ReusedOperationCount;
+        LegacyHoleMaterializationCount = source.LegacyHoleMaterializationCount;
+    }
+
     internal bool TryAppend(
         int passIndex,
         XRFrameBuffer? target,

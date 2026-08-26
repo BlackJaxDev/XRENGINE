@@ -10,6 +10,15 @@ internal static class VulkanRejectedDesktopFramePolicy
         bool deviceLost,
         bool imageWasEverPresented,
         bool imageHasValidCompletedContent)
+        => Resolve(acquireAvailable, deviceLost, imageWasEverPresented,
+            imageHasValidCompletedContent, allowStaleReuse: true);
+
+    internal static RejectedDesktopFramePolicyDecision Resolve(
+        bool acquireAvailable,
+        bool deviceLost,
+        bool imageWasEverPresented,
+        bool imageHasValidCompletedContent,
+        bool allowStaleReuse)
     {
         if (!acquireAvailable)
         {
@@ -24,6 +33,15 @@ internal static class VulkanRejectedDesktopFramePolicy
                 ERejectedDesktopFrameDisposition.SkipPresent,
                 ERejectedDesktopFramePolicyReason.DeviceLost);
         }
+
+        // A present-now transaction is never allowed to turn a rejected fresh
+        // frame into an implicit old-content presentation.  Preserve the
+        // normal WSI/device recovery decisions above, but make the foreground
+        // contract explicit once the acquired image is otherwise usable.
+        if (!allowStaleReuse)
+            return new RejectedDesktopFramePolicyDecision(
+                ERejectedDesktopFrameDisposition.FailPresentNow,
+                ERejectedDesktopFramePolicyReason.PresentNowFreshOutputRequired);
 
         if (!imageWasEverPresented)
         {

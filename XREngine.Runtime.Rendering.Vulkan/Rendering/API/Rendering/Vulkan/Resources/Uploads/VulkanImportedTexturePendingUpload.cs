@@ -14,6 +14,7 @@ namespace XREngine.Rendering.Vulkan;
 
 internal sealed class VulkanImportedTexturePendingUpload(
     VulkanImportedTextureUploadRequest request,
+    VulkanTextureUploadTicket ticket,
     VkTexture2D texture,
     Image image,
     DeviceMemory memory,
@@ -36,6 +37,7 @@ internal sealed class VulkanImportedTexturePendingUpload(
     private int _stagingResourcesReleased;
 
     public VulkanImportedTextureUploadRequest Request { get; } = request;
+    public VulkanTextureUploadTicket Ticket { get; } = ticket;
     public VkTexture2D Texture { get; } = texture;
     public Image Image { get; private set; } = image;
     public DeviceMemory Memory { get; private set; } = memory;

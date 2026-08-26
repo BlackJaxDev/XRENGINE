@@ -94,8 +94,11 @@ Call `start_agent_run` only when all of these conditions are true:
   the API project has billing/quota plus access to the selected exact model.
   Never ask the user to paste the key into chat, print or echo it, inspect its
   value, put it in MCP arguments, or persist it.
-- A reasoning-only run omits `editor_session`, exposes no local tools, and
-  cannot mutate repository, process, or editor state. A run that needs editor
+- An evidence-only run omits both `repository_access` and `editor_session`,
+  exposes no local tools, and cannot mutate repository, process, or editor
+  state. Use `context_files` for immutable selected repository text, or enable
+  read-only repository tools only with explicit narrow `allowed_roots`; both
+  mechanisms send selected content to the OpenAI API. A run that needs editor
   evidence targets one exact named session created with
   `Tools/Manage-McpEditorSession.ps1`; the broker accepts only that session's
   manifest and loopback endpoint and never discovers or manages processes.
@@ -103,8 +106,10 @@ Call `start_agent_run` only when all of these conditions are true:
   criteria, constraints, tool policy, and narrow turn, tool-call,
   tool-result-byte, output-token, elapsed-time, retry, and concurrency budgets.
 
-Automatic runs default to at most 3 turns, 8 editor tool calls, 1 retry, and
-per-run concurrency 1. Luna and Terra default to 4,096 combined
+Automatic runs default to at most 3 turns, 8 local tool calls, 1 retry, and
+per-run concurrency 1. Context snapshots default to at most 16 UTF-8 text
+files, 256 KiB per raw file, 1 MiB aggregate raw content, and 2 MiB rendered
+provider input. Luna and Terra default to 4,096 combined
 output/reasoning tokens and 120 seconds. Sol defaults to 16,384 tokens and 300
 seconds, or 32,768 tokens and 600 seconds at `xhigh`/`max`, because its deeper
 reasoning can otherwise consume either generic budget before producing visible
@@ -116,9 +121,10 @@ remains bounded by `XRE_LOCAL_AGENT_BROKER_MAX_CONCURRENCY`.
 #### Required Coordinator Workflow
 
 1. Keep the current Codex agent as coordinator. Use native Codex subagents for
-   repository searches, filesystem operations, implementation, and validation;
-   use the broker for bounded reasoning or editor-tool evidence. Prefer a
-   supported native Codex handoff for routing an entire coding task.
+   broad repository searches, filesystem operations, implementation, and
+   validation; use the broker for bounded reasoning, explicitly rooted
+   read-only repository evidence, or editor-tool evidence. Prefer a supported
+   native Codex handoff for routing an entire coding task.
 2. Partition broker work into coherent bounded slices and route
    each slice to the lowest-cost tier likely to validate successfully: Luna for
    deterministic inventory, evidence extraction, and classification; Terra for
@@ -132,13 +138,18 @@ remains bounded by `XRE_LOCAL_AGENT_BROKER_MAX_CONCURRENCY`.
 4. Build a compact evidence packet containing only the objective, success
    criteria, constraints, relevant files/symbols, current diff, commands and
    observed results, failed hypotheses, unresolved questions, and next
-   decision. Do not send unrelated repository data or secrets.
+   decision. Attach exact known files through `context_files`; enable
+   `repository_access` only when the worker must discover additional context,
+   and authorize the narrowest practical roots. Do not send unrelated
+   repository data or secrets.
 5. Keep `use_background_mode` disabled by default. Enable it only for a
    long-running slice after the user or an applicable project policy accepts
    the provider's temporary response storage and non-ZDR behavior. When
    enabled, retain provider attempt diagnostics and cancellation acceptance.
-6. Use read-only editor access by default. A non-empty allowlist should name
-   only the tools needed for the objective.
+6. Repository tools are disabled by default, always read-only, and separately
+   authorized from editor policy. Use read-only editor access by default. A
+   non-empty editor allowlist should name only the tools needed for the
+   objective.
 7. Mutation still requires all of: explicit task authority, an `AllowMutate` named
    session, `allow_mutation: true`, an exact non-empty mutating-tool allowlist,
    and a later read-back, query, inspection, validation, or capture. Destructive
@@ -152,9 +163,10 @@ remains bounded by `XRE_LOCAL_AGENT_BROKER_MAX_CONCURRENCY`.
    or materially reclassified slice; do not
    change tiers merely to bypass provider/model-access failure.
 10. Integrate the returned evidence into the local investigation and perform the
-   relevant local read-back, capture, build, or test. The worker has no generic
-   shell, repository-write, Git, or process tool, so its answer is evidence, not
-   repository validation.
+   relevant local read-back, capture, build, or test. The worker may read only
+   explicitly attached or rooted eligible repository text. It has no generic
+   shell, repository-write, Git, or process tool, so its answer is evidence,
+   not repository validation.
 11. Report API, policy, editor, timeout, budget, or model-access failures
     directly. Do not improvise credentials/endpoints, discover processes, or
     silently fall back.

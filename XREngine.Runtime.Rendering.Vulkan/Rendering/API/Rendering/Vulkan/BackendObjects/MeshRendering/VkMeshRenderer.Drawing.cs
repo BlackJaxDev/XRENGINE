@@ -2254,6 +2254,7 @@ internal unsafe partial class VkMeshRenderer
 		IReadOnlyCollection<RenderPassMetadata>? passMetadata,
 		bool depthStencilReadOnly,
 		string pipelineName,
+		bool foregroundRequired,
 		out string reason)
 	{
 		if (!_recordDrawSync.TryEnter())
@@ -2274,7 +2275,7 @@ internal unsafe partial class VkMeshRenderer
 
 			if (triangleIndexed)
 			{
-				ready &= EnsurePipeline(
+				ready &= EnsurePipelineCore(
 					material,
 					PrimitiveTopology.TriangleList,
 					draw,
@@ -2286,12 +2287,13 @@ internal unsafe partial class VkMeshRenderer
 					depthStencilReadOnly,
 					pipelineName,
 					allowPipelineCreation: true,
+					foregroundRequired,
 					out _);
 			}
 
 			if (!triangleOnly && lineIndexed)
 			{
-				ready &= EnsurePipeline(
+				ready &= EnsurePipelineCore(
 					material,
 					PrimitiveTopology.LineList,
 					draw,
@@ -2303,12 +2305,13 @@ internal unsafe partial class VkMeshRenderer
 					depthStencilReadOnly,
 					pipelineName,
 					allowPipelineCreation: true,
+					foregroundRequired,
 					out _);
 			}
 
 			if (!triangleOnly && pointIndexed)
 			{
-				ready &= EnsurePipeline(
+				ready &= EnsurePipelineCore(
 					material,
 					PrimitiveTopology.PointList,
 					draw,
@@ -2320,6 +2323,7 @@ internal unsafe partial class VkMeshRenderer
 					depthStencilReadOnly,
 					pipelineName,
 					allowPipelineCreation: true,
+					foregroundRequired,
 					out _);
 			}
 
@@ -2337,7 +2341,7 @@ internal unsafe partial class VkMeshRenderer
 				};
 				if (!triangleOnly || IsTriangleClassTopology(fallbackTopology))
 				{
-					ready &= EnsurePipeline(
+					ready &= EnsurePipelineCore(
 						material,
 						fallbackTopology,
 						draw,
@@ -2349,6 +2353,7 @@ internal unsafe partial class VkMeshRenderer
 						depthStencilReadOnly,
 						pipelineName,
 						allowPipelineCreation: true,
+						foregroundRequired,
 						out _);
 				}
 			}

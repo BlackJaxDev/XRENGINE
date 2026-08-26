@@ -29,9 +29,12 @@ namespace XREngine.Rendering.Vulkan
                     acquireAvailable,
                     _deviceLost,
                     imageWasEverPresented,
-                    imageHasValidPresentedContent);
+                    imageHasValidPresentedContent,
+                    allowStaleReuse:
+                        attempt.WorkClass != ERenderOutputWorkClass.PresentNow);
 
             if (policy.ShouldPresent ||
+                policy.IsExplicitFailure ||
                 !acquireAvailable ||
                 _deviceLost ||
                 !string.Equals(

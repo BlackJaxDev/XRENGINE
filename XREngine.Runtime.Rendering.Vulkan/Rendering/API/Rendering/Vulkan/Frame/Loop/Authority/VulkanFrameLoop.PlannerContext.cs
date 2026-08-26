@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using XREngine.Rendering.RenderGraph;
 using XREngine.Rendering.Resources;
 
@@ -172,18 +173,49 @@ internal sealed partial class VulkanFrameLoop
         if (requestCount == 0)
             return;
 
+        long readinessStart = Stopwatch.GetTimestamp();
+        double deadlineMilliseconds = 0.0;
+        for (int index = 0; index < requestCount; index++)
+        {
+            double candidate = _meshOperationRequestScratch[index]
+                .Context.OutputSchedulingRequest.Schedule.DeadlineMs;
+            if (candidate > 0.0 &&
+                (deadlineMilliseconds <= 0.0 || candidate < deadlineMilliseconds))
+            {
+                deadlineMilliseconds = candidate;
+            }
+        }
+        if (deadlineMilliseconds <= 0.0)
+            deadlineMilliseconds = 11.1;
+        long deadlineTimestamp = checked(
+            readinessStart +
+            Math.Max(
+                1L,
+                (long)Math.Ceiling(
+                    deadlineMilliseconds * Stopwatch.Frequency / 1000.0)));
+
         try
         {
             if (MaterializeQueuedMeshRenderRequests(
                     requestCount,
                     allowPreparedCohort: false,
-                    out string deferredReason))
+                    out string deferredReason,
+                    foregroundRequired: true,
+                    readinessDeadlineTimestamp: deadlineTimestamp,
+                    sourceFrameId: RuntimeEngine.Rendering.State.RenderFrameId))
             {
                 return;
             }
 
-            throw new InvalidOperationException(
-                $"OpenXR deferred mesh materialization did not complete inside its eye capture. {deferredReason}");
+            TimeSpan elapsed = Stopwatch.GetElapsedTime(readinessStart);
+            throw new VulkanPresentNowReadinessException(
+                RuntimeEngine.Rendering.State.RenderFrameId,
+                EVulkanPresentNowReadinessStage.MeshMaterialization,
+                "openxr-eye-visible-meshes",
+                "OpenXREyeSubmit -> visible meshes",
+                elapsed,
+                elapsed,
+                $"XR deadline missed with no declared resident GPU fallback. {deferredReason}");
         }
         catch
         {

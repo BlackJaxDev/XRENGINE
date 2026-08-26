@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -12,7 +13,7 @@ internal sealed unsafe partial class VulkanPipelineManager
     private const string VulkanPipelineCompileWorkersEnvVar = XREngineEnvironmentVariables.VulkanPipelineCompileWorkers;
     private const double VulkanPipelineCompileWarningSeconds = 2.0;
     private const double VulkanPipelineCompileQuarantineSeconds = 10.0;
-
+    private static readonly TimeSpan ForegroundPipelineCompileTimeout = TimeSpan.FromSeconds(30);
 
     internal bool IsAsyncCompilationEnabled(
         bool deviceReady,
@@ -31,6 +32,7 @@ internal sealed unsafe partial class VulkanPipelineManager
 
     internal bool TryTakeCompletedGraphicsPipeline(
         in VulkanGraphicsPipelineCompileKey key,
+        long dependencyGeneration,
         out VulkanGraphicsPipelineCompileResult result)
     {
         DrainSupersededSharedGraphicsPipelines();
@@ -38,6 +40,14 @@ internal sealed unsafe partial class VulkanPipelineManager
         result = default;
         lock (_vulkanGraphicsPipelineCompileJobsLock)
         {
+            var completionKey = new VulkanGraphicsPipelineCompileCompletionKey(
+                key,
+                dependencyGeneration);
+            if (_vulkanGraphicsPipelineCompletedResults.TryGetValue(
+                    completionKey,
+                    out result))
+                return true;
+
             if (!_vulkanGraphicsPipelineCompileJobs.TryGetValue(key, out VulkanGraphicsPipelineCompileJob? job) ||
                 !job.Task.IsCompleted)
             {
@@ -52,6 +62,8 @@ internal sealed unsafe partial class VulkanPipelineManager
                     result.Pipeline);
                 result = result with { Pipeline = published };
             }
+
+            StoreCompletedGraphicsPipelineResult(job.Request, result);
 
             if (!_vulkanGraphicsPipelineCompileJobs.TryRemove(key, out job))
                 return false;
@@ -69,10 +81,72 @@ internal sealed unsafe partial class VulkanPipelineManager
         return _vulkanGraphicsPipelineCompileJobs.ContainsKey(key);
     }
 
+    /// <summary>Waits for an admission-critical compile and publishes its result.</summary>
+    internal bool TryCompleteGraphicsPipelineForForeground(
+        in VulkanGraphicsPipelineCompileKey key,
+        long dependencyGeneration,
+        out VulkanGraphicsPipelineCompileResult result,
+        out string reason)
+    {
+        result = default;
+        reason = string.Empty;
+        DrainSupersededSharedGraphicsPipelines();
+        InspectPipelineCompileHealth();
+        VulkanGraphicsPipelineCompileJob? job;
+        lock (_vulkanGraphicsPipelineCompileJobsLock)
+        {
+            var completionKey = new VulkanGraphicsPipelineCompileCompletionKey(
+                key,
+                dependencyGeneration);
+            if (_vulkanGraphicsPipelineCompletedResults.TryGetValue(completionKey, out result))
+            {
+                if (result.Success && result.Pipeline.Handle != 0)
+                    return true;
+
+                reason = result.ErrorMessage ?? "pipeline compilation failed";
+                return false;
+            }
+
+            if (!_vulkanGraphicsPipelineCompileJobs.TryGetValue(key, out job))
+            {
+                reason = _vulkanGraphicsPipelinePermanentFailures.TryGetValue(
+                        completionKey,
+                        out string? permanentFailure)
+                    ? permanentFailure
+                    : "pipeline compile was not admitted";
+                return false;
+            }
+        }
+
+        if (!job.Task.Wait(ForegroundPipelineCompileTimeout))
+        {
+            reason = $"pipeline compile exceeded {ForegroundPipelineCompileTimeout.TotalSeconds:F0}s foreground timeout";
+            return false;
+        }
+
+        if (!TryTakeCompletedGraphicsPipeline(
+                key,
+                job.Request.DependencyGeneration,
+                out result))
+        {
+            reason = "pipeline compile completed but could not be published";
+            return false;
+        }
+
+        if (!result.Success || result.Pipeline.Handle == 0)
+        {
+            reason = result.ErrorMessage ?? "pipeline compilation failed";
+            return false;
+        }
+
+        return true;
+    }
+
     internal bool TryEnqueueGraphicsPipelineCompile(
         VulkanGraphicsPipelineBuildRequest request,
         bool acceptsBackendWork,
         bool asyncCompilationEnabled,
+        bool foregroundRequired,
         out string rejectReason)
     {
         DrainSupersededSharedGraphicsPipelines();
@@ -115,6 +189,17 @@ internal sealed unsafe partial class VulkanPipelineManager
                 return false;
             }
 
+            var completionKey = new VulkanGraphicsPipelineCompileCompletionKey(
+                request.CompileKey,
+                request.DependencyGeneration);
+            if (_vulkanGraphicsPipelinePermanentFailures.TryGetValue(
+                    completionKey,
+                    out string? permanentFailure))
+            {
+                rejectReason = permanentFailure;
+                return false;
+            }
+
             if (_vulkanGraphicsPipelineProgramCompileJobs.ContainsKey(request.Key.ProgramPipelineHash))
             {
                 rejectReason =
@@ -132,7 +217,7 @@ internal sealed unsafe partial class VulkanPipelineManager
             int capacity = Math.Clamp(workerCount * 8, 8, 64);
             int activeJobCount = CountActiveVulkanGraphicsPipelineCompileJobs();
             int totalJobCount = _vulkanGraphicsPipelineCompileJobs.Count;
-            if (activeJobCount >= capacity)
+            if (activeJobCount >= capacity && !foregroundRequired)
             {
                 rejectReason = $"async Vulkan pipeline compile queue is at capacity ({capacity}; active={activeJobCount}, completed={Math.Max(0, totalJobCount - activeJobCount)})";
                 RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanPipelineTelemetry(
@@ -200,6 +285,29 @@ internal sealed unsafe partial class VulkanPipelineManager
         }
 
         return count;
+    }
+
+    /// <summary>
+    /// Makes a terminal worker result observable after the publication
+    /// continuation removes its job. The cache is scoped to dependency
+    /// generation and is cleared by the dependency-mutation boundary.
+    /// </summary>
+    private void StoreCompletedGraphicsPipelineResult(
+        VulkanGraphicsPipelineBuildRequest request,
+        in VulkanGraphicsPipelineCompileResult result)
+    {
+        var completionKey = new VulkanGraphicsPipelineCompileCompletionKey(
+            request.CompileKey,
+            request.DependencyGeneration);
+        _vulkanGraphicsPipelineCompletedResults[completionKey] = result;
+        if (!result.Success && !result.Retryable)
+        {
+            string detail = result.ErrorMessage ?? "native Vulkan pipeline creation returned no pipeline";
+            _vulkanGraphicsPipelinePermanentFailures[completionKey] =
+                $"permanent graphics pipeline compile failure: pipeline='{request.PipelineName}', " +
+                $"program='{request.Program.Data.Name ?? "<unnamed program>"}', " +
+                $"programHash=0x{request.Key.ProgramPipelineHash:X16}, detail={detail}";
+        }
     }
 
     private void InspectPipelineCompileHealth()
@@ -324,6 +432,8 @@ internal sealed unsafe partial class VulkanPipelineManager
                         1);
                     Interlocked.Increment(
                         ref _vulkanPipelineCompileDependencyGeneration);
+                    _vulkanGraphicsPipelineCompletedResults.Clear();
+                    _vulkanGraphicsPipelinePermanentFailures.Clear();
                     jobs = [.. _vulkanGraphicsPipelineCompileJobs.Values];
                 }
 

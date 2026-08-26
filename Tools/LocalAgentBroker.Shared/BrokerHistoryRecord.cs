@@ -19,7 +19,10 @@ public sealed record BrokerHistoryRecord
 
     public string Objective { get; init; } = string.Empty;
 
-    /// <summary>The exact text prompt submitted to the first provider turn.</summary>
+    /// <summary>
+    /// Broker-generated first-turn prompt text. Separate image and repository
+    /// context input blocks are intentionally excluded.
+    /// </summary>
     public string PromptText { get; init; } = string.Empty;
 
     /// <summary>Optional Responses API instructions submitted beside the prompt.</summary>

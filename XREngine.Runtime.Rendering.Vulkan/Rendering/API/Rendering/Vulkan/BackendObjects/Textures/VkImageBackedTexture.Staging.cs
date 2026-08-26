@@ -73,7 +73,8 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
     protected bool TryAllocateImportedStagingBuffer(
         DataSource? data,
         out Buffer buffer,
-        out DeviceMemory memory)
+        out DeviceMemory memory,
+        bool foregroundRequired = false)
     {
         if (data is null || data.Length == 0)
         {
@@ -82,13 +83,13 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
             return false;
         }
 
-        (buffer, memory) = BackendContext.Resources.Buffers.Create(
+        (buffer, memory) = BackendContext.Resources.Allocations.Staging.Acquire(
             BackendContext,
-            data.Length,
+            (ulong)data.Length,
             BufferUsageFlags.TransferSrcBit,
             MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit,
             data.Address,
-            enableDeviceAddress: false);
+            foregroundRequired);
         return buffer.Handle != 0;
     }
 

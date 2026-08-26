@@ -350,6 +350,64 @@ internal sealed class FramePlan
         return ref _outputs[index];
     }
 
+    internal ref readonly RenderOutputRequest GetOutputRequest(int index)
+    {
+        EnsureSealed();
+        if ((uint)index >= (uint)_outputCount)
+            throw new ArgumentOutOfRangeException(nameof(index));
+
+        return ref _outputRequests[index];
+    }
+
+    /// <summary>
+    /// Resolves the strictest executable foreground contract without allocating
+    /// or depending on output declaration order.
+    /// </summary>
+    internal bool TryGetPresentNowContract(out RenderOutputRequest request)
+    {
+        EnsureSealed();
+        int selected = -1;
+        for (int index = 0; index < _outputCount; index++)
+        {
+            ref readonly RenderOutputRequest candidate =
+                ref _outputRequests[index];
+            if (!_outputDecisions[index].Execute ||
+                candidate.WorkClass != ERenderOutputWorkClass.PresentNow)
+            {
+                continue;
+            }
+
+            if (selected < 0 ||
+                IsStricterReadiness(
+                    candidate.ReadinessPolicy,
+                    _outputRequests[selected].ReadinessPolicy))
+            {
+                selected = index;
+            }
+        }
+
+        if (selected < 0)
+        {
+            request = default;
+            return false;
+        }
+
+        request = _outputRequests[selected];
+        return true;
+    }
+
+    private static bool IsStricterReadiness(
+        ERenderOutputReadinessPolicy candidate,
+        ERenderOutputReadinessPolicy current)
+        => candidate switch
+        {
+            ERenderOutputReadinessPolicy.BlockForExact =>
+                current != ERenderOutputReadinessPolicy.BlockForExact,
+            ERenderOutputReadinessPolicy.MeetDeadlineWithGpuFallback =>
+                current == ERenderOutputReadinessPolicy.AllowDeferral,
+            _ => false,
+        };
+
     /// <summary>
     /// Returns whether the immutable output manifest admitted native execution
     /// for at least one output of the requested kind.

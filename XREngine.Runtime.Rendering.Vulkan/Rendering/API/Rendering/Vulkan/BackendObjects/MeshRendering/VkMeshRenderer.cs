@@ -434,15 +434,20 @@ internal unsafe partial class VkMeshRenderer(
             forceNoStereo,
             canonicalDrawIdentitySnapshot,
             residentTemplateHandle);
-        if (_meshRequests?.TryEnqueue(in request) == true)
+        VulkanMeshOperationRequestQueue.EMeshRequestScheduleResult scheduleResult =
+            _meshRequests?.TryEnqueue(in request)
+            ?? VulkanMeshOperationRequestQueue.EMeshRequestScheduleResult.TerminalFailure;
+        if (scheduleResult is VulkanMeshOperationRequestQueue.EMeshRequestScheduleResult.Scheduled
+            or VulkanMeshOperationRequestQueue.EMeshRequestScheduleResult.AlreadyReady)
             return;
 
         CommandOperations.MarkCommandBuffersDirtyForLegacyMeshState();
         Debug.VulkanWarningEvery(
             $"Vulkan.MeshRenderer.RequestQueueFull.{MeshRenderer.Name ?? "UnnamedRenderer"}",
             TimeSpan.FromSeconds(2),
-            "[Vulkan] Rejecting the current mesh request cohort at renderer='{0}' because its bounded publication or queue capacity was exceeded.",
-            MeshRenderer.Name ?? "<unnamed renderer>");
+            "[Vulkan] Mesh request was not scheduled at renderer='{0}' (result={1}); the pending queue remains intact.",
+            MeshRenderer.Name ?? "<unnamed renderer>",
+            scheduleResult);
     }
 
     private ulong CapturePreparationCompatibilitySignature(

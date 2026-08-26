@@ -8,4 +8,5 @@ internal enum ERejectedDesktopFramePolicyReason
     NoCompletedFinalWrite = 3,
     ReuseCompletedContent = 4,
     DeferredInitializationClear = 5,
+    PresentNowFreshOutputRequired = 6,
 }

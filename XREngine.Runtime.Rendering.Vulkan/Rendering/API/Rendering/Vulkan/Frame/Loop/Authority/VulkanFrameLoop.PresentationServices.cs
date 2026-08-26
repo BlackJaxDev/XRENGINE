@@ -339,11 +339,48 @@ internal sealed partial class VulkanFrameLoop
             attempt.ImageIndex <
             OutputRuntime.Desktop.ImageHasValidPresentedContent.Length &&
             OutputRuntime.Desktop.ImageHasValidPresentedContent[attempt.ImageIndex];
+        VulkanAcceptedFramePlan? acceptedPlan = attempt.AcceptedFramePlan;
+        VulkanPresentNowTargetCompatibilityKey targetCompatibility =
+            acceptedPlan?.TargetCompatibility ?? default;
+        CaptureCurrentDependencyTicket(
+            acceptedPlan,
+            out bool hasCurrentDependencyTicket,
+            out EVulkanFrameDependencyKind currentDependencyKind,
+            out EVulkanFrameDependencyState currentDependencyState,
+            out ulong currentDependencyResourceKey,
+            out ulong currentDependencyGeneration,
+            out ulong currentDependencyTimelineValue);
+        bool presentedNew = presentAccepted &&
+            hasValidFrameContent &&
+            attempt.ScenePrimaryRecordedThisFrame &&
+            attempt.Submitted &&
+            attempt.GraphicsSignalValue != 0UL;
+        bool acquireHeldAtLedger = attempt.AcquireOwnership is
+            EVulkanDesktopAcquireOwnership.AcquiredUnresolved or
+            EVulkanDesktopAcquireOwnership.ConsumedBySubmissionImagePendingPresent or
+            EVulkanDesktopAcquireOwnership.ConsumedByRecoveryImagePendingPresent;
+        bool targetCompatibilityMatched = acceptedPlan is not null &&
+            targetCompatibility.OutputGeneration == OutputRuntime.Desktop.Generation &&
+            targetCompatibility.Extent.Width == OutputRuntime.Desktop.Extent.Width &&
+            targetCompatibility.Extent.Height == OutputRuntime.Desktop.Extent.Height;
 
         bool invariantFailed = false;
         string? invariantFailure = null;
         if (presentAccepted && hasValidFrameContent)
         {
+            if (attempt.WorkClass == ERenderOutputWorkClass.PresentNow && !presentedNew)
+            {
+                invariantFailed = true;
+                invariantFailure =
+                    "PresentNow accepted presentation lacks fresh recording, submission, or graphics signal";
+            }
+            else if (attempt.PresentDispatched &&
+                     !attempt.PresentWaitSemaphoreProvenanceValid)
+            {
+                invariantFailed = true;
+                invariantFailure =
+                    "accepted desktop present wait semaphore does not match the acquired target lease";
+            }
             // A recovery command owns the final swapchain write during bootstrap
             // and rejection handling, so the scene's sampled presentation source
             // is not the content accepted by this present attempt.
@@ -430,11 +467,102 @@ internal sealed partial class VulkanFrameLoop
                 hadValidPriorSwapchainContent,
                 attempt.HasImGuiOverlayCommandBuffer,
                 attempt.HasDynamicTextOverlayCommandBuffer,
+                attempt.AcceptedSceneEpoch,
+                attempt.OutputGeneration,
+                attempt.ReadinessPolicy,
+                attempt.WorkClass,
+                attempt.PrimaryRecordingDisposition,
+                attempt.PrimaryRecordingUsedGpuFallback,
+                attempt.RecordingSourceFrameId,
+                attempt.AcquireResult,
+                attempt.SubmitResult,
+                attempt.AcquireTimelineValue,
+                attempt.GraphicsSignalValue,
+                attempt.PresentedSourceFrameId,
+                presentedNew,
+                attempt.AcquireOwnership,
+                acquireHeldAtLedger,
+                targetCompatibilityMatched,
+                targetCompatibility.ColorFormat,
+                targetCompatibility.DepthFormat,
+                targetCompatibility.Extent.Width,
+                targetCompatibility.Extent.Height,
+                targetCompatibility.DynamicRendering,
+                targetCompatibility.StreamlineFrameGeneration,
+                attempt.PresentSemaphore.Handle,
+                attempt.ExpectedPresentWaitSemaphore.Handle,
+                attempt.PresentWaitSemaphoreProvenanceValid,
+                attempt.AcquireStartedTimestamp,
+                attempt.AcquireCompletedTimestamp,
+                attempt.RecordStartedTimestamp,
+                attempt.RecordCompletedTimestamp,
+                attempt.SubmitStartedTimestamp,
+                attempt.SubmitCompletedTimestamp,
+                attempt.PresentStartedTimestamp,
+                attempt.PresentCompletedTimestamp,
+                acceptedPlan?.TerminalOperationCount ?? 0,
+                VulkanAcceptedFramePlan.TerminalCapacity,
+                acceptedPlan?.MainSceneOperationCount ?? 0,
+                VulkanAcceptedFramePlan.MainSceneCapacity,
+                acceptedPlan?.ShadowOperationCount ?? 0,
+                VulkanAcceptedFramePlan.ShadowCapacity,
+                acceptedPlan?.DynamicUiOperationCount ?? 0,
+                VulkanAcceptedFramePlan.UiCapacity,
+                acceptedPlan?.TextureUploadOperationCount ?? 0,
+                VulkanAcceptedFramePlan.UploadCapacity,
+                acceptedPlan?.DependencyCount ?? 0,
+                VulkanAcceptedFramePlan.DependencyCapacity,
+                hasCurrentDependencyTicket,
+                currentDependencyKind,
+                currentDependencyState,
+                currentDependencyResourceKey,
+                currentDependencyGeneration,
+                currentDependencyTimelineValue,
                 presentResult,
                 presentAccepted,
                 hasValidFrameContent,
                 invariantFailed,
                 invariantFailure));
+    }
+
+    private static void CaptureCurrentDependencyTicket(
+        VulkanAcceptedFramePlan? acceptedPlan,
+        out bool hasTicket,
+        out EVulkanFrameDependencyKind kind,
+        out EVulkanFrameDependencyState state,
+        out ulong resourceKey,
+        out ulong generation,
+        out ulong timelineValue)
+    {
+        hasTicket = false;
+        kind = default;
+        state = default;
+        resourceKey = 0UL;
+        generation = 0UL;
+        timelineValue = 0UL;
+        if (acceptedPlan is null)
+            return;
+
+        Span<VulkanFrameDependencyTicket> dependencies = acceptedPlan.Dependencies;
+        if (dependencies.IsEmpty)
+            return;
+
+        ref VulkanFrameDependencyTicket ticket = ref dependencies[0];
+        for (int index = 0; index < dependencies.Length; index++)
+        {
+            if (dependencies[index].State == EVulkanFrameDependencyState.Ready)
+                continue;
+
+            ticket = ref dependencies[index];
+            break;
+        }
+
+        hasTicket = true;
+        kind = ticket.Kind;
+        state = ticket.State;
+        resourceKey = ticket.ResourceKey;
+        generation = ticket.Generation;
+        timelineValue = ticket.TimelineValue;
     }
 
     /// <summary>

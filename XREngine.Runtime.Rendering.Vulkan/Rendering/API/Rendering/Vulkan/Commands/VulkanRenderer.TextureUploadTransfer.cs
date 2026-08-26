@@ -19,7 +19,8 @@ internal sealed partial class VulkanCommandRuntime
     internal unsafe bool TrySubmitImportedTextureUploadToTransferQueue(
         VulkanImportedTexturePendingUpload upload,
         out VulkanSubmittedImportedTextureUpload? submitted,
-        out string? failureReason)
+        out string? failureReason,
+        bool allowGraphicsQueue = false)
     {
         submitted = null;
         failureReason = null;
@@ -30,7 +31,8 @@ internal sealed partial class VulkanCommandRuntime
             return false;
         }
 
-        if (!RenderDiagnosticsFlags.VkTextureUploadTransferQueue)
+        if (!RenderDiagnosticsFlags.VkTextureUploadTransferQueue &&
+            !allowGraphicsQueue)
         {
             failureReason = "XRE_VULKAN_TEXTURE_UPLOAD_TRANSFER_QUEUE is disabled";
             return false;
@@ -39,7 +41,11 @@ internal sealed partial class VulkanCommandRuntime
         QueueFamilyIndices families = _deviceContext.QueueFamilies;
         uint graphicsFamily = families.GraphicsFamilyIndex ?? 0u;
         uint transferFamily = families.TransferFamilyIndex ?? graphicsFamily;
-        if (_deviceContext.TransferQueue.Handle == 0 || transferFamily == graphicsFamily)
+        bool useDedicatedTransferQueue =
+            RenderDiagnosticsFlags.VkTextureUploadTransferQueue &&
+            _deviceContext.TransferQueue.Handle != 0 &&
+            transferFamily != graphicsFamily;
+        if (!useDedicatedTransferQueue && !allowGraphicsQueue)
         {
             failureReason = "no dedicated transfer queue family is available";
             return false;
@@ -51,7 +57,20 @@ internal sealed partial class VulkanCommandRuntime
             return false;
         }
 
-        CommandPool pool = GetThreadTransferCommandPool();
+        Queue submissionQueue = useDedicatedTransferQueue
+            ? _deviceContext.TransferQueue
+            : _deviceContext.GraphicsQueue;
+        if (submissionQueue.Handle == 0)
+        {
+            failureReason = "no Vulkan queue is available for foreground upload submission";
+            return false;
+        }
+        uint submissionFamily = useDedicatedTransferQueue
+            ? transferFamily
+            : graphicsFamily;
+        CommandPool pool = useDedicatedTransferQueue
+            ? GetThreadTransferCommandPool()
+            : GetThreadCommandPool();
         CommandBuffer commandBuffer = default;
         Fence fence = default;
         try
@@ -121,28 +140,32 @@ internal sealed partial class VulkanCommandRuntime
                 commandBuffer,
                 pool,
                 fence,
-                requiresGraphicsAcquire: true,
-                transferFamily,
+                requiresGraphicsAcquire: useDedicatedTransferQueue,
+                submissionFamily,
                 graphicsFamily,
                 TextureRuntimeDiagnostics.StartTiming(),
                 CalculateUploadStagingBytes(upload));
 
             VulkanSubmissionReceipt submitReceipt;
             submitReceipt = SubmitToQueueTrackedWithDisposition(
-                DeviceContext.TransferQueue,
+                submissionQueue,
                 ref submitInfo,
                 fence,
                 new VulkanSubmissionDiagnosticContext
                 {
                     SubmissionKind = "TextureUpload.Transfer",
-                    QueueKind = "Transfer",
+                    QueueKind = useDedicatedTransferQueue
+                        ? "Transfer"
+                        : "GraphicsForegroundUpload",
                     CommandBufferCount = 1,
                     FirstCommandBufferHandle = (ulong)commandBuffer.Handle,
                     FenceHandle = fence.Handle,
                 },
                 out _,
                 out _,
-                "TextureUpload.Transfer");
+                useDedicatedTransferQueue
+                    ? "TextureUpload.Transfer"
+                    : "TextureUpload.GraphicsForeground");
 
             if (!submitReceipt.SubmissionAccepted)
             {

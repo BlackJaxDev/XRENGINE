@@ -11,11 +11,13 @@ internal sealed class FrameOperationStream
 {
     private const int KindCount = (int)EVulkanPrimaryPlanNodeKind.ReleaseExternalImageOwnership + 1;
     private readonly FrameOperationPayloadStore _payloads;
-    private FrameOperationHeader[] _headers = new FrameOperationHeader[64];
-    private FrameOperationHeader[] _headerOrderScratch = new FrameOperationHeader[64];
-    private FrameOpContext[] _contexts = new FrameOpContext[64];
-    private FrameOpResourceUse[] _resourceUses = new FrameOpResourceUse[256];
-    private XRFrameBuffer?[] _targets = new XRFrameBuffer?[64];
+    private readonly bool _fixedCapacity;
+    private readonly EVulkanAcceptedFrameLane _lane;
+    private FrameOperationHeader[] _headers;
+    private FrameOperationHeader[] _headerOrderScratch;
+    private FrameOpContext[] _contexts;
+    private FrameOpResourceUse[] _resourceUses;
+    private XRFrameBuffer?[] _targets;
     private int _count;
     private int _resourceUseCount;
     private int _meshPayloadCount;
@@ -24,10 +26,51 @@ internal sealed class FrameOperationStream
     internal int Count => _count;
 
     internal FrameOperationStream()
-        : this(new FrameOperationPayloadStore()) { }
+        : this(new FrameOperationPayloadStore())
+    {
+    }
 
     private FrameOperationStream(FrameOperationPayloadStore payloads)
-        => _payloads = payloads;
+    {
+        _payloads = payloads;
+        _fixedCapacity = false;
+        _lane = EVulkanAcceptedFrameLane.MainScene;
+        _headers = new FrameOperationHeader[64];
+        _headerOrderScratch = new FrameOperationHeader[64];
+        _contexts = new FrameOpContext[64];
+        _resourceUses = new FrameOpResourceUse[256];
+        _targets = new XRFrameBuffer?[64];
+    }
+
+    /// <summary>
+    /// Creates frame-slot storage whose complete budget is allocated before a
+    /// foreground frame can be accepted. Capacity failure is explicit rather
+    /// than an allocation in lowering or recording.
+    /// </summary>
+    internal FrameOperationStream(
+        int operationCapacity,
+        int resourceUseCapacity,
+        int generalPayloadCapacity,
+        int meshPayloadCapacity,
+        int texturePayloadCapacity,
+        EVulkanAcceptedFrameLane lane)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(operationCapacity);
+        ArgumentOutOfRangeException.ThrowIfNegative(resourceUseCapacity);
+        _payloads = new FrameOperationPayloadStore(
+            generalPayloadCapacity,
+            meshPayloadCapacity,
+            texturePayloadCapacity,
+            fixedCapacity: true,
+            lane);
+        _fixedCapacity = true;
+        _lane = lane;
+        _headers = new FrameOperationHeader[operationCapacity];
+        _headerOrderScratch = new FrameOperationHeader[operationCapacity];
+        _contexts = new FrameOpContext[operationCapacity];
+        _resourceUses = new FrameOpResourceUse[resourceUseCapacity];
+        _targets = new XRFrameBuffer?[operationCapacity];
+    }
 
     internal void Reset()
     {
@@ -170,8 +213,7 @@ internal sealed class FrameOperationStream
     {
         if (order.Length != _count)
             throw new ArgumentException("The order must contain every operation exactly once.", nameof(order));
-        if (_headerOrderScratch.Length < _count)
-            Array.Resize(ref _headerOrderScratch, Math.Max(_count, _headerOrderScratch.Length * 2));
+        EnsureHeaderOrderCapacity(_count);
 
         for (int index = 0; index < _count; index++)
         {
@@ -192,10 +234,7 @@ internal sealed class FrameOperationStream
     {
         if (retainedIndices.Length > _count)
             throw new ArgumentException("The retained operation count exceeds the stream.", nameof(retainedIndices));
-        if (_headerOrderScratch.Length < retainedIndices.Length)
-            Array.Resize(
-                ref _headerOrderScratch,
-                Math.Max(retainedIndices.Length, _headerOrderScratch.Length * 2));
+        EnsureHeaderOrderCapacity(retainedIndices.Length);
 
         for (int index = 0; index < retainedIndices.Length; index++)
         {
@@ -387,16 +426,47 @@ internal sealed class FrameOperationStream
 
     private void EnsureCapacity(int required)
     {
-        if (_headers.Length < required) Array.Resize(ref _headers, Math.Max(required, _headers.Length * 2));
-        if (_contexts.Length < required) Array.Resize(ref _contexts, Math.Max(required, _contexts.Length * 2));
-        if (_targets.Length < required) Array.Resize(ref _targets, Math.Max(required, _targets.Length * 2));
+        if (_headers.Length >= required)
+            return;
+        if (_fixedCapacity)
+            throw new VulkanAcceptedFramePlanCapacityException(
+                _lane,
+                _headers.Length,
+                required);
+
+        int capacity = Math.Max(required, _headers.Length * 2);
+        Array.Resize(ref _headers, capacity);
+        Array.Resize(ref _contexts, capacity);
+        Array.Resize(ref _targets, capacity);
     }
 
     private void EnsureResourceUseCapacity(int required)
     {
-        if (_resourceUses.Length < required)
-            Array.Resize(
-                ref _resourceUses,
-                Math.Max(required, _resourceUses.Length * 2));
+        if (_resourceUses.Length >= required)
+            return;
+        if (_fixedCapacity)
+            throw new VulkanAcceptedFramePlanCapacityException(
+                EVulkanAcceptedFrameLane.ResourceUse,
+                _resourceUses.Length,
+                required);
+
+        Array.Resize(
+            ref _resourceUses,
+            Math.Max(required, _resourceUses.Length * 2));
+    }
+
+    private void EnsureHeaderOrderCapacity(int required)
+    {
+        if (_headerOrderScratch.Length >= required)
+            return;
+        if (_fixedCapacity)
+            throw new VulkanAcceptedFramePlanCapacityException(
+                _lane,
+                _headerOrderScratch.Length,
+                required);
+
+        Array.Resize(
+            ref _headerOrderScratch,
+            Math.Max(required, _headerOrderScratch.Length * 2));
     }
 }

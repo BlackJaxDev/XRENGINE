@@ -13,9 +13,17 @@ public readonly record struct RenderOutputRequest(
     ERenderOutputCompletionRequirement CompletionRequirement,
     ulong ProducerDependencySetId,
     ulong ConsumerDependencySetId,
-    ulong FrameId)
+    ulong FrameId,
+    ERenderOutputReadinessPolicy ReadinessPolicy = ERenderOutputReadinessPolicy.AllowDeferral,
+    ERenderOutputWorkClass WorkClass = ERenderOutputWorkClass.Background)
 {
     public bool IsDefined => OutputId != 0UL;
+
+    /// <summary>Whether the renderer must finish required resources before this output can be published.</summary>
+    public bool RequiresCompleteFreshOutput => ReadinessPolicy == ERenderOutputReadinessPolicy.BlockForExact;
+
+    /// <summary>Whether a GPU fallback is permitted when the output has a runtime deadline.</summary>
+    public bool AllowsGpuFallback => ReadinessPolicy == ERenderOutputReadinessPolicy.MeetDeadlineWithGpuFallback;
 
     public RenderOutputRequest WithTarget(in RenderOutputTargetDescriptor target)
         => this with { Target = target };
@@ -26,6 +34,7 @@ public readonly record struct RenderOutputRequest(
             ERenderOutputWorkDisposition.FreshRender or ERenderOutputWorkDisposition.ReusedCurrent => true,
             ERenderOutputWorkDisposition.ReusedStale => (FallbackPolicy & ERenderOutputFallbackPolicy.AllowStaleReuse) != 0,
             ERenderOutputWorkDisposition.Deferred =>
+                ReadinessPolicy == ERenderOutputReadinessPolicy.AllowDeferral &&
                 (FallbackPolicy & (ERenderOutputFallbackPolicy.AllowCadenceReduction | ERenderOutputFallbackPolicy.AllowBudgetDeferral)) != 0,
             ERenderOutputWorkDisposition.Skipped => FallbackPolicy != ERenderOutputFallbackPolicy.None,
             ERenderOutputWorkDisposition.QualityReduced =>
@@ -43,6 +52,8 @@ public readonly record struct RenderOutputRequest(
         ERenderOutputClass outputClass = ResolveClass(outputKind);
         ERenderOutputPriority priority = ResolvePriority(outputKind, outputClass);
         ERenderOutputFallbackPolicy fallback = ResolveFallback(outputKind, outputClass);
+        ERenderOutputReadinessPolicy readiness = ResolveReadiness(outputKind, outputClass);
+        ERenderOutputWorkClass workClass = ResolveWorkClass(outputKind, outputClass);
         bool hardDeadline = outputClass == ERenderOutputClass.XrCritical;
         double deadlineMs = hardDeadline && sourceRateHz > 0.0f ? 1000.0 / sourceRateHz : 0.0;
         float resolvedDesiredRateHz = desiredRateHz > 0.0f
@@ -93,7 +104,9 @@ public readonly record struct RenderOutputRequest(
             ResolveCompletionRequirement(outputKind),
             ProducerDependencySetId: 0UL,
             ConsumerDependencySetId: 0UL,
-            frameId);
+            frameId,
+            readiness,
+            workClass);
     }
 
     private static ERenderOutputClass ResolveClass(EFrameOutputKind kind)
@@ -174,6 +187,29 @@ public readonly record struct RenderOutputRequest(
             fallback |= ERenderOutputFallbackPolicy.AllowCompositionReuse | ERenderOutputFallbackPolicy.AllowStaleReuse;
         return fallback;
     }
+
+    private static ERenderOutputReadinessPolicy ResolveReadiness(
+        EFrameOutputKind kind,
+        ERenderOutputClass outputClass)
+        => outputClass switch
+        {
+            ERenderOutputClass.XrCritical => ERenderOutputReadinessPolicy.MeetDeadlineWithGpuFallback,
+            ERenderOutputClass.RequiredDependency or ERenderOutputClass.Presentation or
+                ERenderOutputClass.InteractiveScene => ERenderOutputReadinessPolicy.BlockForExact,
+            _ => ERenderOutputReadinessPolicy.AllowDeferral,
+        };
+
+    private static ERenderOutputWorkClass ResolveWorkClass(
+        EFrameOutputKind kind,
+        ERenderOutputClass outputClass)
+        => outputClass switch
+        {
+            ERenderOutputClass.XrCritical or ERenderOutputClass.Presentation or
+                ERenderOutputClass.InteractiveScene or ERenderOutputClass.RequiredDependency =>
+                ERenderOutputWorkClass.PresentNow,
+            ERenderOutputClass.BackgroundCapture => ERenderOutputWorkClass.Prewarm,
+            _ => ERenderOutputWorkClass.Background,
+        };
 
     private static ERenderOutputTargetClass ResolveTargetClass(EFrameOutputKind kind)
         => kind switch

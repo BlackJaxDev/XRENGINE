@@ -83,7 +83,7 @@ internal sealed partial class VulkanCommandRuntime
             input.LogicalViewId == 0 &&
             input.CommandChainSchedule is not null &&
             !input.CommandChainSchedule.RequiresFreshPrimary &&
-            !input.Policy.FreshSerialRecording &&
+            input.Policy.AllowsArtifactReuse &&
             TryPreparePrimaryReuseFrameDataCohort(
                 in input,
                 operations,
@@ -162,7 +162,8 @@ internal sealed partial class VulkanCommandRuntime
                 input.Policy))
         {
             return AttachUploadArtifacts(
-                VulkanPrimaryCommandRecordingResult.Deferred(
+                CreatePolicyRecordingFailure(
+                    input.Policy,
                     "dynamic UI secondary command recording was deferred"),
                 uploadCommandBuffer,
                 uploadCommandPool);
@@ -637,8 +638,26 @@ internal sealed partial class VulkanCommandRuntime
         string reason = string.IsNullOrWhiteSpace(context.RecordingDeferredReason)
             ? "primary command recording was deferred"
             : context.RecordingDeferredReason;
-        return context.FailureKind == EVulkanCommandRecordingFailureKind.ReplanRequired
-            ? VulkanPrimaryCommandRecordingResult.ReplanRequired(reason)
+        if (context.FailureKind == EVulkanCommandRecordingFailureKind.ReplanRequired)
+            return VulkanPrimaryCommandRecordingResult.ReplanRequired(reason);
+
+        return context.Policy.IsPresentNow
+            ? VulkanPrimaryCommandRecordingResult.Failed(
+                reason,
+                context.Policy.ReadinessPolicy,
+                context.Policy.WorkClass,
+                context.Policy.SourceFrameId)
             : VulkanPrimaryCommandRecordingResult.Deferred(reason);
     }
+
+    private static VulkanPrimaryCommandRecordingResult CreatePolicyRecordingFailure(
+        in VulkanCommandRecordingPolicySnapshot policy,
+        string reason)
+        => policy.IsPresentNow
+            ? VulkanPrimaryCommandRecordingResult.Failed(
+                reason,
+                policy.ReadinessPolicy,
+                policy.WorkClass,
+                policy.SourceFrameId)
+            : VulkanPrimaryCommandRecordingResult.Deferred(reason);
 }
