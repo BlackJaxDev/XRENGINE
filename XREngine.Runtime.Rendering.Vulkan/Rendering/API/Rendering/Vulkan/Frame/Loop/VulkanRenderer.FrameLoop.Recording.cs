@@ -402,6 +402,7 @@ namespace XREngine.Rendering.Vulkan
                             snapshot,
                             attempt.SwapchainLayoutAfterScene,
                             attempt.SceneCommandBuffer,
+                            clearSwapchain: false,
                             out attempt.ImGuiOverlayCommandBuffer);
                     if (attempt.PreserveSwapchainForImGuiOverlay &&
                         !attempt.HasImGuiOverlayCommandBuffer)

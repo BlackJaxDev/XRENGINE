@@ -14,7 +14,7 @@ internal sealed class VulkanDesktopOutputState
 {
     internal Format PreferredFormat = Format.B8G8R8A8Srgb;
     internal ColorSpaceKHR PreferredColorSpace = ColorSpaceKHR.SpaceSrgbNonlinearKhr;
-    internal PresentModeKHR PreferredPresentMode = PresentModeKHR.MailboxKhr;
+    internal PresentModeKHR PreferredPresentMode = PresentModeKHR.FifoKhr;
     internal PresentModeKHR FallbackPresentMode = PresentModeKHR.FifoKhr;
     internal KhrSwapchain? SwapchainExtension;
     internal SwapchainKHR Swapchain;
@@ -44,6 +44,7 @@ internal sealed class VulkanDesktopOutputState
     internal bool Maintenance1Enabled;
     internal bool PresentScalingActive;
     internal SurfacePresentScalingCapabilitiesEXT PresentScalingCapabilities;
+    internal VulkanPresentationProfileSnapshot PresentationProfile;
 
     internal bool IsPresentScalingExtentSupported(
         uint swapchainWidth,
@@ -54,7 +55,7 @@ internal sealed class VulkanDesktopOutputState
             swapchainHeight == 0)
         {
             return false;
-        }
+}
 
         Extent2D min = PresentScalingCapabilities.MinScaledImageExtent;
         Extent2D max = PresentScalingCapabilities.MaxScaledImageExtent;

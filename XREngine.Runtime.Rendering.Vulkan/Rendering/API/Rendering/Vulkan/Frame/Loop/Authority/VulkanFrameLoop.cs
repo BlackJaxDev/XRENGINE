@@ -27,6 +27,8 @@ internal sealed partial class VulkanFrameLoop
     private readonly int _frameSlotCount;
     private readonly VulkanPrimaryCommandPlan[] _explicitPrimaryPlans;
     private readonly VulkanAcceptedFramePlanArena _acceptedFramePlans;
+    private readonly VulkanDesktopFramePacer _desktopFramePacer = new();
+    private readonly ulong[] _preWaitedFrameSlotTimelineValues;
     internal VulkanMeshOperationRequestQueue MeshOperationRequests { get; } = new();
     private readonly VulkanMeshRenderRequest[] _meshOperationRequestScratch =
         new VulkanMeshRenderRequest[VulkanMeshOperationRequestQueue.Capacity];
@@ -84,6 +86,7 @@ internal sealed partial class VulkanFrameLoop
     private int _activeFrameExecutions;
     private readonly bool _injectResidentTemplateDeviceLoss;
     private int _residentTemplateDeviceLossInjected;
+    private long _lastAcceptedPresentCompletedTimestamp;
 
     internal VulkanFrameLoop(
         Vk api,
@@ -121,6 +124,7 @@ internal sealed partial class VulkanFrameLoop
             _explicitPrimaryPlans = [];
         }
         _acceptedFramePlans = new VulkanAcceptedFramePlanArena(_frameSlotCount);
+        _preWaitedFrameSlotTimelineValues = new ulong[_frameSlotCount];
         _window = window;
         _resourcePlannerSessions = new VulkanResourcePlannerSessionService(
             framePlanner,
@@ -417,18 +421,61 @@ internal sealed partial class VulkanFrameLoop
             unchecked((int)attempt.ImageIndex),
             _outputRuntime.Desktop.Generation);
         _resourceRuntime.PublishMappedMemoryTelemetry();
+        ulong renderFrameId = attempt.RecordingSourceFrameId != 0
+            ? attempt.RecordingSourceFrameId
+            : attempt.AcceptedSceneEpoch != 0
+                ? attempt.AcceptedSceneEpoch
+                : attempt.FrameNumber;
+        attempt.Timing.SetRenderFrameIdentity(renderFrameId);
+        attempt.Timing.WorkerOverlap =
+            _telemetry.CaptureWorkerOverlap(renderFrameId);
+        PopulateDeviceDiagnosticTelemetry(ref attempt);
         attempt.Timing.PublishAfterFrame(
             totalFrameTime,
             attempt.TerminalResultPublished
                 ? attempt.TerminalResult.Outcome
                 : throw new InvalidOperationException(
                     "Desktop frame telemetry cannot publish before its terminal result."));
+        if (totalFrameTime >= TimeSpan.FromMilliseconds(100) &&
+            _telemetry.TryGetLatestPublication(
+                out VulkanFrameTelemetryPublication publication) &&
+            publication.Identity.EngineFrameNumber == attempt.FrameNumber)
+        {
+            Debug.VulkanEvery(
+                "Vulkan.FrameTree.LongDesktopRoot",
+                TimeSpan.FromMilliseconds(250),
+                "[Vulkan][FrameTree] authority={0} publication={1} engineFrame={2} " +
+                "renderFrame={3} slot={4} output={5}/{6} outcome={7} " +
+                "inclusiveMs={8:F3} stageExclusiveMs={9:F3} rootExclusiveMs={10:F3} " +
+                "workMs={11:F3} waitMs={12:F3} driverMs={13:F3} externalMs={14:F3} " +
+                "diagnosticMs={15:F3} workerOverlapMs={16:F3} attributedRatio={17:F4}",
+                publication.AuthorityId,
+                publication.PublicationSequence,
+                publication.Identity.EngineFrameNumber,
+                publication.Identity.RenderFrameNumber,
+                publication.Identity.FrameSlot,
+                publication.Identity.Output.OutputIndex,
+                publication.Identity.Output.OutputGeneration,
+                publication.Outcome,
+                publication.Tree.InclusiveElapsed.TotalMilliseconds,
+                publication.Tree.StageExclusiveElapsed.TotalMilliseconds,
+                publication.Tree.RootExclusiveElapsed.TotalMilliseconds,
+                publication.Tree.WorkElapsed.TotalMilliseconds,
+                publication.Tree.WaitElapsed.TotalMilliseconds,
+                publication.Tree.NativeDriverElapsed.TotalMilliseconds,
+                publication.Tree.ExternalRuntimeElapsed.TotalMilliseconds,
+                publication.Tree.DiagnosticElapsed.TotalMilliseconds,
+                publication.Tree.WorkerOverlapElapsed.TotalMilliseconds,
+                publication.Attribution.AttributedRatio);
+        }
         attempt.AdvanceTo(EDesktopFramePhase.Finalized);
     }
 
     private static EVulkanFrameOutcome ResolveDesktopFrameTelemetryOutcome(
         ref VulkanFrameAttempt attempt)
     {
+        if (attempt.RejectedFailure is not null)
+            return EVulkanFrameOutcome.Rejected;
         if (attempt.PrimaryFailure is not null || attempt.DeferredFailure is not null)
             return EVulkanFrameOutcome.Failed;
 
@@ -462,11 +509,33 @@ internal sealed partial class VulkanFrameLoop
             "[Vulkan] Desktop frame telemetry finalization failed: {0}",
             telemetryFailure.Message);
 
+    private long BeginDesktopFramePhase(EVulkanFrameStage stage)
+    {
+        VulkanFrameWaitInstrumentation.SetStage(_telemetry, stage);
+        return Stopwatch.GetTimestamp();
+    }
+
     private static VulkanDesktopFramePhaseResult CompleteDesktopFramePhase(
         ref VulkanFrameAttempt attempt,
         EVulkanFrameStage stage,
-        EDesktopFrameFlow flow)
-        => attempt.CompletePhase(stage, flow);
+        EDesktopFrameFlow flow,
+        long startedTimestamp)
+    {
+        attempt.Timing.RecordStageRemainder(
+            stage,
+            Stopwatch.GetElapsedTime(startedTimestamp),
+            EVulkanFrameOutcome.Completed);
+        return attempt.CompletePhase(stage, flow);
+    }
+
+    private static void CompleteDesktopFramePhaseTiming(
+        ref VulkanFrameAttempt attempt,
+        EVulkanFrameStage stage,
+        long startedTimestamp)
+        => attempt.Timing.RecordStageRemainder(
+            stage,
+            Stopwatch.GetElapsedTime(startedTimestamp),
+            EVulkanFrameOutcome.Completed);
 
     /// <summary>
     /// Performs the single terminal ownership pass for an accepted attempt.
@@ -549,7 +618,8 @@ internal sealed partial class VulkanFrameLoop
             ? ResolveDesktopFrameTelemetryOutcome(ref attempt)
             : EVulkanFrameOutcome.Failed;
         Exception? terminalException =
-            attempt.PrimaryFailure ?? attempt.DeferredFailure ?? settlementFailure;
+            attempt.PrimaryFailure ?? attempt.DeferredFailure ??
+            attempt.RejectedFailure ?? settlementFailure;
         VulkanDesktopFrameFailure terminalFailure =
             VulkanDesktopFrameFailureClassifier.Classify(
                 attempt.Reason,
@@ -660,48 +730,116 @@ internal sealed partial class VulkanFrameLoop
         if (!_deviceContext.StateMachine.IsOperational)
             throw CreateDeviceLostException("RenderWindow", Result.ErrorDeviceLost);
 
+        long phaseStarted = BeginDesktopFramePhase(
+            EVulkanFrameStage.SnapshotHandoff);
         _telemetry.PublishDescriptorTableGeneration(_resourceRuntime.DescriptorTableGeneration);
         _resourceRuntime.Descriptors.Heap.BeginFrame(attempt.FrameNumber);
         RecordDesktopFrameGap(ref attempt);
+        CompleteDesktopFramePhaseTiming(
+            ref attempt,
+            EVulkanFrameStage.SnapshotHandoff,
+            phaseStarted);
 
+        phaseStarted = BeginDesktopFramePhase(EVulkanFrameStage.FramePacing);
         if (!CompleteDesktopFramePhase(
                 ref attempt,
                 EVulkanFrameStage.FramePacing,
-                RunDesktopFramePreflight(ref attempt)).ShouldContinue)
+                RunDesktopFramePreflight(ref attempt),
+                phaseStarted).ShouldContinue)
             return;
 
+        phaseStarted = BeginDesktopFramePhase(
+            EVulkanFrameStage.CompletionMaintenance);
         if (!CompleteDesktopFramePhase(
                 ref attempt,
                 EVulkanFrameStage.CompletionMaintenance,
-                PrepareDesktopFrameSlot(ref attempt)).ShouldContinue)
+                PrepareDesktopFrameSlot(ref attempt),
+                phaseStarted).ShouldContinue)
             return;
 
+        if (attempt.InteractiveResize)
+        {
+            try
+            {
+                RunInteractiveResizeDesktopFramePhases(ref attempt);
+            }
+            finally
+            {
+                _outputRuntime._imguiDrawData.Recycle(
+                    attempt.InteractiveResizeImGuiSnapshot);
+                attempt.InteractiveResizeImGuiSnapshot = null;
+            }
+            return;
+        }
+
+        phaseStarted = BeginDesktopFramePhase(EVulkanFrameStage.ResourcePrepare);
         if (!CompleteDesktopFramePhase(
                 ref attempt,
                 EVulkanFrameStage.ResourcePrepare,
-                DriveDesktopPresentNowReadiness(ref attempt)).ShouldContinue)
+                DriveDesktopPresentNowReadiness(ref attempt),
+                phaseStarted).ShouldContinue)
             return;
 
+        phaseStarted = BeginDesktopFramePhase(EVulkanFrameStage.OutputAcquire);
+        EDesktopFrameFlow acquireFlow = AcquireDesktopSwapchainImageCore(
+            ref attempt);
+        if (acquireFlow != EDesktopFrameFlow.Continue)
+        {
+            _ = CompleteDesktopFramePhase(
+                ref attempt,
+                EVulkanFrameStage.OutputAcquire,
+                acquireFlow,
+                phaseStarted);
+            return;
+        }
+
+        PrepareAcquiredDesktopImage(ref attempt);
         if (!CompleteDesktopFramePhase(
                 ref attempt,
                 EVulkanFrameStage.OutputAcquire,
-                AcquireDesktopSwapchainImageCore(ref attempt)).ShouldContinue)
+                acquireFlow,
+                phaseStarted).ShouldContinue)
+        {
+            return;
+        }
+
+        phaseStarted = BeginDesktopFramePhase(EVulkanFrameStage.CommandRecord);
+        VulkanDesktopFramePhaseResult recordResult = RecordDesktopFrame(
+            ref attempt);
+        CompleteDesktopFramePhaseTiming(
+            ref attempt,
+            EVulkanFrameStage.CommandRecord,
+            phaseStarted);
+        if (!recordResult.ShouldContinue)
             return;
 
-        PrepareAcquiredDesktopImage(ref attempt);
-        if (!RecordDesktopFrame(ref attempt).ShouldContinue ||
-            !SubmitDesktopFrame(ref attempt).ShouldContinue)
+        phaseStarted = BeginDesktopFramePhase(EVulkanFrameStage.QueueSubmit);
+        VulkanDesktopFramePhaseResult submitResult = SubmitDesktopFrame(
+            ref attempt);
+        CompleteDesktopFramePhaseTiming(
+            ref attempt,
+            EVulkanFrameStage.QueueSubmit,
+            phaseStarted);
+        if (!submitResult.ShouldContinue)
             return;
 
+        phaseStarted = BeginDesktopFramePhase(EVulkanFrameStage.OutputComplete);
         _ = CompleteDesktopFramePhase(
             ref attempt,
             EVulkanFrameStage.OutputComplete,
-            PresentSubmittedDesktopFrame(ref attempt));
+            PresentSubmittedDesktopFrame(ref attempt),
+            phaseStarted);
     }
 
     private void SettleAndPublishDesktopFrame(ref VulkanFrameAttempt attempt)
     {
+        long settlementStarted = BeginDesktopFramePhase(
+            EVulkanFrameStage.FrameSettlement);
         Exception? settlementFailure = SettleDesktopFrameAttempt(ref attempt);
+        CompleteDesktopFramePhaseTiming(
+            ref attempt,
+            EVulkanFrameStage.FrameSettlement,
+            settlementStarted);
         Exception? telemetryFailure = null;
         try
         {

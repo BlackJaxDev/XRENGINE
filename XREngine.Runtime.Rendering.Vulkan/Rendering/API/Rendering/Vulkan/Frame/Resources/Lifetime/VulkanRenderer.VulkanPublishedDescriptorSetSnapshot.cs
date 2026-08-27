@@ -32,12 +32,16 @@ internal sealed record VulkanPublishedDescriptorSetSnapshot(
         if (Volatile.Read(ref _recordedResourcesReady) != 0)
             return _recordedResources;
 
-        lock (this)
+        using (VulkanFrameLockScope.Enter(
+                   this,
+                   EVulkanFrameWaitReason.DescriptorPublicationLock))
         {
             if (_recordedResourcesReady != 0)
                 return _recordedResources;
 
-            lock (tracker.SyncRoot)
+            using (VulkanFrameLockScope.Enter(
+                       tracker.SyncRoot,
+                       EVulkanFrameWaitReason.ResourceLifetimeLock))
                 _recordedResources = CaptureRecordedResourcesNoLock(tracker);
             Volatile.Write(ref _recordedResourcesReady, 1);
             return _recordedResources;

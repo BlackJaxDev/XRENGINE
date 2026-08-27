@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using Silk.NET.Vulkan;
 using Silk.NET.Vulkan.Extensions.KHR;
@@ -51,6 +52,7 @@ internal sealed partial class VulkanFrameLoop
         VulkanImGuiFrameSnapshot snapshot,
         ImageLayout initialSwapchainLayout,
         CommandBuffer predecessorCommandBuffer,
+        bool clearSwapchain,
         out CommandBuffer overlayCommandBuffer)
     {
         overlayCommandBuffer = default;
@@ -79,7 +81,7 @@ internal sealed partial class VulkanFrameLoop
             target,
             _outputRuntime._imguiResources,
             _outputRuntime._imguiTextureRegistry.DescriptorSets,
-            ClearSwapchain: false,
+            ClearSwapchain: clearSwapchain,
             snapshot);
         return _imguiOverlayRecorder.TryRecord(
             new VulkanTrackedCommandEncoder(_commandRuntime),
@@ -185,9 +187,13 @@ internal sealed partial class VulkanFrameLoop
         out Result result,
         out string failureReason,
         out Exception? postDispatchFailure,
+        out TimeSpan queueAdmissionWait,
+        out TimeSpan nativePresentElapsed,
         [CallerMemberName] string? caller = null)
     {
         postDispatchFailure = null;
+        queueAdmissionWait = TimeSpan.Zero;
+        nativePresentElapsed = TimeSpan.Zero;
         if (!TryAdmitVulkanDeviceOperation(
                 "vkQueuePresentKHR",
                 out failureReason))
@@ -198,6 +204,7 @@ internal sealed partial class VulkanFrameLoop
         }
 
         bool dispatched;
+        long queueAdmissionStarted = Stopwatch.GetTimestamp();
         _commandRuntime.CommandBuffers.DeviceQueueAdmissionGate.EnterReadLock();
         try
         {
@@ -213,6 +220,11 @@ internal sealed partial class VulkanFrameLoop
                 RecordQueueOperation("present-rejected", queue, result, caller);
                 return false;
             }
+
+            long nativePresentStarted = Stopwatch.GetTimestamp();
+            queueAdmissionWait = Stopwatch.GetElapsedTime(
+                queueAdmissionStarted,
+                nativePresentStarted);
 
             if (OutputRuntime.Desktop.StreamlineFrameGenerationActive)
             {
@@ -231,6 +243,8 @@ internal sealed partial class VulkanFrameLoop
                 failureReason = string.Empty;
                 dispatched = true;
             }
+            nativePresentElapsed = Stopwatch.GetElapsedTime(
+                nativePresentStarted);
 
         }
         finally
@@ -386,7 +400,9 @@ internal sealed partial class VulkanFrameLoop
             // A recovery command owns the final swapchain write during bootstrap
             // and rejection handling, so the scene's sampled presentation source
             // is not the content accepted by this present attempt.
-            bool presentedSceneSource = attempt.RecoverySwapchainWriteCount <= 0;
+            bool presentedSceneSource =
+                !attempt.InteractiveResizeOverlayOnly &&
+                attempt.RecoverySwapchainWriteCount <= 0;
             if (presentedSceneSource &&
                 source.ColorTexture is not null &&
                 !sourceSnapshotReady)

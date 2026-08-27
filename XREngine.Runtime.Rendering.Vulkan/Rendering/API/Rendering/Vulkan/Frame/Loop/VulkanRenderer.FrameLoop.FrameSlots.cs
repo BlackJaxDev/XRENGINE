@@ -7,7 +7,7 @@ namespace XREngine.Rendering.Vulkan
     {
         internal EDesktopFrameFlow PrepareDesktopFrameSlot(ref VulkanFrameAttempt attempt)
         {
-            long stageStartTimestamp = Stopwatch.GetTimestamp();
+            TimeSpan slotWaitElapsed = TimeSpan.Zero;
             ulong slotWaitValue;
             bool xrOwnsFrameDeadline =
                 RuntimeRenderingHostServices.Presentation.IsOpenXRActive;
@@ -16,10 +16,15 @@ namespace XREngine.Rendering.Vulkan
             {
                 slotWaitValue =
                     _commandRuntime.Synchronization._frameSlotTimelineValues![attempt.FrameSlot];
+                bool slotWasPreWaited = slotWaitValue != 0UL &&
+                    Volatile.Read(
+                        ref _preWaitedFrameSlotTimelineValues[attempt.FrameSlot]) ==
+                    slotWaitValue;
                 bool deadlineBoundDesktop = attempt.InteractiveResize || xrOwnsFrameDeadline;
-                bool frameSlotReady = HasTimelineValueCompleted(
-                    _commandRuntime.Synchronization._graphicsTimelineSemaphore,
-                    slotWaitValue);
+                bool frameSlotReady = slotWasPreWaited ||
+                    HasTimelineValueCompleted(
+                        _commandRuntime.Synchronization._graphicsTimelineSemaphore,
+                        slotWaitValue);
                 bool imageSlotsReady = !xrOwnsFrameDeadline ||
                     AreDesktopImageTimelinesCompleted();
                 if (deadlineBoundDesktop && (!frameSlotReady || !imageSlotsReady))
@@ -27,7 +32,8 @@ namespace XREngine.Rendering.Vulkan
                     DrainSkippedResizeFrameOps(
                         deadlineBoundDesktop && xrOwnsFrameDeadline
                             ? "XR-owned desktop frame slot or swapchain image is still busy"
-                            : "Interactive resize frame slot is still busy");
+                            : "Interactive resize frame slot is still busy",
+                        preserveTextureUploads: attempt.InteractiveResize);
                     if (attempt.InteractiveResize)
                         MarkSkippedResizeFrameObserved(attempt.StartTimestamp);
                     RuntimeRenderingHostServices.Presentation.RecordRenderFrameOutputWork(
@@ -36,14 +42,37 @@ namespace XREngine.Rendering.Vulkan
                     return EDesktopFrameFlow.Stop;
                 }
 
-                WaitForTimelineValue(_commandRuntime.Synchronization._graphicsTimelineSemaphore, slotWaitValue);
+                if (!slotWasPreWaited)
+                {
+                    long waitStartTimestamp = Stopwatch.GetTimestamp();
+                    WaitForTimelineValue(
+                        _commandRuntime.Synchronization._graphicsTimelineSemaphore,
+                        slotWaitValue);
+                    slotWaitElapsed = Stopwatch.GetElapsedTime(waitStartTimestamp);
+                }
+                Volatile.Write(
+                    ref _preWaitedFrameSlotTimelineValues[attempt.FrameSlot],
+                    0UL);
             }
 
             ResourceRuntime.ResidentTemplateFrameSlotLifetimes.ReleaseFrameSlot(
                 attempt.FrameSlot);
 
-            attempt.Timing.WaitFrameSlot +=
-                Stopwatch.GetElapsedTime(stageStartTimestamp);
+            attempt.Timing.WaitFrameSlot += slotWaitElapsed;
+            attempt.Timing.WaitCurrentFrameSlot += slotWaitElapsed;
+            attempt.Timing.RecordCausalWait(new VulkanFrameCausalWait(
+                EVulkanFrameWaitReason.FrameSlot,
+                slotWaitElapsed,
+                attempt.FrameNumber,
+                attempt.FrameSlot,
+                ImageIndex: -1,
+                SemaphoreTargetValue: slotWaitValue,
+                SemaphoreCompletedValue: slotWaitValue,
+                QueueFamily: _deviceContext.QueueFamilies.GraphicsFamilyIndex ?? 0U,
+                PendingCommandCount: 0,
+                ConcurrentWorkerActivity: Volatile.Read(
+                    ref _commandRuntime.Workers.ActiveWorkerCount),
+                Stage: EVulkanFrameStage.CompletionMaintenance));
 
             if (FrameDataArena is { } frameDataArena &&
                 !frameDataArena.TryResetFrameSlot(
@@ -55,7 +84,7 @@ namespace XREngine.Rendering.Vulkan
                     $"Vulkan frame-data arena slot {attempt.FrameSlot} could not be reopened after timeline completion {slotWaitValue}.");
             }
 
-            stageStartTimestamp = Stopwatch.GetTimestamp();
+            long stageStartTimestamp = Stopwatch.GetTimestamp();
             if (attempt.InteractiveResize || xrOwnsFrameDeadline)
             {
                 // The modal callback must remain bounded. Completed retirement
@@ -137,6 +166,62 @@ namespace XREngine.Rendering.Vulkan
             return EDesktopFrameFlow.Continue;
         }
 
+        /// <summary>
+        /// Pays the next slot's unavoidable reuse wait after the current submit
+        /// but before releasing visibility collection. This makes the slot-ready
+        /// publication truthful while presentation and non-render gameplay work
+        /// can still overlap after the boundary.
+        /// </summary>
+        private void WaitForNextDesktopFrameSlotBeforeCollect(
+            ref VulkanFrameAttempt attempt)
+        {
+            if (attempt.InteractiveResize ||
+                RuntimeRenderingHostServices.Presentation.IsOpenXRActive ||
+                FrameSlotCount <= 1)
+            {
+                return;
+            }
+
+            int nextFrameSlot = (attempt.FrameSlot + 1) % FrameSlotCount;
+            ulong targetValue = _commandRuntime.Synchronization
+                ._frameSlotTimelineValues![nextFrameSlot];
+            if (targetValue == 0UL)
+            {
+                Volatile.Write(
+                    ref _preWaitedFrameSlotTimelineValues[nextFrameSlot],
+                    0UL);
+                return;
+            }
+
+            long waitStart = Stopwatch.GetTimestamp();
+            using (RuntimeRenderingHostServices.Profiling.StartProfileScope(
+                       "Vulkan.FrameLifecycle.PreCollectNextSlotWait"))
+            {
+                WaitForTimelineValue(
+                    _commandRuntime.Synchronization._graphicsTimelineSemaphore,
+                    targetValue);
+            }
+            TimeSpan elapsed = Stopwatch.GetElapsedTime(waitStart);
+            Volatile.Write(
+                ref _preWaitedFrameSlotTimelineValues[nextFrameSlot],
+                targetValue);
+            attempt.Timing.WaitFrameSlot += elapsed;
+            attempt.Timing.WaitNextFrameSlotBeforeCollect += elapsed;
+            attempt.Timing.RecordCausalWait(new VulkanFrameCausalWait(
+                EVulkanFrameWaitReason.FrameSlot,
+                elapsed,
+                attempt.FrameNumber,
+                nextFrameSlot,
+                ImageIndex: -1,
+                SemaphoreTargetValue: targetValue,
+                SemaphoreCompletedValue: targetValue,
+                QueueFamily: _deviceContext.QueueFamilies.GraphicsFamilyIndex ?? 0U,
+                PendingCommandCount: 0,
+                ConcurrentWorkerActivity: Volatile.Read(
+                    ref _commandRuntime.Workers.ActiveWorkerCount),
+                Stage: EVulkanFrameStage.QueueSubmit));
+        }
+
         private bool AreDesktopImageTimelinesCompleted()
         {
             ulong[]? imageTimelineValues = OutputRuntime.Desktop.ImageTimelineValues;
@@ -179,8 +264,21 @@ namespace XREngine.Rendering.Vulkan
                 }
             }
 
-            attempt.Timing.WaitSwapchainImage +=
-                Stopwatch.GetElapsedTime(stageStartTimestamp);
+            TimeSpan imageWaitElapsed = Stopwatch.GetElapsedTime(stageStartTimestamp);
+            attempt.Timing.WaitSwapchainImage += imageWaitElapsed;
+            attempt.Timing.RecordCausalWait(new VulkanFrameCausalWait(
+                EVulkanFrameWaitReason.OutputImage,
+                imageWaitElapsed,
+                attempt.FrameNumber,
+                attempt.FrameSlot,
+                unchecked((int)attempt.ImageIndex),
+                SemaphoreTargetValue: imageCompletionValue,
+                SemaphoreCompletedValue: imageCompletionValue,
+                QueueFamily: _deviceContext.QueueFamilies.GraphicsFamilyIndex ?? 0U,
+                PendingCommandCount: 0,
+                ConcurrentWorkerActivity: Volatile.Read(
+                    ref _commandRuntime.Workers.ActiveWorkerCount),
+                Stage: EVulkanFrameStage.OutputAcquire));
 
             stageStartTimestamp = Stopwatch.GetTimestamp();
             using (RuntimeRenderingHostServices.Profiling.StartProfileScope(

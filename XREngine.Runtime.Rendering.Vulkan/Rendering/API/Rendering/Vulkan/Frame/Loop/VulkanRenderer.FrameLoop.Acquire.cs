@@ -83,9 +83,22 @@ namespace XREngine.Rendering.Vulkan
             if (attempt.AcquireResult is Result.Success or Result.SuboptimalKhr)
                 attempt.TransitionAcquireOwnership(acquireOutcome.Ownership);
 
-            attempt.Timing.AcquireImage +=
-                Stopwatch.GetElapsedTime(stageStartTimestamp);
+            TimeSpan acquireElapsed = Stopwatch.GetElapsedTime(stageStartTimestamp);
+            attempt.Timing.AcquireImage += acquireElapsed;
             attempt.AcquireCompletedTimestamp = Stopwatch.GetTimestamp();
+            attempt.Timing.RecordCausalWait(new VulkanFrameCausalWait(
+                EVulkanFrameWaitReason.SwapchainAcquire,
+                acquireElapsed,
+                attempt.FrameNumber,
+                attempt.FrameSlot,
+                unchecked((int)attempt.ImageIndex),
+                SemaphoreTargetValue: 0UL,
+                SemaphoreCompletedValue: 0UL,
+                QueueFamily: _deviceContext.QueueFamilies.PresentFamilyIndex ?? 0U,
+                PendingCommandCount: 0,
+                ConcurrentWorkerActivity: Volatile.Read(
+                    ref _commandRuntime.Workers.ActiveWorkerCount),
+                Stage: EVulkanFrameStage.OutputAcquire));
 
             if (VulkanFrameDiagnosticsTraceEnabled)
             {
@@ -137,6 +150,7 @@ namespace XREngine.Rendering.Vulkan
                         "A platform surface restart is required; swapchain-only recreation is unsafe.");
                 case Result.NotReady:
                 case Result.Timeout:
+                    attempt.Timing.AcquireUnavailableCount++;
                     return HandleDesktopAcquireUnavailable(
                         ref attempt,
                         in acquireOutcome,
@@ -201,7 +215,8 @@ namespace XREngine.Rendering.Vulkan
                 DrainSkippedResizeFrameOps(
                     xrOwnsFrameDeadline
                         ? "Nonblocking desktop acquisition was unavailable during an XR-owned frame"
-                        : "Nonblocking desktop acquisition was unavailable during interactive resize");
+                        : "Nonblocking desktop acquisition was unavailable during interactive resize",
+                    preserveTextureUploads: attempt.InteractiveResize);
                 if (attempt.InteractiveResize)
                     MarkSkippedResizeFrameObserved(attempt.StartTimestamp);
                 RuntimeRenderingHostServices.Presentation.RecordRenderFrameOutputWork(

@@ -128,22 +128,25 @@ internal static class VulkanShaderReflection
             string storage = match.Groups["storage"].Value;
             string declaration = match.Groups["declaration"].Value.Trim();
 
+            if (qualifiers.Contains("XRENGINE_FORWARD_DESCRIPTOR_SET", StringComparison.Ordinal))
+            {
+                // The source fallback is captured before shaderc expands this
+                // Vulkan-only forwarding macro. Normalize it before parsing so
+                // binding, name, and optional-resource metadata can merge with
+                // the otherwise anonymous SPIR-V descriptor declarations.
+                qualifiers = qualifiers.Replace(
+                    "XRENGINE_FORWARD_DESCRIPTOR_SET",
+                    $"set = {VulkanDescriptorManager.PerPassSetIndex},",
+                    StringComparison.Ordinal);
+            }
+
             if (!TryParseQualifier(qualifiers, "binding", out uint binding))
             {
                 Debug.VulkanWarning($"Shader descriptor '{declaration}' is missing a binding index; skipping.");
                 continue;
             }
 
-            uint set;
-            if (!TryParseQualifier(qualifiers, "set", out set) &&
-                qualifiers.Contains("XRENGINE_FORWARD_DESCRIPTOR_SET", StringComparison.Ordinal))
-            {
-                // The source fallback is captured before shaderc expands the
-                // Vulkan-only forwarding macro. Preserve its authored set so
-                // source names and optional-resource policy can merge with the
-                // otherwise anonymous SPIR-V storage-buffer declarations.
-                set = VulkanDescriptorManager.PerPassSetIndex;
-            }
+            TryParseQualifier(qualifiers, "set", out uint set);
 
             DescriptorType descriptorType = ClassifyDescriptor(storage, declaration, source, match.Index + match.Length);
             uint arraySize = ExtractArraySize(declaration);

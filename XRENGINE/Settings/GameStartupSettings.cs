@@ -762,6 +762,24 @@ namespace XREngine
             set => Rendering.Vulkan.RenderTargetModeOverride = value ?? new();
         }
 
+        /// <summary>Project override for the deliberate Vulkan desktop presentation profile.</summary>
+        [Category("Rendering Overrides")]
+        [Description("Project override for Stable, LowLatency, Uncapped, or FrameGeneration Vulkan presentation policy.")]
+        public OverrideableSetting<EVulkanPresentationProfile> VulkanPresentationProfileOverride
+        {
+            get => Rendering.Vulkan.PresentationProfileOverride;
+            set => Rendering.Vulkan.PresentationProfileOverride = value ?? new();
+        }
+
+        /// <summary>Project override for the Vulkan desktop presentation cadence.</summary>
+        [Category("Rendering Overrides")]
+        [Description("Project override for Vulkan presentation target hertz; zero selects automatic display cadence.")]
+        public OverrideableSetting<float> VulkanPresentationTargetRefreshHzOverride
+        {
+            get => Rendering.Vulkan.PresentationTargetRefreshHzOverride;
+            set => Rendering.Vulkan.PresentationTargetRefreshHzOverride = value ?? new();
+        }
+
         /// <summary>
         /// Project override for anti-aliasing mode.
         /// Takes precedence over engine defaults when HasOverride is true.

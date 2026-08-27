@@ -1479,24 +1479,37 @@ internal sealed partial class ImportedTextureStreamingManager
             }
         }
 
-        if (!_transitionQueue.TryBeginTransition(
-                record,
-                cts,
-                normalizedTarget,
-                normalizedPageSelection,
-                frameId,
-                pressureDemotion,
-                previousResidentSize,
-                currentCommittedBytes,
-                targetCommittedBytes,
-                backend.Name,
-                reason,
-                transitionPriority,
-                uploadPriorityClass,
-                out previousPendingLoadCts))
+        if (!RenderForegroundWorkCoordinator.TryEnterBackgroundSlice(
+                out RenderForegroundWorkCoordinator.BackgroundSlice backgroundSlice))
         {
             cts.Dispose();
             return false;
+        }
+        try
+        {
+            if (!_transitionQueue.TryBeginTransition(
+                    record,
+                    cts,
+                    normalizedTarget,
+                    normalizedPageSelection,
+                    frameId,
+                    pressureDemotion,
+                    previousResidentSize,
+                    currentCommittedBytes,
+                    targetCommittedBytes,
+                    backend.Name,
+                    reason,
+                    transitionPriority,
+                    uploadPriorityClass,
+                    out previousPendingLoadCts))
+            {
+                cts.Dispose();
+                return false;
+            }
+        }
+        finally
+        {
+            backgroundSlice.Dispose();
         }
 
         CancelPendingLoad(previousPendingLoadCts);

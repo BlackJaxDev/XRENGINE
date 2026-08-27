@@ -260,6 +260,38 @@ namespace XREngine.Rendering.Vulkan
                             caller: "RenderFrameCallback");
                         submitResult = submitReceipt.Result;
                         attempt.SubmitResult = submitResult;
+                        attempt.Timing.QueueSubmitAdmission +=
+                            submitReceipt.QueueAdmissionWait;
+                        attempt.Timing.NativeQueueSubmit +=
+                            submitReceipt.NativeDispatchElapsed;
+                        attempt.Timing.RecordCausalWait(
+                            new VulkanFrameCausalWait(
+                                EVulkanFrameWaitReason.QueueSubmitAdmission,
+                                submitReceipt.QueueAdmissionWait,
+                                attempt.FrameNumber,
+                                attempt.FrameSlot,
+                                unchecked((int)attempt.ImageIndex),
+                                SemaphoreTargetValue: attempt.AcquireTimelineValue,
+                                SemaphoreCompletedValue: attempt.AcquireTimelineValue,
+                                QueueFamily: _deviceContext.QueueFamilies.GraphicsFamilyIndex ?? 0U,
+                                PendingCommandCount: checked((int)commandBufferCount),
+                                ConcurrentWorkerActivity: Volatile.Read(
+                                    ref _commandRuntime.Workers.ActiveWorkerCount),
+                                Stage: EVulkanFrameStage.QueueSubmit));
+                        attempt.Timing.RecordCausalWait(
+                            new VulkanFrameCausalWait(
+                                EVulkanFrameWaitReason.NativeQueueSubmit,
+                                submitReceipt.NativeDispatchElapsed,
+                                attempt.FrameNumber,
+                                attempt.FrameSlot,
+                                unchecked((int)attempt.ImageIndex),
+                                SemaphoreTargetValue: attempt.GraphicsSignalValue,
+                                SemaphoreCompletedValue: 0UL,
+                                QueueFamily: _deviceContext.QueueFamilies.GraphicsFamilyIndex ?? 0U,
+                                PendingCommandCount: checked((int)commandBufferCount),
+                                ConcurrentWorkerActivity: Volatile.Read(
+                                    ref _commandRuntime.Workers.ActiveWorkerCount),
+                                Stage: EVulkanFrameStage.QueueSubmit));
                         if (submitReceipt.SubmissionAccepted)
                         {
                             // The queue owns this frame as soon as vkQueueSubmit accepts it. Set
@@ -356,9 +388,8 @@ namespace XREngine.Rendering.Vulkan
                 attempt.DeferredFailure ??= ex;
             }
 
-            RuntimeRenderingHostServices.Scheduling
-                .MarkRenderFrameReadyForCollect(DesktopWsiOutput.Window);
-            attempt.CollectReleased = true;
+            WaitForNextDesktopFrameSlotBeforeCollect(ref attempt);
+            ReleaseCollectForDesktopFrame(ref attempt);
 
             stageStartTimestamp = Stopwatch.GetTimestamp();
             try

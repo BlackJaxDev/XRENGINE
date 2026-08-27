@@ -58,9 +58,19 @@ internal sealed class AssetTextureStreamingSource(string assetPath, string? fall
         if (Volatile.Read(ref _preferFallback) != 0 && _fallbackSource is not null)
             return _fallbackSource.LoadResidentData(maxResidentDimension, includeMipChain, cancellationToken);
 
+        cancellationToken.ThrowIfCancellationRequested();
+        if (_fallbackSource is not null && !File.Exists(assetPath))
+        {
+            return LoadFallbackResidentData(
+                maxResidentDimension,
+                includeMipChain,
+                cancellationToken,
+                "the cached texture asset does not exist",
+                reportFailure: false);
+        }
+
         try
         {
-            cancellationToken.ThrowIfCancellationRequested();
             long totalStartTimestamp = XRTexture2D.StartImportedTextureTiming();
             long readStartTimestamp = XRTexture2D.StartImportedTextureTiming();
             byte[] assetBytes = RuntimeRenderingHostServices.Assets.ReadAllBytes(assetPath);
@@ -91,6 +101,16 @@ internal sealed class AssetTextureStreamingSource(string assetPath, string? fall
             double failedPayloadParseMilliseconds = XRTexture2D.CompleteImportedTextureTiming(parseStartTimestamp);
             cancellationToken.ThrowIfCancellationRequested();
 
+            if (_fallbackSource is not null &&
+                XRTexture2D.LooksLikeBinaryTextureStreamingPayload(assetBytes))
+            {
+                return LoadFallbackResidentData(
+                    maxResidentDimension,
+                    includeMipChain,
+                    cancellationToken,
+                    "the binary cache payload is incompatible with the current texture-streaming format");
+            }
+
             XRTexture2D? scratch = RuntimeRenderingHostServices.Assets.LoadAsset<XRTexture2D>(assetPath);
             if (scratch is not null)
             {
@@ -120,27 +140,47 @@ internal sealed class AssetTextureStreamingSource(string assetPath, string? fall
         {
             throw;
         }
+        catch (Exception ex) when (
+            _fallbackSource is not null &&
+            ex is FileNotFoundException or DirectoryNotFoundException)
+        {
+            return LoadFallbackResidentData(
+                maxResidentDimension,
+                includeMipChain,
+                cancellationToken,
+                "the cached texture asset disappeared before it could be read",
+                reportFailure: false);
+        }
         catch (Exception ex) when (_fallbackSource is not null)
         {
-            return LoadFallbackResidentData(maxResidentDimension, includeMipChain, cancellationToken, ex);
+            return LoadFallbackResidentData(
+                maxResidentDimension,
+                includeMipChain,
+                cancellationToken,
+                $"{ex.GetType().Name}: {ex.Message}");
         }
 
         if (_fallbackSource is not null)
-            return LoadFallbackResidentData(maxResidentDimension, includeMipChain, cancellationToken, failure: null);
+            return LoadFallbackResidentData(maxResidentDimension, includeMipChain, cancellationToken, failureReason: null);
 
         throw new FileNotFoundException($"Failed to load texture asset '{assetPath}'.", assetPath);
     }
 
-    private TextureStreamingResidentData LoadFallbackResidentData(uint maxResidentDimension, bool includeMipChain, CancellationToken cancellationToken, Exception? failure)
+    private TextureStreamingResidentData LoadFallbackResidentData(
+        uint maxResidentDimension,
+        bool includeMipChain,
+        CancellationToken cancellationToken,
+        string? failureReason,
+        bool reportFailure = true)
     {
         if (_fallbackSource is null)
-            throw failure ?? new FileNotFoundException($"Failed to load texture asset '{assetPath}'.", assetPath);
+            throw new FileNotFoundException($"Failed to load texture asset '{assetPath}'.", assetPath);
 
-        if (Interlocked.Exchange(ref _preferFallback, 1) == 0)
+        if (Interlocked.Exchange(ref _preferFallback, 1) == 0 && reportFailure)
         {
-            string reason = failure is null
+            string reason = failureReason is null
                 ? "the cached texture asset was unreadable"
-                : $"{failure.GetType().Name}: {failure.Message}";
+                : failureReason;
             Debug.TexturesWarning(
                 $"Falling back to source texture '{_fallbackSource.SourcePath}' because cache asset '{assetPath}' could not be used ({reason}).");
         }

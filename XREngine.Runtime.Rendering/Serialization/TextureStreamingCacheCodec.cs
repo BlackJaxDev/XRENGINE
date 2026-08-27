@@ -33,7 +33,14 @@ internal sealed class TextureStreamingCacheCodec : IThirdPartyCacheCodec
 
     public CacheReadResult Read(string cachePath, string originalPath, DateTime sourceTimestampUtc)
     {
-        if (!LooksLikeBinaryPayload(cachePath))
+        bool? looksLikeBinaryPayload = LooksLikeBinaryPayload(cachePath);
+        if (!looksLikeBinaryPayload.HasValue)
+        {
+            return CacheReadResult.Rejected(
+                CacheRejectReason.Unreadable,
+                "The texture streaming cache could not be inspected while it was being replaced or was inaccessible.");
+        }
+        if (!looksLikeBinaryPayload.Value)
             return CacheReadResult.Miss();
 
         DateTime cacheTimestampUtc = File.GetLastWriteTimeUtc(cachePath);
@@ -42,7 +49,13 @@ internal sealed class TextureStreamingCacheCodec : IThirdPartyCacheCodec
 
         try
         {
-            XRTexture2D texture = DeserializeBinaryAsset(cachePath);
+            if (!TryDeserializeBinaryAsset(cachePath, out XRTexture2D? texture) || texture is null)
+            {
+                return CacheReadResult.Rejected(
+                    CacheRejectReason.Unreadable,
+                    "The file begins with a binary marker but is not a valid XRTexture2D streaming payload.");
+            }
+
             texture.OriginalPath = originalPath;
             texture.OriginalLastWriteTimeUtc = cacheTimestampUtc;
             return CacheReadResult.Hit(texture);
@@ -80,10 +93,33 @@ internal sealed class TextureStreamingCacheCodec : IThirdPartyCacheCodec
     public bool TryReadDirectAssetFile(string filePath, Type assetType, out XRAsset? asset)
     {
         asset = null;
-        if (assetType != typeof(XRTexture2D) || !LooksLikeBinaryPayload(filePath))
+        if (assetType != typeof(XRTexture2D))
             return false;
 
-        asset = DeserializeBinaryAsset(filePath);
+        bool? looksLikeBinaryPayload = LooksLikeBinaryPayload(filePath);
+        if (!looksLikeBinaryPayload.HasValue)
+        {
+            // Claim a temporarily unreadable texture file. If a binary cache is
+            // atomically replaced between opens, it must never reach YAML.
+            return true;
+        }
+        if (!looksLikeBinaryPayload.Value)
+            return false;
+
+        // A recognized binary file is claimed even when its payload is stale or
+        // corrupt. Returning true with a null asset prevents raw bytes from
+        // falling through to the generic YAML deserializer.
+        try
+        {
+            if (TryDeserializeBinaryAsset(filePath, out XRTexture2D? texture))
+                asset = texture;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            // The codec already recognized the file as binary. A replacement or
+            // failed read must remain a cache rejection rather than becoming YAML.
+        }
+
         return true;
     }
 
@@ -111,7 +147,7 @@ internal sealed class TextureStreamingCacheCodec : IThirdPartyCacheCodec
         return true;
     }
 
-    private static bool LooksLikeBinaryPayload(string cachePath)
+    private static bool? LooksLikeBinaryPayload(string cachePath)
     {
         try
         {
@@ -121,23 +157,20 @@ internal sealed class TextureStreamingCacheCodec : IThirdPartyCacheCodec
                 && first <= (byte)RuntimeCookedBinaryTypeMarker.CustomObject
                 && first is not (byte)'\t' and not (byte)'\n' and not (byte)'\r';
         }
-        catch
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
-            return false;
+            return null;
         }
     }
 
-    private static XRTexture2D DeserializeBinaryAsset(string filePath)
+    private static bool TryDeserializeBinaryAsset(string filePath, out XRTexture2D? texture)
     {
         byte[] bytes = File.ReadAllBytes(filePath);
-        if (!XRTexture2D.TryDeserializeTextureStreamingPayload(bytes, out XRTexture2D? texture))
-        {
-            throw new InvalidDataException(
-                $"Texture asset '{filePath}' begins with a binary marker but is not a valid XRTexture2D streaming payload.");
-        }
+        if (!XRTexture2D.TryDeserializeTextureStreamingPayload(bytes, out texture))
+            return false;
 
         texture.FilePath = Path.GetFullPath(filePath);
-        return texture;
+        return true;
     }
 
     private static bool HasStreamableShape(XRTexture2D texture)

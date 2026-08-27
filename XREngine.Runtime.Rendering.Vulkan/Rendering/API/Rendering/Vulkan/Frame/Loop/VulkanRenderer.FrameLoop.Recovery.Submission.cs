@@ -89,9 +89,8 @@ namespace XREngine.Rendering.Vulkan
                 attempt.TransitionUploadOwnership(
                     EVulkanDesktopUploadOwnership.SubmittedDeferredFree);
             SettleAcceptedDesktopRecoverySubmissionDebt(ref attempt);
-            RuntimeRenderingHostServices.Scheduling
-                .MarkRenderFrameReadyForCollect(DesktopWsiOutput.Window);
-            attempt.CollectReleased = true;
+            WaitForNextDesktopFrameSlotBeforeCollect(ref attempt);
+            ReleaseCollectForDesktopFrame(ref attempt);
             return true;
         }
 

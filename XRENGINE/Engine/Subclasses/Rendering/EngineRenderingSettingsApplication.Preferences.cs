@@ -284,8 +284,11 @@ namespace XREngine
             {
                 static void Apply()
                 {
-                    EMeshSubmissionStrategy strategy = RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy();
-                    bool useGpu = strategy != EMeshSubmissionStrategy.CpuDirect;
+                    EMeshSubmissionStrategy requestedStrategy =
+                        RuntimeEngine.Rendering.ResolveRequestedMeshSubmissionStrategy();
+                    EMeshSubmissionStrategy effectiveStrategy =
+                        RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy();
+                    bool useGpu = effectiveStrategy != EMeshSubmissionStrategy.CpuDirect;
                     
                     foreach (RuntimeWorld world in Engine.WorldInstances)
                         world.GetRenderWorld()?.ApplyRenderDispatchPreference(useGpu);
@@ -297,9 +300,11 @@ namespace XREngine
                             continue;
 
                         if (pipeline is DebugOpaqueRenderPipeline debugPipeline)
-                            debugPipeline.MeshSubmissionStrategy = strategy;
+                            debugPipeline.MeshSubmissionStrategy = requestedStrategy;
                         else
-                            RuntimeEngine.Rendering.ApplyMeshSubmissionStrategyToPipeline(pipeline, strategy);
+                            RuntimeEngine.Rendering.ApplyMeshSubmissionStrategyToPipeline(
+                                pipeline,
+                                requestedStrategy);
                     }
                 }
 

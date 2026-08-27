@@ -1525,6 +1525,11 @@ namespace XREngine.Rendering.Vulkan
                         workerActiveSpan: timing.WorkerActiveSpan,
                         workerOverlapTime: timing.WorkerOverlapTime,
                         waitForWorkersTime: timing.WaitForWorkersTime);
+                    ulong renderFrameId = recordingState.FramePlan?.RenderFrameId ??
+                        recordingState.Policy.SourceFrameId;
+                    _frameTelemetry.RecordWorkerOverlap(
+                        renderFrameId,
+                        timing.WorkerOverlapTime);
                 }
 
                 using (VulkanCpuStageScope cpuStage = new(_frameTelemetry, EVulkanCpuStage.SecondaryRecording))

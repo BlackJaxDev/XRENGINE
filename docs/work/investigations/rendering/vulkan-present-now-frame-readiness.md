@@ -1,7 +1,7 @@
 # Vulkan Present-Now Frame Readiness Investigation
 
 Last updated: 2026-08-26
-Status: prior desktop acceptance passed; current prepared-cohort Sponza fix builds, live revalidation pending
+Status: current desktop capacity-one Sponza acceptance passed; explicit fault injection and representative RenderDoc capture remain open
 Tracker: `docs/work/todo/rendering/vulkan-present-now-frame-readiness-todo.md`
 
 ## Problem statement
@@ -297,17 +297,259 @@ Observed Sponza failure results:
 - Source now uses that early return only for non-foreground work. PresentNow
   falls through with its accepted request cohort intact. The targeted Vulkan
   project builds with zero warnings and zero errors.
-- Live revalidation is still required. One fresh isolated editor build compiled
-  but startup encountered a concurrent settings-projection `XRWorld` clone
-  regression; its owner fixed that boundary. A subsequent incremental session
-  build was invalidated when concurrent session retention removed its artifact
-  tree during compilation. No other task's live editor was stopped.
+- Initial live revalidation attempts were blocked first by a concurrent
+  settings-projection `XRWorld` clone regression and then by isolated-session
+  artifact cleanup during compilation. The closeout pass below supersedes
+  those incomplete attempts. No other task's live editor was stopped.
+
+## 2026-08-26 current-tree Sponza closeout
+
+The prepared-cohort cold-entry fix is now live-validated. The isolated
+capacity-one session is:
+
+`Build/_AgentValidation/00000000-000000-shared/mcp-sessions/20260826-182037-present-now-closeout-v6/`
+
+Reaching that path exposed and resolved three adjacent current-tree blockers:
+
+- Effective startup settings were deep-cloning nested `XRAsset` instances into
+  an attached asset graph, so marking the root as a runtime projection threw.
+  Projection construction now suppresses object-cache registration, detaches
+  nested startup/build/user settings after overlay, clears projection-only
+  embedded-asset edges, and marks the complete projection transient.
+- Opaque-uniform hoisting moved a forward-descriptor declaration above the
+  `XRENGINE_FORWARD_DESCRIPTOR_SET` definition. Macro-dependent layouts now
+  stay in preprocessing order.
+- Source reflection did not understand the forward-descriptor macro form. Its
+  qualifier is now normalized to descriptor set 3 before binding parsing. An
+  ignored isolated probe reflected `DirectionalShadowMaps` as set 3, binding
+  15 and exited successfully.
+
+The camera then moved through eight outside, entrance, left, inside, right,
+upper, deep, and near-wall Sponza positions with 0.65-second transitions. Cold
+required fragment pipeline/library compilations took approximately 20-21
+seconds. The accepted frame remained in foreground readiness, reported
+monotonic watchdog progress, and recovered without looking away or converting
+the cold dependency into a terminal frame failure.
+
+After settlement, the final-presentation ledger retained 128 consecutive
+frames 327-454. Each record had matching frame/source/accepted-epoch identity,
+a strictly increasing graphics timeline signal, a matching successful native
+descriptor write, `PresentedNew`, no fallback, and no invariant failure. The
+logs contained no `RendererPaused`, `PresentNowReadinessFailed`,
+`DesktopFrameFailure`, shader compilation failure, or Vulkan validation error.
+
+The inspected settled image is:
+
+`Build/_AgentValidation/20260826-175504-present-now-closeout/mcp-captures/v6-settled-sponza/`
+
+It shows a complete textured Sponza stone wall rather than the stale red/blue
+pre-fix image. The session was stopped through its exact named MCP session; no
+other editor process was stopped.
+
+Targeted Vulkan and full editor builds pass with zero warnings and zero errors.
+A targeted `UberShaderCompilationTests` invocation cannot currently compile the
+existing unit-test project because unrelated tests still call the removed
+`UnitTestingWorldSettingsStore.ApplyStartupOverrides` API and an obsolete
+`VulkanImportedTextureUploadRequest` constructor. No tests were added or
+modified on top of that broken baseline.
+
+## 2026-08-26 18:59 staging-pool exception regression
+
+The later user run was:
+
+`Build/Logs/Debug_net10.0-windows7.0/windows_x64/xrengine_2026-08-26_18-59-18_pid11472/`
+
+Its exception census was 47 `FileNotFoundException` records, two occurrences
+of one `InvalidOperationException`, and three
+`VulkanPresentNowReadinessException` records. The mapped-memory failure paused
+the renderer at frame 437 and produced 3,638 later
+`PresentNowReadinessFailed` records. Those later records were the terminal
+failure latch being re-reported, not 3,638 independent failures.
+
+The `FileNotFoundException` records were separate, expected cold-cache misses.
+All 45 prospective cooked `.XRTexture2D.asset` paths were absent, every source
+texture existed, and source fallback subsequently uploaded 43 of them before
+the log ended. `AssetTextureStreamingSource` now checks for an absent
+prospective cache before reading it, latches source fallback without warning or
+exception-driven control flow, and still warns for an existing but unreadable
+or corrupt cache. A disappearance between the check and read receives the same
+benign cache-miss treatment.
+
+The terminal Vulkan chain began while preparing required ticket
+`texture-upload:81:3` for `sponza_fabric_diff.png`. The worker reached
+`VulkanStagingManager.Acquire`, then `VulkanBufferResourceService.UpdateFromVoidPtr`
+rejected the pooled buffer's mapped-memory identity. This was not a native VMA
+map failure: host-visible VMA allocations are persistently mapped and the run
+contained no `VMA map failed` warning.
+
+Root cause was retirement identity loss. VMA buffer suballocations may share a
+single `VkDeviceMemory` block, while the retirement queue deduplicates that
+memory handle. Later buffers in the same block could therefore reach
+`DrainRetiredBuffers` with `Memory=0`. The old drain skipped
+`VulkanStagingManager.TryRelease`, destroyed the per-buffer allocation, and
+left its pool entry behind. Later Vulkan handle reuse could make that stale
+entry appear reusable and fail mapped-slice validation.
+
+The drain now recovers the authoritative memory from the tracked per-buffer
+allocation before attempting pool release. Every buffer that is actually
+destroyed is also forgotten by buffer identity before its allocation is
+removed. A genuine mapping failure remains terminal; no dedicated-memory retry
+or CPU fallback hides an invalid pool/allocation invariant. Mapping diagnostics
+now distinguish invalid identity, missing tracking, non-host-visible memory,
+memory mismatch, and out-of-range writes.
+
+Fresh exact-workload validation used the isolated session:
+
+`Build/_AgentValidation/00000000-000000-shared/mcp-sessions/20260826-191905-last-run-exceptions-v2/`
+
+The camera interpolated through central, side, and opposing Sponza viewpoints,
+forcing visibility-driven texture work. One inspected view showed the imported
+stone wall and the captures changed with camera position. The session passed
+the original frame-437 failure point, then settled at frame 825 with 223
+tracked textures, zero pending transitions, zero active decodes, zero active
+GPU uploads, and no frozen streaming state. The presentation ledger remained
+unfrozen and reported a fresh accepted frame with a successful descriptor
+write, matching frame/source identity, and no invariant failure.
+
+After the named session was stopped and logs were flushed, full-log counts were
+zero for `FileNotFoundException`, `InvalidOperationException`,
+`VulkanPresentNowReadinessException`, `PresentNowReadinessFailed`,
+`RendererPaused`, mapped-memory failures, VUIDs, and Vulkan validation errors.
+The isolated editor build had zero errors; its nine warnings were the existing
+`OscCore` submodule warnings.
+
+Residual hardening remains explicit rather than folded into this regression
+fix: suppress repeated generic frame-failure records after one terminal pause
+transition, and make the foreground-reserve builder prove that it provisioned
+distinct reserve entries.
+
+## 2026-08-26 atomic staging recycle publication
+
+The first remaining staging hardening slice is complete. Each pooled staging
+entry now records the exact published Vulkan buffer resource generation and has
+an explicit `Idle`, `InUse`, or `Retiring` state. A completed upload can become
+reusable only through one staging-lock transaction: validate buffer, memory,
+generation, and `InUse` state; quarantine the entry as `Retiring`; reactivate
+the matching pending-retirement lifetime under its exact old generation;
+publish a fresh nonzero resource generation; update the entry generation; and
+publish `Idle` last. `Acquire` therefore cannot observe the allocation in the
+old release/reactivation gap.
+
+The subsequent reserve-provisioning slice removed the direct no-retirement
+release path from `EnsureForegroundReserve`: cold reserve entries are now
+created directly in `Idle` state with their published allocation generation.
+Forced retirement drains and device loss still deliberately decline
+reactivation, leave the entry quarantined, then use the retirement ticket's
+exact generation to guard pool forgetting and physical destruction.
+Retirement still recovers authoritative per-buffer VMA memory identity when
+several suballocations share one `VkDeviceMemory` block.
+
+Targeted validation on 2026-08-26:
+
+- `dotnet build .\XREngine.Runtime.Rendering.Vulkan\XREngine.Runtime.Rendering.Vulkan.csproj --no-restore`
+  completed with zero warnings and zero errors.
+- Isolated session
+  `Build/_AgentValidation/00000000-000000-shared/mcp-sessions/20260826-214445-staging-recycle-slice1/`
+  built and stopped cleanly. Its editor build had zero errors and the nine
+  existing `OscCore` warnings.
+- Three materially different Vulkan camera views were captured and inspected.
+  The streaming query settled at frame 798 with 133 tracked textures, zero
+  pending transitions, zero active decodes, zero queued decodes, zero active
+  GPU uploads, and `vulkan_frozen=false`; the log later reached a ready
+  PresentNow frame 1073 before shutdown.
+- Full-log searches found no lifecycle/recycle `InvalidOperationException`,
+  mapped-memory failure, `VulkanPresentNowReadinessException`,
+  `PresentNowReadinessFailed`, renderer pause, device loss, OOM, or VUID record.
+  The existing run settings had Vulkan validation layers disabled, so this is
+  runtime/log evidence rather than a validation-layer pass.
+
+No tests were added or changed: repository policy requires the live feature
+path to pass first and then explicit user clearance before regression-test
+work. The completed reserve-provisioning follow-up is recorded below.
+
+## 2026-08-26 binary texture-cache dispatch and distinct reserve provisioning
+
+The YAML exception in the 21:53 editor run was a format-dispatch failure, not
+malformed authored YAML. The affected
+`studio_small_09_4k.exr.XREngine.Rendering.XRTexture2D.asset` cache file is a
+178,958,379-byte cooked binary streaming payload whose first bytes were passed
+to `XRAssetDeserializer` as a YAML scalar. Generic asset loading now asks the
+registered feature codec to claim a direct asset file before opening a text
+reader. A recognized binary texture payload is claimed even when stale or
+incompatible, so raw bytes cannot fall through to YAML. Missing or rejected
+prospective cache entries retain the original source texture as their
+recoverable authority instead of assigning a filler texture. Cache replacement
+I/O and access races are also classified as recoverable asset-load failures;
+out-of-memory and cancellation semantics are not hidden. The Runtime.Core
+source directory is explicitly unignored so the dispatcher cannot disappear
+from an ordinary patch or fresh checkout.
+
+The foreground reserve bug was also confirmed: the old loop acquired and
+released through the ordinary pool, so the first exact-fit idle entry could be
+reacquired for every nominal reserve slot. Cold provisioning now creates the
+missing protected entries directly, serializes only that provisioning path,
+counts protected `Idle`, `InUse`, and `Retiring` entries toward the configured
+total, and leaves ordinary foreground spill allocations trim-eligible. Its
+allocation-free snapshot verifies nonzero, pairwise-distinct buffer handles
+and allocation generations and emits one cold-path identity signature.
+
+Validation evidence:
+
+- `dotnet build .\XREngine.Runtime.Rendering.Vulkan\XREngine.Runtime.Rendering.Vulkan.csproj --no-restore`
+  completed with zero warnings and zero errors.
+- Isolated session
+  `Build/_AgentValidation/00000000-000000-shared/mcp-sessions/20260826-220419-yaml-reserve-slice2/`
+  reported `[Vulkan.StagingReserve] configured=4 created=4 total=4 idle=4
+  inUse=0 retiring=0 distinctBuffers=4 distinctGenerations=4`.
+- The exact 178,958,379-byte cache payload from the failing run was copied into
+  the isolated cache and loaded through MCP `find_asset`. It returned one
+  `XREngine.Rendering.XRTexture2D` with the binary cache as `filePath` and
+  `Build/CommonAssets/Textures/studio_small_09_4k.exr` as `originalPath`.
+  Full-log searches found no `YamlDotNet`, `YamlException`, unresolved
+  `XRTexture2D` scalar, or texture-load failure.
+- Before the separate capacity failure described below, a Vulkan viewport
+  capture was inspected and showed the textured stone-wall scene. Texture
+  streaming later reported zero pending transitions, decodes, and GPU uploads,
+  with `promotions_blocked=false` and `vulkan_frozen=false`.
+
+No tests were added or changed because explicit post-live-validation test
+clearance has not been given.
+
+## 2026-08-26 interactive resize non-recovery diagnosis
+
+The reported resize symptom has two causal parts. During a Win32 sizing modal
+loop the configured `Win32ModalLoopTimer` strategy freezes ordinary engine
+relayout and swapchain recreation, so Windows temporarily stretches the last
+presented image. The session published its first framebuffer resize only on
+`win32-exit-size-move`, after which the managed render pipeline rebuilt and
+committed 1905x922 resources. Vulkan then recreated the swapchain from
+1920x1080 to 1905x922 in 179.219 ms with zero final extent divergence.
+
+The permanent failure began on the first post-resize exact-readiness frame,
+not in WSI convergence. Rebuilding the dense scene produced a main-scene
+manifest beyond its declared lane capacity:
+
+```text
+FramePlanCapacityExceeded lane=MainScene meshLane=MainScene
+actual=1537 configured=1536 accepted=1536 rejected=2306
+```
+
+`PausePresentNowRenderer` stored this exception in
+`_presentNowTerminalFailure`. The guard at the start of every later readiness
+attempt then stopped before acquire, record, submit, or present, while generic
+`DesktopFrameFailure` logging repeated on every callback. Thus the stretch
+during dragging is current modal-resize policy; failure to recover after
+release is the one-request frame-plan overflow combined with a permanent
+terminal-failure latch and an unbounded follow-on log storm. This run naturally
+reproduced the overflow portion of the open acceptance item, but it does not
+close that item because one bounded detailed failure record and recovery policy
+are still missing.
 
 ## RenderDoc investigation
 
-`rdc doctor` passed, but this machine has mismatched capture installations:
-the `rdc` Python module/layer is RenderDoc 1.41 while the installed desktop
-RenderDoc is 1.44.
+`rdc doctor` now reports an aligned RenderDoc 1.44 Python module,
+`renderdoccmd`, and registered Vulkan layer. The earlier mismatched-tooling
+observations remain useful history but are no longer the current blocker.
 
 - `renderdoc/present-now-capacity1-sponza.rdc` is a valid Vulkan capture, but it
   contains only the startup swapchain frame: 11 events and zero draws. It is
@@ -323,13 +565,13 @@ RenderDoc is 1.44.
   advancing, while the renderer correctly remained in frame-slot completion
   maintenance waiting for the intercepted graphics timeline value. The helper
   timed out and terminated only its owned PID.
-- A direct RenderDoc 1.44 launch crashed CoreCLR during editor startup before
-  the configured capture frame was reached. No engine capture-trigger message
-  was emitted and no `.rdc` was produced.
+- Two new direct RenderDoc 1.44 editor launches targeted frames 450 and 60 with
+  a 240-second timeout. Neither observed a present, both timed out, and neither
+  produced a `.rdc`. No owned target process remained afterward.
 
 The representative RenderDoc checkbox remains open. Resume it only after the
-capture and replay versions are aligned; do not weaken frame-slot reuse waits to
-work around a capture-layer timeline stall.
+direct-launch/no-present behavior is understood; do not weaken frame-slot reuse
+waits to work around capture-layer interception.
 
 ## Build status
 
@@ -339,8 +581,8 @@ Latest targeted validation:
 dotnet build .\XREngine.Runtime.Rendering.Vulkan\XREngine.Runtime.Rendering.Vulkan.csproj --no-restore -p:BuildProjectReferences=false
 ```
 
-Result: 0 warnings and 0 errors on 2026-08-26 at 16:52 local time after the
-prepared-cohort cold-entry foreground fallback was added.
+Result: 0 warnings and 0 errors on 2026-08-26 after the prepared-cohort
+cold-entry foreground fallback was added.
 
 Latest full editor validation:
 
@@ -348,41 +590,36 @@ Latest full editor validation:
 dotnet build .\XREngine.Editor\XREngine.Editor.csproj --no-restore
 ```
 
-Result: 0 warnings and 0 errors on 2026-08-26 at 16:14 local time. The earlier
-concurrent `UnityAnimImporter.cs` compile break was resolved by its owning work;
-this investigation did not alter or revert those changes. A later isolated
-editor build containing the Sponza fix compiled with zero errors and nine
-existing OscCore warnings, but did not reach MCP because of the concurrent
-settings clone regression described above. The current full working tree still
-needs one clean build after concurrent changes settle.
+Result: 0 warnings and 0 errors on 2026-08-26 at approximately 18:41 local
+time, including the startup-projection, shader preprocessing, and descriptor-
+source reflection changes used for closeout.
 
 ## Remaining work / resume sequence
 
-1. Leave any other task's live editor untouched. After
-   `present-now-capacity1-integrated` stops and no isolated build is running,
-   start a fresh uniquely named capacity-one session.
-2. Reproduce the away-to-dense-Sponza transition. Inspect the dense PNG and
-   retain at least 96 ledger entries proving fresh matching frame/source IDs,
-   monotonic graphics signals, ready dependencies, and no renderer pause,
-   fallback, invariant failure, or generic terminal-failure storm.
-3. If the cold pipeline completes inside foreground readiness, check the Phase
-   5 deliberately slow successful compile criterion in the TODO.
-4. In a separate session, overlap one duplicate Sponza hierarchy to naturally
-   exceed the main-scene lane. Verify the typed bounded-capacity diagnostic and
-   stable terminal identity before checking the Phase 3/6 acceptance items.
-5. Rerun the targeted Vulkan and full editor builds after concurrent source
-   changes settle.
-6. Align RenderDoc 1.41/1.44 capture and replay tooling, repeat the fixed-camera
-   capacity-one capture, and inspect/export a settled Sponza frame.
+1. Prove background upload, compilation, and shadow work yields to exact
+   foreground readiness and resumes without starvation.
+2. Emit one detailed renderer-pause transition for a terminal PresentNow
+   failure and suppress the later generic per-frame failure storm.
+3. Define and implement the recovery policy for a main-scene manifest that
+   exceeds a declared lane during post-resize reseal; do not hide the defect by
+   merely increasing the fixed capacity.
+4. In a separate isolated session, mutate camera/scene state while foreground
+   preparation is blocked. Verify captured-epoch immutability and one stable
+   typed capacity failure.
+5. Repair or rebase the existing unit-test API drift, then run the unchecked
+   Phase 8 contract, capacity, mutation, fault-injection, and allocation-soak
+   matrix without changing the live feature first.
+6. Diagnose the aligned RenderDoc 1.44 direct-launch/no-present behavior, then
+   inspect a representative settled Sponza capture.
 7. Validate OpenXR deadline/fallback behavior on an available runtime/headset.
-8. Obtain explicit user clearance before adding or modifying tests, then run
-   the unchecked Phase 8 contract, capacity, mutation, fault-injection, and
-   allocation-soak matrix.
 
 ## User-reported result
 
-The user reported that current runs still black out and never recover when the
-camera enters Sponza. The live log reproduction above explains that report and
-the source fix is implemented, but no post-fix visual result has been recorded
-yet. Earlier automated desktop Vulkan acceptance remains valid evidence for the
-broader architecture; current-tree Sponza recovery is explicitly pending.
+The reported current-tree blackout was reproduced, traced to the prepared-
+cohort cold-entry early return, fixed, and visually revalidated. The capacity-
+one closeout session moved throughout Sponza, waited through genuinely slow
+successful driver compiles, and recovered to 128 consecutive fresh frames with
+stable provenance and no renderer pause. Remaining unchecked items are explicit
+mutation/overflow/failure injection, the broader test matrix, representative
+RenderDoc capture, and real OpenXR validation rather than the reported desktop
+Sponza liveness defect.

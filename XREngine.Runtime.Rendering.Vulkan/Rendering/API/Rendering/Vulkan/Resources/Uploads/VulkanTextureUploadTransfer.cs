@@ -154,7 +154,9 @@ internal sealed partial class VulkanTextureUploadService
 
     private bool HasSubmittedTransfersOrCompleteDrain(VulkanTextureUploadManifest? requiredManifest = null)
     {
-        lock (_transferQueueSync)
+        using (VulkanFrameLockScope.Enter(
+                   _transferQueueSync,
+                   EVulkanFrameWaitReason.UploadLock))
         {
             if (requiredManifest is not null)
             {
@@ -171,7 +173,9 @@ internal sealed partial class VulkanTextureUploadService
         }
 
         Interlocked.Exchange(ref _transferDrainScheduled, 0);
-        lock (_transferQueueSync)
+        using (VulkanFrameLockScope.Enter(
+                   _transferQueueSync,
+                   EVulkanFrameWaitReason.UploadLock))
         {
             if (_pendingTransferUploads.Count == 0)
                 return true;
@@ -186,7 +190,9 @@ internal sealed partial class VulkanTextureUploadService
         VulkanTextureUploadManifest? requiredManifest,
         out VulkanSubmittedImportedTextureUpload? submitted)
     {
-        lock (_transferQueueSync)
+        using (VulkanFrameLockScope.Enter(
+                   _transferQueueSync,
+                   EVulkanFrameWaitReason.UploadLock))
         {
             submitted = null;
             for (int index = 0; index < _pendingTransferUploads.Count; index++)
@@ -214,7 +220,9 @@ internal sealed partial class VulkanTextureUploadService
         VulkanTextureUploadSchedulingContext context)
     {
         VulkanSubmittedImportedTextureUpload? submitted = null;
-        lock (_transferQueueSync)
+        using (VulkanFrameLockScope.Enter(
+                   _transferQueueSync,
+                   EVulkanFrameWaitReason.UploadLock))
         {
             for (int index = 0; index < _pendingTransferUploads.Count; index++)
             {
@@ -251,7 +259,9 @@ internal sealed partial class VulkanTextureUploadService
     private bool RemoveSubmittedTransfer(VulkanSubmittedImportedTextureUpload submitted)
     {
         bool removed;
-        lock (_transferQueueSync)
+        using (VulkanFrameLockScope.Enter(
+                   _transferQueueSync,
+                   EVulkanFrameWaitReason.UploadLock))
             removed = _pendingTransferUploads.Remove(submitted);
 
         if (!removed)
@@ -269,7 +279,9 @@ internal sealed partial class VulkanTextureUploadService
     private void CancelSubmittedTransfers(VulkanCommandRuntime commandRuntime, string reason)
     {
         VulkanSubmittedImportedTextureUpload[] submittedUploads;
-        lock (_transferQueueSync)
+        using (VulkanFrameLockScope.Enter(
+                   _transferQueueSync,
+                   EVulkanFrameWaitReason.UploadLock))
         {
             submittedUploads = [.. _pendingTransferUploads];
             _pendingTransferUploads.Clear();

@@ -42,7 +42,9 @@ internal sealed class VulkanResourceLifetimeTracker
     internal VulkanResourceLifetimeSnapshot CaptureSnapshot(
         bool includeExactLiveResourceGenerations)
     {
-        lock (SyncRoot)
+        using (VulkanFrameLockScope.Enter(
+                   SyncRoot,
+                   EVulkanFrameWaitReason.ResourceLifetimeLock))
         {
             int live = 0;
             int recorded = 0;
@@ -170,7 +172,9 @@ internal sealed class VulkanResourceLifetimeTracker
         if (!key.IsValid)
             return;
 
-        lock (SyncRoot)
+        using (VulkanFrameLockScope.Enter(
+                   SyncRoot,
+                   EVulkanFrameWaitReason.ResourceLifetimeLock))
         {
             if (ResourceLifetimes.TryGetValue(key, out VulkanResourceLifetimeRecord? existing))
             {
@@ -238,7 +242,9 @@ internal sealed class VulkanResourceLifetimeTracker
         VulkanResourceLifetimeKey key,
         string owner)
     {
-        lock (SyncRoot)
+        using (VulkanFrameLockScope.Enter(
+                   SyncRoot,
+                   EVulkanFrameWaitReason.ResourceLifetimeLock))
         {
             _ = GetOrRegisterResourceNoLock(key, owner);
             PublishedResourceGenerations[key] = 0;
@@ -247,7 +253,9 @@ internal sealed class VulkanResourceLifetimeTracker
 
     internal VulkanRetirementTicket CaptureRetirementWatermark()
     {
-        lock (SyncRoot)
+        using (VulkanFrameLockScope.Enter(
+                   SyncRoot,
+                   EVulkanFrameWaitReason.ResourceLifetimeLock))
         {
             return new VulkanRetirementTicket(
                 LastGraphicsSequence,
@@ -285,7 +293,9 @@ internal sealed class VulkanResourceLifetimeTracker
     /// </summary>
     internal void MarkDeviceIdleCompleted()
     {
-        lock (SyncRoot)
+        using (VulkanFrameLockScope.Enter(
+                   SyncRoot,
+                   EVulkanFrameWaitReason.ResourceLifetimeLock))
         {
             CompletedGraphicsSequence = Math.Max(
                 CompletedGraphicsSequence,
@@ -301,7 +311,9 @@ internal sealed class VulkanResourceLifetimeTracker
 
     internal bool IsRetirementReady(in VulkanRetirementTicket ticket)
     {
-        lock (SyncRoot)
+        using (VulkanFrameLockScope.Enter(
+                   SyncRoot,
+                   EVulkanFrameWaitReason.ResourceLifetimeLock))
             return IsRetirementReadyNoLock(ticket);
     }
 

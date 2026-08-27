@@ -95,7 +95,8 @@ internal sealed partial class VulkanFrameLoop
             _telemetry,
             pipeline,
             _targetDriver as VulkanDesktopWsiTargetDriver,
-            this);
+            this,
+            FrameSlotCount);
         _openXrOutputResourceService = new VulkanOpenXrOutputResourceService(
             _outputRuntime.OpenXrBackend,
             api,

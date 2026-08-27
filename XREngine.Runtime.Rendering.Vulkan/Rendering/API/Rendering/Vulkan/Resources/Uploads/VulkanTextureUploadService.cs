@@ -133,7 +133,9 @@ internal sealed partial class VulkanTextureUploadService
             }
         }
 
-        lock (_prepQueueSync)
+        using (VulkanFrameLockScope.Enter(
+                   _prepQueueSync,
+                   EVulkanFrameWaitReason.UploadLock))
         {
             for (int index = 0; index < _pendingPrepJobs.Count; index++)
             {
@@ -155,7 +157,9 @@ internal sealed partial class VulkanTextureUploadService
             }
         }
 
-        lock (_transferQueueSync)
+        using (VulkanFrameLockScope.Enter(
+                   _transferQueueSync,
+                   EVulkanFrameWaitReason.UploadLock))
         {
             for (int index = 0; index < _pendingTransferUploads.Count; index++)
             {
@@ -205,7 +209,8 @@ internal sealed partial class VulkanTextureUploadService
         RefreshRequiredUploadGenerations(manifest);
         madeProgress = manifest.ProgressVersion != initialProgressVersion;
         return preparationReady && transfersReady &&
-            (manifest.AreAllReady || manifest.TryGetTerminalFailure(out _, out _));
+            (manifest.AreAllReady ||
+             manifest.TryGetTerminalFailure(out _, out _, out _));
     }
 
     internal static bool TryDescribeActiveUploadWork(out string reason)
@@ -324,6 +329,11 @@ internal sealed partial class VulkanTextureUploadService
         public VulkanImportedTextureUploadPreparation? Preparation { get; set; }
         public Task<VulkanImportedTextureUploadWorkerResult>? WorkerPrepTask { get; set; }
         public long? PublicationToken { get; set; }
+        private int _foregroundRequired;
+
+        public bool IsForegroundRequired =>
+            Request.PriorityClass == TextureUploadPriorityClass.VisibleNow ||
+            Volatile.Read(ref _foregroundRequired) != 0;
 
         public bool ShouldAccept()
             => !Request.CancellationToken.IsCancellationRequested
@@ -338,6 +348,9 @@ internal sealed partial class VulkanTextureUploadService
             long delayTicks = (long)Math.Ceiling(clampedDelay * Stopwatch.Frequency / 1000.0);
             NotBeforeTimestamp = Stopwatch.GetTimestamp() + Math.Max(1L, delayTicks);
         }
+
+        public void PromoteToForeground()
+            => Volatile.Write(ref _foregroundRequired, 1);
     }
 
     public bool ShouldAcceptResult(
@@ -508,7 +521,9 @@ internal sealed partial class VulkanTextureUploadService
         int depth = 0;
         double oldestWaitMilliseconds = 0.0;
         bool rejectedForRetirement;
-        lock (_prepQueueSync)
+        using (VulkanFrameLockScope.Enter(
+                   _prepQueueSync,
+                   EVulkanFrameWaitReason.UploadLock))
         {
             rejectedForRetirement = Volatile.Read(ref _preparationRetirementStarted) != 0;
             if (!rejectedForRetirement)

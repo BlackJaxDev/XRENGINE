@@ -412,11 +412,10 @@ public sealed class VulkanPerformanceEvaluator
 
         Dictionary<string, VulkanPerformanceMetricStatistics> metrics =
             new(StringComparer.Ordinal);
+        double deadlineMilliseconds = ResolveDeadlineMilliseconds(
+            allMetricValues);
         foreach ((string name, List<double> values) in allMetricValues)
-        {
-            values.Sort();
-            metrics[name] = CreateStatistics(values);
-        }
+            metrics[name] = CreateStatistics(values, deadlineMilliseconds);
 
         return new VulkanPerformanceCohortReport
         {
@@ -1336,20 +1335,147 @@ public sealed class VulkanPerformanceEvaluator
     }
 
     private static VulkanPerformanceMetricStatistics CreateStatistics(
-        List<double> sortedValues)
-        => new()
+        List<double> values,
+        double deadlineMilliseconds)
+    {
+        double[] sortedValues = values.ToArray();
+        Array.Sort(sortedValues);
+        double mean = 0.0;
+        double sumSquaredDeviation = 0.0;
+        for (int index = 0; index < values.Count; index++)
         {
-            SampleCount = sortedValues.Count,
+            double delta = values[index] - mean;
+            mean += delta / (index + 1);
+            sumSquaredDeviation += delta * (values[index] - mean);
+        }
+
+        double standardDeviation = values.Count > 1
+            ? Math.Sqrt(sumSquaredDeviation / (values.Count - 1))
+            : 0.0;
+        int maximumMissedStreak = 0;
+        int currentMissedStreak = 0;
+        int missedDeadlineCount = 0;
+        for (int index = 0; index < values.Count; index++)
+        {
+            if (values[index] <= deadlineMilliseconds)
+            {
+                currentMissedStreak = 0;
+                continue;
+            }
+
+            missedDeadlineCount++;
+            currentMissedStreak++;
+            maximumMissedStreak = Math.Max(
+                maximumMissedStreak,
+                currentMissedStreak);
+        }
+
+        double[] histogramUpperBounds =
+        [0.25, 0.5, 1.0, 2.0, 4.0, 5.0, 8.33, 11.11, 16.67, 33.33, 66.67, double.MaxValue];
+        int[] histogramCounts = new int[histogramUpperBounds.Length];
+        for (int valueIndex = 0; valueIndex < values.Count; valueIndex++)
+        {
+            double value = values[valueIndex];
+            for (int bucketIndex = 0; bucketIndex < histogramUpperBounds.Length; bucketIndex++)
+            {
+                if (value > histogramUpperBounds[bucketIndex])
+                    continue;
+                histogramCounts[bucketIndex]++;
+                break;
+            }
+        }
+
+        ResolvePeriodicity(
+            values,
+            mean,
+            out int dominantPeriodSamples,
+            out double periodicityStrength);
+        return new VulkanPerformanceMetricStatistics
+        {
+            SampleCount = sortedValues.Length,
             P50 = Percentile(sortedValues, 0.50),
             P90 = Percentile(sortedValues, 0.90),
             P95 = Percentile(sortedValues, 0.95),
             P99 = Percentile(sortedValues, 0.99),
             Maximum = sortedValues[^1],
+            Mean = mean,
+            StandardDeviation = standardDeviation,
+            MissedDeadlineCount = missedDeadlineCount,
+            MaximumMissedDeadlineStreak = maximumMissedStreak,
             MissedFiveMillisecondCount = sortedValues.Count(
                 static value => value > 5.0),
             MissedEightPointThreeThreeMillisecondCount = sortedValues.Count(
                 static value => value > 8.33),
+            HistogramUpperBoundsMilliseconds = histogramUpperBounds,
+            HistogramCounts = histogramCounts,
+            DominantPeriodSamples = dominantPeriodSamples,
+            PeriodicityStrength = periodicityStrength,
         };
+    }
+
+    private static double ResolveDeadlineMilliseconds(
+        IReadOnlyDictionary<string, List<double>> metrics)
+    {
+        if (metrics.TryGetValue(
+                "vulkan_presentation_target_interval_ms",
+                out List<double>? intervals) &&
+            intervals.Count > 0)
+        {
+            double[] sorted = intervals.ToArray();
+            Array.Sort(sorted);
+            double deadline = Percentile(sorted, 0.50);
+            if (double.IsFinite(deadline) && deadline > 0.0)
+                return deadline;
+        }
+
+        return 8.33;
+    }
+
+    private static void ResolvePeriodicity(
+        IReadOnlyList<double> values,
+        double mean,
+        out int dominantPeriodSamples,
+        out double periodicityStrength)
+    {
+        dominantPeriodSamples = 0;
+        periodicityStrength = 0.0;
+        if (values.Count < 8)
+            return;
+
+        double variance = 0.0;
+        for (int index = 0; index < values.Count; index++)
+        {
+            double centered = values[index] - mean;
+            variance += centered * centered;
+        }
+        if (variance <= double.Epsilon)
+            return;
+
+        int maximumLag = Math.Min(240, values.Count / 2);
+        for (int lag = 2; lag <= maximumLag; lag++)
+        {
+            double covariance = 0.0;
+            double leftEnergy = 0.0;
+            double rightEnergy = 0.0;
+            for (int index = lag; index < values.Count; index++)
+            {
+                double left = values[index] - mean;
+                double right = values[index - lag] - mean;
+                covariance += left * right;
+                leftEnergy += left * left;
+                rightEnergy += right * right;
+            }
+
+            double denominator = Math.Sqrt(leftEnergy * rightEnergy);
+            double correlation = denominator > double.Epsilon
+                ? covariance / denominator
+                : 0.0;
+            if (correlation <= periodicityStrength)
+                continue;
+            dominantPeriodSamples = lag;
+            periodicityStrength = correlation;
+        }
+    }
 
     private static string ClassifyFailure(
         bool withinBudget,

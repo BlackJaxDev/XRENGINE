@@ -2,19 +2,18 @@
 
 Last Updated: 2026-08-26
 Owner: Rendering / Vulkan, with Data / Serialization cleanup
-Status: Prior Desktop Acceptance Passed; Current Cold Sponza Fast-Path Fix Builds, Live Revalidation Pending
+Status: Current Desktop Sponza Acceptance Passed; Fault Injection And RenderDoc Capture Remain Open
 
 ## 2026-08-26 Validation Checkpoint
 
-The desktop Vulkan `PresentNow + BlockForExact` path passed the isolated Sponza
-acceptance runs, including scheduling capacity forced to one. A later current-
-tree run exposed a narrower prepared-cohort regression: when newly visible
-`sponza_371` started a successful asynchronous pipeline compile, the matching-
-cohort fast path treated its cold non-reusable entry as terminal after one
-attempt. Source now retains that accepted foreground cohort and falls through
-to the existing PresentNow wait/pump loop. The fix builds, but a fresh live
-camera-to-Sponza recovery pass remains required before claiming current-tree
-acceptance again.
+The current desktop Vulkan `PresentNow + BlockForExact` path passed a fresh
+isolated Sponza acceptance run with scheduling capacity forced to one. The
+camera moved smoothly through eight exterior, entrance, atrium, upper, deep,
+and near-wall views while the accepted frame retained ownership of cold work.
+Several required driver pipeline/library compilations took approximately
+20-21 seconds, well beyond the old per-frame admission budget; monotonic
+progress continued and the same foreground path recovered without looking
+away, pausing the renderer, replaying old content, or violating provenance.
 
 Checkbox convention: implementation items are checked from source/build
 evidence. Acceptance, live-validation, allocation, and fault-injection items
@@ -26,8 +25,8 @@ Latest targeted build validation:
 dotnet build .\XREngine.Runtime.Rendering.Vulkan\XREngine.Runtime.Rendering.Vulkan.csproj --no-restore -p:BuildProjectReferences=false
 ```
 
-Result: 0 warnings, 0 errors on 2026-08-26 at 16:52 local time after preserving
-foreground readiness across a prepared-cohort cold-entry miss.
+Result: 0 warnings, 0 errors on 2026-08-26 after preserving foreground
+readiness across a prepared-cohort cold-entry miss.
 
 Latest full editor validation:
 
@@ -35,13 +34,9 @@ Latest full editor validation:
 dotnet build .\XREngine.Editor\XREngine.Editor.csproj --no-restore
 ```
 
-Result: 0 warnings, 0 errors on 2026-08-26 at 16:14 local time. The
-previously observed concurrent `UnityAnimImporter.cs` compile break is no
-longer present. A later isolated editor build containing the Sponza fix also
-compiled with 0 errors and nine existing OscCore warnings, but startup was
-blocked by a concurrent settings-projection regression. Its owner subsequently
-fixed that regression; the next incremental isolated build was invalidated by
-concurrent session-retention cleanup deleting its artifact tree mid-build.
+Result: 0 warnings, 0 errors on 2026-08-26 at approximately 18:41 local time,
+including the startup-projection, shader preprocessing, and descriptor-source
+reflection fixes used by the final live pass.
 
 Validated implementation in the working tree:
 
@@ -118,6 +113,8 @@ Live evidence:
   `Build/_AgentValidation/00000000-000000-shared/mcp-sessions/20260826-161446-present-now-pin-slot/`.
 - Authored persistence and Sponza-failure diagnosis session:
   `Build/_AgentValidation/00000000-000000-shared/mcp-sessions/20260826-163804-present-now-roundtrip-overflow/`.
+- Current-tree capacity-one smooth-motion closeout session:
+  `Build/_AgentValidation/00000000-000000-shared/mcp-sessions/20260826-182037-present-now-closeout-v6/`.
 - Durable screenshots and RenderDoc attempts:
   `Build/_AgentValidation/20260825-160514-present-now-readiness/`.
 - The primary run retained eight consecutive frames 11919-11926 and a
@@ -173,14 +170,27 @@ Live evidence:
   ms later. The one-shot prepared-cohort path had already converted that
   transient state into `PresentNowReadinessFailed`, followed by generic failed
   terminal records on every render tick.
+- The closeout session moved the camera through eight Sponza viewpoints with
+  0.65-second transitions. Cold required fragment pipeline/library compiles
+  took approximately 20-21 seconds while the accepted foreground frame kept
+  advancing its readiness watchdog progress; the renderer then resumed fresh
+  record/submit/present work without a look-away recovery step.
+- Its final presentation ledger retained 128 consecutive frames 327-454.
+  Every entry had matching frame/source/accepted-epoch identities, a strictly
+  increasing graphics signal, successful native descriptor publication,
+  `PresentedNew`, no fallback, and no invariant failure. Logs contained no
+  `RendererPaused`, `PresentNowReadinessFailed`, `DesktopFrameFailure`, shader
+  compilation failure, or Vulkan validation error.
+- The settled closeout PNG was inspected at original resolution and showed a
+  fully textured Sponza stone wall rather than the stale red/blue pre-fix image:
+  `Build/_AgentValidation/20260826-175504-present-now-closeout/mcp-captures/v6-settled-sponza/`.
+- The macro-qualified forward descriptor declaration now remains below its
+  required preprocessor definition, and the source-reflection fallback maps it
+  to descriptor set 3, binding 15. An ignored isolated reflection probe printed
+  `name=DirectionalShadowMaps; set=3; binding=15` and exited successfully.
 
 ### Known incomplete work
 
-- Live-revalidate the prepared-cohort cold-entry fix by moving from an away
-  view into dense Sponza on a fresh isolated capacity-one session. The source
-  fix and targeted Vulkan build pass; runtime proof was interrupted by a
-  concurrent settings startup regression and then an isolated-artifact cleanup
-  race.
 - Validate camera/scene mutation during blocked preparation, naturally exceed
   a declared mesh lane to prove the new actionable overflow diagnostic, and
   inject permanent failures. These acceptance/fault-injection items remain
@@ -188,42 +198,29 @@ Live evidence:
 - Exercise the OpenXR path on a real runtime/headset. Its contracts and bounded
   worker inputs build, but this desktop-only validation cannot prove deadline
   behavior.
-- Capture a representative settled RenderDoc frame after aligning the installed
-  RenderDoc and `rdc` module versions. The available 1.41 capture contains only
-  the startup swapchain frame (11 events, zero draws); a settled 1.41 trigger
-  stalls the intercepted graphics timeline, while installed RenderDoc 1.44
-  crashes CoreCLR during startup before the configured frame is reached.
-- Complete Phase 8 only after the user explicitly clears test additions.
-- Do not begin Phase 8 test additions until Phase 7 passes and the user
-  explicitly clears test work, as required by repository policy.
+- Capture a representative settled RenderDoc frame. `rdc doctor` now reports
+  aligned RenderDoc 1.44 tooling and a registered Vulkan layer, but direct
+  frame-60 and frame-450 launches both timed out before observing a present and
+  produced no `.rdc`; the earlier startup-only capture remains nonrepresentative.
+- Phase 8 test/fault-injection work remains open. A targeted unit-test invocation
+  cannot currently compile the existing test project because unrelated tests
+  still call the removed `ApplyStartupOverrides` API and an obsolete imported-
+  texture upload request constructor. No new tests were added on top of that
+  broken baseline.
 
 ### Exact resume sequence
 
-1. Do not stop or reuse another task's editor. Wait until
-   `present-now-capacity1-integrated` is no longer live, confirm no isolated
-   session build is running, then start a new uniquely named session with
-   `settings/capacity1-session-environment.json`.
-2. Clear the final-presentation ledger, capture an away frame, focus the Sponza
-   root, and capture the dense frame. Inspect the PNG and verify logs contain no
-   `RendererPaused` or `PresentNowReadinessFailed`; a cold `ProgramsPending`
-   observation is acceptable only if the same accepted frame waits and then
-   continues to fresh record/submit/present.
-3. Retain at least 96 post-transition ledger entries and verify matching frame/
-   source IDs, monotonic graphics signals, ready dependencies, no fallback or
-   invariant failures, and no repeated generic terminal-failure records. If
-   this passes, check the deliberately slow successful compile acceptance item.
-4. In a separate fresh session, overlap one duplicate Sponza hierarchy to
-   naturally exceed the main-scene lane. Verify one bounded diagnostic reports
-   accepted-frame lane, mesh lane, configured, required, accepted, and rejected
-   counts, then check the Phase 3 overflow and Phase 6 genuine-failure items if
-   the terminal record remains stable and fully identified.
-5. Run the targeted Vulkan build and full editor build after concurrent working-
-   tree changes settle. Preserve and report unrelated failures.
-6. Align RenderDoc capture and replay versions, then repeat the fixed-camera
-   capacity-one capture and inspect/export a settled Sponza frame.
-7. Validate OpenXR on an available runtime/headset.
-8. Ask the user for explicit test clearance, then execute the still-unchecked
-   Phase 8 contract/fault-injection/mutation/soak matrix.
+1. In a separate isolated session, mutate camera/scene state while preparation
+   is blocked and naturally exceed a declared main-scene lane. Verify captured-
+   epoch immutability and one stable typed capacity failure before checking the
+   remaining Phase 3/6 acceptance items.
+2. Repair or rebase the pre-existing unit-test API drift, then execute the
+   unchecked Phase 8 contract, capacity, mutation, failure-injection, and soak
+   matrix without changing the now-passing live feature first.
+3. Diagnose why aligned RenderDoc 1.44 direct launches do not observe a present;
+   capture and inspect a settled Sponza frame without weakening frame-slot or
+   timeline waits.
+4. Validate OpenXR deadline/fallback behavior on an available runtime/headset.
 
 Related work:
 
@@ -577,6 +574,15 @@ correctness gates for `PresentNow`.
   optional streaming work.
 - [x] Reserve a foreground portion of the staging ring so background texture
   streaming cannot consume all upload capacity.
+- [x] Recycle VMA-backed staging buffers using the authoritative per-buffer
+  allocation identity even when retirement deduplicates a shared
+  `VkDeviceMemory` block, and forget pool entries before actual destruction.
+- [x] Treat an absent prospective cooked texture-cache entry as a normal cold
+  miss and use its source fallback without throwing/logging
+  `FileNotFoundException`.
+- [x] Claim recognized binary `XRTexture2D` cache assets before generic YAML;
+  reject incompatible binary payloads without text-deserializer fallback and
+  retain the original source as the recoverable authority.
 - [x] Remove the approximately 0.5 ms preparation budget and one-job drain cap
   from required foreground uploads.
 - [x] Stream resources larger than the staging ring in bounded chunks instead
@@ -587,6 +593,11 @@ correctness gates for `PresentNow`.
   and bind them through the sealed frame snapshot.
 - [x] Ensure the thread waiting for readiness can pump the exact required jobs
   needed to make progress without spinning or deadlocking.
+- [x] Make staging recycle publication allocation-generation-aware and atomic
+  with resource-lifetime reactivation so an entry cannot be reacquired in the
+  release/reactivation gap.
+- [x] Prove `EnsureForegroundReserve` creates the requested number of distinct
+  idle entries rather than repeatedly reacquiring one reserve.
 
 ### 5.3 Shadows
 
@@ -603,7 +614,7 @@ correctness gates for `PresentNow`.
 
 Acceptance criteria:
 
-- [ ] A deliberately slow but successful required compile or upload may exceed
+- [x] A deliberately slow but successful required compile or upload may exceed
   the old per-frame budget and then records the accepted desktop frame.
 - [ ] Background work yields to foreground readiness and resumes with its
   earlier progress intact.
@@ -641,6 +652,9 @@ Primary surfaces include:
   with exact high-water information rather than an infinite retry loop.
 - [x] Make actual `VK_ERROR_DEVICE_LOST` renderer-terminal until explicit
   Vulkan reinitialization.
+- [ ] Publish one detailed terminal transition when PresentNow pauses the
+  renderer, then suppress generic per-frame repeats of the same latched
+  failure.
 
 Acceptance criteria:
 

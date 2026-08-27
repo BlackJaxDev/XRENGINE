@@ -19,7 +19,9 @@ internal sealed partial class VulkanTextureUploadService
         bool requiredOnly = false,
         VulkanTextureUploadManifest? requiredManifest = null)
     {
-        lock (_prepQueueSync)
+        using (VulkanFrameLockScope.Enter(
+                   _prepQueueSync,
+                   EVulkanFrameWaitReason.UploadLock))
         {
             if (_pendingPrepJobs.Count == 0)
             {
@@ -69,6 +71,8 @@ internal sealed partial class VulkanTextureUploadService
             }
 
             _pendingPrepJobs.RemoveAt(bestIndex);
+            if (requiredOnly)
+                best.PromoteToForeground();
             job = best;
             RenderWorkBudgetCoordinator.RecordTextureQueue(
                 _pendingPrepJobs.Count,
@@ -80,7 +84,9 @@ internal sealed partial class VulkanTextureUploadService
 
     private void RequeueUploadPreparation(VulkanImportedTextureUploadJob job)
     {
-        lock (_prepQueueSync)
+        using (VulkanFrameLockScope.Enter(
+                   _prepQueueSync,
+                   EVulkanFrameWaitReason.UploadLock))
         {
             _pendingPrepJobs.Add(job);
             RenderWorkBudgetCoordinator.RecordTextureQueue(
@@ -93,7 +99,9 @@ internal sealed partial class VulkanTextureUploadService
     private void CancelQueuedPreparation(string reason)
     {
         VulkanImportedTextureUploadJob[] canceledJobs;
-        lock (_prepQueueSync)
+        using (VulkanFrameLockScope.Enter(
+                   _prepQueueSync,
+                   EVulkanFrameWaitReason.UploadLock))
         {
             canceledJobs = [.. _pendingPrepJobs];
             _pendingPrepJobs.Clear();
@@ -122,7 +130,9 @@ internal sealed partial class VulkanTextureUploadService
             throw new TimeoutException("Timed out waiting for Vulkan texture preparation drains during backend retirement.");
 
         VulkanImportedTextureUploadJob[] queuedJobs;
-        lock (_prepQueueSync)
+        using (VulkanFrameLockScope.Enter(
+                   _prepQueueSync,
+                   EVulkanFrameWaitReason.UploadLock))
             queuedJobs = [.. _pendingPrepJobs];
 
         long deadline = Stopwatch.GetTimestamp() +
@@ -157,7 +167,9 @@ internal sealed partial class VulkanTextureUploadService
             }
         }
 
-        lock (_prepQueueSync)
+        using (VulkanFrameLockScope.Enter(
+                   _prepQueueSync,
+                   EVulkanFrameWaitReason.UploadLock))
             _pendingPrepJobs.Clear();
         for (int index = 0; index < queuedJobs.Length; index++)
         {
@@ -181,7 +193,9 @@ internal sealed partial class VulkanTextureUploadService
     internal void CancelAllQueuedWork(VulkanCommandRuntime commandRuntime, string reason)
     {
         VulkanImportedTextureUploadJob[] canceledJobs;
-        lock (_prepQueueSync)
+        using (VulkanFrameLockScope.Enter(
+                   _prepQueueSync,
+                   EVulkanFrameWaitReason.UploadLock))
         {
             canceledJobs = [.. _pendingPrepJobs];
             _pendingPrepJobs.Clear();
@@ -221,7 +235,9 @@ internal sealed partial class VulkanTextureUploadService
     {
         int depth;
         double oldestWaitMilliseconds;
-        lock (_prepQueueSync)
+        using (VulkanFrameLockScope.Enter(
+                   _prepQueueSync,
+                   EVulkanFrameWaitReason.UploadLock))
         {
             depth = _pendingPrepJobs.Count;
             oldestWaitMilliseconds = GetOldestQueueWaitMillisecondsNoLock();
@@ -231,7 +247,9 @@ internal sealed partial class VulkanTextureUploadService
         Volatile.Write(ref s_pendingVulkanPrepPackages, depth);
         if (requiredManifest is not null)
         {
-            lock (_prepQueueSync)
+            using (VulkanFrameLockScope.Enter(
+                       _prepQueueSync,
+                       EVulkanFrameWaitReason.UploadLock))
             {
                 for (int index = 0; index < _pendingPrepJobs.Count; index++)
                 {
@@ -246,7 +264,9 @@ internal sealed partial class VulkanTextureUploadService
             return false;
 
         Interlocked.Exchange(ref _prepDrainScheduled, 0);
-        lock (_prepQueueSync)
+        using (VulkanFrameLockScope.Enter(
+                   _prepQueueSync,
+                   EVulkanFrameWaitReason.UploadLock))
         {
             if (_pendingPrepJobs.Count == 0)
                 return true;

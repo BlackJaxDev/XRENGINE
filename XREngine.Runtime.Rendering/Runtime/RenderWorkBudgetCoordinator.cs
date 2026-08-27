@@ -147,6 +147,8 @@ internal static class RenderWorkBudgetCoordinator
     public static void AppendProfilerSummary(StringBuilder builder)
     {
         RenderWorkBudgetSnapshot snapshot = GetSnapshot();
+        RenderForegroundWorkSnapshot foreground =
+            RenderForegroundWorkCoordinator.CaptureSnapshot();
         builder.Append("RenderWorkBudgetFrame: ").Append(snapshot.FrameId).AppendLine();
         builder.Append("RenderWorkTextureBudgetMs: ").Append(snapshot.TextureUploadBudgetMilliseconds.ToString("F3")).AppendLine();
         builder.Append("RenderWorkTextureConsumedMs: ").Append(snapshot.TextureUploadConsumedMilliseconds.ToString("F3")).AppendLine();
@@ -158,6 +160,15 @@ internal static class RenderWorkBudgetCoordinator
         builder.Append("RenderWorkOldestTextureWaitMs: ").Append(snapshot.OldestTextureQueueWaitMilliseconds.ToString("F3")).AppendLine();
         builder.Append("RenderWorkLastShadowMs: ").Append(snapshot.LastShadowAtlasMilliseconds.ToString("F3")).AppendLine();
         builder.Append("RenderWorkStartupBoostActive: ").Append(snapshot.StartupBoostActive).AppendLine();
+        builder.Append("RenderForegroundEpoch: ").Append(foreground.ForegroundEpoch).AppendLine();
+        builder.Append("RenderForegroundExactDepth: ").Append(foreground.ExactForegroundDepth).AppendLine();
+        builder.Append("RenderForegroundActiveBackgroundSlices: ").Append(foreground.ActiveBackgroundSlices).AppendLine();
+        builder.Append("RenderForegroundEntries: ").Append(foreground.ExactForegroundEntries).AppendLine();
+        builder.Append("RenderForegroundWaitTicks: ").Append(foreground.ExactForegroundWaitTicks).AppendLine();
+        builder.Append("RenderBackgroundSlicesStarted: ").Append(foreground.BackgroundSlicesStarted).AppendLine();
+        builder.Append("RenderBackgroundSlicesCompleted: ").Append(foreground.BackgroundSlicesCompleted).AppendLine();
+        builder.Append("RenderBackgroundYieldCount: ").Append(foreground.BackgroundYieldCount).AppendLine();
+        builder.Append("RenderBackgroundResumeCount: ").Append(foreground.BackgroundResumeCount).AppendLine();
         XRBufferWriteTelemetry.AppendProfilerSummary(builder);
         if (TextureStreamingBackendRegistry.TryGet(
                 RuntimeRenderingHostServices.FrameTiming.CurrentRenderBackend,

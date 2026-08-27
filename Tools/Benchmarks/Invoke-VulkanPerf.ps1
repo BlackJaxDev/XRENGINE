@@ -41,7 +41,7 @@ $explicitCohortSelection = $requestedCohorts.Count -gt 0
 if ($requestedCohorts.Count -eq 0) {
     $requestedCohorts = switch ($Preset) {
         'Quick' { @('desktop-deferred-static') }
-        'Compare' { @($contract.cohorts | Where-Object { $_.lane -eq 'Desktop' } | ForEach-Object { $_.id }) }
+        'Compare' { @($contract.cohorts | Where-Object { $_.lane -in @('Desktop', 'DesktopMatched') } | ForEach-Object { $_.id }) }
         'Gate' { @($contract.cohorts | Where-Object { $_.gate } | ForEach-Object { $_.id }) }
     }
 }
@@ -214,6 +214,44 @@ if ($LASTEXITCODE -ne 0) {
 }
 $dirtyWorktree = @(& git -C $repoRoot status --porcelain).Count -gt 0
 $executableSha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $editorExe).Hash
+$contractSha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $contractFullPath).Hash
+$dependencyManifestHashes = [ordered]@{}
+foreach ($dependencyManifest in @(
+    'global.json',
+    'Directory.Packages.props',
+    'Directory.Build.props',
+    'docs\DEPENDENCIES.md',
+    'Build\Dependencies\vcpkg\vcpkg.json'
+)) {
+    $dependencyManifestPath = Join-Path $repoRoot $dependencyManifest
+    if (Test-Path -LiteralPath $dependencyManifestPath -PathType Leaf) {
+        $dependencyManifestHashes[$dependencyManifest] =
+            (Get-FileHash -Algorithm SHA256 -LiteralPath $dependencyManifestPath).Hash
+    }
+}
+$processor = Get-CimInstance Win32_Processor -ErrorAction SilentlyContinue |
+    Select-Object -First 1
+$computerSystem = Get-CimInstance Win32_ComputerSystem -ErrorAction SilentlyContinue |
+    Select-Object -First 1
+$cpuName = if ($null -ne $processor -and -not [string]::IsNullOrWhiteSpace([string]$processor.Name)) {
+    ([string]$processor.Name).Trim()
+} else {
+    'Unavailable'
+}
+$logicalProcessorCount = if ($null -ne $computerSystem) {
+    [int]$computerSystem.NumberOfLogicalProcessors
+} else {
+    [Environment]::ProcessorCount
+}
+$physicalMemoryBytes = if ($null -ne $computerSystem) {
+    [uint64]$computerSystem.TotalPhysicalMemory
+} else {
+    [uint64]0
+}
+$powerPlan = (& powercfg /getactivescheme 2>$null | Out-String).Trim()
+if ([string]::IsNullOrWhiteSpace($powerPlan)) {
+    $powerPlan = 'Unavailable'
+}
 $gpuName = ''
 $gpuDriver = ''
 $nvidiaSmi = Get-Command nvidia-smi -ErrorAction SilentlyContinue
@@ -234,7 +272,15 @@ if ([string]::IsNullOrWhiteSpace($gpuName)) {
     $gpuName = 'Unavailable'
     $gpuDriver = 'Unavailable'
 }
-$displayMode = 'Windowed 1920x1080, VSync off'
+$displayControllers = @(Get-CimInstance Win32_VideoController -ErrorAction SilentlyContinue |
+    Where-Object { $_.CurrentHorizontalResolution -gt 0 -and $_.CurrentVerticalResolution -gt 0 })
+$displayMode = if ($displayControllers.Count -gt 0) {
+    ($displayControllers | ForEach-Object {
+        "$($_.CurrentHorizontalResolution)x$($_.CurrentVerticalResolution)@$($_.CurrentRefreshRate)Hz"
+    } | Sort-Object -Unique) -join '; '
+} else {
+    'Unavailable'
+}
 
 $measureScript = Join-Path $repoRoot 'Tools\Measure-GameLoopRenderPipeline.ps1'
 $runCohorts = [System.Collections.Generic.List[object]]::new()
@@ -299,6 +345,22 @@ try {
 
         $cohortOutput = Join-Path $reportsPath ([string]$cohort.id)
         New-Item -ItemType Directory -Path $cohortOutput -Force | Out-Null
+        $presentationProfile = if (-not [string]::IsNullOrWhiteSpace(
+                [string]$cohort.presentationProfile)) {
+            [string]$cohort.presentationProfile
+        } elseif ([string]$cohort.lane -eq 'VulkanRvc') {
+            'Stable'
+        } else {
+            'Uncapped'
+        }
+        $targetRefreshHz = if ($null -ne $cohort.targetRefreshHz -and
+            [double]$cohort.targetRefreshHz -gt 0) {
+            [double]$cohort.targetRefreshHz
+        } elseif ($cohort.lane -eq 'VulkanRvc') {
+            120.0
+        } else {
+            200.0
+        }
 
         [Environment]::SetEnvironmentVariable('XRE_UNIT_TEST_WORLD_SETTINGS_PATH', $settingsPath, 'Process')
         [Environment]::SetEnvironmentVariable('XRE_GPU_DRIVER', $gpuDriver, 'Process')
@@ -344,7 +406,8 @@ try {
             ProfileViewport = [string]$cohort.viewport
             RenderScale = [string]$cohort.renderScale
             GpuClockPolicy = $GpuClockPolicy
-            TargetRefreshHz = $(if ($cohort.lane -eq 'VulkanRvc') { 120.0 } else { 200.0 })
+            TargetRefreshHz = $targetRefreshHz
+            VulkanPresentationProfile = $presentationProfile
             NoClearCachesBetweenVariants = $true
             NoP3Logging = $true
             RetainedRunCount = 20
@@ -390,6 +453,25 @@ try {
         }
 
         try {
+            if ([string]$cohort.strategy -eq 'GpuMeshletZeroReadback') {
+                $meshletCacheRoot = Join-Path $runFullPath (
+                    "temp-build\meshlet-cache\$($cohort.id)")
+                New-Item -ItemType Directory -Path $meshletCacheRoot -Force |
+                    Out-Null
+                $measureArguments.MeshletStandaloneCookedCacheRoot =
+                    $meshletCacheRoot
+                $prewarmArguments = $measureArguments.Clone()
+                $prewarmArguments.CacheMode = 'Cold'
+                $prewarmArguments.WarmupSec = [int]$presetDefinition.warmupSeconds
+                $prewarmArguments.CaptureSec = 1
+                $prewarmArguments.Repetitions = 1
+                $prewarmArguments.RunLabel =
+                    "vulkan-perf-prewarm-$($cohort.id)"
+                $prewarmArguments.OutputDirectory = Join-Path `
+                    $cohortOutput `
+                    'prewarm'
+                & $measureScript @prewarmArguments
+            }
             & $measureScript @measureArguments
         } catch {
             $captureFailures.Add([pscustomobject]@{
@@ -408,6 +490,22 @@ try {
                 SummaryPath = $summaryPath
                 SettingsPath = $settingsPath
                 SettingsSha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $settingsPath).Hash
+                Lane = [string]$cohort.lane
+                Scene = [string]$cohort.scene
+                CameraTrajectory = [string]$cohort.camera
+                Lights = [string]$cohort.lights
+                Viewport = [string]$cohort.viewport
+                RenderScale = [string]$cohort.renderScale
+                SubmissionStrategy = [string]$cohort.strategy
+                FeatureStack = "renderTarget=DynamicRendering;materialPath=$($cohort.zeroReadbackMaterialDrawPath);primaryReuse=$($measureArguments.VulkanPrimaryReuse);commandChains=Enabled;parallelChains=$($measureArguments.VulkanParallelCommandChainRecording);parallelSecondary=Enabled;occlusion=Disabled;profileMode=$($presetDefinition.profileMode)"
+                PresentationProfile = $presentationProfile
+                TargetRefreshHz = $targetRefreshHz
+                VrMode = [string]$cohort.vrMode
+                OpenXrRuntime = $(if ([string]$cohort.vrMode -eq 'Desktop') {
+                    ''
+                } else {
+                    [Environment]::GetEnvironmentVariable('XR_RUNTIME_JSON', 'Process') ?? ''
+                })
             })
         } else {
             $captureFailures.Add([pscustomobject]@{
@@ -431,7 +529,7 @@ try {
 $captureFailuresPath = Join-Path $reportsPath 'capture-failures.json'
 $captureFailures | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $captureFailuresPath -Encoding UTF8
 $runManifest = [ordered]@{
-    SchemaVersion = 1
+    SchemaVersion = 2
     Preset = $Preset
     PromotionEligible = [bool]$presetDefinition.promotionEligible
     ProfileMode = [string]$presetDefinition.profileMode
@@ -441,14 +539,24 @@ $runManifest = [ordered]@{
         'Full'
     })
     ContractPath = $contractFullPath
+    ContractSha256 = $contractSha256
     SourceCommit = $sourceCommit
     DirtyWorktree = $dirtyWorktree
+    BuildConfiguration = 'Release'
     ExecutableSha256 = $executableSha256
+    DependencyManifestSha256 = $dependencyManifestHashes
     OperatingSystem = [System.Environment]::OSVersion.VersionString
     MachineName = [System.Environment]::MachineName
+    CpuName = $cpuName
+    LogicalProcessorCount = $logicalProcessorCount
+    PhysicalMemoryBytes = $physicalMemoryBytes
     GpuName = $gpuName
     GpuDriver = $gpuDriver
     DisplayMode = $displayMode
+    PowerPlan = $powerPlan
+    WindowMode = 'Windowed'
+    Resolution = '1920x1080'
+    PresentationProfile = 'PerCohort'
     CreatedUtc = [datetime]::UtcNow.ToString('O')
     Cohorts = @($runCohorts)
     CaptureFailures = @($captureFailures)

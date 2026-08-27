@@ -1547,6 +1547,24 @@ public static partial class RuntimeEngine
                     set => Vulkan.CommandRecording.Mode = value;
                 }
 
+                /// <summary>Selects the deliberate Vulkan desktop presentation policy.</summary>
+                [Category("Vulkan")]
+                [Description("Selects Stable, LowLatency, Uncapped, or FrameGeneration desktop presentation behavior.")]
+                public EVulkanPresentationProfile VulkanPresentationProfile
+                {
+                    get => Vulkan.Presentation.Profile;
+                    set => Vulkan.Presentation.Profile = value;
+                }
+
+                /// <summary>Sets the Vulkan desktop presentation target cadence; zero selects automatic display cadence.</summary>
+                [Category("Vulkan")]
+                [Description("Vulkan presentation target hertz; zero resolves from environment or display cadence.")]
+                public float VulkanPresentationTargetRefreshHz
+                {
+                    get => Vulkan.Presentation.TargetRefreshHz;
+                    set => Vulkan.Presentation.TargetRefreshHz = value;
+                }
+
                 /// <summary>
                 /// Enables correctness-validated Vulkan primary and stable secondary command-buffer reuse.
                 /// </summary>

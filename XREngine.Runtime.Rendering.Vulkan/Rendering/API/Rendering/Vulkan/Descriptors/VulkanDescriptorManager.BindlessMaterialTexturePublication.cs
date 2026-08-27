@@ -26,7 +26,9 @@ internal sealed unsafe partial class VulkanDescriptorManager
         VulkanBackendObjectContext context = _backendContext ?? throw new InvalidOperationException(
             "The descriptor manager has not been bound to a Vulkan backend context.");
         VulkanBindlessMaterialTextureTableState state = BindlessMaterialTextures;
-        lock (state.Sync)
+        using (VulkanFrameLockScope.Enter(
+                   state.Sync,
+                   EVulkanFrameWaitReason.DescriptorPublicationLock))
         {
             if (state.Set.Handle == 0)
             {
@@ -213,7 +215,9 @@ internal sealed unsafe partial class VulkanDescriptorManager
             return false;
 
         VulkanBindlessMaterialTextureTableState state = BindlessMaterialTextures;
-        lock (state.Sync)
+        using (VulkanFrameLockScope.Enter(
+                   state.Sync,
+                   EVulkanFrameWaitReason.DescriptorPublicationLock))
         {
             if (transfer.DescriptorIndex >= state.Slots.Length)
                 return false;

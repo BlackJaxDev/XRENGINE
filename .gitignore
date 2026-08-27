@@ -454,4 +454,6 @@ Build/McpRuns/
 Build/Deps/Monado/
 Build/Submodules/Build/_AgentValidation/
 Assets/
+!XREngine.Runtime.Core/Assets/
+!XREngine.Runtime.Core/Assets/**
 Build/RenderBench/

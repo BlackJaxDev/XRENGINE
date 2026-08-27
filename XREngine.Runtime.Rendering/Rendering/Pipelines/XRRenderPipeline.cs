@@ -145,8 +145,19 @@ public abstract partial class RenderPipeline : XRAsset, IRuntimeRenderPipelineHo
     }
 
     private ViewportRenderCommandContainer _commandChain = [];
+    private EMeshSubmissionStrategy? _appliedMeshSubmissionStrategy;
+
     [YamlIgnore]
     public ulong CommandGeneration { get; private set; }
+
+    /// <summary>
+    /// Gets the requested mesh-submission strategy captured by the current
+    /// command chain. Backend capability resolution remains a later concern.
+    /// </summary>
+    [Browsable(false)]
+    [YamlIgnore]
+    internal EMeshSubmissionStrategy? AppliedMeshSubmissionStrategy
+        => _appliedMeshSubmissionStrategy;
 
     /// <summary>
     /// Gets the command chain for this pipeline.
@@ -223,6 +234,9 @@ public abstract partial class RenderPipeline : XRAsset, IRuntimeRenderPipelineHo
     /// </summary>
     protected void InitializeCommandChain()
     {
+        EMeshSubmissionStrategy requestedStrategy =
+            RuntimeEngine.Rendering.ResolveRequestedMeshSubmissionStrategy();
+
         using (ViewportRenderCommandContainer.SuppressStructureChangeNotifications())
         {
             ViewportRenderCommandContainer previous = CommandChain;
@@ -239,6 +253,11 @@ public abstract partial class RenderPipeline : XRAsset, IRuntimeRenderPipelineHo
                 OnCommandChainChanged();
             }
         }
+
+        SetField(
+            ref _appliedMeshSubmissionStrategy,
+            requestedStrategy,
+            nameof(AppliedMeshSubmissionStrategy));
     }
 
     /// <summary>
@@ -261,10 +280,22 @@ public abstract partial class RenderPipeline : XRAsset, IRuntimeRenderPipelineHo
     }
 
     /// <summary>
-    /// Regenerates commands that snapshot the resolved mesh-submission strategy.
+    /// Regenerates commands when the requested mesh-submission strategy changes.
+    /// Reapplying an unchanged settings cascade must not invalidate a published
+    /// frame package or advance the command generation.
     /// </summary>
-    internal void RebuildForMeshSubmissionStrategyChange()
-        => RebuildCommandChain();
+    internal bool ApplyMeshSubmissionStrategy(EMeshSubmissionStrategy strategy)
+    {
+        if (_appliedMeshSubmissionStrategy == strategy)
+            return false;
+
+        RebuildCommandChain();
+        SetField(
+            ref _appliedMeshSubmissionStrategy,
+            strategy,
+            nameof(AppliedMeshSubmissionStrategy));
+        return true;
+    }
 
     /// <summary>
     /// Allows derived pipelines to describe the resources they require via the resource layout builder.

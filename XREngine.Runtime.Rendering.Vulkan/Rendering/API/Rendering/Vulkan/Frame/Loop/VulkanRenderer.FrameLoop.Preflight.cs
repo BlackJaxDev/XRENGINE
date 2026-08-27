@@ -7,7 +7,53 @@ namespace XREngine.Rendering.Vulkan
     {
         internal EDesktopFrameFlow RunDesktopFramePreflight(ref VulkanFrameAttempt attempt)
         {
-            attempt.InteractiveResize = DesktopWsiOutput.IsInteractiveResizeInProgress;
+            attempt.InteractiveResize =
+                DesktopWsiOutput.IsInteractiveResizeInProgress ||
+                RuntimeInteractiveResizeDispatchState.IsActive;
+
+            VulkanPresentationProfileSnapshot presentationProfile =
+                OutputRuntime.Desktop.PresentationProfile;
+            attempt.Timing.PresentationProfile = presentationProfile;
+            _desktopFramePacer.Pace(
+                in presentationProfile,
+                bypass: attempt.InteractiveResize ||
+                    RuntimeRenderingHostServices.Presentation.IsOpenXRActive,
+                out TimeSpan limiterSleep,
+                out TimeSpan limiterSpin);
+            attempt.Timing.LimiterSleep += limiterSleep;
+            attempt.Timing.LimiterSpin += limiterSpin;
+            if (limiterSleep > TimeSpan.Zero)
+            {
+                attempt.Timing.RecordCausalWait(new VulkanFrameCausalWait(
+                    EVulkanFrameWaitReason.FrameLimiterSleep,
+                    limiterSleep,
+                    attempt.FrameNumber,
+                    attempt.FrameSlot,
+                    ImageIndex: -1,
+                    SemaphoreTargetValue: 0UL,
+                    SemaphoreCompletedValue: 0UL,
+                    QueueFamily: _deviceContext.QueueFamilies.GraphicsFamilyIndex ?? 0U,
+                    PendingCommandCount: 0,
+                    ConcurrentWorkerActivity: Volatile.Read(
+                        ref _commandRuntime.Workers.ActiveWorkerCount),
+                    Stage: EVulkanFrameStage.FramePacing));
+            }
+            if (limiterSpin > TimeSpan.Zero)
+            {
+                attempt.Timing.RecordCausalWait(new VulkanFrameCausalWait(
+                    EVulkanFrameWaitReason.FrameLimiterSpin,
+                    limiterSpin,
+                    attempt.FrameNumber,
+                    attempt.FrameSlot,
+                    ImageIndex: -1,
+                    SemaphoreTargetValue: 0UL,
+                    SemaphoreCompletedValue: 0UL,
+                    QueueFamily: _deviceContext.QueueFamilies.GraphicsFamilyIndex ?? 0U,
+                    PendingCommandCount: 0,
+                    ConcurrentWorkerActivity: Volatile.Read(
+                        ref _commandRuntime.Workers.ActiveWorkerCount),
+                    Stage: EVulkanFrameStage.FramePacing));
+            }
 
             var liveFramebufferSize = DesktopWsiOutput.EffectiveFramebufferSize;
             var liveWindowSize = DesktopWsiOutput.Window.Window.Size;
@@ -50,17 +96,18 @@ namespace XREngine.Rendering.Vulkan
                     "Live surface size is zero");
             }
 
-                    if (TryGetViewportResourceBlocker(
-                        attempt.InteractiveResize,
-                        out string resourceMismatchReason))
-                    {
+            if (!attempt.InteractiveResize &&
+                TryGetViewportResourceBlocker(
+                    allowInteractiveDisplayMismatch: false,
+                    out string resourceMismatchReason))
+            {
                     return StopDesktopFrameForPreflightStatus(
                         ref attempt,
                         EVulkanDesktopPreflightStatus.ResourceMismatch,
                         resourceMismatchReason);
-                    }
+            }
 
-                    ServiceDesktopSwapchainRecreatePolicy(ref attempt);
+            ServiceDesktopSwapchainRecreatePolicy(ref attempt);
 
             if (_frameBufferInvalidated ||
                 (!attempt.SurfaceMatchesSwapchain &&
@@ -76,7 +123,8 @@ namespace XREngine.Rendering.Vulkan
                     reason);
             }
 
-            bool frameGenerationProxyRequired = _outputRuntime._streamlineFrameGenerationProvisioned;
+            bool frameGenerationProxyRequired =
+                OutputRuntime.Desktop.PresentationProfile.FrameGenerationEnabled;
             bool frameGenerationProxyIncludesDlss =
                 frameGenerationProxyRequired && _outputRuntime._streamlineDlssProvisioned;
             if (OutputRuntime.Desktop.StreamlineFrameGenerationActive != frameGenerationProxyRequired ||
@@ -134,7 +182,9 @@ namespace XREngine.Rendering.Vulkan
                 attempt.FrameSlot,
                 attempt.InteractiveResize,
                 detail);
-            DrainSkippedResizeFrameOps(detail);
+            DrainSkippedResizeFrameOps(
+                detail,
+                preserveTextureUploads: attempt.InteractiveResize);
             MarkSkippedResizeFrameObserved(attempt.StartTimestamp);
             attempt.Stop(reason);
         }

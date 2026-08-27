@@ -31,11 +31,15 @@ internal readonly struct VulkanQueueOperationLease : IDisposable
     {
         long waitStart = Stopwatch.GetTimestamp();
         Monitor.Enter(gate);
+        TimeSpan elapsed = Stopwatch.GetElapsedTime(waitStart);
         telemetry.RecordCpuStage(
             EVulkanCpuStage.QueueLockAcquisition,
-            Stopwatch.GetElapsedTime(waitStart),
+            elapsed,
             allocatedBytes: 0,
             boundaryAllocatedBytes: 0);
+        VulkanFrameWaitInstrumentation.RecordCurrentThreadWait(
+            EVulkanFrameWaitReason.QueueLeaseLock,
+            elapsed);
         if (deviceState.IsOperational)
             return new VulkanQueueOperationLease(gate);
 

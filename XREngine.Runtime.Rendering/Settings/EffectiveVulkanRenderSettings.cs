@@ -9,6 +9,8 @@ namespace XREngine;
 public readonly record struct EffectiveVulkanRenderSettings(
     EVulkanGpuDrivenProfile GpuDrivenProfile,
     EVulkanQueueOverlapMode QueueOverlapMode,
+    EVulkanPresentationProfile PresentationProfile,
+    float PresentationTargetRefreshHz,
     bool EnableDescriptorIndexing,
     bool EnableBindlessMaterialTable,
     EVulkanBindlessMaterialMode BindlessMaterialMode,

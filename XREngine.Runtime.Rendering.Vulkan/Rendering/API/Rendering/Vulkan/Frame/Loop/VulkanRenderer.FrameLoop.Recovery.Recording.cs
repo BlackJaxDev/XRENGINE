@@ -415,6 +415,7 @@ namespace XREngine.Rendering.Vulkan
                     snapshot,
                     ImageLayout.PresentSrcKhr,
                     predecessorCommandBuffer,
+                    clearSwapchain: false,
                     out overlayCommandBuffer);
                 if (recorded)
                 {

@@ -54,6 +54,9 @@ internal sealed unsafe partial class VulkanDeviceContext
         "VK_EXT_memory_budget",
         "VK_EXT_memory_priority",
         SwapchainMaintenance1ExtensionName,
+        "VK_KHR_present_id",
+        "VK_KHR_present_wait",
+        "VK_GOOGLE_display_timing",
         "VK_NV_memory_decompression",
         "VK_NV_copy_memory_indirect",
     ];
@@ -419,6 +422,15 @@ internal sealed unsafe partial class VulkanDeviceContext
 
         foreach (string optionalExt in _deviceContext.Configuration.OptionalDeviceExtensions)
         {
+            if (optionalExt == "VK_KHR_present_wait" &&
+                !availableExtensionSet.Contains("VK_KHR_present_id"))
+            {
+                Debug.VulkanWarning(
+                    "[Vulkan] Optional extension {0} skipped because required dependency VK_KHR_present_id is unavailable.",
+                    optionalExt);
+                continue;
+            }
+
             if (optionalExt == "VK_EXT_graphics_pipeline_library" &&
                 !availableExtensionSet.Contains("VK_KHR_pipeline_library"))
             {

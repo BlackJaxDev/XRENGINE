@@ -103,12 +103,30 @@ internal sealed partial class VulkanTextureUploadService
                     return false;
                 }
 
-                VulkanImportedTextureUploadPrepResult prepResult = TryPrepareAndEnqueueImportedTextureUpload(
-                    context,
-                    job,
-                    drainStart,
-                    prepBudgetMilliseconds,
-                    requiredManifest);
+                RenderForegroundWorkCoordinator.BackgroundSlice backgroundSlice =
+                    default;
+                if (!foregroundRequired &&
+                    !RenderForegroundWorkCoordinator.TryEnterBackgroundSlice(
+                        out backgroundSlice))
+                {
+                    RequeueUploadPreparation(job);
+                    return false;
+                }
+
+                VulkanImportedTextureUploadPrepResult prepResult;
+                try
+                {
+                    prepResult = TryPrepareAndEnqueueImportedTextureUpload(
+                        context,
+                        job,
+                        drainStart,
+                        prepBudgetMilliseconds,
+                        requiredManifest);
+                }
+                finally
+                {
+                    backgroundSlice.Dispose();
+                }
                 if (prepResult == VulkanImportedTextureUploadPrepResult.Deferred)
                 {
                     RequeueUploadPreparation(job);
@@ -410,7 +428,8 @@ internal sealed partial class VulkanTextureUploadService
                 return VulkanImportedTextureUploadPrepResult.Canceled;
             }
 
-            job.WorkerPrepTask = Task.Run(() => RunWorkerPreparation(context, preparation));
+            job.WorkerPrepTask = Task.Run(
+                () => RunWorkerPreparation(context, job, preparation));
             return VulkanImportedTextureUploadPrepResult.Deferred;
         }
 
@@ -487,6 +506,7 @@ internal sealed partial class VulkanTextureUploadService
 
     private static VulkanImportedTextureUploadWorkerResult RunWorkerPreparation(
         VulkanTextureUploadSchedulingContext context,
+        VulkanImportedTextureUploadJob job,
         VulkanImportedTextureUploadPreparation preparation)
     {
         long prepStart = TextureRuntimeDiagnostics.StartTiming();
@@ -495,13 +515,27 @@ internal sealed partial class VulkanTextureUploadService
             if (RuntimeRenderingHostServices.FrameTiming.IsRenderThread)
                 throw new InvalidOperationException("Vulkan upload worker preparation must not run on the render thread or touch active frame command buffers.");
 
-            lock (context.Resources.TextureUploadContextSync)
+            bool completed = false;
+            VulkanImportedTexturePendingUpload? pendingUpload = null;
+            string? failureReason = null;
+            while (!completed)
             {
-                bool completed = false;
-                VulkanImportedTexturePendingUpload? pendingUpload = null;
-                string? failureReason = null;
-                while (!completed)
+                RenderForegroundWorkCoordinator.BackgroundSlice backgroundSlice =
+                    default;
+                if (!job.IsForegroundRequired &&
+                    !RenderForegroundWorkCoordinator.TryEnterBackgroundSlice(
+                        out backgroundSlice))
                 {
+                    RenderForegroundWorkCoordinator.WaitForBackgroundPermission();
+                    continue;
+                }
+
+                try
+                {
+                    using (VulkanFrameLockScope.Enter(
+                               context.Resources.TextureUploadContextSync,
+                               EVulkanFrameWaitReason.UploadLock))
+                    {
                     if (!preparation.ShouldAccept())
                     {
                         preparation.Texture.ReleaseSynchronizedImportedUploadPreparation(preparation);
@@ -529,15 +563,20 @@ internal sealed partial class VulkanTextureUploadService
                             TextureRuntimeDiagnostics.ElapsedMilliseconds(prepStart),
                             null);
                     }
+                    }
                 }
-
-                return new VulkanImportedTextureUploadWorkerResult(
-                    pendingUpload,
-                    null,
-                    canceled: false,
-                    TextureRuntimeDiagnostics.ElapsedMilliseconds(prepStart),
-                    null);
+                finally
+                {
+                    backgroundSlice.Dispose();
+                }
             }
+
+            return new VulkanImportedTextureUploadWorkerResult(
+                pendingUpload,
+                null,
+                canceled: false,
+                TextureRuntimeDiagnostics.ElapsedMilliseconds(prepStart),
+                null);
         }
         catch (Exception ex)
         {
@@ -584,7 +623,9 @@ internal sealed partial class VulkanTextureUploadService
         // PresentNow can discover and wait on the generation before the frame
         // drain that would ever record that operation.
         {
-            lock (_transferQueueSync)
+            using (VulkanFrameLockScope.Enter(
+                       _transferQueueSync,
+                       EVulkanFrameWaitReason.UploadLock))
             {
                 _pendingTransferUploads.EnsureCapacity(
                     _pendingTransferUploads.Count +
@@ -600,7 +641,9 @@ internal sealed partial class VulkanTextureUploadService
             }
             finally
             {
-                lock (_transferQueueSync)
+                using (VulkanFrameLockScope.Enter(
+                           _transferQueueSync,
+                           EVulkanFrameWaitReason.UploadLock))
                 {
                     _pendingTransferReservations--;
                     if (submitted is not null)

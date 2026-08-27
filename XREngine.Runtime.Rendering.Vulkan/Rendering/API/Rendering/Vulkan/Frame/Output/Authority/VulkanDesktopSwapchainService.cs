@@ -37,15 +37,15 @@ internal sealed unsafe partial class VulkanDesktopSwapchainService
         new(Format.B8G8R8A8Unorm, ColorSpaceKHR.SpaceSrgbNonlinearKhr),
         new(Format.R8G8B8A8Unorm, ColorSpaceKHR.SpaceSrgbNonlinearKhr),
     ];
-    private static readonly PresentModeKHR[] DlssFrameGenerationPresentModePreferences =
-    [PresentModeKHR.MailboxKhr, PresentModeKHR.ImmediateKhr];
     private readonly VulkanOutputRuntime _output;
     private readonly Vk _api;
     private readonly VulkanDeviceContext _device;
     private readonly VulkanResourceRuntime _resources;
+    private readonly VulkanFrameTelemetry _telemetry;
     private readonly VulkanImGuiOutputPipelineService _imguiPipeline;
     private readonly VulkanDesktopWsiTargetDriver? _desktopWsiTarget;
     private readonly IVulkanTargetOutputHost _services;
+    private readonly int _frameSlotCount;
 
     internal VulkanDesktopSwapchainService(
         VulkanOutputRuntime output,
@@ -55,15 +55,18 @@ internal sealed unsafe partial class VulkanDesktopSwapchainService
         VulkanFrameTelemetry telemetry,
         VulkanImGuiOutputPipelineService imguiPipeline,
         VulkanDesktopWsiTargetDriver? desktopWsiTarget,
-        IVulkanTargetOutputHost services)
+        IVulkanTargetOutputHost services,
+        int frameSlotCount)
     {
         _output = output;
         _api = api;
         _device = device;
         _resources = resources;
+        _telemetry = telemetry;
         _imguiPipeline = imguiPipeline;
         _desktopWsiTarget = desktopWsiTarget;
         _services = services;
+        _frameSlotCount = Math.Max(frameSlotCount, 1);
     }
 
     internal void QueueRetiredGeneration(RetiredSwapchainGeneration generation)
@@ -329,8 +332,19 @@ internal sealed unsafe partial class VulkanDesktopSwapchainService
     internal void CreateSwapchain(SwapchainKHR oldSwapchain = default)
     {
         SwapChainSupportDetails support = QuerySwapchainSupport(_device.PhysicalDevice);
-        SurfaceFormatKHR surfaceFormat = ChooseSurfaceFormat(support.Formats);
-        PresentModeKHR presentMode = ChoosePresentMode(support.PresentModes);
+        VulkanPresentationProfileResolution presentation =
+            VulkanPresentationProfileResolver.Resolve(
+                support.PresentModes,
+                _device,
+                _output,
+                _frameSlotCount,
+                _telemetry._diagnosticOptions.EnableValidationLayers);
+        bool frameGenerationProfile =
+            presentation.Snapshot.FrameGenerationEnabled;
+        SurfaceFormatKHR surfaceFormat = ChooseSurfaceFormat(
+            support.Formats,
+            frameGenerationProfile);
+        PresentModeKHR presentMode = presentation.NativePresentMode;
         if (!TryChooseExtent(support.Capabilities, out Extent2D extent, out string unavailableReason))
             throw new InvalidOperationException($"Cannot create Vulkan swapchain while the surface is not presentable: {unavailableReason}");
 
@@ -380,7 +394,7 @@ internal sealed unsafe partial class VulkanDesktopSwapchainService
             ?? throw new NotSupportedException("VK_KHR_swapchain extension was returned without an implementation.");
         _output.Desktop.SwapchainExtension = swapchainExtension;
 
-        bool requestFrameGeneration = _output._streamlineFrameGenerationProvisioned;
+        bool requestFrameGeneration = frameGenerationProfile;
         bool requestFrameGenerationDlss = requestFrameGeneration && _output._streamlineDlssProvisioned;
         VulkanStreamlineDeviceBinding binding = _output.CaptureStreamlineDeviceBinding(_device);
         Result result;
@@ -389,7 +403,7 @@ internal sealed unsafe partial class VulkanDesktopSwapchainService
             if (!NvidiaDlssManager.Native.TryCreateProxySwapchain(
                     binding, ref createInfo, requestFrameGenerationDlss, out _output.Desktop.Swapchain, out result, out string failureReason))
             {
-                if (NvidiaDlssManager.IsFrameGenerationRequested)
+                if (frameGenerationProfile)
                     throw new InvalidOperationException($"Requested NVIDIA DLSS frame generation could not create a Streamline proxy swapchain: {failureReason}");
 
                 Debug.RenderingWarning("[Vulkan] Optional DLSS-G proxy-swapchain provisioning failed; creating a direct Vulkan swapchain and disabling the live DLSS-G toggle. Reason={0}", failureReason);
@@ -444,9 +458,24 @@ internal sealed unsafe partial class VulkanDesktopSwapchainService
         _output.Desktop.ImageFormat = surfaceFormat.Format;
         _output.Desktop.ImageColorSpace = surfaceFormat.ColorSpace;
         _output.Desktop.Extent = extent;
+        _output.Desktop.PresentationProfile = presentation.Snapshot with
+        {
+            SwapchainImageCount = checked((int)imageCount),
+            FrameGenerationEnabled = requestFrameGeneration,
+        };
         Debug.VulkanWarningEvery("Vulkan.Swapchain.SelectedSurfaceFormat", TimeSpan.FromSeconds(10),
-            "[Vulkan] Swapchain surface selected: format={0} colorSpace={1} presentMode={2} extent={3}x{4} images={5}",
-            surfaceFormat.Format, surfaceFormat.ColorSpace, presentMode, extent.Width, extent.Height, imageCount);
+            "[Vulkan] Swapchain surface selected: format={0} colorSpace={1} presentMode={2} profile={3}->{4} targetHz={5:F2} extent={6}x{7} images={8} frameSlots={9} frameGeneration={10}",
+            surfaceFormat.Format,
+            surfaceFormat.ColorSpace,
+            presentMode,
+            presentation.Snapshot.RequestedProfile,
+            presentation.Snapshot.ResolvedProfile,
+            presentation.Snapshot.TargetRefreshHz,
+            extent.Width,
+            extent.Height,
+            imageCount,
+            _frameSlotCount,
+            requestFrameGeneration);
     }
 
     /// <summary>Destroys the active native WSI generation after Streamline has been disabled.</summary>
@@ -618,10 +647,11 @@ internal sealed unsafe partial class VulkanDesktopSwapchainService
         return semaphores;
     }
 
-    private SurfaceFormatKHR ChooseSurfaceFormat(IReadOnlyList<SurfaceFormatKHR> formats)
+    private SurfaceFormatKHR ChooseSurfaceFormat(
+        IReadOnlyList<SurfaceFormatKHR> formats,
+        bool frameGeneration)
     {
         bool requestHdr = RequireDesktopWsiTarget().PreferHdrOutput;
-        bool frameGeneration = _output._streamlineFrameGenerationProvisioned;
         if (_device.MutableCapabilities._supportsSwapchainColorspace && requestHdr && frameGeneration && TrySelectFormat(formats, DlssFrameGenerationHdrSurfacePreferences, out SurfaceFormatKHR dlssHdr))
             return SetPreferredFormat(dlssHdr);
         if (frameGeneration && TrySelectFormat(formats, DlssFrameGenerationSdrSurfacePreferences, out SurfaceFormatKHR dlssSdr))
@@ -640,20 +670,6 @@ internal sealed unsafe partial class VulkanDesktopSwapchainService
         _output.Desktop.PreferredFormat = format.Format;
         _output.Desktop.PreferredColorSpace = format.ColorSpace;
         return format;
-    }
-
-    private PresentModeKHR ChoosePresentMode(IReadOnlyList<PresentModeKHR> modes)
-    {
-        if (_output._streamlineFrameGenerationProvisioned)
-            for (int preferenceIndex = 0; preferenceIndex < DlssFrameGenerationPresentModePreferences.Length; preferenceIndex++)
-                foreach (PresentModeKHR mode in modes)
-                    if (mode == DlssFrameGenerationPresentModePreferences[preferenceIndex])
-                        return mode;
-
-        foreach (PresentModeKHR mode in modes)
-            if (mode == _output.Desktop.PreferredPresentMode)
-                return mode;
-        return _output.Desktop.FallbackPresentMode;
     }
 
     private bool TryChooseExtent(SurfaceCapabilitiesKHR capabilities, out Extent2D extent, out string reason)

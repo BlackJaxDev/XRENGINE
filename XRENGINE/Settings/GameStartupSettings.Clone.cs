@@ -1,4 +1,5 @@
 using System.Reflection;
+using XREngine.Core.Files;
 
 namespace XREngine;
 
@@ -16,10 +17,40 @@ public partial class GameStartupSettings
 
         CopyBaseSettingsProperties(this, clone);
         CopyDerivedLaunchProperties(this, clone, runtimeType);
-        clone.SourceAsset = clone;
-        clone.FilePath = null;
-        clone.ClearDirty();
+        DetachClonedAsset(clone.BuildSettings);
+        DetachClonedAsset(clone.DefaultUserSettings);
+        DetachClonedAsset(clone);
         return clone;
+    }
+
+    /// <summary>
+    /// Finalizes the owned settings assets after session overrides have been applied.
+    /// </summary>
+    internal void FinalizeSessionProjection()
+    {
+        DetachClonedAsset(BuildSettings);
+        DetachClonedAsset(DefaultUserSettings);
+        DetachClonedAsset(this);
+
+        BuildSettings.EmbeddedAssets.Clear();
+        DefaultUserSettings.EmbeddedAssets.Clear();
+        EmbeddedAssets.Clear();
+
+        BuildSettings.MarkAsTransientProjection();
+        DefaultUserSettings.MarkAsTransientProjection();
+        MarkAsTransientProjection();
+        ClearDirty();
+    }
+
+    /// <summary>
+    /// Removes authored graph ownership from a cloned settings asset before it
+    /// becomes a process-local projection.
+    /// </summary>
+    private static void DetachClonedAsset(XRAsset asset)
+    {
+        asset.SourceAsset = asset;
+        asset.FilePath = null;
+        asset.ClearDirty();
     }
 
     private static void CopyBaseSettingsProperties(

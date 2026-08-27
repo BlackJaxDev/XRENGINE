@@ -56,6 +56,10 @@ namespace XREngine.Core.Files.Caching
 
         /// <summary>
         /// Attempts to read a feature-owned binary asset file before the generic YAML path.
+        /// Returning <see langword="true"/> claims the file even when
+        /// <paramref name="asset"/> is <see langword="null"/>, allowing a codec
+        /// to reject an incompatible binary payload without routing it through an
+        /// unrelated text deserializer.
         /// </summary>
         bool TryReadDirectAssetFile(string filePath, Type assetType, out XRAsset? asset)
         {

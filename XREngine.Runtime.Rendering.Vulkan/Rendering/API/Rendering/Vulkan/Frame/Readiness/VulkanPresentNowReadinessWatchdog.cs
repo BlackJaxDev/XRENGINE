@@ -37,7 +37,9 @@ internal struct VulkanPresentNowReadinessWatchdog
         string activeTicket,
         string dependencyChain,
         string detail,
-        Exception? innerException = null)
+        Exception? innerException = null,
+        EVulkanPresentNowFailureDisposition disposition =
+            EVulkanPresentNowFailureDisposition.RendererTerminal)
     {
         long now = Stopwatch.GetTimestamp();
         return new VulkanPresentNowReadinessException(
@@ -48,7 +50,8 @@ internal struct VulkanPresentNowReadinessWatchdog
             Stopwatch.GetElapsedTime(_startTimestamp, now),
             Stopwatch.GetElapsedTime(_lastProgressTimestamp, now),
             detail,
-            innerException);
+            innerException,
+            disposition);
     }
 
     private static long ResolveTimeoutTicks()

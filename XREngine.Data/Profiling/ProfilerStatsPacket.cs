@@ -294,6 +294,7 @@ public sealed partial class RenderProfilerV2Data
 [MemoryPackable]
 public sealed partial class VulkanFrameLoopTelemetryData
 {
+    public VulkanCorrelatedFrameTreeData CorrelatedFrameTree { get; set; } = new();
     public double FrameSampleTimingQueriesMs { get; set; }
     public double FrameDrainRetiredResourcesMs { get; set; }
     public double FrameAcquireBridgeSubmitMs { get; set; }

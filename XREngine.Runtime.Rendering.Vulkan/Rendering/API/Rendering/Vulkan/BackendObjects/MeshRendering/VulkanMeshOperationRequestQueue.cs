@@ -58,13 +58,13 @@ internal sealed class VulkanMeshOperationRequestQueue
         if (capture.Destination is { } destination)
         {
             if (capture.Failed)
-                return EMeshRequestScheduleResult.TerminalFailure;
+                return EMeshRequestScheduleResult.Backpressured;
             if (capture.Count == destination.Length)
             {
                 capture.RecordCapacityFailure(
                     ResolveLane(in request),
                     destination.Length);
-                return EMeshRequestScheduleResult.TerminalFailure;
+                return EMeshRequestScheduleResult.Backpressured;
             }
 
             VulkanMeshRenderRequest acceptedRequest = request;
@@ -94,7 +94,7 @@ internal sealed class VulkanMeshOperationRequestQueue
             if (occupancy >= laneCapacity)
             {
                 RecordCapacityFailure(lane, laneCapacity, occupancy);
-                return EMeshRequestScheduleResult.TerminalFailure;
+                return EMeshRequestScheduleResult.Backpressured;
             }
 
             VulkanMeshRenderRequest acceptedRequest = request;
@@ -411,13 +411,20 @@ internal sealed class VulkanMeshOperationRequestQueue
         int configuredCapacity,
         int actualOccupancy)
     {
-        int overflowCount = ++_framePlanCapacityExceededCount;
+        _framePlanCapacityExceededCount++;
+        int laneOverflowCount =
+            _lastCapacityFailure.HasFailure &&
+            _lastCapacityFailure.Lane == lane &&
+            _lastCapacityFailure.ConfiguredCapacity == configuredCapacity &&
+            _lastCapacityFailure.ActualOccupancy == actualOccupancy
+                ? _lastCapacityFailure.OverflowCount + 1
+                : 1;
         _lastCapacityFailure = new VulkanMeshRequestLaneCapacityFailure(
             lane,
             configuredCapacity,
             actualOccupancy,
-            actualOccupancy + 1,
-            overflowCount);
+            actualOccupancy + laneOverflowCount,
+            laneOverflowCount);
     }
 
     internal void ReleaseCanonicalPublicationLeases()

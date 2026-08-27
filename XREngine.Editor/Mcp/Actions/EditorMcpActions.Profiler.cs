@@ -362,6 +362,103 @@ namespace XREngine.Editor.Mcp
                             outcome = vulkanFrame.Outcome.ToString(),
                             total_ms = vulkanFrame.TotalElapsed.TotalMilliseconds,
                             gpu_command_buffer_ms = VulkanStats.VulkanFrameGpuCommandBufferMs,
+                            presentation_profile = new
+                            {
+                                requested = vulkanFrame.PresentationProfile.RequestedProfile.ToString(),
+                                resolved = vulkanFrame.PresentationProfile.ResolvedProfile.ToString(),
+                                present_mode = vulkanFrame.PresentationProfile.PresentMode.ToString(),
+                                target_refresh_hz = vulkanFrame.PresentationProfile.TargetRefreshHz,
+                                target_interval_ms = vulkanFrame.PresentationProfile.TargetInterval.TotalMilliseconds,
+                                maximum_frames_ahead = vulkanFrame.PresentationProfile.MaximumFramesAhead,
+                                limiter_enabled = vulkanFrame.PresentationProfile.LimiterEnabled,
+                                frame_generation_enabled = vulkanFrame.PresentationProfile.FrameGenerationEnabled,
+                                swapchain_image_count = vulkanFrame.PresentationProfile.SwapchainImageCount,
+                                frame_slot_count = vulkanFrame.PresentationProfile.FrameSlotCount,
+                                validation_enabled = vulkanFrame.PresentationProfile.ValidationEnabled,
+                                render_target_mode = vulkanFrame.PresentationProfile.RenderTargetMode.ToString(),
+                                present_id_available = vulkanFrame.PresentationProfile.PresentIdAvailable,
+                                present_id_enabled = vulkanFrame.PresentationProfile.PresentIdEnabled,
+                                present_wait_available = vulkanFrame.PresentationProfile.PresentWaitAvailable,
+                                present_wait_enabled = vulkanFrame.PresentationProfile.PresentWaitEnabled,
+                                display_timing_available = vulkanFrame.PresentationProfile.DisplayTimingAvailable,
+                                display_timing_enabled = vulkanFrame.PresentationProfile.DisplayTimingEnabled,
+                            },
+                            presentation = new
+                            {
+                                actual_interval_ms = vulkanFrame.Presentation.ActualPresentInterval.TotalMilliseconds,
+                                limiter_sleep_ms = vulkanFrame.Presentation.LimiterSleep.TotalMilliseconds,
+                                limiter_spin_ms = vulkanFrame.Presentation.LimiterSpin.TotalMilliseconds,
+                                queue_submit_admission_ms = vulkanFrame.Presentation.QueueSubmitAdmission.TotalMilliseconds,
+                                native_queue_submit_ms = vulkanFrame.Presentation.NativeQueueSubmit.TotalMilliseconds,
+                                queue_present_admission_ms = vulkanFrame.Presentation.QueuePresentAdmission.TotalMilliseconds,
+                                native_queue_present_ms = vulkanFrame.Presentation.NativeQueuePresent.TotalMilliseconds,
+                                frames_ahead = vulkanFrame.Presentation.FramesAhead,
+                                acquire_unavailable_count = vulkanFrame.Presentation.AcquireUnavailableCount,
+                                dispatched = vulkanFrame.Presentation.PresentDispatched,
+                                accepted = vulkanFrame.Presentation.PresentationAccepted,
+                            },
+                            attribution = new
+                            {
+                                attributed_ms = vulkanFrame.Attribution.Attributed.TotalMilliseconds,
+                                unattributed_ms = vulkanFrame.Attribution.Unattributed.TotalMilliseconds,
+                                attributed_ratio = vulkanFrame.Attribution.AttributedRatio,
+                                reportable_gap = vulkanFrame.Attribution.HasReportableGap,
+                            },
+                            device_diagnostics = new
+                            {
+                                operational = vulkanFrame.DeviceDiagnostics.DeviceOperational,
+                                device_lost = vulkanFrame.DeviceDiagnostics.DeviceLost,
+                                device_fault_supported = vulkanFrame.DeviceDiagnostics.DeviceFaultSupported,
+                                device_fault_capture_active = vulkanFrame.DeviceDiagnostics.DeviceFaultCaptureActive,
+                                memory_budget_supported = vulkanFrame.DeviceDiagnostics.MemoryBudgetSupported,
+                                memory_budget_sample_valid = vulkanFrame.DeviceDiagnostics.MemoryBudgetSampleValid,
+                                device_local_usage_bytes = vulkanFrame.DeviceDiagnostics.DeviceLocalUsageBytes,
+                                device_local_budget_bytes = vulkanFrame.DeviceDiagnostics.DeviceLocalBudgetBytes,
+                                largest_device_local_heap_bytes = vulkanFrame.DeviceDiagnostics.LargestDeviceLocalHeapBytes,
+                                active_allocation_count = vulkanFrame.DeviceDiagnostics.ActiveAllocationCount,
+                                last_successful_submission_serial = vulkanFrame.DeviceDiagnostics.LastSuccessfulSubmissionSerial,
+                                last_successful_submission_frame_id = vulkanFrame.DeviceDiagnostics.LastSuccessfulSubmissionFrameId,
+                                last_successful_submission_frame_slot = vulkanFrame.DeviceDiagnostics.LastSuccessfulSubmissionFrameSlot,
+                                last_successful_submission_image_index = vulkanFrame.DeviceDiagnostics.LastSuccessfulSubmissionImageIndex,
+                                last_successful_wait_timeline_value = vulkanFrame.DeviceDiagnostics.LastSuccessfulWaitTimelineValue,
+                                last_successful_signal_timeline_value = vulkanFrame.DeviceDiagnostics.LastSuccessfulSignalTimelineValue,
+                                last_command_marker_serial = vulkanFrame.DeviceDiagnostics.LastCommandMarkerSerial,
+                                last_command_marker_generation = vulkanFrame.DeviceDiagnostics.LastCommandMarkerGeneration,
+                                descriptor_table_generation = vulkanFrame.DeviceDiagnostics.DescriptorTableGeneration,
+                                longest_native_driver_call_ms = vulkanFrame.DeviceDiagnostics.LongestNativeDriverCall.TotalMilliseconds,
+                                native_driver_call_exceeded_one_second = vulkanFrame.DeviceDiagnostics.NativeDriverCallExceededOneSecond,
+                            },
+                            tree = new
+                            {
+                                inclusive_ms = vulkanFrame.Tree.InclusiveElapsed.TotalMilliseconds,
+                                stage_exclusive_ms = vulkanFrame.Tree.StageExclusiveElapsed.TotalMilliseconds,
+                                root_exclusive_ms = vulkanFrame.Tree.RootExclusiveElapsed.TotalMilliseconds,
+                                work_ms = vulkanFrame.Tree.WorkElapsed.TotalMilliseconds,
+                                wait_ms = vulkanFrame.Tree.WaitElapsed.TotalMilliseconds,
+                                native_driver_ms = vulkanFrame.Tree.NativeDriverElapsed.TotalMilliseconds,
+                                external_runtime_ms = vulkanFrame.Tree.ExternalRuntimeElapsed.TotalMilliseconds,
+                                diagnostic_ms = vulkanFrame.Tree.DiagnosticElapsed.TotalMilliseconds,
+                                worker_overlap_ms = vulkanFrame.Tree.WorkerOverlapElapsed.TotalMilliseconds,
+                                required_output_critical_path_ms = vulkanFrame.Tree.RequiredOutputCriticalPathElapsed.TotalMilliseconds,
+                            },
+                            causal_waits = Enumerable.Range(0, vulkanFrame.CausalWaits.Count)
+                                .Select(index => vulkanFrame.CausalWaits.Get(index))
+                                .Select(wait => new
+                                {
+                                    stage = wait.Stage.ToString(),
+                                    reason = wait.Reason.ToString(),
+                                    elapsed_ms = wait.Elapsed.TotalMilliseconds,
+                                    frame_id = wait.FrameId,
+                                    frame_slot = wait.FrameSlot,
+                                    image_index = wait.ImageIndex,
+                                    semaphore_target = wait.SemaphoreTargetValue,
+                                    semaphore_completed = wait.SemaphoreCompletedValue,
+                                    queue_family = wait.QueueFamily,
+                                    pending_commands = wait.PendingCommandCount,
+                                    concurrent_workers = wait.ConcurrentWorkerActivity,
+                                })
+                                .ToArray(),
+                            causal_waits_dropped = vulkanFrame.CausalWaits.DroppedCount,
                             stages = new
                             {
                                 frame_pacing = VulkanFrameStage(vulkanFrame.FramePacing),
@@ -396,6 +493,7 @@ namespace XREngine.Editor.Mcp
                                 present_ms = vulkanFrame.Detail.PresentQueue.TotalMilliseconds,
                             },
                         },
+                        foreground_arbitration = RenderForegroundWorkCoordinator.CaptureSnapshot(),
                         cpu_stages = new
                         {
                             frame_op_preparation = VulkanCpuStage(EVulkanCpuStage.FrameOpPreparation),
@@ -1020,6 +1118,11 @@ namespace XREngine.Editor.Mcp
             => new
             {
                 elapsed_ms = stage.Elapsed.TotalMilliseconds,
+                work_ms = stage.WorkElapsed.TotalMilliseconds,
+                wait_ms = stage.WaitElapsed.TotalMilliseconds,
+                driver_ms = stage.DriverElapsed.TotalMilliseconds,
+                external_ms = stage.ExternalElapsed.TotalMilliseconds,
+                diagnostic_ms = stage.DiagnosticElapsed.TotalMilliseconds,
                 interval_count = stage.IntervalCount,
                 interval_class = stage.IntervalClass.ToString(),
                 outcome = stage.Outcome.ToString(),

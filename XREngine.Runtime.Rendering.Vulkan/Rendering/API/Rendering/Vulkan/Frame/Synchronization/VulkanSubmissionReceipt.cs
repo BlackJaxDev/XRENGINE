@@ -7,8 +7,19 @@ internal readonly record struct VulkanSubmissionReceipt(
     Result Result,
     bool SubmissionAccepted,
     bool LifetimePinsTransferred,
-    bool PostSubmissionPublicationSucceeded)
+    bool PostSubmissionPublicationSucceeded,
+    TimeSpan QueueAdmissionWait,
+    TimeSpan NativeDispatchElapsed)
 {
-    public static VulkanSubmissionReceipt Rejected(Result result)
-        => new(result, false, false, true);
+    public static VulkanSubmissionReceipt Rejected(
+        Result result,
+        TimeSpan queueAdmissionWait = default,
+        TimeSpan nativeDispatchElapsed = default)
+        => new(
+            result,
+            false,
+            false,
+            true,
+            queueAdmissionWait,
+            nativeDispatchElapsed);
 }

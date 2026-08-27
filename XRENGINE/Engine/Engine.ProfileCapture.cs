@@ -81,7 +81,7 @@ public static partial class Engine
         private const string ManifestFileName = "profiler-capture-manifest.json";
         private const string SummaryFileName = "profiler-capture-summary.json";
         private const string RuntimeCaptureDirectoryName = "speed-profiles";
-        private const int ProfileCaptureSchemaVersion = 7;
+        private const int ProfileCaptureSchemaVersion = 8;
         private const int RuntimeCaptureRetentionCount = 3;
         private const int FlushIntervalMilliseconds = 1000;
         private const int MaxBufferedCharacters = 256 * 1024;
@@ -564,6 +564,10 @@ public static partial class Engine
                 VrDesktopAutoSkipWhenOverBudget: CaptureString(() => RuntimeEngine.Rendering.Settings.VrDesktopAutoSkipWhenOverBudget ? "true" : "false"),
                 VulkanRenderTargetModeEnvironment: renderTargetModeEnv,
                 VulkanRenderTargetModeSetting: renderTargetModeSetting,
+                VulkanPresentationProfileEnvironment: Environment.GetEnvironmentVariable(
+                    XREngineEnvironmentVariables.VulkanPresentationProfile) ?? string.Empty,
+                VulkanPresentationProfileSetting: CaptureString(
+                    () => Engine.EffectiveSettings.VulkanPresentationProfile.ToString()),
                 VulkanPrimaryCommandBufferReusePolicy: primaryReusePolicy,
                 VulkanPrimaryCommandBufferReuseEnabled: primaryReuseEnabled,
                 VulkanObsHookPolicy: Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.VkObsHook) ?? "Auto",
@@ -628,7 +632,7 @@ public static partial class Engine
             var manifest = new
             {
                 capture_file = FrameStatsFileName,
-                schema = "xrengine.profile_capture.render_stats.v7",
+                schema = "xrengine.profile_capture.render_stats.v8",
                 schema_version = ProfileCaptureSchemaVersion,
                 fields_note = metadata.SampleIntervalFrames == 1
                     ? "One JSON object per completed render frame. CPU frame timings are wall-clock thread loop durations; GPU pipeline timings are backend timestamp-query snapshots when ready."
@@ -1087,6 +1091,88 @@ public static partial class Engine
             AppendStringField(s_lineBuilder, "vulkan_frame_outcome", vulkanFrame.Outcome.ToString(), ref first);
             AppendNumberField(s_lineBuilder, "vulkan_frame_total_ms", vulkanFrame.TotalElapsed.TotalMilliseconds, ref first);
             AppendNumberField(s_lineBuilder, "vulkan_frame_gpu_command_buffer_ms", RuntimeEngine.Rendering.Stats.Vulkan.VulkanFrameGpuCommandBufferMs, ref first);
+            AppendStringField(s_lineBuilder, "vulkan_presentation_profile_requested", vulkanFrame.PresentationProfile.RequestedProfile.ToString(), ref first);
+            AppendStringField(s_lineBuilder, "vulkan_presentation_profile_resolved", vulkanFrame.PresentationProfile.ResolvedProfile.ToString(), ref first);
+            AppendStringField(s_lineBuilder, "vulkan_present_mode", vulkanFrame.PresentationProfile.PresentMode.ToString(), ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_presentation_target_refresh_hz", vulkanFrame.PresentationProfile.TargetRefreshHz, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_presentation_target_interval_ms", vulkanFrame.PresentationProfile.TargetInterval.TotalMilliseconds, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_presentation_actual_interval_ms", vulkanFrame.Presentation.ActualPresentInterval.TotalMilliseconds, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_presentation_maximum_frames_ahead", vulkanFrame.PresentationProfile.MaximumFramesAhead, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_presentation_frames_ahead", vulkanFrame.Presentation.FramesAhead, ref first);
+            AppendBoolField(s_lineBuilder, "vulkan_presentation_limiter_enabled", vulkanFrame.PresentationProfile.LimiterEnabled, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_presentation_limiter_sleep_ms", vulkanFrame.Presentation.LimiterSleep.TotalMilliseconds, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_presentation_limiter_spin_ms", vulkanFrame.Presentation.LimiterSpin.TotalMilliseconds, ref first);
+            AppendBoolField(s_lineBuilder, "vulkan_frame_generation_enabled", vulkanFrame.PresentationProfile.FrameGenerationEnabled, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_swapchain_image_count", vulkanFrame.PresentationProfile.SwapchainImageCount, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_frame_slot_count", vulkanFrame.PresentationProfile.FrameSlotCount, ref first);
+            AppendBoolField(s_lineBuilder, "vulkan_validation_enabled", vulkanFrame.PresentationProfile.ValidationEnabled, ref first);
+            AppendStringField(s_lineBuilder, "vulkan_render_target_mode", vulkanFrame.PresentationProfile.RenderTargetMode.ToString(), ref first);
+            AppendBoolField(s_lineBuilder, "vulkan_present_id_available", vulkanFrame.PresentationProfile.PresentIdAvailable, ref first);
+            AppendBoolField(s_lineBuilder, "vulkan_present_id_enabled", vulkanFrame.PresentationProfile.PresentIdEnabled, ref first);
+            AppendBoolField(s_lineBuilder, "vulkan_present_wait_available", vulkanFrame.PresentationProfile.PresentWaitAvailable, ref first);
+            AppendBoolField(s_lineBuilder, "vulkan_present_wait_enabled", vulkanFrame.PresentationProfile.PresentWaitEnabled, ref first);
+            AppendBoolField(s_lineBuilder, "vulkan_display_timing_available", vulkanFrame.PresentationProfile.DisplayTimingAvailable, ref first);
+            AppendBoolField(s_lineBuilder, "vulkan_display_timing_enabled", vulkanFrame.PresentationProfile.DisplayTimingEnabled, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_queue_submit_admission_ms", vulkanFrame.Presentation.QueueSubmitAdmission.TotalMilliseconds, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_native_queue_submit_ms", vulkanFrame.Presentation.NativeQueueSubmit.TotalMilliseconds, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_queue_present_admission_ms", vulkanFrame.Presentation.QueuePresentAdmission.TotalMilliseconds, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_native_queue_present_ms", vulkanFrame.Presentation.NativeQueuePresent.TotalMilliseconds, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_acquire_unavailable_count", vulkanFrame.Presentation.AcquireUnavailableCount, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_frame_attributed_ms", vulkanFrame.Attribution.Attributed.TotalMilliseconds, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_frame_unattributed_ms", vulkanFrame.Attribution.Unattributed.TotalMilliseconds, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_frame_attributed_ratio", vulkanFrame.Attribution.AttributedRatio, ref first);
+            AppendBoolField(s_lineBuilder, "vulkan_frame_has_reportable_gap", vulkanFrame.Attribution.HasReportableGap, ref first);
+            AppendBoolField(s_lineBuilder, "vulkan_device_operational", vulkanFrame.DeviceDiagnostics.DeviceOperational, ref first);
+            AppendBoolField(s_lineBuilder, "vulkan_device_lost", vulkanFrame.DeviceDiagnostics.DeviceLost, ref first);
+            AppendBoolField(s_lineBuilder, "vulkan_device_fault_supported", vulkanFrame.DeviceDiagnostics.DeviceFaultSupported, ref first);
+            AppendBoolField(s_lineBuilder, "vulkan_device_fault_capture_active", vulkanFrame.DeviceDiagnostics.DeviceFaultCaptureActive, ref first);
+            AppendBoolField(s_lineBuilder, "vulkan_memory_budget_supported", vulkanFrame.DeviceDiagnostics.MemoryBudgetSupported, ref first);
+            AppendBoolField(s_lineBuilder, "vulkan_memory_budget_sample_valid", vulkanFrame.DeviceDiagnostics.MemoryBudgetSampleValid, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_device_local_usage_bytes", vulkanFrame.DeviceDiagnostics.DeviceLocalUsageBytes, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_device_local_budget_bytes", vulkanFrame.DeviceDiagnostics.DeviceLocalBudgetBytes, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_largest_device_local_heap_bytes", vulkanFrame.DeviceDiagnostics.LargestDeviceLocalHeapBytes, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_active_device_allocation_count", vulkanFrame.DeviceDiagnostics.ActiveAllocationCount, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_last_successful_submission_serial", vulkanFrame.DeviceDiagnostics.LastSuccessfulSubmissionSerial, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_last_successful_submission_frame_id", vulkanFrame.DeviceDiagnostics.LastSuccessfulSubmissionFrameId, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_last_successful_submission_frame_slot", vulkanFrame.DeviceDiagnostics.LastSuccessfulSubmissionFrameSlot, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_last_successful_submission_image_index", vulkanFrame.DeviceDiagnostics.LastSuccessfulSubmissionImageIndex, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_last_successful_wait_timeline_value", vulkanFrame.DeviceDiagnostics.LastSuccessfulWaitTimelineValue, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_last_successful_signal_timeline_value", vulkanFrame.DeviceDiagnostics.LastSuccessfulSignalTimelineValue, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_last_command_marker_serial", vulkanFrame.DeviceDiagnostics.LastCommandMarkerSerial, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_last_command_marker_generation", vulkanFrame.DeviceDiagnostics.LastCommandMarkerGeneration, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_descriptor_table_generation", vulkanFrame.DeviceDiagnostics.DescriptorTableGeneration, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_longest_native_driver_call_ms", vulkanFrame.DeviceDiagnostics.LongestNativeDriverCall.TotalMilliseconds, ref first);
+            AppendBoolField(s_lineBuilder, "vulkan_native_driver_call_exceeded_one_second", vulkanFrame.DeviceDiagnostics.NativeDriverCallExceededOneSecond, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_frame_tree_inclusive_ms", vulkanFrame.Tree.InclusiveElapsed.TotalMilliseconds, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_frame_tree_stage_exclusive_ms", vulkanFrame.Tree.StageExclusiveElapsed.TotalMilliseconds, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_frame_tree_root_exclusive_ms", vulkanFrame.Tree.RootExclusiveElapsed.TotalMilliseconds, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_frame_tree_work_ms", vulkanFrame.Tree.WorkElapsed.TotalMilliseconds, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_frame_tree_wait_ms", vulkanFrame.Tree.WaitElapsed.TotalMilliseconds, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_frame_tree_native_driver_ms", vulkanFrame.Tree.NativeDriverElapsed.TotalMilliseconds, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_frame_tree_external_runtime_ms", vulkanFrame.Tree.ExternalRuntimeElapsed.TotalMilliseconds, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_frame_tree_diagnostic_ms", vulkanFrame.Tree.DiagnosticElapsed.TotalMilliseconds, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_frame_tree_worker_overlap_ms", vulkanFrame.Tree.WorkerOverlapElapsed.TotalMilliseconds, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_frame_tree_required_output_critical_path_ms", vulkanFrame.Tree.RequiredOutputCriticalPathElapsed.TotalMilliseconds, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_causal_wait_count", vulkanFrame.CausalWaits.Count, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_causal_wait_dropped_count", vulkanFrame.CausalWaits.DroppedCount, ref first);
+            VulkanFrameCausalWait longestCausalWait = default;
+            for (int causalWaitIndex = 0; causalWaitIndex < vulkanFrame.CausalWaits.Count; causalWaitIndex++)
+            {
+                VulkanFrameCausalWait candidate = vulkanFrame.CausalWaits.Get(causalWaitIndex);
+                if (candidate.Elapsed > longestCausalWait.Elapsed)
+                    longestCausalWait = candidate;
+            }
+            AppendStringField(s_lineBuilder, "vulkan_longest_causal_wait_stage", longestCausalWait.Stage.ToString(), ref first);
+            AppendStringField(s_lineBuilder, "vulkan_longest_causal_wait_reason", longestCausalWait.Reason.ToString(), ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_longest_causal_wait_ms", longestCausalWait.Elapsed.TotalMilliseconds, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_longest_causal_wait_semaphore_target", longestCausalWait.SemaphoreTargetValue, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_longest_causal_wait_semaphore_completed", longestCausalWait.SemaphoreCompletedValue, ref first);
+            RenderForegroundWorkSnapshot foregroundWork = RenderForegroundWorkCoordinator.CaptureSnapshot();
+            AppendNumberField(s_lineBuilder, "vulkan_foreground_epoch", foregroundWork.ForegroundEpoch, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_exact_foreground_entries", foregroundWork.ExactForegroundEntries, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_background_slice_count", foregroundWork.BackgroundSlicesStarted, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_background_yield_count", foregroundWork.BackgroundYieldCount, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_background_resume_count", foregroundWork.BackgroundResumeCount, ref first);
             AppendVulkanFrameStageFields(s_lineBuilder, "frame_pacing", vulkanFrame.FramePacing, ref first);
             AppendVulkanFrameStageFields(s_lineBuilder, "snapshot_handoff", vulkanFrame.SnapshotHandoff, ref first);
             AppendVulkanFrameStageFields(s_lineBuilder, "completion_maintenance", vulkanFrame.CompletionMaintenance, ref first);
@@ -2622,6 +2708,8 @@ public static partial class Engine
             string VrDesktopAutoSkipWhenOverBudget,
             string VulkanRenderTargetModeEnvironment,
             string VulkanRenderTargetModeSetting,
+            string VulkanPresentationProfileEnvironment,
+            string VulkanPresentationProfileSetting,
             string VulkanPrimaryCommandBufferReusePolicy,
             bool VulkanPrimaryCommandBufferReuseEnabled,
             string VulkanObsHookPolicy,

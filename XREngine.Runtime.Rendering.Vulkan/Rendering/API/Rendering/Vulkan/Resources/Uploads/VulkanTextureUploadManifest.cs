@@ -12,6 +12,8 @@ internal sealed class VulkanTextureUploadManifest
         new EVulkanFrameDependencyState[Capacity];
     private readonly ulong[] _timelineValues = new ulong[Capacity];
     private readonly string?[] _failureDetails = new string?[Capacity];
+    private readonly EVulkanPresentNowFailureDisposition[] _failureDispositions =
+        new EVulkanPresentNowFailureDisposition[Capacity];
     private readonly int[] _index = new int[IndexCapacity];
     private readonly int[] _indexSlots = new int[Capacity];
     private readonly XRTexture2D?[] _unresolvedTextures =
@@ -26,6 +28,7 @@ internal sealed class VulkanTextureUploadManifest
     private int _unresolvedCount;
     private int _pinnedCount;
     private string? _captureFailureDetail;
+    private EVulkanPresentNowFailureDisposition _captureFailureDisposition;
     private ulong _progressVersion;
 
     internal bool RequiresExactDescriptorPublication { get; private set; }
@@ -62,6 +65,7 @@ internal sealed class VulkanTextureUploadManifest
         _states.AsSpan(0, _count).Clear();
         _timelineValues.AsSpan(0, _count).Clear();
         _failureDetails.AsSpan(0, _count).Clear();
+        _failureDispositions.AsSpan(0, _count).Clear();
         _unresolvedTextures.AsSpan(0, _unresolvedCount).Clear();
         _unresolvedGenerations.AsSpan(0, _unresolvedCount).Clear();
         for (int index = 0; index < _indexSlotCount; index++)
@@ -70,6 +74,8 @@ internal sealed class VulkanTextureUploadManifest
         _indexSlotCount = 0;
         _unresolvedCount = 0;
         _captureFailureDetail = null;
+        _captureFailureDisposition =
+            EVulkanPresentNowFailureDisposition.RendererTerminal;
         _progressVersion = 0UL;
         RequiresExactDescriptorPublication = requireExactDescriptorPublication;
     }
@@ -107,7 +113,9 @@ internal sealed class VulkanTextureUploadManifest
             VulkanTextureUploadGenerationEntry? entry = _pinnedEntries[index];
             if (record is not null && entry is not null)
             {
-                lock (record.Sync)
+                using (VulkanFrameLockScope.Enter(
+                           record.Sync,
+                           EVulkanFrameWaitReason.UploadLock))
                 {
                     if (entry.PinCount > 0)
                         entry.PinCount--;
@@ -222,7 +230,9 @@ internal sealed class VulkanTextureUploadManifest
     internal void ApplyDurableState(
         in VulkanTextureUploadTicket ticket,
         EVulkanFrameDependencyState state,
-        string? failureDetail)
+        string? failureDetail,
+        EVulkanPresentNowFailureDisposition failureDisposition =
+            EVulkanPresentNowFailureDisposition.RendererTerminal)
     {
         switch (state)
         {
@@ -242,18 +252,23 @@ internal sealed class VulkanTextureUploadManifest
                 _ = Fail(
                     ticket,
                     failureDetail ??
-                        "Required texture upload generation failed without a diagnostic.");
+                        "Required texture upload generation failed without a diagnostic.",
+                    failureDisposition);
                 break;
         }
     }
 
-    internal void FailCapture(string detail)
+    internal void FailCapture(
+        string detail,
+        EVulkanPresentNowFailureDisposition disposition =
+            EVulkanPresentNowFailureDisposition.RendererTerminal)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(detail);
         if (_captureFailureDetail is not null)
             return;
 
         _captureFailureDetail = detail;
+        _captureFailureDisposition = disposition;
         AdvanceProgress();
     }
 
@@ -326,7 +341,9 @@ internal sealed class VulkanTextureUploadManifest
 
     internal bool Fail(
         in VulkanTextureUploadTicket ticket,
-        string detail)
+        string detail,
+        EVulkanPresentNowFailureDisposition disposition =
+            EVulkanPresentNowFailureDisposition.RendererTerminal)
     {
         if (!TryFindIndex(in ticket, out int index, out _) ||
             _states[index] is EVulkanFrameDependencyState.Ready or
@@ -336,15 +353,19 @@ internal sealed class VulkanTextureUploadManifest
         }
 
         _failureDetails[index] = detail;
+        _failureDispositions[index] = disposition;
         _states[index] = EVulkanFrameDependencyState.TerminalFailed;
         AdvanceProgress();
         return true;
     }
 
-    internal void FailUnresolved(string detail)
+    internal void FailUnresolved(
+        string detail,
+        EVulkanPresentNowFailureDisposition disposition =
+            EVulkanPresentNowFailureDisposition.RendererTerminal)
     {
         if (_unresolvedCount != 0)
-            FailCapture(detail);
+            FailCapture(detail, disposition);
         for (int index = 0; index < _count; index++)
         {
             if (_states[index] is EVulkanFrameDependencyState.Ready or
@@ -354,6 +375,7 @@ internal sealed class VulkanTextureUploadManifest
             }
 
             _failureDetails[index] = detail;
+            _failureDispositions[index] = disposition;
             _states[index] = EVulkanFrameDependencyState.TerminalFailed;
             AdvanceProgress();
         }
@@ -381,12 +403,14 @@ internal sealed class VulkanTextureUploadManifest
 
     internal bool TryGetTerminalFailure(
         out VulkanTextureUploadTicket ticket,
-        out string detail)
+        out string detail,
+        out EVulkanPresentNowFailureDisposition disposition)
     {
         if (_captureFailureDetail is not null)
         {
             ticket = default;
             detail = _captureFailureDetail;
+            disposition = _captureFailureDisposition;
             return true;
         }
 
@@ -397,11 +421,13 @@ internal sealed class VulkanTextureUploadManifest
             ticket = _tickets[index];
             detail = _failureDetails[index] ??
                 "Required texture upload failed without a diagnostic.";
+            disposition = _failureDispositions[index];
             return true;
         }
 
         ticket = default;
         detail = string.Empty;
+        disposition = EVulkanPresentNowFailureDisposition.RendererTerminal;
         return false;
     }
 

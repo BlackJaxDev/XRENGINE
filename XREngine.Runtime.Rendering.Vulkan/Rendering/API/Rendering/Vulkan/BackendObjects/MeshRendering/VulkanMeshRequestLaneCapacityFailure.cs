@@ -25,5 +25,6 @@ internal readonly record struct VulkanMeshRequestLaneCapacityFailure(
         => $"FramePlanCapacityExceeded lane={AcceptedFrameLane} " +
            $"meshLane={Lane} actual={RequiredCapacity} " +
            $"configured={ConfiguredCapacity} " +
-           $"accepted={ActualOccupancy} rejected={totalRejectedCount}.";
+           $"accepted={ActualOccupancy} rejected={OverflowCount} " +
+           $"totalRejected={totalRejectedCount}.";
 }
