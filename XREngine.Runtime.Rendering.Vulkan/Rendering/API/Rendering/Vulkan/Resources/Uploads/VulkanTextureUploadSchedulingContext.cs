@@ -7,9 +7,7 @@ namespace XREngine.Rendering.Vulkan;
 internal readonly record struct VulkanTextureUploadSchedulingContext(
     VulkanBackendObjectContext BackendObjects,
     VulkanResourceRuntime Resources,
-    VulkanCommandRuntime Commands,
-    VulkanFrameOperationQueue Operations,
-    FrameOpContext FrameContext)
+    VulkanCommandRuntime Commands)
 {
     internal bool IsDeviceOperational => BackendObjects.IsDeviceOperational;
 }

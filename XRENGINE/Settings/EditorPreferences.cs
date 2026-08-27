@@ -898,66 +898,13 @@ namespace XREngine
 
         public void CopyFrom(EditorPreferences source)
         {
-            if (source is null)
+            if (source is null || ReferenceEquals(source, this))
                 return;
 
-            Theme.CopyFrom(source.Theme);
-            Debug.CopyFrom(source.Debug);
-            Viewport.CopyFrom(source.Viewport);
-            Selection.CopyFrom(source.Selection);
-            ConfirmBeforeEnteringPlayMode = source.ConfirmBeforeEnteringPlayMode;
-            ConfirmBeforeExitingPlayMode = source.ConfirmBeforeExitingPlayMode;
-            McpServerEnabled = source.McpServerEnabled;
-            McpServerPort = source.McpServerPort;
-            McpServerRequireAuth = source.McpServerRequireAuth;
-            McpServerAuthToken = source.McpServerAuthToken;
-            McpServerCorsAllowlist = source.McpServerCorsAllowlist;
-            McpServerMaxRequestBytes = source.McpServerMaxRequestBytes;
-            McpServerRequestTimeoutMs = source.McpServerRequestTimeoutMs;
-            McpServerReadOnly = source.McpServerReadOnly;
-            McpServerAllowedTools = source.McpServerAllowedTools;
-            McpServerDeniedTools = source.McpServerDeniedTools;
-            McpServerRateLimitEnabled = source.McpServerRateLimitEnabled;
-            McpServerRateLimitRequests = source.McpServerRateLimitRequests;
-            McpServerRateLimitWindowSeconds = source.McpServerRateLimitWindowSeconds;
-            McpServerIncludeStatusInPing = source.McpServerIncludeStatusInPing;
-            McpPermissionPolicy = source.McpPermissionPolicy;
-            McpDispatchMode = source.McpDispatchMode;
-
-            // MCP Assistant
-            McpAssistantProviderIndex = source.McpAssistantProviderIndex;
-            McpAssistantOpenAiApiKey = source.McpAssistantOpenAiApiKey;
-            McpAssistantAnthropicApiKey = source.McpAssistantAnthropicApiKey;
-            McpAssistantOpenAiModel = source.McpAssistantOpenAiModel;
-            McpAssistantOpenAiRealtimeModel = source.McpAssistantOpenAiRealtimeModel;
-            McpAssistantAnthropicModel = source.McpAssistantAnthropicModel;
-            McpAssistantMaxTokens = source.McpAssistantMaxTokens;
-            McpAssistantMaxAutoReprompts = source.McpAssistantMaxAutoReprompts;
-            McpAssistantAutoSummarizeNearContextLimit = source.McpAssistantAutoSummarizeNearContextLimit;
-            McpAssistantUseRealtimeWebSocket = source.McpAssistantUseRealtimeWebSocket;
-            McpAssistantAttachMcpServer = source.McpAssistantAttachMcpServer;
-            McpAssistantAutoScroll = source.McpAssistantAutoScroll;
-            McpAssistantAutoCameraView = source.McpAssistantAutoCameraView;
-            McpAssistantVerboseAiLogging = source.McpAssistantVerboseAiLogging;
-            FocusPreferredDownPitchDegrees = source.FocusPreferredDownPitchDegrees;
-            FocusMaximumDownPitchDegrees = source.FocusMaximumDownPitchDegrees;
-            McpAssistantGeminiApiKey = source.McpAssistantGeminiApiKey;
-            McpAssistantGeminiModel = source.McpAssistantGeminiModel;
-            McpAssistantGitHubModelsToken = source.McpAssistantGitHubModelsToken;
-            McpAssistantGitHubModelsModel = source.McpAssistantGitHubModelsModel;
-
-            // Secret env-var-name companions: copy the env-var indirection so CopyFrom preserves
-            // the source's persistence mode (file vs. environment variable) rather than baking
-            // the resolved value into the target's plaintext slot.
-            McpServerAuthTokenEnvVar = source.McpServerAuthTokenEnvVar;
-            McpAssistantOpenAiApiKeyEnvVar = source.McpAssistantOpenAiApiKeyEnvVar;
-            McpAssistantAnthropicApiKeyEnvVar = source.McpAssistantAnthropicApiKeyEnvVar;
-            McpAssistantGeminiApiKeyEnvVar = source.McpAssistantGeminiApiKeyEnvVar;
-            McpAssistantGitHubModelsTokenEnvVar = source.McpAssistantGitHubModelsTokenEnvVar;
-
-            // Importers
-            FbxImporterBackend = source.FbxImporterBackend;
-            GltfImporterBackend = source.GltfImporterBackend;
+            // Keep effective composition future-proof: every public writable preference
+            // declared on this root participates automatically, while inherited asset
+            // metadata and read-only runtime adapter groups remain excluded.
+            CopyDeclaredCloneableProperties(source, this);
         }
 
         public void ApplyOverrides(EditorPreferencesOverrides overrides)

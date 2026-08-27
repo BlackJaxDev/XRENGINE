@@ -166,7 +166,7 @@ namespace XREngine.Rendering.Vulkan
                 attempt.AcquireSemaphore,
                 attempt.PresentSemaphore);
             attempt.ExpectedPresentWaitSemaphore =
-                attempt.FrameTargetLease.SubmissionWaitSemaphore;
+                attempt.FrameTargetLease.SubmissionSignalSemaphore;
             attempt.AdvanceTo(EDesktopFramePhase.ImageAcquired);
             return EDesktopFrameFlow.Continue;
         }

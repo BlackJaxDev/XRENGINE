@@ -9,9 +9,10 @@ namespace XREngine.Animation.Importers;
 [MemoryPackable]
 public sealed partial class UnityAnimationImportManifest
 {
-    public const int CurrentSchemaVersion = 1;
+    public const int CurrentSchemaVersion = 2;
 
     public int SchemaVersion { get; set; } = CurrentSchemaVersion;
+    public int CapabilityContractVersion { get; set; } = UnityAnimationImportCapabilityContract.CurrentVersion;
     public UnityAnimationSourceIdentity SourceIdentity { get; set; } = new();
     public UnityAnimationCoordinateContract CoordinateContract { get; set; } = new();
     public UnityAnimationDomainCapability[] Domains { get; set; } = [];
@@ -55,11 +56,16 @@ public sealed partial class UnityAnimationImportManifest
     }
 
     public bool TryGetBlockingDiagnostic(out string diagnostic)
+        => TryGetBlockingDiagnostic(allowRuntimeAdapters: false, out diagnostic);
+
+    public bool TryGetBlockingDiagnostic(bool allowRuntimeAdapters, out string diagnostic)
     {
         for (int i = 0; i < Domains.Length; i++)
         {
             UnityAnimationDomainCapability domain = Domains[i];
             if (domain.State == EUnityAnimationCapabilityState.SupportedAndApplied)
+                continue;
+            if (allowRuntimeAdapters && domain.State == EUnityAnimationCapabilityState.RequiresRuntimeAdapter)
                 continue;
 
             string detail = domain.Diagnostics.Length > 0

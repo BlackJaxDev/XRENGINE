@@ -20,17 +20,31 @@ internal sealed partial class VulkanFrameLoop
                     in preparedSecondEye,
                     out FramePlan pairedLogicalPlan))
             {
-                return false;
+                throw CreateOpenXrEyePresentNowFailure(
+                    firstEye.OpenXrViewIndex,
+                    EVulkanPresentNowReadinessStage.FramePlanSeal,
+                    "parallel-paired-plan",
+                    "OpenXREyeSubmit -> parallel paired logical plan",
+                    "Foreground parallel-eye preparation returned no sealed paired plan.");
             }
 
-            preparedFirstEye = preparedFirstEye with { PairedLogicalPlan = pairedLogicalPlan };
-            preparedSecondEye = preparedSecondEye with { PairedLogicalPlan = pairedLogicalPlan };
+            preparedFirstEye = BindOpenXrEyeOutputContract(
+                in preparedFirstEye,
+                pairedLogicalPlan);
+            preparedSecondEye = BindOpenXrEyeOutputContract(
+                in preparedSecondEye,
+                pairedLogicalPlan);
         }
 
         if (!TryFreezeOpenXrEyeRecordWorkerInput(in preparedFirstEye, out OpenXrPreparedEyeRecordWorkerInput frozenFirstEye) ||
             !TryFreezeOpenXrEyeRecordWorkerInput(in preparedSecondEye, out OpenXrPreparedEyeRecordWorkerInput frozenSecondEye))
         {
-            return false;
+            throw CreateOpenXrEyePresentNowFailure(
+                firstEye.OpenXrViewIndex,
+                EVulkanPresentNowReadinessStage.FramePlanSeal,
+                "parallel-freeze",
+                "OpenXREyeSubmit -> parallel immutable worker inputs",
+                "Foreground parallel-eye freeze returned no exact worker input.");
         }
 
         VulkanOpenXrEyeWorkerCommandService workers = _commandRuntime.OpenXrEyeWorkers;
@@ -56,7 +70,12 @@ internal sealed partial class VulkanFrameLoop
         if (!batch.Left.Success || !batch.Right.Success)
         {
             LogOpenXrEyeRecordWorkerFailure(in batch);
-            return false;
+            throw CreateOpenXrEyePresentNowFailure(
+                firstEye.OpenXrViewIndex,
+                EVulkanPresentNowReadinessStage.PipelineCompilation,
+                "parallel-primary",
+                "OpenXREyeSubmit -> parallel exact primary recording",
+                "Foreground parallel eye recording returned an unsuccessful batch without a propagated exception.");
         }
 
         if (result.Submitted)
@@ -82,6 +101,9 @@ internal sealed partial class VulkanFrameLoop
             prepared.OpenXrViewIndex,
             prepared.OpenXrImageIndex,
             prepared.FrameDataSlotIndex,
+            prepared.LogicalViewId,
+            prepared.RequiredOutputIndex,
+            prepared.OutputContract,
             prepared.FrameOpsSignature,
             prepared.PlannerRevision,
             prepared.FrameOpContextId,

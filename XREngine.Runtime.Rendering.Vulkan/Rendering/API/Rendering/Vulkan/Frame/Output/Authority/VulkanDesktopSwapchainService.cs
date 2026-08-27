@@ -99,6 +99,7 @@ internal sealed unsafe partial class VulkanDesktopSwapchainService
                 _output.Desktop.Images?.Length
                     ?? throw new InvalidOperationException("Desktop images were not published."));
             _services.ReserveOpenXrFrameDataSlots(_output.Desktop.Images.Length);
+            EnsureMandatoryOutputPipelineForExistingImGuiContext();
             PublishPlannerExtent(_output.Desktop.Extent);
         }
         catch
@@ -250,6 +251,7 @@ internal sealed unsafe partial class VulkanDesktopSwapchainService
                     _services.CreateDesktopOutputArtifacts(
                         _output.Desktop.Images.Length);
                 _services.ReserveOpenXrFrameDataSlots(_output.Desktop.Images.Length);
+                EnsureMandatoryOutputPipelineForExistingImGuiContext();
                 ulong[] imageTimelineValues = new ulong[_output.Desktop.Images.Length];
                 if (oldGraphicsCompletionValue != 0)
                 {
@@ -545,6 +547,20 @@ internal sealed unsafe partial class VulkanDesktopSwapchainService
     private void PublishPlannerExtent(Extent2D extent)
     {
         _services.PublishDesktopSwapchainExtent(extent);
+    }
+
+    /// <summary>
+    /// A swapchain replacement changes the UI pipeline compatibility key. The
+    /// first generation may exist before an ImGui context, but once that context
+    /// has made the font descriptor resources resident every replacement must
+    /// rebuild the mandatory terminal pipeline before publication.
+    /// </summary>
+    private void EnsureMandatoryOutputPipelineForExistingImGuiContext()
+    {
+        if (!_output._imguiResources.FontReady)
+            return;
+
+        _imguiPipeline.EnsureMandatoryPresentNowPipeline();
     }
 
     /// <summary>

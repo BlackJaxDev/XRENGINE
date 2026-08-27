@@ -24,6 +24,104 @@ internal sealed class TextureStreamingRegistry
     public bool IsTracked(XRTexture2D texture)
         => _recordsByTexture.TryGetValue(texture, out _);
 
+    public bool TryGetGenerationState(
+        XRTexture2D texture,
+        out long publishedGeneration,
+        out long uploadGeneration,
+        out TextureUploadPriorityClass pendingPriorityClass,
+        out bool hasPendingTransition)
+    {
+        if (!_recordsByTexture.TryGetValue(
+                texture,
+                out ImportedTextureStreamingRecord? record))
+        {
+            publishedGeneration = 0L;
+            uploadGeneration = 0L;
+            pendingPriorityClass = TextureUploadPriorityClass.Background;
+            hasPendingTransition = false;
+            return false;
+        }
+
+        lock (record.Sync)
+        {
+            publishedGeneration = record.PublishedGeneration;
+            uploadGeneration = record.UploadGeneration;
+            pendingPriorityClass =
+                record.PendingTransitionUploadPriorityClass;
+            hasPendingTransition =
+                record.PendingLoadCts is not null ||
+                record.PendingMaxDimension != 0;
+            return true;
+        }
+    }
+
+    public void RecordTerminalGenerationFailure(
+        XRTexture2D texture,
+        long generation,
+        string detail)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(generation, 1L);
+        ArgumentException.ThrowIfNullOrWhiteSpace(detail);
+        if (!_recordsByTexture.TryGetValue(
+                texture,
+                out ImportedTextureStreamingRecord? record))
+        {
+            return;
+        }
+
+        lock (record.Sync)
+            record.RecordTerminalGenerationFailureNoLock(generation, detail);
+    }
+
+    public bool TryGetTerminalGenerationFailure(
+        XRTexture2D texture,
+        long generation,
+        out string detail)
+    {
+        if (_recordsByTexture.TryGetValue(
+                texture,
+                out ImportedTextureStreamingRecord? record))
+        {
+            lock (record.Sync)
+            {
+                if (record.TryGetTerminalGenerationFailureNoLock(
+                        generation,
+                        out string failure))
+                {
+                    detail = failure;
+                    return true;
+                }
+            }
+        }
+
+        detail = string.Empty;
+        return false;
+    }
+
+    public bool TryAcquirePublicationAuthority(
+        XRTexture2D texture,
+        long streamingGeneration,
+        out IDisposable? authority)
+    {
+        authority = null;
+        if (!_recordsByTexture.TryGetValue(
+                texture,
+                out ImportedTextureStreamingRecord? record))
+            return false;
+
+        Monitor.Enter(record.Sync);
+        if (record.UploadGeneration != streamingGeneration ||
+            record.PublicationEligibleGeneration != streamingGeneration ||
+            record.PublishedGeneration >= streamingGeneration)
+        {
+            Monitor.Exit(record.Sync);
+            return false;
+        }
+
+        authority = new TextureStreamingPublicationAuthority(record.Sync);
+        return true;
+    }
+
     public ImportedTextureStreamingRecord GetOrCreateRecord(
         XRTexture2D texture,
         string? filePath,

@@ -11,6 +11,12 @@ namespace XREngine.Animation
     [MemoryPackable(GenerateType.NoGenerate)]
     public partial class AnimStateMachine : XRAsset
     {
+        private static readonly string[] QuaternionComponentMethodStems =
+        [
+            "SetRootRotation",
+            "SetAnimatedIKRotation",
+        ];
+
         public enum AnimParameterType : byte
         {
             Bool = 1,
@@ -69,6 +75,35 @@ namespace XREngine.Animation
         [MemoryPackIgnore]
         internal AnimationValueStore ValueStore { get; } = new();
 
+        [MemoryPackIgnore]
+        private readonly UnityHumanoidMotionContributionBuffer _unityHumanoidContributions = new();
+
+        [MemoryPackIgnore]
+        private ulong _humanoidMotionContinuityVersion;
+
+        [MemoryPackIgnore]
+        public ulong HumanoidMotionContinuityVersion => _humanoidMotionContinuityVersion;
+
+        [MemoryPackIgnore]
+        public EAnimMotionContinuityChange LastHumanoidMotionContinuityChange { get; private set; }
+
+        /// <summary>
+        /// Exact weighted Unity humanoid leaf samples from the most recent graph evaluation.
+        /// The span remains valid until the next evaluation or deinitialization.
+        /// </summary>
+        public ReadOnlySpan<UnityHumanoidMotionContribution> UnityHumanoidMotionContributions
+            => _unityHumanoidContributions.Items;
+
+        public int UnityHumanoidMotionContributionCapacity
+            => _unityHumanoidContributions.Capacity;
+
+        /// <summary>
+        /// True when the current evaluation produced more active humanoid leaves than
+        /// the graph's preallocated contribution contract can represent.
+        /// </summary>
+        public bool UnityHumanoidMotionContributionsOverflowed
+            => _unityHumanoidContributions.Overflowed;
+
         /// <summary>
         /// Shared slot layout describing the number of slots per type.
         /// Built during <see cref="Initialize"/> after all curves are registered.
@@ -99,6 +134,7 @@ namespace XREngine.Animation
         /// </summary>
         private void AssignSlots()
         {
+            RegisterUnityHumanoidMirroredBindings();
             var layout = new AnimationSlotLayout();
             var slotsByPath = new Dictionary<string, AnimSlot>(StringComparer.Ordinal);
 
@@ -114,7 +150,7 @@ namespace XREngine.Animation
                 slotsByPath.Add(kvp.Key, slot);
             }
 
-            layout.QuaternionFloatGroups = BuildQuaternionFloatSlotGroups(slotsByPath);
+            layout.QuaternionFloatGroups = BuildQuaternionFloatSlotGroups(slotsByPath, _animatedCurves);
             SlotLayout = layout;
 
             // Build dense member array for ApplyAnimationValues
@@ -124,6 +160,7 @@ namespace XREngine.Animation
             ValueStore.Resize(layout);
 
             // Propagate layout to all layers and all motions in the tree
+            int stateMachineContributionCapacity = 0;
             foreach (var layer in Layers)
             {
                 if (layer is null)
@@ -132,9 +169,19 @@ namespace XREngine.Animation
                 layer.SlotLayout = layout;
                 layer.ValueStore.Resize(layout);
 
+                int layerContributionCapacity = 0;
                 foreach (var state in layer.States)
+                {
                     PropagateLayoutToMotion(state?.Motion, layout, slotsByPath);
+                    int stateContributionCapacity = state?.Motion?.PrepareUnityHumanoidContributionCapacity() ?? 0;
+                    state?.PrepareRuntimeEvaluation(layout, stateContributionCapacity);
+                    layerContributionCapacity += stateContributionCapacity;
+                }
+                int transitionContributionCapacity = checked(layerContributionCapacity * 2);
+                layer.PrepareUnityHumanoidContributionCapacity(transitionContributionCapacity);
+                stateMachineContributionCapacity += transitionContributionCapacity;
             }
+            _unityHumanoidContributions.EnsureCapacity(stateMachineContributionCapacity);
         }
 
         private static void PropagateLayoutToMotion(
@@ -156,29 +203,42 @@ namespace XREngine.Animation
             // Recurse into blend tree children
             switch (motion)
             {
+                case AnimationClip clip:
+                    clip.PrepareUnityHumanoidMirrorSlotBindings(layout, slotsByPath);
+                    clip.PrepareUnityHumanoidScalarQuaternionBindings(layout);
+                    clip.PrepareAdditivePoseEvaluation(layout);
+                    break;
                 case BlendTree1D bt1d:
                     foreach (var child in bt1d.Children)
                         PropagateLayoutToMotion(child.Motion, layout, slotsByPath);
+                    bt1d.PrepareRuntimeEvaluation(layout);
                     break;
                 case BlendTree2D bt2d:
                     foreach (var child in bt2d.Children)
                         PropagateLayoutToMotion(child.Motion, layout, slotsByPath);
+                    bt2d.PrepareRuntimeEvaluation(layout);
                     break;
                 case BlendTreeDirect btd:
                     foreach (var child in btd.Children)
                         PropagateLayoutToMotion(child.Motion, layout, slotsByPath);
+                    btd.PrepareRuntimeEvaluation(layout);
                     break;
             }
         }
 
         internal static AnimationQuaternionFloatSlotGroup[] BuildQuaternionFloatSlotGroups(
             IReadOnlyDictionary<string, AnimSlot> slotsByPath)
+            => BuildQuaternionFloatSlotGroups(slotsByPath, membersByPath: null);
+
+        private static AnimationQuaternionFloatSlotGroup[] BuildQuaternionFloatSlotGroups(
+            IReadOnlyDictionary<string, AnimSlot> slotsByPath,
+            IReadOnlyDictionary<string, AnimationMember>? membersByPath)
         {
             var groupsByTargetPath = new Dictionary<string, int[]>(StringComparer.Ordinal);
             foreach ((string path, AnimSlot slot) in slotsByPath)
             {
                 if (slot.Type != EAnimValueType.Float
-                    || !TryGetImportedBodyRotationComponent(path, out string targetPath, out int componentIndex))
+                    || !TryGetQuaternionFloatComponent(path, out string targetPath, out int componentIndex))
                     continue;
 
                 if (!groupsByTargetPath.TryGetValue(targetPath, out int[]? indices))
@@ -200,45 +260,100 @@ namespace XREngine.Animation
                 if (group.IsValid)
                     result.Add(group);
             }
+
+            if (membersByPath is null)
+                return [.. result];
+
+            Dictionary<UnityAnimationQuaternionBindingKey, int[]> unityBindingGroups = [];
+            foreach ((string path, AnimationMember member) in membersByPath)
+            {
+                if (!slotsByPath.TryGetValue(path, out AnimSlot slot)
+                    || slot.Type != EAnimValueType.Float
+                    || member.MemberType != EAnimationMemberType.Method
+                    || member.MemberName != "SetUnityAnimationFloat"
+                    || member.MethodArguments.Length == 0
+                    || member.MethodArguments[0] is not UnityAnimationBindingDescriptor binding
+                    || !UnityAnimationQuaternionBindingKey.TryCreate(binding, out UnityAnimationQuaternionBindingKey key))
+                    continue;
+
+                if (!unityBindingGroups.TryGetValue(key, out int[]? indices))
+                {
+                    indices = [-1, -1, -1, -1];
+                    unityBindingGroups.Add(key, indices);
+                }
+                indices[binding.Component] = slot.TypeIndex;
+            }
+
+            foreach (int[] indices in unityBindingGroups.Values)
+            {
+                var group = new AnimationQuaternionFloatSlotGroup(
+                    indices[0],
+                    indices[1],
+                    indices[2],
+                    indices[3]);
+                if (group.IsValid)
+                    result.Add(group);
+            }
             return [.. result];
         }
 
-        private static bool TryGetImportedBodyRotationComponent(
+        private static bool TryGetQuaternionFloatComponent(
             string path,
             out string targetPath,
             out int componentIndex)
         {
-            string methodName;
-            if (path.Contains("SetRootRotationX:<AnimatedValue>", StringComparison.Ordinal))
+            for (int stemIndex = 0; stemIndex < QuaternionComponentMethodStems.Length; stemIndex++)
             {
-                methodName = "SetRootRotationX";
-                componentIndex = 0;
-            }
-            else if (path.Contains("SetRootRotationY:<AnimatedValue>", StringComparison.Ordinal))
-            {
-                methodName = "SetRootRotationY";
-                componentIndex = 1;
-            }
-            else if (path.Contains("SetRootRotationZ:<AnimatedValue>", StringComparison.Ordinal))
-            {
-                methodName = "SetRootRotationZ";
-                componentIndex = 2;
-            }
-            else if (path.Contains("SetRootRotationW:<AnimatedValue>", StringComparison.Ordinal))
-            {
-                methodName = "SetRootRotationW";
-                componentIndex = 3;
-            }
-            else
-            {
-                targetPath = string.Empty;
-                componentIndex = -1;
-                return false;
+                string stem = QuaternionComponentMethodStems[stemIndex];
+                for (int index = 0; index < 4; index++)
+                {
+                    char suffix = index switch
+                    {
+                        0 => 'X',
+                        1 => 'Y',
+                        2 => 'Z',
+                        _ => 'W',
+                    };
+                    string memberName = $"{stem}{suffix}";
+                    int memberIndex = path.LastIndexOf(memberName, StringComparison.Ordinal);
+                    if (memberIndex < 0)
+                        continue;
+
+                    int suffixStart = memberIndex + memberName.Length;
+                    if (suffixStart >= path.Length || path[suffixStart] != ':')
+                        continue;
+
+                    targetPath = string.Concat(
+                        path.AsSpan(0, memberIndex),
+                        stem,
+                        path.AsSpan(suffixStart));
+                    componentIndex = index;
+                    return true;
+                }
             }
 
-            int methodIndex = path.LastIndexOf(methodName, StringComparison.Ordinal);
-            targetPath = methodIndex >= 0 ? path[..methodIndex] : string.Empty;
-            return methodIndex >= 0;
+            const string propertyStem = "Quaternion";
+            for (int index = 0; index < 4; index++)
+            {
+                char suffix = index switch
+                {
+                    0 => 'X',
+                    1 => 'Y',
+                    2 => 'Z',
+                    _ => 'W',
+                };
+                string propertyName = $"{propertyStem}{suffix}";
+                if (!path.EndsWith(propertyName, StringComparison.Ordinal))
+                    continue;
+
+                targetPath = path[..^1];
+                componentIndex = index;
+                return true;
+            }
+
+            targetPath = string.Empty;
+            componentIndex = -1;
+            return false;
         }
 
         public void Deinitialize()
@@ -248,6 +363,14 @@ namespace XREngine.Animation
 
             SlotLayout = null;
             _animatedMembersArray = [];
+            _animatedCurves.Clear();
+            _unityHumanoidContributions.Clear();
+        }
+
+        internal void NotifyHumanoidMotionContinuityChanged(EAnimMotionContinuityChange change)
+        {
+            LastHumanoidMotionContinuityChange = change;
+            _humanoidMotionContinuityVersion = unchecked(_humanoidMotionContinuityVersion + 1UL);
         }
 
         public void ResetAnimatedState()
@@ -301,12 +424,33 @@ namespace XREngine.Animation
         /// </summary>
         public void EvaluateAnimationValues(object? rootObject, float delta)
         {
-            ValueStore.Clear();
+            InitializeValueStoreFromDefaults();
+            _unityHumanoidContributions.Clear();
             for (int i = 0; i < Layers.Count; ++i)
             {
                 AnimLayer layer = Layers[i];
                 layer.EvaluationTick(rootObject, delta, Variables);
                 CombineAnimationValues(layer);
+                CombineUnityHumanoidMotionContributions(layer);
+            }
+        }
+
+        private void RegisterUnityHumanoidMirroredBindings()
+        {
+            KeyValuePair<string, AnimationMember>[] registered = [.. _animatedCurves];
+            for (int i = 0; i < registered.Length; i++)
+            {
+                (string sourcePath, AnimationMember sourceMember) = registered[i];
+                if (!AnimationClip.TryCreateUnityHumanoidMirroredBinding(
+                        sourcePath,
+                        sourceMember,
+                        out string mirroredPath,
+                        out AnimationMember? mirroredMember)
+                    || mirroredMember is null
+                    || _animatedCurves.ContainsKey(mirroredPath))
+                    continue;
+
+                _animatedCurves.Add(mirroredPath, mirroredMember);
             }
         }
 
@@ -319,138 +463,79 @@ namespace XREngine.Animation
         /// <inheritdoc cref="EvaluateAnimationValues(object?, float)"/>
         public void EvaluateAnimationValues(object? rootObject, long deltaTicks)
         {
-            ValueStore.Clear();
+            InitializeValueStoreFromDefaults();
+            _unityHumanoidContributions.Clear();
             for (int i = 0; i < Layers.Count; ++i)
             {
                 AnimLayer layer = Layers[i];
                 layer.EvaluationTick(rootObject, deltaTicks, Variables);
                 CombineAnimationValues(layer);
+                CombineUnityHumanoidMotionContributions(layer);
             }
+        }
+
+        private void CombineUnityHumanoidMotionContributions(AnimLayer layer)
+        {
+            float layerWeight = float.IsFinite(layer.Weight)
+                ? Math.Clamp(layer.Weight, 0.0f, 1.0f)
+                : 0.0f;
+            if (layerWeight <= 0.0f)
+                return;
+
+            if (layer.ApplyType == EApplyType.Additive)
+            {
+                _unityHumanoidContributions.AppendScaled(
+                    layer.UnityHumanoidContributions,
+                    layerWeight,
+                    EUnityHumanoidMotionContributionType.Additive);
+                return;
+            }
+
+            _unityHumanoidContributions.AttenuateOverride(1.0f - layerWeight);
+            _unityHumanoidContributions.AppendScaled(
+                layer.UnityHumanoidContributions,
+                layerWeight,
+                EUnityHumanoidMotionContributionType.Override);
         }
 
         /// <summary>
         /// Seeks the current and transitioning motions on every layer to one exact time.
         /// </summary>
-        public void SeekActiveMotions(float timeSeconds)
+        public void SeekActiveMotions(float timeSeconds, bool collectEvents = false)
         {
             for (int i = 0; i < Layers.Count; i++)
-                Layers[i]?.SeekActiveMotionPlayback(timeSeconds);
+                Layers[i]?.SeekActiveMotionPlayback(timeSeconds, collectEvents);
         }
 
-        /// <summary>
-        /// Resolves the single active humanoid root-motion leaf supported by Phase 6.
-        /// Multi-leaf root blending is rejected explicitly until Phase 7 evaluates and blends
-        /// independent leaf results.
-        /// </summary>
-        public bool TryResolveHumanoidRootMotionProjection(
-            out UnityHumanoidClipRootMotionSettings? settings,
-            out string? calibrationClipName,
-            out AnimationClip? contributingClip,
-            out string diagnostic)
+        /// <summary>Raised in deterministic layer, state, leaf, and source-event order.</summary>
+        public event Action<UnityAnimationEventOccurrence>? UnityAnimationEventTriggered;
+
+        internal void DispatchUnityAnimationEvents(AnimState? state)
         {
-            settings = null;
-            calibrationClipName = null;
-            contributingClip = null;
-            diagnostic = string.Empty;
-            int contributorCount = 0;
-
-            for (int i = 0; i < Layers.Count; i++)
-            {
-                AnimLayer? layer = Layers[i];
-                AccumulateHumanoidRootMotionProjection(
-                    layer?.CurrentState?.Motion,
-                    ref settings,
-                    ref calibrationClipName,
-                    ref contributingClip,
-                    ref contributorCount);
-                AccumulateHumanoidRootMotionProjection(
-                    layer?.NextState?.Motion,
-                    ref settings,
-                    ref calibrationClipName,
-                    ref contributingClip,
-                    ref contributorCount);
-            }
-
-            if (contributorCount > 1)
-            {
-                settings = null;
-                calibrationClipName = null;
-                contributingClip = null;
-                diagnostic =
-                    "Phase 6 supports exactly one active humanoid root-motion leaf; "
-                    + $"the current state-machine sample has {contributorCount}. Multi-leaf root blending belongs to Phase 7.";
-                return false;
-            }
-            return true;
-        }
-
-        private static void AccumulateHumanoidRootMotionProjection(
-            MotionBase? motion,
-            ref UnityHumanoidClipRootMotionSettings? settings,
-            ref string? calibrationClipName,
-            ref AnimationClip? contributingClip,
-            ref int contributorCount)
-        {
-            if (motion is null)
+            if (state is null || state.UnityAnimationEvents.Count == 0)
                 return;
 
-            switch (motion)
-            {
-                case AnimationClip clip:
-                    if (!clip.HasRootMotion || clip.UnityHumanoidRootMotionSettings is not { } clipSettings)
-                        return;
-
-                    contributorCount++;
-                    if (contributorCount == 1)
-                    {
-                        settings = clipSettings;
-                        calibrationClipName = clip.Name;
-                        contributingClip = clip;
-                    }
-                    return;
-
-                case BlendTree1D tree1D:
-                    foreach (BlendTree1D.Child child in tree1D.Children)
-                        AccumulateHumanoidRootMotionProjection(
-                            child.Motion,
-                            ref settings,
-                            ref calibrationClipName,
-                            ref contributingClip,
-                            ref contributorCount);
-                    return;
-
-                case BlendTree2D tree2D:
-                    foreach (BlendTree2D.Child child in tree2D.Children)
-                        AccumulateHumanoidRootMotionProjection(
-                            child.Motion,
-                            ref settings,
-                            ref calibrationClipName,
-                            ref contributingClip,
-                            ref contributorCount);
-                    return;
-
-                case BlendTreeDirect directTree:
-                    foreach (BlendTreeDirect.Child child in directTree.Children)
-                        AccumulateHumanoidRootMotionProjection(
-                            child.Motion,
-                            ref settings,
-                            ref calibrationClipName,
-                            ref contributingClip,
-                            ref contributorCount);
-                    return;
-            }
+            foreach (ref readonly UnityAnimationEventOccurrence occurrence in state.UnityAnimationEvents.Items)
+                UnityAnimationEventTriggered?.Invoke(occurrence with { StateName = state.Name });
+            state.UnityAnimationEvents.Clear();
         }
 
         private void CombineAnimationValues(AnimLayer layer)
         {
+            float layerWeight = float.IsFinite(layer.Weight)
+                ? Math.Clamp(layer.Weight, 0.0f, 1.0f)
+                : 0.0f;
+            if (layerWeight <= 0.0f)
+                return;
+
             // Typed store path: single bulk operation, no locks, no string hashing
             if (SlotLayout is not null && layer.SlotLayout is not null)
             {
                 bool additive = layer.ApplyType == EApplyType.Additive;
                 if (additive)
-                    ValueStore.AddFrom(layer.ValueStore);
+                    ValueStore.AddFrom(layer.ValueStore, layerWeight);
                 else
-                    ValueStore.OverrideFrom(layer.ValueStore);
+                    ValueStore.OverrideFrom(layer.ValueStore, layerWeight);
                 return;
             }
 
@@ -486,6 +571,16 @@ namespace XREngine.Animation
                     }
                 }
             }
+        }
+
+        private void InitializeValueStoreFromDefaults()
+        {
+            ValueStore.Clear();
+            if (SlotLayout is null)
+                return;
+
+            for (int i = 0; i < _animatedMembersArray.Length; i++)
+                _animatedMembersArray[i].WriteDefaultToStore(ValueStore);
         }
 
         private static object? AddValues(object? currentValue, object? layerValue) => currentValue switch

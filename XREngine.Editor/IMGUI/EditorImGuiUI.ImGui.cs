@@ -1497,8 +1497,8 @@ public static partial class EditorImGuiUI
 
             if (ImGui.BeginMenu("Game Project"))
             {
-                if (ImGui.MenuItem("Game Settings", null, false, Engine.GameSettings is not null))
-                    OpenSettingsInInspector(Engine.GameSettings, "Game Settings");
+                if (ImGui.MenuItem("Game Settings", null, false, Engine.PersistentGameSettings is not null))
+                    OpenSettingsInInspector(Engine.PersistentGameSettings, "Game Settings");
 
                 if (ImGui.MenuItem("User Settings", null, false, Engine.UserSettings is not null))
                     OpenSettingsInInspector(Engine.UserSettings, "User Settings");

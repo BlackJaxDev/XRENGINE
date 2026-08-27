@@ -100,13 +100,56 @@ internal sealed class VulkanFinalPresentationLedgerState
         }
     }
 
+    /// <summary>
+    /// Captures the latest diagnostic observation for one descriptor slot. If
+    /// diagnostics were enabled or cleared after the native descriptor was
+    /// already published, reconstructs the observation from the authoritative
+    /// presentation-source receipt instead of requiring a redundant write.
+    /// </summary>
     internal VulkanFinalPresentationDescriptorObservation CaptureLatestDescriptor(
-        int descriptorSlot)
+        int descriptorSlot,
+        ulong frameNumber,
+        in VulkanPresentationSourceTuple source)
     {
         lock (_sync)
-            return (uint)descriptorSlot < (uint)_latestDescriptors.Length
-                ? _latestDescriptors[descriptorSlot]
-                : default;
+        {
+            if ((uint)descriptorSlot >= (uint)_latestDescriptors.Length)
+                return default;
+
+            ref VulkanFinalPresentationDescriptorObservation latest =
+                ref _latestDescriptors[descriptorSlot];
+            bool latestMatchesPublication = latest.Sequence != 0 &&
+                latest.DescriptorSlot == descriptorSlot &&
+                latest.DescriptorSet == source.DescriptorSet.Handle &&
+                latest.ImageView == source.ImageView.Handle &&
+                latest.Sampler == source.Sampler.Handle;
+            if (latestMatchesPublication ||
+                !source.IsComplete ||
+                source.DescriptorSlot != descriptorSlot)
+            {
+                return latest;
+            }
+
+            // TryBindDescriptor publishes this receipt only after the exact
+            // SourceTexture write/match succeeds. It remains valid across a
+            // tooling-only ledger clear even when no native rewrite is needed.
+            latest = new VulkanFinalPresentationDescriptorObservation(
+                ++_descriptorSequence,
+                frameNumber,
+                descriptorSlot,
+                unchecked((ulong)source.OwningCommandArtifact.Handle),
+                source.DescriptorSet.Handle,
+                Set: 0U,
+                Binding: 0U,
+                BindingName: "SourceTexture",
+                source.ImageView.Handle,
+                source.Sampler.Handle,
+                source.ExpectedLayout,
+                source.DescriptorPublicationGeneration,
+                WriteMatched: true,
+                WriteSucceeded: true);
+            return latest;
+        }
     }
 
     internal void Append(in VulkanFinalPresentationLedgerEntry entry)

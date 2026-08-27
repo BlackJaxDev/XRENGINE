@@ -22,6 +22,8 @@ internal sealed class VulkanImportedTexturePendingUpload(
     Sampler sampler,
     Format format,
     ImageAspectFlags aspectMask,
+    ImageUsageFlags usage,
+    ImageLayout finalLayout,
     Extent3D extent,
     uint mipLevels,
     uint arrayLayers,
@@ -45,6 +47,16 @@ internal sealed class VulkanImportedTexturePendingUpload(
     public Sampler Sampler { get; private set; } = sampler;
     public Format Format { get; } = format;
     public ImageAspectFlags AspectMask { get; } = aspectMask;
+    public ImageUsageFlags Usage { get; } = usage;
+    public ImageLayout FinalLayout { get; } = finalLayout;
+    public AccessFlags FinalAccessMask { get; } =
+        finalLayout == ImageLayout.General
+            ? AccessFlags.ShaderReadBit | AccessFlags.ShaderWriteBit
+            : AccessFlags.ShaderReadBit;
+    public PipelineStageFlags FinalPipelineStages { get; } =
+        PipelineStageFlags.VertexShaderBit |
+        PipelineStageFlags.FragmentShaderBit |
+        PipelineStageFlags.ComputeShaderBit;
     public Extent3D Extent { get; } = extent;
     public uint MipLevels { get; } = mipLevels;
     public uint ArrayLayers { get; } = arrayLayers;
@@ -84,6 +96,10 @@ internal sealed class VulkanImportedTexturePendingUpload(
 
     public void DetachPublishedImageHandles()
     {
+        // Publication has transferred ownership to the texture wrapper. Any
+        // later cleanup path must be a no-op even if old-generation retirement
+        // or telemetry reports an exception after the descriptor commit.
+        Interlocked.Exchange(ref _preparedResourcesReleased, 1);
         Image = default;
         Memory = default;
         ImageView = default;

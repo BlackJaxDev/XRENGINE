@@ -90,9 +90,7 @@ internal sealed partial class VulkanFrameLoop : IVulkanTextureUploadScheduler
             new VulkanTextureUploadSchedulingContext(
                 BackendObjectContext,
                 _resourceRuntime,
-                _commandRuntime,
-                _frameOperationQueue,
-                CaptureFrameOpContextOrLastActive()),
+                _commandRuntime),
             texture,
             residentData,
             includeMipChain,

@@ -7,6 +7,7 @@ namespace XREngine.Animation.Importers;
 public enum EUnityAnimationCapabilityState
 {
     SupportedAndApplied,
+    RequiresRuntimeAdapter,
     PreservedNotExecutable,
     Unsupported,
 }

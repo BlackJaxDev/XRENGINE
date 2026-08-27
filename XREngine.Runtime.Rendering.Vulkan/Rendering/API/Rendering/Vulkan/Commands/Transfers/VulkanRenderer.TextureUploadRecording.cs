@@ -210,9 +210,9 @@ namespace XREngine.Rendering.Vulkan
             {
                 SType = StructureType.ImageMemoryBarrier,
                 SrcAccessMask = AccessFlags.TransferWriteBit,
-                DstAccessMask = AccessFlags.ShaderReadBit,
+                DstAccessMask = upload.FinalAccessMask,
                 OldLayout = ImageLayout.TransferDstOptimal,
-                NewLayout = ImageLayout.ShaderReadOnlyOptimal,
+                NewLayout = upload.FinalLayout,
                 SrcQueueFamilyIndex = Vk.QueueFamilyIgnored,
                 DstQueueFamilyIndex = Vk.QueueFamilyIgnored,
                 Image = upload.Image,
@@ -222,7 +222,7 @@ namespace XREngine.Rendering.Vulkan
             CmdPipelineBarrierTracked(
                 commandBuffer,
                 PipelineStageFlags.TransferBit,
-                PipelineStageFlags.FragmentShaderBit | PipelineStageFlags.ComputeShaderBit,
+                upload.FinalPipelineStages,
                 0,
                 0,
                 null,
@@ -272,7 +272,12 @@ namespace XREngine.Rendering.Vulkan
                 return;
 
             for (int i = 0; i < _textureUploadPublicationState.RecordedForSubmit.Count; i++)
-                PublishRecordedTextureUploadAfterGpuCompletion(_textureUploadPublicationState.RecordedForSubmit[i], uploadSource);
+            {
+                ResourceRuntime.Uploads.PublishCompletedRecordedTextureUpload(
+                    ResourceRuntime,
+                    _textureUploadPublicationState.RecordedForSubmit[i],
+                    uploadSource);
+            }
 
             _textureUploadPublicationState.RecordedForSubmit.Clear();
         }
@@ -294,7 +299,12 @@ namespace XREngine.Rendering.Vulkan
                 return;
 
             for (int i = 0; i < uploads.Count; i++)
-                PublishRecordedTextureUploadAfterGpuCompletion(uploads[i], uploadSource);
+            {
+                ResourceRuntime.Uploads.PublishCompletedRecordedTextureUpload(
+                    ResourceRuntime,
+                    uploads[i],
+                    uploadSource);
+            }
 
             uploads.Clear();
         }
@@ -356,94 +366,6 @@ namespace XREngine.Rendering.Vulkan
                 upload.Texture.ReleasePreparedImportedUploadResources(upload);
 
             InvokeTextureUploadCanceled(upload);
-        }
-
-        private void PublishRecordedTextureUploadAfterGpuCompletion(
-            VulkanImportedTexturePendingUpload upload,
-            string uploadSource)
-        {
-            VulkanImportedTextureUploadRequest request = upload.Request;
-            if (!upload.ShouldPublish())
-            {
-                upload.Texture.ReleasePreparedImportedUploadResources(upload);
-                ResourceRuntime.Uploads.RecordState(
-                    request,
-                    VulkanTextureUploadGenerationState.Canceled,
-                    $"request became stale before {uploadSource} descriptor publication");
-                InvokeTextureUploadCanceled(upload);
-                return;
-            }
-
-            ResourceRuntime.Uploads.RecordState(
-                request,
-                VulkanTextureUploadGenerationState.Uploaded,
-                $"{uploadSource} recorded upload completed");
-            ResourceRuntime.Uploads.RecordState(
-                request,
-                VulkanTextureUploadGenerationState.DescriptorPublishPending,
-                $"publicationToken={upload.PublicationToken}");
-
-            long publicationStart = TextureRuntimeDiagnostics.StartTiming();
-            upload.Texture.PublishSynchronizedImportedTextureUpload(upload);
-            upload.MarkPublished();
-            RetireTextureUploadStagingResources(upload);
-            TextureRuntimeDiagnostics.LogVulkanImportedTextureUploadLatency(
-                RuntimeRenderingHostServices.FrameTiming.LastRenderTimestampTicks,
-                request.TextureName,
-                request.SourcePath,
-                request.StreamingGeneration,
-                upload.PublicationToken,
-                "uploadRecordToDescriptorPublication",
-                upload.RecordTimestamp == 0L ? 0.0 : TextureRuntimeDiagnostics.ElapsedMilliseconds(upload.RecordTimestamp));
-            TextureRuntimeDiagnostics.LogVulkanImportedTextureUploadLatency(
-                RuntimeRenderingHostServices.FrameTiming.LastRenderTimestampTicks,
-                request.TextureName,
-                request.SourcePath,
-                request.StreamingGeneration,
-                upload.PublicationToken,
-                "publicationToOldResourceRetirementEnqueue",
-                TextureRuntimeDiagnostics.ElapsedMilliseconds(publicationStart));
-
-            ResourceRuntime.Uploads.RecordState(
-                request,
-                VulkanTextureUploadGenerationState.Published,
-                $"publicationToken={upload.PublicationToken}");
-            ResourceRuntime.Uploads.RecordState(
-                request,
-                VulkanTextureUploadGenerationState.Retired,
-                "old texture and staging resources enqueued for frame-slot retirement");
-            InvokeTextureUploadFinished(upload);
-        }
-
-        private void RetireTextureUploadStagingResources(VulkanImportedTexturePendingUpload upload)
-        {
-            if (!upload.TryMarkStagingResourcesReleased())
-                return;
-
-            for (int i = 0; i < upload.StagingResources.Length; i++)
-            {
-                VulkanImportedTextureUploadStagingResource staging = upload.StagingResources[i];
-                if (!staging.Slice.IsValid)
-                    RetireUploadBuffer(
-                        staging.Buffer,
-                        staging.Memory,
-                        "TextureUpload.Staging");
-            }
-        }
-
-        private static void InvokeTextureUploadFinished(VulkanImportedTexturePendingUpload upload)
-        {
-            if (!upload.TryGetTexture(out XRTexture2D? texture) || texture is null)
-                return;
-
-            try
-            {
-                upload.OnFinished?.Invoke(texture);
-            }
-            catch (Exception ex)
-            {
-                upload.OnError?.Invoke(ex);
-            }
         }
 
         private static void InvokeTextureUploadCanceled(VulkanImportedTexturePendingUpload upload)

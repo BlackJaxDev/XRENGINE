@@ -18,6 +18,7 @@ namespace XREngine.Animation
         
         protected override int LerpValues(int t1, int t2, float time) => (int)Interp.Lerp(t1, t2, time);
         protected override float[] GetComponents(int value) => [value];
+        protected override int ScaleValue(int value, float scale) => (int)(value * scale);
         protected override int GetMaxValue() => int.MaxValue;
         protected override int GetMinValue() => int.MinValue;
         protected override float GetVelocityMagnitude()

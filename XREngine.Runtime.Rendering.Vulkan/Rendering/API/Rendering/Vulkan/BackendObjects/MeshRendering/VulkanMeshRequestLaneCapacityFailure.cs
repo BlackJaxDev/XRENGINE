@@ -9,4 +9,21 @@ internal readonly record struct VulkanMeshRequestLaneCapacityFailure(
     int OverflowCount)
 {
     public bool HasFailure => OverflowCount > 0;
+
+    internal EVulkanAcceptedFrameLane AcceptedFrameLane => Lane switch
+    {
+        EVulkanMeshRequestLane.TerminalComposition =>
+            EVulkanAcceptedFrameLane.Terminal,
+        EVulkanMeshRequestLane.Ui => EVulkanAcceptedFrameLane.Ui,
+        EVulkanMeshRequestLane.MainScene =>
+            EVulkanAcceptedFrameLane.MainScene,
+        EVulkanMeshRequestLane.Shadow => EVulkanAcceptedFrameLane.Shadow,
+        _ => throw new ArgumentOutOfRangeException(nameof(Lane)),
+    };
+
+    internal string FormatDiagnostic(int totalRejectedCount)
+        => $"FramePlanCapacityExceeded lane={AcceptedFrameLane} " +
+           $"meshLane={Lane} actual={RequiredCapacity} " +
+           $"configured={ConfiguredCapacity} " +
+           $"accepted={ActualOccupancy} rejected={totalRejectedCount}.";
 }

@@ -10,6 +10,11 @@ internal sealed class FramePlan
     private FrameOperationStream _operations = new();
     private FrameOperationStream _dynamicOverlayOperations = new();
     private FrameOperationStream _textureUploadOperations = new();
+    // OpenXR can freeze two eye inputs concurrently. Keep a separate bounded
+    // header/resource-use view for each eye so both workers can consume the
+    // same immutable payload columns without a per-eye heap allocation.
+    private readonly FrameOperationStream[] _logicalViewOperations;
+    private readonly ulong[] _logicalViewIds;
     private OutputRequest[] _outputs = Array.Empty<OutputRequest>();
     private RenderOutputRequest[] _outputRequests = Array.Empty<RenderOutputRequest>();
     private RenderOutputSchedulingDecision[] _outputDecisions =
@@ -41,6 +46,12 @@ internal sealed class FramePlan
     internal ulong StaticOperationSignature { get; private set; }
     internal ulong DynamicOverlaySignature { get; private set; }
     internal ulong RenderGraphPlanSignature { get; private set; }
+    /// <summary>
+    /// The PresentNow transaction had no authored terminal producer, so native
+    /// recording must write a deterministic fresh full-surface clear instead
+    /// of replaying or preserving an older presentation source.
+    /// </summary>
+    internal bool RequiresFreshEmptyTerminalWrite { get; private set; }
     internal ViewSetPlan ViewSet { get; }
     internal bool IsSealed { get; private set; }
     internal int OperationCount => _operationCount;
@@ -95,6 +106,27 @@ internal sealed class FramePlan
         return new FrameOperationSequence(_textureUploadOperations);
     }
 
+    internal bool RequiresAcquiredStreamlineUiImage
+    {
+        get
+        {
+            EnsureSealed();
+            return _operations.Contains(
+                EVulkanPrimaryPlanNodeKind.DlssFrameGeneration);
+        }
+    }
+
+    /// <summary>
+    /// Applies the one acquired-image-dependent payload variant after late WSI
+    /// acquire. No logical producer content is rebuilt or re-admitted.
+    /// </summary>
+    internal bool BindAcquiredStreamlineUiImage(
+        in VulkanStreamlineImage uiImage)
+    {
+        EnsureSealed();
+        return _operations.BindAcquiredStreamlineUiImage(uiImage) > 0;
+    }
+
     /// <summary>
     /// Returns a header-only logical-view slice over the plan's already sealed
     /// payload store. No eye authoring operation is inspected or lowered here.
@@ -105,14 +137,29 @@ internal sealed class FramePlan
         EnsureSealed();
         if (logicalViewId == 0UL)
             throw new ArgumentOutOfRangeException(nameof(logicalViewId));
-        FrameOperationStream slice = _operations.CreateLogicalViewSlice(logicalViewId);
+        FrameOperationStream slice = GetLogicalViewSlice(logicalViewId);
         if (slice.Count == 0)
             throw new InvalidOperationException("The sealed frame plan has no operations for the requested logical view.");
         return new FrameOperationSequence(slice);
     }
 
-    internal FramePlan(ViewSetPlan viewSet)
-        => ViewSet = viewSet;
+    internal FramePlan(
+        ViewSetPlan viewSet,
+        FrameOperationStream staticOperationStorage)
+    {
+        ArgumentNullException.ThrowIfNull(staticOperationStorage);
+        ViewSet = viewSet;
+        _logicalViewOperations =
+        [
+            staticOperationStorage.CreateLogicalViewStorage(
+                staticOperationStorage.Capacity,
+                staticOperationStorage.ResourceUseCapacity),
+            staticOperationStorage.CreateLogicalViewStorage(
+                staticOperationStorage.Capacity,
+                staticOperationStorage.ResourceUseCapacity),
+        ];
+        _logicalViewIds = new ulong[_logicalViewOperations.Length];
+    }
 
     internal void Publish(
         int frameSlot,
@@ -139,7 +186,8 @@ internal sealed class FramePlan
         FrameOpContext[] staticPlannerContexts,
         VulkanRenderGraphPlan[] staticPlannerContextPlans,
         int staticPlannerContextKeyCount,
-        ulong renderGraphPlanSignature)
+        ulong renderGraphPlanSignature,
+        bool requiresFreshEmptyTerminalWrite)
     {
         lock (_leaseGate)
         {
@@ -155,6 +203,8 @@ internal sealed class FramePlan
             StaticOperationSignature = staticOperationSignature;
             DynamicOverlaySignature = dynamicOverlaySignature;
             RenderGraphPlanSignature = renderGraphPlanSignature;
+            RequiresFreshEmptyTerminalWrite =
+                requiresFreshEmptyTerminalWrite;
             _operations = operations;
             _dynamicOverlayOperations = dynamicOverlayOperations;
             _textureUploadOperations = textureUploadOperations;
@@ -175,6 +225,7 @@ internal sealed class FramePlan
             _staticPlannerContextPlans = staticPlannerContextPlans;
             _staticPlannerContextKeyCount = staticPlannerContextKeyCount;
             ViewSet.Seal();
+            MaterializeOpenXrLogicalViewSlices();
             IsSealed = true;
         }
     }
@@ -196,6 +247,7 @@ internal sealed class FramePlan
             StaticOperationSignature = 0;
             DynamicOverlaySignature = 0;
             RenderGraphPlanSignature = 0;
+            RequiresFreshEmptyTerminalWrite = false;
             _operationCount = 0;
             _dynamicOverlayOperationCount = 0;
             _textureUploadOperationCount = 0;
@@ -205,6 +257,11 @@ internal sealed class FramePlan
             Array.Clear(_staticPlannerContexts, 0, _staticPlannerContextKeyCount);
             Array.Clear(_staticPlannerContextPlans, 0, _staticPlannerContextKeyCount);
             _staticPlannerContextKeyCount = 0;
+            for (int index = 0; index < _logicalViewOperations.Length; index++)
+            {
+                _logicalViewOperations[index].Reset();
+                _logicalViewIds[index] = 0UL;
+            }
             IsSealed = false;
             ViewSet.Reset();
         }
@@ -310,6 +367,53 @@ internal sealed class FramePlan
     }
 
     /// <summary>
+    /// Materializes every OpenXR eye slice on the single publishing thread. Eye
+    /// workers subsequently perform immutable lookup only, so two workers can
+    /// never claim or populate the same slot concurrently.
+    /// </summary>
+    private void MaterializeOpenXrLogicalViewSlices()
+    {
+        if (!ViewSet.HasLocatedOpenXrViews)
+            return;
+
+        int sliceIndex = 0;
+        for (int viewIndex = 0; viewIndex < ViewSet.Count; viewIndex++)
+        {
+            ulong logicalViewId = ViewSet.GetHistoryKey(viewIndex);
+            if (!ViewSet.TryGetLocatedOpenXrViewKindByLogicalViewId(
+                    logicalViewId,
+                    out _))
+            {
+                continue;
+            }
+
+            if (sliceIndex >= _logicalViewOperations.Length)
+            {
+                throw new VulkanAcceptedFramePlanCapacityException(
+                    EVulkanAcceptedFrameLane.Terminal,
+                    _logicalViewOperations.Length,
+                    sliceIndex + 1);
+            }
+
+            _operations.CopyLogicalViewSliceTo(
+                logicalViewId,
+                _logicalViewOperations[sliceIndex]);
+            _logicalViewIds[sliceIndex] = logicalViewId;
+            sliceIndex++;
+        }
+    }
+
+    private FrameOperationStream GetLogicalViewSlice(ulong logicalViewId)
+    {
+        for (int index = 0; index < _logicalViewIds.Length; index++)
+            if (_logicalViewIds[index] == logicalViewId)
+                return _logicalViewOperations[index];
+
+        throw new InvalidOperationException(
+            "The sealed frame plan has no pre-materialized OpenXR logical-view slice for the requested identity.");
+    }
+
+    /// <summary>
     /// Resolves the immutable graph publication owned by the supplied operation
     /// context. The bounded linear lookup avoids a dictionary allocation in the
     /// recording hot path and runs only when the active context changes.
@@ -394,6 +498,93 @@ internal sealed class FramePlan
 
         request = _outputRequests[selected];
         return true;
+    }
+
+    /// <summary>
+    /// Resolves the executable terminal matching one exact scheduling
+    /// contract. This prevents a different foreground dependency from being
+    /// mistaken for the output that the caller must publish now.
+    /// </summary>
+    internal bool TryGetExecutableOutputContract(
+        in RenderOutputRequest requiredContract,
+        out RenderOutputRequest request)
+    {
+        EnsureSealed();
+        for (int index = 0; index < _outputCount; index++)
+        {
+            if (!_outputDecisions[index].Execute ||
+                !_outputs[index].MatchesSchedulingContract(in requiredContract))
+            {
+                continue;
+            }
+
+            request = _outputRequests[index];
+            return true;
+        }
+
+        request = default;
+        return false;
+    }
+
+    /// <summary>
+    /// Resolves the one executable output terminal produced by a sealed
+    /// logical-view slice. The caller supplies the located view kind because
+    /// an OpenXR operation context intentionally stores only its stable
+    /// logical-view identity, never an acquired runtime image index.
+    /// </summary>
+    internal bool TryGetExecutableOutputContractForLogicalView(
+        ulong logicalViewId,
+        EFrameOutputKind expectedKind,
+        EVrOutputViewKind expectedView,
+        out int outputIndex,
+        out RenderOutputRequest request)
+    {
+        EnsureSealed();
+        outputIndex = -1;
+        request = default;
+        if (logicalViewId == 0UL)
+            return false;
+
+        for (int operationIndex = 0;
+             operationIndex < _operationCount;
+             operationIndex++)
+        {
+            ref readonly FrameOpContext context =
+                ref _operations.GetContext(operationIndex);
+            if (context.LogicalViewId != logicalViewId)
+                continue;
+
+            OutputRequest operationOutput = OutputRequest.FromContext(
+                context,
+                expectedView);
+            if (operationOutput.OutputKind != expectedKind ||
+                operationOutput.ViewKind != expectedView)
+            {
+                continue;
+            }
+
+            for (int candidateIndex = 0;
+                 candidateIndex < _outputCount;
+                 candidateIndex++)
+            {
+                if (!_outputs[candidateIndex].MatchesOutput(operationOutput))
+                    continue;
+                if (!_outputDecisions[candidateIndex].Execute)
+                    return false;
+                if (outputIndex >= 0 && outputIndex != candidateIndex)
+                {
+                    outputIndex = -1;
+                    request = default;
+                    return false;
+                }
+
+                outputIndex = candidateIndex;
+                request = _outputRequests[candidateIndex];
+                break;
+            }
+        }
+
+        return outputIndex >= 0;
     }
 
     private static bool IsStricterReadiness(

@@ -237,18 +237,30 @@ namespace XREngine.Animation
             if (Keyframes.Count == 0)
                 return DefaultValue;
 
+            second = Keyframes.ResolveSampleTime(second, out float velocityScale, out bool clamped);
+            if (clamped && type != EVectorValueType.Position)
+                return default;
+
             if (ConstrainKeyframedFPS)
             {
                 if (!TryGetCadenceFrameWindow(second, out _, out _, out float floorSec, out float ceilSec, out float frameFraction))
                     return DefaultValue;
 
                 if (LerpConstrainedFPS)
-                    return LerpKeyedValues(floorSec, ceilSec, frameFraction, type);
+                {
+                    TValue constrainedValue = LerpKeyedValues(floorSec, ceilSec, frameFraction, type);
+                    return type == EVectorValueType.Velocity && velocityScale < 0.0f
+                        ? ScaleValue(constrainedValue, velocityScale)
+                        : constrainedValue;
+                }
 
                 second = floorSec;
             }
 
-            return Keyframes.First?.Interpolate(second, type) ?? DefaultValue;
+            TValue value = Keyframes.First?.Interpolate(second, type) ?? DefaultValue;
+            return type == EVectorValueType.Velocity && velocityScale < 0.0f
+                ? ScaleValue(value, velocityScale)
+                : value;
         }
 
         public override float CurrentTime
@@ -278,8 +290,6 @@ namespace XREngine.Animation
                 return;
             }
 
-            _prevKeyframe ??= Keyframes.GetKeyBefore(_currentTime);
-
             if (Keyframes.Count == 0)
             {
                 CurrentPosition = DefaultValue;
@@ -288,7 +298,8 @@ namespace XREngine.Animation
                 return;
             }
 
-            float second = _currentTime;
+            float second = Keyframes.ResolveSampleTime(_currentTime, out float velocityScale, out bool clamped);
+            _prevKeyframe ??= Keyframes.GetKeyBefore(second) ?? Keyframes.First;
             if (ConstrainKeyframedFPS)
             {
                 if (!TryGetCadenceFrameWindow(second, out _, out _, out float floorSec, out float ceilSec, out float frameFraction))
@@ -323,8 +334,10 @@ namespace XREngine.Animation
                        out ceilAcceleration);
 
                     CurrentPosition = LerpValues(floorPosition, ceilPosition, frameFraction);
-                    CurrentVelocity = LerpValues(floorVelocity, ceilVelocity, frameFraction);
-                    CurrentAcceleration = LerpValues(floorAcceleration, ceilAcceleration, frameFraction);
+                    CurrentVelocity = clamped
+                        ? default
+                        : ScaleValue(LerpValues(floorVelocity, ceilVelocity, frameFraction), velocityScale);
+                    CurrentAcceleration = clamped ? default : LerpValues(floorAcceleration, ceilAcceleration, frameFraction);
                     return;
                 }
                 second = floorSec;
@@ -343,8 +356,8 @@ namespace XREngine.Animation
                 out acc);
 
             CurrentPosition = pos;
-            CurrentVelocity = vel;
-            CurrentAcceleration = acc;
+            CurrentVelocity = clamped ? default : ScaleValue(vel, velocityScale);
+            CurrentAcceleration = clamped ? default : acc;
         }
         private TValue LerpKeyedValues(float floorSec, float ceilSec, float time, EVectorValueType type)
         {
@@ -682,6 +695,7 @@ namespace XREngine.Animation
         }
 
         protected abstract float[] GetComponents(TValue value);
+        protected abstract TValue ScaleValue(TValue value, float scale);
         protected abstract TValue GetMaxValue();
         protected abstract TValue GetMinValue();
     }

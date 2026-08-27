@@ -8,6 +8,7 @@ namespace XREngine.Rendering.Vulkan;
 internal sealed partial class VulkanFrameLoop
 {
     private VulkanPresentNowReadinessException? _presentNowTerminalFailure;
+    private readonly VulkanTextureUploadManifest _presentNowPumpUploadManifest = new();
 
     /// <summary>
     /// Freezes and completes format-independent foreground work before the WSI
@@ -31,30 +32,10 @@ internal sealed partial class VulkanFrameLoop
                 AcceptDesktopPresentNowPlan(ref attempt, ref watchdog);
             watchdog.RecordProgress();
 
-            VulkanTextureUploadSchedulingContext uploadContext =
-                CreatePresentNowUploadContext();
-            while (!_resourceRuntime.Uploads.DrainRequiredTextureUploads(
-                       uploadContext,
-                       acceptedPlan.RequiredTextureUploads))
-            {
-                if (watchdog.IsExpired)
-                {
-                    VulkanTextureUploadService.TryDescribeActiveUploadWork(
-                        out string uploadDetail);
-                    throw watchdog.CreateFailure(
-                        EVulkanPresentNowReadinessStage.RequiredUploadCompletion,
-                        "visible-now-texture-upload",
-                        "DesktopScene -> material descriptor -> texture generation",
-                        string.IsNullOrEmpty(uploadDetail)
-                            ? "Required upload timeline did not advance."
-                            : uploadDetail);
-                }
-
-                // Worker completions publish their generation state independently.
-                // Do not pump arbitrary engine callbacks here: that would permit
-                // render reentrancy while an accepted snapshot is frozen.
-                Thread.Yield();
-            }
+            CompleteAcceptedPresentNowTextureReadiness(
+                acceptedPlan,
+                ref watchdog,
+                "DesktopScene -> material descriptor -> texture generation");
 
             watchdog.RecordProgress();
             RevalidateAcceptedDesktopTargetCompatibility(
@@ -77,6 +58,11 @@ internal sealed partial class VulkanFrameLoop
         {
             PausePresentNowRenderer(ref attempt, failure);
             return EDesktopFrameFlow.Stop;
+        }
+        catch
+        {
+            attempt.AcceptedFramePlan?.SettleUnsubmittedSubmissionMarkers();
+            throw;
         }
     }
 
@@ -138,17 +124,22 @@ internal sealed partial class VulkanFrameLoop
                 _meshOperationRequestScratch,
                 foregroundRequired: true,
                 out int acceptedRequestCount,
-                out int capacityExceededCount);
+                out int capacityExceededCount,
+                out VulkanMeshRequestLaneCapacityFailure capacityFailure,
+                acceptedPlan.CanonicalPublicationPins);
             if (capacityExceededCount > 0)
             {
+                string detail = capacityFailure.HasFailure
+                    ? capacityFailure.FormatDiagnostic(capacityExceededCount)
+                    : $"FramePlanCapacityExceeded lane=MainScene " +
+                      $"actual={acceptedRequestCount + capacityExceededCount} " +
+                      $"configured={VulkanMeshOperationRequestQueue.Capacity} " +
+                      $"rejected={capacityExceededCount}.";
                 throw watchdog.CreateFailure(
                     EVulkanPresentNowReadinessStage.MeshMaterialization,
                     "frame-plan-capacity",
                     "DesktopScene -> visible mesh manifest arena",
-                    $"FramePlanCapacityExceeded lane=Mesh actual=" +
-                    $"{acceptedRequestCount + capacityExceededCount} " +
-                    $"configured={VulkanMeshOperationRequestQueue.Capacity} " +
-                    $"rejected={capacityExceededCount}.");
+                    detail);
             }
         }
 
@@ -162,12 +153,23 @@ internal sealed partial class VulkanFrameLoop
         }
 
         attempt.PresentNowMeshRequestCount = requestCount;
+        acceptedPlan.CaptureRequiredTextureReferences(
+            _meshOperationRequestScratch.AsSpan(0, requestCount));
+        _resourceRuntime.Uploads.CaptureRequiredTextureUploadManifest(
+            acceptedPlan.RequiredTextureUploads,
+            acceptedPlan.RequiredTextures,
+            acceptedPlan.RequiredTextureGenerations,
+            requireExactDescriptorPublication: false);
+        CompleteAcceptedPresentNowTextureReadiness(
+            acceptedPlan,
+            ref watchdog,
+            "DesktopScene -> visible material snapshot -> texture generation");
+
         if (!MaterializeQueuedMeshRenderRequests(
                 requestCount,
                 allowPreparedCohort: true,
                 out string meshFailure,
-                foregroundRequired: true,
-                readinessDeadlineTimestamp: watchdog.DeadlineTimestamp,
+                ref watchdog,
                 sourceFrameId: attempt.FrameNumber))
         {
             throw watchdog.CreateFailure(
@@ -180,6 +182,7 @@ internal sealed partial class VulkanFrameLoop
         FrameOp[] drainedOperations =
             _framePlanner.Operations.DrainForPrimary(
                 out FrameOp[] textureUploadOperations);
+        acceptedPlan.ClaimUnsubmittedSubmissionMarkers(drainedOperations);
         VulkanFramePlanningSnapshot planningSnapshot =
             _framePlanner.CaptureSnapshot();
         VulkanSwapchainContextCoalescer.Coalesce(
@@ -291,7 +294,8 @@ internal sealed partial class VulkanFrameLoop
             authoringDynamicOverlayOperationCount:
                 acceptedPlan.DynamicUiOperationCount,
             authoringTextureUploadOperationCount:
-                acceptedPlan.TextureUploadOperationCount);
+                acceptedPlan.TextureUploadOperationCount,
+            emptyPresentNowOutputContract: provisionalContract);
         if (!logicalPlan.HasAnyExecutableOutput)
         {
             throw watchdog.CreateFailure(
@@ -301,10 +305,16 @@ internal sealed partial class VulkanFrameLoop
                 "The logical output DAG admitted no executable foreground output.");
         }
 
-        RenderOutputRequest outputContract = logicalPlan.TryGetPresentNowContract(
-            out RenderOutputRequest sealedContract)
-                ? sealedContract
-                : provisionalContract;
+        if (!logicalPlan.TryGetExecutableOutputContract(
+                in provisionalContract,
+                out RenderOutputRequest outputContract))
+        {
+            throw watchdog.CreateFailure(
+                EVulkanPresentNowReadinessStage.FramePlanSeal,
+                "desktop-output-contract",
+                "DesktopScene -> exact terminal output",
+                "The sealed output DAG did not publish the required desktop PresentNow contract.");
+        }
         if (outputContract.WorkClass != ERenderOutputWorkClass.PresentNow ||
             outputContract.ReadinessPolicy !=
                 ERenderOutputReadinessPolicy.BlockForExact)
@@ -317,11 +327,6 @@ internal sealed partial class VulkanFrameLoop
                 $"readiness={outputContract.ReadinessPolicy}.");
         }
 
-        acceptedPlan.Seal(
-            in outputContract,
-            logicalPlan.Generation,
-            in plannerState,
-            in frozenPlanningSnapshot);
         attempt.ReadinessPolicy = outputContract.ReadinessPolicy;
         attempt.WorkClass = outputContract.WorkClass;
         attempt.OutputGeneration = outputContract.Target.TargetGeneration;
@@ -351,6 +356,8 @@ internal sealed partial class VulkanFrameLoop
                 in resourcePlanStamp,
                 in acceptedRenderGraphPlan,
                 UseDynamicRenderingRenderTargets,
+                preserveSwapchainForOverlay: true,
+                ref watchdog,
                 out string pipelineFailure))
         {
             throw watchdog.CreateFailure(
@@ -360,8 +367,52 @@ internal sealed partial class VulkanFrameLoop
                 pipelineFailure);
         }
 
+        Image[]? desktopImages = OutputRuntime.Desktop.Images;
+        if (desktopImages is null || desktopImages.Length == 0)
+        {
+            throw watchdog.CreateFailure(
+                EVulkanPresentNowReadinessStage.PipelineCompilation,
+                "desktop-frame-data-slots",
+                "DesktopScene -> compute descriptors/uniforms",
+                "The desktop swapchain has no frame-data slots to prepare before acquire.");
+        }
+        for (uint frameDataImageIndex = 0;
+             frameDataImageIndex < (uint)desktopImages.Length;
+             frameDataImageIndex++)
+        {
+            computePreparation =
+                _commandRuntime.PrepareComputeFramePlanForRecording(
+                    frameDataImageIndex,
+                    logicalPlan);
+            if (!computePreparation.Succeeded)
+            {
+                throw watchdog.CreateFailure(
+                    EVulkanPresentNowReadinessStage.PipelineCompilation,
+                    $"compute-frame-data:{frameDataImageIndex}",
+                    "DesktopScene -> compute descriptors/uniforms",
+                    computePreparation.FormatFailure());
+            }
+        }
+
+        acceptedPlan.CaptureRequiredTextureReferences(
+            logicalPlan,
+            _resourceRuntime.Descriptors);
         _resourceRuntime.Uploads.CaptureRequiredTextureUploadManifest(
-            acceptedPlan.RequiredTextureUploads);
+            acceptedPlan.RequiredTextureUploads,
+            acceptedPlan.RequiredTextures,
+            acceptedPlan.RequiredTextureGenerations,
+            // Materialization already captured the exact descriptor bindings
+            // for these published generations. Streaming requests admitted
+            // after that boundary belong to the next accepted frame.
+            requireExactDescriptorPublication: false);
+        acceptedPlan.DeclareDependencies(logicalPlan);
+        acceptedPlan.MarkNonTextureDependenciesReady();
+        _ = acceptedPlan.SynchronizeTextureDependencies();
+        acceptedPlan.Seal(
+            in outputContract,
+            logicalPlan,
+            in plannerState,
+            in frozenPlanningSnapshot);
         return acceptedPlan;
     }
 
@@ -460,23 +511,7 @@ internal sealed partial class VulkanFrameLoop
             acceptedPlan.PlannerState.ResourceAllocationSignature);
         VulkanRenderGraphPlan acceptedRenderGraphPlan =
             acceptedPlan.FrozenPlanningSnapshot.RenderGraphPlan;
-        FramePlan logicalPlan = _framePlanner.FramePlanBuilder.BuildAndSeal(
-            acceptedPlan.FrameSlot,
-            acceptedPlan.PlannerState.ResourcePlannerRevision,
-            staticOperationSignature: 0UL,
-            dynamicOverlaySignature: 0UL,
-            acceptedPlan.StaticOperations,
-            acceptedPlan.DynamicUiOperations,
-            new VulkanFramePlanRenderGraphAuthority(
-                acceptedPlan.FrozenPlanningSnapshot.RenderGraphPlan,
-                acceptedPlan.PlannerState.FrameOpResourcePlannerSwitchingState),
-            textureUploadOperations: acceptedPlan.TextureUploadOperations,
-            preparedMeshIngress: acceptedPlan.PreparedMeshIngress,
-            authoringOperationCount: acceptedPlan.StaticOperationCount,
-            authoringDynamicOverlayOperationCount:
-                acceptedPlan.DynamicUiOperationCount,
-            authoringTextureUploadOperationCount:
-                acceptedPlan.TextureUploadOperationCount);
+        FramePlan logicalPlan = acceptedPlan.LogicalPlan;
         if (!_commandRuntime.TryPreparePresentNowPipelinesForSealedFramePlan(
                 logicalPlan,
                 logicalPlan.GetNativeStaticOperationsForRecording(),
@@ -485,6 +520,8 @@ internal sealed partial class VulkanFrameLoop
                 in resourcePlanStamp,
                 in acceptedRenderGraphPlan,
                 current.DynamicRendering,
+                preserveSwapchainForOverlay: true,
+                ref watchdog,
                 out string pipelineFailure))
         {
             throw watchdog.CreateFailure(
@@ -499,9 +536,81 @@ internal sealed partial class VulkanFrameLoop
         => new(
             BackendObjectContext,
             _resourceRuntime,
-            _commandRuntime,
-            _frameOperationQueue,
-            CaptureFrameOpContextOrLastActive());
+            _commandRuntime);
+
+    private void CompleteAcceptedPresentNowTextureReadiness(
+        VulkanAcceptedFramePlan acceptedPlan,
+        ref VulkanPresentNowReadinessWatchdog watchdog,
+        string dependencyChain)
+    {
+        VulkanTextureUploadSchedulingContext uploadContext =
+            CreatePresentNowUploadContext();
+        while (true)
+        {
+            bool uploadsReady;
+            bool uploadProgress;
+            try
+            {
+                uploadsReady =
+                    _resourceRuntime.Uploads.DrainRequiredTextureUploads(
+                        uploadContext,
+                        acceptedPlan.RequiredTextureUploads,
+                        out uploadProgress);
+            }
+            catch (Exception exception)
+            {
+                string detail =
+                    $"Required texture readiness raised " +
+                    $"{exception.GetType().Name}: {exception.Message}";
+                acceptedPlan.RequiredTextureUploads.FailUnresolved(detail);
+                _ = acceptedPlan.SynchronizeTextureDependencies();
+                throw watchdog.CreateFailure(
+                    EVulkanPresentNowReadinessStage.RequiredUploadCompletion,
+                    "visible-now-texture-upload",
+                    dependencyChain,
+                    detail,
+                    exception);
+            }
+            bool dependencyProgress =
+                acceptedPlan.SynchronizeTextureDependencies();
+            if (uploadProgress || dependencyProgress)
+                watchdog.RecordProgress();
+            if (acceptedPlan.RequiredTextureUploads.TryGetTerminalFailure(
+                    out VulkanTextureUploadTicket failedTicket,
+                    out string failureDetail))
+            {
+                throw watchdog.CreateFailure(
+                    EVulkanPresentNowReadinessStage.RequiredUploadCompletion,
+                    $"texture-upload:{failedTicket.Sequence}:" +
+                    failedTicket.StreamingGeneration,
+                    dependencyChain,
+                    failureDetail);
+            }
+            if (uploadsReady &&
+                acceptedPlan.RequiredTextureUploads.AreAllReady)
+            {
+                return;
+            }
+
+            if (watchdog.IsExpired)
+            {
+                VulkanTextureUploadService.TryDescribeActiveUploadWork(
+                    out string uploadDetail);
+                throw watchdog.CreateFailure(
+                    EVulkanPresentNowReadinessStage.RequiredUploadCompletion,
+                    "visible-now-texture-upload",
+                    dependencyChain,
+                    string.IsNullOrEmpty(uploadDetail)
+                        ? "Required upload completion did not advance."
+                        : uploadDetail);
+            }
+
+            // Worker completions publish their generation state independently.
+            // Do not pump arbitrary engine callbacks here: that would permit
+            // render reentrancy while an accepted snapshot is frozen.
+            Thread.Yield();
+        }
+    }
 
     /// <summary>
     /// Executes the render-thread-affine foreground upload lane. Mesh/index and
@@ -510,14 +619,19 @@ internal sealed partial class VulkanFrameLoop
     /// </summary>
     private void PumpPresentNowRequiredJobs()
     {
+        _resourceRuntime.Uploads.CaptureRequiredTextureUploadManifest(
+            _presentNowPumpUploadManifest);
         _ = _resourceRuntime.Uploads.DrainRequiredTextureUploads(
-            CreatePresentNowUploadContext());
+            CreatePresentNowUploadContext(),
+            _presentNowPumpUploadManifest,
+            out _);
     }
 
     private void PausePresentNowRenderer(
         ref VulkanFrameAttempt attempt,
         VulkanPresentNowReadinessException failure)
     {
+        attempt.AcceptedFramePlan?.SettleUnsubmittedSubmissionMarkers();
         _presentNowTerminalFailure ??= failure;
         Debug.VulkanError($"[Vulkan][PresentNow][RendererPaused] {failure.Message}");
         attempt.DeferredFailure = failure;

@@ -291,6 +291,12 @@ internal sealed unsafe partial class VulkanDescriptorManager
                     if (isVariableDescriptorBinding)
                     {
                         flagsForBinding |= DescriptorBindingFlags.VariableDescriptorCountBit;
+                        if (DeviceContext.MutableCapabilities
+                            ._supportsDescriptorBindingUpdateUnusedWhilePending)
+                        {
+                            flagsForBinding |=
+                                DescriptorBindingFlags.UpdateUnusedWhilePendingBit;
+                        }
                         usesVariableDescriptorCount = true;
                     }
 
@@ -355,14 +361,14 @@ internal sealed unsafe partial class VulkanDescriptorManager
     /// <returns>True if the descriptor type can use the update-after-bind feature; otherwise, false.</returns>
     private bool CanUseUpdateAfterBind(DescriptorType descriptorType)
     {
-        if (!DeviceContext.MutableCapabilities._supportsDescriptorBindingUpdateAfterBind)
-            return false;
-
         return descriptorType switch
         {
-            DescriptorType.SampledImage or DescriptorType.CombinedImageSampler or DescriptorType.Sampler => true,
-            DescriptorType.UniformBuffer => true,
-            DescriptorType.StorageBuffer => true,
+            DescriptorType.SampledImage or DescriptorType.CombinedImageSampler or DescriptorType.Sampler =>
+                DeviceContext.MutableCapabilities._supportsDescriptorBindingSampledImageUpdateAfterBind,
+            DescriptorType.UniformBuffer =>
+                DeviceContext.MutableCapabilities._supportsDescriptorBindingUniformBufferUpdateAfterBind,
+            DescriptorType.StorageBuffer =>
+                DeviceContext.MutableCapabilities._supportsDescriptorBindingStorageBufferUpdateAfterBind,
             DescriptorType.StorageImage => DeviceContext.MutableCapabilities._supportsDescriptorBindingStorageImageUpdateAfterBind,
             _ => false,
         };

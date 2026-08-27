@@ -51,7 +51,10 @@ internal sealed unsafe class VulkanBlockAllocator : IVulkanMemoryAllocator
         Vk api, Device device, Buffer buffer, MemoryPropertyFlags requiredProperties)
     {
         if (!TryAllocateForBuffer(api, device, buffer, requiredProperties, out VulkanMemoryAllocation allocation, out Result result))
-            throw new VulkanOutOfMemoryException($"Failed to suballocate Vulkan buffer memory ({result}).", requiredProperties);
+            throw new VulkanOutOfMemoryException(
+                $"Failed to suballocate Vulkan buffer memory ({result}).",
+                requiredProperties,
+                result);
         return allocation;
     }
 
@@ -59,7 +62,10 @@ internal sealed unsafe class VulkanBlockAllocator : IVulkanMemoryAllocator
         Vk api, Device device, Image image, MemoryPropertyFlags requiredProperties)
     {
         if (!TryAllocateForImage(api, device, image, requiredProperties, out VulkanMemoryAllocation allocation, out Result result))
-            throw new VulkanOutOfMemoryException($"Failed to suballocate Vulkan image memory ({result}).", requiredProperties);
+            throw new VulkanOutOfMemoryException(
+                $"Failed to suballocate Vulkan image memory ({result}).",
+                requiredProperties,
+                result);
         return allocation;
     }
 

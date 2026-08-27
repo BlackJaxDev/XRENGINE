@@ -150,7 +150,7 @@ namespace XREngine
                     Task.Run(async () => await InitializeVR(vrSettings, startupSettings.RunVRInPlace));
 
                 // Start the engine timer for update/render ticks
-                Time.Initialize(GameSettings, UserSettings);
+                Time.Initialize(GameSettings, EffectiveUserSettings);
 
                 // Initialize networking based on configuration
                 InitializeNetworking(startupSettings);
@@ -292,6 +292,7 @@ namespace XREngine
             RuntimeEngine.Rendering.SecondaryContext.Dispose();
             WindowPumpHost.Stop();
             Assets.Dispose();
+            _sessionSettings.ClearAll();
         }
 
         /// <summary>

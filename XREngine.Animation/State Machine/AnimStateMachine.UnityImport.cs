@@ -9,6 +9,16 @@ public partial class AnimStateMachine
     public bool TryValidateUnityImportCapabilities(
         out string diagnostic,
         out bool requiresHumanoidAvatar)
+        => TryValidateUnityImportCapabilities(null, out diagnostic, out requiresHumanoidAvatar);
+
+    /// <summary>
+    /// Validates every imported clip and optionally asks the runtime owner to
+    /// resolve typed native/adapted bindings against the concrete scene.
+    /// </summary>
+    public bool TryValidateUnityImportCapabilities(
+        Func<AnimationClip, string?>? runtimeBindingValidator,
+        out string diagnostic,
+        out bool requiresHumanoidAvatar)
     {
         var visited = new HashSet<MotionBase>(ReferenceEqualityComparer.Instance);
         requiresHumanoidAvatar = false;
@@ -27,6 +37,7 @@ public partial class AnimStateMachine
                 if (!TryValidateMotion(
                     state.Motion,
                     visited,
+                    runtimeBindingValidator,
                     ref requiresHumanoidAvatar,
                     out diagnostic))
                 {
@@ -44,6 +55,7 @@ public partial class AnimStateMachine
     private static bool TryValidateMotion(
         MotionBase motion,
         HashSet<MotionBase> visited,
+        Func<AnimationClip, string?>? runtimeBindingValidator,
         ref bool requiresHumanoidAvatar,
         out string diagnostic)
     {
@@ -60,9 +72,16 @@ public partial class AnimStateMachine
                     || clip.HasMuscleChannels
                     || clip.HasRootMotion
                     || clip.HasIKGoals;
-                if (!clip.TryValidateUnityPlaybackCapabilities(out diagnostic))
+                if (!clip.TryValidateUnityPlaybackCapabilities(
+                    allowRuntimeAdapters: runtimeBindingValidator is not null,
+                    out diagnostic))
                 {
                     diagnostic = $"Clip '{clip.Name}': {diagnostic}";
+                    return false;
+                }
+                if (runtimeBindingValidator?.Invoke(clip) is string runtimeDiagnostic)
+                {
+                    diagnostic = $"Clip '{clip.Name}': {runtimeDiagnostic}";
                     return false;
                 }
                 break;
@@ -72,7 +91,7 @@ public partial class AnimStateMachine
                 {
                     MotionBase? child = tree1D.Children[i].Motion;
                     if (child is not null
-                        && !TryValidateMotion(child, visited, ref requiresHumanoidAvatar, out diagnostic))
+                        && !TryValidateMotion(child, visited, runtimeBindingValidator, ref requiresHumanoidAvatar, out diagnostic))
                         return false;
                 }
                 break;
@@ -82,7 +101,7 @@ public partial class AnimStateMachine
                 {
                     MotionBase? child = tree2D.Children[i].Motion;
                     if (child is not null
-                        && !TryValidateMotion(child, visited, ref requiresHumanoidAvatar, out diagnostic))
+                        && !TryValidateMotion(child, visited, runtimeBindingValidator, ref requiresHumanoidAvatar, out diagnostic))
                         return false;
                 }
                 break;
@@ -92,7 +111,7 @@ public partial class AnimStateMachine
                 {
                     MotionBase? child = directTree.Children[i].Motion;
                     if (child is not null
-                        && !TryValidateMotion(child, visited, ref requiresHumanoidAvatar, out diagnostic))
+                        && !TryValidateMotion(child, visited, runtimeBindingValidator, ref requiresHumanoidAvatar, out diagnostic))
                         return false;
                 }
                 break;

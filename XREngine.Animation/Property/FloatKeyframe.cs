@@ -6,6 +6,37 @@ namespace XREngine.Animation
 {
     public class FloatKeyframe(float second, float inValue, float outValue, float inTangent, float outTangent, EVectorInterpType type) : VectorKeyframe<float>(second, inValue, outValue, inTangent, outTangent, type)
     {
+        private const float DefaultTangentWeight = 1.0f / 3.0f;
+        private const float BezierDerivativeEpsilon = 0.000001f;
+
+        private EKeyframeWeightedMode _weightedMode;
+        private float _inWeight = DefaultTangentWeight;
+        private float _outWeight = DefaultTangentWeight;
+
+        /// <summary>
+        /// Identifies which tangent weights are authored. Unweighted handles use
+        /// the canonical one-third Hermite-to-Bezier conversion.
+        /// </summary>
+        public EKeyframeWeightedMode WeightedMode
+        {
+            get => _weightedMode;
+            set => SetField(ref _weightedMode, value);
+        }
+
+        /// <summary>Normalized duration of the incoming tangent handle.</summary>
+        public float InWeight
+        {
+            get => _inWeight;
+            set => SetField(ref _inWeight, SanitizeWeight(value));
+        }
+
+        /// <summary>Normalized duration of the outgoing tangent handle.</summary>
+        public float OutWeight
+        {
+            get => _outWeight;
+            set => SetField(ref _outWeight, SanitizeWeight(value));
+        }
+
         public FloatKeyframe()
             : this(0.0f, 0.0f, 0.0f, EVectorInterpType.Linear) { }
 
@@ -148,6 +179,9 @@ namespace XREngine.Animation
             if (span.IsZero())
                 return OutValue;
 
+            if (next is FloatKeyframe nextFloat && IsWeightedSegment(nextFloat))
+                return EvaluateWeightedSegment(nextFloat, diff, span, EVectorValueType.Position);
+
             var t = Math.Clamp(diff / span, 0.0f, 1.0f);
             return Interp.CubicHermite(
                 OutValue,
@@ -161,6 +195,9 @@ namespace XREngine.Animation
         {
             if (span.IsZero())
                 return 0.0f;
+
+            if (next is FloatKeyframe nextFloat && IsWeightedSegment(nextFloat))
+                return EvaluateWeightedSegment(nextFloat, diff, span, EVectorValueType.Velocity);
 
             var t = Math.Clamp(diff / span, 0.0f, 1.0f);
             return Interp.CubicHermiteVelocity(
@@ -176,6 +213,9 @@ namespace XREngine.Animation
             if (span.IsZero())
                 return 0.0f;
 
+            if (next is FloatKeyframe nextFloat && IsWeightedSegment(nextFloat))
+                return EvaluateWeightedSegment(nextFloat, diff, span, EVectorValueType.Acceleration);
+
             var t = Math.Clamp(diff / span, 0.0f, 1.0f);
             return Interp.CubicHermiteAcceleration(
                 OutValue,
@@ -189,6 +229,9 @@ namespace XREngine.Animation
         {
             if (span.IsZero())
                 return InValue;
+
+            if (prev is FloatKeyframe prevFloat && prevFloat.IsWeightedSegment(this))
+                return prevFloat.EvaluateWeightedSegment(this, diff, span, EVectorValueType.Position);
 
             var t = Math.Clamp(diff / span, 0.0f, 1.0f);
             return Interp.CubicHermite(
@@ -204,6 +247,9 @@ namespace XREngine.Animation
             if (span.IsZero())
                 return 0.0f;
 
+            if (prev is FloatKeyframe prevFloat && prevFloat.IsWeightedSegment(this))
+                return prevFloat.EvaluateWeightedSegment(this, diff, span, EVectorValueType.Velocity);
+
             var t = Math.Clamp(diff / span, 0.0f, 1.0f);
             return Interp.CubicHermiteVelocity(
                 prev?.OutValue ?? InValue,
@@ -218,6 +264,9 @@ namespace XREngine.Animation
             if (span.IsZero())
                 return 0.0f;
 
+            if (prev is FloatKeyframe prevFloat && prevFloat.IsWeightedSegment(this))
+                return prevFloat.EvaluateWeightedSegment(this, diff, span, EVectorValueType.Acceleration);
+
             var t = Math.Clamp(diff / span, 0.0f, 1.0f);
             return Interp.CubicHermiteAcceleration(
                 prev?.OutValue ?? InValue,
@@ -226,6 +275,121 @@ namespace XREngine.Animation
                 InValue,
                 t) / (span * span);
         }
+
+        private bool IsWeightedSegment(FloatKeyframe next)
+            => (WeightedMode & EKeyframeWeightedMode.Out) != 0
+                || (next.WeightedMode & EKeyframeWeightedMode.In) != 0;
+
+        /// <summary>
+        /// Evaluates Unity-style weighted tangents as a two-dimensional cubic
+        /// Bezier. Time is the x axis, so the Bezier parameter must be inverted
+        /// before evaluating value or time derivatives.
+        /// </summary>
+        private float EvaluateWeightedSegment(
+            FloatKeyframe next,
+            float diff,
+            float span,
+            EVectorValueType valueType)
+        {
+            float normalizedTime = Math.Clamp(diff / span, 0.0f, 1.0f);
+            float outWeight = (WeightedMode & EKeyframeWeightedMode.Out) != 0
+                ? OutWeight
+                : DefaultTangentWeight;
+            float inWeight = (next.WeightedMode & EKeyframeWeightedMode.In) != 0
+                ? next.InWeight
+                : DefaultTangentWeight;
+
+            float x1 = outWeight;
+            float x2 = 1.0f - inWeight;
+            float y0 = OutValue;
+            float y1 = y0 + OutTangent * span * outWeight;
+            float y3 = next.InValue;
+            // Incoming tangents are stored with XRE's historical sign convention.
+            float y2 = y3 + next.InTangent * span * inWeight;
+            float parameter = InvertBezierTime(normalizedTime, x1, x2);
+
+            if (valueType == EVectorValueType.Position)
+                return EvaluateBezier(y0, y1, y2, y3, parameter);
+
+            EvaluateBezierDerivatives(x1, x2, parameter, out float dx, out float ddx);
+            EvaluateBezierDerivatives(y0, y1, y2, y3, parameter, out float dy, out float ddy);
+            if (MathF.Abs(dx) <= BezierDerivativeEpsilon)
+                return 0.0f;
+
+            if (valueType == EVectorValueType.Velocity)
+                return dy / (dx * span);
+
+            return (ddy * dx - dy * ddx) / (dx * dx * dx * span * span);
+        }
+
+        private static float InvertBezierTime(float target, float x1, float x2)
+        {
+            if (target <= 0.0f || target >= 1.0f)
+                return target;
+
+            float lower = 0.0f;
+            float upper = 1.0f;
+            float parameter = target;
+            for (int i = 0; i < 14; i++)
+            {
+                float value = EvaluateBezier(0.0f, x1, x2, 1.0f, parameter);
+                float error = value - target;
+                if (MathF.Abs(error) <= 0.0000005f)
+                    break;
+
+                if (error < 0.0f)
+                    lower = parameter;
+                else
+                    upper = parameter;
+
+                EvaluateBezierDerivatives(x1, x2, parameter, out float derivative, out _);
+                float candidate = MathF.Abs(derivative) > BezierDerivativeEpsilon
+                    ? parameter - error / derivative
+                    : float.NaN;
+                parameter = float.IsFinite(candidate) && candidate > lower && candidate < upper
+                    ? candidate
+                    : (lower + upper) * 0.5f;
+            }
+
+            return Math.Clamp(parameter, 0.0f, 1.0f);
+        }
+
+        private static float EvaluateBezier(float p0, float p1, float p2, float p3, float parameter)
+        {
+            float inverse = 1.0f - parameter;
+            return inverse * inverse * inverse * p0
+                + 3.0f * inverse * inverse * parameter * p1
+                + 3.0f * inverse * parameter * parameter * p2
+                + parameter * parameter * parameter * p3;
+        }
+
+        private static void EvaluateBezierDerivatives(
+            float p1,
+            float p2,
+            float parameter,
+            out float first,
+            out float second)
+            => EvaluateBezierDerivatives(0.0f, p1, p2, 1.0f, parameter, out first, out second);
+
+        private static void EvaluateBezierDerivatives(
+            float p0,
+            float p1,
+            float p2,
+            float p3,
+            float parameter,
+            out float first,
+            out float second)
+        {
+            float inverse = 1.0f - parameter;
+            first = 3.0f * inverse * inverse * (p1 - p0)
+                + 6.0f * inverse * parameter * (p2 - p1)
+                + 3.0f * parameter * parameter * (p3 - p2);
+            second = 6.0f * inverse * (p2 - 2.0f * p1 + p0)
+                + 6.0f * parameter * (p3 - 2.0f * p2 + p1);
+        }
+
+        private static float SanitizeWeight(float value)
+            => float.IsFinite(value) ? Math.Clamp(value, 0.0f, 1.0f) : DefaultTangentWeight;
 
         /// <summary>
         /// Calculates and returns the four control points needed for cubic Bezier interpolation 

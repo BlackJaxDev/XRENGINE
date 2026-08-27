@@ -10,6 +10,7 @@ namespace XREngine.Animation
     {
         public override void GetAnimationValues(MotionBase? parentMotion, IDictionary<string, AnimVar> variables, float weight)
         {
+            ValueStore.Clear();
             BlendChildMotionAnimationValues(variables, weight);
             parentMotion?.CopyAnimationValuesFrom(this);
         }

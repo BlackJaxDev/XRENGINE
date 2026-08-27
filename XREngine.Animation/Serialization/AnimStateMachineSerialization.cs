@@ -173,6 +173,7 @@ internal static class AnimStateMachineSerialization
             Name = state.Name,
             Position = state.Position,
             Motion = MotionSerialization.CreateModel(state.Motion),
+            MotionOccurrenceId = state.MotionOccurrenceId,
             StartSecond = state.StartSecond,
             EndSecond = state.EndSecond,
             Components = components,
@@ -198,6 +199,7 @@ internal static class AnimStateMachineSerialization
                 Priority = transition.Priority,
                 Name = transition.Name,
                 ExitTime = transition.ExitTime,
+                HasExitTime = transition.HasExitTime,
                 FixedDuration = transition.FixedDuration,
                 TransitionOffset = transition.TransitionOffset,
                 InterruptionSource = transition.InterruptionSource,
@@ -288,6 +290,7 @@ internal static class AnimStateMachineSerialization
                     Name = stateModel.Name ?? string.Empty,
                     Position = stateModel.Position,
                     Motion = MotionSerialization.CreateRuntimeMotion(stateModel.Motion),
+                    MotionOccurrenceId = stateModel.MotionOccurrenceId ?? Guid.NewGuid(),
                     StartSecond = stateModel.StartSecond,
                     EndSecond = stateModel.EndSecond,
                     Components = CreateRuntimeComponents(stateModel.Components)
@@ -330,6 +333,7 @@ internal static class AnimStateMachineSerialization
                 Priority = model.Priority,
                 Name = model.Name ?? string.Empty,
                 ExitTime = model.ExitTime,
+                HasExitTime = model.HasExitTime ?? false,
                 FixedDuration = model.FixedDuration ?? true,
                 TransitionOffset = model.TransitionOffset,
                 InterruptionSource = model.InterruptionSource,
@@ -467,6 +471,8 @@ internal sealed partial class AnimStateSerializedModel
 
     public SerializedMotionModel? Motion { get; set; }
 
+    public Guid? MotionOccurrenceId { get; set; }
+
     public float StartSecond { get; set; }
 
     public float EndSecond { get; set; }
@@ -494,6 +500,8 @@ internal sealed partial class AnimStateTransitionSerializedModel
     public string? Name { get; set; }
 
     public float ExitTime { get; set; }
+
+    public bool? HasExitTime { get; set; }
 
     public bool? FixedDuration { get; set; }
 

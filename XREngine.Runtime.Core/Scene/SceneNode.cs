@@ -44,6 +44,7 @@ namespace XREngine.Scene
     /// </code>
     /// </example>
     [Serializable]
+    [CookedBinaryReflectionOnly]
     [MemoryPackable]
     public sealed partial class SceneNode : RuntimeWorldObjectBase, IPostCookedBinaryDeserialize
     {

@@ -415,9 +415,9 @@ internal static class VulkanDeviceCapabilityReporter
                 snapshot.DescriptorIndexingSupported && descriptorBackend == EVulkanDescriptorBackend.DescriptorIndexing),
             apiVersion,
             "VK_EXT_descriptor_indexing / Vulkan 1.2",
-            "descriptorIndexing+runtimeDescriptorArray+partiallyBound+updateAfterBind",
+            "descriptorIndexing+runtimeDescriptorArray+partiallyBound+updateAfterBind+updateUnusedWhilePending",
             descriptorBackend.ToString(),
-            $"runtimeArray={deviceContext.MutableCapabilities._supportsRuntimeDescriptorArray};partiallyBound={deviceContext.MutableCapabilities._supportsDescriptorBindingPartiallyBound};updateAfterBind={deviceContext.MutableCapabilities._supportsDescriptorBindingUpdateAfterBind};storageImageUpdateAfterBind={deviceContext.MutableCapabilities._supportsDescriptorBindingStorageImageUpdateAfterBind}",
+            $"runtimeArray={deviceContext.MutableCapabilities._supportsRuntimeDescriptorArray};partiallyBound={deviceContext.MutableCapabilities._supportsDescriptorBindingPartiallyBound};sampledImageUpdateAfterBind={deviceContext.MutableCapabilities._supportsDescriptorBindingSampledImageUpdateAfterBind};storageImageUpdateAfterBind={deviceContext.MutableCapabilities._supportsDescriptorBindingStorageImageUpdateAfterBind};storageBufferUpdateAfterBind={deviceContext.MutableCapabilities._supportsDescriptorBindingStorageBufferUpdateAfterBind};uniformBufferUpdateAfterBind={deviceContext.MutableCapabilities._supportsDescriptorBindingUniformBufferUpdateAfterBind};updateUnusedWhilePending={deviceContext.MutableCapabilities._supportsDescriptorBindingUpdateUnusedWhilePending}",
             snapshot.DescriptorIndexingSupported ? string.Empty : "Descriptor sets remain on the non-indexed path.");
 
         VulkanBindlessMaterialCapability bindlessMaterialCapability = snapshot.BindlessMaterialCapability;

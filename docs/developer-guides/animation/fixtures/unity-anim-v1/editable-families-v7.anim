@@ -1,0 +1,234 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!74 &7400000
+AnimationClip:
+  m_Name: XRE Editable Families V7
+  serializedVersion: 7
+  m_Legacy: 1
+  m_Compressed: 0
+  m_UseHighQualityCurve: 1
+  m_RotationCurves:
+  - curve:
+      serializedVersion: 2
+      m_Curve:
+      - serializedVersion: 3
+        time: 0
+        value: {x: 0, y: 0, z: 0, w: 1}
+        inSlope: {x: 0, y: 0, z: 0, w: 0}
+        outSlope: {x: 0, y: 0, z: 0, w: 0}
+        tangentMode: 0
+        weightedMode: 0
+        inWeight: 0.33333334
+        outWeight: 0.33333334
+      - serializedVersion: 3
+        time: 1
+        value: {x: 0, y: -0.70710677, z: 0, w: -0.70710677}
+        inSlope: {x: 0, y: 0, z: 0, w: 0}
+        outSlope: {x: 0, y: 0, z: 0, w: 0}
+        tangentMode: 0
+        weightedMode: 0
+        inWeight: 0.33333334
+        outWeight: 0.33333334
+      m_PreInfinity: 2
+      m_PostInfinity: 1
+      m_RotationOrder: 4
+    path: RotationNode
+    classID: 4
+    script: {fileID: 0}
+  m_CompressedRotationCurves: []
+  m_EulerCurves:
+  - curve:
+      serializedVersion: 2
+      m_Curve:
+      - serializedVersion: 3
+        time: 0
+        value: {x: 0, y: 0, z: 0}
+        inSlope: {x: 0, y: 0, z: 0}
+        outSlope: {x: 10, y: 20, z: 30}
+        tangentMode: 0
+        weightedMode: 3
+        inWeight: 0.2
+        outWeight: 0.2
+      - serializedVersion: 3
+        time: 1
+        value: {x: 10, y: 20, z: 30}
+        inSlope: {x: 10, y: 20, z: 30}
+        outSlope: {x: 0, y: 0, z: 0}
+        tangentMode: 0
+        weightedMode: 0
+        inWeight: 0.33333334
+        outWeight: 0.33333334
+      m_PreInfinity: 4
+      m_PostInfinity: 8
+      m_RotationOrder: 4
+    path: EulerNode
+    classID: 4
+    script: {fileID: 0}
+  m_PositionCurves:
+  - curve:
+      serializedVersion: 2
+      m_Curve:
+      - serializedVersion: 3
+        time: 0
+        value: {x: 0, y: 0, z: 0}
+        inSlope: {x: 0, y: 0, z: 0}
+        outSlope: {x: 1, y: 2, z: 3}
+        tangentMode: 0
+        weightedMode: 3
+        inWeight: {x: 0.25, y: 0.25, z: 0.25}
+        outWeight: {x: 0.1, y: 0.2, z: 0.3}
+      - serializedVersion: 3
+        time: 1
+        value: {x: 1, y: 2, z: 3}
+        inSlope: {x: 1, y: 2, z: 3}
+        outSlope: {x: 0, y: 0, z: 0}
+        tangentMode: 0
+        weightedMode: 0
+        inWeight: 0.33333334
+        outWeight: 0.33333334
+      m_PreInfinity: 0
+      m_PostInfinity: 0
+      m_RotationOrder: 4
+    path: PositionNode
+    classID: 4
+    script: {fileID: 0}
+  m_ScaleCurves:
+  - curve:
+      serializedVersion: 2
+      m_Curve:
+      - serializedVersion: 3
+        time: 0
+        value: {x: 1, y: 1, z: 1}
+        inSlope: {x: 0, y: 0, z: 0}
+        outSlope: {x: 0, y: 0, z: 0}
+        tangentMode: 0
+        weightedMode: 0
+        inWeight: 0.33333334
+        outWeight: 0.33333334
+      - serializedVersion: 3
+        time: 1
+        value: {x: 2, y: 2, z: 2}
+        inSlope: {x: 0, y: 0, z: 0}
+        outSlope: {x: 0, y: 0, z: 0}
+        tangentMode: 0
+        weightedMode: 0
+        inWeight: 0.33333334
+        outWeight: 0.33333334
+      m_PreInfinity: 1
+      m_PostInfinity: 2
+      m_RotationOrder: 4
+    path: ScaleNode
+    classID: 4
+    script: {fileID: 0}
+  m_FloatCurves:
+  - curve:
+      serializedVersion: 2
+      m_Curve:
+      - serializedVersion: 3
+        time: 0
+        value: 0
+        inSlope: 2
+        outSlope: 2
+        tangentMode: 0
+        weightedMode: 2
+        inWeight: 0.33333334
+        outWeight: 0.1
+      - serializedVersion: 3
+        time: 1
+        value: 1
+        inSlope: 1
+        outSlope: 1
+        tangentMode: 0
+        weightedMode: 1
+        inWeight: 0.1
+        outWeight: 0.33333334
+      m_PreInfinity: 8
+      m_PostInfinity: 4
+      m_RotationOrder: 4
+    attribute: m_IsActive
+    path: ""
+    classID: 1
+    script: {fileID: 0}
+  m_PPtrCurves:
+  - curve:
+    - time: 0
+      value: {fileID: 0}
+    - time: 0.5
+      value: {fileID: 0}
+    attribute: m_Materials.Array.data[0]
+    path: MeshNode
+    classID: 137
+    script: {fileID: 0}
+  m_SampleRate: 60
+  m_WrapMode: 4
+  m_Bounds:
+    m_Center: {x: 1, y: 2, z: 3}
+    m_Extent: {x: 4, y: 5, z: 6}
+  m_MuscleClip:
+    m_StopTime: 1
+    m_Clip:
+      m_StreamedClip:
+        data: []
+        curveCount: 0
+      m_DenseClip:
+        m_FrameCount: 0
+        m_CurveCount: 0
+        m_SampleRate: 60
+        m_BeginTime: 0
+        m_SampleArray: []
+      m_ConstantClip:
+        data: []
+  m_ClipBindingConstant:
+    genericBindings: []
+    pptrCurveMapping: []
+  m_AnimationClipSettings:
+    serializedVersion: 2
+    m_AdditiveReferencePoseClip: {fileID: 0}
+    m_AdditiveReferencePoseTime: 0
+    m_StartTime: 0
+    m_StopTime: 1
+    m_OrientationOffsetY: 0
+    m_Level: 0
+    m_CycleOffset: 0
+    m_HasAdditiveReferencePose: 0
+    m_LoopTime: 0
+    m_LoopBlend: 0
+    m_LoopBlendOrientation: 0
+    m_LoopBlendPositionY: 0
+    m_LoopBlendPositionXZ: 0
+    m_KeepOriginalOrientation: 0
+    m_KeepOriginalPositionY: 0
+    m_KeepOriginalPositionXZ: 0
+    m_HeightFromFeet: 0
+    m_Mirror: 0
+  m_EditorCurves: []
+  m_EulerEditorCurves: []
+  m_Events:
+  - time: 0
+    functionName: OnFixtureStart
+    data: start
+    objectReferenceParameter: {fileID: 0}
+    floatParameter: 0.25
+    intParameter: 1
+    messageOptions: 0
+  - time: 0.5
+    functionName: OnFixtureHalfA
+    data: half-a
+    objectReferenceParameter: {fileID: 0}
+    floatParameter: 0.5
+    intParameter: 2
+    messageOptions: 1
+  - time: 0.5
+    functionName: OnFixtureHalfB
+    data: half-b
+    objectReferenceParameter: {fileID: 0}
+    floatParameter: 0.75
+    intParameter: 3
+    messageOptions: 0
+  - time: 1
+    functionName: OnFixtureEnd
+    data: end
+    objectReferenceParameter: {fileID: 0}
+    floatParameter: 1
+    intParameter: 4
+    messageOptions: 0

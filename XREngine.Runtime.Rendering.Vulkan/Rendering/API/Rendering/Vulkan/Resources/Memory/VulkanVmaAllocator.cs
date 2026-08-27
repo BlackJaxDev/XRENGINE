@@ -70,7 +70,10 @@ internal sealed unsafe class VulkanVmaAllocator : IVulkanMemoryAllocator
         Vk api, Device device, Buffer buffer, MemoryPropertyFlags requiredProperties)
     {
         if (!TryAllocateForBuffer(api, device, buffer, requiredProperties, out VulkanMemoryAllocation allocation, out Result result))
-            throw new VulkanOutOfMemoryException($"Failed to allocate Vulkan buffer memory through VMA ({result}).", requiredProperties);
+            throw new VulkanOutOfMemoryException(
+                $"Failed to allocate Vulkan buffer memory through VMA ({result}).",
+                requiredProperties,
+                result);
         return allocation;
     }
 
@@ -78,7 +81,10 @@ internal sealed unsafe class VulkanVmaAllocator : IVulkanMemoryAllocator
         Vk api, Device device, Image image, MemoryPropertyFlags requiredProperties)
     {
         if (!TryAllocateForImage(api, device, image, requiredProperties, out VulkanMemoryAllocation allocation, out Result result))
-            throw new VulkanOutOfMemoryException($"Failed to allocate Vulkan image memory through VMA ({result}).", requiredProperties);
+            throw new VulkanOutOfMemoryException(
+                $"Failed to allocate Vulkan image memory through VMA ({result}).",
+                requiredProperties,
+                result);
         return allocation;
     }
 

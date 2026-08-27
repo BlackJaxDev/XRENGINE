@@ -35,9 +35,15 @@ internal sealed partial class VulkanTextureUploadService
             for (int i = 0; i < _pendingPrepJobs.Count; i++)
             {
                 VulkanImportedTextureUploadJob candidate = _pendingPrepJobs[i];
-                if (requiredOnly && (candidate.Request.PriorityClass != TextureUploadPriorityClass.VisibleNow
-                    || requiredManifest is not null && !requiredManifest.Contains(candidate.Ticket)))
-                    continue;
+                if (requiredOnly)
+                {
+                    bool belongsToRequiredClosure = requiredManifest is not null
+                        ? requiredManifest.Contains(candidate.Ticket)
+                        : candidate.Request.PriorityClass ==
+                            TextureUploadPriorityClass.VisibleNow;
+                    if (!belongsToRequiredClosure)
+                        continue;
+                }
                 if (candidate.NotBeforeTimestamp > now)
                     continue;
 
@@ -338,11 +344,10 @@ internal sealed partial class VulkanTextureUploadService
         }
 
         if (RenderDiagnosticsFlags.VkTextureUploadTransferQueue
-            && !commandRuntime.HasDedicatedTextureUploadTransferQueue
             && Interlocked.Exchange(ref _transferQueueCompatLogged, 1) == 0)
         {
             XREngine.Debug.Vulkan(
-                "[Vulkan Compat] XRE_VULKAN_TEXTURE_UPLOAD_TRANSFER_QUEUE requested, but this device did not expose a dedicated transfer queue family; imported texture copies will submit through the graphics frame command buffer.");
+                "[Vulkan Compat] XRE_VULKAN_TEXTURE_UPLOAD_TRANSFER_QUEUE requested, but imported texture uploads remain on the graphics queue until the dedicated transfer path has an explicit semaphore release/acquire chain.");
         }
 
         if (!RenderDiagnosticsFlags.VkTextureUploadPrepWorker

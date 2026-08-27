@@ -470,10 +470,10 @@ namespace XREngine
             Debug.Out("No windows are focused.");
 
             // Disable audio if configured to do so on defocus
-            if (UserSettings.DisableAudioOnDefocus)
+            if (EffectiveUserSettings.DisableAudioOnDefocus)
             {
-                if (UserSettings.AudioDisableFadeSeconds > 0.0f)
-                    Audio.FadeOut(UserSettings.AudioDisableFadeSeconds);
+                if (EffectiveUserSettings.AudioDisableFadeSeconds > 0.0f)
+                    Audio.FadeOut(EffectiveUserSettings.AudioDisableFadeSeconds);
                 else
                     Audio.Enabled = false;
             }
@@ -501,10 +501,10 @@ namespace XREngine
             Debug.Out("At least one window is focused.");
 
             // Re-enable audio if it was disabled on defocus
-            if (UserSettings.DisableAudioOnDefocus)
+            if (EffectiveUserSettings.DisableAudioOnDefocus)
             {
-                if (UserSettings.AudioDisableFadeSeconds > 0.0f)
-                    Audio.FadeIn(UserSettings.AudioDisableFadeSeconds);
+                if (EffectiveUserSettings.AudioDisableFadeSeconds > 0.0f)
+                    Audio.FadeIn(EffectiveUserSettings.AudioDisableFadeSeconds);
                 else
                     Audio.Enabled = true;
             }

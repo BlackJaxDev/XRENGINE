@@ -11,6 +11,9 @@ namespace XREngine.Animation.Importers;
 [MemoryPackable]
 public sealed partial class UnityHumanoidClipRootMotionSettings
 {
+    public UnityAssetReference AdditiveReferencePoseClip { get; set; }
+    public float AdditiveReferencePoseTime { get; set; }
+    public bool HasAdditiveReferencePose { get; set; }
     public float StartTime { get; set; }
     public float StopTime { get; set; }
     public float OrientationOffsetY { get; set; }

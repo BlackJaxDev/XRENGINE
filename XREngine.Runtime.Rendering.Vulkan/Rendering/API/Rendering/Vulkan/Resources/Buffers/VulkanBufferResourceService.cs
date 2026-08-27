@@ -522,7 +522,8 @@ internal unsafe sealed class VulkanBufferResourceService(VulkanAllocationAuthori
             if (allocationResult != Result.Success)
                 throw new VulkanOutOfMemoryException(
                     $"Dedicated Vulkan buffer allocation failed ({allocationResult}). Requested={properties}",
-                    properties);
+                    properties,
+                    allocationResult);
 
             VulkanMemoryAllocation allocation = new(
                 memory,

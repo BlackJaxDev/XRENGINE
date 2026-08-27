@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using Silk.NET.Vulkan;
 using XREngine.Data.Colors;
+using XREngine.Rendering.Shadows;
 
 namespace XREngine.Rendering.Vulkan;
 
@@ -46,6 +47,7 @@ internal sealed partial class VulkanFrameLoop
         bool frameDataSlotPrepared = false;
         CommandBuffer commandBuffer = default;
         ulong frameNumber = unchecked((ulong)OutputRuntime.NextExplicitTargetFrameNumber());
+        VulkanAcceptedFramePlan? acceptedPlan = null;
 
         try
         {
@@ -54,24 +56,22 @@ internal sealed partial class VulkanFrameLoop
 
             _telemetry.PublishDescriptorTableGeneration(_resourceRuntime.DescriptorTableGeneration);
             _resourceRuntime.Descriptors.Heap.BeginFrame(frameNumber);
-            lease = target.AcquireFrameTarget(out commandBuffer);
-            acquired = true;
-            if (!lease.IsValid)
-                throw new InvalidOperationException($"Vulkan target '{FrameExecutionLabel}' returned an invalid frame-target lease.");
+            VulkanExplicitFrameTargetPreview preview =
+                target.PreviewNextFrameTarget();
+            if (!preview.Output.IsValid)
+            {
+                throw new InvalidOperationException(
+                    $"Vulkan target '{FrameExecutionLabel}' did not provide a valid non-acquiring output preview.");
+            }
 
-            ResourceRuntime.Uploads.DrainCompletedRecordedTextureUploadPublications(
-                Api,
-                _deviceContext,
-                _commandRuntime,
-                ResourceRuntime,
-                IsDeviceLost);
-
-            int planIndex = checked((int)lease.Target.FrameSlotIndex);
+            int planIndex = checked((int)preview.ExpectedFrameSlotIndex);
             if ((uint)planIndex >= (uint)_explicitPrimaryPlans.Length)
-                throw new InvalidOperationException($"Explicit frame slot {planIndex} has no reusable primary plan.");
+                throw new InvalidOperationException(
+                    $"Explicit frame slot {planIndex} has no reusable primary plan.");
             PublishFrameSlot(planIndex);
-            uint frameSlot = lease.Target.FrameSlotIndex;
-            ResourceRuntime.ResidentTemplateFrameSlotLifetimes.ReleaseFrameSlot(planIndex);
+            uint frameSlot = preview.ExpectedFrameSlotIndex;
+            ResourceRuntime.ResidentTemplateFrameSlotLifetimes.ReleaseFrameSlot(
+                planIndex);
             mappedFrameArena = MappedFrameArena;
             mappedFrameGeneration = mappedFrameArena?.Generation ?? 0UL;
             frameDataArena = FrameDataArena;
@@ -89,26 +89,52 @@ internal sealed partial class VulkanFrameLoop
             if (!mappedFrameSlotWritable || !frameDataSlotWritable)
             {
                 throw new InvalidOperationException(
-                    $"Explicit target '{FrameExecutionLabel}' acquired frame slot {frameSlot}, " +
-                    "but its previous frame-data ownership was not ready to reopen.");
+                    $"Explicit target '{FrameExecutionLabel}' previewed frame slot " +
+                    $"{frameSlot}, but its previous frame-data ownership was not " +
+                    "ready to reopen before logical collection.");
             }
 
-            RenderFrameOutputDescription output = lease.ToOutputDescription(
-                TargetExecutionMode,
-                target.OutputProperties);
-            using (renderer.PushFrameOutput(in output))
-                buildFrame(output);
+            // The caller observes the same output description it did before this
+            // split, but logical collection/readiness now runs before any target
+            // image, semaphore, or WSI obligation is held.
+            RenderFrameOutputDescription previewOutput = preview.Output;
+            using (renderer.PushFrameOutput(in previewOutput))
+                buildFrame(previewOutput);
+            acceptedPlan = PrepareExplicitProductionLogicalPlan(
+                in preview,
+                frameNumber);
 
-            VulkanPrimaryCommandRecordingResult recording = RecordPreparedExplicitPrimary(
+            lease = target.AcquireFrameTarget(out commandBuffer);
+            acquired = true;
+            if (!lease.IsValid)
+                throw new InvalidOperationException($"Vulkan target '{FrameExecutionLabel}' returned an invalid frame-target lease.");
+            if (!preview.IsCompatible(in lease))
+            {
+                throw new InvalidOperationException(
+                    $"Vulkan target '{FrameExecutionLabel}' changed between its non-acquiring preview " +
+                    "and acquire. The acquired target will be settled and the next invocation will " +
+                    "rebuild/reseal against a fresh preview without holding an image during readiness.");
+            }
+
+            ResourceRuntime.Uploads.DrainCompletedRecordedTextureUploadPublications(
+                Api,
+                _deviceContext,
+                _commandRuntime,
+                ResourceRuntime,
+                IsDeviceLost);
+
+            VulkanPrimaryCommandRecordingResult recording = RecordAcceptedExplicitPrimary(
                 in lease,
                 commandBuffer,
-                _explicitPrimaryPlans[planIndex]);
+                _explicitPrimaryPlans[planIndex],
+                acceptedPlan);
             if (!recording.Succeeded || recording.CommandBuffer.Handle == 0)
             {
                 throw new InvalidOperationException(
                     $"The production render graph could not record against {FrameExecutionLabel}: " +
                     (recording.Reason ?? recording.Disposition.ToString()));
             }
+            acceptedPlan.TransferSubmissionMarkerOwnershipToCommandBuffer();
             if (recording.SwapchainLayoutAfterCommandBuffer != lease.Target.RequiredFinalColorLayout)
             {
                 throw new InvalidOperationException(
@@ -178,6 +204,7 @@ internal sealed partial class VulkanFrameLoop
         {
             if (!submitted)
             {
+                acceptedPlan?.SettleUnsubmittedSubmissionMarkers();
                 _commandRuntime.FailSubmissionMarkersForCommandBuffer(commandBuffer);
                 CancelPendingImportedTextureUploadFrameOps(
                     $"{FrameExecutionLabel} production frame aborted before submission");
@@ -195,188 +222,462 @@ internal sealed partial class VulkanFrameLoop
         }
     }
 
-    private VulkanPrimaryCommandRecordingResult RecordPreparedExplicitPrimary(
-        in VulkanFrameTargetLease lease,
-        CommandBuffer primaryCommandBuffer,
-        VulkanPrimaryCommandPlan primaryPlan)
+    /// <summary>
+    /// Captures the complete logical explicit-target transaction before acquire.
+    /// The accepted arena owns the bounded operation arrays; native image/view
+    /// authority is intentionally absent until the later reseal.
+    /// </summary>
+    private VulkanAcceptedFramePlan PrepareExplicitProductionLogicalPlan(
+        in VulkanExplicitFrameTargetPreview preview,
+        ulong frameNumber)
     {
-        if (!UseDynamicRenderingRenderTargets)
+        VulkanPresentNowReadinessWatchdog watchdog = new(frameNumber);
+        int frameSlot = checked((int)preview.ExpectedFrameSlotIndex);
+        VulkanPresentNowTargetCompatibilityKey compatibility = new(
+            preview.TargetGeneration,
+            VulkanFixedOutputFormatResolver.ResolveColorFormat(
+                preview.Output.Properties.ColorFormat),
+            VulkanFixedOutputFormatResolver.ResolveDepthFormat(
+                preview.Output.Properties.DepthFormat),
+            new Extent2D(preview.Output.Properties.Width, preview.Output.Properties.Height),
+            UseDynamicRenderingRenderTargets,
+            StreamlineFrameGeneration: false);
+        VulkanAcceptedFramePlan acceptedPlan = _acceptedFramePlans.Begin(
+            frameSlot,
+            frameNumber,
+            RuntimeEngine.Rendering.State.RenderFrameId,
+            in compatibility);
+
+        RenderOutputRequest provisionalOutputContract =
+            RenderOutputRequest.CreateDefault(
+                EVrOutputViewKind.Secondary,
+                EFrameOutputKind.DesktopScene,
+                frameNumber);
+        RenderOutputTargetDescriptor outputTarget =
+            provisionalOutputContract.Target with
+            {
+                TargetGeneration = preview.TargetGeneration,
+                DisplayWidth = preview.Output.Properties.Width,
+                DisplayHeight = preview.Output.Properties.Height,
+                InternalWidth = preview.Output.Properties.Width,
+                InternalHeight = preview.Output.Properties.Height,
+                FormatCompatibilityKey =
+                    ((ulong)(uint)preview.CompatibilityTarget.ImageFormat << 32) |
+                    (uint)preview.CompatibilityTarget.DepthFormat,
+                SampleCount = preview.Output.Properties.SampleCount,
+            };
+        provisionalOutputContract =
+            provisionalOutputContract.WithTarget(in outputTarget);
+
+        // Exact shadow production is part of the logical PresentNow closure.
+        // It must complete before mesh and frame-operation queues are frozen.
+        if (RuntimeEngine.Rendering.State.RenderingWorld?.Lights is { } lights)
         {
-            return VulkanPrimaryCommandRecordingResult.Deferred(
-                "Lease-backed production output currently requires Vulkan dynamic rendering; no legacy framebuffer belongs to an explicit target.");
+            ShadowAtlasReadinessManifest shadowManifest =
+                lights.CaptureShadowReadiness(in provisionalOutputContract);
+            ShadowAtlasReadinessResult shadowResult =
+                lights.CompleteShadowReadiness(in shadowManifest);
+            acceptedPlan.ShadowReadiness = shadowManifest;
+            acceptedPlan.ShadowReadinessResult = shadowResult;
+            if (!shadowResult.IsSatisfied)
+            {
+                throw watchdog.CreateFailure(
+                    EVulkanPresentNowReadinessStage.FramePlanSeal,
+                    $"shadow-plan:{shadowManifest.RenderPlanId}",
+                    "ExplicitOutput -> required shadow atlas",
+                    $"Shadow readiness failed selection={shadowResult.Selection} " +
+                    $"requiredTiles={shadowManifest.RequiredTileCount} " +
+                    $"failedTiles={shadowResult.FailedTileCount} " +
+                    $"unavailable={shadowManifest.UnavailableTileCount} " +
+                    $"overflow={shadowManifest.RequestQueueOverflowCount}.");
+            }
         }
 
-        // Direct prepared ingress is desktop-only until explicit targets define
-        // their own final-context and UI partition policy.
         _preparedMeshIngress.Clear();
-        bool meshMaterializationComplete = DrainQueuedMeshRenderRequests(
-            allowPreparedCohort: false,
-            out string deferredReason);
-        FrameOp[] drainedOperations = _framePlanner.Operations.DrainForPrimary(out FrameOp[] textureUploadOperations);
-        VulkanSwapchainContextCoalescer.Coalesce(drainedOperations);
-        // Explicit targets have no desktop ImGui overlay, but render-graph UI is
-        // ordinary portable work. Record it serially into the target primary so
-        // browser and presentationless hosts do not lose engine-owned UI.
-        FrameOp[] staticOperations = drainedOperations;
-        bool submissionMarkersTransferred = false;
+        int requestCount;
+        using (VulkanCpuStageScope rawRequestDrainStage = new(
+                   _telemetry,
+                   EVulkanCpuStage.RawMeshRequestDrain))
+        {
+            requestCount = MeshOperationRequests.DrainTo(
+                _meshOperationRequestScratch,
+                foregroundRequired: true,
+                out int acceptedRequestCount,
+                out int capacityExceededCount,
+                out VulkanMeshRequestLaneCapacityFailure capacityFailure,
+                acceptedPlan.CanonicalPublicationPins);
+            if (capacityExceededCount > 0)
+            {
+                string detail = capacityFailure.HasFailure
+                    ? capacityFailure.FormatDiagnostic(capacityExceededCount)
+                    : $"FramePlanCapacityExceeded lane=MainScene " +
+                      $"actual={acceptedRequestCount + capacityExceededCount} " +
+                      $"configured={VulkanMeshOperationRequestQueue.Capacity} " +
+                      $"rejected={capacityExceededCount}.";
+                throw watchdog.CreateFailure(
+                    EVulkanPresentNowReadinessStage.MeshMaterialization,
+                    "frame-plan-capacity",
+                    "ExplicitOutput -> visible mesh manifest arena",
+                    detail);
+            }
+        }
+        if (requestCount < 0)
+        {
+            throw watchdog.CreateFailure(
+                EVulkanPresentNowReadinessStage.MeshMaterialization,
+                "mesh-request-cohort",
+                "ExplicitOutput -> visible meshes",
+                "The bounded request queue rejected an accepted foreground cohort.");
+        }
+
+        // Capture the raw material snapshot first so cold imported textures can
+        // be prepared before mesh materialization attempts descriptor binding.
+        acceptedPlan.CaptureRequiredTextureReferences(
+            _meshOperationRequestScratch.AsSpan(0, requestCount));
+        _resourceRuntime.Uploads.CaptureRequiredTextureUploadManifest(
+            acceptedPlan.RequiredTextureUploads,
+            acceptedPlan.RequiredTextures,
+            acceptedPlan.RequiredTextureGenerations,
+            requireExactDescriptorPublication: false);
+        CompleteAcceptedPresentNowTextureReadiness(
+            acceptedPlan,
+            ref watchdog,
+            "ExplicitOutput -> visible material snapshot -> texture generation");
+
+        if (!MaterializeQueuedMeshRenderRequests(
+                requestCount,
+                allowPreparedCohort: true,
+                out string meshFailure,
+                ref watchdog,
+                sourceFrameId: frameNumber))
+        {
+            throw watchdog.CreateFailure(
+                EVulkanPresentNowReadinessStage.MeshMaterialization,
+                "visible-mesh-generation",
+                "ExplicitOutput -> visible meshes -> program/buffer/descriptor",
+                meshFailure);
+        }
+
+        FrameOp[] drainedOperations = _framePlanner.Operations.DrainForPrimary(
+            out FrameOp[] textureUploadOperations);
+        acceptedPlan.ClaimUnsubmittedSubmissionMarkers(drainedOperations);
+        bool logicalPlanAccepted = false;
         try
         {
-            if (!meshMaterializationComplete)
-            {
-                VulkanCommandSynchronizationState.FailUnsubmittedSubmissionMarkers(
-                    staticOperations);
-                staticOperations = [];
-            }
-            _commandRuntime.NormalizePrimaryPlanPassIndicesForPublication(staticOperations);
+        VulkanSwapchainContextCoalescer.Coalesce(
+            drainedOperations,
+            _preparedMeshIngress);
+        if (!_preparedMeshIngress.TryFinalize(
+                ref _preparedMeshIngressResourceUseScratch))
+        {
+            throw watchdog.CreateFailure(
+                EVulkanPresentNowReadinessStage.FramePlanSeal,
+                "prepared-mesh-ingress",
+                "ExplicitOutput -> prepared mesh dependency lowering",
+                "Prepared mesh ingress exceeded its fixed resource-use capacity.");
+        }
+        if (_preparedMeshIngress.IsCohortHit)
+            PublishPreparedMeshIngressCohortHit();
+        _commandRuntime.NormalizePrimaryPlanPassIndicesForPublication(
+            drainedOperations);
+        VulkanComputePreparationResult computePreparation =
+            _commandRuntime.PrepareComputeProgramsForFramePlan(drainedOperations);
+        if (!computePreparation.Succeeded)
+        {
+            acceptedPlan.SettleUnsubmittedSubmissionMarkers();
+            throw new InvalidOperationException(computePreparation.FormatFailure());
+        }
+        watchdog.RecordProgress();
 
-            VulkanComputePreparationResult computePreparation =
-                _commandRuntime.PrepareComputeProgramsForFramePlan(staticOperations);
-            if (!computePreparation.Succeeded)
-            {
-                VulkanCommandSynchronizationState.FailUnsubmittedSubmissionMarkers(
-                    staticOperations);
-                return VulkanPrimaryCommandRecordingResult.Deferred(computePreparation.FormatFailure());
-            }
+        ResourcePlannerRuntimeState plannerState =
+            PublishedResourcePlannerRuntimeState;
+        VulkanFramePlanningSnapshot planningSnapshot =
+            _framePlanner.CaptureSnapshot();
+        if (planningSnapshot.RenderGraphPlan.Revision !=
+            plannerState.ResourcePlannerRevision)
+        {
+            acceptedPlan.SettleUnsubmittedSubmissionMarkers();
+            throw new InvalidOperationException(
+                $"Planner publication changed before explicit logical sealing. " +
+                $"Planner={plannerState.ResourcePlannerRevision} " +
+                $"Graph={planningSnapshot.RenderGraphPlan.Revision}.");
+        }
+        if (!TryPrepareFrameOperationTargets(
+                drainedOperations,
+                allowSynchronousResourceUploads: true,
+                out string targetFailure) ||
+            !TryPreparePreparedMeshIngressTargets(
+                _preparedMeshIngress,
+                allowSynchronousResourceUploads: true,
+                out targetFailure))
+        {
+            acceptedPlan.SettleUnsubmittedSubmissionMarkers();
+            throw watchdog.CreateFailure(
+                EVulkanPresentNowReadinessStage.FramePlanSeal,
+                "explicit-frame-operation-target",
+                "ExplicitOutput -> framebuffer dependencies",
+                targetFailure);
+        }
+        if (!TryFreezeNativeBarrierBindings(
+                in planningSnapshot,
+                in plannerState,
+                allowSynchronousResourceUploads: true,
+                out VulkanFramePlanningSnapshot frozenPlanningSnapshot,
+                out string freezeFailure))
+        {
+            acceptedPlan.SettleUnsubmittedSubmissionMarkers();
+            throw new InvalidOperationException(freezeFailure);
+        }
+        watchdog.RecordProgress();
 
-            ResourcePlannerRuntimeState plannerState = PublishedResourcePlannerRuntimeState;
-            VulkanFramePlanningSnapshot planningSnapshot = _framePlanner.CaptureSnapshot();
-            if (planningSnapshot.RenderGraphPlan.Revision != plannerState.ResourcePlannerRevision)
-            {
-                VulkanCommandSynchronizationState.FailUnsubmittedSubmissionMarkers(
-                    staticOperations);
-                return VulkanPrimaryCommandRecordingResult.Deferred(
-                    $"Planner publication changed before explicit-target recording. " +
-                    $"Planner={plannerState.ResourcePlannerRevision} Graph={planningSnapshot.RenderGraphPlan.Revision}.");
-            }
-            if (!TryFreezeNativeBarrierBindings(
-                    in planningSnapshot,
-                    in plannerState,
-                    _resourceRuntime.AllowSynchronousResourceUploads,
-                    out VulkanFramePlanningSnapshot frozenPlanningSnapshot,
-                    out string freezeFailure))
-            {
-                VulkanCommandSynchronizationState.FailUnsubmittedSubmissionMarkers(
-                    staticOperations);
-                return VulkanPrimaryCommandRecordingResult.Deferred(freezeFailure);
-            }
+        acceptedPlan.CaptureOperations(
+            drainedOperations,
+            dynamicUiOperations: [],
+            textureUploadOperations);
+        acceptedPlan.PreparedMeshIngress.CopyFrom(_preparedMeshIngress);
+        _preparedMeshIngress.Clear();
+        FramePlan logicalPlan = _framePlanner.FramePlanBuilder.BuildAndSeal(
+            frameSlot,
+            plannerState.ResourcePlannerRevision,
+            staticOperationSignature: 0UL,
+            dynamicOverlaySignature: 0UL,
+            acceptedPlan.StaticOperations,
+            acceptedPlan.DynamicUiOperations,
+            new VulkanFramePlanRenderGraphAuthority(
+                frozenPlanningSnapshot.RenderGraphPlan,
+                plannerState.FrameOpResourcePlannerSwitchingState),
+            textureUploadOperations: acceptedPlan.TextureUploadOperations,
+            preparedMeshIngress: acceptedPlan.PreparedMeshIngress,
+            authoringOperationCount: acceptedPlan.StaticOperationCount,
+            authoringDynamicOverlayOperationCount: 0,
+            authoringTextureUploadOperationCount:
+                acceptedPlan.TextureUploadOperationCount,
+            emptyPresentNowOutputContract: provisionalOutputContract);
+        if (!logicalPlan.HasAnyExecutableOutput)
+        {
+            acceptedPlan.SettleUnsubmittedSubmissionMarkers();
+            throw new InvalidOperationException(
+                "The explicit-target logical output DAG admitted no executable output.");
+        }
 
-            SwapchainRecordingTarget recordingTarget = new(
-                lease.Target.ColorImage,
-                lease.Target.ColorView,
-                lease.ColorFormat,
-                lease.Target.Extent,
-                lease.Target.DepthImage,
-                lease.Target.DepthView,
-                lease.DepthFormat,
-                VulkanFixedOutputFormatResolver.DepthAspect(lease.DepthFormat),
-                lease.Target.InitialColorLayout,
-                ImageEverPresentedAtRecordStart:
-                    lease.Target.InitialColorLayout != ImageLayout.Undefined);
+        if (!logicalPlan.TryGetExecutableOutputContract(
+                in provisionalOutputContract,
+                out RenderOutputRequest outputContract))
+        {
+            throw watchdog.CreateFailure(
+                EVulkanPresentNowReadinessStage.FramePlanSeal,
+                "explicit-output-contract",
+                "ExplicitOutput -> exact terminal output",
+                "The sealed output DAG did not publish the required explicit PresentNow contract.");
+        }
+        outputTarget = outputContract.Target with
+        {
+            TargetGeneration = preview.TargetGeneration,
+            DisplayWidth = preview.Output.Properties.Width,
+            DisplayHeight = preview.Output.Properties.Height,
+            InternalWidth = preview.Output.Properties.Width,
+            InternalHeight = preview.Output.Properties.Height,
+            FormatCompatibilityKey =
+                ((ulong)(uint)preview.CompatibilityTarget.ImageFormat << 32) |
+                (uint)preview.CompatibilityTarget.DepthFormat,
+            SampleCount = preview.Output.Properties.SampleCount,
+        };
+        outputContract = outputContract.WithTarget(in outputTarget);
+        if (outputContract.WorkClass == ERenderOutputWorkClass.PresentNow &&
+            outputContract.ReadinessPolicy ==
+                ERenderOutputReadinessPolicy.AllowDeferral)
+        {
+            throw watchdog.CreateFailure(
+                EVulkanPresentNowReadinessStage.FramePlanSeal,
+                "explicit-output-contract",
+                "ExplicitOutput -> terminal present policy",
+                "A PresentNow explicit output cannot admit AllowDeferral.");
+        }
+
+        if (outputContract.WorkClass == ERenderOutputWorkClass.PresentNow)
+        {
             VulkanPreparedResourcePlanStamp resourcePlanStamp = new(
                 frozenPlanningSnapshot,
                 plannerState.ResourcePlannerRevision,
                 plannerState.ResourcePlannerSignature,
                 plannerState.ResourceAllocationSignature);
-            VulkanCommandRecordingPolicySnapshot policy = new(
-                UseDynamicRendering: true,
-                AllowSynchronousResourceUploads: _resourceRuntime.AllowSynchronousResourceUploads,
-                FreshSerialRecording: true,
-                IsExternalSwapchainTarget: lease.ImagesExternallyOwned,
-                PreserveSwapchainForOverlay: false,
-                TransitionSwapchainToPresent: true,
-                PreferKhrDynamicRendering: false,
-                FinalTargetLayout: lease.Target.RequiredFinalColorLayout);
-            VulkanPreparedPrimaryAuthority authority = new(
-                recordingTarget,
-                CapturePreparedRenderTargetSnapshot(
-                    in recordingTarget,
-                    lease.Target.TargetGeneration),
-                default,
-                resourcePlanStamp,
-                new VulkanCommandClearStateSnapshot(
-                    _commandRuntime.StateTracker.ClearColor,
-                    _commandRuntime.StateTracker.ClearDepth,
-                    _commandRuntime.StateTracker.ClearStencil,
-                    RenderDiagnosticsFlags.VkForceSwapchainMagenta),
-                policy,
-                lease.Target.InitialColorLayout);
-
-            FramePlan framePlan = _framePlanner.FramePlanBuilder.BuildAndSeal(
-                checked((int)lease.Target.FrameSlotIndex),
-                plannerState.ResourcePlannerRevision,
-                staticOperationSignature: 0UL,
-                dynamicOverlaySignature: 0UL,
-                staticOperations,
-                dynamicOverlayOperations: [],
-                new VulkanFramePlanRenderGraphAuthority(
-                    frozenPlanningSnapshot.RenderGraphPlan,
-                    plannerState.FrameOpResourcePlannerSwitchingState),
-                textureUploadOperations: textureUploadOperations);
-            FrameOperationSequence preparedOperations = framePlan.GetNativeStaticOperationsForRecording();
-            computePreparation = _commandRuntime.PrepareComputeFrameOpsForRecording(
-                lease.Target.FrameSlotIndex,
-                preparedOperations);
-            if (!computePreparation.Succeeded)
+            VulkanRenderGraphPlan renderGraphPlan =
+                frozenPlanningSnapshot.RenderGraphPlan;
+            SwapchainRecordingTarget compatibilityTarget =
+                preview.CompatibilityTarget;
+            if (!_commandRuntime.TryPreparePresentNowPipelinesForSealedFramePlan(
+                    logicalPlan,
+                    logicalPlan.GetNativeStaticOperationsForRecording(),
+                    logicalPlan.GetNativeDynamicOverlayOperationsForRecording(),
+                    in compatibilityTarget,
+                    in resourcePlanStamp,
+                    in renderGraphPlan,
+                    UseDynamicRenderingRenderTargets,
+                    preserveSwapchainForOverlay: false,
+                    ref watchdog,
+                    out string pipelineFailure))
             {
-                VulkanCommandSynchronizationState.FailUnsubmittedSubmissionMarkers(
-                    staticOperations);
-                return VulkanPrimaryCommandRecordingResult.Deferred(computePreparation.FormatFailure());
+                throw watchdog.CreateFailure(
+                    EVulkanPresentNowReadinessStage.PipelineCompilation,
+                    "explicit-graphics-pipeline",
+                    "ExplicitOutput -> graphics pipeline manifest",
+                    pipelineFailure);
             }
+        }
 
-            primaryPlan.Build(
-                preparedOperations.Stream,
-                framePlan.StaticOperationSignature,
-                new VulkanPrimaryPlanTerminalContext(
-                    PreserveSwapchainForOverlay: false,
-                    TransitionSwapchainToPresent: true,
-                    ReleaseExternalImageOwnership:
-                        lease.CompletionKind == VulkanFrameTargetCompletionKind.OpenXrRuntimeRelease),
-                framePlan: framePlan);
-            VulkanPreparedPrimaryCommandInput input = PreparePrimaryCommandInput(
-                lease.Target.FrameSlotIndex,
-                primaryCommandBuffer,
-                dynamicUiSecondaryCommandBuffer: default,
-                framePlan,
-                primaryPlan,
-                in authority) with
-            {
-                FrameDataImageIndexOverride = lease.Target.FrameSlotIndex,
-                ExcludeDesktopSwapchainBarriers = true,
-            };
-            VulkanPrimaryCommandRecordingResult result = _commandRuntime.RecordPrimary(in input);
-            if (!meshMaterializationComplete && result.Succeeded)
-            {
-                _commandRuntime.FailSubmissionMarkersForCommandBuffer(
-                    input.PrimaryCommandBuffer);
-                VulkanCommandSynchronizationState.FailUnsubmittedSubmissionMarkers(
-                    staticOperations);
-                return result with
-                {
-                    Disposition = EVulkanPrimaryCommandRecordingDisposition.Deferred,
-                    CommandBuffer = default,
-                    Reason = deferredReason,
-                };
-            }
+        computePreparation =
+            _commandRuntime.PrepareComputeFramePlanForRecording(
+                preview.ExpectedFrameSlotIndex,
+                logicalPlan);
+        if (!computePreparation.Succeeded)
+        {
+            throw watchdog.CreateFailure(
+                EVulkanPresentNowReadinessStage.PipelineCompilation,
+                $"explicit-compute-frame-data:{preview.ExpectedFrameSlotIndex}",
+                "ExplicitOutput -> compute descriptors/uniforms",
+                computePreparation.FormatFailure());
+        }
 
-            if (!result.Succeeded)
-            {
-                VulkanCommandSynchronizationState.FailUnsubmittedSubmissionMarkers(
-                    staticOperations);
-            }
-
-            submissionMarkersTransferred =
-                result.Succeeded && result.CommandBuffer.Handle != 0;
-            return result;
+        acceptedPlan.CaptureRequiredTextureReferences(
+            logicalPlan,
+            _resourceRuntime.Descriptors);
+        _resourceRuntime.Uploads.CaptureRequiredTextureUploadManifest(
+            acceptedPlan.RequiredTextureUploads,
+            acceptedPlan.RequiredTextures,
+            acceptedPlan.RequiredTextureGenerations,
+            // The sealed explicit plan already owns descriptor bindings for
+            // these published generations. Later streaming requests are next-
+            // frame work rather than mutations of this accepted snapshot.
+            requireExactDescriptorPublication: false);
+        acceptedPlan.DeclareDependencies(logicalPlan);
+        acceptedPlan.MarkNonTextureDependenciesReady();
+        _ = acceptedPlan.SynchronizeTextureDependencies();
+        acceptedPlan.Seal(
+            in outputContract,
+            logicalPlan,
+            in plannerState,
+            in frozenPlanningSnapshot);
+        watchdog.RecordProgress();
+        if (outputContract.WorkClass == ERenderOutputWorkClass.PresentNow)
+        {
+            CompleteAcceptedPresentNowTextureReadiness(
+                acceptedPlan,
+                ref watchdog,
+                "ExplicitOutput -> material descriptor -> texture generation");
+        }
+        logicalPlanAccepted = true;
+        return acceptedPlan;
         }
         finally
         {
-            if (!submissionMarkersTransferred)
-            {
-                _commandRuntime.FailSubmissionMarkersForCommandBuffer(
-                    primaryCommandBuffer);
-                VulkanCommandSynchronizationState.FailUnsubmittedSubmissionMarkers(
-                    staticOperations);
-            }
+            if (!logicalPlanAccepted)
+                acceptedPlan.SettleUnsubmittedSubmissionMarkers();
         }
     }
+
+    /// <summary>
+    /// Reseals the previously accepted logical operation snapshot using the
+    /// acquired image/view authority. No queue drain, planner snapshot capture,
+    /// or cold resource preparation is repeated after acquire.
+    /// </summary>
+    private VulkanPrimaryCommandRecordingResult RecordAcceptedExplicitPrimary(
+        in VulkanFrameTargetLease lease,
+        CommandBuffer primaryCommandBuffer,
+        VulkanPrimaryCommandPlan primaryPlan,
+        VulkanAcceptedFramePlan acceptedPlan)
+    {
+        if (!UseDynamicRenderingRenderTargets)
+        {
+            string reason =
+                "Lease-backed production output currently requires Vulkan dynamic " +
+                "rendering; no legacy framebuffer belongs to an explicit target.";
+            return acceptedPlan.OutputContract.WorkClass ==
+                    ERenderOutputWorkClass.PresentNow
+                ? VulkanPrimaryCommandRecordingResult.Failed(
+                    reason,
+                    acceptedPlan.OutputContract.ReadinessPolicy,
+                    acceptedPlan.OutputContract.WorkClass,
+                    acceptedPlan.FrameId)
+                : VulkanPrimaryCommandRecordingResult.Deferred(reason);
+        }
+
+        SwapchainRecordingTarget recordingTarget = new(
+            lease.Target.ColorImage,
+            lease.Target.ColorView,
+            lease.ColorFormat,
+            lease.Target.Extent,
+            lease.Target.DepthImage,
+            lease.Target.DepthView,
+            lease.DepthFormat,
+            VulkanFixedOutputFormatResolver.DepthAspect(lease.DepthFormat),
+            lease.Target.InitialColorLayout,
+            ImageEverPresentedAtRecordStart:
+                lease.Target.InitialColorLayout != ImageLayout.Undefined);
+        VulkanPreparedResourcePlanStamp resourcePlanStamp = new(
+            acceptedPlan.FrozenPlanningSnapshot,
+            acceptedPlan.PlannerState.ResourcePlannerRevision,
+            acceptedPlan.PlannerState.ResourcePlannerSignature,
+            acceptedPlan.PlannerState.ResourceAllocationSignature);
+        VulkanCommandRecordingPolicySnapshot policy = new(
+            UseDynamicRendering: true,
+            AllowSynchronousResourceUploads:
+                _resourceRuntime.AllowSynchronousResourceUploads,
+            FreshSerialRecording: true,
+            IsExternalSwapchainTarget: lease.ImagesExternallyOwned,
+            PreserveSwapchainForOverlay: false,
+            TransitionSwapchainToPresent: true,
+            PreferKhrDynamicRendering: false,
+            FinalTargetLayout: lease.Target.RequiredFinalColorLayout,
+            ReadinessPolicy: acceptedPlan.OutputContract.ReadinessPolicy,
+            WorkClass: acceptedPlan.OutputContract.WorkClass,
+            SourceFrameId: acceptedPlan.FrameId,
+            AllowArtifactReuse:
+                acceptedPlan.OutputContract.WorkClass !=
+                    ERenderOutputWorkClass.PresentNow,
+            AllowSecondaryDeferral:
+                acceptedPlan.OutputContract.WorkClass !=
+                    ERenderOutputWorkClass.PresentNow);
+        VulkanPreparedPrimaryAuthority authority = new(
+            recordingTarget,
+            CapturePreparedRenderTargetSnapshot(
+                in recordingTarget,
+                lease.Target.TargetGeneration),
+            default,
+            resourcePlanStamp,
+            new VulkanCommandClearStateSnapshot(
+                _commandRuntime.StateTracker.ClearColor,
+                _commandRuntime.StateTracker.ClearDepth,
+                _commandRuntime.StateTracker.ClearStencil,
+                RenderDiagnosticsFlags.VkForceSwapchainMagenta),
+            policy,
+            lease.Target.InitialColorLayout);
+        FramePlan framePlan = acceptedPlan.LogicalPlan;
+        FrameOperationSequence preparedOperations =
+            framePlan.GetNativeStaticOperationsForRecording();
+
+        primaryPlan.Build(
+            preparedOperations.Stream,
+            framePlan.StaticOperationSignature,
+            new VulkanPrimaryPlanTerminalContext(
+                PreserveSwapchainForOverlay: false,
+                TransitionSwapchainToPresent: true,
+                ReleaseExternalImageOwnership:
+                    lease.CompletionKind ==
+                    VulkanFrameTargetCompletionKind.OpenXrRuntimeRelease),
+            framePlan: framePlan);
+        VulkanPreparedPrimaryCommandInput input = PreparePrimaryCommandInput(
+            lease.Target.FrameSlotIndex,
+            primaryCommandBuffer,
+            dynamicUiSecondaryCommandBuffer: default,
+            framePlan,
+            primaryPlan,
+            in authority,
+            callerOwnsSubmissionMarkersUntilRecordingSucceeds: true) with
+        {
+            FrameDataImageIndexOverride = lease.Target.FrameSlotIndex,
+            ExcludeDesktopSwapchainBarriers = true,
+        };
+        return _commandRuntime.RecordPrimary(in input);
+    }
+
 }

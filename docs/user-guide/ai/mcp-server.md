@@ -73,6 +73,14 @@ XREngine.Editor.exe --no-mcp
 Use `--mcp-allow-all` only for trusted local automation because it bypasses permission prompts.
 Use `--no-mcp` to force MCP off for an isolated benchmark or unattended run,
 even when the saved editor preference enables it.
+Command-line MCP values are process-local session overrides. They do not modify
+or appear as unsaved changes in the persisted editor preference assets.
+MCP clients can apply any editor preference property for only the active process
+by calling `set_editor_preference` with `session_only: true`; nested dotted paths
+such as `Debug.RenderMesh3DBounds` are supported. Restarting the editor discards
+the value and reveals the saved global/project preference again.
+`set_game_setting` supports the same `session_only: true` behavior for any writable
+game setting or nested dotted path.
 
 ## VS Code
 

@@ -211,7 +211,8 @@ internal sealed partial class VulkanFrameLoop : IVulkanTargetOutputHost
 
         throw new VulkanOutOfMemoryException(
             $"Vulkan target image allocation failed ({result}). Requested={requiredProperties}",
-            requiredProperties);
+            requiredProperties,
+            result);
     }
 
     public VulkanMemoryAllocation AllocateBufferMemoryWithFallback(Buffer buffer, MemoryPropertyFlags requiredProperties)
@@ -242,7 +243,8 @@ internal sealed partial class VulkanFrameLoop : IVulkanTargetOutputHost
 
         throw new VulkanOutOfMemoryException(
             $"Vulkan target buffer allocation failed ({result}). Requested={requiredProperties}",
-            requiredProperties);
+            requiredProperties,
+            result);
     }
 
     public void FreeMemoryAllocation(VulkanMemoryAllocation allocation)

@@ -69,6 +69,7 @@ internal unsafe partial class VkMeshRenderer(
     private IndexSize _pointIndexSize;
     private bool _triangleIndexBufferExternallyProvided;
     private bool _indexBuffersSkippedForShaderGeneratedVertices;
+    private int _pendingAsyncIndexBufferReady;
 
     private readonly Dictionary<VulkanGraphicsPipelineKey, Pipeline> _pipelines = new();
 

@@ -12,6 +12,7 @@ namespace XREngine.Animation
 
         protected override Vector3 LerpValues(Vector3 t1, Vector3 t2, float time) => Vector3.Lerp(t1, t2, time);
         protected override float[] GetComponents(Vector3 value) => [value.X, value.Y, value.Z];
+        protected override Vector3 ScaleValue(Vector3 value, float scale) => value * scale;
         protected override Vector3 GetMaxValue() => new(float.MaxValue);
         protected override Vector3 GetMinValue() => new(float.MinValue);
         protected override float GetVelocityMagnitude()

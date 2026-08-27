@@ -19,6 +19,9 @@ public partial class AnimationClip
     }
 
     public bool TryValidateUnityPlaybackCapabilities(out string diagnostic)
+        => TryValidateUnityPlaybackCapabilities(allowRuntimeAdapters: false, out diagnostic);
+
+    public bool TryValidateUnityPlaybackCapabilities(bool allowRuntimeAdapters, out string diagnostic)
     {
         UnityAnimationImportManifest? manifest = UnityImportManifest;
         if (manifest is null)
@@ -35,6 +38,14 @@ public partial class AnimationClip
             return false;
         }
 
+        if (manifest.CapabilityContractVersion != UnityAnimationImportCapabilityContract.CurrentVersion)
+        {
+            diagnostic =
+                $"Unity animation capability contract {manifest.CapabilityContractVersion} is not supported; " +
+                $"expected {UnityAnimationImportCapabilityContract.CurrentVersion}.";
+            return false;
+        }
+
         if (manifest.SourceIdentity is null
             || manifest.CoordinateContract is null
             || manifest.Domains is null
@@ -42,6 +53,26 @@ public partial class AnimationClip
             || manifest.PreservedPayloads is null)
         {
             diagnostic = "The Unity import manifest is incomplete or malformed.";
+            return false;
+        }
+
+        if (!string.Equals(
+            manifest.SourceIdentity.SourceFormat,
+            UnityAnimationImportCapabilityContract.SourceFormat,
+            StringComparison.Ordinal))
+        {
+            diagnostic =
+                $"Unity animation source format '{manifest.SourceIdentity.SourceFormat}' is not supported; " +
+                $"expected '{UnityAnimationImportCapabilityContract.SourceFormat}'.";
+            return false;
+        }
+
+        if (!UnityAnimationImportCapabilityContract.SupportsSerializedVersion(
+            manifest.SourceIdentity.SerializedVersion))
+        {
+            diagnostic =
+                $"Unity AnimationClip serializedVersion {manifest.SourceIdentity.SerializedVersion} " +
+                $"is outside capability contract {UnityAnimationImportCapabilityContract.CurrentVersion}.";
             return false;
         }
 
@@ -63,7 +94,7 @@ public partial class AnimationClip
             return false;
         }
 
-        if (!manifest.TryGetBlockingDiagnostic(out diagnostic))
+        if (!manifest.TryGetBlockingDiagnostic(allowRuntimeAdapters, out diagnostic))
         {
             diagnostic = string.Empty;
             return true;

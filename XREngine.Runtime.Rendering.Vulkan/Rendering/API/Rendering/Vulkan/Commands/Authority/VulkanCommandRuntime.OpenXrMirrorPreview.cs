@@ -122,6 +122,9 @@ internal sealed partial class VulkanCommandRuntime
         uint openXrViewIndex,
         uint openXrImageIndex,
         uint frameDataSlotIndex,
+        ulong logicalViewId,
+        int requiredOutputIndex,
+        RenderOutputRequest outputContract,
         ulong frameOpsSignature,
         ulong plannerRevision,
         ulong frameOpContextId,
@@ -132,11 +135,33 @@ internal sealed partial class VulkanCommandRuntime
     {
         recorded = default;
         recordedUploads = [];
-        if (!DeviceContext.IsOperational ||
-            commandInput.PrimaryCommandBuffer.Handle == 0 ||
-            !commandInput.FramePlan.IsSealed)
+        bool inputIsValid =
+            commandInput.PrimaryCommandBuffer.Handle != 0 &&
+            commandInput.FramePlan.IsSealed &&
+            (outputContract.WorkClass != ERenderOutputWorkClass.PresentNow ||
+             logicalViewId != 0UL &&
+             requiredOutputIndex >= 0 &&
+             outputContract.IsDefined);
+        if (!inputIsValid)
         {
+            if (outputContract.WorkClass == ERenderOutputWorkClass.PresentNow)
+            {
+                throw new VulkanPresentNowReadinessException(
+                    outputContract.FrameId,
+                    EVulkanPresentNowReadinessStage.FramePlanSeal,
+                    $"openxr-mirror-{openXrViewIndex}-frozen-input",
+                    "DesktopMirror -> exact immutable recording input",
+                    TimeSpan.Zero,
+                    TimeSpan.Zero,
+                    "The foreground mirror recorder received an incomplete or stale output binding.");
+            }
+
             return false;
+        }
+        if (!DeviceContext.IsOperational)
+        {
+            throw new InvalidOperationException(
+                "OpenXR foreground mirror recording cannot continue because the Vulkan device is not operational.");
         }
 
         List<VulkanImportedTexturePendingUpload> uploadBatch =
@@ -146,6 +171,34 @@ internal sealed partial class VulkanCommandRuntime
         {
             VulkanPrimaryCommandRecordingResult result =
                 RecordPrimary(in commandInput);
+            if (outputContract.IsDefined)
+            {
+                result = result with
+                {
+                    ReadinessPolicy = outputContract.ReadinessPolicy,
+                    WorkClass = outputContract.WorkClass,
+                    SourceFrameId = commandInput.FramePlan.RenderFrameId,
+                };
+            }
+            if (outputContract.WorkClass == ERenderOutputWorkClass.PresentNow &&
+                result.Disposition is not
+                    EVulkanPrimaryCommandRecordingDisposition.Recorded and not
+                    EVulkanPrimaryCommandRecordingDisposition.RecordedWithGpuFallback)
+            {
+                ResourceRuntime.Uploads.CancelRecordedSubmitBatch(
+                    DeviceContext.State != EVulkanDeviceState.Healthy,
+                    result.Reason ??
+                        $"OpenXR mirror recording returned {result.Disposition}");
+                throw new VulkanPresentNowReadinessException(
+                    commandInput.FramePlan.RenderFrameId,
+                    EVulkanPresentNowReadinessStage.PipelineCompilation,
+                    $"openxr-mirror-{openXrViewIndex}-primary",
+                    "DesktopMirror -> newly recorded exact primary",
+                    TimeSpan.Zero,
+                    TimeSpan.Zero,
+                    $"A foreground mirror cannot complete as {result.Disposition}. " +
+                    (result.Reason ?? "Primary recording produced no concrete failure detail."));
+            }
             if (!result.Succeeded)
             {
                 ResourceRuntime.Uploads.CancelRecordedSubmitBatch(
@@ -166,6 +219,9 @@ internal sealed partial class VulkanCommandRuntime
                 openXrViewIndex,
                 openXrImageIndex,
                 frameDataSlotIndex,
+                logicalViewId,
+                requiredOutputIndex,
+                outputContract,
                 frameOpsSignature,
                 plannerRevision,
                 frameOpContextId,

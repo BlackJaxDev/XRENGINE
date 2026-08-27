@@ -724,7 +724,7 @@ internal sealed class EngineRuntimeRenderingHostServices :
         => new();
 
     public AbstractPhysicsScene CreatePhysicsScene()
-        => Engine.UserSettings.PhysicsLibrary switch
+        => Engine.EffectiveSettings.PhysicsLibrary switch
         {
             EPhysicsLibrary.Jitter => new JitterScene(),
             EPhysicsLibrary.Jolt => new JoltScene(),

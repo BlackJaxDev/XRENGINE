@@ -337,10 +337,12 @@ internal static class ProjectBuilder
             ? BuildAotRuntimeMetadata(configuration, platform)
             : null;
 
-        WriteCookedAsset(Engine.GameSettings ?? new GameStartupSettings(), Path.Combine(staging, StartupAssetName), aotMetadata);
+        WriteCookedAsset(Engine.PersistentGameSettings, Path.Combine(staging, StartupAssetName), aotMetadata);
 
-        if (Engine.EditorPreferences is not null)
-            WriteCookedAsset(Engine.EditorPreferences, Path.Combine(staging, XRProject.EditorPreferencesFileName), aotMetadata);
+        WriteCookedAsset(
+            Engine.CreatePersistableEditorPreferencesSnapshot(),
+            Path.Combine(staging, XRProject.EditorPreferencesFileName),
+            aotMetadata);
 
         WriteCookedAsset(Engine.UserSettings ?? new UserSettings(), Path.Combine(staging, XRProject.UserSettingsFileName), aotMetadata);
 

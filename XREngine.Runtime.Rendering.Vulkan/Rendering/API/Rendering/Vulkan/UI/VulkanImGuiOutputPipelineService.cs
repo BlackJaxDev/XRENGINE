@@ -8,16 +8,15 @@ namespace XREngine.Rendering.Vulkan;
 
 /// <summary>
 /// Owns ImGui graphics-pipeline creation for a desktop-output generation.  Old
-/// handles stay alive until the generation is disposed, so recreating WSI never
-/// races work that was submitted with the previous pipeline.
+/// handles retire through the resource-lifetime authority, so recreating WSI
+/// never races work submitted with the previous pipeline and does not retain an
+/// unbounded superseded-handle list.
 /// </summary>
 internal sealed unsafe class VulkanImGuiOutputPipelineService(
     VulkanOutputRuntime output,
     VulkanResourceRuntime resources,
     VulkanDeviceContext device)
 {
-    private readonly List<(Pipeline Pipeline, PipelineLayout Layout)> _superseded = [];
-
     internal void EnsureCreated()
     {
         VulkanImGuiResources handles = output._imguiResources;
@@ -31,18 +30,55 @@ internal sealed unsafe class VulkanImGuiOutputPipelineService(
         CreatePipeline(handles, signature);
     }
 
+    /// <summary>
+    /// Makes the target-compatible terminal UI pipeline resident before a
+    /// PresentNow frame can need it. This is deliberately separate from
+    /// material pipelines: its compatibility is fully determined by the live
+    /// desktop output generation, whereas scene material variants are not.
+    /// </summary>
+    internal void EnsureMandatoryPresentNowPipeline()
+    {
+        if (!output._imguiResources.FontReady)
+        {
+            throw new InvalidOperationException(
+                "The mandatory ImGui PresentNow pipeline cannot be initialized before its font descriptor resources are resident.");
+        }
+
+        try
+        {
+            EnsureCreated();
+            if (output._imguiResources.Pipeline.Handle == 0)
+            {
+                throw new InvalidOperationException(
+                    "ImGui pipeline creation returned without a resident native pipeline handle.");
+            }
+        }
+        catch (Exception exception)
+        {
+            InvalidOperationException failure = new(
+                $"Mandatory PresentNow ImGui pipeline initialization failed for desktop generation " +
+                $"{output.Desktop.Generation} ({output.Desktop.ImageFormat}, " +
+                $"{output.Desktop.ImageColorSpace}, dynamicRendering=" +
+                $"{device.MutableCapabilities._useDynamicRenderingRenderTargets}).",
+                exception);
+            Debug.VulkanError(
+                $"[Vulkan][PresentNow][InitializationFailed] {failure.Message} " +
+                $"Cause={exception.GetType().Name}: {exception.Message}");
+            throw failure;
+        }
+    }
+
     internal void InvalidateForDesktopOutputMutation()
         => output._imguiResources.PipelineSignature = 0;
 
     internal void Dispose()
     {
-        Destroy(output._imguiResources.Pipeline, output._imguiResources.PipelineLayout);
+        RetirePipelinePair(
+            output._imguiResources.Pipeline,
+            output._imguiResources.PipelineLayout);
         output._imguiResources.Pipeline = default;
         output._imguiResources.PipelineLayout = default;
         output._imguiResources.PipelineSignature = 0;
-        for (int index = 0; index < _superseded.Count; index++)
-            Destroy(_superseded[index].Pipeline, _superseded[index].Layout);
-        _superseded.Clear();
         DestroyShader(ref output._imguiResources.VertShader);
         DestroyShader(ref output._imguiResources.FragShader);
     }
@@ -59,11 +95,12 @@ internal sealed unsafe class VulkanImGuiOutputPipelineService(
 
     private void PreserveCurrentPipeline(VulkanImGuiResources handles)
     {
-        if (handles.Pipeline.Handle != 0 || handles.PipelineLayout.Handle != 0)
-            _superseded.Add((handles.Pipeline, handles.PipelineLayout));
+        Pipeline supersededPipeline = handles.Pipeline;
+        PipelineLayout supersededLayout = handles.PipelineLayout;
         handles.Pipeline = default;
         handles.PipelineLayout = default;
         handles.PipelineSignature = 0;
+        RetirePipelinePair(supersededPipeline, supersededLayout);
         DestroyShader(ref handles.VertShader);
         DestroyShader(ref handles.FragShader);
     }
@@ -92,7 +129,9 @@ internal sealed unsafe class VulkanImGuiOutputPipelineService(
                 PPushConstantRanges = &range,
             };
             Ensure(device.Api.CreatePipelineLayout(device.Device, ref layoutInfo, null, out handles.PipelineLayout), "create ImGui pipeline layout");
-            resources.Lifetime.Tracker.RegisterResource(new VulkanResourceLifetimeKey(ObjectType.PipelineLayout, handles.PipelineLayout.Handle), "ImGui.PipelineLayout", externallyOwned: false);
+            resources.TrackPipelineLayout(
+                handles.PipelineLayout,
+                "ImGui.PipelineLayout");
 
             PipelineShaderStageCreateInfo* stages = stackalloc PipelineShaderStageCreateInfo[2];
             stages[0] = CreateStage(ShaderStageFlags.VertexBit, handles.VertShader);
@@ -134,7 +173,7 @@ internal sealed unsafe class VulkanImGuiOutputPipelineService(
         }
         catch
         {
-            Destroy(handles.Pipeline, handles.PipelineLayout);
+            RetirePipelinePair(handles.Pipeline, handles.PipelineLayout);
             handles.Pipeline = default;
             handles.PipelineLayout = default;
             DestroyShader(ref handles.VertShader);
@@ -157,12 +196,14 @@ internal sealed unsafe class VulkanImGuiOutputPipelineService(
     private static PipelineShaderStageCreateInfo CreateStage(ShaderStageFlags stage, ShaderModule module)
         => new() { SType = StructureType.PipelineShaderStageCreateInfo, Stage = stage, Module = module, PName = (byte*)Silk.NET.Core.Native.SilkMarshal.StringToPtr("main") };
 
-    private void Destroy(Pipeline pipeline, PipelineLayout layout)
+    private void RetirePipelinePair(Pipeline pipeline, PipelineLayout layout)
     {
         if (pipeline.Handle != 0)
-            device.Api.DestroyPipeline(device.Device, pipeline, null);
+            resources.RetirePipeline(pipeline, "ImGui.Pipeline");
         if (layout.Handle != 0)
-            device.Api.DestroyPipelineLayout(device.Device, layout, null);
+            _ = resources.TryBeginDestroyPipelineLayout(
+                layout,
+                "ImGui.PipelineLayout");
     }
 
     private void DestroyShader(ref ShaderModule shader)

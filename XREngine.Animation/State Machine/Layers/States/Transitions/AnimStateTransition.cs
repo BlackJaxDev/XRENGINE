@@ -92,13 +92,32 @@ namespace XREngine.Animation
         }
 
         private float _exitTime = 0.0f;
+        /// <summary>
+        /// Normalized source-state time after which this transition may run.
+        /// Values below one recur each loop; values at or above one occur after
+        /// that many complete normalized cycles.
+        /// </summary>
         public float ExitTime
         {
             get => _exitTime;
             set => SetField(ref _exitTime, value);
         }
 
+        private bool _hasExitTime;
+        /// <summary>
+        /// Whether <see cref="ExitTime"/> participates in transition scheduling.
+        /// </summary>
+        public bool HasExitTime
+        {
+            get => _hasExitTime;
+            set => SetField(ref _hasExitTime, value);
+        }
+
         private bool _fixedDuration = true;
+        /// <summary>
+        /// True when <see cref="BlendDuration"/> is seconds; false when it is a
+        /// normalized fraction of the source state's effective duration.
+        /// </summary>
         public bool FixedDuration
         {
             get => _fixedDuration;
@@ -139,7 +158,22 @@ namespace XREngine.Animation
             => Started?.Invoke();
 
         public bool AllConditionsValid(IDictionary<string, AnimVar> variables)
-            => Conditions.Count == 0 || Conditions.All(x => x.Evaluate(variables));
+        {
+            for (int i = 0; i < Conditions.Count; i++)
+                if (!Conditions[i].Evaluate(variables))
+                    return false;
+
+            return true;
+        }
+
+        internal bool IsEligible(IDictionary<string, AnimVar> variables, AnimState? playbackState)
+        {
+            if (!HasExitTime && Conditions.Count == 0)
+                return false;
+            if (HasExitTime && (playbackState is null || !playbackState.HasCrossedExitTime(ExitTime)))
+                return false;
+            return AllConditionsValid(variables);
+        }
 
         public bool NameEquals(string name, StringComparison comp = StringComparison.Ordinal)
             => string.Equals(Name, name, comp);

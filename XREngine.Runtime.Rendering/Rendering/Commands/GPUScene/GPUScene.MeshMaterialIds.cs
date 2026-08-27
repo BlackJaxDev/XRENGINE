@@ -9,6 +9,7 @@ using System.Collections.Concurrent;
 using System.IO;
 using System.Linq;
 using System.Numerics;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Threading;
 using XREngine.Components;
@@ -77,7 +78,7 @@ namespace XREngine.Rendering.Commands
                 if (remaining >= 0)
                 {
                     string matName = material.Name ?? "<unnamed>";
-                    SceneLog($"[GPUScene] Assigned MaterialID={index} to '{matName}' (hash=0x{material.GetHashCode():X8}). Remaining logs: {remaining}");
+                    SceneLog($"[GPUScene] Assigned MaterialID={index} to '{matName}' (identity=0x{RuntimeHelpers.GetHashCode(material):X8}). Remaining logs: {remaining}");
                     if (remaining == 0)
                         SceneLog("[GPUScene] MaterialID assignment log budget exhausted; suppressing further logs.");
                 }

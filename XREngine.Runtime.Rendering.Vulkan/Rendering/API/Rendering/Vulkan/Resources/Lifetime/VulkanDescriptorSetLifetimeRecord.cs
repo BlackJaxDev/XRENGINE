@@ -18,6 +18,8 @@ internal sealed class VulkanDescriptorSetLifetimeRecord
     internal bool UsesUpdateAfterBind;
     internal bool HasReflection;
     internal string Owner = string.Empty;
+    internal EVulkanDescriptorNativePublicationState NativePublicationState =
+        EVulkanDescriptorNativePublicationState.Known;
     internal ulong Generation;
     /// <summary>
     /// Changes only when the image view/layout/type payload changes. Secondary

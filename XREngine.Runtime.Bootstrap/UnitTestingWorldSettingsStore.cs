@@ -2,6 +2,7 @@ using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using System.Globalization;
 using XREngine.Audio;
+using XREngine.Data.Core;
 using XREngine.Rendering;
 using XREngine.Rendering.Vulkan;
 
@@ -183,48 +184,143 @@ public static class UnitTestingWorldSettingsStore
         return applied;
     }
 
-    public static void ApplyStartupOverrides(GameStartupSettings startupSettings, UnitTestingWorldSettings settings)
+    /// <summary>
+    /// Applies explicitly configured unit-test values through the generic process-local settings layer.
+    /// </summary>
+    public static bool ApplyUserSettingsSessionValues(UnitTestingWorldSettings settings)
     {
-        ApplyUserSettingsOverrides(startupSettings.DefaultUserSettings, settings);
+        bool applied = false;
 
         if (settings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.Rendering)))
         {
-            startupSettings.RenderBackendFallbackPolicyOverride = new(settings.Rendering.BackendFallbackPolicy, true);
-            startupSettings.VulkanRenderTargetModeOverride = new(settings.Rendering.Vulkan.RenderTargetMode, true);
+            Engine.SetSessionSetting(
+                (UserSettings userSettings) => userSettings.PreferredRenderBackend,
+                settings.Rendering.RenderBackend);
+            Engine.SetSessionSetting(
+                (UserSettings userSettings) => userSettings.RenderBackendFallbackPolicyOverride,
+                new OverrideableSetting<RenderBackendFallbackPolicy>(settings.Rendering.BackendFallbackPolicy, true));
+            applied = true;
+        }
+        else if (settings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.RenderAPI)))
+        {
+            Engine.SetSessionSetting(
+                (UserSettings userSettings) => userSettings.PreferredRenderBackend,
+                settings.RenderAPI);
+            applied = true;
+        }
+
+        if (settings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.PhysicsAPI)))
+        {
+            Engine.SetSessionSetting(
+                (UserSettings userSettings) => userSettings.PhysicsLibrary,
+                settings.PhysicsAPI);
+            applied = true;
+        }
+
+        if (settings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.VSyncOverride)) &&
+            settings.VSyncOverride is EVSyncMode vSync)
+        {
+            Engine.SetSessionSetting(
+                (UserSettings userSettings) => userSettings.VSync,
+                vSync);
+            applied = true;
+        }
+
+        return applied;
+    }
+
+    /// <summary>
+    /// Applies explicitly configured unit-test game values through the generic
+    /// process-local settings layer.
+    /// </summary>
+    public static bool ApplyGameSettingsSessionValues(UnitTestingWorldSettings settings)
+    {
+        bool applied = false;
+
+        if (settings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.Rendering)))
+        {
+            Engine.SetSessionSetting(
+                (GameStartupSettings gameSettings) => gameSettings.RenderBackendFallbackPolicyOverride,
+                new OverrideableSetting<RenderBackendFallbackPolicy>(settings.Rendering.BackendFallbackPolicy, true));
+            Engine.SetSessionSetting(
+                (GameStartupSettings gameSettings) => gameSettings.VulkanRenderTargetModeOverride,
+                new OverrideableSetting<EVulkanRenderTargetMode>(settings.Rendering.Vulkan.RenderTargetMode, true));
+            applied = true;
         }
 
         if (settings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.GPURenderDispatch)))
         {
-            startupSettings.GPURenderDispatch = settings.GPURenderDispatch;
+            Engine.SetSessionSetting(
+                (GameStartupSettings gameSettings) => gameSettings.GPURenderDispatch,
+                settings.GPURenderDispatch);
             if (!settings.GPURenderDispatch && ResolveRenderBackend(settings) == ERenderLibrary.Vulkan)
             {
-                startupSettings.VulkanGpuDrivenProfileOverride = new(
-                    EVulkanGpuDrivenProfile.DevParity,
-                    true);
+                Engine.SetSessionSetting(
+                    (GameStartupSettings gameSettings) => gameSettings.VulkanGpuDrivenProfileOverride,
+                    new OverrideableSetting<EVulkanGpuDrivenProfile>(EVulkanGpuDrivenProfile.DevParity, true));
             }
+
+            applied = true;
         }
 
         if (settings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.UpdateFPS)))
-            startupSettings.TargetUpdatesPerSecond = settings.UpdateFPS;
+        {
+            Engine.SetSessionSetting(
+                (GameStartupSettings gameSettings) => gameSettings.TargetUpdatesPerSecond,
+                settings.UpdateFPS);
+            applied = true;
+        }
 
         if (settings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.RenderFPS)))
-            startupSettings.TargetFramesPerSecond = settings.RenderFPS;
+        {
+            Engine.SetSessionSetting(
+                (GameStartupSettings gameSettings) => gameSettings.TargetFramesPerSecond,
+                settings.RenderFPS);
+            applied = true;
+        }
 
         if (settings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.VSyncOverride))
             && settings.VSyncOverride is EVSyncMode vSyncOverride)
-            startupSettings.VSyncOverride = new(vSyncOverride, true);
+        {
+            Engine.SetSessionSetting(
+                (GameStartupSettings gameSettings) => gameSettings.VSyncOverride,
+                new OverrideableSetting<EVSyncMode>(vSyncOverride, true));
+            applied = true;
+        }
 
         if (settings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.FixedFPS)))
-            startupSettings.FixedFramesPerSecond = settings.FixedFPS;
+        {
+            Engine.SetSessionSetting(
+                (GameStartupSettings gameSettings) => gameSettings.FixedFramesPerSecond,
+                settings.FixedFPS);
+            applied = true;
+        }
 
         if (settings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.AudioArchitectureV2)))
-            startupSettings.AudioArchitectureV2Override = new(settings.AudioArchitectureV2, true);
+        {
+            Engine.SetSessionSetting(
+                (GameStartupSettings gameSettings) => gameSettings.AudioArchitectureV2Override,
+                new OverrideableSetting<bool>(settings.AudioArchitectureV2, true));
+            applied = true;
+        }
 
         if (settings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.AudioTransport)))
-            startupSettings.AudioTransportOverride = new(settings.AudioTransport, true);
+        {
+            Engine.SetSessionSetting(
+                (GameStartupSettings gameSettings) => gameSettings.AudioTransportOverride,
+                new OverrideableSetting<EAudioTransport>(settings.AudioTransport, true));
+            applied = true;
+        }
 
         if (settings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.AudioEffects)))
-            startupSettings.AudioEffectsOverride = new(settings.AudioEffects, true);
+        {
+            Engine.SetSessionSetting(
+                (GameStartupSettings gameSettings) => gameSettings.AudioEffectsOverride,
+                new OverrideableSetting<EAudioEffects>(settings.AudioEffects, true));
+            applied = true;
+        }
+
+        return applied;
     }
 
     private static ERenderLibrary ResolveRenderBackend(UnitTestingWorldSettings settings)

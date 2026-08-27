@@ -22,8 +22,11 @@ internal sealed class VulkanDeviceMutableCapabilities
     internal bool _supportsDescriptorIndexing;
     internal bool _supportsRuntimeDescriptorArray;
     internal bool _supportsDescriptorBindingPartiallyBound;
-    internal bool _supportsDescriptorBindingUpdateAfterBind;
+    internal bool _supportsDescriptorBindingSampledImageUpdateAfterBind;
+    internal bool _supportsDescriptorBindingUpdateUnusedWhilePending;
     internal bool _supportsDescriptorBindingStorageImageUpdateAfterBind;
+    internal bool _supportsDescriptorBindingStorageBufferUpdateAfterBind;
+    internal bool _supportsDescriptorBindingUniformBufferUpdateAfterBind;
     internal bool _supportsDescriptorBindingVariableDescriptorCount;
     internal bool _supportsShaderSampledImageArrayNonUniformIndexing;
     internal bool _supportsExternalMemoryWin32;

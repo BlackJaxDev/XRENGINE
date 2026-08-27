@@ -1258,7 +1258,8 @@ namespace XREngine.Rendering.Vulkan
             if (descriptorSet.Handle == 0 ||
                 !ResourceRuntime.Lifetime.Tracker.PublishedDescriptorSets.TryGetValue(
                     descriptorSet.Handle,
-                    out VulkanPublishedDescriptorSetSnapshot? snapshot))
+                    out VulkanPublishedDescriptorSetSnapshot? snapshot) ||
+                !snapshot.IsNativePublicationKnown)
             {
                 return false;
             }
@@ -1312,6 +1313,7 @@ namespace XREngine.Rendering.Vulkan
                     DescriptorSet descriptorSet = descriptorBindings[descriptorIndex].DescriptorSet;
                     if (descriptorSet.Handle == 0 ||
                         !tracker.PublishedDescriptorSets.TryGetValue(descriptorSet.Handle, out VulkanPublishedDescriptorSetSnapshot? snapshot) ||
+                        !snapshot.IsNativePublicationKnown ||
                         snapshot.ImagePayloadGeneration == 0)
                     {
                         failureReason = $"descriptor set 0x{descriptorSet.Handle:X} has no published image payload";
@@ -1469,6 +1471,7 @@ namespace XREngine.Rendering.Vulkan
                 {
                     VulkanPreparedDescriptorImagePayload payload = payloads[index];
                     if (!tracker.PublishedDescriptorSets.TryGetValue(payload.DescriptorSetHandle, out VulkanPublishedDescriptorSetSnapshot? snapshot) ||
+                        !snapshot.IsNativePublicationKnown ||
                         snapshot.ImagePayloadGeneration != payload.ImagePayloadGeneration)
                     {
                         failureReason = $"descriptor set 0x{payload.DescriptorSetHandle:X} publication changed after prepared-frame capture";
@@ -1586,7 +1589,8 @@ namespace XREngine.Rendering.Vulkan
                 }
                 if (!tracker.PublishedDescriptorSets.TryGetValue(
                         descriptorSetHandle,
-                        out VulkanPublishedDescriptorSetSnapshot? snapshot))
+                        out VulkanPublishedDescriptorSetSnapshot? snapshot) ||
+                    !snapshot.IsNativePublicationKnown)
                 {
                     failureReason = "the descriptor set has no published payload snapshot";
                     return false;

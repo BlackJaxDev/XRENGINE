@@ -421,11 +421,6 @@ internal sealed unsafe partial class VulkanDescriptorManager
                     references.Add(pair.Second);
             }
 
-            UpdateReferenceIndexNoLock(tracker, descriptorSetHandle, state, references);
-            foreach (VulkanResourceLifetimeKey reference in references)
-                AddPinnedReferenceClosureNoLock(tracker, reference, pinnedReferences);
-            UpdateGenerationPinsNoLock(tracker, state, pinnedReferences);
-
             VulkanPublishedDescriptorImageReference[] images = state.ImageReferences.Count == 0
                 ? []
                 : new VulkanPublishedDescriptorImageReference[state.ImageReferences.Count];
@@ -449,6 +444,21 @@ internal sealed unsafe partial class VulkanDescriptorManager
                     out VulkanResourceLifetimeRecord? descriptorSetLifetime)
                     ? descriptorSetLifetime.Generation
                     : 0UL;
+
+            // All fallible snapshot allocations precede semantic pin/index
+            // mutation. This keeps a failed publication recoverable without
+            // releasing the last conservative reference to the old payload.
+            foreach (VulkanResourceLifetimeKey reference in references)
+                AddPinnedReferenceClosureNoLock(
+                    tracker,
+                    reference,
+                    pinnedReferences);
+            UpdateReferenceIndexNoLock(
+                tracker,
+                descriptorSetHandle,
+                state,
+                references);
+            UpdateGenerationPinsNoLock(tracker, state, pinnedReferences);
             tracker.PublishedDescriptorSets[descriptorSetHandle] = new VulkanPublishedDescriptorSetSnapshot(
                 state.Generation,
                 state.ImagePayloadGeneration,
@@ -456,7 +466,8 @@ internal sealed unsafe partial class VulkanDescriptorManager
                 publishedReferences,
                 images,
                 reflectedBindings,
-                state.HasReflection);
+                state.HasReflection,
+                state.NativePublicationState);
         }
         finally
         {

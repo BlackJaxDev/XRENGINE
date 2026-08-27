@@ -560,7 +560,7 @@ namespace XREngine
                 return;
             }
 
-            var created = GameSettings ?? new GameStartupSettings();
+            var created = _gameSettings ?? new GameStartupSettings();
             created.FilePath = settingsPath;
             created.Name = "Game Settings";
 
@@ -592,7 +592,7 @@ namespace XREngine
                 return;
             }
 
-            var created = GameSettings ?? new GameStartupSettings();
+            var created = _gameSettings ?? new GameStartupSettings();
             created.FilePath = settingsPath;
             created.Name = "Game Settings";
 
@@ -694,8 +694,8 @@ namespace XREngine
                 if (settings is not null)
                 {
                     BuildSettings = settings;
-                    if (GameSettings is not null)
-                        GameSettings.BuildSettings = BuildSettings;
+                    if (_gameSettings is not null)
+                        _gameSettings.BuildSettings = BuildSettings;
                     Debug.Out("Loaded project build settings.");
                 }
             }
@@ -716,8 +716,8 @@ namespace XREngine
                     settings.Name = "Build Settings";
                     Assets.EnsureTracked(settings);
                     BuildSettings = settings;
-                    if (GameSettings is not null)
-                        GameSettings.BuildSettings = BuildSettings;
+                    if (_gameSettings is not null)
+                        _gameSettings.BuildSettings = BuildSettings;
                     Debug.Out("Loaded sandbox build settings.");
                 }
                 return;
@@ -728,8 +728,8 @@ namespace XREngine
             created.Name = "Build Settings";
             Assets.EnsureTracked(created);
             BuildSettings = created;
-            if (GameSettings is not null)
-                GameSettings.BuildSettings = BuildSettings;
+            if (_gameSettings is not null)
+                _gameSettings.BuildSettings = BuildSettings;
         }
 
         /// <summary>
@@ -947,11 +947,11 @@ namespace XREngine
             if (!string.IsNullOrWhiteSpace(settingsDirectory))
                 Directory.CreateDirectory(settingsDirectory);
 
-            GameSettings.FilePath = settingsPath;
-            GameSettings.Name = "Game Settings";
-            Assets.EnsureTracked(GameSettings);
+            _gameSettings.FilePath = settingsPath;
+            _gameSettings.Name = "Game Settings";
+            Assets.EnsureTracked(_gameSettings);
 
-            Assets.Save(GameSettings);
+            Assets.Save(_gameSettings);
             Debug.Out("Saved project game settings.");
         }
 
@@ -968,11 +968,11 @@ namespace XREngine
             if (!string.IsNullOrWhiteSpace(settingsDirectory))
                 Directory.CreateDirectory(settingsDirectory);
 
-            GameSettings.FilePath = settingsPath;
-            GameSettings.Name = "Game Settings";
-            Assets.EnsureTracked(GameSettings);
+            _gameSettings.FilePath = settingsPath;
+            _gameSettings.Name = "Game Settings";
+            Assets.EnsureTracked(_gameSettings);
 
-            Assets.Save(GameSettings);
+            Assets.Save(_gameSettings);
             Debug.Out("Saved sandbox game settings.");
         }
 

@@ -171,7 +171,25 @@ internal sealed partial class VulkanFrameLoop
             _outputRuntime._imguiDrawData.Clear();
         }
 
-        return _imguiBackend ??= new VulkanImGuiBackend(outputHost, windowHost);
+        if (_imguiBackend is not null)
+            return _imguiBackend;
+
+        VulkanImGuiBackend created = new VulkanImGuiBackend(outputHost, windowHost);
+        try
+        {
+            // This is the first point at which the font atlas's CPU data and
+            // descriptor layout are both available. It is therefore the
+            // earliest safe target-compatible initialization boundary for the
+            // terminal ImGui pipeline.
+            InitializeMandatoryDesktopPresentNowPipelines();
+            _imguiBackend = created;
+            return created;
+        }
+        catch
+        {
+            created.Dispose();
+            throw;
+        }
     }
     internal bool TryReadBufferBytesForDiagnostics(
         VulkanBackendObjectContext backendContext,
@@ -462,6 +480,14 @@ internal sealed partial class VulkanFrameLoop
             return null;
 
         Exception? settlementFailure = null;
+        try
+        {
+            attempt.AcceptedFramePlan?.SettleUnsubmittedSubmissionMarkers();
+        }
+        catch (Exception failure)
+        {
+            AddDesktopSettlementFailure(ref settlementFailure, failure);
+        }
         if (!_deviceLost)
         {
             try
@@ -522,14 +548,46 @@ internal sealed partial class VulkanFrameLoop
         EVulkanFrameOutcome outcome = settlementFailure is null
             ? ResolveDesktopFrameTelemetryOutcome(ref attempt)
             : EVulkanFrameOutcome.Failed;
+        Exception? terminalException =
+            attempt.PrimaryFailure ?? attempt.DeferredFailure ?? settlementFailure;
+        VulkanDesktopFrameFailure terminalFailure =
+            VulkanDesktopFrameFailureClassifier.Classify(
+                attempt.Reason,
+                attempt.LastPhaseResult.Stage,
+                attempt.AcquireResult,
+                attempt.SubmitResult,
+                attempt.PresentResult,
+                terminalException);
         attempt.PublishTerminalResult(
             new VulkanDesktopFrameTerminalResult(
                 outcome,
                 attempt.Reason,
+                terminalFailure,
                 ownershipSettled));
+
+        if (outcome == EVulkanFrameOutcome.Failed)
+            ReportDesktopFrameTerminalFailure(ref attempt, in terminalFailure);
 
         return settlementFailure;
     }
+
+    private static void ReportDesktopFrameTerminalFailure(
+        ref VulkanFrameAttempt attempt,
+        in VulkanDesktopFrameFailure failure)
+        => Debug.VulkanError(
+            "[Vulkan][DesktopFrameFailure] frame={0} slot={1} sceneEpoch={2} " +
+            "outputGeneration={3} kind={4} stage={5} reason={6} native={7} " +
+            "exception={8} detail={9}",
+            attempt.FrameNumber,
+            attempt.FrameSlot,
+            attempt.AcceptedSceneEpoch,
+            attempt.OutputGeneration,
+            failure.Kind,
+            failure.Stage,
+            attempt.Reason,
+            failure.NativeResult,
+            failure.ExceptionType ?? "<none>",
+            failure.Detail ?? "<none>");
 
     private static void AddDesktopSettlementFailure(
         ref Exception? settlementFailure,

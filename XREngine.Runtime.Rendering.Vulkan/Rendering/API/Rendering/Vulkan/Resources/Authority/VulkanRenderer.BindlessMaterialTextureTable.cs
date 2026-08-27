@@ -65,7 +65,10 @@ internal sealed unsafe partial class VulkanDescriptorManager
             lock (_globalMaterialTextureTableLock)
                 return _globalMaterialTextureDescriptorSet.Handle == 0
                     ? 0u
-                    : (uint)_globalMaterialTextureDescriptorSlotsByTexture.Count + 1u;
+                    : Math.Min(
+                        _nextGlobalMaterialTextureDescriptorSlot,
+                        _globalMaterialTextureDescriptorCapacity) -
+                      (uint)_freeGlobalMaterialTextureDescriptorSlots.Count;
         }
     }
 
@@ -146,12 +149,6 @@ internal sealed unsafe partial class VulkanDescriptorManager
             return Materials.MaterialTextureReferenceResolution.Failed(reason);
         }
 
-        if (!TryResolveMaterialTextureDescriptor(texture, semantic, out DescriptorImageInfo imageInfo, out string descriptorReason))
-        {
-            RecordGlobalMaterialTextureFallback(semantic, descriptorReason);
-            return Materials.MaterialTextureReferenceResolution.Pending(descriptorReason);
-        }
-
         if (!TryEnsureGlobalMaterialTextureDescriptorTable(out string tableReason))
         {
             if (VulkanFeatureProfile.RequireBindlessMaterialTable)
@@ -162,41 +159,102 @@ internal sealed unsafe partial class VulkanDescriptorManager
             return Materials.MaterialTextureReferenceResolution.Unsupported(tableReason);
         }
 
+        bool allowSynchronousTextureUpload = AllowSynchronousResourceUploads;
+        if (WrapperLookup.GetOrCreate(
+                texture,
+                generateNow: allowSynchronousTextureUpload) is not
+            IVkImageDescriptorSource source)
+        {
+            string reason =
+                $"Texture '{texture.Name ?? "<unnamed>"}' has no Vulkan image descriptor source.";
+            RecordGlobalMaterialTextureFallback(semantic, reason);
+            return Materials.MaterialTextureReferenceResolution.Pending(reason);
+        }
+
         uint descriptorIndex;
         bool pendingPublication;
         uint slotGeneration;
-        lock (_globalMaterialTextureTableLock)
+        lock (source.DescriptorSnapshotSyncRoot)
         {
-            if (!_globalMaterialTextureDescriptorSlotsByTexture.TryGetValue(texture, out descriptorIndex) &&
-                !TryAllocateGlobalMaterialTextureDescriptorSlot(texture, out descriptorIndex, out tableReason))
+            if (!TryCaptureMaterialTextureDescriptorSnapshot(
+                    texture,
+                    source,
+                    semantic,
+                    allowSynchronousTextureUpload,
+                    out DescriptorImageInfo imageInfo,
+                    out ulong wrapperDescriptorGeneration,
+                    out long streamingGeneration,
+                    out ulong imageViewGeneration,
+                    out ulong samplerGeneration,
+                    out string descriptorReason))
             {
-                if (VulkanFeatureProfile.RequireBindlessMaterialTable)
-                    RecordGlobalMaterialTextureBindingFailure(semantic, tableReason, skippedDraw: true);
-                else
-                    RecordGlobalMaterialTextureFallback(semantic, tableReason);
-
-                return Materials.MaterialTextureReferenceResolution.Failed(tableReason);
+                RecordGlobalMaterialTextureFallback(semantic, descriptorReason);
+                return Materials.MaterialTextureReferenceResolution.Pending(descriptorReason);
             }
 
-            ref MaterialTextureDescriptorSlot slot = ref _globalMaterialTextureDescriptorSlots[descriptorIndex];
-            slot.LastUsedFrameId = RuntimeEngine.Rendering.State.RenderFrameId;
-            slot.PendingRetirement = false;
-            slot.RetireAfterFrameId = 0ul;
-
-            if (slot.ImageInfo.ImageView.Handle != imageInfo.ImageView.Handle ||
-                slot.ImageInfo.Sampler.Handle != imageInfo.Sampler.Handle ||
-                slot.ImageInfo.ImageLayout != imageInfo.ImageLayout)
+            lock (_globalMaterialTextureTableLock)
             {
-                slot.ImageInfo = imageInfo;
-                slot.ExpectedImageLayout = imageInfo.ImageLayout;
-                slot.ImageViewGeneration = ResourceRuntime.GetPublishedGeneration(ObjectType.ImageView, imageInfo.ImageView.Handle);
-                slot.SamplerGeneration = ResourceRuntime.GetPublishedGeneration(ObjectType.Sampler, imageInfo.Sampler.Handle);
-                slot.Generation++;
-                MarkGlobalMaterialTextureDescriptorSlotDirty(descriptorIndex);
-            }
+                if (!_globalMaterialTextureDescriptorSlotsByTexture.TryGetValue(texture, out descriptorIndex) &&
+                    !TryAllocateGlobalMaterialTextureDescriptorSlot(texture, out descriptorIndex, out tableReason))
+                {
+                    if (VulkanFeatureProfile.RequireBindlessMaterialTable)
+                        RecordGlobalMaterialTextureBindingFailure(semantic, tableReason, skippedDraw: true);
+                    else
+                        RecordGlobalMaterialTextureFallback(semantic, tableReason);
 
-            pendingPublication = slot.Dirty;
-            slotGeneration = slot.Generation;
+                    return Materials.MaterialTextureReferenceResolution.Failed(tableReason);
+                }
+
+                ref MaterialTextureDescriptorSlot currentSlot =
+                    ref _globalMaterialTextureDescriptorSlots[descriptorIndex];
+                bool generationChanged =
+                    currentSlot.ImageInfo.ImageView.Handle != imageInfo.ImageView.Handle ||
+                    currentSlot.ImageInfo.Sampler.Handle != imageInfo.Sampler.Handle ||
+                    currentSlot.ImageInfo.ImageLayout != imageInfo.ImageLayout ||
+                    currentSlot.ImageViewGeneration != imageViewGeneration ||
+                    currentSlot.SamplerGeneration != samplerGeneration ||
+                    currentSlot.WrapperDescriptorGeneration != wrapperDescriptorGeneration ||
+                    currentSlot.StreamingGeneration != streamingGeneration;
+                if (generationChanged && currentSlot.IsGenerationSnapshot &&
+                    !TryAllocateGlobalMaterialTextureDescriptorSlot(
+                        texture,
+                        out descriptorIndex,
+                        out tableReason))
+                {
+                    RecordGlobalMaterialTextureBindingFailure(
+                        semantic,
+                        tableReason,
+                        skippedDraw: true);
+                    return Materials.MaterialTextureReferenceResolution.Failed(tableReason);
+                }
+
+                ref MaterialTextureDescriptorSlot slot =
+                    ref _globalMaterialTextureDescriptorSlots[descriptorIndex];
+                slot.LastUsedFrameId = RuntimeEngine.Rendering.State.RenderFrameId;
+                slot.PendingRetirement = false;
+                slot.RetireAfterFrameId = 0ul;
+
+                if (slot.ImageInfo.ImageView.Handle != imageInfo.ImageView.Handle ||
+                    slot.ImageInfo.Sampler.Handle != imageInfo.Sampler.Handle ||
+                    slot.ImageInfo.ImageLayout != imageInfo.ImageLayout ||
+                    slot.ImageViewGeneration != imageViewGeneration ||
+                    slot.SamplerGeneration != samplerGeneration ||
+                    slot.WrapperDescriptorGeneration != wrapperDescriptorGeneration ||
+                    slot.StreamingGeneration != streamingGeneration)
+                {
+                    slot.ImageInfo = imageInfo;
+                    slot.ExpectedImageLayout = imageInfo.ImageLayout;
+                    slot.ImageViewGeneration = imageViewGeneration;
+                    slot.SamplerGeneration = samplerGeneration;
+                    slot.WrapperDescriptorGeneration = wrapperDescriptorGeneration;
+                    slot.StreamingGeneration = streamingGeneration;
+                    slot.Generation++;
+                    MarkGlobalMaterialTextureDescriptorSlotDirty(descriptorIndex);
+                }
+
+                pendingPublication = slot.Dirty;
+                slotGeneration = slot.Generation;
+            }
         }
 
         if (descriptorIndex == 0u)
@@ -232,7 +290,8 @@ internal sealed unsafe partial class VulkanDescriptorManager
         if (!SupportsDescriptorIndexing ||
             !DeviceContext.MutableCapabilities._supportsRuntimeDescriptorArray ||
             !DeviceContext.MutableCapabilities._supportsDescriptorBindingPartiallyBound ||
-            !DeviceContext.MutableCapabilities._supportsDescriptorBindingUpdateAfterBind)
+            !DeviceContext.MutableCapabilities._supportsDescriptorBindingSampledImageUpdateAfterBind ||
+            !DeviceContext.MutableCapabilities._supportsDescriptorBindingUpdateUnusedWhilePending)
         {
             reason = FormatBindlessDescriptorIndexingUnavailableReason();
             RefreshBindlessMaterialCapability(reason);
@@ -448,6 +507,133 @@ internal sealed unsafe partial class VulkanDescriptorManager
     }
 
     /// <summary>
+    /// Atomically leases exact receipts for every immutable descriptor element
+    /// that a sealed GPU material row can reference. Historical elements are
+    /// included because a row encoded before a streaming replacement remains a
+    /// legal consumer of the prior descriptor index.
+    /// </summary>
+    internal bool TryAcquireGlobalMaterialTextureReceiptLeases(
+        Span<VulkanBindlessMaterialTextureReceipt> destination,
+        out int count,
+        out string reason)
+    {
+        count = 0;
+        lock (_globalMaterialTextureTableLock)
+        {
+            uint limit = Math.Min(
+                _nextGlobalMaterialTextureDescriptorSlot,
+                unchecked((uint)_globalMaterialTextureDescriptorSlots.Length));
+            for (uint descriptorIndex = 1U; descriptorIndex < limit; descriptorIndex++)
+            {
+                ref MaterialTextureDescriptorSlot slot =
+                    ref _globalMaterialTextureDescriptorSlots[descriptorIndex];
+                if (slot.Texture is not { } texture ||
+                    slot.Dirty ||
+                    !slot.IsGenerationSnapshot ||
+                    slot.PendingRetirement)
+                {
+                    continue;
+                }
+
+                if (count >= destination.Length)
+                {
+                    ReleaseGlobalMaterialTextureReceiptLeasesLocked(
+                        destination[..count]);
+                    reason =
+                        $"Bindless material descriptor receipt closure exceeds fixed capacity " +
+                        $"{destination.Length}.";
+                    return false;
+                }
+
+                ulong liveImageViewGeneration = ResourceRuntime.GetPublishedGeneration(
+                    ObjectType.ImageView,
+                    slot.ImageInfo.ImageView.Handle);
+                ulong liveSamplerGeneration = ResourceRuntime.GetPublishedGeneration(
+                    ObjectType.Sampler,
+                    slot.ImageInfo.Sampler.Handle);
+                if (slot.ImageInfo.ImageView.Handle == 0 ||
+                    slot.ImageInfo.Sampler.Handle == 0 ||
+                    liveImageViewGeneration != slot.ImageViewGeneration ||
+                    liveSamplerGeneration != slot.SamplerGeneration ||
+                    !BackendContext.Resources.Images.IsAvailableForDescriptor(
+                        slot.ImageInfo.ImageView) ||
+                    !ResourceRuntime.Descriptors.IsLiveSampler(
+                        slot.ImageInfo.Sampler))
+                {
+                    ReleaseGlobalMaterialTextureReceiptLeasesLocked(
+                        destination[..count]);
+                    reason =
+                        $"Bindless material descriptor slot {descriptorIndex} " +
+                        $"for texture '{texture.Name ?? "<unnamed>"}' no longer " +
+                        "owns its exact native resource generation.";
+                    return false;
+                }
+
+                slot.LeaseCount++;
+                destination[count++] = new VulkanBindlessMaterialTextureReceipt(
+                    texture,
+                    slot.StreamingGeneration,
+                    descriptorIndex,
+                    slot.Generation,
+                    slot.WrapperDescriptorGeneration,
+                    slot.ImageInfo.ImageView,
+                    slot.ImageViewGeneration,
+                    slot.ImageInfo.Sampler,
+                    slot.SamplerGeneration,
+                    slot.ImageInfo.ImageLayout);
+            }
+        }
+
+        reason = string.Empty;
+        return true;
+    }
+
+    /// <summary>
+    /// Releases exact descriptor-element leases after the accepted frame slot
+    /// has completed or an unsubmitted plan aborts.
+    /// </summary>
+    internal void ReleaseGlobalMaterialTextureReceiptLeases(
+        ReadOnlySpan<VulkanBindlessMaterialTextureReceipt> receipts)
+    {
+        lock (_globalMaterialTextureTableLock)
+            ReleaseGlobalMaterialTextureReceiptLeasesLocked(receipts);
+    }
+
+    private void ReleaseGlobalMaterialTextureReceiptLeasesLocked(
+        ReadOnlySpan<VulkanBindlessMaterialTextureReceipt> receipts)
+    {
+        for (int index = 0; index < receipts.Length; index++)
+        {
+            ref readonly VulkanBindlessMaterialTextureReceipt receipt =
+                ref receipts[index];
+            if (receipt.DescriptorIndex >=
+                _globalMaterialTextureDescriptorSlots.Length)
+            {
+                continue;
+            }
+
+            ref MaterialTextureDescriptorSlot slot =
+                ref _globalMaterialTextureDescriptorSlots[
+                    receipt.DescriptorIndex];
+            if (slot.Generation == receipt.SlotGeneration &&
+                slot.LeaseCount > 0)
+            {
+                slot.LeaseCount--;
+            }
+            else
+            {
+                Debug.VulkanWarning(
+                    "[Vulkan] Bindless receipt lease release mismatch: " +
+                    "slot={0} receiptGeneration={1} liveGeneration={2} leases={3}.",
+                    receipt.DescriptorIndex,
+                    receipt.SlotGeneration,
+                    slot.Generation,
+                    slot.LeaseCount);
+            }
+        }
+    }
+
+    /// <summary>
     /// Tries to bind the global material texture descriptor set for the specified render program.
     /// </summary>
     /// <param name="commandBuffer">The command buffer to which the descriptor set should be bound.</param>
@@ -512,37 +698,43 @@ internal sealed unsafe partial class VulkanDescriptorManager
     /// <param name="imageInfo">The resolved descriptor image information for the texture.</param>
     /// <param name="reason">The reason for failure if the descriptor could not be resolved.</param>
     /// <returns>True if the descriptor was successfully resolved; otherwise, false.</returns>
-    private bool TryResolveMaterialTextureDescriptor(
+    private bool TryCaptureMaterialTextureDescriptorSnapshot(
         XRTexture texture,
+        IVkImageDescriptorSource source,
         string semantic,
+        bool allowSynchronousTextureUpload,
         out DescriptorImageInfo imageInfo,
+        out ulong wrapperDescriptorGeneration,
+        out long streamingGeneration,
+        out ulong imageViewGeneration,
+        out ulong samplerGeneration,
         out string reason)
     {
         imageInfo = default;
+        wrapperDescriptorGeneration = 0UL;
+        streamingGeneration = 0L;
+        imageViewGeneration = 0UL;
+        samplerGeneration = 0UL;
         reason = string.Empty;
 
-        bool allowSynchronousTextureUpload = AllowSynchronousResourceUploads;
-        if (WrapperLookup.GetOrCreate(texture, generateNow: allowSynchronousTextureUpload) is not IVkImageDescriptorSource source)
-        {
-            reason = $"Texture '{texture.Name ?? "<unnamed>"}' has no Vulkan image descriptor source.";
-            return false;
-        }
-
-        if (!source.TryEnsureDescriptorReadyForUse($"bindless material texture '{semantic}'", allowSynchronousTextureUpload))
+        if (!source.TryGetDescriptorSnapshot(
+                ImageViewType.Type2D,
+                requestedAspectMask: null,
+                $"bindless material texture '{semantic}'",
+                allowSynchronousTextureUpload,
+                out VkImageDescriptorSnapshot snapshot))
         {
             reason = $"Texture '{texture.Name ?? "<unnamed>"}' descriptor is not ready for Vulkan sampling.";
             return false;
         }
 
-        if ((source.DescriptorUsage & ImageUsageFlags.SampledBit) == 0)
+        if ((snapshot.Usage & ImageUsageFlags.SampledBit) == 0)
         {
             reason = $"Texture '{texture.Name ?? "<unnamed>"}' is missing VK_IMAGE_USAGE_SAMPLED_BIT.";
             return false;
         }
 
-        ImageView descriptorView = source.DescriptorViewType == ImageViewType.Type2D
-            ? source.DescriptorView
-            : source.GetDescriptorView(ImageViewType.Type2D);
+        ImageView descriptorView = snapshot.View;
         if (descriptorView.Handle == 0)
         {
             reason = $"Texture '{texture.Name ?? "<unnamed>"}' cannot provide a 2D view for material semantic '{semantic}'.";
@@ -555,7 +747,7 @@ internal sealed unsafe partial class VulkanDescriptorManager
             return false;
         }
 
-        Sampler descriptorSampler = source.DescriptorSampler;
+        Sampler descriptorSampler = snapshot.Sampler;
         if (descriptorSampler.Handle != 0 && !ResourceRuntime.Descriptors.IsLiveSampler(descriptorSampler))
             descriptorSampler = default;
 
@@ -572,10 +764,19 @@ internal sealed unsafe partial class VulkanDescriptorManager
         {
             ImageLayout = ResourceRuntime.Descriptors.ResolveDescriptorImageLayout(
                 source,
+                in snapshot,
                 DescriptorType.CombinedImageSampler),
             ImageView = descriptorView,
             Sampler = descriptorSampler,
         };
+        wrapperDescriptorGeneration = snapshot.Generation;
+        streamingGeneration = snapshot.StreamingGeneration;
+        imageViewGeneration = ResourceRuntime.GetPublishedGeneration(
+            ObjectType.ImageView,
+            descriptorView.Handle);
+        samplerGeneration = ResourceRuntime.GetPublishedGeneration(
+            ObjectType.Sampler,
+            descriptorSampler.Handle);
         return true;
     }
 
@@ -591,17 +792,11 @@ internal sealed unsafe partial class VulkanDescriptorManager
         out uint descriptorIndex,
         out string reason)
     {
-        reason = string.Empty;
-        descriptorIndex = _freeGlobalMaterialTextureDescriptorSlots.Count > 0
-            ? _freeGlobalMaterialTextureDescriptorSlots.Dequeue()
-            : _nextGlobalMaterialTextureDescriptorSlot++;
-
-        if (descriptorIndex == 0u || descriptorIndex >= _globalMaterialTextureDescriptorCapacity)
-        {
-            reason = $"Global material texture descriptor table is full (capacity={_globalMaterialTextureDescriptorCapacity}).";
-            descriptorIndex = 0u;
+        if (!TryReserveGlobalMaterialTextureDescriptorSlot(
+                out descriptorIndex,
+                out _,
+                out reason))
             return false;
-        }
 
         ref MaterialTextureDescriptorSlot slot = ref _globalMaterialTextureDescriptorSlots[descriptorIndex];
         slot.Texture = texture;
@@ -611,6 +806,63 @@ internal sealed unsafe partial class VulkanDescriptorManager
         slot.RetireAfterFrameId = 0ul;
         _globalMaterialTextureDescriptorSlotsByTexture[texture] = descriptorIndex;
         return true;
+    }
+
+    private bool TryReserveGlobalMaterialTextureDescriptorSlot(
+        out uint descriptorIndex,
+        out bool recycled,
+        out string reason)
+    {
+        recycled = _freeGlobalMaterialTextureDescriptorSlots.Count > 0;
+        if (recycled)
+        {
+            descriptorIndex = _freeGlobalMaterialTextureDescriptorSlots.Dequeue();
+        }
+        else if (_nextGlobalMaterialTextureDescriptorSlot <
+                 _globalMaterialTextureDescriptorCapacity)
+        {
+            descriptorIndex = _nextGlobalMaterialTextureDescriptorSlot++;
+        }
+        else
+        {
+            descriptorIndex = 0u;
+            reason =
+                $"Global material texture descriptor table is full " +
+                $"(capacity={_globalMaterialTextureDescriptorCapacity}).";
+            return false;
+        }
+
+        if (descriptorIndex == 0u ||
+            descriptorIndex >= _globalMaterialTextureDescriptorCapacity)
+        {
+            descriptorIndex = 0u;
+            reason =
+                $"Global material texture descriptor allocator produced an " +
+                $"invalid slot (capacity={_globalMaterialTextureDescriptorCapacity}).";
+            return false;
+        }
+
+        reason = string.Empty;
+        return true;
+    }
+
+    private void RollbackGlobalMaterialTextureDescriptorSlotReservation(
+        uint descriptorIndex,
+        bool recycled)
+    {
+        if (descriptorIndex == 0u ||
+            descriptorIndex >= _globalMaterialTextureDescriptorSlots.Length)
+            return;
+
+        _globalMaterialTextureDescriptorSlots[descriptorIndex] = default;
+        if (recycled)
+        {
+            _freeGlobalMaterialTextureDescriptorSlots.Enqueue(descriptorIndex);
+        }
+        else if (_nextGlobalMaterialTextureDescriptorSlot == descriptorIndex + 1u)
+        {
+            _nextGlobalMaterialTextureDescriptorSlot = descriptorIndex;
+        }
     }
 
     /// <summary>
@@ -663,7 +915,14 @@ internal sealed unsafe partial class VulkanDescriptorManager
         }
 
         for (int i = 0; i < dirtyCount; i++)
-            _globalMaterialTextureDescriptorSlots[publication.DirtySlotIds[i]].Dirty = false;
+        {
+            ref MaterialTextureDescriptorSlot slot =
+                ref _globalMaterialTextureDescriptorSlots[
+                    publication.DirtySlotIds[i]];
+            slot.Dirty = false;
+            if (slot.Texture is not null)
+                slot.IsGenerationSnapshot = true;
+        }
 
         _globalMaterialTextureDescriptorWritesLastFlush = (ulong)dirtyCount;
         _globalMaterialTextureDescriptorWritesTotal += (ulong)dirtyCount;
@@ -699,15 +958,41 @@ internal sealed unsafe partial class VulkanDescriptorManager
 
             if (slot.LastUsedFrameId + GlobalMaterialTextureRetireDelayFrames > frameId)
                 continue;
+            if (slot.LeaseCount != 0)
+                continue;
 
-            _globalMaterialTextureDescriptorSlotsByTexture.Remove(slot.Texture);
+            if (_globalMaterialTextureDescriptorSlotsByTexture.TryGetValue(
+                    slot.Texture,
+                    out uint currentSlotIndex) &&
+                currentSlotIndex == i)
+            {
+                _globalMaterialTextureDescriptorSlotsByTexture.Remove(slot.Texture);
+            }
+            if (slot.HasRetainedResources)
+            {
+                RetiredImageResources retained = slot.RetainedResources;
+                slot.RetainedResources = default;
+                slot.HasRetainedResources = false;
+                BackendContext.Resources.Images.RetireOwnedResources(
+                    in retained,
+                    "GlobalMaterialTexture.ImmutableSlot");
+                if (retained.AllocatedVRAMBytes > 0)
+                {
+                    RuntimeEngine.Rendering.Stats.Vram.RemoveTextureAllocation(
+                        retained.AllocatedVRAMBytes);
+                }
+            }
+
             slot.Texture = null;
             slot.ImageInfo = fallbackInfo;
             slot.ExpectedImageLayout = fallbackInfo.ImageLayout;
             slot.ImageViewGeneration = ResourceRuntime.GetPublishedGeneration(ObjectType.ImageView, fallbackInfo.ImageView.Handle);
             slot.SamplerGeneration = ResourceRuntime.GetPublishedGeneration(ObjectType.Sampler, fallbackInfo.Sampler.Handle);
+            slot.WrapperDescriptorGeneration = 0UL;
+            slot.StreamingGeneration = 0L;
             slot.Generation++;
             slot.PendingRetirement = true;
+            slot.IsGenerationSnapshot = false;
             slot.RetireAfterFrameId = frameId;
             MarkGlobalMaterialTextureDescriptorSlotDirty(i);
             _freeGlobalMaterialTextureDescriptorSlots.Enqueue(i);
@@ -772,7 +1057,8 @@ internal sealed unsafe partial class VulkanDescriptorManager
         else if (!SupportsDescriptorIndexing ||
                  !DeviceContext.MutableCapabilities._supportsRuntimeDescriptorArray ||
                  !DeviceContext.MutableCapabilities._supportsDescriptorBindingPartiallyBound ||
-                 !DeviceContext.MutableCapabilities._supportsDescriptorBindingUpdateAfterBind)
+                 !DeviceContext.MutableCapabilities._supportsDescriptorBindingSampledImageUpdateAfterBind ||
+                 !DeviceContext.MutableCapabilities._supportsDescriptorBindingUpdateUnusedWhilePending)
             reason = FormatBindlessDescriptorIndexingUnavailableReason();
         else
             tier = EVulkanBindlessMaterialCapabilityTier.DescriptorIndexingReady;
@@ -795,7 +1081,7 @@ internal sealed unsafe partial class VulkanDescriptorManager
             SupportsDescriptorIndexing,
             DeviceContext.MutableCapabilities._supportsRuntimeDescriptorArray,
             DeviceContext.MutableCapabilities._supportsDescriptorBindingPartiallyBound,
-            DeviceContext.MutableCapabilities._supportsDescriptorBindingUpdateAfterBind,
+            DeviceContext.MutableCapabilities._supportsDescriptorBindingSampledImageUpdateAfterBind,
             _globalMaterialTextureDescriptorCapacity,
             tableReady,
             shaderReady,
@@ -827,7 +1113,7 @@ internal sealed unsafe partial class VulkanDescriptorManager
     /// </summary>
     /// <returns>A formatted string explaining why descriptor indexing prerequisites are unavailable.</returns>
     private string FormatBindlessDescriptorIndexingUnavailableReason()
-        => $"Descriptor indexing prerequisites unavailable (descriptorIndexing={SupportsDescriptorIndexing}, runtimeArray={DeviceContext.MutableCapabilities._supportsRuntimeDescriptorArray}, partiallyBound={DeviceContext.MutableCapabilities._supportsDescriptorBindingPartiallyBound}, updateAfterBind={DeviceContext.MutableCapabilities._supportsDescriptorBindingUpdateAfterBind}).";
+        => $"Descriptor indexing prerequisites unavailable (descriptorIndexing={SupportsDescriptorIndexing}, runtimeArray={DeviceContext.MutableCapabilities._supportsRuntimeDescriptorArray}, partiallyBound={DeviceContext.MutableCapabilities._supportsDescriptorBindingPartiallyBound}, sampledImageUpdateAfterBind={DeviceContext.MutableCapabilities._supportsDescriptorBindingSampledImageUpdateAfterBind}, updateUnusedWhilePending={DeviceContext.MutableCapabilities._supportsDescriptorBindingUpdateUnusedWhilePending}).";
 
     /// <summary>
     /// Records a fallback for the global material texture table, typically used when a descriptor binding cannot be satisfied.

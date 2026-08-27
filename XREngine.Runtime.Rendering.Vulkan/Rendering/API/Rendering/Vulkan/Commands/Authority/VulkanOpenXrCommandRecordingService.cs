@@ -56,8 +56,28 @@ internal sealed class VulkanOpenXrCommandRecordingService
             throw new InvalidOperationException("OpenXR resource recording is not configured.");
         VulkanDeviceContext deviceContext = _deviceContext ??
             throw new InvalidOperationException("OpenXR device recording is not configured.");
-        if (!deviceContext.IsOperational || !prepared.IsValid)
+        RenderOutputRequest outputContract = prepared.OutputContract;
+        if (!prepared.IsValid)
+        {
+            if (outputContract.WorkClass == ERenderOutputWorkClass.PresentNow)
+            {
+                throw new VulkanPresentNowReadinessException(
+                    outputContract.FrameId,
+                    EVulkanPresentNowReadinessStage.FramePlanSeal,
+                    $"openxr-eye-{prepared.OpenXrViewIndex}-frozen-input",
+                    "OpenXREyeSubmit -> exact immutable worker input",
+                    TimeSpan.Zero,
+                    TimeSpan.Zero,
+                    "The foreground eye worker received an incomplete or stale frozen recording input.");
+            }
+
             return false;
+        }
+        if (!deviceContext.IsOperational)
+        {
+            throw new InvalidOperationException(
+                "OpenXR foreground recording cannot continue because the Vulkan device is not operational.");
+        }
 
         List<VulkanImportedTexturePendingUpload> uploadBatch =
             resourceRuntime.Uploads.PublicationState.RecordedForSubmit;
@@ -74,15 +94,31 @@ internal sealed class VulkanOpenXrCommandRecordingService
                 prepared.CommandInput;
             VulkanPrimaryCommandRecordingResult result =
                 commandRuntime.RecordPrimary(in commandInput);
-            if (commandInput.FramePlan.TryGetPresentNowContract(
-                    out RenderOutputRequest outputContract))
+            result = result with
             {
-                result = result with
-                {
-                    ReadinessPolicy = outputContract.ReadinessPolicy,
-                    WorkClass = outputContract.WorkClass,
-                    SourceFrameId = commandInput.FramePlan.RenderFrameId,
-                };
+                ReadinessPolicy = outputContract.ReadinessPolicy,
+                WorkClass = outputContract.WorkClass,
+                SourceFrameId = commandInput.FramePlan.RenderFrameId,
+            };
+            if (outputContract.WorkClass == ERenderOutputWorkClass.PresentNow &&
+                result.Disposition is not
+                    EVulkanPrimaryCommandRecordingDisposition.Recorded and not
+                    EVulkanPrimaryCommandRecordingDisposition.RecordedWithGpuFallback)
+            {
+                resourceRuntime.Uploads.CancelRecordedSubmitBatch(
+                    deviceContext.State != EVulkanDeviceState.Healthy,
+                    result.Reason ??
+                        $"OpenXR eye worker {workerIndex} returned {result.Disposition}");
+                TimeSpan elapsed = Stopwatch.GetElapsedTime(recordingStart);
+                throw new VulkanPresentNowReadinessException(
+                    result.SourceFrameId,
+                    EVulkanPresentNowReadinessStage.PipelineCompilation,
+                    $"openxr-eye-{prepared.OpenXrViewIndex}-primary",
+                    "OpenXREyeSubmit -> newly recorded exact primary",
+                    elapsed,
+                    elapsed,
+                    $"A foreground eye cannot complete as {result.Disposition}. " +
+                    (result.Reason ?? "Primary recording produced no concrete failure detail."));
             }
             if (!result.Succeeded)
             {
@@ -127,6 +163,9 @@ internal sealed class VulkanOpenXrCommandRecordingService
                 prepared.OpenXrViewIndex,
                 prepared.OpenXrImageIndex,
                 prepared.FrameDataSlotIndex,
+                prepared.LogicalViewId,
+                prepared.RequiredOutputIndex,
+                outputContract,
                 prepared.FrameOpsSignature,
                 prepared.PlannerRevision,
                 prepared.FrameOpContextId,

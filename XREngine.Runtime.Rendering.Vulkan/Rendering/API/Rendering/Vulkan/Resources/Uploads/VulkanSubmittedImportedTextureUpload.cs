@@ -17,20 +17,35 @@ internal sealed class VulkanSubmittedImportedTextureUpload(
     CommandBuffer commandBuffer,
     CommandPool commandPool,
     Fence fence,
-    bool requiresGraphicsAcquire,
-    uint transferQueueFamily,
-    uint graphicsQueueFamily,
     long submitTimestamp,
     long bytesInFlight)
 {
+    private string? _terminalFailureReason;
+
     public VulkanImportedTexturePendingUpload Upload { get; } = upload;
     public CommandBuffer CommandBuffer { get; } = commandBuffer;
     public CommandPool CommandPool { get; } = commandPool;
     public Fence Fence { get; } = fence;
-    public bool RequiresGraphicsAcquire { get; } = requiresGraphicsAcquire;
-    public uint TransferQueueFamily { get; } = transferQueueFamily;
-    public uint GraphicsQueueFamily { get; } = graphicsQueueFamily;
     public long SubmitTimestamp { get; } = submitTimestamp;
     public long BytesInFlight { get; } = bytesInFlight;
+
+    public bool HasTerminalFailure =>
+        Volatile.Read(ref _terminalFailureReason) is not null;
+
+    public bool TryMarkTerminalFailure(string reason)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(reason);
+        return Interlocked.CompareExchange(
+            ref _terminalFailureReason,
+            reason,
+            comparand: null) is null;
+    }
+
+    public bool TryGetTerminalFailure(out string reason)
+    {
+        string? published = Volatile.Read(ref _terminalFailureReason);
+        reason = published ?? string.Empty;
+        return published is not null;
+    }
 }
 

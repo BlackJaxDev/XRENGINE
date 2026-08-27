@@ -91,7 +91,7 @@ internal sealed class FramePlanBuilder
         internal VulkanRenderGraphPlan[] StaticPlannerContextPlans =
             new VulkanRenderGraphPlan[PlannerContextCapacity];
 
-        internal Slot() => Plan = new FramePlan(ViewSet);
+        internal Slot() => Plan = new FramePlan(ViewSet, Operations);
     }
 
     private readonly Slot[] _slots = [new(), new(), new(), new()];
@@ -115,7 +115,8 @@ internal sealed class FramePlanBuilder
         VulkanPreparedMeshIngress? preparedMeshIngress = null,
         int authoringOperationCount = -1,
         int authoringDynamicOverlayOperationCount = -1,
-        int authoringTextureUploadOperationCount = -1)
+        int authoringTextureUploadOperationCount = -1,
+        RenderOutputRequest? emptyPresentNowOutputContract = null)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(frameSlot);
         ArgumentNullException.ThrowIfNull(operations);
@@ -181,12 +182,61 @@ internal sealed class FramePlanBuilder
         int operationKeyCount = 0;
         AddPlanMetadata(slot, slot.Operations, dynamicOverlay: false, openXrViewKind, ref outputCount, ref operationKeyCount);
         AddPlanMetadata(slot, slot.DynamicOverlayOperations, dynamicOverlay: true, openXrViewKind, ref outputCount, ref operationKeyCount);
+        bool requiresFreshEmptyTerminalWrite = false;
+        if (emptyPresentNowOutputContract is { } emptyContract)
+        {
+            if (!emptyContract.IsDefined ||
+                emptyContract.WorkClass != ERenderOutputWorkClass.PresentNow)
+            {
+                throw new ArgumentException(
+                    "An empty foreground plan requires a defined PresentNow output contract.",
+                    nameof(emptyPresentNowOutputContract));
+            }
+
+            int requiredOutputIndex = FindSchedulingContractOutputIndex(
+                    slot,
+                    outputCount,
+                    in emptyContract);
+            if (requiredOutputIndex < 0)
+            {
+                AddOutput(
+                    slot,
+                    OutputRequest.FromSchedulingRequest(in emptyContract),
+                    ref outputCount);
+                requiresFreshEmptyTerminalWrite = true;
+            }
+            else
+            {
+                slot.Outputs[requiredOutputIndex] =
+                    slot.Outputs[requiredOutputIndex]
+                        .WithSchedulingContract(in emptyContract);
+            }
+        }
         SortOutputs(slot.Outputs, outputCount);
         int outputExecutionNodeCount = CompileOutputGraph(
             slot,
             outputCount,
             renderFrameId,
             openXrImagesAcquired);
+        if (emptyPresentNowOutputContract is { } requiredContract)
+        {
+            int requiredOutputIndex = FindSchedulingContractOutputIndex(
+                slot,
+                outputCount,
+                in requiredContract);
+            RenderOutputRequest resolvedContract = requiredOutputIndex < 0
+                ? default
+                : slot.OutputGraphRequests[requiredOutputIndex];
+            if (requiredOutputIndex < 0 ||
+                !slot.OutputDue[requiredOutputIndex] ||
+                resolvedContract.WorkClass != requiredContract.WorkClass ||
+                resolvedContract.ReadinessPolicy !=
+                    requiredContract.ReadinessPolicy)
+            {
+                throw new InvalidOperationException(
+                    "A required PresentNow output contract has no exact executable output-DAG terminal.");
+            }
+        }
         ApplyOutputAdmission(
             slot,
             slot.Operations,
@@ -266,7 +316,8 @@ internal sealed class FramePlanBuilder
             slot.StaticPlannerContexts,
             slot.StaticPlannerContextPlans,
             staticPlannerContextKeyCount,
-            renderGraphPlanSignature);
+            renderGraphPlanSignature,
+            requiresFreshEmptyTerminalWrite);
         return slot.Plan;
     }
 
@@ -823,6 +874,18 @@ internal sealed class FramePlanBuilder
             outputCount + 1,
             EVulkanAcceptedFrameLane.Output);
         slot.Outputs[outputCount++] = request;
+    }
+
+    private static int FindSchedulingContractOutputIndex(
+        Slot slot,
+        int outputCount,
+        in RenderOutputRequest contract)
+    {
+        for (int index = 0; index < outputCount; index++)
+            if (slot.Outputs[index].MatchesSchedulingContract(in contract))
+                return index;
+
+        return -1;
     }
 
     private int CompileOutputGraph(

@@ -12,7 +12,6 @@ internal struct VulkanPresentNowReadinessWatchdog
 
     private readonly ulong _frameId;
     private readonly long _startTimestamp;
-    private readonly long _deadlineTimestamp;
     private long _lastProgressTimestamp;
 
     internal VulkanPresentNowReadinessWatchdog(ulong frameId)
@@ -20,22 +19,25 @@ internal struct VulkanPresentNowReadinessWatchdog
         _frameId = frameId;
         _startTimestamp = Stopwatch.GetTimestamp();
         _lastProgressTimestamp = _startTimestamp;
-        _deadlineTimestamp = checked(_startTimestamp + TimeoutTicks);
     }
 
-    internal readonly long DeadlineTimestamp => _deadlineTimestamp;
+    internal readonly long DeadlineTimestamp
+        => checked(_lastProgressTimestamp + TimeoutTicks);
+
+    internal static long StallTimeoutTicks => TimeoutTicks;
 
     internal void RecordProgress()
         => _lastProgressTimestamp = Stopwatch.GetTimestamp();
 
     internal readonly bool IsExpired
-        => Stopwatch.GetTimestamp() >= _deadlineTimestamp;
+        => Stopwatch.GetTimestamp() >= DeadlineTimestamp;
 
     internal readonly VulkanPresentNowReadinessException CreateFailure(
         EVulkanPresentNowReadinessStage stage,
         string activeTicket,
         string dependencyChain,
-        string detail)
+        string detail,
+        Exception? innerException = null)
     {
         long now = Stopwatch.GetTimestamp();
         return new VulkanPresentNowReadinessException(
@@ -45,7 +47,8 @@ internal struct VulkanPresentNowReadinessWatchdog
             dependencyChain,
             Stopwatch.GetElapsedTime(_startTimestamp, now),
             Stopwatch.GetElapsedTime(_lastProgressTimestamp, now),
-            detail);
+            detail,
+            innerException);
     }
 
     private static long ResolveTimeoutTicks()

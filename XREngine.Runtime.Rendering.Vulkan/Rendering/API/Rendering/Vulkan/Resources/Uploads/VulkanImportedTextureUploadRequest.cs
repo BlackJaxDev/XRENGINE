@@ -21,6 +21,7 @@ internal readonly record struct VulkanImportedTextureUploadRequest(
     ESizedInternalFormat Format,
     string? ColorSpace,
     long EstimatedBytes,
+    VulkanTextureUploadTicket Ticket,
     long StreamingGeneration,
     TextureUploadPriorityClass PriorityClass,
     CancellationToken CancellationToken)
