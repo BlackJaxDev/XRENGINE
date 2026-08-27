@@ -696,20 +696,21 @@ namespace XREngine.Timers
         public float Time() => (float)TimeDouble();
 
         /// <summary>
-        /// Dispatches a complete render frame from a native modal resize callback.
+        /// Dispatches a bounded interactive-resize render frame from a native modal callback.
         /// </summary>
         /// <remarks>
         /// The collapsed Windows window/render thread can remain inside the OS size/move
-        /// loop while the normal outer render loop is paused. The callback must not enter
-        /// ordinary render dispatch because that path may wait for visibility, GPU
-        /// completion, workers, or retirement. The already-published swapchain image is
-        /// instead retained for WSI/compositor scaling until the modal loop exits.
+        /// loop while the normal outer render loop is paused. This entry point preserves
+        /// the ordinary render clock and callbacks. The window renderer limits the callback
+        /// to presentation/UI work and retains the last completed scene output; foreground
+        /// scene readiness and queued render-thread maintenance remain owned by the normal
+        /// render loop after the modal interaction ends.
         /// </remarks>
         public XREngine.Rendering.InteractiveResizeDispatchResult TryDispatchInteractiveResizeFrame(
             ulong? presentationPackageId = null)
         {
             long started = Stopwatch.GetTimestamp();
-            ulong packageId = presentationPackageId ?? PresentFrameId;
+            ulong packageId = presentationPackageId.GetValueOrDefault();
             if (!IsRunning)
                 return XREngine.Rendering.InteractiveResizeDispatchResult.Deferred(
                     XREngine.Rendering.EInteractiveResizeDispatchReason.RuntimeStopped,
@@ -725,25 +726,66 @@ namespace XREngine.Timers
 
             if (!IsRenderDispatchDue())
             {
-                return XREngine.Rendering.InteractiveResizeDispatchResult.Deferred(
-                    XREngine.Rendering.EInteractiveResizeDispatchReason.RenderCadenceNotDue,
-                    packageId,
-                    Stopwatch.GetTimestamp() - started);
+                return packageId != 0UL
+                    ? new XREngine.Rendering.InteractiveResizeDispatchResult(
+                        XREngine.Rendering.EInteractiveResizeDispatchOutcome.PresentedScaledStale,
+                        XREngine.Rendering.EInteractiveResizeDispatchReason.None,
+                        packageId,
+                        Stopwatch.GetTimestamp() - started)
+                    : XREngine.Rendering.InteractiveResizeDispatchResult.Deferred(
+                        XREngine.Rendering.EInteractiveResizeDispatchReason.RenderCadenceNotDue,
+                        PresentFrameId,
+                        Stopwatch.GetTimestamp() - started);
             }
 
-            if (packageId == 0UL)
+            ulong previousPresentFrameId = PresentFrameId;
+            bool dispatched;
+            XREngine.Rendering.RuntimeInteractiveResizeDispatchState.Enter();
+            try
             {
-                return XREngine.Rendering.InteractiveResizeDispatchResult.Deferred(
-                    XREngine.Rendering.EInteractiveResizeDispatchReason.PresentationPackageUnavailable,
-                    packageId,
+                dispatched = DispatchRender(processMainThreadTasks: false);
+            }
+            finally
+            {
+                XREngine.Rendering.RuntimeInteractiveResizeDispatchState.Exit();
+            }
+
+            if (!dispatched)
+            {
+                XREngine.Rendering.EInteractiveResizeDispatchReason deferredReason = IsRunning
+                    ? XREngine.Rendering.EInteractiveResizeDispatchReason.RenderCadenceNotDue
+                    : XREngine.Rendering.EInteractiveResizeDispatchReason.RuntimeStopped;
+                return packageId != 0UL && IsRunning
+                    ? new XREngine.Rendering.InteractiveResizeDispatchResult(
+                        XREngine.Rendering.EInteractiveResizeDispatchOutcome.PresentedScaledStale,
+                        XREngine.Rendering.EInteractiveResizeDispatchReason.None,
+                        packageId,
+                        Stopwatch.GetTimestamp() - started)
+                    : XREngine.Rendering.InteractiveResizeDispatchResult.Deferred(
+                        deferredReason,
+                        PresentFrameId,
+                        Stopwatch.GetTimestamp() - started);
+            }
+
+            if (PresentFrameId != previousPresentFrameId)
+            {
+                return new XREngine.Rendering.InteractiveResizeDispatchResult(
+                    XREngine.Rendering.EInteractiveResizeDispatchOutcome.Submitted,
+                    XREngine.Rendering.EInteractiveResizeDispatchReason.None,
+                    PresentFrameId,
                     Stopwatch.GetTimestamp() - started);
             }
 
-            return new XREngine.Rendering.InteractiveResizeDispatchResult(
-                XREngine.Rendering.EInteractiveResizeDispatchOutcome.PresentedScaledStale,
-                XREngine.Rendering.EInteractiveResizeDispatchReason.None,
-                packageId,
-                Stopwatch.GetTimestamp() - started);
+            return packageId != 0UL
+                ? new XREngine.Rendering.InteractiveResizeDispatchResult(
+                    XREngine.Rendering.EInteractiveResizeDispatchOutcome.PresentedScaledStale,
+                    XREngine.Rendering.EInteractiveResizeDispatchReason.None,
+                    packageId,
+                    Stopwatch.GetTimestamp() - started)
+                : XREngine.Rendering.InteractiveResizeDispatchResult.Deferred(
+                    XREngine.Rendering.EInteractiveResizeDispatchReason.FrameDidNotAdvance,
+                    PresentFrameId,
+                    Stopwatch.GetTimestamp() - started);
         }
 
         private bool IsRenderDispatchDue()
@@ -757,6 +799,9 @@ namespace XREngine.Timers
         }
 
         public bool DispatchRender()
+            => DispatchRender(processMainThreadTasks: true);
+
+        private bool DispatchRender(bool processMainThreadTasks)
         {
             try
             {
@@ -788,7 +833,8 @@ namespace XREngine.Timers
                     Engine.SetDispatchingRenderFrame(true);
                     try
                     {
-                        Engine.ProcessMainThreadTasks();
+                        if (processMainThreadTasks)
+                            Engine.ProcessMainThreadTasks();
                         RenderFrame?.Invoke(); // This dispatch has to be synchronous to stay on the render thread
                     }
                     finally

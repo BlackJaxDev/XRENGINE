@@ -38,7 +38,9 @@ internal sealed unsafe partial class VulkanPipelineManager
         DrainSupersededSharedGraphicsPipelines();
         InspectPipelineCompileHealth();
         result = default;
-        lock (_vulkanGraphicsPipelineCompileJobsLock)
+        using (VulkanFrameLockScope.Enter(
+                   _vulkanGraphicsPipelineCompileJobsLock,
+                   EVulkanFrameWaitReason.PipelineCompilerLock))
         {
             var completionKey = new VulkanGraphicsPipelineCompileCompletionKey(
                 key,
@@ -93,7 +95,9 @@ internal sealed unsafe partial class VulkanPipelineManager
         DrainSupersededSharedGraphicsPipelines();
         InspectPipelineCompileHealth();
         VulkanGraphicsPipelineCompileJob? job;
-        lock (_vulkanGraphicsPipelineCompileJobsLock)
+        using (VulkanFrameLockScope.Enter(
+                   _vulkanGraphicsPipelineCompileJobsLock,
+                   EVulkanFrameWaitReason.PipelineCompilerLock))
         {
             var completionKey = new VulkanGraphicsPipelineCompileCompletionKey(
                 key,
@@ -118,6 +122,7 @@ internal sealed unsafe partial class VulkanPipelineManager
             }
         }
 
+        job.PromoteToForeground();
         if (!job.Task.Wait(ForegroundPipelineCompileTimeout))
         {
             reason = $"pipeline compile exceeded {ForegroundPipelineCompileTimeout.TotalSeconds:F0}s foreground timeout";
@@ -161,7 +166,9 @@ internal sealed unsafe partial class VulkanPipelineManager
             return false;
         }
 
-        lock (_vulkanGraphicsPipelineCompileJobsLock)
+        using (VulkanFrameLockScope.Enter(
+                   _vulkanGraphicsPipelineCompileJobsLock,
+                   EVulkanFrameWaitReason.PipelineCompilerLock))
         {
             if (Volatile.Read(ref _vulkanPipelineCompileShutdownStarted) != 0 ||
                 !acceptsBackendWork)
@@ -183,8 +190,12 @@ internal sealed unsafe partial class VulkanPipelineManager
                 return false;
             }
 
-            if (_vulkanGraphicsPipelineCompileJobs.ContainsKey(request.CompileKey))
+            if (_vulkanGraphicsPipelineCompileJobs.TryGetValue(
+                    request.CompileKey,
+                    out VulkanGraphicsPipelineCompileJob? existingJob))
             {
+                if (foregroundRequired)
+                    existingJob.PromoteToForeground();
                 rejectReason = "pipeline compile job is already queued";
                 return false;
             }
@@ -238,9 +249,14 @@ internal sealed unsafe partial class VulkanPipelineManager
                 compileTask.Enqueue(
                     () => CreateGraphicsPipelineOnWorker(
                         request,
-                        BackgroundPipelineCache));
+                        BackgroundPipelineCache),
+                    foregroundRequired,
+                    out Action promoteToForeground);
 
-            var job = new VulkanGraphicsPipelineCompileJob(request, task);
+            var job = new VulkanGraphicsPipelineCompileJob(
+                request,
+                task,
+                promoteToForeground);
             _vulkanGraphicsPipelineCompileJobs[request.CompileKey] = job;
 
             RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanPipelineTelemetry(
@@ -358,7 +374,9 @@ internal sealed unsafe partial class VulkanPipelineManager
         if (_vulkanPipelineCompileTask is not null)
             return _vulkanPipelineCompileTask;
 
-        lock (_vulkanPipelineCompileGateLock)
+        using (VulkanFrameLockScope.Enter(
+                   _vulkanPipelineCompileGateLock,
+                   EVulkanFrameWaitReason.PipelineCompilerLock))
         {
             _vulkanPipelineCompileTask ??= new VulkanPipelineCompileTask();
             return _vulkanPipelineCompileTask;
@@ -403,7 +421,9 @@ internal sealed unsafe partial class VulkanPipelineManager
     internal void DrainPipelineCompileJobsForOwner(long ownerId, string ownerName)
     {
         VulkanGraphicsPipelineCompileJob[] jobs;
-        lock (_vulkanGraphicsPipelineCompileJobsLock)
+        using (VulkanFrameLockScope.Enter(
+                   _vulkanGraphicsPipelineCompileJobsLock,
+                   EVulkanFrameWaitReason.PipelineCompilerLock))
         {
             jobs = [.. _vulkanGraphicsPipelineCompileJobs.Values
                 .Where(job => job.Request.OwnerId == ownerId)];
@@ -425,7 +445,9 @@ internal sealed unsafe partial class VulkanPipelineManager
             if (outermostMutation)
             {
                 VulkanGraphicsPipelineCompileJob[] jobs;
-                lock (_vulkanGraphicsPipelineCompileJobsLock)
+                using (VulkanFrameLockScope.Enter(
+                           _vulkanGraphicsPipelineCompileJobsLock,
+                           EVulkanFrameWaitReason.PipelineCompilerLock))
                 {
                     Volatile.Write(
                         ref _vulkanPipelineCompileDependencyMutationActive,
@@ -456,7 +478,9 @@ internal sealed unsafe partial class VulkanPipelineManager
         _vulkanPipelineCompileDependencyMutationDepth--;
         if (outermostMutation)
         {
-            lock (_vulkanGraphicsPipelineCompileJobsLock)
+            using (VulkanFrameLockScope.Enter(
+                       _vulkanGraphicsPipelineCompileJobsLock,
+                       EVulkanFrameWaitReason.PipelineCompilerLock))
             {
                 Interlocked.Increment(
                     ref _vulkanPipelineCompileDependencyGeneration);
@@ -510,7 +534,9 @@ internal sealed unsafe partial class VulkanPipelineManager
                 job.Task.Wait();
                 job.PublicationTask.Wait();
                 bool removed;
-                lock (_vulkanGraphicsPipelineCompileJobsLock)
+                using (VulkanFrameLockScope.Enter(
+                           _vulkanGraphicsPipelineCompileJobsLock,
+                           EVulkanFrameWaitReason.PipelineCompilerLock))
                 {
                     removed = _vulkanGraphicsPipelineCompileJobs.TryRemove(
                         job.Request.CompileKey,
@@ -541,7 +567,9 @@ internal sealed unsafe partial class VulkanPipelineManager
         Interlocked.Exchange(ref _vulkanPipelineCompileShutdownStarted, 1);
 
         VulkanGraphicsPipelineCompileJob[] jobs;
-        lock (_vulkanGraphicsPipelineCompileJobsLock)
+        using (VulkanFrameLockScope.Enter(
+                   _vulkanGraphicsPipelineCompileJobsLock,
+                   EVulkanFrameWaitReason.PipelineCompilerLock))
             jobs = [.. _vulkanGraphicsPipelineCompileJobs.Values];
 
         foreach (VulkanGraphicsPipelineCompileJob job in jobs)
@@ -559,7 +587,9 @@ internal sealed unsafe partial class VulkanPipelineManager
 
         foreach (VulkanGraphicsPipelineCompileJob job in jobs)
         {
-            lock (_vulkanGraphicsPipelineCompileJobsLock)
+            using (VulkanFrameLockScope.Enter(
+                       _vulkanGraphicsPipelineCompileJobsLock,
+                       EVulkanFrameWaitReason.PipelineCompilerLock))
             {
                 if (!_vulkanGraphicsPipelineCompileJobs.TryRemove(job.Request.CompileKey, out _))
                     continue;
@@ -575,7 +605,9 @@ internal sealed unsafe partial class VulkanPipelineManager
             }
         }
 
-        lock (_vulkanGraphicsPipelineCompileJobsLock)
+        using (VulkanFrameLockScope.Enter(
+                   _vulkanGraphicsPipelineCompileJobsLock,
+                   EVulkanFrameWaitReason.PipelineCompilerLock))
             _vulkanGraphicsPipelineProgramCompileJobs.Clear();
 
         _vulkanPipelineCompileGate?.Dispose();

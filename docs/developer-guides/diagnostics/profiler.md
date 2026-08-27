@@ -247,10 +247,10 @@ at least one sample has been written. Harness summaries are written under
 `summary.json`, `summary.txt`, and `run-logdirs.txt`; by default the harness keeps
 only the latest three summary runs, configurable with `-RetainedRunCount`.
 
-### Render Stats Capture Schema v5
+### Render Stats Capture Schema v8
 
 `profiler-capture-manifest.json` now records
-`xrengine.profile_capture.render_stats.v5` with `schema_version = 5`. The
+`xrengine.profile_capture.render_stats.v8` with `schema_version = 8`. The
 manifest makes benchmark context explicit: build configuration, world mode,
 forced and effective mesh submission strategy, zero-readback material draw path,
 render backend, GPU/vendor, scene, camera, lights, viewport, render scale,
@@ -268,6 +268,32 @@ path, XR runtime, output anti-aliasing identity, and active AO, exposure, MSAA,
 TSR, bloom, motion-blur, and motion-vector settings. Clean captures are
 therefore self-describing and are rejected when an intrusive observer or cold
 shader/texture cache remains.
+
+Schema v8 adds the Phase 1 presentation profile, actual present cadence,
+causal-wait, device/memory/submission breadcrumb, foreground arbitration, and
+correlated Vulkan frame-tree fields. Tree rows retain stable engine, render,
+output, and authority IDs and partition stage-exclusive work, waits, native
+driver time, external runtime time, and diagnostic observer time. Worker
+overlap is keyed to the immutable render frame rather than sampled from a
+rolling global counter.
+
+Each causal-wait row also carries the coarse frame stage in which the wait was
+observed. The desktop aggregate path times current-slot and pre-collect next-slot
+reuse independently, separates admission from native acquire/submit/present,
+and instruments contended command-pool, descriptor, submission, queue-lease,
+lifetime, upload, pipeline-compiler, and synchronization authorities. Lock
+instrumentation takes the uncontended `TryEnter` fast path without reading the
+clock; only contended intervals of at least 0.1 ms are retained in the bounded
+per-frame payload.
+
+The in-process and UDP profiler sources materialize the same diagnostic tree
+only when a profiler packet is requested; the renderer's aggregate publication
+remains allocation-free. The ImGui profiler presents a collapsible root with
+category totals, critical path, stage children, causal waits, and explicit
+attribution warnings. Frames at or above the slow-frame threshold also emit a
+rate-limited `[Vulkan][FrameTree]` log record with the same identities and
+totals. Observer overhead and the detailed 99% attribution target remain
+empirical promotion gates rather than assumed properties of schema v8.
 
 Each `profiler-render-stats.ndjson` sample includes the old frame timing fields
 plus renderer-state churn counters: indirect-count and multi-draw calls, shader
@@ -455,6 +481,24 @@ The four profile modes have distinct intent:
 | `DevelopmentProfile` | Explicitly selected; labels and detailed scopes allowed | Normal editor and profiling tools allowed | Development trend only |
 | `CleanProfile` | Validation, dense timestamps, command labels, and P3 logging prohibited | ImGui and dynamic diagnostic overlays skipped | Quick feedback; non-promotable |
 | `ReleaseBenchmark` | Same non-intrusive restrictions as CleanProfile | ImGui and dynamic diagnostic overlays skipped | Compare/Gate promotion evidence |
+
+Vulkan presentation policy is an independent axis from observer/profile mode.
+The editor defaults to `Stable` (FIFO, refresh paced, no frame generation).
+`LowLatency` selects Mailbox with the bounded hybrid limiter,
+`Uncapped` requires Immediate mode for GPU-headroom diagnosis, and
+`FrameGeneration` requires the separately provisioned Streamline presentation
+path. Unsupported requested modes fail or visibly downgrade according to their
+profile contract; they are never silently measured as another mode.
+
+Use `-VulkanPresentationProfile Stable|LowLatency|Uncapped|FrameGeneration`
+with `Measure-GameLoopRenderPipeline.ps1`. `Invoke-VulkanPerf.ps1` selects the
+profile declared by each tracked cohort (desktop headroom cohorts default to
+`Uncapped`, while RVC/OpenXR mirror cohorts remain `Stable`). The launch-only
+diagnostic overrides are `XRE_VULKAN_PRESENTATION_PROFILE` and
+`XRE_TARGET_REFRESH_HZ`; every capture records the requested/resolved profile,
+native present mode, target and actual intervals, swapchain image/frame-slot
+counts, frame-generation state, validation state, render-target mode, and
+present-timing extension capabilities.
 
 The matching VS Code tasks are `Benchmark-Vulkan-Clean-Desktop` and
 `Benchmark-Vulkan-Clean-OpenXR`. At engine startup, the resolved mode emits one

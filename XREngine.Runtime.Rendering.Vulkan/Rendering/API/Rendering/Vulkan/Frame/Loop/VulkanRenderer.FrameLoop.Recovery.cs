@@ -145,12 +145,23 @@ namespace XREngine.Rendering.Vulkan
 
         private void ReleaseCollectForFailureSettlement(
             ref VulkanFrameAttempt attempt)
+            => ReleaseCollectForDesktopFrame(ref attempt);
+
+        /// <summary>
+        /// Releases the scene visibility producer only when this frame actually consumed
+        /// a scene epoch. Interactive resize frames are UI/presentation transactions over
+        /// retained scene content and therefore do not own the collect-visible handoff.
+        /// </summary>
+        private void ReleaseCollectForDesktopFrame(ref VulkanFrameAttempt attempt)
         {
             if (attempt.CollectReleased)
                 return;
 
-            RuntimeRenderingHostServices.Scheduling
-                .MarkRenderFrameReadyForCollect(DesktopWsiOutput.Window);
+            if (!attempt.InteractiveResize)
+            {
+                RuntimeRenderingHostServices.Scheduling
+                    .MarkRenderFrameReadyForCollect(DesktopWsiOutput.Window);
+            }
             attempt.CollectReleased = true;
         }
 

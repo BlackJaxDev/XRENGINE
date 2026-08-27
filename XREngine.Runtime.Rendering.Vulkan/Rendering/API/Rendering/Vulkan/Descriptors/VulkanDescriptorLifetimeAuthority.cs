@@ -115,7 +115,9 @@ internal sealed unsafe class VulkanDescriptorLifetimeAuthority
             new VulkanResourceLifetimeKey(ObjectType.DescriptorSet, descriptorSet.Handle),
             owner,
             externallyOwned: false);
-        lock (tracker.SyncRoot)
+        using (VulkanFrameLockScope.Enter(
+                   tracker.SyncRoot,
+                   EVulkanFrameWaitReason.ResourceLifetimeLock))
         {
             if (!tracker.DescriptorSetLifetimes.TryGetValue(
                     descriptorSet.Handle,
@@ -211,7 +213,9 @@ internal sealed unsafe class VulkanDescriptorLifetimeAuthority
         bool invalidatesRecordedCommandBuffers;
         VulkanDescriptorUpdateInvalidation firstInvalidation;
         VulkanResourceLifetimeTracker tracker = _lifetime.Tracker;
-        lock (tracker.SyncRoot)
+        using (VulkanFrameLockScope.Enter(
+                   tracker.SyncRoot,
+                   EVulkanFrameWaitReason.ResourceLifetimeLock))
         {
             if (!TryPrevalidateWritesNoLock(
                     descriptorWriteCount,
@@ -375,7 +379,9 @@ internal sealed unsafe class VulkanDescriptorLifetimeAuthority
                 VulkanDescriptorUpdateInvalidation firstInvalidation;
                 fixed (WriteDescriptorSet* writePointer = writes)
                 {
-                    lock (_lifetime.Tracker.SyncRoot)
+                    using (VulkanFrameLockScope.Enter(
+                               _lifetime.Tracker.SyncRoot,
+                               EVulkanFrameWaitReason.ResourceLifetimeLock))
                     {
                         if (!TryPrevalidateWritesNoLock(
                                 unchecked((uint)writes.Length),
@@ -455,7 +461,9 @@ internal sealed unsafe class VulkanDescriptorLifetimeAuthority
     internal void DestroyUpdateTemplateCache()
     {
         VulkanDeviceContext? device = _deviceContext;
-        lock (_descriptors._descriptorUpdateTemplateCacheLock)
+        using (VulkanFrameLockScope.Enter(
+                   _descriptors._descriptorUpdateTemplateCacheLock,
+                   EVulkanFrameWaitReason.DescriptorPublicationLock))
         {
             if (device is not null && device.Device.Handle != 0)
             {
@@ -1020,7 +1028,9 @@ internal sealed unsafe class VulkanDescriptorLifetimeAuthority
     {
         updateTemplate = default;
         ulong hash = ComputeTemplateHash(signature);
-        lock (_descriptors._descriptorUpdateTemplateCacheLock)
+        using (VulkanFrameLockScope.Enter(
+                   _descriptors._descriptorUpdateTemplateCacheLock,
+                   EVulkanFrameWaitReason.DescriptorPublicationLock))
         {
             if (_descriptors._descriptorUpdateTemplateCache.TryGetValue(
                     hash,
@@ -1083,7 +1093,9 @@ internal sealed unsafe class VulkanDescriptorLifetimeAuthority
             new VulkanResourceLifetimeKey(ObjectType.DescriptorSet, descriptorSet.Handle),
             nameof(RetireDescriptorSet));
         int frameSlot = _resources.FramebufferRetirementFrameSlot;
-        lock (_lifetime.Retirement.SyncRoot)
+        using (VulkanFrameLockScope.Enter(
+                   _lifetime.Retirement.SyncRoot,
+                   EVulkanFrameWaitReason.ResourceLifetimeLock))
         {
             if (_lifetime.Retirement.AllDescriptorPoolHandles.Contains(descriptorPool.Handle))
                 return;
@@ -1103,7 +1115,9 @@ internal sealed unsafe class VulkanDescriptorLifetimeAuthority
         if (descriptorPool.Handle == 0)
             return;
 
-        lock (_lifetime.Retirement.SyncRoot)
+        using (VulkanFrameLockScope.Enter(
+                   _lifetime.Retirement.SyncRoot,
+                   EVulkanFrameWaitReason.ResourceLifetimeLock))
             if (!_lifetime.Retirement.AllDescriptorPoolHandles.Add(descriptorPool.Handle))
                 return;
 
@@ -1116,13 +1130,17 @@ internal sealed unsafe class VulkanDescriptorLifetimeAuthority
         }
         catch
         {
-            lock (_lifetime.Retirement.SyncRoot)
+            using (VulkanFrameLockScope.Enter(
+                       _lifetime.Retirement.SyncRoot,
+                       EVulkanFrameWaitReason.ResourceLifetimeLock))
                 _lifetime.Retirement.AllDescriptorPoolHandles.Remove(descriptorPool.Handle);
             throw;
         }
 
         int frameSlot = _resources.FramebufferRetirementFrameSlot;
-        lock (_lifetime.Retirement.SyncRoot)
+        using (VulkanFrameLockScope.Enter(
+                   _lifetime.Retirement.SyncRoot,
+                   EVulkanFrameWaitReason.ResourceLifetimeLock))
         {
             RemoveRetiredDescriptorSetsForPoolNoLock(descriptorPool.Handle);
             _lifetime.Retirement.DescriptorPoolHandles[frameSlot].Add(descriptorPool.Handle);
@@ -1145,7 +1163,9 @@ internal sealed unsafe class VulkanDescriptorLifetimeAuthority
             ComputePoolSizeFingerprint(perAllocationPoolSizes),
             setsPerAllocation,
             updateAfterBind);
-        lock (_descriptors.MeshDescriptorPoolSlabLock)
+        using (VulkanFrameLockScope.Enter(
+                   _descriptors.MeshDescriptorPoolSlabLock,
+                   EVulkanFrameWaitReason.DescriptorArena))
         {
             if (_descriptors.MeshDescriptorPoolSlabs.TryGetValue(
                     key,
@@ -1226,7 +1246,9 @@ internal sealed unsafe class VulkanDescriptorLifetimeAuthority
 
         DescriptorPool pool = lease.Pool;
         bool retireWholePool = false;
-        lock (_descriptors.MeshDescriptorPoolSlabLock)
+        using (VulkanFrameLockScope.Enter(
+                   _descriptors.MeshDescriptorPoolSlabLock,
+                   EVulkanFrameWaitReason.DescriptorArena))
         {
             if (lease.Released)
                 return;
@@ -1280,7 +1302,9 @@ internal sealed unsafe class VulkanDescriptorLifetimeAuthority
         VulkanRetirementTicket ticket = CaptureRetirementTicket(poolKey, owner);
         VulkanResourceLifetimeTracker tracker = _lifetime.Tracker;
         ulong[] ownedSets;
-        lock (tracker.SyncRoot)
+        using (VulkanFrameLockScope.Enter(
+                   tracker.SyncRoot,
+                   EVulkanFrameWaitReason.ResourceLifetimeLock))
             ownedSets = tracker.DescriptorSetsByPool.TryGetValue(pool.Handle, out HashSet<ulong>? sets)
                 ? [.. sets]
                 : [];
@@ -1316,7 +1340,9 @@ internal sealed unsafe class VulkanDescriptorLifetimeAuthority
         ulong generation;
         string resourceOwner;
         int invalidatedDescriptorSetCount = 0;
-        lock (tracker.SyncRoot)
+        using (VulkanFrameLockScope.Enter(
+                   tracker.SyncRoot,
+                   EVulkanFrameWaitReason.ResourceLifetimeLock))
         {
             VulkanResourceLifetimeRecord resource = tracker.GetOrRegisterResourceNoLock(key, owner);
             generation = resource.Generation;

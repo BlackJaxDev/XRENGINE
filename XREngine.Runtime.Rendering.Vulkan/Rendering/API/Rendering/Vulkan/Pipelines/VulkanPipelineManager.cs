@@ -145,7 +145,9 @@ internal sealed unsafe partial class VulkanPipelineManager
             recordingStructuralSignature,
             submissionStrategy,
             dynamicRendering);
-        lock (_pipelineVariantManifestCacheLock)
+        using (VulkanFrameLockScope.Enter(
+                   _pipelineVariantManifestCacheLock,
+                   EVulkanFrameWaitReason.PipelineCompilerLock))
         {
             if (_pipelineVariantManifestCache.TryGetValue(key, out VulkanPipelineVariantManifest? manifest))
                 return manifest;
@@ -409,20 +411,26 @@ internal sealed unsafe partial class VulkanPipelineManager
     {
         get
         {
-            lock (_sharedGraphicsPipelineLock)
+            using (VulkanFrameLockScope.Enter(
+                       _sharedGraphicsPipelineLock,
+                       EVulkanFrameWaitReason.PipelineCompilerLock))
                 return _sharedGraphicsPipelineGeneration;
         }
     }
 
     internal void QueueProgramLinkUntilDeviceReady(VkRenderProgram program)
     {
-        lock (_pendingDeviceReadyProgramLinksLock)
+        using (VulkanFrameLockScope.Enter(
+                   _pendingDeviceReadyProgramLinksLock,
+                   EVulkanFrameWaitReason.PipelineCompilerLock))
             _pendingDeviceReadyProgramLinks.Add(program);
     }
 
     internal int FlushPendingDeviceReadyProgramLinks()
     {
-        lock (_pendingDeviceReadyProgramLinksLock)
+        using (VulkanFrameLockScope.Enter(
+                   _pendingDeviceReadyProgramLinksLock,
+                   EVulkanFrameWaitReason.PipelineCompilerLock))
         {
             int deferredCount = _pendingDeviceReadyProgramLinks.Count;
             _pendingDeviceReadyProgramLinks.Clear();
@@ -432,7 +440,9 @@ internal sealed unsafe partial class VulkanPipelineManager
 
     internal void ClearPendingDeviceReadyProgramLinks()
     {
-        lock (_pendingDeviceReadyProgramLinksLock)
+        using (VulkanFrameLockScope.Enter(
+                   _pendingDeviceReadyProgramLinksLock,
+                   EVulkanFrameWaitReason.PipelineCompilerLock))
             _pendingDeviceReadyProgramLinks.Clear();
     }
 
@@ -440,7 +450,9 @@ internal sealed unsafe partial class VulkanPipelineManager
         in VulkanGraphicsPipelineKey key,
         out Pipeline pipeline)
     {
-        lock (_sharedGraphicsPipelineLock)
+        using (VulkanFrameLockScope.Enter(
+                   _sharedGraphicsPipelineLock,
+                   EVulkanFrameWaitReason.PipelineCompilerLock))
             return _sharedGraphicsPipelines.TryGetValue(key, out pipeline) &&
                 pipeline.Handle != 0;
     }
@@ -452,7 +464,9 @@ internal sealed unsafe partial class VulkanPipelineManager
         if (pipeline.Handle == 0)
             return pipeline;
 
-        lock (_sharedGraphicsPipelineLock)
+        using (VulkanFrameLockScope.Enter(
+                   _sharedGraphicsPipelineLock,
+                   EVulkanFrameWaitReason.PipelineCompilerLock))
         {
             if (_sharedGraphicsPipelines.TryGetValue(key, out Pipeline existing) &&
                 existing.Handle != 0)
@@ -489,7 +503,9 @@ internal sealed unsafe partial class VulkanPipelineManager
     /// </summary>
     internal void PublishCompletedGraphicsPipelineCompile(VulkanGraphicsPipelineCompileJob completedJob)
     {
-        lock (_vulkanGraphicsPipelineCompileJobsLock)
+        using (VulkanFrameLockScope.Enter(
+                   _vulkanGraphicsPipelineCompileJobsLock,
+                   EVulkanFrameWaitReason.PipelineCompilerLock))
         {
             if (!_vulkanGraphicsPipelineCompileJobs.TryGetValue(
                     completedJob.Request.CompileKey,
@@ -619,7 +635,9 @@ internal sealed unsafe partial class VulkanPipelineManager
 
     internal Pipeline[] DrainSharedGraphicsPipelines()
     {
-        lock (_sharedGraphicsPipelineLock)
+        using (VulkanFrameLockScope.Enter(
+                   _sharedGraphicsPipelineLock,
+                   EVulkanFrameWaitReason.PipelineCompilerLock))
         {
             if (_sharedGraphicsPipelines.Count == 0)
                 return [];
@@ -653,7 +671,9 @@ internal sealed unsafe partial class VulkanPipelineManager
         out Pipeline library,
         out bool creationReserved)
     {
-        lock (_sharedGraphicsPipelineLibraryLock)
+        using (VulkanFrameLockScope.Enter(
+                   _sharedGraphicsPipelineLibraryLock,
+                   EVulkanFrameWaitReason.PipelineCompilerLock))
         {
             if (_sharedGraphicsPipelineLibraries.TryGetValue(key, out library) &&
                 library.Handle != 0)
@@ -677,7 +697,9 @@ internal sealed unsafe partial class VulkanPipelineManager
             return library;
         }
 
-        lock (_sharedGraphicsPipelineLibraryLock)
+        using (VulkanFrameLockScope.Enter(
+                   _sharedGraphicsPipelineLibraryLock,
+                   EVulkanFrameWaitReason.PipelineCompilerLock))
         {
             _sharedGraphicsPipelineLibraryCreations.Remove(key);
             if (_sharedGraphicsPipelineLibraries.TryGetValue(key, out Pipeline existing) &&
@@ -694,13 +716,17 @@ internal sealed unsafe partial class VulkanPipelineManager
     internal void CancelSharedGraphicsPipelineLibraryCreation(
         in VulkanGraphicsPipelineLibraryKey key)
     {
-        lock (_sharedGraphicsPipelineLibraryLock)
+        using (VulkanFrameLockScope.Enter(
+                   _sharedGraphicsPipelineLibraryLock,
+                   EVulkanFrameWaitReason.PipelineCompilerLock))
             _sharedGraphicsPipelineLibraryCreations.Remove(key);
     }
 
     internal Pipeline[] DrainSharedGraphicsPipelineLibraries()
     {
-        lock (_sharedGraphicsPipelineLibraryLock)
+        using (VulkanFrameLockScope.Enter(
+                   _sharedGraphicsPipelineLibraryLock,
+                   EVulkanFrameWaitReason.PipelineCompilerLock))
         {
             _sharedGraphicsPipelineLibraryCreations.Clear();
             if (_sharedGraphicsPipelineLibraries.Count == 0)

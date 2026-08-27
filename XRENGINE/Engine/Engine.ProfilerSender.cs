@@ -422,6 +422,8 @@ public static partial class Engine
             VulkanRetiredResourcePlanBuffers = RuntimeEngine.Rendering.Stats.Vulkan.VulkanRetiredResourcePlanBuffers,
             VulkanFrameLoop = new VulkanFrameLoopTelemetryData
             {
+                CorrelatedFrameTree = VulkanFrameTelemetryProfilerDataConverter
+                    .CreateProfilerFrameTree(in vulkanFrame),
                 FrameSampleTimingQueriesMs = vulkanFrame.Detail.SampleTimingQueries.TotalMilliseconds,
                 FrameDrainRetiredResourcesMs = vulkanFrame.Detail.DrainRetiredResources.TotalMilliseconds,
                 FrameAcquireBridgeSubmitMs = vulkanFrame.Detail.AcquireBridgeSubmit.TotalMilliseconds,

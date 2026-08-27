@@ -1446,6 +1446,8 @@ namespace XREngine.Rendering
                 WarnIfNotRenderOwnerThread("InteractiveResize.Render");
 
                 ulong? presentationPackageId = null;
+                EInteractiveResizeDispatchReason presentationUnavailableReason =
+                    EInteractiveResizeDispatchReason.None;
                 if (((IRuntimeRendererHost)_renderer).TryGetBackendCapability<IInteractiveResizePresentationBackendCapability>(out var presentationCapability) &&
                     presentationCapability is not null)
                 {
@@ -1453,21 +1455,23 @@ namespace XREngine.Rendering
                             out ulong packageId,
                             out EInteractiveResizeDispatchReason unavailableReason))
                     {
-                        InteractiveResizeDispatchResult unavailable = InteractiveResizeDispatchResult.Deferred(
-                            unavailableReason,
-                            packageId,
-                            System.Diagnostics.Stopwatch.GetTimestamp() - callbackStarted);
-                        InteractiveResizeDiagnostics.RecordDispatch(unavailable);
-                        InteractiveResizeDiagnostics.RecordSuppressedRender(
-                            GetInteractiveResizeDispatchReasonName(unavailable.Reason));
-                        return;
+                        presentationUnavailableReason = unavailableReason;
                     }
-
-                    presentationPackageId = packageId;
+                    else
+                    {
+                        presentationPackageId = packageId;
+                    }
                 }
 
                 InteractiveResizeDispatchResult dispatch =
                     RuntimeRenderingHostServices.Scheduling.TryDispatchInteractiveResizeFrame(presentationPackageId);
+                if (!dispatch.Presented &&
+                    presentationUnavailableReason != EInteractiveResizeDispatchReason.None &&
+                    dispatch.Reason is EInteractiveResizeDispatchReason.VisibilityUnavailable or
+                        EInteractiveResizeDispatchReason.FrameDidNotAdvance)
+                {
+                    dispatch = dispatch with { Reason = presentationUnavailableReason };
+                }
                 InteractiveResizeDiagnostics.RecordDispatch(dispatch);
                 if (!dispatch.Presented)
                 {
@@ -2922,6 +2926,9 @@ namespace XREngine.Rendering
             ObserveRenderOwnerThread("RenderFrame");
             WarnIfNotRenderOwnerThread("RenderFrame");
             ulong renderFrameId = RuntimeEngine.Rendering.State.RenderFrameId;
+            bool interactiveResizeFrame =
+                IsInteractiveResizeInProgress ||
+                RuntimeInteractiveResizeDispatchState.IsActive;
 
             long phaseStart = System.Diagnostics.Stopwatch.GetTimestamp();
             ConsumeLatestWindowSurfaceSnapshotForRenderFrame();
@@ -2986,8 +2993,9 @@ namespace XREngine.Rendering
                 return;
 
             phaseStart = System.Diagnostics.Stopwatch.GetTimestamp();
-            using (var mainThreadJobsSample = RuntimeRenderingHostServices.Profiling.StartProfileScope("XRWindow.Timer.PostRenderMainThreadJobs"))
+            if (!interactiveResizeFrame)
             {
+                using var mainThreadJobsSample = RuntimeRenderingHostServices.Profiling.StartProfileScope("XRWindow.Timer.PostRenderMainThreadJobs");
                 // Draw the frame first, then spend a small budget on queued GPU work.
                 // This keeps texture uploads and property updates from delaying visible rendering.
                 RuntimeEngine.ProcessMainThreadTasks();
@@ -3161,6 +3169,9 @@ namespace XREngine.Rendering
                 }
 
                 ulong renderFrameId = RuntimeEngine.Rendering.State.RenderFrameId;
+                bool interactiveResizeFrame =
+                    IsInteractiveResizeInProgress ||
+                    RuntimeInteractiveResizeDispatchState.IsActive;
 
                 // Reset per-frame rendering statistics at the start of each frame.
                 long phaseStart = System.Diagnostics.Stopwatch.GetTimestamp();
@@ -3171,23 +3182,26 @@ namespace XREngine.Rendering
                 RecordRenderThreadCpuTiming(renderFrameId, "XRWindow.BeginRenderStatsFrame", phaseStart);
 
                 phaseStart = System.Diagnostics.Stopwatch.GetTimestamp();
-                using (var gpuReadbackSample = RuntimeRenderingHostServices.Profiling.StartProfileScope("XRWindow.PollGpuRenderStatsReadbacks"))
+                if (!interactiveResizeFrame)
                 {
+                    using var gpuReadbackSample = RuntimeRenderingHostServices.Profiling.StartProfileScope("XRWindow.PollGpuRenderStatsReadbacks");
                     frameRenderer.PollGpuRenderStatsReadbacks();
                 }
                 RecordRenderThreadCpuTiming(renderFrameId, "XRWindow.PollGpuRenderStatsReadbacks", phaseStart);
 
                 phaseStart = System.Diagnostics.Stopwatch.GetTimestamp();
-                using (var screenshotReadbackSample = RuntimeRenderingHostServices.Profiling.StartProfileScope("XRWindow.PollScreenshotReadbacks"))
+                if (!interactiveResizeFrame)
                 {
+                    using var screenshotReadbackSample = RuntimeRenderingHostServices.Profiling.StartProfileScope("XRWindow.PollScreenshotReadbacks");
                     frameRenderer.PollScreenshotReadbacks();
                 }
                 RecordRenderThreadCpuTiming(renderFrameId, "XRWindow.PollScreenshotReadbacks", phaseStart);
 
                 // Process any pending async buffer uploads within the frame budget.
                 phaseStart = System.Diagnostics.Stopwatch.GetTimestamp();
-                using (var uploadSample = RuntimeRenderingHostServices.Profiling.StartProfileScope("XRWindow.ProcessPendingUploads"))
+                if (!interactiveResizeFrame)
                 {
+                    using var uploadSample = RuntimeRenderingHostServices.Profiling.StartProfileScope("XRWindow.ProcessPendingUploads");
                     frameRenderer.ProcessPendingUploads();
                 }
                 RecordRenderThreadCpuTiming(renderFrameId, "XRWindow.ProcessPendingUploads", phaseStart);
@@ -3205,6 +3219,7 @@ namespace XREngine.Rendering
                 bool forceFullViewport = RuntimeRenderingHostServices.Presentation.ForceFullViewport;
                 if (forceFullViewport)
                     useScenePanelMode = false;
+                bool interactiveScenePanelFrame = interactiveResizeFrame && useScenePanelMode;
                 EVrMirrorMode mirrorMode = RuntimeRenderingHostServices.Presentation.VrMirrorMode;
                 bool mirrorByComposition =
                     RuntimeRenderingHostServices.Presentation.IsInVR &&
@@ -3235,8 +3250,9 @@ namespace XREngine.Rendering
                 //LogRenderDiagnostics(delta, useScenePanelMode, canRenderWindowViewports, forceFullViewport);
                 ApplyForcedDebugOpaquePipelineOverride();
 
-                using (var preRenderSample = RuntimeRenderingHostServices.Profiling.StartProfileScope("XRWindow.GlobalPreRender"))
+                if (!interactiveScenePanelFrame)
                 {
+                    using var preRenderSample = RuntimeRenderingHostServices.Profiling.StartProfileScope("XRWindow.GlobalPreRender");
                     try
                     {
                         TargetWorldInstance?.GlobalPreRender();
@@ -3283,6 +3299,7 @@ namespace XREngine.Rendering
                         long viewportsPhaseStart = System.Diagnostics.Stopwatch.GetTimestamp();
                         using (var renderViewportsSample = RuntimeRenderingHostServices.Profiling.StartProfileScope("XRWindow.RenderWindowViewports"))
                         {
+                        if (!interactiveScenePanelFrame)
                             RenderWindowViewports(useScenePanelMode, canRenderWindowViewports, mirrorByComposition);
                         }
                         RecordRenderThreadCpuTiming(renderFrameId, "XRWindow.RenderWindowViewports", viewportsPhaseStart);
@@ -3309,8 +3326,9 @@ namespace XREngine.Rendering
                     return;
                 }
 
-                using (var postRenderSample = RuntimeRenderingHostServices.Profiling.StartProfileScope("XRWindow.GlobalPostRender"))
+                if (!interactiveScenePanelFrame)
                 {
+                    using var postRenderSample = RuntimeRenderingHostServices.Profiling.StartProfileScope("XRWindow.GlobalPostRender");
                     try
                     {
                         TargetWorldInstance?.GlobalPostRender();
@@ -3326,7 +3344,7 @@ namespace XREngine.Rendering
                     }
                 }
 
-                if (RuntimeEngine.StartupPresentationEnabled)
+                if (RuntimeEngine.StartupPresentationEnabled && !interactiveResizeFrame)
                 {
                     using var startupPresentationSample = RuntimeRenderingHostServices.Profiling.StartProfileScope("XRWindow.StartupPresentationMarker");
                     Vector2D<int> framebufferSize = RenderFramebufferSize;
@@ -3377,8 +3395,9 @@ namespace XREngine.Rendering
 
                 // Tick render-thread coroutines (e.g. progressive texture uploads) while the renderer
                 // is still marked active so that IsRendererActive guards inside those coroutines pass.
-                using (var inFrameJobsSample = RuntimeRenderingHostServices.Profiling.StartProfileScope("XRWindow.InFrameMainThreadJobs"))
+                if (!interactiveResizeFrame)
                 {
+                    using var inFrameJobsSample = RuntimeRenderingHostServices.Profiling.StartProfileScope("XRWindow.InFrameMainThreadJobs");
                     RuntimeEngine.ProcessMainThreadTasks();
                 }
 
@@ -3389,7 +3408,8 @@ namespace XREngine.Rendering
                     _renderDisabledUntilUtc = default;
                 }
 
-                RuntimeRenderingHostServices.Scheduling.MarkRenderFrameReadyForCollect(this);
+                if (!interactiveResizeFrame)
+                    RuntimeRenderingHostServices.Scheduling.MarkRenderFrameReadyForCollect(this);
                 if (!viewportRenderFailed)
                     AnyRendererFrameCompleted?.Invoke(this, frameRenderer.BackendGeneration);
             }

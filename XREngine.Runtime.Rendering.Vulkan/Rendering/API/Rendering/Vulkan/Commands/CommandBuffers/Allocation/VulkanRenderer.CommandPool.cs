@@ -36,7 +36,9 @@ namespace XREngine.Rendering.Vulkan
             DestroyCommandChainCaches();
             DestroyCommandChainRecordingWorkers();
 
-            lock (CommandPoolsGate)
+            using (VulkanFrameLockScope.Enter(
+                       CommandPoolsGate,
+                       EVulkanFrameWaitReason.CommandPool))
             {
                 HashSet<ulong> destroyed = [];
                 foreach (CommandPool pool in ThreadCommandPools.Values)
@@ -66,7 +68,9 @@ namespace XREngine.Rendering.Vulkan
                 ? primaryPool
                 : CreateCommandPoolForFamily(transferFamily);
 
-            lock (CommandPoolsGate)
+            using (VulkanFrameLockScope.Enter(
+                       CommandPoolsGate,
+                       EVulkanFrameWaitReason.CommandPool))
             {
                 _commandRuntime.Pools.PrimaryGraphics = primaryPool;
                 _commandRuntime.Pools.PrimaryTransfer = primaryTransferPool;
@@ -78,7 +82,9 @@ namespace XREngine.Rendering.Vulkan
         internal CommandPool GetThreadCommandPool()
         {
             int threadId = Environment.CurrentManagedThreadId;
-            lock (CommandPoolsGate)
+            using (VulkanFrameLockScope.Enter(
+                       CommandPoolsGate,
+                       EVulkanFrameWaitReason.CommandPool))
             {
                 if (ThreadCommandPools.TryGetValue(threadId, out CommandPool pool) && pool.Handle != 0)
                     return pool;
@@ -90,7 +96,9 @@ namespace XREngine.Rendering.Vulkan
 
             CommandPool created = CreateCommandPoolForFamily(graphicsFamily);
 
-            lock (CommandPoolsGate)
+            using (VulkanFrameLockScope.Enter(
+                       CommandPoolsGate,
+                       EVulkanFrameWaitReason.CommandPool))
             {
                 if (ThreadCommandPools.TryGetValue(threadId, out CommandPool existing) && existing.Handle != 0)
                 {
@@ -107,7 +115,9 @@ namespace XREngine.Rendering.Vulkan
         internal CommandPool GetThreadTransferCommandPool()
         {
             int threadId = Environment.CurrentManagedThreadId;
-            lock (CommandPoolsGate)
+            using (VulkanFrameLockScope.Enter(
+                       CommandPoolsGate,
+                       EVulkanFrameWaitReason.CommandPool))
             {
                 if (ThreadTransferCommandPools.TryGetValue(threadId, out CommandPool pool) && pool.Handle != 0)
                     return pool;
@@ -122,7 +132,9 @@ namespace XREngine.Rendering.Vulkan
                 ? GetThreadCommandPool()
                 : CreateCommandPoolForFamily(transferFamily);
 
-            lock (CommandPoolsGate)
+            using (VulkanFrameLockScope.Enter(
+                       CommandPoolsGate,
+                       EVulkanFrameWaitReason.CommandPool))
             {
                 if (ThreadTransferCommandPools.TryGetValue(threadId, out CommandPool existing) && existing.Handle != 0)
                 {
@@ -168,7 +180,9 @@ namespace XREngine.Rendering.Vulkan
             pool = default;
             if (!DeviceContext.IsOperational)
                 return Result.ErrorDeviceLost;
-            lock (CommandPoolsGate)
+            using (VulkanFrameLockScope.Enter(
+                       CommandPoolsGate,
+                       EVulkanFrameWaitReason.CommandPool))
             {
                 Result result = Api.CreateCommandPool(DeviceContext.Device, ref createInfo, null, out pool);
                 if (result == Result.Success)
@@ -213,7 +227,9 @@ namespace XREngine.Rendering.Vulkan
             if (pool.Handle == 0)
                 return Result.Success;
 
-            lock (CommandPoolsGate)
+            using (VulkanFrameLockScope.Enter(
+                       CommandPoolsGate,
+                       EVulkanFrameWaitReason.CommandPool))
             {
                 VulkanResourceLifetimeKey poolKey = ResourceKey(ObjectType.CommandPool, pool.Handle);
                 VulkanResourceLifetimeTracker tracker = ResourceRuntime.Lifetime.Tracker;
@@ -223,7 +239,9 @@ namespace XREngine.Rendering.Vulkan
                 bool nativeResetSucceeded = false;
                 try
                 {
-                    lock (tracker.SyncRoot)
+                    using (VulkanFrameLockScope.Enter(
+                               tracker.SyncRoot,
+                               EVulkanFrameWaitReason.ResourceLifetimeLock))
                     {
                         if (tracker.ResourceLifetimes.TryGetValue(
                                 poolKey,
@@ -256,7 +274,9 @@ namespace XREngine.Rendering.Vulkan
                                         childHandle,
                                         out VulkanCommandBufferTrackingBatch? batch))
                                 {
-                                    lock (batch)
+                                    using (VulkanFrameLockScope.Enter(
+                                               batch,
+                                               EVulkanFrameWaitReason.CommandPool))
                                     {
                                         if (batch.IsRecording ||
                                             batch.QueuedSubmissionCount != 0)
@@ -281,7 +301,9 @@ namespace XREngine.Rendering.Vulkan
                                         childHandle,
                                         out VulkanCommandBufferTrackingBatch? batch))
                                 {
-                                    lock (batch)
+                                    using (VulkanFrameLockScope.Enter(
+                                               batch,
+                                               EVulkanFrameWaitReason.CommandPool))
                                         batch.IsRecording = true;
                                 }
                             }
@@ -313,7 +335,9 @@ namespace XREngine.Rendering.Vulkan
                     {
                         if (hostUseMarked)
                         {
-                            lock (tracker.SyncRoot)
+                            using (VulkanFrameLockScope.Enter(
+                                       tracker.SyncRoot,
+                                       EVulkanFrameWaitReason.ResourceLifetimeLock))
                             {
                                 for (int index = 0; index < childCount; index++)
                                 {
@@ -326,7 +350,9 @@ namespace XREngine.Rendering.Vulkan
                                         continue;
                                     }
 
-                                    lock (batch)
+                                    using (VulkanFrameLockScope.Enter(
+                                               batch,
+                                               EVulkanFrameWaitReason.CommandPool))
                                     {
                                         batch.IsRecording = false;
                                         if (nativeResetSucceeded)

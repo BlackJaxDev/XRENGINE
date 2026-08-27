@@ -679,13 +679,66 @@ internal unsafe sealed class VulkanBufferResourceService(VulkanAllocationAuthori
     {
         if (source is null || length == 0 || !context.IsDeviceOperational)
             return;
-        if (!TryCreateMappedSlice(context, buffer, memory, offset, length, out VulkanMappedMemorySlice slice) ||
-            !TryAcquireWrite(context, in slice, out VulkanMappedMemoryWriteLease lease))
-            throw new InvalidOperationException("Failed to acquire a Vulkan mapped-memory write lease.");
+
+        if (!TryCreateMappedSlice(context, buffer, memory, offset, length, out VulkanMappedMemorySlice slice))
+            throw new InvalidOperationException(DescribeMappedSliceFailure(buffer, memory, offset, length));
+
+        if (!TryAcquireWrite(context, in slice, out VulkanMappedMemoryWriteLease lease))
+            throw new InvalidOperationException(
+                $"Vulkan mapped-memory acquisition failed for buffer=0x{buffer.Handle:X}, " +
+                $"memory=0x{memory.Handle:X}, offset={offset}, length={length}, " +
+                $"allocationOffset={slice.AllocationOffset}, allocationSize={slice.AllocationSize}.");
+
         using (lease)
-        {
             new ReadOnlySpan<byte>(source, checked((int)length)).CopyTo(lease.Bytes);
+    }
+
+    private string DescribeMappedSliceFailure(
+        Buffer buffer,
+        DeviceMemory memory,
+        ulong offset,
+        ulong length)
+    {
+        if (buffer.Handle == 0 || memory.Handle == 0 || length == 0)
+        {
+            return
+                $"Vulkan mapped-memory slice has invalid identity or length: buffer=0x{buffer.Handle:X}, " +
+                $"memory=0x{memory.Handle:X}, offset={offset}, length={length}.";
         }
+
+        if (!TryGetAllocation(buffer, out VulkanMemoryAllocation allocation))
+        {
+            return
+                $"Vulkan mapped-memory allocation is no longer tracked for buffer=0x{buffer.Handle:X}, " +
+                $"memory=0x{memory.Handle:X}, offset={offset}, length={length}.";
+        }
+
+        if (!allocation.IsHostVisible)
+        {
+            return
+                $"Vulkan buffer 0x{buffer.Handle:X} is not host-visible. " +
+                $"Properties={allocation.Properties}, allocationSize={allocation.Size}.";
+        }
+
+        if (allocation.Memory.Handle != memory.Handle)
+        {
+            return
+                $"Vulkan staging memory identity changed for buffer=0x{buffer.Handle:X}: " +
+                $"requested=0x{memory.Handle:X}, tracked=0x{allocation.Memory.Handle:X}.";
+        }
+
+        if (offset > allocation.Size || length > allocation.Size - offset)
+        {
+            return
+                $"Vulkan mapped-memory range exceeds buffer allocation 0x{buffer.Handle:X}: " +
+                $"offset={offset}, length={length}, allocationSize={allocation.Size}.";
+        }
+
+        return
+            $"Vulkan mapped-memory slice validation failed for buffer=0x{buffer.Handle:X}, " +
+            $"memory=0x{memory.Handle:X}, offset={offset}, length={length}, " +
+            $"allocationOffset={allocation.Offset}, allocationSize={allocation.Size}, " +
+            $"blockId={allocation.BlockId}, native=0x{allocation.NativeAllocation:X}.";
     }
 
     internal bool CanUseNvIndirectCopyUploads(VulkanBackendObjectContext context)

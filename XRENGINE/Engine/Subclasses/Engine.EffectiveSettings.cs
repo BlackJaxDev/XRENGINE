@@ -233,6 +233,23 @@ namespace XREngine
                 => RuntimeEngine.Rendering.Settings.VulkanCommandRecordingMode;
 
             /// <summary>
+            /// Gets the effective deliberate Vulkan desktop presentation profile.
+            /// Resolved from: environment override in the backend, project override, then engine default.
+            /// </summary>
+            public static EVulkanPresentationProfile VulkanPresentationProfile
+                => OverrideableSettingExtensions.ResolveCascade(
+                    RuntimeEngine.Rendering.Settings.Vulkan.Presentation.Profile,
+                    GameSettings?.VulkanPresentationProfileOverride,
+                    null);
+
+            /// <summary>Gets the effective Vulkan desktop presentation target cadence.</summary>
+            public static float VulkanPresentationTargetRefreshHz
+                => OverrideableSettingExtensions.ResolveCascade(
+                    RuntimeEngine.Rendering.Settings.Vulkan.Presentation.TargetRefreshHz,
+                    GameSettings?.VulkanPresentationTargetRefreshHzOverride,
+                    null);
+
+            /// <summary>
             /// Gets the effective Vulkan diagnostics preset.
             /// Resolved from: Environment Override > Engine Default.
             /// </summary>
@@ -279,6 +296,8 @@ namespace XREngine
                     new EffectiveVulkanRenderSettings(
                         VulkanGpuDrivenProfile,
                         VulkanQueueOverlapMode,
+                        VulkanPresentationProfile,
+                        VulkanPresentationTargetRefreshHz,
                         EnableVulkanDescriptorIndexing,
                         EnableVulkanBindlessMaterialTable,
                         VulkanBindlessMaterialMode,

@@ -65,6 +65,19 @@ namespace XREngine.Rendering
                 if (TryLoadTextureAsset(filePath, this, deepCopy: true))
                     return true;
 
+                string? fallbackSourcePath = originalSourcePath ?? OriginalPath;
+                if (!string.IsNullOrWhiteSpace(fallbackSourcePath))
+                {
+                    fallbackSourcePath = Path.GetFullPath(fallbackSourcePath);
+                    if (!string.Equals(fallbackSourcePath, FilePath, StringComparison.OrdinalIgnoreCase) &&
+                        File.Exists(fallbackSourcePath))
+                    {
+                        Debug.TexturesWarning(
+                            $"Texture cache asset '{filePath}' is unusable. Loading source texture '{fallbackSourcePath}' instead.");
+                        return Load3rdPartyCore(fallbackSourcePath);
+                    }
+                }
+
                 Debug.TexturesWarning($"Failed to load texture asset '{filePath}'. Falling back to filler texture.");
                 return AssignFillerTexture(filePath);
             }
@@ -1113,7 +1126,11 @@ namespace XREngine.Rendering
         }
 
         private static bool IsTextureAssetLoadFailure(Exception ex)
-            => ex is YamlException or MagickException or InvalidOperationException;
+            => ex is YamlException
+                or MagickException
+                or InvalidOperationException
+                or IOException
+                or UnauthorizedAccessException;
 
         private static void ResizePreviewIfNeeded(MagickImage previewImage, uint maxPreviewSize)
         {

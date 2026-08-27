@@ -35,6 +35,8 @@ param(
     [string]$VulkanGpuDrivenProfile = 'Configured',
     [string]$GpuClockPolicy = 'Unspecified',
     [double]$TargetRefreshHz = 0,
+    [ValidateSet('Configured', 'Stable', 'LowLatency', 'Uncapped', 'FrameGeneration')]
+    [string]$VulkanPresentationProfile = 'Configured',
     [switch]$GpuTimestampDense,
     [switch]$NoClearCachesBetweenVariants,
     [switch]$NoP3Logging,
@@ -1126,6 +1128,7 @@ function Measure-Variant {
         'XRE_PROFILE_PHASE',
         'XRE_GPU_CLOCK_POLICY',
         'XRE_TARGET_REFRESH_HZ',
+        'XRE_VULKAN_PRESENTATION_PROFILE',
         'XRE_GPU_TIMESTAMP_DENSE',
         'XRE_P3_LOGGING',
         'XRE_SKIP_IMGUI',
@@ -1273,6 +1276,14 @@ function Measure-Variant {
             Set-BenchmarkEnvValue 'XRE_TARGET_REFRESH_HZ' ($TargetRefreshHz.ToString([System.Globalization.CultureInfo]::InvariantCulture)) -PositiveNumber
         } else {
             Clear-EnvValue 'XRE_TARGET_REFRESH_HZ'
+        }
+        if ($VulkanPresentationProfile -eq 'Configured') {
+            Clear-EnvValue 'XRE_VULKAN_PRESENTATION_PROFILE'
+        } else {
+            Set-BenchmarkEnvValue `
+                'XRE_VULKAN_PRESENTATION_PROFILE' `
+                $VulkanPresentationProfile `
+                -AllowedValues @('Stable', 'LowLatency', 'Uncapped', 'FrameGeneration')
         }
 
         if ($GpuTimestampDense) {
@@ -1947,6 +1958,7 @@ function Measure-Variant {
         VulkanGpuDrivenProfile = $VulkanGpuDrivenProfile
         GpuClockPolicy = $GpuClockPolicy
         TargetRefreshHz = if ($TargetRefreshHz -gt 0) { $TargetRefreshHz } else { $null }
+        VulkanPresentationProfile = $VulkanPresentationProfile
         GpuTimestampDense = [bool]$GpuTimestampDense
         StartupPhase = 'process-launch-to-first-sample'
         WarmupPhaseSec = $WarmupSec
@@ -2370,6 +2382,7 @@ $results | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $summaryJson -Enco
     "VulkanGpuDrivenProfile: $VulkanGpuDrivenProfile"
     "GpuClockPolicy: $GpuClockPolicy"
     "TargetRefreshHz: $TargetRefreshHz"
+    "VulkanPresentationProfile: $VulkanPresentationProfile"
     "GpuTimestampDense: $([bool]$GpuTimestampDense)"
     "WarmupSec: $WarmupSec"
     "StabilityGate: enabled=$(-not [bool]$NoStabilityGate) windowSec=$StabilityWindowSec timeoutSec=$StabilityTimeoutSec"

@@ -11,15 +11,48 @@ namespace XREngine.Rendering.Vulkan;
 /// </summary>
 internal sealed class VulkanPipelineCompileTask : IDisposable
 {
-    private sealed class WorkItem<T>(Func<T> compile)
+    private abstract class WorkItem
+    {
+        private int _foregroundRequired;
+        private int _executionStarted;
+
+        protected WorkItem(bool foregroundRequired)
+            => _foregroundRequired = foregroundRequired ? 1 : 0;
+
+        internal bool IsForegroundRequired
+            => Volatile.Read(ref _foregroundRequired) != 0;
+
+        internal bool TryPromoteToForeground()
+            => Interlocked.Exchange(ref _foregroundRequired, 1) == 0;
+
+        internal bool TryExecute()
+        {
+            if (Interlocked.CompareExchange(ref _executionStarted, 1, 0) != 0)
+                return false;
+            ExecuteCore();
+            return true;
+        }
+
+        protected abstract void ExecuteCore();
+    }
+
+    private sealed class WorkItem<T>(
+        Func<T> compile,
+        bool foregroundRequired) : WorkItem(foregroundRequired)
     {
         internal readonly Func<T> Compile = compile;
         internal readonly TaskCompletionSource<T> Completion =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        protected override void ExecuteCore()
+            => Execute(this);
     }
 
-    private readonly BlockingCollection<Action> _queue = new();
+    private readonly ConcurrentQueue<WorkItem> _foregroundQueue = new();
+    private readonly ConcurrentQueue<WorkItem> _backgroundQueue = new();
+    private readonly SemaphoreSlim _queuedWork = new(0);
     private readonly Thread _worker;
+    private int _shutdownStarted;
 
     internal VulkanPipelineCompileTask()
     {
@@ -32,11 +65,35 @@ internal sealed class VulkanPipelineCompileTask : IDisposable
         _worker.Start();
     }
 
-    internal Task<T> Enqueue<T>(Func<T> compile)
+    internal Task<T> Enqueue<T>(
+        Func<T> compile,
+        bool foregroundRequired,
+        out Action promoteToForeground)
     {
-        var item = new WorkItem<T>(compile);
-        _queue.Add(() => Execute(item));
+        ObjectDisposedException.ThrowIf(
+            Volatile.Read(ref _shutdownStarted) != 0,
+            this);
+        var item = new WorkItem<T>(compile, foregroundRequired);
+        Enqueue(item);
+        promoteToForeground = () => PromoteToForeground(item);
         return item.Completion.Task;
+    }
+
+    private void Enqueue(WorkItem item)
+    {
+        if (item.IsForegroundRequired)
+            _foregroundQueue.Enqueue(item);
+        else
+            _backgroundQueue.Enqueue(item);
+        _queuedWork.Release();
+    }
+
+    private void PromoteToForeground(WorkItem item)
+    {
+        if (!item.TryPromoteToForeground())
+            return;
+        _foregroundQueue.Enqueue(item);
+        _queuedWork.Release();
     }
 
     private static void Execute<T>(WorkItem<T> item)
@@ -53,14 +110,66 @@ internal sealed class VulkanPipelineCompileTask : IDisposable
 
     private void WorkerMain()
     {
-        foreach (Action work in _queue.GetConsumingEnumerable())
-            work();
+        while (true)
+        {
+            _queuedWork.Wait();
+            if (!TryDequeue(out WorkItem work))
+            {
+                if (Volatile.Read(ref _shutdownStarted) != 0)
+                    return;
+                continue;
+            }
+
+            if (work.IsForegroundRequired)
+            {
+                _ = work.TryExecute();
+                continue;
+            }
+
+            if (!RenderForegroundWorkCoordinator.TryEnterBackgroundSlice(
+                    out RenderForegroundWorkCoordinator.BackgroundSlice backgroundSlice))
+            {
+                _backgroundQueue.Enqueue(work);
+                _queuedWork.Release();
+                RenderForegroundWorkCoordinator.WaitForBackgroundPermission();
+                continue;
+            }
+
+            try
+            {
+                _ = work.TryExecute();
+            }
+            finally
+            {
+                backgroundSlice.Dispose();
+            }
+        }
+    }
+
+    private bool TryDequeue(out WorkItem work)
+    {
+        if (_foregroundQueue.TryDequeue(out WorkItem? foreground) &&
+            foreground is not null)
+        {
+            work = foreground;
+            return true;
+        }
+        if (_backgroundQueue.TryDequeue(out WorkItem? background) &&
+            background is not null)
+        {
+            work = background;
+            return true;
+        }
+        work = null!;
+        return false;
     }
 
     public void Dispose()
     {
-        _queue.CompleteAdding();
+        if (Interlocked.Exchange(ref _shutdownStarted, 1) != 0)
+            return;
+        _queuedWork.Release();
         _worker.Join();
-        _queue.Dispose();
+        _queuedWork.Dispose();
     }
 }

@@ -115,8 +115,12 @@ internal sealed unsafe partial class VulkanPipelineManager
     internal void PublishBackgroundPipelineCache(double compileMilliseconds)
     {
         Result mergeResult;
-        lock (_pipelineCacheHostAccessLock)
-            lock (_backgroundPipelineCacheHostAccessLock)
+        using (VulkanFrameLockScope.Enter(
+                   _pipelineCacheHostAccessLock,
+                   EVulkanFrameWaitReason.PipelineCompilerLock))
+            using (VulkanFrameLockScope.Enter(
+                       _backgroundPipelineCacheHostAccessLock,
+                       EVulkanFrameWaitReason.PipelineCompilerLock))
             {
                 if (_pipelineCache.Handle == 0 || _backgroundPipelineCache.Handle == 0)
                     return;
@@ -214,7 +218,9 @@ internal sealed unsafe partial class VulkanPipelineManager
         if (pipelineCache.Handle == 0)
             return RequireApi().CreateGraphicsPipelines(RequireDeviceContext().Device, pipelineCache, 1, ref pipelineInfo, null, out pipeline);
 
-        lock (GetVulkanPipelineCacheHostAccessLock(pipelineCache))
+        using (VulkanFrameLockScope.Enter(
+                   GetVulkanPipelineCacheHostAccessLock(pipelineCache),
+                   EVulkanFrameWaitReason.PipelineCompilerLock))
             return RequireApi().CreateGraphicsPipelines(RequireDeviceContext().Device, pipelineCache, 1, ref pipelineInfo, null, out pipeline);
     }
 
@@ -229,7 +235,9 @@ internal sealed unsafe partial class VulkanPipelineManager
         if (pipelineCache.Handle == 0)
             return RequireApi().CreateComputePipelines(RequireDeviceContext().Device, pipelineCache, 1, ref pipelineInfo, null, out pipeline);
 
-        lock (GetVulkanPipelineCacheHostAccessLock(pipelineCache))
+        using (VulkanFrameLockScope.Enter(
+                   GetVulkanPipelineCacheHostAccessLock(pipelineCache),
+                   EVulkanFrameWaitReason.PipelineCompilerLock))
             return RequireApi().CreateComputePipelines(RequireDeviceContext().Device, pipelineCache, 1, ref pipelineInfo, null, out pipeline);
     }
 
@@ -247,7 +255,9 @@ internal sealed unsafe partial class VulkanPipelineManager
 
         try
         {
-            lock (_pipelineCacheHostAccessLock)
+            using (VulkanFrameLockScope.Enter(
+                       _pipelineCacheHostAccessLock,
+                       EVulkanFrameWaitReason.PipelineCompilerLock))
             {
                 if (_pipelineCache.Handle == 0)
                     return false;
@@ -292,7 +302,9 @@ internal sealed unsafe partial class VulkanPipelineManager
         try
         {
             global::System.Diagnostics.Stopwatch saveWatch = global::System.Diagnostics.Stopwatch.StartNew();
-            lock (_pipelineCacheFileWriteLock)
+            using (VulkanFrameLockScope.Enter(
+                       _pipelineCacheFileWriteLock,
+                       EVulkanFrameWaitReason.PipelineCompilerLock))
             {
                 if (skipIfStale && Volatile.Read(ref _pipelineCacheSaveGeneration) != generation)
                 {
@@ -377,8 +389,12 @@ internal sealed unsafe partial class VulkanPipelineManager
     {
         SavePipelinePrewarmDatabase();
 
-        lock (_pipelineCacheHostAccessLock)
-            lock (_backgroundPipelineCacheHostAccessLock)
+        using (VulkanFrameLockScope.Enter(
+                   _pipelineCacheHostAccessLock,
+                   EVulkanFrameWaitReason.PipelineCompilerLock))
+            using (VulkanFrameLockScope.Enter(
+                       _backgroundPipelineCacheHostAccessLock,
+                       EVulkanFrameWaitReason.PipelineCompilerLock))
                 if (_pipelineCache.Handle != 0 && _backgroundPipelineCache.Handle != 0)
                 {
                     PipelineCache source = _backgroundPipelineCache;
@@ -395,7 +411,9 @@ internal sealed unsafe partial class VulkanPipelineManager
                     }
                 }
 
-        lock (_backgroundPipelineCacheHostAccessLock)
+        using (VulkanFrameLockScope.Enter(
+                   _backgroundPipelineCacheHostAccessLock,
+                   EVulkanFrameWaitReason.PipelineCompilerLock))
             if (_backgroundPipelineCache.Handle != 0)
             {
                 RequireApi().DestroyPipelineCache(RequireDeviceContext().Device, _backgroundPipelineCache, null);
@@ -405,7 +423,9 @@ internal sealed unsafe partial class VulkanPipelineManager
         if (_pipelineCache.Handle != 0)
         {
             SaveVulkanPipelineCache();
-            lock (_pipelineCacheHostAccessLock)
+            using (VulkanFrameLockScope.Enter(
+                       _pipelineCacheHostAccessLock,
+                       EVulkanFrameWaitReason.PipelineCompilerLock))
             {
                 RequireApi().DestroyPipelineCache(RequireDeviceContext().Device, _pipelineCache, null);
                 _pipelineCache = default;

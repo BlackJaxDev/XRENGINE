@@ -6,9 +6,13 @@ namespace XREngine.Rendering.Vulkan
 {
     internal sealed partial class VulkanFrameLoop
     {
-        private void DrainSkippedResizeFrameOps(string reason)
+        private void DrainSkippedResizeFrameOps(
+            string reason,
+            bool preserveTextureUploads = false)
         {
-            FrameOp[] droppedOps = _framePlanner.Operations.DrainPending();
+            FrameOp[] droppedOps = preserveTextureUploads
+                ? _framePlanner.Operations.DrainExcludingTextureUploads()
+                : _framePlanner.Operations.DrainPending();
             VulkanCommandSynchronizationState.FailUnsubmittedSubmissionMarkers(
                 droppedOps);
             var liveFramebufferSize = DesktopWsiOutput.EffectiveFramebufferSize;

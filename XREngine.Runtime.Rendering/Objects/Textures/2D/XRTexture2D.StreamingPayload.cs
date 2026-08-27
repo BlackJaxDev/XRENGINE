@@ -617,7 +617,7 @@ public partial class XRTexture2D
         return payloadType is not null && typeof(XRTexture2D).IsAssignableFrom(payloadType);
     }
 
-    private static bool LooksLikeBinaryTextureStreamingPayload(ReadOnlySpan<byte> payload)
+    internal static bool LooksLikeBinaryTextureStreamingPayload(ReadOnlySpan<byte> payload)
         => !payload.IsEmpty && IsBinaryTextureStreamingMarker(payload[0]);
 
     private static bool IsBinaryTextureStreamingMarker(byte value)

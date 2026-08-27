@@ -15,7 +15,8 @@ namespace XREngine.Rendering.Vulkan
             // Detached ImGui viewports sample renderer-owned textures. Submit them only
             // after the primary scene submission so graphics-queue ordering makes those
             // resources visible without introducing a second engine-wide frame graph.
-            _imguiBackend?.RenderPendingViewports();
+            if (!attempt.InteractiveResizeOverlayOnly)
+                _imguiBackend?.RenderPendingViewports();
 
             VulkanDesktopPresentDispatchOutcome dispatch = QueueDesktopPresentCore(
                 ref attempt,
@@ -55,16 +56,46 @@ namespace XREngine.Rendering.Vulkan
                 DesktopWsiOutput.ClassifyPresent(result);
             bool presentAccepted =
                 presentOutcome.PresentationAccepted;
+            attempt.Timing.PresentDispatched = dispatch.Dispatched;
+            attempt.Timing.PresentationAccepted = presentAccepted;
+            attempt.Timing.FramesAhead = attempt.Submitted ? 1 : 0;
             if (presentAccepted)
             {
+                long presentCompletedTimestamp =
+                    attempt.PresentCompletedTimestamp != 0L
+                        ? attempt.PresentCompletedTimestamp
+                        : Stopwatch.GetTimestamp();
+                long previousPresentCompletedTimestamp = Interlocked.Exchange(
+                    ref _lastAcceptedPresentCompletedTimestamp,
+                    presentCompletedTimestamp);
+                if (previousPresentCompletedTimestamp != 0L &&
+                    presentCompletedTimestamp > previousPresentCompletedTimestamp)
+                {
+                    attempt.Timing.ActualPresentInterval =
+                        Stopwatch.GetElapsedTime(
+                            previousPresentCompletedTimestamp,
+                            presentCompletedTimestamp);
+                }
+
                 bool presentedNew =
                     attempt.ScenePrimaryRecordedThisFrame &&
+                    attempt.Submitted &&
+                    attempt.GraphicsSignalValue != 0UL;
+                bool presentedInteractiveOverlay =
+                    attempt.InteractiveResizeOverlayOnly &&
+                    attempt.HasImGuiOverlayCommandBuffer &&
                     attempt.Submitted &&
                     attempt.GraphicsSignalValue != 0UL;
                 if (presentedNew)
                 {
                     attempt.Presented = true;
                     attempt.PresentedSourceFrameId = attempt.FrameNumber;
+                }
+                else if (presentedInteractiveOverlay)
+                {
+                    attempt.Presented = true;
+                    attempt.PresentedSourceFrameId =
+                        OutputRuntime.Desktop.LastPresentedFrameNumber;
                 }
                 else if (attempt.WorkClass == ERenderOutputWorkClass.PresentNow)
                 {
@@ -209,7 +240,37 @@ namespace XREngine.Rendering.Vulkan
                         out result,
                         out string failureReason,
                         out Exception? postDispatchFailure,
+                        out TimeSpan queueAdmissionWait,
+                        out TimeSpan nativePresentElapsed,
                         caller: "RenderFrameCallback");
+                attempt.Timing.QueuePresentAdmission += queueAdmissionWait;
+                attempt.Timing.NativeQueuePresent += nativePresentElapsed;
+                attempt.Timing.RecordCausalWait(new VulkanFrameCausalWait(
+                    EVulkanFrameWaitReason.QueuePresentAdmission,
+                    queueAdmissionWait,
+                    attempt.FrameNumber,
+                    attempt.FrameSlot,
+                    unchecked((int)attempt.ImageIndex),
+                    SemaphoreTargetValue: attempt.GraphicsSignalValue,
+                    SemaphoreCompletedValue: 0UL,
+                    QueueFamily: _deviceContext.QueueFamilies.PresentFamilyIndex ?? 0U,
+                    PendingCommandCount: attempt.Submitted ? 1 : 0,
+                    ConcurrentWorkerActivity: Volatile.Read(
+                        ref _commandRuntime.Workers.ActiveWorkerCount),
+                    Stage: EVulkanFrameStage.OutputComplete));
+                attempt.Timing.RecordCausalWait(new VulkanFrameCausalWait(
+                    EVulkanFrameWaitReason.NativeQueuePresent,
+                    nativePresentElapsed,
+                    attempt.FrameNumber,
+                    attempt.FrameSlot,
+                    unchecked((int)attempt.ImageIndex),
+                    SemaphoreTargetValue: attempt.GraphicsSignalValue,
+                    SemaphoreCompletedValue: 0UL,
+                    QueueFamily: _deviceContext.QueueFamilies.PresentFamilyIndex ?? 0U,
+                    PendingCommandCount: attempt.Submitted ? 1 : 0,
+                    ConcurrentWorkerActivity: Volatile.Read(
+                        ref _commandRuntime.Workers.ActiveWorkerCount),
+                    Stage: EVulkanFrameStage.OutputComplete));
                 auxiliaryFailure ??= postDispatchFailure;
                 if (!dispatched)
                 {

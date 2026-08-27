@@ -13,14 +13,25 @@ public sealed class VulkanPerformanceRunManifest
     public bool PromotionEligible { get; init; }
     public string ProfileMode { get; init; } = string.Empty;
     public string ContractPath { get; init; } = string.Empty;
+    public string ContractSha256 { get; init; } = string.Empty;
     public string SourceCommit { get; init; } = string.Empty;
     public bool DirtyWorktree { get; init; }
+    public string BuildConfiguration { get; init; } = string.Empty;
     public string ExecutableSha256 { get; init; } = string.Empty;
+    public Dictionary<string, string> DependencyManifestSha256 { get; init; } =
+        new(StringComparer.Ordinal);
     public string OperatingSystem { get; init; } = string.Empty;
     public string MachineName { get; init; } = string.Empty;
+    public string CpuName { get; init; } = string.Empty;
+    public int LogicalProcessorCount { get; init; }
+    public ulong PhysicalMemoryBytes { get; init; }
     public string GpuName { get; init; } = string.Empty;
     public string GpuDriver { get; init; } = string.Empty;
     public string DisplayMode { get; init; } = string.Empty;
+    public string PowerPlan { get; init; } = string.Empty;
+    public string WindowMode { get; init; } = string.Empty;
+    public string Resolution { get; init; } = string.Empty;
+    public string PresentationProfile { get; init; } = string.Empty;
     public DateTime CreatedUtc { get; init; }
     public List<VulkanPerformanceRunCohort> Cohorts { get; init; } = [];
 
@@ -34,7 +45,7 @@ public sealed class VulkanPerformanceRunManifest
             ?? throw new InvalidDataException(
                 $"Vulkan performance run manifest '{path}' was empty.");
 
-        if (manifest.SchemaVersion != 1)
+        if (manifest.SchemaVersion != 2)
             throw new InvalidDataException(
                 $"Unsupported Vulkan performance run schema {manifest.SchemaVersion}.");
         if (manifest.Cohorts.Count == 0)

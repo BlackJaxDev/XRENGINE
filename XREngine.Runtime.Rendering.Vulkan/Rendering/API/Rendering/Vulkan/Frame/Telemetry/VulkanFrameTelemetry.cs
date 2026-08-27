@@ -28,6 +28,7 @@ internal sealed class VulkanFrameTelemetry
     internal ConcurrentDictionary<string, string> ComputeDispatchOperationNames { get; } =
         new(StringComparer.Ordinal);
     private const int PublicationCapacity = 64;
+    private const int WorkerOverlapCorrelationCapacity = 256;
     private const int VulkanCrashBreadcrumbCapacity = 64;
     private const int VulkanDeviceAddressRangeCapacity = 512;
     private const int VulkanDeviceAddressBindingEventCapacity = 128;
@@ -55,6 +56,9 @@ internal sealed class VulkanFrameTelemetry
     internal readonly VulkanFinalPresentationLedgerState _finalPresentationLedger =
         new(XREnvironment.IsEnabled(XREngineEnvironmentVariables.VulkanFinalPresentationLedger));
     internal readonly object _deviceLostTransitionLock = new();
+    private readonly object _presentNowTerminalTransitionLock = new();
+    private VulkanPresentNowTerminalTransitionRecord
+        _latestPresentNowTerminalTransition;
     internal readonly object _vulkanSubmissionDiagnosticsLock = new();
     internal readonly VulkanCrashBreadcrumb[] _vulkanCrashBreadcrumbs =
         new VulkanCrashBreadcrumb[VulkanCrashBreadcrumbCapacity];
@@ -150,12 +154,150 @@ internal sealed class VulkanFrameTelemetry
     private readonly long[] _publishedSequences = new long[PublicationCapacity];
     private readonly long[] _publicationVersions = new long[PublicationCapacity];
     private readonly int[] _publicationWriterGates = new int[PublicationCapacity];
+    private readonly object _workerOverlapCorrelationGate = new();
+    private readonly ulong[] _workerOverlapFrameIds =
+        new ulong[WorkerOverlapCorrelationCapacity];
+    private readonly long[] _workerOverlapTicks =
+        new long[WorkerOverlapCorrelationCapacity];
     private readonly long _authorityId = Interlocked.Increment(ref s_nextAuthorityId);
     private long _nextPublicationSequence;
 
-    public VulkanFrameTrace BeginFrame(in DesktopFrameIdentity identity) => new(this, identity);
+    internal void PublishPresentNowTerminalTransition(
+        in VulkanPresentNowTerminalTransitionRecord transition)
+    {
+        if (!transition.IsValid)
+            throw new ArgumentException(
+                "A PresentNow terminal transition publication must be valid.",
+                nameof(transition));
+        lock (_presentNowTerminalTransitionLock)
+            _latestPresentNowTerminalTransition = transition;
+    }
+
+    internal bool TryGetLatestPresentNowTerminalTransition(
+        out VulkanPresentNowTerminalTransitionRecord transition)
+    {
+        lock (_presentNowTerminalTransitionLock)
+            transition = _latestPresentNowTerminalTransition;
+        return transition.IsValid;
+    }
+
+    internal void RecordSuccessfulSubmissionBreadcrumb(
+        in VulkanSubmissionDiagnosticContext diagnostics)
+    {
+        if (diagnostics.SubmissionSerial == 0)
+            throw new ArgumentException(
+                "A successful Vulkan submission breadcrumb requires a non-zero serial.",
+                nameof(diagnostics));
+
+        VulkanCrashBreadcrumb breadcrumb = new()
+        {
+            Serial = diagnostics.SubmissionSerial,
+            SubmissionKind = diagnostics.SubmissionKind,
+            FrameOpKind = diagnostics.FrameOpKind,
+            OutputTargetName = diagnostics.OutputTargetName,
+            FrameId = diagnostics.FrameId,
+            FrameSlot = diagnostics.FrameSlot,
+            SwapchainImageIndex = diagnostics.SwapchainImageIndex,
+            CommandBufferDirtyGeneration = diagnostics.CommandBufferDirtyGeneration,
+            FrameOpsSignature = diagnostics.FrameOpsSignature,
+            PlannerRevision = diagnostics.PlannerRevision,
+            FrameOpContextId = diagnostics.FrameOpContextId,
+            ResourceGeneration = diagnostics.ResourceGeneration,
+            DescriptorGeneration = diagnostics.DescriptorGeneration,
+            QueueKind = diagnostics.QueueKind,
+            CommandBufferCount = diagnostics.CommandBufferCount,
+            FirstCommandBufferHandle = diagnostics.FirstCommandBufferHandle,
+            FenceHandle = diagnostics.FenceHandle,
+            WaitTimelineValue = diagnostics.WaitTimelineValue,
+            SignalTimelineValue = diagnostics.SignalTimelineValue,
+            Caller = diagnostics.Caller,
+            LastCommandMarkerSerial = diagnostics.LastCommandMarkerSerial,
+            LastCommandMarkerGeneration = diagnostics.LastCommandMarkerGeneration,
+            LastCommandMarkerKind = diagnostics.LastCommandMarkerKind,
+            LastCommandMarkerPassIndex = diagnostics.LastCommandMarkerPassIndex,
+            LastCommandMarkerBatchIndex = diagnostics.LastCommandMarkerBatchIndex,
+            ImageLayoutTransitionSerial = diagnostics.ImageLayoutTransitionSerial,
+            DescriptorTableGeneration = diagnostics.DescriptorTableGeneration,
+            FirstFailingApi = diagnostics.FirstFailingApi,
+        };
+
+        lock (_vulkanSubmissionDiagnosticsLock)
+        {
+            int slot = (int)((diagnostics.SubmissionSerial - 1UL) %
+                (ulong)_vulkanCrashBreadcrumbs.Length);
+            _vulkanCrashBreadcrumbs[slot] = breadcrumb;
+            Volatile.Write(
+                ref _vulkanCrashBreadcrumbSerial,
+                unchecked((long)diagnostics.SubmissionSerial));
+        }
+    }
+
+    internal bool TryGetLastSuccessfulSubmissionBreadcrumb(
+        out VulkanCrashBreadcrumb breadcrumb)
+    {
+        lock (_vulkanSubmissionDiagnosticsLock)
+        {
+            ulong serial = unchecked((ulong)Math.Max(
+                0L,
+                Volatile.Read(ref _vulkanCrashBreadcrumbSerial)));
+            if (serial == 0)
+            {
+                breadcrumb = default;
+                return false;
+            }
+
+            int slot = (int)((serial - 1UL) %
+                (ulong)_vulkanCrashBreadcrumbs.Length);
+            breadcrumb = _vulkanCrashBreadcrumbs[slot];
+            return breadcrumb.Serial == serial;
+        }
+    }
+
+    public VulkanFrameTrace BeginFrame(in DesktopFrameIdentity identity)
+    {
+        VulkanFrameWaitInstrumentation.BeginFrame(this, in identity);
+        return new VulkanFrameTrace(this, identity);
+    }
 
     public VulkanFrameTrace BeginFrame(VulkanFrameRootIdentity identity) => new(this, identity);
+
+    /// <summary>
+    /// Publishes command-chain overlap against the immutable render-frame ID.
+    /// The fixed ring is allocation-free after authority construction and
+    /// prevents a later output root from reading another frame's rolling stat.
+    /// </summary>
+    internal void RecordWorkerOverlap(ulong renderFrameId, TimeSpan elapsed)
+    {
+        if (renderFrameId == 0 || elapsed <= TimeSpan.Zero)
+            return;
+
+        int slot = unchecked((int)(renderFrameId % WorkerOverlapCorrelationCapacity));
+        lock (_workerOverlapCorrelationGate)
+        {
+            if (_workerOverlapFrameIds[slot] != renderFrameId)
+            {
+                _workerOverlapFrameIds[slot] = renderFrameId;
+                _workerOverlapTicks[slot] = 0;
+            }
+
+            _workerOverlapTicks[slot] += elapsed.Ticks;
+        }
+    }
+
+    /// <summary>Reads worker overlap only while its fixed-ring slot owns the requested frame.</summary>
+    internal TimeSpan CaptureWorkerOverlap(ulong renderFrameId)
+    {
+        if (renderFrameId == 0)
+            return TimeSpan.Zero;
+
+        int slot = unchecked((int)(renderFrameId % WorkerOverlapCorrelationCapacity));
+        lock (_workerOverlapCorrelationGate)
+        {
+            return _workerOverlapFrameIds[slot] == renderFrameId
+                ? TimeSpan.FromTicks(_workerOverlapTicks[slot])
+                : TimeSpan.Zero;
+        }
+    }
 
     internal void MarkFrameTimingSubmitted(int frameSlot)
     {

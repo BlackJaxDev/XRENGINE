@@ -57,7 +57,9 @@ internal sealed partial class VulkanCommandRuntime
 
     internal string DescribeVulkanQueueOperationTail(int maxEntries = 8)
     {
-        lock (CommandBuffers.OneTimeSubmitGate)
+        using (VulkanFrameLockScope.Enter(
+                   CommandBuffers.OneTimeSubmitGate,
+                   EVulkanFrameWaitReason.QueueLeaseLock))
         {
             long latest = Volatile.Read(ref Synchronization._vulkanQueueOperationSerial);
             if (latest <= 0)
@@ -220,7 +222,9 @@ internal sealed partial class VulkanCommandRuntime
         if (!DeviceContext.IsOperational)
             return Result.ErrorDeviceLost;
 
-        lock (Pools.Gate)
+        using (VulkanFrameLockScope.Enter(
+                   Pools.Gate,
+                   EVulkanFrameWaitReason.CommandPool))
         {
             ulong recordingGeneration = InitializeCommandBufferBindState(commandBuffer);
             try
@@ -255,7 +259,9 @@ internal sealed partial class VulkanCommandRuntime
 
         ulong recordingGeneration = unchecked(
             (ulong)Interlocked.Increment(ref CommandBuffers.RecordingGeneration));
-        lock (CommandBuffers.BindStateGate)
+        using (VulkanFrameLockScope.Enter(
+                   CommandBuffers.BindStateGate,
+                   EVulkanFrameWaitReason.DescriptorPublicationLock))
         {
             CommandBuffers.BindStates[handle] = new CommandBufferBindState
             {
@@ -275,7 +281,9 @@ internal sealed partial class VulkanCommandRuntime
             return;
 
         VulkanResourceLifetimeTracker tracker = ResourceRuntime.Lifetime.Tracker;
-        lock (tracker.SyncRoot)
+        using (VulkanFrameLockScope.Enter(
+                   tracker.SyncRoot,
+                   EVulkanFrameWaitReason.ResourceLifetimeLock))
         {
             if (!ResourceRuntime.TryValidateCommandBufferRecordingAdmissionNoLock(
                     handle,
@@ -287,7 +295,9 @@ internal sealed partial class VulkanCommandRuntime
 
             VulkanCommandBufferTrackingBatch batch =
                 CommandBuffers.TrackingBatches.GetOrAdd(handle, static _ => new());
-            lock (batch)
+            using (VulkanFrameLockScope.Enter(
+                       batch,
+                       EVulkanFrameWaitReason.ResourceLifetimeLock))
             {
                 if (batch.IsRecording || batch.QueuedSubmissionCount != 0)
                 {
@@ -312,7 +322,9 @@ internal sealed partial class VulkanCommandRuntime
             throw new InvalidOperationException($"Cannot create a command pool while device state is {deviceContext.State}.");
 
         int threadId = Environment.CurrentManagedThreadId;
-        lock (Pools.Gate)
+        using (VulkanFrameLockScope.Enter(
+                   Pools.Gate,
+                   EVulkanFrameWaitReason.CommandPool))
         {
             if (Pools.GraphicsByThread.TryGetValue(threadId, out CommandPool pool) && pool.Handle != 0)
                 return pool;
@@ -490,7 +502,9 @@ internal sealed partial class VulkanCommandRuntime
             }
         }
 
-        lock (CommandBuffers.OpenXrPrimaryOwnersGate)
+        using (VulkanFrameLockScope.Enter(
+                   CommandBuffers.OpenXrPrimaryOwnersGate,
+                   EVulkanFrameWaitReason.SynchronizationLock))
         {
             foreach (PrimaryCommandArtifactOwner owner in
                      CommandBuffers.OpenXrPrimaryOwners.Values)
@@ -596,14 +610,20 @@ internal sealed partial class VulkanCommandRuntime
         if (handle == 0)
             return false;
 
-        lock (Pools.Gate)
+        using (VulkanFrameLockScope.Enter(
+                   Pools.Gate,
+                   EVulkanFrameWaitReason.CommandPool))
         {
             VulkanResourceLifetimeTracker tracker = ResourceRuntime.Lifetime.Tracker;
             VulkanCommandBufferTrackingBatch batch;
-            lock (tracker.SyncRoot)
+            using (VulkanFrameLockScope.Enter(
+                       tracker.SyncRoot,
+                       EVulkanFrameWaitReason.ResourceLifetimeLock))
             {
                 batch = CommandBuffers.TrackingBatches.GetOrAdd(handle, static _ => new());
-                lock (batch)
+                using (VulkanFrameLockScope.Enter(
+                           batch,
+                           EVulkanFrameWaitReason.ResourceLifetimeLock))
                 {
                     if (batch.IsRecording || batch.QueuedSubmissionCount != 0 ||
                         !ResourceRuntime.CanResetCommandBufferNoLock(handle))
@@ -625,8 +645,12 @@ internal sealed partial class VulkanCommandRuntime
                 RemoveCommandBufferState(commandBuffer);
             }
 
-            lock (tracker.SyncRoot)
-            lock (batch)
+            using (VulkanFrameLockScope.Enter(
+                       tracker.SyncRoot,
+                       EVulkanFrameWaitReason.ResourceLifetimeLock))
+            using (VulkanFrameLockScope.Enter(
+                       batch,
+                       EVulkanFrameWaitReason.ResourceLifetimeLock))
             {
                 batch.IsRecording = false;
                 if (result == Result.Success)
@@ -647,7 +671,9 @@ internal sealed partial class VulkanCommandRuntime
         List<RetiredCommandBuffer> list =
             resourceRuntime.Lifetime.Retirement.CommandBuffers[frameSlot];
         List<RetiredCommandBuffer> ready = [];
-        lock (resourceRuntime.Lifetime.Retirement.SyncRoot)
+        using (VulkanFrameLockScope.Enter(
+                   resourceRuntime.Lifetime.Retirement.SyncRoot,
+                   EVulkanFrameWaitReason.ResourceLifetimeLock))
         {
             for (int index = 0;
                  index < list.Count && ready.Count < maxItems;)
@@ -676,7 +702,9 @@ internal sealed partial class VulkanCommandRuntime
         {
             RetiredCommandBuffer entry = ready[index];
             CommandBuffer commandBuffer = entry.CommandBuffer;
-            lock (Pools.Gate)
+            using (VulkanFrameLockScope.Enter(
+                       Pools.Gate,
+                       EVulkanFrameWaitReason.CommandPool))
                 api.FreeCommandBuffers(
                     device,
                     entry.CommandPool,
@@ -711,7 +739,9 @@ internal sealed partial class VulkanCommandRuntime
         List<RetiredCommandPool> list =
             resourceRuntime.Lifetime.Retirement.CommandPools[frameSlot];
         List<RetiredCommandPool> ready = [];
-        lock (resourceRuntime.Lifetime.Retirement.SyncRoot)
+        using (VulkanFrameLockScope.Enter(
+                   resourceRuntime.Lifetime.Retirement.SyncRoot,
+                   EVulkanFrameWaitReason.ResourceLifetimeLock))
         {
             for (int index = 0;
                  index < list.Count && ready.Count < maxItems;)
@@ -740,7 +770,9 @@ internal sealed partial class VulkanCommandRuntime
         for (int index = 0; index < ready.Count; index++)
         {
             CommandPool pool = ready[index].CommandPool;
-            lock (Pools.Gate)
+            using (VulkanFrameLockScope.Enter(
+                       Pools.Gate,
+                       EVulkanFrameWaitReason.CommandPool))
                 api.DestroyCommandPool(device, pool, null);
             resourceRuntime.CompleteCommandPoolChildDestructions(pool);
             resourceRuntime.CompleteCommandPoolDestruction(pool);
@@ -778,7 +810,9 @@ internal sealed partial class VulkanCommandRuntime
             return;
         }
 
-        lock (Pools.Gate)
+        using (VulkanFrameLockScope.Enter(
+                   Pools.Gate,
+                   EVulkanFrameWaitReason.CommandPool))
             api.FreeCommandBuffers(device, commandPool, 1, &retiring);
         RemoveCommandBufferState(retiring);
         resourceRuntime.CompleteCommandBufferDestruction(retiring);
@@ -805,7 +839,9 @@ internal sealed partial class VulkanCommandRuntime
             return false;
 
         VulkanResourceLifetimeTracker tracker = resourceRuntime.Lifetime.Tracker;
-        lock (tracker.SyncRoot)
+        using (VulkanFrameLockScope.Enter(
+                   tracker.SyncRoot,
+                   EVulkanFrameWaitReason.ResourceLifetimeLock))
         {
             if (tracker.ForcedRetirementDrainDepth > 0)
                 return true;
@@ -814,7 +850,9 @@ internal sealed partial class VulkanCommandRuntime
                     handle,
                     out VulkanCommandBufferTrackingBatch? batch))
             {
-                lock (batch)
+                using (VulkanFrameLockScope.Enter(
+                           batch,
+                           EVulkanFrameWaitReason.ResourceLifetimeLock))
                     if (batch.IsRecording || batch.QueuedSubmissionCount != 0)
                         return false;
             }
@@ -843,7 +881,9 @@ internal sealed partial class VulkanCommandRuntime
             ObjectType.CommandPool,
             commandPool.Handle);
         CommandBuffer[] children;
-        lock (tracker.SyncRoot)
+        using (VulkanFrameLockScope.Enter(
+                   tracker.SyncRoot,
+                   EVulkanFrameWaitReason.ResourceLifetimeLock))
         {
             if (!tracker.CommandBuffersByPool.TryGetValue(
                     poolKey,

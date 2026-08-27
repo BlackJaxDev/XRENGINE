@@ -301,6 +301,22 @@ public interface IRuntimeRenderSettingsServices
     /// </summary>
     EVulkanCommandRecordingMode VulkanCommandRecordingMode => RuntimeRenderingHostServiceDefaults.VulkanCommandRecordingMode;
 
+    /// <summary>Gets the requested deliberate Vulkan desktop presentation profile.</summary>
+    EVulkanPresentationProfile VulkanPresentationProfile
+        => RuntimeRenderingHostServiceDefaults.VulkanPresentationProfile;
+
+    /// <summary>Gets the requested presentation cadence; zero selects automatic display cadence.</summary>
+    float VulkanPresentationTargetRefreshHz
+        => RuntimeRenderingHostServiceDefaults.VulkanPresentationTargetRefreshHz;
+
+    /// <summary>Gets the requested bounded application queue depth.</summary>
+    int VulkanPresentationMaximumFramesAhead
+        => RuntimeRenderingHostServiceDefaults.VulkanPresentationMaximumFramesAhead;
+
+    /// <summary>Gets the final hybrid-limiter spin window in milliseconds.</summary>
+    float VulkanPresentationLimiterSpinThresholdMilliseconds
+        => RuntimeRenderingHostServiceDefaults.VulkanPresentationLimiterSpinThresholdMilliseconds;
+
     bool EnableVulkanPrimaryCommandBufferReuse => RuntimeRenderingHostServiceDefaults.EnableVulkanPrimaryCommandBufferReuse;
 
     /// <summary>

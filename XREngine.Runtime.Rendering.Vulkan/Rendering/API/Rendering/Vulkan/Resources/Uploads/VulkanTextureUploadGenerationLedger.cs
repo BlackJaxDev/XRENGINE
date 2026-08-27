@@ -15,7 +15,9 @@ internal sealed partial class VulkanTextureUploadService
         VulkanTextureUploadGenerationRecord record = _uploadGenerations.GetValue(
             texture,
             static _ => new VulkanTextureUploadGenerationRecord());
-        lock (record.Sync)
+        using (VulkanFrameLockScope.Enter(
+                   record.Sync,
+                   EVulkanFrameWaitReason.UploadLock))
         {
             if (FindUploadGenerationNoLock(record, request.Ticket) is not null)
             {
@@ -57,7 +59,9 @@ internal sealed partial class VulkanTextureUploadService
             !_uploadGenerations.TryGetValue(texture, out VulkanTextureUploadGenerationRecord? record))
             return;
 
-        lock (record.Sync)
+        using (VulkanFrameLockScope.Enter(
+                   record.Sync,
+                   EVulkanFrameWaitReason.UploadLock))
         {
             VulkanTextureUploadGenerationEntry? entry =
                 FindUploadGenerationNoLock(record, request.Ticket);
@@ -154,14 +158,19 @@ internal sealed partial class VulkanTextureUploadService
         XRTexture2D texture,
         in VulkanTextureUploadTicket ticket,
         out EVulkanFrameDependencyState dependencyState,
-        out string? detail)
+        out string? detail,
+        out EVulkanPresentNowFailureDisposition failureDisposition)
     {
         dependencyState = EVulkanFrameDependencyState.Declared;
         detail = null;
+        failureDisposition =
+            EVulkanPresentNowFailureDisposition.RendererTerminal;
         if (!_uploadGenerations.TryGetValue(texture, out VulkanTextureUploadGenerationRecord? record))
             return false;
 
-        lock (record.Sync)
+        using (VulkanFrameLockScope.Enter(
+                   record.Sync,
+                   EVulkanFrameWaitReason.UploadLock))
         {
             VulkanTextureUploadGenerationEntry? entry =
                 FindUploadGenerationNoLock(record, ticket);
@@ -170,6 +179,7 @@ internal sealed partial class VulkanTextureUploadService
 
             dependencyState = MapDependencyState(entry.State);
             detail = entry.Detail;
+            failureDisposition = ResolveUploadFailureDisposition(entry.State);
             return true;
         }
     }
@@ -181,16 +191,21 @@ internal sealed partial class VulkanTextureUploadService
         out VulkanTextureUploadTicket ticket,
         out TextureUploadPriorityClass priorityClass,
         out EVulkanFrameDependencyState dependencyState,
-        out string? detail)
+        out string? detail,
+        out EVulkanPresentNowFailureDisposition failureDisposition)
     {
         ticket = default;
         priorityClass = TextureUploadPriorityClass.Background;
         dependencyState = EVulkanFrameDependencyState.Declared;
         detail = null;
+        failureDisposition =
+            EVulkanPresentNowFailureDisposition.RendererTerminal;
         if (!_uploadGenerations.TryGetValue(texture, out VulkanTextureUploadGenerationRecord? record))
             return false;
 
-        lock (record.Sync)
+        using (VulkanFrameLockScope.Enter(
+                   record.Sync,
+                   EVulkanFrameWaitReason.UploadLock))
         {
             VulkanTextureUploadGenerationEntry? selected = null;
             for (int index = 0; index < record.Entries.Count; index++)
@@ -210,6 +225,7 @@ internal sealed partial class VulkanTextureUploadService
             priorityClass = selected.PriorityClass;
             dependencyState = MapDependencyState(selected.State);
             detail = selected.Detail;
+            failureDisposition = ResolveUploadFailureDisposition(selected.State);
             pinOwner?.PinGenerationNoLock(record, selected);
             return true;
         }
@@ -228,7 +244,9 @@ internal sealed partial class VulkanTextureUploadService
             return false;
         }
 
-        lock (record.Sync)
+        using (VulkanFrameLockScope.Enter(
+                   record.Sync,
+                   EVulkanFrameWaitReason.UploadLock))
         {
             VulkanTextureUploadGenerationEntry? entry =
                 FindUploadGenerationNoLock(record, ticket);
@@ -255,7 +273,9 @@ internal sealed partial class VulkanTextureUploadService
         if (!_uploadGenerations.TryGetValue(texture, out VulkanTextureUploadGenerationRecord? record))
             return false;
 
-        lock (record.Sync)
+        using (VulkanFrameLockScope.Enter(
+                   record.Sync,
+                   EVulkanFrameWaitReason.UploadLock))
         {
             VulkanTextureUploadGenerationEntry? selected = null;
             for (int index = 0; index < record.Entries.Count; index++)
@@ -312,6 +332,12 @@ internal sealed partial class VulkanTextureUploadService
             _ => EVulkanFrameDependencyState.Declared,
         };
 
+    private static EVulkanPresentNowFailureDisposition ResolveUploadFailureDisposition(
+        VulkanTextureUploadGenerationState state)
+        => state == VulkanTextureUploadGenerationState.Canceled
+            ? EVulkanPresentNowFailureDisposition.RetryFrame
+            : EVulkanPresentNowFailureDisposition.RendererTerminal;
+
     private void CaptureRequiredUploadGeneration(
         VulkanTextureUploadManifest manifest,
         XRTexture2D texture,
@@ -324,7 +350,8 @@ internal sealed partial class VulkanTextureUploadService
                 out VulkanTextureUploadTicket ticket,
                 out _,
                 out EVulkanFrameDependencyState dependencyState,
-                out string? detail))
+                out string? detail,
+                out EVulkanPresentNowFailureDisposition failureDisposition))
         {
             if (ImportedTextureStreamingManager.Instance.TryGetTerminalGenerationFailure(
                     texture,
@@ -340,7 +367,11 @@ internal sealed partial class VulkanTextureUploadService
         }
 
         manifest.Add(ticket, texture);
-        manifest.ApplyDurableState(ticket, dependencyState, detail);
+        manifest.ApplyDurableState(
+            ticket,
+            dependencyState,
+            detail,
+            failureDisposition);
     }
 
     private void RefreshRequiredUploadGenerations(VulkanTextureUploadManifest manifest)
@@ -356,9 +387,14 @@ internal sealed partial class VulkanTextureUploadService
                     texture,
                     capturedTicket,
                     out EVulkanFrameDependencyState dependencyState,
-                    out string? detail))
+                    out string? detail,
+                    out EVulkanPresentNowFailureDisposition failureDisposition))
             {
-                manifest.ApplyDurableState(capturedTicket, dependencyState, detail);
+                manifest.ApplyDurableState(
+                    capturedTicket,
+                    dependencyState,
+                    detail,
+                    failureDisposition);
                 continue;
             }
 
@@ -383,10 +419,15 @@ internal sealed partial class VulkanTextureUploadService
                     out VulkanTextureUploadTicket ticket,
                     out _,
                     out EVulkanFrameDependencyState dependencyState,
-                    out string? detail))
+                    out string? detail,
+                    out EVulkanPresentNowFailureDisposition failureDisposition))
             {
                 manifest.Add(ticket, texture);
-                manifest.ApplyDurableState(ticket, dependencyState, detail);
+                manifest.ApplyDurableState(
+                    ticket,
+                    dependencyState,
+                    detail,
+                    failureDisposition);
                 manifest.ResolveUnresolved(index);
                 continue;
             }
@@ -410,7 +451,8 @@ internal sealed partial class VulkanTextureUploadService
             {
                 manifest.FailCapture(
                     $"Required texture generation {requiredGeneration} was canceled or superseded before " +
-                    $"Vulkan upload registration (published={publishedGeneration}, currentUpload={uploadGeneration}).");
+                    $"Vulkan upload registration (published={publishedGeneration}, currentUpload={uploadGeneration}).",
+                    EVulkanPresentNowFailureDisposition.RetryFrame);
                 manifest.ResolveUnresolved(index);
             }
         }

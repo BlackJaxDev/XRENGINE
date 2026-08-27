@@ -182,6 +182,16 @@ internal static partial class VulkanShaderAutoUniforms
             if (IsInsideConditionalRange(match.Index, conditionalRanges))
                 continue;
 
+            string existingLayout = match.Groups["layout"].Value;
+            if (LayoutDependsOnPreprocessorMacro(source, existingLayout, match.Index))
+            {
+                // Keep macro-qualified declarations after the directive that defines
+                // their layout tokens. Hoisting them into the preamble would place the
+                // use before the definition and make shaderc parse the macro name as a
+                // Vulkan layout qualifier.
+                continue;
+            }
+
             string line = match.Value.Trim();
             toHoist.Add((match.Index, match.Length, line));
             CollectArrayBoundConstantNames(line, neededConstantNames);
@@ -215,6 +225,35 @@ internal static partial class VulkanShaderAutoUniforms
             insertPos = modified.Length;
 
         return InsertAtPreferredLocation(modified, hoisted.ToString().TrimEnd(), insertPos);
+    }
+
+    private static bool LayoutDependsOnPreprocessorMacro(
+        string source,
+        string layout,
+        int declarationIndex)
+    {
+        if (string.IsNullOrWhiteSpace(layout))
+            return false;
+
+        foreach (Match define in Regex.Matches(
+                     source,
+                     @"^[ \t]*#[ \t]*define[ \t]+(?<name>[A-Za-z_][A-Za-z0-9_]*)\b",
+                     RegexOptions.Multiline | RegexOptions.CultureInvariant))
+        {
+            if (define.Index >= declarationIndex)
+                break;
+
+            string name = define.Groups["name"].Value;
+            if (Regex.IsMatch(
+                    layout,
+                    $@"\b{Regex.Escape(name)}\b",
+                    RegexOptions.CultureInvariant))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static void RemoveMatchAndTrailingNewline(StringBuilder source, int start, int length)

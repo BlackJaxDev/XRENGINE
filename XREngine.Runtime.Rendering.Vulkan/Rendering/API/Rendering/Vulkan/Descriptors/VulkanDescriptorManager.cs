@@ -189,7 +189,9 @@ internal sealed unsafe partial class VulkanDescriptorManager
         if (sampler.Handle == 0)
             return;
 
-        lock (SamplerLifetimeLock)
+        using (VulkanFrameLockScope.Enter(
+                   SamplerLifetimeLock,
+                   EVulkanFrameWaitReason.DescriptorPublicationLock))
             LiveSamplerHandles.Add(sampler.Handle);
     }
 
@@ -198,7 +200,9 @@ internal sealed unsafe partial class VulkanDescriptorManager
         if (sampler.Handle == 0)
             return;
 
-        lock (SamplerLifetimeLock)
+        using (VulkanFrameLockScope.Enter(
+                   SamplerLifetimeLock,
+                   EVulkanFrameWaitReason.DescriptorPublicationLock))
         {
             LiveSamplerHandles.Add(sampler.Handle);
             DescriptorHeapSamplerCreateInfos[sampler.Handle] = createInfo with { PNext = null };
@@ -210,7 +214,9 @@ internal sealed unsafe partial class VulkanDescriptorManager
         if (sampler.Handle == 0)
             return;
 
-        lock (SamplerLifetimeLock)
+        using (VulkanFrameLockScope.Enter(
+                   SamplerLifetimeLock,
+                   EVulkanFrameWaitReason.DescriptorPublicationLock))
         {
             LiveSamplerHandles.Remove(sampler.Handle);
             DescriptorHeapSamplerCreateInfos.Remove(sampler.Handle);
@@ -222,7 +228,9 @@ internal sealed unsafe partial class VulkanDescriptorManager
         if (sampler.Handle == 0)
             return false;
 
-        lock (SamplerLifetimeLock)
+        using (VulkanFrameLockScope.Enter(
+                   SamplerLifetimeLock,
+                   EVulkanFrameWaitReason.DescriptorPublicationLock))
             return LiveSamplerHandles.Contains(sampler.Handle);
     }
 
@@ -230,7 +238,9 @@ internal sealed unsafe partial class VulkanDescriptorManager
     {
         if (sampler.Handle != 0)
         {
-            lock (SamplerLifetimeLock)
+            using (VulkanFrameLockScope.Enter(
+                       SamplerLifetimeLock,
+                       EVulkanFrameWaitReason.DescriptorPublicationLock))
             {
                 if (DescriptorHeapSamplerCreateInfos.TryGetValue(sampler.Handle, out createInfo))
                     return true;
@@ -263,7 +273,9 @@ internal sealed unsafe partial class VulkanDescriptorManager
 
     internal ulong[] TakeLiveSamplerHandles()
     {
-        lock (SamplerLifetimeLock)
+        using (VulkanFrameLockScope.Enter(
+                   SamplerLifetimeLock,
+                   EVulkanFrameWaitReason.DescriptorPublicationLock))
         {
             if (LiveSamplerHandles.Count == 0)
                 return [];
@@ -552,7 +564,9 @@ internal sealed unsafe partial class VulkanDescriptorManager
         XRMaterial material,
         out VkMeshRenderer.DescriptorAllocation allocation)
     {
-        lock (_sharedMeshDescriptorAllocationLock)
+        using (VulkanFrameLockScope.Enter(
+                   _sharedMeshDescriptorAllocationLock,
+                   EVulkanFrameWaitReason.DescriptorArena))
         {
             if (_sharedMeshDescriptorAllocations.TryGetValue(
                     key,
@@ -583,7 +597,9 @@ internal sealed unsafe partial class VulkanDescriptorManager
         VkMeshRenderer.DescriptorAllocation allocation,
         out bool published)
     {
-        lock (_sharedMeshDescriptorAllocationLock)
+        using (VulkanFrameLockScope.Enter(
+                   _sharedMeshDescriptorAllocationLock,
+                   EVulkanFrameWaitReason.DescriptorArena))
         {
             if (!_sharedMeshDescriptorAllocations.TryGetValue(
                     key,
@@ -620,7 +636,9 @@ internal sealed unsafe partial class VulkanDescriptorManager
         in VkMeshRenderer.DescriptorAllocationKey key,
         VkMeshRenderer.DescriptorAllocation allocation)
     {
-        lock (_sharedMeshDescriptorAllocationLock)
+        using (VulkanFrameLockScope.Enter(
+                   _sharedMeshDescriptorAllocationLock,
+                   EVulkanFrameWaitReason.DescriptorArena))
         {
             if (allocation.SharedReferenceCount > 0)
                 allocation.SharedReferenceCount--;

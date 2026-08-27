@@ -39,7 +39,9 @@ internal sealed class VulkanPipelinePrewarmDatabase
     {
         get
         {
-            lock (_sync)
+            using (VulkanFrameLockScope.Enter(
+                       _sync,
+                       EVulkanFrameWaitReason.PipelineCompilerLock))
                 return _entriesByKey.Count;
         }
     }
@@ -72,7 +74,9 @@ internal sealed class VulkanPipelinePrewarmDatabase
         if (string.IsNullOrWhiteSpace(key))
             return false;
 
-        lock (_sync)
+        using (VulkanFrameLockScope.Enter(
+                   _sync,
+                   EVulkanFrameWaitReason.PipelineCompilerLock))
             return _entriesByKey.ContainsKey(key);
     }
 
@@ -81,7 +85,9 @@ internal sealed class VulkanPipelinePrewarmDatabase
         if (string.IsNullOrWhiteSpace(key))
             return false;
 
-        lock (_sync)
+        using (VulkanFrameLockScope.Enter(
+                   _sync,
+                   EVulkanFrameWaitReason.PipelineCompilerLock))
             return _keysLoadedAtStartup.Contains(key);
     }
 
@@ -90,7 +96,9 @@ internal sealed class VulkanPipelinePrewarmDatabase
         if (string.IsNullOrWhiteSpace(entry.Key))
             return false;
 
-        lock (_sync)
+        using (VulkanFrameLockScope.Enter(
+                   _sync,
+                   EVulkanFrameWaitReason.PipelineCompilerLock))
         {
             DateTime now = DateTime.UtcNow;
             if (_entriesByKey.TryGetValue(entry.Key, out VulkanPipelinePrewarmEntry? existing))
@@ -112,7 +120,9 @@ internal sealed class VulkanPipelinePrewarmDatabase
 
     public void Save(string path)
     {
-        lock (_sync)
+        using (VulkanFrameLockScope.Enter(
+                   _sync,
+                   EVulkanFrameWaitReason.PipelineCompilerLock))
         {
             string? directory = Path.GetDirectoryName(path);
             if (!string.IsNullOrWhiteSpace(directory))

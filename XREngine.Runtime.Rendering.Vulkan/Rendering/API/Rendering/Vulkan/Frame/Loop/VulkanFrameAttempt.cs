@@ -57,6 +57,16 @@ internal ref struct VulkanFrameAttempt
     /// </summary>
     public bool InteractiveResize;
     /// <summary>
+    /// Indicates that this attempt owns only a fresh ImGui overlay over retained
+    /// swapchain content. It does not consume or publish a scene epoch.
+    /// </summary>
+    public bool InteractiveResizeOverlayOnly;
+    /// <summary>
+    /// The immutable ImGui snapshot retained across nonblocking acquire, record,
+    /// submit, and terminal settlement for an interactive-resize attempt.
+    /// </summary>
+    public VulkanImGuiFrameSnapshot? InteractiveResizeImGuiSnapshot;
+    /// <summary>
     /// Indicates the width of the framebuffer associated with the frame attempt,
     /// which is important for ensuring that the rendered content is displayed correctly.
     /// </summary>
@@ -309,6 +319,11 @@ internal ref struct VulkanFrameAttempt
     /// which is important for ensuring that the rendering operations are completed and that the rendered content is displayed correctly.
     /// </summary>
     public Exception? DeferredFailure;
+    /// <summary>
+    /// The failure that rejected only this attempt, without establishing a new
+    /// renderer-terminal failure.
+    /// </summary>
+    public Exception? RejectedFailure;
     /// <summary>
     /// Indicates the primary failure that occurred during the current frame attempt, if any,
     /// which is important for diagnosing issues and ensuring that the rendering operations are completed correctly.

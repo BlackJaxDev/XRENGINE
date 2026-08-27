@@ -242,6 +242,7 @@ public partial class OpenGLDiagnosticsSettings : XRBase
 public partial class VulkanRenderSettings : XRBase
 {
     private VulkanStartupSettings _startup = new();
+    private VulkanPresentationSettings _presentation = new();
     private VulkanTargetModeSettings _targetMode = new();
     private VulkanGpuDrivenSettings _gpuDriven = new();
     private VulkanDescriptorSettings _descriptors = new();
@@ -252,7 +253,7 @@ public partial class VulkanRenderSettings : XRBase
     private VulkanDiagnosticsSettings _diagnostics = new();
 
     public VulkanRenderSettings()
-        => AttachSubSettings(_startup, _targetMode, _gpuDriven, _descriptors, _commandRecording, _synchronization, _memory, _robustness, _diagnostics);
+        => AttachSubSettings(_startup, _presentation, _targetMode, _gpuDriven, _descriptors, _commandRecording, _synchronization, _memory, _robustness, _diagnostics);
 
     [Category("Vulkan")]
     [Description("Vulkan startup and backend creation policy.")]
@@ -260,6 +261,14 @@ public partial class VulkanRenderSettings : XRBase
     {
         get => _startup;
         set => SetField(ref _startup, value ?? new VulkanStartupSettings());
+    }
+
+    [Category("Vulkan")]
+    [Description("Vulkan desktop presentation profile, cadence, and application queue-depth policy.")]
+    public VulkanPresentationSettings Presentation
+    {
+        get => _presentation;
+        set => SetField(ref _presentation, value ?? new VulkanPresentationSettings());
     }
 
     [Category("Vulkan")]
@@ -331,6 +340,7 @@ public partial class VulkanRenderSettings : XRBase
         base.OnPropertyChanged(propName, prev, field);
 
         if (propName == nameof(Startup)
+            || propName == nameof(Presentation)
             || propName == nameof(TargetMode)
             || propName == nameof(GpuDriven)
             || propName == nameof(Descriptors)

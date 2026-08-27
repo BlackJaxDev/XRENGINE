@@ -1,8 +1,8 @@
 namespace XREngine.Rendering.Vulkan;
 
 /// <summary>
-/// Reports a terminal foreground-readiness failure without converting it to
-/// deferred work or previous-frame presentation.
+/// Reports a typed foreground-readiness failure and whether it invalidates the
+/// current frame or the renderer as a whole.
 /// </summary>
 internal sealed class VulkanPresentNowReadinessException : InvalidOperationException
 {
@@ -14,7 +14,9 @@ internal sealed class VulkanPresentNowReadinessException : InvalidOperationExcep
         TimeSpan elapsed,
         TimeSpan sinceLastProgress,
         string detail,
-        Exception? innerException = null)
+        Exception? innerException = null,
+        EVulkanPresentNowFailureDisposition disposition =
+            EVulkanPresentNowFailureDisposition.RendererTerminal)
         : base(
             $"Vulkan PresentNow readiness failed: frame={frameId} stage={stage} " +
             $"ticket='{activeTicket}' dependency='{dependencyChain}' " +
@@ -28,6 +30,7 @@ internal sealed class VulkanPresentNowReadinessException : InvalidOperationExcep
         DependencyChain = dependencyChain;
         Elapsed = elapsed;
         SinceLastProgress = sinceLastProgress;
+        Disposition = disposition;
     }
 
     internal ulong FrameId { get; }
@@ -36,4 +39,5 @@ internal sealed class VulkanPresentNowReadinessException : InvalidOperationExcep
     internal string DependencyChain { get; }
     internal TimeSpan Elapsed { get; }
     internal TimeSpan SinceLastProgress { get; }
+    internal EVulkanPresentNowFailureDisposition Disposition { get; }
 }

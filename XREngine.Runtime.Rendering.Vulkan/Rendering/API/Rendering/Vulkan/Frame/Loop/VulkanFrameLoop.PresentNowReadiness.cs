@@ -9,6 +9,7 @@ internal sealed partial class VulkanFrameLoop
 {
     private VulkanPresentNowReadinessException? _presentNowTerminalFailure;
     private readonly VulkanTextureUploadManifest _presentNowPumpUploadManifest = new();
+    private long _presentNowTerminalTransitionSequence;
 
     /// <summary>
     /// Freezes and completes format-independent foreground work before the WSI
@@ -20,10 +21,13 @@ internal sealed partial class VulkanFrameLoop
     {
         if (_presentNowTerminalFailure is not null)
         {
+            attempt.RejectedFailure = _presentNowTerminalFailure;
             attempt.Stop(EDesktopFrameReason.PresentNowReadinessFailed);
             return EDesktopFrameFlow.Stop;
         }
 
+        using RenderForegroundWorkCoordinator.ExactForegroundScope foregroundScope =
+            RenderForegroundWorkCoordinator.EnterExactForeground();
         VulkanPresentNowReadinessWatchdog watchdog = new(attempt.FrameNumber);
         attempt.AcceptedSceneEpoch = RuntimeEngine.Rendering.State.RenderFrameId;
         try
@@ -56,12 +60,15 @@ internal sealed partial class VulkanFrameLoop
         }
         catch (VulkanPresentNowReadinessException failure)
         {
-            PausePresentNowRenderer(ref attempt, failure);
+            if (failure.Disposition == EVulkanPresentNowFailureDisposition.RetryFrame)
+                RejectPresentNowFrame(ref attempt, failure);
+            else
+                PausePresentNowRenderer(ref attempt, failure);
             return EDesktopFrameFlow.Stop;
         }
         catch
         {
-            attempt.AcceptedFramePlan?.SettleUnsubmittedSubmissionMarkers();
+            ResetIncompleteAcceptedPresentNowPlan(ref attempt);
             throw;
         }
     }
@@ -129,6 +136,7 @@ internal sealed partial class VulkanFrameLoop
                 acceptedPlan.CanonicalPublicationPins);
             if (capacityExceededCount > 0)
             {
+                _meshOperationRequestScratch.AsSpan(0, requestCount).Clear();
                 string detail = capacityFailure.HasFailure
                     ? capacityFailure.FormatDiagnostic(capacityExceededCount)
                     : $"FramePlanCapacityExceeded lane=MainScene " +
@@ -139,7 +147,8 @@ internal sealed partial class VulkanFrameLoop
                     EVulkanPresentNowReadinessStage.MeshMaterialization,
                     "frame-plan-capacity",
                     "DesktopScene -> visible mesh manifest arena",
-                    detail);
+                    detail,
+                    disposition: EVulkanPresentNowFailureDisposition.RetryFrame);
             }
         }
 
@@ -577,14 +586,16 @@ internal sealed partial class VulkanFrameLoop
                 watchdog.RecordProgress();
             if (acceptedPlan.RequiredTextureUploads.TryGetTerminalFailure(
                     out VulkanTextureUploadTicket failedTicket,
-                    out string failureDetail))
+                    out string failureDetail,
+                    out EVulkanPresentNowFailureDisposition disposition))
             {
                 throw watchdog.CreateFailure(
                     EVulkanPresentNowReadinessStage.RequiredUploadCompletion,
                     $"texture-upload:{failedTicket.Sequence}:" +
                     failedTicket.StreamingGeneration,
                     dependencyChain,
-                    failureDetail);
+                    failureDetail,
+                    disposition: disposition);
             }
             if (uploadsReady &&
                 acceptedPlan.RequiredTextureUploads.AreAllReady)
@@ -627,14 +638,138 @@ internal sealed partial class VulkanFrameLoop
             out _);
     }
 
+    private void RejectPresentNowFrame(
+        ref VulkanFrameAttempt attempt,
+        VulkanPresentNowReadinessException failure)
+    {
+        ResetIncompleteAcceptedPresentNowPlan(ref attempt);
+        attempt.RejectedFailure = failure;
+        Debug.VulkanWarningEvery(
+            $"Vulkan.PresentNow.FrameRejected.{failure.Stage}.{GetHashCode()}",
+            TimeSpan.FromSeconds(1),
+            "[Vulkan][PresentNow][FrameRejected] frame={0} stage={1} " +
+            "disposition={2} detail={3}",
+            failure.FrameId,
+            failure.Stage,
+            failure.Disposition,
+            failure.Message);
+        attempt.Stop(EDesktopFrameReason.PresentNowReadinessFailed);
+    }
+
     private void PausePresentNowRenderer(
         ref VulkanFrameAttempt attempt,
         VulkanPresentNowReadinessException failure)
     {
-        attempt.AcceptedFramePlan?.SettleUnsubmittedSubmissionMarkers();
-        _presentNowTerminalFailure ??= failure;
-        Debug.VulkanError($"[Vulkan][PresentNow][RendererPaused] {failure.Message}");
-        attempt.DeferredFailure = failure;
+        if (_presentNowTerminalFailure is null)
+        {
+            VulkanPresentNowTerminalTransitionRecord transition =
+                CapturePresentNowTerminalTransition(ref attempt, failure);
+            _presentNowTerminalFailure = failure;
+            _telemetry.PublishPresentNowTerminalTransition(in transition);
+            PublishPresentNowTerminalTransitionDiagnostics(in transition);
+        }
+        ResetIncompleteAcceptedPresentNowPlan(ref attempt);
+        attempt.DeferredFailure = _presentNowTerminalFailure;
         attempt.Stop(EDesktopFrameReason.PresentNowReadinessFailed);
+    }
+
+    private VulkanPresentNowTerminalTransitionRecord
+        CapturePresentNowTerminalTransition(
+            ref VulkanFrameAttempt attempt,
+            VulkanPresentNowReadinessException failure)
+    {
+        VulkanAcceptedFramePlan? acceptedPlan = attempt.AcceptedFramePlan;
+        RenderForegroundWorkSnapshot foreground =
+            RenderForegroundWorkCoordinator.CaptureSnapshot();
+        return new VulkanPresentNowTerminalTransitionRecord(
+            Interlocked.Increment(ref _presentNowTerminalTransitionSequence),
+            Stopwatch.GetTimestamp(),
+            attempt.FrameNumber,
+            attempt.FrameSlot,
+            attempt.AcceptedSceneEpoch,
+            attempt.OutputGeneration,
+            failure.Stage,
+            failure.ActiveTicket,
+            failure.DependencyChain,
+            failure.Elapsed,
+            failure.SinceLastProgress,
+            failure.Disposition,
+            attempt.PresentNowMeshRequestCount,
+            acceptedPlan?.RequiredTextureCount ?? 0,
+            acceptedPlan?.RequiredTextureUploads.Count ?? 0,
+            attempt.AcquireOwnership != EVulkanDesktopAcquireOwnership.None,
+            attempt.Submitted,
+            attempt.PresentDispatched,
+            foreground.ForegroundEpoch,
+            foreground.BackgroundYieldCount,
+            foreground.BackgroundResumeCount,
+            failure.GetType().FullName ?? failure.GetType().Name,
+            failure.Message);
+    }
+
+    private static void PublishPresentNowTerminalTransitionDiagnostics(
+        in VulkanPresentNowTerminalTransitionRecord transition)
+    {
+        Debug.VulkanError(
+            "[Vulkan][PresentNow][RendererPaused][TerminalTransition] id={0} frame={1} slot={2} " +
+            "sceneEpoch={3} outputGeneration={4} stage={5} ticket='{6}' " +
+            "dependency='{7}' disposition={8} elapsedMs={9:F1} " +
+            "lastProgressMs={10:F1} meshRequests={11} requiredTextures={12} " +
+            "requiredUploads={13} acquired={14} submitted={15} " +
+            "presentDispatched={16} foregroundEpoch={17} backgroundYields={18} " +
+            "backgroundResumes={19} failureType={20} detail={21}",
+            transition.TransitionId,
+            transition.FrameId,
+            transition.FrameSlot,
+            transition.AcceptedSceneEpoch,
+            transition.OutputGeneration,
+            transition.ReadinessStage,
+            transition.ActiveTicket,
+            transition.DependencyChain,
+            transition.Disposition,
+            transition.Elapsed.TotalMilliseconds,
+            transition.SinceLastProgress.TotalMilliseconds,
+            transition.MeshRequestCount,
+            transition.RequiredTextureCount,
+            transition.RequiredUploadCount,
+            transition.ImageAcquired,
+            transition.Submitted,
+            transition.PresentDispatched,
+            transition.ForegroundEpoch,
+            transition.BackgroundYieldCount,
+            transition.BackgroundResumeCount,
+            transition.FailureType,
+            transition.Detail);
+        Debug.Vulkan(
+            "[Vulkan][PresentNow][ReproductionRecord] transition={0} " +
+            "backend=Vulkan policy=BlockForExact workClass=PresentNow " +
+            "watchdogMs={1:F1} meshQueueCapacity={2} acceptedMainCapacity={3} " +
+            "acceptedShadowCapacity={4} acceptedUploadCapacity={5} " +
+            "frame={6} sceneEpoch={7} outputGeneration={8} stage={9} " +
+            "ticket='{10}' dependency='{11}'",
+            transition.TransitionId,
+            VulkanPresentNowReadinessWatchdog.StallTimeoutTicks * 1000.0 /
+            Stopwatch.Frequency,
+            VulkanMeshOperationRequestQueue.Capacity,
+            VulkanAcceptedFramePlan.MainSceneCapacity,
+            VulkanAcceptedFramePlan.ShadowCapacity,
+            VulkanAcceptedFramePlan.UploadCapacity,
+            transition.FrameId,
+            transition.AcceptedSceneEpoch,
+            transition.OutputGeneration,
+            transition.ReadinessStage,
+            transition.ActiveTicket,
+            transition.DependencyChain);
+    }
+
+    private static void ResetIncompleteAcceptedPresentNowPlan(
+        ref VulkanFrameAttempt attempt)
+    {
+        VulkanAcceptedFramePlan? acceptedPlan = attempt.AcceptedFramePlan;
+        if (acceptedPlan is null)
+            return;
+
+        acceptedPlan.Reset();
+        attempt.AcceptedFramePlan = null;
     }
 }

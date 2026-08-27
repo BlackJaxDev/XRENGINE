@@ -148,6 +148,10 @@ internal sealed class EngineRuntimeRenderingHostServices :
     public EVulkanRenderTargetMode VulkanRenderTargetMode => Engine.EffectiveSettings.VulkanRenderTargetMode;
     public EVulkanGpuDrivenProfile VulkanGpuDrivenProfile => Engine.EffectiveSettings.VulkanGpuDrivenProfile;
     public EVulkanQueueOverlapMode VulkanQueueOverlapMode => Engine.EffectiveSettings.VulkanQueueOverlapMode;
+    public EVulkanPresentationProfile VulkanPresentationProfile => Engine.EffectiveSettings.VulkanPresentationProfile;
+    public float VulkanPresentationTargetRefreshHz => Engine.EffectiveSettings.VulkanPresentationTargetRefreshHz;
+    public int VulkanPresentationMaximumFramesAhead => RuntimeEngine.Rendering.Settings.Vulkan.Presentation.MaximumFramesAhead;
+    public float VulkanPresentationLimiterSpinThresholdMilliseconds => RuntimeEngine.Rendering.Settings.Vulkan.Presentation.LimiterSpinThresholdMilliseconds;
     public EVulkanCommandRecordingMode VulkanCommandRecordingMode => Engine.EffectiveSettings.VulkanCommandRecordingMode;
     public bool EnableVulkanPrimaryCommandBufferReuse => RuntimeEngine.Rendering.Settings.EnableVulkanPrimaryCommandBufferReuse;
     public EVulkanDiagnosticPreset VulkanDiagnosticPreset => Engine.EffectiveSettings.VulkanDiagnosticPreset;

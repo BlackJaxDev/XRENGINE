@@ -879,6 +879,7 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
         ImGui.Text($"  GPU CmdBuf: {GetRingBufferStat(_vulkanFrameGpuCommandBufferMsHistory, _cpuTimingDisplayMode):F3} ms");
         VulkanFrameLoopTelemetryData loop = stats.VulkanFrameLoop;
         ImGui.Text($"  Detail: sample queries {loop.FrameSampleTimingQueriesMs:F3} ms | drain retired {loop.FrameDrainRetiredResourcesMs:F3} ms | acquire bridge {loop.FrameAcquireBridgeSubmitMs:F3} ms | wait image {loop.FrameWaitSwapchainImageMs:F3} ms | reset dyn UBO {loop.FrameResetDynamicUniformRingMs:F3} ms");
+        DrawVulkanCorrelatedFrameTree(loop.CorrelatedFrameTree);
 
         if (_renderStatsHistoryCount > 1 && ImGui.CollapsingHeader("Vulkan Frame Timing History", ImGuiTreeNodeFlags.DefaultOpen))
         {
@@ -2826,6 +2827,97 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
         bool hasMax = maxMs > 0f;
         double elapsed = node.ElapsedMs;
         return elapsed >= minMs && (!hasMax || elapsed <= maxMs);
+    }
+
+    private static void DrawVulkanCorrelatedFrameTree(
+        VulkanCorrelatedFrameTreeData tree)
+    {
+        if (tree.PublicationSequence <= 0 ||
+            !ImGui.CollapsingHeader(
+                "Vulkan Correlated Frame Tree",
+                ImGuiTreeNodeFlags.DefaultOpen))
+        {
+            return;
+        }
+
+        ImGui.Text(
+            $"  Authority/Publication: {tree.AuthorityId}/{tree.PublicationSequence} | " +
+            $"Engine/Render: {tree.EngineFrameNumber}/{tree.RenderFrameNumber} | " +
+            $"Slot/Output/Generation: {tree.FrameSlot}/{tree.OutputIndex}/{tree.OutputGeneration}");
+        ImGui.Text(
+            $"  Presentation: {tree.PresentationProfile}/{tree.PresentMode} | " +
+            $"actual {tree.ActualPresentIntervalMs:F3} ms | frames ahead {tree.FramesAhead} | " +
+            $"outcome {tree.Outcome}");
+        ImGui.Text(
+            $"  Root: inclusive {tree.InclusiveMs:F3} ms | " +
+            $"required-output critical path {tree.RequiredOutputCriticalPathMs:F3} ms | " +
+            $"stage exclusive {tree.StageExclusiveMs:F3} ms | " +
+            $"root exclusive {tree.RootExclusiveMs:F3} ms");
+        ImGui.Text(
+            $"  Classes: work {tree.WorkMs:F3} | wait {tree.WaitMs:F3} | " +
+            $"driver {tree.NativeDriverMs:F3} | external {tree.ExternalRuntimeMs:F3} | " +
+            $"diagnostic {tree.DiagnosticMs:F3} | worker overlap {tree.WorkerOverlapMs:F3} ms");
+        ImGui.Text(
+            $"  Device: operational {tree.DeviceOperational} | lost {tree.DeviceLost} | " +
+            $"last submit/signal {tree.LastSuccessfulSubmissionSerial}/" +
+            $"{tree.LastSuccessfulSignalTimelineValue}");
+
+        if (tree.HasReportableGap)
+        {
+            ImGui.TextColored(
+                new Vector4(1.0f, 0.68f, 0.2f, 1.0f),
+                $"  Attribution: {tree.AttributedRatio * 100.0:F2}% " +
+                $"({tree.RootExclusiveMs:F3} ms Unattributed)");
+        }
+        else
+        {
+            ImGui.Text(
+                $"  Attribution: {tree.AttributedRatio * 100.0:F2}% " +
+                $"({tree.RootExclusiveMs:F3} ms Unattributed)");
+        }
+
+        if (!ImGui.TreeNode(
+                $"Required Output Critical Path##vulkan-frame-tree-{tree.AuthorityId}"))
+        {
+            return;
+        }
+
+        foreach (VulkanFrameStageTelemetryData stage in tree.Stages)
+        {
+            bool stageOpen = ImGui.TreeNode(
+                $"{stage.Name}: {stage.ElapsedMs:F3} ms##vulkan-stage-{stage.Name}");
+            if (!stageOpen)
+                continue;
+
+            ImGui.Text(
+                $"work {stage.WorkMs:F3} | wait {stage.WaitMs:F3} | " +
+                $"driver {stage.NativeDriverMs:F3} | external {stage.ExternalRuntimeMs:F3} | " +
+                $"diagnostic {stage.DiagnosticMs:F3} ms");
+            ImGui.Text(
+                $"intervals {stage.IntervalCount} | class {stage.LastIntervalClass} | " +
+                $"outcome {stage.Outcome} | wait reason {stage.WaitReason}");
+            ImGui.TreePop();
+        }
+
+        if (tree.CausalWaits.Length > 0 &&
+            ImGui.TreeNode(
+                $"Causal Waits ({tree.CausalWaits.Length}, dropped {tree.DroppedCausalWaitCount})" +
+                "##vulkan-causal-waits"))
+        {
+            foreach (VulkanFrameCausalWaitTelemetryData wait in tree.CausalWaits)
+            {
+                ImGui.BulletText(
+                    $"{wait.Stage}/{wait.Reason}: {wait.ElapsedMs:F3} ms | " +
+                    $"frame/slot/image {wait.FrameId}/{wait.FrameSlot}/{wait.ImageIndex} | " +
+                    $"timeline {wait.SemaphoreCompletedValue}->{wait.SemaphoreTargetValue} | " +
+                    $"queue {wait.QueueFamily} | pending/workers " +
+                    $"{wait.PendingCommandCount}/{wait.ConcurrentWorkerActivity}");
+            }
+
+            ImGui.TreePop();
+        }
+
+        ImGui.TreePop();
     }
 
     private void DrawRenderStatsHistoryPlot(string label, float[] ring, string units, float minY, float maxY)

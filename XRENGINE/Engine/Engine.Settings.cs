@@ -1180,12 +1180,10 @@ namespace XREngine
                 return;
             }
 
+            using IDisposable cacheSuppression = XRObjectBase.SuppressObjectCacheRegistration();
             GameStartupSettings projection = _gameSettings.DeepClone();
             _sessionSettings.Apply(projection);
-            projection.BuildSettings.MarkAsTransientProjection();
-            projection.DefaultUserSettings.MarkAsTransientProjection();
-            projection.MarkAsTransientProjection();
-            projection.ClearDirty();
+            projection.FinalizeSessionProjection();
             _effectiveGameSettings = projection;
         }
 

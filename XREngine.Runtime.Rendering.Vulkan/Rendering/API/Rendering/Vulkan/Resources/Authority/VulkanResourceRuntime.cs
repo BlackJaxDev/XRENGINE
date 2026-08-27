@@ -1533,20 +1533,56 @@ internal sealed partial class VulkanResourceRuntime
         // Drain the ready buffers, destroying or pooling them as appropriate.
         for (int index = 0; index < ready.Count; index++)
         {
-            Silk.NET.Vulkan.Buffer buffer = ready[index].Buffer;
-            DeviceMemory memory = ready[index].Memory;
+            RetiredBuffer retired = ready[index];
+            Silk.NET.Vulkan.Buffer buffer = retired.Buffer;
+            DeviceMemory memory = retired.Memory;
             if (buffer.Handle != 0)
             {
-                if (memory.Handle != 0 &&
-                    Allocations.Staging.TryRelease(buffer, memory))
-                {
-                    ReactivateResourceAfterRetirement(
-                        ObjectType.Buffer,
+                // VMA suballocations may share one VkDeviceMemory block. The
+                // retirement queue deduplicates that block handle, so recover
+                // this buffer's authoritative allocation identity before asking
+                // the staging pool to release it for reuse.
+                DeviceMemory poolMemory = memory;
+                if (Allocations.Buffers.Allocations.TryGetValue(
                         buffer.Handle,
-                        "StagingPool.Reuse");
+                        out VulkanMemoryAllocation trackedAllocation))
+                {
+                    poolMemory = trackedAllocation.Memory;
+                }
+                else if (Allocations.Buffers.LegacyAllocations.TryGetValue(
+                             buffer.Handle,
+                             out VulkanMemoryAllocation trackedLegacyAllocation))
+                {
+                    poolMemory = trackedLegacyAllocation.Memory;
+                }
+
+                if (poolMemory.Handle != 0 &&
+                    Allocations.Staging.TryPublishRecycled(
+                        this,
+                        buffer,
+                        poolMemory,
+                        retired.Ticket.ResourceGeneration,
+                        out _))
+                {
                     pooledBuffers++;
                     continue;
                 }
+
+                if (!TryBeginDestroyResourceGeneration(
+                        ObjectType.Buffer,
+                        buffer.Handle,
+                        retired.Ticket.ResourceGeneration,
+                        "RetiredBufferDrain"))
+                {
+                    throw new InvalidOperationException(
+                        $"Cannot destroy retired Vulkan buffer 0x{buffer.Handle:X}: " +
+                        $"generation {retired.Ticket.ResourceGeneration} is no longer authoritative.");
+                }
+
+                // A buffer that is actually destroyed must not leave a stale
+                // staging-pool record. Match by buffer identity so this also
+                // cleans queue entries whose shared memory handle was deduped.
+                Allocations.Staging.TryForget(buffer, default);
 
                 if (Allocations.Buffers.Allocations.TryRemove(
                         buffer.Handle,
@@ -1979,17 +2015,40 @@ internal sealed partial class VulkanResourceRuntime
     private bool TryTakeLiveBuffer(Silk.NET.Vulkan.Buffer buffer)
         => Allocations.Buffers.LiveHandles.TryRemove(buffer.Handle, out _);
 
-    internal void ReactivateResourceAfterRetirement(
+    internal bool TryReactivateResourceAfterRetirement(
         ObjectType type,
         ulong handle,
-        string owner)
+        ulong retiredGeneration,
+        string owner,
+        out ulong publishedGeneration)
     {
+        publishedGeneration = 0;
+        if (retiredGeneration == 0)
+            throw new ArgumentOutOfRangeException(
+                nameof(retiredGeneration),
+                "A retired Vulkan resource generation must be nonzero.");
+
         lock (Lifetime.Tracker.SyncRoot)
         {
-            VulkanResourceLifetimeRecord resource =
-                Lifetime.Tracker.GetOrRegisterResourceNoLock(
-                    new VulkanResourceLifetimeKey(type, handle),
-                    owner);
+            VulkanResourceLifetimeKey key = new(type, handle);
+            if (!Lifetime.Tracker.ResourceLifetimes.TryGetValue(
+                    key,
+                    out VulkanResourceLifetimeRecord? resource) ||
+                resource.Generation != retiredGeneration ||
+                resource.RetirementTicket.ResourceGeneration != retiredGeneration ||
+                (resource.State & EVulkanResourceLifetimeState.PendingRetirement) == 0 ||
+                (resource.State & (EVulkanResourceLifetimeState.Destroyed |
+                                   EVulkanResourceLifetimeState.External)) != 0)
+            {
+                throw new InvalidOperationException(
+                    $"Cannot recycle {key} generation {retiredGeneration}: " +
+                    "the matching pending-retirement lifetime is not active.");
+            }
+            if (Lifetime.Tracker.ForcedRetirementDrainDepth > 0 ||
+                Lifetime.Tracker.DeviceLost)
+            {
+                return false;
+            }
             if (!Lifetime.Tracker.IsRetirementReadyNoLock(
                     resource.RetirementTicket))
             {
@@ -1997,11 +2056,20 @@ internal sealed partial class VulkanResourceRuntime
                     $"Cannot recycle {resource.Key} before its retirement completion point is reached.");
             }
 
+            ulong nextGeneration = VulkanGeneration.IncrementNonZero(
+                ref Lifetime.Tracker.ResourceGeneration);
             resource.Owner = owner;
+            resource.Generation = nextGeneration;
             resource.State = EVulkanResourceLifetimeState.CpuOwned;
-            resource.Pins.ResetCompletion();
+            resource.Pins = default;
+            resource.LastSubmissionSerial = 0;
+            resource.LastFrameOpContextId = 0;
+            resource.LastFrameOpKind = null;
             resource.RetirementSerial = 0;
             resource.RetirementTicket = default;
+            Lifetime.Tracker.PublishedResourceGenerations[key] = nextGeneration;
+            publishedGeneration = nextGeneration;
+            return true;
         }
     }
 
