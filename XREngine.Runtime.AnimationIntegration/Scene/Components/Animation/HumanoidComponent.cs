@@ -301,6 +301,13 @@ namespace XREngine.Components.Animation
                 if (TransformBase.IsDiagnosticEvaluationActive)
                     return;
 
+                if (_skipNextScenePoseAfterImmediateStateMachineEvaluation)
+                {
+                    _skipNextScenePoseAfterImmediateStateMachineEvaluation = false;
+                    if (_pendingStateMachineRootMotionFrame is null)
+                        return;
+                }
+
                 ApplyMusclePose();
             }
         }
@@ -1279,7 +1286,8 @@ namespace XREngine.Components.Animation
             LogMusclePoseSnapshot(_muscleValueSnapshot);
 
             // Split the projected root only after the final corrected authored pose has FK.
-            FinalizeImportedBodyRootAndPose(compiled, resolvedFeetBeforeLoopPose);
+            if (!TryFinalizeStateMachineRootMotionFrame(compiled, muscleSnapshot))
+                FinalizeImportedBodyRootAndPose(compiled, resolvedFeetBeforeLoopPose);
         }
 
         private void ApplyMuscleSnapshot(
@@ -3389,6 +3397,9 @@ namespace XREngine.Components.Animation
             if (_isImportedBodySampleTransactionActive)
                 return false;
 
+            // A new evaluator sample supersedes any pending skip left by an immediate
+            // fixed-time state-machine evaluation in the same update interval.
+            _skipNextScenePoseAfterImmediateStateMachineEvaluation = false;
             _isImportedBodySampleTransactionActive = true;
             _importedBodySampleTransactionOwner = owner;
             _transactionHasCanonicalImportedBodySample = hasCanonicalSample;
@@ -4594,9 +4605,9 @@ namespace XREngine.Components.Animation
                 hipsTransform.RecalcLocal();
 
             // Unity evaluates Body channels in Animator-root space. Imported scene
-            // parents can be normalized (for example, Mitsuki's Armature is identity
-            // in XREngine even though Unity records a -90-degree parent frame), so the
-            // live scene parent is not a reliable Body basis. Enter the exported
+            // parents can be normalized into a different basis than their serialized
+            // Unity parent frame, so the live scene parent is not a reliable Body
+            // basis. Enter the exported
             // Hips-parent -> Animator-root frame, apply Body/root allocation there,
             // then conjugate back to the imported Hips-local basis.
             Matrix4x4 bodyFrame = compiled.HasLegacyCalibrationRootAllocationFrame
@@ -5418,6 +5429,7 @@ namespace XREngine.Components.Animation
 
         private void ResetRuntimeAnimationDiagnostics()
         {
+            _skipNextScenePoseAfterImmediateStateMachineEvaluation = false;
             ResetRootMotionBaseline();
         }
 

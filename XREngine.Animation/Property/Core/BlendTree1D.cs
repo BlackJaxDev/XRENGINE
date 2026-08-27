@@ -19,6 +19,16 @@ namespace XREngine.Animation
         [MemoryPackable]
         public partial class Child : XRBase
         {
+            [MemoryPackIgnore]
+            internal AnimationValueStore RuntimeValueStore { get; } = new();
+
+            private Guid _motionOccurrenceId = Guid.NewGuid();
+            public Guid MotionOccurrenceId
+            {
+                get => _motionOccurrenceId;
+                set => SetField(ref _motionOccurrenceId, value == Guid.Empty ? Guid.NewGuid() : value);
+            }
+
             private MotionBase? _motion;
             public MotionBase? Motion
             {
@@ -31,6 +41,16 @@ namespace XREngine.Animation
             {
                 get => _speed;
                 set => SetField(ref _speed, value);
+            }
+
+            private float _cycleOffset;
+            /// <summary>
+            /// Normalized phase offset applied to this child occurrence.
+            /// </summary>
+            public float CycleOffset
+            {
+                get => _cycleOffset;
+                set => SetField(ref _cycleOffset, value);
             }
 
             private float _threshold = 0.0f;
@@ -53,6 +73,12 @@ namespace XREngine.Animation
         {
             get => _children;
             set => SetField(ref _children, value);
+        }
+
+        internal void PrepareRuntimeEvaluation(AnimationSlotLayout layout)
+        {
+            for (int i = 0; i < Children.Count; i++)
+                Children[i].RuntimeValueStore.Resize(layout);
         }
 
         [MemoryPackIgnore]
@@ -138,13 +164,29 @@ namespace XREngine.Animation
         }
 
         public override void BlendChildMotionAnimationValues(IDictionary<string, AnimVar> variables, float weight)
+            => BlendChildMotionAnimationValues(variables, weight, null, additive: false);
+
+        internal void EvaluateAnimationValuesAtNormalizedStateTimeCore(
+            IDictionary<string, AnimVar> variables,
+            double normalizedTime,
+            bool additive)
+        {
+            ValueStore.Clear();
+            BlendChildMotionAnimationValues(variables, 1.0f, normalizedTime, additive);
+        }
+
+        private void BlendChildMotionAnimationValues(
+            IDictionary<string, AnimVar> variables,
+            float weight,
+            double? normalizedTime,
+            bool additive)
         {
             if (_children.Count == 0)
                 return;
 
             if (_children.Count == 1)
             {
-                _children[0].Motion?.GetAnimationValues(this, variables, 1.0f);
+                CopyChildAnimationValues(_children[0], variables, weight, normalizedTime, additive);
                 return;
             }
 
@@ -155,6 +197,19 @@ namespace XREngine.Animation
             }
 
             float parameterValue = variables.TryGetValue(ParameterName, out AnimVar? var) ? var.FloatValue : 0.0f;
+
+            if (!float.IsFinite(parameterValue) || parameterValue <= _children[0].Threshold)
+            {
+                CopyChildAnimationValues(_children[0], variables, weight, normalizedTime, additive);
+                return;
+            }
+
+            int lastIndex = _children.Count - 1;
+            if (parameterValue >= _children[lastIndex].Threshold)
+            {
+                CopyChildAnimationValues(_children[lastIndex], variables, weight, normalizedTime, additive);
+                return;
+            }
 
             Child min, max;
 
@@ -167,7 +222,7 @@ namespace XREngine.Animation
             {
                 // Binary search to find the index just above the parameter value
                 int l = 0;
-                int r = Children.Count - 1;
+                int r = lastIndex;
                 int m;
                 while (l < r)
                 {
@@ -191,7 +246,149 @@ namespace XREngine.Animation
                 max = Children[l];
             }
 
-            Blend(min.Motion, max.Motion, (parameterValue - min.Threshold) / (max.Threshold - min.Threshold), variables, weight);
+            float interval = max.Threshold - min.Threshold;
+            if (!float.IsFinite(interval) || MathF.Abs(interval) <= float.Epsilon)
+            {
+                CopyChildAnimationValues(min, variables, weight, normalizedTime, additive);
+                return;
+            }
+
+            float blend = Math.Clamp((parameterValue - min.Threshold) / interval, 0.0f, 1.0f);
+            BlendChildAnimationValues(min, max, blend, variables, weight, normalizedTime, additive);
+        }
+
+        private void CopyChildAnimationValues(
+            Child child,
+            IDictionary<string, AnimVar> variables,
+            float weight,
+            double? normalizedTime,
+            bool additive)
+        {
+            if (SlotLayout is null)
+            {
+                child.Motion?.GetAnimationValues(this, variables, weight);
+                return;
+            }
+
+            if (!EvaluateChildAnimationValues(child, variables, normalizedTime, additive))
+                return;
+            ValueStore.CopyFrom(child.RuntimeValueStore);
+        }
+
+        private void BlendChildAnimationValues(
+            Child first,
+            Child second,
+            float blend,
+            IDictionary<string, AnimVar> variables,
+            float weight,
+            double? normalizedTime,
+            bool additive)
+        {
+            if (SlotLayout is null)
+            {
+                Blend(first.Motion, second.Motion, blend, variables, weight);
+                return;
+            }
+
+            bool hasFirst = EvaluateChildAnimationValues(first, variables, normalizedTime, additive);
+            bool hasSecond = EvaluateChildAnimationValues(second, variables, normalizedTime, additive);
+            if (!hasFirst)
+            {
+                if (hasSecond)
+                    ValueStore.CopyFrom(second.RuntimeValueStore);
+                return;
+            }
+            if (!hasSecond)
+            {
+                ValueStore.CopyFrom(first.RuntimeValueStore);
+                return;
+            }
+
+            AnimationValueStore.Lerp(
+                first.RuntimeValueStore,
+                second.RuntimeValueStore,
+                blend,
+                ValueStore);
+        }
+
+        private static bool EvaluateChildAnimationValues(
+            Child child,
+            IDictionary<string, AnimVar> variables,
+            double? normalizedTime,
+            bool additive)
+        {
+            if (child.Motion is not MotionBase motion)
+                return false;
+
+            if (normalizedTime is double time)
+                motion.EvaluateAnimationValuesAtNormalizedStateTime(
+                    variables,
+                    ResolveChildNormalizedPhase(time, child.Speed, child.CycleOffset),
+                    additive);
+            else
+                motion.GetAnimationValues(null, variables, 1.0f);
+            child.RuntimeValueStore.CopyFrom(motion.ValueStore);
+            return true;
+        }
+
+        internal double GetEffectiveDurationSecondsCore(IDictionary<string, AnimVar> variables)
+        {
+            if (_children.Count == 0)
+                return 0.0;
+
+            if (_needsSort)
+            {
+                _needsSort = false;
+                _children.Sort(_childComparer);
+            }
+
+            float parameterValue = variables.TryGetValue(ParameterName, out AnimVar? variable)
+                ? variable.FloatValue
+                : 0.0f;
+            if (!float.IsFinite(parameterValue) || parameterValue <= _children[0].Threshold)
+                return GetChildDuration(_children[0], variables);
+
+            int lastIndex = _children.Count - 1;
+            if (parameterValue >= _children[lastIndex].Threshold)
+                return GetChildDuration(_children[lastIndex], variables);
+
+            int upperIndex = 1;
+            while (upperIndex < _children.Count && _children[upperIndex].Threshold < parameterValue)
+                upperIndex++;
+
+            Child lower = _children[upperIndex - 1];
+            Child upper = _children[upperIndex];
+            float interval = upper.Threshold - lower.Threshold;
+            if (!float.IsFinite(interval) || MathF.Abs(interval) <= float.Epsilon)
+                return GetChildDuration(lower, variables);
+
+            float upperWeight = Math.Clamp((parameterValue - lower.Threshold) / interval, 0.0f, 1.0f);
+            return BlendChildDurations(
+                GetChildDuration(lower, variables),
+                1.0f - upperWeight,
+                GetChildDuration(upper, variables),
+                upperWeight);
+        }
+
+        private static double GetChildDuration(Child child, IDictionary<string, AnimVar> variables)
+        {
+            if (child.Motion is not MotionBase motion)
+                return 0.0;
+            if (!float.IsFinite(child.Speed) || MathF.Abs(child.Speed) <= float.Epsilon)
+                return double.PositiveInfinity;
+            return motion.GetEffectiveDurationSeconds(variables) / Math.Abs(child.Speed);
+        }
+
+        private static double BlendChildDurations(double first, float firstWeight, double second, float secondWeight)
+        {
+            if ((firstWeight > 0.0f && double.IsPositiveInfinity(first))
+                || (secondWeight > 0.0f && double.IsPositiveInfinity(second)))
+                return double.PositiveInfinity;
+
+            double totalWeight = Math.Max(0.0f, firstWeight) + Math.Max(0.0f, secondWeight);
+            return totalWeight > double.Epsilon
+                ? (first * Math.Max(0.0f, firstWeight) + second * Math.Max(0.0f, secondWeight)) / totalWeight
+                : 0.0;
         }
     }
 }

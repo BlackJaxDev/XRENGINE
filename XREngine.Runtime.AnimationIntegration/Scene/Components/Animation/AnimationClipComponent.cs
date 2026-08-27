@@ -13,7 +13,7 @@ namespace XREngine.Components.Animation
 {
     [CookedBinaryReflectionOnly]
     [XRComponentEditor("XREngine.Editor.ComponentEditors.AnimationClipComponentEditor")]
-    public class AnimationClipComponent : XRComponent
+    public partial class AnimationClipComponent : XRComponent
     {
         private bool _initialized;
         private bool _isPlaying;
@@ -24,6 +24,11 @@ namespace XREngine.Components.Animation
         private readonly Dictionary<AnimationMember, float> _loopPoseFloatEndpointDeltas = [];
         private readonly Dictionary<AnimationMember, Vector3> _loopPoseVectorEndpointDeltas = [];
         private readonly Dictionary<AnimationMember, Quaternion> _loopPoseQuaternionEndpointCorrections = [];
+        private AnimationMember[] _scalarIKRotationXMembers = [];
+        private AnimationMember[] _scalarIKRotationYMembers = [];
+        private AnimationMember[] _scalarIKRotationZMembers = [];
+        private AnimationMember[] _scalarIKRotationWMembers = [];
+        private Quaternion[] _scalarIKRotationLoopPoseCorrections = [];
         private readonly HashSet<Transform> _animatedQuaternionTargets = [];
         private Transform[] _animatedQuaternionTargetsSnapshot = [];
         private BasePropAnim[] _propertyAnimationsSnapshot = [];
@@ -228,6 +233,7 @@ namespace XREngine.Components.Animation
             {
                 case nameof(Animation):
                     PlaybackCapabilityDiagnostic = string.Empty;
+                    ResetUnityAnimationBindings();
                     if (IsActiveInHierarchy && StartOnActivate)
                         Start();
                     break;
@@ -359,12 +365,14 @@ namespace XREngine.Components.Animation
             StartAllPropertyAnimations(clip, ResolveEffectiveSampleTimeTicks(clip, initialTicks));
             UpdateEffectiveHumanoidSamplePhase(clip, initialTicks);
             SetPlaybackTimeTicks(initialTicks);
+            PrimeUnityAnimationEventClock(clip, initialTicks);
         }
 
         private void CompletePlaybackStartup()
         {
             ApplyAnimatedValues();
             GetSiblingHumanoid()?.ApplyCurrentMusclePose();
+            DispatchInitialUnityAnimationEvents();
             RegisterTick(ETickGroup.Normal, ETickOrder.Animation, TickAnimation);
             RegisterTick(ETickGroup.Late, ETickOrder.Input, PublishRootMotion);
         }
@@ -422,6 +430,13 @@ namespace XREngine.Components.Animation
         }
 
         public void EvaluateAtTime(float timeSeconds)
+            => EvaluateAtTime(timeSeconds, dispatchEvents: false);
+
+        /// <summary>
+        /// Seeks the clip and optionally emits every imported Unity animation event
+        /// crossed by the discontinuity. Editor scrubbing uses the non-dispatching overload.
+        /// </summary>
+        public void EvaluateAtTime(float timeSeconds, bool dispatchEvents)
         {
             if (Animation is null)
                 return;
@@ -440,9 +455,22 @@ namespace XREngine.Components.Animation
             // accumulate the absolute projected pose on every repeated seek.
             BeginRootMotionEpoch(preserveExistingAnchor: true);
 
+            long previousEventTicks = _unityEventUnwrappedPlaybackTimeTicks;
             long evaluationTicks = NormalizePlaybackTime(SecondsToStopwatchTicks(timeSeconds), Animation, wrapLooped: false);
             SetAllPropertyAnimationTimesForPlayback(Animation, evaluationTicks);
             SetPlaybackTimeTicks(evaluationTicks);
+            _unityEventUnwrappedPlaybackTimeTicks = evaluationTicks;
+            _dispatchInitialUnityEvents = false;
+            if (dispatchEvents)
+            {
+                _unityAnimationEventBuffer.Clear();
+                Animation.CollectUnityAnimationEvents(
+                    _unityAnimationEventBuffer,
+                    StopwatchTicksToSeconds(previousEventTicks),
+                    StopwatchTicksToSeconds(evaluationTicks),
+                    includePrevious: false);
+                DispatchBufferedUnityAnimationEvents();
+            }
 
             if (!ShouldDriveSiblingHumanoidPose())
                 return;
@@ -472,7 +500,13 @@ namespace XREngine.Components.Animation
                 return false;
             }
 
-            if (!clip.TryValidateUnityPlaybackCapabilities(out diagnostic))
+            if (!clip.TryValidateUnityPlaybackCapabilities(allowRuntimeAdapters: true, out diagnostic))
+            {
+                PlaybackCapabilityDiagnostic = diagnostic;
+                return false;
+            }
+
+            if (!TryValidateUnityAnimationBindings(clip, out diagnostic))
             {
                 PlaybackCapabilityDiagnostic = diagnostic;
                 return false;
@@ -584,24 +618,41 @@ namespace XREngine.Components.Animation
             long deltaTicks;
             long unwrappedPlaybackTimeTicks;
             long playbackTimeTicks;
+            bool stopAtPlaybackBoundary;
             using (RuntimeAnimationHostServices.Current.StartProfileScope("AnimationClipComponent.TickAnimation.AdvanceTime"))
             {
                 deltaTicks = ScaleStopwatchTicks(SecondsToStopwatchTicks(RuntimeAnimationHostServices.Current.DilatedUpdateDeltaSeconds), Speed);
-                unwrappedPlaybackTimeTicks = _playbackTimeTicks + deltaTicks;
-                playbackTimeTicks = NormalizePlaybackTime(unwrappedPlaybackTimeTicks, Animation, wrapLooped: Animation.Looped);
-                if (Animation.Looped && playbackTimeTicks != unwrappedPlaybackTimeTicks)
-                    _rootMotionLoopCycle += CountWrappedCycles(unwrappedPlaybackTimeTicks, GetClipLengthTicks(Animation));
+                AdvanceAndDispatchUnityAnimationEvents(deltaTicks);
+                unwrappedPlaybackTimeTicks = _unityEventUnwrappedPlaybackTimeTicks;
+                playbackTimeTicks = NormalizePlaybackTime(
+                    unwrappedPlaybackTimeTicks,
+                    Animation,
+                    wrapLooped: Animation.UsesCyclicUnityPlayback);
+                long clipLengthTicks = GetClipLengthTicks(Animation);
+                _rootMotionLoopCycle = Animation.EffectiveUnityWrapMode == EUnityAnimationWrapMode.Loop
+                    ? CountWrappedCycles(unwrappedPlaybackTimeTicks, clipLengthTicks)
+                    : 0L;
                 SetPlaybackTimeTicks(playbackTimeTicks);
+                stopAtPlaybackBoundary = Animation.EffectiveUnityWrapMode == EUnityAnimationWrapMode.Once
+                    && ((deltaTicks > 0L && unwrappedPlaybackTimeTicks >= clipLengthTicks)
+                        || (deltaTicks < 0L && unwrappedPlaybackTimeTicks <= 0L));
             }
 
             using (RuntimeAnimationHostServices.Current.StartProfileScope("AnimationClipComponent.TickAnimation.SetPropertyTimes"))
                 SetAllPropertyAnimationTimesForPlayback(Animation, playbackTimeTicks);
 
-            if (!ShouldDriveSiblingHumanoidPose())
-                return;
+            if (ShouldDriveSiblingHumanoidPose())
+            {
+                using (RuntimeAnimationHostServices.Current.StartProfileScope("AnimationClipComponent.TickAnimation.ApplyAnimatedValues"))
+                    ApplyAnimatedValues();
+            }
 
-            using (RuntimeAnimationHostServices.Current.StartProfileScope("AnimationClipComponent.TickAnimation.ApplyAnimatedValues"))
-                ApplyAnimatedValues();
+            if (stopAtPlaybackBoundary)
+            {
+                SetPlaybackTimeTicks(0L);
+                _unityEventUnwrappedPlaybackTimeTicks = 0L;
+                Stop();
+            }
         }
 
         private void EnsureInitialized()
@@ -632,6 +683,7 @@ namespace XREngine.Components.Animation
                     _baselineMethodArguments[member] = (object?[])member.MethodArguments.Clone();
             }
 
+            CacheScalarIKRotationMembers();
             CacheImportedBodyRootMembers();
             CacheRootMotionPolicy();
             CacheCanonicalImportedBodySample();
@@ -832,6 +884,7 @@ namespace XREngine.Components.Animation
             _loopPoseFloatEndpointDeltas.Clear();
             _loopPoseVectorEndpointDeltas.Clear();
             _loopPoseQuaternionEndpointCorrections.Clear();
+            Array.Fill(_scalarIKRotationLoopPoseCorrections, Quaternion.Identity);
             AnimationClip? clip = Animation;
             HumanoidComponent? humanoid = GetSiblingHumanoid();
             if (clip?.HasRootMotion != true
@@ -913,6 +966,7 @@ namespace XREngine.Components.Animation
             foreach (AnimationMember member in _animatedMembersSnapshot)
             {
                 if (!SupportsHumanoidLoopPose(member)
+                    || IsScalarIKRotationMember(member)
                     || member.Animation?.GetValueGeneric(0.0f) is not { } start
                     || member.Animation.GetValueGeneric(endTime) is not { } end)
                     continue;
@@ -938,6 +992,19 @@ namespace XREngine.Components.Animation
                         break;
                     }
                 }
+            }
+
+            for (int i = 0; i < _scalarIKRotationXMembers.Length; i++)
+            {
+                if (!TrySampleScalarIKRotation(i, 0.0f, out Quaternion start)
+                    || !TrySampleScalarIKRotation(i, endTime, out Quaternion end))
+                    continue;
+
+                if (Quaternion.Dot(start, end) < 0.0f)
+                    end = new Quaternion(-end.X, -end.Y, -end.Z, -end.W);
+
+                _scalarIKRotationLoopPoseCorrections[i] = Quaternion.Normalize(
+                    Quaternion.Inverse(end) * start);
             }
         }
 
@@ -1098,6 +1165,11 @@ namespace XREngine.Components.Animation
             && float.IsFinite(value.LengthSquared())
             && value.LengthSquared() > 1.0e-8f;
 
+        private static Quaternion NormalizeQuaternionOrIdentity(Quaternion value)
+            => IsFiniteNonZero(value)
+                ? Quaternion.Normalize(value)
+                : Quaternion.Identity;
+
         private HumanoidComponent? GetSiblingHumanoid()
             => TryGetSiblingComponent<HumanoidComponent>(out var humanoid) ? humanoid : null;
 
@@ -1110,6 +1182,11 @@ namespace XREngine.Components.Animation
             _loopPoseFloatEndpointDeltas.Clear();
             _loopPoseVectorEndpointDeltas.Clear();
             _loopPoseQuaternionEndpointCorrections.Clear();
+            _scalarIKRotationXMembers = [];
+            _scalarIKRotationYMembers = [];
+            _scalarIKRotationZMembers = [];
+            _scalarIKRotationWMembers = [];
+            _scalarIKRotationLoopPoseCorrections = [];
             _animatedQuaternionTargets.Clear();
             _animatedQuaternionTargetsSnapshot = [];
             _propertyAnimationsSnapshot = [];
@@ -1125,7 +1202,97 @@ namespace XREngine.Components.Animation
             Array.Clear(_loopProjectionEndMuscleValues);
             _loggedMissingHumanoidForRootMotion = false;
             _loggedMissingRootMotionTarget = false;
+            ResetUnityAnimationBindings();
             _initialized = false;
+        }
+
+        /// <summary>
+        /// Finds complete Unity scalar IK quaternion bindings once at initialization.
+        /// Treating x/y/z/w as four unrelated floats produces invalid interpolation,
+        /// mirror, and Loop Pose results, so playback evaluates each complete binding
+        /// atomically as one quaternion.
+        /// </summary>
+        private void CacheScalarIKRotationMembers()
+        {
+            List<AnimationMember> xMembers = [];
+            List<AnimationMember> yMembers = [];
+            List<AnimationMember> zMembers = [];
+            List<AnimationMember> wMembers = [];
+
+            foreach (AnimationMember xMember in _animatedMembersSnapshot)
+            {
+                if (xMember.MemberName != "SetAnimatedIKRotationX"
+                    || !TryGetBaselineLimbGoal(xMember, out ELimbEndEffector goal)
+                    || FindScalarIKRotationMember("SetAnimatedIKRotationY", goal) is not { } yMember
+                    || FindScalarIKRotationMember("SetAnimatedIKRotationZ", goal) is not { } zMember
+                    || FindScalarIKRotationMember("SetAnimatedIKRotationW", goal) is not { } wMember)
+                    continue;
+
+                xMembers.Add(xMember);
+                yMembers.Add(yMember);
+                zMembers.Add(zMember);
+                wMembers.Add(wMember);
+            }
+
+            _scalarIKRotationXMembers = [.. xMembers];
+            _scalarIKRotationYMembers = [.. yMembers];
+            _scalarIKRotationZMembers = [.. zMembers];
+            _scalarIKRotationWMembers = [.. wMembers];
+            _scalarIKRotationLoopPoseCorrections = new Quaternion[xMembers.Count];
+            Array.Fill(_scalarIKRotationLoopPoseCorrections, Quaternion.Identity);
+        }
+
+        private AnimationMember? FindScalarIKRotationMember(
+            string memberName,
+            ELimbEndEffector goal)
+        {
+            foreach (AnimationMember member in _animatedMembersSnapshot)
+                if (member.MemberName == memberName
+                    && TryGetBaselineLimbGoal(member, out ELimbEndEffector memberGoal)
+                    && memberGoal == goal)
+                    return member;
+
+            return null;
+        }
+
+        private bool TryGetBaselineLimbGoal(
+            AnimationMember member,
+            out ELimbEndEffector goal)
+        {
+            if (_baselineMethodArguments.TryGetValue(member, out object?[]? arguments)
+                && arguments.Length > 0)
+                return TryGetLimbGoal(arguments[0], out goal);
+
+            goal = default;
+            return false;
+        }
+
+        private bool IsScalarIKRotationMember(AnimationMember member)
+        {
+            for (int i = 0; i < _scalarIKRotationXMembers.Length; i++)
+                if (ReferenceEquals(member, _scalarIKRotationXMembers[i])
+                    || ReferenceEquals(member, _scalarIKRotationYMembers[i])
+                    || ReferenceEquals(member, _scalarIKRotationZMembers[i])
+                    || ReferenceEquals(member, _scalarIKRotationWMembers[i]))
+                    return true;
+
+            return false;
+        }
+
+        private bool TrySampleScalarIKRotation(
+            int bindingIndex,
+            float timeSeconds,
+            out Quaternion value)
+        {
+            value = Quaternion.Identity;
+            if (_scalarIKRotationXMembers[bindingIndex].Animation?.GetValueGeneric(timeSeconds) is not float x
+                || _scalarIKRotationYMembers[bindingIndex].Animation?.GetValueGeneric(timeSeconds) is not float y
+                || _scalarIKRotationZMembers[bindingIndex].Animation?.GetValueGeneric(timeSeconds) is not float z
+                || _scalarIKRotationWMembers[bindingIndex].Animation?.GetValueGeneric(timeSeconds) is not float w)
+                return false;
+
+            value = NormalizeQuaternionOrIdentity(new Quaternion(x, y, z, w));
+            return true;
         }
 
         private void CacheImportedBodyRootMembers()
@@ -1297,6 +1464,9 @@ namespace XREngine.Components.Animation
                     if (TryApplyImportedBodyRootChannel(member))
                         continue;
 
+                    if (TryApplyScalarIKRotationGroup(member, fullWeight, weight))
+                        continue;
+
                     if (member.Animation is null && member.MemberType != EAnimationMemberType.Method)
                     {
                         member.ApplyAnimationValue(member.DefaultValue);
@@ -1310,7 +1480,7 @@ namespace XREngine.Components.Animation
 
                     if (fullWeight)
                     {
-                        // Fast path: skip LerpValue entirely � lerp(x, y, 1.0) == y.
+                        // Fast path: skip LerpValue entirely — lerp(x, y, 1.0) == y.
                         // ApplyRuntimeClipRemaps only affects Method members, so skip for field/property.
                         if (member.MemberType == EAnimationMemberType.Method)
                             ApplyRuntimeClipRemaps(member, ref animatedValue);
@@ -1457,6 +1627,91 @@ namespace XREngine.Components.Animation
             || TryApplyTypedVector2(member, fullWeight, weight)
             || TryApplyTypedVector4(member, fullWeight, weight)
             || TryApplyTypedBool(member, fullWeight, weight);
+
+        private bool TryApplyScalarIKRotationGroup(
+            AnimationMember member,
+            bool fullWeight,
+            float weight)
+        {
+            for (int i = 0; i < _scalarIKRotationXMembers.Length; i++)
+            {
+                bool isX = ReferenceEquals(member, _scalarIKRotationXMembers[i]);
+                if (!isX
+                    && !ReferenceEquals(member, _scalarIKRotationYMembers[i])
+                    && !ReferenceEquals(member, _scalarIKRotationZMembers[i])
+                    && !ReferenceEquals(member, _scalarIKRotationWMembers[i]))
+                    continue;
+
+                if (!TryReadCurrentScalarIKRotation(i, out Quaternion value))
+                    return false;
+
+                // The x member owns the atomic application. The remaining scalar
+                // members are consumed so registration order cannot alter the result.
+                if (!isX)
+                    return true;
+
+                if (_rootMotionPolicy?.LoopPose == true)
+                {
+                    Quaternion correction = Quaternion.Slerp(
+                        Quaternion.Identity,
+                        _scalarIKRotationLoopPoseCorrections[i],
+                        _effectiveHumanoidSamplePhase);
+                    value = NormalizeQuaternionOrIdentity(value * correction);
+                }
+
+                if (!fullWeight)
+                {
+                    float clampedWeight = float.IsFinite(weight)
+                        ? Math.Clamp(weight, 0.0f, 1.0f)
+                        : 0.0f;
+                    value = Quaternion.Slerp(Quaternion.Identity, value, clampedWeight);
+                }
+
+                AnimationMember xMember = _scalarIKRotationXMembers[i];
+                AnimationMember yMember = _scalarIKRotationYMembers[i];
+                AnimationMember zMember = _scalarIKRotationZMembers[i];
+                AnimationMember wMember = _scalarIKRotationWMembers[i];
+                RestoreBaselineMethodArguments(xMember);
+                RestoreBaselineMethodArguments(yMember);
+                RestoreBaselineMethodArguments(zMember);
+                RestoreBaselineMethodArguments(wMember);
+
+                if (ShouldApplyRuntimeClipRemap(xMember.MemberName))
+                    RemapAnimatedIKRotation(xMember, ref value);
+
+                if (xMember.MethodArguments.Length > 0)
+                {
+                    object? mappedGoal = xMember.MethodArguments[0];
+                    if (yMember.MethodArguments.Length > 0)
+                        yMember.MethodArguments[0] = mappedGoal;
+                    if (zMember.MethodArguments.Length > 0)
+                        zMember.MethodArguments[0] = mappedGoal;
+                    if (wMember.MethodArguments.Length > 0)
+                        wMember.MethodArguments[0] = mappedGoal;
+                }
+
+                xMember.TryApplyFloat(value.X);
+                yMember.TryApplyFloat(value.Y);
+                zMember.TryApplyFloat(value.Z);
+                wMember.TryApplyFloat(value.W);
+                return true;
+            }
+
+            return false;
+        }
+
+        private bool TryReadCurrentScalarIKRotation(int bindingIndex, out Quaternion value)
+        {
+            value = Quaternion.Identity;
+            if (!TryGetAnimatedFloat(_scalarIKRotationXMembers[bindingIndex], out float x)
+                || !TryGetAnimatedFloat(_scalarIKRotationYMembers[bindingIndex], out float y)
+                || !TryGetAnimatedFloat(_scalarIKRotationZMembers[bindingIndex], out float z)
+                || !TryGetAnimatedFloat(_scalarIKRotationWMembers[bindingIndex], out float w))
+                return false;
+
+            value = NormalizeQuaternionOrIdentity(new Quaternion(x, y, z, w));
+            return true;
+        }
 
         private bool TryApplyTypedFloat(AnimationMember member, bool fullWeight, float weight)
         {
@@ -2214,9 +2469,14 @@ namespace XREngine.Components.Animation
             if (clipLengthTicks <= 0L)
                 return 0L;
 
-            return wrapLooped
-                ? WrapStopwatchTicks(timeTicks, clipLengthTicks)
-                : Math.Clamp(timeTicks, 0L, clipLengthTicks);
+            if (!wrapLooped)
+                return Math.Clamp(timeTicks, 0L, clipLengthTicks);
+
+            double sampleSeconds = clip.ResolveUnityPlaybackTime(
+                StopwatchTicksToSeconds(timeTicks),
+                out _,
+                out _);
+            return Math.Clamp(SecondsToStopwatchTicks(sampleSeconds), 0L, clipLengthTicks);
         }
 
         private void SetPlaybackTimeTicks(long playbackTimeTicks)
@@ -2232,17 +2492,42 @@ namespace XREngine.Components.Animation
                 : SecondsToStopwatchTicks(clip.LengthInSeconds);
 
         private static long SecondsToStopwatchTicks(double seconds)
-            => !double.IsFinite(seconds) || seconds == 0.0
-                ? 0L
-                : (long)Math.Round(seconds * Stopwatch.Frequency);
+        {
+            if (!double.IsFinite(seconds) || seconds == 0.0)
+                return 0L;
+
+            double ticks = seconds * Stopwatch.Frequency;
+            if (ticks >= long.MaxValue)
+                return long.MaxValue;
+            if (ticks <= long.MinValue)
+                return long.MinValue;
+            return (long)Math.Round(ticks);
+        }
 
         private static float StopwatchTicksToSeconds(long ticks)
             => (float)(ticks / (double)Stopwatch.Frequency);
 
         private static long ScaleStopwatchTicks(long deltaTicks, float speed)
-            => deltaTicks == 0L || !float.IsFinite(speed) || speed == 0.0f
-                ? 0L
-                : (long)Math.Round(deltaTicks * (double)speed);
+        {
+            if (deltaTicks == 0L || !float.IsFinite(speed) || speed == 0.0f)
+                return 0L;
+
+            double scaledTicks = deltaTicks * (double)speed;
+            if (scaledTicks >= long.MaxValue)
+                return long.MaxValue;
+            if (scaledTicks <= long.MinValue)
+                return long.MinValue;
+            return (long)Math.Round(scaledTicks);
+        }
+
+        private static long SaturatingAddStopwatchTicks(long left, long right)
+        {
+            if (right > 0L && left > long.MaxValue - right)
+                return long.MaxValue;
+            if (right < 0L && left < long.MinValue - right)
+                return long.MinValue;
+            return left + right;
+        }
 
         private static long WrapStopwatchTicks(long valueTicks, long lengthTicks)
         {

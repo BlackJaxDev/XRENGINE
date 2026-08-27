@@ -9,11 +9,22 @@ namespace XREngine.Rendering.Vulkan;
 internal sealed class VulkanOutOfMemoryException : Exception
 {
     public MemoryPropertyFlags RequestedProperties { get; }
+    public Result? NativeResult { get; }
 
     public VulkanOutOfMemoryException(string message, MemoryPropertyFlags requestedProperties)
         : base(message)
     {
         RequestedProperties = requestedProperties;
+    }
+
+    public VulkanOutOfMemoryException(
+        string message,
+        MemoryPropertyFlags requestedProperties,
+        Result nativeResult)
+        : base(message)
+    {
+        RequestedProperties = requestedProperties;
+        NativeResult = nativeResult;
     }
 
     public VulkanOutOfMemoryException(string message, MemoryPropertyFlags requestedProperties, Exception innerException)

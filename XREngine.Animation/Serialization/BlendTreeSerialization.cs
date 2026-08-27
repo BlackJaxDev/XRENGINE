@@ -120,7 +120,9 @@ internal static class BlendTreeSerialization
             children.Add(new BlendTree1DChildSerializedModel
             {
                 Motion = MotionSerialization.CreateModel(child.Motion),
+                MotionOccurrenceId = child.MotionOccurrenceId,
                 Speed = child.Speed,
+                CycleOffset = child.CycleOffset,
                 Threshold = child.Threshold,
                 HumanoidMirror = child.HumanoidMirror
             });
@@ -144,9 +146,11 @@ internal static class BlendTreeSerialization
             children.Add(new BlendTree2DChildSerializedModel
             {
                 Motion = MotionSerialization.CreateModel(child.Motion),
+                MotionOccurrenceId = child.MotionOccurrenceId,
                 PositionX = child.PositionX,
                 PositionY = child.PositionY,
                 Speed = child.Speed,
+                CycleOffset = child.CycleOffset,
                 HumanoidMirror = child.HumanoidMirror
             });
         }
@@ -171,8 +175,10 @@ internal static class BlendTreeSerialization
             children.Add(new BlendTreeDirectChildSerializedModel
             {
                 Motion = MotionSerialization.CreateModel(child.Motion),
+                MotionOccurrenceId = child.MotionOccurrenceId,
                 WeightParameterName = child.WeightParameterName,
                 Speed = child.Speed,
+                CycleOffset = child.CycleOffset,
                 HumanoidMirror = child.HumanoidMirror
             });
         }
@@ -182,6 +188,7 @@ internal static class BlendTreeSerialization
             Name = blendTree.Name,
             OriginalPath = blendTree.OriginalPath,
             OriginalLastWriteTimeUtc = blendTree.OriginalLastWriteTimeUtc,
+            NormalizeBlendValues = blendTree.NormalizeBlendValues,
             Children = children
         };
     }
@@ -204,7 +211,9 @@ internal static class BlendTreeSerialization
                 blendTree.Children.Add(new BlendTree1D.Child
                 {
                     Motion = MotionSerialization.CreateRuntimeMotion(childModel.Motion),
+                    MotionOccurrenceId = childModel.MotionOccurrenceId ?? Guid.NewGuid(),
                     Speed = childModel.Speed ?? 1.0f,
+                    CycleOffset = childModel.CycleOffset ?? 0.0f,
                     Threshold = childModel.Threshold,
                     HumanoidMirror = childModel.HumanoidMirror
                 });
@@ -234,9 +243,11 @@ internal static class BlendTreeSerialization
                 blendTree.Children.Add(new BlendTree2D.Child
                 {
                     Motion = MotionSerialization.CreateRuntimeMotion(childModel.Motion),
+                    MotionOccurrenceId = childModel.MotionOccurrenceId ?? Guid.NewGuid(),
                     PositionX = childModel.PositionX,
                     PositionY = childModel.PositionY,
                     Speed = childModel.Speed ?? 1.0f,
+                    CycleOffset = childModel.CycleOffset ?? 0.0f,
                     HumanoidMirror = childModel.HumanoidMirror
                 });
             }
@@ -252,6 +263,7 @@ internal static class BlendTreeSerialization
             Name = model.Name,
             OriginalPath = model.OriginalPath,
             OriginalLastWriteTimeUtc = model.OriginalLastWriteTimeUtc,
+            NormalizeBlendValues = model.NormalizeBlendValues ?? false,
             Children = []
         };
 
@@ -262,8 +274,10 @@ internal static class BlendTreeSerialization
                 blendTree.Children.Add(new BlendTreeDirect.Child
                 {
                     Motion = MotionSerialization.CreateRuntimeMotion(childModel.Motion),
+                    MotionOccurrenceId = childModel.MotionOccurrenceId ?? Guid.NewGuid(),
                     WeightParameterName = childModel.WeightParameterName,
                     Speed = childModel.Speed ?? 1.0f,
+                    CycleOffset = childModel.CycleOffset ?? 0.0f,
                     HumanoidMirror = childModel.HumanoidMirror
                 });
             }
@@ -287,7 +301,9 @@ internal sealed partial class BlendTree1DSerializedModel
 internal sealed partial class BlendTree1DChildSerializedModel
 {
     public SerializedMotionModel? Motion { get; set; }
+    public Guid? MotionOccurrenceId { get; set; }
     public float? Speed { get; set; }
+    public float? CycleOffset { get; set; }
     public float Threshold { get; set; }
     public bool HumanoidMirror { get; set; }
 }
@@ -308,9 +324,11 @@ internal sealed partial class BlendTree2DSerializedModel
 internal sealed partial class BlendTree2DChildSerializedModel
 {
     public SerializedMotionModel? Motion { get; set; }
+    public Guid? MotionOccurrenceId { get; set; }
     public float PositionX { get; set; }
     public float PositionY { get; set; }
     public float? Speed { get; set; }
+    public float? CycleOffset { get; set; }
     public bool HumanoidMirror { get; set; }
 }
 
@@ -320,6 +338,7 @@ internal sealed partial class BlendTreeDirectSerializedModel
     public string? Name { get; set; }
     public string? OriginalPath { get; set; }
     public DateTime? OriginalLastWriteTimeUtc { get; set; }
+    public bool? NormalizeBlendValues { get; set; }
     public List<BlendTreeDirectChildSerializedModel> Children { get; set; } = [];
 }
 
@@ -327,7 +346,9 @@ internal sealed partial class BlendTreeDirectSerializedModel
 internal sealed partial class BlendTreeDirectChildSerializedModel
 {
     public SerializedMotionModel? Motion { get; set; }
+    public Guid? MotionOccurrenceId { get; set; }
     public string? WeightParameterName { get; set; }
     public float? Speed { get; set; }
+    public float? CycleOffset { get; set; }
     public bool HumanoidMirror { get; set; }
 }

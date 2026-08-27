@@ -98,10 +98,14 @@ namespace XREngine
         // ═══════════════════════════════════════════════════════════════════════════════════════════
 
         private static UserSettings _userSettings = null!;
+        private static UserSettings _effectiveUserSettings = null!;
         private static GameStartupSettings _gameSettings = null!;
+        private static GameStartupSettings _effectiveGameSettings = null!;
         private static EditorPreferences _globalEditorPreferences = null!;
         private static EditorPreferencesOverrides _editorPreferencesOverrides = null!;
         private static EditorPreferences _editorPreferences = null!;
+        private static readonly SessionSettingsOverlay _sessionSettings = new();
+        private static readonly Dictionary<Type, Action> _sessionSettingsRootRefreshers = [];
 
         /// <summary>
         /// When true, settings cascades (Apply* methods) are suppressed.
@@ -291,6 +295,18 @@ namespace XREngine
                 _editorPreferences = new EditorPreferences();
                 UpdateEffectiveEditorPreferences();
             }
+
+            RegisterSessionSettingsRoot<UserSettings>(() =>
+            {
+                RebuildEffectiveUserSettings();
+                ApplyEffectiveSettingsForProperty(null);
+            });
+            RegisterSessionSettingsRoot<GameStartupSettings>(() =>
+            {
+                RebuildEffectiveGameSettings();
+                ApplyEffectiveSettingsForProperty(null);
+            });
+            RegisterSessionSettingsRoot<EditorPreferences>(() => UpdateEffectiveEditorPreferences());
 
             EngineRenderingSettingsApplication.InitializeSettingsApplicationBoundary();
             Debug.InitializeExceptionTracing();

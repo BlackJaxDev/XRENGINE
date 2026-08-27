@@ -13,4 +13,7 @@ internal readonly record struct OpenXrPreparedEyeCommandBufferInput(
     VulkanPreparedResourcePlanStamp ResourcePlanStamp,
     ulong FrameOpsSignature,
     ulong PlannerRevision,
+    ulong LogicalViewId = 0UL,
+    int RequiredOutputIndex = -1,
+    RenderOutputRequest RequiredOutputContract = default,
     FramePlan? PairedLogicalPlan = null);

@@ -3,6 +3,12 @@ using Silk.NET.Vulkan;
 namespace XREngine.Rendering.Vulkan;
 internal interface IVkImageDescriptorSource
 {
+    /// <summary>
+    /// Synchronizes a complete descriptor snapshot with native descriptor-table
+    /// publication. Callers that must keep a snapshot current through a second
+    /// authority commit hold this monitor across both operations.
+    /// </summary>
+    object DescriptorSnapshotSyncRoot => this;
     Image DescriptorImage { get; }
     DeviceMemory DescriptorMemory { get; }
     ImageView DescriptorView { get; }

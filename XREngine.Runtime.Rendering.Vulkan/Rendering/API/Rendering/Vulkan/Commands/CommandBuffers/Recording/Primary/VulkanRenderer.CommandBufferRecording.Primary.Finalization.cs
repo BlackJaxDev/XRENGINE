@@ -29,6 +29,18 @@ namespace XREngine.Rendering.Vulkan
                 }
 
                 bool forceMagentaSwapchain = XREngine.Rendering.RenderDiagnosticsFlags.VkForceSwapchainMagenta;
+                bool isPresentNowTransaction =
+                    recordingState.Policy.WorkClass ==
+                        ERenderOutputWorkClass.PresentNow &&
+                    recordingState.TransitionSwapchainToPresent;
+                bool requiresFreshEmptyTerminalWrite =
+                    recordingState.FramePlan?.RequiresFreshEmptyTerminalWrite == true &&
+                    isPresentNowTransaction;
+                if (requiresFreshEmptyTerminalWrite &&
+                    recordingState.ActualSwapchainWriteCount == 0)
+                {
+                    RecordFreshEmptyPresentNowTerminalClear(ref recordingState);
+                }
                 int sceneActualSwapchainWritesBeforeOverlay = recordingState.ActualSwapchainWriteCount;
 
                 ExecuteDynamicUiBatchTextOverlay(ref recordingState);
@@ -82,9 +94,20 @@ namespace XREngine.Rendering.Vulkan
                 else
                 {
                     EndActiveRenderPass(ref recordingState);
-                    bool refreshRequested = ShouldRefreshUnwrittenSwapchainForPresent(
-                        touchSwapchainForFinalOverlay,
-                        recordingState.TransitionSwapchainToPresent);
+                    if (isPresentNowTransaction &&
+                        recordingState.ActualSwapchainWriteCount == 0)
+                    {
+                        throw new VulkanPlanPreconditionException(
+                            $"PresentNow frame {recordingState.Policy.SourceFrameId} " +
+                            "recorded no fresh swapchain terminal. Replaying a " +
+                            "previous presentation source is forbidden.");
+                    }
+
+                    bool refreshRequested =
+                        !isPresentNowTransaction &&
+                        ShouldRefreshUnwrittenSwapchainForPresent(
+                            touchSwapchainForFinalOverlay,
+                            recordingState.TransitionSwapchainToPresent);
                     bool refreshedFromLastPresentSource =
                         refreshRequested &&
                         TryRefreshUnwrittenSwapchainFromLastWindowPresentSource(ref recordingState);
@@ -311,6 +334,40 @@ namespace XREngine.Rendering.Vulkan
                         CreateOpenXrRuntimeColorSubresourceRange());
                 }
             }
+        }
+
+        private void RecordFreshEmptyPresentNowTerminalClear(
+            scoped ref PrimaryCommandBufferRecordingState recordingState)
+        {
+            EndActiveRenderPass(ref recordingState);
+            int passIndex = recordingState.ActivePassIndex != int.MinValue
+                ? recordingState.ActivePassIndex
+                : VulkanBarrierPlanner.SwapchainPassIndex;
+            FrameOpContext context = recordingState.HasActiveContext
+                ? recordingState.ActiveContext
+                : recordingState.InitialContext;
+            BeginRenderPassForTarget(
+                ref recordingState,
+                null,
+                passIndex,
+                context);
+            recordingState.SwapchainWriteCount++;
+            recordingState.ActualSwapchainWriteCount++;
+            recordingState.Metrics.SwapchainClearWrites++;
+            recordingState.Metrics.ForcedDiagnosticSwapchainWriters++;
+            MarkSwapchainStaticWriter(
+                ref recordingState,
+                "EmptyPresentNowClear",
+                "published a fresh deterministic terminal for an empty PresentNow frame",
+                passIndex,
+                recordingState.Ops.Length,
+                context.PipelineIdentity);
+            Debug.VulkanEvery(
+                $"Vulkan.EmptyPresentNowTerminalClear.{GetHashCode()}",
+                TimeSpan.FromSeconds(1),
+                "[Vulkan] Published a fresh full-surface clear for empty PresentNow frame {0} on image {1}.",
+                recordingState.Policy.SourceFrameId,
+                recordingState.ImageIndex);
         }
 
         private bool EndPrimaryCommandBuffer(

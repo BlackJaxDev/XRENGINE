@@ -9,7 +9,6 @@ namespace XREngine.Rendering;
 internal sealed class VulkanDenseTextureResidencyBackend : ITextureResidencyBackend
 {
     private const int MaxConcurrentStreamingDecodes = 2;
-    private const int MaxRenderThreadSchedulePerFrame = 1;
 
     private static readonly uint[] ResidentCandidates =
     [
@@ -36,8 +35,6 @@ internal sealed class VulkanDenseTextureResidencyBackend : ITextureResidencyBack
     private static int s_activeGpuUploadCount;
     private static long s_uploadBytesFrameTicks = -1;
     private static long s_uploadBytesScheduledThisFrame;
-    private static long s_scheduleFrameTicks = -1;
-    private static int s_scheduleCountThisFrame;
 
     public string Name => nameof(VulkanDenseTextureResidencyBackend);
     public uint PreviewMaxDimension => XRTexture2D.ImportedPreviewMaxDimensionInternal;
@@ -193,7 +190,6 @@ internal sealed class VulkanDenseTextureResidencyBackend : ITextureResidencyBack
             bool decodeActivated = false;
             bool decodeGateHeld = false;
             int residentDataPackageQueued = 0;
-            bool uploadHandoffOwned = false;
             string cancellationPhase = "before decode/cache read";
 
             void ReleaseDecodeGate()
@@ -279,7 +275,7 @@ internal sealed class VulkanDenseTextureResidencyBackend : ITextureResidencyBack
                 Volatile.Write(ref residentDataPackageQueued, 1);
                 CompleteDecodeActivity();
 
-                void ScheduleUploadOnRenderThread()
+                void AdmitPreparedUpload()
                 {
                     try
                     {
@@ -322,28 +318,11 @@ internal sealed class VulkanDenseTextureResidencyBackend : ITextureResidencyBack
                     }
                 }
 
-                bool ScheduleUploadBudgeted()
-                {
-                    if (!TryEnterRenderThreadScheduleBudget())
-                        return false;
-
-                    ScheduleUploadOnRenderThread();
-                    return true;
-                }
-
-                if (RuntimeRenderingHostServices.FrameTiming.IsRenderThread && TryEnterRenderThreadScheduleBudget())
-                {
-                    ScheduleUploadOnRenderThread();
-                    uploadHandoffOwned = true;
-                }
-                else
-                {
-                    RuntimeRenderingHostServices.Scheduling.EnqueueRenderThreadCoroutine(
-                        ScheduleUploadBudgeted,
-                        $"TextureStreaming.ScheduleVulkanUpload[{target.Name}]",
-                        RenderThreadJobKind.TextureUpload);
-                    uploadHandoffOwned = true;
-                }
+                // Admission is deliberately thread-safe and Vulkan-free. Publishing
+                // the exact generation ticket directly from the decode worker breaks
+                // the PresentNow cycle where the render thread waited for a ticket
+                // whose only producer was queued back onto that same render thread.
+                AdmitPreparedUpload();
             }
             catch (OperationCanceledException)
             {
@@ -357,8 +336,7 @@ internal sealed class VulkanDenseTextureResidencyBackend : ITextureResidencyBack
             {
                 ReleaseDecodeGate();
                 CompleteDecodeActivity();
-                if (!uploadHandoffOwned)
-                    ConsumeResidentDataPackage();
+                ConsumeResidentDataPackage();
                 MarkDecodeDequeued();
             }
         });
@@ -467,24 +445,6 @@ internal sealed class VulkanDenseTextureResidencyBackend : ITextureResidencyBack
 
         RecordUploadBytes(uploadBytes);
         onProgress?.Invoke(0.5f);
-    }
-
-    private static bool TryEnterRenderThreadScheduleBudget()
-    {
-        long currentFrame = RuntimeRenderingHostServices.FrameTiming.LastRenderTimestampTicks;
-        long previousFrame = Interlocked.Exchange(ref s_scheduleFrameTicks, currentFrame);
-        if (previousFrame != currentFrame)
-            Interlocked.Exchange(ref s_scheduleCountThisFrame, 0);
-
-        while (true)
-        {
-            int currentCount = Volatile.Read(ref s_scheduleCountThisFrame);
-            if (currentCount >= MaxRenderThreadSchedulePerFrame)
-                return false;
-
-            if (Interlocked.CompareExchange(ref s_scheduleCountThisFrame, currentCount + 1, currentCount) == currentCount)
-                return true;
-        }
     }
 
     private static void RecordUploadBytes(long bytes)

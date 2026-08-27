@@ -2,9 +2,10 @@
 
 Last Updated: 2026-08-26
 Owner: Animation / Avatar
-Status: In progress; Phase 6 complete root-motion settings and the
-Mitsuki/Sexy Walk reference milestone are complete, while the remaining
-corpus/persistence gates and Phase 7+ transition/blend parity remain open
+Status: In progress; Phases 1-7 are implemented, with Phase 7 live-validated on
+Mitsuki and Aryia V1.3 through the single native XRE path. Raw `.anim` format
+completeness, the final native humanoid solver/tooling, and the versioned parity
+corpus remain in Phases 8-10
 
 Related evidence:
 
@@ -629,59 +630,133 @@ Acceptance criteria:
 
 ## Phase 7 - Per-Motion State-Machine Root/Body Evaluation
 
-- [ ] Evaluate Body and root projection independently for each active clip or
+- [x] Evaluate Body and root projection independently for each active clip or
   blend-tree leaf using that motion's settings, canonical reference, playback
   time, and loop epoch.
-- [ ] Blend evaluated Body/root contributions using the actual active weights.
+- [x] Blend evaluated Body/root contributions using the actual active weights.
   Zero-weight children must not disable projection or avatar-definition state.
-- [ ] Replace the all-contributors-must-share-settings/name rule with a measured
+- [x] Replace the all-contributors-must-share-settings/name rule with a measured
   per-contributor composition contract.
-- [ ] Rebase canonical Body and temporal-root baselines at state entry,
+- [x] Rebase canonical Body and temporal-root baselines at state entry,
   transition start/end, interruption, seek, replay, and evaluator handoff without
   leaking the first sampled state's reference into later states.
-- [ ] Extend scalar quaternion grouping and shortest-arc normalization to
+- [x] Extend scalar quaternion grouping and shortest-arc normalization to
   imported IK goal rotations and generic transform quaternion components, not
   only Body `RootQ`.
-- [ ] Define additive-layer Body/root behavior explicitly and keep it separate
+- [x] Define additive-layer Body/root behavior explicitly and keep it separate
   from override-layer motion.
-- [ ] Validate 1D, 2D, and direct blend trees, two-state transitions,
-  interrupted transitions, different clip lengths, different loop states, and
-  compatible/incompatible root settings against Unity references.
+- [x] Validate the native runtime matrix for 1D, 2D, and direct blend trees,
+  two-state transitions, interrupted transitions, different clip lengths and
+  loop states, compatible/incompatible root settings, mirror, authored IK,
+  additive layers, signed speed, child cycle offsets, and zero-weight changes.
+  Strict numerical comparison with versioned Unity known-answer data belongs to
+  the Phase 10 conformance matrix and does not add a second runtime path.
 
 Acceptance criteria:
 
-- [ ] A state-machine leaf produces the same result as direct playback at the
+- [x] A state-machine leaf produces the same result as direct playback at the
   same time and weight.
-- [ ] Transition/blend output is independent of child registration order and
+- [x] Transition/blend output is independent of child registration order and
   contains no discontinuity when a contributor enters or leaves at zero weight.
-- [ ] Mixed clip names and renamed clips do not change root-motion behavior.
+- [x] Mixed clip names and renamed clips do not change root-motion behavior.
+
+Implementation and validation status (2026-08-26):
+
+- Active leaves now carry preallocated contribution records with persistent
+  occurrence identity, exact state-owned clocks, clip-local settings, canonical
+  references, loop epochs, lifecycle generations, and explicit override or
+  additive composition type. Clip display names are diagnostics only.
+- The runtime evaluates and caches each leaf independently, then composes Body,
+  Hips allocation, and projected-root output using deterministic weighted
+  translation and tangent-space quaternion accumulation. Direct-tree raw weights
+  remain raw when normalization is disabled.
+- State entry, transition start/completion/interruption, replay, seek, and
+  evaluator handoff invalidate the appropriate temporal baseline. A fixed-time
+  state-machine evaluation no longer gets overwritten by the following scene
+  pose tick.
+- Scalar `RootQ`, humanoid IK goal rotations, and generic transform quaternion
+  component groups use atomic shortest-arc normalized blending. Mirrored and
+  unmirrored humanoid leaves use separate precompiled semantic slots so one leaf
+  cannot mutate another leaf's binding arguments.
+- Additive evaluation now converts each leaf to a clip-local reference-relative
+  pose before tree, transition, and layer composition. Ordinary layer blending
+  is coverage- and sparse-binding-aware, so layer weight applies consistently to
+  muscles, transforms, Body/root contributions, and additive deltas.
+- State playback now executes exit-time crossing, fixed-seconds versus
+  normalized transition duration, destination offset, interruption, self-replay,
+  and guarded enter/exit callbacks. Child speed and cycle offset are resolved by
+  the same phase function for sampling, seeking, and Body/root contributions, so
+  speed magnitude is not applied twice and reverse/zero speed remain coherent.
+- Direct non-normalized trees retain independent raw child weights. Quaternion
+  accumulation chooses a deterministic canonical reference before shortest-arc
+  blending, eliminating registration-order dependence even when the first child
+  has zero weight or an antipodal representation.
+- Mitsuki/Sexy Walk direct and one-leaf state-machine evaluation matched at
+  0.8 s, 1.6 s, and 2.4 s to printed float precision for Hips translation and
+  rotation; projected-root output differed only by floating-point rounding
+  (maximum observed component delta approximately `3.8e-6`). Renaming the clip
+  in memory produced bit-identical output. Normal playback advanced across a
+  loop boundary with one active contributor and no contribution overflow.
+- The completed live matrix exercised Mitsuki and the unrelated Aryia V1.3 FBX
+  from `Aryia_By_Mimiiu_V1.3.unitypackage` with Sexy Walk, Basic Walk, and
+  Shutka Walk. Both avatars used automatically generated avatar definitions
+  (95% and 93% profile coverage respectively), all required bones, 39 axis
+  mappings, and calibrated IK through the same production path.
+- 1D, 2D, direct, additive, mirror, signed speed, cycle-offset, two-state, and
+  interrupted-transition cases stayed finite without contribution overflow.
+  A frozen direct-tree child changed contributor count `3 -> 4 -> 3` as its
+  weight changed `0 -> 0.7 -> 0`, retained the same lifecycle epoch, produced
+  identity root delta, and returned exactly to its original pose on both
+  avatars. A genuine in-flight transition interruption exercised contributor
+  counts from 2 through 9 without exceeding capacity.
+- Both avatars ran five humanoid IK solvers; all four authored hand/foot goals
+  reported `AppliedAuthored`. Missing creator-machine Aryia texture warnings are
+  material/rendering concerns and do not affect this animation acceptance.
+- The validation fixture and settings were temporary and were removed/restored.
+  No production behavior refers to either avatar, package, model path, or clip
+  name. Strict whole-pose Unity known-answer tolerances remain a Phase 10 corpus
+  concern rather than unfinished Phase 7 runtime implementation.
+
+Phase 7 follow-on correctness work completed in this pass:
+
+- [x] Make ordinary pose-slot layer composition honor `AnimLayer.Weight` and
+  sparse binding presence. The humanoid Body/root contribution sidecar is
+  now composed with the normal typed pose through the same coverage-aware
+  override/additive contract.
+- [x] Execute imported transition scheduling fields: exit-time enablement and
+  one-frame crossing, fixed-seconds versus normalized duration, destination
+  transition offset, Any State precedence, and transition interruption.
+- [x] Exercise mirrored/unmirrored leaves and imported IK goal rotations in one
+  live graph with an intentionally attached `HumanoidIKSolverComponent`. The
+  Mitsuki and Aryia V1.3 sessions each applied all four authored goals through
+  five active solvers.
 
 ## Phase 8 - Raw Unity `.anim` Format Completeness
 
-- [ ] Implement Unity weighted tangent semantics using `weightedMode`,
+- [x] Implement Unity weighted tangent semantics using `weightedMode`,
   `inWeight`, and `outWeight`; retain unweighted fast paths.
-- [ ] Map all claimed Unity pre/post-infinity modes rather than collapsing every
+- [x] Map all claimed Unity pre/post-infinity modes rather than collapsing every
   value except Loop to Clamp.
-- [ ] Import and execute animation events with deterministic ordering across
+- [x] Import and execute animation events with deterministic ordering across
   forward, reverse, loop, seek, and state-machine playback.
-- [ ] Decode and validate nonempty compressed rotation, dense-clip, and
+- [x] Decode and validate nonempty compressed rotation, dense-clip, and
   streamed-clip representations for every declared supported Unity version.
-- [ ] Normalize all supported serialized curve families (`m_RotationCurves`,
+- [x] Normalize all supported serialized curve families (`m_RotationCurves`,
   `m_CompressedRotationCurves`, `m_EulerCurves`, `m_PositionCurves`,
   `m_ScaleCurves`, `m_FloatCurves`, `m_PPtrCurves`, dense, streamed, and
   constant data) without routing them through different playback semantics.
 - [ ] Preserve and execute clip metadata that affects behavior, including sample
   rate, wrap mode, legacy/high-quality flags where applicable, clip bounds,
   loop/time settings, and all humanoid clip settings.
-- [ ] Import PPtr/object-reference curves into executable typed tracks with
+- [x] Import PPtr/object-reference curves into executable typed tracks with
   asset resolution and missing-reference diagnostics, rather than metadata-only
   preservation.
-- [ ] Support generic serialized property bindings used by valid `.anim` files,
+- [x] Support generic serialized property bindings used by valid `.anim` files,
   including float, integer, Boolean, enum, vector/component, quaternion/Euler,
   and object-reference targets. Resolve them through a typed XRE binding
   contract; when a Unity-only component has no XRE target, preserve the binding
   and require an explicit adapter instead of reporting successful execution.
-- [ ] Preserve quaternion sign continuity and normalize all quaternion binding
+- [x] Preserve quaternion sign continuity and normalize all quaternion binding
   families after interpolation and blending.
 - [ ] Publish a versioned `.anim` capability manifest and fixtures for each
   claimed serialization family. Completion of a declared Unity version means
@@ -695,7 +770,52 @@ Acceptance criteria:
   contract fail with a precise unsupported-feature diagnostic.
 - [ ] Unity and XRENGINE samples agree at keys, frame boundaries, half-frame
   points, randomized times, and infinity/loop boundaries.
-- [ ] Events and object bindings are applied, not merely parsed or listed.
+- [x] Events and object bindings are applied, not merely parsed or listed.
+
+Phase 8 wrap-up status (2026-08-26):
+
+- Weighted/unweighted Hermite evaluation, all declared infinity and legacy wrap
+  modes, deterministic events, editable and packed curve decoders, typed scalar
+  and object bindings, quaternion continuity, import manifests, and runtime
+  preflight are implemented. The ordinary `.anim` asset-load copy path now
+  retains metadata, events, and generic/object bindings instead of dropping the
+  importer sidecars. Direct root-motion loop counting also follows the effective
+  Unity wrap mode and no longer accumulates an absolute cycle count each frame.
+- The current version-1 contract declares AnimationClip `serializedVersion` 6
+  and 7. Portable fixtures cover editable curve families plus compressed
+  rotation, streamed, dense, and constant packed representations. A scan of 545
+  repository clips imported 449 as immediately executable and 96 as correctly
+  requiring explicit destination adapters; no clip was silently classified as
+  preserved or unsupported by the implemented curve decoders.
+- Phase 8 is **not complete yet**. Do not mark the two remaining implementation
+  items or the first two acceptance gates complete until the work below is done.
+
+Next Phase 8 work, in order:
+
+1. Finish exact additive-reference-pose semantics. Resolve
+   `m_AdditiveReferencePoseClip` through its GUID/fileID, sample
+   `m_AdditiveReferencePoseTime`, and use that reference for both typed pose
+   deltas and humanoid Body/root contributions. The current additive evaluator
+   uses the source clip at time zero, which is correct only for Unity's default
+   reference-pose case. Unresolved or unsupported external clip subassets must
+   fail preflight explicitly; they must never fall back to time zero.
+2. Close the source-schema audit. Preserve and validate
+   `m_HasGenericRootTransform`, `m_HasMotionFloatCurves`,
+   `m_GenerateMotionCurves`, editable binding `flags`, and nested serialized
+   versions. Add allowlisted-key validation so an unknown behaviorally relevant
+   version-6/7 field produces a capability failure instead of being ignored.
+3. Publish the tracked capability JSON/guide and fixture `README`/expected
+   hashes, then add a packed typed fixture covering integer/discrete and packed
+   PPtr bindings. Keep opaque packed CRC bindings adapter-owned unless a native
+   family can reverse them unambiguously; guessing a property from a hash is not
+   an exact conversion.
+4. Re-run the narrow builds, the evaluator probe, all portable fixture imports,
+   and the 545-clip corpus scan. Then run one isolated editor session through
+   the real `AnimationClip.Load3rdParty` path and inspect the animation/runtime
+   logs. Renderer correctness remains outside this acceptance.
+5. Leave full Unity known-answer numerical comparison to Phase 10 after the
+   Phase 9 avatar solver exists. Phase 8 should first prove raw format and event/
+   binding semantics independently of avatar retargeting error.
 
 ## Phase 9 - Replace Fitted Calibration with the Native Humanoid Solver
 

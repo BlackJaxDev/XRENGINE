@@ -116,6 +116,8 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
 
         Format format = Format;
         ImageAspectFlags aspectMask = NormalizeAspectMaskForFormat(format, AspectFlags);
+        ImageUsageFlags usage = ResolveImportedUploadUsage(format);
+        ImageLayout finalLayout = ResolveImportedUploadFinalLayout(usage, format);
         AspectFlags = aspectMask;
         Extent3D extent = _layout.Extent;
         uint mipLevels = Math.Max(_layout.MipLevels, 1u);
@@ -135,6 +137,8 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
             onError,
             format,
             aspectMask,
+            usage,
+            finalLayout,
             extent,
             mipLevels,
             arrayLayers,
@@ -174,6 +178,7 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
                             preparation.MipLevels,
                             preparation.ArrayLayers,
                             preparation.Format,
+                            preparation.Usage,
                             out preparation.Image,
                             out preparation.Memory,
                             out preparation.CommittedBytes,
@@ -241,6 +246,8 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
                         preparation.Sampler,
                         preparation.Format,
                         preparation.AspectMask,
+                        preparation.Usage,
+                        preparation.FinalLayout,
                         preparation.Extent,
                         preparation.MipLevels,
                         preparation.ArrayLayers,
@@ -398,6 +405,7 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
         uint mipLevels,
         uint arrayLayers,
         Format format,
+        ImageUsageFlags usage,
         out Image image,
         out DeviceMemory memory,
         out long committedBytes,
@@ -412,15 +420,6 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
         {
             failureReason = $"Vulkan device state is {BackendContext.DeviceContext.State}";
             return false;
-        }
-
-        ImageUsageFlags usage = DefaultUsage;
-        if (Data.RequiresStorageUsage)
-            usage |= ImageUsageFlags.StorageBit;
-        if (VkFormatConversions.IsDepthStencilFormat(format))
-        {
-            usage &= ~ImageUsageFlags.ColorAttachmentBit;
-            usage |= ImageUsageFlags.DepthStencilAttachmentBit;
         }
 
         uint* uploadQueueFamilies = stackalloc uint[2];
@@ -501,6 +500,44 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
         committedBytes = (long)memRequirements.Size;
         RuntimeEngine.Rendering.Stats.Vram.AddTextureAllocation(committedBytes);
         return true;
+    }
+
+    private ImageUsageFlags ResolveImportedUploadUsage(Format format)
+    {
+        ImageUsageFlags usage = DefaultUsage;
+        if (Data.RequiresStorageUsage)
+            usage |= ImageUsageFlags.StorageBit;
+        if (VkFormatConversions.IsDepthStencilFormat(format))
+        {
+            usage &= ~ImageUsageFlags.ColorAttachmentBit;
+            usage |= ImageUsageFlags.DepthStencilAttachmentBit;
+        }
+
+        return usage;
+    }
+
+    /// <summary>
+    /// Selects the stable post-upload descriptor layout from the exact usage
+    /// used to create the image. Sampled/storage images must remain in General;
+    /// publishing them as shader-read-only would make the descriptor contract
+    /// disagree with the image barrier recorded for the same generation.
+    /// </summary>
+    private static ImageLayout ResolveImportedUploadFinalLayout(
+        ImageUsageFlags usage,
+        Format format)
+    {
+        bool canSample =
+            (usage & (ImageUsageFlags.SampledBit |
+                      ImageUsageFlags.InputAttachmentBit)) != 0;
+        bool canStore = (usage & ImageUsageFlags.StorageBit) != 0;
+        if (canStore)
+            return ImageLayout.General;
+        if (canSample && VkFormatConversions.IsDepthStencilFormat(format))
+            return ImageLayout.DepthStencilReadOnlyOptimal;
+        if (canSample)
+            return ImageLayout.ShaderReadOnlyOptimal;
+
+        return ImageLayout.TransferSrcOptimal;
     }
 
     private ImageView CreateImportedUploadImageView(
@@ -630,12 +667,33 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
             RuntimeEngine.Rendering.Stats.Vram.RemoveTextureAllocation(committedBytes);
     }
 
-    internal void PublishSynchronizedImportedTextureUpload(VulkanImportedTexturePendingUpload pendingUpload)
+    internal EVulkanTextureDescriptorPublicationDisposition
+        PublishSynchronizedImportedTextureUpload(
+            VulkanImportedTexturePendingUpload pendingUpload,
+            bool requireExactDescriptorPublication,
+            out string? failureDetail)
+    {
+        lock (_imageStateLock)
+        {
+            return PublishSynchronizedImportedTextureUploadLocked(
+                pendingUpload,
+                requireExactDescriptorPublication,
+                out failureDetail);
+        }
+    }
+
+    private EVulkanTextureDescriptorPublicationDisposition
+        PublishSynchronizedImportedTextureUploadLocked(
+            VulkanImportedTexturePendingUpload pendingUpload,
+            bool requireExactDescriptorPublication,
+            out string? failureDetail)
     {
         if (!ReferenceEquals(pendingUpload.Texture, this))
             throw new InvalidOperationException("Imported texture upload publication target does not match the prepared texture wrapper.");
 
-        RetiredImageResources previousResources;
+        // Stage every allocation and activation step before the descriptor
+        // commit. After an ExactPublished result, only non-throwing field
+        // ownership transfers are allowed before the pending upload detaches.
         ImageView[] retiredAttachmentViews;
         if (_attachmentViews.Count > 0)
         {
@@ -649,13 +707,55 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
             retiredAttachmentViews = [];
         }
 
-        previousResources = new RetiredImageResources(
+        RetiredImageResources previousResources = new(
             _ownsImageMemory ? _image : default,
             _ownsImageMemory ? _memory : default,
             _view,
             retiredAttachmentViews,
             _sampler,
             _ownsImageMemory ? _allocatedVRAMBytes : 0);
+        TextureLayout publishedLayout = new(
+            pendingUpload.Extent,
+            Math.Max(pendingUpload.ArrayLayers, 1u),
+            Math.Max(pendingUpload.MipLevels, 1u));
+        if (!IsActive)
+        {
+            PreGenerated();
+            uint bindingId = CacheObject(this);
+            _bindingId = bindingId;
+            try
+            {
+                PostGenerated();
+            }
+            catch
+            {
+                BackendContext.Resources.BackendObjects.Remove<TTexture>(
+                    bindingId);
+                BackendContext.Resources.BackendObjects.Remove(Data);
+                _bindingId = null;
+                throw;
+            }
+        }
+
+        ulong publishedWrapperDescriptorGeneration =
+            unchecked(DescriptorGeneration + 1UL);
+        EVulkanTextureDescriptorPublicationDisposition descriptorPublication =
+            BackendContext.Resources.Descriptors.PublishGlobalMaterialTextureDescriptor(
+                Data,
+                pendingUpload.ImageView,
+                pendingUpload.Sampler,
+                pendingUpload.FinalLayout,
+                pendingUpload.Request.StreamingGeneration,
+                publishedWrapperDescriptorGeneration,
+                out VulkanBindlessMaterialTextureSlotTransfer retainedResourceTransfer,
+                out failureDetail);
+        if (descriptorPublication ==
+                EVulkanTextureDescriptorPublicationDisposition.Failed ||
+            requireExactDescriptorPublication && descriptorPublication !=
+                EVulkanTextureDescriptorPublicationDisposition.ExactPublished)
+        {
+            return descriptorPublication;
+        }
 
         _image = pendingUpload.Image;
         _memory = pendingUpload.Memory;
@@ -669,36 +769,76 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
         _mipLevelsOverride = null;
         _samplesOverride = null;
         _allocatedVRAMBytes = pendingUpload.CommittedBytes;
-        _layout = new TextureLayout(
-            pendingUpload.Extent,
-            Math.Max(pendingUpload.ArrayLayers, 1u),
-            Math.Max(pendingUpload.MipLevels, 1u));
+        _publishedStreamingGeneration =
+            pendingUpload.Request.StreamingGeneration;
+        _layout = publishedLayout;
         _imageStorageLayout = _layout;
         _imageStorageFormat = pendingUpload.Format;
         _layoutInitialized = true;
         Format = pendingUpload.Format;
         AspectFlags = pendingUpload.AspectMask;
+        Usage = pendingUpload.Usage;
         _attachmentViews.Clear();
-        _currentImageLayout = ImageLayout.ShaderReadOnlyOptimal;
+        _currentImageLayout = pendingUpload.FinalLayout;
         ResetAttachmentLayoutTracking();
+        MarkDescriptorDirty();
         MarkUploaded();
-        if (!IsActive)
-        {
-            PreGenerated();
-            _bindingId = CacheObject(this);
-            PostGenerated();
-        }
 
-        BackendContext.Resources.Descriptors.RefreshGlobalMaterialTextureDescriptorForPublishedTexture(Data);
-        BackendContext.Resources.Images.RetireOwnedResources(
-            in previousResources,
-            "VkImageBackedTexture.ImportedUpload.Publish");
-        if (previousResources.AllocatedVRAMBytes > 0)
-            RuntimeEngine.Rendering.Stats.Vram.RemoveTextureAllocation(previousResources.AllocatedVRAMBytes);
+        // From this point cleanup cannot release the newly published handles.
+        pendingUpload.DetachPublishedImageHandles();
+
+        bool retainedByImmutableDescriptor =
+            retainedResourceTransfer.IsValid &&
+            BackendContext.Resources.Descriptors
+                .CompleteGlobalMaterialTextureRetainedResourceTransfer(
+                    in retainedResourceTransfer,
+                    in previousResources);
+
+        try
+        {
+            if (!retainedByImmutableDescriptor &&
+                !retainedResourceTransfer.IsValid)
+            {
+                BackendContext.Resources.Images.RetireOwnedResources(
+                    in previousResources,
+                    "VkImageBackedTexture.ImportedUpload.Publish");
+                if (previousResources.AllocatedVRAMBytes > 0)
+                {
+                    RuntimeEngine.Rendering.Stats.Vram.RemoveTextureAllocation(
+                        previousResources.AllocatedVRAMBytes);
+                }
+            }
+            else if (!retainedByImmutableDescriptor)
+            {
+                // The native descriptor already committed. If its ownership
+                // transfer receipt cannot be completed, leaking the old
+                // allocation until device teardown is safer than destroying a
+                // resource an immutable slot may still reference.
+                Debug.VulkanWarning(
+                    "[Vulkan] Immutable descriptor resource transfer failed " +
+                    "for texture '{0}' slot={1} generation={2}; retaining " +
+                    "the prior allocation until device teardown.",
+                    Data.Name ?? "<unnamed>",
+                    retainedResourceTransfer.DescriptorIndex,
+                    retainedResourceTransfer.SlotGeneration);
+            }
+        }
+        catch (Exception exception)
+        {
+            // The new wrapper and descriptor generation are already committed.
+            // Never report a false upload failure that would release their
+            // handles. Retirement diagnostics remain explicit; device teardown
+            // still owns all unreclaimed device objects.
+            Debug.VulkanWarning(
+                "[Vulkan] Streamed texture generation committed for '{0}', " +
+                "but prior-generation retirement could not be queued: {1}",
+                Data.Name ?? "<unnamed>",
+                exception.Message);
+        }
 
         // Compatible content publication preserves binding identity. Command-chain
         // invalidation deliberately treats this class of update as a no-op.
-        pendingUpload.DetachPublishedImageHandles();
+        return descriptorPublication;
     }
 
     #endregion

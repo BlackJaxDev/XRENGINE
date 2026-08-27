@@ -31,22 +31,35 @@ internal sealed partial class VulkanTextureUploadService
     {
         if (!context.IsDeviceOperational)
         {
-            CancelSubmittedTransfers(context.Commands, "Vulkan device was lost while transfer uploads were pending");
+            const string reason =
+                "Vulkan device was lost while transfer uploads were pending.";
+            requiredManifest?.FailUnresolved(reason);
+            CancelSubmittedTransfers(context.Commands, reason);
             Interlocked.Exchange(ref _transferDrainScheduled, 0);
             return true;
         }
 
+        DrainTerminalFailedTransferRetirement(context);
+
         while (TryPeekSubmittedTransfer(requiredManifest, out VulkanSubmittedImportedTextureUpload? submitted) && submitted is not null)
         {
+            _ = requiredManifest?.MarkGpuSubmitted(submitted.Upload.Ticket);
             if (!context.Commands.TryPollImportedTextureTransfer(submitted, out bool complete, out string? pollFailure))
             {
-                if (!RemoveSubmittedTransfer(submitted))
-                    continue;
-
-                submitted.Upload.Texture.ReleasePreparedImportedUploadResources(submitted.Upload);
-                RecordState(submitted.Upload.Request, VulkanTextureUploadGenerationState.Failed, pollFailure ?? "transfer upload polling failed");
-                Interlocked.Increment(ref s_failedUploads);
-                InvokeTextureUploadError(submitted.Upload, new InvalidOperationException(pollFailure ?? "Transfer upload polling failed."));
+                string reason = pollFailure ??
+                    "Required texture transfer upload polling failed.";
+                requiredManifest?.Fail(submitted.Upload.Ticket, reason);
+                if (submitted.TryMarkTerminalFailure(reason))
+                {
+                    RecordState(
+                        submitted.Upload.Request,
+                        VulkanTextureUploadGenerationState.Failed,
+                        reason);
+                    Interlocked.Increment(ref s_failedUploads);
+                    InvokeTextureUploadError(
+                        submitted.Upload,
+                        new InvalidOperationException(reason));
+                }
                 continue;
             }
 
@@ -65,13 +78,60 @@ internal sealed partial class VulkanTextureUploadService
             if (!context.Commands.CompleteSubmittedImportedTextureUpload(submitted, out string? completeFailure))
             {
                 submitted.Upload.Texture.ReleasePreparedImportedUploadResources(submitted.Upload);
-                RecordState(submitted.Upload.Request, VulkanTextureUploadGenerationState.Failed, completeFailure ?? "transfer upload completion failed");
+                string reason = completeFailure ??
+                    "Required texture transfer upload completion failed.";
+                requiredManifest?.Fail(submitted.Upload.Ticket, reason);
+                RecordState(
+                    submitted.Upload.Request,
+                    VulkanTextureUploadGenerationState.Failed,
+                    reason);
                 Interlocked.Increment(ref s_failedUploads);
-                InvokeTextureUploadError(submitted.Upload, new InvalidOperationException(completeFailure ?? "Transfer upload completion failed."));
+                InvokeTextureUploadError(
+                    submitted.Upload,
+                    new InvalidOperationException(reason));
                 continue;
             }
 
-            PublishCompletedImportedTextureUpload(context.Resources, submitted.Upload, "_deviceContext.TransferQueue");
+            bool published;
+            string? publicationFailure;
+            try
+            {
+                published = PublishCompletedImportedTextureUpload(
+                    context.Resources,
+                    submitted.Upload,
+                    "_deviceContext.TransferQueue",
+                    requireExactDescriptorPublication:
+                        requiredManifest?.RequiresExactDescriptorPublication == true,
+                    out publicationFailure);
+            }
+            catch (Exception exception) when (requiredManifest is not null)
+            {
+                publicationFailure =
+                    $"Required texture descriptor publication failed: " +
+                    exception.Message;
+                requiredManifest.Fail(
+                    submitted.Upload.Ticket,
+                    publicationFailure);
+                RecordState(
+                    submitted.Upload.Request,
+                    VulkanTextureUploadGenerationState.Failed,
+                    publicationFailure);
+                Interlocked.Increment(ref s_failedUploads);
+                InvokeTextureUploadError(submitted.Upload, exception);
+                return true;
+            }
+
+            if (published)
+            {
+                _ = requiredManifest?.MarkReady(submitted.Upload.Ticket);
+            }
+            else
+            {
+                requiredManifest?.Fail(
+                    submitted.Upload.Ticket,
+                    publicationFailure ??
+                        "Required texture descriptor publication failed.");
+            }
             // Completion releases staging resources and publishes descriptors. Keep
             // that non-preemptible Vulkan work to one texture per render iteration;
             // draining a whole completed avatar batch here previously produced
@@ -132,7 +192,9 @@ internal sealed partial class VulkanTextureUploadService
             for (int index = 0; index < _pendingTransferUploads.Count; index++)
             {
                 VulkanSubmittedImportedTextureUpload candidate = _pendingTransferUploads[index];
-                if (requiredManifest is null || requiredManifest.Contains(candidate.Upload.Ticket))
+                if (!candidate.HasTerminalFailure &&
+                    (requiredManifest is null ||
+                     requiredManifest.Contains(candidate.Upload.Ticket)))
                 {
                     submitted = candidate;
                     break;
@@ -140,6 +202,50 @@ internal sealed partial class VulkanTextureUploadService
             }
             return submitted is not null;
         }
+    }
+
+    /// <summary>
+    /// Retires one terminal-failed submission only after its fence proves that
+    /// the GPU no longer owns its command buffer, staging buffers, or image.
+    /// Poll failures quarantine the native owner instead of freeing in-flight
+    /// resources; device-loss teardown destroys the enclosing device objects.
+    /// </summary>
+    private void DrainTerminalFailedTransferRetirement(
+        VulkanTextureUploadSchedulingContext context)
+    {
+        VulkanSubmittedImportedTextureUpload? submitted = null;
+        lock (_transferQueueSync)
+        {
+            for (int index = 0; index < _pendingTransferUploads.Count; index++)
+            {
+                VulkanSubmittedImportedTextureUpload candidate =
+                    _pendingTransferUploads[index];
+                if (!candidate.HasTerminalFailure)
+                    continue;
+
+                submitted = candidate;
+                break;
+            }
+        }
+
+        if (submitted is null ||
+            !context.Commands.TryPollImportedTextureTransfer(
+                submitted,
+                out bool complete,
+                out _) ||
+            !complete ||
+            !context.Commands.CompleteSubmittedImportedTextureUpload(
+                submitted,
+                out _))
+        {
+            return;
+        }
+
+        if (!RemoveSubmittedTransfer(submitted))
+            return;
+
+        submitted.Upload.Texture.ReleasePreparedImportedUploadResources(
+            submitted.Upload);
     }
 
     private bool RemoveSubmittedTransfer(VulkanSubmittedImportedTextureUpload submitted)
@@ -174,8 +280,14 @@ internal sealed partial class VulkanTextureUploadService
         for (int i = 0; i < submittedUploads.Length; i++)
         {
             VulkanSubmittedImportedTextureUpload submitted = submittedUploads[i];
-            commandRuntime.CompleteSubmittedImportedTextureUpload(submitted, out _);
-            submitted.Upload.Texture.ReleasePreparedImportedUploadResources(submitted.Upload);
+            bool retired = commandRuntime.CompleteSubmittedImportedTextureUpload(
+                submitted,
+                out _);
+            if (retired)
+            {
+                submitted.Upload.Texture.ReleasePreparedImportedUploadResources(
+                    submitted.Upload);
+            }
             RecordState(submitted.Upload.Request, VulkanTextureUploadGenerationState.Canceled, reason);
             Interlocked.Increment(ref s_canceledStaleUploads);
             InvokeTextureUploadCanceled(submitted.Upload);

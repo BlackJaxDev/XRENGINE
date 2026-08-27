@@ -194,12 +194,9 @@ internal partial class Program
 
             TraceBootstrapStep("BeforeCreateWindows.ApplyStartupProfilerPreferences", ApplyStartupProfilerPreferences);
 
-            // LoadSandboxSettings() replaces Engine.UserSettings with persisted values.
-            // Re-apply only the render/physics values that were actually present in JSONC.
-            if (UnitTestingWorldSettingsStore.ApplyUserSettingsOverrides(XREngine.Engine.UserSettings, RuntimeBootstrapState.Settings))
-                WriteBootstrapTrace($"Applied explicit unit-test user setting overrides: Render={XREngine.Engine.UserSettings.RenderLibrary}, Physics={XREngine.Engine.UserSettings.PhysicsLibrary}");
-            else
-                WriteBootstrapTrace("No unit-test RenderAPI/PhysicsAPI overrides were specified; keeping loaded user settings.");
+            // Unit-test values were registered before Engine.Run. Loading project or
+            // sandbox assets republishes the detached effective projections automatically.
+            WriteBootstrapTrace($"Unit-test session settings active: Render={XREngine.Engine.EffectiveSettings.PreferredRenderBackend}, Physics={XREngine.Engine.EffectiveSettings.PhysicsLibrary}");
             TraceBootstrapStep("BeforeCreateWindows.ApplyOpenXrRenderPacingOverride", () => ApplyOpenXrRenderPacingOverride(RuntimeBootstrapState.Settings));
             TraceBootstrapStep("BeforeCreateWindows.ApplyOpenXrPoseTimeOffsetOverride", ApplyOpenXrPoseTimeOffsetOverride);
             TraceBootstrapStep("BeforeCreateWindows.StartStartupFontPrewarm", StartStartupFontPrewarm);
@@ -1080,7 +1077,10 @@ internal partial class Program
             NetworkingType = ENetworkingType.Client,
         };
 
-        UnitTestingWorldSettingsStore.ApplyStartupOverrides(settings, unitTestSettings);
+        bool appliedUserSessionValues = UnitTestingWorldSettingsStore.ApplyUserSettingsSessionValues(unitTestSettings);
+        bool appliedGameSessionValues = UnitTestingWorldSettingsStore.ApplyGameSettingsSessionValues(unitTestSettings);
+        WriteBootstrapTrace(
+            $"Registered unit-test session settings before engine startup: User={appliedUserSessionValues}, Game={appliedGameSessionValues}.");
 
         // Allow overriding the window title for multi-instance local testing.
         // Example: launch a 2nd client with XRE_WINDOW_TITLE="XRE Editor (Client 2)".
@@ -1937,7 +1937,7 @@ internal partial class Program
             }
         }
 
-        var fallback = Engine.GameSettings ?? new GameStartupSettings();
+        var fallback = Engine.PersistentGameSettings ?? new GameStartupSettings();
         fallback.Name = Engine.CurrentProject?.ProjectName ?? fallback.Name;
         fallback.FilePath ??= startupPath;
         Engine.GameSettings = fallback;

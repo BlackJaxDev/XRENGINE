@@ -514,7 +514,8 @@ internal sealed unsafe partial class VulkanDeviceContext
             _deviceContext.MutableCapabilities._supportsDescriptorBindingPartiallyBound &&
             _deviceContext.MutableCapabilities._supportsDescriptorBindingVariableDescriptorCount &&
             _deviceContext.MutableCapabilities._supportsShaderSampledImageArrayNonUniformIndexing &&
-            _deviceContext.MutableCapabilities._supportsDescriptorBindingUpdateAfterBind;
+            _deviceContext.MutableCapabilities._supportsDescriptorBindingSampledImageUpdateAfterBind &&
+            _deviceContext.MutableCapabilities._supportsDescriptorBindingUpdateUnusedWhilePending;
 
         bool enableDescriptorIndexing = descriptorIndexingExtensionEnabled &&
             (descriptorIndexingRequestedByProfile || descriptorIndexingRequiredByStreamline) &&
@@ -876,10 +877,12 @@ internal sealed unsafe partial class VulkanDeviceContext
             PNext = null,
             RuntimeDescriptorArray = enableDescriptorIndexing,
             DescriptorBindingPartiallyBound = enableDescriptorIndexing,
-            DescriptorBindingSampledImageUpdateAfterBind = enableDescriptorIndexing,
+            DescriptorBindingSampledImageUpdateAfterBind = enableDescriptorIndexing && _deviceContext.MutableCapabilities._supportsDescriptorBindingSampledImageUpdateAfterBind,
             DescriptorBindingStorageImageUpdateAfterBind = enableDescriptorIndexing && _deviceContext.MutableCapabilities._supportsDescriptorBindingStorageImageUpdateAfterBind,
-            DescriptorBindingStorageBufferUpdateAfterBind = enableDescriptorIndexing,
-            DescriptorBindingUniformBufferUpdateAfterBind = enableDescriptorIndexing,
+            DescriptorBindingStorageBufferUpdateAfterBind = enableDescriptorIndexing && _deviceContext.MutableCapabilities._supportsDescriptorBindingStorageBufferUpdateAfterBind,
+            DescriptorBindingUniformBufferUpdateAfterBind = enableDescriptorIndexing && _deviceContext.MutableCapabilities._supportsDescriptorBindingUniformBufferUpdateAfterBind,
+            DescriptorBindingUpdateUnusedWhilePending = enableDescriptorIndexing &&
+                _deviceContext.MutableCapabilities._supportsDescriptorBindingUpdateUnusedWhilePending,
             DescriptorBindingVariableDescriptorCount = enableDescriptorIndexing,
             ShaderSampledImageArrayNonUniformIndexing = enableDescriptorIndexing,
         };
@@ -949,10 +952,12 @@ internal sealed unsafe partial class VulkanDeviceContext
             DescriptorIndexing = descriptorIndexingExtensionEnabled && supportedVulkan12Features.DescriptorIndexing,
             RuntimeDescriptorArray = enableDescriptorIndexing,
             DescriptorBindingPartiallyBound = enableDescriptorIndexing,
-            DescriptorBindingSampledImageUpdateAfterBind = enableDescriptorIndexing,
+            DescriptorBindingSampledImageUpdateAfterBind = enableDescriptorIndexing && _deviceContext.MutableCapabilities._supportsDescriptorBindingSampledImageUpdateAfterBind,
             DescriptorBindingStorageImageUpdateAfterBind = enableDescriptorIndexing && _deviceContext.MutableCapabilities._supportsDescriptorBindingStorageImageUpdateAfterBind,
-            DescriptorBindingStorageBufferUpdateAfterBind = enableDescriptorIndexing,
-            DescriptorBindingUniformBufferUpdateAfterBind = enableDescriptorIndexing,
+            DescriptorBindingStorageBufferUpdateAfterBind = enableDescriptorIndexing && _deviceContext.MutableCapabilities._supportsDescriptorBindingStorageBufferUpdateAfterBind,
+            DescriptorBindingUniformBufferUpdateAfterBind = enableDescriptorIndexing && _deviceContext.MutableCapabilities._supportsDescriptorBindingUniformBufferUpdateAfterBind,
+            DescriptorBindingUpdateUnusedWhilePending = enableDescriptorIndexing &&
+                _deviceContext.MutableCapabilities._supportsDescriptorBindingUpdateUnusedWhilePending,
             DescriptorBindingVariableDescriptorCount = enableDescriptorIndexing,
             ShaderSampledImageArrayNonUniformIndexing = enableDescriptorIndexing,
             TimelineSemaphore = enableTimelineSemaphoreFeature,
@@ -1488,7 +1493,7 @@ internal sealed unsafe partial class VulkanDeviceContext
                 _deviceContext.MutableCapabilities._supportsDescriptorBindingPartiallyBound,
                 _deviceContext.MutableCapabilities._supportsDescriptorBindingVariableDescriptorCount,
                 _deviceContext.MutableCapabilities._supportsShaderSampledImageArrayNonUniformIndexing,
-                _deviceContext.MutableCapabilities._supportsDescriptorBindingUpdateAfterBind);
+                _deviceContext.MutableCapabilities._supportsDescriptorBindingSampledImageUpdateAfterBind);
         }
             else if (enableDescriptorIndexing && !_deviceContext.MutableCapabilities._supportsDescriptorBindingStorageImageUpdateAfterBind)
             {

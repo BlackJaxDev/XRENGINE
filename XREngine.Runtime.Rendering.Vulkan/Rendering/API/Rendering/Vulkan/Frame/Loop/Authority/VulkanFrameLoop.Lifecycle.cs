@@ -215,6 +215,10 @@ internal sealed partial class VulkanFrameLoop
         RunCleanupStep("recorded texture upload publications", () => _commandRuntime.CancelRecordedTextureUploadPublications(shutdownReason), failures);
         RunCleanupStep("pipeline compile queue", _resourceRuntime.PipelineManager.DrainPipelineCompileQueueForShutdown, failures);
         RunCleanupStep(
+            "accepted frame plans",
+            _acceptedFramePlans.ResetAll,
+            failures);
+        RunCleanupStep(
             "resident draw templates",
             _resourceRuntime.ResidentDrawTemplates.Clear,
             failures);

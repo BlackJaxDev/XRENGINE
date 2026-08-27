@@ -48,6 +48,50 @@ internal sealed unsafe class VulkanPresentationlessTargetDriver :
     public double LastCompletedGpuFrameNanoseconds { get; private set; }
     public string PresentationDescription => "Engine-owned presentationless image ring; no Vulkan acquire or present operation.";
 
+    public VulkanExplicitFrameTargetPreview PreviewNextFrameTarget()
+    {
+        VulkanTargetOutputContext renderer = RequireTargetContext();
+        int slotIndex = _nextSlot;
+        VulkanPresentationlessFrameSlot slot = _slots[slotIndex];
+        Fence slotFence = slot.Fence;
+        ThrowIfDeviceFailure(
+            renderer.VulkanApi.WaitForFences(
+                renderer.Device,
+                1,
+                in slotFence,
+                true,
+                ulong.MaxValue),
+            "wait for non-acquiring presentationless frame-slot preview");
+        renderer.NotifyVulkanFenceCompleted(slotFence);
+        uint frameSlotIndex = checked((uint)slotIndex);
+        Format colorFormat = VulkanFixedOutputFormatResolver.ResolveColorFormat(
+            _output.ColorFormat);
+        Format depthFormat = VulkanFixedOutputFormatResolver.ResolveDepthFormat(
+            _output.DepthFormat);
+        RenderFrameOutputDescription output = new(
+            ExecutionMode,
+            _output,
+            TargetGeneration,
+            frameSlotIndex);
+        return new VulkanExplicitFrameTargetPreview(
+            output,
+            TargetGeneration,
+            frameSlotIndex,
+            new SwapchainRecordingTarget(
+                slot.ColorImage,
+                slot.ColorView,
+                colorFormat,
+                new Extent2D(_output.Width, _output.Height),
+                slot.DepthImage,
+                slot.DepthView,
+                depthFormat,
+                VulkanFixedOutputFormatResolver.DepthAspect(depthFormat),
+                _colorInitialized[slotIndex]
+                    ? ImageLayout.TransferSrcOptimal
+                    : ImageLayout.Undefined,
+                _colorInitialized[slotIndex]));
+    }
+
     public string[] GetRequiredInstanceExtensions() => [];
     public void CreateInstanceResources(VulkanTargetSurfaceAuthority surfaces) { }
 

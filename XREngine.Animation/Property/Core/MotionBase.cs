@@ -55,6 +55,9 @@ namespace XREngine.Animation
         internal AnimationMember[] AnimatedMembersArray { get; set; } = [];
 
         [MemoryPackIgnore]
+        internal int UnityHumanoidContributionCapacity { get; private set; }
+
+        [MemoryPackIgnore]
         public Dictionary<string, object?> AnimationValues => _animationValues;
         [MemoryPackIgnore]
         public Dictionary<string, AnimationMember> AnimatedCurves => _animatedCurves;
@@ -72,6 +75,49 @@ namespace XREngine.Animation
                 clip.ResetUnityHumanoidEvaluationState();
             _animatedCurves.Clear();
             AnimatedMembersArray = [];
+        }
+
+        /// <summary>
+        /// Preallocates the largest Body/root contribution frame this motion can emit.
+        /// This is graph setup work and must finish before animation ticks begin.
+        /// </summary>
+        internal int PrepareUnityHumanoidContributionCapacity()
+        {
+            int capacity = this switch
+            {
+                AnimationClip clip when clip.HasRootMotion
+                    && clip.UnityHumanoidRootMotionSettings is not null => 1,
+                BlendTree1D tree => SumChildContributionCapacity(tree.Children),
+                BlendTree2D tree => SumChildContributionCapacity(tree.Children),
+                BlendTreeDirect tree => SumChildContributionCapacity(tree.Children),
+                _ => 0,
+            };
+            UnityHumanoidContributionCapacity = capacity;
+            return capacity;
+        }
+
+        private static int SumChildContributionCapacity(IEnumerable<BlendTree1D.Child> children)
+        {
+            int capacity = 0;
+            foreach (BlendTree1D.Child child in children)
+                capacity += child.Motion?.PrepareUnityHumanoidContributionCapacity() ?? 0;
+            return capacity;
+        }
+
+        private static int SumChildContributionCapacity(IEnumerable<BlendTree2D.Child> children)
+        {
+            int capacity = 0;
+            foreach (BlendTree2D.Child child in children)
+                capacity += child.Motion?.PrepareUnityHumanoidContributionCapacity() ?? 0;
+            return capacity;
+        }
+
+        private static int SumChildContributionCapacity(IEnumerable<BlendTreeDirect.Child> children)
+        {
+            int capacity = 0;
+            foreach (BlendTreeDirect.Child child in children)
+                capacity += child.Motion?.PrepareUnityHumanoidContributionCapacity() ?? 0;
+            return capacity;
         }
 
         public virtual void SetDefaults()
@@ -168,7 +214,7 @@ namespace XREngine.Animation
                 string brokenAt = string.IsNullOrEmpty(path) ? member.MemberName : $"{path}{member.MemberName}";
                 // Log GetComponent/GetComponentInHierarchy failures (HumanoidComponent, etc), not FindDescendantByName (blendshape mesh paths)
                 if (member.MemberName == "GetComponent" || member.MemberName == "GetComponentInHierarchy")
-                    LogWarningOnce($"[Animation] Broken animation path at '{brokenAt}' (segment '{member.MemberName}') on '{prevObject.GetType().Name}'. Humanoid animation will not work.");
+                    LogWarningOnce($"[Animation] Broken animation path at '{brokenAt}' (segment '{member.MemberName}') on '{prevObject.GetType().Name}'. Downstream animation bindings under this lookup will not be applied.");
             }
 
             if (member.MemberNotFound)
@@ -581,6 +627,54 @@ namespace XREngine.Animation
         }
 
         /// <summary>
+        /// Samples one state-owned clock through the motion graph. Child speed
+        /// magnitude is represented by the resolved state duration; only its sign
+        /// and the child cycle offset alter normalized phase at each occurrence.
+        /// </summary>
+        internal void SeekPlaybackFromNormalizedStateTime(double normalizedTime)
+            => SeekPlaybackFromNormalizedStateTime(this, normalizedTime);
+
+        private static void SeekPlaybackFromNormalizedStateTime(MotionBase motion, double normalizedTime)
+        {
+            switch (motion)
+            {
+                case AnimationClip clip:
+                    clip.SeekClipPlaybackFromNormalizedStateTime(normalizedTime);
+                    break;
+                case BlendTree1D tree1D:
+                    foreach (BlendTree1D.Child child in tree1D.Children)
+                        if (child.Motion is not null)
+                            SeekPlaybackFromNormalizedStateTime(
+                                child.Motion,
+                                ResolveChildNormalizedPhase(
+                                    normalizedTime,
+                                    child.Speed,
+                                    child.CycleOffset));
+                    break;
+                case BlendTree2D tree2D:
+                    foreach (BlendTree2D.Child child in tree2D.Children)
+                        if (child.Motion is not null)
+                            SeekPlaybackFromNormalizedStateTime(
+                                child.Motion,
+                                ResolveChildNormalizedPhase(
+                                    normalizedTime,
+                                    child.Speed,
+                                    child.CycleOffset));
+                    break;
+                case BlendTreeDirect directTree:
+                    foreach (BlendTreeDirect.Child child in directTree.Children)
+                        if (child.Motion is not null)
+                            SeekPlaybackFromNormalizedStateTime(
+                                child.Motion,
+                                ResolveChildNormalizedPhase(
+                                    normalizedTime,
+                                    child.Speed,
+                                    child.CycleOffset));
+                    break;
+            }
+        }
+
+        /// <summary>
         /// Stops every property animation owned by this motion.
         /// </summary>
         internal void StopPlayback()
@@ -658,6 +752,28 @@ namespace XREngine.Animation
             => deltaTicks == 0L || !float.IsFinite(speed) || speed == 0.0f
                 ? 0L
                 : (long)Math.Round(deltaTicks * (double)speed);
+
+        /// <summary>
+        /// Resolves a Unity blend-tree child's synchronized normalized phase.
+        /// Positive speed magnitude changes the parent state's effective duration
+        /// exactly once; negative speed reverses phase and zero speed pauses it.
+        /// </summary>
+        protected static double ResolveChildNormalizedPhase(
+            double normalizedTime,
+            float speed,
+            float cycleOffset)
+        {
+            double offset = float.IsFinite(cycleOffset) ? cycleOffset : 0.0;
+            if (!double.IsFinite(normalizedTime)
+                || !float.IsFinite(speed)
+                || MathF.Abs(speed) <= float.Epsilon)
+                return offset;
+
+            double phase = normalizedTime * Math.Sign(speed) + offset;
+            return double.IsFinite(phase)
+                ? phase
+                : Math.CopySign(double.MaxValue, phase);
+        }
 
         protected static float StopwatchTicksToSeconds(long deltaTicks)
             => (float)(deltaTicks / (double)Stopwatch.Frequency);

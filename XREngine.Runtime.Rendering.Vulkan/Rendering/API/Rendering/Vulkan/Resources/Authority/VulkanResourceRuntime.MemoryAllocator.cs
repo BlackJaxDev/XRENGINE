@@ -59,7 +59,10 @@ internal sealed partial class VulkanResourceRuntime
         }
 
         deviceContext.ObserveNativeResult("vkAllocateMemory.TargetBufferFallback", result);
-        throw new VulkanOutOfMemoryException($"Vulkan target buffer allocation failed ({result}). Requested={requiredProperties}", requiredProperties);
+        throw new VulkanOutOfMemoryException(
+            $"Vulkan target buffer allocation failed ({result}). Requested={requiredProperties}",
+            requiredProperties,
+            result);
     }
 
     internal VulkanMemoryAllocation AllocateImageMemoryWithFallback(
@@ -78,7 +81,10 @@ internal sealed partial class VulkanResourceRuntime
         }
 
         deviceContext.ObserveNativeResult("vkAllocateMemory.TargetImageFallback", result);
-        throw new VulkanOutOfMemoryException($"Vulkan target image allocation failed ({result}). Requested={requiredProperties}", requiredProperties);
+        throw new VulkanOutOfMemoryException(
+            $"Vulkan target image allocation failed ({result}). Requested={requiredProperties}",
+            requiredProperties,
+            result);
     }
 
     internal bool TryAllocateImageMemoryWithFallback(

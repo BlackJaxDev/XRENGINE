@@ -45,6 +45,70 @@ namespace XREngine.Animation
         [Browsable(false)]
         public bool LoopsAfterLastKey => _postInfinityMode == EKeyframeInfinityMode.Loop;
 
+        /// <summary>
+        /// Resolves an arbitrary sample time against the authored key range.
+        /// The returned velocity scale is negative on the reflected half of a
+        /// ping-pong cycle and zero when the result was clamped.
+        /// </summary>
+        public float ResolveSampleTime(float second, out float velocityScale, out bool clamped)
+        {
+            velocityScale = 1.0f;
+            clamped = false;
+
+            if (FirstKey is null || LastKey is null)
+                return 0.0f;
+
+            float first = FirstKey.Second;
+            float last = LastKey.Second;
+            if (!float.IsFinite(second))
+            {
+                clamped = true;
+                velocityScale = 0.0f;
+                return first;
+            }
+
+            if (second >= first && second <= last)
+                return second;
+
+            EKeyframeInfinityMode mode = second < first ? PreInfinityMode : PostInfinityMode;
+            float duration = last - first;
+            if (duration <= 0.0f || mode is EKeyframeInfinityMode.Default
+                or EKeyframeInfinityMode.Once
+                or EKeyframeInfinityMode.Clamp
+                or EKeyframeInfinityMode.ClampForever)
+            {
+                clamped = true;
+                velocityScale = 0.0f;
+                return second < first ? first : last;
+            }
+
+            double relative = second - first;
+            if (mode == EKeyframeInfinityMode.Loop)
+                return first + PositiveModulo(relative, duration);
+
+            if (mode == EKeyframeInfinityMode.PingPong)
+            {
+                float cycle = PositiveModulo(relative, duration * 2.0f);
+                if (cycle <= duration)
+                    return first + cycle;
+
+                velocityScale = -1.0f;
+                return last - (cycle - duration);
+            }
+
+            clamped = true;
+            velocityScale = 0.0f;
+            return second < first ? first : last;
+        }
+
+        private static float PositiveModulo(double value, float modulus)
+        {
+            double remainder = value % modulus;
+            if (remainder < 0.0)
+                remainder += modulus;
+            return (float)remainder;
+        }
+
         public void SetLength(float seconds, bool stretch, bool notifyLengthChanged = true, bool notifyChanged = true)
         {
             float prevLength = LengthInSeconds;

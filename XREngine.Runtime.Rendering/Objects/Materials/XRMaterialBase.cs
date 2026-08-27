@@ -1,7 +1,9 @@
+using MemoryPack;
 using XREngine.Extensions;
 using System.ComponentModel;
 using System.Numerics;
 using XREngine.Data.Rendering;
+using XREngine.Data.Core;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.Models.Materials.Shaders.Parameters;
 using YamlDotNet.Serialization;
@@ -43,8 +45,8 @@ namespace XREngine.Rendering
         /// Typed, generation-owned numeric binding publishers eligible for
         /// immutable backend capture and frequency-scoped reuse.
         /// </summary>
-        [Browsable(false)]
-        [YamlIgnore]
+        [Browsable(false), RuntimeOnly, YamlIgnore, MemoryPackIgnore]
+        [field: RuntimeOnly, YamlIgnore, MemoryPackIgnore]
         public RenderBindingPublisherCollection BindingPublishers { get; } = new();
 
         public event Action<XRMaterialBase, XRRenderProgram>? SettingShadowUniforms;

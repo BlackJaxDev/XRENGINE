@@ -54,36 +54,22 @@ namespace XREngine.Editor.Mcp
         /// Modifies a property on <see cref="GameStartupSettings"/> (or its nested <see cref="BuildSettings"/>).
         /// </summary>
         [XRMcp(Name = "set_game_setting", Permission = McpPermissionLevel.Mutate, PermissionReason = "Modifies game startup settings.")]
-        [Description("Set a game startup setting by property name.")]
+        [Description("Set a game startup setting by property name or dotted path, persistently or for the active process only.")]
         public static Task<McpToolResponse> SetGameSettingAsync(
             McpToolContext context,
-            [McpName("property_name"), Description("Property name (case-insensitive). Prefix with 'BuildSettings.' to target build settings.")]
+            [McpName("property_name"), Description("Property name or dotted path (case-insensitive), e.g. 'BuildSettings.Configuration'.")]
             string propertyName,
             [McpName("value"), Description("JSON value to assign to the property.")]
-            object value)
+            object value,
+            [McpName("session_only"), Description("When true, apply only to the active process without dirtying or saving game settings.")]
+            bool sessionOnly = false)
         {
             if (string.IsNullOrWhiteSpace(propertyName))
                 return Task.FromResult(new McpToolResponse("property_name is required.", isError: true));
 
-            // Support 'BuildSettings.PropertyName' for nested build settings
-            XRBase target;
-            string actualPropertyName;
-
-            if (propertyName.StartsWith("BuildSettings.", StringComparison.OrdinalIgnoreCase))
-            {
-                if (Engine.GameSettings.BuildSettings is null)
-                    return Task.FromResult(new McpToolResponse("BuildSettings is not initialized.", isError: true));
-
-                target = Engine.GameSettings.BuildSettings;
-                actualPropertyName = propertyName["BuildSettings.".Length..];
-            }
-            else
-            {
-                target = Engine.GameSettings;
-                actualPropertyName = propertyName;
-            }
-
-            return SetSettingsProperty(target, actualPropertyName, value);
+            return sessionOnly
+                ? SetSessionSettingsProperty<GameStartupSettings>(Engine.GameSettings, propertyName, value, "game setting")
+                : SetSettingsProperty(Engine.PersistentGameSettings, propertyName, value);
         }
 
         // ───────────────────────────────────────────────────────────────────
@@ -91,10 +77,10 @@ namespace XREngine.Editor.Mcp
         // ───────────────────────────────────────────────────────────────────
 
         /// <summary>
-        /// Reads the effective editor preferences (global + project overrides merged).
+        /// Reads the effective editor preferences (global + project + session overrides merged).
         /// </summary>
         [XRMcp(Name = "get_editor_preferences", Permission = McpPermissionLevel.ReadOnly)]
-        [Description("Read all editor preferences (effective view: global base + project overrides merged).")]
+        [Description("Read all editor preferences (effective view: global base + project and process-local session overrides merged).")]
         public static Task<McpToolResponse> GetEditorPreferencesAsync(
             McpToolContext context,
             [McpName("category"), Description("Optional category filter (e.g. 'MCP Server', 'Theme'). Omit for all.")]
@@ -121,6 +107,7 @@ namespace XREngine.Editor.Mcp
                     string name = ((dynamic)prop).name;
                     var overrideProp = overridesType.GetProperty(name, flags);
                     bool isOverridden = false;
+                    bool isSessionOverridden = Engine.HasSessionSettingAtOrBelow<EditorPreferences>(name);
 
                     // Check if the overrides object has a non-default value for this property
                     if (overrideProp is not null && overrideProp.CanRead)
@@ -141,7 +128,9 @@ namespace XREngine.Editor.Mcp
                     sourceInfo.Add(new
                     {
                         name,
-                        source = isOverridden ? "project_override" : "global_default"
+                        source = isSessionOverridden
+                            ? "session_override"
+                            : isOverridden ? "project_override" : "global_default"
                     });
                 }
             }
@@ -161,22 +150,91 @@ namespace XREngine.Editor.Mcp
         /// Modifies an editor preference on the <see cref="Engine.GlobalEditorPreferences"/> object.
         /// </summary>
         [XRMcp(Name = "set_editor_preference", Permission = McpPermissionLevel.Mutate, PermissionReason = "Modifies editor preferences.")]
-        [Description("Set an editor preference by property name or dotted path (writes to the global default).")]
+        [Description("Set an editor preference by property name or dotted path, either persistently or for this editor session only.")]
         public static Task<McpToolResponse> SetEditorPreferenceAsync(
             McpToolContext context,
             [McpName("property_name"), Description("Property name or dotted path (case-insensitive), e.g. 'Debug.RenderMesh3DBounds'.")]
             string propertyName,
             [McpName("value"), Description("JSON value to assign.")]
-            object value)
+            object value,
+            [McpName("session_only"), Description("When true, apply only to the active process without dirtying or saving preference assets.")]
+            bool sessionOnly = false)
         {
             if (string.IsNullOrWhiteSpace(propertyName))
                 return Task.FromResult(new McpToolResponse("property_name is required.", isError: true));
+
+            if (sessionOnly)
+                return SetSessionSettingsProperty<EditorPreferences>(
+                    Engine.EditorPreferences,
+                    propertyName,
+                    value,
+                    "editor preference");
 
             Task<McpToolResponse> result = SetSettingsProperty(Engine.GlobalEditorPreferences, propertyName, value);
             if (!result.Result.IsError)
                 Engine.RefreshEffectiveEditorPreferences(propertyName);
 
             return result;
+        }
+
+        private static Task<McpToolResponse> SetSessionSettingsProperty<TSettings>(
+            TSettings effectiveRoot,
+            string propertyPath,
+            object value,
+            string settingLabel)
+            where TSettings : XRBase
+        {
+            if (!TryResolvePropertyPathTarget(
+                effectiveRoot,
+                propertyPath,
+                out XRBase? owner,
+                out string propertyName,
+                out string resolvedPath,
+                out McpToolResponse? pathError))
+            {
+                return Task.FromResult(pathError!);
+            }
+
+            Type ownerType = owner!.GetType();
+            const BindingFlags flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.IgnoreCase;
+            PropertyInfo? property = ownerType.GetProperty(propertyName, flags);
+            if (property is null || !property.CanWrite)
+            {
+                return Task.FromResult(new McpToolResponse(
+                    $"Writable property '{propertyName}' not found on '{ownerType.Name}'.",
+                    isError: true));
+            }
+
+            if (!McpToolRegistry.TryConvertValue(value, property.PropertyType, out object? converted, out string? conversionError))
+            {
+                return Task.FromResult(new McpToolResponse(
+                    conversionError ?? $"Unable to convert value for '{property.Name}'.",
+                    isError: true));
+            }
+
+            string normalizedPath = Engine.SetSessionSetting<TSettings>(resolvedPath, converted);
+            _ = TryResolvePropertyPathTarget(
+                effectiveRoot is EditorPreferences ? Engine.EditorPreferences : Engine.GameSettings,
+                normalizedPath,
+                out XRBase? effectiveOwner,
+                out string effectivePropertyName,
+                out _,
+                out _);
+            object? effectiveValue = effectiveOwner?
+                .GetType()
+                .GetProperty(effectivePropertyName, BindingFlags.Instance | BindingFlags.Public | BindingFlags.IgnoreCase)?
+                .GetValue(effectiveOwner);
+            return Task.FromResult(new McpToolResponse(
+                $"Set session-only {settingLabel} '{normalizedPath}'.",
+                new
+                {
+                    settingsType = typeof(TSettings).FullName,
+                    propertyPath = normalizedPath,
+                    property = property.Name,
+                    propertyType = FormatTypeName(property.PropertyType),
+                    value = ToMcpValue(effectiveValue),
+                    sessionOnly = true,
+                }));
         }
 
         // ───────────────────────────────────────────────────────────────────
@@ -201,7 +259,7 @@ namespace XREngine.Editor.Mcp
             // User settings
             if (all || string.Equals(section, "user", StringComparison.OrdinalIgnoreCase))
             {
-                var userSettings = Engine.UserSettings;
+                var userSettings = Engine.EffectiveUserSettings;
                 result["userSettings"] = new
                 {
                     settingsType = userSettings.GetType().FullName ?? userSettings.GetType().Name,

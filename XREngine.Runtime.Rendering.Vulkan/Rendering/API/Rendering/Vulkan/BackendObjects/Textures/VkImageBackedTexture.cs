@@ -47,6 +47,9 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
 
     private readonly object _imageStateLock = new();
 
+    object IVkImageDescriptorSource.DescriptorSnapshotSyncRoot
+        => _imageStateLock;
+
     /// <summary>Layout tracking for framebuffer writes that touch only one mip/layer at a time.</summary>
     private readonly Dictionary<AttachmentLayoutKey, ImageLayout> _attachmentLayouts = new();
 
@@ -104,6 +107,12 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
 
     /// <summary>Tracks the currently allocated GPU memory size for this texture in bytes.</summary>
     private long _allocatedVRAMBytes = 0;
+
+    /// <summary>
+    /// Exact imported-texture generation represented by the current image,
+    /// view, sampler, and layout tuple. Zero identifies non-streamed content.
+    /// </summary>
+    private long _publishedStreamingGeneration;
 
     #endregion
 
@@ -578,7 +587,8 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
             DescriptorGeneration,
             trackedLayout,
             _physicalGroup is not null,
-            ready);
+            ready,
+            _publishedStreamingGeneration);
         return ready;
     }
 

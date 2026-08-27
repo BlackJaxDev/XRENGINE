@@ -52,6 +52,54 @@ internal sealed unsafe class VulkanHeadlessWsiTargetDriver :
     public double LastCompletedGpuFrameNanoseconds => 0;
     public string PresentationDescription => "VK_EXT_headless_surface acquire/present; presentation is a headless WSI no-op.";
 
+    public VulkanExplicitFrameTargetPreview PreviewNextFrameTarget()
+    {
+        VulkanTargetOutputContext renderer = RequireTargetContext();
+        int slotIndex = _nextSlot;
+        VulkanHeadlessWsiFrameSlot slot = _slots[slotIndex];
+        Fence slotFence = slot.Fence;
+        ThrowIfDeviceFailure(
+            renderer.VulkanApi.WaitForFences(
+                renderer.Device,
+                1,
+                in slotFence,
+                true,
+                ulong.MaxValue),
+            "wait for non-acquiring headless WSI frame-slot preview");
+        renderer.NotifyVulkanFenceCompleted(slotFence);
+        uint frameSlotIndex = checked((uint)slotIndex);
+        if (_images.Length == 0 || _imageViews.Length == 0)
+            throw new InvalidOperationException(
+                "The headless WSI target has no symbolic swapchain image for pipeline compatibility.");
+        Format colorFormat = VulkanFixedOutputFormatResolver.ResolveColorFormat(
+            _output.ColorFormat);
+        Format depthFormat = VulkanFixedOutputFormatResolver.ResolveDepthFormat(
+            _output.DepthFormat);
+        RenderFrameOutputDescription output = new(
+            ExecutionMode,
+            _output,
+            TargetGeneration,
+            frameSlotIndex,
+            ViewIndex: 0u,
+            RenderFrameOutputCapabilities.Presentation |
+            RenderFrameOutputCapabilities.ExternallyOwnedImages);
+        return new VulkanExplicitFrameTargetPreview(
+            output,
+            TargetGeneration,
+            frameSlotIndex,
+            new SwapchainRecordingTarget(
+                _images[0],
+                _imageViews[0],
+                colorFormat,
+                new Extent2D(_output.Width, _output.Height),
+                slot.DepthImage,
+                slot.DepthView,
+                depthFormat,
+                VulkanFixedOutputFormatResolver.DepthAspect(depthFormat),
+                ImageLayout.Undefined,
+                _imagePresented.Length > 0 && _imagePresented[0]));
+    }
+
     public string[] GetRequiredInstanceExtensions()
         => [KhrSurface.ExtensionName, VulkanHeadlessWsiSupport.ExtensionName];
 

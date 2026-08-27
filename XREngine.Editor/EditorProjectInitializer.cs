@@ -97,12 +97,12 @@ internal static class EditorProjectInitializer
     {
         Directory.CreateDirectory(Engine.Assets.GameAssetsPath);
 
-        Engine.GameSettings ??= new GameStartupSettings();
-        Engine.GameSettings.Name = projectName;
-        Engine.GameSettings.FilePath ??= Path.Combine(Engine.Assets.GameAssetsPath, StartupAssetFileName);
-        Engine.Assets.Save(Engine.GameSettings, bypassJobThread: true);
+        GameStartupSettings settings = Engine.PersistentGameSettings;
+        settings.Name = projectName;
+        settings.FilePath ??= Path.Combine(Engine.Assets.GameAssetsPath, StartupAssetFileName);
+        Engine.Assets.Save(settings, bypassJobThread: true);
 
-        output.WriteLine($"Created startup asset at '{Engine.GameSettings.FilePath}'.");
+        output.WriteLine($"Created startup asset at '{settings.FilePath}'.");
     }
 
     private static void GenerateProjectBuildFiles(string projectDirectory, string projectName, TextWriter output)

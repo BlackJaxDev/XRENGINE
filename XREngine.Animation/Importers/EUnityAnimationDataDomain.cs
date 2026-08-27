@@ -11,6 +11,7 @@ public enum EUnityAnimationDataDomain
     HumanoidBody,
     HumanoidIK,
     RootMotionSettings,
+    ClipMetadata,
     AnimationEvent,
     ObjectReference,
     SourceEncoding,

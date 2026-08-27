@@ -31,7 +31,6 @@ internal sealed class VulkanMeshOperationRequestQueue
     internal const int UiCapacity = 256;
     internal const int MainSceneCapacity = 1536;
     internal const int ShadowCapacity = 2048;
-    private const int PublicationLeaseCapacity = Capacity;
     private static readonly int BackgroundSchedulingCapacity =
         ResolveBackgroundSchedulingCapacity();
     private readonly VulkanMeshRenderRequest[] _entries = new VulkanMeshRenderRequest[Capacity];
@@ -39,8 +38,10 @@ internal sealed class VulkanMeshOperationRequestQueue
     private readonly object _gate = new();
     private readonly ThreadLocal<ThreadCaptureState> _threadCapture =
         new(static () => new ThreadCaptureState(), trackAllValues: true);
-    private readonly CanonicalPublicationLeaseBatch _publishedPublicationLeases = new();
-    private readonly CanonicalPublicationLeaseBatch _drainedPublicationLeases = new();
+    private readonly VulkanCanonicalPublicationPinSet _publishedPublicationPins =
+        new(Capacity);
+    private readonly VulkanCanonicalPublicationPinSet _drainedPublicationPins =
+        new(Capacity);
     private int _head;
     private int _count;
     private int _framePlanCapacityExceededCount;
@@ -56,19 +57,32 @@ internal sealed class VulkanMeshOperationRequestQueue
                 "The Vulkan mesh-operation request queue capture state is unavailable.");
         if (capture.Destination is { } destination)
         {
-            if (capture.Failed || capture.Count == destination.Length)
+            if (capture.Failed)
+                return EMeshRequestScheduleResult.TerminalFailure;
+            if (capture.Count == destination.Length)
             {
-                capture.Failed = true;
-                return EMeshRequestScheduleResult.Backpressured;
-            }
-            if (!capture.TryRetainPublication(
-                    request.CanonicalDrawIdentitySnapshot))
-            {
-                capture.Failed = true;
+                capture.RecordCapacityFailure(
+                    ResolveLane(in request),
+                    destination.Length);
                 return EMeshRequestScheduleResult.TerminalFailure;
             }
 
-            destination[capture.Count++] = request;
+            VulkanMeshRenderRequest acceptedRequest = request;
+            if (!capture.TryRetainPublication(
+                    request.CanonicalDrawIdentitySnapshot))
+            {
+                // The canonical bridge is optional here for the same reason it
+                // is optional on the shared queue: the immutable request can
+                // still take the legacy materialization path without losing
+                // accepted foreground content.
+                acceptedRequest = request with
+                {
+                    CanonicalDrawIdentitySnapshot = default,
+                    ResidentTemplateHandle = default,
+                };
+            }
+
+            destination[capture.Count++] = acceptedRequest;
             return EMeshRequestScheduleResult.Scheduled;
         }
 
@@ -84,7 +98,7 @@ internal sealed class VulkanMeshOperationRequestQueue
             }
 
             VulkanMeshRenderRequest acceptedRequest = request;
-            if (!_publishedPublicationLeases.TryRetain(
+            if (!_publishedPublicationPins.TryRetain(
                     request.CanonicalDrawIdentitySnapshot))
             {
                 // The canonical publication bridge is an optimization. Preserve
@@ -115,16 +129,19 @@ internal sealed class VulkanMeshOperationRequestQueue
     /// </summary>
     internal int CaptureTo(
         Action emitRequests,
-        VulkanMeshRenderRequest[] destination)
+        VulkanMeshRenderRequest[] destination,
+        out VulkanMeshRequestLaneCapacityFailure capacityFailure)
     {
         ArgumentNullException.ThrowIfNull(emitRequests);
         ArgumentNullException.ThrowIfNull(destination);
+        capacityFailure = default;
 
         ThreadCaptureState capture = BeginThreadCapture(destination);
         bool completed = false;
         try
         {
             emitRequests();
+            capacityFailure = capture.CapacityFailure;
             completed = !capture.Failed;
             return completed ? capture.Count : -1;
         }
@@ -140,16 +157,19 @@ internal sealed class VulkanMeshOperationRequestQueue
     internal int CaptureTo(
         IOpenXrEyeFrameOpEmitter emitter,
         in OpenXrEyeFrameOpEmission emission,
-        VulkanMeshRenderRequest[] destination)
+        VulkanMeshRenderRequest[] destination,
+        out VulkanMeshRequestLaneCapacityFailure capacityFailure)
     {
         ArgumentNullException.ThrowIfNull(emitter);
         ArgumentNullException.ThrowIfNull(destination);
+        capacityFailure = default;
 
         ThreadCaptureState capture = BeginThreadCapture(destination);
         bool completed = false;
         try
         {
             emitter.Emit(in emission);
+            capacityFailure = capture.CapacityFailure;
             completed = !capture.Failed;
             return completed ? capture.Count : -1;
         }
@@ -174,6 +194,7 @@ internal sealed class VulkanMeshOperationRequestQueue
         capture.Destination = destination;
         capture.Count = 0;
         capture.Failed = false;
+        capture.CapacityFailure = default;
         capture.AdvancePublicationLeaseBatch();
         return capture;
     }
@@ -187,6 +208,7 @@ internal sealed class VulkanMeshOperationRequestQueue
         capture.Destination = null;
         capture.Count = 0;
         capture.Failed = false;
+        capture.CapacityFailure = default;
         if (clearCapturedRequests && destination is not null && count > 0)
         {
             destination.AsSpan(0, count).Clear();
@@ -256,7 +278,8 @@ internal sealed class VulkanMeshOperationRequestQueue
         bool foregroundRequired,
         out int acceptedRequestCount,
         out int capacityExceededCount,
-        out VulkanMeshRequestLaneCapacityFailure capacityFailure)
+        out VulkanMeshRequestLaneCapacityFailure capacityFailure,
+        VulkanCanonicalPublicationPinSet? acceptedFramePins = null)
     {
         lock (_gate)
         {
@@ -272,13 +295,25 @@ internal sealed class VulkanMeshOperationRequestQueue
                 ? destination.Length
                 : Math.Min(destination.Length, BackgroundSchedulingCapacity);
             int drainCount = Math.Min(_count, schedulingLimit);
+            if (acceptedFramePins is not null && drainCount != _count)
+            {
+                throw new InvalidOperationException(
+                    "An accepted foreground frame must transfer the complete canonical-publication cohort into its frame slot.");
+            }
             // The lease batch is aggregate rather than per-entry. Transfer it only
             // when the complete queue is drained; partial drains leave the leases
             // published until the remaining entries are handed off.
             if (drainCount == _count)
             {
-                _drainedPublicationLeases.ReleaseAll();
-                _publishedPublicationLeases.MoveTo(_drainedPublicationLeases);
+                if (acceptedFramePins is not null)
+                {
+                    _publishedPublicationPins.MoveTo(acceptedFramePins);
+                }
+                else
+                {
+                    _drainedPublicationPins.ReleaseAll();
+                    _publishedPublicationPins.MoveTo(_drainedPublicationPins);
+                }
             }
             int firstCount = Math.Min(drainCount, Capacity - _head);
             _entries.AsSpan(_head, firstCount).CopyTo(destination);
@@ -389,8 +424,8 @@ internal sealed class VulkanMeshOperationRequestQueue
     {
         lock (_gate)
         {
-            _publishedPublicationLeases.ReleaseAll();
-            _drainedPublicationLeases.ReleaseAll();
+            _publishedPublicationPins.ReleaseAll();
+            _drainedPublicationPins.ReleaseAll();
         }
 
         foreach (ThreadCaptureState capture in _threadCapture.Values)
@@ -405,8 +440,8 @@ internal sealed class VulkanMeshOperationRequestQueue
 
         lock (_gate)
         {
-            _publishedPublicationLeases.ReleaseMatching(canonicalDraw);
-            _drainedPublicationLeases.ReleaseMatching(canonicalDraw);
+            _publishedPublicationPins.ReleaseMatching(canonicalDraw);
+            _drainedPublicationPins.ReleaseMatching(canonicalDraw);
         }
     }
 
@@ -416,22 +451,41 @@ internal sealed class VulkanMeshOperationRequestQueue
         internal VulkanMeshRenderRequest[]? Destination;
         internal int Count;
         internal bool Failed;
-        private CanonicalPublicationLeaseBatch PublicationLeases { get; } = new();
-        private CanonicalPublicationLeaseBatch PreviousPublicationLeases { get; } = new();
+        internal VulkanMeshRequestLaneCapacityFailure CapacityFailure;
+        private VulkanCanonicalPublicationPinSet PublicationPins { get; } =
+            new(Capacity);
+        private VulkanCanonicalPublicationPinSet PreviousPublicationPins { get; } =
+            new(Capacity);
 
         internal bool TryRetainPublication(
             in AdvancedGpuSceneDrawIdentitySnapshot canonicalDraw)
         {
             lock (_leaseGate)
-                return PublicationLeases.TryRetain(canonicalDraw);
+                return PublicationPins.TryRetain(canonicalDraw);
+        }
+
+        internal void RecordCapacityFailure(
+            EVulkanMeshRequestLane lane,
+            int configuredCapacity)
+        {
+            int overflowCount = CapacityFailure.HasFailure
+                ? CapacityFailure.OverflowCount + 1
+                : 1;
+            CapacityFailure = new VulkanMeshRequestLaneCapacityFailure(
+                lane,
+                configuredCapacity,
+                Count,
+                Count + overflowCount,
+                overflowCount);
+            Failed = true;
         }
 
         internal void AdvancePublicationLeaseBatch()
         {
             lock (_leaseGate)
             {
-                PreviousPublicationLeases.ReleaseAll();
-                PublicationLeases.MoveTo(PreviousPublicationLeases);
+                PreviousPublicationPins.ReleaseAll();
+                PublicationPins.MoveTo(PreviousPublicationPins);
             }
         }
 
@@ -439,124 +493,15 @@ internal sealed class VulkanMeshOperationRequestQueue
         {
             lock (_leaseGate)
             {
-                PublicationLeases.ReleaseAll();
-                PreviousPublicationLeases.ReleaseAll();
+                PublicationPins.ReleaseAll();
+                PreviousPublicationPins.ReleaseAll();
             }
         }
 
         internal void ReleaseCurrentPublicationLeases()
         {
             lock (_leaseGate)
-                PublicationLeases.ReleaseAll();
-        }
-
-
-    }
-
-    /// <summary>
-    /// Bounded bridge between package projection and frame-slot acquisition.
-    /// The bridge owns one GPU pin per distinct publication, never per draw.
-    /// </summary>
-    private sealed class CanonicalPublicationLeaseBatch
-    {
-        private readonly AdvancedSharedGpuSceneDatabase?[] _databases =
-            new AdvancedSharedGpuSceneDatabase[PublicationLeaseCapacity];
-        private readonly AdvancedGpuScenePublicationReference[] _publications =
-            new AdvancedGpuScenePublicationReference[PublicationLeaseCapacity];
-        private readonly AdvancedGpuScenePublicationLease[] _leases =
-            new AdvancedGpuScenePublicationLease[PublicationLeaseCapacity];
-        private int _count;
-
-        internal bool TryRetain(
-            in AdvancedGpuSceneDrawIdentitySnapshot canonicalDraw)
-        {
-            if (!canonicalDraw.IsValid || canonicalDraw.Database is not { } database)
-                return true;
-
-            AdvancedGpuScenePublicationReference publication =
-                canonicalDraw.Publication;
-            for (int index = 0; index < _count; ++index)
-            {
-                if (ReferenceEquals(_databases[index], database) &&
-                    _publications[index] == publication)
-                {
-                    return true;
-                }
-            }
-            if (_count == _leases.Length ||
-                !database.TryAcquirePublicationLease(
-                    publication,
-                    EAdvancedGpuScenePublicationPinKind.Gpu,
-                    out AdvancedGpuScenePublicationLease lease))
-            {
-                return false;
-            }
-
-            int slot = _count++;
-            _databases[slot] = database;
-            _publications[slot] = publication;
-            _leases[slot] = lease;
-            return true;
-        }
-
-        internal void MoveTo(CanonicalPublicationLeaseBatch destination)
-        {
-            if (destination._count != 0)
-                throw new InvalidOperationException(
-                    "Canonical publication lease destination was not retired before transfer.");
-
-            for (int index = 0; index < _count; ++index)
-            {
-                destination._databases[index] = _databases[index];
-                destination._publications[index] = _publications[index];
-                destination._leases[index] = _leases[index];
-                _databases[index] = null;
-                _publications[index] = default;
-                _leases[index] = default;
-            }
-            destination._count = _count;
-            _count = 0;
-        }
-
-        internal void ReleaseAll()
-        {
-            for (int index = 0; index < _count; ++index)
-            {
-                _leases[index].Dispose();
-                _databases[index] = null;
-                _publications[index] = default;
-                _leases[index] = default;
-            }
-            _count = 0;
-        }
-
-        internal void ReleaseMatching(
-            in AdvancedGpuSceneDrawIdentitySnapshot canonicalDraw)
-        {
-            AdvancedSharedGpuSceneDatabase? database = canonicalDraw.Database;
-            AdvancedGpuScenePublicationReference publication =
-                canonicalDraw.Publication;
-            for (int index = 0; index < _count; ++index)
-            {
-                if (!ReferenceEquals(_databases[index], database) ||
-                    _publications[index] != publication)
-                {
-                    continue;
-                }
-
-                _leases[index].Dispose();
-                int last = --_count;
-                if (index != last)
-                {
-                    _databases[index] = _databases[last];
-                    _publications[index] = _publications[last];
-                    _leases[index] = _leases[last];
-                }
-                _databases[last] = null;
-                _publications[last] = default;
-                _leases[last] = default;
-                return;
-            }
+                PublicationPins.ReleaseAll();
         }
     }
 }

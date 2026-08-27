@@ -681,6 +681,21 @@ internal sealed partial class VulkanCommandRuntime
     internal void FailSubmissionMarkersForCommandBuffer(CommandBuffer commandBuffer)
         => ResetSubmissionMarkersForCommandBuffer(commandBuffer);
 
+    /// <summary>
+    /// Drops tentative command-buffer references without settling their fences.
+    /// An accepted frame plan remains the sole owner until recording succeeds,
+    /// which prevents duplicate failure through a stale pooled-fence reference.
+    /// </summary>
+    internal void DiscardSubmissionMarkersForCommandBuffer(CommandBuffer commandBuffer)
+    {
+        if (commandBuffer.Handle == 0)
+            return;
+
+        lock (Synchronization._submissionMarkerLock)
+            _ = Synchronization._submissionMarkersByCommandBuffer.Remove(
+                commandBuffer.Handle);
+    }
+
     private void BeginFrameTimingQueries(CommandBuffer commandBuffer, int frameSlot)
     {
         if (!FrameTelemetry._frameTimingGpuEnabled ||
@@ -1049,6 +1064,7 @@ internal sealed partial class VulkanCommandRuntime
                         out VulkanPublishedDescriptorSetSnapshot? current);
                 if (!hasRecordedPayload ||
                     !hasCurrentPayload || current is null ||
+                    !current.IsNativePublicationKnown ||
                     current.ImagePayloadGeneration != recordedPayloadGeneration)
                 {
                     if (FrameDataReuseDiagnosticsEnabled)

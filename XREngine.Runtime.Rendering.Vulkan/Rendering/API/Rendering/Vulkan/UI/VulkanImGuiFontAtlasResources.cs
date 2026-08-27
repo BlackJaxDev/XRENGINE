@@ -400,10 +400,11 @@ internal unsafe sealed class VulkanImGuiFontAtlasResources(
         target.ObserveNativeResult("vkAllocateDescriptorSets.ImGuiFontAtlas", result);
         if (result != Result.Success)
             throw new InvalidOperationException($"Failed to allocate ImGui font descriptor set ({result}).");
-        _resourceRuntime.Lifetime.Tracker.RegisterResource(
-            new VulkanResourceLifetimeKey(ObjectType.DescriptorSet, resources.FontDescriptorSet.Handle),
-            "ImGui.FontAtlas.DescriptorSet",
-            externallyOwned: false);
+        _resourceRuntime.DescriptorLifetime.RegisterDescriptorSet(
+            resources.DescriptorPool,
+            resources.FontDescriptorSet,
+            usesUpdateAfterBind: false,
+            owner: "ImGui.FontAtlas.DescriptorSet");
 
         DescriptorImageInfo imageInfo = new()
         {
@@ -420,7 +421,7 @@ internal unsafe sealed class VulkanImGuiFontAtlasResources(
             DescriptorCount = 1,
             PImageInfo = &imageInfo,
         };
-        target.VulkanApi.UpdateDescriptorSets(target.Device, 1, &write, 0, null);
+        _resourceRuntime.DescriptorLifetime.UpdateDescriptorSets(1, &write);
         _textureRegistry.DescriptorSets[(nint)1] = resources.FontDescriptorSet;
     }
 

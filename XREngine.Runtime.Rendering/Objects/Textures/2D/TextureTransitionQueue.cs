@@ -42,6 +42,7 @@ internal sealed class TextureTransitionQueue
             record.PendingSparseTransitionRequest = default;
             record.PendingSparseTransitionResult = null;
             record.UploadGeneration++;
+            record.PublicationEligibleGeneration = 0L;
             record.LastTransitionFrameId = frameId;
             return true;
         }

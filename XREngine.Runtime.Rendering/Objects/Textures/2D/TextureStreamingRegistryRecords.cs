@@ -5,6 +5,8 @@ namespace XREngine.Rendering;
 
 internal sealed class ImportedTextureStreamingRecord(XRTexture2D texture)
 {
+    private const int TerminalGenerationFailureCapacity = 64;
+
     /// <summary>
     /// Guards transition state, format, source, backend, pending-upload bookkeeping,
     /// and any other fields that mutate during streaming work. Held briefly by snapshot
@@ -38,7 +40,15 @@ internal sealed class ImportedTextureStreamingRecord(XRTexture2D texture)
     public long ResidentGeneration;
     public long PublishedGeneration;
     public long UploadGeneration;
+    public long PublicationEligibleGeneration;
     public long RetirementGeneration;
+    /// <summary>
+    /// Terminal CPU decode/admission failures keyed by the exact reserved
+    /// generation. Accepted frames must observe these instead of waiting for a
+    /// Vulkan ticket that can no longer be produced.
+    /// </summary>
+    public Dictionary<long, string> TerminalGenerationFailures { get; } = [];
+    public long RetiredTerminalFailureGeneration;
     public int SparseNumLevels;
     public long LastVisibleFrameId = long.MinValue;
     public float MinVisibleDistance = float.PositiveInfinity;
@@ -77,6 +87,98 @@ internal sealed class ImportedTextureStreamingRecord(XRTexture2D texture)
     public float PromotionFadeStartBias;
     public long PromotionFadeStartFrameId = long.MinValue;
     public long PromotionFadeEndFrameId = long.MinValue;
+
+    /// <summary>
+    /// Records exact terminal truth without allowing a long-lived texture to
+    /// grow an unbounded failure dictionary. The caller holds <see cref="Sync"/>.
+    /// </summary>
+    public void RecordTerminalGenerationFailureNoLock(
+        long generation,
+        string detail)
+    {
+        if (TerminalGenerationFailures.ContainsKey(generation))
+        {
+            TerminalGenerationFailures[generation] = detail;
+            return;
+        }
+
+        if (TerminalGenerationFailures.Count >=
+            TerminalGenerationFailureCapacity)
+        {
+            long oldestGeneration = long.MaxValue;
+            foreach (long recordedGeneration in
+                     TerminalGenerationFailures.Keys)
+            {
+                if (recordedGeneration < oldestGeneration)
+                    oldestGeneration = recordedGeneration;
+            }
+
+            if (oldestGeneration != long.MaxValue)
+            {
+                TerminalGenerationFailures.Remove(oldestGeneration);
+                RetiredTerminalFailureGeneration = Math.Max(
+                    RetiredTerminalFailureGeneration,
+                    oldestGeneration);
+            }
+        }
+
+        TerminalGenerationFailures[generation] = detail;
+    }
+
+    /// <summary>
+    /// Returns exact failure detail when retained, or a durable terminal
+    /// tombstone after the bounded detail record has retired.
+    /// </summary>
+    public bool TryGetTerminalGenerationFailureNoLock(
+        long generation,
+        out string detail)
+    {
+        if (TerminalGenerationFailures.TryGetValue(
+                generation,
+                out string? exactDetail))
+        {
+            detail = exactDetail;
+            return true;
+        }
+
+        if (generation > PublishedGeneration &&
+            generation <= RetiredTerminalFailureGeneration)
+        {
+            detail =
+                $"Texture streaming generation {generation} is terminal; " +
+                "its exact failure detail retired from the bounded history.";
+            return true;
+        }
+
+        detail = string.Empty;
+        return false;
+    }
+
+    /// <summary>
+    /// Drops failure details made obsolete by a newer successful publication.
+    /// A frame sealed to an older generation observes supersession from the
+    /// published-generation watermark instead.
+    /// </summary>
+    public void RetireTerminalGenerationFailuresThroughNoLock(long generation)
+    {
+        while (true)
+        {
+            long candidate = long.MaxValue;
+            foreach (long recordedGeneration in
+                     TerminalGenerationFailures.Keys)
+            {
+                if (recordedGeneration <= generation &&
+                    recordedGeneration < candidate)
+                {
+                    candidate = recordedGeneration;
+                }
+            }
+
+            if (candidate == long.MaxValue)
+                return;
+            TerminalGenerationFailures.Remove(candidate);
+        }
+    }
 }
 
 internal readonly record struct ImportedTextureStreamingSnapshot(

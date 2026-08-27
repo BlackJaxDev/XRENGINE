@@ -487,8 +487,11 @@ internal sealed partial class VulkanDeviceContext
     {
         MutableCapabilities._supportsRuntimeDescriptorArray = false;
         MutableCapabilities._supportsDescriptorBindingPartiallyBound = false;
-        MutableCapabilities._supportsDescriptorBindingUpdateAfterBind = false;
+        MutableCapabilities._supportsDescriptorBindingSampledImageUpdateAfterBind = false;
+        MutableCapabilities._supportsDescriptorBindingUpdateUnusedWhilePending = false;
         MutableCapabilities._supportsDescriptorBindingStorageImageUpdateAfterBind = false;
+        MutableCapabilities._supportsDescriptorBindingStorageBufferUpdateAfterBind = false;
+        MutableCapabilities._supportsDescriptorBindingUniformBufferUpdateAfterBind = false;
         MutableCapabilities._supportsDescriptorBindingVariableDescriptorCount = false;
         MutableCapabilities._supportsShaderSampledImageArrayNonUniformIndexing = false;
 
@@ -505,14 +508,17 @@ internal sealed partial class VulkanDeviceContext
 
         MutableCapabilities._supportsRuntimeDescriptorArray = features.RuntimeDescriptorArray;
         MutableCapabilities._supportsDescriptorBindingPartiallyBound = features.DescriptorBindingPartiallyBound;
+        MutableCapabilities._supportsDescriptorBindingUpdateUnusedWhilePending =
+            features.DescriptorBindingUpdateUnusedWhilePending;
+        MutableCapabilities._supportsDescriptorBindingSampledImageUpdateAfterBind =
+            features.DescriptorBindingSampledImageUpdateAfterBind;
         MutableCapabilities._supportsDescriptorBindingStorageImageUpdateAfterBind = features.DescriptorBindingStorageImageUpdateAfterBind;
+        MutableCapabilities._supportsDescriptorBindingStorageBufferUpdateAfterBind =
+            features.DescriptorBindingStorageBufferUpdateAfterBind;
+        MutableCapabilities._supportsDescriptorBindingUniformBufferUpdateAfterBind =
+            features.DescriptorBindingUniformBufferUpdateAfterBind;
         MutableCapabilities._supportsDescriptorBindingVariableDescriptorCount = features.DescriptorBindingVariableDescriptorCount;
         MutableCapabilities._supportsShaderSampledImageArrayNonUniformIndexing = features.ShaderSampledImageArrayNonUniformIndexing;
-        MutableCapabilities._supportsDescriptorBindingUpdateAfterBind =
-            features.DescriptorBindingSampledImageUpdateAfterBind ||
-            features.DescriptorBindingStorageImageUpdateAfterBind ||
-            features.DescriptorBindingStorageBufferUpdateAfterBind ||
-            features.DescriptorBindingUniformBufferUpdateAfterBind;
     }
 
     internal unsafe void QuerySynchronization2Capabilities()

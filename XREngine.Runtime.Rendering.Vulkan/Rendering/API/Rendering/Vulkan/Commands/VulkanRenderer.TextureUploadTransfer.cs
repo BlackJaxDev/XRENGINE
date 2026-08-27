@@ -16,11 +16,15 @@ internal sealed partial class VulkanCommandRuntime
         }
     }
 
-    internal unsafe bool TrySubmitImportedTextureUploadToTransferQueue(
+    /// <summary>
+    /// Submits an imported texture copy on the graphics queue. A dedicated
+    /// transfer queue requires an explicit semaphore release/acquire chain;
+    /// until that chain exists it is not a valid immediate-readiness path.
+    /// </summary>
+    internal unsafe bool TrySubmitImportedTextureUploadToGraphicsQueue(
         VulkanImportedTexturePendingUpload upload,
         out VulkanSubmittedImportedTextureUpload? submitted,
-        out string? failureReason,
-        bool allowGraphicsQueue = false)
+        out string? failureReason)
     {
         submitted = null;
         failureReason = null;
@@ -31,25 +35,8 @@ internal sealed partial class VulkanCommandRuntime
             return false;
         }
 
-        if (!RenderDiagnosticsFlags.VkTextureUploadTransferQueue &&
-            !allowGraphicsQueue)
-        {
-            failureReason = "XRE_VULKAN_TEXTURE_UPLOAD_TRANSFER_QUEUE is disabled";
-            return false;
-        }
-
         QueueFamilyIndices families = _deviceContext.QueueFamilies;
         uint graphicsFamily = families.GraphicsFamilyIndex ?? 0u;
-        uint transferFamily = families.TransferFamilyIndex ?? graphicsFamily;
-        bool useDedicatedTransferQueue =
-            RenderDiagnosticsFlags.VkTextureUploadTransferQueue &&
-            _deviceContext.TransferQueue.Handle != 0 &&
-            transferFamily != graphicsFamily;
-        if (!useDedicatedTransferQueue && !allowGraphicsQueue)
-        {
-            failureReason = "no dedicated transfer queue family is available";
-            return false;
-        }
 
         if (!upload.TryValidateCopyRegions(out string? validationFailure))
         {
@@ -57,20 +44,13 @@ internal sealed partial class VulkanCommandRuntime
             return false;
         }
 
-        Queue submissionQueue = useDedicatedTransferQueue
-            ? _deviceContext.TransferQueue
-            : _deviceContext.GraphicsQueue;
+        Queue submissionQueue = _deviceContext.GraphicsQueue;
         if (submissionQueue.Handle == 0)
         {
             failureReason = "no Vulkan queue is available for foreground upload submission";
             return false;
         }
-        uint submissionFamily = useDedicatedTransferQueue
-            ? transferFamily
-            : graphicsFamily;
-        CommandPool pool = useDedicatedTransferQueue
-            ? GetThreadTransferCommandPool()
-            : GetThreadCommandPool();
+        CommandPool pool = GetThreadCommandPool();
         CommandBuffer commandBuffer = default;
         Fence fence = default;
         try
@@ -140,9 +120,6 @@ internal sealed partial class VulkanCommandRuntime
                 commandBuffer,
                 pool,
                 fence,
-                requiresGraphicsAcquire: useDedicatedTransferQueue,
-                submissionFamily,
-                graphicsFamily,
                 TextureRuntimeDiagnostics.StartTiming(),
                 CalculateUploadStagingBytes(upload));
 
@@ -154,18 +131,14 @@ internal sealed partial class VulkanCommandRuntime
                 new VulkanSubmissionDiagnosticContext
                 {
                     SubmissionKind = "TextureUpload.Transfer",
-                    QueueKind = useDedicatedTransferQueue
-                        ? "Transfer"
-                        : "GraphicsForegroundUpload",
+                    QueueKind = "GraphicsForegroundUpload",
                     CommandBufferCount = 1,
                     FirstCommandBufferHandle = (ulong)commandBuffer.Handle,
                     FenceHandle = fence.Handle,
                 },
                 out _,
                 out _,
-                useDedicatedTransferQueue
-                    ? "TextureUpload.Transfer"
-                    : "TextureUpload.GraphicsForeground");
+                "TextureUpload.GraphicsForeground");
 
             if (!submitReceipt.SubmissionAccepted)
             {
@@ -237,9 +210,6 @@ internal sealed partial class VulkanCommandRuntime
             return false;
         }
 
-        if (submitted.RequiresGraphicsAcquire)
-            RecordImportedTextureGraphicsAcquire(submitted);
-
         CommandBuffer commandBuffer = submitted.CommandBuffer;
         if (submitted.Fence.Handle != 0)
         {
@@ -306,9 +276,9 @@ internal sealed partial class VulkanCommandRuntime
         {
             SType = StructureType.ImageMemoryBarrier,
             SrcAccessMask = AccessFlags.TransferWriteBit,
-            DstAccessMask = 0,
+            DstAccessMask = upload.FinalAccessMask,
             OldLayout = ImageLayout.TransferDstOptimal,
-            NewLayout = ImageLayout.ShaderReadOnlyOptimal,
+            NewLayout = upload.FinalLayout,
             SrcQueueFamilyIndex = Vk.QueueFamilyIgnored,
             DstQueueFamilyIndex = Vk.QueueFamilyIgnored,
             Image = upload.Image,
@@ -318,7 +288,7 @@ internal sealed partial class VulkanCommandRuntime
         CmdPipelineBarrierTracked(
             commandBuffer,
             PipelineStageFlags.TransferBit,
-            PipelineStageFlags.BottomOfPipeBit,
+            upload.FinalPipelineStages,
             0,
             0,
             null,
@@ -326,45 +296,6 @@ internal sealed partial class VulkanCommandRuntime
             null,
             1,
             &releaseBarrier);
-    }
-
-    private unsafe void RecordImportedTextureGraphicsAcquire(VulkanSubmittedImportedTextureUpload submitted)
-    {
-        VulkanImportedTexturePendingUpload upload = submitted.Upload;
-        using VulkanCommandRuntime.CommandScope graphicsScope = _commandRuntime.NewCommandScope();
-        ImageSubresourceRange range = new()
-        {
-            AspectMask = upload.AspectMask,
-            BaseMipLevel = 0,
-            LevelCount = upload.MipLevels,
-            BaseArrayLayer = 0,
-            LayerCount = 1,
-        };
-
-        ImageMemoryBarrier acquireBarrier = new()
-        {
-            SType = StructureType.ImageMemoryBarrier,
-            SrcAccessMask = 0,
-            DstAccessMask = AccessFlags.ShaderReadBit,
-            OldLayout = ImageLayout.ShaderReadOnlyOptimal,
-            NewLayout = ImageLayout.ShaderReadOnlyOptimal,
-            SrcQueueFamilyIndex = Vk.QueueFamilyIgnored,
-            DstQueueFamilyIndex = Vk.QueueFamilyIgnored,
-            Image = upload.Image,
-            SubresourceRange = range,
-        };
-
-        CmdPipelineBarrierTracked(
-            graphicsScope.CommandBuffer,
-            PipelineStageFlags.TopOfPipeBit,
-            PipelineStageFlags.FragmentShaderBit | PipelineStageFlags.ComputeShaderBit,
-            0,
-            0,
-            null,
-            0,
-            null,
-            1,
-            &acquireBarrier);
     }
 
     private static long CalculateUploadStagingBytes(VulkanImportedTexturePendingUpload upload)

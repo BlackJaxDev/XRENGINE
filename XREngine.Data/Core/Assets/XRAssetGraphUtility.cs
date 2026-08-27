@@ -426,9 +426,50 @@ public static class XRAssetGraphUtility
     /// are mistaken for embedded assets.
     /// </summary>
     private static bool IsSerializationIgnored(MemberInfo member)
-        => member.GetCustomAttribute<YamlIgnoreAttribute>() is not null ||
-           member.GetCustomAttribute<MemoryPackIgnoreAttribute>() is not null ||
-           member.GetCustomAttribute<RuntimeOnlyAttribute>() is not null;
+    {
+        if (member.GetCustomAttribute<YamlIgnoreAttribute>() is not null ||
+            member.GetCustomAttribute<MemoryPackIgnoreAttribute>() is not null ||
+            member.GetCustomAttribute<RuntimeOnlyAttribute>() is not null)
+        {
+            return true;
+        }
+
+        // Reflection exposes an auto-property and its compiler-generated backing
+        // field as two independent members. Persistence attributes are normally
+        // authored on the property, so inherit that boundary when considering the
+        // backing field or transient runtime graphs can leak back into traversal.
+        if (member is not FieldInfo field ||
+            field.GetCustomAttribute<CompilerGeneratedAttribute>() is null ||
+            !TryGetAutoPropertyName(field.Name, out string? propertyName))
+        {
+            return false;
+        }
+
+        PropertyInfo? property = field.DeclaringType?.GetProperty(
+            propertyName,
+            BindingFlags.Instance |
+            BindingFlags.Public |
+            BindingFlags.NonPublic |
+            BindingFlags.DeclaredOnly);
+        return property is not null && IsSerializationIgnored(property);
+    }
+
+    private static bool TryGetAutoPropertyName(
+        string fieldName,
+        [NotNullWhen(true)] out string? propertyName)
+    {
+        const string suffix = ">k__BackingField";
+        if (fieldName.Length <= suffix.Length + 1 ||
+            fieldName[0] != '<' ||
+            !fieldName.EndsWith(suffix, StringComparison.Ordinal))
+        {
+            propertyName = null;
+            return false;
+        }
+
+        propertyName = fieldName[1..^suffix.Length];
+        return propertyName.Length != 0;
+    }
 
     private static bool ShouldInspectMemberType(Type? memberType)
     {

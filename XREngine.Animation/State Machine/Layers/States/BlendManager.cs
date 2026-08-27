@@ -7,80 +7,106 @@ namespace XREngine.Animation
 {
     public class BlendManager : XRBase
     {
-        // Cached static blend functions — no per-blend lambda allocation
+        // Cached static blend functions â€” no per-blend lambda allocation
         private static readonly Func<float, float> LinearBlend = static (time) => time;
         private static readonly Func<float, float> CosineBlend = static (time) => Interp.Cosine(0.0f, 1.0f, time);
         private static readonly Func<float, float> QuadEaseStartBlend = static (time) => Interp.QuadraticEaseStart(0.0f, 1.0f, time);
         private static readonly Func<float, float> QuadEaseEndBlend = static (time) => Interp.QuadraticEaseEnd(0.0f, 1.0f, time);
 
-        private float _linearBlendTime = 0.0f;
+        private float _linearBlendProgress;
+        private float _durationValue;
+        private bool _fixedDuration;
         /// <summary>
-        /// How long the blend lasts in seconds.
+        /// Configured transition duration. This is seconds for fixed-duration
+        /// transitions and normalized source duration otherwise.
         /// </summary>
         public float BlendDuration
         {
-            get => _invDuration == 0.0f ? 0.0f : 1.0f / _invDuration;
-            set => SetField(ref _invDuration, value == 0.0f ? 0.0f : 1.0f / value);
+            get => _durationValue;
+            set => SetField(ref _durationValue, value);
         }
 
         private AnimStateTransition? _currentTransition;
-        private float _invDuration;
         private Func<float, float>? _blendFunction;
+        private readonly AnimationValueStore _sourceSnapshot = new();
+        private readonly UnityHumanoidMotionContributionBuffer _sourceSnapshotContributions = new();
+        private bool _usesSourceSnapshot;
 
         public AnimStateTransition? CurrentTransition => _currentTransition;
 
-        //Multiplying is faster than division, store duration as inverse
         /// <summary>
         /// Returns a value from 0.0f - 1.0f indicating a time between two animations.
         /// This time is called 'modified' because it uses a function to modify the linear time.
         /// </summary>
-        public float GetModifiedBlendTime() => _blendFunction?.Invoke(_invDuration == 0.0f ? 1.0f : (_linearBlendTime * _invDuration).ClampMax(1.0f)) ?? 0.0f;
+        public float GetModifiedBlendTime()
+            => _blendFunction?.Invoke(
+                _durationValue <= 0.0f
+                    ? 1.0f
+                    : Math.Clamp(_linearBlendProgress, 0.0f, 1.0f)) ?? 0.0f;
         internal void OnStarted() => _currentTransition?.OnStarted();
         internal void OnFinished() => _currentTransition?.OnFinished();
 
+        internal void PrepareRuntimeEvaluation(AnimationSlotLayout layout, int contributionCapacity)
+        {
+            _sourceSnapshot.Resize(layout);
+            _sourceSnapshotContributions.EnsureCapacity(contributionCapacity);
+        }
+
+        internal void ResetRuntimeState()
+        {
+            _linearBlendProgress = 0.0f;
+            _durationValue = 0.0f;
+            _currentTransition = null;
+            _blendFunction = null;
+            _usesSourceSnapshot = false;
+            CurrentState = null;
+            NextState = null;
+            _sourceSnapshot.Clear();
+            _sourceSnapshotContributions.Clear();
+        }
+
         public void BeginBlend(AnimStateTransition transition, AnimState? currentState, AnimState nextState)
         {
-            _linearBlendTime = 0.0f;
+            _usesSourceSnapshot = false;
+            ConfigureBlend(transition, currentState, nextState);
+        }
+
+        internal void BeginBlendFromSnapshot(
+            AnimStateTransition transition,
+            AnimState? semanticSourceState,
+            AnimState nextState,
+            AnimationValueStore sourceValues,
+            UnityHumanoidMotionContributionBuffer sourceContributions)
+        {
+            _sourceSnapshot.CopyFrom(sourceValues);
+            _sourceSnapshotContributions.CopyFrom(sourceContributions);
+            _usesSourceSnapshot = true;
+            ConfigureBlend(transition, semanticSourceState, nextState);
+        }
+
+        private void ConfigureBlend(
+            AnimStateTransition transition,
+            AnimState? currentState,
+            AnimState nextState)
+        {
+            _linearBlendProgress = 0.0f;
             _currentTransition = transition;
-            _invDuration = transition.BlendDuration == 0.0f ? 0.0f : 1.0f / transition.BlendDuration;
+            _durationValue = float.IsFinite(transition.BlendDuration)
+                ? Math.Max(0.0f, transition.BlendDuration)
+                : 0.0f;
+            _fixedDuration = transition.FixedDuration;
             _blendFunction = transition.BlendType switch
             {
                 EAnimBlendType.CosineEaseInOut => CosineBlend,
                 EAnimBlendType.QuadraticEaseStart => QuadEaseStartBlend,
                 EAnimBlendType.QuadraticEaseEnd => QuadEaseEndBlend,
-                // Custom must capture transition reference — only allocation case
+                // Custom must capture transition reference â€” only allocation case
                 EAnimBlendType.Custom => (time) => _currentTransition.CustomBlendFunction?.GetValue(time) ?? 0.0f,
                 _ => LinearBlend,
             };
             CurrentState = currentState;
             NextState = nextState;
-            GetCurves(currentState, nextState);
             OnStarted();
-        }
-
-        private void GetCurves(AnimState? currentState, AnimState nextState)
-        {
-            var currCurves = currentState?.Motion?.AnimatedCurves;
-            var nextCurves = nextState.Motion?.AnimatedCurves;
-
-            int capacity = (currCurves?.Count ?? 0) + (nextCurves?.Count ?? 0);
-            _animatedCurves = new Dictionary<string, AnimationMember>(capacity);
-
-            // Add from current motion first
-            if (currCurves is not null)
-            {
-                foreach (var kvp in currCurves)
-                    if (kvp.Value is not null)
-                        _animatedCurves.TryAdd(kvp.Key, kvp.Value);
-            }
-
-            // Add from next motion (TryAdd skips duplicates)
-            if (nextCurves is not null)
-            {
-                foreach (var kvp in nextCurves)
-                    if (kvp.Value is not null)
-                        _animatedCurves.TryAdd(kvp.Key, kvp.Value);
-            }
         }
 
         public bool IsBlending => _currentTransition is not null;
@@ -99,26 +125,33 @@ namespace XREngine.Animation
             private set => SetField(ref _nextState, value);
         }
 
-        private Dictionary<string, AnimationMember> _animatedCurves = [];
-
         /// <summary>
         /// Returns true if the blend finished, false if still blending.
         /// </summary>
-        public bool TickBlend(AnimLayer layer, float delta)
+        public bool TickBlend(
+            AnimLayer layer,
+            float delta,
+            IDictionary<string, AnimVar> variables)
         {
             float blendTime = GetModifiedBlendTime();
+            bool finished = _durationValue <= 0.0f || _linearBlendProgress >= 1.0f;
 
-            var currMotion = _currentState?.Motion;
-            var nextMotion = _nextState?.Motion;
+            AnimState? currentState = _currentState;
+            AnimState? nextState = _nextState;
+            var currMotion = currentState?.Motion;
+            var nextMotion = nextState?.Motion;
+            AnimationValueStore? sourceStore = _usesSourceSnapshot
+                ? _sourceSnapshot
+                : currentState?.RuntimeValueStore;
 
-            // Typed store path: lerp directly into the layer store — no boxing, no snapshots
+            // Typed store path: lerp directly into the layer store â€” no boxing, no snapshots
             if (layer.SlotLayout is not null
-                && currMotion?.SlotLayout is not null
+                && sourceStore is not null
                 && nextMotion?.SlotLayout is not null)
             {
                 AnimationValueStore.Lerp(
-                    currMotion.ValueStore,
-                    nextMotion.ValueStore,
+                    sourceStore,
+                    nextState!.RuntimeValueStore,
                     blendTime,
                     layer.ValueStore);
             }
@@ -128,12 +161,38 @@ namespace XREngine.Animation
                 BlendLegacy(layer, currMotion, nextMotion, blendTime);
             }
 
-            _linearBlendTime += delta;
-            if (_linearBlendTime >= BlendDuration)
+            float clampedBlendTime = Math.Clamp(blendTime, 0.0f, 1.0f);
+            layer.UnityHumanoidContributions.BlendFrom(
+                _usesSourceSnapshot
+                    ? _sourceSnapshotContributions
+                    : currentState?.UnityHumanoidContributions,
+                1.0f - clampedBlendTime,
+                nextState?.UnityHumanoidContributions,
+                clampedBlendTime);
+
+            if (finished)
             {
                 OnFinished();
                 _currentTransition = null;
+                _usesSourceSnapshot = false;
                 return true;
+            }
+
+            if (float.IsFinite(delta))
+            {
+                double durationSeconds = _fixedDuration
+                    ? _durationValue
+                    : _durationValue * (currentState?.GetEffectiveDurationSeconds(variables) ?? 0.0);
+                if (double.IsPositiveInfinity(durationSeconds))
+                {
+                    // A normalized transition sourced from a paused tree does not advance.
+                }
+                else if (!(durationSeconds > double.Epsilon) || !double.IsFinite(durationSeconds))
+                    _linearBlendProgress = 1.0f;
+                else
+                    _linearBlendProgress = Math.Min(
+                        1.0f,
+                        _linearBlendProgress + (float)(MathF.Abs(delta) / durationSeconds));
             }
 
             return false;
@@ -154,14 +213,14 @@ namespace XREngine.Animation
                 {
                     if (v2Dict is not null && v2Dict.TryGetValue(kvp.Key, out object? v2Value))
                     {
-                        // Both have the key — lerp
+                        // Both have the key â€” lerp
                         layer.SetAnimValue(kvp.Key, LerpValue(kvp.Value, v2Value, t));
                     }
-                    // Key only in v1 — leave alone (don't override with nothing)
+                    // Key only in v1 â€” leave alone (don't override with nothing)
                 }
             }
 
-            // Keys only in v2 but not in v1 — leave alone as well
+            // Keys only in v2 but not in v1 â€” leave alone as well
         }
 
         private static object? LerpValue(object? a, object? b, float t) => a switch

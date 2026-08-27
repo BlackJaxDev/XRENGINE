@@ -304,6 +304,9 @@ internal unsafe partial class VkMeshRenderer
 	{
 		lock (_bufferStateSync)
 		{
+			if (Interlocked.Exchange(ref _pendingAsyncIndexBufferReady, 0) != 0)
+				ApplyIndexBufferReadyNoLock();
+
 			EnsureRuntimeDeformationBuffersCurrent();
 
 			if (skipIndexBuffers)
@@ -488,24 +491,23 @@ internal unsafe partial class VkMeshRenderer
 
 	private void OnAsyncIndexBufferReady(XRDataBuffer buffer, IndexSize elementSize)
 	{
-		RuntimeRenderingHostServices.Scheduling.EnqueueRenderThreadTask(
-			MarkIndexBuffersDirty,
-			"VkMeshRenderer.AsyncIndexBufferReady",
-			RenderThreadJobKind.MeshUpload);
+		_ = buffer;
+		_ = elementSize;
+		// The worker publishes only an atomic readiness edge. EnsureBuffers consumes
+		// it while already holding the render-thread-owned buffer-state lock, so a
+		// PresentNow materialization loop never depends on pumping a generic callback.
+		Interlocked.Exchange(ref _pendingAsyncIndexBufferReady, 1);
 	}
 
-	private void MarkIndexBuffersDirty()
+	private void ApplyIndexBufferReadyNoLock()
 	{
-		lock (_bufferStateSync)
-		{
-			BumpPreparationCompatibilityRevision();
-			_buffersDirty = true;
-			_pipelineDirty = true;
-			_descriptorDirty = true;
-			_vertexInputStateDirty = true;
-			_geometryLayoutSignature = MeshGeometryLayoutSignature.Empty;
-			CommandOperations.MarkCommandBuffersDirtyForLegacyMeshState();
-		}
+		BumpPreparationCompatibilityRevision();
+		_buffersDirty = true;
+		_pipelineDirty = true;
+		_descriptorDirty = true;
+		_vertexInputStateDirty = true;
+		_geometryLayoutSignature = MeshGeometryLayoutSignature.Empty;
+		CommandOperations.MarkCommandBuffersDirtyForLegacyMeshState();
 	}
 
 	/// <summary>

@@ -609,34 +609,45 @@ namespace XREngine.Animation
         }
 
         private T InterpolatePositionSegment(VectorKeyframe<T>? next, float diff, float span)
-            => InterpolateSegment(
-                next,
-                diff,
-                span,
-                OutValue,
-                _interpolateOut,
-                static key => key._interpolateIn,
-                static (key, other) => other);
+            => IsSteppedSegment(next)
+                ? StepOut(next, diff, span)
+                : InterpolateSegment(
+                    next,
+                    diff,
+                    span,
+                    OutValue,
+                    _interpolateOut,
+                    static key => key._interpolateIn,
+                    static (key, other) => other);
 
         private T InterpolateVelocitySegment(VectorKeyframe<T>? next, float diff, float span)
-            => InterpolateSegment(
-                next,
-                diff,
-                span,
-                OutTangent,
-                _interpolateVelocityOut,
-                static key => key._interpolateVelocityIn,
-                static (key, other) => other);
+            => IsSteppedSegment(next)
+                ? default
+                : InterpolateSegment(
+                    next,
+                    diff,
+                    span,
+                    OutTangent,
+                    _interpolateVelocityOut,
+                    static key => key._interpolateVelocityIn,
+                    static (key, other) => other);
 
         private T InterpolateAccelerationSegment(VectorKeyframe<T>? next, float diff, float span)
-            => InterpolateSegment(
-                next,
-                diff,
-                span,
-                default,
-                _interpolateAccelerationOut,
-                static key => key._interpolateAccelerationIn,
-                static (key, other) => other);
+            => IsSteppedSegment(next)
+                ? default
+                : InterpolateSegment(
+                    next,
+                    diff,
+                    span,
+                    default,
+                    _interpolateAccelerationOut,
+                    static key => key._interpolateAccelerationIn,
+                    static (key, other) => other);
+
+        private bool IsSteppedSegment(VectorKeyframe<T>? next)
+            => next is not null
+                && (InterpolationTypeOut == EVectorInterpType.Step
+                    || next.InterpolationTypeIn == EVectorInterpType.Step);
 
         private T InterpolateSegment(
             VectorKeyframe<T>? next,

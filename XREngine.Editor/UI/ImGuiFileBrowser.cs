@@ -214,7 +214,7 @@ public static class ImGuiFileBrowser
                 LocalPlayers = 0,
                 TargetWorld = world,
                 TransparentFramebuffer = false,
-                VSync = Engine.UserSettings.VSync != EVSyncMode.Off
+                VSync = Engine.EffectiveSettings.VSync != EVSyncMode.Off
             };
 
             XRWindow window = Engine.CreateWindow(settings);

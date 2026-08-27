@@ -24,6 +24,9 @@ namespace XREngine
         /// </remarks>
         public static class EffectiveSettings
         {
+            private static global::XREngine.UserSettings UserSettings
+                => Engine.EffectiveUserSettings;
+
             /// <summary>
             /// Fired when any effective setting value changes due to override changes at any level.
             /// </summary>
@@ -145,7 +148,15 @@ namespace XREngine
             /// Gets the user-preferred render backend before applying startup fallback policy.
             /// </summary>
             public static ERenderLibrary PreferredRenderBackend
-                => UserSettings?.PreferredRenderBackend ?? ERenderLibrary.OpenGL;
+                => UserSettings?.PreferredRenderBackend ??
+                   ERenderLibrary.OpenGL;
+
+            /// <summary>
+            /// Gets the effective physics backend requested for this process.
+            /// </summary>
+            public static EPhysicsLibrary PhysicsLibrary
+                => UserSettings?.PhysicsLibrary ??
+                   EPhysicsLibrary.PhysX;
 
             /// <summary>
             /// Gets the effective render backend fallback policy.
@@ -629,7 +640,8 @@ namespace XREngine
             /// </summary>
             public static EVSyncMode VSync
                 => OverrideableSettingExtensions.ResolveCascade(
-                    UserSettings?.VSync ?? EVSyncMode.Adaptive,
+                    UserSettings?.VSync ??
+                    EVSyncMode.Adaptive,
                     GameSettings?.VSyncOverride,
                     UserSettings?.VSyncOverride);
 

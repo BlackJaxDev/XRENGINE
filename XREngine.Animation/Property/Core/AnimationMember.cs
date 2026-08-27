@@ -430,7 +430,9 @@ namespace XREngine.Animation
         /// </summary>
         public void ApplyFromStore(AnimationValueStore store)
         {
-            if (MemberNotFound || !Slot.IsValid)
+            if (MemberNotFound
+                || !Slot.IsValid
+                || store.GetCoverage(Slot) <= float.Epsilon)
                 return;
 
             switch (Slot.Type)
@@ -647,6 +649,35 @@ namespace XREngine.Animation
             
             return result;
         }
+
+        /// <summary>
+        /// Creates an initialized apply-only method binding that differs by one
+        /// non-animated semantic argument. State-machine mirroring uses this to
+        /// give the mirrored target its own stable slot instead of mutating a
+        /// shared binding while clips are being blended.
+        /// </summary>
+        internal AnimationMember CreateMethodArgumentBindingVariant(
+            int argumentIndex,
+            object? argumentValue)
+        {
+            if (MemberType != EAnimationMemberType.Method)
+                throw new InvalidOperationException(
+                    $"Animation member '{MemberName}' is not a method binding.");
+            if ((uint)argumentIndex >= (uint)MethodArguments.Length
+                || argumentIndex == AnimatedMethodArgumentIndex)
+                throw new ArgumentOutOfRangeException(nameof(argumentIndex));
+
+            object?[] arguments = (object?[])MethodArguments.Clone();
+            arguments[argumentIndex] = argumentValue;
+            var variant = new AnimationMember(MemberName, EAnimationMemberType.Method)
+            {
+                MethodArguments = arguments,
+                AnimatedMethodArgumentIndex = AnimatedMethodArgumentIndex,
+            };
+            variant.InitializeMethod(_parentObject);
+            return variant;
+        }
+
         public object? InitializeProperty(object? parentObj)
         {
             _parentObject = parentObj;

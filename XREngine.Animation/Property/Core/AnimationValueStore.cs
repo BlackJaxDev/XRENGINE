@@ -44,7 +44,7 @@ namespace XREngine.Animation
     /// All MotionBase, AnimLayer, and AnimStateMachine instances in the same state machine share a compatible
     /// slot layout so array indices are directly transferable.
     /// </summary>
-    public sealed class AnimationValueStore
+    public sealed partial class AnimationValueStore
     {
         private float[] _floats = [];
         private Vector2[] _vectors2 = [];
@@ -78,6 +78,8 @@ namespace XREngine.Animation
             _bools = layout.BoolCount > 0 ? new bool[layout.BoolCount] : [];
             _discrete = layout.DiscreteCount > 0 ? new object?[layout.DiscreteCount] : [];
             _quaternionFloatGroups = layout.QuaternionFloatGroups;
+            ResizeCoverage(layout);
+            InitializeQuaternionsToIdentity();
             InitializeQuaternionFloatGroupsToIdentity();
         }
 
@@ -107,25 +109,64 @@ namespace XREngine.Animation
         // ── Typed setters ────────────────────────────────────────────────
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public void SetFloat(int index, float value) => _floats[index] = value;
+        public void SetFloat(int index, float value)
+        {
+            _floats[index] = value;
+            _floatCoverage[index] = 1.0f;
+        }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public void SetVector2(int index, Vector2 value) => _vectors2[index] = value;
+        public void SetVector2(int index, Vector2 value)
+        {
+            _vectors2[index] = value;
+            _vector2Coverage[index] = 1.0f;
+        }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public void SetVector3(int index, Vector3 value) => _vectors3[index] = value;
+        public void SetVector3(int index, Vector3 value)
+        {
+            _vectors3[index] = value;
+            _vector3Coverage[index] = 1.0f;
+        }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public void SetVector4(int index, Vector4 value) => _vectors4[index] = value;
+        public void SetVector4(int index, Vector4 value)
+        {
+            _vectors4[index] = value;
+            _vector4Coverage[index] = 1.0f;
+        }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public void SetQuaternion(int index, Quaternion value) => _quaternions[index] = value;
+        public void SetQuaternion(int index, Quaternion value)
+        {
+            _quaternions[index] = NormalizeOrIdentity(value);
+            _quaternionCoverage[index] = 1.0f;
+        }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public void SetBool(int index, bool value) => _bools[index] = value;
+        public void SetBool(int index, bool value)
+        {
+            _bools[index] = value;
+            _boolCoverage[index] = 1.0f;
+        }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public void SetDiscrete(int index, object? value) => _discrete[index] = value;
+        public void SetDiscrete(int index, object? value)
+        {
+            _discrete[index] = value;
+            _discreteCoverage[index] = 1.0f;
+        }
+
+        internal Quaternion ReadQuaternionFloatGroup(AnimationQuaternionFloatSlotGroup group)
+            => ReadNormalizedQuaternion(_floats, group);
+
+        internal void WriteQuaternionFloatGroup(
+            AnimationQuaternionFloatSlotGroup group,
+            Quaternion value)
+        {
+            WriteQuaternion(_floats, group, NormalizeOrIdentity(value));
+            SetQuaternionFloatGroupCoverage(group, 1.0f);
+        }
 
         // ── Generic slot access (fallback paths) ─────────────────────────
 
@@ -139,24 +180,31 @@ namespace XREngine.Animation
             {
                 case EAnimValueType.Float when value is float f:
                     _floats[slot.TypeIndex] = f;
+                    _floatCoverage[slot.TypeIndex] = 1.0f;
                     break;
                 case EAnimValueType.Vector2 when value is Vector2 v2:
                     _vectors2[slot.TypeIndex] = v2;
+                    _vector2Coverage[slot.TypeIndex] = 1.0f;
                     break;
                 case EAnimValueType.Vector3 when value is Vector3 v3:
                     _vectors3[slot.TypeIndex] = v3;
+                    _vector3Coverage[slot.TypeIndex] = 1.0f;
                     break;
                 case EAnimValueType.Vector4 when value is Vector4 v4:
                     _vectors4[slot.TypeIndex] = v4;
+                    _vector4Coverage[slot.TypeIndex] = 1.0f;
                     break;
                 case EAnimValueType.Quaternion when value is Quaternion q:
-                    _quaternions[slot.TypeIndex] = q;
+                    _quaternions[slot.TypeIndex] = NormalizeOrIdentity(q);
+                    _quaternionCoverage[slot.TypeIndex] = 1.0f;
                     break;
                 case EAnimValueType.Bool when value is bool b:
                     _bools[slot.TypeIndex] = b;
+                    _boolCoverage[slot.TypeIndex] = 1.0f;
                     break;
                 default:
                     _discrete[slot.TypeIndex] = value;
+                    _discreteCoverage[slot.TypeIndex] = 1.0f;
                     break;
             }
         }
@@ -194,6 +242,7 @@ namespace XREngine.Animation
             source._quaternions.AsSpan().CopyTo(_quaternions.AsSpan());
             source._bools.AsSpan().CopyTo(_bools.AsSpan());
             source._discrete.AsSpan().CopyTo(_discrete.AsSpan());
+            CopyCoverageFrom(source);
         }
 
         /// <summary>
@@ -208,6 +257,8 @@ namespace XREngine.Animation
             _quaternions.AsSpan().Clear();
             _bools.AsSpan().Clear();
             _discrete.AsSpan().Clear();
+            ClearCoverage();
+            InitializeQuaternionsToIdentity();
             InitializeQuaternionFloatGroupsToIdentity();
         }
 
@@ -219,16 +270,7 @@ namespace XREngine.Animation
         /// Quaternions use Slerp; discrete values pick the closer side.
         /// </summary>
         public static void Lerp(AnimationValueStore a, AnimationValueStore b, float t, AnimationValueStore result)
-        {
-            LerpFloats(a._floats, b._floats, t, result._floats);
-            SlerpQuaternionFloatGroups(a, b, t, result);
-            LerpVectors2(a._vectors2, b._vectors2, t, result._vectors2);
-            LerpVectors3(a._vectors3, b._vectors3, t, result._vectors3);
-            LerpVectors4(a._vectors4, b._vectors4, t, result._vectors4);
-            SlerpQuaternions(a._quaternions, b._quaternions, t, result._quaternions);
-            LerpBools(a._bools, b._bools, t, result._bools);
-            LerpDiscrete(a._discrete, b._discrete, t, result._discrete);
-        }
+            => BlendTwoPresenceAware(a, b, t, result);
 
         /// <summary>
         /// Weighted blend of three stores.
@@ -237,58 +279,7 @@ namespace XREngine.Animation
             AnimationValueStore a, AnimationValueStore b, AnimationValueStore c,
             float w1, float w2, float w3,
             AnimationValueStore result)
-        {
-            // Floats — SIMD
-            WeightedSum3Simd(a._floats, b._floats, c._floats, w1, w2, w3, result._floats);
-            BlendQuaternionFloatGroups(a, b, c, w1, w2, w3, result);
-            // Vector2 — reinterpret as flat floats for SIMD
-            WeightedSum3Simd(
-                MemoryMarshal.Cast<Vector2, float>(a._vectors2.AsSpan()),
-                MemoryMarshal.Cast<Vector2, float>(b._vectors2.AsSpan()),
-                MemoryMarshal.Cast<Vector2, float>(c._vectors2.AsSpan()),
-                w1, w2, w3,
-                MemoryMarshal.Cast<Vector2, float>(result._vectors2.AsSpan()));
-            // Vector3 — 12-byte stride, scalar
-            {
-                var sa = a._vectors3.AsSpan(); var sb = b._vectors3.AsSpan(); var sc = c._vectors3.AsSpan(); var sr = result._vectors3.AsSpan();
-                for (int i = 0; i < sr.Length; i++)
-                    sr[i] = sa[i] * w1 + sb[i] * w2 + sc[i] * w3;
-            }
-            // Vector4 — reinterpret as flat floats for SIMD
-            WeightedSum3Simd(
-                MemoryMarshal.Cast<Vector4, float>(a._vectors4.AsSpan()),
-                MemoryMarshal.Cast<Vector4, float>(b._vectors4.AsSpan()),
-                MemoryMarshal.Cast<Vector4, float>(c._vectors4.AsSpan()),
-                w1, w2, w3,
-                MemoryMarshal.Cast<Vector4, float>(result._vectors4.AsSpan()));
-            // Quaternion — weighted slerp
-            {
-                var sa = a._quaternions.AsSpan(); var sb = b._quaternions.AsSpan(); var sc = c._quaternions.AsSpan(); var sr = result._quaternions.AsSpan();
-                for (int i = 0; i < sr.Length; i++)
-                {
-                    Quaternion ab = Quaternion.Slerp(sa[i], sb[i], w2 / Math.Max(w1 + w2, float.Epsilon));
-                    sr[i] = Quaternion.Slerp(ab, sc[i], w3);
-                }
-            }
-            // Bool — majority wins
-            {
-                var sa = a._bools.AsSpan(); var sb = b._bools.AsSpan(); var sc = c._bools.AsSpan(); var sr = result._bools.AsSpan();
-                for (int i = 0; i < sr.Length; i++)
-                {
-                    float maxW = Math.Max(Math.Max(w1, w2), w3);
-                    sr[i] = maxW == w1 ? sa[i] : maxW == w2 ? sb[i] : sc[i];
-                }
-            }
-            // Discrete — highest weight wins
-            {
-                var sa = a._discrete.AsSpan(); var sb = b._discrete.AsSpan(); var sc = c._discrete.AsSpan(); var sr = result._discrete.AsSpan();
-                for (int i = 0; i < sr.Length; i++)
-                {
-                    float maxW = Math.Max(Math.Max(w1, w2), w3);
-                    sr[i] = maxW == w1 ? sa[i] : maxW == w2 ? sb[i] : sc[i];
-                }
-            }
-        }
+            => BlendThreePresenceAware(a, b, c, w1, w2, w3, result);
 
         /// <summary>
         /// Weighted blend of four stores.
@@ -297,61 +288,19 @@ namespace XREngine.Animation
             AnimationValueStore a, AnimationValueStore b, AnimationValueStore c, AnimationValueStore d,
             float w1, float w2, float w3, float w4,
             AnimationValueStore result)
-        {
-            // Floats — SIMD
-            WeightedSum4Simd(a._floats, b._floats, c._floats, d._floats, w1, w2, w3, w4, result._floats);
-            BlendQuaternionFloatGroups(a, b, c, d, w1, w2, w3, w4, result);
-            // Vector2 — reinterpret as flat floats for SIMD
-            WeightedSum4Simd(
-                MemoryMarshal.Cast<Vector2, float>(a._vectors2.AsSpan()),
-                MemoryMarshal.Cast<Vector2, float>(b._vectors2.AsSpan()),
-                MemoryMarshal.Cast<Vector2, float>(c._vectors2.AsSpan()),
-                MemoryMarshal.Cast<Vector2, float>(d._vectors2.AsSpan()),
-                w1, w2, w3, w4,
-                MemoryMarshal.Cast<Vector2, float>(result._vectors2.AsSpan()));
-            // Vector3 — 12-byte stride, scalar
-            {
-                var sa = a._vectors3.AsSpan(); var sb = b._vectors3.AsSpan(); var sc = c._vectors3.AsSpan(); var sd = d._vectors3.AsSpan(); var sr = result._vectors3.AsSpan();
-                for (int i = 0; i < sr.Length; i++)
-                    sr[i] = sa[i] * w1 + sb[i] * w2 + sc[i] * w3 + sd[i] * w4;
-            }
-            // Vector4 — reinterpret as flat floats for SIMD
-            WeightedSum4Simd(
-                MemoryMarshal.Cast<Vector4, float>(a._vectors4.AsSpan()),
-                MemoryMarshal.Cast<Vector4, float>(b._vectors4.AsSpan()),
-                MemoryMarshal.Cast<Vector4, float>(c._vectors4.AsSpan()),
-                MemoryMarshal.Cast<Vector4, float>(d._vectors4.AsSpan()),
-                w1, w2, w3, w4,
-                MemoryMarshal.Cast<Vector4, float>(result._vectors4.AsSpan()));
-            // Quaternion — cascaded slerp
-            {
-                var sa = a._quaternions.AsSpan(); var sb = b._quaternions.AsSpan(); var sc = c._quaternions.AsSpan(); var sd = d._quaternions.AsSpan(); var sr = result._quaternions.AsSpan();
-                for (int i = 0; i < sr.Length; i++)
-                {
-                    Quaternion ab = Quaternion.Slerp(sa[i], sb[i], w2 / Math.Max(w1 + w2, float.Epsilon));
-                    Quaternion abc = Quaternion.Slerp(ab, sc[i], w3 / Math.Max(w1 + w2 + w3, float.Epsilon));
-                    sr[i] = Quaternion.Slerp(abc, sd[i], w4);
-                }
-            }
-            // Bool — highest weight wins
-            {
-                var sa = a._bools.AsSpan(); var sb = b._bools.AsSpan(); var sc = c._bools.AsSpan(); var sd = d._bools.AsSpan(); var sr = result._bools.AsSpan();
-                for (int i = 0; i < sr.Length; i++)
-                {
-                    float maxW = Math.Max(Math.Max(Math.Max(w1, w2), w3), w4);
-                    sr[i] = maxW == w1 ? sa[i] : maxW == w2 ? sb[i] : maxW == w3 ? sc[i] : sd[i];
-                }
-            }
-            // Discrete — highest weight wins
-            {
-                var sa = a._discrete.AsSpan(); var sb = b._discrete.AsSpan(); var sc = c._discrete.AsSpan(); var sd = d._discrete.AsSpan(); var sr = result._discrete.AsSpan();
-                for (int i = 0; i < sr.Length; i++)
-                {
-                    float maxW = Math.Max(Math.Max(Math.Max(w1, w2), w3), w4);
-                    sr[i] = maxW == w1 ? sa[i] : maxW == w2 ? sb[i] : maxW == w3 ? sc[i] : sd[i];
-                }
-            }
-        }
+            => BlendFourPresenceAware(a, b, c, d, w1, w2, w3, w4, result);
+
+        /// <summary>
+        /// Blends an arbitrary preallocated set of stores without depending on source order.
+        /// Direct trees use this for independently controlled child weights.
+        /// </summary>
+        public static void WeightedBlend(
+            AnimationValueStore?[] sources,
+            float[] weights,
+            int count,
+            bool normalizeWeights,
+            AnimationValueStore result)
+            => BlendManyPresenceAware(sources, weights, count, normalizeWeights, result);
 
         // ── Layer combine ────────────────────────────────────────────────
 
@@ -359,51 +308,14 @@ namespace XREngine.Animation
         /// Override-combine: copies all values from <paramref name="source"/> into this store.
         /// </summary>
         public void OverrideFrom(AnimationValueStore source)
-            => CopyFrom(source);
+            => OverrideFrom(source, 1.0f);
 
         /// <summary>
         /// Additive-combine: adds numeric values from <paramref name="source"/> to this store.
         /// Quaternions are multiplied; discrete values are overwritten.
         /// </summary>
         public void AddFrom(AnimationValueStore source)
-        {
-            {
-                var src = source._floats.AsSpan(); var dst = _floats.AsSpan();
-                AddFloatsSimd(src, dst);
-                MultiplyQuaternionFloatGroupsAfterScalarAdd(source);
-            }
-            {
-                // Vector2 = 2 floats — reinterpret and SIMD-add as flat float spans
-                var src = MemoryMarshal.Cast<Vector2, float>(source._vectors2.AsSpan());
-                var dst = MemoryMarshal.Cast<Vector2, float>(_vectors2.AsSpan());
-                AddFloatsSimd(src, dst);
-            }
-            {
-                // Vector3 has 12-byte stride (not power-of-2), scalar loop is safest
-                var src = source._vectors3.AsSpan(); var dst = _vectors3.AsSpan();
-                for (int i = 0; i < dst.Length; i++) dst[i] += src[i];
-            }
-            {
-                // Vector4 = 4 floats — reinterpret and SIMD-add
-                var src = MemoryMarshal.Cast<Vector4, float>(source._vectors4.AsSpan());
-                var dst = MemoryMarshal.Cast<Vector4, float>(_vectors4.AsSpan());
-                AddFloatsSimd(src, dst);
-            }
-            {
-                var src = source._quaternions.AsSpan(); var dst = _quaternions.AsSpan();
-                for (int i = 0; i < dst.Length; i++) dst[i] *= src[i];
-            }
-            {
-                // Bool additive: OR
-                var src = source._bools.AsSpan(); var dst = _bools.AsSpan();
-                for (int i = 0; i < dst.Length; i++) dst[i] |= src[i];
-            }
-            {
-                // Discrete additive: override (no meaningful addition for arbitrary objects)
-                var src = source._discrete.AsSpan(); var dst = _discrete.AsSpan();
-                for (int i = 0; i < dst.Length; i++) dst[i] = src[i];
-            }
-        }
+            => AddFrom(source, 1.0f);
 
         // ── Private helpers ──────────────────────────────────────────────
 
@@ -411,6 +323,12 @@ namespace XREngine.Animation
         {
             for (int i = 0; i < _quaternionFloatGroups.Length; i++)
                 WriteQuaternion(_floats, _quaternionFloatGroups[i], Quaternion.Identity);
+        }
+
+        private void InitializeQuaternionsToIdentity()
+        {
+            for (int i = 0; i < _quaternions.Length; i++)
+                _quaternions[i] = Quaternion.Identity;
         }
 
         private static void SlerpQuaternionFloatGroups(
@@ -443,14 +361,11 @@ namespace XREngine.Animation
             for (int i = 0; i < result._quaternionFloatGroups.Length; i++)
             {
                 AnimationQuaternionFloatSlotGroup group = result._quaternionFloatGroups[i];
-                Quaternion ab = WeightedSlerp(
+                Quaternion blended = WeightedQuaternionAverage(
                     ReadNormalizedQuaternion(a._floats, group),
                     w1,
                     ReadNormalizedQuaternion(b._floats, group),
-                    w2);
-                Quaternion blended = WeightedSlerp(
-                    ab,
-                    w1 + w2,
+                    w2,
                     ReadNormalizedQuaternion(c._floats, group),
                     w3);
                 WriteQuaternion(result._floats, group, blended);
@@ -472,19 +387,13 @@ namespace XREngine.Animation
             for (int i = 0; i < result._quaternionFloatGroups.Length; i++)
             {
                 AnimationQuaternionFloatSlotGroup group = result._quaternionFloatGroups[i];
-                Quaternion ab = WeightedSlerp(
+                Quaternion blended = WeightedQuaternionAverage(
                     ReadNormalizedQuaternion(a._floats, group),
                     w1,
                     ReadNormalizedQuaternion(b._floats, group),
-                    w2);
-                Quaternion abc = WeightedSlerp(
-                    ab,
-                    w1 + w2,
+                    w2,
                     ReadNormalizedQuaternion(c._floats, group),
-                    w3);
-                Quaternion blended = WeightedSlerp(
-                    abc,
-                    w1 + w2 + w3,
+                    w3,
                     ReadNormalizedQuaternion(d._floats, group),
                     w4);
                 WriteQuaternion(result._floats, group, blended);
@@ -506,14 +415,41 @@ namespace XREngine.Animation
             }
         }
 
-        private static Quaternion WeightedSlerp(Quaternion a, float aWeight, Quaternion b, float bWeight)
-        {
-            float pairWeight = aWeight + bWeight;
-            if (!float.IsFinite(pairWeight) || MathF.Abs(pairWeight) <= float.Epsilon)
-                return Quaternion.Identity;
+        private static Quaternion WeightedQuaternionAverage(
+            Quaternion a,
+            float aWeight,
+            Quaternion b,
+            float bWeight,
+            Quaternion c,
+            float cWeight)
+            => BlendQuaternionFixed(
+                a,
+                Math.Max(0.0f, aWeight),
+                b,
+                Math.Max(0.0f, bWeight),
+                c,
+                Math.Max(0.0f, cWeight),
+                Quaternion.Identity,
+                0.0f);
 
-            return NormalizeOrIdentity(Quaternion.Slerp(a, b, bWeight / pairWeight));
-        }
+        private static Quaternion WeightedQuaternionAverage(
+            Quaternion a,
+            float aWeight,
+            Quaternion b,
+            float bWeight,
+            Quaternion c,
+            float cWeight,
+            Quaternion d,
+            float dWeight)
+            => BlendQuaternionFixed(
+                a,
+                Math.Max(0.0f, aWeight),
+                b,
+                Math.Max(0.0f, bWeight),
+                c,
+                Math.Max(0.0f, cWeight),
+                d,
+                Math.Max(0.0f, dWeight));
 
         private static Quaternion ReadNormalizedQuaternion(
             float[] values,
@@ -532,6 +468,28 @@ namespace XREngine.Animation
                 && value.LengthSquared() > 1e-12f
                     ? Quaternion.Normalize(value)
                     : Quaternion.Identity;
+
+        private static Quaternion CanonicalizeQuaternion(Quaternion value)
+        {
+            bool negate = value.W < 0.0f
+                || (value.W == 0.0f && value.Z < 0.0f)
+                || (value.W == 0.0f && value.Z == 0.0f && value.Y < 0.0f)
+                || (value.W == 0.0f && value.Z == 0.0f && value.Y == 0.0f && value.X < 0.0f);
+            return negate
+                ? new Quaternion(-value.X, -value.Y, -value.Z, -value.W)
+                : value;
+        }
+
+        private static Vector4 ToVector4(Quaternion value)
+            => new(value.X, value.Y, value.Z, value.W);
+
+        private static Quaternion NormalizeQuaternionVector(Vector4 value)
+            => NormalizeOrIdentity(new Quaternion(value.X, value.Y, value.Z, value.W));
+
+        private static float SanitizeWeight(AnimationValueStore? source, float weight)
+            => source is not null && float.IsFinite(weight) && weight > 0.0f
+                ? weight
+                : 0.0f;
 
         private static void WriteQuaternion(
             float[] values,

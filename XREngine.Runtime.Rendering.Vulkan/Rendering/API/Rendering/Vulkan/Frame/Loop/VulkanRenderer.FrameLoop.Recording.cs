@@ -71,6 +71,12 @@ namespace XREngine.Rendering.Vulkan
                                   "primary command recording was deferred";
                         attempt.SceneCommandBuffer =
                             recordingResult.CommandBuffer;
+                        if (recordingResult.Succeeded &&
+                            recordingResult.CommandBuffer.Handle != 0)
+                        {
+                            attempt.AcceptedFramePlan?
+                                .TransferSubmissionMarkerOwnershipToCommandBuffer();
+                        }
                         dynamicTextSecondaryCommandBuffer =
                             recordingResult.DynamicUiSecondaryCommandBuffer;
                         dynamicTextOverlayOpCount =

@@ -78,6 +78,8 @@ namespace XREngine.Rendering.Vulkan
                 return _view;
             }
         }
+        object IVkImageDescriptorSource.DescriptorSnapshotSyncRoot
+            => _viewLifetimeLock;
         ImageViewType IVkImageDescriptorSource.DescriptorViewType => ResolveViewType(Data.TextureTarget, _arrayLayers);
         Sampler IVkImageDescriptorSource.DescriptorSampler
         {

@@ -61,6 +61,27 @@ internal sealed partial class VulkanCommandRuntime
             operations,
             prepareDescriptors: true);
 
+    /// <summary>
+    /// Publishes all compute resources for one exact sealed frame-data slot.
+    /// Callers must complete this before acquiring an externally owned output;
+    /// command recording is then a lookup-only consumer of these publications.
+    /// </summary>
+    internal VulkanComputePreparationResult PrepareComputeFramePlanForRecording(
+        uint frameDataImageIndex,
+        FramePlan framePlan)
+    {
+        ArgumentNullException.ThrowIfNull(framePlan);
+        VulkanComputePreparationResult preparation =
+            PrepareComputeFrameOpsForRecording(
+                frameDataImageIndex,
+                framePlan.GetNativeStaticOperationsForRecording());
+        return preparation.Succeeded
+            ? PrepareComputeFrameOpsForRecording(
+                frameDataImageIndex,
+                framePlan.GetNativeDynamicOverlayOperationsForRecording())
+            : preparation;
+    }
+
     private VulkanComputePreparationResult PrepareComputeFrameOps(
         uint imageIndex,
         FrameOperationSequence operations,

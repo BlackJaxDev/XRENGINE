@@ -269,7 +269,7 @@ namespace XREngine.Data.Core
             }
         }
 
-        private static object? ClonePropertyValue(object? value, Type declaredType)
+        protected internal static object? ClonePropertyValue(object? value, Type declaredType)
         {
             if (value is null)
                 return null;

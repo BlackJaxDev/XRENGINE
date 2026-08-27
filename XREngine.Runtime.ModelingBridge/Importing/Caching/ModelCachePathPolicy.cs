@@ -97,6 +97,7 @@ internal sealed class ModelCachePathPolicy(
         DateTime sourceTimestampUtc)
     {
         if (!IsSafeLegacyVariantKey(request.VariantKey)
+            || request.TryResolveGenericThirdPartyCachePath is null
             || !request.TryResolveGenericThirdPartyCachePath(
                 request.SourceFilePath,
                 request.AssetType,

@@ -167,7 +167,7 @@ namespace XREngine.Rendering.Vulkan
                 queuedPresentSemaphore.Handle != 0 &&
                 attempt.ExpectedPresentWaitSemaphore.Handle != 0 &&
                 queuedPresentSemaphore.Handle == attempt.ExpectedPresentWaitSemaphore.Handle &&
-                attempt.FrameTargetLease.SubmissionWaitSemaphore.Handle == queuedPresentSemaphore.Handle;
+                attempt.FrameTargetLease.SubmissionSignalSemaphore.Handle == queuedPresentSemaphore.Handle;
             uint queuedImageIndex = attempt.ImageIndex;
             var swapChains = stackalloc[] { OutputRuntime.Desktop.Swapchain };
             PresentInfoKHR presentInfo = new()

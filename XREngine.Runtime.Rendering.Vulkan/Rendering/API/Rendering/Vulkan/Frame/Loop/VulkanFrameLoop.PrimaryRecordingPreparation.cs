@@ -235,9 +235,6 @@ internal sealed partial class VulkanFrameLoop
             }
             if (!computePreparation.Succeeded)
             {
-                FailPreparedSubmissionMarkers(
-                    staticOperations.AsSpan(0, staticOperationCount),
-                    dynamicUiOperations.AsSpan(0, dynamicUiOperationCount));
                 return CreateDesktopRecordingReadinessFailure(
                     ref attempt,
                     computePreparation.FormatFailure());
@@ -264,6 +261,7 @@ internal sealed partial class VulkanFrameLoop
                 if (!TryBindPreparedStreamlineUiImage(
                         imageIndex,
                         staticOperations,
+                        acceptedPlan,
                         out string streamlinePreparationFailure))
                 {
                     replanReason = streamlinePreparationFailure;
@@ -341,42 +339,37 @@ internal sealed partial class VulkanFrameLoop
                                    _telemetry,
                                    EVulkanCpuStage.FrameOpPlan))
                         {
-                            framePlan = _framePlanner.FramePlanBuilder.BuildAndSeal(
-                                CurrentFrameSlot,
-                                plannerState.ResourcePlannerRevision,
-                                staticOperationSignature: 0UL,
-                                dynamicOverlaySignature: 0UL,
-                                staticOperations,
-                                dynamicUiOperations,
-                                new VulkanFramePlanRenderGraphAuthority(
-                                    frozenPlanningSnapshot.RenderGraphPlan,
-                                    plannerState.FrameOpResourcePlannerSwitchingState),
-                                textureUploadOperations: textureUploadOperations,
-                                preparedMeshIngress: preparedMeshIngress,
-                                authoringOperationCount: staticOperationCount,
-                                authoringDynamicOverlayOperationCount:
-                                    dynamicUiOperationCount,
-                                authoringTextureUploadOperationCount:
-                                    textureUploadOperationCount);
+                            framePlan = acceptedPlan?.LogicalPlan ??
+                                _framePlanner.FramePlanBuilder.BuildAndSeal(
+                                    CurrentFrameSlot,
+                                    plannerState.ResourcePlannerRevision,
+                                    staticOperationSignature: 0UL,
+                                    dynamicOverlaySignature: 0UL,
+                                    staticOperations,
+                                    dynamicUiOperations,
+                                    new VulkanFramePlanRenderGraphAuthority(
+                                        frozenPlanningSnapshot.RenderGraphPlan,
+                                        plannerState.FrameOpResourcePlannerSwitchingState),
+                                    textureUploadOperations: textureUploadOperations,
+                                    preparedMeshIngress: preparedMeshIngress,
+                                    authoringOperationCount: staticOperationCount,
+                                    authoringDynamicOverlayOperationCount:
+                                        dynamicUiOperationCount,
+                                    authoringTextureUploadOperationCount:
+                                        textureUploadOperationCount);
                         }
                     }
                 }
                 FrameOperationSequence preparedOperations =
                     framePlan.GetNativeStaticOperationsForRecording();
-                computePreparation = _commandRuntime.PrepareComputeFrameOpsForRecording(
-                    imageIndex,
-                    preparedOperations);
-                if (computePreparation.Succeeded)
+                if (acceptedPlan is null)
                 {
-                    computePreparation = _commandRuntime.PrepareComputeFrameOpsForRecording(
+                    computePreparation = _commandRuntime.PrepareComputeFramePlanForRecording(
                         imageIndex,
-                        framePlan.GetNativeDynamicOverlayOperationsForRecording());
+                        framePlan);
                 }
                 if (!computePreparation.Succeeded)
                 {
-                    FailPreparedSubmissionMarkers(
-                        staticOperations.AsSpan(0, staticOperationCount),
-                        dynamicUiOperations.AsSpan(0, dynamicUiOperationCount));
                     return CreateDesktopRecordingReadinessFailure(
                         ref attempt,
                         computePreparation.FormatFailure());
@@ -401,7 +394,8 @@ internal sealed partial class VulkanFrameLoop
                         dynamicUiBuffers[imageIndex],
                         framePlan,
                         primaryPlan,
-                        in authority);
+                        in authority,
+                        callerOwnsSubmissionMarkersUntilRecordingSucceeds: true);
 
                 _ = attempt.CompletePhase(
                     EVulkanFrameStage.CommandRecord,
@@ -419,14 +413,6 @@ internal sealed partial class VulkanFrameLoop
                     framePlan);
                 if (!result.RequiresReplan)
                 {
-                    if (result.Succeeded && !meshMaterializationComplete)
-                        _commandRuntime.FailSubmissionMarkersForCommandBuffer(
-                            input.PrimaryCommandBuffer);
-                    if (!result.Succeeded || !meshMaterializationComplete)
-                        FailPreparedSubmissionMarkers(
-                            staticOperations.AsSpan(0, staticOperationCount),
-                            dynamicUiOperations.AsSpan(0, dynamicUiOperationCount));
-
                     if (meshMaterializationComplete)
                     {
                         submissionMarkersTransferred =
@@ -442,9 +428,6 @@ internal sealed partial class VulkanFrameLoop
                     "primary command recording requested a fresh plan";
             }
 
-            FailPreparedSubmissionMarkers(
-                staticOperations.AsSpan(0, staticOperationCount),
-                dynamicUiOperations.AsSpan(0, dynamicUiOperationCount));
             return CreateDesktopRecordingReadinessFailure(
                 ref attempt,
                 $"primary command recording exceeded the two-attempt replan limit: {replanReason}");
@@ -455,11 +438,18 @@ internal sealed partial class VulkanFrameLoop
                 _preparedMeshIngress.Clear();
             if (!submissionMarkersTransferred)
             {
-                _commandRuntime.FailSubmissionMarkersForCommandBuffer(
+                _commandRuntime.DiscardSubmissionMarkersForCommandBuffer(
                     primaryBuffers[imageIndex]);
-                FailPreparedSubmissionMarkers(
-                    staticOperations.AsSpan(0, staticOperationCount),
-                    dynamicUiOperations.AsSpan(0, dynamicUiOperationCount));
+                if (acceptedPlan is not null)
+                {
+                    acceptedPlan.SettleUnsubmittedSubmissionMarkers();
+                }
+                else
+                {
+                    FailPreparedSubmissionMarkers(
+                        staticOperations.AsSpan(0, staticOperationCount),
+                        dynamicUiOperations.AsSpan(0, dynamicUiOperationCount));
+                }
             }
         }
     }
@@ -639,6 +629,44 @@ internal sealed partial class VulkanFrameLoop
         long readinessDeadlineTimestamp = long.MaxValue,
         ulong sourceFrameId = 0UL)
     {
+        VulkanPresentNowReadinessWatchdog inactiveWatchdog = default;
+        return MaterializeQueuedMeshRenderRequestsCore(
+            requestCount,
+            allowPreparedCohort,
+            out deferredReason,
+            foregroundRequired,
+            readinessDeadlineTimestamp,
+            sourceFrameId,
+            trackPresentNowProgress: false,
+            ref inactiveWatchdog);
+    }
+
+    private bool MaterializeQueuedMeshRenderRequests(
+        int requestCount,
+        bool allowPreparedCohort,
+        out string deferredReason,
+        ref VulkanPresentNowReadinessWatchdog watchdog,
+        ulong sourceFrameId)
+        => MaterializeQueuedMeshRenderRequestsCore(
+            requestCount,
+            allowPreparedCohort,
+            out deferredReason,
+            foregroundRequired: true,
+            readinessDeadlineTimestamp: long.MaxValue,
+            sourceFrameId,
+            trackPresentNowProgress: true,
+            ref watchdog);
+
+    private bool MaterializeQueuedMeshRenderRequestsCore(
+        int requestCount,
+        bool allowPreparedCohort,
+        out string deferredReason,
+        bool foregroundRequired,
+        long readinessDeadlineTimestamp,
+        ulong sourceFrameId,
+        bool trackPresentNowProgress,
+        ref VulkanPresentNowReadinessWatchdog watchdog)
+    {
         deferredReason = string.Empty;
         if (requestCount == 0)
             return true;
@@ -688,6 +716,8 @@ internal sealed partial class VulkanFrameLoop
             if (TryStageResidentMeshTemplates(requestCount, out deferredReason))
             {
                 _meshOperationRequestScratch.AsSpan(0, requestCount).Clear();
+                if (trackPresentNowProgress)
+                    watchdog.RecordProgress();
                 return true;
             }
             stagedPreparedCohort = TryStagePreparedMeshOperationCohort(
@@ -699,14 +729,25 @@ internal sealed partial class VulkanFrameLoop
         if (stagedPreparedCohort)
         {
             _meshOperationRequestScratch.AsSpan(0, requestCount).Clear();
+            if (trackPresentNowProgress)
+                watchdog.RecordProgress();
             return true;
         }
 
-        if (allowPreparedCohort && preparedCohortMatched)
+        if (allowPreparedCohort &&
+            preparedCohortMatched &&
+            !foregroundRequired)
         {
             _meshOperationRequestScratch.AsSpan(0, requestCount).Clear();
             return false;
         }
+
+        // A structurally matching prepared cohort may still contain a cold
+        // non-reusable entry. Its first materialization attempt can start a
+        // successful asynchronous program or pipeline build. PresentNow must
+        // retain the accepted request cohort and drive that work to completion;
+        // treating this fast-path miss as terminal would permanently pause the
+        // renderer merely because the newly visible variant was still compiling.
         XRRenderPipelineInstance? scopedPipeline = null;
         XRCamera? scopedCamera = null;
         IDisposable? pipelineScope = null;
@@ -797,7 +838,10 @@ internal sealed partial class VulkanFrameLoop
                     if (materialized || !foregroundRequired)
                         break;
 
-                    if (Stopwatch.GetTimestamp() >= readinessDeadlineTimestamp)
+                    if (HasMeshReadinessExpired(
+                            trackPresentNowProgress,
+                            ref watchdog,
+                            readinessDeadlineTimestamp))
                     {
                         deferredReason =
                             $"PresentNow mesh readiness watchdog expired for frame={sourceFrameId} " +
@@ -826,7 +870,10 @@ internal sealed partial class VulkanFrameLoop
                     if (resumeRequestIndex < 0)
                         resumeRequestIndex = requestIndex;
                     if (foregroundRequired &&
-                        Stopwatch.GetTimestamp() >= readinessDeadlineTimestamp)
+                        HasMeshReadinessExpired(
+                            trackPresentNowProgress,
+                            ref watchdog,
+                            readinessDeadlineTimestamp))
                     {
                         break;
                     }
@@ -857,6 +904,9 @@ internal sealed partial class VulkanFrameLoop
                     cohortMaterializationComplete = false;
                     continue;
                 }
+
+                if (trackPresentNowProgress)
+                    watchdog.RecordProgress();
 
                 bool reusable = IsPreparedMeshOperationCohortEligible(
                         in request,
@@ -964,6 +1014,14 @@ internal sealed partial class VulkanFrameLoop
             deferredReason);
         return false;
     }
+
+    private static bool HasMeshReadinessExpired(
+        bool trackPresentNowProgress,
+        ref VulkanPresentNowReadinessWatchdog watchdog,
+        long readinessDeadlineTimestamp)
+        => trackPresentNowProgress
+            ? watchdog.IsExpired
+            : Stopwatch.GetTimestamp() >= readinessDeadlineTimestamp;
 
     /// <summary>
     /// Captures frame-loop-owned context and output facts exactly once per raw
@@ -1649,16 +1707,22 @@ internal sealed partial class VulkanFrameLoop
     private bool TryBindPreparedStreamlineUiImage(
         uint imageIndex,
         FrameOp[] staticOperations,
+        VulkanAcceptedFramePlan? acceptedPlan,
         out string reason)
     {
         reason = string.Empty;
-        bool requiresUiImage = false;
-        for (int index = 0; index < staticOperations.Length; index++)
+        bool requiresUiImage = acceptedPlan is not null
+            ? acceptedPlan.LogicalPlan.RequiresAcquiredStreamlineUiImage
+            : false;
+        if (acceptedPlan is null)
         {
-            if (staticOperations[index] is DlssFrameGenerationOp)
+            for (int index = 0; index < staticOperations.Length; index++)
             {
-                requiresUiImage = true;
-                break;
+                if (staticOperations[index] is DlssFrameGenerationOp)
+                {
+                    requiresUiImage = true;
+                    break;
+                }
             }
         }
 
@@ -1690,19 +1754,33 @@ internal sealed partial class VulkanFrameLoop
             uiImage = uiImage with { Layout = submittedLayout };
         }
 
+        if (acceptedPlan is not null)
+        {
+            if (!acceptedPlan.LogicalPlan.BindAcquiredStreamlineUiImage(
+                    in uiImage))
+            {
+                reason =
+                    "The sealed accepted plan lost its admitted DLSS frame " +
+                    "generation payload before acquired-image rebinding.";
+                return false;
+            }
+
+            return true;
+        }
+
         for (int index = 0; index < staticOperations.Length; index++)
         {
-            if (staticOperations[index] is DlssFrameGenerationOp frameGeneration)
+            if (staticOperations[index] is not DlssFrameGenerationOp frameGeneration)
+                continue;
+
+            FrameOp preparedOperation = frameGeneration with
             {
-                FrameOp preparedOperation = frameGeneration with
-                {
-                    UiColorAndAlpha = uiImage,
-                };
-                // The queued producer has already published its resource-use
-                // declaration. A record copy preserves that immutable declaration;
-                // only the output-owned UI image changes for this acquired target.
-                staticOperations[index] = preparedOperation;
-            }
+                UiColorAndAlpha = uiImage,
+            };
+            // The queued producer has already published its resource-use
+            // declaration. A record copy preserves that immutable declaration;
+            // only the output-owned UI image changes for this acquired target.
+            staticOperations[index] = preparedOperation;
         }
 
         return true;
@@ -1803,7 +1881,8 @@ internal sealed partial class VulkanFrameLoop
         CommandBuffer dynamicUiSecondaryCommandBuffer,
         FramePlan framePlan,
         VulkanPrimaryCommandPlan primaryCommandPlan,
-        in VulkanPreparedPrimaryAuthority authority)
+        in VulkanPreparedPrimaryAuthority authority,
+        bool callerOwnsSubmissionMarkersUntilRecordingSucceeds = false)
     {
         FrameOpSignatureHasher resourceVersionHasher = new();
         resourceVersionHasher.Add(framePlan.ResourceVersionSignature);
@@ -1844,7 +1923,9 @@ internal sealed partial class VulkanFrameLoop
             authority.ClearState,
             authority.Policy,
             authority.TrackedTargetLayout,
-            CommandChainSchedule: commandChainSchedule);
+            CommandChainSchedule: commandChainSchedule,
+            CallerOwnsSubmissionMarkersUntilRecordingSucceeds:
+                callerOwnsSubmissionMarkersUntilRecordingSucceeds);
     }
 
     private bool TryCapturePreparedPrimaryAuthority(

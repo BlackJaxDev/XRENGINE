@@ -79,16 +79,79 @@ internal sealed partial class VulkanTextureUploadService
 
     internal void CaptureRequiredTextureUploadManifest(
         VulkanTextureUploadManifest manifest)
+        => CaptureRequiredTextureUploadManifestCore(
+            manifest,
+            requiredTextures: default,
+            requiredGenerations: default,
+            requireExactDescriptorPublication: false,
+            filterByRequiredTexture: false);
+
+    /// <summary>
+    /// Captures the exact generations frozen for texture owners in the sealed
+    /// accepted frame. A background upload becomes foreground-required when
+    /// that exact generation is referenced by the accepted frame.
+    /// </summary>
+    internal void CaptureRequiredTextureUploadManifest(
+        VulkanTextureUploadManifest manifest,
+        ReadOnlySpan<XRTexture?> requiredTextures,
+        ReadOnlySpan<long> requiredGenerations,
+        bool requireExactDescriptorPublication = true)
+        => CaptureRequiredTextureUploadManifestCore(
+            manifest,
+            requiredTextures,
+            requiredGenerations,
+            requireExactDescriptorPublication,
+            filterByRequiredTexture: true);
+
+    private void CaptureRequiredTextureUploadManifestCore(
+        VulkanTextureUploadManifest manifest,
+        ReadOnlySpan<XRTexture?> requiredTextures,
+        ReadOnlySpan<long> requiredGenerations,
+        bool requireExactDescriptorPublication,
+        bool filterByRequiredTexture)
     {
         ArgumentNullException.ThrowIfNull(manifest);
-        manifest.BeginCapture();
+        if (filterByRequiredTexture &&
+            requiredTextures.Length != requiredGenerations.Length)
+        {
+            throw new ArgumentException(
+                "Required texture owners and generations must have equal lengths.");
+        }
+        manifest.BeginCapture(requireExactDescriptorPublication);
+        if (filterByRequiredTexture)
+        {
+            for (int index = 0; index < requiredTextures.Length; index++)
+            {
+                if (requiredTextures[index] is not XRTexture2D texture)
+                    continue;
+                long requiredGeneration = requiredGenerations[index];
+                if (requiredGeneration > 0L)
+                    CaptureRequiredUploadGeneration(
+                        manifest,
+                        texture,
+                        requiredGeneration);
+            }
+        }
+
         lock (_prepQueueSync)
         {
             for (int index = 0; index < _pendingPrepJobs.Count; index++)
             {
                 VulkanImportedTextureUploadJob job = _pendingPrepJobs[index];
-                if (job.Request.PriorityClass == TextureUploadPriorityClass.VisibleNow)
-                    manifest.Add(job.Ticket);
+                VulkanImportedTextureUploadRequest request = job.Request;
+                if (request.PriorityClass == TextureUploadPriorityClass.VisibleNow &&
+                    (!filterByRequiredTexture ||
+                     IsRequiredTexture(in request, requiredTextures)))
+                {
+                    request.TryGetTexture(out XRTexture2D? texture);
+                    manifest.Add(job.Ticket, texture);
+                    _ = TryPinUploadGeneration(manifest, texture, job.Ticket);
+                    manifest.ApplyDurableState(
+                        job.Ticket,
+                        MapDependencyState(
+                            VulkanTextureUploadGenerationState.PrepQueued),
+                        null);
+                }
             }
         }
 
@@ -97,24 +160,53 @@ internal sealed partial class VulkanTextureUploadService
             for (int index = 0; index < _pendingTransferUploads.Count; index++)
             {
                 VulkanSubmittedImportedTextureUpload submitted = _pendingTransferUploads[index];
-                if (submitted.Upload.Request.PriorityClass == TextureUploadPriorityClass.VisibleNow)
-                    manifest.Add(submitted.Upload.Ticket);
+                VulkanImportedTextureUploadRequest request = submitted.Upload.Request;
+                if (request.PriorityClass == TextureUploadPriorityClass.VisibleNow &&
+                    (!filterByRequiredTexture ||
+                     IsRequiredTexture(in request, requiredTextures)))
+                {
+                    request.TryGetTexture(out XRTexture2D? texture);
+                    manifest.Add(submitted.Upload.Ticket, texture);
+                    _ = TryPinUploadGeneration(
+                        manifest,
+                        texture,
+                        submitted.Upload.Ticket);
+                    _ = manifest.MarkCpuPrepared(submitted.Upload.Ticket);
+                    _ = manifest.MarkGpuSubmitted(submitted.Upload.Ticket);
+                    if (submitted.TryGetTerminalFailure(out string failureReason))
+                        manifest.Fail(submitted.Upload.Ticket, failureReason);
+                }
             }
         }
     }
 
+    private static bool IsRequiredTexture(
+        in VulkanImportedTextureUploadRequest request,
+        ReadOnlySpan<XRTexture?> requiredTextures)
+    {
+        if (!request.TryGetTexture(out XRTexture2D? texture) || texture is null)
+            return false;
+        for (int index = 0; index < requiredTextures.Length; index++)
+            if (ReferenceEquals(requiredTextures[index], texture))
+                return true;
+        return false;
+    }
+
     internal bool DrainRequiredTextureUploads(
         VulkanTextureUploadSchedulingContext context,
-        VulkanTextureUploadManifest manifest)
+        VulkanTextureUploadManifest manifest,
+        out bool madeProgress)
     {
+        ulong initialProgressVersion = manifest.ProgressVersion;
+        RefreshRequiredUploadGenerations(manifest);
         context.Resources.Allocations.Staging.EnsureForegroundReserve(context.BackendObjects);
         bool preparationReady = DrainRequiredUploadPreparation(context, manifest);
         bool transfersReady = DrainRequiredTextureTransfers(context, manifest);
-        return preparationReady && transfersReady;
+        RefreshRequiredUploadGenerations(manifest);
+        madeProgress = manifest.ProgressVersion != initialProgressVersion;
+        return preparationReady && transfersReady &&
+            (manifest.AreAllReady || manifest.TryGetTerminalFailure(out _, out _));
     }
-
-    internal bool DrainRequiredTextureUploads(VulkanTextureUploadSchedulingContext context)
-        => DrainRequiredTextureUploads(context, CaptureRequiredTextureUploadManifest());
 
     internal static bool TryDescribeActiveUploadWork(out string reason)
     {
@@ -284,6 +376,7 @@ internal sealed partial class VulkanTextureUploadService
         VulkanTextureUploadGenerationState state,
         string? detail = null)
     {
+        UpdateUploadGeneration(request, state, detail);
         TextureRuntimeDiagnostics.LogVulkanImportedTextureUploadState(
             RuntimeRenderingHostServices.FrameTiming.LastRenderTimestampTicks,
             request.TextureName,
@@ -336,6 +429,8 @@ internal sealed partial class VulkanTextureUploadService
         }
 
         long estimatedBytes = XRTexture2D.CalculateResidentUploadBytes(residentData);
+        long sequence = Interlocked.Increment(ref _nextQueuedUploadSequence);
+        VulkanTextureUploadTicket ticket = new(sequence, streamingGeneration);
         VulkanImportedTextureUploadRequest request = new(
             new WeakReference<XRTexture2D>(texture),
             texture.Name,
@@ -349,9 +444,20 @@ internal sealed partial class VulkanTextureUploadService
             ESizedInternalFormat.Rgba8,
             null,
             estimatedBytes,
+            ticket,
             streamingGeneration,
             priorityClass,
             cancellationToken);
+
+        if (!RegisterUploadGeneration(texture, request, out string? ledgerFailure))
+        {
+            InvalidOperationException failure = new(
+                ledgerFailure ??
+                "The Vulkan texture upload generation ledger rejected the request.");
+            Interlocked.Increment(ref s_failedUploads);
+            onError?.Invoke(failure);
+            return false;
+        }
 
         if ((shouldAcceptResult is not null && !shouldAcceptResult())
             || !TryQueueImportedTextureUpload(request, streamingGeneration, out _))
@@ -362,10 +468,9 @@ internal sealed partial class VulkanTextureUploadService
             return false;
         }
 
-        long sequence = Interlocked.Increment(ref _nextQueuedUploadSequence);
         VulkanImportedTextureUploadJob job = new(
             request,
-            new VulkanTextureUploadTicket(sequence, streamingGeneration),
+            ticket,
             residentData,
             includeMipChain,
             sequence,
@@ -373,9 +478,9 @@ internal sealed partial class VulkanTextureUploadService
             onFinished,
             onCanceled,
             onError);
-
         LogCompatibilityPathState(context.Commands);
-        if (!RenderDiagnosticsFlags.VkAsyncTextureUpload)
+        if (!RenderDiagnosticsFlags.VkAsyncTextureUpload &&
+            RuntimeRenderingHostServices.FrameTiming.IsRenderThread)
         {
             RecordState(request, VulkanTextureUploadGenerationState.PrepRunning, "async upload prep disabled; preparing immediately on render thread");
             while (true)
@@ -384,7 +489,8 @@ internal sealed partial class VulkanTextureUploadService
                     context,
                     job,
                     TextureRuntimeDiagnostics.StartTiming(),
-                    0.0);
+                    0.0,
+                    requiredManifest: null);
                 if (immediateResult == VulkanImportedTextureUploadPrepResult.Deferred)
                 {
                     return QueueUploadPreparation(context, job);

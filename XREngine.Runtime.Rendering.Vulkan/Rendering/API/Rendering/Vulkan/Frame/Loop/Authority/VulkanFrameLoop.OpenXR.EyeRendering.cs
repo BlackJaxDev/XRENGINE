@@ -37,7 +37,14 @@ internal sealed partial class VulkanFrameLoop
         List<VulkanImportedTexturePendingUpload> eyeUploads = GetOpenXrEyeRecordedTextureUploads(openXrViewIndex);
         eyeUploads.Clear();
         if (!TryRecordOpenXrEyeSwapchainCommandBuffer(request, out OpenXrRecordedEyeCommandBuffer recorded))
-            return false;
+        {
+            throw CreateOpenXrEyePresentNowFailure(
+                openXrViewIndex,
+                EVulkanPresentNowReadinessStage.FramePlanSeal,
+                "single-eye-record",
+                "OpenXREyeSubmit -> logical plan -> exact primary",
+                "Foreground eye preparation or recording returned no command buffer.");
+        }
 
         bool submitted = false;
         bool commandBufferCompleted = false;
@@ -95,7 +102,12 @@ internal sealed partial class VulkanFrameLoop
                 }
             }
 
-            return submitted;
+            if (!submitted)
+                ThrowOpenXrRecordedPresentNowSubmissionFailure(
+                    in recorded,
+                    commandBufferCompleted,
+                    "single-eye-submit");
+            return true;
         }
         finally
         {
@@ -143,22 +155,47 @@ internal sealed partial class VulkanFrameLoop
             using (RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.Vulkan.Batch.PrepareLeftEye"))
             {
                 if (!TryPrepareOpenXrEyeSwapchainCommandBuffer(firstEye, out firstPrepared))
-                    return false;
+                {
+                    throw CreateOpenXrEyePresentNowFailure(
+                        firstEye.OpenXrViewIndex,
+                        EVulkanPresentNowReadinessStage.FramePlanSeal,
+                        "left-eye-prepare",
+                        "OpenXREyeSubmit -> left logical plan",
+                        "Foreground left-eye preparation returned no immutable input.");
+                }
             }
 
             using (RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.Vulkan.Batch.PrepareRightEye"))
             {
                 if (!TryPrepareOpenXrEyeSwapchainCommandBuffer(secondEye, out secondPrepared))
-                    return false;
+                {
+                    throw CreateOpenXrEyePresentNowFailure(
+                        secondEye.OpenXrViewIndex,
+                        EVulkanPresentNowReadinessStage.FramePlanSeal,
+                        "right-eye-prepare",
+                        "OpenXREyeSubmit -> right logical plan",
+                        "Foreground right-eye preparation returned no immutable input.");
+                }
             }
 
             if (!TryCreatePairedOpenXrLogicalPlan(
                     in firstPrepared,
                     in secondPrepared,
                     out FramePlan pairedLogicalPlan))
-                return false;
-            firstPrepared = firstPrepared with { PairedLogicalPlan = pairedLogicalPlan };
-            secondPrepared = secondPrepared with { PairedLogicalPlan = pairedLogicalPlan };
+            {
+                throw CreateOpenXrEyePresentNowFailure(
+                    firstEye.OpenXrViewIndex,
+                    EVulkanPresentNowReadinessStage.FramePlanSeal,
+                    "paired-eye-plan",
+                    "OpenXREyeSubmit -> paired logical plan",
+                    "Foreground paired-eye planning returned no sealed plan.");
+            }
+            firstPrepared = BindOpenXrEyeOutputContract(
+                in firstPrepared,
+                pairedLogicalPlan);
+            secondPrepared = BindOpenXrEyeOutputContract(
+                in secondPrepared,
+                pairedLogicalPlan);
 
             // Preparing the second eye can grow shared mesh-renderer descriptor/
             // uniform capacity. Re-prewarm both complete op streams only after
@@ -173,12 +210,26 @@ internal sealed partial class VulkanFrameLoop
             using (RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.Vulkan.Batch.RecordLeftEye"))
                 hasFirst = TryRecordPreparedOpenXrEyeSwapchainCommandBuffer(in firstPrepared, out firstRecorded);
             if (!hasFirst)
-                return false;
+            {
+                throw CreateOpenXrEyePresentNowFailure(
+                    firstEye.OpenXrViewIndex,
+                    EVulkanPresentNowReadinessStage.PipelineCompilation,
+                    "left-eye-primary",
+                    "OpenXREyeSubmit -> left exact primary",
+                    "Foreground left-eye recording returned no command buffer.");
+            }
 
             using (RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.Vulkan.Batch.RecordRightEye"))
                 hasSecond = TryRecordPreparedOpenXrEyeSwapchainCommandBuffer(in secondPrepared, out secondRecorded);
             if (!hasSecond)
-                return false;
+            {
+                throw CreateOpenXrEyePresentNowFailure(
+                    secondEye.OpenXrViewIndex,
+                    EVulkanPresentNowReadinessStage.PipelineCompilation,
+                    "right-eye-primary",
+                    "OpenXREyeSubmit -> right exact primary",
+                    "Foreground right-eye recording returned no command buffer.");
+            }
 
             using (RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.Vulkan.Batch.SubmitAndWait"))
             {
@@ -228,7 +279,12 @@ internal sealed partial class VulkanFrameLoop
                 }
             }
 
-            return submitted;
+            if (!submitted)
+                ThrowOpenXrRecordedPresentNowSubmissionFailure(
+                    in firstRecorded,
+                    commandBuffersCompleted,
+                    "paired-eye-submit");
+            return true;
         }
         finally
         {
@@ -284,10 +340,15 @@ internal sealed partial class VulkanFrameLoop
                 in prepared,
                 out FramePlan logicalPlan))
         {
-            return false;
+            throw CreateOpenXrEyePresentNowFailure(
+                request.OpenXrViewIndex,
+                EVulkanPresentNowReadinessStage.FramePlanSeal,
+                "single-eye-plan",
+                "OpenXREyeSubmit -> single logical plan",
+                "Foreground single-eye preparation returned no sealed logical plan.");
         }
 
-        prepared = prepared with { PairedLogicalPlan = logicalPlan };
+        prepared = BindOpenXrEyeOutputContract(in prepared, logicalPlan);
         return TryRecordPreparedOpenXrEyeSwapchainCommandBuffer(
             in prepared,
             out recorded);
@@ -554,7 +615,14 @@ internal sealed partial class VulkanFrameLoop
         if (!TryFreezeOpenXrEyeRecordWorkerInput(
                 in prepared,
                 out OpenXrPreparedEyeRecordWorkerInput frozen))
-            return false;
+        {
+            throw CreateOpenXrEyePresentNowFailure(
+                prepared.TargetContext.OpenXrViewIndex,
+                EVulkanPresentNowReadinessStage.FramePlanSeal,
+                "eye-freeze",
+                "OpenXREyeSubmit -> immutable native recording input",
+                "Foreground eye freeze returned no worker input.");
+        }
 
         try
         {
@@ -604,11 +672,40 @@ internal sealed partial class VulkanFrameLoop
         OpenXrEyeRenderTargetContext targetContext = prepared.TargetContext;
         FramePlan? framePlan = prepared.PairedLogicalPlan;
         if (!targetContext.IsValid || framePlan is null || !framePlan.IsSealed)
-            return false;
+        {
+            throw CreateOpenXrEyePresentNowFailure(
+                targetContext.OpenXrViewIndex,
+                EVulkanPresentNowReadinessStage.FramePlanSeal,
+                "eye-freeze-plan",
+                "OpenXREyeSubmit -> immutable logical plan",
+                "The foreground eye lost its target or sealed logical plan before native recording freeze.");
+        }
 
-        ulong logicalViewId = GetSingleOpenXrLogicalViewId(prepared.Ops);
-        if (logicalViewId == 0UL)
-            return false;
+        ulong logicalViewId = prepared.LogicalViewId;
+        RenderOutputRequest requiredContract = prepared.RequiredOutputContract;
+        if (logicalViewId == 0UL ||
+            prepared.RequiredOutputIndex < 0 ||
+            !requiredContract.IsDefined ||
+            !framePlan.TryGetExecutableOutputContractForLogicalView(
+                logicalViewId,
+                EFrameOutputKind.OpenXREyeSubmit,
+                requiredContract.ViewKind,
+                out int outputIndex,
+                out RenderOutputRequest outputContract) ||
+            outputIndex != prepared.RequiredOutputIndex ||
+            outputContract != requiredContract ||
+            outputContract.WorkClass != ERenderOutputWorkClass.PresentNow ||
+            outputContract.ReadinessPolicy is ERenderOutputReadinessPolicy.AllowDeferral)
+        {
+            throw new VulkanPresentNowReadinessException(
+                framePlan.RenderFrameId,
+                EVulkanPresentNowReadinessStage.FramePlanSeal,
+                $"openxr-eye-{targetContext.OpenXrViewIndex}-output-contract",
+                "OpenXREyeSubmit -> exact logical-view output terminal",
+                TimeSpan.Zero,
+                TimeSpan.Zero,
+                "The sealed logical OpenXR plan no longer matches the exact non-deferrable eye-submit contract bound before worker publication.");
+        }
 
         FrameOperationSequence nativeOperations =
             framePlan.GetNativeStaticOperationsForLogicalView(logicalViewId);
@@ -707,7 +804,12 @@ internal sealed partial class VulkanFrameLoop
                 FreshSerialRecording: true,
                 IsExternalSwapchainTarget: true,
                 PreserveSwapchainForOverlay: false,
-                TransitionSwapchainToPresent: false),
+                TransitionSwapchainToPresent: false,
+                ReadinessPolicy: outputContract.ReadinessPolicy,
+                WorkClass: outputContract.WorkClass,
+                SourceFrameId: framePlan.RenderFrameId,
+                AllowArtifactReuse: false,
+                AllowSecondaryDeferral: false),
             trackedTargetLayout,
             FrameDataImageIndexOverride: targetContext.FrameDataSlotIndex,
             OpenXrTargetContext: targetContext,
@@ -723,12 +825,103 @@ internal sealed partial class VulkanFrameLoop
             targetContext.OpenXrViewIndex,
             targetContext.OpenXrImageIndex,
             targetContext.FrameDataSlotIndex,
+            logicalViewId,
+            outputIndex,
+            outputContract,
             frameOpsSignature,
             prepared.PlannerRevision,
             prepared.PlannerContext.ContextId,
             prepared.PlannerContext.ResourceGeneration,
             prepared.PlannerContext.DescriptorGeneration);
         return true;
+    }
+
+    /// <summary>
+    /// Binds one prepared eye to the exact executable terminal produced by its
+    /// logical view before the immutable input can be published to a recorder.
+    /// </summary>
+    private static OpenXrPreparedEyeCommandBufferInput BindOpenXrEyeOutputContract(
+        in OpenXrPreparedEyeCommandBufferInput prepared,
+        FramePlan logicalPlan)
+    {
+        ulong logicalViewId = GetSingleOpenXrLogicalViewId(prepared.Ops);
+        EVrOutputViewKind viewKind = default;
+        EVrOutputViewKind indexedViewKind = default;
+        bool hasViewKind = logicalViewId != 0UL &&
+            logicalPlan.ViewSet.TryGetLocatedOpenXrViewKindByLogicalViewId(
+                logicalViewId,
+                out viewKind);
+        bool hasIndexedViewKind = logicalPlan.ViewSet.TryGetLocatedOpenXrViewKind(
+            prepared.TargetContext.OpenXrViewIndex,
+            out indexedViewKind);
+        if (!hasViewKind ||
+            !hasIndexedViewKind ||
+            viewKind != indexedViewKind ||
+            !logicalPlan.TryGetExecutableOutputContractForLogicalView(
+                logicalViewId,
+                EFrameOutputKind.OpenXREyeSubmit,
+                viewKind,
+                out int outputIndex,
+                out RenderOutputRequest outputContract) ||
+            outputContract.WorkClass != ERenderOutputWorkClass.PresentNow ||
+            outputContract.ReadinessPolicy is ERenderOutputReadinessPolicy.AllowDeferral)
+        {
+            throw new VulkanPresentNowReadinessException(
+                logicalPlan.RenderFrameId,
+                EVulkanPresentNowReadinessStage.FramePlanSeal,
+                $"openxr-eye-{prepared.TargetContext.OpenXrViewIndex}-output-bind",
+                "OpenXREyeSubmit -> exact logical-view output terminal",
+                TimeSpan.Zero,
+                TimeSpan.Zero,
+                "The sealed logical OpenXR plan did not expose exactly one executable non-deferrable terminal for this located view.");
+        }
+
+        return prepared with
+        {
+            LogicalViewId = logicalViewId,
+            RequiredOutputIndex = outputIndex,
+            RequiredOutputContract = outputContract,
+            PairedLogicalPlan = logicalPlan,
+        };
+    }
+
+    private static VulkanPresentNowReadinessException CreateOpenXrEyePresentNowFailure(
+        uint openXrViewIndex,
+        EVulkanPresentNowReadinessStage stage,
+        string ticket,
+        string dependencyChain,
+        string detail)
+        => new(
+            RuntimeEngine.Rendering.State.RenderFrameId,
+            stage,
+            $"openxr-eye-{openXrViewIndex}-{ticket}",
+            dependencyChain,
+            TimeSpan.Zero,
+            TimeSpan.Zero,
+            detail);
+
+    private void ThrowOpenXrRecordedPresentNowSubmissionFailure(
+        scoped in OpenXrRecordedEyeCommandBuffer recorded,
+        bool commandBuffersCompleted,
+        string ticket)
+    {
+        if (recorded.OutputContract.WorkClass != ERenderOutputWorkClass.PresentNow)
+            return;
+        if (IsDeviceLost)
+        {
+            throw CreateDeviceLostException(
+                "OpenXR foreground queue submission",
+                Result.ErrorDeviceLost);
+        }
+
+        throw new VulkanPresentNowReadinessException(
+            recorded.OutputContract.FrameId,
+            EVulkanPresentNowReadinessStage.QueueSubmission,
+            $"openxr-output-{recorded.OpenXrViewIndex}-{ticket}",
+            $"{recorded.OutputContract.OutputKind} -> graphics queue submission -> timeline completion",
+            TimeSpan.Zero,
+            TimeSpan.Zero,
+            $"The exact foreground output submission failed; commandBuffersCompleted={commandBuffersCompleted}.");
     }
 
     internal static int ResolveOpenXrEyeUploadPublicationBufferIndex(uint openXrViewIndex)
@@ -907,8 +1100,22 @@ internal sealed partial class VulkanFrameLoop
         int destinationIndex)
     {
         for (int index = 0; index < source.Length; index++)
+            destination[destinationIndex + index] = source[index];
+
+        ClearLogicalOperationNativeTargets(
+            destination.AsSpan(destinationIndex, source.Length));
+    }
+
+    /// <summary>
+    /// Removes native framebuffer authority from an already captured logical
+    /// operation cohort. The stable output-target identity remains intact so
+    /// planner ownership and the eventual native target seal cannot diverge.
+    /// </summary>
+    private static void ClearLogicalOperationNativeTargets(Span<FrameOp> operations)
+    {
+        for (int index = 0; index < operations.Length; index++)
         {
-            FrameOp operation = source[index];
+            FrameOp operation = operations[index];
             FrameOpContext context = operation.Context with
             {
                 // OutputTargetIdentity names the stable per-view resource-plan owner;
@@ -918,7 +1125,7 @@ internal sealed partial class VulkanFrameLoop
                 OutputFrameBufferName = null,
                 OutputFrameBuffer = null,
             };
-            destination[destinationIndex + index] = operation with { Context = context };
+            operations[index] = operation with { Context = context };
         }
     }
 
@@ -946,6 +1153,10 @@ internal sealed partial class VulkanFrameLoop
 
         try
         {
+            // This single-eye path has no later consumer of its producer
+            // operations. Strip native framebuffer authority before sealing so
+            // it has the same logical/native split as the paired-eye path.
+            ClearLogicalOperationNativeTargets(eye.Ops);
             ResourcePlannerRuntimeState publishedPlannerState =
                 PublishedResourcePlannerRuntimeState;
             plan = _framePlanner.FramePlanBuilder.BuildAndSeal(

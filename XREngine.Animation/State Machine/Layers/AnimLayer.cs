@@ -45,6 +45,9 @@ namespace XREngine.Animation
         /// </summary>
         [MemoryPackIgnore]
         internal AnimationSlotLayout? SlotLayout { get; set; }
+
+        [MemoryPackIgnore]
+        internal UnityHumanoidMotionContributionBuffer UnityHumanoidContributions { get; } = new();
         
         [MemoryPackIgnore]
         private readonly BlendManager _blendManager = new();
@@ -173,15 +176,26 @@ namespace XREngine.Animation
             foreach (var state in States)
                 state.Initialize(this, owner, rootObject);
 
-            CurrentState?.RestartMotionPlayback();
+            CurrentState?.RestartMotionPlayback(owner.Variables);
             CurrentState?.OnEnter(owner.Variables);
+            if (CurrentState is not null)
+                owner.NotifyHumanoidMotionContinuityChanged(EAnimMotionContinuityChange.StateEntry);
         }
 
         public void Deinitialize()
         {
+            IDictionary<string, AnimVar>? variables = OwningStateMachine?.Variables;
+            if (variables is not null)
+            {
+                CurrentState?.OnExit(variables);
+                if (NextState is not null && !ReferenceEquals(NextState, CurrentState))
+                    NextState.OnExit(variables);
+            }
+
             foreach (var state in States)
                 state.StopMotionPlayback();
 
+            _blendManager.ResetRuntimeState();
             CurrentState = null;
             NextState = null;
             OwningStateMachine = null;
@@ -189,112 +203,142 @@ namespace XREngine.Animation
                 state.Deinitialize();
         }
 
-        internal void SeekActiveMotionPlayback(float timeSeconds)
+        internal void SeekActiveMotionPlayback(float timeSeconds, bool collectEvents = false)
         {
-            CurrentState?.SeekMotionPlayback(timeSeconds);
+            IDictionary<string, AnimVar>? variables = OwningStateMachine?.Variables;
+            if (variables is null)
+                return;
+
+            CurrentState?.SeekMotionPlayback(timeSeconds, variables, collectEvents);
             if (NextState is not null && !ReferenceEquals(NextState, CurrentState))
-                NextState.SeekMotionPlayback(timeSeconds);
+                NextState.SeekMotionPlayback(timeSeconds, variables, collectEvents);
+            if (collectEvents)
+            {
+                OwningStateMachine?.DispatchUnityAnimationEvents(CurrentState);
+                if (NextState is not null && !ReferenceEquals(NextState, CurrentState))
+                    OwningStateMachine?.DispatchUnityAnimationEvents(NextState);
+            }
+            OwningStateMachine?.NotifyHumanoidMotionContinuityChanged(EAnimMotionContinuityChange.Seek);
+        }
+
+        internal void PrepareUnityHumanoidContributionCapacity(int capacity)
+        {
+            UnityHumanoidContributions.EnsureCapacity(capacity);
+            if (SlotLayout is not null)
+                _blendManager.PrepareRuntimeEvaluation(SlotLayout, capacity);
         }
 
         public void EvaluationTick(object? rootObject, float delta, IDictionary<string, AnimVar> variables)
-        {
-            //TODO: evaluate next state's transitions while still blending, stack multiple blends?
-            //Right now we can only perform one transition at a time.
-
-            //Get the current state or set to the initial
-            var currState = CurrentState;
-            if (currState is null)
-            {
-                //No current state, set it to the initial state
-                InitialState ??= States.FirstOrDefault();
-                CurrentState = currState = InitialState;
-                if (currState is null)
-                    return; //No states, nothing to do
-
-                currState.RestartMotionPlayback();
-                currState.OnEnter(variables);
-            }
-
-            CurrentState?.EvaluateValues(variables);
-            NextState?.EvaluateValues(variables);
-
-            //Check if we're blending to a new state
-            var nextState = NextState;
-            if (nextState is not null || TryTransition(variables, currState, out nextState) || TryTransition(variables, AnyState, out nextState))
-            {
-                //The blend manager will update animation values
-                if (_blendManager.TickBlend(this, delta))
-                {
-                    AnimState? previousState = CurrentState;
-                    CurrentState = nextState;
-                    if (previousState is not null && !ReferenceEquals(previousState, CurrentState))
-                        previousState.StopMotionPlayback();
-                    CurrentState?.OnEnter(variables);
-                    NextState = null;
-                }
-            }
-            else
-            {
-                NextState = null;
-
-                //Copy animation values from the current state
-                CopyAnimationValuesFromMotion(_currentState?.Motion);
-            }
-
-            CurrentState?.Tick(delta, variables);
-            NextState?.Tick(delta, variables);
-        }
+            => EvaluateFrame(variables, delta, null);
 
         public void EvaluationTick(object? rootObject, long deltaTicks, IDictionary<string, AnimVar> variables)
         {
-            var currState = CurrentState;
+            float delta = deltaTicks == 0L
+                ? 0.0f
+                : (float)(deltaTicks / (double)Stopwatch.Frequency);
+            EvaluateFrame(variables, delta, deltaTicks);
+        }
+
+        private void EvaluateFrame(
+            IDictionary<string, AnimVar> variables,
+            float delta,
+            long? deltaTicks)
+        {
+            ValueStore.Clear();
+            UnityHumanoidContributions.Clear();
+            AnimState? currState = CurrentState;
             if (currState is null)
             {
-                InitialState ??= States.FirstOrDefault();
+                InitialState ??= States.Count > 0 ? States[0] : null;
                 CurrentState = currState = InitialState;
                 if (currState is null)
                     return;
 
-                currState.RestartMotionPlayback();
+                currState.RestartMotionPlayback(variables);
                 currState.OnEnter(variables);
+                OwningStateMachine?.NotifyHumanoidMotionContinuityChanged(EAnimMotionContinuityChange.StateEntry);
             }
 
-            CurrentState?.EvaluateValues(variables);
-            NextState?.EvaluateValues(variables);
+            currState.EvaluateValues(variables);
+            if (NextState is AnimState nextToEvaluate
+                && !ReferenceEquals(nextToEvaluate, currState))
+                nextToEvaluate.EvaluateValues(variables);
 
-            float delta = deltaTicks == 0L ? 0.0f : (float)(deltaTicks / (double)Stopwatch.Frequency);
-            var nextState = NextState;
-            if (nextState is not null || TryTransition(variables, currState, out nextState) || TryTransition(variables, AnyState, out nextState))
+            if (_blendManager.IsBlending)
             {
-                if (_blendManager.TickBlend(this, delta))
-                {
-                    AnimState? previousState = CurrentState;
-                    CurrentState = nextState;
-                    if (previousState is not null && !ReferenceEquals(previousState, CurrentState))
-                        previousState.StopMotionPlayback();
-                    CurrentState?.OnEnter(variables);
-                    NextState = null;
-                }
+                if (_blendManager.TickBlend(this, delta, variables))
+                    CompleteTransition(variables);
+                else
+                    TryInterruptTransition(variables);
+            }
+            else if (TryTransition(variables, AnyState, out _)
+                || TryTransition(variables, currState, out _))
+            {
+                if (_blendManager.TickBlend(this, delta, variables))
+                    CompleteTransition(variables);
             }
             else
             {
                 NextState = null;
-                CopyAnimationValuesFromMotion(_currentState?.Motion);
+                CopyAnimationValuesFromState(currState);
             }
 
-            CurrentState?.Tick(deltaTicks, variables);
-            NextState?.Tick(deltaTicks, variables);
+            TickActiveStates(variables, delta, deltaTicks);
         }
 
-        private void CopyAnimationValuesFromMotion(MotionBase? motion)
+        private void TickActiveStates(
+            IDictionary<string, AnimVar> variables,
+            float delta,
+            long? deltaTicks)
         {
-            if (motion is null)
+            AnimState? current = CurrentState;
+            AnimState? next = NextState;
+            if (deltaTicks is long ticks)
+            {
+                current?.Tick(ticks, variables);
+                OwningStateMachine?.DispatchUnityAnimationEvents(current);
+                if (next is not null && !ReferenceEquals(next, current))
+                {
+                    next.Tick(ticks, variables);
+                    OwningStateMachine?.DispatchUnityAnimationEvents(next);
+                }
+                return;
+            }
+
+            current?.Tick(delta, variables);
+            OwningStateMachine?.DispatchUnityAnimationEvents(current);
+            if (next is not null && !ReferenceEquals(next, current))
+            {
+                next.Tick(delta, variables);
+                OwningStateMachine?.DispatchUnityAnimationEvents(next);
+            }
+        }
+
+        private void CompleteTransition(IDictionary<string, AnimVar> variables)
+        {
+            AnimState? completedState = NextState;
+            AnimState? previousState = CurrentState;
+            CurrentState = completedState;
+            if (previousState is not null && !ReferenceEquals(previousState, completedState))
+            {
+                previousState.OnExit(variables);
+                previousState.StopMotionPlayback();
+            }
+            NextState = null;
+            OwningStateMachine?.NotifyHumanoidMotionContinuityChanged(
+                EAnimMotionContinuityChange.TransitionCompleted);
+        }
+
+        private void CopyAnimationValuesFromState(AnimState? state)
+        {
+            if (state?.Motion is not MotionBase motion)
                 return;
 
             // Typed store path: bulk copy (zero-alloc)
             if (SlotLayout is not null && motion.SlotLayout is not null)
             {
-                ValueStore.CopyFrom(motion.ValueStore);
+                ValueStore.CopyFrom(state.RuntimeValueStore);
+                UnityHumanoidContributions.CopyFrom(state.UnityHumanoidContributions);
                 return;
             }
 
@@ -335,25 +379,142 @@ namespace XREngine.Animation
 
         private bool TryTransition(IDictionary<string, AnimVar> variables, AnimStateBase testState, out AnimState? nextState)
         {
-            //If we're not blending, check for a transition
-            AnimStateTransition? transition = testState.TryTransition(variables);
+            AnimStateTransition? transition = testState.TryTransition(
+                variables,
+                CurrentState,
+                orderedBefore: null);
             nextState = transition?.DestinationState;
 
-            //If the new state is different, queue it
             if (nextState != null && (nextState != CurrentState || transition!.CanTransitionToSelf))
             {
                 Debug.WriteLine($"Transitioning from {CurrentState} to {nextState} with transition {transition}");
-                CurrentState?.OnExit(variables);
-                nextState.RestartMotionPlayback();
+                bool replayingCurrentState = ReferenceEquals(nextState, CurrentState);
+                if (replayingCurrentState)
+                {
+                    CopyAnimationValuesFromState(CurrentState);
+                    CurrentState?.OnExit(variables);
+                }
+                nextState.RestartMotionPlayback(variables, transition!.TransitionOffset);
                 nextState.EvaluateValues(variables);
+                nextState.OnEnter(variables);
                 NextState = nextState;
-                _blendManager.BeginBlend(transition!, CurrentState, nextState);
+                if (replayingCurrentState)
+                {
+                    _blendManager.BeginBlendFromSnapshot(
+                        transition!,
+                        CurrentState,
+                        nextState,
+                        ValueStore,
+                        UnityHumanoidContributions);
+                    OwningStateMachine?.NotifyHumanoidMotionContinuityChanged(
+                        EAnimMotionContinuityChange.Replay);
+                }
+                else
+                {
+                    _blendManager.BeginBlend(transition!, CurrentState, nextState);
+                    OwningStateMachine?.NotifyHumanoidMotionContinuityChanged(
+                        EAnimMotionContinuityChange.TransitionStarted);
+                }
                 return true;
             }
 
-            //No transition found
             nextState = null;
             return false;
+        }
+
+        private bool TryInterruptTransition(IDictionary<string, AnimVar> variables)
+        {
+            AnimStateTransition? activeTransition = _blendManager.CurrentTransition;
+            if (activeTransition is null
+                || activeTransition.InterruptionSource is ETransitionInterruptionSource.Neither)
+                return false;
+
+            if (TryInterruptFrom(AnyState, CurrentState, activeTransition, variables))
+                return true;
+
+            bool interrupted = activeTransition.InterruptionSource switch
+            {
+                ETransitionInterruptionSource.Current =>
+                    TryInterruptFrom(CurrentState, CurrentState, activeTransition, variables),
+                ETransitionInterruptionSource.Next =>
+                    TryInterruptFrom(NextState, NextState, activeTransition, variables),
+                ETransitionInterruptionSource.CurrentThenNext =>
+                    TryInterruptFrom(CurrentState, CurrentState, activeTransition, variables)
+                    || TryInterruptFrom(NextState, NextState, activeTransition, variables),
+                ETransitionInterruptionSource.NextThenCurrent =>
+                    TryInterruptFrom(NextState, NextState, activeTransition, variables)
+                    || TryInterruptFrom(CurrentState, CurrentState, activeTransition, variables),
+                _ => false,
+            };
+            if (interrupted)
+                return true;
+            return false;
+        }
+
+        private bool TryInterruptFrom(
+            AnimStateBase? transitionSource,
+            AnimState? semanticSourceState,
+            AnimStateTransition activeTransition,
+            IDictionary<string, AnimVar> variables)
+        {
+            if (transitionSource is null)
+                return false;
+
+            AnimStateTransition? orderedBefore = activeTransition.OrderedInterruption
+                && ReferenceEquals(activeTransition.Owner, transitionSource)
+                    ? activeTransition
+                    : null;
+            AnimStateTransition? interruption = transitionSource.TryTransition(
+                variables,
+                semanticSourceState,
+                orderedBefore,
+                activeTransition);
+            AnimState? destination = interruption?.DestinationState;
+            if (interruption is null
+                || destination is null
+                || (ReferenceEquals(destination, semanticSourceState)
+                    && !interruption.CanTransitionToSelf))
+                return false;
+
+            Debug.WriteLine(
+                $"Interrupting {activeTransition} from {semanticSourceState} with {interruption}");
+            AnimState? previousCurrent = CurrentState;
+            AnimState? previousNext = NextState;
+            bool replayingSource = ReferenceEquals(destination, semanticSourceState);
+            if (replayingSource)
+                destination.OnExit(variables);
+            destination.RestartMotionPlayback(variables, interruption.TransitionOffset);
+            destination.EvaluateValues(variables);
+            destination.OnEnter(variables);
+            CurrentState = semanticSourceState ?? previousCurrent;
+            NextState = destination;
+            _blendManager.BeginBlendFromSnapshot(
+                interruption,
+                CurrentState,
+                destination,
+                ValueStore,
+                UnityHumanoidContributions);
+
+            StopAbandonedInterruptedState(previousCurrent, CurrentState, destination, variables);
+            StopAbandonedInterruptedState(previousNext, CurrentState, destination, variables);
+            OwningStateMachine?.NotifyHumanoidMotionContinuityChanged(
+                EAnimMotionContinuityChange.TransitionInterrupted);
+            return true;
+        }
+
+        private static void StopAbandonedInterruptedState(
+            AnimState? candidate,
+            AnimState? semanticSource,
+            AnimState destination,
+            IDictionary<string, AnimVar> variables)
+        {
+            if (candidate is not null
+                && !ReferenceEquals(candidate, semanticSource)
+                && !ReferenceEquals(candidate, destination))
+            {
+                candidate.OnExit(variables);
+                candidate.StopMotionPlayback();
+            }
         }
     }
 }

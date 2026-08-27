@@ -17,4 +17,5 @@ internal readonly record struct VkImageDescriptorSnapshot(
     ulong Generation,
     ImageLayout TrackedLayout,
     bool UsesAllocatorImage,
-    bool IsReady);
+    bool IsReady,
+    long StreamingGeneration = 0L);

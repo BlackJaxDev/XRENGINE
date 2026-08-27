@@ -11,6 +11,9 @@ internal readonly record struct OpenXrPreparedEyeRecordWorkerInput(
     uint OpenXrViewIndex,
     uint OpenXrImageIndex,
     uint FrameDataSlotIndex,
+    ulong LogicalViewId,
+    int RequiredOutputIndex,
+    RenderOutputRequest OutputContract,
     ulong FrameOpsSignature,
     ulong PlannerRevision,
     ulong FrameOpContextId,
@@ -21,6 +24,9 @@ internal readonly record struct OpenXrPreparedEyeRecordWorkerInput(
         CommandInput.PrimaryCommandBuffer.Handle != 0 &&
         CommandInput.RecordingTarget.IsValid &&
         CommandInput.FramePlan.IsSealed &&
+        LogicalViewId != 0UL &&
+        RequiredOutputIndex >= 0 &&
+        OutputContract.IsDefined &&
         PlannerState.ResourceAllocator is not null &&
         PlannerState.RenderGraphPlan is not null;
 }

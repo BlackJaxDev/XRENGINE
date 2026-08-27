@@ -13,6 +13,12 @@ internal interface IVulkanExplicitFrameTargetDriver
     bool IsDeviceLost { get; }
     double LastCompletedGpuFrameNanoseconds { get; }
     string PresentationDescription { get; }
+    /// <summary>
+    /// Returns the stable logical output for the next acquire without reserving
+    /// an image, fence, semaphore, or WSI ownership. The returned token must be
+    /// checked against the later lease before native recording.
+    /// </summary>
+    VulkanExplicitFrameTargetPreview PreviewNextFrameTarget();
     VulkanFrameTargetLease AcquireFrameTarget(out CommandBuffer commandBuffer);
     void BeginFrameRecording(in VulkanFrameTargetLease lease, CommandBuffer commandBuffer);
     void EndFrameRecording(in VulkanFrameTargetLease lease, CommandBuffer commandBuffer);

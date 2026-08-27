@@ -95,6 +95,37 @@ internal sealed partial class ImportedTextureStreamingManager
     internal bool HasActiveImportedModelImports
         => Volatile.Read(ref _activeImportedModelImports) > 0;
 
+    internal bool TryGetGenerationState(
+        XRTexture2D texture,
+        out long publishedGeneration,
+        out long uploadGeneration,
+        out TextureUploadPriorityClass pendingPriorityClass,
+        out bool hasPendingTransition)
+        => _registry.TryGetGenerationState(
+            texture,
+            out publishedGeneration,
+            out uploadGeneration,
+            out pendingPriorityClass,
+            out hasPendingTransition);
+
+    internal bool TryGetTerminalGenerationFailure(
+        XRTexture2D texture,
+        long generation,
+        out string detail)
+        => _registry.TryGetTerminalGenerationFailure(
+            texture,
+            generation,
+            out detail);
+
+    internal bool TryAcquirePublicationAuthority(
+        XRTexture2D texture,
+        long streamingGeneration,
+        out IDisposable? authority)
+        => _registry.TryAcquirePublicationAuthority(
+            texture,
+            streamingGeneration,
+            out authority);
+
     internal bool TryDescribeActiveStartupTextureWork(out string reason)
     {
         int activeImportScopes = Volatile.Read(ref _activeImportedModelImports);
@@ -188,10 +219,18 @@ internal sealed partial class ImportedTextureStreamingManager
 
         string authorityPath = target.FilePath ?? filePath;
         ImportedTextureStreamingRecord record = GetOrCreateRecord(target, filePath);
+        long previewGeneration;
         lock (record.Sync)
         {
             record.Format = ESizedInternalFormat.Rgba8;
             record.Backend = ResolvePreviewBackendCandidate(record.Format);
+            previewGeneration = checked(
+                Math.Max(
+                    Math.Max(record.ResidentGeneration, record.PublishedGeneration),
+                    record.UploadGeneration) + 1L);
+            record.UploadGeneration = previewGeneration;
+            record.PublicationEligibleGeneration = previewGeneration;
+            record.PendingMaxDimension = record.Backend.PreviewMaxDimension;
         }
 
         ITextureResidencyBackend previewBackend = record.Backend;
@@ -202,6 +241,28 @@ internal sealed partial class ImportedTextureStreamingManager
             previewBackend.PreviewMaxDimension,
             previewBackend.Name);
 
+        bool IsCurrentPreview()
+        {
+            lock (record.Sync)
+            {
+                return record.UploadGeneration == previewGeneration &&
+                    record.PublicationEligibleGeneration == previewGeneration;
+            }
+        }
+
+        void SettleFailedPreview(string detail)
+        {
+            lock (record.Sync)
+            {
+                if (record.UploadGeneration == previewGeneration)
+                    record.PendingMaxDimension = 0;
+            }
+            _registry.RecordTerminalGenerationFailure(
+                target,
+                previewGeneration,
+                detail);
+        }
+
         return previewBackend.SchedulePreviewLoad(
             record.Source ?? TextureStreamingSourceFactory.Create(filePath),
             target,
@@ -210,17 +271,20 @@ internal sealed partial class ImportedTextureStreamingManager
                 ITextureResidencyBackend readyBackend;
                 lock (record.Sync)
                 {
+                    if (record.UploadGeneration != previewGeneration ||
+                        record.PublicationEligibleGeneration != previewGeneration)
+                    {
+                        return;
+                    }
+
                     record.Format = residentData.SizedInternalFormat;
                     record.SourceWidth = residentData.SourceWidth;
                     record.SourceHeight = residentData.SourceHeight;
                     record.ResidentMaxDimension = residentData.ResidentMaxDimension;
                     record.DesiredMaxDimension = residentData.ResidentMaxDimension;
-                    record.PendingMaxDimension = 0;
                     record.PreviewReady = true;
                     record.Backend = ResolveBackendForTexture(residentData.SourceWidth, residentData.SourceHeight, record.Format);
-                    long generation = Math.Max(record.ResidentGeneration, record.PublishedGeneration) + 1L;
-                    record.ResidentGeneration = generation;
-                    record.UploadGeneration = generation;
+                    record.ResidentGeneration = previewGeneration;
                     readyBackend = record.Backend;
                 }
 
@@ -246,20 +310,35 @@ internal sealed partial class ImportedTextureStreamingManager
             {
                 lock (record.Sync)
                 {
+                    if (record.UploadGeneration != previewGeneration)
+                        return;
+
                     record.SparseNumLevels = tex.SparseTextureStreamingNumSparseLevels;
                     record.Backend ??= ResolveBackendForTexture(record.SourceWidth, record.SourceHeight, record.Format);
-                    if (record.UploadGeneration > record.PublishedGeneration)
-                        record.PublishedGeneration = record.UploadGeneration;
+                    if (previewGeneration > record.PublishedGeneration)
+                        record.PublishedGeneration = previewGeneration;
+                    record.PendingMaxDimension = 0;
                 }
 
                 onFinished?.Invoke(tex);
             },
-            onError,
-            onCanceled,
+            ex =>
+            {
+                SettleFailedPreview(
+                    $"Preview generation {previewGeneration} failed before publication: {ex.Message}");
+                onError?.Invoke(ex);
+            },
+            () =>
+            {
+                SettleFailedPreview(
+                    $"Preview generation {previewGeneration} was canceled before publication.");
+                onCanceled?.Invoke();
+            },
             onProgress,
-                shouldAcceptResult: null,
+            shouldAcceptResult: IsCurrentPreview,
             cancellationToken,
-            priority);
+            priority,
+            previewGeneration);
     }
 
     public void RecordUsage(XRMaterial? material, float distanceFromCamera)
@@ -1486,6 +1565,7 @@ internal sealed partial class ImportedTextureStreamingManager
                         record.Format,
                         record.SparseNumLevels,
                         normalizedPageSelection);
+                    record.PublicationEligibleGeneration = streamingGeneration;
                 }
             },
             (request, transitionResult) =>
@@ -1740,6 +1820,8 @@ internal sealed partial class ImportedTextureStreamingManager
                 record.ResidentMaxDimension = completedResidentSize;
                 record.ResidentGeneration = Math.Max(record.ResidentGeneration + 1L, record.UploadGeneration);
                 record.PublishedGeneration = record.ResidentGeneration;
+                record.RetireTerminalGenerationFailuresThroughNoLock(
+                    record.PublishedGeneration);
                 record.FailedTransitionCooldownUntilFrameId = long.MinValue;
                 record.FailedTransitionTargetMaxDimension = 0;
                 record.ConsecutiveTransitionFailureCount = 0;
@@ -1807,6 +1889,7 @@ internal sealed partial class ImportedTextureStreamingManager
                 record.SparseNumLevels = sparseNumLevels;
 
             TextureTransitionQueue.ClearPendingStateAfterLock(record);
+            record.PublicationEligibleGeneration = 0L;
             record.LastTransitionFrameId = frameId;
         }
 

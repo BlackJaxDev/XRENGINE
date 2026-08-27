@@ -1947,6 +1947,7 @@ namespace XREngine.Rendering.Vulkan
                     !tracker.PublishedDescriptorSets.TryGetValue(
                         set.Handle,
                         out VulkanPublishedDescriptorSetSnapshot? published) ||
+                    !published.IsNativePublicationKnown ||
                     published.DescriptorSetLifetimeGeneration == 0UL)
                 {
                     result.Invalidate();

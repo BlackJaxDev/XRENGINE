@@ -28,6 +28,49 @@ internal readonly record struct OutputRequest(
     ulong ConsumerDependencySetId,
     RenderOutputRequest SchedulingRequest)
 {
+    /// <summary>
+    /// Creates an explicit terminal output when a PresentNow transaction has
+    /// no authored frame operations. The scheduling contract is still a real
+    /// output declaration: it participates in the output DAG and requires the
+    /// recorder to publish a fresh terminal image for this frame.
+    /// </summary>
+    internal static OutputRequest FromSchedulingRequest(
+        in RenderOutputRequest request)
+    {
+        if (!request.IsDefined)
+            throw new ArgumentException(
+                "A synthetic output requires a defined scheduling request.",
+                nameof(request));
+
+        RenderOutputTargetDescriptor target = request.Target;
+        int targetIdentity = FoldIdentity(target.StableTargetId);
+        if (targetIdentity == 0)
+            targetIdentity = FoldIdentity(request.OutputId);
+
+        return new(
+            request.OutputKind,
+            request.ViewKind,
+            request.OutputId,
+            request.ViewFamilyId,
+            targetIdentity,
+            targetIdentity,
+            ResolveContextKind(request.OutputKind),
+            PipelineIdentity: 0,
+            ViewportIdentity: 0,
+            target.DisplayWidth,
+            target.DisplayHeight,
+            target.InternalWidth,
+            target.InternalHeight,
+            target.TargetGeneration,
+            target.TargetGeneration,
+            target.FormatCompatibilityKey,
+            request.ProducerDependencySetId == 0UL
+                ? request.OutputId
+                : request.ProducerDependencySetId,
+            request.ConsumerDependencySetId,
+            request);
+    }
+
     internal static OutputRequest FromContext(
         in FrameOpContext context,
         EVrOutputViewKind? openXrViewKind = null)
@@ -74,7 +117,14 @@ internal readonly record struct OutputRequest(
                 ViewKind,
                 frameId,
                 out RenderOutputSchedulingSnapshot scheduling);
-        RenderOutputRequest request = hasSchedulingSnapshot
+        bool hasMandatoryPresentNowContract =
+            SchedulingRequest.IsDefined &&
+            SchedulingRequest.WorkClass == ERenderOutputWorkClass.PresentNow &&
+            SchedulingRequest.ReadinessPolicy ==
+                ERenderOutputReadinessPolicy.BlockForExact;
+        RenderOutputRequest request = hasMandatoryPresentNowContract
+            ? SchedulingRequest
+            : hasSchedulingSnapshot
             ? scheduling.Request
             : SchedulingRequest.IsDefined
                 ? SchedulingRequest
@@ -98,7 +148,12 @@ internal readonly record struct OutputRequest(
             ConsumerDependencySetId = ConsumerDependencySetId,
             FrameId = frameId,
         };
-        decision = hasSchedulingSnapshot
+        decision = hasMandatoryPresentNowContract
+            ? RuntimeRenderingHostServices.Presentation.PlanRenderOutput(
+                resolved,
+                isDue: true,
+                ERenderOutputPolicyReason.None)
+            : hasSchedulingSnapshot
             ? scheduling.Decision
             : RuntimeRenderingHostServices.Presentation.PlanRenderOutput(
                 resolved,
@@ -139,6 +194,26 @@ internal readonly record struct OutputRequest(
            PipelineIdentity == other.PipelineIdentity &&
            ViewportIdentity == other.ViewportIdentity;
 
+    /// <summary>
+    /// Compares the stable scheduling identity of this terminal with an
+    /// externally required output contract. Target generations and native
+    /// identities are deliberately excluded because they are rebound after a
+    /// physical image is acquired.
+    /// </summary>
+    internal bool MatchesSchedulingContract(in RenderOutputRequest contract)
+        => OutputKind == contract.OutputKind &&
+           ViewKind == contract.ViewKind &&
+           StableOutputId == contract.OutputId &&
+           StableViewFamilyId == contract.ViewFamilyId;
+
+    /// <summary>
+    /// Promotes an authored terminal to the caller's mandatory scheduling
+    /// policy without replacing its native producer identity or dataflow.
+    /// </summary>
+    internal OutputRequest WithSchedulingContract(
+        in RenderOutputRequest contract)
+        => this with { SchedulingRequest = contract };
+
     private static EFrameOutputKind ResolveOutputKind(EVulkanFrameOpContextKind contextKind)
         => contextKind switch
         {
@@ -151,6 +226,31 @@ internal readonly record struct OutputRequest(
             EVulkanFrameOpContextKind.DiagnosticCapture => EFrameOutputKind.Diagnostic,
             _ => EFrameOutputKind.DesktopScene,
         };
+
+    private static EVulkanFrameOpContextKind ResolveContextKind(
+        EFrameOutputKind outputKind)
+        => outputKind switch
+        {
+            EFrameOutputKind.OpenXREyeSubmit or EFrameOutputKind.OpenVRSubmit =>
+                EVulkanFrameOpContextKind.OpenXrEye,
+            EFrameOutputKind.DesktopMirror or EFrameOutputKind.VrPickupMirror or
+                EFrameOutputKind.InWorldMirror =>
+                EVulkanFrameOpContextKind.OpenXrMirror,
+            EFrameOutputKind.SceneCapture =>
+                EVulkanFrameOpContextKind.SceneCapture,
+            EFrameOutputKind.LightProbeCapture or
+                EFrameOutputKind.ReflectionProbeCapture or
+                EFrameOutputKind.ImageBasedLighting =>
+                EVulkanFrameOpContextKind.LightProbeCapture,
+            EFrameOutputKind.Shadow => EVulkanFrameOpContextKind.Shadow,
+            EFrameOutputKind.UiPreview => EVulkanFrameOpContextKind.UiPreview,
+            EFrameOutputKind.Diagnostic =>
+                EVulkanFrameOpContextKind.DiagnosticCapture,
+            _ => EVulkanFrameOpContextKind.MainViewport,
+        };
+
+    private static int FoldIdentity(ulong identity)
+        => unchecked((int)(identity ^ (identity >> 32)));
 
     private static EVrOutputViewKind ResolveViewKind(
         EVulkanFrameOpContextKind contextKind,

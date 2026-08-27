@@ -113,6 +113,26 @@ internal sealed partial class VulkanFrameLoop
     internal void InitializeTargetFinalOutput()
         => _targetDriver.InitializeFinalOutput(TargetOutputSession);
 
+    /// <summary>
+    /// Initializes target-compatible terminal UI work once an ImGui context has
+    /// built its font atlas. Scene composition variants are intentionally sealed
+    /// and made mandatory by PresentNow readiness before acquire because their
+    /// pass/material/target identity does not exist at output initialization.
+    /// Empty-terminal clear and failure reporting remain pipeline-free so a
+    /// shader compiler failure cannot disable the diagnostic path itself.
+    /// </summary>
+    internal void InitializeMandatoryDesktopPresentNowPipelines()
+    {
+        if (_targetDriver is not VulkanDesktopWsiTargetDriver ||
+            _outputRuntime.Desktop.Swapchain.Handle == 0)
+        {
+            return;
+        }
+
+        ImGuiFontAtlasResources.EnsureCreated();
+        ImGuiOutputPipelineService.EnsureMandatoryPresentNowPipeline();
+    }
+
     internal void DestroyTargetFinalOutput()
     {
         if (_targetOutputSession is not { } target)

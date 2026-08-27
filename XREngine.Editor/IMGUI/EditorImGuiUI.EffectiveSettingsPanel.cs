@@ -243,6 +243,12 @@ public static partial class EditorImGuiUI
     {
         string overridePropertyName = ResolveOverridePropertyName(settingName);
 
+        if (HasActiveUserSettingsSessionOverride(settingName))
+            return "Session Override";
+
+        if (HasActiveGameSettingsSessionOverride(settingName))
+            return "Session Override";
+
         if (TryResolveEnvironmentSettingSource(settingName, out string environmentSource))
             return environmentSource;
 
@@ -255,15 +261,15 @@ public static partial class EditorImGuiUI
         if (TryGetActiveOverride(Engine.UserSettings, overridePropertyName))
             return "User Settings";
 
-        if (TryGetActiveOverride(Engine.GameSettings, overridePropertyName))
+        if (TryGetActiveOverride(Engine.PersistentGameSettings, overridePropertyName))
             return "Game Settings";
 
         return settingName switch
         {
-            nameof(Engine.EffectiveSettings.GPURenderDispatch) => Engine.GameSettings is null ? "Built-in Default" : "Game Settings",
-            nameof(Engine.EffectiveSettings.TargetUpdatesPerSecond) => Engine.GameSettings is null ? "No Project Value" : "Game Settings",
-            nameof(Engine.EffectiveSettings.TargetFramesPerSecond) => Engine.GameSettings is null ? "No Project Value" : "Game Settings",
-            nameof(Engine.EffectiveSettings.FixedFramesPerSecond) => Engine.GameSettings is null ? "Built-in Default" : "Game Settings",
+            nameof(Engine.EffectiveSettings.GPURenderDispatch) => Engine.PersistentGameSettings is null ? "Built-in Default" : "Game Settings",
+            nameof(Engine.EffectiveSettings.TargetUpdatesPerSecond) => Engine.PersistentGameSettings is null ? "No Project Value" : "Game Settings",
+            nameof(Engine.EffectiveSettings.TargetFramesPerSecond) => Engine.PersistentGameSettings is null ? "No Project Value" : "Game Settings",
+            nameof(Engine.EffectiveSettings.FixedFramesPerSecond) => Engine.PersistentGameSettings is null ? "Built-in Default" : "Game Settings",
             nameof(Engine.EffectiveSettings.UnfocusedTargetFramesPerSecond) => ResolveUnfocusedTargetFrameSource(),
             _ when IsUserPrimaryEffectiveSetting(settingName) && HasReadableProperty(Engine.UserSettings, settingName) => "User Settings",
             _ => EngineDefaultSourceName(),
@@ -278,7 +284,7 @@ public static partial class EditorImGuiUI
         if (TryGetActiveOverride(Engine.UserSettings, nameof(UserSettings.UnfocusedTargetFramesPerSecondOverride)))
             return "User Settings";
 
-        if (TryGetPropertyValue(Engine.GameSettings, nameof(GameStartupSettings.UnfocusedTargetFramesPerSecond), out object? projectValue) &&
+        if (TryGetPropertyValue(Engine.PersistentGameSettings, nameof(GameStartupSettings.UnfocusedTargetFramesPerSecond), out object? projectValue) &&
             projectValue is not null)
         {
             return "Game Settings";
@@ -325,10 +331,10 @@ public static partial class EditorImGuiUI
 
     private static string ResolveGameSettingValue(string settingName, string overridePropertyName)
     {
-        if (TryFormatOverrideableSettingValue(Engine.GameSettings, overridePropertyName, out string overrideValue))
+        if (TryFormatOverrideableSettingValue(Engine.PersistentGameSettings, overridePropertyName, out string overrideValue))
             return overrideValue;
 
-        return TryFormatReadablePropertyValue(Engine.GameSettings, settingName, out string value)
+        return TryFormatReadablePropertyValue(Engine.PersistentGameSettings, settingName, out string value)
             ? value
             : "-";
     }
@@ -459,10 +465,38 @@ public static partial class EditorImGuiUI
             nameof(Engine.EffectiveSettings.VSync) or
             nameof(Engine.EffectiveSettings.GlobalIlluminationMode) or
             nameof(Engine.EffectiveSettings.PreferredRenderBackend) or
+            nameof(Engine.EffectiveSettings.PhysicsLibrary) or
             nameof(Engine.EffectiveSettings.AudioTransport) or
             nameof(Engine.EffectiveSettings.AudioEffects) or
             nameof(Engine.EffectiveSettings.AudioArchitectureV2) or
             nameof(Engine.EffectiveSettings.AudioSampleRate);
+
+    private static bool HasActiveUserSettingsSessionOverride(string settingName)
+    {
+        bool hasPrimarySessionValue = Engine.HasSessionSetting<UserSettings>(settingName);
+        string overridePropertyName = ResolveOverridePropertyName(settingName);
+        bool hasOverrideSessionValue = Engine.HasSessionSetting<UserSettings>(overridePropertyName);
+
+        if (hasOverrideSessionValue || !hasPrimarySessionValue)
+            return hasOverrideSessionValue;
+
+        return !TryGetActiveOverride(Engine.UserSettings, overridePropertyName) &&
+            !TryGetActiveOverride(Engine.GameSettings, overridePropertyName);
+    }
+
+    private static bool HasActiveGameSettingsSessionOverride(string settingName)
+    {
+        string overridePropertyName = ResolveOverridePropertyName(settingName);
+        bool hasOverrideSessionValue = Engine.HasSessionSetting<GameStartupSettings>(overridePropertyName);
+        if (hasOverrideSessionValue)
+            return !TryGetActiveOverride(Engine.UserSettings, overridePropertyName);
+
+        if (!Engine.HasSessionSetting<GameStartupSettings>(settingName))
+            return false;
+
+        return !TryGetActiveOverride(Engine.PersistentGameSettings, overridePropertyName) &&
+            !TryGetActiveOverride(Engine.UserSettings, overridePropertyName);
+    }
 
     private static bool TryGetActiveOverride(object? owner, string propertyName)
     {
@@ -580,6 +614,8 @@ public static partial class EditorImGuiUI
             nameof(Engine.EffectiveSettings.AudioEffects) or
             nameof(Engine.EffectiveSettings.AudioArchitectureV2) or
             nameof(Engine.EffectiveSettings.AudioSampleRate) => "Audio",
+
+            nameof(Engine.EffectiveSettings.PhysicsLibrary) => "Physics",
 
             nameof(Engine.EffectiveSettings.PreferredRenderBackend) or
             nameof(Engine.EffectiveSettings.RenderBackendFallbackPolicy) or

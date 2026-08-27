@@ -124,23 +124,18 @@ namespace XREngine.Editor.Mcp
                 ? McpPermissionPolicy.AllowAll
                 : TryReadPermissionPolicy(args, out var parsedPolicy) ? parsedPolicy : null;
 
-            // Apply CLI settings through the project/sandbox override layer. The
-            // effective preferences object is recomputed whenever editor debug
-            // settings change, so writing only to Engine.EditorPreferences would
-            // be lost and could stop the MCP server during unattended runs.
-            var overrides = Engine.EditorPreferencesOverrides;
-            if (cliPort.HasValue)
-                SetCliOverride(overrides.McpServerPortOverride, cliPort.Value);
-            if (cliPermissionPolicy.HasValue)
-                SetCliOverride(overrides.McpPermissionPolicyOverride, cliPermissionPolicy.Value);
             if (cliEnabled || cliDisabled)
-                SetCliOverride(overrides.McpServerEnabledOverride, cliEnabled);
-
-            // CLI overrides must be reflected before UpdateServerState reads the
-            // effective preferences. Depending on when the project settings root
-            // was loaded, nested override notifications may not be tracked yet.
-            if (cliPort.HasValue || cliPermissionPolicy.HasValue || cliEnabled || cliDisabled)
-                Engine.RefreshEffectiveEditorPreferences();
+                Engine.SetSessionSetting(
+                    (EditorPreferences preferences) => preferences.McpServerEnabled,
+                    cliEnabled);
+            if (cliPort.HasValue)
+                Engine.SetSessionSetting(
+                    (EditorPreferences preferences) => preferences.McpServerPort,
+                    cliPort.Value);
+            if (cliPermissionPolicy.HasValue)
+                Engine.SetSessionSetting(
+                    (EditorPreferences preferences) => preferences.McpPermissionPolicy,
+                    cliPermissionPolicy.Value);
 
             Debug.Out(
                 $"[MCP] initialize cli_enabled={cliEnabled} cli_disabled={cliDisabled} cli_port={cliPort?.ToString() ?? "<none>"} " +
@@ -1720,13 +1715,6 @@ namespace XREngine.Editor.Mcp
             Debug.Out($"[MCP] methods={string.Join(",", s_supportedMethods)} capabilities=tools/resources/prompts static_list_changed=false");
             Debug.Out($"[MCP] security auth_required={prefs.McpServerRequireAuth} auth_token_configured={!string.IsNullOrWhiteSpace(prefs.McpServerAuthToken)} read_only={prefs.McpServerReadOnly} cors_allowlist='{prefs.McpServerCorsAllowlist}'");
             Debug.Out($"[MCP] policy permission={prefs.McpPermissionPolicy} dispatch={prefs.McpDispatchMode} allowed='{prefs.McpServerAllowedTools}' denied='{prefs.McpServerDeniedTools}' rate_limit_enabled={prefs.McpServerRateLimitEnabled} rate_limit={prefs.McpServerRateLimitRequests}/{prefs.McpServerRateLimitWindowSeconds}s");
-        }
-
-        private static void SetCliOverride<T>(OverrideableSetting<T> setting, T value)
-        {
-            setting.Value = value;
-            if (!setting.HasOverride)
-                setting.HasOverride = true;
         }
 
         private static bool TryReadPort(string[] args, out int port)

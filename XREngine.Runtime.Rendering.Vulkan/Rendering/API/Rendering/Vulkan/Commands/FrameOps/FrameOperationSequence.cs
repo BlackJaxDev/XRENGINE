@@ -19,6 +19,8 @@ internal readonly struct FrameOperationSequence
 
     internal ref readonly FrameOperationHeader GetHeader(int index) => ref Stream.GetHeader(index);
     internal ref readonly FrameOpContext GetContext(int index) => ref Stream.GetContext(index);
+    internal ReadOnlySpan<FrameOpResourceUse> GetResourceUses(int index)
+        => Stream.GetResourceUses(index);
     internal XRFrameBuffer? GetTarget(int index) => Stream.GetTarget(index);
     internal bool TryGetMeshDraw(int index, out MeshDrawPayload payload) => Stream.TryGetMeshDraw(index, out payload);
     internal bool TryGetIndirectDraw(int index, out IndirectDrawPayload payload) => Stream.TryGetIndirectDraw(index, out payload);

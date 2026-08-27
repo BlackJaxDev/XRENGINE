@@ -18,6 +18,8 @@ internal sealed partial class VulkanCommandRuntime
         in VulkanPreparedResourcePlanStamp resourcePlanStamp,
         in VulkanRenderGraphPlan renderGraphPlan,
         bool useDynamicRendering,
+        bool preserveSwapchainForOverlay,
+        ref VulkanPresentNowReadinessWatchdog watchdog,
         out string reason)
     {
         ArgumentNullException.ThrowIfNull(framePlan);
@@ -30,24 +32,32 @@ internal sealed partial class VulkanCommandRuntime
             return false;
         }
 
-        return TryPreparePresentNowPipelineSequence(
+        if (!TryPreparePresentNowPipelineSequence(
             framePlan,
             staticOperations,
             in compatibilityTarget,
             in resourcePlanStamp,
             in renderGraphPlan,
             useDynamicRendering,
+            includeSwapchainDepth: true,
             framePlan.StaticOperationSignature,
-            out reason) &&
-            TryPreparePresentNowPipelineSequence(
-                framePlan,
-                dynamicOverlayOperations,
-                in compatibilityTarget,
-                in resourcePlanStamp,
-                in renderGraphPlan,
-                useDynamicRendering,
-                framePlan.DynamicOverlaySignature,
-                out reason);
+            ref watchdog,
+            out reason))
+        {
+            return false;
+        }
+
+        return TryPreparePresentNowPipelineSequence(
+            framePlan,
+            dynamicOverlayOperations,
+            in compatibilityTarget,
+            in resourcePlanStamp,
+            in renderGraphPlan,
+            useDynamicRendering,
+            includeSwapchainDepth: !preserveSwapchainForOverlay,
+            framePlan.DynamicOverlaySignature,
+            ref watchdog,
+            out reason);
     }
 
     private bool TryPreparePresentNowPipelineSequence(
@@ -57,7 +67,9 @@ internal sealed partial class VulkanCommandRuntime
         in VulkanPreparedResourcePlanStamp resourcePlanStamp,
         in VulkanRenderGraphPlan renderGraphPlan,
         bool useDynamicRendering,
+        bool includeSwapchainDepth,
         ulong recordingStructuralSignature,
+        ref VulkanPresentNowReadinessWatchdog watchdog,
         out string reason)
     {
         reason = string.Empty;
@@ -70,7 +82,9 @@ internal sealed partial class VulkanCommandRuntime
         scoped PrimaryCommandBufferRecordingState recordingState = default;
         recordingState.Ops = operations;
         recordingState.FramePlan = framePlan;
-        recordingState.SwapchainTarget = compatibilityTarget;
+        recordingState.SwapchainTarget = includeSwapchainDepth
+            ? compatibilityTarget
+            : compatibilityTarget with { DepthFormat = Format.Undefined };
         recordingState.ResourcePlanStamp = resourcePlanStamp;
         recordingState.RenderGraphPlan = renderGraphPlan;
         recordingState.RecordingScratch = scratch;
@@ -79,8 +93,13 @@ internal sealed partial class VulkanCommandRuntime
             AllowSynchronousResourceUploads: true,
             FreshSerialRecording: true,
             IsExternalSwapchainTarget: false,
-            PreserveSwapchainForOverlay: true,
-            TransitionSwapchainToPresent: true);
+            PreserveSwapchainForOverlay: !includeSwapchainDepth,
+            TransitionSwapchainToPresent: true,
+            ReadinessPolicy: ERenderOutputReadinessPolicy.BlockForExact,
+            WorkClass: ERenderOutputWorkClass.PresentNow,
+            SourceFrameId: framePlan.RenderFrameId,
+            AllowArtifactReuse: false,
+            AllowSecondaryDeferral: false);
         recordingState.PipelineDeferredOperationIndices =
             scratch.PipelineDeferredOperationIndices;
         recordingState.PipelineDeferredOperationIndices.Clear();
@@ -102,6 +121,7 @@ internal sealed partial class VulkanCommandRuntime
                     out bool optionalDeferred,
                     out string pendingReason))
             {
+                watchdog.RecordProgress();
                 continue;
             }
 
@@ -117,6 +137,7 @@ internal sealed partial class VulkanCommandRuntime
             return false;
         }
 
+        watchdog.RecordProgress();
         manifest.MarkWarmupCompleted();
         return true;
     }

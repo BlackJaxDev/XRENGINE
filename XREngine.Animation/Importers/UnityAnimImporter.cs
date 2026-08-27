@@ -11,7 +11,7 @@ using YamlDotNet.RepresentationModel;
 
 namespace XREngine.Animation.Importers
 {
-    public static class AnimYamlImporter
+    public static partial class AnimYamlImporter
     {
         private const float TangentLinkTolerance = 0.0001f;
 
@@ -163,9 +163,11 @@ namespace XREngine.Animation.Importers
             string? Path,
             string Attribute,
             int? ClassId,
+            UnityAssetReference Script,
             IReadOnlyList<CurveKey> Keys,
             int PreInfinity,
-            int PostInfinity);
+            int PostInfinity,
+            UnityAnimationBindingDescriptor? BindingDescriptor = null);
 
         private sealed record VectorCurve(
             string SourceField,
@@ -173,9 +175,22 @@ namespace XREngine.Animation.Importers
             string? Path,
             string Attribute,
             int? ClassId,
+            UnityAssetReference Script,
             IReadOnlyDictionary<char, IReadOnlyList<CurveKey>> ComponentKeys,
             int PreInfinity,
             int PostInfinity);
+
+        private sealed record ObjectCurve(
+            string SourceField,
+            string SourcePayload,
+            string? Path,
+            string Attribute,
+            int? ClassId,
+            UnityAssetReference Script,
+            IReadOnlyList<ObjectCurveKey> Keys,
+            UnityAnimationBindingDescriptor? BindingDescriptor = null);
+
+        private sealed record ObjectCurveKey(float Time, UnityAssetReference Value, int SourceOrder);
 
         private sealed record CurveKey(
             float Time,
@@ -205,24 +220,19 @@ namespace XREngine.Animation.Importers
             /// <summary>
             /// Gets the interpolation type for the incoming (left) tangent.
             /// </summary>
-            public EVectorInterpType InInterpType => ToInterpType(LeftTangentMode);
+            public EVectorInterpType InInterpType
+                => float.IsInfinity(InSlope) || LeftTangentMode == TangentMode.Constant
+                    ? EVectorInterpType.Step
+                    : EVectorInterpType.Hermite;
 
             /// <summary>
             /// Gets the interpolation type for the outgoing (right) tangent.
             /// </summary>
-            public EVectorInterpType OutInterpType => ToInterpType(RightTangentMode);
+            public EVectorInterpType OutInterpType
+                => float.IsInfinity(OutSlope) || RightTangentMode == TangentMode.Constant
+                    ? EVectorInterpType.Step
+                    : EVectorInterpType.Hermite;
 
-            /// <summary>
-            /// Converts a Unity TangentMode to an EVectorInterpType.
-            /// </summary>
-            private static EVectorInterpType ToInterpType(TangentMode mode)
-                => mode switch
-                {
-                    TangentMode.Constant => EVectorInterpType.Step,
-                    TangentMode.Linear => EVectorInterpType.Linear,
-                    TangentMode.Free or TangentMode.Auto or TangentMode.ClampedAuto => EVectorInterpType.Hermite,
-                    _ => EVectorInterpType.Hermite,
-                };
         }
 
         public static AnimationClip Import(string filePath)
@@ -262,6 +272,24 @@ namespace XREngine.Animation.Importers
 
             string name = GetScalarString(clipMap, "m_Name") ?? Path.GetFileNameWithoutExtension(filePath);
             int sampleRate = GetScalarInt(clipMap, "m_SampleRate") ?? 30;
+            int sourceWrapMode = GetScalarInt(clipMap, "m_WrapMode") ?? 0;
+            if (sourceWrapMode is not (0 or 1 or 2 or 4 or 8))
+            {
+                manifestBuilder.RecordSection(
+                    EUnityAnimationDataDomain.ClipMetadata,
+                    EUnityAnimationCapabilityState.Unsupported,
+                    "m_WrapMode",
+                    $"Unity wrap mode {sourceWrapMode} is outside the declared native capability contract.",
+                    sourceWrapMode.ToString(CultureInfo.InvariantCulture));
+            }
+
+            UnityAnimationClipMetadata clipMetadata = ReadClipMetadata(clipMap, sampleRate, sourceWrapMode);
+            manifestBuilder.RecordSection(
+                EUnityAnimationDataDomain.ClipMetadata,
+                EUnityAnimationCapabilityState.SupportedAndApplied,
+                "AnimationClip header",
+                "Sample rate, wrap behavior, legacy/compression/high-quality flags, and authored bounds were imported.",
+                serializedYaml: string.Empty);
 
             var settingsMap = GetMappingOrNull(clipMap, "m_AnimationClipSettings");
             float startTime = GetScalarFloatOrNull(settingsMap, "m_StartTime") ?? 0.0f;
@@ -271,6 +299,9 @@ namespace XREngine.Animation.Importers
                 ? null
                 : new UnityHumanoidClipRootMotionSettings
                 {
+                    AdditiveReferencePoseClip = ReadAssetReference(GetMappingOrNull(settingsMap, "m_AdditiveReferencePoseClip")),
+                    AdditiveReferencePoseTime = GetScalarFloatOrNull(settingsMap, "m_AdditiveReferencePoseTime") ?? 0.0f,
+                    HasAdditiveReferencePose = (GetScalarIntOrNull(settingsMap, "m_HasAdditiveReferencePose") ?? 0) != 0,
                     StartTime = startTime,
                     StopTime = stopTime,
                     OrientationOffsetY = GetScalarFloatOrNull(settingsMap, "m_OrientationOffsetY") ?? 0.0f,
@@ -310,6 +341,14 @@ namespace XREngine.Animation.Importers
             var vecCurves = new List<VectorCurve>();
             var materialBindings = new List<UnityMaterialAnimationBinding>();
             var materialBindingDiagnostics = new List<string>();
+            var genericBindings = new List<UnityAnimationBindingDescriptor>();
+            UnityAnimationEvent[] animationEvents = ReadAnimationEvents(
+                clipMap,
+                filePath,
+                startTime,
+                stopTime,
+                manifestBuilder);
+            List<ObjectCurve> objectCurves = ReadObjectReferenceCurves(clipMap, filePath, manifestBuilder);
 
             // Some exporters duplicate data between m_FloatCurves and m_EditorCurves.
             // Prefer m_FloatCurves when present; fall back to m_EditorCurves.
@@ -327,32 +366,27 @@ namespace XREngine.Animation.Importers
             TryReadCurveList(clipMap, "m_ScaleCurves", curves, vecCurves, manifestBuilder);
             TryReadCurveList(clipMap, "m_EulerCurves", curves, vecCurves, manifestBuilder);
             TryReadCurveList(clipMap, "m_RotationCurves", curves, vecCurves, manifestBuilder);
+            DecodeCompressedRotationCurves(clipMap, vecCurves, manifestBuilder);
+            DecodePackedClipRepresentations(
+                clipMap,
+                filePath,
+                curves,
+                objectCurves,
+                manifestBuilder,
+                hasAuthoritativeEditableScalarCurves: curves.Count > 0 || vecCurves.Count > 0,
+                hasAuthoritativeEditableObjectCurves: objectCurves.Count > 0,
+                startTime,
+                stopTime,
+                sampleRate);
+            NormalizeQuaternionVectorCurves(vecCurves, manifestBuilder);
+            NormalizeDefaultInfinityModes(curves, vecCurves, sourceWrapMode, looped);
             ReadMaterialObjectReferenceBindings(clipMap, materialBindings, materialBindingDiagnostics);
-            RecordPreservedSequence(
-                clipMap,
-                "m_PPtrCurves",
-                EUnityAnimationDataDomain.ObjectReference,
-                "Object-reference key values are preserved but do not have a complete typed runtime resolver yet.",
-                manifestBuilder);
-            RecordPreservedSequence(
-                clipMap,
-                "m_Events",
-                EUnityAnimationDataDomain.AnimationEvent,
-                "Animation events are preserved but are not executed by the native evaluator yet.",
-                manifestBuilder);
-            RecordPreservedSequence(
-                clipMap,
-                "m_CompressedRotationCurves",
-                EUnityAnimationDataDomain.SourceEncoding,
-                "Compressed rotation curves are preserved but are not decoded yet.",
-                manifestBuilder);
-            RecordPreservedMuscleClipEncoding(clipMap, manifestBuilder);
             RemoveUnsupportedCurveEncodings(curves, manifestBuilder);
             RemoveUnsupportedCurveEncodings(vecCurves, manifestBuilder);
 
             float length = Math.Max(0.0f, stopTime - startTime);
             if (length <= 0.0f)
-                length = GetMaxTime(curves, vecCurves);
+                length = GetMaxTime(curves, vecCurves, objectCurves, animationEvents);
 
             var clip = new AnimationClip
             {
@@ -360,6 +394,8 @@ namespace XREngine.Animation.Importers
                 LengthInSeconds = length,
                 Looped = looped,
                 SampleRate = sampleRate,
+                UnityMetadata = clipMetadata,
+                UnityEvents = animationEvents,
                 UnityHumanoidRootMotionSettings = rootMotionSettings,
                 RootMember = new AnimationMember("Root", EAnimationMemberType.Group),
             };
@@ -369,11 +405,19 @@ namespace XREngine.Animation.Importers
             var builder = new AnimMemberBuilder(clip.RootMember);
 
             // 1) Handle scalar curves (includes RootT.x/RootQ.w/etc and blendShape.*)
-            var scalarByTarget = new Dictionary<(string nodePath, string attribute), ScalarCurve>();
+            var scalarByTarget = new Dictionary<
+                (string nodePath, string attribute, uint pathHash, uint attributeHash, int component),
+                ScalarCurve>();
             foreach (var c in curves)
             {
                 string nodePath = NormalizePath(c.Path);
-                var key = (nodePath, c.Attribute);
+                UnityAnimationBindingDescriptor? packedBinding = c.BindingDescriptor;
+                var key = (
+                    nodePath,
+                    c.Attribute,
+                    packedBinding?.PathHash ?? 0,
+                    packedBinding?.AttributeHash ?? 0,
+                    packedBinding?.Component ?? -1);
                 if (scalarByTarget.TryAdd(key, c))
                     continue;
 
@@ -401,6 +445,13 @@ namespace XREngine.Animation.Importers
             {
                 string nodePath = kvp.Key.nodePath;
                 string attr = kvp.Key.attribute;
+
+                // Packed bindings retain only Unity path/property hashes. They must
+                // remain on the typed runtime binding path so the target hierarchy,
+                // blendshape table, or adapter can resolve those hashes at preflight.
+                if (kvp.Value.BindingDescriptor is not null
+                    && !IsNativePackedHumanoidSemanticBinding(kvp.Value))
+                    continue;
 
                 // Check for IK goal curves first (LeftFootT.x, RightHandQ.w, etc.)
                 if (TryMapIKGoalComponent(attr, out string goalName, out string ikKind, out char ikComponent))
@@ -438,6 +489,10 @@ namespace XREngine.Animation.Importers
                 }
                 group.Components[component] = kvp.Value;
             }
+
+            NormalizeQuaternionScalarGroups(transformGroups.Values, manifestBuilder);
+            NormalizeQuaternionScalarGroups(rootMotionGroups.Values, manifestBuilder);
+            NormalizeQuaternionScalarGroups(ikGoalGroups.Values, manifestBuilder);
 
             // Build transform animations.
             foreach (var kv in transformGroups)
@@ -590,16 +645,21 @@ namespace XREngine.Animation.Importers
             // Build blendshape animations and remaining scalar animations.
             foreach (var c in curves)
             {
+                bool nativePackedHumanoid = IsNativePackedHumanoidSemanticBinding(c);
+
                 // Skip ones consumed by transform grouping.
-                if (TryMapTransformComponent(c.Attribute, out _, out _))
+                if ((c.BindingDescriptor is null || nativePackedHumanoid)
+                    && TryMapTransformComponent(c.Attribute, out _, out _))
                     continue;
 
                 // Skip ones consumed by IK goal grouping.
-                if (TryMapIKGoalComponent(c.Attribute, out _, out _, out _))
+                if ((c.BindingDescriptor is null || nativePackedHumanoid)
+                    && TryMapIKGoalComponent(c.Attribute, out _, out _, out _))
                     continue;
 
                 // Skip ones consumed by root motion grouping.
-                if (TryMapRootMotionComponent(c.Attribute, out _, out _))
+                if ((c.BindingDescriptor is null || nativePackedHumanoid)
+                    && TryMapRootMotionComponent(c.Attribute, out _, out _))
                     continue;
 
                 string nodePath = NormalizePath(c.Path);
@@ -675,14 +735,19 @@ namespace XREngine.Animation.Importers
                     continue;
                 }
 
-                EUnityAnimationDataDomain unhandledDomain = string.IsNullOrWhiteSpace(c.Path) && c.ClassId is 95
-                    ? EUnityAnimationDataDomain.HumanoidMuscle
-                    : EUnityAnimationDataDomain.GenericProperty;
-                RecordPreservedBinding(
-                    manifestBuilder,
-                    unhandledDomain,
-                    c,
-                    "No typed native binding resolver accepted this serialized curve.");
+                UnityAnimationBindingDescriptor descriptor = c.BindingDescriptor
+                    ?? CreateGenericBindingDescriptor(
+                        c.SourceField,
+                        nodePath,
+                        c.Attribute,
+                        c.ClassId,
+                        c.Script,
+                        EUnityAnimationBindingValueKind.Float,
+                        component: GetSerializedComponentIndex(c.Attribute));
+                genericBindings.Add(descriptor);
+                PropAnimFloat genericAnimation = BuildFloatAnim(c, length, looped, sampleRate, valueScale: 1.0f, startTime);
+                builder.AddGenericFloatAnimation(descriptor, genericAnimation);
+                RecordGenericBinding(manifestBuilder, descriptor);
             }
 
             // 2) Handle explicit vector curves (if any were present in the YAML)
@@ -707,7 +772,7 @@ namespace XREngine.Animation.Importers
                                 vc,
                                 $"{nodePath}:Transform.{kind}.{component.Key}");
                             var anim = BuildFloatAnim(
-                                new ScalarCurve(vc.SourceField, vc.SourcePayload, vc.Path, $"{vc.Attribute}.{component.Key}", vc.ClassId, component.Value, vc.PreInfinity, vc.PostInfinity),
+                                new ScalarCurve(vc.SourceField, vc.SourcePayload, vc.Path, $"{vc.Attribute}.{component.Key}", vc.ClassId, vc.Script, component.Value, vc.PreInfinity, vc.PostInfinity),
                                 length,
                                 looped,
                                 sampleRate,
@@ -729,7 +794,7 @@ namespace XREngine.Animation.Importers
                                 vc,
                                 $"{nodePath}:Transform.Rotation.{component.Key}");
                             var anim = BuildFloatAnim(
-                                new ScalarCurve(vc.SourceField, vc.SourcePayload, vc.Path, $"{vc.Attribute}.{component.Key}", vc.ClassId, component.Value, vc.PreInfinity, vc.PostInfinity),
+                                new ScalarCurve(vc.SourceField, vc.SourcePayload, vc.Path, $"{vc.Attribute}.{component.Key}", vc.ClassId, vc.Script, component.Value, vc.PreInfinity, vc.PostInfinity),
                                 length,
                                 looped,
                                 sampleRate,
@@ -741,11 +806,82 @@ namespace XREngine.Animation.Importers
                     continue;
                 }
 
-                RecordPreservedBinding(
-                    manifestBuilder,
-                    EUnityAnimationDataDomain.GenericProperty,
-                    vc,
-                    "No typed native vector/quaternion binding resolver accepted this serialized curve.");
+                foreach ((char componentName, IReadOnlyList<CurveKey> componentKeys) in vc.ComponentKeys.OrderBy(static x => x.Key))
+                {
+                    int componentIndex = "xyzw".IndexOf(componentName);
+                    if (componentIndex < 0)
+                        continue;
+
+                    EUnityAnimationBindingValueKind valueKind = vc.ComponentKeys.Count switch
+                    {
+                        2 => EUnityAnimationBindingValueKind.Vector2,
+                        3 when vc.Attribute.Contains("Euler", StringComparison.OrdinalIgnoreCase) => EUnityAnimationBindingValueKind.Euler,
+                        3 => EUnityAnimationBindingValueKind.Vector3,
+                        4 when vc.Attribute.Contains("Rotation", StringComparison.OrdinalIgnoreCase) => EUnityAnimationBindingValueKind.Quaternion,
+                        _ => EUnityAnimationBindingValueKind.Vector4,
+                    };
+                    UnityAnimationBindingDescriptor descriptor = CreateGenericBindingDescriptor(
+                        vc.SourceField,
+                        nodePath,
+                        vc.Attribute,
+                        vc.ClassId,
+                        vc.Script,
+                        valueKind,
+                        componentIndex);
+                    genericBindings.Add(descriptor);
+                    ScalarCurve scalarComponent = new(
+                        vc.SourceField,
+                        vc.SourcePayload,
+                        vc.Path,
+                        $"{vc.Attribute}.{componentName}",
+                        vc.ClassId,
+                        vc.Script,
+                        componentKeys,
+                        vc.PreInfinity,
+                        vc.PostInfinity);
+                    builder.AddGenericFloatAnimation(
+                        descriptor,
+                        BuildFloatAnim(scalarComponent, length, looped, sampleRate, 1.0f, startTime));
+                    RecordGenericBinding(manifestBuilder, descriptor);
+                }
+            }
+
+            foreach (ObjectCurve objectCurve in objectCurves)
+            {
+                string nodePath = NormalizePath(objectCurve.Path);
+                UnityAnimationBindingDescriptor descriptor = objectCurve.BindingDescriptor
+                    ?? CreateGenericBindingDescriptor(
+                        objectCurve.SourceField,
+                        nodePath,
+                        objectCurve.Attribute,
+                        objectCurve.ClassId,
+                        objectCurve.Script,
+                        EUnityAnimationBindingValueKind.ObjectReference,
+                        component: -1);
+                bool hasMissingReference = objectCurve.Keys.Any(static key =>
+                    !key.Value.IsNull
+                    && string.IsNullOrWhiteSpace(key.Value.ResolvedAssetPath));
+                genericBindings.Add(descriptor);
+                builder.AddGenericObjectAnimation(
+                    descriptor,
+                    BuildObjectAnim(objectCurve, length, looped, startTime));
+                manifestBuilder.RecordBinding(
+                    EUnityAnimationDataDomain.ObjectReference,
+                    hasMissingReference
+                        ? EUnityAnimationCapabilityState.PreservedNotExecutable
+                        : descriptor.RequiresAdapter
+                            ? EUnityAnimationCapabilityState.RequiresRuntimeAdapter
+                            : EUnityAnimationCapabilityState.SupportedAndApplied,
+                    descriptor.SourceField,
+                    descriptor.NodePath,
+                    descriptor.Attribute,
+                    descriptor.ClassId,
+                    descriptor.RequiresAdapter ? "IUnityAnimationBindingAdapter" : "Native object-reference binding",
+                    hasMissingReference
+                        ? "At least one non-null Unity object key could not be resolved through a project .meta GUID."
+                        : descriptor.RequiresAdapter
+                            ? "A Unity-only object target requires an explicit IUnityAnimationBindingAdapter on the animated node."
+                            : string.Empty);
             }
 
             // ── Clip classification ──────────────────────────────────────────
@@ -756,7 +892,8 @@ namespace XREngine.Animation.Importers
                 ? EAnimationClipKind.UnityHumanoidMuscle
                 : EAnimationClipKind.GenericTransform;
             clip.SourceMaterialBindings = [.. materialBindings.Distinct()];
-            clip.MaterialBindingDiagnostics = [.. materialBindingDiagnostics];
+                clip.MaterialBindingDiagnostics = [.. materialBindingDiagnostics];
+            clip.UnityGenericBindings = [.. genericBindings.Distinct()];
             clip.UnityImportManifest = manifestBuilder.Build();
 
             return clip;
@@ -848,6 +985,32 @@ namespace XREngine.Animation.Importers
                 var getComp = GetOrAddMethod(node, "GetComponent", ["ModelComponent"], animatedArgIndex: -1, cacheReturnValue: true);
                 var method = GetOrAddMethod(getComp, "SetBlendShapeWeightNormalized", [blendshapeName, 0.0f, StringComparison.InvariantCultureIgnoreCase], animatedArgIndex: 1, cacheReturnValue: false);
                 method.Animation = anim;
+            }
+
+            public void AddGenericFloatAnimation(
+                UnityAnimationBindingDescriptor binding,
+                PropAnimFloat animation)
+            {
+                AnimationMember method = GetOrAddMethod(
+                    _root,
+                    "SetUnityAnimationFloat",
+                    [binding, 0.0f],
+                    animatedArgIndex: 1,
+                    cacheReturnValue: false);
+                method.Animation = animation;
+            }
+
+            public void AddGenericObjectAnimation(
+                UnityAnimationBindingDescriptor binding,
+                PropAnimObject animation)
+            {
+                AnimationMember method = GetOrAddMethod(
+                    _root,
+                    "SetUnityAnimationObjectReference",
+                    [binding, default(UnityAssetReference)],
+                    animatedArgIndex: 1,
+                    cacheReturnValue: false);
+                method.Animation = animation;
             }
 
             public void AddHumanoidValueAnimation(EHumanoidValue humanoidValue, PropAnimFloat anim)
@@ -1080,6 +1243,7 @@ namespace XREngine.Animation.Importers
                 string? path = GetScalarString(item, "path");
                 string? attribute = GetScalarString(item, "attribute");
                 int? classId = GetScalarInt(item, "classID");
+                UnityAssetReference script = ReadAssetReference(GetMappingOrNull(item, "script"));
                 string sourcePayload = item.ToString();
 
                 // Case 1: Float curve item (attribute + curve.m_Curve)
@@ -1087,7 +1251,7 @@ namespace XREngine.Animation.Importers
                 {
                     if (TryParseCurveData(item, out var keys, out int scalarPreInfinity, out int scalarPostInfinity))
                     {
-                        scalarCurves.Add(new ScalarCurve(key, sourcePayload, path, attribute!, classId, keys, scalarPreInfinity, scalarPostInfinity));
+                        scalarCurves.Add(new ScalarCurve(key, sourcePayload, path, attribute!, classId, script, keys, scalarPreInfinity, scalarPostInfinity));
                         addedAny = true;
                         continue;
                     }
@@ -1095,9 +1259,9 @@ namespace XREngine.Animation.Importers
 
                 // Case 2: Vector/quaternion curve item (curve has x/y/z(/w) each containing curve data)
                 // These are not present in your current samples, but this keeps the importer usable for more exporter variants.
-                if (TryParseVectorCurveData(item, out var vecAttribute, out var components, out int vectorPreInfinity, out int vectorPostInfinity))
+                if (TryParseVectorCurveData(key, item, out var vecAttribute, out var components, out int vectorPreInfinity, out int vectorPostInfinity))
                 {
-                    vectorCurves.Add(new VectorCurve(key, sourcePayload, path, vecAttribute, classId, components, vectorPreInfinity, vectorPostInfinity));
+                    vectorCurves.Add(new VectorCurve(key, sourcePayload, path, vecAttribute, classId, script, components, vectorPreInfinity, vectorPostInfinity));
                     addedAny = true;
                     continue;
                 }
@@ -1153,6 +1317,7 @@ namespace XREngine.Animation.Importers
         }
 
         private static bool TryParseVectorCurveData(
+            string sourceField,
             YamlMappingNode item,
             out string attribute,
             out IReadOnlyDictionary<char, IReadOnlyList<CurveKey>> componentKeys,
@@ -1167,13 +1332,25 @@ namespace XREngine.Animation.Importers
             if (!TryGetMapping(item, "curve", out var curveMap))
                 return false;
 
-            // Some exporters store "attribute" at the item level even for vector curves; if not, we can't map.
-            attribute = GetScalarString(item, "attribute") ?? string.Empty;
+            // Unity's canonical transform lists imply the serialized property from
+            // the list name. Third-party exporters may emit an explicit attribute.
+            attribute = GetScalarString(item, "attribute")
+                ?? GetImpliedVectorAttribute(sourceField);
             if (string.IsNullOrEmpty(attribute))
                 return false;
 
             preInfinity = GetScalarInt(curveMap, "m_PreInfinity") ?? 0;
             postInfinity = GetScalarInt(curveMap, "m_PostInfinity") ?? 0;
+
+            // Canonical Unity YAML stores one vector/quaternion key sequence whose
+            // value and tangent fields are mappings. Normalize it to scalar channels
+            // so every serialized family uses the same evaluator below.
+            if (TryGetSequence(curveMap, "m_Curve", out YamlSequenceNode canonicalKeys)
+                && TryParseCanonicalVectorKeys(canonicalKeys, out var canonicalComponents))
+            {
+                componentKeys = canonicalComponents;
+                return true;
+            }
 
             var comps = new Dictionary<char, IReadOnlyList<CurveKey>>();
             foreach (char c in new[] { 'x', 'y', 'z', 'w' })
@@ -1209,6 +1386,345 @@ namespace XREngine.Animation.Importers
             return true;
         }
 
+        private static string GetImpliedVectorAttribute(string sourceField)
+            => sourceField switch
+            {
+                "m_PositionCurves" => "m_LocalPosition",
+                "m_ScaleCurves" => "m_LocalScale",
+                "m_RotationCurves" or "m_CompressedRotationCurves" => "m_LocalRotation",
+                "m_EulerCurves" => "localEulerAnglesRaw",
+                _ => string.Empty,
+            };
+
+        private static bool TryParseCanonicalVectorKeys(
+            YamlSequenceNode keySequence,
+            out IReadOnlyDictionary<char, IReadOnlyList<CurveKey>> componentKeys)
+        {
+            componentKeys = new Dictionary<char, IReadOnlyList<CurveKey>>();
+            if (keySequence.Children.Count == 0
+                || keySequence.Children[0] is not YamlMappingNode firstKey
+                || GetMappingOrNull(firstKey, "value") is not YamlMappingNode firstValue)
+                return false;
+
+            char[] components = firstValue.Children.ContainsKey(new YamlScalarNode("w"))
+                ? ['x', 'y', 'z', 'w']
+                : ['x', 'y', 'z'];
+            Dictionary<char, List<CurveKey>> normalized = new(components.Length);
+            for (int i = 0; i < components.Length; i++)
+                normalized.Add(components[i], new List<CurveKey>(keySequence.Children.Count));
+
+            for (int keyIndex = 0; keyIndex < keySequence.Children.Count; keyIndex++)
+            {
+                if (keySequence.Children[keyIndex] is not YamlMappingNode key
+                    || GetMappingOrNull(key, "value") is not YamlMappingNode value)
+                    return false;
+
+                float time = GetScalarFloat(key, "time") ?? 0.0f;
+                int scalarTangentMode = GetScalarInt(key, "tangentMode") ?? 0;
+                int scalarWeightedMode = GetScalarInt(key, "weightedMode") ?? 0;
+                for (int componentIndex = 0; componentIndex < components.Length; componentIndex++)
+                {
+                    char component = components[componentIndex];
+                    if (GetScalarFloat(value, component.ToString()) is not float componentValue)
+                        return false;
+                    normalized[component].Add(new CurveKey(
+                        time,
+                        componentValue,
+                        GetMappedOrScalarFloat(key, "inSlope", component),
+                        GetMappedOrScalarFloat(key, "outSlope", component),
+                        GetMappedOrScalarInt(key, "tangentMode", component, scalarTangentMode),
+                        GetMappedOrScalarInt(key, "weightedMode", component, scalarWeightedMode),
+                        GetMappedOrScalarFloat(key, "inWeight", component),
+                        GetMappedOrScalarFloat(key, "outWeight", component)));
+                }
+            }
+
+            componentKeys = normalized.ToDictionary(
+                static pair => pair.Key,
+                static pair => (IReadOnlyList<CurveKey>)pair.Value);
+            return true;
+        }
+
+        private static void NormalizeQuaternionVectorCurves(
+            List<VectorCurve> curves,
+            UnityAnimationImportManifestBuilder manifestBuilder)
+        {
+            for (int i = curves.Count - 1; i >= 0; i--)
+            {
+                VectorCurve curve = curves[i];
+                bool mappedRotation = TryMapVectorAttribute(
+                    curve.Attribute,
+                    out string kind,
+                    out int componentCount)
+                    && kind == "rotation"
+                    && componentCount == 4;
+                if (!mappedRotation && !IsQuaternionVectorAttribute(curve))
+                    continue;
+
+                if (!TryNormalizeQuaternionChannels(
+                    curve.ComponentKeys,
+                    out IReadOnlyDictionary<char, IReadOnlyList<CurveKey>> normalized,
+                    out string diagnostic))
+                {
+                    RecordPreservedBinding(
+                        manifestBuilder,
+                        EUnityAnimationDataDomain.SourceEncoding,
+                        curve,
+                        diagnostic);
+                    curves.RemoveAt(i);
+                    continue;
+                }
+                curves[i] = curve with { ComponentKeys = normalized };
+            }
+        }
+
+        private static void NormalizeQuaternionScalarGroups(
+            IEnumerable<TransformCurveGroup> groups,
+            UnityAnimationImportManifestBuilder manifestBuilder)
+        {
+            foreach (TransformCurveGroup group in groups)
+            {
+                if (group.Kind != "rotation"
+                    || !group.Components.TryGetValue('x', out ScalarCurve? x)
+                    || !group.Components.TryGetValue('y', out ScalarCurve? y)
+                    || !group.Components.TryGetValue('z', out ScalarCurve? z)
+                    || !group.Components.TryGetValue('w', out ScalarCurve? w))
+                    continue;
+
+                Dictionary<char, IReadOnlyList<CurveKey>> channels = new(4)
+                {
+                    ['x'] = x.Keys,
+                    ['y'] = y.Keys,
+                    ['z'] = z.Keys,
+                    ['w'] = w.Keys,
+                };
+                if (!TryNormalizeQuaternionChannels(channels, out var normalized, out string diagnostic))
+                {
+                    if (TryValidateUnevenQuaternionChannels(
+                        x,
+                        y,
+                        z,
+                        w,
+                        out string unevenDiagnostic))
+                    {
+                        manifestBuilder.RecordNotice(
+                            EUnityAnimationDataDomain.SourceEncoding,
+                            $"{x.SourceField} quaternion components use independently reduced key times; native playback combines and normalizes them after scalar evaluation, and treats opposite-sign samples as the same rotation.");
+                        continue;
+                    }
+                    manifestBuilder.RecordSection(
+                        EUnityAnimationDataDomain.SourceEncoding,
+                        EUnityAnimationCapabilityState.Unsupported,
+                        x.SourceField,
+                        string.IsNullOrEmpty(unevenDiagnostic) ? diagnostic : unevenDiagnostic,
+                        x.SourcePayload);
+                    continue;
+                }
+
+                group.Components['x'] = x with { Keys = normalized['x'] };
+                group.Components['y'] = y with { Keys = normalized['y'] };
+                group.Components['z'] = z with { Keys = normalized['z'] };
+                group.Components['w'] = w with { Keys = normalized['w'] };
+            }
+        }
+
+        private static bool IsQuaternionVectorAttribute(VectorCurve curve)
+            => curve.ComponentKeys.Count == 4
+                && curve.ComponentKeys.ContainsKey('x')
+                && curve.ComponentKeys.ContainsKey('y')
+                && curve.ComponentKeys.ContainsKey('z')
+                && curve.ComponentKeys.ContainsKey('w')
+                && (curve.Attribute.Contains("rotation", StringComparison.OrdinalIgnoreCase)
+                    || curve.Attribute.Contains("quaternion", StringComparison.OrdinalIgnoreCase));
+
+        private static bool TryValidateUnevenQuaternionChannels(
+            ScalarCurve x,
+            ScalarCurve y,
+            ScalarCurve z,
+            ScalarCurve w,
+            out string diagnostic)
+        {
+            float maxTime = Math.Max(
+                Math.Max(GetLastKeyTime(x.Keys), GetLastKeyTime(y.Keys)),
+                Math.Max(GetLastKeyTime(z.Keys), GetLastKeyTime(w.Keys)));
+            if (!float.IsFinite(maxTime) || maxTime < 0.0f)
+            {
+                diagnostic = "Quaternion component curves have invalid time bounds.";
+                return false;
+            }
+
+            PropAnimFloat xAnimation = BuildFloatAnim(x, maxTime, looped: false, fps: 0, valueScale: 1.0f, timeOffsetSeconds: 0.0f);
+            PropAnimFloat yAnimation = BuildFloatAnim(y, maxTime, looped: false, fps: 0, valueScale: 1.0f, timeOffsetSeconds: 0.0f);
+            PropAnimFloat zAnimation = BuildFloatAnim(z, maxTime, looped: false, fps: 0, valueScale: 1.0f, timeOffsetSeconds: 0.0f);
+            PropAnimFloat wAnimation = BuildFloatAnim(w, maxTime, looped: false, fps: 0, valueScale: 1.0f, timeOffsetSeconds: 0.0f);
+
+            SortedSet<float> authoredTimes = [];
+            AddKeyTimes(authoredTimes, x.Keys);
+            AddKeyTimes(authoredTimes, y.Keys);
+            AddKeyTimes(authoredTimes, z.Keys);
+            AddKeyTimes(authoredTimes, w.Keys);
+            float[] keyTimes = [.. authoredTimes];
+            for (int timeIndex = 0; timeIndex < keyTimes.Length; timeIndex++)
+            {
+                if (!TryValidateQuaternionSample(
+                    xAnimation,
+                    yAnimation,
+                    zAnimation,
+                    wAnimation,
+                    keyTimes[timeIndex],
+                    out diagnostic))
+                    return false;
+                if (timeIndex + 1 < keyTimes.Length
+                    && !TryValidateQuaternionSample(
+                        xAnimation,
+                        yAnimation,
+                        zAnimation,
+                        wAnimation,
+                        (keyTimes[timeIndex] + keyTimes[timeIndex + 1]) * 0.5f,
+                        out diagnostic))
+                    return false;
+            }
+
+            diagnostic = string.Empty;
+            return true;
+        }
+
+        private static bool TryValidateQuaternionSample(
+            PropAnimFloat xAnimation,
+            PropAnimFloat yAnimation,
+            PropAnimFloat zAnimation,
+            PropAnimFloat wAnimation,
+            float time,
+            out string diagnostic)
+        {
+            Quaternion value = new(
+                xAnimation.GetValue(time),
+                yAnimation.GetValue(time),
+                zAnimation.GetValue(time),
+                wAnimation.GetValue(time));
+            float lengthSquared = value.LengthSquared();
+            if (!float.IsFinite(lengthSquared) || lengthSquared <= 1.0e-12f)
+            {
+                diagnostic = $"Quaternion scalar curves evaluate to a non-finite or zero value at t={time.ToString("R", CultureInfo.InvariantCulture)}.";
+                return false;
+            }
+
+            // q and -q are exactly the same rotation. Unity clips may switch
+            // sign hemispheres at an authored key (commonly the loop endpoint),
+            // so sign alone is never an unsupported condition. Runtime targets
+            // normalize the combined quartet and blend it shortest-arc.
+            diagnostic = string.Empty;
+            return true;
+        }
+
+        private static float GetLastKeyTime(IReadOnlyList<CurveKey> keys)
+            => keys.Count == 0 ? 0.0f : keys.Max(static key => key.Time);
+
+        private static void AddKeyTimes(ISet<float> destination, IReadOnlyList<CurveKey> keys)
+        {
+            for (int i = 0; i < keys.Count; i++)
+                if (float.IsFinite(keys[i].Time))
+                    destination.Add(keys[i].Time);
+        }
+
+        private static bool TryNormalizeQuaternionChannels(
+            IReadOnlyDictionary<char, IReadOnlyList<CurveKey>> channels,
+            out IReadOnlyDictionary<char, IReadOnlyList<CurveKey>> normalized,
+            out string diagnostic)
+        {
+            normalized = channels;
+            if (!channels.TryGetValue('x', out IReadOnlyList<CurveKey>? x)
+                || !channels.TryGetValue('y', out IReadOnlyList<CurveKey>? y)
+                || !channels.TryGetValue('z', out IReadOnlyList<CurveKey>? z)
+                || !channels.TryGetValue('w', out IReadOnlyList<CurveKey>? w))
+            {
+                diagnostic = "Quaternion curve does not contain all x/y/z/w channels.";
+                return false;
+            }
+            if (x.Count != y.Count || x.Count != z.Count || x.Count != w.Count)
+            {
+                diagnostic = "Quaternion component curves have different key counts.";
+                return false;
+            }
+
+            CurveKey[][] output = [x.ToArray(), y.ToArray(), z.ToArray(), w.ToArray()];
+            Quaternion previous = Quaternion.Identity;
+            bool hasPrevious = false;
+            for (int keyIndex = 0; keyIndex < x.Count; keyIndex++)
+            {
+                float time = x[keyIndex].Time;
+                if (MathF.Abs(y[keyIndex].Time - time) > 0.000001f
+                    || MathF.Abs(z[keyIndex].Time - time) > 0.000001f
+                    || MathF.Abs(w[keyIndex].Time - time) > 0.000001f)
+                {
+                    diagnostic = "Quaternion component curves have mismatched key times.";
+                    return false;
+                }
+
+                Quaternion value = new(
+                    x[keyIndex].Value,
+                    y[keyIndex].Value,
+                    z[keyIndex].Value,
+                    w[keyIndex].Value);
+                float lengthSquared = value.LengthSquared();
+                if (!float.IsFinite(lengthSquared) || lengthSquared <= 1.0e-12f)
+                {
+                    diagnostic = $"Quaternion key at t={time.ToString("R", CultureInfo.InvariantCulture)} is non-finite or zero-length.";
+                    return false;
+                }
+
+                float inverseLength = 1.0f / MathF.Sqrt(lengthSquared);
+                value *= inverseLength;
+                float sign = hasPrevious && Quaternion.Dot(previous, value) < 0.0f ? -1.0f : 1.0f;
+                value *= sign;
+                float tangentScale = inverseLength * sign;
+                float[] values = [value.X, value.Y, value.Z, value.W];
+                for (int component = 0; component < 4; component++)
+                {
+                    CurveKey key = output[component][keyIndex];
+                    output[component][keyIndex] = key with
+                    {
+                        Value = values[component],
+                        InSlope = key.InSlope * tangentScale,
+                        OutSlope = key.OutSlope * tangentScale,
+                    };
+                }
+                previous = value;
+                hasPrevious = true;
+            }
+
+            normalized = new Dictionary<char, IReadOnlyList<CurveKey>>(4)
+            {
+                ['x'] = output[0],
+                ['y'] = output[1],
+                ['z'] = output[2],
+                ['w'] = output[3],
+            };
+            diagnostic = string.Empty;
+            return true;
+        }
+
+        private static float GetMappedOrScalarFloat(
+            YamlMappingNode parent,
+            string key,
+            char component)
+        {
+            if (GetMappingOrNull(parent, key) is YamlMappingNode mapping)
+                return GetScalarFloat(mapping, component.ToString()) ?? 0.0f;
+            return GetScalarFloat(parent, key) ?? 0.0f;
+        }
+
+        private static int GetMappedOrScalarInt(
+            YamlMappingNode parent,
+            string key,
+            char component,
+            int fallback)
+        {
+            if (GetMappingOrNull(parent, key) is YamlMappingNode mapping)
+                return GetScalarInt(mapping, component.ToString()) ?? fallback;
+            return GetScalarInt(parent, key) ?? fallback;
+        }
+
         private static PropAnimFloat BuildFloatAnim(ScalarCurve curve, float length, bool looped, int fps, float valueScale, float timeOffsetSeconds)
         {
             var anim = new PropAnimFloat
@@ -1226,17 +1742,246 @@ namespace XREngine.Animation.Importers
             anim.Keyframes.PreInfinityMode = MapInfinityMode(curve.PreInfinity);
             anim.Keyframes.PostInfinityMode = MapInfinityMode(curve.PostInfinity);
 
-            foreach (var k in curve.Keys)
+            IReadOnlyList<CurveKey> trimmedKeys = TrimCurveKeys(
+                curve.Keys,
+                timeOffsetSeconds,
+                timeOffsetSeconds + length);
+            foreach (CurveKey k in trimmedKeys)
                 anim.Keyframes.Add(CreateFloatKeyframe(k, fps, valueScale, timeOffsetSeconds));
 
             return anim;
         }
 
+        private static PropAnimObject BuildObjectAnim(
+            ObjectCurve curve,
+            float length,
+            bool looped,
+            float timeOffsetSeconds)
+        {
+            PropAnimObject animation = new(length, looped, useKeyframes: true)
+            {
+                DiscreteValueRounding = PropAnimObject.EDiscreteValueRounding.Floor,
+            };
+            EKeyframeInfinityMode infinity = looped
+                ? EKeyframeInfinityMode.Loop
+                : EKeyframeInfinityMode.Once;
+            animation.Keyframes.PreInfinityMode = infinity;
+            animation.Keyframes.PostInfinityMode = infinity;
+            IReadOnlyList<ObjectCurveKey> trimmedKeys = TrimObjectCurveKeys(
+                curve.Keys,
+                timeOffsetSeconds,
+                timeOffsetSeconds + length);
+            foreach (ObjectCurveKey key in trimmedKeys)
+            {
+                animation.Keyframes.Add(new ObjectKeyframe
+                {
+                    Second = key.Time - timeOffsetSeconds,
+                    Value = key.Value,
+                });
+            }
+            return animation;
+        }
+
+        private static IReadOnlyList<CurveKey> TrimCurveKeys(
+            IReadOnlyList<CurveKey> source,
+            float startTime,
+            float stopTime)
+        {
+            if (source.Count == 0)
+                return source;
+
+            List<CurveKey> keys = [.. source.OrderBy(static key => key.Time)];
+            if (!float.IsFinite(startTime) || !float.IsFinite(stopTime) || stopTime < startTime)
+                return keys;
+
+            SplitCurveAt(keys, startTime);
+            if (stopTime > startTime)
+                SplitCurveAt(keys, stopTime);
+            return keys
+                .Where(key => key.Time >= startTime - 0.000001f && key.Time <= stopTime + 0.000001f)
+                .ToArray();
+        }
+
+        private static void SplitCurveAt(List<CurveKey> keys, float splitTime)
+        {
+            int rightIndex = keys.FindIndex(key => key.Time >= splitTime - 0.000001f);
+            if (rightIndex <= 0 || rightIndex >= keys.Count)
+                return;
+            CurveKey right = keys[rightIndex];
+            if (MathF.Abs(right.Time - splitTime) <= 0.000001f)
+                return;
+
+            CurveKey left = keys[rightIndex - 1];
+            if (splitTime <= left.Time || splitTime >= right.Time)
+                return;
+
+            SplitUnityCurveSegment(
+                left,
+                right,
+                splitTime,
+                out CurveKey adjustedLeft,
+                out CurveKey boundary,
+                out CurveKey adjustedRight);
+            keys[rightIndex - 1] = adjustedLeft;
+            keys[rightIndex] = adjustedRight;
+            keys.Insert(rightIndex, boundary);
+        }
+
+        private static void SplitUnityCurveSegment(
+            CurveKey left,
+            CurveKey right,
+            float splitTime,
+            out CurveKey adjustedLeft,
+            out CurveKey boundary,
+            out CurveKey adjustedRight)
+        {
+            float duration = right.Time - left.Time;
+            if (left.OutInterpType == EVectorInterpType.Step || duration <= 0.0f)
+            {
+                adjustedLeft = left with { OutSlope = float.PositiveInfinity };
+                boundary = new CurveKey(
+                    splitTime,
+                    left.Value,
+                    float.PositiveInfinity,
+                    float.PositiveInfinity,
+                    CombinedTangentMode: 0,
+                    WeightedMode: 0,
+                    InWeight: 1.0f / 3.0f,
+                    OutWeight: 1.0f / 3.0f);
+                adjustedRight = right with { InSlope = float.PositiveInfinity };
+                return;
+            }
+
+            float normalizedTime = Math.Clamp((splitTime - left.Time) / duration, 0.0f, 1.0f);
+            float outWeight = (left.WeightedMode & 2) != 0 ? left.OutWeight : 1.0f / 3.0f;
+            float inWeight = (right.WeightedMode & 1) != 0 ? right.InWeight : 1.0f / 3.0f;
+            Vector2 p0 = new(0.0f, left.Value);
+            Vector2 p1 = new(outWeight, left.Value + left.OutSlope * duration * outWeight);
+            Vector2 p2 = new(1.0f - inWeight, right.Value - right.InSlope * duration * inWeight);
+            Vector2 p3 = new(1.0f, right.Value);
+            float parameter = InvertUnityBezierTime(normalizedTime, p1.X, p2.X);
+
+            Vector2 a = Vector2.Lerp(p0, p1, parameter);
+            Vector2 b = Vector2.Lerp(p1, p2, parameter);
+            Vector2 c = Vector2.Lerp(p2, p3, parameter);
+            Vector2 d = Vector2.Lerp(a, b, parameter);
+            Vector2 e = Vector2.Lerp(b, c, parameter);
+            Vector2 point = Vector2.Lerp(d, e, parameter);
+
+            float leftDuration = Math.Max(point.X - p0.X, 0.0000001f);
+            float rightDuration = Math.Max(p3.X - point.X, 0.0000001f);
+            adjustedLeft = left with
+            {
+                OutSlope = GetBezierHandleSlope(p0, a, duration, left.OutSlope),
+                OutWeight = Math.Clamp((a.X - p0.X) / leftDuration, 0.0f, 1.0f),
+                WeightedMode = (left.WeightedMode & 1) | 2,
+                CombinedTangentMode = left.CombinedTangentMode & ~(0xF << 5),
+            };
+            boundary = new CurveKey(
+                splitTime,
+                point.Y,
+                GetBezierHandleSlope(d, point, duration, left.OutSlope),
+                GetBezierHandleSlope(point, e, duration, right.InSlope),
+                CombinedTangentMode: 0,
+                WeightedMode: 3,
+                InWeight: Math.Clamp((point.X - d.X) / leftDuration, 0.0f, 1.0f),
+                OutWeight: Math.Clamp((e.X - point.X) / rightDuration, 0.0f, 1.0f));
+            adjustedRight = right with
+            {
+                InSlope = GetBezierHandleSlope(c, p3, duration, right.InSlope),
+                InWeight = Math.Clamp((p3.X - c.X) / rightDuration, 0.0f, 1.0f),
+                WeightedMode = (right.WeightedMode & 2) | 1,
+                CombinedTangentMode = right.CombinedTangentMode & ~(0xF << 1),
+            };
+        }
+
+        private static float GetBezierHandleSlope(
+            Vector2 from,
+            Vector2 to,
+            float sourceDuration,
+            float fallback)
+        {
+            float deltaX = to.X - from.X;
+            return MathF.Abs(deltaX) <= 0.0000001f
+                ? fallback
+                : (to.Y - from.Y) / (deltaX * sourceDuration);
+        }
+
+        private static float InvertUnityBezierTime(float target, float x1, float x2)
+        {
+            float lower = 0.0f;
+            float upper = 1.0f;
+            float parameter = target;
+            for (int iteration = 0; iteration < 16; iteration++)
+            {
+                float value = EvaluateUnityBezier(0.0f, x1, x2, 1.0f, parameter);
+                float error = value - target;
+                if (MathF.Abs(error) <= 0.0000001f)
+                    break;
+                if (error < 0.0f)
+                    lower = parameter;
+                else
+                    upper = parameter;
+
+                float inverse = 1.0f - parameter;
+                float derivative = 3.0f * inverse * inverse * x1
+                    + 6.0f * inverse * parameter * (x2 - x1)
+                    + 3.0f * parameter * parameter * (1.0f - x2);
+                float candidate = MathF.Abs(derivative) > 0.0000001f
+                    ? parameter - error / derivative
+                    : float.NaN;
+                parameter = float.IsFinite(candidate) && candidate > lower && candidate < upper
+                    ? candidate
+                    : (lower + upper) * 0.5f;
+            }
+            return Math.Clamp(parameter, 0.0f, 1.0f);
+        }
+
+        private static float EvaluateUnityBezier(float p0, float p1, float p2, float p3, float parameter)
+        {
+            float inverse = 1.0f - parameter;
+            return inverse * inverse * inverse * p0
+                + 3.0f * inverse * inverse * parameter * p1
+                + 3.0f * inverse * parameter * parameter * p2
+                + parameter * parameter * parameter * p3;
+        }
+
+        private static IReadOnlyList<ObjectCurveKey> TrimObjectCurveKeys(
+            IReadOnlyList<ObjectCurveKey> source,
+            float startTime,
+            float stopTime)
+        {
+            if (source.Count == 0)
+                return source;
+
+            ObjectCurveKey[] ordered = [.. source.OrderBy(static key => key.Time).ThenBy(static key => key.SourceOrder)];
+            if (!float.IsFinite(startTime) || !float.IsFinite(stopTime) || stopTime < startTime)
+                return ordered;
+
+            List<ObjectCurveKey> trimmed = [];
+            ObjectCurveKey boundary = ordered[0] with { Time = startTime };
+            for (int i = 0; i < ordered.Length; i++)
+            {
+                if (ordered[i].Time > startTime + 0.000001f)
+                    break;
+                boundary = ordered[i] with { Time = startTime };
+            }
+            trimmed.Add(boundary);
+            for (int i = 0; i < ordered.Length; i++)
+            {
+                ObjectCurveKey key = ordered[i];
+                if (key.Time <= startTime + 0.000001f || key.Time > stopTime + 0.000001f)
+                    continue;
+                trimmed.Add(key);
+            }
+            return trimmed;
+        }
+
         private static FloatKeyframe CreateFloatKeyframe(CurveKey key, int fps, float valueScale, float timeOffsetSeconds)
         {
-            // Preserve keys on both sides of a trimmed interval. Evaluating the new time-zero
-            // between a negative and positive key reproduces the authored boundary tangent;
-            // clamping every earlier key onto zero destroyed that interpolation and key order.
+            // BuildFloatAnim has split any curve segment crossed by the clip trim
+            // bounds, including weighted Bezier handles, so all retained keys are
+            // legal non-negative track times without changing the authored curve.
             float normalizedTime = key.Time - timeOffsetSeconds;
             var kf = new FloatKeyframe
             {
@@ -1255,6 +2000,9 @@ namespace XREngine.Animation.Importers
             kf.OutValue = key.Value * valueScale;
             kf.InTangent = ConvertIncomingTangent(key.InSlope, valueScale);
             kf.OutTangent = ConvertOutgoingTangent(key.OutSlope, valueScale);
+            kf.WeightedMode = (EKeyframeWeightedMode)key.WeightedMode;
+            kf.InWeight = key.InWeight;
+            kf.OutWeight = key.OutWeight;
 
             if (!key.IsBroken && CanLinkTangents(kf.InTangent, kf.OutTangent))
             {
@@ -1309,11 +2057,52 @@ namespace XREngine.Animation.Importers
             => MathF.Abs(inTangent + outTangent) <= TangentLinkTolerance;
 
         private static EKeyframeInfinityMode MapInfinityMode(int unityInfinity)
-            => unityInfinity == 2
-                ? EKeyframeInfinityMode.Loop
-                : EKeyframeInfinityMode.Clamp;
+            => unityInfinity switch
+            {
+                0 => EKeyframeInfinityMode.Default,
+                1 => EKeyframeInfinityMode.Once,
+                2 => EKeyframeInfinityMode.Loop,
+                4 => EKeyframeInfinityMode.PingPong,
+                8 => EKeyframeInfinityMode.ClampForever,
+                _ => throw new InvalidDataException($"Unsupported Unity infinity mode {unityInfinity}."),
+            };
 
-        private static float GetMaxTime(List<ScalarCurve> scalarCurves, List<VectorCurve> vectorCurves)
+        private static void NormalizeDefaultInfinityModes(
+            List<ScalarCurve> scalarCurves,
+            List<VectorCurve> vectorCurves,
+            int sourceWrapMode,
+            bool looped)
+        {
+            int effectiveDefault = sourceWrapMode == 0
+                ? (looped ? 2 : 1)
+                : sourceWrapMode;
+
+            for (int i = 0; i < scalarCurves.Count; i++)
+            {
+                ScalarCurve curve = scalarCurves[i];
+                scalarCurves[i] = curve with
+                {
+                    PreInfinity = curve.PreInfinity == 0 ? effectiveDefault : curve.PreInfinity,
+                    PostInfinity = curve.PostInfinity == 0 ? effectiveDefault : curve.PostInfinity,
+                };
+            }
+
+            for (int i = 0; i < vectorCurves.Count; i++)
+            {
+                VectorCurve curve = vectorCurves[i];
+                vectorCurves[i] = curve with
+                {
+                    PreInfinity = curve.PreInfinity == 0 ? effectiveDefault : curve.PreInfinity,
+                    PostInfinity = curve.PostInfinity == 0 ? effectiveDefault : curve.PostInfinity,
+                };
+            }
+        }
+
+        private static float GetMaxTime(
+            List<ScalarCurve> scalarCurves,
+            List<VectorCurve> vectorCurves,
+            List<ObjectCurve> objectCurves,
+            UnityAnimationEvent[] animationEvents)
         {
             float max = 0.0f;
             foreach (var c in scalarCurves)
@@ -1324,6 +2113,13 @@ namespace XREngine.Animation.Importers
                 foreach (var ks in vc.ComponentKeys.Values)
                     foreach (var k in ks)
                         max = Math.Max(max, k.Time);
+
+            foreach (ObjectCurve curve in objectCurves)
+                foreach (ObjectCurveKey key in curve.Keys)
+                    max = Math.Max(max, key.Time);
+
+            foreach (UnityAnimationEvent animationEvent in animationEvents)
+                max = Math.Max(max, animationEvent.Time);
 
             return max;
         }
@@ -1405,9 +2201,202 @@ namespace XREngine.Animation.Importers
                         : UnityMaterialAnimationValueKind.ObjectReference;
                 bindings.Add(parsed with { ValueKind = kind });
                 diagnostics.Add(
-                    $"Preserved Unity object-reference curve '{attribute}'. Runtime application requires resolved XRTexture key values.");
+                    $"Imported Unity object-reference curve '{attribute}' through the typed runtime resolver.");
             }
         }
+
+        private static List<ObjectCurve> ReadObjectReferenceCurves(
+            YamlMappingNode clipMap,
+            string clipFilePath,
+            UnityAnimationImportManifestBuilder manifestBuilder)
+        {
+            YamlSequenceNode? sequence = GetSequenceOrNull(clipMap, "m_PPtrCurves");
+            if (sequence is null || sequence.Children.Count == 0)
+                return [];
+
+            List<ObjectCurve> curves = new(sequence.Children.Count);
+            HashSet<string> referencedGuids = new(StringComparer.OrdinalIgnoreCase);
+            for (int curveIndex = 0; curveIndex < sequence.Children.Count; curveIndex++)
+            {
+                if (sequence.Children[curveIndex] is not YamlMappingNode item)
+                {
+                    manifestBuilder.RecordSection(
+                        EUnityAnimationDataDomain.ObjectReference,
+                        EUnityAnimationCapabilityState.Unsupported,
+                        $"m_PPtrCurves[{curveIndex}]",
+                        "Object-reference curve entry is not a mapping.",
+                        sequence.Children[curveIndex].ToString());
+                    continue;
+                }
+
+                YamlSequenceNode? keys = GetSequenceOrNull(item, "curve");
+                if (keys is null && GetMappingOrNull(item, "curve") is YamlMappingNode curveMap)
+                    keys = GetSequenceOrNull(curveMap, "m_Curve");
+                string attribute = GetScalarString(item, "attribute") ?? string.Empty;
+                if (keys is null || string.IsNullOrWhiteSpace(attribute))
+                {
+                    manifestBuilder.RecordSection(
+                        EUnityAnimationDataDomain.ObjectReference,
+                        EUnityAnimationCapabilityState.Unsupported,
+                        $"m_PPtrCurves[{curveIndex}]",
+                        "Object-reference curve is missing its key sequence or attribute.",
+                        item.ToString());
+                    continue;
+                }
+
+                List<ObjectCurveKey> objectKeys = new(keys.Children.Count);
+                for (int keyIndex = 0; keyIndex < keys.Children.Count; keyIndex++)
+                {
+                    if (keys.Children[keyIndex] is not YamlMappingNode keyMap)
+                        continue;
+                    UnityAssetReference reference = ReadAssetReference(GetMappingOrNull(keyMap, "value"));
+                    if (!string.IsNullOrWhiteSpace(reference.Guid))
+                        referencedGuids.Add(reference.Guid);
+                    objectKeys.Add(new ObjectCurveKey(
+                        GetScalarFloat(keyMap, "time") ?? 0.0f,
+                        reference,
+                        keyIndex));
+                }
+
+                curves.Add(new ObjectCurve(
+                    "m_PPtrCurves",
+                    item.ToString(),
+                    GetScalarString(item, "path"),
+                    attribute,
+                    GetScalarInt(item, "classID"),
+                    ReadAssetReference(GetMappingOrNull(item, "script")),
+                    objectKeys));
+            }
+
+            Dictionary<string, string> resolvedPaths = ResolveUnityGuidPaths(clipFilePath, referencedGuids);
+            for (int curveIndex = 0; curveIndex < curves.Count; curveIndex++)
+            {
+                ObjectCurve curve = curves[curveIndex];
+                ObjectCurveKey[] resolvedKeys = new ObjectCurveKey[curve.Keys.Count];
+                for (int keyIndex = 0; keyIndex < curve.Keys.Count; keyIndex++)
+                {
+                    ObjectCurveKey key = curve.Keys[keyIndex];
+                    UnityAssetReference reference = key.Value;
+                    if (resolvedPaths.TryGetValue(reference.Guid, out string? resolvedPath))
+                        reference = reference with { ResolvedAssetPath = resolvedPath };
+                    resolvedKeys[keyIndex] = key with { Value = reference };
+                }
+                curves[curveIndex] = curve with { Keys = resolvedKeys };
+            }
+
+            return curves;
+        }
+
+        private static Dictionary<string, string> ResolveUnityGuidPaths(
+            string clipFilePath,
+            HashSet<string> requestedGuids)
+        {
+            Dictionary<string, string> resolved = new(StringComparer.OrdinalIgnoreCase);
+            if (requestedGuids.Count == 0)
+                return resolved;
+
+            DirectoryInfo? directory = new FileInfo(Path.GetFullPath(clipFilePath)).Directory;
+            while (directory is not null
+                && !directory.Name.Equals("Assets", StringComparison.OrdinalIgnoreCase))
+                directory = directory.Parent;
+            if (directory?.Parent is not DirectoryInfo projectRoot)
+                return resolved;
+
+            try
+            {
+                foreach (string metaPath in Directory.EnumerateFiles(directory.FullName, "*.meta", SearchOption.AllDirectories))
+                {
+                    string? guid = null;
+                    foreach (string line in File.ReadLines(metaPath).Take(24))
+                    {
+                        ReadOnlySpan<char> trimmed = line.AsSpan().Trim();
+                        if (!trimmed.StartsWith("guid:", StringComparison.OrdinalIgnoreCase))
+                            continue;
+                        guid = trimmed[5..].Trim().ToString();
+                        break;
+                    }
+
+                    if (guid is null || !requestedGuids.Contains(guid))
+                        continue;
+
+                    string assetPath = metaPath[..^".meta".Length];
+                    resolved[guid] = Path.GetRelativePath(projectRoot.FullName, assetPath).Replace('\\', '/');
+                    if (resolved.Count == requestedGuids.Count)
+                        break;
+                }
+            }
+            catch (IOException)
+            {
+                // A missing/locked .meta remains an explicit unresolved-reference
+                // capability diagnostic on the affected object curve.
+            }
+            catch (UnauthorizedAccessException)
+            {
+            }
+
+            return resolved;
+        }
+
+        private static UnityAnimationBindingDescriptor CreateGenericBindingDescriptor(
+            string sourceField,
+            string nodePath,
+            string attribute,
+            int? classId,
+            UnityAssetReference script,
+            EUnityAnimationBindingValueKind valueKind,
+            int component)
+            => new()
+            {
+                SourceField = sourceField,
+                NodePath = nodePath,
+                Attribute = attribute,
+                ClassId = classId,
+                Script = script,
+                ValueKind = valueKind,
+                Component = component,
+                RequiresAdapter = RequiresExplicitBindingAdapter(classId, script),
+            };
+
+        private static bool RequiresExplicitBindingAdapter(int? classId, UnityAssetReference script)
+        {
+            if (!script.IsNull || classId is 114)
+                return true;
+            return classId is not (1 or 4 or 20 or 23 or 33 or 54 or 81 or 82 or 108 or 137 or 224);
+        }
+
+        private static int GetSerializedComponentIndex(string attribute)
+        {
+            int separator = attribute.LastIndexOf('.');
+            if (separator < 0 || separator == attribute.Length - 1)
+                return -1;
+            return char.ToLowerInvariant(attribute[^1]) switch
+            {
+                'x' or 'r' => 0,
+                'y' or 'g' => 1,
+                'z' or 'b' => 2,
+                'w' or 'a' => 3,
+                _ => -1,
+            };
+        }
+
+        private static void RecordGenericBinding(
+            UnityAnimationImportManifestBuilder manifestBuilder,
+            UnityAnimationBindingDescriptor descriptor)
+            => manifestBuilder.RecordBinding(
+                EUnityAnimationDataDomain.GenericProperty,
+                descriptor.RequiresAdapter
+                    ? EUnityAnimationCapabilityState.RequiresRuntimeAdapter
+                    : EUnityAnimationCapabilityState.SupportedAndApplied,
+                descriptor.SourceField,
+                descriptor.NodePath,
+                descriptor.Attribute,
+                descriptor.ClassId,
+                descriptor.RequiresAdapter
+                    ? "IUnityAnimationBindingAdapter"
+                    : "Native typed serialized-property resolver",
+                descriptor.RequiresAdapter
+                    ? "The Unity-only component/property is preserved and requires an explicit IUnityAnimationBindingAdapter on the animated node."
+                    : string.Empty);
 
         private static bool TryMapTransformComponent(string attribute, out string kind, out char component)
         {
@@ -1650,14 +2639,23 @@ namespace XREngine.Animation.Importers
             for (int i = 0; i < keys.Count; i++)
             {
                 CurveKey key = keys[i];
-                if (key.WeightedMode == 0)
-                    continue;
+                if ((key.WeightedMode & ~3) != 0)
+                {
+                    diagnostic = $"Weighted tangent key at t={key.Time.ToString("R", CultureInfo.InvariantCulture)} has invalid mode {key.WeightedMode}.";
+                    return true;
+                }
 
-                diagnostic =
-                    $"Weighted tangent key at t={key.Time.ToString("R", CultureInfo.InvariantCulture)} " +
-                    $"(mode={key.WeightedMode}, inWeight={key.InWeight.ToString("R", CultureInfo.InvariantCulture)}, " +
-                    $"outWeight={key.OutWeight.ToString("R", CultureInfo.InvariantCulture)}) is preserved but not executable.";
-                return true;
+                if ((key.WeightedMode & 1) != 0 && (!float.IsFinite(key.InWeight) || key.InWeight < 0.0f || key.InWeight > 1.0f))
+                {
+                    diagnostic = $"Weighted tangent key at t={key.Time.ToString("R", CultureInfo.InvariantCulture)} has invalid inWeight {key.InWeight.ToString("R", CultureInfo.InvariantCulture)}.";
+                    return true;
+                }
+
+                if ((key.WeightedMode & 2) != 0 && (!float.IsFinite(key.OutWeight) || key.OutWeight < 0.0f || key.OutWeight > 1.0f))
+                {
+                    diagnostic = $"Weighted tangent key at t={key.Time.ToString("R", CultureInfo.InvariantCulture)} has invalid outWeight {key.OutWeight.ToString("R", CultureInfo.InvariantCulture)}.";
+                    return true;
+                }
             }
 
             diagnostic = string.Empty;
@@ -1665,82 +2663,7 @@ namespace XREngine.Animation.Importers
         }
 
         private static bool IsCurrentlyExecutableInfinityMode(int mode)
-            => mode is 0 or 1 or 2 or 8;
-
-        private static void RecordPreservedSequence(
-            YamlMappingNode clipMap,
-            string key,
-            EUnityAnimationDataDomain domain,
-            string diagnostic,
-            UnityAnimationImportManifestBuilder manifestBuilder)
-        {
-            YamlSequenceNode? sequence = GetSequenceOrNull(clipMap, key);
-            if (sequence is null || sequence.Children.Count == 0)
-                return;
-
-            manifestBuilder.RecordSection(
-                domain,
-                EUnityAnimationCapabilityState.PreservedNotExecutable,
-                key,
-                diagnostic,
-                sequence.ToString());
-        }
-
-        private static void RecordPreservedMuscleClipEncoding(
-            YamlMappingNode clipMap,
-            UnityAnimationImportManifestBuilder manifestBuilder)
-        {
-            YamlMappingNode? muscleClip = GetMappingOrNull(clipMap, "m_MuscleClip");
-            YamlMappingNode? serializedClip = GetMappingOrNull(muscleClip, "m_Clip");
-            if (serializedClip is null)
-                return;
-
-            RecordPreservedEncodingNode(serializedClip, "m_StreamedClip", manifestBuilder);
-            RecordPreservedEncodingNode(serializedClip, "m_DenseClip", manifestBuilder);
-            RecordPreservedEncodingNode(serializedClip, "m_ConstantClip", manifestBuilder);
-        }
-
-        private static void RecordPreservedEncodingNode(
-            YamlMappingNode parent,
-            string key,
-            UnityAnimationImportManifestBuilder manifestBuilder)
-        {
-            if (!parent.Children.TryGetValue(new YamlScalarNode(key), out YamlNode? node)
-                || !ContainsSerializedSamples(node))
-                return;
-
-            manifestBuilder.RecordSection(
-                EUnityAnimationDataDomain.SourceEncoding,
-                EUnityAnimationCapabilityState.PreservedNotExecutable,
-                $"m_MuscleClip.m_Clip.{key}",
-                $"{key} data is preserved but is not decoded by the native evaluator yet.",
-                node.ToString());
-        }
-
-        private static bool ContainsSerializedSamples(YamlNode node)
-        {
-            if (node is YamlSequenceNode sequence)
-                return sequence.Children.Count > 0;
-
-            if (node is not YamlMappingNode mapping)
-                return node is YamlScalarNode scalar
-                    && !string.IsNullOrWhiteSpace(scalar.Value)
-                    && scalar.Value is not "0";
-
-            foreach ((YamlNode keyNode, YamlNode valueNode) in mapping.Children)
-            {
-                string key = (keyNode as YamlScalarNode)?.Value ?? string.Empty;
-                if (key.Contains("data", StringComparison.OrdinalIgnoreCase)
-                    || key.Contains("sample", StringComparison.OrdinalIgnoreCase)
-                    || key.Contains("curve", StringComparison.OrdinalIgnoreCase))
-                {
-                    if (ContainsSerializedSamples(valueNode))
-                        return true;
-                }
-            }
-
-            return false;
-        }
+            => mode is 0 or 1 or 2 or 4 or 8;
 
         private static string ComputeImportSettingsHash(UnityHumanoidClipRootMotionSettings? settings)
         {
@@ -1748,7 +2671,7 @@ namespace XREngine.Animation.Importers
                 ? "none"
                 : string.Create(
                     CultureInfo.InvariantCulture,
-                    $"{settings.StartTime:R}|{settings.StopTime:R}|{settings.OrientationOffsetY:R}|{settings.Level:R}|{settings.CycleOffset:R}|{settings.LoopTime}|{settings.LoopPose}|{settings.BakeOrientationIntoPose}|{settings.BakePositionYIntoPose}|{settings.BakePositionXZIntoPose}|{settings.KeepOriginalOrientation}|{settings.KeepOriginalPositionY}|{settings.KeepOriginalPositionXZ}|{settings.HeightFromFeet}|{settings.Mirror}");
+                    $"{settings.AdditiveReferencePoseClip.FileId}|{settings.AdditiveReferencePoseClip.Guid}|{settings.AdditiveReferencePoseClip.Type}|{settings.AdditiveReferencePoseTime:R}|{settings.HasAdditiveReferencePose}|{settings.StartTime:R}|{settings.StopTime:R}|{settings.OrientationOffsetY:R}|{settings.Level:R}|{settings.CycleOffset:R}|{settings.LoopTime}|{settings.LoopPose}|{settings.BakeOrientationIntoPose}|{settings.BakePositionYIntoPose}|{settings.BakePositionXZIntoPose}|{settings.KeepOriginalOrientation}|{settings.KeepOriginalPositionY}|{settings.KeepOriginalPositionXZ}|{settings.HeightFromFeet}|{settings.Mirror}");
             string canonical = string.Create(
                 CultureInfo.InvariantCulture,
                 $"manifest={UnityAnimationImportManifest.CurrentSchemaVersion}|coordinate={UnityAnimationCoordinateContract.CurrentContractId}|constrained={Constrained}|lerpConstrained={LerpConstrained}|humanoidIK={ImportHumanoidIKGoalCurves}|humanoidRoot={ImportHumanoidRootMotionCurves}|rootSettings={rootSettings}");
@@ -1759,7 +2682,168 @@ namespace XREngine.Animation.Importers
             // Unity 2022 may serialize otherwise equivalent editable curve clips as version 7
             // after changing only object-reference header fields. The curve, humanoid root,
             // IK, and clip-settings domains consumed above retain the version 6 layout.
-            => serializedVersion is 6 or 7;
+            => UnityAnimationImportCapabilityContract.SupportsSerializedVersion(serializedVersion);
+
+        private static UnityAnimationClipMetadata ReadClipMetadata(
+            YamlMappingNode clipMap,
+            int sampleRate,
+            int sourceWrapMode)
+        {
+            YamlMappingNode? bounds = GetMappingOrNull(clipMap, "m_Bounds");
+            return new UnityAnimationClipMetadata
+            {
+                SampleRate = sampleRate,
+                WrapMode = (EUnityAnimationWrapMode)sourceWrapMode,
+                Legacy = (GetScalarInt(clipMap, "m_Legacy") ?? 0) != 0,
+                Compressed = (GetScalarInt(clipMap, "m_Compressed") ?? 0) != 0,
+                UseHighQualityCurve = (GetScalarInt(clipMap, "m_UseHighQualityCurve") ?? 0) != 0,
+                BoundsCenter = ReadVector3(GetMappingOrNull(bounds, "m_Center")),
+                BoundsExtents = ReadVector3(GetMappingOrNull(bounds, "m_Extent")),
+            };
+        }
+
+        private static UnityAnimationEvent[] ReadAnimationEvents(
+            YamlMappingNode clipMap,
+            string clipFilePath,
+            float startTimeSeconds,
+            float stopTimeSeconds,
+            UnityAnimationImportManifestBuilder manifestBuilder)
+        {
+            YamlSequenceNode? sequence = GetSequenceOrNull(clipMap, "m_Events");
+            if (sequence is null || sequence.Children.Count == 0)
+                return [];
+
+            List<UnityAnimationEvent> events = new(sequence.Children.Count);
+            HashSet<string> referencedGuids = new(StringComparer.OrdinalIgnoreCase);
+            int trimmedEventCount = 0;
+            bool hasTrimRange = stopTimeSeconds > startTimeSeconds;
+            for (int sourceOrder = 0; sourceOrder < sequence.Children.Count; sourceOrder++)
+            {
+                if (sequence.Children[sourceOrder] is not YamlMappingNode item)
+                {
+                    manifestBuilder.RecordSection(
+                        EUnityAnimationDataDomain.AnimationEvent,
+                        EUnityAnimationCapabilityState.Unsupported,
+                        $"m_Events[{sourceOrder}]",
+                        "Animation event entry is not a mapping.",
+                        sequence.Children[sourceOrder].ToString());
+                    continue;
+                }
+
+                string functionName = GetScalarString(item, "functionName") ?? string.Empty;
+                float sourceEventTime = GetScalarFloat(item, "time") ?? 0.0f;
+                int messageOptions = GetScalarInt(item, "messageOptions") ?? 0;
+                if (string.IsNullOrWhiteSpace(functionName)
+                    || !float.IsFinite(sourceEventTime)
+                    || messageOptions is not (0 or 1))
+                {
+                    manifestBuilder.RecordSection(
+                        EUnityAnimationDataDomain.AnimationEvent,
+                        EUnityAnimationCapabilityState.Unsupported,
+                        $"m_Events[{sourceOrder}]",
+                        "Animation event has an invalid function name, time, or message option.",
+                        item.ToString());
+                    continue;
+                }
+
+                const float boundaryTolerance = 0.000001f;
+                if (hasTrimRange
+                    && (sourceEventTime < startTimeSeconds - boundaryTolerance
+                        || sourceEventTime > stopTimeSeconds + boundaryTolerance))
+                {
+                    trimmedEventCount++;
+                    continue;
+                }
+
+                float eventTime = sourceEventTime - startTimeSeconds;
+                if (hasTrimRange)
+                    eventTime = Math.Clamp(eventTime, 0.0f, stopTimeSeconds - startTimeSeconds);
+
+                UnityAssetReference objectReference = ReadAssetReference(
+                    GetMappingOrNull(item, "objectReferenceParameter"));
+                if (!string.IsNullOrWhiteSpace(objectReference.Guid))
+                    referencedGuids.Add(objectReference.Guid);
+
+                events.Add(new UnityAnimationEvent
+                {
+                    Time = eventTime,
+                    FunctionName = functionName,
+                    StringParameter = GetScalarString(item, "data")
+                        ?? GetScalarString(item, "stringParameter")
+                        ?? string.Empty,
+                    FloatParameter = GetScalarFloat(item, "floatParameter") ?? 0.0f,
+                    IntParameter = GetScalarInt(item, "intParameter") ?? 0,
+                    ObjectReferenceParameter = objectReference,
+                    MessageOptions = (EUnityAnimationEventMessageOptions)messageOptions,
+                    SourceOrder = sourceOrder,
+                });
+            }
+
+            Dictionary<string, string> resolvedPaths = ResolveUnityGuidPaths(clipFilePath, referencedGuids);
+            int unresolvedReferenceCount = 0;
+            for (int i = 0; i < events.Count; i++)
+            {
+                UnityAnimationEvent animationEvent = events[i];
+                UnityAssetReference reference = animationEvent.ObjectReferenceParameter;
+                if (reference.IsNull)
+                    continue;
+                if (resolvedPaths.TryGetValue(reference.Guid, out string? resolvedPath))
+                {
+                    animationEvent.ObjectReferenceParameter = reference with { ResolvedAssetPath = resolvedPath };
+                    continue;
+                }
+
+                unresolvedReferenceCount++;
+            }
+
+            if (trimmedEventCount > 0)
+            {
+                manifestBuilder.RecordNotice(
+                    EUnityAnimationDataDomain.AnimationEvent,
+                    $"Excluded {trimmedEventCount} AnimationEvent entries outside the authored clip range " +
+                    $"[{startTimeSeconds:R}, {stopTimeSeconds:R}] seconds.");
+            }
+
+            if (unresolvedReferenceCount > 0)
+            {
+                manifestBuilder.RecordNotice(
+                    EUnityAnimationDataDomain.AnimationEvent,
+                    $"{unresolvedReferenceCount} AnimationEvent object-reference parameters retain their stable " +
+                    "Unity GUID/fileID identity because no matching project .meta file was available at import time.");
+            }
+
+            events.Sort(static (left, right) =>
+            {
+                int timeComparison = left.Time.CompareTo(right.Time);
+                return timeComparison != 0 ? timeComparison : left.SourceOrder.CompareTo(right.SourceOrder);
+            });
+            if (events.Count > 0)
+            {
+                manifestBuilder.RecordSection(
+                    EUnityAnimationDataDomain.AnimationEvent,
+                    EUnityAnimationCapabilityState.SupportedAndApplied,
+                    "m_Events",
+                    $"Imported {events.Count} executable AnimationEvent entries in stable authored order.",
+                    serializedYaml: string.Empty);
+            }
+            return [.. events];
+        }
+
+        private static UnityAssetReference ReadAssetReference(YamlMappingNode? map)
+            => map is null
+                ? default
+                : new UnityAssetReference(
+                    GetScalarLongOrNull(map, "fileID") ?? 0,
+                    GetScalarStringOrNull(map, "guid") ?? string.Empty,
+                    GetScalarIntOrNull(map, "type") ?? 0);
+
+        private static Vector3 ReadVector3(YamlMappingNode? map)
+            => map is null
+                ? Vector3.Zero
+                : new Vector3(
+                    GetScalarFloatOrNull(map, "x") ?? 0.0f,
+                    GetScalarFloatOrNull(map, "y") ?? 0.0f,
+                    GetScalarFloatOrNull(map, "z") ?? 0.0f);
 
         private static bool TrySplitComponent(string attribute, string prefix, out char component)
         {
@@ -1849,11 +2933,30 @@ namespace XREngine.Animation.Importers
         private static int? GetScalarIntOrNull(YamlMappingNode? map, string key)
             => map is null ? null : GetScalarInt(map, key);
 
+        private static long? GetScalarLongOrNull(YamlMappingNode? map, string key)
+        {
+            string? scalar = map is null ? null : GetScalarString(map, key);
+            return long.TryParse(scalar, NumberStyles.Integer, CultureInfo.InvariantCulture, out long value)
+                ? value
+                : null;
+        }
+
         private static float? GetScalarFloat(YamlMappingNode map, string key)
         {
             var s = GetScalarString(map, key);
             if (s is null)
                 return null;
+            if (s.Equals(".inf", StringComparison.OrdinalIgnoreCase)
+                || s.Equals("inf", StringComparison.OrdinalIgnoreCase)
+                || s.Equals("infinity", StringComparison.OrdinalIgnoreCase))
+                return float.PositiveInfinity;
+            if (s.Equals("-.inf", StringComparison.OrdinalIgnoreCase)
+                || s.Equals("-inf", StringComparison.OrdinalIgnoreCase)
+                || s.Equals("-infinity", StringComparison.OrdinalIgnoreCase))
+                return float.NegativeInfinity;
+            if (s.Equals(".nan", StringComparison.OrdinalIgnoreCase)
+                || s.Equals("nan", StringComparison.OrdinalIgnoreCase))
+                return float.NaN;
             if (float.TryParse(s, NumberStyles.Float, CultureInfo.InvariantCulture, out float v))
                 return v;
             return null;

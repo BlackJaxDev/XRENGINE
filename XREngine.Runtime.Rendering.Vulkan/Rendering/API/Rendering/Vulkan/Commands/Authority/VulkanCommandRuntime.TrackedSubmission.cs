@@ -784,11 +784,18 @@ internal sealed partial class VulkanCommandRuntime
         for (int index = 0; index < descriptorScanCount; index++)
         {
             VulkanResourceLifetimeKey descriptorSetKey = touched[index].Key;
-            if (descriptorSetKey.Type != ObjectType.DescriptorSet ||
-                !tracker.PublishedDescriptorSets.TryGetValue(
-                    descriptorSetKey.Handle,
-                    out VulkanPublishedDescriptorSetSnapshot? snapshot))
+            if (descriptorSetKey.Type != ObjectType.DescriptorSet)
                 continue;
+            if (!tracker.PublishedDescriptorSets.TryGetValue(
+                    descriptorSetKey.Handle,
+                    out VulkanPublishedDescriptorSetSnapshot? snapshot) ||
+                !snapshot.IsNativePublicationKnown)
+            {
+                failureKey = descriptorSetKey;
+                failureReason =
+                    $"descriptor set {descriptorSetKey} has no known native publication at submission";
+                return false;
+            }
 
             for (int referenceIndex = 0; referenceIndex < snapshot.References.Length; referenceIndex++)
             {

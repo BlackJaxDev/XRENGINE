@@ -65,6 +65,7 @@ namespace XREngine.Animation
                 : string.Empty;
         public object? GetValueKeyframed(float second)
         {
+            second = Keyframes.ResolveSampleTime(second, out _, out _);
             ObjectKeyframe? key = Keyframes?.GetKeyBefore(second);
             return key != null ? key.Value : DefaultValue;
         }
@@ -92,7 +93,8 @@ namespace XREngine.Animation
                 return;
             }
 
-            _prevKeyframe ??= Keyframes.GetKeyBefore(_currentTime);
+            float sampleTime = Keyframes.ResolveSampleTime(_currentTime, out _, out _);
+            _prevKeyframe = Keyframes.GetKeyBefore(sampleTime);
 
             if (Keyframes.Count == 0)
             {
@@ -119,7 +121,7 @@ namespace XREngine.Animation
                             _currentValue = _prevKeyframe?.Value;
                         else
                         {
-                            float t = (_currentTime - prevSec) / range;
+                        float t = (sampleTime - prevSec) / range;
                             if (t > 0.5f)
                                 _currentValue = _prevKeyframe?.Next?.Value;
                             else

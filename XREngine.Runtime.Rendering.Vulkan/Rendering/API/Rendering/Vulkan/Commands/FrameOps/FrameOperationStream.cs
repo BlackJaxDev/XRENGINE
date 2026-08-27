@@ -24,6 +24,8 @@ internal sealed class FrameOperationStream
 
     internal static FrameOperationStream Empty { get; } = new();
     internal int Count => _count;
+    internal int Capacity => _headers.Length;
+    internal int ResourceUseCapacity => _resourceUses.Length;
 
     internal FrameOperationStream()
         : this(new FrameOperationPayloadStore())
@@ -40,6 +42,41 @@ internal sealed class FrameOperationStream
         _contexts = new FrameOpContext[64];
         _resourceUses = new FrameOpResourceUse[256];
         _targets = new XRFrameBuffer?[64];
+    }
+
+    /// <summary>
+    /// Creates fixed frame-plan-owned header storage that shares this stream's
+    /// immutable payload columns. Logical OpenXR views only remap headers and
+    /// resource-use offsets, so duplicating payload columns would both waste
+    /// memory and permit them to diverge from the sealed source stream.
+    /// </summary>
+    internal FrameOperationStream CreateLogicalViewStorage(
+        int operationCapacity,
+        int resourceUseCapacity)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(operationCapacity);
+        ArgumentOutOfRangeException.ThrowIfNegative(resourceUseCapacity);
+        return new FrameOperationStream(
+            _payloads,
+            operationCapacity,
+            resourceUseCapacity,
+            _lane);
+    }
+
+    private FrameOperationStream(
+        FrameOperationPayloadStore payloads,
+        int operationCapacity,
+        int resourceUseCapacity,
+        EVulkanAcceptedFrameLane lane)
+    {
+        _payloads = payloads;
+        _fixedCapacity = true;
+        _lane = lane;
+        _headers = new FrameOperationHeader[operationCapacity];
+        _headerOrderScratch = new FrameOperationHeader[operationCapacity];
+        _contexts = new FrameOpContext[operationCapacity];
+        _resourceUses = new FrameOpResourceUse[resourceUseCapacity];
+        _targets = new XRFrameBuffer?[operationCapacity];
     }
 
     /// <summary>
@@ -253,21 +290,26 @@ internal sealed class FrameOperationStream
     }
 
     /// <summary>
-    /// Copies a view's numeric headers while sharing the immutable dense payload
-    /// columns. Used only after a frame plan is sealed for per-eye recording.
+    /// Copies a view's numeric headers into preallocated frame-plan storage
+    /// while sharing the immutable dense payload columns. This is the sole
+    /// logical-view materialization boundary and cannot allocate during eye
+    /// recording.
     /// </summary>
-    internal FrameOperationStream CreateLogicalViewSlice(ulong logicalViewId)
+    internal void CopyLogicalViewSliceTo(
+        ulong logicalViewId,
+        FrameOperationStream destination)
     {
         if (logicalViewId == 0UL)
             throw new ArgumentOutOfRangeException(nameof(logicalViewId));
+        ArgumentNullException.ThrowIfNull(destination);
+        if (!ReferenceEquals(_payloads, destination._payloads))
+            throw new InvalidOperationException("Logical-view storage must share the sealed stream payload store.");
 
         int matchCount = 0;
         for (int index = 0; index < _count; index++)
             if (GetContext(index).LogicalViewId == logicalViewId)
                 matchCount++;
 
-        FrameOperationStream slice = new(_payloads);
-        slice.EnsureCapacity(matchCount);
         int matchingResourceUseCount = 0;
         for (int sourceIndex = 0; sourceIndex < _count; sourceIndex++)
         {
@@ -275,32 +317,33 @@ internal sealed class FrameOperationStream
             if (_contexts[header.ContextIndex].LogicalViewId == logicalViewId)
                 matchingResourceUseCount += header.ResourceUseCount;
         }
-        slice.EnsureResourceUseCapacity(matchingResourceUseCount);
+        destination.Reset();
+        destination.EnsureCapacity(matchCount);
+        destination.EnsureResourceUseCapacity(matchingResourceUseCount);
         for (int sourceIndex = 0, destinationIndex = 0; sourceIndex < _count; sourceIndex++)
         {
             ref readonly FrameOperationHeader header = ref _headers[sourceIndex];
             if (_contexts[header.ContextIndex].LogicalViewId != logicalViewId)
                 continue;
 
-            int destinationResourceUseOffset = slice._resourceUseCount;
+            int destinationResourceUseOffset = destination._resourceUseCount;
             _resourceUses.AsSpan(
                 header.ResourceUseOffset,
                 header.ResourceUseCount).CopyTo(
-                    slice._resourceUses.AsSpan(
+                    destination._resourceUses.AsSpan(
                         destinationResourceUseOffset,
                         header.ResourceUseCount));
-            slice._resourceUseCount += header.ResourceUseCount;
-            slice._headers[destinationIndex] = header with
+            destination._resourceUseCount += header.ResourceUseCount;
+            destination._headers[destinationIndex] = header with
             {
                 ContextIndex = destinationIndex,
                 ResourceUseOffset = destinationResourceUseOffset,
             };
-            slice._contexts[destinationIndex] = _contexts[header.ContextIndex];
-            slice._targets[destinationIndex] = _targets[header.ContextIndex];
+            destination._contexts[destinationIndex] = _contexts[header.ContextIndex];
+            destination._targets[destinationIndex] = _targets[header.ContextIndex];
             destinationIndex++;
         }
-        slice._count = matchCount;
-        return slice;
+        destination._count = matchCount;
     }
 
     internal ref readonly FrameOperationHeader GetHeader(int index)
@@ -392,6 +435,44 @@ internal sealed class FrameOperationStream
     internal ref readonly PublishFramebufferPayload GetPublishedFramebuffer(int index) => ref _payloads.PublishedFramebuffers[RequireKind(index, EVulkanPrimaryPlanNodeKind.PublishFramebufferForSampling).PayloadIndex];
     internal ref readonly DlssUpscalePayload GetDlssUpscale(int index) => ref _payloads.DlssUpscales[RequireKind(index, EVulkanPrimaryPlanNodeKind.DlssUpscale).PayloadIndex];
     internal ref readonly DlssFrameGenerationPayload GetDlssFrameGeneration(int index) => ref _payloads.DlssFrameGenerations[RequireKind(index, EVulkanPrimaryPlanNodeKind.DlssFrameGeneration).PayloadIndex];
+
+    internal bool Contains(EVulkanPrimaryPlanNodeKind kind)
+    {
+        for (int index = 0; index < _count; index++)
+            if (_headers[index].OpCode == kind)
+                return true;
+        return false;
+    }
+
+    /// <summary>
+    /// Rebinds only the acquired-output UI image in admitted DLSS-G payloads.
+    /// Headers, contexts, producer snapshots, and resource ordering remain
+    /// frozen; this is the target-dependent counterpart to late WSI acquire.
+    /// </summary>
+    internal int BindAcquiredStreamlineUiImage(
+        in VulkanStreamlineImage uiImage)
+    {
+        int rebound = 0;
+        for (int index = 0; index < _count; index++)
+        {
+            ref readonly FrameOperationHeader header = ref _headers[index];
+            if (header.OpCode !=
+                EVulkanPrimaryPlanNodeKind.DlssFrameGeneration)
+            {
+                continue;
+            }
+
+            DlssFrameGenerationPayload payload =
+                _payloads.DlssFrameGenerations[header.PayloadIndex];
+            _payloads.DlssFrameGenerations[header.PayloadIndex] = payload with
+            {
+                UiColorAndAlpha = uiImage,
+            };
+            rebound++;
+        }
+
+        return rebound;
+    }
 
     private ref readonly FrameOperationHeader RequireKind(int index, EVulkanPrimaryPlanNodeKind kind)
     {

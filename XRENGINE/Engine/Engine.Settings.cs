@@ -1,4 +1,5 @@
 using System.Diagnostics.CodeAnalysis;
+using System.Linq.Expressions;
 using System.Reflection;
 using XREngine.Audio;
 using XREngine.Core.Files;
@@ -41,6 +42,13 @@ namespace XREngine
         }
 
         /// <summary>
+        /// Effective user settings for the active process after replaying session values.
+        /// The persisted <see cref="UserSettings"/> object remains the editor/save target.
+        /// </summary>
+        public static UserSettings EffectiveUserSettings
+            => _effectiveUserSettings ?? _userSettings;
+
+        /// <summary>
         /// Game-defined startup settings including initial world, libraries, and networking configuration.
         /// </summary>
         /// <remarks>
@@ -48,7 +56,7 @@ namespace XREngine
         /// </remarks>
         public static GameStartupSettings GameSettings
         {
-            get => _gameSettings;
+            get => _effectiveGameSettings ?? _gameSettings;
             set
             {
                 if (!ReplaceSettingsRoot(
@@ -58,12 +66,20 @@ namespace XREngine
                     DetachGameSettings,
                     AttachGameSettings))
                     return;
-                
+
+                RebuildEffectiveGameSettings();
                 BuildSettingsChanged?.Invoke(_gameSettings.BuildSettings);
 
                 ApplyEffectiveSettingsForProperty(null);
             }
         }
+
+        /// <summary>
+        /// Project-owned game settings used by inspectors and persistence. Runtime
+        /// consumers should read <see cref="GameSettings"/>, which includes session values.
+        /// </summary>
+        public static GameStartupSettings PersistentGameSettings
+            => _gameSettings;
 
         /// <summary>
         /// Project-level build settings describing how packaged builds should be produced.
@@ -73,7 +89,7 @@ namespace XREngine
         /// </remarks>
         public static BuildSettings BuildSettings
         {
-            get => GameSettings.BuildSettings;
+            get => _gameSettings.BuildSettings;
             set => SetBuildSettings(value);
         }
 
@@ -133,6 +149,117 @@ namespace XREngine
         /// with <see cref="EditorPreferencesOverrides"/>. Changes trigger <see cref="EditorPreferencesChanged"/>.
         /// </remarks>
         public static EditorPreferences EditorPreferences => _editorPreferences;
+
+        /// <summary>
+        /// Sets any writable settings property for the lifetime of the current process.
+        /// Session values are replayed onto a transient effective projection and are never
+        /// written into the persisted settings asset.
+        /// </summary>
+        public static void SetSessionSetting<TSettings, TValue>(
+            Expression<Func<TSettings, TValue>> propertySelector,
+            TValue value)
+            where TSettings : class
+        {
+            EnsureSessionSettingsRootRegistered(typeof(TSettings));
+            _sessionSettings.SetAndPublish(
+                propertySelector,
+                value,
+                () => RefreshSessionSettingsRoot(typeof(TSettings)));
+        }
+
+        /// <summary>
+        /// Sets any writable settings property by dotted path for the lifetime of the current process.
+        /// The supplied value must already be converted to the leaf property's declared type.
+        /// </summary>
+        public static string SetSessionSetting<TSettings>(string propertyPath, object? value)
+            where TSettings : class
+        {
+            EnsureSessionSettingsRootRegistered(typeof(TSettings));
+            return _sessionSettings.SetAndPublish<TSettings>(
+                propertyPath,
+                value,
+                () => RefreshSessionSettingsRoot(typeof(TSettings)));
+        }
+
+        /// <summary>
+        /// Clears one process-local setting value.
+        /// </summary>
+        public static bool ClearSessionSetting<TSettings, TValue>(
+            Expression<Func<TSettings, TValue>> propertySelector)
+            where TSettings : class
+        {
+            EnsureSessionSettingsRootRegistered(typeof(TSettings));
+            if (!_sessionSettings.Clear(propertySelector))
+                return false;
+
+            RefreshSessionSettingsRoot(typeof(TSettings));
+            return true;
+        }
+
+        /// <summary>
+        /// Clears one process-local setting value by dotted property path.
+        /// </summary>
+        public static bool ClearSessionSetting<TSettings>(string propertyPath)
+            where TSettings : class
+        {
+            EnsureSessionSettingsRootRegistered(typeof(TSettings));
+            if (!_sessionSettings.Clear<TSettings>(propertyPath))
+                return false;
+
+            RefreshSessionSettingsRoot(typeof(TSettings));
+            return true;
+        }
+
+        /// <summary>
+        /// Clears every process-local value for one settings root.
+        /// </summary>
+        public static bool ClearSessionSettings<TSettings>()
+            where TSettings : class
+        {
+            EnsureSessionSettingsRootRegistered(typeof(TSettings));
+            if (!_sessionSettings.Clear<TSettings>())
+                return false;
+
+            RefreshSessionSettingsRoot(typeof(TSettings));
+            return true;
+        }
+
+        /// <summary>
+        /// Clears every process-local setting value and republishes affected roots.
+        /// </summary>
+        public static void ClearSessionSettings()
+        {
+            Type[] affectedTypes = _sessionSettings.ClearAll();
+            foreach (Type settingsType in affectedTypes)
+                RefreshSessionSettingsRoot(settingsType);
+        }
+
+        /// <summary>
+        /// Returns whether an exact dotted property path has a process-local value.
+        /// </summary>
+        public static bool HasSessionSetting<TSettings>(string propertyPath)
+            where TSettings : class
+            => _sessionSettings.Contains<TSettings>(propertyPath);
+
+        /// <summary>
+        /// Returns whether a property path or one of its descendants has a process-local value.
+        /// </summary>
+        public static bool HasSessionSettingAtOrBelow<TSettings>(string propertyPath)
+            where TSettings : class
+            => _sessionSettings.ContainsAtOrBelow<TSettings>(propertyPath);
+
+        /// <summary>
+        /// Creates the editor-preferences snapshot used by persistence and packaging.
+        /// Process-local values are intentionally excluded.
+        /// </summary>
+        public static EditorPreferences CreatePersistableEditorPreferencesSnapshot()
+        {
+            var snapshot = new EditorPreferences();
+            snapshot.CopyFrom(_globalEditorPreferences);
+            snapshot.ApplyOverrides(_editorPreferencesOverrides);
+            snapshot.ClearDirty();
+            return snapshot;
+        }
 
         #endregion
 
@@ -196,16 +323,17 @@ namespace XREngine
 
         private static void SetBuildSettings(BuildSettings? value)
         {
-            BuildSettings? current = GameSettings.BuildSettings;
+            BuildSettings? current = _gameSettings.BuildSettings;
             if (ReferenceEquals(current, value) && value is not null)
                 return;
 
             if (current is not null)
                 DetachBuildSettings(current);
 
-            GameSettings.BuildSettings = value ?? new BuildSettings();
-            AttachBuildSettings(GameSettings.BuildSettings);
-            BuildSettingsChanged?.Invoke(GameSettings.BuildSettings);
+            _gameSettings.BuildSettings = value ?? new BuildSettings();
+            AttachBuildSettings(_gameSettings.BuildSettings);
+            RebuildEffectiveGameSettings();
+            BuildSettingsChanged?.Invoke(_gameSettings.BuildSettings);
         }
 
         private static void AttachBuildSettings(BuildSettings settings)
@@ -252,6 +380,7 @@ namespace XREngine
         /// </summary>
         private static void OnUserSettingsChanged()
         {
+            RebuildEffectiveUserSettings();
             ApplyEffectiveSettingsForProperty(null);
             UserSettingsChanged?.Invoke(_userSettings);
         }
@@ -270,6 +399,7 @@ namespace XREngine
                 _trackedUserOverrideableSettings,
                 HandleOverrideableSettingChanged);
 
+            RebuildEffectiveUserSettings();
             ApplyEffectiveSettingsForProperty(e.PropertyName);
         }
 
@@ -278,7 +408,8 @@ namespace XREngine
         /// </summary>
         private static void HandleBuildSettingsChanged(object? sender, IXRPropertyChangedEventArgs e)
         {
-            BuildSettingsChanged?.Invoke(GameSettings.BuildSettings);
+            RebuildEffectiveGameSettings();
+            BuildSettingsChanged?.Invoke(_gameSettings.BuildSettings);
         }
 
         /// <summary>
@@ -295,6 +426,7 @@ namespace XREngine
                 _trackedGameOverrideableSettings,
                 HandleOverrideableSettingChanged);
 
+            RebuildEffectiveGameSettings();
             ApplyEffectiveSettingsForProperty(e.PropertyName);
         }
 
@@ -357,6 +489,9 @@ namespace XREngine
                 UpdateEffectiveEditorPreferences(propertyName);
                 return;
             }
+
+            if (_trackedGameOverrideableSettings.Contains(setting))
+                RebuildEffectiveGameSettings();
 
             ApplyEffectiveSettingsForProperty(propertyName);
         }
@@ -1004,6 +1139,10 @@ namespace XREngine
                 _editorPreferences.ApplyOverrides(_editorPreferencesOverrides);
             }
 
+            _sessionSettings.Apply(_editorPreferences);
+            _editorPreferences.MarkAsTransientProjection();
+            _editorPreferences.ClearDirty();
+
             if (_suppressSettingsCascades)
             {
                 MarkEditorPreferencesApplyPending();
@@ -1016,6 +1155,57 @@ namespace XREngine
             }
 
             EditorPreferencesChanged?.Invoke(_editorPreferences);
+        }
+
+        private static void RebuildEffectiveUserSettings()
+        {
+            if (!_sessionSettings.HasAny<UserSettings>())
+            {
+                _effectiveUserSettings = _userSettings;
+                return;
+            }
+
+            UserSettings projection = _userSettings.DeepClone();
+            _sessionSettings.Apply(projection);
+            projection.MarkAsTransientProjection();
+            projection.ClearDirty();
+            _effectiveUserSettings = projection;
+        }
+
+        private static void RebuildEffectiveGameSettings()
+        {
+            if (!_sessionSettings.HasAny<GameStartupSettings>())
+            {
+                _effectiveGameSettings = _gameSettings;
+                return;
+            }
+
+            GameStartupSettings projection = _gameSettings.DeepClone();
+            _sessionSettings.Apply(projection);
+            projection.BuildSettings.MarkAsTransientProjection();
+            projection.DefaultUserSettings.MarkAsTransientProjection();
+            projection.MarkAsTransientProjection();
+            projection.ClearDirty();
+            _effectiveGameSettings = projection;
+        }
+
+        private static void RegisterSessionSettingsRoot<TSettings>(Action refresh)
+            where TSettings : class
+            => _sessionSettingsRootRefreshers[typeof(TSettings)] = refresh;
+
+        private static void EnsureSessionSettingsRootRegistered(Type settingsType)
+        {
+            if (_sessionSettingsRootRefreshers.ContainsKey(settingsType))
+                return;
+
+            throw new NotSupportedException(
+                $"Settings root '{settingsType.FullName}' has not registered an effective session projection.");
+        }
+
+        private static void RefreshSessionSettingsRoot(Type settingsType)
+        {
+            EnsureSessionSettingsRootRegistered(settingsType);
+            _sessionSettingsRootRefreshers[settingsType]();
         }
 
         private static bool IsProfilerOnlyEditorDebugProperty(string? propertyName)

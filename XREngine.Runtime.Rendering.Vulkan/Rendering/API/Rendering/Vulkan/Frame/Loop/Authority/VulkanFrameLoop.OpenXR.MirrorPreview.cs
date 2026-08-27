@@ -47,7 +47,19 @@ internal sealed partial class VulkanFrameLoop
         {
             hasRecorded = TryRecordOpenXrEyeMirrorFrameBufferCommandBuffer(in request, out recorded);
             if (!hasRecorded)
+            {
+                if (request.RendersExternalSwapchainTarget)
+                {
+                    throw CreateOpenXrEyePresentNowFailure(
+                        request.OpenXrViewIndex,
+                        EVulkanPresentNowReadinessStage.FramePlanSeal,
+                        "mirror-record",
+                        "DesktopMirror -> logical plan -> exact primary",
+                        "Foreground external mirror recording returned no command buffer.");
+                }
+
                 return false;
+            }
 
             submitted = _commandRuntime.SubmitAndWaitOpenXrCommandBuffer(
                 recorded.CommandBuffer,
@@ -76,6 +88,11 @@ internal sealed partial class VulkanFrameLoop
                 _commandRuntime.CancelOpenXrRecordedTextureUploads(OutputRuntime.OpenXrBackend.RecordedTextureUploadsForSubmit, "OpenXR eye mirror command buffer did not complete");
             }
 
+            if (!submitted)
+                ThrowOpenXrRecordedPresentNowSubmissionFailure(
+                    in recorded,
+                    commandBufferCompleted,
+                    "mirror-submit");
             return submitted;
         }
         finally
@@ -108,11 +125,35 @@ internal sealed partial class VulkanFrameLoop
         {
             hasFirst = TryRecordOpenXrEyeMirrorFrameBufferCommandBuffer(firstEye, out firstRecorded);
             if (!hasFirst)
+            {
+                if (firstEye.RendersExternalSwapchainTarget)
+                {
+                    throw CreateOpenXrEyePresentNowFailure(
+                        firstEye.OpenXrViewIndex,
+                        EVulkanPresentNowReadinessStage.FramePlanSeal,
+                        "left-mirror-record",
+                        "DesktopMirror -> left logical plan -> exact primary",
+                        "Foreground left external mirror recording returned no command buffer.");
+                }
+
                 return false;
+            }
 
             hasSecond = TryRecordOpenXrEyeMirrorFrameBufferCommandBuffer(secondEye, out secondRecorded);
             if (!hasSecond)
+            {
+                if (secondEye.RendersExternalSwapchainTarget)
+                {
+                    throw CreateOpenXrEyePresentNowFailure(
+                        secondEye.OpenXrViewIndex,
+                        EVulkanPresentNowReadinessStage.FramePlanSeal,
+                        "right-mirror-record",
+                        "DesktopMirror -> right logical plan -> exact primary",
+                        "Foreground right external mirror recording returned no command buffer.");
+                }
+
                 return false;
+            }
 
             submitted = _commandRuntime.SubmitAndWaitOpenXrCommandBuffers(
                 firstRecorded.CommandBuffer,
@@ -137,6 +178,11 @@ internal sealed partial class VulkanFrameLoop
                 _commandRuntime.CancelOpenXrRecordedTextureUploads(OutputRuntime.OpenXrBackend.RecordedTextureUploadsForSubmit, "OpenXR eye mirror batch command buffers did not complete");
             }
 
+            if (!submitted)
+                ThrowOpenXrRecordedPresentNowSubmissionFailure(
+                    in firstRecorded,
+                    commandBuffersCompleted,
+                    "mirror-batch-submit");
             return submitted;
         }
         finally
@@ -180,11 +226,35 @@ internal sealed partial class VulkanFrameLoop
         {
             hasFirst = TryRecordOpenXrEyeMirrorFrameBufferCommandBuffer(firstEye, out firstRecorded);
             if (!hasFirst)
+            {
+                if (firstEye.RendersExternalSwapchainTarget)
+                {
+                    throw CreateOpenXrEyePresentNowFailure(
+                        firstEye.OpenXrViewIndex,
+                        EVulkanPresentNowReadinessStage.FramePlanSeal,
+                        "left-mirror-publish-record",
+                        "DesktopMirror -> left render/publish primary",
+                        "Foreground left mirror render/publish recording returned no command buffer.");
+                }
+
                 return false;
+            }
 
             hasSecond = TryRecordOpenXrEyeMirrorFrameBufferCommandBuffer(secondEye, out secondRecorded);
             if (!hasSecond)
+            {
+                if (secondEye.RendersExternalSwapchainTarget)
+                {
+                    throw CreateOpenXrEyePresentNowFailure(
+                        secondEye.OpenXrViewIndex,
+                        EVulkanPresentNowReadinessStage.FramePlanSeal,
+                        "right-mirror-publish-record",
+                        "DesktopMirror -> right render/publish primary",
+                        "Foreground right mirror render/publish recording returned no command buffer.");
+                }
+
                 return false;
+            }
 
             if (!TryPrepareOpenXrEyeMirrorPublish(firstPublish, out OpenXrEyeMirrorPublishPlan firstPlan) ||
                 !TryPrepareOpenXrEyeMirrorPublish(secondPublish, out OpenXrEyeMirrorPublishPlan secondPlan))
@@ -231,7 +301,20 @@ internal sealed partial class VulkanFrameLoop
                 _commandRuntime.CancelOpenXrRecordedTextureUploads(OutputRuntime.OpenXrBackend.RecordedTextureUploadsForSubmit, "OpenXR eye mirror render+publish batch command buffers did not complete");
             }
 
+            if (!submitted)
+                ThrowOpenXrRecordedPresentNowSubmissionFailure(
+                    in firstRecorded,
+                    commandBuffersCompleted,
+                    "mirror-render-publish-submit");
             return submitted;
+        }
+        catch (VulkanPresentNowReadinessException)
+        {
+            throw;
+        }
+        catch (Exception) when (IsDeviceLost)
+        {
+            throw;
         }
         catch (Exception ex)
         {
@@ -298,7 +381,19 @@ internal sealed partial class VulkanFrameLoop
 
             hasRecorded = TryRecordOpenXrEyeMirrorFrameBufferCommandBuffer(in renderRequest, out recorded);
             if (!hasRecorded)
+            {
+                if (renderRequest.RendersExternalSwapchainTarget)
+                {
+                    throw CreateOpenXrEyePresentNowFailure(
+                        renderRequest.OpenXrViewIndex,
+                        EVulkanPresentNowReadinessStage.FramePlanSeal,
+                        "stereo-mirror-record",
+                        "DesktopMirror -> stereo render/publish primary",
+                        "Foreground stereo mirror recording returned no command buffer.");
+                }
+
                 return false;
+            }
 
 
             if (IsOpenXrStrictSpsFaultBoundary(
@@ -367,7 +462,23 @@ internal sealed partial class VulkanFrameLoop
                 _commandRuntime.CancelOpenXrRecordedTextureUploads(OutputRuntime.OpenXrBackend.RecordedTextureUploadsForSubmit, "OpenXR true stereo render+publish batch command buffers did not complete");
             }
 
+            if (!submitted &&
+                injectedFailureStage == EOpenXrStrictSpsFaultInjectionStage.None)
+            {
+                ThrowOpenXrRecordedPresentNowSubmissionFailure(
+                    in recorded,
+                    commandBuffersCompleted,
+                    "stereo-mirror-submit");
+            }
             return submitted;
+        }
+        catch (VulkanPresentNowReadinessException)
+        {
+            throw;
+        }
+        catch (Exception) when (IsDeviceLost)
+        {
+            throw;
         }
         catch (Exception ex)
         {
@@ -539,6 +650,7 @@ internal sealed partial class VulkanFrameLoop
                 FrameOpContext fallbackContext = ops.Length > 0
                     ? ops[0].Context
                     : plannerContext;
+                ulong logicalViewId = GetSingleOpenXrLogicalViewId(ops);
                 VulkanFramePlanningSnapshot planningSnapshot =
                     _framePlanner.CaptureSnapshot() with
                     {
@@ -555,6 +667,41 @@ internal sealed partial class VulkanFrameLoop
                         planningSnapshot.RenderGraphPlan,
                         plannerState.FrameOpResourcePlannerSwitchingState),
                     openXrViewIndex: request.OpenXrViewIndex);
+                EVrOutputViewKind viewKind = default;
+                EVrOutputViewKind indexedViewKind = default;
+                int outputIndex = -1;
+                RenderOutputRequest outputContract = default;
+                bool hasOutputContract =
+                    logicalViewId != 0UL &&
+                    framePlan.ViewSet.TryGetLocatedOpenXrViewKindByLogicalViewId(
+                        logicalViewId,
+                        out viewKind) &&
+                    framePlan.ViewSet.TryGetLocatedOpenXrViewKind(
+                        request.OpenXrViewIndex,
+                        out indexedViewKind) &&
+                    viewKind == indexedViewKind &&
+                    framePlan.TryGetExecutableOutputContractForLogicalView(
+                        logicalViewId,
+                        EFrameOutputKind.DesktopMirror,
+                        viewKind,
+                        out outputIndex,
+                        out outputContract);
+                bool hasForegroundContract =
+                    hasOutputContract &&
+                    outputContract.WorkClass == ERenderOutputWorkClass.PresentNow;
+                if (request.RendersExternalSwapchainTarget &&
+                    (!hasForegroundContract ||
+                     outputContract.ReadinessPolicy == ERenderOutputReadinessPolicy.AllowDeferral))
+                {
+                    throw new VulkanPresentNowReadinessException(
+                        framePlan.RenderFrameId,
+                        EVulkanPresentNowReadinessStage.FramePlanSeal,
+                        $"openxr-mirror-{request.OpenXrViewIndex}-output-bind",
+                        "DesktopMirror -> exact logical-view output terminal",
+                        TimeSpan.Zero,
+                        TimeSpan.Zero,
+                        "The external mirror plan did not expose exactly one executable non-deferrable terminal for this located view.");
+                }
                 frameOpsSignature = framePlan.StaticOperationSignature;
                 FrameOperationSequence recordingOperations =
                     framePlan.GetNativeStaticOperationsForRecording();
@@ -606,13 +753,21 @@ internal sealed partial class VulkanFrameLoop
                     new VulkanCommandRecordingPolicySnapshot(
                         UseDynamicRenderingRenderTargets,
                         AllowSynchronousResourceUploads,
-                        RuntimeRenderingHostServices.Settings.VulkanCommandRecordingMode ==
-                            EVulkanCommandRecordingMode.FreshSerial,
+                        FreshSerialRecording: hasForegroundContract,
 
                         IsExternalSwapchainTarget:
                             request.RendersExternalSwapchainTarget,
                         PreserveSwapchainForOverlay: false,
-                        TransitionSwapchainToPresent: false),
+                        TransitionSwapchainToPresent: false,
+                        ReadinessPolicy: hasOutputContract
+                            ? outputContract.ReadinessPolicy
+                            : ERenderOutputReadinessPolicy.AllowDeferral,
+                        WorkClass: hasOutputContract
+                            ? outputContract.WorkClass
+                            : ERenderOutputWorkClass.Background,
+                        SourceFrameId: framePlan.RenderFrameId,
+                        AllowArtifactReuse: !hasForegroundContract,
+                        AllowSecondaryDeferral: !hasForegroundContract),
                     TrackedTargetLayout: ImageLayout.Undefined,
                     FrameDataImageIndexOverride: recordImageIndex,
                     OpenXrTargetContext: null,
@@ -624,6 +779,9 @@ internal sealed partial class VulkanFrameLoop
                         request.OpenXrViewIndex,
                         request.OpenXrImageIndex,
                         recordImageIndex,
+                        logicalViewId,
+                        outputIndex,
+                        outputContract,
                         frameOpsSignature,
                         plannerRevision,
                         plannerContext.ContextId,

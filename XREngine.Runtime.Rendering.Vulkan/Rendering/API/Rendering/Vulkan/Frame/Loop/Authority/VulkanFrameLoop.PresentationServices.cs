@@ -323,7 +323,9 @@ internal sealed partial class VulkanFrameLoop
             source.DescriptorResourceEpoch != 0;
         VulkanFinalPresentationDescriptorObservation descriptor =
             _frameTelemetry._finalPresentationLedger.CaptureLatestDescriptor(
-                unchecked((int)attempt.ImageIndex));
+                unchecked((int)attempt.ImageIndex),
+                attempt.FrameNumber,
+                in source);
 
         _ = _commandRuntime.CommandBuffers.TryGetDiagnosticMetadata(
             attempt.ImageIndex,

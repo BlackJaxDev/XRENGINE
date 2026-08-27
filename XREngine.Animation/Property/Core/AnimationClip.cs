@@ -264,6 +264,7 @@ namespace XREngine.Animation
 
         public override void GetAnimationValues(MotionBase? parentMotion, IDictionary<string, AnimVar> variables, float weight)
         {
+            ValueStore.Clear();
             bool hasUnityHumanoidPolicy = TryGetUnityHumanoidEvaluationContext(
                 out UnityHumanoidRootMotionPolicy unityPolicy,
                 out float unitySampleTime,
@@ -293,6 +294,10 @@ namespace XREngine.Animation
 
                     member.WriteCurrentValueToStore(ValueStore);
                 }
+                ApplyUnityHumanoidScalarQuaternionCorrections(
+                    hasUnityHumanoidPolicy,
+                    unityPolicy,
+                    unitySamplePhase);
                 parentMotion?.CopyAnimationValuesFrom(this);
                 return;
             }
@@ -390,8 +395,11 @@ namespace XREngine.Animation
             {
                 case EAnimValueType.Float when TrySampleFloat(member.Animation, sampleTime, out float floatValue):
                     floatValue = ApplyUnityHumanoidLoopPose(member, policy, samplePhase, floatValue);
-                    ApplyUnityHumanoidMirror(member, policy, ref floatValue);
-                    ValueStore.SetFloat(member.Slot.TypeIndex, floatValue);
+                    AnimSlot floatSlot = ResolveUnityHumanoidMirroredFloatSlot(
+                        member,
+                        policy.Mirror,
+                        ref floatValue);
+                    ValueStore.SetFloat(floatSlot.TypeIndex, floatValue);
                     return true;
 
                 case EAnimValueType.Vector2 when member.Animation is PropAnimVector2 vector2Animation:
@@ -401,8 +409,11 @@ namespace XREngine.Animation
                 case EAnimValueType.Vector3 when member.Animation is PropAnimVector3 vector3Animation:
                     Vector3 vector3Value = vector3Animation.GetValue(sampleTime);
                     vector3Value = ApplyUnityHumanoidLoopPose(member, policy, samplePhase, vector3Value);
-                    ApplyUnityHumanoidMirror(member, policy, ref vector3Value);
-                    ValueStore.SetVector3(member.Slot.TypeIndex, vector3Value);
+                    AnimSlot vector3Slot = ResolveUnityHumanoidMirroredVector3Slot(
+                        member,
+                        policy.Mirror,
+                        ref vector3Value);
+                    ValueStore.SetVector3(vector3Slot.TypeIndex, vector3Value);
                     return true;
 
                 case EAnimValueType.Vector4 when member.Animation is PropAnimVector4 vector4Animation:
@@ -412,8 +423,11 @@ namespace XREngine.Animation
                 case EAnimValueType.Quaternion when member.Animation is PropAnimQuaternion quaternionAnimation:
                     Quaternion quaternionValue = quaternionAnimation.GetValue(sampleTime);
                     quaternionValue = ApplyUnityHumanoidLoopPose(member, policy, samplePhase, quaternionValue);
-                    ApplyUnityHumanoidMirror(member, policy, ref quaternionValue);
-                    ValueStore.SetQuaternion(member.Slot.TypeIndex, quaternionValue);
+                    AnimSlot quaternionSlot = ResolveUnityHumanoidMirroredQuaternionSlot(
+                        member,
+                        policy.Mirror,
+                        ref quaternionValue);
+                    ValueStore.SetQuaternion(quaternionSlot.TypeIndex, quaternionValue);
                     return true;
 
                 case EAnimValueType.Bool when member.Animation is PropAnimBool boolAnimation:
@@ -479,6 +493,10 @@ namespace XREngine.Animation
             float value)
         {
             if (!policy.LoopPose
+                || member.MemberName is "SetAnimatedIKRotationX"
+                    or "SetAnimatedIKRotationY"
+                    or "SetAnimatedIKRotationZ"
+                    or "SetAnimatedIKRotationW"
                 || !IsUnityHumanoidPoseMember(member)
                 || member.Animation is null
                 || !TrySampleFloat(member.Animation, 0.0f, out float start)
@@ -659,6 +677,8 @@ namespace XREngine.Animation
                 }
             }
             _unityHumanoidMethodArgumentBaselines.Clear();
+            ClearUnityHumanoidMirrorSlotBindings();
+            ClearUnityHumanoidScalarQuaternionBindings();
             ResetUnityHumanoidStateClock(0.0f);
         }
 
@@ -859,6 +879,9 @@ namespace XREngine.Animation
                     SourceMaterialBindings = imported.SourceMaterialBindings;
                     MaterialBindingDiagnostics = imported.MaterialBindingDiagnostics;
                     UnityHumanoidRootMotionSettings = imported.UnityHumanoidRootMotionSettings;
+                    UnityMetadata = imported.UnityMetadata;
+                    UnityEvents = imported.UnityEvents;
+                    UnityGenericBindings = imported.UnityGenericBindings;
                     UnityImportManifest = imported.UnityImportManifest;
                     SampleRate = imported.SampleRate;
                     RootMember = imported.RootMember;

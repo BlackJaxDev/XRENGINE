@@ -115,14 +115,31 @@ Changes take effect immediately - the server will start or stop based on the `Mc
 Command-line arguments can be used to override preferences at startup:
 
 ```bash
-XREngine.Editor.exe --mcp                                      # Enable MCP server (sets preference to true)
+XREngine.Editor.exe --mcp                                      # Enable MCP server for this process
 XREngine.Editor.exe --mcp --mcp-port 8080                      # Enable on custom port
 XREngine.Editor.exe --mcp --mcp-allow-all                      # Enable unattended local tool calls
 XREngine.Editor.exe --mcp --mcp-permission-policy AllowMutate  # Set a specific auto-approve threshold
 ```
 
-> **Note:** Command-line arguments set the corresponding preferences, so the server state persists after startup.
+> **Note:** Command-line arguments populate a process-local preference layer. They override the effective MCP settings for that editor process without mutating or dirtying global/project preference assets.
 > Use `--mcp-allow-all` only for trusted local automation, because it bypasses every MCP permission prompt.
+
+The process-local layer is property-path based rather than a fixed launch-options DTO.
+`Engine.SetSessionSetting<TSettings, TValue>(...)` accepts any writable property,
+including nested properties, under the registered `UserSettings`,
+`GameStartupSettings`, and `EditorPreferences` roots. A string-path overload
+supports dynamic MCP calls; adding another root requires registering its effective
+projection, not defining another property whitelist DTO.
+The engine replays those values onto detached effective projections whenever a
+persistent root changes; authoring inspectors and save/build paths continue to use
+the persistent roots. Clearing a session value immediately reveals the current
+persistent value, and no session value enters dirty tracking or serialized output.
+
+`set_editor_preference` exposes the same behavior with `session_only: true`. Its
+`property_name` accepts a case-insensitive dotted path such as
+`Debug.RenderMesh3DBounds`; omitting `session_only` retains the existing persistent
+global-preference edit behavior. `set_game_setting` likewise accepts dotted paths
+and `session_only: true`.
 
 ### Default Endpoint
 
@@ -554,7 +571,7 @@ pwsh Tools/Reports/generate_mcp_docs.ps1
 | `get_component_schema` | Get detailed component type schema including properties and fields. |
 | `get_component_snapshot` | Get a component snapshot including readable properties and fields. |
 | `get_derived_types` | Find all types that derive from a given type across all loaded assemblies. |
-| `get_editor_preferences` | Read all editor preferences (effective view: global base + project overrides merged). |
+| `get_editor_preferences` | Read all editor preferences (effective view: global base + project and process-local session overrides merged). |
 | `get_engine_settings` | Read engine configuration overview (user settings, timing, project info, runtime metrics). |
 | `get_engine_state` | Get engine/editor play mode and high-level state flags. |
 | `get_enum_values` | Get all named values for an enum type. |
@@ -651,8 +668,8 @@ pwsh Tools/Reports/generate_mcp_docs.ps1
 | `set_component_property` | Set a component property or field value by name. |
 | `set_editor_camera_render_on_demand` | Set render-on-demand for the active editor camera pawn and optionally invalidate the viewport. |
 | `set_editor_camera_view` | Set the editor camera view with interpolation using position plus look-at or Euler rotation. |
-| `set_editor_preference` | Set an editor preference by property name or dotted path (writes to the global default). |
-| `set_game_setting` | Set a game startup setting by property name. |
+| `set_editor_preference` | Set an editor preference by property name or dotted path, persistently or for the active process only. |
+| `set_game_setting` | Set a game startup setting by property name or dotted path, persistently or for the active process only. |
 | `set_layer` | Set the layer for a scene node. |
 | `set_material_uniform` | Set a shader uniform value on a material by uniform name. Supports float, int, uint, vec2 ({X,Y}), vec3 ({X,Y,Z}), vec4 ({X,Y,Z,W}). Target by material asset ID, a component's Material property, or a ModelComponent submesh/LOD material slot. |
 | `set_material_uniforms` | Set multiple shader uniforms on a material in one call. Pass a map of uniform_name -> value and target by material asset ID, a component's Material property, or a ModelComponent submesh/LOD material slot. |

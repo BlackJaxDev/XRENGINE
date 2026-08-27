@@ -25,4 +25,11 @@ internal sealed class VulkanAcceptedFramePlanArena
         plan.Begin(frameSlot, frameId, sceneEpoch, in compatibility);
         return plan;
     }
+
+    /// <summary>Releases every frame-slot-owned plan publication.</summary>
+    internal void ResetAll()
+    {
+        for (int index = 0; index < _slots.Length; index++)
+            _slots[index].Reset();
+    }
 }

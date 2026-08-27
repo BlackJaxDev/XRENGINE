@@ -9,6 +9,7 @@ using System.Collections.Concurrent;
 using System.IO;
 using System.Linq;
 using System.Numerics;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Threading;
 using XREngine.Components;
@@ -36,7 +37,8 @@ namespace XREngine.Rendering.Commands
         // -------------------------------------------------------------------------
 
         /// <summary>Maps XRMaterial instances to unique GPU IDs.</summary>
-        private readonly ConcurrentDictionary<XRMaterial, uint> _materialIDMap = new();
+        private readonly ConcurrentDictionary<XRMaterial, uint> _materialIDMap =
+            new(ReferenceEqualityComparer.Instance);
 
         /// <summary>Reverse mapping from material ID to XRMaterial instance.</summary>
         private readonly ConcurrentDictionary<uint, XRMaterial> _idToMaterial = new();

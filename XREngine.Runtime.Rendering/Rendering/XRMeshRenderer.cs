@@ -532,6 +532,7 @@ namespace XREngine.Rendering
         /// immutable backend capture and frequency-scoped reuse.
         /// </summary>
         [RuntimeOnly, YamlIgnore, MemoryPackIgnore]
+        [field: RuntimeOnly, YamlIgnore, MemoryPackIgnore]
         public RenderBindingPublisherCollection BindingPublishers { get; } = new();
 
         public delegate void DelPrepareRenderData();

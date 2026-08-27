@@ -25,6 +25,8 @@ internal sealed class VulkanImportedTextureUploadPreparation(
     Action<Exception>? onError,
     Format format,
     ImageAspectFlags aspectMask,
+    ImageUsageFlags usage,
+    ImageLayout finalLayout,
     Extent3D extent,
     uint mipLevels,
     uint arrayLayers,
@@ -42,6 +44,8 @@ internal sealed class VulkanImportedTextureUploadPreparation(
     public Action<Exception>? OnError { get; } = onError;
     public Format Format { get; } = format;
     public ImageAspectFlags AspectMask { get; } = aspectMask;
+    public ImageUsageFlags Usage { get; } = usage;
+    public ImageLayout FinalLayout { get; } = finalLayout;
     public Extent3D Extent { get; } = extent;
     public uint MipLevels { get; } = mipLevels;
     public uint ArrayLayers { get; } = arrayLayers;

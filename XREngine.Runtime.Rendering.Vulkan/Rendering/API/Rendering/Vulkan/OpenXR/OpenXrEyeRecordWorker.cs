@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Runtime.ExceptionServices;
 
 namespace XREngine.Rendering.Vulkan;
 
@@ -85,7 +86,8 @@ internal sealed class OpenXrEyeRecordWorker : IDisposable
                     Stopwatch.GetElapsedTime(start, end),
                     ex.Message,
                     start,
-                    end);
+                    end,
+                    Failure: ExceptionDispatchInfo.Capture(ex));
             }
             finally
             {

@@ -53,10 +53,35 @@ namespace XREngine.Animation
         /// Attempts to find any transitions that evaluate to true and returns the one with the highest priority.
         /// </summary>
         public AnimStateTransition? TryTransition(IDictionary<string, AnimVar> variables)
-            => Transitions.
-                FindAll(x => x.AllConditionsValid(variables)).
-                OrderBy(x => x.Priority).
-                FirstOrDefault();
+            => TryTransition(variables, this as AnimState, orderedBefore: null, excluded: null);
+
+        internal AnimStateTransition? TryTransition(
+            IDictionary<string, AnimVar> variables,
+            AnimState? playbackState,
+            AnimStateTransition? orderedBefore)
+            => TryTransition(variables, playbackState, orderedBefore, excluded: null);
+
+        internal AnimStateTransition? TryTransition(
+            IDictionary<string, AnimVar> variables,
+            AnimState? playbackState,
+            AnimStateTransition? orderedBefore,
+            AnimStateTransition? excluded)
+        {
+            AnimStateTransition? selected = null;
+            for (int i = 0; i < Transitions.Count; i++)
+            {
+                AnimStateTransition transition = Transitions[i];
+                if (ReferenceEquals(transition, orderedBefore))
+                    break;
+                if (ReferenceEquals(transition, excluded))
+                    continue;
+                if (!transition.IsEligible(variables, playbackState))
+                    continue;
+                if (selected is null || transition.Priority < selected.Priority)
+                    selected = transition;
+            }
+            return selected;
+        }
 
         private void Transitions_PostAnythingRemoved(AnimStateTransition item)
         {
@@ -72,6 +97,7 @@ namespace XREngine.Animation
             AnimState nextState,
             AnimTransitionCondition[] conditions,
             float exitTime = 0.0f,
+            bool hasExitTime = false,
             bool fixedDuration = true,
             float transitionDuration = 0.0f,
             float transitionOffset = 0.0f,
@@ -88,6 +114,7 @@ namespace XREngine.Animation
                 Priority = 0,
                 Name = "Transition to " + nextState.Name,
                 ExitTime = exitTime,
+                HasExitTime = hasExitTime,
                 FixedDuration = fixedDuration,
                 TransitionOffset = transitionOffset,
                 InterruptionSource = interruptionSource,

@@ -10,10 +10,15 @@ internal sealed record VulkanPublishedDescriptorSetSnapshot(
     VulkanResourceLifetimeKey[] References,
     VulkanPublishedDescriptorImageReference[] ImageReferences,
     uint[] ReflectedImageBindings,
-    bool HasReflection)
+    bool HasReflection,
+    EVulkanDescriptorNativePublicationState NativePublicationState)
 {
     private VulkanRecordedDescriptorResourceIdentityBuffer _recordedResources;
     private int _recordedResourcesReady;
+
+    internal bool IsNativePublicationKnown =>
+        NativePublicationState ==
+            EVulkanDescriptorNativePublicationState.Known;
 
     /// <summary>
     /// Materializes the exact recording identity only when a command artifact
@@ -42,6 +47,9 @@ internal sealed record VulkanPublishedDescriptorSetSnapshot(
     private VulkanRecordedDescriptorResourceIdentityBuffer
         CaptureRecordedResourcesNoLock(VulkanResourceLifetimeTracker tracker)
     {
+        if (!IsNativePublicationKnown)
+            return default;
+
         int required = References.Length + ImageReferences.Length;
         for (int index = 0; index < References.Length; index++)
         {

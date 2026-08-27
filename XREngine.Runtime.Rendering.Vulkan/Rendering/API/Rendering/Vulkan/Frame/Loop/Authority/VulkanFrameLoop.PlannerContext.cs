@@ -143,10 +143,12 @@ internal sealed partial class VulkanFrameLoop
     {
         int requestCount = MeshOperationRequests.CaptureTo(
             emitter,
-            _meshOperationRequestScratch);
+            _meshOperationRequestScratch,
+            out VulkanMeshRequestLaneCapacityFailure capacityFailure);
         if (requestCount < 0)
-            throw new InvalidOperationException(
-                "The bounded OpenXR mesh request cohort was rejected atomically during capture.");
+            throw CreateOpenXrCaptureCapacityFailure(
+                in capacityFailure,
+                "OpenXR action-backed mesh capture");
         MaterializeCapturedOpenXrMeshRequests(requestCount);
     }
 
@@ -161,11 +163,32 @@ internal sealed partial class VulkanFrameLoop
         int requestCount = MeshOperationRequests.CaptureTo(
             emitter,
             in emission,
-            _meshOperationRequestScratch);
+            _meshOperationRequestScratch,
+            out VulkanMeshRequestLaneCapacityFailure capacityFailure);
         if (requestCount < 0)
-            throw new InvalidOperationException(
-                "The bounded OpenXR eye mesh request cohort was rejected atomically during capture.");
+            throw CreateOpenXrCaptureCapacityFailure(
+                in capacityFailure,
+                "OpenXR eye mesh capture");
         MaterializeCapturedOpenXrMeshRequests(requestCount);
+    }
+
+    private static Exception CreateOpenXrCaptureCapacityFailure(
+        in VulkanMeshRequestLaneCapacityFailure capacityFailure,
+        string captureIdentity)
+    {
+        if (!capacityFailure.HasFailure)
+        {
+            return new InvalidOperationException(
+                $"{captureIdentity} failed without a typed capacity record.");
+        }
+
+        return new VulkanAcceptedFramePlanCapacityException(
+            capacityFailure.AcceptedFrameLane,
+            capacityFailure.ConfiguredCapacity,
+            capacityFailure.RequiredCapacity,
+            $"capture='{captureIdentity}' meshLane={capacityFailure.Lane} " +
+            $"accepted={capacityFailure.ActualOccupancy} " +
+            $"rejected={capacityFailure.OverflowCount}.");
     }
 
     private void MaterializeCapturedOpenXrMeshRequests(int requestCount)

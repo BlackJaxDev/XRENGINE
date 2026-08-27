@@ -6,10 +6,12 @@ internal sealed class VulkanAcceptedFramePlanCapacityException : InvalidOperatio
     internal VulkanAcceptedFramePlanCapacityException(
         EVulkanAcceptedFrameLane lane,
         int configuredCapacity,
-        int actualCount)
+        int actualCount,
+        string? detail = null)
         : base(
             $"FramePlanCapacityExceeded lane={lane} actual={actualCount} " +
-            $"configured={configuredCapacity} required={actualCount}.")
+            $"configured={configuredCapacity} required={actualCount}." +
+            (string.IsNullOrWhiteSpace(detail) ? string.Empty : $" {detail}"))
     {
         Lane = lane;
         ConfiguredCapacity = configuredCapacity;

@@ -12,7 +12,7 @@ using XREngine.Scene.Transforms;
 
 namespace XREngine.Components
 {
-    public class AnimStateMachineComponent : XRComponent
+    public partial class AnimStateMachineComponent : XRComponent
     {
         private const string ParamSchemaPacketId = "SCHEMA";
         private const string ChangeIndexedPacketId = "CHANGE_INDEX";
@@ -20,28 +20,21 @@ namespace XREngine.Components
         private const string ChangeHashPacketId = "CHANGE_HASH";
 
         private int _lastSentSchemaVersion = -1;
-        private HumanoidImportedBodySample _provisionalImportedBodyReference = HumanoidImportedBodySample.Neutral;
-        private bool _hasProvisionalImportedBodyReference;
         private bool _stateMachineInitialized;
         private bool _playbackCapabilitiesValid;
-        private AnimationClip? _activeRootMotionClip;
-        private readonly UnityHumanoidMuscleSampleBuffer _canonicalProjectionMuscles = new();
-        private readonly UnityHumanoidMuscleSampleBuffer _loopPoseStartMuscles = new();
-        private readonly UnityHumanoidMuscleSampleBuffer _loopPoseEndMuscles = new();
-        private HumanoidProjectedRootPose _projectedRootLoopPose = HumanoidProjectedRootPose.Identity;
-        private HumanoidLoopPoseCorrection _bodyLoopPoseCorrection = HumanoidLoopPoseCorrection.Identity;
         private HumanoidProjectedRootPose _appliedRootMotionPose = HumanoidProjectedRootPose.Identity;
         private HumanoidProjectedRootPose _previousAppliedRootMotionPose = HumanoidProjectedRootPose.Identity;
+        private HumanoidProjectedRootPose _rootMotionEpochReferencePose = HumanoidProjectedRootPose.Identity;
         private HumanoidRootMotionDelta _appliedRootMotionDelta = HumanoidRootMotionDelta.Identity;
         private Transform? _rootMotionAnchorTarget;
         private Vector3 _rootMotionAnchorTranslation;
         private Quaternion _rootMotionAnchorRotation = Quaternion.Identity;
         private ulong _rootMotionEpoch;
         private ulong _rootMotionSequence;
-        private bool _hasProjectedRootLoopPose;
-        private bool _hasBodyLoopPoseCorrection;
         private bool _hasRootMotionAnchor;
         private bool _hasPreviousAppliedRootMotionPose;
+        private bool _hasRootMotionEpochReference;
+        private bool _rebaseRootMotionFromNextPose;
 
         private AnimStateMachine _stateMachine = new();
         public AnimStateMachine StateMachine
@@ -83,11 +76,14 @@ namespace XREngine.Components
 
         public ulong RootMotionEpoch => _rootMotionEpoch;
         public ulong RootMotionSequence => _rootMotionSequence;
-        public long RootMotionLoopCycle => _activeRootMotionClip?.UnityHumanoidStateLoopCycle ?? 0L;
+        public long RootMotionLoopCycle => _dominantRootMotionLoopCycle;
         public HumanoidProjectedRootPose AppliedRootMotionPose => _appliedRootMotionPose;
         public HumanoidRootMotionDelta AppliedRootMotionDelta => _appliedRootMotionDelta;
 
         public event Action<HumanoidProjectedRootPose, HumanoidRootMotionDelta>? RootMotionEvaluated;
+
+        /// <summary>Raised after an imported AnimationEvent is dispatched to scene components.</summary>
+        public event Action<UnityAnimationEventOccurrence>? UnityAnimationEventTriggered;
 
         private bool _suspendedByClip;
         public bool SuspendedByClip
@@ -121,6 +117,7 @@ namespace XREngine.Components
             {
                 UnregisterTick(ETickGroup.Normal, ETickOrder.Animation, EvaluationTick);
                 UnregisterTick(ETickGroup.Late, ETickOrder.Input, PublishRootMotion);
+                EndRootMotionEpoch();
             }
             else
             {
@@ -128,6 +125,7 @@ namespace XREngine.Components
                 {
                     RegisterTick(ETickGroup.Normal, ETickOrder.Animation, EvaluationTick);
                     RegisterTick(ETickGroup.Late, ETickOrder.Input, PublishRootMotion);
+                    BeginRootMotionEpoch(rebaseFromNextPose: true);
                 }
             }
         }
@@ -143,13 +141,17 @@ namespace XREngine.Components
             // an animation owner must still release the pose it authored.
             switch (propName)
             {
+                case nameof(StateMachine):
+                    ResetUnityAnimationBindings();
+                    _playbackCapabilitiesValid = false;
+                    break;
                 case nameof(IsActive) when field is bool isActive && !isActive && !IsActiveInHierarchy:
                     ResetDrivenPose();
                     break;
                 case nameof(RootMotionApplicationMode):
                 case nameof(RootMotionTarget):
                     if (IsActiveInHierarchy)
-                        BeginRootMotionEpoch();
+                        BeginRootMotionEpoch(rebaseFromNextPose: true);
                     break;
             }
         }
@@ -164,16 +166,12 @@ namespace XREngine.Components
             }
 
             if (!SuspendedByClip)
-            {
-                _hasProvisionalImportedBodyReference = false;
-                _provisionalImportedBodyReference = HumanoidImportedBodySample.Neutral;
                 GetHumanoidComponent()?.ResetRootMotionBaseline();
-            }
             if (!SuspendedByClip)
             {
                 RegisterTick(ETickGroup.Normal, ETickOrder.Animation, EvaluationTick);
                 RegisterTick(ETickGroup.Late, ETickOrder.Input, PublishRootMotion);
-                BeginRootMotionEpoch();
+                BeginRootMotionEpoch(rebaseFromNextPose: true);
             }
         }
 
@@ -197,17 +195,14 @@ namespace XREngine.Components
                 ResetDrivenPose();
             if (_stateMachineInitialized)
             {
+                StateMachine.UnityAnimationEventTriggered -= OnUnityAnimationEventTriggered;
                 StateMachine.Deinitialize();
                 StateMachine.VariableChanged -= VariableChanged;
                 _stateMachineInitialized = false;
             }
             _playbackCapabilitiesValid = false;
+            ResetUnityAnimationBindings();
             _changedLastEval.Clear();
-            if (!SuspendedByClip)
-            {
-                _hasProvisionalImportedBodyReference = false;
-                _provisionalImportedBodyReference = HumanoidImportedBodySample.Neutral;
-            }
         }
 
         private void ResetDrivenPose()
@@ -237,6 +232,13 @@ namespace XREngine.Components
         /// Temporal root-motion continuity is intentionally reset at this discontinuity.
         /// </summary>
         public void EvaluateAtTime(float timeSeconds)
+            => EvaluateAtTime(timeSeconds, dispatchEvents: false);
+
+        /// <summary>
+        /// Seeks active motions and optionally emits every event crossed by the
+        /// discontinuity. Editor scrubbing uses the non-dispatching overload.
+        /// </summary>
+        public void EvaluateAtTime(float timeSeconds, bool dispatchEvents)
         {
             if (!_playbackCapabilitiesValid && !TryPrepareStateMachinePlayback())
                 return;
@@ -245,8 +247,11 @@ namespace XREngine.Components
             if (humanoid is not null && !humanoid.IsAnimatedPosePreviewActive)
                 return;
 
-            StateMachine.SeekActiveMotions(timeSeconds);
-            BeginRootMotionEpoch(preserveExistingAnchor: true);
+            StateMachine.SeekActiveMotions(timeSeconds, dispatchEvents);
+            _observedMotionContinuityVersion = StateMachine.HumanoidMotionContinuityVersion;
+            BeginRootMotionEpoch(
+                preserveExistingAnchor: true,
+                rebaseFromNextPose: true);
             EvaluateAndApply(0L, humanoid);
             PublishRootMotion();
         }
@@ -257,7 +262,10 @@ namespace XREngine.Components
         /// </summary>
         public bool TryValidatePlaybackCapabilities(out string diagnostic)
         {
-            if (!StateMachine.TryValidateUnityImportCapabilities(out diagnostic, out bool requiresHumanoidAvatar))
+            if (!StateMachine.TryValidateUnityImportCapabilities(
+                ValidateUnityAnimationClipBindings,
+                out diagnostic,
+                out bool requiresHumanoidAvatar))
             {
                 PlaybackCapabilityDiagnostic = diagnostic;
                 _playbackCapabilitiesValid = false;
@@ -297,10 +305,25 @@ namespace XREngine.Components
                 return true;
 
             StateMachine.Initialize(this);
+            InitializeStateMachineRootMotionPipeline();
             StateMachine.VariableChanged += VariableChanged;
+            StateMachine.UnityAnimationEventTriggered += OnUnityAnimationEventTriggered;
             _stateMachineInitialized = true;
             ReplicateParameterSchema(force: true);
             return true;
+        }
+
+        private void OnUnityAnimationEventTriggered(UnityAnimationEventOccurrence occurrence)
+        {
+            int receiverCount = UnityAnimationEventDispatcher.Dispatch(this, occurrence);
+            UnityAnimationEventTriggered?.Invoke(occurrence);
+            if (receiverCount == 0
+                && occurrence.Event.MessageOptions == EUnityAnimationEventMessageOptions.RequireReceiver)
+            {
+                Debug.Animation(
+                    $"[AnimationEvent] '{occurrence.Event.FunctionName}' from state '{occurrence.StateName}' " +
+                    $"had no compatible receiver on '{SceneNode.Name}'.");
+            }
         }
 
         private void EvaluateAndApply(long deltaTicks, HumanoidComponent? humanoid)
@@ -309,173 +332,58 @@ namespace XREngine.Components
             try
             {
                 StateMachine.EvaluateAnimationValues(this, deltaTicks);
-                if (!StateMachine.TryResolveHumanoidRootMotionProjection(
-                    out var projectionSettings,
-                    out string? projectionCalibrationClipName,
-                    out AnimationClip? rootMotionClip,
-                    out string projectionDiagnostic))
+                if (humanoid is not null)
                 {
-                    PlaybackCapabilityDiagnostic = projectionDiagnostic;
+                    // RootT/RootQ are still present in the shared typed pose store. Swallow those
+                    // scalar setters atomically; the per-leaf sidecar below owns Body/root
+                    // projection and composition without losing clip-local policy or time state.
+                    ownsImportedBodySampleTransaction = humanoid.BeginImportedBodySampleTransaction(
+                        this,
+                        HumanoidImportedBodySample.Neutral,
+                        hasCanonicalSample: false);
+                    if (!ownsImportedBodySampleTransaction)
+                    {
+                        const string diagnostic =
+                            "Another evaluator owns the target humanoid Body/root transaction.";
+                        PlaybackCapabilityDiagnostic = diagnostic;
+                        _playbackCapabilitiesValid = false;
+                        Debug.Animation(
+                            $"[AnimStateMachineComponent] Playback rejected on '{SceneNode.Name}': {diagnostic}");
+                        return;
+                    }
+                }
+
+                StateMachine.ApplyAnimationValues();
+
+                if (ownsImportedBodySampleTransaction)
+                {
+                    humanoid!.CancelImportedBodySampleTransaction(this);
+                    ownsImportedBodySampleTransaction = false;
+                }
+
+                if (!PrepareStateMachineRootMotionFrame(humanoid))
+                {
                     _playbackCapabilitiesValid = false;
-                    Debug.Animation($"[AnimStateMachineComponent] Playback rejected on '{SceneNode.Name}': {projectionDiagnostic}");
+                    Debug.Animation(
+                        $"[AnimStateMachineComponent] Playback rejected on '{SceneNode.Name}': {PlaybackCapabilityDiagnostic}");
                     return;
                 }
-                HumanoidProjectedRootPose? projectionPrefix = PrepareRootMotionLeaf(
-                    rootMotionClip,
-                    humanoid,
-                    projectionSettings);
-                ownsImportedBodySampleTransaction = humanoid?.BeginImportedBodySampleTransaction(
-                    this,
-                    _provisionalImportedBodyReference,
-                    _hasProvisionalImportedBodyReference,
-                    projectionSettings: projectionSettings,
-                    projectionCalibrationClipName: projectionCalibrationClipName,
-                    projectionPrefix: projectionPrefix,
-                    loopPoseCorrection: _hasBodyLoopPoseCorrection && rootMotionClip is not null
-                        ? _bodyLoopPoseCorrection.AtPhase(rootMotionClip.UnityHumanoidStateSamplePhase)
-                        : null,
-                    canonicalProjectionMuscles: _canonicalProjectionMuscles.Values) == true;
-                if (ownsImportedBodySampleTransaction)
-                    rootMotionClip?.PublishUnityHumanoidProjectionMuscles(humanoid!);
-                StateMachine.ApplyAnimationValues();
             }
             catch
             {
                 if (ownsImportedBodySampleTransaction)
                     humanoid!.CancelImportedBodySampleTransaction(this);
+                humanoid?.ClearStateMachineRootMotionFrame(this);
                 throw;
             }
 
-            if (ownsImportedBodySampleTransaction && humanoid!.CommitImportedBodySampleTransaction(this) && !_hasProvisionalImportedBodyReference)
-            {
-                _provisionalImportedBodyReference = humanoid.CanonicalImportedBodySample;
-                _hasProvisionalImportedBodyReference = true;
-            }
-
             if (deltaTicks == 0L)
-                humanoid?.ApplyCurrentMusclePose();
+                humanoid?.ApplyCurrentStateMachineMusclePoseImmediately();
 
             // Keep schema in sync before sending any indexed changes.
             ReplicateParameterSchema(force: false);
             ReplicateModifiedVariables();
             _changedLastEval.Clear();
-        }
-
-        private HumanoidProjectedRootPose? PrepareRootMotionLeaf(
-            AnimationClip? clip,
-            HumanoidComponent? humanoid,
-            UnityHumanoidClipRootMotionSettings? settings)
-        {
-            if (clip is null || settings is null || humanoid is null)
-            {
-                if (_activeRootMotionClip is not null)
-                {
-                    _activeRootMotionClip = null;
-                    _projectedRootLoopPose = HumanoidProjectedRootPose.Identity;
-                    _hasProjectedRootLoopPose = false;
-                    _bodyLoopPoseCorrection = HumanoidLoopPoseCorrection.Identity;
-                    _hasBodyLoopPoseCorrection = false;
-                    BeginRootMotionEpoch();
-                }
-                return null;
-            }
-
-            if (!ReferenceEquals(_activeRootMotionClip, clip))
-            {
-                _activeRootMotionClip = clip;
-                _hasProvisionalImportedBodyReference = false;
-                _provisionalImportedBodyReference = HumanoidImportedBodySample.Neutral;
-                humanoid.ResetRootMotionBaseline();
-                CacheProjectedRootLoopPose(clip, humanoid, settings);
-                BeginRootMotionEpoch();
-            }
-
-            return clip.UnityHumanoidSourceWrapped && _hasProjectedRootLoopPose
-                ? _projectedRootLoopPose
-                : null;
-        }
-
-        private void CacheProjectedRootLoopPose(
-            AnimationClip clip,
-            HumanoidComponent humanoid,
-            UnityHumanoidClipRootMotionSettings settings)
-        {
-            _projectedRootLoopPose = HumanoidProjectedRootPose.Identity;
-            _hasProjectedRootLoopPose = false;
-            _bodyLoopPoseCorrection = HumanoidLoopPoseCorrection.Identity;
-            _hasBodyLoopPoseCorrection = false;
-            _canonicalProjectionMuscles.Clear();
-            if (!UnityHumanoidRootMotionPolicy.TryCreate(settings, out UnityHumanoidRootMotionPolicy policy, out _)
-                || !clip.TrySampleUnityHumanoidBody(0.0f, out Vector3 startPosition, out Quaternion startRotation)
-                || !clip.TrySampleUnityHumanoidBody(clip.LengthInSeconds, out Vector3 endPosition, out Quaternion endRotation))
-                return;
-
-            HumanoidImportedBodySample sourceStart = CreateImportedBodySample(startPosition, startRotation);
-            HumanoidImportedBodySample sourceEnd = CreateImportedBodySample(endPosition, endRotation);
-            _provisionalImportedBodyReference = sourceStart;
-            _hasProvisionalImportedBodyReference = true;
-            clip.PublishUnityHumanoidProjectionMusclesAtTime(
-                policy.NormalizedCycleOffset * clip.LengthInSeconds,
-                _canonicalProjectionMuscles);
-
-            bool needsEndpointMuscles = policy.LoopPose
-                || (policy.LoopTime
-                    && !policy.BakePositionYIntoPose
-                    && policy.PositionYBasis is EUnityHumanoidRootPositionYBasis.Feet);
-            HumanoidProjectedRootPose sourceGenerator;
-            if (needsEndpointMuscles)
-            {
-                _loopPoseStartMuscles.Clear();
-                _loopPoseEndMuscles.Clear();
-                clip.PublishUnityHumanoidProjectionMusclesAtTime(0.0f, _loopPoseStartMuscles);
-                clip.PublishUnityHumanoidProjectionMusclesAtTime(clip.LengthInSeconds, _loopPoseEndMuscles);
-                humanoid.CalculateLoopEvaluation(
-                    sourceStart,
-                    sourceEnd,
-                    _loopPoseStartMuscles.Values,
-                    _loopPoseEndMuscles.Values,
-                    1.0f,
-                    settings,
-                    clip.Name,
-                    out _bodyLoopPoseCorrection,
-                    out sourceGenerator);
-                _hasBodyLoopPoseCorrection = policy.LoopPose;
-            }
-            else
-            {
-                sourceGenerator = humanoid.CalculateProjectedRootPose(
-                    sourceEnd,
-                    sourceStart,
-                    1.0f,
-                    settings,
-                    clip.Name,
-                    ReadOnlySpan<float>.Empty);
-            }
-
-            if (!policy.LoopTime)
-                return;
-
-            float offsetSeconds = policy.NormalizedCycleOffset * clip.LengthInSeconds;
-            if (offsetSeconds > 0.0f
-                && clip.TrySampleUnityHumanoidBody(offsetSeconds, out Vector3 offsetPosition, out Quaternion offsetRotation))
-            {
-                HumanoidProjectedRootPose offsetFromStart = humanoid.CalculateProjectedRootPose(
-                    CreateImportedBodySample(offsetPosition, offsetRotation),
-                    sourceStart,
-                    1.0f,
-                    settings,
-                    clip.Name,
-                    ReadOnlySpan<float>.Empty);
-                _projectedRootLoopPose = HumanoidComponent.ComposeProjectedRootPoses(
-                    HumanoidComponent.InvertProjectedRootPose(offsetFromStart),
-                    HumanoidComponent.ComposeProjectedRootPoses(sourceGenerator, offsetFromStart));
-            }
-            else
-            {
-                _projectedRootLoopPose = sourceGenerator;
-            }
-
-            _hasProjectedRootLoopPose = _projectedRootLoopPose.Channels != EHumanoidProjectedRootChannels.None;
         }
 
         private static long ScalePlaybackTicks(long ticks, float speed)
@@ -493,35 +401,31 @@ namespace XREngine.Components
             return (long)Math.Round(scaled);
         }
 
-        private static HumanoidImportedBodySample CreateImportedBodySample(
-            Vector3 position,
-            Quaternion rotation)
-            => new()
-            {
-                Position = position,
-                Rotation = rotation,
-                Channels = EHumanoidImportedBodySampleChannels.All,
-            };
-
         private void PublishRootMotion()
         {
-            if (TransformBase.IsDiagnosticEvaluationActive || _activeRootMotionClip is null)
+            if (TransformBase.IsDiagnosticEvaluationActive || !_hasStateMachineRootMotion)
                 return;
 
             HumanoidComponent? humanoid = GetHumanoidComponent();
             if (humanoid is null)
                 return;
 
-            HumanoidProjectedRootPose withinCyclePose = humanoid.CurrentProjectedRootPose;
-            if (withinCyclePose.Channels == EHumanoidProjectedRootChannels.None)
+            HumanoidProjectedRootPose composedPose = humanoid.CurrentProjectedRootPose;
+            if (composedPose.Channels == EHumanoidProjectedRootChannels.None)
                 return;
 
-            long loopCycle = _activeRootMotionClip.UnityHumanoidStateLoopCycle;
-            HumanoidProjectedRootPose unwrappedPose = loopCycle != 0L && _hasProjectedRootLoopPose
+            if (_rebaseRootMotionFromNextPose)
+            {
+                _rootMotionEpochReferencePose = composedPose;
+                _hasRootMotionEpochReference = true;
+                _rebaseRootMotionFromNextPose = false;
+            }
+
+            HumanoidProjectedRootPose unwrappedPose = _hasRootMotionEpochReference
                 ? HumanoidComponent.ComposeProjectedRootPoses(
-                    PowProjectedRootPose(_projectedRootLoopPose, loopCycle),
-                    withinCyclePose)
-                : withinCyclePose;
+                    HumanoidComponent.InvertProjectedRootPose(_rootMotionEpochReferencePose),
+                    composedPose)
+                : composedPose;
             _appliedRootMotionDelta = _hasPreviousAppliedRootMotionPose
                 ? HumanoidComponent.CalculateProjectedRootDelta(_previousAppliedRootMotionPose, unwrappedPose)
                 : HumanoidRootMotionDelta.Identity;
@@ -562,7 +466,9 @@ namespace XREngine.Components
                 Quaternion.Normalize(_rootMotionAnchorRotation * projectedRotation));
         }
 
-        private void BeginRootMotionEpoch(bool preserveExistingAnchor = false)
+        private void BeginRootMotionEpoch(
+            bool preserveExistingAnchor = false,
+            bool rebaseFromNextPose = false)
         {
             if (TransformBase.IsDiagnosticEvaluationActive)
                 return;
@@ -583,6 +489,9 @@ namespace XREngine.Components
             _previousAppliedRootMotionPose = HumanoidProjectedRootPose.Identity;
             _appliedRootMotionDelta = HumanoidRootMotionDelta.Identity;
             _hasPreviousAppliedRootMotionPose = false;
+            _rootMotionEpochReferencePose = HumanoidProjectedRootPose.Identity;
+            _hasRootMotionEpochReference = false;
+            _rebaseRootMotionFromNextPose = rebaseFromNextPose;
             _hasRootMotionAnchor = false;
             _rootMotionAnchorTarget = null;
 
@@ -604,14 +513,13 @@ namespace XREngine.Components
 
         private void EndRootMotionEpoch()
         {
-            _activeRootMotionClip = null;
-            _projectedRootLoopPose = HumanoidProjectedRootPose.Identity;
-            _hasProjectedRootLoopPose = false;
-            _bodyLoopPoseCorrection = HumanoidLoopPoseCorrection.Identity;
-            _hasBodyLoopPoseCorrection = false;
+            ClearStateMachineRootMotionPipeline(GetHumanoidComponent());
             _hasRootMotionAnchor = false;
             _rootMotionAnchorTarget = null;
             _hasPreviousAppliedRootMotionPose = false;
+            _rootMotionEpochReferencePose = HumanoidProjectedRootPose.Identity;
+            _hasRootMotionEpochReference = false;
+            _rebaseRootMotionFromNextPose = false;
             _appliedRootMotionDelta = HumanoidRootMotionDelta.Identity;
         }
 
@@ -623,31 +531,6 @@ namespace XREngine.Components
                 ? Quaternion.Normalize(target.Rotation)
                 : Quaternion.Identity;
             _hasRootMotionAnchor = true;
-        }
-
-        private static HumanoidProjectedRootPose PowProjectedRootPose(
-            HumanoidProjectedRootPose pose,
-            long exponent)
-        {
-            if (exponent == 0L)
-                return new HumanoidProjectedRootPose(Vector3.Zero, Quaternion.Identity, pose.Channels);
-
-            HumanoidProjectedRootPose factor = exponent < 0L
-                ? HumanoidComponent.InvertProjectedRootPose(pose)
-                : pose;
-            ulong remaining = exponent < 0L
-                ? unchecked((ulong)(-(exponent + 1L))) + 1UL
-                : (ulong)exponent;
-            HumanoidProjectedRootPose result = new(Vector3.Zero, Quaternion.Identity, pose.Channels);
-            while (remaining != 0UL)
-            {
-                if ((remaining & 1UL) != 0UL)
-                    result = HumanoidComponent.ComposeProjectedRootPoses(result, factor);
-                remaining >>= 1;
-                if (remaining != 0UL)
-                    factor = HumanoidComponent.ComposeProjectedRootPoses(factor, factor);
-            }
-            return result;
         }
 
         private static Vector3 SelectProjectedRootPosition(HumanoidProjectedRootPose pose)

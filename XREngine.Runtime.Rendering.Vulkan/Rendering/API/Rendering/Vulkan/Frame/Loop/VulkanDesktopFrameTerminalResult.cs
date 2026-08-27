@@ -6,6 +6,7 @@ namespace XREngine.Rendering.Vulkan;
 internal readonly record struct VulkanDesktopFrameTerminalResult(
     EVulkanFrameOutcome Outcome,
     EDesktopFrameReason Reason,
+    VulkanDesktopFrameFailure Failure,
     bool OwnershipSettled)
 {
     /// <summary>Every terminal result belongs to the settlement stage.</summary>

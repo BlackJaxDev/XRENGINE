@@ -15,14 +15,26 @@ internal sealed partial class VulkanCommandRuntime
         {
             VulkanPrimaryCommandRecordingResult result = RecordPrimaryCore(in input);
             if (!result.Succeeded)
-                FailSubmissionMarkersForCommandBuffer(input.PrimaryCommandBuffer);
+                SettleFailedPrimaryRecordingMarkers(in input);
             return result;
         }
         catch
         {
-            FailSubmissionMarkersForCommandBuffer(input.PrimaryCommandBuffer);
+            SettleFailedPrimaryRecordingMarkers(in input);
             throw;
         }
+    }
+
+    private void SettleFailedPrimaryRecordingMarkers(
+        in VulkanPreparedPrimaryCommandInput input)
+    {
+        if (input.CallerOwnsSubmissionMarkersUntilRecordingSucceeds)
+        {
+            DiscardSubmissionMarkersForCommandBuffer(input.PrimaryCommandBuffer);
+            return;
+        }
+
+        FailSubmissionMarkersForCommandBuffer(input.PrimaryCommandBuffer);
     }
 
     private VulkanPrimaryCommandRecordingResult RecordPrimaryCore(

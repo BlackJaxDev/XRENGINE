@@ -169,6 +169,12 @@ public sealed class AnimationClipYamlTypeConverter : IYamlTypeConverter
 
         public UnityHumanoidClipRootMotionSettings? UnityHumanoidRootMotionSettings { get; set; }
 
+        public UnityAnimationClipMetadata? UnityMetadata { get; set; }
+
+        public UnityAnimationEvent[]? UnityEvents { get; set; }
+
+        public UnityAnimationBindingDescriptor[]? UnityGenericBindings { get; set; }
+
         public UnityAnimationImportManifest? UnityImportManifest { get; set; }
 
         public AnimationClipSerializedModel ToLegacyModel()
@@ -189,6 +195,9 @@ public sealed class AnimationClipYamlTypeConverter : IYamlTypeConverter
                 SampleRate = SampleRate,
                 RootMember = RootMember,
                 UnityHumanoidRootMotionSettings = UnityHumanoidRootMotionSettings,
+                UnityMetadata = UnityMetadata,
+                UnityEvents = UnityEvents,
+                UnityGenericBindings = UnityGenericBindings,
                 UnityImportManifest = UnityImportManifest,
             };
     }
@@ -222,6 +231,9 @@ internal static class AnimationClipSerialization
             SampleRate = clip.SampleRate,
             RootMember = CreateModel(clip.RootMember),
             UnityHumanoidRootMotionSettings = clip.UnityHumanoidRootMotionSettings,
+            UnityMetadata = clip.UnityMetadata,
+            UnityEvents = clip.UnityEvents,
+            UnityGenericBindings = clip.UnityGenericBindings,
             UnityImportManifest = clip.UnityImportManifest,
         };
     }
@@ -250,6 +262,9 @@ internal static class AnimationClipSerialization
         clip.HasIKGoals = model.HasIKGoals;
         clip.SampleRate = model.SampleRate ?? 30;
         clip.UnityHumanoidRootMotionSettings = model.UnityHumanoidRootMotionSettings;
+        clip.UnityMetadata = model.UnityMetadata;
+        clip.UnityEvents = model.UnityEvents ?? [];
+        clip.UnityGenericBindings = model.UnityGenericBindings ?? [];
         clip.UnityImportManifest = model.UnityImportManifest;
 
         AnimationMember? rootMember = CreateRuntimeMember(model.RootMember);
@@ -415,6 +430,12 @@ internal sealed partial class AnimationClipSerializedModel
     public AnimationMemberSerializedModel? RootMember { get; set; }
 
     public UnityHumanoidClipRootMotionSettings? UnityHumanoidRootMotionSettings { get; set; }
+
+    public UnityAnimationClipMetadata? UnityMetadata { get; set; }
+
+    public UnityAnimationEvent[]? UnityEvents { get; set; }
+
+    public UnityAnimationBindingDescriptor[]? UnityGenericBindings { get; set; }
 
     public UnityAnimationImportManifest? UnityImportManifest { get; set; }
 }
