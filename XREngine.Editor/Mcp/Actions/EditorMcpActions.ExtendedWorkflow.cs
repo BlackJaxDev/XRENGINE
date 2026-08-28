@@ -435,7 +435,7 @@ namespace XREngine.Editor.Mcp
         private static Task<McpToolResponse> ImportExternalAssetAsync(
             string? sourcePath,
             string? destinationFolder,
-            string? unityProjectRoot,
+            string? sourceProjectRoot,
             bool overwrite)
         {
             if (string.IsNullOrWhiteSpace(sourcePath))
@@ -460,7 +460,7 @@ namespace XREngine.Editor.Mcp
             bool queued = EditorImGuiUI.TryQueueExternalFileImport(
                 fullSourcePath,
                 normalizedDestination,
-                unityProjectRoot,
+                sourceProjectRoot,
                 overwrite,
                 out string? error);
             if (!queued)
@@ -474,7 +474,7 @@ namespace XREngine.Editor.Mcp
                 {
                     sourcePath = fullSourcePath,
                     destinationFolder = normalizedDestination,
-                    unityProjectRoot,
+                    sourceProjectRoot,
                     overwrite,
                     queued = true,
                     workflow = "editor-external-file-import"

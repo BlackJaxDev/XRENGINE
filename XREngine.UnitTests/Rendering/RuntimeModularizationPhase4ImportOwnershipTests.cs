@@ -21,9 +21,9 @@ public sealed class RuntimeModularizationPhase4ImportOwnershipTests
     }
 
     [Test]
-    public void P43_UnityImporters_AreOwnedByEditor()
+    public void P43_SourceImporters_AreOwnedByEditor()
     {
-        typeof(UnityMaterialImporter).Assembly.GetName().Name.ShouldBe("XREngine.Editor");
-        typeof(UnitySceneImporter).Assembly.GetName().Name.ShouldBe("XREngine.Editor");
+        typeof(SerializedMaterialImporter).Assembly.GetName().Name.ShouldBe("XREngine.Editor");
+        typeof(SerializedSceneImporter).Assembly.GetName().Name.ShouldBe("XREngine.Editor");
     }
 }

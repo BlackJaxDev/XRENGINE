@@ -43,7 +43,7 @@ public sealed partial class XRMaterialInspector
             return;
         }
 
-        ShaderAuthoringSchema primarySchema = PoiyomiAuthoringSchemaCatalog.GetOrCreate(primaryManifest);
+        ShaderAuthoringSchema primarySchema = SourceToonAuthoringSchemaCatalog.GetOrCreate(primaryManifest);
         List<MultiMaterialSchema> targets = new(materials.Count);
         foreach (XRMaterial material in materials)
         {
@@ -53,7 +53,7 @@ public sealed partial class XRMaterialInspector
                 targets.Add(new(material, null));
                 continue;
             }
-            targets.Add(new(material, PoiyomiAuthoringSchemaCatalog.GetOrCreate(manifest)));
+            targets.Add(new(material, SourceToonAuthoringSchemaCatalog.GetOrCreate(manifest)));
         }
 
         if (!ImGui.BeginTable(

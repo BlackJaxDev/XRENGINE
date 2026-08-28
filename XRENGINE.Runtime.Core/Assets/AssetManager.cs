@@ -39,6 +39,9 @@ namespace XREngine
         private static string? _publishedEngineContentArchivePath;
 
         private readonly Func<JobManager> _jobManagerProvider;
+        private readonly Func<bool> _remoteAssetDownloadAllowedProvider;
+        private readonly ConcurrentDictionary<string, byte> _pendingFeatureCacheImports =
+            new(StringComparer.OrdinalIgnoreCase);
 
         private static bool IsOnJobThread
             => JobManager.IsJobWorkerThread;
@@ -102,9 +105,13 @@ namespace XREngine
             bool bypassJobThread = false)
             => RunOnJobThreadAsync(work, priority, bypassJobThread);
 
-        public AssetManager(string? engineAssetsDirPath = null, Func<JobManager>? jobManagerProvider = null)
+        public AssetManager(
+            string? engineAssetsDirPath = null,
+            Func<JobManager>? jobManagerProvider = null,
+            Func<bool>? remoteAssetDownloadAllowedProvider = null)
         {
             _jobManagerProvider = jobManagerProvider ?? (() => RuntimeWorkScheduler.Jobs);
+            _remoteAssetDownloadAllowedProvider = remoteAssetDownloadAllowedProvider ?? (static () => false);
             string? resolvedEngineAssetsPath = null;
             string? engineAssetsOverridePath = Environment.GetEnvironmentVariable(EngineAssetsPathEnvVar);
             if (!string.IsNullOrWhiteSpace(engineAssetsOverridePath))
@@ -379,8 +386,6 @@ namespace XREngine
         private readonly object _metadataLock = new();
         private readonly ConcurrentDictionary<string, object> _assetLoadGates = new(StringComparer.OrdinalIgnoreCase);
         private readonly ConcurrentDictionary<string, object> _thirdPartyImportOptionsCache = new(StringComparer.OrdinalIgnoreCase);
-        private readonly ConcurrentDictionary<string, byte> _pendingTextureStreamingCacheImports = new(StringComparer.OrdinalIgnoreCase);
-
         public Func<string, bool>? AllowOverwriteCallback { get; set; } = path => true;
 
         public event Action<XRAsset>? AssetLoaded;

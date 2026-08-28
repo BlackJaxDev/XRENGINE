@@ -10,8 +10,8 @@ public partial class HumanoidComponent
 
     private void MigratePendingLegacyAvatarProfile()
     {
-        if (Settings.UnityAvatarProfile is UnityHumanoidAvatarProfile profile)
-            MigrateLegacyUnityAvatarProfile(profile, applyPreview: false);
+        if (Settings.ImportedAvatarProfile is ImportedHumanoidAvatarProfile profile)
+            MigrateLegacyImportedAvatarProfile(profile, applyPreview: false);
     }
 
     /// <summary>
@@ -19,22 +19,22 @@ public partial class HumanoidComponent
     /// avatar definition. Transform names are consumed once as migration input;
     /// the resulting runtime definition is role/structure indexed.
     /// </summary>
-    private void MigrateLegacyUnityAvatarProfile(
-        UnityHumanoidAvatarProfile profile,
+    private void MigrateLegacyImportedAvatarProfile(
+        ImportedHumanoidAvatarProfile profile,
         bool applyPreview)
     {
         ArgumentNullException.ThrowIfNull(profile);
         profile.BuildDenseLookups();
         _avatarMigrationDiagnostics.Clear();
 
-        for (int roleIndex = 0; roleIndex < (int)EUnityHumanoidAvatarRole.Count; roleIndex++)
+        for (int roleIndex = 0; roleIndex < (int)EHumanoidAvatarRole.Count; roleIndex++)
         {
-            EUnityHumanoidAvatarRole legacyRole = (EUnityHumanoidAvatarRole)roleIndex;
+            EHumanoidAvatarRole legacyRole = (EHumanoidAvatarRole)roleIndex;
             EHumanoidAvatarBoneRole role = (EHumanoidAvatarBoneRole)roleIndex;
             HumanoidAvatarBoneBinding? existing = FindBinding(AvatarDefinition.Bones, role);
             if (existing?.Locked == true && GetBoneDefinition(role).Node is not null)
                 continue;
-            if (!profile.TryGetRole(legacyRole, out UnityHumanoidAvatarRoleProfile roleProfile)
+            if (!profile.TryGetRole(legacyRole, out ImportedHumanoidAvatarRoleProfile roleProfile)
                 || string.IsNullOrWhiteSpace(roleProfile.TransformName))
                 continue;
 
@@ -66,7 +66,7 @@ public partial class HumanoidComponent
         }
 
         float modelUnitsPerMeter = CalculateMigratedModelUnitsPerMeter(profile);
-        _unityProfileUnitsPerMeter = modelUnitsPerMeter;
+        _sourceProfileUnitsPerMeter = modelUnitsPerMeter;
 
         Settings.ArmTwistDistribution = profile.AvatarSettings.UpperArmTwist;
         Settings.ForearmTwistDistribution = profile.AvatarSettings.LowerArmTwist;
@@ -99,7 +99,7 @@ public partial class HumanoidComponent
 
         // Clear the compatibility input before refreshing. From this point on,
         // only AvatarDefinition owns mapping, scale, axes, and fitted payloads.
-        Settings.UnityAvatarProfile = null;
+        Settings.ImportedAvatarProfile = null;
         RefreshAvatarDefinition(profileResult);
 
         HumanoidAvatarLegacyBoneCalibration[] migratedBones =
@@ -134,22 +134,22 @@ public partial class HumanoidComponent
         return matchCount == 1 ? firstMatch : null;
     }
 
-    private float CalculateMigratedModelUnitsPerMeter(UnityHumanoidAvatarProfile profile)
+    private float CalculateMigratedModelUnitsPerMeter(ImportedHumanoidAvatarProfile profile)
     {
-        Span<float> ratios = stackalloc float[(int)EUnityHumanoidAvatarRole.Count];
+        Span<float> ratios = stackalloc float[(int)EHumanoidAvatarRole.Count];
         int count = 0;
-        for (int roleIndex = 0; roleIndex < (int)EUnityHumanoidAvatarRole.Count; roleIndex++)
+        for (int roleIndex = 0; roleIndex < (int)EHumanoidAvatarRole.Count; roleIndex++)
         {
-            EUnityHumanoidAvatarRole legacyRole = (EUnityHumanoidAvatarRole)roleIndex;
-            if (!profile.TryGetNeutralPosition(legacyRole, out Vector3 unityPosition))
+            EHumanoidAvatarRole legacyRole = (EHumanoidAvatarRole)roleIndex;
+            if (!profile.TryGetNeutralPosition(legacyRole, out Vector3 sourcePosition))
                 continue;
-            float unityLength = unityPosition.Length();
+            float sourceLength = sourcePosition.Length();
             SceneNode? node = GetBoneDefinition((EHumanoidAvatarBoneRole)roleIndex).Node;
             if (node is null
-                || unityLength <= 1e-5f
+                || sourceLength <= 1e-5f
                 || !TryGetHumanoidBindLocalState(node, out _, out _, out Vector3 enginePosition))
                 continue;
-            float ratio = enginePosition.Length() / unityLength;
+            float ratio = enginePosition.Length() / sourceLength;
             if (float.IsFinite(ratio) && ratio > 1e-5f)
                 ratios[count++] = ratio;
         }
@@ -164,14 +164,14 @@ public partial class HumanoidComponent
     }
 
     private static HumanoidAvatarTwistChain[] ConvertLegacyTwistChains(
-        List<UnityHumanoidTwistChainProfile>? legacyChains)
+        List<ImportedHumanoidTwistChainProfile>? legacyChains)
     {
         if (legacyChains is not { Count: > 0 })
             return [];
         var result = new HumanoidAvatarTwistChain[legacyChains.Count];
         for (int i = 0; i < result.Length; i++)
         {
-            UnityHumanoidTwistChainProfile source = legacyChains[i];
+            ImportedHumanoidTwistChainProfile source = legacyChains[i];
             result[i] = new HumanoidAvatarTwistChain
             {
                 Name = source.Name ?? string.Empty,
@@ -186,18 +186,18 @@ public partial class HumanoidComponent
     }
 
     private static HumanoidAvatarLegacyCalibration ConvertLegacyCalibration(
-        UnityHumanoidAvatarProfile profile)
+        ImportedHumanoidAvatarProfile profile)
     {
         List<HumanoidAvatarLegacyBoneCalibration> bones = [];
-        for (int roleIndex = 0; roleIndex < (int)EUnityHumanoidAvatarRole.Count; roleIndex++)
+        for (int roleIndex = 0; roleIndex < (int)EHumanoidAvatarRole.Count; roleIndex++)
         {
-            EUnityHumanoidAvatarRole legacyRole = (EUnityHumanoidAvatarRole)roleIndex;
+            EHumanoidAvatarRole legacyRole = (EHumanoidAvatarRole)roleIndex;
             bool hasRotation = profile.TryGetNeutralRotation(legacyRole, out Quaternion neutralRotation);
             bool hasPosition = profile.TryGetNeutralPosition(legacyRole, out Vector3 neutralPosition);
-            UnityHumanoidBoneResponseProfile? response = profile.TryGetBoneResponse(legacyRole, out var roleResponse)
+            ImportedHumanoidBoneResponseProfile? response = profile.TryGetBoneResponse(legacyRole, out var roleResponse)
                 ? roleResponse
                 : null;
-            UnityHumanoidCoupledBoneModel? coupled = profile.TryGetCoupledBoneModel(legacyRole, out var roleCoupled)
+            ImportedHumanoidCoupledBoneModel? coupled = profile.TryGetCoupledBoneModel(legacyRole, out var roleCoupled)
                 ? roleCoupled
                 : null;
             if (!hasRotation && !hasPosition && response is null && coupled is null)
@@ -228,22 +228,22 @@ public partial class HumanoidComponent
         };
     }
 
-    private static UnityHumanoidRootAllocationFrame? CopyRootAllocationFrame(
-        UnityHumanoidRootAllocationFrame? source)
+    private static ImportedHumanoidRootAllocationFrame? CopyRootAllocationFrame(
+        ImportedHumanoidRootAllocationFrame? source)
         => source is null
             ? null
-            : new UnityHumanoidRootAllocationFrame
+            : new ImportedHumanoidRootAllocationFrame
             {
                 HipsParentPositionInAnimatorRoot = source.HipsParentPositionInAnimatorRoot,
                 HipsParentRotationInAnimatorRoot = source.HipsParentRotationInAnimatorRoot,
                 HipsParentScaleInAnimatorRoot = source.HipsParentScaleInAnimatorRoot,
             };
 
-    private static UnityHumanoidClipRootMotionSettings? CopyRootMotionSettings(
-        UnityHumanoidClipRootMotionSettings? source)
+    private static ImportedHumanoidClipRootMotionSettings? CopyRootMotionSettings(
+        ImportedHumanoidClipRootMotionSettings? source)
         => source is null
             ? null
-            : new UnityHumanoidClipRootMotionSettings
+            : new ImportedHumanoidClipRootMotionSettings
             {
                 StartTime = source.StartTime,
                 StopTime = source.StopTime,

@@ -25,7 +25,7 @@
 
   <ItemGroup Condition="'$(DesignTimeBuild)' != 'true'">
     <Compile Include="$(GeneratedAotFactoryRegistrations)" />
-    <AotFactoryRegistrationInput Include="$(MSBuildProjectDirectory)\**\*.cs;$(MSBuildProjectDirectory)\..\XREngine.Data\**\*.cs;$(MSBuildProjectDirectory)\..\XREngine.Animation\**\*.cs;$(MSBuildProjectDirectory)\..\XREngine.Runtime.Core\**\*.cs;$(MSBuildProjectDirectory)\..\XREngine.Runtime.Rendering\**\*.cs;$(MSBuildProjectDirectory)\..\XREngine.Runtime.AnimationIntegration\**\*.cs;$(MSBuildProjectDirectory)\..\XREngine.Runtime.AudioIntegration\**\*.cs;$(MSBuildProjectDirectory)\..\XREngine.Runtime.InputIntegration\**\*.cs;$(MSBuildProjectDirectory)\..\XREngine.Runtime.ModelingBridge\**\*.cs" Exclude="**\bin\**;**\obj\**;**\*.g.cs" />
+    <AotFactoryRegistrationInput Include="$(MSBuildProjectDirectory)\**\*.cs;$(MSBuildProjectDirectory)\..\XREngine.Data\**\*.cs;$(MSBuildProjectDirectory)\..\XREngine.Animation\**\*.cs;$(MSBuildProjectDirectory)\..\XREngine.Runtime.Core\**\*.cs;$(MSBuildProjectDirectory)\..\XREngine.Runtime.Rendering\**\*.cs;$(MSBuildProjectDirectory)\..\XREngine.Runtime.AnimationIntegration\**\*.cs;$(MSBuildProjectDirectory)\..\XREngine.Runtime.AudioIntegration\**\*.cs;$(MSBuildProjectDirectory)\..\XREngine.Runtime.InputIntegration\**\*.cs" Exclude="**\bin\**;**\obj\**;**\*.g.cs" />
   </ItemGroup>
 
   <Target Name="InvalidateMissingAotFactoryRegistrationOutput" BeforeTargets="GenerateAotFactoryRegistrations" Condition="'$(DesignTimeBuild)' != 'true' and !Exists('$(GeneratedAotFactoryRegistrations)') and Exists('$(AotFactoryRegistrationStamp)')">
@@ -59,7 +59,6 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="AssimpNetter" Version="6.0.5" />
     <PackageReference Include="Newtonsoft.Json" Version="13.0.4" />
   </ItemGroup>
 
@@ -73,7 +72,6 @@
     <ProjectReference Include="..\XREngine.Runtime.AudioIntegration\XREngine.Runtime.AudioIntegration.csproj" />
     <ProjectReference Include="..\XREngine.Runtime.Core\XREngine.Runtime.Core.csproj" />
     <ProjectReference Include="..\XREngine.Runtime.InputIntegration\XREngine.Runtime.InputIntegration.csproj" />
-    <ProjectReference Include="..\XREngine.Runtime.ModelingBridge\XREngine.Runtime.ModelingBridge.csproj" />
     <ProjectReference Include="..\XREngine.Runtime.Rendering.OpenGL\XREngine.Runtime.Rendering.OpenGL.csproj" Condition="'$(XREngineIncludeOpenGlBackend)' == 'true'" />
     <ProjectReference Include="..\XREngine.Runtime.Rendering\XREngine.Runtime.Rendering.csproj" />
     <ProjectReference Include="..\XREngine.Runtime.Rendering.Vulkan\XREngine.Runtime.Rendering.Vulkan.csproj" Condition="'$(XREngineIncludeVulkanBackend)' == 'true'" />

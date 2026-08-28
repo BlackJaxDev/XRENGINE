@@ -13,12 +13,12 @@ Build a USD pipeline that:
 - preserves current engine strengths such as async mesh processing, scene publication, and material/texture remap seeding, and
 - makes USD-specific semantics explicit instead of flattening everything into Assimp-style assumptions or lossy stage snapshots.
 
-This tracker assumes the current import entry point stays anchored in the existing `ModelImporter` and `XRPrefabSource` workflow while we add a USD-specific parsing, stage-resolution, and export core underneath it.
+This tracker assumes the current import entry point stays anchored in the existing `ModelAssetImporter` and `XRPrefabSource` workflow while we add a USD-specific parsing, stage-resolution, and export core underneath it.
 
 ## Current State
 
 - `XRENGINE/Scene/Prefabs/XRPrefabSource.cs` already lists `usd`, `usda`, `usdc`, and `usdz` as supported third-party extensions.
-- `XRENGINE/Core/ModelImporter.cs` currently has format-specific native dispatch only for `.fbx`; non-FBX formats still route through the generic Assimp path.
+- `XREngine.Runtime.ModelAssetPipeline/Importing/ModelAssetImporter.cs` currently has format-specific native dispatch for `.fbx` and glTF; other formats still route through the generic Assimp path.
 - There is no `XREngine.Usd` project, no USD-specific import/export option surface, no committed USD fixture corpus, no USD unit tests, and no USD benchmarks.
 - `docs/developer-guides/assets/model-import.md` currently documents the native FBX path and Assimp for non-FBX formats; it does not describe any native USD behavior yet.
 - Any OpenUSD dependency, binding generator, native packaging, or submodule addition would be a risky operation and requires proposal + approval before landing, along with the dependency/license workflow in `AGENTS.md`.
@@ -57,7 +57,7 @@ This tracker assumes the current import entry point stays anchored in the existi
 ## Phase 0: Scope, Ownership, Dependency Gate, and Validation Harness
 
 - [ ] Confirm the supported V1 subset for import and export: scene/model features, composition arcs, animation scope, and export formats.
-- [ ] Decide the low-level code boundary: create an engine-neutral `XREngine.Usd` core instead of embedding USD parsing directly into `ModelImporter`.
+- [ ] Decide the low-level code boundary: create an engine-neutral `XREngine.Usd` core instead of embedding USD parsing directly into `ModelAssetImporter`.
 - [ ] Define the boundary between the USD core and engine integration: layer/package parsing, stage resolution, value decoding, and export documents vs `SceneNode`, `XRMesh`, `XRMaterial`, and import orchestration.
 - [ ] Decide the interop boundary up front: what must stay managed, what explicitly routes through OpenUSD, and what remains deferred.
 - [ ] Decide the Windows-first native packaging strategy for OpenUSD before any dependency lands.
@@ -286,7 +286,7 @@ Recommended stages:
 - [ ] Import authored hierarchy and Xform semantics into `SceneNode` with explicit up-axis, unit-scale, and local-vs-world transform handling.
 - [ ] Import mesh topology, positions, normals, tangents, UV sets, color sets, material bindings, and subset-based assignments into engine-native mesh/material structures.
 - [ ] Decide the supported schema subset for the first bridge pass, likely including `Xform`, `Mesh`, `Material`, `Shader`, and the binding metadata needed by the corpus.
-- [ ] Preserve or intentionally replace current remap seeding behavior for textures and materials through `ModelImporter` and `XRPrefabSource`.
+- [ ] Preserve or intentionally replace current remap seeding behavior for textures and materials through `ModelAssetImporter` and `XRPrefabSource`.
 - [ ] Keep heavy mesh decode compatible with the engine's async mesh processing and publication controls.
 - [ ] Add targeted unit tests for static scene/model import parity on representative USD assets.
 - [ ] Add macro benchmarks comparing native USD import vs the current generic non-FBX path where that comparison is meaningful.
@@ -383,9 +383,9 @@ Recommended stages:
 
 ## Suggested Initial File/Project Touchpoints
 
-- `XRENGINE/Core/ModelImporter.cs`
-- `XRENGINE/Models/Meshes/ModelImportOptions.cs`
-- `XRENGINE/Scene/Prefabs/XRPrefabSource.cs`
+- `XREngine.Runtime.ModelAssetPipeline/Importing/ModelAssetImporter.cs`
+- `XREngine.Runtime.ModelAssetPipeline/Importing/ModelImportOptions.cs`
+- `XREngine.Runtime.Core/Scene/Prefabs/XRPrefabSource.cs`
 - `XREngine.UnitTests/`
 - `XREngine.Benchmarks/`
 - new engine-neutral USD core parser/writer project or namespace

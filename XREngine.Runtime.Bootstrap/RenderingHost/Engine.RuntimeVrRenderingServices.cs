@@ -1,4 +1,3 @@
-using Assimp;
 using OpenVR.NET;
 using System.Diagnostics.CodeAnalysis;
 using System.IO;
@@ -525,27 +524,17 @@ internal sealed class EngineRuntimeVrRenderingServices : IRuntimeVrRenderingServ
             try
             {
                 string path = WriteBinaryModelCache(renderModel);
-                var result = await ModelImporter.ImportAsync(
+                SceneNode? importedRoot = await RuntimeModelSceneLoadingServices.Current.LoadAsync(
                     path,
-                    PostProcessSteps.Triangulate |
-                    PostProcessSteps.GenerateSmoothNormals |
-                    PostProcessSteps.CalculateTangentSpace |
-                    PostProcessSteps.JoinIdenticalVertices |
-                    PostProcessSteps.ImproveCacheLocality,
-                    onCompleted: null,
-                    materialFactory: null,
-                    parent: _renderNode,
-                    scaleConversion: 1.0f,
-                    zUp: false,
-                    batchSubmeshAddsDuringAsyncImport: false);
+                    _renderNode);
 
                 if (_disposed || generation != _loadGeneration)
                 {
-                    result.rootNode?.Destroy();
+                    importedRoot?.Destroy();
                     return;
                 }
 
-                _importedModelRoot = result.rootNode;
+                _importedModelRoot = importedRoot;
                 if (_importedModelRoot is not null)
                     _importedModelRoot.Name = renderModel.DisplayName;
             }

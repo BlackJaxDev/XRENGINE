@@ -36,14 +36,14 @@ public static partial class EditorUnitTests
 {
     public static partial class Models
     {
-        private static ModelImporter.DelMakeMaterialAction ResolveMakeMaterialAction(Settings.ModelImportSettings model)
+        private static ModelAssetImporter.DelMakeMaterialAction ResolveMakeMaterialAction(Settings.ModelImportSettings model)
         {
-            ModelImporter.DelMakeMaterialAction baseAction = model.MaterialMode switch
+            ModelAssetImporter.DelMakeMaterialAction baseAction = model.MaterialMode switch
             {
-                ModelImportMaterialMode.Deferred => ModelImporter.MakeMaterialDeferred,
-                ModelImportMaterialMode.Forward => ModelImporter.MakeMaterialForwardPlusTextured,
-                ModelImportMaterialMode.Uber => ModelImporter.MakeMaterialForwardPlusUberShader,
-                _ => ModelImporter.MakeMaterialDeferred,
+                ModelImportMaterialMode.Deferred => ModelAssetImporter.MakeMaterialDeferred,
+                ModelImportMaterialMode.Forward => ModelAssetImporter.MakeMaterialForwardPlusTextured,
+                ModelImportMaterialMode.Uber => ModelAssetImporter.MakeMaterialForwardPlusUberShader,
+                _ => ModelAssetImporter.MakeMaterialDeferred,
             };
 
             // When deferred mode is active and the user wants forward rendering for transparent
@@ -52,10 +52,10 @@ public static partial class EditorUnitTests
             {
                 return (textureList, textures, name) =>
                 {
-                    bool hasTransparency = ModelImporter.ResolveTransparencyMode(textureList, textures)
+                    bool hasTransparency = ModelAssetImporter.ResolveTransparencyMode(textureList, textures)
                         is not ETransparencyMode.Opaque;
                     return hasTransparency
-                        ? ModelImporter.MakeMaterialForwardPlusTextured(textureList, textures, name)
+                        ? ModelAssetImporter.MakeMaterialForwardPlusTextured(textureList, textures, name)
                         : baseAction(textureList, textures, name);
                 };
             }
@@ -407,9 +407,9 @@ public static partial class EditorUnitTests
                     return;
                 }
 
-                if (IsUnityPrefabPath(resolvedPath))
+                if (IsSerializedPrefabPath(resolvedPath))
                 {
-                    SceneNode? unityStaticParent = null;
+                    SceneNode? sourceStaticParent = null;
                     if (model.Kind is UnitTestModelImportKind.Static)
                     {
                         importedStaticModelsRootNode ??= new SceneNode(rootNode)
@@ -417,10 +417,10 @@ public static partial class EditorUnitTests
                             Name = "Static Model Root",
                             Layer = DefaultLayers.StaticIndex,
                         };
-                        unityStaticParent = importedStaticModelsRootNode;
+                        sourceStaticParent = importedStaticModelsRootNode;
                     }
 
-                    ScheduleUnityPrefabImport(
+                    ScheduleSerializedPrefabImport(
                         resolvedPath,
                         model,
                         onFinished: result =>
@@ -433,7 +433,7 @@ public static partial class EditorUnitTests
                                     if (model.Kind is UnitTestModelImportKind.Animated)
                                     {
                                         List<ModelComponent> suspendedModels =
-                                            SuspendUnityPrefabModelPublication(importedRoot);
+                                            SuspendSerializedPrefabModelPublication(importedRoot);
                                         if (importedRoot.Transform.Parent != characterParentNode.Transform)
                                             characterParentNode.Transform.AddChild(importedRoot.Transform, false, EParentAssignmentMode.Immediate);
 
@@ -441,13 +441,13 @@ public static partial class EditorUnitTests
                                             importedRoot,
                                             characterParentNode,
                                             result.SourceContentSha256);
-                                        StageUnityPrefabModelPublication(
+                                        StageSerializedPrefabModelPublication(
                                             importedRoot,
                                             suspendedModels);
                                     }
                                     else
                                     {
-                                        SceneNode staticParent = unityStaticParent
+                                        SceneNode staticParent = sourceStaticParent
                                             ?? throw new InvalidOperationException("Unity static prefab import has no static parent node.");
                                         if (importedRoot.Transform.Parent != staticParent.Transform)
                                             staticParent.Transform.AddChild(importedRoot.Transform, false, EParentAssignmentMode.Immediate);
@@ -474,8 +474,8 @@ public static partial class EditorUnitTests
                                     Debug.Meshes(
                                         $"[UnityPrefab] Import completed: {resolvedPath} " +
                                         $"({result.ModelCount} models, {result.MaterialCount} materials, " +
-                                        $"{result.PoiyomiMaterialCount} Poiyomi-to-Uber conversions, " +
-                                        $"{result.PoiyomiDowngradeCount} Poiyomi Pro downgrade(s))");
+                                        $"{result.SourceToonMaterialCount} Poiyomi-to-Uber conversions, " +
+                                        $"{result.SourceToonDowngradeCount} Poiyomi Pro downgrade(s))");
                                 }
                                 catch (Exception ex)
                                 {
@@ -509,10 +509,10 @@ public static partial class EditorUnitTests
                 {
                     case UnitTestModelImportKind.Animated:
                     {
-                        ModelImporter.DelMakeMaterialAction makeMaterialAction = ResolveMakeMaterialAction(model);
+                        ModelAssetImporter.DelMakeMaterialAction makeMaterialAction = ResolveMakeMaterialAction(model);
                         ModelImportOptions? importOptions = CreateImportOptions(model, textureLoadDirSearchPaths);
 
-                        _ = ModelImporter.ScheduleImportJob(
+                        _ = ModelAssetImporter.ScheduleImportJob(
                             resolvedPath,
                             model.ImportFlags,
                             onFinished: result =>
@@ -583,10 +583,10 @@ public static partial class EditorUnitTests
                             CompleteAllModelImportSlot();
                             break;
                         }
-                        ModelImporter.DelMakeMaterialAction makeMaterialAction = ResolveMakeMaterialAction(model);
+                        ModelAssetImporter.DelMakeMaterialAction makeMaterialAction = ResolveMakeMaterialAction(model);
                         ModelImportOptions? importOptions = CreateImportOptions(model, textureLoadDirSearchPaths);
 
-                        _ = ModelImporter.ScheduleImportJob(
+                        _ = ModelAssetImporter.ScheduleImportJob(
                             resolvedPath,
                             model.ImportFlags,
                             onFinished: result =>
@@ -1482,13 +1482,13 @@ public static partial class EditorUnitTests
 
         private static void ConfigureAvatarFaceTracking(SceneNode rootNode, AnimStateMachineComponent animator)
         {
-            const string vrcftPrefix = "/avatar/parameters/";
+            const string faceTrackingParameterPrefix = "/avatar/parameters/";
             var ftOscReceiver = rootNode.AddComponent<FaceTrackingReceiverComponent>()!;
-            ftOscReceiver.ParameterPrefix = vrcftPrefix;
+            ftOscReceiver.ParameterPrefix = faceTrackingParameterPrefix;
             ftOscReceiver.GenerateARKitStateMachine();
 
             var ftOscSender = rootNode.AddComponent<OscSenderComponent>()!;
-            ftOscSender.ParameterPrefix = vrcftPrefix;
+            ftOscSender.ParameterPrefix = faceTrackingParameterPrefix;
 
             animator.StateMachine.VariableChanged += StateMachineVariableChanged;
 
@@ -1820,12 +1820,12 @@ public static partial class EditorUnitTests
 
                         Debug.Out($"[UnitTestingWorld] Attached startup .anim clip '{clip.Name}' to '{rootNode.Name}'.");
 
-                        if (clip.ClipKind == EAnimationClipKind.UnityHumanoidMuscle && !runPoseAudit)
+                        if (clip.ClipKind == EAnimationClipKind.ImportedHumanoidMuscle && !runPoseAudit)
                         {
                             Debug.LogWarning($"[UnitTestingWorld] Loaded Unity humanoid clip '{clip.Name}' and started playback. Raw .anim humanoid curves still do not fully match Unity HumanPose semantics; enable HumanoidPoseAudit* settings if you need to compare that path precisely.");
                         }
 
-                        if (clip.ClipKind == EAnimationClipKind.UnityHumanoidMuscle
+                        if (clip.ClipKind == EAnimationClipKind.ImportedHumanoidMuscle
                             && clip.HasIKGoals
                             && rootNode.TryGetComponent<HumanoidIKSolverComponent>(out var humanoidIK)
                             && humanoidIK is not null)

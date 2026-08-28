@@ -22,7 +22,6 @@ public sealed class RuntimeModularizationPhase5SerializationCompatibilityTests
     [TestCase("XREngine.Components.AudioListenerComponent, XREngine", typeof(AudioListenerComponent))]
     [TestCase("XREngine.Components.AudioSourceComponent, XREngine", typeof(AudioSourceComponent))]
     [TestCase("XREngine.Data.Components.Scene.VRHeadsetComponent, XREngine", typeof(VRHeadsetComponent))]
-    [TestCase("XREngine.ModelImporter, XREngine", typeof(ModelImporter))]
     [TestCase("XREngine.Rendering.Models.ModelImportOptions, XREngine", typeof(ModelImportOptions))]
     public void PreMoveAssemblyQualifiedType_ResolvesToExactlyOneCurrentPublicType(string legacyTypeName, Type expectedType)
     {
@@ -30,6 +29,18 @@ public sealed class RuntimeModularizationPhase5SerializationCompatibilityTests
 
         string rewritten = XRTypeRedirectRegistry.RewriteTypeName(legacyTypeName);
         Type.GetType(rewritten).ShouldBe(expectedType);
+    }
+
+    [Test]
+    public void RenamedModelImporter_ResolvesThroughThePersistedTypeRedirect()
+    {
+        const string legacyTypeName = "XREngine.ModelImporter, XREngine";
+
+        string rewritten = XRTypeRedirectRegistry.RewriteTypeName(legacyTypeName);
+        rewritten.ShouldContain("XREngine.ModelAssetImporter");
+        Type.GetType(rewritten).ShouldBe(typeof(ModelAssetImporter));
+        CookedAssetTypeReference.Resolve(legacyTypeName, typeof(ModelAssetImporter))
+            .ShouldBe(typeof(ModelAssetImporter));
     }
 
     [TestCase("XREngine.Components.Animation.HumanoidComponent", typeof(HumanoidComponent))]
@@ -123,7 +134,7 @@ ZUp: true
 
         string rewritten = JsonConvert.SerializeObject(settings);
         rewritten.ShouldNotContain("ModelImportOptions");
-        rewritten.ShouldNotContain("ModelImporter");
+        rewritten.ShouldNotContain("ModelAssetImporter");
     }
 
     [Test]

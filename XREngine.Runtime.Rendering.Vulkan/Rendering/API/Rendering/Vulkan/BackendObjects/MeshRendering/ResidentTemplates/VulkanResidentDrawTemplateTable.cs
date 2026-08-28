@@ -54,8 +54,13 @@ internal sealed class VulkanResidentDrawTemplateTable : IDisposable
     private long _fullStructuralComparisons;
     private long _dependencyRejects;
     private long _capacityFailures;
+    private long _exactDependencyInvalidations;
+    private long _broadFallbackInvalidations;
+    private long _broadFallbackEntries;
+    private readonly int[][] _reverseDependencyHeads;
     private ulong _lastProjectionDatabaseEpoch;
     private ulong _lastProjectionSequence;
+    private VulkanResidentTemplateBroadInvalidationRecord _lastBroadInvalidation;
 
     internal VulkanResidentDrawTemplateTable(
         VulkanResourceRuntime resourceRuntime,
@@ -72,11 +77,16 @@ internal sealed class VulkanResidentDrawTemplateTable : IDisposable
         _ownerThreadId = Environment.CurrentManagedThreadId;
         _variantsPerDraw = checked((int)variantsPerDraw);
         _primarySlots = CreateSlots(checked((int)primaryCapacity + 1), _variantsPerDraw);
+        _reverseDependencyHeads = new int[(int)EBackendReadyCanonicalOwner.Probe + 1][];
+        for (int index = 0; index < _reverseDependencyHeads.Length; ++index)
+            _reverseDependencyHeads[index] = new int[1];
     }
 
     internal uint PrimaryCapacity => checked((uint)_primarySlots.Length - 1u);
     internal int VariantsPerDraw => _variantsPerDraw;
     internal int ResidentCount => _residentCount;
+    internal VulkanResidentTemplateBroadInvalidationRecord LastBroadInvalidation
+        => _lastBroadInvalidation;
 
     internal VulkanResidentDrawTemplateTelemetrySnapshot CaptureTelemetry()
         => new(
@@ -88,7 +98,10 @@ internal sealed class VulkanResidentDrawTemplateTable : IDisposable
             unchecked((ulong)Volatile.Read(ref _fullStructuralComparisons)),
             unchecked((ulong)Volatile.Read(ref _dependencyRejects)),
             unchecked((ulong)Volatile.Read(ref _capacityFailures)),
-            _residentCount);
+            _residentCount,
+            unchecked((ulong)Volatile.Read(ref _exactDependencyInvalidations)),
+            unchecked((ulong)Volatile.Read(ref _broadFallbackInvalidations)),
+            unchecked((ulong)Volatile.Read(ref _broadFallbackEntries)));
 
     /// <summary>
     /// Stable-frame lookup: direct primary slot, exact active variant,
@@ -119,6 +132,7 @@ internal sealed class VulkanResidentDrawTemplateTable : IDisposable
             if (!_resourceRuntime.IsResidentTemplateDependencyLeaseCurrent(
                     candidate.DependencyLease))
             {
+                UnlinkReverseDependencies(candidate);
                 candidate.Dispose();
                 variants[index] = null;
                 slot.EntryGenerations[index] = NextGeneration(
@@ -256,6 +270,18 @@ internal sealed class VulkanResidentDrawTemplateTable : IDisposable
                 capacityFailure: true);
             return false;
         }
+        if (!VulkanResidentDrawDependencyManifest.TryCreate(
+                structuralIdentity.CanonicalDraw,
+                out VulkanResidentDrawDependencyManifest? dependencyManifest) ||
+            dependencyManifest is null)
+        {
+            dependencyLease.Dispose();
+            Interlocked.Increment(ref _dependencyRejects);
+            RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanResidentDrawTemplate(
+                dependencyRejected: true);
+            return false;
+        }
+        EnsureReverseDependencyCapacity(dependencyManifest);
 
         PrimarySlot slot = _primarySlots[checked((int)primary.Handle.Index)];
         if (slot.DatabaseEpoch != 0u && !slot.Matches(in primary))
@@ -290,8 +316,14 @@ internal sealed class VulkanResidentDrawTemplateTable : IDisposable
             variant,
             generations,
             nativeState,
+            dependencyManifest,
             dependencyLease);
+        if (existing is not null)
+            UnlinkReverseDependencies(existing);
         variants[targetVariant] = replacement;
+        LinkReverseDependencies(
+            checked((int)primary.Handle.Index),
+            replacement);
         slot.EntryGenerations[targetVariant] = NextGeneration(
             slot.EntryGenerations[targetVariant]);
         if (existing is null)
@@ -328,6 +360,7 @@ internal sealed class VulkanResidentDrawTemplateTable : IDisposable
         VulkanResidentDrawTemplate? candidate = variants[index];
         if (candidate is not null && candidate.Variant == variant)
         {
+            UnlinkReverseDependencies(candidate);
             candidate.Detach();
             variants[index] = null;
             slot.EntryGenerations[index] = NextGeneration(
@@ -361,11 +394,8 @@ internal sealed class VulkanResidentDrawTemplateTable : IDisposable
     }
 
     /// <summary>
-    /// Applies the package's draw-owner invalidation journal directly to
-    /// canonical primary slots. Until Phase 4 supplies reverse dependency
-    /// manifests, a structural non-draw mutation conservatively clears the
-    /// table so an offscreen template cannot retain stale native ownership.
-    /// Data-only owner changes advance independent generations on lookup.
+    /// Applies the package's exact mutation journal through compact reverse
+    /// dependency arrays. Data-only changes leave resident structure warm.
     /// </summary>
     internal void ApplyProjectionDeltas(
         ulong databaseEpoch,
@@ -379,7 +409,6 @@ internal sealed class VulkanResidentDrawTemplateTable : IDisposable
             publicationSequence <= _lastProjectionSequence)
             return;
 
-        bool clearForStructuralOwnerMutation = false;
         for (int index = 0; index < deltas.Length; ++index)
         {
             ref readonly BackendTemplateProjectionDelta delta = ref deltas[index];
@@ -388,9 +417,37 @@ internal sealed class VulkanResidentDrawTemplateTable : IDisposable
 
             if (delta.Owner != EBackendReadyCanonicalOwner.Draw)
             {
-                if (delta.Kind != EBackendTemplateProjectionDeltaKind.Add &&
-                    delta.Domain != EBackendTemplateMutationDomain.DataContent)
-                    clearForStructuralOwnerMutation = true;
+                if (delta.Kind == EBackendTemplateProjectionDeltaKind.Add ||
+                    delta.Domain == EBackendTemplateMutationDomain.DataContent)
+                {
+                    continue;
+                }
+
+                if (!TryEvictReverseDependents(
+                        delta.Owner,
+                        delta.Handle,
+                        out int invalidated))
+                {
+                    RecordBroadFallback(
+                        "reverse dependency index was missing or inconsistent",
+                        delta.Owner,
+                        delta.Domain,
+                        publicationSequence);
+                    break;
+                }
+
+                if (invalidated > 0)
+                {
+                    Interlocked.Add(ref _exactDependencyInvalidations, invalidated);
+                    RuntimeEngine.Rendering.Stats.Vulkan
+                        .RecordVulkanResidentTemplateExactDependencyInvalidation(
+                            invalidated);
+                    RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanExactResourceInvalidation(
+                        invalidated,
+                        0,
+                        _residentCount,
+                        0);
+                }
                 continue;
             }
             if (delta.Kind == EBackendTemplateProjectionDeltaKind.Add)
@@ -402,9 +459,6 @@ internal sealed class VulkanResidentDrawTemplateTable : IDisposable
                 EvictPrimary(databaseEpoch, delta.PreviousHandle);
         }
 
-        if (clearForStructuralOwnerMutation)
-            Clear();
-
         _lastProjectionDatabaseEpoch = databaseEpoch;
         _lastProjectionSequence = publicationSequence;
     }
@@ -414,6 +468,7 @@ internal sealed class VulkanResidentDrawTemplateTable : IDisposable
         VerifyOwnerThread();
         for (int index = 1; index < _primarySlots.Length; ++index)
             EvictSlot(_primarySlots[index]);
+        ClearReverseDependencyHeads();
     }
 
     public void Dispose() => Clear();
@@ -454,6 +509,7 @@ internal sealed class VulkanResidentDrawTemplateTable : IDisposable
             if (template is null)
                 continue;
 
+            UnlinkReverseDependencies(template);
             template.Detach();
             variants[index] = null;
             slot.EntryGenerations[index] = NextGeneration(
@@ -464,6 +520,240 @@ internal sealed class VulkanResidentDrawTemplateTable : IDisposable
                 evicted: true);
         }
         slot.ClearIdentity();
+    }
+
+    private void EnsureReverseDependencyCapacity(
+        VulkanResidentDrawDependencyManifest manifest)
+    {
+        ReadOnlySpan<VulkanResidentDrawDependency> dependencies =
+            manifest.CanonicalDependencies;
+        for (int index = 0; index < dependencies.Length; ++index)
+        {
+            VulkanResidentDrawDependency dependency = dependencies[index];
+            int owner = (int)dependency.Owner;
+            if ((uint)owner >= (uint)_reverseDependencyHeads.Length)
+                throw new InvalidOperationException("Unsupported resident reverse-dependency owner.");
+
+            int required = checked((int)dependency.Handle.Index + 1);
+            int[] heads = _reverseDependencyHeads[owner];
+            if (heads.Length >= required)
+                continue;
+
+            int capacity = heads.Length;
+            while (capacity < required)
+                capacity = checked(capacity * 2);
+            Array.Resize(ref _reverseDependencyHeads[owner], capacity);
+        }
+    }
+
+    private void LinkReverseDependencies(
+        int primaryIndex,
+        VulkanResidentDrawTemplate template)
+    {
+        ReadOnlySpan<VulkanResidentDrawDependency> dependencies =
+            template.DependencyManifest.CanonicalDependencies;
+        Span<VulkanResidentDrawDependencyLink> links =
+            template.DependencyManifest.ReverseLinks;
+        for (int index = 0; index < dependencies.Length; ++index)
+        {
+            VulkanResidentDrawDependency dependency = dependencies[index];
+            int[] heads = _reverseDependencyHeads[(int)dependency.Owner];
+            int dependencyIndex = checked((int)dependency.Handle.Index);
+            int previousHead = heads[dependencyIndex];
+            links[index] = new VulkanResidentDrawDependencyLink
+            {
+                NextPrimaryIndex = previousHead,
+                IsLinked = true,
+            };
+            if (previousHead != 0 &&
+                TryGetReverseLink(
+                    previousHead,
+                    dependency.Owner,
+                    dependency.Handle.Index,
+                    out VulkanResidentDrawDependencyManifest? headManifest,
+                    out int headLinkIndex))
+            {
+                headManifest!.ReverseLinks[headLinkIndex].PreviousPrimaryIndex = primaryIndex;
+            }
+            heads[dependencyIndex] = primaryIndex;
+        }
+    }
+
+    private void UnlinkReverseDependencies(VulkanResidentDrawTemplate template)
+    {
+        ReadOnlySpan<VulkanResidentDrawDependency> dependencies =
+            template.DependencyManifest.CanonicalDependencies;
+        Span<VulkanResidentDrawDependencyLink> links =
+            template.DependencyManifest.ReverseLinks;
+        for (int index = 0; index < dependencies.Length; ++index)
+        {
+            ref VulkanResidentDrawDependencyLink link = ref links[index];
+            if (!link.IsLinked)
+                continue;
+
+            VulkanResidentDrawDependency dependency = dependencies[index];
+            int owner = (int)dependency.Owner;
+            int dependencyIndex = checked((int)dependency.Handle.Index);
+            int[] heads = _reverseDependencyHeads[owner];
+            if (link.PreviousPrimaryIndex == 0)
+            {
+                heads[dependencyIndex] = link.NextPrimaryIndex;
+            }
+            else if (TryGetReverseLink(
+                         link.PreviousPrimaryIndex,
+                         dependency.Owner,
+                         dependency.Handle.Index,
+                         out VulkanResidentDrawDependencyManifest? previousManifest,
+                         out int previousLinkIndex))
+            {
+                previousManifest!.ReverseLinks[previousLinkIndex].NextPrimaryIndex =
+                    link.NextPrimaryIndex;
+            }
+
+            if (link.NextPrimaryIndex != 0 &&
+                TryGetReverseLink(
+                    link.NextPrimaryIndex,
+                    dependency.Owner,
+                    dependency.Handle.Index,
+                    out VulkanResidentDrawDependencyManifest? nextManifest,
+                    out int nextLinkIndex))
+            {
+                nextManifest!.ReverseLinks[nextLinkIndex].PreviousPrimaryIndex =
+                    link.PreviousPrimaryIndex;
+            }
+            link = default;
+        }
+    }
+
+    private bool TryEvictReverseDependents(
+        EBackendReadyCanonicalOwner owner,
+        AdvancedGpuHandle handle,
+        out int invalidated)
+    {
+        invalidated = 0;
+        int ownerIndex = (int)owner;
+        if (!handle.IsValid ||
+            (uint)ownerIndex >= (uint)_reverseDependencyHeads.Length)
+        {
+            return false;
+        }
+
+        int[] heads = _reverseDependencyHeads[ownerIndex];
+        if (handle.Index >= (uint)heads.Length)
+            return true;
+
+        int primaryIndex = heads[checked((int)handle.Index)];
+        int traversalBudget = _residentCount + 1;
+        int expectedPreviousPrimaryIndex = 0;
+        while (primaryIndex != 0)
+        {
+            if (--traversalBudget < 0 ||
+                !TryGetReverseLink(
+                    primaryIndex,
+                    owner,
+                    handle.Index,
+                    out VulkanResidentDrawDependencyManifest? manifest,
+                    out int linkIndex))
+            {
+                return false;
+            }
+
+            VulkanResidentDrawDependencyLink link = manifest!.ReverseLinks[linkIndex];
+            if (link.PreviousPrimaryIndex != expectedPreviousPrimaryIndex)
+                return false;
+            int nextPrimaryIndex = link.NextPrimaryIndex;
+            if (nextPrimaryIndex != 0 &&
+                (!TryGetReverseLink(
+                    nextPrimaryIndex,
+                    owner,
+                    handle.Index,
+                    out VulkanResidentDrawDependencyManifest? nextManifest,
+                    out int nextLinkIndex) ||
+                 nextManifest!.ReverseLinks[nextLinkIndex].PreviousPrimaryIndex !=
+                    primaryIndex))
+            {
+                return false;
+            }
+            VulkanResidentDrawDependency dependency =
+                manifest.CanonicalDependencies[linkIndex];
+            if (dependency.Handle == handle)
+            {
+                EvictSlot(_primarySlots[primaryIndex]);
+                ++invalidated;
+            }
+            else
+            {
+                expectedPreviousPrimaryIndex = primaryIndex;
+            }
+            primaryIndex = nextPrimaryIndex;
+        }
+        return true;
+    }
+
+    private bool TryGetReverseLink(
+        int primaryIndex,
+        EBackendReadyCanonicalOwner owner,
+        uint dependencyIndex,
+        out VulkanResidentDrawDependencyManifest? manifest,
+        out int linkIndex)
+    {
+        manifest = null;
+        linkIndex = -1;
+        if ((uint)primaryIndex >= (uint)_primarySlots.Length ||
+            _primarySlots[primaryIndex].Variants[0] is not { } template)
+        {
+            return false;
+        }
+
+        VulkanResidentDrawDependencyManifest candidate =
+            template.DependencyManifest;
+        ReadOnlySpan<VulkanResidentDrawDependency> dependencies =
+            candidate.CanonicalDependencies;
+        for (int index = 0; index < dependencies.Length; ++index)
+        {
+            if (dependencies[index].Owner != owner ||
+                dependencies[index].Handle.Index != dependencyIndex ||
+                !candidate.ReverseLinks[index].IsLinked)
+            {
+                continue;
+            }
+
+            manifest = candidate;
+            linkIndex = index;
+            return true;
+        }
+        return false;
+    }
+
+    private void RecordBroadFallback(
+        string reason,
+        EBackendReadyCanonicalOwner owner,
+        EBackendTemplateMutationDomain domain,
+        ulong publicationSequence)
+    {
+        int affected = _residentCount;
+        _lastBroadInvalidation = new VulkanResidentTemplateBroadInvalidationRecord(
+            reason,
+            owner,
+            domain,
+            affected,
+            publicationSequence);
+        Interlocked.Increment(ref _broadFallbackInvalidations);
+        Interlocked.Add(ref _broadFallbackEntries, affected);
+        RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanResidentTemplateBroadFallback(
+            affected);
+        RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanExactResourceInvalidation(
+            0,
+            0,
+            0,
+            1);
+        Clear();
+    }
+
+    private void ClearReverseDependencyHeads()
+    {
+        for (int owner = 0; owner < _reverseDependencyHeads.Length; ++owner)
+            Array.Clear(_reverseDependencyHeads[owner]);
     }
 
     private void EvictPrimary(ulong databaseEpoch, AdvancedGpuHandle handle)

@@ -24,7 +24,6 @@ namespace XREngine.Data.Core
         public static SpatialCoordinateSystem OpenXR { get; } = Engine;
         public static SpatialCoordinateSystem OpenVR { get; } = Engine;
         public static SpatialCoordinateSystem XRightYUpZForward { get; } = new(SpatialAxis.PositiveX, SpatialAxis.PositiveY, SpatialAxis.PositiveZ);
-        public static SpatialCoordinateSystem Unity { get; } = XRightYUpZForward;
         public static SpatialCoordinateSystem Mmd { get; } = XRightYUpZForward;
         public static SpatialCoordinateSystem Blender { get; } = new(SpatialAxis.PositiveX, SpatialAxis.PositiveZ, SpatialAxis.NegativeY);
         public static SpatialCoordinateSystem Unreal { get; } = new(SpatialAxis.PositiveY, SpatialAxis.PositiveZ, SpatialAxis.PositiveX);

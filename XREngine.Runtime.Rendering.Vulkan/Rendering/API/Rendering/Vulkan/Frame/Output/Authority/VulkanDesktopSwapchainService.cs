@@ -212,8 +212,6 @@ internal sealed unsafe partial class VulkanDesktopSwapchainService
                         oldGraphicsCompletionValue,
                         oldImageTimelineValues[i]);
             }
-            ulong[] oldImageGenerations = _resources.DetachExternalImageLifetimesForHandleReuse(oldImages);
-
             RetireDesktopCommandArtifacts();
             _imguiPipeline.InvalidateForDesktopOutputMutation();
             RetireStreamlineUiResources();
@@ -228,6 +226,8 @@ internal sealed unsafe partial class VulkanDesktopSwapchainService
                 _resources.Images.RetireOwnedResources(new RetiredImageResources(
                     depth.Image, depth.Memory, depth.View, [], default, 0),
                     "Swapchain.Depth");
+            VulkanResourceSlotHandle[] oldImageLifetimeSlots =
+                _resources.DetachExternalImageLifetimesForHandleReuse(oldImages);
 
             _output.Desktop.PresentBridgeSemaphores = null;
             _output.Desktop.Swapchain = default;
@@ -238,7 +238,7 @@ internal sealed unsafe partial class VulkanDesktopSwapchainService
             _output.Desktop.StreamlineFrameGenerationIncludesDlss = false;
 
             RetiredSwapchainGeneration retired = new(
-                oldSwapchain, oldImages, oldImageGenerations, oldViews, oldFramebuffers,
+                oldSwapchain, oldImages, oldImageLifetimeSlots, oldViews, oldFramebuffers,
                 oldPresentBridges, oldClear, oldLoad, graphicsMarker, presentMarker,
                 oldStreamlineProxy, oldWidth, oldHeight, Stopwatch.GetTimestamp());
             try
@@ -282,9 +282,10 @@ internal sealed unsafe partial class VulkanDesktopSwapchainService
                         "Swapchain.Depth.RecreateFailure");
 
                 Image[] failedImages = _output.Desktop.Images ?? [];
-                ulong[] failedImageGenerations = _resources.DetachExternalImageLifetimesForHandleReuse(failedImages);
                 ImageView[] failedViews = _output.Desktop.ImageViews ?? [];
                 DestroyImageViews();
+                VulkanResourceSlotHandle[] failedImageLifetimeSlots =
+                    _resources.DetachExternalImageLifetimesForHandleReuse(failedImages);
                 Semaphore[] failedPresentBridges = _output.Desktop.PresentBridgeSemaphores ?? [];
                 SwapchainKHR failedSwapchain = _output.Desktop.Swapchain;
                 bool failedStreamlineProxy = _output.Desktop.StreamlineFrameGenerationActive;
@@ -307,7 +308,7 @@ internal sealed unsafe partial class VulkanDesktopSwapchainService
                 QueueRetiredGeneration(new(
                     failedSwapchain,
                     failedImages,
-                    failedImageGenerations,
+                    failedImageLifetimeSlots,
                     failedViews,
                     [],
                     failedPresentBridges,
@@ -887,11 +888,21 @@ internal sealed unsafe partial class VulkanDesktopSwapchainService
         for (int i = 0; i < generation.ImageViews.Length; i++)
             if (_resources.Lifetime.ImageViews.LiveHandles.ContainsKey(generation.ImageViews[i].Handle))
                 return true;
-        lock (_resources.Lifetime.Tracker.SyncRoot)
+
+        VulkanResourceLifetimeTracker tracker = _resources.Lifetime.Tracker;
+        lock (tracker.SyncRoot)
+        {
             for (int i = 0; i < generation.Framebuffers.Length; i++)
-                if (_resources.Lifetime.Tracker.ResourceLifetimes.TryGetValue(new(ObjectType.Framebuffer, generation.Framebuffers[i].Handle), out VulkanResourceLifetimeRecord? lifetime) &&
+                if (tracker.ResourceLifetimes.TryGetValue(new(ObjectType.Framebuffer, generation.Framebuffers[i].Handle), out VulkanResourceLifetimeRecord? lifetime) &&
                     (lifetime.State & EVulkanResourceLifetimeState.Destroyed) == 0)
                     return true;
+
+            for (int i = 0; i < generation.ImageLifetimeSlots.Length; i++)
+                if (!tracker.IsDetachedResourceSlotRetirementReadyNoLock(
+                        generation.ImageLifetimeSlots[i]))
+                    return true;
+        }
+
         return false;
     }
 
@@ -919,7 +930,13 @@ internal sealed unsafe partial class VulkanDesktopSwapchainService
                 RequireSwapchainExtension().DestroySwapchain(_device.Device, generation.Swapchain, null);
         }
         for (int i = 0; i < generation.Images.Length; i++)
-            _resources.CompleteDetachedExternalResourceDestruction(ObjectType.Image, generation.Images[i].Handle, i < generation.ImageLifetimeGenerations.Length ? generation.ImageLifetimeGenerations[i] : 0, force);
+            _resources.CompleteDetachedExternalResourceDestruction(
+                ObjectType.Image,
+                generation.Images[i].Handle,
+                i < generation.ImageLifetimeSlots.Length
+                    ? generation.ImageLifetimeSlots[i]
+                    : VulkanResourceSlotHandle.Invalid,
+                force);
     }
 
     private void DestroyRenderPass(RenderPass renderPass, bool force)

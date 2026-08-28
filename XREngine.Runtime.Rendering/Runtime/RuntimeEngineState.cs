@@ -1,14 +1,16 @@
 using XREngine.Rendering;
+using XREngine.Input;
 
 namespace XREngine;
 
 internal sealed class RuntimeEngineState
 {
-    public IPawnController? MainPlayer => GetLocalPlayer(ELocalPlayerIndex.One);
+    public IPawnController? MainPlayer => RuntimePlayerControllerServices.Current?.GetLocalPlayer(ELocalPlayerIndex.One);
 
     public IPawnController GetOrCreateLocalPlayer(ELocalPlayerIndex playerIndex)
-        => GetLocalPlayer(playerIndex) ?? new NullPawnController(playerIndex);
+        => RuntimePlayerControllerServices.Current?.GetOrCreateLocalPlayer(playerIndex)
+            ?? throw new InvalidOperationException("No local-player registry is installed for this runtime profile.");
 
     public IPawnController? GetLocalPlayer(ELocalPlayerIndex playerIndex)
-        => RuntimeRenderingHostServices.Factories.EnumerateLocalPlayers().FirstOrDefault(player => player.LocalPlayerIndex == playerIndex);
+        => RuntimePlayerControllerServices.Current?.GetLocalPlayer(playerIndex);
 }

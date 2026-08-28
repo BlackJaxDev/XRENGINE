@@ -487,11 +487,11 @@ public static class MaterialAuthoringActionExecutor
             return;
         }
 
-        material.RenderPass = TranslateUnityQueue(int.Parse(value!, CultureInfo.InvariantCulture));
+        material.RenderPass = TranslateSourceRenderQueue(int.Parse(value!, CultureInfo.InvariantCulture));
         MaterialAuthoringMetadataStore.Instance.SetImportedRenderQueue(material, int.Parse(value!, CultureInfo.InvariantCulture));
     }
 
-    public static int TranslateUnityQueue(int queue)
+    public static int TranslateSourceRenderQueue(int queue)
         => queue switch
         {
             < 2450 => (int)EDefaultRenderPass.OpaqueForward,

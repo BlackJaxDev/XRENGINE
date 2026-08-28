@@ -1937,9 +1937,12 @@ namespace XREngine.Rendering.Commands
                 return new GPUMaterialEntry { Flags = flags };
             }
 
-            XRTexture? albedo = material.Textures.Count > 0 ? material.Textures[0] : null;
-            XRTexture? normal = material.Textures.Count > 1 ? material.Textures[1] : null;
-            XRTexture? rm = material.Textures.Count > 2 ? material.Textures[2] : null;
+            MaterialBindingSourceSnapshot source = MaterialBindingSourceEncoder.Encode(material);
+            GPUMaterialEntry entry = source.Entry;
+            XRTexture? albedo = source.Albedo;
+            XRTexture? normal = source.Normal;
+            XRTexture? rm = source.RM;
+            flags = entry.Flags;
 
             if (albedo is not null)
             {
@@ -1995,13 +1998,8 @@ namespace XREngine.Rendering.Commands
             if (residencyStatus == EMaterialTextureReferenceStatus.Ready)
                 flags |= 1u << 31;
 
-            return new GPUMaterialEntry
-            {
-                Flags = flags,
-                BaseColorOpacity = ResolveMaterialBaseColorOpacity(material),
-                RMSE = ResolveMaterialRmse(material),
-                AlphaCutoff = material.AlphaCutoff,
-            };
+            entry.Flags = flags;
+            return entry;
         }
 
         private static void AccumulateMaterialTextureResolution(
@@ -2019,37 +2017,6 @@ namespace XREngine.Rendering.Commands
                 descriptorPublicationGeneration,
                 resolution.PublicationGeneration);
         }
-        private static Vector4 ResolveMaterialBaseColorOpacity(XRMaterial material)
-        {
-            Vector3 baseColor = material.Parameter<ShaderVector3>("BaseColor")?.Value ?? Vector3.One;
-            float opacity = material.Parameter<ShaderFloat>("Opacity")?.Value ?? 1.0f;
-
-            if (material.Parameter<ShaderVector4>("BaseColor") is { } baseColor4)
-            {
-                Vector4 v = baseColor4.Value;
-                baseColor = new Vector3(v.X, v.Y, v.Z);
-                opacity = v.W;
-            }
-            else if (material.Parameter<ShaderVector4>("MatColor") is { } matColor)
-            {
-                Vector4 v = matColor.Value;
-                baseColor = new Vector3(v.X, v.Y, v.Z);
-                opacity = v.W;
-            }
-
-            return new Vector4(baseColor, opacity);
-        }
-
-        private static Vector4 ResolveMaterialRmse(XRMaterial material)
-        {
-            float roughness = material.Parameter<ShaderFloat>("Roughness")?.Value ?? 1.0f;
-            float metallic = material.Parameter<ShaderFloat>("Metallic")?.Value ?? 0.0f;
-            float specular = material.Parameter<ShaderFloat>("Specular")?.Value ?? 1.0f;
-            float emission = material.Parameter<ShaderFloat>("Emission")?.Value ?? 0.0f;
-
-            return new Vector4(roughness, metallic, specular, emission);
-        }
-
         private static MaterialTextureReferenceResolution ResolveMaterialTexture(
             XRMaterial material,
             XRTexture texture,

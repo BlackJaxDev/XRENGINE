@@ -58,7 +58,7 @@ public sealed class NativeFbxImporterTests
 
         try
         {
-            using var importer = new ModelImporter(fbxPath, onCompleted: null, materialFactory: null)
+            using var importer = new ModelAssetImporter(fbxPath, onCompleted: null, materialFactory: null)
             {
                 ImportOptions = new ModelImportOptions
                 {
@@ -137,7 +137,7 @@ public sealed class NativeFbxImporterTests
 
         try
         {
-            using var importer = new ModelImporter(fbxPath, onCompleted: null, materialFactory: null);
+            using var importer = new ModelAssetImporter(fbxPath, onCompleted: null, materialFactory: null);
 
             SceneNode? rootNode = importer.Import(PostProcessSteps.None, onProgress: null);
 
@@ -180,7 +180,7 @@ public sealed class NativeFbxImporterTests
         {
             static XRMesh ImportMesh(string sourcePath, ModelImportOptions options)
             {
-                using var importer = new ModelImporter(sourcePath, onCompleted: null, materialFactory: null)
+                using var importer = new ModelAssetImporter(sourcePath, onCompleted: null, materialFactory: null)
                 {
                     ImportOptions = options,
                 };
@@ -210,7 +210,7 @@ public sealed class NativeFbxImporterTests
             XRMesh unflippedMesh = ImportMesh(fbxPath, new ModelImportOptions
             {
                 GenerateMeshRenderersAsync = false,
-                LegacyPostProcessSteps = PostProcessSteps.None,
+                LegacyPostProcessSteps = ModelImportSteps.None,
             });
 
             unflippedMesh.Vertices[0].TextureCoordinateSets.ShouldNotBeNull();
@@ -236,7 +236,7 @@ public sealed class NativeFbxImporterTests
 
         try
         {
-            using var importer = new ModelImporter(fbxPath, onCompleted: null, materialFactory: null)
+            using var importer = new ModelAssetImporter(fbxPath, onCompleted: null, materialFactory: null)
             {
                 ImportOptions = new ModelImportOptions
                 {
@@ -272,7 +272,7 @@ public sealed class NativeFbxImporterTests
             ProcessMeshesAsynchronously = true,
         };
 
-        using (XRPrefabSource.EnterSynchronousMeshImportScope(options))
+        using (SynchronousModelMeshImportScope.Enter(options))
         {
             options.ProcessMeshesAsynchronously.ShouldBe(false);
         }
@@ -281,7 +281,7 @@ public sealed class NativeFbxImporterTests
 
         options.ProcessMeshesAsynchronously = null;
 
-        using (XRPrefabSource.EnterSynchronousMeshImportScope(options))
+        using (SynchronousModelMeshImportScope.Enter(options))
         {
             options.ProcessMeshesAsynchronously.ShouldBe(false);
         }
@@ -301,7 +301,7 @@ public sealed class NativeFbxImporterTests
 
         try
         {
-            using var importer = new ModelImporter(fbxPath, onCompleted: null, materialFactory: null)
+            using var importer = new ModelAssetImporter(fbxPath, onCompleted: null, materialFactory: null)
             {
                 ImportOptions = new ModelImportOptions
                 {
@@ -394,7 +394,7 @@ public sealed class NativeFbxImporterTests
 
         try
         {
-            using var importer = new ModelImporter(fbxPath, onCompleted: null, materialFactory: null)
+            using var importer = new ModelAssetImporter(fbxPath, onCompleted: null, materialFactory: null)
             {
                 ImportOptions = new ModelImportOptions
                 {
@@ -510,7 +510,7 @@ public sealed class NativeFbxImporterTests
     [Test]
     public void NativeFbxMeshBuildParallelism_UsesExplicitLimitAndConservativeAutoCap()
     {
-        Type importerType = typeof(ModelImporter).Assembly.GetType("XREngine.NativeFbxSceneImporter", throwOnError: true)!;
+        Type importerType = typeof(ModelAssetImporter).Assembly.GetType("XREngine.NativeFbxSceneImporter", throwOnError: true)!;
         MethodInfo method = importerType.GetMethod("ResolveMeshBuildParallelism", BindingFlags.NonPublic | BindingFlags.Static)!;
 
         int explicitParallelism = (int)method.Invoke(null, [new ModelImportOptions
@@ -568,7 +568,7 @@ public sealed class NativeFbxImporterTests
             [boneObjectId] = boneNode,
         };
 
-        Type importerType = typeof(ModelImporter).Assembly.GetType("XREngine.NativeFbxSceneImporter", throwOnError: true)!;
+        Type importerType = typeof(ModelAssetImporter).Assembly.GetType("XREngine.NativeFbxSceneImporter", throwOnError: true)!;
         MethodInfo method = importerType.GetMethod("BuildSkinWeightsByControlPoint", BindingFlags.NonPublic | BindingFlags.Static)!;
         var result = (Dictionary<int, Dictionary<TransformBase, (float weight, Matrix4x4 bindInvWorldMatrix)>>)method.Invoke(
             obj: null,
@@ -624,7 +624,7 @@ public sealed class NativeFbxImporterTests
         };
         AABB rawMeshBounds = subMesh.Bounds;
 
-        Type importerType = typeof(ModelImporter).Assembly.GetType("XREngine.NativeFbxSceneImporter", throwOnError: true)!;
+        Type importerType = typeof(ModelAssetImporter).Assembly.GetType("XREngine.NativeFbxSceneImporter", throwOnError: true)!;
         MethodInfo method = importerType.GetMethod("UpdateSkinnedSubMeshCullingBoundsForRuntimeBasis", BindingFlags.NonPublic | BindingFlags.Static)!;
         method.Invoke(obj: null, parameters: new object[] { subMesh, mesh, meshNode.Transform.WorldMatrix, rootNode.Transform });
 

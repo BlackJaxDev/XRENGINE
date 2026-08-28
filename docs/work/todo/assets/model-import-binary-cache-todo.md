@@ -66,7 +66,7 @@ The deterministic model binary container and defensive reader now exist. End-to-
 | GPUScene meshlet registration and cone data | Exists in `GPUScene.GpuMeshletDescriptor` | Cache remains CPU-owned; GPU upload data is rebuilt from cached CPU descriptors. |
 | Runtime meshlet disk cache | Exists in `MeshletPayloadDiskCache.cs` | It becomes a repair/non-model secondary cache for model imports. |
 | Generic manual reimport transaction | Exists in `AssetManager.ThirdPartyImport.cs` | Extend it to stage and publish a cache candidate while preserving generated asset identity. |
-| Model-specific binary container/codec | A deterministic writer and defensive manifest/selective reader exist in `XREngine.Runtime.ModelingBridge/Importing/Caching/`; the exclusive engine codec recognizes the fixed magic and validates the manifest plus entry-source freshness | Live `XRPrefabSource` hydration and cache publication remain deliberately unavailable until cooked model sections exist. |
+| Model-specific binary container/codec | A deterministic writer and defensive manifest/selective reader exist in `XREngine.Runtime.ModelAssetPipeline/Importing/Caching/`; the exclusive engine codec recognizes the fixed magic and validates the manifest plus entry-source freshness | Live `XRPrefabSource` hydration and cache publication remain deliberately unavailable until cooked model sections exist. |
 | Explicit cache rejection reasons and backend registry | Shared `CacheRejectReason`, immutable versioned descriptors, deterministic resolver snapshots, normalized producer reports, and the Unity adapter exist | The v1 preamble and mandatory dependency/manifest chunks persist the completed producer and dependency contracts. |
 | Deterministic model-cache identity | Canonical import/cook projections, authored override snapshots, SHA-256-derived variant keys, origin-aware source identity, and bounded paths are integrated into `AssetManager` | The resolved path and compatibility hashes now feed the v1 container preamble without changing lookup identity. |
 
@@ -95,9 +95,9 @@ The following decisions must remain true unless the design and this tracker are 
 - `XRENGINE/Core/Engine/Loading/AssetManager.Loading.SerializationAndCache.cs` — generic cache routing.
 - `XRENGINE/Core/Engine/AssetManager.ThirdPartyImport.cs` — reimport transaction.
 - `XRENGINE/Core/Engine/ModelCaching/` — proposed AssetManager adapter, hydration, and publication integration.
-- `XREngine.Runtime.ModelingBridge/Importing/ModelImporter.cs` — producer selection and import routing.
-- `XREngine.Runtime.ModelingBridge/Importing/ModelImportOptions.cs` — import and cook policy.
-- `XREngine.Runtime.ModelingBridge/Importing/Caching/` — proposed backend descriptors, dependency reporting, and binary document/container implementation.
+- `XREngine.Runtime.ModelAssetPipeline/Importing/ModelAssetImporter.cs` — producer selection and import routing.
+- `XREngine.Runtime.ModelAssetPipeline/Importing/ModelImportOptions.cs` — import and cook policy.
+- `XREngine.Runtime.ModelAssetPipeline/Importing/Caching/` — proposed backend descriptors, dependency reporting, and binary document/container implementation.
 - `XRENGINE/Scene/UnityEditorImportBridge.cs` — Unity producer adapter at the upper-layer composition boundary.
 - `XRENGINE/Scene/Prefabs/XRPrefabSource.cs` — hydrated imported-model state.
 - `XREngine.Runtime.Rendering/Objects/Meshes/XRMesh.CookedBinary.cs` — existing cooked mesh payload to refactor into shared sections.
@@ -141,8 +141,8 @@ Candidate existing fixtures:
 - [x] Route exclusive model lookup before the generic cache timestamp/YAML path and keep model validity inside the model codec.
 - [x] Add a model codec registration for `XRPrefabSource`.
 - [x] Define immutable backend descriptors: stable ID, implementation version, supported extensions, priority, and capability flags.
-- [x] Make the ModelingBridge FBX/glTF/Assimp path resolve an ordered candidate list deterministically.
-- [x] Register Unity prefab conversion as an `XRENGINE` adapter that emits the same normalized producer/dependency report without moving Unity-specific types into ModelingBridge.
+- [x] Make the ModelAssetPipeline FBX/glTF/Assimp path resolve an ordered candidate list deterministically.
+- [x] Register Unity prefab conversion as an `XREngine.Editor` adapter that emits the same normalized producer/dependency report without moving Unity-specific types into ModelAssetPipeline.
 - [x] Record the requested policy, candidate-list hash, actual producer ID, and actual producer version.
 - [x] Require producers to report structural dependencies, stable source entity keys, and imported remap/reference keys.
 - [x] Remove the independent glTF remap-key pre-parse from `XRPrefabSource`; seed keys from the successful producer report or warm manifest.
@@ -156,9 +156,9 @@ Implemented routing evidence:
 - `AssetCacheTests` covers model registration, legacy rejection, no generic model-cache publication, and source fallback in the presence of a fresh legacy YAML entry.
 - `ModelImportBackendRegistry` owns immutable descriptor snapshots ordered by descending priority and ordinal stable ID. Built-ins are `xrengine.native-gltf@1`, `xrengine.native-fbx@1`, and `assimp@1`.
 - Resolver policy v1 normalizes FBX/glTF/other-format policies, preserves `Auto` as the requested policy, and hashes the ordered candidate IDs and implementation versions with SHA-256.
-- `ModelImporter` executes the resolver snapshot in order and exposes the successful producer through both `LastBackendSelection` and `ModelImporterResult.BackendSelection`.
+- `ModelAssetImporter` executes the resolver snapshot in order and exposes the successful producer through both `LastBackendSelection` and `ModelAssetImportResult.BackendSelection`.
 - Native glTF, native FBX, and Assimp emit immutable, normalized dependency/entity/reference metadata. Assimp discovers external glTF buffers/images and OBJ material libraries; native FBX uses stable FBX object IDs.
-- `UnityModelImportProducerAdapter` registers `xrengine.unity-prefab@1` at the upper boundary and maps `UnityPrefabImportManifest` records without introducing Unity types into ModelingBridge.
+- `UnityModelImportProducerAdapter` registers `xrengine.unity-prefab@1` at the upper boundary and maps `UnityPrefabImportManifest` records without introducing Unity types into ModelAssetPipeline.
 - `XRPrefabSource` consumes the successful producer report to seed texture/material remap keys and no longer opens glTF independently for key discovery.
 
 ## Phase 2 — Paths, Fingerprints, and Legacy Transition
@@ -205,14 +205,14 @@ Implemented identity and transition evidence:
 
 Implemented container evidence:
 
-- `XREngine.Runtime.ModelingBridge/Importing/Caching/` owns the immutable v1 container model, deterministic writer, strict reader, and centralized read-limit policy.
+- `XREngine.Runtime.ModelAssetPipeline/Importing/Caching/` owns the immutable v1 container model, deterministic writer, strict reader, and centralized read-limit policy.
 - The packed little-endian layout uses a 308-byte preamble, 64-byte chunk entries, 16-byte alignment, and 20 explicit versioned chunk type IDs.
 - The writer emits NFC-normalized ordinal string-pool and chunk ordering. xxHash3-64 independently protects the preamble, string pool, chunk table, dependency manifest, and decoded chunk bodies.
 - The reader validates checked ranges, non-overlap, counts, hard resource ceilings, exact layout versions, strict UTF-8 strings, required/optional/unknown chunk policy, and the reserved uncompressed codec contract before exposing payload bytes.
 - Manifest-only, selected-chunk, and full required-chunk publication-validation entry points share the same defensive validation path.
 - The exclusive engine codec distinguishes the fixed binary magic from legacy YAML, validates binary manifests and entry-source length/timestamp/hash gates, then reports `CodecUnavailable` until later phases provide live hydration and publication payloads.
 - `ModelBinaryContainerTests` covers fixed layout, round trip, deterministic bytes, selective reads, publication validation, truncation, every checksum layer, overlaps, absurd counts, malformed strings/layouts, required/optional unknown chunks, codec rejection, read-limit ceilings, and codec source gating.
-- Validation on 2026-07-29: the ModelingBridge and XRENGINE no-dependency builds succeeded with zero errors. An isolated cache regression project passed 51/51 tests: all 16 Phase 3 container tests plus the Phase 1/2 model-cache, `AssetCacheTests`, and `NativeGltfImporterTests` suites. The full unit-test project is currently blocked by unrelated concurrent Vulkan test work referencing a missing `VkObject<>`; existing Magick.NET advisory warnings also remain unrelated.
+- Validation on 2026-07-29: the then-named ModelingBridge and XRENGINE no-dependency builds succeeded with zero errors. An isolated cache regression project passed 51/51 tests: all 16 Phase 3 container tests plus the Phase 1/2 model-cache, `AssetCacheTests`, and `NativeGltfImporterTests` suites. The full unit-test project was blocked by unrelated concurrent Vulkan test work referencing a missing `VkObject<>`; existing Magick.NET advisory warnings were also unrelated.
 
 ## Phase 4 — Import-Time Cooking and Shared Mesh Section Codecs
 
@@ -252,7 +252,7 @@ Remaining work:
 - [ ] Introduce a cache-local `CookedModelDocument` independent of `AssetManager` and editor assemblies.
 - [ ] Add an upper-layer `IImportedComponentCacheCodec` registry with stable keys, versions, required/optional policy, and bounded canonical payloads.
 - [ ] Keep standard model components reference-based so component payloads do not duplicate model/submesh/material objects.
-- [ ] Map supported Unity component records at the `XRENGINE` boundary without adding Unity-specific dependencies to ModelingBridge.
+- [ ] Map supported Unity component records at the `XREngine.Editor` boundary without adding Unity-specific dependencies to ModelAssetPipeline.
 - [ ] Hydrate `XRPrefabSource` through normal mutation paths, using `SetField(...)` where `XRBase` state changes.
 - [ ] Rebuild prefab hierarchy and component relationships from deterministic cache-local IDs.
 - [ ] Restore mesh, material, skin, morph, and animation references without source parsing.

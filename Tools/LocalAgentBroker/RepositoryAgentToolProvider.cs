@@ -22,8 +22,6 @@ internal sealed partial class RepositoryAgentToolProvider : IAgentToolProvider
     private const int MaximumGlobCount = 8;
     private const long MaximumRunSearchBytes = 268_435_456;
     private const long MaximumRunOutputBytes = 2_097_152;
-    private static readonly TimeSpan s_toolTimeout = TimeSpan.FromSeconds(10);
-
     private static readonly IReadOnlyList<AgentToolDefinition> s_tools =
     [
         new AgentToolDefinition
@@ -90,15 +88,13 @@ internal sealed partial class RepositoryAgentToolProvider : IAgentToolProvider
         }
 
         AgentToolResult result;
-        using var timeoutSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        timeoutSource.CancelAfter(s_toolTimeout);
         try
         {
             using JsonDocument document = JsonDocument.Parse(call.ArgumentsJson);
             JsonElement arguments = document.RootElement;
             result = call.Name switch
             {
-                SearchToolName => Search(arguments, timeoutSource.Token),
+                SearchToolName => Search(arguments, cancellationToken),
                 ReadToolName => Read(arguments),
                 _ => new AgentToolResult
                 {
@@ -123,15 +119,6 @@ internal sealed partial class RepositoryAgentToolProvider : IAgentToolProvider
                 IsError = true,
             };
         }
-        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
-        {
-            result = new AgentToolResult
-            {
-                Content = "Repository tool execution exceeded its 10-second limit.",
-                IsError = true,
-            };
-        }
-
         int resultBytes = Encoding.UTF8.GetByteCount(result.Content);
         if (resultBytes > _remainingOutputBytes)
         {

@@ -319,15 +319,23 @@ internal sealed partial class VulkanFrameLoop : IVulkanTargetOutputHost
     public bool TryBeginDestroyImageView(ImageView imageView, string owner)
         => imageView.Handle != 0 && TryCompleteResource(ObjectType.ImageView, imageView.Handle, owner);
 
+    public bool TryBeginReleaseExternalImage(Image image, string owner)
+        => image.Handle != 0 && TryCompleteResource(
+            ObjectType.Image,
+            image.Handle,
+            owner,
+            requireExternal: true);
+
     public void TrackLiveImageView(ImageView imageView, in ImageViewCreateInfo createInfo, string owner)
     {
         if (imageView.Handle == 0)
             return;
 
-        VulkanResourceLifetimeTracker tracker = _resourceRuntime.Lifetime.Tracker;
-        RegisterResource(ObjectType.ImageView, imageView.Handle, owner);
-        lock (tracker.SyncRoot)
-            tracker.ImageViewBackingImages[imageView.Handle] = createInfo.Image.Handle;
+        _resourceRuntime.RegisterImageViewResource(
+            imageView,
+            createInfo.Image,
+            owner,
+            IsExternalImageOwner(owner));
     }
 
     public Result SubmitToQueueTracked(Queue queue, ref SubmitInfo submitInfo, Fence fence, string caller)
@@ -505,7 +513,15 @@ internal sealed partial class VulkanFrameLoop : IVulkanTargetOutputHost
             owner,
             externallyOwned: false);
 
-    private bool TryCompleteResource(ObjectType type, ulong handle, string owner)
+    private static bool IsExternalImageOwner(string owner)
+        => owner.StartsWith("OpenXR.Swapchain", StringComparison.Ordinal) ||
+           owner.StartsWith("Swapchain.Color", StringComparison.Ordinal);
+
+    private bool TryCompleteResource(
+        ObjectType type,
+        ulong handle,
+        string owner,
+        bool requireExternal = false)
     {
         if (handle == 0)
             return false;
@@ -514,26 +530,33 @@ internal sealed partial class VulkanFrameLoop : IVulkanTargetOutputHost
         VulkanResourceLifetimeTracker tracker = _resourceRuntime.Lifetime.Tracker;
         lock (tracker.SyncRoot)
         {
-            if (tracker.ResourceLifetimes.TryGetValue(key, out VulkanResourceLifetimeRecord? record) &&
-                !tracker.IsRetirementReadyNoLock(new VulkanRetirementTicket(
-                    tracker.LastGraphicsSequence,
-                    tracker.LastTransferSequence,
-                    tracker.LastOtherSequence,
-                    0,
-                    0,
-                    false)))
+            if (tracker.ResourceLifetimes.TryGetValue(
+                    key,
+                    out VulkanResourceLifetimeRecord? record))
             {
-                Debug.VulkanWarning(
-                    "[Vulkan] Target output deferred destruction of {0} 0x{1:X} in {2}; generation {3} is still in flight.",
-                    type,
-                    handle,
-                    owner,
-                    record.Generation);
-                return false;
+                if (requireExternal &&
+                    (record.State & EVulkanResourceLifetimeState.External) == 0)
+                {
+                    throw new InvalidOperationException(
+                        $"Target output cannot release engine-owned Vulkan resource {key} through the external-image path ({owner}).");
+                }
+
+                if (!record.Pins.IsRetirementReady(
+                        tracker.CompletedGraphicsSequence,
+                        tracker.CompletedTransferSequence,
+                        tracker.CompletedOtherSequence))
+                {
+                    Debug.VulkanWarning(
+                        "[Vulkan] Target output deferred destruction of {0} 0x{1:X} in {2}; generation {3} is still in flight.",
+                        type,
+                        handle,
+                        owner,
+                        record.Generation);
+                    return false;
+                }
             }
 
-            tracker.PublishedResourceGenerations.TryRemove(key, out _);
-            tracker.ResourceLifetimes.Remove(key);
+            tracker.RemoveResourceNoLock(key);
             if (type == ObjectType.ImageView)
                 tracker.ImageViewBackingImages.Remove(handle);
             return true;
@@ -552,13 +575,11 @@ internal sealed partial class VulkanFrameLoop : IVulkanTargetOutputHost
                 {
                     VulkanResourceLifetimeKey childKey = ResourceKey(ObjectType.CommandBuffer, child);
                     tracker.CommandBufferLifetimes.Remove(child);
-                    tracker.PublishedResourceGenerations.TryRemove(childKey, out _);
-                    tracker.ResourceLifetimes.Remove(childKey);
+                    tracker.RemoveResourceNoLock(childKey);
                 }
             }
 
-            tracker.PublishedResourceGenerations.TryRemove(poolKey, out _);
-            tracker.ResourceLifetimes.Remove(poolKey);
+            tracker.RemoveResourceNoLock(poolKey);
         }
     }
 

@@ -65,7 +65,7 @@ namespace XREngine.Components.Animation
         private bool _hasPreviousAppliedRootMotionPose;
         private int _deferredStartVersion;
         private bool _deferredStartPending;
-        private UnityHumanoidRootMotionPolicy? _rootMotionPolicy;
+        private ImportedHumanoidRootMotionPolicy? _rootMotionPolicy;
         private float _effectiveHumanoidSamplePhase;
 
         private AnimationClip? _animation;
@@ -233,7 +233,7 @@ namespace XREngine.Components.Animation
             {
                 case nameof(Animation):
                     PlaybackCapabilityDiagnostic = string.Empty;
-                    ResetUnityAnimationBindings();
+                    ResetImportedAnimationBindings();
                     if (IsActiveInHierarchy && StartOnActivate)
                         Start();
                     break;
@@ -365,14 +365,14 @@ namespace XREngine.Components.Animation
             StartAllPropertyAnimations(clip, ResolveEffectiveSampleTimeTicks(clip, initialTicks));
             UpdateEffectiveHumanoidSamplePhase(clip, initialTicks);
             SetPlaybackTimeTicks(initialTicks);
-            PrimeUnityAnimationEventClock(clip, initialTicks);
+            PrimeImportedAnimationEventClock(clip, initialTicks);
         }
 
         private void CompletePlaybackStartup()
         {
             ApplyAnimatedValues();
             GetSiblingHumanoid()?.ApplyCurrentMusclePose();
-            DispatchInitialUnityAnimationEvents();
+            DispatchInitialImportedAnimationEvents();
             RegisterTick(ETickGroup.Normal, ETickOrder.Animation, TickAnimation);
             RegisterTick(ETickGroup.Late, ETickOrder.Input, PublishRootMotion);
         }
@@ -455,21 +455,21 @@ namespace XREngine.Components.Animation
             // accumulate the absolute projected pose on every repeated seek.
             BeginRootMotionEpoch(preserveExistingAnchor: true);
 
-            long previousEventTicks = _unityEventUnwrappedPlaybackTimeTicks;
+            long previousEventTicks = _sourceEventUnwrappedPlaybackTimeTicks;
             long evaluationTicks = NormalizePlaybackTime(SecondsToStopwatchTicks(timeSeconds), Animation, wrapLooped: false);
             SetAllPropertyAnimationTimesForPlayback(Animation, evaluationTicks);
             SetPlaybackTimeTicks(evaluationTicks);
-            _unityEventUnwrappedPlaybackTimeTicks = evaluationTicks;
-            _dispatchInitialUnityEvents = false;
+            _sourceEventUnwrappedPlaybackTimeTicks = evaluationTicks;
+            _dispatchInitialSourceEvents = false;
             if (dispatchEvents)
             {
-                _unityAnimationEventBuffer.Clear();
-                Animation.CollectUnityAnimationEvents(
-                    _unityAnimationEventBuffer,
+                _importedAnimationEventBuffer.Clear();
+                Animation.CollectImportedAnimationEvents(
+                    _importedAnimationEventBuffer,
                     StopwatchTicksToSeconds(previousEventTicks),
                     StopwatchTicksToSeconds(evaluationTicks),
                     includePrevious: false);
-                DispatchBufferedUnityAnimationEvents();
+                DispatchBufferedImportedAnimationEvents();
             }
 
             if (!ShouldDriveSiblingHumanoidPose())
@@ -500,26 +500,26 @@ namespace XREngine.Components.Animation
                 return false;
             }
 
-            if (!clip.TryValidateUnityPlaybackCapabilities(allowRuntimeAdapters: true, out diagnostic))
+            if (!clip.TryValidateSourcePlaybackCapabilities(allowRuntimeAdapters: true, out diagnostic))
             {
                 PlaybackCapabilityDiagnostic = diagnostic;
                 return false;
             }
 
-            if (!TryValidateUnityAnimationBindings(clip, out diagnostic))
+            if (!TryValidateImportedAnimationBindings(clip, out diagnostic))
             {
                 PlaybackCapabilityDiagnostic = diagnostic;
                 return false;
             }
 
-            if (clip.UnityHumanoidRootMotionSettings is { } serializedRootSettings
-                && !UnityHumanoidRootMotionPolicy.TryCreate(serializedRootSettings, out _, out diagnostic))
+            if (clip.ImportedHumanoidRootMotionSettings is { } serializedRootSettings
+                && !ImportedHumanoidRootMotionPolicy.TryCreate(serializedRootSettings, out _, out diagnostic))
             {
                 PlaybackCapabilityDiagnostic = diagnostic;
                 return false;
             }
 
-            UnityAnimationImportManifest? manifest = clip.UnityImportManifest;
+            ImportedAnimationImportManifest? manifest = clip.SourceImportManifest;
             bool requiresHumanoid = manifest?.RequiresHumanoidAvatar == true
                 || clip.HasMuscleChannels
                 || clip.HasRootMotion
@@ -622,18 +622,18 @@ namespace XREngine.Components.Animation
             using (RuntimeAnimationHostServices.Current.StartProfileScope("AnimationClipComponent.TickAnimation.AdvanceTime"))
             {
                 deltaTicks = ScaleStopwatchTicks(SecondsToStopwatchTicks(RuntimeAnimationHostServices.Current.DilatedUpdateDeltaSeconds), Speed);
-                AdvanceAndDispatchUnityAnimationEvents(deltaTicks);
-                unwrappedPlaybackTimeTicks = _unityEventUnwrappedPlaybackTimeTicks;
+                AdvanceAndDispatchImportedAnimationEvents(deltaTicks);
+                unwrappedPlaybackTimeTicks = _sourceEventUnwrappedPlaybackTimeTicks;
                 playbackTimeTicks = NormalizePlaybackTime(
                     unwrappedPlaybackTimeTicks,
                     Animation,
-                    wrapLooped: Animation.UsesCyclicUnityPlayback);
+                    wrapLooped: Animation.UsesCyclicSourcePlayback);
                 long clipLengthTicks = GetClipLengthTicks(Animation);
-                _rootMotionLoopCycle = Animation.EffectiveUnityWrapMode == EUnityAnimationWrapMode.Loop
+                _rootMotionLoopCycle = Animation.EffectiveSourceWrapMode == EImportedAnimationWrapMode.Loop
                     ? CountWrappedCycles(unwrappedPlaybackTimeTicks, clipLengthTicks)
                     : 0L;
                 SetPlaybackTimeTicks(playbackTimeTicks);
-                stopAtPlaybackBoundary = Animation.EffectiveUnityWrapMode == EUnityAnimationWrapMode.Once
+                stopAtPlaybackBoundary = Animation.EffectiveSourceWrapMode == EImportedAnimationWrapMode.Once
                     && ((deltaTicks > 0L && unwrappedPlaybackTimeTicks >= clipLengthTicks)
                         || (deltaTicks < 0L && unwrappedPlaybackTimeTicks <= 0L));
             }
@@ -650,7 +650,7 @@ namespace XREngine.Components.Animation
             if (stopAtPlaybackBoundary)
             {
                 SetPlaybackTimeTicks(0L);
-                _unityEventUnwrappedPlaybackTimeTicks = 0L;
+                _sourceEventUnwrappedPlaybackTimeTicks = 0L;
                 Stop();
             }
         }
@@ -890,8 +890,8 @@ namespace XREngine.Components.Animation
             if (clip?.HasRootMotion != true
                 || !_hasCachedImportedBodyRootMembers
                 || humanoid is null
-                || _rootMotionPolicy is not UnityHumanoidRootMotionPolicy policy
-                || clip.UnityHumanoidRootMotionSettings is not { } settings)
+                || _rootMotionPolicy is not ImportedHumanoidRootMotionPolicy policy
+                || clip.ImportedHumanoidRootMotionSettings is not { } settings)
                 return;
 
             CacheHumanoidLoopPoseMemberCorrections(clip, policy);
@@ -901,7 +901,7 @@ namespace XREngine.Components.Animation
             bool needsEndpointMuscles = policy.LoopPose
                 || (policy.LoopTime
                     && !policy.BakePositionYIntoPose
-                    && policy.PositionYBasis is EUnityHumanoidRootPositionYBasis.Feet);
+                    && policy.PositionYBasis is EImportedHumanoidRootPositionYBasis.Feet);
             HumanoidProjectedRootPose sourceGenerator;
             if (needsEndpointMuscles)
             {
@@ -957,7 +957,7 @@ namespace XREngine.Components.Animation
 
         private void CacheHumanoidLoopPoseMemberCorrections(
             AnimationClip clip,
-            UnityHumanoidRootMotionPolicy policy)
+            ImportedHumanoidRootMotionPolicy policy)
         {
             if (!policy.LoopPose)
                 return;
@@ -1202,7 +1202,7 @@ namespace XREngine.Components.Animation
             Array.Clear(_loopProjectionEndMuscleValues);
             _loggedMissingHumanoidForRootMotion = false;
             _loggedMissingRootMotionTarget = false;
-            ResetUnityAnimationBindings();
+            ResetImportedAnimationBindings();
             _initialized = false;
         }
 
@@ -1380,8 +1380,8 @@ namespace XREngine.Components.Animation
 
         private void CacheRootMotionPolicy()
         {
-            _rootMotionPolicy = Animation?.UnityHumanoidRootMotionSettings is { } settings
-                && UnityHumanoidRootMotionPolicy.TryCreate(settings, out UnityHumanoidRootMotionPolicy policy, out _)
+            _rootMotionPolicy = Animation?.ImportedHumanoidRootMotionSettings is { } settings
+                && ImportedHumanoidRootMotionPolicy.TryCreate(settings, out ImportedHumanoidRootMotionPolicy policy, out _)
                     ? policy
                     : null;
         }
@@ -1444,7 +1444,7 @@ namespace XREngine.Components.Animation
                 _canonicalImportedBodySample,
                 _hasCachedImportedBodyRootMembers,
                 weight,
-                Animation.UnityHumanoidRootMotionSettings,
+                Animation.ImportedHumanoidRootMotionSettings,
                 Animation.Name,
                 _cycleOffsetSourceWrapped && _hasProjectedRootLoopPose
                     ? _projectedRootLoopPose
@@ -1455,7 +1455,7 @@ namespace XREngine.Components.Animation
                 _canonicalProjectionMuscleValues) == true;
 
             if (ownsImportedBodySampleTransaction)
-                PublishUnityHumanoidProjectionMuscles(humanoid!, fullWeight, weight);
+                PublishImportedHumanoidProjectionMuscles(humanoid!, fullWeight, weight);
 
             try
             {
@@ -1515,7 +1515,7 @@ namespace XREngine.Components.Animation
             NormalizeAnimatedQuaternionTargets();
         }
 
-        private void PublishUnityHumanoidProjectionMuscles(
+        private void PublishImportedHumanoidProjectionMuscles(
             HumanoidComponent humanoid,
             bool fullWeight,
             float weight)
@@ -1549,7 +1549,7 @@ namespace XREngine.Components.Animation
                 bool flipImportedMuscleZ = member.MemberName == "SetImportedRawValue"
                     && member.MethodArguments.Length > 2
                     && member.MethodArguments[2] is true;
-                humanoid.SetUnityHumanoidProjectionMuscle(
+                humanoid.SetImportedHumanoidProjectionMuscle(
                     value,
                     amount,
                     flipImportedMuscleZ);
@@ -2086,7 +2086,7 @@ namespace XREngine.Components.Animation
 
             if (IsClipHumanoidMirrorEnabled)
             {
-                humanoidValue = UnityHumanoidMirrorOperator.MirrorMuscle(humanoidValue, out float parity);
+                humanoidValue = ImportedHumanoidMirrorOperator.MirrorMuscle(humanoidValue, out float parity);
                 amount *= parity;
             }
 
@@ -2110,7 +2110,7 @@ namespace XREngine.Components.Animation
 
             if (IsClipHumanoidMirrorEnabled)
             {
-                humanoidValue = UnityHumanoidMirrorOperator.MirrorMuscle(humanoidValue, out float parity);
+                humanoidValue = ImportedHumanoidMirrorOperator.MirrorMuscle(humanoidValue, out float parity);
                 value *= parity;
             }
 
@@ -2130,7 +2130,7 @@ namespace XREngine.Components.Animation
             if (TryGetLimbGoal(member.MethodArguments[0], out var goal))
             {
                 if (IsClipHumanoidMirrorEnabled)
-                    goal = UnityHumanoidMirrorOperator.MirrorGoal(goal);
+                    goal = ImportedHumanoidMirrorOperator.MirrorGoal(goal);
                 if (FlipIKPositionLeftRight)
                     goal = SwapLimbLeftRight(goal);
                 member.MethodArguments[0] = SwapLimbGoalArgumentType(member.MethodArguments[0], goal);
@@ -2139,7 +2139,7 @@ namespace XREngine.Components.Animation
             if (IsClipHumanoidMirrorEnabled)
             {
                 if (value is Vector3 mirroredPosition)
-                    value = UnityHumanoidMirrorOperator.MirrorPosition(mirroredPosition);
+                    value = ImportedHumanoidMirrorOperator.MirrorPosition(mirroredPosition);
                 else if (value is float mirroredScalar && member.MemberName == "SetAnimatedIKPositionX")
                     value = -mirroredScalar;
             }
@@ -2165,14 +2165,14 @@ namespace XREngine.Components.Animation
             if (TryGetLimbGoal(member.MethodArguments[0], out var goal))
             {
                 if (IsClipHumanoidMirrorEnabled)
-                    goal = UnityHumanoidMirrorOperator.MirrorGoal(goal);
+                    goal = ImportedHumanoidMirrorOperator.MirrorGoal(goal);
                 if (FlipIKPositionLeftRight)
                     goal = SwapLimbLeftRight(goal);
                 member.MethodArguments[0] = SwapLimbGoalArgumentType(member.MethodArguments[0], goal);
             }
 
             if (IsClipHumanoidMirrorEnabled)
-                value = UnityHumanoidMirrorOperator.MirrorPosition(value);
+                value = ImportedHumanoidMirrorOperator.MirrorPosition(value);
 
             if (FlipIKPositionZ)
                 value = new Vector3(value.X, value.Y, -value.Z);
@@ -2186,7 +2186,7 @@ namespace XREngine.Components.Animation
             if (TryGetLimbGoal(member.MethodArguments[0], out var goal))
             {
                 if (IsClipHumanoidMirrorEnabled)
-                    goal = UnityHumanoidMirrorOperator.MirrorGoal(goal);
+                    goal = ImportedHumanoidMirrorOperator.MirrorGoal(goal);
                 if (FlipIKPositionLeftRight)
                     goal = SwapLimbLeftRight(goal);
                 member.MethodArguments[0] = SwapLimbGoalArgumentType(member.MethodArguments[0], goal);
@@ -2207,7 +2207,7 @@ namespace XREngine.Components.Animation
             if (TryGetLimbGoal(member.MethodArguments[0], out var goal))
             {
                 if (IsClipHumanoidMirrorEnabled)
-                    goal = UnityHumanoidMirrorOperator.MirrorGoal(goal);
+                    goal = ImportedHumanoidMirrorOperator.MirrorGoal(goal);
                 if (FlipIKRotationLeftRight)
                     goal = SwapLimbLeftRight(goal);
                 member.MethodArguments[0] = SwapLimbGoalArgumentType(member.MethodArguments[0], goal);
@@ -2216,7 +2216,7 @@ namespace XREngine.Components.Animation
             if (IsClipHumanoidMirrorEnabled)
             {
                 if (value is Quaternion mirroredRotation)
-                    value = UnityHumanoidMirrorOperator.MirrorRotation(mirroredRotation);
+                    value = ImportedHumanoidMirrorOperator.MirrorRotation(mirroredRotation);
                 else if (value is float mirroredScalar
                     && member.MemberName is "SetAnimatedIKRotationY" or "SetAnimatedIKRotationZ")
                     value = -mirroredScalar;
@@ -2243,14 +2243,14 @@ namespace XREngine.Components.Animation
             if (TryGetLimbGoal(member.MethodArguments[0], out var goal))
             {
                 if (IsClipHumanoidMirrorEnabled)
-                    goal = UnityHumanoidMirrorOperator.MirrorGoal(goal);
+                    goal = ImportedHumanoidMirrorOperator.MirrorGoal(goal);
                 if (FlipIKRotationLeftRight)
                     goal = SwapLimbLeftRight(goal);
                 member.MethodArguments[0] = SwapLimbGoalArgumentType(member.MethodArguments[0], goal);
             }
 
             if (IsClipHumanoidMirrorEnabled)
-                value = UnityHumanoidMirrorOperator.MirrorRotation(value);
+                value = ImportedHumanoidMirrorOperator.MirrorRotation(value);
 
             if (FlipIKRotationZ)
                 value = new Quaternion(-value.X, -value.Y, value.Z, value.W);
@@ -2264,7 +2264,7 @@ namespace XREngine.Components.Animation
             if (TryGetLimbGoal(member.MethodArguments[0], out var goal))
             {
                 if (IsClipHumanoidMirrorEnabled)
-                    goal = UnityHumanoidMirrorOperator.MirrorGoal(goal);
+                    goal = ImportedHumanoidMirrorOperator.MirrorGoal(goal);
                 if (FlipIKRotationLeftRight)
                     goal = SwapLimbLeftRight(goal);
                 member.MethodArguments[0] = SwapLimbGoalArgumentType(member.MethodArguments[0], goal);
@@ -2408,7 +2408,7 @@ namespace XREngine.Components.Animation
         private long ResolveEffectiveSampleTimeTicks(AnimationClip clip, long playbackTimeTicks)
         {
             long lengthTicks = GetClipLengthTicks(clip);
-            if (lengthTicks <= 0L || _rootMotionPolicy is not UnityHumanoidRootMotionPolicy policy)
+            if (lengthTicks <= 0L || _rootMotionPolicy is not ImportedHumanoidRootMotionPolicy policy)
                 return Math.Clamp(playbackTimeTicks, 0L, Math.Max(0L, lengthTicks));
 
             long cycleOffsetTicks = (long)Math.Round(policy.NormalizedCycleOffset * lengthTicks);
@@ -2433,7 +2433,7 @@ namespace XREngine.Components.Animation
 
             long sampleTimeTicks = ResolveEffectiveSampleTimeTicks(clip, playbackTimeTicks);
             _effectiveHumanoidSamplePhase = Math.Clamp(sampleTimeTicks / (float)lengthTicks, 0.0f, 1.0f);
-            if (_rootMotionPolicy is UnityHumanoidRootMotionPolicy policy)
+            if (_rootMotionPolicy is ImportedHumanoidRootMotionPolicy policy)
             {
                 long cycleOffsetTicks = (long)Math.Round(policy.NormalizedCycleOffset * lengthTicks);
                 long logicalTicks = Math.Clamp(playbackTimeTicks, 0L, lengthTicks);
@@ -2472,7 +2472,7 @@ namespace XREngine.Components.Animation
             if (!wrapLooped)
                 return Math.Clamp(timeTicks, 0L, clipLengthTicks);
 
-            double sampleSeconds = clip.ResolveUnityPlaybackTime(
+            double sampleSeconds = clip.ResolveSourcePlaybackTime(
                 StopwatchTicksToSeconds(timeTicks),
                 out _,
                 out _);

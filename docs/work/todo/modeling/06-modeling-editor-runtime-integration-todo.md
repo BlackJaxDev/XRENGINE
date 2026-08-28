@@ -51,7 +51,7 @@ Expose the modeling system through the ImGui editor path first, bridge committed
 - `XREngine.Editor/`
 - `XREngine.Editor/MeshEditingPawnComponent.cs`
 - `XREngine.Editor/AssetEditors/`
-- `XREngine.Runtime.ModelingBridge/`
+- `XREngine.Runtime.ModelingIntegration/`
 - `XREngine.Runtime.Rendering/Objects/Meshes/`
 - `XREngine.Runtime.Rendering/Rendering/Commands/GPUScene/`
 - `XREngine.Runtime.Rendering/Rendering/Pipelines/`
@@ -135,7 +135,7 @@ Expose the modeling system through the ImGui editor path first, bridge committed
 
 - [ ] Geometry node graphs can be authored or at least inspected and parameterized in-editor.
 
-## Phase 4: Runtime Modeling Bridge
+## Phase 4: Runtime Modeling Integration
 
 **Goal:** convert authored/evaluated modeling data into runtime render data.
 
@@ -216,8 +216,8 @@ pwsh Tools/Reports/generate_mcp_docs.ps1
 
 ```powershell
 dotnet build .\XREngine.Editor\XREngine.Editor.csproj
-dotnet build .\XREngine.Runtime.ModelingBridge\XREngine.Runtime.ModelingBridge.csproj
+dotnet build .\XREngine.Runtime.ModelingIntegration\XREngine.Runtime.ModelingIntegration.csproj
 dotnet build .\XREngine.Runtime.Rendering\XREngine.Runtime.Rendering.csproj
 dotnet test .\XREngine.UnitTests\XREngine.UnitTests.csproj --filter FullyQualifiedName~Modeling
-dotnet test .\XREngine.UnitTests\XREngine.UnitTests.csproj --filter FullyQualifiedName~XRMeshModelingBridge
+dotnet test .\XREngine.UnitTests\XREngine.UnitTests.csproj --filter FullyQualifiedName~XRMeshModelingIntegration
 ```

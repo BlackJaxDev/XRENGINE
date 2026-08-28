@@ -1,4 +1,4 @@
-﻿# XRMesh Modeling and Editing Architecture
+# XRMesh Modeling and Editing Architecture
 
 [<- Docs index](../README.md)
 
@@ -42,16 +42,18 @@ The missing piece is a formal authoring architecture that preserves this richer 
 
 ## Architectural Constraints
 
-- `XREngine` references `XREngine.Modeling`.
-- `XREngine.Modeling` currently does not reference `XREngine` and should remain engine-agnostic.
-- Therefore, `XRMesh` conversion logic must live in `XREngine` (adapter/bridge layer), not inside `XREngine.Modeling`.
+- `XREngine.Modeling` is renderer- and importer-independent and references only lower data/math dependencies.
+- `XREngine.Runtime.Rendering` owns `XRMesh` and ordinary runtime use of already-produced meshes.
+- Therefore, `XRMesh` conversion logic lives in the optional `XREngine.Runtime.ModelingIntegration` adapter, never in Modeling, Rendering, or the external model asset pipeline.
+- External FBX/glTF/Assimp import, cooking, caches, and prefab reconstruction live separately in `XREngine.Runtime.ModelAssetPipeline`.
 
 ## Proposed Layers
 
 | Layer | Project | Responsibility |
 |---|---|---|
 | Authoring Domain | `XREngine.Modeling` | Topology kernel, attribute layers, editing operations, validation, acceleration caches |
-| XRMesh Bridge | `XREngine` | Convert `XRMesh` to/from modeling DTOs; preserve channel semantics and buffer layout intent |
+| XRMesh Modeling Integration | `XREngine.Runtime.ModelingIntegration` | Convert `XRMesh` to/from modeling DTOs; preserve channel semantics and buffer layout intent |
+| External Model Asset Pipeline | `XREngine.Runtime.ModelAssetPipeline` | Import/export source formats, cook/cache results, and publish native runtime model assets without depending on Modeling |
 | Editor Session | `XREngine.Editor` | Selection, gizmos, tool commands, undo scopes, save/apply workflows |
 
 ## Authoring Domain Model
@@ -89,25 +91,26 @@ Store per-element channels independently from topology:
 
 This prevents topology rewrites from silently dropping non-position data.
 
-## XRMesh Bridge Architecture
+## XRMesh Authoring Integration Architecture
 
-Add a bridge in `XREngine` (example namespace: `XREngine.Rendering.Modeling`):
+Use the dedicated `XREngine.Runtime.ModelingIntegration` assembly (namespace `XREngine.Rendering.Modeling`):
 
-- `XRMeshModelingImporter`
-- `XRMeshModelingExporter`
-- `XRMeshModelingOptions`
+- `XRMeshToModelingDocumentConverter`
+- `ModelingDocumentToXRMeshConverter`
+- `XRMeshToModelingDocumentOptions`
+- `ModelingDocumentToXRMeshOptions`
 
 `XREngine.Modeling` receives/returns neutral DTOs, not `XRMesh` directly.
 
-### Import Path (`XRMesh -> Modeling`)
+### Runtime Mesh To Modeling Document (`XRMesh -> Modeling`)
 
 1. Read geometry channels through `XRMesh` accessors and buffers (interleaved or separate).
 2. Normalize into `ModelingMeshDocument` channel sets.
-3. Import primitive indices (`Triangles`, `Lines`, `Points`) as applicable.
+3. Copy primitive indices (`Triangles`, `Lines`, `Points`) as applicable.
 4. Capture metadata required for round-trip: source primitive type, channel counts, buffer layout preference, and skinning/blendshape presence.
 5. Build topology caches and validation report.
 
-### Export Path (`Modeling -> XRMesh`)
+### Modeling Document To Runtime Mesh (`Modeling -> XRMesh`)
 
 1. Validate topology and channel cardinality.
 2. Build vertex/index streams according to export policy (keep indexed topology, optional remap/optimize pass).
@@ -223,23 +226,23 @@ Use this checklist to implement the baseline bridge in a single pass.
 - [x] Add `EditableMeshConverter.FromEditable(EditableMesh mesh, ModelingMeshMetadata metadata)`.
 - [x] Ensure conversion keeps triangle winding order and position indices stable.
 
-### 3. Add XRMesh Bridge in `XREngine`
+### 3. Add XRMesh Authoring Integration in `XREngine.Runtime.ModelingIntegration`
 
-- [x] Create folder `XREngine/Rendering/Modeling/`.
-- [x] Create `XREngine/Rendering/Modeling/XRMeshModelingImportOptions.cs`.
-- [x] Create `XREngine/Rendering/Modeling/XRMeshModelingExportOptions.cs`.
-- [x] Create `XREngine/Rendering/Modeling/XRMeshModelingImporter.cs`.
-- [x] Create `XREngine/Rendering/Modeling/XRMeshModelingExporter.cs`.
+- [x] Create project `XREngine.Runtime.ModelingIntegration`.
+- [x] Create `XREngine.Runtime.ModelingIntegration/XRMeshToModelingDocumentOptions.cs`.
+- [x] Create `XREngine.Runtime.ModelingIntegration/ModelingDocumentToXRMeshOptions.cs`.
+- [x] Create `XREngine.Runtime.ModelingIntegration/XRMeshToModelingDocumentConverter.cs`.
+- [x] Create `XREngine.Runtime.ModelingIntegration/ModelingDocumentToXRMeshConverter.cs`.
 - [x] Implement importer API:
-  - `public static ModelingMeshDocument Import(XRMesh mesh, XRMeshModelingImportOptions? options = null)`
+  - `public static ModelingMeshDocument Convert(XRMesh mesh, XRMeshToModelingDocumentOptions? options = null)`
 - [x] Implement exporter API:
-  - `public static XRMesh Export(ModelingMeshDocument document, XRMeshModelingExportOptions? options = null)`
+  - `public static XRMesh Convert(ModelingMeshDocument document, ModelingDocumentToXRMeshOptions? options = null)`
 - [x] In importer, read positions through `GetPosition`, indices through `GetIndices(EPrimitiveType.Triangles)`, and hydrate metadata.
 - [x] In exporter, create `XRMesh` from position/triangle streams and enforce `VertexCount`/index consistency.
 
-### 4. Add XRMesh Update Contract in Exporter
+### 4. Add XRMesh Update Contract in the Runtime-Mesh Converter
 
-- [x] Export path must perform all of the following before returning:
+- [x] Runtime-mesh conversion must perform all of the following before returning:
   - rebuild bounds from positions
   - repopulate triangle index list
   - invalidate index buffer cache
@@ -258,7 +261,7 @@ Use this checklist to implement the baseline bridge in a single pass.
 
 ### 6. Add Baseline Tests
 
-- [x] Create `XREngine.UnitTests/Rendering/XRMeshModelingBridgeTests.cs`.
+- [x] Create `XREngine.UnitTests/Rendering/XRMeshModelingIntegrationTests.cs`.
 - [x] Add test: `XRMesh -> Modeling -> XRMesh` preserves vertex positions and triangle indices for a simple triangle list mesh.
 - [x] Add test: exporter rejects invalid indices with a validation failure.
 - [x] Add test: importer handles meshes with no normals/uv/colors.
@@ -268,7 +271,7 @@ Use this checklist to implement the baseline bridge in a single pass.
 
 - [x] A mesh loaded from `XRMesh` can be edited with current `EditableMesh` operations and saved back to valid `XRMesh`.
 - [x] Round-trip preserves triangle topology and positions exactly for deterministic test meshes.
-- [x] No project reference cycle is introduced (`XREngine.Modeling` remains independent of `XREngine`).
+- [x] No project reference cycle is introduced (`XREngine.Modeling` remains independent of Runtime.Rendering and both optional runtime projects).
 - [x] New bridge unit tests pass in `XREngine.UnitTests`.
 
 ## Phase 1 Implementation Checklist (Concrete)
@@ -277,7 +280,7 @@ Use this checklist to complete channel-preserving round-trip behavior.
 
 ### 1. Channel-complete bridge behavior
 
-- [x] Set `XRMeshModelingImportOptions` defaults to import normals/tangents/texcoords/colors.
+- [x] Set `XRMeshToModelingDocumentOptions` defaults to import normals/tangents/texcoords/colors.
 - [x] Ensure importer populates `Normals`, `Tangents`, `TexCoordChannels`, and `ColorChannels` when present in source `XRMesh`.
 - [x] Ensure exporter writes imported normals/tangents/texcoords/colors back to `XRMesh` vertex streams.
 - [x] Keep channel cardinality validation enforced before export via `ModelingMeshValidation`.
@@ -296,7 +299,7 @@ Use this checklist to complete channel-preserving round-trip behavior.
 
 ### 4. Deterministic ordering policy
 
-- [x] Add explicit deterministic export ordering policy in `XRMeshModelingExportOptions`.
+- [x] Add explicit deterministic export ordering policy in `ModelingDocumentToXRMeshOptions`.
 - [x] Implement deterministic remap/ordering strategy with documented tie-break rules.
 - [x] Add tests proving repeated exports are deterministic under each policy mode.
 
@@ -304,7 +307,7 @@ Use this checklist to complete channel-preserving round-trip behavior.
 
 - [x] Representative round-trip tests preserve positions/indices plus normals/tangents/UV/color channels.
 - [x] Editor bridge save path no longer drops compatible attribute channels by default.
-- [x] Export ordering behavior is explicit and verified by deterministic tests.
+- [x] Runtime-mesh conversion ordering is explicit and verified by deterministic tests.
 
 ## Phase 2 Implementation Checklist (Concrete)
 
@@ -319,10 +322,10 @@ Use this checklist to add skinning/blendshape-aware editing and save behavior.
 
 ### 2. Skinning/blendshape bridge import-export
 
-- [x] Import skin indices/weights from `XRMesh` into modeling DTOs.
-- [x] Export preserved or reprojected skin indices/weights back to `XRMesh`.
-- [x] Import blendshape target/frame data into modeling DTOs.
-- [x] Export blendshape target/frame data back to `XRMesh`.
+- [x] Copy skin indices/weights from `XRMesh` into modeling DTOs.
+- [x] Convert preserved or reprojected skin indices/weights back to `XRMesh`.
+- [x] Copy blendshape target/frame data into modeling DTOs.
+- [x] Convert blendshape target/frame data back to `XRMesh`.
 
 ### 3. Topology-change preservation policies
 
@@ -361,7 +364,7 @@ Use this checklist to add skinning/blendshape-aware editing and save behavior.
 ## Test Strategy
 
 - Unit tests (`XREngine.Modeling`): topology invariants, operation correctness, and channel interpolation correctness.
-- Integration tests (`XREngine.Editor`/`XREngine`): `XRMesh -> Modeling -> XRMesh` round-trip equivalence, renderer refresh after save, and undo/redo stability.
+- Integration tests (`XREngine.Editor`/`XREngine.Runtime.ModelingIntegration`): `XRMesh -> Modeling -> XRMesh` round-trip equivalence, renderer refresh after save, and undo/redo stability.
 - Performance tests: large mesh import/export timings plus operation cost and allocation tracking.
 
 ## Risks and Mitigations
@@ -369,13 +372,13 @@ Use this checklist to add skinning/blendshape-aware editing and save behavior.
 - Risk: channel loss during topology edits.
 - Mitigation: explicit attribute interpolation policies per operation.
 - Risk: dependency cycles between projects.
-- Mitigation: keep `XRMesh` bridge in `XREngine`, modeling core DTO-only.
+- Mitigation: keep the `XRMesh` bridge in the optional ModelingIntegration assembly and the modeling core DTO-only.
 - Risk: renderer stale data after in-place save.
 - Mitigation: enforce post-save refresh contract in exporter.
 
 ## Recommended Initial Deliverables
 
-1. `XRMeshModelingImporter` and `XRMeshModelingExporter` in `XREngine`.
+1. `XRMeshToModelingDocumentConverter` and `ModelingDocumentToXRMeshConverter` in `XREngine.Runtime.ModelingIntegration`.
 2. `ModelingMeshDocument` and validation primitives in `XREngine.Modeling`.
 3. Editor save/apply workflow using the bridge from `MeshEditingPawnComponent`.
 4. Round-trip integration test for a representative mesh with UV/color channels.

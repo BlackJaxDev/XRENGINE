@@ -746,7 +746,8 @@ internal partial class CodeManager : XRSingleton<CodeManager>
             "XREngine.Runtime.Rendering.dll",
             "XREngine.Runtime.InputIntegration.dll",
             "XREngine.Runtime.AnimationIntegration.dll",
-            "XREngine.Runtime.ModelingBridge.dll"
+            "XREngine.Runtime.ModelAssetPipeline.dll",
+            "XREngine.Runtime.ModelingIntegration.dll"
         ];
 
         List<string> validPaths = [];
@@ -1192,7 +1193,6 @@ internal partial class CodeManager : XRSingleton<CodeManager>
         sb.AppendLine("#else");
         sb.AppendLine("        XRRuntimeEnvironment.ConfigureBuildKind(EXRRuntimeBuildKind.Development);");
         sb.AppendLine("#endif");
-        sb.AppendLine("        RuntimeRenderingBootstrap.InstallEngineHostServices();");
         sb.AppendLine("        EnginePublishedCookedAssetRegistryRegistration.Register();");
         sb.AppendLine();
         sb.AppendLine($"        string archivePath = ResolvePublishedArchivePath(\"{escapedConfigFolder}\", \"{escapedConfigArchive}\");");
@@ -1258,15 +1258,15 @@ internal partial class CodeManager : XRSingleton<CodeManager>
             sb.AppendLine("            ?? throw new InvalidOperationException(\"The game launch bootstrap returned null startup settings.\");");
         }
         sb.AppendLine();
-        sb.AppendLine($"        var editorPreferences = Engine.Assets.Load<EditorPreferences>(\"{escapedEditorPreferences}\");");
-        sb.AppendLine("        if (editorPreferences is not null)");
-        sb.AppendLine("            Engine.GlobalEditorPreferences = editorPreferences;");
-        sb.AppendLine();
         sb.AppendLine($"        var userSettings = Engine.Assets.Load<UserSettings>(\"{escapedUser}\");");
         sb.AppendLine("        if (userSettings is not null)");
         sb.AppendLine("            Engine.UserSettings = userSettings;");
         sb.AppendLine();
         sb.AppendLine("        Engine.ConfigureMemoryPolicy(startup is IVRGameStartupSettings ? EngineMemoryProfile.VRLowLatency : EngineMemoryProfile.PublishedDefault);");
+        sb.AppendLine("        using IDisposable applicationServices = RuntimeApplicationBootstrap.Install(");
+        sb.AppendLine("            startup is IVRGameStartupSettings");
+        sb.AppendLine("                ? RuntimeApplicationProfile.VrClient");
+        sb.AppendLine("                : RuntimeApplicationProfile.DesktopClient);");
         sb.AppendLine();
         sb.AppendLine("#if XRE_PUBLISHED");
         sb.AppendLine("        if (runAotSmoke)");
@@ -1337,9 +1337,6 @@ internal partial class CodeManager : XRSingleton<CodeManager>
         sb.AppendLine("        VerifyArchiveAsset(configArchivePath, AotRuntimeMetadataStore.MetadataFileName);");
         sb.AppendLine("        VerifyRuntimeBinaryAsset(configArchivePath, \"startup.asset\", typeof(GameStartupSettings));");
         sb.AppendLine("        VerifyRuntimeBinaryAsset(configArchivePath, \"user_settings.asset\", typeof(UserSettings));");
-        sb.AppendLine();
-        sb.AppendLine("        if (AssetArchiveContains(configArchivePath, \"editor_preferences.asset\"))");
-        sb.AppendLine("            VerifyRuntimeBinaryAsset(configArchivePath, \"editor_preferences.asset\", typeof(EditorPreferences));");
         sb.AppendLine();
         sb.AppendLine("        if (!File.Exists(contentArchivePath))");
         sb.AppendLine("            throw new FileNotFoundException(\"Content archive was not produced for the published launcher.\", contentArchivePath);");

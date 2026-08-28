@@ -55,7 +55,7 @@ The importer is organized as a staged pipeline:
 
 1. Structural scan: traverse FBX node records, validate offsets and property spans, identify child ranges, and collect heavy array decode work.
 2. Heavy array decode: decode raw or zlib-compressed arrays into typed buffers, using pool-backed scratch where practical.
-3. Semantic build: build FBX objects, connections, geometry, deformers, materials, textures, animation stacks, and the engine-neutral scene document consumed by `ModelImporter`.
+3. Semantic build: build FBX objects, connections, geometry, deformers, materials, textures, animation stacks, and the engine-neutral scene document consumed by `ModelAssetImporter`.
 
 The binary reader is built around `ReadOnlySpan<byte>`, `BinaryPrimitives`, bounds-checked cursor movement, and version-aware record sizes. Parser hot paths avoid LINQ, boxing, and capture-heavy delegates.
 
@@ -119,7 +119,7 @@ The semantic layer sits above raw nodes and properties. It builds typed views fo
 
 Transform import is native FBX behavior rather than inherited Assimp behavior. The importer handles axis system, unit scale, geometric transforms, pivots, pre/post rotations, bind-pose-related transforms, and helper-node policy through explicit options.
 
-The engine-neutral intermediate representation includes nodes, meshes, materials, textures, skins, clusters, blendshapes, animation stacks, layers, curve nodes, and animation curves. `ModelImporter` then maps that representation into the normal engine scene assembly path so async publication, submesh splitting, material remaps, texture remaps, and asset externalization continue to use the existing workflow.
+The engine-neutral intermediate representation includes nodes, meshes, materials, textures, skins, clusters, blendshapes, animation stacks, layers, curve nodes, and animation curves. `ModelAssetImporter` then maps that representation into the normal engine scene assembly path so async publication, submesh splitting, material remaps, texture remaps, and asset externalization continue to use the existing workflow.
 
 Skin clusters attach directly to imported `SceneNode` transforms. Per-control-point weights are normalized before `XRMesh` skinning buffers are rebuilt. Blendshape channel deltas are converted into absolute per-vertex targets in engine space, and default deform percentages become normalized `ModelComponent` blendshape weights.
 

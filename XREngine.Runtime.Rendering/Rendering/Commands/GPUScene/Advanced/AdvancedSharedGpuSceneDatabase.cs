@@ -46,7 +46,10 @@ public sealed class AdvancedSharedGpuSceneDatabase
             capacities.MaterialLayoutMembers,
             capacities.MaterialConstantWords,
             capacities.MaterialTextureBindings);
-        HandleLookups = new AdvancedGpuSceneLookupTable(Scene, Materials);
+        Resources = new AdvancedGlobalResourceDatabase(
+            capacities.TextureRecords,
+            capacities.SamplerRecords);
+        HandleLookups = new AdvancedGpuSceneLookupTable(Scene, Materials, Resources);
         _publicationRing = new AdvancedGpuScenePublication[checked((int)publicationCapacity)];
         _publicationSnapshots = new AdvancedGpuScenePublicationSnapshot[_publicationRing.Length];
         _packagePinCounts = new uint[_publicationRing.Length];
@@ -67,6 +70,9 @@ public sealed class AdvancedSharedGpuSceneDatabase
     public AdvancedGpuSceneDatabase Scene { get; }
 
     public AdvancedMaterialDatabase Materials { get; }
+
+    /// <summary>Canonical texture and sampler records shared by all frame consumers.</summary>
+    public AdvancedGlobalResourceDatabase Resources { get; }
 
     public AdvancedGpuSceneLookupTable HandleLookups { get; }
 
@@ -416,6 +422,8 @@ public sealed class AdvancedSharedGpuSceneDatabase
         Materials.Materials.ClearPublishedRemaps();
         Materials.Kernels.ClearPublishedRemaps();
         Materials.Layouts.ClearPublishedRemaps();
+        Resources.Textures.ClearPublishedRemaps();
+        Resources.Samplers.ClearPublishedRemaps();
     }
 
     /// <summary>
@@ -429,7 +437,9 @@ public sealed class AdvancedSharedGpuSceneDatabase
             !Accumulate(Materials.Materials.Compact(), ref total) ||
             !Accumulate(Materials.Kernels.Compact(), ref total) ||
             !Accumulate(Materials.Layouts.Compact(), ref total) ||
-            !HandleLookups.Publish(Scene, Materials))
+            !Accumulate(Resources.Textures.Compact(), ref total) ||
+            !Accumulate(Resources.Samplers.Compact(), ref total) ||
+            !HandleLookups.Publish(Scene, Materials, Resources))
         {
             return -1;
         }
@@ -438,7 +448,7 @@ public sealed class AdvancedSharedGpuSceneDatabase
     }
 
     public bool PublishHandleLookups()
-        => HandleLookups.Publish(Scene, Materials);
+        => HandleLookups.Publish(Scene, Materials, Resources);
 
     public void GrowAtFrameBoundary(
         in AdvancedSharedGpuSceneCapacityProfile capacities)
@@ -472,7 +482,10 @@ public sealed class AdvancedSharedGpuSceneDatabase
                 capacities.MaterialLayoutMembers,
                 capacities.MaterialConstantWords,
                 capacities.MaterialTextureBindings);
-            HandleLookups.RebuildAtFrameBoundary(Scene, Materials);
+            Resources.GrowAtFrameBoundary(
+                capacities.TextureRecords,
+                capacities.SamplerRecords);
+            HandleLookups.RebuildAtFrameBoundary(Scene, Materials, Resources);
             for (int index = 0; index < _publicationSnapshots.Length; ++index)
                 _publicationSnapshots[index] = new AdvancedGpuScenePublicationSnapshot(this);
             return true;
@@ -506,6 +519,8 @@ public sealed class AdvancedSharedGpuSceneDatabase
         reclaimed += Materials.Materials.ReclaimAcknowledged(safeSequence);
         reclaimed += Materials.Kernels.ReclaimAcknowledged(safeSequence);
         reclaimed += Materials.Layouts.ReclaimAcknowledged(safeSequence);
+        reclaimed += Resources.Textures.ReclaimAcknowledged(safeSequence);
+        reclaimed += Resources.Samplers.ReclaimAcknowledged(safeSequence);
         _lastReclaimedPublicationSequence = safeSequence;
         return reclaimed;
     }
@@ -621,21 +636,33 @@ public sealed class AdvancedSharedGpuSceneDatabase
         Materials.Materials.BeginPublicationGeneration(sequence);
         Materials.Kernels.BeginPublicationGeneration(sequence);
         Materials.Layouts.BeginPublicationGeneration(sequence);
+        Resources.Textures.BeginPublicationGeneration(sequence);
+        Resources.Samplers.BeginPublicationGeneration(sequence);
     }
 
     private bool TrySealTablePublication(
         ulong sequence,
         AdvancedGpuScenePublicationSnapshot snapshot)
-        => Scene.Draws.TrySealPublication(sequence, snapshot.Draws) &&
-           Scene.Instances.TrySealPublication(sequence, snapshot.Instances) &&
-           Scene.Transforms.TrySealPublication(sequence, snapshot.Transforms) &&
-           Scene.Deformations.TrySealPublication(sequence, snapshot.Deformations) &&
-           Scene.RenderStates.TrySealPublication(sequence, snapshot.RenderStates) &&
-           Scene.EditorIdentities.TrySealPublication(sequence, snapshot.EditorIdentities) &&
-           Scene.Geometry.Records.TrySealPublication(sequence, snapshot.Geometry) &&
-           Materials.Materials.TrySealPublication(sequence, snapshot.Materials) &&
-           Materials.Kernels.TrySealPublication(sequence, snapshot.Kernels) &&
-           Materials.Layouts.TrySealPublication(sequence, snapshot.Layouts);
+    {
+        if (!Scene.Draws.TrySealPublication(sequence, snapshot.Draws) ||
+            !Scene.Instances.TrySealPublication(sequence, snapshot.Instances) ||
+            !Scene.Transforms.TrySealPublication(sequence, snapshot.Transforms) ||
+            !Scene.Deformations.TrySealPublication(sequence, snapshot.Deformations) ||
+            !Scene.RenderStates.TrySealPublication(sequence, snapshot.RenderStates) ||
+            !Scene.EditorIdentities.TrySealPublication(sequence, snapshot.EditorIdentities) ||
+            !Scene.Geometry.Records.TrySealPublication(sequence, snapshot.Geometry) ||
+            !Materials.Materials.TrySealPublication(sequence, snapshot.Materials) ||
+            !Materials.Kernels.TrySealPublication(sequence, snapshot.Kernels) ||
+            !Materials.Layouts.TrySealPublication(sequence, snapshot.Layouts) ||
+            !Resources.Textures.TrySealPublication(sequence, snapshot.Textures) ||
+            !Resources.Samplers.TrySealPublication(sequence, snapshot.Samplers))
+        {
+            return false;
+        }
+
+        snapshot.CaptureResourceGenerations(Resources.Generations);
+        return true;
+    }
 
     private static ulong CreateDatabaseEpoch()
     {

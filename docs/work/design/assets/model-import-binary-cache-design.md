@@ -64,10 +64,10 @@ The repository now has the model-specific deterministic container, defensive rea
 |---|---|---|
 | Third-party cache path and load routing | `XRENGINE/Core/Engine/Loading/AssetManager.Loading.SerializationAndCache.cs` | Typed decisions and exclusive ownership are implemented; binary model hydration and publication remain. |
 | Generated asset reimport transaction | `XRENGINE/Core/Engine/AssetManager.ThirdPartyImport.cs` | Extend to stage and publish the binary cache while preserving imported identity. |
-| Model backend routing | `XREngine.Runtime.ModelingBridge/Importing/ModelImporter.cs` and `Importing/Caching/` | Stable descriptors, deterministic resolver snapshots, candidate hashing, actual-producer reporting, dependencies, entity keys, and imported reference keys are implemented. |
-| Import options | `XREngine.Runtime.ModelingBridge/Importing/ModelImportOptions.cs` | Versioned model cook policy and canonical semantic projection are implemented; Phase 4 still resolves and executes effective per-submesh cooking. |
-| Model cache identity/path | `XREngine.Runtime.ModelingBridge/Importing/Caching/` and `XRENGINE/Core/Engine/ModelCaching/` | Versioned canonical settings, authored override snapshots, SHA-256 variants, source-origin identity, bounded paths, and legacy-location probing are implemented. |
-| Model binary container | `XREngine.Runtime.ModelingBridge/Importing/Caching/` | Deterministic v1 writer and defensive manifest/selective reader are implemented; semantic cooked chunks, hydration, and publication remain. |
+| Model backend routing | `XREngine.Runtime.ModelAssetPipeline/Importing/ModelAssetImporter.cs` and `Importing/Caching/` | Stable descriptors, deterministic resolver snapshots, candidate hashing, actual-producer reporting, dependencies, entity keys, and imported reference keys are implemented. |
+| Import options | `XREngine.Runtime.ModelAssetPipeline/Importing/ModelImportOptions.cs` | Versioned model cook policy and canonical semantic projection are implemented; Phase 4 still resolves and executes effective per-submesh cooking. |
+| Model cache identity/path | `XREngine.Runtime.ModelAssetPipeline/Importing/Caching/` and `XRENGINE/Core/Engine/ModelCaching/` | Versioned canonical settings, authored override snapshots, SHA-256 variants, source-origin identity, bounded paths, and legacy-location probing are implemented. |
+| Model binary container | `XREngine.Runtime.ModelAssetPipeline/Importing/Caching/` | Deterministic v1 writer and defensive manifest/selective reader are implemented; semantic cooked chunks, hydration, and publication remain. |
 | Standalone cooked `XRMesh` payload | `XREngine.Runtime.Rendering/Objects/Meshes/XRMesh.CookedBinary.cs` and `XRMesh.CookedMeshlets.cs` | Extract reusable section codecs; do not duplicate its monolithic payload inside the model container. |
 | YAML `XRMesh` bridge | `XREngine.Runtime.Rendering/Serialization/XRMeshYamlTypeConverter.cs` | Continue composing the standalone mesh format from the shared sections. |
 | Per-submesh LOD/meshlet overrides | `XREngine.Runtime.Rendering/Rendering/Meshlets/MeshOptimizerSettings.cs` | Use as authored overrides when resolving import-time cook settings. |
@@ -90,7 +90,7 @@ XREngine.Runtime.Rendering
     shared mesh section codecs and cook payloads
             |
             v
-XREngine.Runtime.ModelingBridge
+XREngine.Runtime.ModelAssetPipeline
     backend descriptors, dependency reports,
     CookedModelDocument, binary reader/writer
             |
@@ -113,7 +113,7 @@ Ownership:
 - `XREngine.Runtime.Rendering/Serialization/Meshes/`
   - shared mesh core, skinning/bind, morph, and meshlet section codecs;
   - no AssetManager or model-container policy.
-- `XREngine.Runtime.ModelingBridge/Importing/Caching/`
+- `XREngine.Runtime.ModelAssetPipeline/Importing/Caching/`
   - backend descriptors and resolver snapshots;
   - structural dependency records;
   - `CookedModelDocument`;
@@ -171,9 +171,9 @@ Each completed cold import returns:
 
 The requested policy and actual producer are different values. For example, `Auto` is the requested policy; `NativeGltf` or `Assimp` is the actual producer.
 
-The implemented ModelingBridge registry uses stable built-in identities `xrengine.native-gltf@1`, `xrengine.native-fbx@1`, and `assimp@1`; the upper adapter registers `xrengine.unity-prefab@1`. Resolver policy v1 snapshots eligible descriptors in descending priority and then ordinal stable-ID order, computes a SHA-256 hash over the ordered IDs and versions, and preserves requested policy separately. `ModelImporter` follows that snapshot in order and returns the successful descriptor plus normalized dependencies, source-entity keys, and imported reference keys through `ModelImporterResult`.
+The implemented ModelAssetPipeline registry uses stable built-in identities `xrengine.native-gltf@1`, `xrengine.native-fbx@1`, and `assimp@1`; the upper adapter registers `xrengine.unity-prefab@1`. Resolver policy v1 snapshots eligible descriptors in descending priority and then ordinal stable-ID order, computes a SHA-256 hash over the ordered IDs and versions, and preserves requested policy separately. `ModelAssetImporter` follows that snapshot in order and returns the successful descriptor plus normalized dependencies, source-entity keys, and imported reference keys through `ModelAssetImportResult`.
 
-Native glTF, native FBX, and Assimp implementations live behind the ModelingBridge contract. Unity prefab conversion remains an `XRENGINE` adapter because it depends on the editor/Unity bridge; the composition root registers that adapter and maps its import manifest into the same normalized dependency and entity-key records. Unity-specific runtime types must not be pushed into ModelingBridge.
+Native glTF, native FBX, and Assimp implementations live behind the ModelAssetPipeline contract. Unity prefab conversion remains an `XREngine.Editor` adapter because it depends on the editor/Unity bridge; the composition root registers that adapter and maps its import manifest into the same normalized dependency and entity-key records. Unity-specific types must not be pushed into ModelAssetPipeline.
 
 Key discovery comes from the successful producer report. `XRPrefabSource` must not independently pre-parse glTF merely to seed remap dictionaries; that duplicates cold-parser work and would undermine the cache boundary. The upper adapter seeds missing keys from either the cold producer report or the warm cache manifest.
 
@@ -362,7 +362,7 @@ The transition probes both the current deterministic model-cache location and th
 
 The model codec owns the file bytes directly. The `.asset` suffix is the repository's generated-cache convention; the file is not wrapped in generic YAML or a second serialized `XRAsset` envelope. The fixed magic distinguishes it from legacy entries.
 
-Phase 3 implements this container in `XREngine.Runtime.ModelingBridge/Importing/Caching/`, including deterministic writes, manifest-only and selective reads, full required-chunk publication validation, and bounded malformed-input rejection. The engine-facing codec validates the manifest and entry-source freshness but intentionally returns `CodecUnavailable` after that gate until later phases can hydrate a live prefab; publication is likewise deferred until cooked semantic chunks exist.
+Phase 3 implements this container in `XREngine.Runtime.ModelAssetPipeline/Importing/Caching/`, including deterministic writes, manifest-only and selective reads, full required-chunk publication validation, and bounded malformed-input rejection. The engine-facing codec validates the manifest and entry-source freshness but intentionally returns `CodecUnavailable` after that gate until later phases can hydrate a live prefab; publication is likewise deferred until cooked semantic chunks exist.
 
 The file is little-endian and contains:
 
@@ -589,7 +589,7 @@ Imported component state uses a registry rather than generic reflection or YAML:
 - `IImportedComponentCacheCodec` is registered at the `XRENGINE` composition boundary.
 - Each codec has a stable type key, monotonic payload version, required/optional policy, and bounded canonical reader/writer.
 - Standard model-component records reference the model/submesh/material tables instead of embedding those objects.
-- Unity-specific adapters may contribute component records without introducing Unity/XRENGINE type dependencies into ModelingBridge.
+- Unity-specific adapters may contribute component records without introducing Unity/editor type dependencies into ModelAssetPipeline.
 - The lower container treats registered extension payloads as bounded canonical bytes; the upper adapter owns live component construction and mutation.
 - A missing or incompatible required component codec rejects the requested prefab hydration. Unknown optional component records are skipped with diagnostics.
 - Components intentionally ignored by a source converter are recorded in import diagnostics, not invented as empty cache records.

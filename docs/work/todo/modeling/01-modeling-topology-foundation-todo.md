@@ -52,7 +52,7 @@ Evolve the current triangle-list-oriented `EditableMesh` and `HalfEdgeTopology` 
 - `XREngine.Modeling/ModelingMeshMetadata.cs`
 - `XREngine.Modeling/ModelingMeshValidation.cs`
 - `XREngine.Modeling/ModelingOperationOptions.cs`
-- `XREngine.Runtime.ModelingBridge/`
+- `XREngine.Runtime.ModelingIntegration/`
 - `XREngine.UnitTests/Modeling/`
 
 ## Phase 0: Baseline And Migration Plan
@@ -186,7 +186,7 @@ Evolve the current triangle-list-oriented `EditableMesh` and `HalfEdgeTopology` 
 - [ ] Undo/redo can restore topology and attributes deterministically.
 - [ ] Validation reports actionable issue codes.
 
-## Phase 6: Bake, Export, And Bridge Hooks
+## Phase 6: Bake, Conversion, And Integration Hooks
 
 **Goal:** produce renderable/runtime data from authored topology without leaking implementation details.
 

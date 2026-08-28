@@ -221,7 +221,7 @@ public sealed class OpenAiResponsesStreamParser
                 ? "unspecified reason"
                 : IncompleteReason;
             string guidance = outputBudgetReached
-                ? " The configured max_output_tokens budget remains a hard limit; for a later explicitly authorized run, request a higher max_output_tokens budget or lower reasoning_effort/text_verbosity."
+                ? " The response reached an output-token ceiling. Disable or raise an explicit broker limit; if none was configured, the selected model or provider limit was reached."
                 : string.Empty;
             return new AgentModelException(
                 outputBudgetReached ? AgentFailureCategory.BudgetExceeded : AgentFailureCategory.ProviderError,

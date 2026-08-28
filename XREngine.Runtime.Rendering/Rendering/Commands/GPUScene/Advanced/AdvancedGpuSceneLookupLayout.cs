@@ -15,14 +15,18 @@ public readonly record struct AdvancedGpuSceneLookupLayout(
     AdvancedGpuLookupSegment Materials,
     AdvancedGpuLookupSegment ShadingKernels,
     AdvancedGpuLookupSegment MaterialLayouts,
+    AdvancedGpuLookupSegment Textures,
+    AdvancedGpuLookupSegment Samplers,
     uint TotalCount)
 {
     public static AdvancedGpuSceneLookupLayout Create(
         AdvancedGpuSceneDatabase scene,
-        AdvancedMaterialDatabase materials)
+        AdvancedMaterialDatabase materials,
+        AdvancedGlobalResourceDatabase resources)
     {
         ArgumentNullException.ThrowIfNull(scene);
         ArgumentNullException.ThrowIfNull(materials);
+        ArgumentNullException.ThrowIfNull(resources);
 
         uint offset = 0u;
         AdvancedGpuLookupSegment draws = Append(scene.Draws.Capacity, ref offset);
@@ -35,6 +39,8 @@ public readonly record struct AdvancedGpuSceneLookupLayout(
         AdvancedGpuLookupSegment materialRows = Append(materials.Materials.Capacity, ref offset);
         AdvancedGpuLookupSegment kernels = Append(materials.Kernels.Capacity, ref offset);
         AdvancedGpuLookupSegment layouts = Append(materials.Layouts.Capacity, ref offset);
+        AdvancedGpuLookupSegment textures = Append(resources.Textures.Capacity, ref offset);
+        AdvancedGpuLookupSegment samplers = Append(resources.Samplers.Capacity, ref offset);
 
         return new AdvancedGpuSceneLookupLayout(
             draws,
@@ -47,6 +53,8 @@ public readonly record struct AdvancedGpuSceneLookupLayout(
             materialRows,
             kernels,
             layouts,
+            textures,
+            samplers,
             offset);
     }
 

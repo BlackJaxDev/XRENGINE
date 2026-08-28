@@ -6,6 +6,7 @@ using XREngine.Components.Movement;
 using XREngine.Components.Physics;
 using XREngine.Components.Scene.Transforms;
 using XREngine.Components.VR;
+using XREngine.Input;
 using XREngine.Data.Components.Scene;
 using XREngine.Data.Colors;
 using XREngine.Rendering;
@@ -368,7 +369,7 @@ public static class BootstrapPawnFactory
             BootstrapEditorBridge.Current?.ConfigureEditorViewCamera(parent, cameraNode);
 
         pawnComp.EnqueuePossessionByLocalPlayer(ELocalPlayerIndex.One);
-        Engine.State.GetOrCreateLocalPlayer(ELocalPlayerIndex.One).OnPawnCameraChanged();
+        RuntimePlayerControllerServices.Current?.GetOrCreateLocalPlayer(ELocalPlayerIndex.One).OnPawnCameraChanged();
         return pawnComp;
     }
 

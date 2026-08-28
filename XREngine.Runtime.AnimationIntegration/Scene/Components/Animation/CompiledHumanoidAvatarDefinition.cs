@@ -40,7 +40,7 @@ internal sealed class CompiledHumanoidAvatarDefinition
         CompiledHumanoidAvatarAuxiliaryBone[] auxiliaryBones,
         HumanoidAvatarLegacyBoneCalibration?[] legacyCalibrations,
         string legacyCalibrationClipName,
-        UnityHumanoidRootMotionPolicy? legacyCalibrationRootMotionPolicy,
+        ImportedHumanoidRootMotionPolicy? legacyCalibrationRootMotionPolicy,
         Matrix4x4 legacyCalibrationRootAllocationFrame,
         Matrix4x4 inverseLegacyCalibrationRootAllocationFrame,
         bool hasLegacyCalibrationRootAllocationFrame)
@@ -104,7 +104,7 @@ internal sealed class CompiledHumanoidAvatarDefinition
     public CompiledHumanoidAvatarAuxiliaryBone[] AuxiliaryBones { get; }
     public HumanoidAvatarLegacyBoneCalibration?[] LegacyCalibrations { get; }
     public string LegacyCalibrationClipName { get; }
-    public UnityHumanoidRootMotionPolicy? LegacyCalibrationRootMotionPolicy { get; }
+    public ImportedHumanoidRootMotionPolicy? LegacyCalibrationRootMotionPolicy { get; }
     public Matrix4x4 LegacyCalibrationRootAllocationFrame { get; }
     public Matrix4x4 InverseLegacyCalibrationRootAllocationFrame { get; }
     public bool HasLegacyCalibrationRootAllocationFrame { get; }

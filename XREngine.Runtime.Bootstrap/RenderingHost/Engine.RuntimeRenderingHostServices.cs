@@ -4,6 +4,7 @@ using System.Numerics;
 using System.Runtime.ExceptionServices;
 using System.Threading;
 using XREngine.Core.Files;
+using XREngine.Data;
 using XREngine.Data.Colors;
 using XREngine.Data.Core;
 using XREngine.Data.Geometry;
@@ -536,10 +537,10 @@ internal sealed class EngineRuntimeRenderingHostServices :
         => Engine.EnqueueAppThreadTask(task, reason);
 
     public void EnqueueWindowThreadTask(IRuntimeRenderWindowHost window, Action task, string reason)
-        => Engine.WindowPumpHost.EnqueueWindowTask(window, task, reason);
+        => RuntimeWindowApplicationServices.Current.EnqueueWindowTask(window, task, reason);
 
     public T InvokeWindowThreadTask<T>(IRuntimeRenderWindowHost window, Func<T> task, string reason)
-        => Engine.WindowPumpHost.InvokeWindowTask(window, task, reason);
+        => RuntimeWindowApplicationServices.Current.InvokeWindowTask(window, task, reason);
 
     public void EnqueueRenderThreadCoroutine(Func<bool> task)
         => Engine.AddRenderThreadCoroutine(task);
@@ -676,7 +677,20 @@ internal sealed class EngineRuntimeRenderingHostServices :
         => Engine.Assets.ResolveEngineAssetPath(relativePathFolders);
 
     public object? GetOrCreateThirdPartyImportOptions(string sourcePath, Type assetType)
-        => Engine.Assets.GetOrCreateThirdPartyImportOptions(sourcePath, assetType);
+    {
+        string extension = Path.GetExtension(sourcePath).TrimStart('.');
+        if (!ThirdPartyAssetTypeRegistry.TryResolve(
+                extension,
+                out ThirdPartyAssetTypeDescriptor? descriptor)
+            || descriptor.AssetType != assetType)
+        {
+            return null;
+        }
+
+        return descriptor.ImportOptionsType is Type optionsType
+            ? Activator.CreateInstance(optionsType)
+            : null;
+    }
 
     public TAsset? LoadAsset<TAsset>(string filePath, JobPriority priority, bool bypassJobThread)
         where TAsset : XRAsset, new()
@@ -1951,7 +1965,8 @@ internal sealed class EngineRuntimeRenderingHostServices :
         => RuntimeEngine.EnumerateActiveViewports();
 
     public IEnumerable<IPawnController> EnumerateLocalPlayers()
-        => Engine.State.LocalPlayers.OfType<IPawnController>();
+        => RuntimePlayerControllerServices.Current?.AllLocalPlayers.OfType<IPawnController>()
+            ?? Enumerable.Empty<IPawnController>();
 
     // The RuntimeEngine facade resolves through this installed factory.
     // Calling it here would re-enter this adapter.

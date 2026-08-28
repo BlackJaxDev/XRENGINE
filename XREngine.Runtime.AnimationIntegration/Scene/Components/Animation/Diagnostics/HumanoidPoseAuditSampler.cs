@@ -75,7 +75,7 @@ namespace XREngine.Components.Animation
                 SampleRate = sampleRate,
                 SampleCount = sampleCount,
                 AvatarHumanScale = humanoid.AvatarDefinition.HumanScale,
-                EngineUnitsPerUnityMeter = ResolveEngineUnitsPerUnityMeter(humanoid),
+                EngineUnitsPerSourceMeter = ResolveEngineUnitsPerSourceMeter(humanoid),
             };
 
             using TransformDiagnosticEvaluationScope diagnosticScope = TransformBase.BeginDiagnosticEvaluation();
@@ -136,9 +136,9 @@ namespace XREngine.Components.Animation
             return report;
         }
 
-        private static float ResolveEngineUnitsPerUnityMeter(HumanoidComponent humanoid)
+        private static float ResolveEngineUnitsPerSourceMeter(HumanoidComponent humanoid)
         {
-            float profileUnits = humanoid.UnityProfileUnitsPerMeter;
+            float profileUnits = humanoid.SourceProfileUnitsPerMeter;
             if (float.IsFinite(profileUnits) && profileUnits > 0.0f)
                 return profileUnits;
 
@@ -197,7 +197,7 @@ namespace XREngine.Components.Animation
             Dictionary<string, Quaternion> neutralRotations = CaptureBoneLocalRotations(humanoid);
 
             int muscleIndex = 0;
-            foreach (UnityHumanoidMuscleMap.MuscleEntry entry in UnityHumanoidMuscleMap.OrderedMuscleEntries)
+            foreach (ImportedHumanoidMuscleMap.MuscleEntry entry in ImportedHumanoidMuscleMap.OrderedMuscleEntries)
             {
                 humanoid.SetImportedRawValue(entry.Value, -1.0f);
                 humanoid.ApplyCurrentMusclePose();
@@ -244,7 +244,7 @@ namespace XREngine.Components.Animation
 
         private static void SetAllMuscles(HumanoidComponent humanoid, float amount)
         {
-            foreach (UnityHumanoidMuscleMap.MuscleEntry entry in UnityHumanoidMuscleMap.OrderedMuscleEntries)
+            foreach (ImportedHumanoidMuscleMap.MuscleEntry entry in ImportedHumanoidMuscleMap.OrderedMuscleEntries)
                 humanoid.SetImportedRawValue(entry.Value, amount);
         }
 
@@ -373,7 +373,7 @@ namespace XREngine.Components.Animation
 
             CaptureComposedTransforms(humanoid, sample);
 
-            foreach (UnityHumanoidMuscleMap.MuscleEntry entry in UnityHumanoidMuscleMap.OrderedMuscleEntries)
+            foreach (ImportedHumanoidMuscleMap.MuscleEntry entry in ImportedHumanoidMuscleMap.OrderedMuscleEntries)
             {
                 humanoid.TryGetMuscleValue(entry.Value, out float amount);
                 sample.Muscles.Add(new HumanoidPoseAuditNamedFloat

@@ -359,8 +359,8 @@ public sealed class UberShaderForwardContractTests : GpuTestBase
         XRShader fragment = ShaderHelper.UberFragForward();
         var material = new XRMaterial
         {
-            Parameters = ModelImporter.CreateDefaultForwardPlusUberShaderParameters(),
-            RenderOptions = ModelImporter.CreateForwardPlusUberShaderRenderOptions(),
+            Parameters = ModelAssetImporter.CreateDefaultForwardPlusUberShaderParameters(),
+            RenderOptions = ModelAssetImporter.CreateForwardPlusUberShaderRenderOptions(),
             RenderPass = (int)EDefaultRenderPass.OpaqueForward,
         };
         material.Shaders.Clear();
@@ -415,13 +415,13 @@ public sealed class UberShaderForwardContractTests : GpuTestBase
     }
 
     [Test]
-    public void UberFragmentVariant_ZeroEncodedPoiyomiGlobalMasksCompileOnOpenGl()
+    public void UberFragmentVariant_ZeroEncodedSourceToonGlobalMasksCompileOnOpenGl()
     {
         XRShader fragment = ShaderHelper.UberFragForward();
         XRMaterial material = new()
         {
-            Parameters = ModelImporter.CreateDefaultForwardPlusUberShaderParameters(),
-            RenderOptions = ModelImporter.CreateForwardPlusUberShaderRenderOptions(),
+            Parameters = ModelAssetImporter.CreateDefaultForwardPlusUberShaderParameters(),
+            RenderOptions = ModelAssetImporter.CreateForwardPlusUberShaderRenderOptions(),
             RenderPass = (int)EDefaultRenderPass.OpaqueForward,
         };
         material.Shaders.Clear();
@@ -533,11 +533,11 @@ public sealed class UberShaderForwardContractTests : GpuTestBase
     [Test]
     public void DefaultUberMaterialContract_RequestsForwardEngineUniforms_AndFeatureDefaults()
     {
-        ShaderVar[] parameters = ModelImporter.CreateDefaultForwardPlusUberShaderParameters();
+        ShaderVar[] parameters = ModelAssetImporter.CreateDefaultForwardPlusUberShaderParameters();
         var material = new XRMaterial
         {
             Parameters = parameters,
-            RenderOptions = ModelImporter.CreateForwardPlusUberShaderRenderOptions(),
+            RenderOptions = ModelAssetImporter.CreateForwardPlusUberShaderRenderOptions(),
         };
 
         material.RenderOptions.RequiredEngineUniforms.ShouldBe(

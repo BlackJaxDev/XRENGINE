@@ -688,8 +688,7 @@ namespace XREngine.Components
                 return;
 
             XRCamera? fallbackCamera =
-                ((RuntimeEngine.State.MainPlayer?.ControlledPawnComponent as IRuntimeInputControllablePawn)?.RuntimeCameraComponent as CameraComponent)?.Camera
-                ?? ((RuntimeEngine.State.GetOrCreateLocalPlayer(ELocalPlayerIndex.One)?.ControlledPawnComponent as IRuntimeInputControllablePawn)?.RuntimeCameraComponent as CameraComponent)?.Camera;
+                ((RuntimePlayerControllerServices.Current?.MainPlayer?.ControlledPawnComponent as IRuntimeInputControllablePawn)?.RuntimeCameraComponent as CameraComponent)?.Camera;
 
             if (fallbackCamera is null)
                 return;
@@ -891,8 +890,7 @@ namespace XREngine.Components
             right = Globals.Right;
 
             var camera = transform.CameraSpaceCamera
-                ?? ((RuntimeEngine.State.MainPlayer?.ControlledPawnComponent as IRuntimeInputControllablePawn)?.RuntimeCameraComponent as CameraComponent)?.Camera
-                ?? ((RuntimeEngine.State.GetOrCreateLocalPlayer(ELocalPlayerIndex.One)?.ControlledPawnComponent as IRuntimeInputControllablePawn)?.RuntimeCameraComponent as CameraComponent)?.Camera;
+                ?? ((RuntimePlayerControllerServices.Current?.MainPlayer?.ControlledPawnComponent as IRuntimeInputControllablePawn)?.RuntimeCameraComponent as CameraComponent)?.Camera;
 
             var cameraTransform = camera?.Transform;
             if (cameraTransform is null)
@@ -932,7 +930,7 @@ namespace XREngine.Components
             up = Globals.Up;
             right = Globals.Right;
 
-            var player = RuntimeEngine.State.MainPlayer ?? RuntimeEngine.State.GetOrCreateLocalPlayer(ELocalPlayerIndex.One);
+            var player = RuntimePlayerControllerServices.Current?.MainPlayer;
             var cameraTransform = ((player?.ControlledPawnComponent as IRuntimeInputControllablePawn)?.RuntimeCameraComponent as CameraComponent)?.Transform;
             if (cameraTransform is null)
                 return false;

@@ -1,4 +1,3 @@
-using Assimp;
 using XREngine.Extensions;
 using OpenVR.NET;
 using OpenVR.NET.Devices;

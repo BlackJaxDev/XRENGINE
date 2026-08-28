@@ -19,7 +19,12 @@ internal sealed partial class VulkanCommandRuntime
             throw new InvalidOperationException("An OpenXR acquire cannot publish a null Vulkan image.");
 
         ulong generation = ResourceRuntime.GetPublishedGeneration(ObjectType.Image, image.Handle);
-        lock (Synchronization._vulkanImageLayoutLock)
+        using (VulkanFrameLockScope.Enter(
+                   CommandBuffers.SubmissionStateGate,
+                   EVulkanFrameWaitReason.SubmissionStateLock))
+        using (VulkanFrameLockScope.Enter(
+                   Synchronization._vulkanImageLayoutLock,
+                   EVulkanFrameWaitReason.SynchronizationLock))
         {
             Synchronization._externalImageOwnershipByHandle[image.Handle] =
                 (generation, EVulkanExternalImageOwnership.OpenXrRuntimeAcquired);
@@ -64,10 +69,21 @@ internal sealed partial class VulkanCommandRuntime
         {
             ExternalOwnership = EVulkanExternalImageOwnership.OpenXrRuntimeAcquired,
         };
+        state.SubmittedVersion = NextSubmittedImageStateVersion(
+            state.SubmittedVersion);
         state.Completed = state.Completed with
         {
             ExternalOwnership = EVulkanExternalImageOwnership.OpenXrRuntimeAcquired,
         };
+    }
+
+    private static ulong NextSubmittedImageStateVersion(ulong version)
+    {
+        unchecked
+        {
+            ++version;
+        }
+        return version == 0u ? 1u : version;
     }
 
     /// <summary>

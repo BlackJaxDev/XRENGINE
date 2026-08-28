@@ -174,7 +174,7 @@ to the repository. Its current dependency shape is:
   can rescan the same large Unity project repeatedly.
 - Every PrefabInstance source currently recurses through the Unity YAML
   hierarchy parser. A binary FBX source is therefore read as text/YAML instead
-  of being dispatched to `ModelImporter`.
+  of being dispatched to `ModelAssetImporter`.
 - The Unity document-header parser recognizes the `stripped` token but does not
   preserve it. Stripped model proxies are parsed as incomplete standalone scene
   objects.
@@ -352,7 +352,7 @@ Acceptance criteria:
 - [x] Dispatch PrefabInstance sources by actual asset type:
   - `.prefab` and `.unity` use the Unity YAML hierarchy importer,
   - `.fbx`, `.obj`, `.gltf`, `.glb`, `.dae`, and other supported model formats
-    use the existing `XRPrefabSource`/`ModelImporter` path, and
+    use the existing `XRPrefabSource`/`ModelAssetImporter` path, and
   - unsupported source types produce explicit placeholders or failures
     according to dependency classification.
 - [x] Never call `File.ReadAllLines` or YamlDotNet for model formats.

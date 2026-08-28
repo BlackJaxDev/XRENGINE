@@ -144,40 +144,40 @@ namespace XREngine.Animation
         private AnimationMember? _rootMember;
 
         [MemoryPackIgnore]
-        private readonly Dictionary<AnimationMember, object?[]> _unityHumanoidMethodArgumentBaselines = [];
+        private readonly Dictionary<AnimationMember, object?[]> _importedHumanoidMethodArgumentBaselines = [];
 
         [MemoryPackIgnore]
-        private long _unityHumanoidStatePlaybackTicks;
+        private long _importedHumanoidStatePlaybackTicks;
 
         [MemoryPackIgnore]
-        private long _unityHumanoidStateLoopCycle;
+        private long _importedHumanoidStateLoopCycle;
 
         [MemoryPackIgnore]
-        private bool _unityHumanoidStateClockInitialized;
+        private bool _importedHumanoidStateClockInitialized;
 
         [MemoryPackIgnore]
-        private bool _unityHumanoidSourceWrapped;
+        private bool _importedHumanoidSourceWrapped;
 
         [MemoryPackIgnore]
-        private float _unityHumanoidStateSampleTime;
+        private float _importedHumanoidStateSampleTime;
 
         [MemoryPackIgnore]
-        private float _unityHumanoidStateSamplePhase;
+        private float _importedHumanoidStateSamplePhase;
 
         /// <summary>Signed loop epoch for this clip when evaluated as a state-machine leaf.</summary>
         [MemoryPackIgnore]
-        public long UnityHumanoidStateLoopCycle => _unityHumanoidStateLoopCycle;
+        public long ImportedHumanoidStateLoopCycle => _importedHumanoidStateLoopCycle;
 
         /// <summary>
         /// True when CycleOffset crossed the source endpoint inside the current logical cycle.
         /// The runtime evaluator prefixes one conjugated generator in this case.
         /// </summary>
         [MemoryPackIgnore]
-        public bool UnityHumanoidSourceWrapped => _unityHumanoidSourceWrapped;
+        public bool ImportedHumanoidSourceWrapped => _importedHumanoidSourceWrapped;
 
         /// <summary>Effective source phase after CycleOffset for this state-machine leaf.</summary>
         [MemoryPackIgnore]
-        public float UnityHumanoidStateSamplePhase => _unityHumanoidStateSamplePhase;
+        public float ImportedHumanoidStateSamplePhase => _importedHumanoidStateSamplePhase;
 
         [MemoryPackIgnore]
         [YamlIgnore]
@@ -265,10 +265,10 @@ namespace XREngine.Animation
         public override void GetAnimationValues(MotionBase? parentMotion, IDictionary<string, AnimVar> variables, float weight)
         {
             ValueStore.Clear();
-            bool hasUnityHumanoidPolicy = TryGetUnityHumanoidEvaluationContext(
-                out UnityHumanoidRootMotionPolicy unityPolicy,
-                out float unitySampleTime,
-                out float unitySamplePhase);
+            bool hasImportedHumanoidPolicy = TryGetImportedHumanoidEvaluationContext(
+                out ImportedHumanoidRootMotionPolicy sourcePolicy,
+                out float sourceSampleTime,
+                out float sourceSamplePhase);
 
             // Typed store path: write directly to ValueStore via slot indices (no boxing)
             if (SlotLayout is not null)
@@ -284,20 +284,20 @@ namespace XREngine.Animation
                         continue;
                     }
 
-                    if (hasUnityHumanoidPolicy
-                        && TryWriteUnityHumanoidValueToStore(
+                    if (hasImportedHumanoidPolicy
+                        && TryWriteImportedHumanoidValueToStore(
                             member,
-                            unityPolicy,
-                            unitySampleTime,
-                            unitySamplePhase))
+                            sourcePolicy,
+                            sourceSampleTime,
+                            sourceSamplePhase))
                         continue;
 
                     member.WriteCurrentValueToStore(ValueStore);
                 }
-                ApplyUnityHumanoidScalarQuaternionCorrections(
-                    hasUnityHumanoidPolicy,
-                    unityPolicy,
-                    unitySamplePhase);
+                ApplyImportedHumanoidScalarQuaternionCorrections(
+                    hasImportedHumanoidPolicy,
+                    sourcePolicy,
+                    sourceSamplePhase);
                 parentMotion?.CopyAnimationValuesFrom(this);
                 return;
             }
@@ -311,31 +311,31 @@ namespace XREngine.Animation
                     continue;
                 }
                 
-                object? animatedValue = hasUnityHumanoidPolicy
-                    ? GetUnityHumanoidValueLegacy(
+                object? animatedValue = hasImportedHumanoidPolicy
+                    ? GetImportedHumanoidValueLegacy(
                         kvp.Value,
-                        unityPolicy,
-                        unitySampleTime,
-                        unitySamplePhase)
+                        sourcePolicy,
+                        sourceSampleTime,
+                        sourceSamplePhase)
                     : kvp.Value.GetAnimationValue();
                 SetAnimValue(kvp.Key, animatedValue);
             }
             parentMotion?.CopyAnimationValuesFrom(this);
         }
 
-        private bool TryGetUnityHumanoidEvaluationContext(
-            out UnityHumanoidRootMotionPolicy policy,
+        private bool TryGetImportedHumanoidEvaluationContext(
+            out ImportedHumanoidRootMotionPolicy policy,
             out float sampleTime,
             out float samplePhase)
         {
             policy = default;
             sampleTime = 0.0f;
             samplePhase = 0.0f;
-            if (UnityHumanoidRootMotionSettings is not { } settings
-                || !UnityHumanoidRootMotionPolicy.TryCreate(settings, out policy, out _))
+            if (ImportedHumanoidRootMotionSettings is not { } settings
+                || !ImportedHumanoidRootMotionPolicy.TryCreate(settings, out policy, out _))
                 return false;
 
-            if (!_unityHumanoidStateClockInitialized)
+            if (!_importedHumanoidStateClockInitialized)
             {
                 float initialPlaybackTime = 0.0f;
                 AnimationMember[] members = AnimatedMembersArray;
@@ -347,55 +347,55 @@ namespace XREngine.Animation
                         break;
                     }
                 }
-                _unityHumanoidStatePlaybackTicks = SecondsToUnityHumanoidTicks(initialPlaybackTime);
-                _unityHumanoidStateLoopCycle = 0L;
-                _unityHumanoidStateClockInitialized = true;
+                _importedHumanoidStatePlaybackTicks = SecondsToImportedHumanoidTicks(initialPlaybackTime);
+                _importedHumanoidStateLoopCycle = 0L;
+                _importedHumanoidStateClockInitialized = true;
             }
 
-            float playbackTime = UnityHumanoidTicksToSeconds(_unityHumanoidStatePlaybackTicks);
+            float playbackTime = ImportedHumanoidTicksToSeconds(_importedHumanoidStatePlaybackTicks);
 
             if (!(LengthInSeconds > 0.0f) || !float.IsFinite(LengthInSeconds))
             {
-                _unityHumanoidStateSampleTime = 0.0f;
-                _unityHumanoidStateSamplePhase = 0.0f;
-                _unityHumanoidSourceWrapped = false;
+                _importedHumanoidStateSampleTime = 0.0f;
+                _importedHumanoidStateSamplePhase = 0.0f;
+                _importedHumanoidSourceWrapped = false;
                 return true;
             }
 
             float shiftedTime = playbackTime + policy.NormalizedCycleOffset * LengthInSeconds;
             sampleTime = policy.LoopTime
-                ? WrapUnityHumanoidSampleTime(shiftedTime, LengthInSeconds)
+                ? WrapImportedHumanoidSampleTime(shiftedTime, LengthInSeconds)
                 : Math.Clamp(shiftedTime, 0.0f, LengthInSeconds);
             samplePhase = Math.Clamp(sampleTime / LengthInSeconds, 0.0f, 1.0f);
-            _unityHumanoidStateSampleTime = sampleTime;
-            _unityHumanoidStateSamplePhase = samplePhase;
-            _unityHumanoidSourceWrapped = policy.LoopTime
+            _importedHumanoidStateSampleTime = sampleTime;
+            _importedHumanoidStateSamplePhase = samplePhase;
+            _importedHumanoidSourceWrapped = policy.LoopTime
                 && policy.NormalizedCycleOffset > 0.0f
                 && playbackTime + policy.NormalizedCycleOffset * LengthInSeconds >= LengthInSeconds;
             return true;
         }
 
-        private static float WrapUnityHumanoidSampleTime(float time, float length)
+        private static float WrapImportedHumanoidSampleTime(float time, float length)
         {
             float wrapped = time % length;
             return wrapped < 0.0f ? wrapped + length : wrapped;
         }
 
-        private bool TryWriteUnityHumanoidValueToStore(
+        private bool TryWriteImportedHumanoidValueToStore(
             AnimationMember member,
-            UnityHumanoidRootMotionPolicy policy,
+            ImportedHumanoidRootMotionPolicy policy,
             float sampleTime,
             float samplePhase)
         {
             if (!member.Slot.IsValid || member.Animation is null)
                 return false;
 
-            RestoreUnityHumanoidMethodArguments(member);
+            RestoreImportedHumanoidMethodArguments(member);
             switch (member.Slot.Type)
             {
                 case EAnimValueType.Float when TrySampleFloat(member.Animation, sampleTime, out float floatValue):
-                    floatValue = ApplyUnityHumanoidLoopPose(member, policy, samplePhase, floatValue);
-                    AnimSlot floatSlot = ResolveUnityHumanoidMirroredFloatSlot(
+                    floatValue = ApplyImportedHumanoidLoopPose(member, policy, samplePhase, floatValue);
+                    AnimSlot floatSlot = ResolveImportedHumanoidMirroredFloatSlot(
                         member,
                         policy.Mirror,
                         ref floatValue);
@@ -408,8 +408,8 @@ namespace XREngine.Animation
 
                 case EAnimValueType.Vector3 when member.Animation is PropAnimVector3 vector3Animation:
                     Vector3 vector3Value = vector3Animation.GetValue(sampleTime);
-                    vector3Value = ApplyUnityHumanoidLoopPose(member, policy, samplePhase, vector3Value);
-                    AnimSlot vector3Slot = ResolveUnityHumanoidMirroredVector3Slot(
+                    vector3Value = ApplyImportedHumanoidLoopPose(member, policy, samplePhase, vector3Value);
+                    AnimSlot vector3Slot = ResolveImportedHumanoidMirroredVector3Slot(
                         member,
                         policy.Mirror,
                         ref vector3Value);
@@ -422,8 +422,8 @@ namespace XREngine.Animation
 
                 case EAnimValueType.Quaternion when member.Animation is PropAnimQuaternion quaternionAnimation:
                     Quaternion quaternionValue = quaternionAnimation.GetValue(sampleTime);
-                    quaternionValue = ApplyUnityHumanoidLoopPose(member, policy, samplePhase, quaternionValue);
-                    AnimSlot quaternionSlot = ResolveUnityHumanoidMirroredQuaternionSlot(
+                    quaternionValue = ApplyImportedHumanoidLoopPose(member, policy, samplePhase, quaternionValue);
+                    AnimSlot quaternionSlot = ResolveImportedHumanoidMirroredQuaternionSlot(
                         member,
                         policy.Mirror,
                         ref quaternionValue);
@@ -440,27 +440,27 @@ namespace XREngine.Animation
             }
         }
 
-        private object? GetUnityHumanoidValueLegacy(
+        private object? GetImportedHumanoidValueLegacy(
             AnimationMember member,
-            UnityHumanoidRootMotionPolicy policy,
+            ImportedHumanoidRootMotionPolicy policy,
             float sampleTime,
             float samplePhase)
         {
-            RestoreUnityHumanoidMethodArguments(member);
+            RestoreImportedHumanoidMethodArguments(member);
             object? value = member.Animation?.GetValueGeneric(sampleTime) ?? member.DefaultValue;
             switch (value)
             {
                 case float floatValue:
-                    floatValue = ApplyUnityHumanoidLoopPose(member, policy, samplePhase, floatValue);
-                    ApplyUnityHumanoidMirror(member, policy, ref floatValue);
+                    floatValue = ApplyImportedHumanoidLoopPose(member, policy, samplePhase, floatValue);
+                    ApplyImportedHumanoidMirror(member, policy, ref floatValue);
                     return floatValue;
                 case Vector3 vector3Value:
-                    vector3Value = ApplyUnityHumanoidLoopPose(member, policy, samplePhase, vector3Value);
-                    ApplyUnityHumanoidMirror(member, policy, ref vector3Value);
+                    vector3Value = ApplyImportedHumanoidLoopPose(member, policy, samplePhase, vector3Value);
+                    ApplyImportedHumanoidMirror(member, policy, ref vector3Value);
                     return vector3Value;
                 case Quaternion quaternionValue:
-                    quaternionValue = ApplyUnityHumanoidLoopPose(member, policy, samplePhase, quaternionValue);
-                    ApplyUnityHumanoidMirror(member, policy, ref quaternionValue);
+                    quaternionValue = ApplyImportedHumanoidLoopPose(member, policy, samplePhase, quaternionValue);
+                    ApplyImportedHumanoidMirror(member, policy, ref quaternionValue);
                     return quaternionValue;
                 default:
                     return value;
@@ -486,9 +486,9 @@ namespace XREngine.Animation
             }
         }
 
-        private float ApplyUnityHumanoidLoopPose(
+        private float ApplyImportedHumanoidLoopPose(
             AnimationMember member,
-            UnityHumanoidRootMotionPolicy policy,
+            ImportedHumanoidRootMotionPolicy policy,
             float phase,
             float value)
         {
@@ -497,7 +497,7 @@ namespace XREngine.Animation
                     or "SetAnimatedIKRotationY"
                     or "SetAnimatedIKRotationZ"
                     or "SetAnimatedIKRotationW"
-                || !IsUnityHumanoidPoseMember(member)
+                || !IsImportedHumanoidPoseMember(member)
                 || member.Animation is null
                 || !TrySampleFloat(member.Animation, 0.0f, out float start)
                 || !TrySampleFloat(member.Animation, LengthInSeconds, out float end))
@@ -506,28 +506,28 @@ namespace XREngine.Animation
             return value + (start - end) * phase;
         }
 
-        private Vector3 ApplyUnityHumanoidLoopPose(
+        private Vector3 ApplyImportedHumanoidLoopPose(
             AnimationMember member,
-            UnityHumanoidRootMotionPolicy policy,
+            ImportedHumanoidRootMotionPolicy policy,
             float phase,
             Vector3 value)
         {
             if (!policy.LoopPose
-                || !IsUnityHumanoidPoseMember(member)
+                || !IsImportedHumanoidPoseMember(member)
                 || member.Animation is not PropAnimVector3 animation)
                 return value;
 
             return value + (animation.GetValue(0.0f) - animation.GetValue(LengthInSeconds)) * phase;
         }
 
-        private Quaternion ApplyUnityHumanoidLoopPose(
+        private Quaternion ApplyImportedHumanoidLoopPose(
             AnimationMember member,
-            UnityHumanoidRootMotionPolicy policy,
+            ImportedHumanoidRootMotionPolicy policy,
             float phase,
             Quaternion value)
         {
             if (!policy.LoopPose
-                || !IsUnityHumanoidPoseMember(member)
+                || !IsImportedHumanoidPoseMember(member)
                 || member.Animation is not PropAnimQuaternion animation)
                 return value;
 
@@ -542,7 +542,7 @@ namespace XREngine.Animation
             return Quaternion.Normalize(value * correction);
         }
 
-        private static bool IsUnityHumanoidPoseMember(AnimationMember member)
+        private static bool IsImportedHumanoidPoseMember(AnimationMember member)
             => member.MemberType == EAnimationMemberType.Method
             && member.MemberName is "SetValue"
                 or "SetImportedRawValue"
@@ -556,25 +556,25 @@ namespace XREngine.Animation
                 or "SetAnimatedIKRotationZ"
                 or "SetAnimatedIKRotationW";
 
-        private void ApplyUnityHumanoidMirror(
+        private void ApplyImportedHumanoidMirror(
             AnimationMember member,
-            UnityHumanoidRootMotionPolicy policy,
+            ImportedHumanoidRootMotionPolicy policy,
             ref float value)
         {
             if (!policy.Mirror || member.MemberType != EAnimationMemberType.Method)
                 return;
 
             if (member.MemberName is "SetValue" or "SetImportedRawValue"
-                && TryGetUnityHumanoidMuscleArgument(member, out EHumanoidValue muscle))
+                && TryGetImportedHumanoidMuscleArgument(member, out EHumanoidValue muscle))
             {
-                member.MethodArguments[0] = UnityHumanoidMirrorOperator.MirrorMuscle(muscle, out float parity);
+                member.MethodArguments[0] = ImportedHumanoidMirrorOperator.MirrorMuscle(muscle, out float parity);
                 value *= parity;
                 return;
             }
 
-            if (IsUnityHumanoidIKMember(member)
-                && TryGetUnityHumanoidGoalArgument(member, out ELimbEndEffector goal))
-                member.MethodArguments[0] = UnityHumanoidMirrorOperator.MirrorGoal(goal);
+            if (IsImportedHumanoidIKMember(member)
+                && TryGetImportedHumanoidGoalArgument(member, out ELimbEndEffector goal))
+                member.MethodArguments[0] = ImportedHumanoidMirrorOperator.MirrorGoal(goal);
 
             // RootT/RootQ remain in their imported basis here. The shared humanoid
             // evaluator mirrors the complete Body sample once, after atomic staging.
@@ -583,42 +583,42 @@ namespace XREngine.Animation
                 value = -value;
         }
 
-        private void ApplyUnityHumanoidMirror(
+        private void ApplyImportedHumanoidMirror(
             AnimationMember member,
-            UnityHumanoidRootMotionPolicy policy,
+            ImportedHumanoidRootMotionPolicy policy,
             ref Vector3 value)
         {
             if (!policy.Mirror || member.MemberType != EAnimationMemberType.Method)
                 return;
 
-            if (IsUnityHumanoidIKMember(member)
-                && TryGetUnityHumanoidGoalArgument(member, out ELimbEndEffector goal))
+            if (IsImportedHumanoidIKMember(member)
+                && TryGetImportedHumanoidGoalArgument(member, out ELimbEndEffector goal))
             {
-                member.MethodArguments[0] = UnityHumanoidMirrorOperator.MirrorGoal(goal);
-                value = UnityHumanoidMirrorOperator.MirrorPosition(value);
+                member.MethodArguments[0] = ImportedHumanoidMirrorOperator.MirrorGoal(goal);
+                value = ImportedHumanoidMirrorOperator.MirrorPosition(value);
             }
         }
 
-        private void ApplyUnityHumanoidMirror(
+        private void ApplyImportedHumanoidMirror(
             AnimationMember member,
-            UnityHumanoidRootMotionPolicy policy,
+            ImportedHumanoidRootMotionPolicy policy,
             ref Quaternion value)
         {
             if (!policy.Mirror || member.MemberType != EAnimationMemberType.Method)
                 return;
 
-            if (IsUnityHumanoidIKMember(member)
-                && TryGetUnityHumanoidGoalArgument(member, out ELimbEndEffector goal))
+            if (IsImportedHumanoidIKMember(member)
+                && TryGetImportedHumanoidGoalArgument(member, out ELimbEndEffector goal))
             {
-                member.MethodArguments[0] = UnityHumanoidMirrorOperator.MirrorGoal(goal);
-                value = UnityHumanoidMirrorOperator.MirrorRotation(value);
+                member.MethodArguments[0] = ImportedHumanoidMirrorOperator.MirrorGoal(goal);
+                value = ImportedHumanoidMirrorOperator.MirrorRotation(value);
             }
         }
 
-        private static bool IsUnityHumanoidIKMember(AnimationMember member)
+        private static bool IsImportedHumanoidIKMember(AnimationMember member)
             => member.MemberName.StartsWith("SetAnimatedIK", StringComparison.Ordinal);
 
-        private static bool TryGetUnityHumanoidMuscleArgument(
+        private static bool TryGetImportedHumanoidMuscleArgument(
             AnimationMember member,
             out EHumanoidValue muscle)
         {
@@ -632,7 +632,7 @@ namespace XREngine.Animation
             return false;
         }
 
-        private static bool TryGetUnityHumanoidGoalArgument(
+        private static bool TryGetImportedHumanoidGoalArgument(
             AnimationMember member,
             out ELimbEndEffector goal)
         {
@@ -646,15 +646,15 @@ namespace XREngine.Animation
             return false;
         }
 
-        private void RestoreUnityHumanoidMethodArguments(AnimationMember member)
+        private void RestoreImportedHumanoidMethodArguments(AnimationMember member)
         {
             if (member.MemberType != EAnimationMemberType.Method)
                 return;
 
-            if (!_unityHumanoidMethodArgumentBaselines.TryGetValue(member, out object?[]? baseline))
+            if (!_importedHumanoidMethodArgumentBaselines.TryGetValue(member, out object?[]? baseline))
             {
                 baseline = (object?[])member.MethodArguments.Clone();
-                _unityHumanoidMethodArgumentBaselines.Add(member, baseline);
+                _importedHumanoidMethodArgumentBaselines.Add(member, baseline);
             }
 
             int count = Math.Min(member.MethodArguments.Length, baseline.Length);
@@ -665,9 +665,9 @@ namespace XREngine.Animation
             }
         }
 
-        internal void ResetUnityHumanoidEvaluationState()
+        internal void ResetImportedHumanoidEvaluationState()
         {
-            foreach ((AnimationMember member, object?[] baseline) in _unityHumanoidMethodArgumentBaselines)
+            foreach ((AnimationMember member, object?[] baseline) in _importedHumanoidMethodArgumentBaselines)
             {
                 int count = Math.Min(member.MethodArguments.Length, baseline.Length);
                 for (int i = 0; i < count; i++)
@@ -676,25 +676,25 @@ namespace XREngine.Animation
                         member.MethodArguments[i] = baseline[i];
                 }
             }
-            _unityHumanoidMethodArgumentBaselines.Clear();
-            ClearUnityHumanoidMirrorSlotBindings();
-            ClearUnityHumanoidScalarQuaternionBindings();
-            ResetUnityHumanoidStateClock(0.0f);
+            _importedHumanoidMethodArgumentBaselines.Clear();
+            ClearImportedHumanoidMirrorSlotBindings();
+            ClearImportedHumanoidScalarQuaternionBindings();
+            ResetImportedHumanoidStateClock(0.0f);
         }
 
-        internal void ResetUnityHumanoidStateClock(float timeSeconds)
+        internal void ResetImportedHumanoidStateClock(float timeSeconds)
         {
-            long lengthTicks = SecondsToUnityHumanoidTicks(LengthInSeconds);
-            _unityHumanoidStatePlaybackTicks = Math.Clamp(
-                SecondsToUnityHumanoidTicks(timeSeconds),
+            long lengthTicks = SecondsToImportedHumanoidTicks(LengthInSeconds);
+            _importedHumanoidStatePlaybackTicks = Math.Clamp(
+                SecondsToImportedHumanoidTicks(timeSeconds),
                 0L,
                 Math.Max(0L, lengthTicks));
-            _unityHumanoidStateLoopCycle = 0L;
-            _unityHumanoidStateClockInitialized = true;
-            _unityHumanoidSourceWrapped = false;
-            _unityHumanoidStateSampleTime = Math.Clamp(timeSeconds, 0.0f, Math.Max(0.0f, LengthInSeconds));
-            _unityHumanoidStateSamplePhase = LengthInSeconds > 0.0f
-                ? Math.Clamp(_unityHumanoidStateSampleTime / LengthInSeconds, 0.0f, 1.0f)
+            _importedHumanoidStateLoopCycle = 0L;
+            _importedHumanoidStateClockInitialized = true;
+            _importedHumanoidSourceWrapped = false;
+            _importedHumanoidStateSampleTime = Math.Clamp(timeSeconds, 0.0f, Math.Max(0.0f, LengthInSeconds));
+            _importedHumanoidStateSamplePhase = LengthInSeconds > 0.0f
+                ? Math.Clamp(_importedHumanoidStateSampleTime / LengthInSeconds, 0.0f, 1.0f)
                 : 0.0f;
         }
 
@@ -702,27 +702,27 @@ namespace XREngine.Animation
         /// Publishes the current authored muscle sample before Loop Pose correction. Feet-based
         /// root projection consumes this sample before the corrected pose is committed.
         /// </summary>
-        public void PublishUnityHumanoidProjectionMuscles(IUnityHumanoidProjectionPoseSink sink)
-            => PublishUnityHumanoidProjectionMusclesAtTime(_unityHumanoidStateSampleTime, sink);
+        public void PublishImportedHumanoidProjectionMuscles(IImportedHumanoidProjectionPoseSink sink)
+            => PublishImportedHumanoidProjectionMusclesAtTime(_importedHumanoidStateSampleTime, sink);
 
         /// <summary>
         /// Publishes an authored pre-Loop-Pose muscle sample without changing the state-machine
         /// clock. Endpoint probes use this to calculate feet-based Body seam correction before
         /// the first visible evaluation.
         /// </summary>
-        public void PublishUnityHumanoidProjectionMusclesAtTime(
+        public void PublishImportedHumanoidProjectionMusclesAtTime(
             float timeSeconds,
-            IUnityHumanoidProjectionPoseSink sink)
+            IImportedHumanoidProjectionPoseSink sink)
         {
             ArgumentNullException.ThrowIfNull(sink);
-            if (UnityHumanoidRootMotionSettings is not { } settings
-                || !UnityHumanoidRootMotionPolicy.TryCreate(
+            if (ImportedHumanoidRootMotionSettings is not { } settings
+                || !ImportedHumanoidRootMotionPolicy.TryCreate(
                     settings,
-                    out UnityHumanoidRootMotionPolicy policy,
+                    out ImportedHumanoidRootMotionPolicy policy,
                     out _)
                 || (!policy.LoopPose
                     && (policy.BakePositionYIntoPose
-                        || policy.PositionYBasis is not EUnityHumanoidRootPositionYBasis.Feet)))
+                        || policy.PositionYBasis is not EImportedHumanoidRootPositionYBasis.Feet)))
                 return;
 
             AnimationMember[] members = AnimatedMembersArray;
@@ -735,27 +735,27 @@ namespace XREngine.Animation
                     || !TrySampleFloat(animation, timeSeconds, out float amount))
                     continue;
 
-                RestoreUnityHumanoidMethodArguments(member);
-                if (!TryGetUnityHumanoidMuscleArgument(member, out EHumanoidValue muscle))
+                RestoreImportedHumanoidMethodArguments(member);
+                if (!TryGetImportedHumanoidMuscleArgument(member, out EHumanoidValue muscle))
                     continue;
 
                 if (policy.Mirror)
                 {
-                    muscle = UnityHumanoidMirrorOperator.MirrorMuscle(muscle, out float parity);
+                    muscle = ImportedHumanoidMirrorOperator.MirrorMuscle(muscle, out float parity);
                     amount *= parity;
                 }
 
                 bool flipImportedMuscleZ = member.MemberName == "SetImportedRawValue"
                     && member.MethodArguments.Length > 2
                     && member.MethodArguments[2] is true;
-                sink.SetUnityHumanoidProjectionMuscle(muscle, amount, flipImportedMuscleZ);
+                sink.SetImportedHumanoidProjectionMuscle(muscle, amount, flipImportedMuscleZ);
             }
         }
 
         /// <summary>
         /// Samples the imported-mapped RootT/RootQ leaf data without mutating its playback clock.
         /// </summary>
-        public bool TrySampleUnityHumanoidBody(
+        public bool TrySampleImportedHumanoidBody(
             float timeSeconds,
             out Vector3 position,
             out Quaternion rotation)
@@ -803,39 +803,39 @@ namespace XREngine.Animation
 
         public override void Tick(float delta)
         {
-            AdvanceUnityHumanoidStateClock(SecondsToUnityHumanoidTicks(delta));
+            AdvanceImportedHumanoidStateClock(SecondsToImportedHumanoidTicks(delta));
             TickPropertyAnimations(delta);
         }
 
         public override void Tick(long deltaTicks)
         {
-            AdvanceUnityHumanoidStateClock(deltaTicks);
+            AdvanceImportedHumanoidStateClock(deltaTicks);
             TickPropertyAnimations(deltaTicks);
         }
 
-        private void AdvanceUnityHumanoidStateClock(long deltaTicks)
+        private void AdvanceImportedHumanoidStateClock(long deltaTicks)
         {
-            if (!_unityHumanoidStateClockInitialized
-                || UnityHumanoidRootMotionSettings is not { } settings
-                || !UnityHumanoidRootMotionPolicy.TryCreate(settings, out UnityHumanoidRootMotionPolicy policy, out _))
+            if (!_importedHumanoidStateClockInitialized
+                || ImportedHumanoidRootMotionSettings is not { } settings
+                || !ImportedHumanoidRootMotionPolicy.TryCreate(settings, out ImportedHumanoidRootMotionPolicy policy, out _))
                 return;
 
-            long lengthTicks = SecondsToUnityHumanoidTicks(LengthInSeconds);
+            long lengthTicks = SecondsToImportedHumanoidTicks(LengthInSeconds);
             if (lengthTicks <= 0L)
                 return;
 
-            long unwrappedTicks = _unityHumanoidStatePlaybackTicks + deltaTicks;
+            long unwrappedTicks = _importedHumanoidStatePlaybackTicks + deltaTicks;
             if (!policy.LoopTime)
             {
-                _unityHumanoidStatePlaybackTicks = Math.Clamp(unwrappedTicks, 0L, lengthTicks);
+                _importedHumanoidStatePlaybackTicks = Math.Clamp(unwrappedTicks, 0L, lengthTicks);
                 return;
             }
 
-            _unityHumanoidStateLoopCycle += CountUnityHumanoidWrappedCycles(unwrappedTicks, lengthTicks);
-            _unityHumanoidStatePlaybackTicks = WrapUnityHumanoidTicks(unwrappedTicks, lengthTicks);
+            _importedHumanoidStateLoopCycle += CountImportedHumanoidWrappedCycles(unwrappedTicks, lengthTicks);
+            _importedHumanoidStatePlaybackTicks = WrapImportedHumanoidTicks(unwrappedTicks, lengthTicks);
         }
 
-        private static long CountUnityHumanoidWrappedCycles(long unwrappedTicks, long lengthTicks)
+        private static long CountImportedHumanoidWrappedCycles(long unwrappedTicks, long lengthTicks)
         {
             long quotient = unwrappedTicks / lengthTicks;
             if (unwrappedTicks % lengthTicks < 0L)
@@ -843,18 +843,18 @@ namespace XREngine.Animation
             return quotient;
         }
 
-        private static long WrapUnityHumanoidTicks(long ticks, long lengthTicks)
+        private static long WrapImportedHumanoidTicks(long ticks, long lengthTicks)
         {
             long wrapped = ticks % lengthTicks;
             return wrapped < 0L ? wrapped + lengthTicks : wrapped;
         }
 
-        private static long SecondsToUnityHumanoidTicks(double seconds)
+        private static long SecondsToImportedHumanoidTicks(double seconds)
             => !double.IsFinite(seconds) || seconds == 0.0
                 ? 0L
                 : (long)Math.Round(seconds * Stopwatch.Frequency);
 
-        private static float UnityHumanoidTicksToSeconds(long ticks)
+        private static float ImportedHumanoidTicksToSeconds(long ticks)
             => (float)(ticks / (double)Stopwatch.Frequency);
 
         public override bool Load3rdParty(string filePath)
@@ -878,11 +878,11 @@ namespace XREngine.Animation
                     HasIKGoals = imported.HasIKGoals;
                     SourceMaterialBindings = imported.SourceMaterialBindings;
                     MaterialBindingDiagnostics = imported.MaterialBindingDiagnostics;
-                    UnityHumanoidRootMotionSettings = imported.UnityHumanoidRootMotionSettings;
-                    UnityMetadata = imported.UnityMetadata;
-                    UnityEvents = imported.UnityEvents;
-                    UnityGenericBindings = imported.UnityGenericBindings;
-                    UnityImportManifest = imported.UnityImportManifest;
+                    ImportedHumanoidRootMotionSettings = imported.ImportedHumanoidRootMotionSettings;
+                    ImportedMetadata = imported.ImportedMetadata;
+                    ImportedEvents = imported.ImportedEvents;
+                    ImportedGenericBindings = imported.ImportedGenericBindings;
+                    SourceImportManifest = imported.SourceImportManifest;
                     SampleRate = imported.SampleRate;
                     RootMember = imported.RootMember;
                     return true;

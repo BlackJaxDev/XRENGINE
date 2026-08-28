@@ -20,6 +20,6 @@ namespace XREngine.Animation
         /// <summary>
         /// Unity humanoid muscle-space animation (float curves with Mecanim channel names).
         /// </summary>
-        UnityHumanoidMuscle,
+        ImportedHumanoidMuscle,
     }
 }

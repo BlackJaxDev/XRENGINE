@@ -10,6 +10,11 @@ public enum RuntimeAdapterProfile
     Animation = 1 << 0,
     Audio = 1 << 1,
     Input = 1 << 2,
-    Modeling = 1 << 3,
-    All = Animation | Audio | Input | Modeling,
+    /// <summary>
+    /// Declares that the application requires external model asset import/cooking.
+    /// The concrete application root must install ModelAssetPipeline; generic Bootstrap
+    /// does not own that optional feature.
+    /// </summary>
+    ModelAssetPipeline = 1 << 3,
+    All = Animation | Audio | Input | ModelAssetPipeline,
 }

@@ -293,6 +293,13 @@ internal sealed partial class VulkanCommandRuntime
                     $"Cannot begin command buffer 0x{handle:X} for {owner}: {reason}");
             }
 
+            if (tracker.CommandBufferLifetimes.TryGetValue(
+                    handle,
+                    out VulkanCommandBufferLifetimeRecord? lifetime))
+            {
+                lifetime.InvalidateSealedSubmissionContract();
+            }
+
             VulkanCommandBufferTrackingBatch batch =
                 CommandBuffers.TrackingBatches.GetOrAdd(handle, static _ => new());
             using (VulkanFrameLockScope.Enter(

@@ -203,7 +203,7 @@ public partial class HumanoidComponent
             DefinitionContentSha256 = definitionSignature,
             SourceProvenance = sourceProvenance,
             SourceModelContentSha256 = sourceModelSignature,
-            CoordinateContractId = UnityAnimationCoordinateContract.CurrentContractId,
+            CoordinateContractId = ImportedAnimationCoordinateContract.CurrentContractId,
             HumanScale = humanScale,
             ModelUnitsPerMeter = modelUnitsPerMeter,
             MuscleInputScale = muscleInputScale,
@@ -472,10 +472,10 @@ public partial class HumanoidComponent
 
         if (!string.Equals(
             definition.CoordinateContractId,
-            UnityAnimationCoordinateContract.CurrentContractId,
+            ImportedAnimationCoordinateContract.CurrentContractId,
             StringComparison.Ordinal))
             return RejectAvatarDefinition(
-                $"Avatar coordinate contract '{definition.CoordinateContractId}' does not match runtime contract '{UnityAnimationCoordinateContract.CurrentContractId}'.",
+                $"Avatar coordinate contract '{definition.CoordinateContractId}' does not match runtime contract '{ImportedAnimationCoordinateContract.CurrentContractId}'.",
                 out diagnostic);
 
         HumanoidAvatarSolverSettings liveSolverSettings = CopySolverSettings(definition.SolverSettings);
@@ -554,7 +554,7 @@ public partial class HumanoidComponent
     public string CreateAnimationCompatibilityKey(AnimationClip clip)
     {
         ArgumentNullException.ThrowIfNull(clip);
-        UnityAnimationImportManifest? manifest = clip.UnityImportManifest;
+        ImportedAnimationImportManifest? manifest = clip.SourceImportManifest;
         if (manifest is null)
             return string.Empty;
 
@@ -863,8 +863,8 @@ public partial class HumanoidComponent
     {
         return float.IsFinite(previous.ModelUnitsPerMeter) && previous.ModelUnitsPerMeter > 0.0f
             ? previous.ModelUnitsPerMeter
-            : float.IsFinite(_unityProfileUnitsPerMeter) && _unityProfileUnitsPerMeter > 0.0f
-                ? _unityProfileUnitsPerMeter
+            : float.IsFinite(_sourceProfileUnitsPerMeter) && _sourceProfileUnitsPerMeter > 0.0f
+                ? _sourceProfileUnitsPerMeter
                 : 1.0f;
     }
 
@@ -1061,7 +1061,7 @@ public partial class HumanoidComponent
         var canonical = new StringBuilder(16384);
         AppendCanonical(canonical, HumanoidAvatarDefinitionMetadata.CurrentSchemaVersion);
         AppendCanonical(canonical, HumanoidAvatarDefinitionMetadata.CurrentAutoMappingAlgorithmVersion);
-        AppendCanonical(canonical, UnityAnimationCoordinateContract.CurrentContractId);
+        AppendCanonical(canonical, ImportedAnimationCoordinateContract.CurrentContractId);
         AppendCanonical(canonical, skeletonSignature);
         AppendCanonical(canonical, (int)sourceProvenance);
         AppendCanonical(canonical, sourceModelSignature);

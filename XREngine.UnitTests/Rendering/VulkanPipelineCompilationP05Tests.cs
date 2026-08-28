@@ -188,7 +188,9 @@ public sealed class VulkanPipelineCompilationP05Tests
             {
                 compileThreadId = Environment.CurrentManagedThreadId;
                 return 42;
-            });
+            },
+            foregroundRequired: false,
+            out _);
 
         result.ShouldBe(42);
         compileThreadId.ShouldNotBe(callingThreadId);

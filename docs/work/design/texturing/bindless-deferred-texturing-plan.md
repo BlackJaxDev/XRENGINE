@@ -63,7 +63,7 @@ That phased approach captures most of the win early while avoiding a large rende
 | GPU material table | `XRENGINE/Rendering/Materials/GPUMaterialTable.cs` |
 | Vulkan descriptor-indexing support | `XRENGINE/Rendering/API/Rendering/Vulkan/Objects/LogicalDevice.cs`, `VulkanFeatureProfile.cs`, `VulkanDescriptorLayoutCache.cs` |
 | Deferred decals | `XRENGINE/Scene/Components/Misc/DeferredDecalComponent.cs` |
-| Deferred material import setup | `XRENGINE/Core/ModelImporter.cs` |
+| Deferred material import setup | `XREngine.Runtime.ModelAssetPipeline/Importing/ModelAssetImporter.cs` |
 | Renderer settings | `XRENGINE/Engine/Subclasses/Rendering/Engine.Rendering.Settings.cs` |
 | Bindless material shader header | `Build/CommonAssets/Shaders/Common/MaterialTable.glsl` |
 | Bindless mesh fragment stub | `Build/CommonAssets/Shaders/Graphics/BindlessMesh.frag` |

@@ -129,7 +129,7 @@ public sealed class ModelCacheVariantFingerprintTests
             ModelImportOptions options = new()
             {
                 ScaleConversion = 1.25f,
-                UnityProjectRootOverride = "ImporterRoot",
+                SourceProjectRootOverride = "ImporterRoot",
                 TextureLoadDirSearchPaths = ["Textures"],
             };
 

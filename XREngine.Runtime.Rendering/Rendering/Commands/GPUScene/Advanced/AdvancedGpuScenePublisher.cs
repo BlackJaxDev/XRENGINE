@@ -438,6 +438,7 @@ public sealed class AdvancedGpuScenePublisher
             World = world,
             StructuralSignature = ComputeStructuralSignature(in command, mesh, sourceMaterial, primitiveIndex),
             ContentSignature = ComputeContentSignature(in command, in bounds, in world, in previousWorld, sourceMaterial),
+            MaterialBindingResourceVersion = sourceMaterial?.BindingResourceVersion ?? 0UL,
             Active = true,
         };
         if (!TryInsertRegistrationLookup(index))
@@ -493,25 +494,34 @@ public sealed class AdvancedGpuScenePublisher
 
             if (!Database.Scene.Geometry.Records.TryReplace(
                 registration.Geometry,
-                CreateGeometry(scene, mesh, in bounds, in command)) ||
+                CreateGeometry(scene, mesh, in bounds, in command),
+                EAdvancedGpuMutationDomain.LayoutTopology) ||
                 !Database.Scene.Deformations.TryReplace(
                     registration.Deformation,
-                    CreateDeformation(registration.Geometry, mesh)) ||
+                    CreateDeformation(registration.Geometry, mesh),
+                    EAdvancedGpuMutationDomain.ResourceBinding) ||
                 !Database.Materials.Materials.TryReplace(
                 registration.Material,
-                CreateMaterial(in command, sourceMaterial, registration.Material)) ||
+                CreateMaterial(in command, sourceMaterial, registration.Material),
+                EAdvancedGpuMutationDomain.LayoutTopology) ||
                 !Database.Scene.RenderStates.TryReplace(
                 registration.RenderState,
-                CreateRenderState(mesh, in command)))
+                CreateRenderState(mesh, in command),
+                EAdvancedGpuMutationDomain.LayoutTopology))
             {
                 throw new InvalidOperationException("Canonical structural update failed after successful preflight.");
             }
 
             draw.PrimitiveSection = checked((uint)Math.Max(0, primitiveIndex));
             draw.Flags = command.Flags;
-            if (!Database.Scene.Draws.TryReplace(registration.Draw, draw))
+            if (!Database.Scene.Draws.TryReplace(
+                    registration.Draw,
+                    draw,
+                    EAdvancedGpuMutationDomain.RecordingTopology))
                 throw new InvalidOperationException("Canonical draw update failed after successful preflight.");
             registration.StructuralSignature = structural;
+            registration.MaterialBindingResourceVersion =
+                sourceMaterial?.BindingResourceVersion ?? 0UL;
             ++_topologyDeltaCount;
             AdvanceNonZero(ref _topologyGeneration);
         }
@@ -519,6 +529,11 @@ public sealed class AdvancedGpuScenePublisher
         if (content == registration.ContentSignature)
             return;
 
+        ulong bindingResourceVersion = sourceMaterial?.BindingResourceVersion ?? 0UL;
+        EAdvancedGpuMutationDomain materialMutationDomain =
+            bindingResourceVersion != registration.MaterialBindingResourceVersion
+                ? EAdvancedGpuMutationDomain.ResourceBinding
+                : EAdvancedGpuMutationDomain.Content;
         if (!CanUpdateRegistrationContent(registration) ||
             !Database.Scene.Transforms.TryReplace(
             registration.PreviousTransform,
@@ -531,7 +546,8 @@ public sealed class AdvancedGpuScenePublisher
             CreateInstance(world, previousWorld, in bounds, in command)) ||
             !Database.Materials.Materials.TryReplace(
             registration.Material,
-            CreateMaterial(in command, sourceMaterial, registration.Material)) ||
+            CreateMaterial(in command, sourceMaterial, registration.Material),
+            materialMutationDomain) ||
             !Database.Scene.EditorIdentities.TryReplace(
             registration.EditorIdentity,
             CreateEditorIdentity(in command)))
@@ -540,6 +556,7 @@ public sealed class AdvancedGpuScenePublisher
         }
         registration.World = world;
         registration.ContentSignature = content;
+        registration.MaterialBindingResourceVersion = bindingResourceVersion;
         ++_contentDeltaCount;
         AdvanceNonZero(ref _contentGeneration);
     }
@@ -1145,6 +1162,7 @@ public sealed class AdvancedGpuScenePublisher
         public Matrix4x4 World;
         public ulong StructuralSignature;
         public ulong ContentSignature;
+        public ulong MaterialBindingResourceVersion;
         public ulong LastSeenSequence;
         public ulong TombstoneSequence;
         public bool Active;

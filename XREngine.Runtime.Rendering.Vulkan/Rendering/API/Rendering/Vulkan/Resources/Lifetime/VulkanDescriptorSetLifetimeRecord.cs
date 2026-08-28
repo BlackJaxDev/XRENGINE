@@ -22,6 +22,12 @@ internal sealed class VulkanDescriptorSetLifetimeRecord
         EVulkanDescriptorNativePublicationState.Known;
     internal ulong Generation;
     /// <summary>
+    /// Changes only when the transitive native-resource identity set changes.
+    /// Buffer offsets, ranges, and other payload-only writes deliberately leave
+    /// this generation stable so reusable command artifacts stay sealed.
+    /// </summary>
+    internal ulong ResourceClosureGeneration;
+    /// <summary>
     /// Changes only when the image view/layout/type payload changes. Secondary
     /// command buffers use this narrower generation to validate their frozen
     /// image-layout requirements; update-after-bind buffer writes do not alter

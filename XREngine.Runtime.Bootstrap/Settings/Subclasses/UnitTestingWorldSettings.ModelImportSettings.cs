@@ -1,5 +1,5 @@
-using Assimp;
 using Newtonsoft.Json;
+using XREngine.Rendering.Models;
 
 namespace XREngine.Runtime.Bootstrap;
 
@@ -40,8 +40,8 @@ public partial class UnitTestingWorldSettings
         /// When omitted, the importer locates the owning project from the prefab path.
         /// Relative paths are resolved from the process working directory.
         /// </summary>
-        public string? UnityProjectRoot { get; set; }
-        public PostProcessSteps ImportFlags { get; set; } = PostProcessSteps.None;
+        public string? SourceProjectRoot { get; set; }
+        public ModelImportSteps ImportFlags { get; set; } = ModelImportSteps.None;
         public float Scale { get; set; } = 1.0f;
         public bool ZUp { get; set; } = false;
 

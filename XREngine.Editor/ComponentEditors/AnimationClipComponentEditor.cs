@@ -27,7 +27,7 @@ public sealed class AnimationClipComponentEditor : IXRComponentEditor
         }
 
         DrawPlaybackSection(clipComponent);
-        DrawUnityImportReport(clipComponent);
+        DrawSourceImportReport(clipComponent);
         DrawAdvancedSection(clipComponent, visited);
         ComponentEditorLayout.DrawActivePreviewDialog();
     }
@@ -131,13 +131,13 @@ public sealed class AnimationClipComponentEditor : IXRComponentEditor
         return Math.Clamp(targetTime, 0.0f, clipLength);
     }
 
-    private static void DrawUnityImportReport(AnimationClipComponent component)
+    private static void DrawSourceImportReport(AnimationClipComponent component)
     {
         if (!ImGui.CollapsingHeader("Unity Import / Playback Report", ImGuiTreeNodeFlags.DefaultOpen))
             return;
 
         var clip = component.Animation;
-        UnityAnimationImportManifest? manifest = clip?.UnityImportManifest;
+        ImportedAnimationImportManifest? manifest = clip?.SourceImportManifest;
         if (clip is null)
         {
             ImGui.TextDisabled("No animation clip is assigned.");
@@ -193,7 +193,7 @@ public sealed class AnimationClipComponentEditor : IXRComponentEditor
             ImGui.TableHeadersRow();
             for (int i = 0; i < manifest.Domains.Length; i++)
             {
-                UnityAnimationDomainCapability domain = manifest.Domains[i];
+                ImportedAnimationDomainCapability domain = manifest.Domains[i];
                 ImGui.TableNextRow();
                 ImGui.TableSetColumnIndex(0);
                 ImGui.TextUnformatted(domain.Domain.ToString());
@@ -213,7 +213,7 @@ public sealed class AnimationClipComponentEditor : IXRComponentEditor
         {
             for (int i = 0; i < manifest.Domains.Length; i++)
             {
-                UnityAnimationDomainCapability domain = manifest.Domains[i];
+                ImportedAnimationDomainCapability domain = manifest.Domains[i];
                 for (int j = 0; j < domain.Diagnostics.Length; j++)
                     ImGui.BulletText($"{domain.Domain}: {domain.Diagnostics[j]}");
             }
@@ -224,7 +224,7 @@ public sealed class AnimationClipComponentEditor : IXRComponentEditor
             $"Bindings: {manifest.Bindings.Length}; preserved payloads: {manifest.PreservedPayloads.Length}");
     }
 
-    private static int CountDiagnostics(UnityAnimationImportManifest manifest)
+    private static int CountDiagnostics(ImportedAnimationImportManifest manifest)
     {
         int count = 0;
         for (int i = 0; i < manifest.Domains.Length; i++)

@@ -1,6 +1,6 @@
 # Dependency Inventory
 
-Generated: 2026-08-25T20:37:34-07:00
+Generated: 2026-08-27T16:11:09-07:00
 Commit: (not a git repo)
 
 Best-effort inventory of dependencies referenced by the XRENGINE solution: NuGet packages, git submodules, vendored source snapshots, and native/managed binaries that are referenced or shipped.
@@ -32,7 +32,7 @@ Notes:
 ## NuGet packages (direct)
 | Package | Version(s) | Owner (best-effort) | License (best-effort) | Used by |
 |---|---|---|---|---|
-| AssimpNetter | 6.0.5 | Saalvage | [MIT](licenses/nuget/AssimpNetter-6.0.5-MIT.txt) | XREngine.Animation.csproj, XREngine.Audio.csproj, XREngine.csproj, XREngine.Data.csproj, XREngine.Editor.csproj, XREngine.Extensions.csproj, XREngine.Modeling.csproj, XREngine.Runtime.Bootstrap.csproj, XREngine.Runtime.ModelingBridge.csproj, XREngine.Server.csproj, XREngine.VRClient.csproj |
+| AssimpNetter | 6.0.5 | Saalvage | [MIT](licenses/nuget/AssimpNetter-6.0.5-MIT.txt) | XREngine.Runtime.ModelAssetPipeline.csproj |
 | BenchmarkDotNet | 0.15.8 | dotnet | [MIT](licenses/nuget/BenchmarkDotNet-0.15.8-MIT.txt) | XREngine.Benchmarks.csproj |
 | BitsKit | 1.2.0 | barncastle | [MIT](licenses/nuget/BitsKit-1.2.0-MIT.txt) | XREngine.Runtime.Core.csproj, XREngine.Runtime.Rendering.csproj |
 | DotnetNoise | 1.0.0 | Mr9Madness | [MIT](licenses/nuget/DotnetNoise-1.0.0-MIT.txt) | XREngine.Runtime.Core.csproj, XREngine.Runtime.Rendering.csproj |
@@ -47,12 +47,12 @@ Notes:
 | JoltPhysicsSharp | 2.22.0 | amerkoleci | [MIT](licenses/nuget/JoltPhysicsSharp-2.22.0-MIT.txt) | XREngine.Runtime.Core.csproj |
 | K4os.Compression.LZ4 | 1.3.8 | MiloszKrajewski | [MIT](licenses/nuget/K4os.Compression.LZ4-1.3.8-MIT.txt) | XREngine.Data.csproj |
 | LZMA-SDK | 22.1.1 | monemihir | [MIT](licenses/nuget/LZMA-SDK-22.1.1-MIT.txt) | XREngine.csproj, XREngine.Data.csproj |
-| Magick.NET-Q16-HDRI-x64 | 14.16.0 | dlemstra | [Apache-2.0](licenses/nuget/Magick.NET-Q16-HDRI-x64-14.16.0-Apache-2.0.txt) | XREngine.Runtime.Core.csproj, XREngine.Runtime.Rendering.csproj, XREngine.UnitTests.csproj |
+| Magick.NET-Q16-HDRI-x64 | 14.16.0 | dlemstra | [Apache-2.0](licenses/nuget/Magick.NET-Q16-HDRI-x64-14.16.0-Apache-2.0.txt) | XREngine.Runtime.Core.csproj, XREngine.Runtime.ModelAssetPipeline.csproj, XREngine.Runtime.Rendering.csproj, XREngine.UnitTests.csproj |
 | MagicPhysX | 1.0.0 | Cysharp | [MIT](licenses/nuget/MagicPhysX-1.0.0-MIT.txt) | XREngine.Runtime.Core.csproj |
 | MathNet.Numerics | 5.0.0 | mathnet | [MIT](licenses/nuget/MathNet.Numerics-5.0.0-MIT.txt) | XREngine.Audio.csproj, XREngine.Editor.csproj, XREngine.Runtime.Rendering.csproj |
 | MathNet.Numerics.Providers.CUDA | 5.0.0 | mathnet | [MIT](licenses/nuget/MathNet.Numerics.Providers.CUDA-5.0.0-MIT.txt) | XREngine.Audio.csproj, XREngine.Editor.csproj, XREngine.Runtime.Rendering.csproj |
 | MemoryPack | 1.21.4 | Cysharp | [MIT](licenses/nuget/MemoryPack-1.21.4-MIT.txt) | XREngine.csproj, XREngine.Data.csproj, XREngine.Editor.csproj, XREngine.Extensions.csproj, XREngine.Modeling.csproj, XREngine.Profiler.csproj, XREngine.Runtime.Core.csproj, XREngine.Runtime.Rendering.csproj, XREngine.Server.csproj |
-| Meshoptimizer.NET | 1.0.7 | BoyBaykiller | [MIT](licenses/nuget/Meshoptimizer.NET-1.0.7-MIT.txt) | XREngine.Editor.csproj, XREngine.Extensions.csproj, XREngine.Modeling.csproj, XREngine.Runtime.Rendering.csproj, XREngine.UnitTests.csproj |
+| Meshoptimizer.NET | 1.0.7 | BoyBaykiller | [MIT](licenses/nuget/Meshoptimizer.NET-1.0.7-MIT.txt) | XREngine.Editor.csproj, XREngine.Extensions.csproj, XREngine.Modeling.csproj, XREngine.Runtime.ModelAssetPipeline.csproj, XREngine.Runtime.Rendering.csproj, XREngine.UnitTests.csproj |
 | MIConvexHull | 1.1.19.1019 | DesignEngrLab | [MIT](licenses/nuget/MIConvexHull-1.1.19.1019-MIT.txt) | XREngine.Modeling.csproj, XREngine.Runtime.Rendering.csproj |
 | Microsoft.Build | 18.8.2 | dotnet | [MIT](licenses/nuget/Microsoft.Build-18.8.2-MIT.txt) | XREngine.Editor.csproj |
 | Microsoft.Build.Framework | 18.8.2 | dotnet | [MIT](licenses/nuget/Microsoft.Build.Framework-18.8.2-MIT.txt) | XREngine.Editor.csproj |
@@ -136,17 +136,16 @@ Notes:
 | SkiaSharp | 4.151.0 | Microsoft | [MIT](licenses/nuget/SkiaSharp-4.151.0-MIT.txt) | XREngine.Runtime.Rendering.csproj |
 | SPIRVCross.NET | 1.1.3 | FaberSanZ | [MIT](licenses/nuget/SPIRVCross.NET-1.1.3-MIT.txt) | XREngine.Editor.csproj |
 | Steamworks.NET | 2024.8.0 | rlabrecque | [MIT](licenses/nuget/Steamworks.NET-2024.8.0-MIT.txt) | XREngine.Editor.csproj, XREngine.Server.csproj |
-| StirlingLabs.assimp.native.win-x64 | 5.2.5.4 | Stirling Labs / Assimp contributors | [BSD-3-Clause](licenses/fetched/StirlingLabs.assimp.native-BSD-3-Clause.txt) | XREngine.csproj, XREngine.Data.csproj, XREngine.Editor.csproj, XREngine.Extensions.csproj |
 | Svg.Skia | 5.1.1 | wieslawsoltes | [MIT](licenses/nuget/Svg.Skia-5.1.1-MIT.txt) | XREngine.Runtime.Rendering.csproj |
 | System.Drawing.Common | 10.0.10 | dotnet | [MIT](licenses/nuget/System.Drawing.Common-10.0.10-MIT.txt) | XREngine.Data.csproj |
 | System.IdentityModel.Tokens.Jwt | 8.22.0 | AzureAD | [MIT](licenses/nuget/System.IdentityModel.Tokens.Jwt-8.22.0-MIT.txt) | XREngine.Server.csproj |
-| System.IO.Hashing | 10.0.10 | dotnet | [MIT](licenses/nuget/System.IO.Hashing-10.0.10-MIT.txt) | XREngine.Data.csproj, XREngine.Runtime.Core.csproj, XREngine.Runtime.ModelingBridge.csproj, XREngine.Runtime.Rendering.csproj |
+| System.IO.Hashing | 10.0.10 | dotnet | [MIT](licenses/nuget/System.IO.Hashing-10.0.10-MIT.txt) | XREngine.Data.csproj, XREngine.Runtime.Core.csproj, XREngine.Runtime.ModelAssetPipeline.csproj, XREngine.Runtime.Rendering.csproj |
 | System.Management | 10.0.10 | dotnet | [MIT](licenses/nuget/System.Management-10.0.10-MIT.txt) | XREngine.Runtime.Rendering.csproj |
 | System.Security.Cryptography.ProtectedData | 10.0.10 | dotnet | [MIT](licenses/nuget/System.Security.Cryptography.ProtectedData-10.0.10-MIT.txt) | XREngine.Editor.csproj |
 | UltralightNet | 1.3.0 | SupinePandora43 | [MIT](licenses/nuget/UltralightNet-1.3.0-MIT.txt) | XREngine.Runtime.Rendering.csproj |
 | UltralightNet.AppCore | 1.3.0 | SupinePandora43 | [MIT](licenses/nuget/UltralightNet.AppCore-1.3.0-MIT.txt) | XREngine.Runtime.Rendering.csproj |
 | Vecc.YamlDotNet.Analyzers.StaticGenerator | 18.1.0 | aaubry | [MIT](licenses/nuget/Vecc.YamlDotNet.Analyzers.StaticGenerator-18.1.0-MIT.txt) | XREngine.csproj |
-| YamlDotNet | 18.1.0 | aaubry | [MIT](licenses/nuget/YamlDotNet-18.1.0-MIT.txt) | XREngine.csproj, XREngine.Data.csproj, XREngine.Editor.csproj, XREngine.Runtime.Core.csproj, XREngine.Runtime.Rendering.csproj |
+| YamlDotNet | 18.1.0 | aaubry | [MIT](licenses/nuget/YamlDotNet-18.1.0-MIT.txt) | XREngine.csproj, XREngine.Data.csproj, XREngine.Editor.csproj, XREngine.Runtime.Core.csproj, XREngine.Runtime.ModelAssetPipeline.csproj, XREngine.Runtime.Rendering.csproj |
 | ZstdSharp.Port | 0.8.8 | oleg-st | [MIT](licenses/nuget/ZstdSharp.Port-0.8.8-MIT.txt) | XREngine.Data.csproj |
 
 ## Explicit assembly references (`<Reference>` )

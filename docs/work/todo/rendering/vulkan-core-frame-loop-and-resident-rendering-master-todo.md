@@ -331,18 +331,18 @@ promotion gate or the other explicitly unchecked empirical rows.
 **Goal:** Make normal-frame submission proportional to changed generations rather than recorded object graphs, and eliminate table-wide resident clears on local mutations.
 
 #### 2.1 Tracked Submission Gateway Instrumentation
-- [ ] Instrument `SubmitToQueueTrackedWithDisposition` with allocation-free timers for: image contract, queue ownership, lifetime pins, state serialization, native submit, lifetime publish, image publish, diagnostic publish, and pin release.
+- [x] Instrument `SubmitToQueueTrackedWithDisposition` with allocation-free timers for: image contract, queue ownership, lifetime pins, state serialization, native submit, lifetime publish, image publish, diagnostic publish, and pin release.
 - [ ] Determine exact gateway CPU p50/p95/p99 overhead.
 
 #### 2.2 `SealedSubmissionContract` Fast Path
-- [ ] Add `SealedSubmissionContract` owned by each reusable resident command artifact.
+- [x] Add `SealedSubmissionContract` owned by each reusable resident command artifact.
 - [ ] Pre-validate image transitions, queue families, resource generations, render scopes, nested artifacts, and native lifetimes at record time.
-- [ ] Store compact generation vector and immutable dependency manifest with the artifact.
+- [x] Store compact generation vector and immutable dependency manifest with the artifact.
 - [ ] On stable hits, validate only the generation vector; bypass subresource dictionary scans and queue-ownership recomputations.
-- [ ] Use the full contract only for cold, dirty, instrumented, sampled-correctness, or dependency-generation changes; compare sampled full-path results against sealed results.
+- [x] Use the full contract only for cold, dirty, instrumented, sampled-correctness, or dependency-generation changes; compare sampled full-path results against sealed results.
 - [ ] Replace submit-time dictionaries with flat arrays keyed by stable resource indices.
-- [ ] Batch lifetime pins per dependency manifest instead of per-draw/subresource reacquisition.
-- [ ] Hold native queue lock strictly across `vkQueueSubmit` calls; never across logging, diagnostics, or retirement.
+- [x] Batch lifetime pins per dependency manifest instead of per-draw/subresource reacquisition.
+- [x] Hold native queue lock strictly across `vkQueueSubmit` calls; never across logging, diagnostics, or retirement.
 - [ ] Aggregate graphics work into one coarse submission per output where practical.
 - [ ] Target unchanged submission CPU p95 $<0.25$ ms.
 
@@ -358,10 +358,43 @@ promotion gate or the other explicitly unchecked empirical rows.
   - `Shadow / Probe Publication` $\rightarrow$ dependent passes / material rows
 - [ ] Give frame, view, pass, material, object, instance, texture, sampler, descriptor, pipeline-layout, and shader data independent version domains, with topology and content separated.
 - [ ] Emit dirty ranges at the mutation point; eliminate table-wide clearing fallbacks.
-- [ ] Preserve tombstones and generation-safe reuse until all consumers acknowledge retirement.
+- [x] Preserve tombstones and generation-safe reuse until all consumers acknowledge retirement.
 - [ ] During migration only, retain a counted broad correctness fallback when a manifest is missing or inconsistent; record exact reason/domain/entry count and require zero broad fallbacks in every promotion scenario.
 - [ ] Verify local mutations (1 material scalar, 1 texture binding, 1 geometry replacement, 1 shader reload) invalidate only exact dependent entries.
 - [ ] Verify add/remove/re-add is generation safe, one shadow-cascade update leaves unrelated entries warm, and camera/object transforms cause zero structural or bin invalidations.
+
+Phase 2 implementation checkpoint (2026-08-27): the tracked gateway now reports
+allocation-free stage histograms plus reason-coded seal/fallback and exact/broad
+invalidation telemetry. Every reusable graphics-primary command lifetime owns
+its contract, which is sealed automatically at a successful recording boundary.
+Presealed contracts carry compact generation vectors, stable ABA-safe
+native-resource slots, complete descriptor-resource closure, and ordered image
+entry/exit manifests; sampled full-path parity records both acceptance
+directions. Descriptor resource-closure and image-payload generations are
+independently published. Canonical mutation domains and the current resident-draw
+reverse graph are implemented with a counted broad correctness fallback. Exact
+detached swapchain-image generations preserve their lifetime slots until all
+recorded, descriptor, and submission pins drain. See
+`docs/work/investigations/rendering/vulkan-frame-loop-phase2-2026-08-27.md`.
+
+Follow-up seal correction (2026-08-27): sampled full validation no longer
+permanently discards a reusable seal when its refreshed descriptor/resource
+closure still matches exactly. `MissingContract` and `ResourceVector` are now
+separate fallback reasons, and the profiler exposes a direct allocation-free
+`gateway_total` p50/p95/p99 histogram instead of requiring component-stage
+sums. Two forced-full sample boundaries retained zero parity mismatches and
+continued stable hits. The aggregate Debug live sample measured 0.2048 ms p50,
+0.4096 ms p95, and 0.4096 ms p99, but was dominated by freshly recorded
+`MissingContract` submissions; the empirical rows above remain unchecked until
+the frozen Release benchmark and unchanged-sealed cohort are measured.
+
+The unchecked rows above remain intentionally open. Full image-state and
+cold-fallback dictionary replacement, stable indices for the remaining owner
+domains, and the pipeline/descriptor/output/shader/shadow/probe portions of the
+reverse graph depend on Phase 3 owners that do not yet exist. The `<0.25 ms`
+stable-hit target, zero-broad-fallback rule, exact mutation matrix,
+hardware/OpenXR coverage, and matched promotion evidence are empirical gates
+rather than claims inferred from implementation.
 
 ---
 
@@ -377,6 +410,18 @@ promotion gate or the other explicitly unchecked empirical rows.
 - [x] Publish canonical deltas, view/pass records, strategy assignments, dirty ranges, and compact exception records through `BackendReadyFramePackage`.
 - [ ] Remove live `BackendReadyMeshSelection` managed arrays after parity and make the immutable backend-ready package the only normal-frame Vulkan input.
 - [ ] Remove legacy `GPUScene` storage and ID maps after dual-publication parity.
+
+Phase 3.1 wrap checkpoint (2026-08-27): canonical generational texture and
+sampler tables now participate in capacity planning, lookup publication,
+publication sealing, reclamation, compaction, and growth. The legacy material
+feed also uses a renderer-neutral numeric/source encoder, and the material
+database has bounded fixed-slot payload storage plus an immutable payload
+snapshot primitive. A focused shared-material publisher exists as an unwired
+integration draft. Rows 3.1.3 and 3.1.4 remain unchecked: material payloads are
+not yet attached to the retained scene-publication ring or backend-ready
+package, draw registration does not acquire the shared material/resource
+owners, Vulkan lowering still lacks a frozen publication-owned dependency
+closure, and the five-strategy dual-feed/output parity matrix has not run.
 
 #### 3.2 Frequency-Owned Structure-of-Arrays (SoA) Data
 - [ ] Complete SoA streams: frame constants; view matrices/frusta/jitter; pass constants; material blocks and resource tables; object transforms/bounds/IDs; instance, skinning, deformation, and visibility ranges; geometry identities/offsets/formats; and bin indirect buffers.

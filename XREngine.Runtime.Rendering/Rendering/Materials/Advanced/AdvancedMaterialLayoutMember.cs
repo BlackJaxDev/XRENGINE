@@ -12,5 +12,5 @@ public readonly record struct AdvancedMaterialLayoutMember(
     uint ElementOffset,
     uint ElementCount,
     uint Flags = 0u,
-    uint Reserved0 = 0u,
+    uint PackedWordOffset = 0u,
     uint Reserved1 = 0u);

@@ -9,6 +9,8 @@ public enum EAdvancedGpuRecordOwner : byte
     Deformation,
     RenderState,
     Material,
+    Texture,
+    Sampler,
     Geometry,
     EditorIdentity,
 }

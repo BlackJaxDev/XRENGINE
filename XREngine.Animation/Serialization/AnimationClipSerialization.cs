@@ -167,15 +167,15 @@ public sealed class AnimationClipYamlTypeConverter : IYamlTypeConverter
 
         public AnimationMemberSerializedModel? RootMember { get; set; }
 
-        public UnityHumanoidClipRootMotionSettings? UnityHumanoidRootMotionSettings { get; set; }
+        public ImportedHumanoidClipRootMotionSettings? ImportedHumanoidRootMotionSettings { get; set; }
 
-        public UnityAnimationClipMetadata? UnityMetadata { get; set; }
+        public ImportedAnimationClipMetadata? ImportedMetadata { get; set; }
 
-        public UnityAnimationEvent[]? UnityEvents { get; set; }
+        public ImportedAnimationEvent[]? ImportedEvents { get; set; }
 
-        public UnityAnimationBindingDescriptor[]? UnityGenericBindings { get; set; }
+        public ImportedAnimationBindingDescriptor[]? ImportedGenericBindings { get; set; }
 
-        public UnityAnimationImportManifest? UnityImportManifest { get; set; }
+        public ImportedAnimationImportManifest? SourceImportManifest { get; set; }
 
         public AnimationClipSerializedModel ToLegacyModel()
             => new()
@@ -194,11 +194,11 @@ public sealed class AnimationClipYamlTypeConverter : IYamlTypeConverter
                 HasIKGoals = HasIKGoals,
                 SampleRate = SampleRate,
                 RootMember = RootMember,
-                UnityHumanoidRootMotionSettings = UnityHumanoidRootMotionSettings,
-                UnityMetadata = UnityMetadata,
-                UnityEvents = UnityEvents,
-                UnityGenericBindings = UnityGenericBindings,
-                UnityImportManifest = UnityImportManifest,
+                ImportedHumanoidRootMotionSettings = ImportedHumanoidRootMotionSettings,
+                ImportedMetadata = ImportedMetadata,
+                ImportedEvents = ImportedEvents,
+                ImportedGenericBindings = ImportedGenericBindings,
+                SourceImportManifest = SourceImportManifest,
             };
     }
 }
@@ -230,11 +230,11 @@ internal static class AnimationClipSerialization
             HasIKGoals = clip.HasIKGoals,
             SampleRate = clip.SampleRate,
             RootMember = CreateModel(clip.RootMember),
-            UnityHumanoidRootMotionSettings = clip.UnityHumanoidRootMotionSettings,
-            UnityMetadata = clip.UnityMetadata,
-            UnityEvents = clip.UnityEvents,
-            UnityGenericBindings = clip.UnityGenericBindings,
-            UnityImportManifest = clip.UnityImportManifest,
+            ImportedHumanoidRootMotionSettings = clip.ImportedHumanoidRootMotionSettings,
+            ImportedMetadata = clip.ImportedMetadata,
+            ImportedEvents = clip.ImportedEvents,
+            ImportedGenericBindings = clip.ImportedGenericBindings,
+            SourceImportManifest = clip.SourceImportManifest,
         };
     }
 
@@ -261,11 +261,11 @@ internal static class AnimationClipSerialization
         clip.HasRootMotion = model.HasRootMotion;
         clip.HasIKGoals = model.HasIKGoals;
         clip.SampleRate = model.SampleRate ?? 30;
-        clip.UnityHumanoidRootMotionSettings = model.UnityHumanoidRootMotionSettings;
-        clip.UnityMetadata = model.UnityMetadata;
-        clip.UnityEvents = model.UnityEvents ?? [];
-        clip.UnityGenericBindings = model.UnityGenericBindings ?? [];
-        clip.UnityImportManifest = model.UnityImportManifest;
+        clip.ImportedHumanoidRootMotionSettings = model.ImportedHumanoidRootMotionSettings;
+        clip.ImportedMetadata = model.ImportedMetadata;
+        clip.ImportedEvents = model.ImportedEvents ?? [];
+        clip.ImportedGenericBindings = model.ImportedGenericBindings ?? [];
+        clip.SourceImportManifest = model.SourceImportManifest;
 
         AnimationMember? rootMember = CreateRuntimeMember(model.RootMember);
         clip.RootMember = rootMember;
@@ -429,15 +429,15 @@ internal sealed partial class AnimationClipSerializedModel
 
     public AnimationMemberSerializedModel? RootMember { get; set; }
 
-    public UnityHumanoidClipRootMotionSettings? UnityHumanoidRootMotionSettings { get; set; }
+    public ImportedHumanoidClipRootMotionSettings? ImportedHumanoidRootMotionSettings { get; set; }
 
-    public UnityAnimationClipMetadata? UnityMetadata { get; set; }
+    public ImportedAnimationClipMetadata? ImportedMetadata { get; set; }
 
-    public UnityAnimationEvent[]? UnityEvents { get; set; }
+    public ImportedAnimationEvent[]? ImportedEvents { get; set; }
 
-    public UnityAnimationBindingDescriptor[]? UnityGenericBindings { get; set; }
+    public ImportedAnimationBindingDescriptor[]? ImportedGenericBindings { get; set; }
 
-    public UnityAnimationImportManifest? UnityImportManifest { get; set; }
+    public ImportedAnimationImportManifest? SourceImportManifest { get; set; }
 }
 
 [MemoryPackable]

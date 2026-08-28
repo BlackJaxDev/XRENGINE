@@ -1,4 +1,4 @@
-﻿using System.Numerics;
+using System.Numerics;
 using System.Diagnostics;
 using MemoryPack;
 using XREngine.Core.Files;
@@ -55,7 +55,7 @@ namespace XREngine.Animation
         internal AnimationMember[] AnimatedMembersArray { get; set; } = [];
 
         [MemoryPackIgnore]
-        internal int UnityHumanoidContributionCapacity { get; private set; }
+        internal int HumanoidContributionCapacity { get; private set; }
 
         [MemoryPackIgnore]
         public Dictionary<string, object?> AnimationValues => _animationValues;
@@ -72,7 +72,7 @@ namespace XREngine.Animation
         {
             //Unregister all animated curves in the motion
             if (this is AnimationClip clip)
-                clip.ResetUnityHumanoidEvaluationState();
+                clip.ResetImportedHumanoidEvaluationState();
             _animatedCurves.Clear();
             AnimatedMembersArray = [];
         }
@@ -81,18 +81,18 @@ namespace XREngine.Animation
         /// Preallocates the largest Body/root contribution frame this motion can emit.
         /// This is graph setup work and must finish before animation ticks begin.
         /// </summary>
-        internal int PrepareUnityHumanoidContributionCapacity()
+        internal int PrepareImportedHumanoidContributionCapacity()
         {
             int capacity = this switch
             {
                 AnimationClip clip when clip.HasRootMotion
-                    && clip.UnityHumanoidRootMotionSettings is not null => 1,
+                    && clip.ImportedHumanoidRootMotionSettings is not null => 1,
                 BlendTree1D tree => SumChildContributionCapacity(tree.Children),
                 BlendTree2D tree => SumChildContributionCapacity(tree.Children),
                 BlendTreeDirect tree => SumChildContributionCapacity(tree.Children),
                 _ => 0,
             };
-            UnityHumanoidContributionCapacity = capacity;
+            HumanoidContributionCapacity = capacity;
             return capacity;
         }
 
@@ -100,7 +100,7 @@ namespace XREngine.Animation
         {
             int capacity = 0;
             foreach (BlendTree1D.Child child in children)
-                capacity += child.Motion?.PrepareUnityHumanoidContributionCapacity() ?? 0;
+                capacity += child.Motion?.PrepareImportedHumanoidContributionCapacity() ?? 0;
             return capacity;
         }
 
@@ -108,7 +108,7 @@ namespace XREngine.Animation
         {
             int capacity = 0;
             foreach (BlendTree2D.Child child in children)
-                capacity += child.Motion?.PrepareUnityHumanoidContributionCapacity() ?? 0;
+                capacity += child.Motion?.PrepareImportedHumanoidContributionCapacity() ?? 0;
             return capacity;
         }
 
@@ -116,7 +116,7 @@ namespace XREngine.Animation
         {
             int capacity = 0;
             foreach (BlendTreeDirect.Child child in children)
-                capacity += child.Motion?.PrepareUnityHumanoidContributionCapacity() ?? 0;
+                capacity += child.Motion?.PrepareImportedHumanoidContributionCapacity() ?? 0;
             return capacity;
         }
 
@@ -603,7 +603,7 @@ namespace XREngine.Animation
         /// </summary>
         internal void RestartPlayback(float startSeconds)
         {
-            VisitAnimationClips(this, clip => clip.ResetUnityHumanoidStateClock(startSeconds));
+            VisitAnimationClips(this, clip => clip.ResetImportedHumanoidStateClock(startSeconds));
             var visited = new HashSet<BasePropAnim>();
             VisitPropertyAnimations(this, visited, animation =>
             {
@@ -618,7 +618,7 @@ namespace XREngine.Animation
         /// </summary>
         internal void SeekPlayback(float timeSeconds)
         {
-            VisitAnimationClips(this, clip => clip.ResetUnityHumanoidStateClock(timeSeconds));
+            VisitAnimationClips(this, clip => clip.ResetImportedHumanoidStateClock(timeSeconds));
             var visited = new HashSet<BasePropAnim>();
             VisitPropertyAnimations(
                 this,
@@ -679,7 +679,7 @@ namespace XREngine.Animation
         /// </summary>
         internal void StopPlayback()
         {
-            VisitAnimationClips(this, static clip => clip.ResetUnityHumanoidStateClock(0.0f));
+            VisitAnimationClips(this, static clip => clip.ResetImportedHumanoidStateClock(0.0f));
             var visited = new HashSet<BasePropAnim>();
             VisitPropertyAnimations(this, visited, static animation => animation.Stop());
         }

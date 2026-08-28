@@ -16,17 +16,29 @@ public partial class AssetManager
         where T : XRAsset, new()
         => LoadAsync<T>(filePath, progressCallback: null, priority, bypassJobThread);
 
-    public Task<T?> LoadAsync<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] T>(
+    public async Task<T?> LoadAsync<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] T>(
         string filePath,
         Action<AssetLoadProgress>? progressCallback,
         JobPriority priority = JobPriority.Normal,
         bool bypassJobThread = false)
         where T : XRAsset, new()
-        => RunOnJobThreadAsync(() =>
+    {
+        if (!File.Exists(filePath) && ShouldAttemptRemoteAssetDownload())
+        {
+            await TryDownloadAssetFromRemoteAsync(
+                filePath,
+                typeof(T),
+                priority,
+                CancellationToken.None,
+                additionalMetadata: null).ConfigureAwait(false);
+        }
+
+        return await RunOnJobThreadAsync(() =>
         {
             using IDisposable progressScope = AssetLoadProgressContext.Begin(filePath, progressCallback);
             return LoadCore<T>(filePath);
-        }, priority, bypassJobThread);
+        }, priority, bypassJobThread).ConfigureAwait(false);
+    }
 
     public Task<XRAsset?> LoadAsync(
         string filePath,
@@ -35,7 +47,7 @@ public partial class AssetManager
         bool bypassJobThread = false)
         => LoadAsync(filePath, type, progressCallback: null, priority, bypassJobThread);
 
-    public Task<XRAsset?> LoadAsync(
+    public async Task<XRAsset?> LoadAsync(
         string filePath,
         Type type,
         Action<AssetLoadProgress>? progressCallback,
@@ -43,11 +55,21 @@ public partial class AssetManager
         bool bypassJobThread = false)
     {
         ArgumentNullException.ThrowIfNull(type);
-        return RunOnJobThreadAsync(() =>
+        if (!File.Exists(filePath) && ShouldAttemptRemoteAssetDownload())
+        {
+            await TryDownloadAssetFromRemoteAsync(
+                filePath,
+                type,
+                priority,
+                CancellationToken.None,
+                additionalMetadata: null).ConfigureAwait(false);
+        }
+
+        return await RunOnJobThreadAsync(() =>
         {
             using IDisposable progressScope = AssetLoadProgressContext.Begin(filePath, progressCallback);
             return LoadCore(filePath, type);
-        }, priority, bypassJobThread);
+        }, priority, bypassJobThread).ConfigureAwait(false);
     }
 
     public T? Load<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] T>(
@@ -55,7 +77,19 @@ public partial class AssetManager
         JobPriority priority = JobPriority.Normal,
         bool bypassJobThread = false)
         where T : XRAsset, new()
-        => RunOnJobThreadBlocking(() => LoadCore<T>(filePath), priority, bypassJobThread);
+    {
+        if (!File.Exists(filePath) && ShouldAttemptRemoteAssetDownload())
+        {
+            TryDownloadAssetFromRemoteAsync(
+                filePath,
+                typeof(T),
+                priority,
+                CancellationToken.None,
+                additionalMetadata: null).GetAwaiter().GetResult();
+        }
+
+        return RunOnJobThreadBlocking(() => LoadCore<T>(filePath), priority, bypassJobThread);
+    }
 
     public XRAsset? Load(
         string filePath,
@@ -64,6 +98,16 @@ public partial class AssetManager
         bool bypassJobThread = false)
     {
         ArgumentNullException.ThrowIfNull(type);
+        if (!File.Exists(filePath) && ShouldAttemptRemoteAssetDownload())
+        {
+            TryDownloadAssetFromRemoteAsync(
+                filePath,
+                type,
+                priority,
+                CancellationToken.None,
+                additionalMetadata: null).GetAwaiter().GetResult();
+        }
+
         return RunOnJobThreadBlocking(() => LoadCore(filePath, type), priority, bypassJobThread);
     }
 
@@ -114,6 +158,12 @@ public partial class AssetManager
             ?? throw new FileNotFoundException($"Unable to find engine asset at '{path}'.");
     }
 
+    public Task<T> LoadEngineAssetAsync<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] T>(
+        JobPriority priority,
+        params string[] relativePathFolders)
+        where T : XRAsset, new()
+        => LoadEngineAssetAsync<T>(priority, bypassJobThread: false, relativePathFolders);
+
     public async Task<T> LoadEngineAssetAsync<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] T>(
         JobPriority priority,
         bool bypassJobThread,
@@ -125,141 +175,20 @@ public partial class AssetManager
             ?? throw new FileNotFoundException($"Unable to find engine asset at '{path}'.");
     }
 
-    private static T? DeserializeAssetFile<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicMethods)] T>(string filePath)
+    public Task<T?> LoadGameAssetAsync<
+        [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] T>(
+        params string[] relativePathFolders)
         where T : XRAsset, new()
-        => DeserializeAssetFile(filePath, typeof(T)) as T;
+        => LoadAsync<T>(ResolveGameAssetPath(relativePathFolders));
 
-    public static XRAsset? DeserializeAssetFile(string filePath, Type type)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(filePath);
-        ArgumentNullException.ThrowIfNull(type);
-
-        IThirdPartyCacheCodec? directCodec = ThirdPartyCacheCodecRegistry.Find(type);
-        if (directCodec?.TryReadDirectAssetFile(filePath, type, out XRAsset? directAsset) == true)
-            return directAsset;
-
-        EnsureYamlAssetRuntimeSupported(filePath);
-
-        using FileStream stream = new(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
-        using StreamReader reader = new(stream);
-        using IDisposable scope = AssetDeserializationContext.Push(filePath);
-        ResetYamlReadContext();
-        return Deserializer.Deserialize(reader, type) as XRAsset;
-    }
-
-    public static Task<XRAsset?> DeserializeAssetFileAsync(string filePath, Type type)
-        => Task.Run(() => DeserializeAssetFile(filePath, type));
-
-    private T? Load3rdPartyWithCache<T>(string filePath, string extension)
-        where T : XRAsset, new()
-        => RuntimeThirdPartyAssetLoadingServices.Current.Load(
-            filePath,
-            extension,
-            typeof(T),
-            importContext: CreateThirdPartyImportContext(filePath, typeof(T), cacheVariantKey: null)) as T;
-
-    private XRAsset? Load3rdPartyWithCache(string filePath, string extension, Type type)
-        => RuntimeThirdPartyAssetLoadingServices.Current.Load(
-            filePath,
-            extension,
-            type,
-            importContext: CreateThirdPartyImportContext(filePath, type, cacheVariantKey: null));
-
-    public T? Load3rdPartyVariantWithCache<T>(
-        string filePath,
-        object? importOptions,
-        string cacheVariantKey,
-        JobPriority priority = JobPriority.Normal,
-        bool bypassJobThread = false)
-        where T : XRAsset, new()
-        => RunOnJobThreadBlocking(
-            () => RuntimeThirdPartyAssetLoadingServices.Current.Load(
-                filePath,
-                Path.GetExtension(filePath).TrimStart('.'),
-                typeof(T),
-                importOptions,
-                CreateThirdPartyImportContext(filePath, typeof(T), cacheVariantKey)) as T,
-            priority,
-            bypassJobThread);
-
-    private AssetImportContext CreateThirdPartyImportContext(
-        string filePath,
-        Type assetType,
-        string? cacheVariantKey)
-    {
-        string? cacheDirectory = TryResolveThirdPartyCachePath(
-            filePath,
-            assetType,
-            cacheVariantKey,
-            out string cachePath)
-                ? Path.GetDirectoryName(cachePath)
-                : null;
-        return new AssetImportContext(filePath, cacheDirectory);
-    }
-
-    public bool TryResolveThirdPartyCachePath(
-        string filePath,
-        Type assetType,
-        string? cacheVariantKey,
-        out string cachePath)
-    {
-        ThirdPartyCachePathRequest request = new(
-            GameCachePath,
-            GameAssetsPath,
-            EngineAssetsPath,
-            filePath,
-            assetType,
-            cacheVariantKey,
-            ImportOptions: null,
-            AssetExtension);
-        IThirdPartyCachePathPolicy? policy = ThirdPartyCachePathPolicies.Find(assetType);
-        return policy?.TryResolve(request, out cachePath) == true
-            || request.TryResolveGenericThirdPartyCachePath(filePath, assetType, cacheVariantKey, out cachePath);
-    }
-
-    internal static CacheCodecOwnership GetThirdPartyCacheCodecOwnership(Type assetType)
-        => ThirdPartyCacheCodecRegistry.Find(assetType)?.GetOwnership(assetType)
-            ?? CacheCodecOwnership.NotHandled;
-
-    internal string ResolveThirdPartyCacheAuthorityPath<T>(
-        string filePath,
-        object? importOptions = null,
-        string? cacheVariantKey = null)
+    public T LoadEngineAssetImmediate<
+        [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] T>(
+        params string[] relativePathFolders)
         where T : XRAsset, new()
     {
-        if (string.IsNullOrWhiteSpace(filePath))
-            return filePath;
-
-        string normalizedPath = Path.GetFullPath(filePath);
-        if (string.Equals(Path.GetExtension(normalizedPath), $".{AssetExtension}", StringComparison.OrdinalIgnoreCase)
-            || !File.Exists(normalizedPath))
-            return normalizedPath;
-
-        IThirdPartyCacheCodec? codec = ThirdPartyCacheCodecRegistry.Find(typeof(T));
-        if (codec is null || codec.GetOwnership(typeof(T)) == CacheCodecOwnership.Exclusive)
-            return normalizedPath;
-
-        string? variantKey = codec.ResolveDefaultVariantKey(cacheVariantKey);
-        if (!TryResolveThirdPartyCachePath(normalizedPath, typeof(T), variantKey, out string cachePath)
-            || !File.Exists(cachePath))
-            return normalizedPath;
-
-        DateTime sourceTimestampUtc = File.GetLastWriteTimeUtc(normalizedPath);
-        DateTime cacheTimestampUtc = File.GetLastWriteTimeUtc(cachePath);
-        return cacheTimestampUtc >= sourceTimestampUtc && codec.IsCacheUsable(cachePath)
-            ? cachePath
-            : normalizedPath;
+        string path = ResolveEngineAssetPath(relativePathFolders);
+        return Load<T>(path, JobPriority.Normal, bypassJobThread: true)
+            ?? throw new FileNotFoundException($"Unable to find engine asset at '{path}'.");
     }
 
-    public string ResolveTextureStreamingAuthorityPath(string filePath)
-    {
-        IThirdPartyCacheCodec? codec = ThirdPartyCacheCodecRegistry.FindByAuthorityRole(
-            ThirdPartyCacheAuthorityRoles.TextureStreaming);
-        Type? assetType = codec?.AuthorityAssetType;
-        string? variantKey = codec?.ResolveDefaultVariantKey(null);
-        return assetType is not null
-            && TryResolveThirdPartyCachePath(filePath, assetType, variantKey, out string cachePath)
-                ? cachePath
-                : Path.GetFullPath(filePath);
-    }
 }

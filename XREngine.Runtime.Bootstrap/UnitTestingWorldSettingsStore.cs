@@ -184,6 +184,38 @@ public static class UnitTestingWorldSettingsStore
         return applied;
     }
 
+    /// <summary>Applies only explicitly present JSONC values to a startup aggregate.</summary>
+    public static void ApplyStartupOverrides(GameStartupSettings startupSettings, UnitTestingWorldSettings settings)
+    {
+        ArgumentNullException.ThrowIfNull(startupSettings);
+        ArgumentNullException.ThrowIfNull(settings);
+        startupSettings.DefaultUserSettings ??= new UserSettings();
+        ApplyUserSettingsOverrides(startupSettings.DefaultUserSettings, settings);
+
+        if (settings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.Rendering)))
+        {
+            startupSettings.RenderBackendFallbackPolicyOverride = new(settings.Rendering.BackendFallbackPolicy, true);
+            startupSettings.VulkanRenderTargetModeOverride = new(settings.Rendering.Vulkan.RenderTargetMode, true);
+        }
+        if (settings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.GPURenderDispatch)))
+            startupSettings.GPURenderDispatch = settings.GPURenderDispatch;
+        if (settings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.UpdateFPS)))
+            startupSettings.TargetUpdatesPerSecond = settings.UpdateFPS;
+        if (settings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.RenderFPS)))
+            startupSettings.TargetFramesPerSecond = settings.RenderFPS;
+        if (settings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.FixedFPS)))
+            startupSettings.FixedFramesPerSecond = settings.FixedFPS;
+        if (settings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.VSyncOverride))
+            && settings.VSyncOverride is EVSyncMode vSync)
+            startupSettings.VSyncOverride = new(vSync, true);
+        if (settings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.AudioArchitectureV2)))
+            startupSettings.AudioArchitectureV2Override = new(settings.AudioArchitectureV2, true);
+        if (settings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.AudioTransport)))
+            startupSettings.AudioTransportOverride = new(settings.AudioTransport, true);
+        if (settings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.AudioEffects)))
+            startupSettings.AudioEffectsOverride = new(settings.AudioEffects, true);
+    }
+
     /// <summary>
     /// Applies explicitly configured unit-test values through the generic process-local settings layer.
     /// </summary>

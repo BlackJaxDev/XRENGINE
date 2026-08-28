@@ -50,7 +50,7 @@ not make an OpenAI API request. Starting a worker requires every item below.
 | Repository context when needed | Use `context_files` for immutable selected UTF-8 text snapshots. Enable `repository_access` only when the worker must discover more context, and name explicit repository-relative roots. Both mechanisms send selected content to the OpenAI API. |
 | Editor session when needed | Omit `editor_session` when no editor tools are required. For editor evidence or mutation, start one exact session with `Tools/Manage-McpEditorSession.ps1`; its manifest and loopback MCP endpoint must be live for the whole run. |
 | Standing authority | `AGENTS.md` pre-authorizes bounded broker/API spend for XRENGINE tasks. The coordinator selects the lowest-cost suitable model automatically without asking per run. Mutation and destructive operations still require authority from the task itself. |
-| Bounded request | Set narrow turn, tool-call, output-token, elapsed-time, retry, and tool-result limits appropriate to the task. |
+| Bounded request | Set narrow turn, tool-call, retry, and tool-result limits appropriate to the task. Output-token and elapsed-time limits are opt-in. |
 
 The supported exact model IDs are:
 
@@ -155,11 +155,15 @@ from a stale caller or transport.
 defaults to `medium`. The broker sends this as the Responses API `text.verbosity`
 control and preserves `reasoning_effort` separately. Start, get, and list
 responses retain both requested controls and the resolved `max_output_tokens`
-hard budget. When that field is omitted, Luna and Terra use 4,096 combined
-visible-output/reasoning tokens; Sol uses 16,384, or 32,768 for `xhigh`/`max`.
-An explicit value is never raised, and an incomplete response is never retried
-with a larger budget. When an explicit cap ends in `max_output_tokens`, start a
-new authorized run with a higher cap or lower reasoning effort/text verbosity.
+setting. By default, `max_output_tokens` is `0`: the broker enforces no
+run-wide output-token cap and omits the field from Responses API requests.
+The selected model/provider maximum still applies. Set a positive value to
+create a hard combined visible-output/reasoning-token limit; the broker never
+raises an explicit limit automatically. `max_elapsed_seconds` follows the same
+pattern: `0` or omission means no broker whole-run timeout, while a positive
+value is a hard timeout. Broker-created repository and editor tool providers
+also have no independent local timeout. Caller cancellation remains available
+in either mode.
 
 ## One-Time Installation
 
@@ -378,9 +382,9 @@ policy entries:
   "budget": {
     "max_turns": 3,
     "max_tool_calls": 0,
-    "max_output_tokens": 32768,
+    "max_output_tokens": 0,
     "max_tool_result_bytes": 262144,
-    "max_elapsed_seconds": 600,
+    "max_elapsed_seconds": 0,
     "max_retries": 1,
     "max_concurrency": 1
   }
@@ -419,13 +423,13 @@ read-only discovery:
   "budget": {
     "max_turns": 3,
     "max_tool_calls": 3,
-    "max_output_tokens": 2000,
+    "max_output_tokens": 0,
     "max_tool_result_bytes": 65536,
     "max_context_files": 2,
     "max_context_file_bytes": 131072,
     "max_context_bytes": 131072,
     "max_context_rendered_bytes": 262144,
-    "max_elapsed_seconds": 120,
+    "max_elapsed_seconds": 0,
     "max_retries": 1,
     "max_concurrency": 1
   }
@@ -441,7 +445,7 @@ within the schema's hard maxima.
 Repository tools default to disabled. Enabling them requires at least one
 explicit `allowed_root` and a positive tool-call budget. `repository_search`
 is literal rather than regular-expression search; one call is limited to 50
-matches, 5,000 files, 64 MiB scanned, and 10 seconds. Run-wide repository
+matches, 5,000 files, and 64 MiB scanned. Run-wide repository
 search and output budgets are also enforced. `repository_read_text` accepts
 `path`, `start_line`, `line_count` (at most 400), and optional
 `expected_sha256`.
@@ -490,9 +494,9 @@ An editor-aware request names the session and exact tool policy:
   "budget": {
     "max_turns": 3,
     "max_tool_calls": 6,
-    "max_output_tokens": 16384,
+    "max_output_tokens": 0,
     "max_tool_result_bytes": 262144,
-    "max_elapsed_seconds": 300,
+    "max_elapsed_seconds": 0,
     "max_retries": 1,
     "max_concurrency": 1
   }
@@ -527,8 +531,10 @@ attempt's turn/attempt number, response ID, actual model, event/poll count, last
 event type, terminal status, incomplete reason, elapsed time, retry disposition,
 and whether provider cancellation was accepted. It never includes prompts,
 response text, headers, credentials, or raw request bodies in those diagnostics.
-`budget.max_output_tokens` must be between 16 and 128,000; values below the live
-Responses API minimum are rejected before any paid request starts.
+`budget.max_output_tokens` must be `0` (no broker limit) or between 16 and
+128,000; positive values below the live Responses API minimum are rejected
+before any paid request starts. `budget.max_elapsed_seconds` must be `0` (no
+broker timeout) or between 1 and 3,600.
 
 ## Cost, Data, And Security
 
@@ -536,11 +542,11 @@ Each worker is billed to the API project associated with the configured key,
 independently of ChatGPT/Codex product billing. Configure API project budgets,
 usage alerts, and model access before relying on standing automatic runs. The
 broker reports token usage but intentionally does not embed volatile price
-estimates. Omitted run budgets default to 3 turns, 8 tool calls, 1 retry, and
-per-run concurrency 1. Luna and Terra receive 4,096 combined output/reasoning
-tokens and 120 seconds. Sol receives 16,384 tokens and 300 seconds, or 32,768
-tokens and 600 seconds at `xhigh`/`max`. The process default is at most 4
-concurrent runs. Explicit output-token and elapsed-time limits remain hard caps.
+estimates. Omitted run budgets default to 3 turns, 8 tool calls, 1 retry,
+per-run concurrency 1, no broker output-token cap, and no broker elapsed-time
+timeout. The process default is at most 4 concurrent runs. Explicit positive
+output-token and elapsed-time limits remain hard caps. Provider/model context,
+output, rate, and service limits still apply even when local limits are disabled.
 
 Requests, context-file snapshots, repository search/read results, and editor
 evidence selected for the run leave the machine for OpenAI processing. A local

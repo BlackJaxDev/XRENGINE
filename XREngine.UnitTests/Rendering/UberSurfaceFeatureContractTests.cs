@@ -81,8 +81,8 @@ public sealed class UberSurfaceFeatureContractTests
         XRShader shader = ShaderHelper.UberFragForward();
         XRMaterial material = new()
         {
-            Parameters = ModelImporter.CreateDefaultForwardPlusUberShaderParameters(),
-            RenderOptions = ModelImporter.CreateForwardPlusUberShaderRenderOptions(),
+            Parameters = ModelAssetImporter.CreateDefaultForwardPlusUberShaderParameters(),
+            RenderOptions = ModelAssetImporter.CreateForwardPlusUberShaderRenderOptions(),
         };
         material.Shaders.Clear();
         material.Shaders.Add(shader);
@@ -102,8 +102,8 @@ public sealed class UberSurfaceFeatureContractTests
         XRShader shader = ShaderHelper.UberFragForward();
         XRMaterial material = new()
         {
-            Parameters = ModelImporter.CreateDefaultForwardPlusUberShaderParameters(),
-            RenderOptions = ModelImporter.CreateForwardPlusUberShaderRenderOptions(),
+            Parameters = ModelAssetImporter.CreateDefaultForwardPlusUberShaderParameters(),
+            RenderOptions = ModelAssetImporter.CreateForwardPlusUberShaderRenderOptions(),
         };
         material.Shaders.Clear();
         material.Shaders.Add(shader);
@@ -140,7 +140,7 @@ public sealed class UberSurfaceFeatureContractTests
     [Test]
     public void TextureImporter_ParsesFlipbookGridMetadata()
     {
-        UnityTextureImportDocument document = UnityTextureImportDocumentParser.Parse("""
+        SerializedTextureImportDocument document = SerializedTextureImportDocumentParser.Parse("""
 TextureImporter:
   serializedVersion: 13
   textureShape: 4
@@ -151,7 +151,7 @@ TextureImporter:
     wrapV: 2
 """);
 
-        document.Shape.ShouldBe(UnityTextureShape.Texture2DArray);
+        document.Shape.ShouldBe(SerializedTextureShape.Texture2DArray);
         document.FlipbookRows.ShouldBe(3);
         document.FlipbookColumns.ShouldBe(5);
     }

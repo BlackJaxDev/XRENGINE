@@ -10,7 +10,7 @@ namespace XREngine.Rendering.Vulkan;
 internal sealed record RetiredSwapchainGeneration(
     SwapchainKHR Swapchain,
     Image[] Images,
-    ulong[] ImageLifetimeGenerations,
+    VulkanResourceSlotHandle[] ImageLifetimeSlots,
     ImageView[] ImageViews,
     Framebuffer[] Framebuffers,
     Semaphore[] PresentBridgeSemaphores,

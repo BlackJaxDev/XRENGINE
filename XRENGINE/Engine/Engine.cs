@@ -236,17 +236,14 @@ namespace XREngine
         }
 
         private static readonly RuntimeRenderThreadHost s_renderThreadHost = new(
-            () => WindowPumpHost.IsRunning,
+            () => RuntimeWindowApplicationServices.Current.IsRunning,
             runUntilPredicate => Time.Timer.BlockForRendering(runUntilPredicate),
             () => Time.Timer.WaitToRender(),
             () => Time.Timer.Stop());
-        private static readonly EngineWindowPumpHost s_windowPumpHost = new();
-
         internal static RuntimeRenderThreadHost RenderThreadHost => s_renderThreadHost;
-        internal static EngineWindowPumpHost WindowPumpHost => s_windowPumpHost;
         internal static bool StartupOpenXrRuntimeRequested { get; private set; }
         public static global::XREngine.Rendering.WindowMailboxDiagnostics WindowThreadMailboxDiagnostics
-            => s_windowPumpHost.Diagnostics;
+            => RuntimeWindowApplicationServices.Current.Diagnostics;
 
         private static bool ExternalProfilingEnabledHook()
             => Profiler.EnableFrameLogging;
@@ -315,7 +312,6 @@ namespace XREngine
             Time.Timer.PostUpdateFrame += Timer_PostUpdateFrame;
             RuntimeWorldObjectServices.Current = new EngineRuntimeWorldObjectServices();
             RuntimeThreadServices.Current = new EngineRuntimeThreadServices();
-            RuntimeSceneImportServices.Current = new UnityEditorImportBridge();
 
             InstallRuntimePhysicsServices();
             RuntimeMaintenanceServices.Current = new EngineRuntimeMaintenanceServices();
@@ -438,7 +434,9 @@ namespace XREngine
         /// <remarks>
         /// Use this to load, cache, and manage the lifecycle of game assets.
         /// </remarks>
-        public static AssetManager Assets { get; } = new(jobManagerProvider: static () => Jobs);
+        public static AssetManager Assets { get; } = new(
+            jobManagerProvider: static () => Jobs,
+            remoteAssetDownloadAllowedProvider: static () => Networking is ClientNetworkingManager);
 
         /// <summary>
         /// Thread-safe random number generator for general use.

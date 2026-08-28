@@ -1,6 +1,7 @@
 using ImGuiNET;
 using System.Numerics;
 using XREngine.Editor.HotReload;
+using XREngine.Editor.Settings;
 using XREngine.Rendering;
 
 namespace XREngine.Editor;
@@ -30,9 +31,8 @@ public static partial class EditorImGuiUI
         ImGui.SameLine();
         if (ImGui.Button("Refresh Process Values"))
         {
-            XREnvironment.RefreshFromProcess();
+            EditorPreferencesService.Current.RefreshRuntimeEnvironment();
             RuntimeEnvironmentEditBuffers.Clear();
-            ReapplyEditorRuntimeEnvironment();
             _runtimeEnvironmentStatus = "Refreshed values changed outside the runtime settings facade.";
         }
 

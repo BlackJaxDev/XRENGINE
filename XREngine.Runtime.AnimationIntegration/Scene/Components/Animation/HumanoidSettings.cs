@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Numerics;
 using XREngine.Data.Core;
 
@@ -41,16 +41,16 @@ namespace XREngine.Components.Animation
         public bool TryGetNeutralPoseBoneRotation(string boneName, out Quaternion rotation)
             => NeutralPoseBoneRotations.TryGetValue(boneName, out rotation);
 
-        private UnityHumanoidAvatarProfile? _unityAvatarProfile;
+        private ImportedHumanoidAvatarProfile? _importedAvatarProfile;
         /// <summary>
         /// Legacy v3 profile migration input retained so older serialized scenes
         /// can be upgraded. <see cref="HumanoidComponent"/> consumes and clears
         /// this value during initialization; production evaluation never reads it.
         /// </summary>
-        public UnityHumanoidAvatarProfile? UnityAvatarProfile
+        public ImportedHumanoidAvatarProfile? ImportedAvatarProfile
         {
-            get => _unityAvatarProfile;
-            set => SetField(ref _unityAvatarProfile, value);
+            get => _importedAvatarProfile;
+            set => SetField(ref _importedAvatarProfile, value);
         }
 
         private Vector2 _leftEyeDownUpRange = new(-1.0f, 1.0f);

@@ -104,19 +104,20 @@ Call `start_agent_run` only when all of these conditions are true:
   manifest and loopback endpoint and never discovers or manages processes.
 - The objective is one bounded reasoning/editor slice with explicit success
   criteria, constraints, tool policy, and narrow turn, tool-call,
-  tool-result-byte, output-token, elapsed-time, retry, and concurrency budgets.
+  tool-result-byte, retry, and concurrency budgets. Output-token and
+  elapsed-time limits are optional controls rather than required defaults.
 
 Automatic runs default to at most 3 turns, 8 local tool calls, 1 retry, and
 per-run concurrency 1. Context snapshots default to at most 16 UTF-8 text
 files, 256 KiB per raw file, 1 MiB aggregate raw content, and 2 MiB rendered
-provider input. Luna and Terra default to 4,096 combined
-output/reasoning tokens and 120 seconds. Sol defaults to 16,384 tokens and 300
-seconds, or 32,768 tokens and 600 seconds at `xhigh`/`max`, because its deeper
-reasoning can otherwise consume either generic budget before producing visible
-evidence. Explicit token and elapsed-time limits are never raised. Raise any
-other individual limit only when the objective requires it and the expected
-validation benefit justifies the additional cost. Global broker concurrency
-remains bounded by `XRE_LOCAL_AGENT_BROKER_MAX_CONCURRENCY`.
+provider input. The broker defaults to no run-wide output-token cap and no
+elapsed-time timeout for every model. It omits `max_output_tokens` from the
+Responses request and relies on the selected model/provider maximum; the
+caller can still cancel a run. Explicit positive token and elapsed-time limits
+remain hard caps. Raise any other individual limit only when the objective
+requires it and the expected validation benefit justifies the additional cost.
+Global broker concurrency remains bounded by
+`XRE_LOCAL_AGENT_BROKER_MAX_CONCURRENCY`.
 
 #### Required Coordinator Workflow
 

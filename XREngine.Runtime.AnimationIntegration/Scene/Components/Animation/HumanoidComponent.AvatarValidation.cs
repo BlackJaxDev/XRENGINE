@@ -451,18 +451,18 @@ public partial class HumanoidComponent
             return;
         }
 
-        if (!UnityHumanoidRootMotionPolicy.TryCreate(
+        if (!ImportedHumanoidRootMotionPolicy.TryCreate(
                 settings,
-                out UnityHumanoidRootMotionPolicy policy,
+                out ImportedHumanoidRootMotionPolicy policy,
                 out string diagnostic))
         {
             diagnostics.Add($"Error: the migrated coupled Hips calibration has an invalid root-motion policy: {diagnostic}");
             return;
         }
 
-        UnityHumanoidCoupledBoneModel model = hips.CoupledBoneModel;
+        ImportedHumanoidCoupledBoneModel model = hips.CoupledBoneModel;
         if (!policy.BakePositionYIntoPose
-            && policy.PositionYBasis is EUnityHumanoidRootPositionYBasis.Feet
+            && policy.PositionYBasis is EImportedHumanoidRootPositionYBasis.Feet
             && model.ProjectedRootYCoefficients.Length != model.ExpectedFeatureCount)
         {
             diagnostics.Add(
@@ -470,7 +470,7 @@ public partial class HumanoidComponent
         }
 
         if (calibration.SourceSchemaVersion < 5
-            || calibration.RootAllocationFrame is not UnityHumanoidRootAllocationFrame frame)
+            || calibration.RootAllocationFrame is not ImportedHumanoidRootAllocationFrame frame)
         {
             diagnostics.Add(
                 "Error: the migrated coupled Hips calibration does not record Unity's Hips-parent allocation frame. Regenerate the avatar profile with schema 5 or newer.");
@@ -548,7 +548,7 @@ public partial class HumanoidComponent
 
     private static void AppendRootAllocationFrame(
         StringBuilder canonical,
-        UnityHumanoidRootAllocationFrame? frame)
+        ImportedHumanoidRootAllocationFrame? frame)
     {
         AppendCanonical(canonical, frame is not null);
         if (frame is null)
@@ -561,7 +561,7 @@ public partial class HumanoidComponent
 
     private static void AppendRootMotionSettings(
         StringBuilder canonical,
-        UnityHumanoidClipRootMotionSettings? settings)
+        ImportedHumanoidClipRootMotionSettings? settings)
     {
         AppendCanonical(canonical, settings is not null);
         if (settings is null)
@@ -586,13 +586,13 @@ public partial class HumanoidComponent
 
     private static void AppendLegacyResponse(
         StringBuilder canonical,
-        UnityHumanoidBoneResponseProfile? response)
+        ImportedHumanoidBoneResponseProfile? response)
     {
         AppendCanonical(canonical, response is not null);
         if (response is null)
             return;
         AppendCanonical(canonical, response.BoneName);
-        UnityHumanoidMuscleResponse[] responses = response.Responses ?? [];
+        ImportedHumanoidMuscleResponse[] responses = response.Responses ?? [];
         for (int i = 0; i < responses.Length; i++)
         {
             AppendCanonical(canonical, (int)responses[i].Muscle);
@@ -603,7 +603,7 @@ public partial class HumanoidComponent
 
     private static void AppendLegacyCoupledModel(
         StringBuilder canonical,
-        UnityHumanoidCoupledBoneModel? model)
+        ImportedHumanoidCoupledBoneModel? model)
     {
         AppendCanonical(canonical, model is not null);
         if (model is null)

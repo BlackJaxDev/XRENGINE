@@ -18,7 +18,7 @@ public partial class AnimStateMachineComponent
 
     private void InitializeStateMachineRootMotionPipeline()
     {
-        int capacity = StateMachine.UnityHumanoidMotionContributionCapacity;
+        int capacity = StateMachine.HumanoidMotionContributionCapacity;
         _rootMotionLeafStates = capacity > 0
             ? new HumanoidStateMachineRootMotionLeafState[capacity]
             : [];
@@ -41,7 +41,7 @@ public partial class AnimStateMachineComponent
             return true;
 
         if (_rootMotionFrame is null
-            || _rootMotionLeafStates.Length != StateMachine.UnityHumanoidMotionContributionCapacity)
+            || _rootMotionLeafStates.Length != StateMachine.HumanoidMotionContributionCapacity)
             InitializeStateMachineRootMotionPipeline();
 
         HumanoidStateMachineRootMotionFrame frame = _rootMotionFrame!;
@@ -49,7 +49,7 @@ public partial class AnimStateMachineComponent
         Array.Clear(_rootMotionLeafStatesUsedThisFrame);
         _rootMotionContributorCount = 0;
         _dominantRootMotionLoopCycle = 0L;
-        if (StateMachine.UnityHumanoidMotionContributionsOverflowed)
+        if (StateMachine.HumanoidMotionContributionsOverflowed)
         {
             PlaybackCapabilityDiagnostic =
                 "The state-machine humanoid contribution frame overflowed its initialization capacity. "
@@ -58,11 +58,11 @@ public partial class AnimStateMachineComponent
         }
 
         float dominantWeight = float.NegativeInfinity;
-        ReadOnlySpan<UnityHumanoidMotionContribution> contributions =
-            StateMachine.UnityHumanoidMotionContributions;
+        ReadOnlySpan<HumanoidMotionContribution> contributions =
+            StateMachine.HumanoidMotionContributions;
         for (int i = 0; i < contributions.Length; i++)
         {
-            UnityHumanoidMotionContribution contribution = contributions[i];
+            HumanoidMotionContribution contribution = contributions[i];
             if (!float.IsFinite(contribution.Weight) || contribution.Weight <= 0.0f)
                 continue;
 

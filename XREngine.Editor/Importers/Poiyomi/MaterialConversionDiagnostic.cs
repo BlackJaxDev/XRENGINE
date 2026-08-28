@@ -1,4 +1,4 @@
-namespace XREngine.Scene.Importers.Poiyomi;
+namespace XREngine.Scene.Importers.SourceToon;
 
 /// <summary>
 /// A stable, actionable diagnostic emitted while recognizing or converting a source material.

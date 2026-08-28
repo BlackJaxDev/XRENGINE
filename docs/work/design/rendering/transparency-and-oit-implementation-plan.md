@@ -47,7 +47,7 @@ This plan defines:
 | Hybrid dispatch | `XRENGINE/Rendering/HybridRenderingManager.cs` |
 | Materials | `XRENGINE/Rendering/API/Rendering/Objects/Materials/XRMaterial.cs` |
 | Blend/depth | `XRENGINE/Models/Materials/Options/BlendMode.cs`, `DepthTest.cs` |
-| Import | `XRENGINE/Core/ModelImporter.cs` |
+| Import | `XREngine.Runtime.ModelAssetPipeline/Importing/ModelAssetImporter.cs` |
 
 ### 2.2 Current Behavior
 

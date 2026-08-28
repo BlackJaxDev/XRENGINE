@@ -11,6 +11,7 @@ namespace XREngine.Rendering.Commands;
 public readonly record struct AdvancedGpuRecordPublicationDelta(
     AdvancedGpuHandle Handle,
     EAdvancedGpuRecordPublicationChange Change,
+    EAdvancedGpuMutationDomain Domain,
     uint PreviousDenseIndex,
     uint CurrentDenseIndex,
     ulong PublicationGeneration)

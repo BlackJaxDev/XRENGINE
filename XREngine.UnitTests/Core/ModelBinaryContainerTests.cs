@@ -3,7 +3,6 @@ using System.IO.Hashing;
 using NUnit.Framework;
 using Shouldly;
 using XREngine.Core.Files.Caching;
-using XREngine.ModelCaching;
 using XREngine.Rendering.Models.Caching;
 
 namespace XREngine.UnitTests.Core;

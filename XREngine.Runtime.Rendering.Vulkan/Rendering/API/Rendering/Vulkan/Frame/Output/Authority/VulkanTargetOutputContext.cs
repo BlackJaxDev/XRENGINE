@@ -94,6 +94,9 @@ internal sealed class VulkanTargetOutputContext
     internal bool TryBeginDestroyImageView(ImageView imageView, string owner)
         => _host.TryBeginDestroyImageView(imageView, owner);
 
+    internal bool TryBeginReleaseExternalImage(Image image, string owner)
+        => _host.TryBeginReleaseExternalImage(image, owner);
+
     internal void TrackLiveImageView(ImageView imageView, in ImageViewCreateInfo createInfo, string owner)
         => _host.TrackLiveImageView(imageView, in createInfo, owner);
 

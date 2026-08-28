@@ -14,6 +14,9 @@ public sealed class AdvancedMaterialDatabase
     private AdvancedMaterialLayoutMember[] _layoutMembers;
     private uint[] _constantWords;
     private AdvancedMaterialTextureBinding[] _textureBindings;
+    private AdvancedGpuHandle[] _materialLayoutHandles;
+    private readonly uint _maximumConstantWordsPerMaterial;
+    private readonly uint _maximumTextureBindingsPerMaterial;
     private uint _layoutMemberCount;
     private uint _constantWordCount;
     private uint _textureBindingCount;
@@ -34,14 +37,25 @@ public sealed class AdvancedMaterialDatabase
         uint layoutCapacity,
         uint layoutMemberCapacity,
         uint constantWordCapacity = 0u,
-        uint textureBindingCapacity = 0u)
+        uint textureBindingCapacity = 0u,
+        uint maximumConstantWordsPerMaterial = 0u,
+        uint maximumTextureBindingsPerMaterial = 0u)
     {
         _materials = new AdvancedGpuRecordTable<AdvancedMaterialRecord>(materialCapacity);
         _kernels = new AdvancedGpuRecordTable<AdvancedShadingKernelRecord>(kernelCapacity);
         _layouts = new AdvancedGpuRecordTable<AdvancedMaterialLayoutRecord>(layoutCapacity);
         _layoutMembers = new AdvancedMaterialLayoutMember[checked((int)layoutMemberCapacity)];
-        _constantWords = new uint[checked((int)constantWordCapacity)];
-        _textureBindings = new AdvancedMaterialTextureBinding[checked((int)textureBindingCapacity)];
+        _maximumConstantWordsPerMaterial = maximumConstantWordsPerMaterial == 0u
+            ? Math.Max(1u, materialCapacity == 0u ? 1u : constantWordCapacity / materialCapacity)
+            : maximumConstantWordsPerMaterial;
+        _maximumTextureBindingsPerMaterial = maximumTextureBindingsPerMaterial == 0u
+            ? Math.Max(1u, materialCapacity == 0u ? 1u : textureBindingCapacity / materialCapacity)
+            : maximumTextureBindingsPerMaterial;
+        uint fixedConstantCapacity = checked((materialCapacity + 1u) * _maximumConstantWordsPerMaterial);
+        uint fixedTextureCapacity = checked((materialCapacity + 1u) * _maximumTextureBindingsPerMaterial);
+        _constantWords = new uint[checked((int)Math.Max(constantWordCapacity, fixedConstantCapacity))];
+        _textureBindings = new AdvancedMaterialTextureBinding[checked((int)Math.Max(textureBindingCapacity, fixedTextureCapacity))];
+        _materialLayoutHandles = new AdvancedGpuHandle[checked((int)materialCapacity + 1)];
     }
 
     public AdvancedGpuRecordTable<AdvancedMaterialRecord> Materials => _materials;
@@ -50,6 +64,131 @@ public sealed class AdvancedMaterialDatabase
     public ReadOnlySpan<AdvancedMaterialLayoutMember> LayoutMembers => _layoutMembers.AsSpan(0, checked((int)_layoutMemberCount));
     public ReadOnlySpan<uint> ConstantWords => _constantWords.AsSpan(0, checked((int)_constantWordCount));
     public ReadOnlySpan<AdvancedMaterialTextureBinding> TextureBindings => _textureBindings.AsSpan(0, checked((int)_textureBindingCount));
+    public uint MaximumConstantWordsPerMaterial => _maximumConstantWordsPerMaterial;
+    public uint MaximumTextureBindingsPerMaterial => _maximumTextureBindingsPerMaterial;
+
+    /// <summary>Allocates a ring-owned immutable publication image at a setup or growth boundary.</summary>
+    public AdvancedMaterialPublicationSnapshot CreatePublicationSnapshot()
+        => new(_materialLayoutHandles.Length, _constantWords.Length, _textureBindings.Length);
+
+    /// <summary>Copies canonical material payload state into a retained publication image without allocating.</summary>
+    public bool TrySealPublication(ulong publicationSequence, AdvancedMaterialPublicationSnapshot snapshot)
+    {
+        ArgumentNullException.ThrowIfNull(snapshot);
+        if (publicationSequence == 0u)
+            return false;
+
+        return snapshot.TryCapture(publicationSequence, _materialLayoutHandles, _constantWords, _textureBindings,
+            _materialGeneration, _kernelGeneration, _layoutGeneration);
+    }
+
+    /// <summary>Resolves the stable layout handle used by a packed material row.</summary>
+    public bool TryFindLayoutHandle(ulong layoutHash, out AdvancedGpuHandle handle)
+    {
+        ReadOnlySpan<AdvancedMaterialLayoutRecord> records = _layouts.PhysicalRecords;
+        ReadOnlySpan<AdvancedGpuHandle> handles = _layouts.PhysicalHandles;
+        ReadOnlySpan<byte> occupancy = _layouts.PhysicalOccupancy;
+        for (int index = 0; index < records.Length; ++index)
+        {
+            if (occupancy[index] == 0 || records[index].LayoutHash != layoutHash)
+                continue;
+
+            handle = handles[index];
+            return handle.IsValid;
+        }
+
+        handle = AdvancedGpuHandle.Invalid;
+        return false;
+    }
+
+    /// <summary>Finds an existing layout only when every packed field agrees.</summary>
+    public bool TryFindLayoutHandle(in AdvancedMaterialLayoutRecord source, ReadOnlySpan<AdvancedMaterialLayoutMember> members, out AdvancedGpuHandle handle)
+    {
+        ReadOnlySpan<AdvancedMaterialLayoutRecord> records = _layouts.PhysicalRecords;
+        ReadOnlySpan<AdvancedGpuHandle> handles = _layouts.PhysicalHandles;
+        ReadOnlySpan<byte> occupancy = _layouts.PhysicalOccupancy;
+        for (int index = 0; index < records.Length; ++index)
+        {
+            if (occupancy[index] == 0 || !LayoutEquals(in records[index], in source) || !GetLayoutMembers(records[index]).SequenceEqual(members))
+                continue;
+            handle = handles[index];
+            return handle.IsValid;
+        }
+        handle = AdvancedGpuHandle.Invalid;
+        return false;
+    }
+
+    /// <summary>Finds an existing fully initialized kernel under its exact layout identity.</summary>
+    public bool TryFindKernelHandle(AdvancedGpuHandle layoutHandle, in AdvancedShadingKernelRecord source, out AdvancedGpuHandle handle)
+    {
+        if (!_layouts.TryGet(layoutHandle, out AdvancedMaterialLayoutRecord layout))
+        {
+            handle = AdvancedGpuHandle.Invalid;
+            return false;
+        }
+        ReadOnlySpan<AdvancedShadingKernelRecord> records = _kernels.PhysicalRecords;
+        ReadOnlySpan<AdvancedGpuHandle> handles = _kernels.PhysicalHandles;
+        ReadOnlySpan<byte> occupancy = _kernels.PhysicalOccupancy;
+        for (int index = 0; index < records.Length; ++index)
+        {
+            if (occupancy[index] == 0 || records[index].MaterialLayoutHash != layout.LayoutHash || !KernelEquals(in records[index], in source))
+                continue;
+            handle = handles[index];
+            return handle.IsValid;
+        }
+        handle = AdvancedGpuHandle.Invalid;
+        return false;
+    }
+
+    /// <summary>
+    /// Returns the immutable texture/sampler reference range owned by a packed
+    /// material row. Invalid ranges fail closed instead of exposing arena data.
+    /// </summary>
+    public bool TryGetTextureBindings(
+        in AdvancedMaterialRecord material,
+        out ReadOnlySpan<AdvancedMaterialTextureBinding> bindings)
+    {
+        ulong end = (ulong)material.TextureReferenceOffset + material.TextureReferenceCount;
+        if (end > (ulong)_textureBindingCount)
+        {
+            bindings = default;
+            return false;
+        }
+
+        bindings = _textureBindings.AsSpan(
+            checked((int)material.TextureReferenceOffset),
+            checked((int)material.TextureReferenceCount));
+        return true;
+    }
+
+    /// <summary>Returns a material's fixed-stride constant payload, bounded by the row's authored count.</summary>
+    public bool TryGetConstantWords(in AdvancedMaterialRecord material, out ReadOnlySpan<uint> words)
+    {
+        ulong end = (ulong)material.ConstantWordOffset + material.ConstantWordCount;
+        if (end > (ulong)_constantWords.Length)
+        {
+            words = default;
+            return false;
+        }
+        words = _constantWords.AsSpan(checked((int)material.ConstantWordOffset), checked((int)material.ConstantWordCount));
+        return true;
+    }
+
+    /// <summary>Resolves the exact generation-safe layout identity retained by a material row.</summary>
+    public bool TryGetLayoutHandle(
+        AdvancedGpuHandle materialHandle,
+        out AdvancedGpuHandle layoutHandle)
+    {
+        if (!_materials.IsCurrent(materialHandle) ||
+            materialHandle.Index >= (uint)_materialLayoutHandles.Length)
+        {
+            layoutHandle = AdvancedGpuHandle.Invalid;
+            return false;
+        }
+
+        layoutHandle = _materialLayoutHandles[checked((int)materialHandle.Index)];
+        return layoutHandle.IsValid && _layouts.IsCurrent(layoutHandle);
+    }
     public AdvancedMaterialDatabaseGenerations Generations => new(_materialGeneration, _kernelGeneration, _layoutGeneration);
 
     public bool TryAddLayout(
@@ -124,7 +263,8 @@ public sealed class AdvancedMaterialDatabase
 
     /// <summary>
     /// Adds a fully packed material row after validating every authored semantic
-    /// against its declared layout. Packed arenas are append-only during a frame.
+    /// against its declared layout. Payload storage is a fixed logical slot keyed
+    /// by the generation-safe material handle.
     /// </summary>
     public bool TryAddMaterial(
         AdvancedGpuHandle layoutHandle,
@@ -147,21 +287,20 @@ public sealed class AdvancedMaterialDatabase
                 out AdvancedMaterialRecord record))
             return false;
 
-        uint constantOffset = _constantWordCount;
-        uint textureOffset = _textureBindingCount;
-        record.ConstantWordOffset = constantOffset;
-        record.ConstantWordCount = checked((uint)constantWords.Length);
-        record.TextureReferenceOffset = textureOffset;
-        record.TextureReferenceCount = checked((uint)textureBindings.Length);
         if (!_materials.TryAdd(record, out handle))
             return false;
 
+        record.ConstantWordOffset = GetConstantOffset(handle.Index);
+        record.ConstantWordCount = checked((uint)constantWords.Length);
+        record.TextureReferenceOffset = GetTextureOffset(handle.Index);
+        record.TextureReferenceCount = checked((uint)textureBindings.Length);
         record.StableRowId = handle.Index;
         record.Generation = handle.Generation;
         if (!_materials.TryReplace(handle, record))
             throw new InvalidOperationException("Newly inserted material row could not be initialized.");
 
-        AppendMaterialPayload(constantWords, textureBindings);
+        _materialLayoutHandles[checked((int)handle.Index)] = layoutHandle;
+        WriteMaterialPayload(handle.Index, constantWords, textureBindings);
         MarkMaterialDirty(handle);
         IncrementGeneration(ref _materialGeneration);
         return true;
@@ -182,8 +321,7 @@ public sealed class AdvancedMaterialDatabase
             ReadOnlySpan<AdvancedMaterialTextureBinding>.Empty);
 
     /// <summary>
-    /// Replaces a material header while appending a new immutable packed payload.
-    /// Arena reclamation is intentionally deferred to a structural boundary.
+    /// Replaces a material header and overwrites its bounded fixed-slot payload.
     /// </summary>
     public bool TryReplaceMaterial(
         AdvancedGpuHandle materialHandle,
@@ -194,7 +332,7 @@ public sealed class AdvancedMaterialDatabase
         ReadOnlySpan<uint> constantWords,
         ReadOnlySpan<AdvancedMaterialTextureBinding> textureBindings)
     {
-        if (!_materials.IsCurrent(materialHandle))
+        if (!_materials.TryGet(materialHandle, out AdvancedMaterialRecord previous))
             return false;
         if (!TryPrepareMaterial(
                 layoutHandle,
@@ -206,16 +344,21 @@ public sealed class AdvancedMaterialDatabase
                 out AdvancedMaterialRecord record))
             return false;
 
-        record.ConstantWordOffset = _constantWordCount;
+        record.ConstantWordOffset = GetConstantOffset(materialHandle.Index);
         record.ConstantWordCount = checked((uint)constantWords.Length);
-        record.TextureReferenceOffset = _textureBindingCount;
+        record.TextureReferenceOffset = GetTextureOffset(materialHandle.Index);
         record.TextureReferenceCount = checked((uint)textureBindings.Length);
         record.StableRowId = materialHandle.Index;
         record.Generation = materialHandle.Generation;
-        if (!_materials.TryReplace(materialHandle, record))
+        EAdvancedGpuMutationDomain mutationDomain = ResolveMaterialMutationDomain(
+            in previous,
+            in record,
+            textureBindings);
+        if (!_materials.TryReplace(materialHandle, record, mutationDomain))
             return false;
 
-        AppendMaterialPayload(constantWords, textureBindings);
+        _materialLayoutHandles[checked((int)materialHandle.Index)] = layoutHandle;
+        WriteMaterialPayload(materialHandle.Index, constantWords, textureBindings);
         MarkMaterialDirty(materialHandle);
         IncrementGeneration(ref _materialGeneration);
         return true;
@@ -228,6 +371,8 @@ public sealed class AdvancedMaterialDatabase
         if (!_materials.TryTombstone(materialHandle))
             return false;
 
+        _materialLayoutHandles[checked((int)materialHandle.Index)] =
+            AdvancedGpuHandle.Invalid;
         MarkMaterialDirty(denseIndex);
         IncrementGeneration(ref _materialGeneration);
         return true;
@@ -365,6 +510,16 @@ public sealed class AdvancedMaterialDatabase
         _materials.GrowAtBoundary(materialCapacity);
         _kernels.GrowAtBoundary(kernelCapacity);
         _layouts.GrowAtBoundary(layoutCapacity);
+        if (materialCapacity >= (uint)_materialLayoutHandles.Length)
+        {
+            Array.Resize(
+                ref _materialLayoutHandles,
+                checked((int)materialCapacity + 1));
+        }
+        uint requiredConstantCapacity = checked((materialCapacity + 1u) * _maximumConstantWordsPerMaterial);
+        uint requiredTextureCapacity = checked((materialCapacity + 1u) * _maximumTextureBindingsPerMaterial);
+        constantWordCapacity = Math.Max(constantWordCapacity, requiredConstantCapacity);
+        textureBindingCapacity = Math.Max(textureBindingCapacity, requiredTextureCapacity);
         if (layoutMemberCapacity <= (uint)_layoutMembers.Length)
         {
             GrowMaterialPayloadArenas(constantWordCapacity, textureBindingCapacity);
@@ -396,8 +551,8 @@ public sealed class AdvancedMaterialDatabase
         if (!validation.IsValid ||
             constantWords.Length != layout.ConstantWordCount ||
             textureBindings.Length != layout.TextureReferenceCount ||
-            (uint)constantWords.Length > (uint)_constantWords.Length - _constantWordCount ||
-            (uint)textureBindings.Length > (uint)_textureBindings.Length - _textureBindingCount)
+            (uint)constantWords.Length > _maximumConstantWordsPerMaterial ||
+            (uint)textureBindings.Length > _maximumTextureBindingsPerMaterial)
         {
             return false;
         }
@@ -417,6 +572,32 @@ public sealed class AdvancedMaterialDatabase
         record.MaterialLayoutHash = layout.LayoutHash;
         record.RequiredAttributeMask |= layout.RequiredAttributeMask | kernel.RequiredAttributeMask;
         return true;
+    }
+
+    private EAdvancedGpuMutationDomain ResolveMaterialMutationDomain(
+        in AdvancedMaterialRecord previous,
+        in AdvancedMaterialRecord replacement,
+        ReadOnlySpan<AdvancedMaterialTextureBinding> replacementBindings)
+    {
+        if (previous.ShadingKernelId != replacement.ShadingKernelId ||
+            previous.ShadingKernelGeneration != replacement.ShadingKernelGeneration ||
+            previous.MaterialLayoutHash != replacement.MaterialLayoutHash ||
+            previous.RenderStateClass != replacement.RenderStateClass ||
+            previous.CoverageMode != replacement.CoverageMode ||
+            previous.RequiredAttributeMask != replacement.RequiredAttributeMask ||
+            previous.FeatureFlags != replacement.FeatureFlags ||
+            previous.EligibilityFlags != replacement.EligibilityFlags)
+        {
+            return EAdvancedGpuMutationDomain.LayoutTopology;
+        }
+
+        if (!TryGetTextureBindings(previous, out ReadOnlySpan<AdvancedMaterialTextureBinding> previousBindings) ||
+            !TextureBindingsEqual(previousBindings, replacementBindings))
+        {
+            return EAdvancedGpuMutationDomain.ResourceBinding;
+        }
+
+        return EAdvancedGpuMutationDomain.Content;
     }
 
     private ReadOnlySpan<AdvancedMaterialLayoutMember> GetLayoutMembers(
@@ -469,26 +650,89 @@ public sealed class AdvancedMaterialDatabase
         return true;
     }
 
-    private void AppendMaterialPayload(
+    private void WriteMaterialPayload(
+        uint materialIndex,
         ReadOnlySpan<uint> constantWords,
         ReadOnlySpan<AdvancedMaterialTextureBinding> textureBindings)
     {
         if (!constantWords.IsEmpty)
         {
-            uint start = _constantWordCount;
+            uint start = GetConstantOffset(materialIndex);
             constantWords.CopyTo(_constantWords.AsSpan(checked((int)start)));
-            _constantWordCount += checked((uint)constantWords.Length);
+            _constantWordCount = Math.Max(_constantWordCount, checked(start + _maximumConstantWordsPerMaterial));
             MarkArenaDirty(ref _constantDirtyFirst, ref _constantDirtyEnd, start, checked((uint)constantWords.Length));
         }
 
         if (!textureBindings.IsEmpty)
         {
-            uint start = _textureBindingCount;
+            uint start = GetTextureOffset(materialIndex);
             textureBindings.CopyTo(_textureBindings.AsSpan(checked((int)start)));
-            _textureBindingCount += checked((uint)textureBindings.Length);
+            _textureBindingCount = Math.Max(_textureBindingCount, checked(start + _maximumTextureBindingsPerMaterial));
             MarkArenaDirty(ref _textureDirtyFirst, ref _textureDirtyEnd, start, checked((uint)textureBindings.Length));
         }
     }
+
+    private static bool LayoutEquals(in AdvancedMaterialLayoutRecord left, in AdvancedMaterialLayoutRecord right)
+        => left.LayoutHash == right.LayoutHash &&
+           left.ConstantWordCount == right.ConstantWordCount &&
+           left.TextureReferenceCount == right.TextureReferenceCount &&
+           left.RequiredAttributeMask == right.RequiredAttributeMask &&
+           left.Flags == right.Flags &&
+           left.Reserved0 == right.Reserved0 &&
+           left.Reserved1 == right.Reserved1;
+
+    private static bool KernelEquals(in AdvancedShadingKernelRecord left, in AdvancedShadingKernelRecord right)
+        => left.MaterialLayoutHash == right.MaterialLayoutHash &&
+           left.RequiredAttributeMask == right.RequiredAttributeMask &&
+           left.SupportedCoverageMask == right.SupportedCoverageMask &&
+           left.SupportedEligibility == right.SupportedEligibility &&
+           left.SupportedFeatures == right.SupportedFeatures &&
+           left.ShaderIdentityHash == right.ShaderIdentityHash &&
+           left.RenderStateClassMask == right.RenderStateClassMask &&
+           left.Flags == right.Flags &&
+           left.Reserved0 == right.Reserved0 && left.Reserved1 == right.Reserved1 &&
+           left.Reserved2 == right.Reserved2 && left.Reserved3 == right.Reserved3;
+
+    private static bool TextureBindingsEqual(
+        ReadOnlySpan<AdvancedMaterialTextureBinding> left,
+        ReadOnlySpan<AdvancedMaterialTextureBinding> right)
+    {
+        if (left.Length != right.Length)
+            return false;
+
+        for (int index = 0; index < left.Length; ++index)
+        {
+            AdvancedMaterialTextureBinding leftBinding = left[index];
+            AdvancedMaterialTextureBinding rightBinding = right[index];
+            if (!TextureReferenceEquals(leftBinding.Texture, rightBinding.Texture) ||
+                !SamplerReferenceEquals(leftBinding.Sampler, rightBinding.Sampler))
+                return false;
+        }
+
+        return true;
+    }
+
+    private static bool TextureReferenceEquals(
+        AdvancedTextureReference left,
+        AdvancedTextureReference right)
+        => left.Handle.Index == right.Handle.Index &&
+           left.Handle.Generation == right.Handle.Generation &&
+           left.Fallback == right.Fallback &&
+           left.Reserved == right.Reserved;
+
+    private static bool SamplerReferenceEquals(
+        AdvancedSamplerReference left,
+        AdvancedSamplerReference right)
+        => left.Handle.Index == right.Handle.Index &&
+           left.Handle.Generation == right.Handle.Generation &&
+           left.Fallback == right.Fallback &&
+           left.Reserved == right.Reserved;
+
+    private uint GetConstantOffset(uint materialIndex)
+        => checked(materialIndex * _maximumConstantWordsPerMaterial);
+
+    private uint GetTextureOffset(uint materialIndex)
+        => checked(materialIndex * _maximumTextureBindingsPerMaterial);
 
     private void GrowMaterialPayloadArenas(
         uint constantWordCapacity,

@@ -111,7 +111,9 @@ public sealed class VulkanRenderer :
             _deviceContext,
             _resourceRuntime,
             _frameTelemetry);
-        _resourceRuntime.DescriptorLifetime.Configure(_deviceContext);
+        _resourceRuntime.DescriptorLifetime.Configure(
+            _deviceContext,
+            _commandRuntime.CommandBuffers.SubmissionStateGate);
         _resourceRuntime.FallbackTexture.Configure(_commandRuntime);
         _resourceRuntime.BlackFallbackTexture.Configure(_commandRuntime);
         _frameLoop = new VulkanFrameLoop(

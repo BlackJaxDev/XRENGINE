@@ -5,6 +5,7 @@ using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using XREngine.Core.Files;
+using XREngine.Data;
 using XREngine.Data.Core;
 using XREngine.Rendering.Models;
 using XREngine.Scene;
@@ -456,7 +457,7 @@ namespace XREngine.Editor.Mcp
             [McpName("dest_folder"), Description("Relative folder within game assets for copied or generated output. Empty for root.")]
             string destFolder = "",
             [McpName("unity_project_root"), Description("Optional Unity project or Assets folder override used when importing an external .prefab.")]
-            string? unityProjectRoot = null,
+            string? sourceProjectRoot = null,
             [McpName("overwrite"), Description("Allow an existing generated Unity prefab output to be replaced transactionally.")]
             bool overwrite = false)
         {
@@ -480,11 +481,11 @@ namespace XREngine.Editor.Mcp
 
             string sourceFullPath = Path.GetFullPath(sourcePath);
             string normalizedRoot = Path.GetFullPath(assetsPath);
-            bool isExternalUnityPrefab =
+            bool isExternalSerializedPrefab =
                 string.Equals(Path.GetExtension(sourceFullPath), ".prefab", StringComparison.OrdinalIgnoreCase) &&
                 !sourceFullPath.StartsWith(normalizedRoot, StringComparison.OrdinalIgnoreCase);
 
-            if (isExternalUnityPrefab)
+            if (isExternalSerializedPrefab)
             {
                 string outputPath = Path.Combine(
                     targetDir,
@@ -496,7 +497,7 @@ namespace XREngine.Editor.Mcp
 
                 var importOptions = new ModelImportOptions
                 {
-                    UnityProjectRootOverride = unityProjectRoot,
+                    SourceProjectRootOverride = sourceProjectRoot,
                     ProcessMeshesAsynchronously = false,
                     GenerateMeshRenderersAsync = false,
                 };
@@ -548,28 +549,34 @@ namespace XREngine.Editor.Mcp
                     });
             }
 
-            // Non-prefab sources retain the existing copy-then-import workflow.
-            string destFilePath = Path.Combine(targetDir, Path.GetFileName(sourcePath));
-            // Only copy if source is outside game assets
-            if (!sourceFullPath.StartsWith(normalizedRoot, StringComparison.OrdinalIgnoreCase))
+            string sourceExtension = Path.GetExtension(sourceFullPath);
+            if (!ThirdPartyAssetTypeRegistry.TryResolve(sourceExtension, out ThirdPartyAssetTypeDescriptor? descriptor))
             {
-                if (File.Exists(destFilePath))
-                    return new McpToolResponse(
-                        $"File '{Path.GetFileName(sourcePath)}' already exists in destination. Delete it first or rename.",
-                        isError: true);
-
-                File.Copy(sourceFullPath, destFilePath);
-            }
-            else
-            {
-                destFilePath = sourceFullPath;
+                return new McpToolResponse(
+                    $"No feature owns third-party extension '{sourceExtension}' for '{sourceFullPath}'.",
+                    isError: true);
             }
 
-            // Trigger engine load which auto-dispatches to the 3rd party import pipeline
-            XRAsset? loaded = null;
+            string generatedOutputPath = Path.Combine(
+                targetDir,
+                $"{Path.GetFileNameWithoutExtension(sourceFullPath)}.{AssetManager.AssetExtension}");
+            if (File.Exists(generatedOutputPath) && !overwrite)
+                return new McpToolResponse(
+                    $"Native output '{Path.GetFileName(generatedOutputPath)}' already exists in destination. Enable overwrite or choose another destination.",
+                    isError: true);
+
             try
             {
-                loaded = Engine.Assets.Load(destFilePath, typeof(XRAsset));
+                bool imported = Engine.Assets.ImportExternalThirdPartyFile(
+                    sourceFullPath,
+                    generatedOutputPath,
+                    importOptions: null,
+                    overwrite,
+                    bypassJobThread: true);
+                if (!imported)
+                    return new McpToolResponse(
+                        $"Import failed for '{sourceFullPath}' using owner '{descriptor.OwnerName}'.",
+                        isError: true);
             }
             catch (Exception ex)
             {
@@ -578,23 +585,25 @@ namespace XREngine.Editor.Mcp
                     isError: true);
             }
 
-            if (loaded is null)
-            {
-                string relativeDest = Path.GetRelativePath(assetsPath, destFilePath).Replace('\\', '/');
+            FileInfo outputFile = new(generatedOutputPath);
+            if (!outputFile.Exists || outputFile.Length == 0)
                 return new McpToolResponse(
-                    $"File copied to '{relativeDest}' but engine could not import it. The file extension may not have a registered importer.",
-                    new { path = relativeDest, imported = false, copied = true });
-            }
+                    $"Import reported success, but native output '{generatedOutputPath}' is missing or empty.",
+                    isError: true);
 
-            string relPath = Path.GetRelativePath(assetsPath, destFilePath).Replace('\\', '/');
+            string relPath = Path.GetRelativePath(assetsPath, generatedOutputPath).Replace('\\', '/');
             return new McpToolResponse(
-                $"Imported '{Path.GetFileName(sourcePath)}' as {loaded.GetType().Name} at '{relPath}'.",
+                $"Imported '{Path.GetFileName(sourcePath)}' to native asset '{relPath}' via {descriptor.OwnerName}.",
                 new
                 {
                     path = relPath,
-                    assetType = loaded.GetType().FullName,
-                    assetId = loaded.ID.ToString(),
-                    name = loaded.Name,
+                    sourcePath = sourceFullPath,
+                    sourceCopied = false,
+                    assetType = descriptor.AssetType.FullName,
+                    importerOwner = descriptor.OwnerName,
+                    name = Path.GetFileNameWithoutExtension(generatedOutputPath),
+                    outputBytes = outputFile.Length,
+                    validation = "transactional-serialization",
                     imported = true
                 });
         }

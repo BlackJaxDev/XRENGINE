@@ -12,10 +12,12 @@ using XREngine.Fbx;
 using XREngine.Native;
 using XREngine.Rendering;
 using XREngine.Rendering.Models.Materials;
+using XREngine.Rendering.Models.Caching;
 using XREngine.Rendering.UI;
 using XREngine.Runtime.Bootstrap;
 using XREngine.Runtime.Bootstrap.Builders;
 using XREngine.Scene;
+using XREngine.Scene.Prefabs;
 using XREngine.Scene.Transforms;
 using static XREngine.GameStartupSettings;
 namespace XREngine.Networking
@@ -42,11 +44,10 @@ namespace XREngine.Networking
 
         private static void Main(string[] args)
         {
-            RuntimeRenderingBootstrap.InstallEngineHostServices(
-                RuntimeAdapterProfile.Animation | RuntimeAdapterProfile.Modeling);
-            // Apply engine settings
-            RuntimeEngine.Rendering.Settings.OutputVerbosity = EOutputVerbosity.Verbose;
-            Engine.EditorPreferences.Debug.UseDebugOpaquePipeline = false;
+            using IDisposable modelAssetPipelineRegistration =
+                ModelAssetPipelineRegistration.Install(Engine.Assets, typeof(XRPrefabSource));
+            using IDisposable applicationServices =
+                RuntimeApplicationBootstrap.Install(RuntimeApplicationProfile.HeadlessServer);
             Engine.ConfigureMemoryPolicy(EngineMemoryProfile.HeadlessServer);
 
             Engine.ServerSessionResolver = ResolveServerSession;
@@ -74,9 +75,13 @@ namespace XREngine.Networking
 
             Engine.BeforeCreateWindows += initializeServerWorld;
             Console.CancelKeyPress += cancelHandler;
+            GameStartupSettings startupSettings = GetEngineSettings(targetWorld);
+            RuntimeStartupPolicy.ValidateProfile(
+                RuntimeApplicationProfile.HeadlessServer,
+                RuntimeStartupPolicy.Normalize(startupSettings));
             try
             {
-                Engine.Run(GetEngineSettings(targetWorld), Engine.LoadOrGenerateGameState());
+                Engine.Run(startupSettings, Engine.LoadOrGenerateGameState());
             }
             finally
             {

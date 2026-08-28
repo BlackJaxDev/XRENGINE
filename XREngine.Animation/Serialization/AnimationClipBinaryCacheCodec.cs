@@ -63,7 +63,7 @@ internal sealed class AnimationClipBinaryCacheCodec : IThirdPartyCacheCodec
         => asset is AnimationClip
         {
             HasRootMotion: true,
-            UnityHumanoidRootMotionSettings: null
+            ImportedHumanoidRootMotionSettings: null
         }
         && string.Equals(sourceExtension, "anim", StringComparison.OrdinalIgnoreCase);
 

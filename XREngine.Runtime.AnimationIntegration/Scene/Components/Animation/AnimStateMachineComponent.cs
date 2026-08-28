@@ -83,7 +83,7 @@ namespace XREngine.Components
         public event Action<HumanoidProjectedRootPose, HumanoidRootMotionDelta>? RootMotionEvaluated;
 
         /// <summary>Raised after an imported AnimationEvent is dispatched to scene components.</summary>
-        public event Action<UnityAnimationEventOccurrence>? UnityAnimationEventTriggered;
+        public event Action<ImportedAnimationEventOccurrence>? ImportedAnimationEventTriggered;
 
         private bool _suspendedByClip;
         public bool SuspendedByClip
@@ -142,7 +142,7 @@ namespace XREngine.Components
             switch (propName)
             {
                 case nameof(StateMachine):
-                    ResetUnityAnimationBindings();
+                    ResetImportedAnimationBindings();
                     _playbackCapabilitiesValid = false;
                     break;
                 case nameof(IsActive) when field is bool isActive && !isActive && !IsActiveInHierarchy:
@@ -195,13 +195,13 @@ namespace XREngine.Components
                 ResetDrivenPose();
             if (_stateMachineInitialized)
             {
-                StateMachine.UnityAnimationEventTriggered -= OnUnityAnimationEventTriggered;
+                StateMachine.ImportedAnimationEventTriggered -= OnImportedAnimationEventTriggered;
                 StateMachine.Deinitialize();
                 StateMachine.VariableChanged -= VariableChanged;
                 _stateMachineInitialized = false;
             }
             _playbackCapabilitiesValid = false;
-            ResetUnityAnimationBindings();
+            ResetImportedAnimationBindings();
             _changedLastEval.Clear();
         }
 
@@ -262,8 +262,8 @@ namespace XREngine.Components
         /// </summary>
         public bool TryValidatePlaybackCapabilities(out string diagnostic)
         {
-            if (!StateMachine.TryValidateUnityImportCapabilities(
-                ValidateUnityAnimationClipBindings,
+            if (!StateMachine.TryValidateSourceImportCapabilities(
+                ValidateImportedAnimationClipBindings,
                 out diagnostic,
                 out bool requiresHumanoidAvatar))
             {
@@ -307,18 +307,18 @@ namespace XREngine.Components
             StateMachine.Initialize(this);
             InitializeStateMachineRootMotionPipeline();
             StateMachine.VariableChanged += VariableChanged;
-            StateMachine.UnityAnimationEventTriggered += OnUnityAnimationEventTriggered;
+            StateMachine.ImportedAnimationEventTriggered += OnImportedAnimationEventTriggered;
             _stateMachineInitialized = true;
             ReplicateParameterSchema(force: true);
             return true;
         }
 
-        private void OnUnityAnimationEventTriggered(UnityAnimationEventOccurrence occurrence)
+        private void OnImportedAnimationEventTriggered(ImportedAnimationEventOccurrence occurrence)
         {
-            int receiverCount = UnityAnimationEventDispatcher.Dispatch(this, occurrence);
-            UnityAnimationEventTriggered?.Invoke(occurrence);
+            int receiverCount = ImportedAnimationEventDispatcher.Dispatch(this, occurrence);
+            ImportedAnimationEventTriggered?.Invoke(occurrence);
             if (receiverCount == 0
-                && occurrence.Event.MessageOptions == EUnityAnimationEventMessageOptions.RequireReceiver)
+                && occurrence.Event.MessageOptions == EImportedAnimationEventMessageOptions.RequireReceiver)
             {
                 Debug.Animation(
                     $"[AnimationEvent] '{occurrence.Event.FunctionName}' from state '{occurrence.StateName}' " +

@@ -209,15 +209,15 @@ public static class GltfPhase0BaselineHarness
 
     private static ImportedSceneSummary ImportAndSummarize(string assetPath, GltfImportBackend backend)
     {
-        using ModelImporter importer = CreateImporter(assetPath, backend);
+        using ModelAssetImporter importer = CreateImporter(assetPath, backend);
         SceneNode? rootNode = importer.Import(PostProcessSteps.None, cancellationToken: default, onProgress: null);
         if (rootNode is null)
-            throw new InvalidDataException($"ModelImporter did not return a root node for '{assetPath}' using backend {backend}.");
+            throw new InvalidDataException($"ModelAssetImporter did not return a root node for '{assetPath}' using backend {backend}.");
 
         return SummarizeImportedScene(rootNode);
     }
 
-    private static ModelImporter CreateImporter(string assetPath, GltfImportBackend backend)
+    private static ModelAssetImporter CreateImporter(string assetPath, GltfImportBackend backend)
     {
         Dictionary<string, XRTexture2D> textureCache = new(StringComparer.OrdinalIgnoreCase);
 
@@ -261,7 +261,7 @@ public static class GltfPhase0BaselineHarness
             return CreateMaterialCore(textureList, name);
         }
 
-        ModelImporter importer = new(assetPath, onCompleted: null, materialFactory: CreateMaterialFromSlots)
+        ModelAssetImporter importer = new(assetPath, onCompleted: null, materialFactory: CreateMaterialFromSlots)
         {
             ImportOptions = new ModelImportOptions
             {

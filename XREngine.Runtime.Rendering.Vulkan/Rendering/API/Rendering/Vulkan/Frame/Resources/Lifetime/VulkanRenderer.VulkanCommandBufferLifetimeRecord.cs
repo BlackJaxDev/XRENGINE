@@ -12,6 +12,8 @@ internal sealed class VulkanCommandBufferLifetimeRecord
     public CommandBufferLevel Level;
     public VulkanResourceLifetimeKey AllocatingCommandPool;
     public ulong AllocatingCommandPoolGeneration;
+    public SealedSubmissionContract? SealedSubmissionContract;
+    public VulkanSubmissionPinReceipt SubmissionPinReceipt { get; } = new();
 
     public void RefreshTouchedDependencies()
     {
@@ -20,4 +22,7 @@ internal sealed class VulkanCommandBufferLifetimeRecord
         foreach (KeyValuePair<VulkanResourceLifetimeKey, ulong> dependency in Dependencies)
             TouchedDependencies.Add(dependency);
     }
+
+    public void InvalidateSealedSubmissionContract()
+        => SealedSubmissionContract = null;
 }

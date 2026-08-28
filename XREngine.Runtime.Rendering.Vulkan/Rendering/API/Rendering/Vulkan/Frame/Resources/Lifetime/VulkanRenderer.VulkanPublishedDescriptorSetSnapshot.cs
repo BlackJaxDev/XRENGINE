@@ -5,8 +5,11 @@ namespace XREngine.Rendering.Vulkan;
 
 internal sealed record VulkanPublishedDescriptorSetSnapshot(
     ulong Generation,
+    ulong ResourceClosureGeneration,
     ulong ImagePayloadGeneration,
     ulong DescriptorSetLifetimeGeneration,
+    VulkanResourceSlotHandle DescriptorSetSlot,
+    VulkanResourceSlotHandle[] ResourceClosure,
     VulkanResourceLifetimeKey[] References,
     VulkanPublishedDescriptorImageReference[] ImageReferences,
     uint[] ReflectedImageBindings,

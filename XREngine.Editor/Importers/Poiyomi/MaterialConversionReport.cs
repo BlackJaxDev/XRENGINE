@@ -4,12 +4,12 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using XREngine.Rendering;
 
-namespace XREngine.Scene.Importers.Poiyomi;
+namespace XREngine.Scene.Importers.SourceToon;
 
 public enum EMaterialConversionOutcome
 {
     Converted,
-    DowngradedToPoiyomiToon,
+    ConvertedToSourceToon,
     GenericFallback,
     Failed,
 }
@@ -187,11 +187,11 @@ public static class MaterialConversionReportBuilder
         string sourcePath,
         string? shaderPath,
         XRMaterial material,
-        PoiyomiMaterialDescriptor? descriptor,
+        SourceToonMaterialDescriptor? descriptor,
         IReadOnlyList<string> warnings,
         IReadOnlyList<MaterialConversionDiagnostic> diagnostics,
         EMaterialConversionOutcome outcome,
-        PoiyomiShaderMatchResult? sourceMatch = null)
+        SourceToonShaderMatchResult? sourceMatch = null)
     {
         ShaderUiManifest manifest = material.TryGetUberMaterialState(out _, out ShaderUiManifest resolved)
             ? resolved
@@ -291,15 +291,15 @@ public static class MaterialConversionReportBuilder
             SourceContentSha256 = ComputeSha256(sourcePath),
             SourceShaderFamily = sourceMatch?.SourceFamily switch
             {
-                PoiyomiShaderFamily.Pro => "Poiyomi Pro (lossy downgrade input)",
-                PoiyomiShaderFamily.Toon => "Poiyomi Toon",
+                SourceToonShaderFamily.Pro => "Poiyomi Pro (lossy downgrade input)",
+                SourceToonShaderFamily.Toon => "Poiyomi Toon",
                 _ => descriptor is null ? "Unity Shader" : "Poiyomi Toon",
             },
             SourceShaderVersion = sourceMatch?.Version?.ToString() ?? descriptor?.Version.ToString() ?? "unknown",
             SourceShaderPath = shaderPath,
             SourceWasLocked = sourceMatch?.IsLocked ?? descriptor?.IsLocked ?? false,
             Outcome = failures.Length > 0 &&
-                      outcome is EMaterialConversionOutcome.Converted or EMaterialConversionOutcome.DowngradedToPoiyomiToon
+                      outcome is EMaterialConversionOutcome.Converted or EMaterialConversionOutcome.ConvertedToSourceToon
                 ? EMaterialConversionOutcome.Failed
                 : outcome,
             GeneratedFeatures = generatedFeatures,
@@ -334,11 +334,11 @@ public static class MaterialConversionReportBuilder
         };
 
     private static IReadOnlyList<MaterialPreservedValue> CollectPreservedValues(
-        PoiyomiMaterialDescriptor descriptor,
+        SourceToonMaterialDescriptor descriptor,
         ShaderUiManifest manifest)
     {
         List<MaterialPreservedValue> values = [];
-        foreach ((string source, PoiyomiPropertyBinding binding) in descriptor.PropertyBindings
+        foreach ((string source, SourceToonPropertyBinding binding) in descriptor.PropertyBindings
                      .OrderBy(static pair => pair.Key, StringComparer.Ordinal))
         {
             if (manifest.PropertyLookup.ContainsKey(binding.SemanticName))
@@ -356,7 +356,7 @@ public static class MaterialConversionReportBuilder
     }
 
     private static MaterialConversionDiagnostic[] BuildEffectiveDiagnostics(
-        PoiyomiMaterialDescriptor? descriptor,
+        SourceToonMaterialDescriptor? descriptor,
         ShaderUiManifest manifest,
         IReadOnlyList<MaterialConversionDiagnostic> diagnostics)
     {
@@ -393,7 +393,7 @@ public static class MaterialConversionReportBuilder
 
     private static IReadOnlySet<string> LoadPreservedRuntimeProperties()
     {
-        using Stream stream = PoiyomiToon93Catalog.OpenCatalog();
+        using Stream stream = SourceToon93Catalog.OpenCatalog();
         using JsonDocument document = JsonDocument.Parse(stream);
         HashSet<string> names = new(StringComparer.Ordinal);
         foreach (JsonElement property in document.RootElement.GetProperty("properties").EnumerateArray())
@@ -411,7 +411,7 @@ public static class MaterialConversionReportBuilder
     }
 
     private static bool TrySerializeDescriptorValue(
-        PoiyomiMaterialDescriptor descriptor,
+        SourceToonMaterialDescriptor descriptor,
         string semanticName,
         out string kind,
         out string serialized)
@@ -440,7 +440,7 @@ public static class MaterialConversionReportBuilder
             serialized = JsonSerializer.Serialize(text);
             return true;
         }
-        if (descriptor.Textures.TryGetValue(semanticName, out PoiyomiTextureDescriptor? texture))
+        if (descriptor.Textures.TryGetValue(semanticName, out SourceToonTextureDescriptor? texture))
         {
             kind = "texture";
             serialized = JsonSerializer.Serialize(new

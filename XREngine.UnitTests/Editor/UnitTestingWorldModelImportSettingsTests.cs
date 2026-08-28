@@ -414,7 +414,7 @@ public sealed class UnitTestingWorldModelImportSettingsTests
         {
             Kind = EditorUnitTests.UnitTestModelImportKind.Static,
             ImporterBackend = EditorUnitTests.ModelImportBackendPreference.AssimpOnly,
-            ImportFlags = PostProcessSteps.FlipUVs | PostProcessSteps.Triangulate,
+            ImportFlags = ModelImportSteps.FlipUVs | ModelImportSteps.Triangulate,
             Scale = 0.01f,
             ZUp = true,
         };
@@ -424,7 +424,7 @@ public sealed class UnitTestingWorldModelImportSettingsTests
         options.ShouldNotBeNull();
         options!.FbxBackend.ShouldBe(FbxImportBackend.Assimp);
         options.GltfBackend.ShouldBe(GltfImportBackend.Assimp);
-        options.PostProcessSteps.ShouldBe(model.ImportFlags);
+        options.ImportSteps.ShouldBe(model.ImportFlags);
         options.ScaleConversion.ShouldBe(model.Scale);
         options.ZUp.ShouldBeTrue();
     }

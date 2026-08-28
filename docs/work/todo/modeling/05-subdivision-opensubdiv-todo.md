@@ -46,7 +46,7 @@ Introduce subdivision as an evaluator interface over authored control topology. 
 ## Primary Code Areas
 
 - `XREngine.Modeling/`
-- `XREngine.Runtime.ModelingBridge/`
+- `XREngine.Runtime.ModelingIntegration/`
 - `XREngine.Runtime.Rendering/Objects/Meshes/`
 - `XREngine.UnitTests/Modeling/`
 - `docs/DEPENDENCIES.md`
@@ -187,7 +187,7 @@ pwsh Tools/Generate-Dependencies.ps1
 
 ```powershell
 dotnet build .\XREngine.Modeling\XREngine.Modeling.csproj
-dotnet build .\XREngine.Runtime.ModelingBridge\XREngine.Runtime.ModelingBridge.csproj
+dotnet build .\XREngine.Runtime.ModelingIntegration\XREngine.Runtime.ModelingIntegration.csproj
 dotnet test .\XREngine.UnitTests\XREngine.UnitTests.csproj --filter FullyQualifiedName~Modeling
 ```
 

@@ -91,8 +91,8 @@ public static partial class EditorImGuiUI
         public bool CopySidecarMeta = true;
         public bool OverwriteExisting;
         public bool ImportAfterCopy = true;
-        public bool HasDirectUnityPrefabImport;
-        public string UnityProjectRoot = string.Empty;
+        public bool HasDirectSerializedPrefabImport;
+        public string SourceProjectRoot = string.Empty;
         public string? Error;
     }
 
@@ -100,7 +100,7 @@ public static partial class EditorImGuiUI
         string SourcePath,
         string RelativePath,
         bool ImportAfterCopy,
-        bool DirectUnityConversion = false);
+        bool DirectSourceConversion = false);
 
     private sealed record ExternalFileImportProgress(float Progress, string Message);
 
@@ -161,12 +161,12 @@ public static partial class EditorImGuiUI
             ? Path.Combine("Imported", Path.GetFileName(normalized[0].TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)))
             : "Imported";
 
-        bool hasDirectUnityPrefabImport = !sourceIsFolder &&
+        bool hasDirectSerializedPrefabImport = !sourceIsFolder &&
             normalized.Any(static path =>
                 string.Equals(Path.GetExtension(path), ".prefab", StringComparison.OrdinalIgnoreCase));
-        string unityProjectRoot = string.Empty;
+        string sourceProjectRoot = string.Empty;
         string? detectionError = null;
-        if (hasDirectUnityPrefabImport)
+        if (hasDirectSerializedPrefabImport)
         {
             try
             {
@@ -175,11 +175,11 @@ public static partial class EditorImGuiUI
                     .. normalized
                         .Where(static path =>
                             string.Equals(Path.GetExtension(path), ".prefab", StringComparison.OrdinalIgnoreCase))
-                        .Select(static path => UnityProjectLocator.Locate(path).ProjectRoot)
+                        .Select(static path => SourceProjectLocator.Locate(path).ProjectRoot)
                         .Distinct(StringComparer.OrdinalIgnoreCase),
                 ];
                 if (roots.Length == 1)
-                    unityProjectRoot = roots[0];
+                    sourceProjectRoot = roots[0];
                 else
                     detectionError = "Selected Unity prefabs belong to different projects; import them separately.";
             }
@@ -196,8 +196,8 @@ public static partial class EditorImGuiUI
             SourceIsFolder = sourceIsFolder,
             SourcePaths = normalized,
             DestinationRelativePath = destination.Replace('\\', '/'),
-            HasDirectUnityPrefabImport = hasDirectUnityPrefabImport,
-            UnityProjectRoot = unityProjectRoot,
+            HasDirectSerializedPrefabImport = hasDirectSerializedPrefabImport,
+            SourceProjectRoot = sourceProjectRoot,
             Error = detectionError,
         };
     }
@@ -211,7 +211,7 @@ public static partial class EditorImGuiUI
     internal static bool TryQueueExternalFileImport(
         string sourcePath,
         string destinationRelativePath,
-        string? unityProjectRoot,
+        string? sourceProjectRoot,
         bool overwrite,
         out string? error)
     {
@@ -227,8 +227,8 @@ public static partial class EditorImGuiUI
 
         state.DestinationRelativePath = destinationRelativePath.Replace('\\', '/');
         state.OverwriteExisting = overwrite;
-        if (state.HasDirectUnityPrefabImport && !string.IsNullOrWhiteSpace(unityProjectRoot))
-            state.UnityProjectRoot = unityProjectRoot;
+        if (state.HasDirectSerializedPrefabImport && !string.IsNullOrWhiteSpace(sourceProjectRoot))
+            state.SourceProjectRoot = sourceProjectRoot;
 
         bool queued = TryStartExternalFileImportJob(state);
         error = state.Error;
@@ -300,14 +300,14 @@ public static partial class EditorImGuiUI
         }
         ImGui.TextWrapped($"Importing to: {resolvedDestination}");
 
-        if (state.HasDirectUnityPrefabImport)
+        if (state.HasDirectSerializedPrefabImport)
         {
             ImGui.Separator();
             ImGui.TextUnformatted("Unity Project Root");
-            string unityProjectRoot = state.UnityProjectRoot;
-            if (ImGui.InputText("##ExternalUnityProjectRoot", ref unityProjectRoot, 1024))
+            string sourceProjectRoot = state.SourceProjectRoot;
+            if (ImGui.InputText("##ExternalUnityProjectRoot", ref sourceProjectRoot, 1024))
             {
-                state.UnityProjectRoot = unityProjectRoot;
+                state.SourceProjectRoot = sourceProjectRoot;
                 state.Error = null;
             }
             ImGui.TextWrapped(
@@ -318,7 +318,7 @@ public static partial class EditorImGuiUI
         ImGui.Separator();
         ImGui.Checkbox("Import non-Unity files after copy", ref state.ImportAfterCopy);
         ImGui.Checkbox("Overwrite existing files", ref state.OverwriteExisting);
-        if (!state.SourceIsFolder && !state.HasDirectUnityPrefabImport)
+        if (!state.SourceIsFolder && !state.HasDirectSerializedPrefabImport)
             ImGui.Checkbox("Copy Unity .meta sidecars when present", ref state.CopySidecarMeta);
 
         if (!string.IsNullOrWhiteSpace(state.Error))
@@ -329,12 +329,12 @@ public static partial class EditorImGuiUI
         }
 
         ImGui.Spacing();
-        bool unityRootValid = !state.HasDirectUnityPrefabImport ||
-            Directory.Exists(NormalizeUnityProjectOrAssetsRoot(state.UnityProjectRoot));
+        bool sourceRootValid = !state.HasDirectSerializedPrefabImport ||
+            Directory.Exists(NormalizeSourceProjectOrAssetsRoot(state.SourceProjectRoot));
         bool canImport = withinRoot &&
             assets is not null &&
             state.SourcePaths.Length > 0 &&
-            unityRootValid;
+            sourceRootValid;
         if (!canImport)
             ImGui.BeginDisabled();
         if (ImGui.Button("Import", new Vector2(120, 0)))
@@ -440,20 +440,20 @@ public static partial class EditorImGuiUI
             for (int i = 0; i < entries.Length; i++)
             {
                 ExternalImportEntry entry = entries[i];
-                if (entry.DirectUnityConversion)
+                if (entry.DirectSourceConversion)
                 {
                     string targetPath = Path.Combine(
                         destination,
                         $"{Path.GetFileNameWithoutExtension(entry.RelativePath)}.{AssetManager.AssetExtension}");
                     var options = new ModelImportOptions
                     {
-                        UnityProjectRootOverride = state.UnityProjectRoot,
+                        SourceProjectRootOverride = state.SourceProjectRoot,
                         ProcessMeshesAsynchronously = false,
                         GenerateMeshRenderersAsync = false,
                     };
                     var progressLock = new object();
-                    float unityProgress = 0.0f;
-                    string unityMessage = $"Discovering dependencies for {Path.GetFileName(entry.SourcePath)}";
+                    float sourceProgress = 0.0f;
+                    string sourceMessage = $"Discovering dependencies for {Path.GetFileName(entry.SourcePath)}";
                     Task<bool> importTask = assets.ImportExternalThirdPartyFileAsync(
                         entry.SourcePath,
                         targetPath,
@@ -463,8 +463,8 @@ public static partial class EditorImGuiUI
                         {
                             lock (progressLock)
                             {
-                                unityProgress = progress.Progress;
-                                unityMessage = progress.Message;
+                                sourceProgress = progress.Progress;
+                                sourceMessage = progress.Message;
                             }
                         });
                     while (!importTask.IsCompleted)
@@ -473,8 +473,8 @@ public static partial class EditorImGuiUI
                         string currentMessage;
                         lock (progressLock)
                         {
-                            currentProgress = unityProgress;
-                            currentMessage = unityMessage;
+                            currentProgress = sourceProgress;
+                            currentMessage = sourceMessage;
                         }
 
                         float overallProgress = (i + currentProgress) / entries.Length;
@@ -541,7 +541,7 @@ public static partial class EditorImGuiUI
         foreach (string sourcePath in state.SourcePaths)
         {
             string fileName = Path.GetFileName(sourcePath);
-            bool directUnityConversion =
+            bool directSourceConversion =
                 string.Equals(Path.GetExtension(sourcePath), ".prefab", StringComparison.OrdinalIgnoreCase);
             if (emittedTargets.Add(fileName))
             {
@@ -549,10 +549,10 @@ public static partial class EditorImGuiUI
                     sourcePath,
                     fileName,
                     ShouldAttemptExternalAssetImport(sourcePath),
-                    directUnityConversion);
+                    directSourceConversion);
             }
 
-            if (directUnityConversion ||
+            if (directSourceConversion ||
                 !state.CopySidecarMeta ||
                 sourcePath.EndsWith(".meta", StringComparison.OrdinalIgnoreCase))
                 continue;
@@ -603,7 +603,7 @@ public static partial class EditorImGuiUI
                ExternalImportableExtensions.Contains(extension);
     }
 
-    private static string NormalizeUnityProjectOrAssetsRoot(string path)
+    private static string NormalizeSourceProjectOrAssetsRoot(string path)
     {
         if (string.IsNullOrWhiteSpace(path))
             return string.Empty;

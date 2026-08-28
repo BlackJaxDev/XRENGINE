@@ -13,7 +13,8 @@ namespace XREngine;
 internal sealed class EngineRuntimeNetworkingHostServices : IRuntimeNetworkingHostServices
 {
     public string ProtocolVersion => typeof(Engine).Assembly.GetName().Version?.ToString() ?? "dev";
-    public IReadOnlyList<IPawnController?> LocalPlayers => Engine.State.LocalPlayers;
+    public IReadOnlyList<IPawnController?> LocalPlayers
+        => RuntimePlayerControllerServices.Current?.AllLocalPlayers ?? Array.Empty<IPawnController?>();
 
     public IRuntimeNetworkWorldContext? ResolvePrimaryWorld()
     {
@@ -47,13 +48,12 @@ internal sealed class EngineRuntimeNetworkingHostServices : IRuntimeNetworkingHo
         return new EngineRuntimeNetworkWorldContext(instance);
     }
 
-    public IPawnController? CreateRemotePlayer(int serverPlayerIndex) => Engine.State.InstantiateRemoteController(serverPlayerIndex);
+    public IPawnController? CreateRemotePlayer(int serverPlayerIndex)
+        => RuntimePlayerControllerServices.Current?.CreateRemotePlayer(serverPlayerIndex);
     public void AddRemotePlayer(IPawnController player)
-    {
-        if (!Engine.State.RemotePlayers.Contains(player))
-            Engine.State.RemotePlayers.Add(player);
-    }
-    public void RemoveRemotePlayer(IPawnController player) => Engine.State.RemotePlayers.Remove(player);
+        => RuntimePlayerControllerServices.Current?.AddRemotePlayer(player);
+    public void RemoveRemotePlayer(IPawnController player)
+        => RuntimePlayerControllerServices.Current?.RemoveRemotePlayer(player);
     public ServerJoinAdmissionResult? ResolveServerJoinAdmission(PlayerJoinRequest request) => Engine.ServerJoinAdmissionResolver?.Invoke(request);
     public ServerSessionContext? ResolveServerSession(PlayerJoinRequest request) => Engine.ServerSessionResolver?.Invoke(request);
     public void NotifyServerPlayerConnected(ServerSessionPlayerEvent playerEvent) => Engine.ServerPlayerConnected?.Invoke(playerEvent);

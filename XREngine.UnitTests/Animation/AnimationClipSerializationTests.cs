@@ -139,7 +139,7 @@ public sealed class AnimationClipSerializationTests
             OriginalLastWriteTimeUtc = new DateTime(2026, 3, 11, 12, 0, 0, DateTimeKind.Utc),
             TraversalMethod = EAnimTreeTraversalMethod.BreadthFirst,
             Looped = true,
-            ClipKind = EAnimationClipKind.UnityHumanoidMuscle,
+            ClipKind = EAnimationClipKind.ImportedHumanoidMuscle,
             HasMuscleChannels = true,
             HasRootMotion = true,
             HasIKGoals = false,

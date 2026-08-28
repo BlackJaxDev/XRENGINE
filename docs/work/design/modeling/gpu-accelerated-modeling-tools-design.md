@@ -282,7 +282,7 @@ The repository already has a starter modeling project:
 - `XREngine.Modeling/EditableMesh.cs` exposes add vertex, connect vertices, split/collapse edge, extrude, inset, bevel, bridge, loop cut, transform, validation, and bake.
 - `XREngine.Modeling/HalfEdgeTopology.cs` rebuilds adjacency, half-edge links, edge-to-face maps, loop traversal, and topology validation.
 - `XREngine.UnitTests/Modeling/EditableMeshTopologyOperatorTests.cs` covers split/collapse, extrude/inset/bevel, loop cut, and bridge.
-- `XREngine.Runtime.ModelingBridge` provides import/export and runtime bridge scaffolding.
+- `XREngine.Runtime.ModelingIntegration` provides in-memory `XRMesh` conversion and runtime authoring-integration scaffolding. External FBX/glTF/Assimp import, export, cooking, and caching belong to the separate `XREngine.Runtime.ModelAssetPipeline` and are not modeling operations.
 
 This baseline is suitable for unit-test fixtures and import/export wiring, but it is **incompatible with the architecture in this doc** and Phase 1 is a rewrite, not an evolution:
 
@@ -723,7 +723,7 @@ This keeps zero-readback rendering and modeling edit state decoupled.
 
 To avoid re-debating dirty-range scheduling later, the boundary with the zero-readback GPUScene design is:
 
-- The modeling bridge (`XREngine.Runtime.ModelingBridge`) **writes intent**: it produces a typed `MeshDirtyRegion` describing which vertex/index ranges, attribute layers, and derived caches changed on commit.
+- The modeling bridge (`XREngine.Runtime.ModelingIntegration`) **writes intent**: it produces a typed `MeshDirtyRegion` describing which vertex/index ranges, attribute layers, and derived caches changed on commit.
 - `GPUScene` and the renderer **own scheduling**: when uploads run, how they coalesce with other scene updates, when meshlets/bounds rebuild, and which frame the change becomes visible.
 - The modeling layer never calls renderer upload APIs directly. The bridge publishes `MeshDirtyRegion` and the renderer pulls.
 - See [GPU meshlet zero-readback rendering design](../rendering/gpu-meshlet-zero-readback-rendering-design.md) for the consumer contract.
@@ -890,7 +890,7 @@ Useful validation commands:
 ```powershell
 dotnet test .\XREngine.UnitTests\XREngine.UnitTests.csproj --filter FullyQualifiedName~Modeling
 dotnet build .\XREngine.Modeling\XREngine.Modeling.csproj
-dotnet build .\XREngine.Runtime.ModelingBridge\XREngine.Runtime.ModelingBridge.csproj
+dotnet build .\XREngine.Runtime.ModelingIntegration\XREngine.Runtime.ModelingIntegration.csproj
 ```
 
 ## 20. Phased Implementation

@@ -78,7 +78,7 @@ The facade project directly references 12 projects:
 - Animation, Audio, Data, Extensions, Fbx, and Input;
 - Runtime.Core and Runtime.Rendering; and
 - AnimationIntegration, AudioIntegration, InputIntegration, and
-  ModelingBridge.
+  ModelAssetPipeline.
 
 It also declares 19 direct NuGet package references spanning physics, import,
 serialization/compression, protected storage, DirectStorage, input, and
@@ -129,7 +129,9 @@ assembly merely to avoid deciding ownership.
 | Animation clip/state-machine/blend-tree/motion serialization that requires animation types | `XREngine.Animation`, built on lower Data-owned serialization contracts |
 | Render-asset serialization, visual-world publication, render picking, rendering debug components, and renderer-facing world state | `XREngine.Runtime.Rendering` |
 | Runtime input/controllers/pawn-input routing and VR action behavior | `XREngine.Runtime.InputIntegration` |
-| Runtime model cache, FBX/glTF/Assimp conversion, runtime prefab model publication, and import policy execution | `XREngine.Runtime.ModelingBridge` |
+| Editable geometry, topology, sculpting/subdivision, splines, procedural meshing, and renderer-independent modeling operations | `XREngine.Modeling` |
+| Conversion and preview between runtime `XRMesh` data and editable modeling documents | `XREngine.Runtime.ModelingIntegration` |
+| Engine-facing external model asset import/export orchestration, FBX/glTF/Assimp conversion, cooking, caches, runtime Unity reconstruction, prefab model publication, and import policy execution | `XREngine.Runtime.ModelAssetPipeline`; reusable format-only readers/writers remain in their lower format libraries |
 | Shared startup profiles, game/window startup normalization, world host composition, game-mode selection, and application-safe adapter installation | `XREngine.Runtime.Bootstrap` |
 | Editor preferences, encrypted editor secrets, authoring-only Unity conversion, project templates, and editor-only hidden-world behavior | `XREngine.Editor` |
 | Pure physics data/algorithms already below runtime ownership | `XREngine.Data` or `XREngine.Runtime.Core`, according to whether world/device ownership is required |
@@ -178,11 +180,14 @@ Runtime.AudioIntegration
 Runtime.InputIntegration
   -> Runtime.Core, Runtime.Rendering, Input, Data, Extensions
 
-Runtime.ModelingBridge
-  -> Runtime.Rendering, Animation, Fbx, Gltf, Modeling, Data
+Runtime.ModelingIntegration
+  -> Runtime.Rendering, Modeling, Data
+
+Runtime.ModelAssetPipeline
+  -> Runtime.Core, Runtime.Rendering, Animation, Fbx, Gltf, Data, Extensions
 
 Runtime.Bootstrap
-  -> runtime layers, all four adapters, required lower feature libraries,
+  -> runtime layers, animation/audio/input integrations, required lower feature libraries,
      Data, Extensions, and selected renderer leaves for static composition
 
 Applications, samples, benchmarks, and tests
@@ -358,33 +363,94 @@ inside another project.
 
 ## P6.4 - Move Gameplay, Input, Startup, And Settings Composition
 
-- [ ] Move or replace `Engine.Input`, input-facing networking glue, character/pawn routing, movement components, and controller behavior according to Core versus InputIntegration ownership.
-- [ ] Move FlyingCamera, Locomotion, and VR game-mode composition to Bootstrap or InputIntegration without making Runtime.Core depend on Input.
-- [ ] Move game/window startup settings and runtime-safe defaults to Data or Bootstrap according to whether they are values or composition policy.
-- [ ] Move editor preference groups, overrides, encrypted secrets, and editor runtime-environment preferences to Editor; expose only stable lower settings DTOs to runtime projects.
-- [ ] Move window-pump and application-loop policy to the application/Bootstrap boundary while keeping window/render context implementation in Runtime.Rendering.
-- [ ] Replace legacy `Engine.Windows`, viewport rebind, and input globals with focused Runtime.Rendering/InputIntegration services.
-- [ ] Preserve local/remote controller possession, pawn-camera selection, UI input capture, window snapshots, play-mode changes, and VR action routing.
-- [ ] Ensure the headless Server profile installs no local input, window, audio, or VR services and does not load their native cargo.
-- [ ] Ensure Editor and VRClient install the complete intended adapter profile with deterministic teardown.
-- [ ] Migrate sample game composition without adding sample types to Bootstrap or runtime libraries.
-- [ ] Run the live Server and available Editor/VRClient paths before updating regression tests.
-- [ ] Update and run targeted game-mode, possession, movement, input, window, settings, profile-installation, headless-absence, and VR startup contract tests.
+- [x] Move or replace `Engine.Input`, input-facing networking glue, character/pawn routing, movement components, and controller behavior according to Core versus InputIntegration ownership.
+- [x] Move FlyingCamera, Locomotion, and VR game-mode composition to Bootstrap or InputIntegration without making Runtime.Core depend on Input.
+- [x] Move game/window startup settings and runtime-safe defaults to Data or Bootstrap according to whether they are values or composition policy.
+- [x] Move editor preference groups, overrides, encrypted secrets, and editor runtime-environment preferences to Editor; expose only stable lower settings DTOs to runtime projects.
+- [x] Move window-pump and application-loop policy to the application/Bootstrap boundary while keeping window/render context implementation in Runtime.Rendering.
+- [x] Replace legacy `Engine.Windows`, viewport rebind, and input globals with focused Runtime.Rendering/InputIntegration services.
+- [x] Preserve local/remote controller possession, pawn-camera selection, UI input capture, window snapshots, play-mode changes, and VR action routing.
+- [x] Ensure the headless Server profile installs no local input, window, audio, or VR services and does not load their native cargo.
+- [x] Ensure Editor and VRClient install the complete intended adapter profile with deterministic teardown.
+- [x] Migrate sample game composition without adding sample types to Bootstrap or runtime libraries.
+- [x] Run the live Server and available Editor/VRClient paths before updating regression tests.
+- [x] Update and run targeted game-mode, possession, movement, input, window, settings, profile-installation, headless-absence, and VR startup contract tests.
+
+P6.4 validation completed on 2026-08-27: Server ran with the simulation-only profile and no local native cargo loaded; the isolated Editor profile reached MCP readiness and produced a Vulkan readback; VRClient started and shut down through its aggregate lease. The Phase 6 boundary suite passed (6/6). The broader feature-filtered test build remains blocked by unrelated Vulkan test/API drift recorded in the task handoff.
 
 ## P6.5 - Move Prefab, Unity, Model Cache, And Import Policy
 
-- [ ] Classify base prefab/source/variant contracts separately from Unity authoring metadata and runtime model construction.
-- [ ] Move runtime-neutral prefab contracts to Runtime.Core or Data without importing Editor or ModelingBridge types into lower signatures.
-- [ ] Move runtime prefab instantiation/world attachment to Runtime.Core and adapter-specific component activation to explicit composition services.
-- [ ] Move Unity YAML/schema parsing, editor diagnostics, unsupported-behavior metadata, project-path policy, and authoring conversion UX to Editor.
-- [ ] Move runtime Unity model/mesh/material/skin/blendshape/animation reconstruction to ModelingBridge using lower input DTOs rather than Editor types.
-- [ ] Move `AssetManager.ThirdPartyImport`, model cache identity/codecs, cook override snapshots, and Unity model producer behavior to ModelingBridge or Editor according to execution ownership.
-- [ ] Keep Assimp, FBX, glTF, Modeling, and native importer dependencies out of Runtime.Core, Rendering, and Bootstrap.
-- [ ] Preserve prefab variants, asset identity, dependency manifests, handedness, scale, materials, submeshes, skinning, blendshapes, animations, async publication, progress, and cancellation.
-- [ ] Preserve actionable diagnostics for absent formats, malformed source assets, unsupported Unity behavior, and cache invalidation.
-- [ ] Remove facade Assimp/Fbx/import package references and native pins after the final importer owner publishes them.
-- [ ] Run representative live model/prefab imports before updating regression tests.
-- [ ] Update and run prefab, Unity conversion, FBX/glTF, model-cache, mesh/material, animation reconstruction, cancellation, and serialization compatibility tests.
+- [x] Classify base prefab/source/variant contracts separately from Unity authoring metadata and runtime model construction.
+- [x] Move runtime-neutral prefab contracts to Runtime.Core or Data without importing Editor or ModelingBridge types into lower signatures.
+- [x] Move runtime prefab instantiation/world attachment to Runtime.Core and adapter-specific component activation to explicit composition services.
+- [x] Move Unity YAML/schema parsing, editor diagnostics, unsupported-behavior metadata, project-path policy, and authoring conversion UX to Editor.
+- [x] Move runtime Unity model/mesh/material/skin/blendshape/animation reconstruction to ModelingBridge using lower input DTOs rather than Editor types.
+- [x] Move `AssetManager.ThirdPartyImport`, model cache identity/codecs, cook override snapshots, and Unity model producer behavior to ModelingBridge or Editor according to execution ownership.
+- [x] Keep Assimp, FBX, glTF, Modeling, and native importer dependencies out of Runtime.Core, Rendering, and Bootstrap.
+- [x] Preserve prefab variants, asset identity, dependency manifests, handedness, scale, materials, submeshes, skinning, blendshapes, animations, async publication, progress, and cancellation.
+- [x] Preserve actionable diagnostics for absent formats, malformed source assets, unsupported Unity behavior, and cache invalidation.
+- [x] Remove facade Assimp/Fbx/import package references and native pins after the final importer owner publishes them.
+- [x] Run representative live model/prefab imports before updating regression tests.
+- [x] Update and run prefab, Unity conversion, FBX/glTF, model-cache, mesh/material, animation reconstruction, cancellation, and serialization compatibility tests.
+
+P6.5 validation completed on 2026-08-27: an isolated Editor session imported and reimported an external glTF model and a Unity prefab into native prefab assets, reloaded both assets, and published the Unity dependency-manifest sidecar without duplicate IDs, generation leaks, or watcher races. The focused prefab/cache, Unity conversion, native FBX/glTF, model reconstruction, cancellation, and serialization suites passed 184 tests with six private-fixture skips; four additional application-composition/profile checks passed. Data, Runtime.Core, Runtime.Rendering, ModelingBridge, Bootstrap, Editor, Server, VRClient, and the redirected UnitTests graph built successfully, with only the existing OscCore submodule warnings in upper application graphs. Concrete application roots now install ModelingBridge explicitly while generic Bootstrap consumes only the lower runtime model-scene contract, and the regenerated dependency inventory lists ModelingBridge as the sole direct AssimpNetter/native importer owner. The normal UnitTests graph remains blocked only by the two in-progress Vulkan API/test changes.
+
+## P6.5A - Separate Modeling Authoring From Model Asset I/O
+
+These names describe distinct lifecycles and must not be used interchangeably:
+
+| Responsibility | Meaning | Owner |
+|---|---|---|
+| Modeling authoring | Mutating editable vertices, edges, faces, surfaces, sculpt data, subdivision meshes, splines, and procedural topology | `XREngine.Modeling` |
+| Runtime authoring integration | Explicit in-memory conversion and preview between an editable modeling document and runtime `XRMesh` data | `XREngine.Runtime.ModelingIntegration` |
+| Model asset pipeline | Reading/writing external model formats at the engine boundary, producer selection, import reconstruction, cooking, caching, prefab publication, and Unity runtime metadata | `XREngine.Runtime.ModelAssetPipeline` |
+| Ordinary runtime consumption | Loading, instantiating, rendering, skinning, animating, and otherwise using already-produced meshes/materials/prefabs in a game | `XREngine.Runtime.Core`, `XREngine.Runtime.Rendering`, and the owning lower feature libraries |
+
+P6.5A supersedes the temporary `ModelingBridge` name and mixed ownership recorded in the completed P6.5 history above.
+
+- [x] Define and document three independent responsibilities: editable geometry authoring, external model asset I/O/cooking, and ordinary runtime model consumption.
+- [x] Keep `XREngine.Modeling` focused on renderer-independent editable geometry, topology, sculpting/subdivision, splines, procedural meshing, and modeling operations.
+- [x] Replace `XREngine.Runtime.ModelingBridge` with a narrowly scoped `XREngine.Runtime.ModelingIntegration` project for conversions and previews between runtime render meshes and editable modeling documents.
+- [x] Create `XREngine.Runtime.ModelAssetPipeline` as the sole owner of engine-facing Assimp/FBX/glTF model I/O orchestration, cooking, cache codecs and policy, prefab production, and runtime Unity asset reconstruction; keep reusable format-only readers/writers in their lower format libraries.
+- [x] Keep ordinary game/runtime use of already-produced meshes, materials, prefabs, skinning, blendshapes, and animations in Runtime.Core/Runtime.Rendering without dependencies on Modeling or ModelingIntegration.
+- [x] Rename ambiguous bridge/import APIs and composition hooks so their names identify either authoring integration or external model asset pipeline ownership.
+- [x] Update application composition, assembly discovery, AOT/source-generation inputs, solution membership, project references, dependency inventory, architecture docs, and ownership ledgers for the new boundary.
+- [x] Add source-ownership and evaluated project-graph contracts that prevent authoring code, importer/native dependencies, and ordinary runtime consumption from crossing the boundary.
+- [x] Validate representative editable-mesh conversion/preview and external model/prefab import paths before updating or running regression tests.
+- [x] Build the affected project graph and run the focused modeling, model-import, prefab/cache, composition, and phase-6 boundary suites.
+
+P6.5A validation completed on 2026-08-27: an isolated Editor authoring run baked a cube/sphere union into a 1,236-vertex runtime mesh and produced camera-dependent preview captures. A direct probe loaded a minimal glTF through `XREngine.Runtime.ModelAssetPipeline.dll`, returning the expected scene root and `assimp` producer/backend; the successful P6.5 external glTF and Unity-prefab publication run remains the live prefab baseline. A separate Editor import attempt entered the new pipeline and selected the native glTF/Assimp candidates before the later transactional asset-publication step encountered the existing `XRTexture2DView`/YamlDotNet default-constructor limitation while walking unrelated loaded assets; that editor externalization defect is outside this ownership split. ModelAssetPipeline, ModelingIntegration, Bootstrap, Editor, Server, VRClient, Benchmarks, and the isolated UnitTests graph built with zero warnings and zero errors. The focused modeling, importer, prefab/cache, composition, serialization-compatibility, and phase-boundary suites passed 151/151 tests; the isolated graph excluded only the two concurrent Vulkan test files. The regenerated source-ownership ledger contains 384 rows and 519 public declarations, the evaluated project-graph report contains 25 rows, and the dependency inventory identifies ModelAssetPipeline as the sole direct AssimpNetter owner.
+
+## P6.5B - Normalize Imported-Asset Semantics And Make Conversion Loss Explicit
+
+Source ecosystems are parser inputs, not engine architecture. Their names may appear in source-file keys, shader names, GUID matchers, provenance strings, compatibility payloads, and diagnostics, but must not appear in engine/editor property, field, method, event, enum, interface, class, record, parameter, local, or namespace identifiers. Converted runtime objects are named for the native behavior they provide; source-schema records use `Serialized*`, and provenance-aware conversion results use `Imported*`.
+
+| Treatment | Data |
+|---|---|
+| Native engine semantics | Avatar presentation anchors, gaze and eyelid bindings, jaw and speech-pose bindings, humanoid retargeting/root motion that has a native implementation, weighted transform constraints, physics-chain behavior, and generic toon/material features |
+| Import-sidecar evidence only | Source GUID/file IDs, editor/project versions, dependency manifests, shader/property matches, serialized controller identities, layer records, provenance, and conversion reports |
+| Intentional conversion loss with diagnostics | Upload/pipeline state, platform policy and network semantics, arbitrary callbacks and opaque behaviours, expression menus or parameter networks without a native graph, unsupported controller behaviours, source-solver quirks, unsupported collider/grab/pose rules, editor-only shader drawers/remotes, and shader-family features with no native material meaning |
+
+Recommended conversion-loss decisions:
+
+- [ ] Stop publishing `ImportedAnimatorMetadataComponent` and `ImportedAvatarAnimationLayer` in runtime assets unless their controller, mask, and layer records are compiled into an executable native animation graph; retain source identities in the import manifest only.
+- [ ] Treat raw animator update/culling modes, platform controller layers, expression menus, parameter networks, upload identity, pipeline status, and platform/network policy as intentional loss with actionable diagnostics.
+- [ ] Convert imported animation callbacks only through an explicit native event allowlist; discard arbitrary name-based callbacks and source-only component/property binding adapters rather than emulating the source runtime.
+- [ ] Keep unsupported behaviour payloads and serialized YAML out of runtime assets; retain a bounded import-report summary for inspection, or discard the opaque payload completely when it has no supported conversion.
+- [ ] Preserve only generic physics-chain, collider, and weighted-constraint behavior; report unsupported grabbing, posing, collision-filtering, solver, freeze/rebake, and source-policy semantics as intentional loss.
+- [ ] Convert recognized toon inputs into native material features and retain conversion provenance, but discard editor drawers, remote facilities, shader-family-only controls, and unsupported shader features rather than creating a source-shader runtime authoring model.
+- [ ] Continue retaining avatar presentation anchors, gaze/eyelid bindings, jaw and speech-pose bindings, native humanoid retargeting/root motion, weighted transform constraints, physics-chain behavior, and generic material features because these have independent engine semantics.
+
+- [x] Replace source-vendor terms in C# declarations with native, `Serialized*`, `Imported*`, or `Source*` vocabulary; do not add compatibility shim types before v1.
+- [x] Rename imported avatar runtime components for their engine behavior, including `AvatarPresentationComponent`, `AvatarGazeBinding`, `AvatarLipSyncMode`, and `WeightedTransformConstraintComponent`.
+- [x] Keep source GUIDs, serialized property names, shader names, environment variables, provenance labels, and diagnostic codes as boundary strings where exact identity is required.
+- [x] Treat raw animator/controller metadata and avatar layer records as transitional import evidence, not promises of SDK-compatible runtime execution.
+- [x] Preserve generic physics-chain and transform-constraint conversions while diagnosing unsupported source-only collision, grabbing, posing, freeze/rebake, and policy behavior.
+- [x] Convert recognized toon semantics into native material features and reports without creating a durable source-shader runtime authoring model.
+- [x] Audit production, tooling, and test declarations with syntax-aware identifier matching so strings and comments do not produce false positives.
+- [x] Reuse the P6.5 live prefab conversion as the behavioral baseline, build the lowest affected projects, and record unrelated downstream build blockers without changing concurrent renderer work.
+
+P6.5B validation completed on 2026-08-27: the syntax-aware inventory found 602 source-vendor-shaped declarations (497 unique identifiers) before the migration and none after it. `XREngine.Animation` built successfully from isolated artifacts after the rename. The downstream AnimationIntegration/ModelAssetPipeline build reached the concurrently modified Rendering project and stopped on its existing `AdvancedMaterialDatabase` errors (`TryGetLayoutMembers` missing and an ambiguous `ulong`/`int` comparison); P6.5B did not alter those renderer files. The successful P6.5 live prefab import/reimport remains the runtime conversion baseline, and exact source names remain confined to parsing, provenance, compatibility strings, and diagnostics.
 
 ## P6.6 - Migrate Applications, Samples, Benchmarks, Tests, And Tooling
 

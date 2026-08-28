@@ -26,20 +26,20 @@ internal sealed class ArchiveEntryNode(string name, string fullPath, bool isDire
 
 internal readonly record struct ArchiveExtractionProgress(float Progress, string Message, string? CurrentItem);
 
-internal sealed record UnityPackageAssetRecord(string InternalFolder, string FinalPath, bool HasMeta, long AssetSize);
+internal sealed record SourcePackageAssetRecord(string InternalFolder, string FinalPath, bool HasMeta, long AssetSize);
 
 internal sealed class ArchiveTreeResult
 {
-    public ArchiveTreeResult(ArchiveEntryNode root, bool isUnityPackage, Dictionary<string, UnityPackageAssetRecord>? unityEntries)
+    public ArchiveTreeResult(ArchiveEntryNode root, bool isSourcePackage, Dictionary<string, SourcePackageAssetRecord>? sourceEntries)
     {
         Root = root;
-        IsUnityPackage = isUnityPackage;
-        UnityEntries = unityEntries;
+        IsSourcePackage = isSourcePackage;
+        SourceEntries = sourceEntries;
     }
 
     public ArchiveEntryNode Root { get; }
-    public bool IsUnityPackage { get; }
-    public Dictionary<string, UnityPackageAssetRecord>? UnityEntries { get; }
+    public bool IsSourcePackage { get; }
+    public Dictionary<string, SourcePackageAssetRecord>? SourceEntries { get; }
 }
 
 internal static class ArchiveImportUtilities
@@ -52,8 +52,8 @@ internal static class ArchiveImportUtilities
         if (!File.Exists(archivePath))
             throw new FileNotFoundException("Archive file not found.", archivePath);
 
-        return IsUnityPackage(archivePath)
-            ? BuildUnityPackageTree(archivePath)
+        return IsSourcePackage(archivePath)
+            ? BuildSourcePackageTree(archivePath)
             : BuildStandardArchiveTree(archivePath);
     }
 
@@ -63,8 +63,8 @@ internal static class ArchiveImportUtilities
         string destinationRoot,
         ArchiveTreeResult? context,
         CancellationToken cancellationToken = default)
-        => context?.IsUnityPackage == true && context.UnityEntries is not null
-            ? ExtractUnityPackageEntries(archivePath, selectedEntries, destinationRoot, context.UnityEntries, cancellationToken)
+        => context?.IsSourcePackage == true && context.SourceEntries is not null
+            ? ExtractSourcePackageEntries(archivePath, selectedEntries, destinationRoot, context.SourceEntries, cancellationToken)
             : ExtractStandardEntries(archivePath, selectedEntries, destinationRoot, cancellationToken);
 
     private static ArchiveTreeResult BuildStandardArchiveTree(string archivePath)
@@ -88,10 +88,10 @@ internal static class ArchiveImportUtilities
         return new ArchiveTreeResult(root, false, null);
     }
 
-    private static ArchiveTreeResult BuildUnityPackageTree(string archivePath)
+    private static ArchiveTreeResult BuildSourcePackageTree(string archivePath)
     {
         var root = new ArchiveEntryNode("/", string.Empty, true);
-        var builders = new Dictionary<string, UnityPackageEntryBuilder>(StringComparer.OrdinalIgnoreCase);
+        var builders = new Dictionary<string, SourcePackageEntryBuilder>(StringComparer.OrdinalIgnoreCase);
 
         using var fileStream = new FileStream(archivePath, FileMode.Open, FileAccess.Read, FileShare.Read);
         using var gzipStream = new GZipInputStream(fileStream);
@@ -122,7 +122,7 @@ internal static class ArchiveImportUtilities
 
             if (!builders.TryGetValue(folder, out var builder))
             {
-                builder = new UnityPackageEntryBuilder();
+                builder = new SourcePackageEntryBuilder();
                 builders[folder] = builder;
             }
 
@@ -151,7 +151,7 @@ internal static class ArchiveImportUtilities
             DrainEntry(tarStream);
         }
 
-        var unityEntries = new Dictionary<string, UnityPackageAssetRecord>(StringComparer.OrdinalIgnoreCase);
+        var sourceEntries = new Dictionary<string, SourcePackageAssetRecord>(StringComparer.OrdinalIgnoreCase);
         foreach (var (folder, builder) in builders)
         {
             if (string.IsNullOrWhiteSpace(builder.Pathname))
@@ -162,11 +162,11 @@ internal static class ArchiveImportUtilities
                 continue;
 
             AddNode(root, normalizedPath, false, builder.AssetSize);
-            unityEntries[normalizedPath] = new UnityPackageAssetRecord(folder, normalizedPath, builder.HasMeta, builder.AssetSize);
+            sourceEntries[normalizedPath] = new SourcePackageAssetRecord(folder, normalizedPath, builder.HasMeta, builder.AssetSize);
         }
 
         SortTree(root);
-        return new ArchiveTreeResult(root, true, unityEntries);
+        return new ArchiveTreeResult(root, true, sourceEntries);
     }
 
     private static IEnumerable<ArchiveExtractionProgress> ExtractStandardEntries(
@@ -226,11 +226,11 @@ internal static class ArchiveImportUtilities
         yield return new ArchiveExtractionProgress(1f, "Import complete.", null);
     }
 
-    private static IEnumerable<ArchiveExtractionProgress> ExtractUnityPackageEntries(
+    private static IEnumerable<ArchiveExtractionProgress> ExtractSourcePackageEntries(
         string archivePath,
         IReadOnlyCollection<string> selectedEntries,
         string destinationRoot,
-        IReadOnlyDictionary<string, UnityPackageAssetRecord> records,
+        IReadOnlyDictionary<string, SourcePackageAssetRecord> records,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(selectedEntries);
@@ -382,7 +382,7 @@ internal static class ArchiveImportUtilities
             SortTree(child);
     }
 
-    private static bool IsUnityPackage(string path)
+    private static bool IsSourcePackage(string path)
         => path.EndsWith(".unitypackage", StringComparison.OrdinalIgnoreCase);
 
     private static string NormalizeKey(string? key)
@@ -411,7 +411,7 @@ internal static class ArchiveImportUtilities
         }
     }
 
-    private sealed class UnityPackageEntryBuilder
+    private sealed class SourcePackageEntryBuilder
     {
         public string? Pathname { get; set; }
         public bool HasMeta { get; set; }

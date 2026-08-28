@@ -6,7 +6,7 @@ namespace XREngine.Rendering.Commands;
 /// </summary>
 public sealed class AdvancedGpuSceneLookupTable
 {
-    private const int SegmentCount = 10;
+    private const int SegmentCount = 12;
 
     private AdvancedGpuHandleLookup[] _records;
     private readonly AdvancedGpuDirtyRange[] _publishedDirtyRanges =
@@ -15,9 +15,10 @@ public sealed class AdvancedGpuSceneLookupTable
 
     public AdvancedGpuSceneLookupTable(
         AdvancedGpuSceneDatabase scene,
-        AdvancedMaterialDatabase materials)
+        AdvancedMaterialDatabase materials,
+        AdvancedGlobalResourceDatabase resources)
     {
-        Layout = AdvancedGpuSceneLookupLayout.Create(scene, materials);
+        Layout = AdvancedGpuSceneLookupLayout.Create(scene, materials, resources);
         _records = new AdvancedGpuHandleLookup[checked((int)Layout.TotalCount)];
         _records.AsSpan().Fill(AdvancedGpuHandleLookup.Invalid);
     }
@@ -38,10 +39,11 @@ public sealed class AdvancedGpuSceneLookupTable
     /// </summary>
     public void RebuildAtFrameBoundary(
         AdvancedGpuSceneDatabase scene,
-        AdvancedMaterialDatabase materials)
+        AdvancedMaterialDatabase materials,
+        AdvancedGlobalResourceDatabase resources)
     {
         AdvancedGpuSceneLookupLayout layout =
-            AdvancedGpuSceneLookupLayout.Create(scene, materials);
+            AdvancedGpuSceneLookupLayout.Create(scene, materials, resources);
         if (layout == Layout)
         {
             _publishedDirtyRangeCount = 0;
@@ -61,7 +63,9 @@ public sealed class AdvancedGpuSceneLookupTable
         CopyAll(materials.Materials, layout.Materials);
         CopyAll(materials.Kernels, layout.ShadingKernels);
         CopyAll(materials.Layouts, layout.MaterialLayouts);
-        ClearSourceDirtyRanges(scene, materials);
+        CopyAll(resources.Textures, layout.Textures);
+        CopyAll(resources.Samplers, layout.Samplers);
+        ClearSourceDirtyRanges(scene, materials, resources);
         _publishedDirtyRanges[0] = new AdvancedGpuDirtyRange(0u, layout.TotalCount);
         _publishedDirtyRangeCount = layout.TotalCount == 0u ? 0 : 1;
     }
@@ -72,9 +76,10 @@ public sealed class AdvancedGpuSceneLookupTable
     /// </summary>
     public bool Publish(
         AdvancedGpuSceneDatabase scene,
-        AdvancedMaterialDatabase materials)
+        AdvancedMaterialDatabase materials,
+        AdvancedGlobalResourceDatabase resources)
     {
-        if (AdvancedGpuSceneLookupLayout.Create(scene, materials) != Layout)
+        if (AdvancedGpuSceneLookupLayout.Create(scene, materials, resources) != Layout)
             return false;
 
         _publishedDirtyRangeCount = 0;
@@ -87,13 +92,15 @@ public sealed class AdvancedGpuSceneLookupTable
             !CopyDirty(scene.Geometry.Records, Layout.Geometry) ||
             !CopyDirty(materials.Materials, Layout.Materials) ||
             !CopyDirty(materials.Kernels, Layout.ShadingKernels) ||
-            !CopyDirty(materials.Layouts, Layout.MaterialLayouts))
+            !CopyDirty(materials.Layouts, Layout.MaterialLayouts) ||
+            !CopyDirty(resources.Textures, Layout.Textures) ||
+            !CopyDirty(resources.Samplers, Layout.Samplers))
         {
             _publishedDirtyRangeCount = 0;
             return false;
         }
 
-        ClearSourceDirtyRanges(scene, materials);
+        ClearSourceDirtyRanges(scene, materials, resources);
         return true;
     }
 
@@ -208,7 +215,8 @@ public sealed class AdvancedGpuSceneLookupTable
 
     private static void ClearSourceDirtyRanges(
         AdvancedGpuSceneDatabase scene,
-        AdvancedMaterialDatabase materials)
+        AdvancedMaterialDatabase materials,
+        AdvancedGlobalResourceDatabase resources)
     {
         scene.Draws.ClearLogicalLookupDirtyRange();
         scene.Instances.ClearLogicalLookupDirtyRange();
@@ -220,5 +228,7 @@ public sealed class AdvancedGpuSceneLookupTable
         materials.Materials.ClearLogicalLookupDirtyRange();
         materials.Kernels.ClearLogicalLookupDirtyRange();
         materials.Layouts.ClearLogicalLookupDirtyRange();
+        resources.Textures.ClearLogicalLookupDirtyRange();
+        resources.Samplers.ClearLogicalLookupDirtyRange();
     }
 }

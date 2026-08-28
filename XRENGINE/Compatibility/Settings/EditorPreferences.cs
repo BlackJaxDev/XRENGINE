@@ -1,0 +1,3620 @@
+using MemoryPack;
+using Newtonsoft.Json;
+using System.ComponentModel;
+using XREngine.Core.Files;
+using XREngine.Data.Core;
+using XREngine.Data.Colors;
+using XREngine.Data.Profiling;
+using XREngine.Data.Rendering;
+using XREngine.Rendering;
+using XREngine.Rendering.Models;
+using YamlDotNet.Serialization;
+
+namespace XREngine
+{
+    // Temporary P6.4 compatibility lease. The editor-owned facade is
+    // XREngine.Editor.Settings.EditorPreferencesService; remove this identity
+    // once remaining facade Engine settings consumers migrate in P6.6/P6.7.
+    /// <summary>
+    /// Editor-only preferences stored per project (e.g., UI theme and editor viewport behavior).
+    /// </summary>
+    [Serializable]
+    [MemoryPackable]
+    public partial class EditorPreferences : XRAsset
+    {
+        public EditorPreferences()
+        {
+            AttachSubSettings(_theme, _debug);
+        }
+
+        public enum ESceneDepthModePreference
+        {
+            UseProjectDefault,
+            Normal,
+            Reversed,
+        }
+
+        public enum EViewportPresentationMode
+        {
+            FullViewportBehindImGuiUI,
+            UseViewportPanel,
+        }
+
+        private EViewportPresentationMode _viewportPresentationMode = EViewportPresentationMode.FullViewportBehindImGuiUI;
+        private ESceneDepthModePreference _sceneDepthMode = ESceneDepthModePreference.UseProjectDefault;
+        private int _scenePanelResizeDebounceMs = 0;
+        private EInteractiveWindowResizeStrategy _interactiveResizeStrategy = EInteractiveWindowResizeStrategy.Win32ModalLoopTimer;
+        private bool _hoverOutlineEnabled = true;
+        private bool _selectionOutlineEnabled = true;
+        private ColorF4 _hoverOutlineColor = ColorF4.Yellow;
+        private ColorF4 _selectionOutlineColor = ColorF4.Green;
+        private bool _gpuMeshBvhClickPickEnabled = true;
+        private bool _confirmBeforeEnteringPlayMode = true;
+        private bool _confirmBeforeExitingPlayMode = true;
+        private int _materialInspectorTabIndex = 0;
+        private int _materialPreviewSurfaceIndex = 0;
+        private int _submeshInspectorTabIndex = 0;
+        private int _submeshDetailTabIndex = 0;
+        private EditorThemeSettings _theme = new();
+        private EditorDebugOptions _debug = new();
+        private EditorViewportPreferences? _viewport;
+        private EditorSelectionPreferences? _selection;
+        private EditorDiagnosticsPreferences? _diagnostics;
+        private EditorRuntimeEnvironmentPreferences? _runtimeEnvironment;
+        private bool _mcpServerEnabled = false;
+        private int _mcpServerPort = 5467;
+        private bool _mcpServerRequireAuth = false;
+        private string _mcpServerAuthToken = string.Empty;
+        private string _mcpServerCorsAllowlist = string.Empty;
+        private int _mcpServerMaxRequestBytes = 1024 * 1024;
+        private int _mcpServerRequestTimeoutMs = 30000;
+        private bool _mcpServerReadOnly = false;
+        private string _mcpServerAllowedTools = string.Empty;
+        private string _mcpServerDeniedTools = string.Empty;
+        private bool _mcpServerRateLimitEnabled = false;
+        private int _mcpServerRateLimitRequests = 120;
+        private int _mcpServerRateLimitWindowSeconds = 60;
+        private bool _mcpServerIncludeStatusInPing = true;
+        private McpPermissionPolicy _mcpPermissionPolicy = McpPermissionPolicy.AllowReadOnly;
+        private McpDispatchMode _mcpDispatchMode = McpDispatchMode.Direct;
+        private bool _rendererAutomaticShaderReload = true;
+        private bool _rendererAutomaticBackendReload = false;
+        private int _rendererBackendReloadDebounceMs = 750;
+        private int _rendererBackendFirstFrameTimeoutMs = 15000;
+        private int _rendererBackendRetainedGenerations = 3;
+
+        // MCP Assistant (in-editor AI chat window) settings
+        private int _mcpAssistantProviderIndex = 0;
+        private string _mcpAssistantOpenAiApiKey = string.Empty;
+        private string _mcpAssistantAnthropicApiKey = string.Empty;
+        private string _mcpAssistantOpenAiModel = "gpt-5-codex";
+        private string _mcpAssistantOpenAiRealtimeModel = "gpt-4o-realtime-preview";
+        private string _mcpAssistantAnthropicModel = "claude-sonnet-4-5";
+        private int _mcpAssistantMaxTokens = 4096;
+        private int _mcpAssistantMaxAutoReprompts = 25;
+        private bool _mcpAssistantAutoSummarizeNearContextLimit = true;
+        private bool _mcpAssistantUseRealtimeWebSocket = false;
+        private bool _mcpAssistantAttachMcpServer = true;
+        private bool _mcpAssistantAttachViewportScreenshot = false;
+        private bool _mcpAssistantAutoScroll = true;
+        private bool _mcpAssistantAutoCameraView = true;
+        private bool _mcpAssistantVerboseAiLogging = true;
+        private float _focusPreferredDownPitchDegrees = 20.0f;
+        private float _focusMaximumDownPitchDegrees = 45.0f;
+        private string _mcpAssistantGeminiApiKey = string.Empty;
+        private string _mcpAssistantGeminiModel = "gemini-2.5-pro";
+        private string _mcpAssistantGitHubModelsToken = string.Empty;
+        private string _mcpAssistantGitHubModelsModel = "openai/gpt-4.1";
+
+        // Importer backend selection (per third-party file type).
+        // Auto favors native importers with compatibility fallbacks where available.
+        private FbxImportBackend _fbxImporterBackend = FbxImportBackend.Auto;
+        private GltfImportBackend _gltfImporterBackend = GltfImportBackend.Auto;
+
+        [Category("Theme")]
+        [DisplayName("Theme")]
+        [Description("Theme and color customization for editor visuals.")]
+        public EditorThemeSettings Theme
+        {
+            get => _theme;
+            set => SetField(ref _theme, value ?? new EditorThemeSettings());
+        }
+
+        [Category("Debug")]
+        [DisplayName("Debug")]
+        [Description("Editor-only debug visualization options.")]
+        public EditorDebugOptions Debug
+        {
+            get => _debug;
+            set
+            {
+                if (SetField(ref _debug, value ?? new EditorDebugOptions()))
+                    _diagnostics = null;
+            }
+        }
+
+        [JsonIgnore]
+        [YamlIgnore]
+        [MemoryPackIgnore]
+        public EditorViewportPreferences Viewport
+            => _viewport ??= new EditorViewportPreferences(this);
+
+        [JsonIgnore]
+        [YamlIgnore]
+        [MemoryPackIgnore]
+        public EditorSelectionPreferences Selection
+            => _selection ??= new EditorSelectionPreferences(this);
+
+        [JsonIgnore]
+        [YamlIgnore]
+        [MemoryPackIgnore]
+        public EditorDiagnosticsPreferences Diagnostics
+            => _diagnostics ??= new EditorDiagnosticsPreferences(Debug);
+
+        [JsonIgnore]
+        [YamlIgnore]
+        [MemoryPackIgnore]
+        [Category("Runtime Environment")]
+        [DisplayName("Runtime Environment")]
+        [Description("Session-scoped runtime overrides for every environment variable recognized by XREngine. Launch values are preserved and can be restored at any time.")]
+        public EditorRuntimeEnvironmentPreferences RuntimeEnvironment
+            => _runtimeEnvironment ??= new EditorRuntimeEnvironmentPreferences();
+
+        [Category("Renderer Development")]
+        [DisplayName("Automatic Shader Reload")]
+        [Description("Reload loaded shaders when their source or a transitive include changes.")]
+        [DefaultValue(true)]
+        public bool RendererAutomaticShaderReload
+        {
+            get => _rendererAutomaticShaderReload;
+            set => SetField(ref _rendererAutomaticShaderReload, value);
+        }
+
+        [Category("Renderer Development")]
+        [DisplayName("Automatic Backend Build And Reload")]
+        [Description("Opt-in: rebuild and transactionally replace the selected rendering backend after backend C# source changes.")]
+        [DefaultValue(false)]
+        public bool RendererAutomaticBackendReload
+        {
+            get => _rendererAutomaticBackendReload;
+            set => SetField(ref _rendererAutomaticBackendReload, value);
+        }
+
+        [Category("Renderer Development")]
+        [DisplayName("Backend Reload Debounce (ms)")]
+        [Description("Quiet period after a backend source save before starting its isolated build.")]
+        [DefaultValue(750)]
+        public int RendererBackendReloadDebounceMs
+        {
+            get => _rendererBackendReloadDebounceMs;
+            set => SetField(ref _rendererBackendReloadDebounceMs, Math.Clamp(value, 100, 10000));
+        }
+
+        [Category("Renderer Development")]
+        [DisplayName("First Frame Timeout (ms)")]
+        [Description("Maximum time a replacement renderer has to initialize and present its first valid frame before rollback.")]
+        [DefaultValue(15000)]
+        public int RendererBackendFirstFrameTimeoutMs
+        {
+            get => _rendererBackendFirstFrameTimeoutMs;
+            set => SetField(ref _rendererBackendFirstFrameTimeoutMs, Math.Clamp(value, 1000, 120000));
+        }
+
+        [Category("Renderer Development")]
+        [DisplayName("Retained Backend Generations")]
+        [Description("Number of immutable backend generations retained for retry and rollback.")]
+        [DefaultValue(3)]
+        public int RendererBackendRetainedGenerations
+        {
+            get => _rendererBackendRetainedGenerations;
+            set => SetField(ref _rendererBackendRetainedGenerations, Math.Clamp(value, 2, 16));
+        }
+
+        /// <summary>
+        /// Controls how the main world viewport is presented when Dear ImGui is active.
+        /// </summary>
+        [Category("Viewport")]
+        [DisplayName("Viewport Presentation Mode")]
+        [Description("Controls whether the world renders full-screen behind ImGui UI, or is constrained to the docked Scene panel.")]
+        public EViewportPresentationMode ViewportPresentationMode
+        {
+            get => _viewportPresentationMode;
+            set => SetField(ref _viewportPresentationMode, value);
+        }
+
+        /// <summary>
+        /// Controls the scene camera depth buffer mode used by the editor.
+        /// UseProjectDefault defers to GameStartupSettings.DepthModeOverride.
+        /// </summary>
+        [Category("Viewport")]
+        [DisplayName("Scene Depth Mode")]
+        [Description("Controls the editor scene camera depth buffer mode. Use Project Default defers to the project GameStartupSettings override.")]
+        public ESceneDepthModePreference SceneDepthMode
+        {
+            get => _sceneDepthMode;
+            set => SetField(ref _sceneDepthMode, value);
+        }
+
+        /// <summary>
+        /// Debounce for Scene panel resizes (0 disables).
+        /// </summary>
+        [Category("Viewport")]
+        [DisplayName("Scene Panel Resize Debounce (ms)")]
+        [Description("Debounce in milliseconds for Scene panel resizes (0 disables).")]
+        public int ScenePanelResizeDebounceMs
+        {
+            get => _scenePanelResizeDebounceMs;
+            set => SetField(ref _scenePanelResizeDebounceMs, Math.Max(0, value));
+        }
+
+        [Category("Window")]
+        [DisplayName("Interactive Resize Strategy")]
+        [Description("Default interactive resize strategy for new editor/runtime windows. The XRE_INTERACTIVE_RESIZE_STRATEGY environment variable overrides this.")]
+        public EInteractiveWindowResizeStrategy InteractiveResizeStrategy
+        {
+            get => _interactiveResizeStrategy;
+            set => SetField(ref _interactiveResizeStrategy, value);
+        }
+
+        [Category("Selection")]
+        [DisplayName("Hover Outline Enabled")]
+        [Description("Enable stencil-based hover outline on the submesh under the cursor.")]
+        public bool HoverOutlineEnabled
+        {
+            get => _hoverOutlineEnabled;
+            set => SetField(ref _hoverOutlineEnabled, value);
+        }
+
+        [Category("Selection")]
+        [DisplayName("Selection Outline Enabled")]
+        [Description("Enable stencil-based outline for selected meshes.")]
+        public bool SelectionOutlineEnabled
+        {
+            get => _selectionOutlineEnabled;
+            set => SetField(ref _selectionOutlineEnabled, value);
+        }
+
+        [Category("Selection")]
+        [DisplayName("Hover Outline Color")]
+        [Description("Outline color used for hovered submeshes.")]
+        public ColorF4 HoverOutlineColor
+        {
+            get => _hoverOutlineColor;
+            set => SetField(ref _hoverOutlineColor, value);
+        }
+
+        [Category("Selection")]
+        [DisplayName("Selection Outline Color")]
+        [Description("Outline color used for selected meshes.")]
+        public ColorF4 SelectionOutlineColor
+        {
+            get => _selectionOutlineColor;
+            set => SetField(ref _selectionOutlineColor, value);
+        }
+
+        [Category("Selection")]
+        [DisplayName("GPU Mesh BVH Click Pick")]
+        [Description("When enabled, meshes that have a GPU mesh BVH (UseGpuMeshBvh) are hover/click-picked by traversing their GPU BVH via an asynchronous compute raycast and GPU readback, resolving the exact triangle/edge/vertex under the cursor. When disabled, those meshes are not precisely pickable in the viewport.")]
+        [DefaultValue(true)]
+        public bool GpuMeshBvhClickPickEnabled
+        {
+            get => _gpuMeshBvhClickPickEnabled;
+            set => SetField(ref _gpuMeshBvhClickPickEnabled, value);
+        }
+
+        [Category("Play Mode")]
+        [DisplayName("Confirm Before Entering Play Mode")]
+        [Description("When enabled, editor-triggered requests to enter play mode show a confirmation dialog before the transition starts.")]
+        public bool ConfirmBeforeEnteringPlayMode
+        {
+            get => _confirmBeforeEnteringPlayMode;
+            set => SetField(ref _confirmBeforeEnteringPlayMode, value);
+        }
+
+        [Category("Play Mode")]
+        [DisplayName("Confirm Before Exiting Play Mode")]
+        [Description("When enabled, editor UI requests to exit play mode show a confirmation dialog before the transition starts. The global Shift+F5 force-stop shortcut always exits without prompting.")]
+        public bool ConfirmBeforeExitingPlayMode
+        {
+            get => _confirmBeforeExitingPlayMode;
+            set => SetField(ref _confirmBeforeExitingPlayMode, value);
+        }
+
+        [Category("Inspector")]
+        [DisplayName("Material Inspector Tab Index")]
+        [Description("Last selected top-level tab in the material inspector.")]
+        public int MaterialInspectorTabIndex
+        {
+            get => _materialInspectorTabIndex;
+            set => SetField(ref _materialInspectorTabIndex, Math.Max(0, value));
+        }
+
+        [Category("Inspector")]
+        [DisplayName("Material Preview Surface Index")]
+        [Description("Last selected preview surface style for the material inspector.")]
+        public int MaterialPreviewSurfaceIndex
+        {
+            get => _materialPreviewSurfaceIndex;
+            set => SetField(ref _materialPreviewSurfaceIndex, Math.Clamp(value, 0, 2));
+        }
+
+        [Category("Inspector")]
+        [DisplayName("Submesh Inspector Tab Index")]
+        [Description("Last selected top-level tab in the model submesh inspector.")]
+        public int SubmeshInspectorTabIndex
+        {
+            get => _submeshInspectorTabIndex;
+            set => SetField(ref _submeshInspectorTabIndex, Math.Max(0, value));
+        }
+
+        [Category("Inspector")]
+        [DisplayName("Submesh Detail Tab Index")]
+        [Description("Last selected tab inside each expanded submesh entry.")]
+        public int SubmeshDetailTabIndex
+        {
+            get => _submeshDetailTabIndex;
+            set => SetField(ref _submeshDetailTabIndex, Math.Max(0, value));
+        }
+
+        /// <summary>
+        /// Whether the MCP (Model Context Protocol) server is enabled.
+        /// When enabled, AI assistants and external tools can interact with the editor via HTTP.
+        /// </summary>
+        [Category("MCP Server")]
+        [DisplayName("MCP Server Enabled")]
+        [Description("Enable the MCP server to allow AI assistants and external tools to interact with the editor.")]
+        public bool McpServerEnabled
+        {
+            get => _mcpServerEnabled;
+            set => SetField(ref _mcpServerEnabled, value);
+        }
+
+        /// <summary>
+        /// The port number for the MCP server.
+        /// </summary>
+        [Category("MCP Server")]
+        [DisplayName("MCP Server Port")]
+        [Description("The port number for the MCP server (default: 5467).")]
+        public int McpServerPort
+        {
+            get => _mcpServerPort;
+            set => SetField(ref _mcpServerPort, Math.Max(1, Math.Min(65535, value)));
+        }
+
+        /// <summary>
+        /// Whether MCP requests require bearer-token authentication.
+        /// </summary>
+        [Category("MCP Server")]
+        [DisplayName("MCP Require Auth")]
+        [Description("Require an Authorization: Bearer <token> header for MCP requests.")]
+        public bool McpServerRequireAuth
+        {
+            get => _mcpServerRequireAuth;
+            set => SetField(ref _mcpServerRequireAuth, value);
+        }
+
+        /// <summary>
+        /// Bearer token required when MCP authentication is enabled.
+        /// </summary>
+        [Category("MCP Server")]
+        [DisplayName("MCP Auth Token")]
+        [Description("Bearer token for MCP authentication. Ignored unless MCP Require Auth is enabled.")]
+        [YamlIgnore]
+        [Password]
+        public string McpServerAuthToken
+        {
+            get => string.IsNullOrEmpty(_mcpServerAuthTokenEnvVar)
+                ? _mcpServerAuthToken
+                : System.Environment.GetEnvironmentVariable(_mcpServerAuthTokenEnvVar) ?? string.Empty;
+            set => SetField(ref _mcpServerAuthToken, value ?? string.Empty);
+        }
+
+        /// <summary>
+        /// CORS allowlist for Origin values as comma/semicolon/newline-separated entries.
+        /// Leave empty to allow all origins.
+        /// </summary>
+        [Category("MCP Server")]
+        [DisplayName("MCP CORS Allowlist")]
+        [Description("Comma/semicolon/newline-separated Origin allowlist. Leave empty to allow all origins.")]
+        public string McpServerCorsAllowlist
+        {
+            get => _mcpServerCorsAllowlist;
+            set => SetField(ref _mcpServerCorsAllowlist, value ?? string.Empty);
+        }
+
+        /// <summary>
+        /// Maximum HTTP request payload size accepted by the MCP server.
+        /// </summary>
+        [Category("MCP Server")]
+        [DisplayName("MCP Max Request Bytes")]
+        [Description("Maximum MCP request payload size in bytes.")]
+        public int McpServerMaxRequestBytes
+        {
+            get => _mcpServerMaxRequestBytes;
+            set => SetField(ref _mcpServerMaxRequestBytes, Math.Max(1024, value));
+        }
+
+        /// <summary>
+        /// Maximum request processing time before MCP calls are canceled.
+        /// </summary>
+        [Category("MCP Server")]
+        [DisplayName("MCP Request Timeout (ms)")]
+        [Description("Maximum MCP request processing duration in milliseconds.")]
+        public int McpServerRequestTimeoutMs
+        {
+            get => _mcpServerRequestTimeoutMs;
+            set => SetField(ref _mcpServerRequestTimeoutMs, Math.Max(100, value));
+        }
+
+        /// <summary>
+        /// Whether the MCP server is restricted to read-only tools.
+        /// </summary>
+        [Category("MCP Server")]
+        [DisplayName("MCP Read-Only Mode")]
+        [Description("When enabled, mutating tools are blocked and only read/list/query tools are allowed.")]
+        public bool McpServerReadOnly
+        {
+            get => _mcpServerReadOnly;
+            set => SetField(ref _mcpServerReadOnly, value);
+        }
+
+        /// <summary>
+        /// Optional allow-list of MCP tool names.
+        /// </summary>
+        [Category("MCP Server")]
+        [DisplayName("MCP Allowed Tools")]
+        [Description("Optional comma/semicolon/newline-separated list of allowed tool names. Leave empty to allow all.")]
+        public string McpServerAllowedTools
+        {
+            get => _mcpServerAllowedTools;
+            set => SetField(ref _mcpServerAllowedTools, value ?? string.Empty);
+        }
+
+        /// <summary>
+        /// Optional deny-list of MCP tool names.
+        /// </summary>
+        [Category("MCP Server")]
+        [DisplayName("MCP Denied Tools")]
+        [Description("Optional comma/semicolon/newline-separated list of denied tool names.")]
+        public string McpServerDeniedTools
+        {
+            get => _mcpServerDeniedTools;
+            set => SetField(ref _mcpServerDeniedTools, value ?? string.Empty);
+        }
+
+        /// <summary>
+        /// Whether per-client MCP request rate limiting is enabled.
+        /// </summary>
+        [Category("MCP Server")]
+        [DisplayName("MCP Rate Limit Enabled")]
+        [Description("Enable per-client MCP request rate limiting.")]
+        public bool McpServerRateLimitEnabled
+        {
+            get => _mcpServerRateLimitEnabled;
+            set => SetField(ref _mcpServerRateLimitEnabled, value);
+        }
+
+        /// <summary>
+        /// Number of requests allowed per client within the configured window.
+        /// </summary>
+        [Category("MCP Server")]
+        [DisplayName("MCP Rate Limit Requests")]
+        [Description("Maximum MCP requests per client in each rate-limit window.")]
+        public int McpServerRateLimitRequests
+        {
+            get => _mcpServerRateLimitRequests;
+            set => SetField(ref _mcpServerRateLimitRequests, Math.Max(1, value));
+        }
+
+        /// <summary>
+        /// Time window for MCP rate limiting.
+        /// </summary>
+        [Category("MCP Server")]
+        [DisplayName("MCP Rate Limit Window (s)")]
+        [Description("Rate-limit window in seconds for MCP requests.")]
+        public int McpServerRateLimitWindowSeconds
+        {
+            get => _mcpServerRateLimitWindowSeconds;
+            set => SetField(ref _mcpServerRateLimitWindowSeconds, Math.Max(1, value));
+        }
+
+        /// <summary>
+        /// Whether ping responses include expanded health/status data.
+        /// </summary>
+        [Category("MCP Server")]
+        [DisplayName("MCP Include Status In Ping")]
+        [Description("Include expanded server health/status payload in ping responses.")]
+        public bool McpServerIncludeStatusInPing
+        {
+            get => _mcpServerIncludeStatusInPing;
+            set => SetField(ref _mcpServerIncludeStatusInPing, value);
+        }
+
+        /// <summary>
+        /// Controls which MCP tool permission levels are auto-approved without prompting the user.
+        /// Tools above this threshold show a modal permission dialog.
+        /// </summary>
+        [Category("MCP Server")]
+        [DisplayName("MCP Permission Policy")]
+        [Description("Auto-approve threshold for MCP tool calls. Tools above this level require explicit user approval.")]
+        public McpPermissionPolicy McpPermissionPolicy
+        {
+            get => _mcpPermissionPolicy;
+            set => SetField(ref _mcpPermissionPolicy, value);
+        }
+
+        /// <summary>
+        /// Controls how MCP tool invocations are dispatched when a tool does not
+        /// declare an explicit <c>[McpThreadAffinity]</c> attribute.
+        /// </summary>
+        [Category("MCP Server")]
+        [DisplayName("MCP Dispatch Mode")]
+        [Description("Default thread dispatch for MCP tools: Direct (threadpool), MainThread (render), or JobWorker.")]
+        public McpDispatchMode McpDispatchMode
+        {
+            get => _mcpDispatchMode;
+            set => SetField(ref _mcpDispatchMode, value);
+        }
+
+        // ── MCP Assistant (in-editor AI chat window) ─────────────────────
+
+        /// <summary>
+        /// Selected provider index (0 = Codex / OpenAI, 1 = Claude Code / Anthropic, 2 = Gemini, 3 = GitHub Models).
+        /// </summary>
+        [Category("MCP Assistant")]
+        [DisplayName("Provider")]
+        [Description("AI provider selection (0 = Codex, 1 = Claude Code, 2 = Gemini, 3 = GitHub Models).")]
+        public int McpAssistantProviderIndex
+        {
+            get => _mcpAssistantProviderIndex;
+            set => SetField(ref _mcpAssistantProviderIndex, Math.Clamp(value, 0, 3));
+        }
+
+        /// <summary>
+        /// OpenAI API key used by the MCP Assistant window.
+        /// </summary>
+        [Category("MCP Assistant")]
+        [DisplayName("OpenAI API Key")]
+        [Description("API key for OpenAI / Codex provider.")]
+        [YamlIgnore]
+        [Password]
+        public string McpAssistantOpenAiApiKey
+        {
+            get => string.IsNullOrEmpty(_mcpAssistantOpenAiApiKeyEnvVar)
+                ? _mcpAssistantOpenAiApiKey
+                : System.Environment.GetEnvironmentVariable(_mcpAssistantOpenAiApiKeyEnvVar) ?? string.Empty;
+            set => SetField(ref _mcpAssistantOpenAiApiKey, value ?? string.Empty);
+        }
+
+        /// <summary>
+        /// Anthropic API key used by the MCP Assistant window.
+        /// </summary>
+        [Category("MCP Assistant")]
+        [DisplayName("Anthropic API Key")]
+        [Description("API key for Anthropic / Claude Code provider.")]
+        [YamlIgnore]
+        [Password]
+        public string McpAssistantAnthropicApiKey
+        {
+            get => string.IsNullOrEmpty(_mcpAssistantAnthropicApiKeyEnvVar)
+                ? _mcpAssistantAnthropicApiKey
+                : System.Environment.GetEnvironmentVariable(_mcpAssistantAnthropicApiKeyEnvVar) ?? string.Empty;
+            set => SetField(ref _mcpAssistantAnthropicApiKey, value ?? string.Empty);
+        }
+
+        /// <summary>
+        /// Model name for OpenAI standard (non-realtime) requests.
+        /// </summary>
+        [Category("MCP Assistant")]
+        [DisplayName("OpenAI Model")]
+        [Description("Model name for OpenAI standard HTTP requests.")]
+        public string McpAssistantOpenAiModel
+        {
+            get => _mcpAssistantOpenAiModel;
+            set => SetField(ref _mcpAssistantOpenAiModel, value ?? "gpt-5-codex");
+        }
+
+        /// <summary>
+        /// Model name for OpenAI Realtime WebSocket requests.
+        /// </summary>
+        [Category("MCP Assistant")]
+        [DisplayName("OpenAI Realtime Model")]
+        [Description("Model name for OpenAI Realtime WebSocket requests.")]
+        public string McpAssistantOpenAiRealtimeModel
+        {
+            get => _mcpAssistantOpenAiRealtimeModel;
+            set => SetField(ref _mcpAssistantOpenAiRealtimeModel, value ?? "gpt-4o-realtime-preview");
+        }
+
+        /// <summary>
+        /// Model name for Anthropic / Claude Code requests.
+        /// </summary>
+        [Category("MCP Assistant")]
+        [DisplayName("Anthropic Model")]
+        [Description("Model name for Anthropic Messages API requests.")]
+        public string McpAssistantAnthropicModel
+        {
+            get => _mcpAssistantAnthropicModel;
+            set => SetField(ref _mcpAssistantAnthropicModel, value ?? "claude-sonnet-4-5");
+        }
+
+        /// <summary>
+        /// Maximum token count per AI request.
+        /// </summary>
+        [Category("MCP Assistant")]
+        [DisplayName("Max Tokens")]
+        [Description("Maximum token limit for AI provider requests.")]
+        public int McpAssistantMaxTokens
+        {
+            get => _mcpAssistantMaxTokens;
+            set => SetField(ref _mcpAssistantMaxTokens, Math.Clamp(value, 64, 128_000));
+        }
+
+        /// <summary>
+        /// Maximum number of automatic continuation prompts sent for a single user prompt.
+        /// </summary>
+        [Category("MCP Assistant")]
+        [DisplayName("Max Auto Re-prompts")]
+        [Description("Maximum automatic continuation prompts sent when the assistant emits the continue marker or has not emitted the done marker.")]
+        public int McpAssistantMaxAutoReprompts
+        {
+            get => _mcpAssistantMaxAutoReprompts;
+            set => SetField(ref _mcpAssistantMaxAutoReprompts, Math.Clamp(value, 0, 50));
+        }
+
+        /// <summary>
+        /// Whether to request an AI-generated context summary when approaching model context limits.
+        /// </summary>
+        [Category("MCP Assistant")]
+        [DisplayName("Auto Summarize Near Context Limit")]
+        [Description("Request a compact assistant-generated context summary as prompts approach the selected model's context window.")]
+        public bool McpAssistantAutoSummarizeNearContextLimit
+        {
+            get => _mcpAssistantAutoSummarizeNearContextLimit;
+            set => SetField(ref _mcpAssistantAutoSummarizeNearContextLimit, value);
+        }
+
+        /// <summary>
+        /// Whether to use the OpenAI Realtime WebSocket API instead of standard HTTP.
+        /// </summary>
+        [Category("MCP Assistant")]
+        [DisplayName("Use Realtime WebSocket")]
+        [Description("Send OpenAI prompts via the Realtime WebSocket API instead of standard HTTP.")]
+        public bool McpAssistantUseRealtimeWebSocket
+        {
+            get => _mcpAssistantUseRealtimeWebSocket;
+            set => SetField(ref _mcpAssistantUseRealtimeWebSocket, value);
+        }
+
+        /// <summary>
+        /// Whether to attach the local MCP server to provider requests.
+        /// </summary>
+        [Category("MCP Assistant")]
+        [DisplayName("Attach MCP Server")]
+        [Description("Include the local MCP server URL in provider requests so the AI can use editor tools.")]
+        public bool McpAssistantAttachMcpServer
+        {
+            get => _mcpAssistantAttachMcpServer;
+            set => SetField(ref _mcpAssistantAttachMcpServer, value);
+        }
+
+        /// <summary>
+        /// Whether to capture and attach the current editor viewport screenshot
+        /// as visual context when sending a message to the AI provider.
+        /// </summary>
+        [Category("MCP Assistant")]
+        [DisplayName("Attach Viewport Screenshot")]
+        [Description("Capture and include a viewport screenshot as visual context with each message sent to the AI.")]
+        public bool McpAssistantAttachViewportScreenshot
+        {
+            get => _mcpAssistantAttachViewportScreenshot;
+            set => SetField(ref _mcpAssistantAttachViewportScreenshot, value);
+        }
+
+        /// <summary>
+        /// Whether the chat log auto-scrolls during streaming.
+        /// </summary>
+        [Category("MCP Assistant")]
+        [DisplayName("Auto-Scroll")]
+        [Description("Automatically scroll the chat log to the bottom during streaming.")]
+        public bool McpAssistantAutoScroll
+        {
+            get => _mcpAssistantAutoScroll;
+            set => SetField(ref _mcpAssistantAutoScroll, value);
+        }
+
+        /// <summary>
+        /// Whether MCP Assistant tool calls automatically move the editor camera to relevant scene nodes.
+        /// Uses the same smooth focus interpolation as hierarchy double-click.
+        /// </summary>
+        [Category("MCP Assistant")]
+        [DisplayName("Auto Camera View")]
+        [Description("Automatically move the editor camera to relevant scene nodes after assistant scene edits.")]
+        public bool McpAssistantAutoCameraView
+        {
+            get => _mcpAssistantAutoCameraView;
+            set => SetField(ref _mcpAssistantAutoCameraView, value);
+        }
+
+        /// <summary>
+        /// Whether MCP Assistant writes comprehensive AI request/response/tool traces.
+        /// </summary>
+        [Category("MCP Assistant")]
+        [DisplayName("Verbose AI Logging")]
+        [Description("Write full MCP Assistant prompts, responses, and tool call args/results to the AI log category.")]
+        public bool McpAssistantVerboseAiLogging
+        {
+            get => _mcpAssistantVerboseAiLogging;
+            set => SetField(ref _mcpAssistantVerboseAiLogging, value);
+        }
+
+        /// <summary>
+        /// Preferred downward pitch for editor auto-focus camera framing.
+        /// </summary>
+        [Category("MCP Assistant")]
+        [DisplayName("Focus Preferred Down Pitch")]
+        [Description("Preferred downward pitch angle (degrees) for editor camera auto-focus framing.")]
+        public float FocusPreferredDownPitchDegrees
+        {
+            get => _focusPreferredDownPitchDegrees;
+            set => SetField(ref _focusPreferredDownPitchDegrees, float.Clamp(value, 0.0f, 80.0f));
+        }
+
+        /// <summary>
+        /// Maximum allowed downward pitch for editor auto-focus camera framing.
+        /// </summary>
+        [Category("MCP Assistant")]
+        [DisplayName("Focus Max Down Pitch")]
+        [Description("Maximum downward pitch angle (degrees) for editor camera auto-focus framing.")]
+        public float FocusMaximumDownPitchDegrees
+        {
+            get => _focusMaximumDownPitchDegrees;
+            set => SetField(ref _focusMaximumDownPitchDegrees, float.Clamp(value, 1.0f, 89.0f));
+        }
+
+        /// <summary>
+        /// Google Gemini API key used by the MCP Assistant window.
+        /// </summary>
+        [Category("MCP Assistant")]
+        [DisplayName("Gemini API Key")]
+        [Description("API key for Google Gemini provider (from Google AI Studio).")]
+        [YamlIgnore]
+        [Password]
+        public string McpAssistantGeminiApiKey
+        {
+            get => string.IsNullOrEmpty(_mcpAssistantGeminiApiKeyEnvVar)
+                ? _mcpAssistantGeminiApiKey
+                : System.Environment.GetEnvironmentVariable(_mcpAssistantGeminiApiKeyEnvVar) ?? string.Empty;
+            set => SetField(ref _mcpAssistantGeminiApiKey, value ?? string.Empty);
+        }
+
+        /// <summary>
+        /// Model name for Google Gemini requests.
+        /// </summary>
+        [Category("MCP Assistant")]
+        [DisplayName("Gemini Model")]
+        [Description("Model name for Google Gemini API requests.")]
+        public string McpAssistantGeminiModel
+        {
+            get => _mcpAssistantGeminiModel;
+            set => SetField(ref _mcpAssistantGeminiModel, value ?? "gemini-2.5-pro");
+        }
+
+        /// <summary>
+        /// GitHub personal access token (PAT) for GitHub Models inference API.
+        /// Requires models:read scope.
+        /// </summary>
+        [Category("MCP Assistant")]
+        [DisplayName("GitHub Models Token")]
+        [Description("GitHub PAT with models:read scope for GitHub Models inference API.")]
+        [YamlIgnore]
+        [Password]
+        public string McpAssistantGitHubModelsToken
+        {
+            get => string.IsNullOrEmpty(_mcpAssistantGitHubModelsTokenEnvVar)
+                ? _mcpAssistantGitHubModelsToken
+                : System.Environment.GetEnvironmentVariable(_mcpAssistantGitHubModelsTokenEnvVar) ?? string.Empty;
+            set => SetField(ref _mcpAssistantGitHubModelsToken, value ?? string.Empty);
+        }
+
+        /// <summary>
+        /// Model name for GitHub Models inference requests.
+        /// </summary>
+        [Category("MCP Assistant")]
+        [DisplayName("GitHub Models Model")]
+        [Description("Model name for GitHub Models inference API requests (e.g. openai/gpt-4.1).")]
+        public string McpAssistantGitHubModelsModel
+        {
+            get => _mcpAssistantGitHubModelsModel;
+            set => SetField(ref _mcpAssistantGitHubModelsModel, value ?? "openai/gpt-4.1");
+        }
+
+        protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
+        {
+            base.OnPropertyChanged(propName, prev, field);
+
+            if (propName == nameof(Theme))
+            {
+                if (prev is EditorThemeSettings previous)
+                    previous.PropertyChanged -= HandleSubSettingsChanged;
+
+                if (field is EditorThemeSettings current)
+                    current.PropertyChanged += HandleSubSettingsChanged;
+            }
+
+            if (propName == nameof(Debug))
+            {
+                if (prev is EditorDebugOptions previous)
+                    previous.PropertyChanged -= HandleSubSettingsChanged;
+
+                if (field is EditorDebugOptions current)
+                    current.PropertyChanged += HandleSubSettingsChanged;
+
+                _diagnostics = null;
+            }
+        }
+
+        private void AttachSubSettings(EditorThemeSettings? theme, EditorDebugOptions? debug)
+        {
+            if (theme is not null)
+                theme.PropertyChanged += HandleSubSettingsChanged;
+
+            if (debug is not null)
+                debug.PropertyChanged += HandleSubSettingsChanged;
+        }
+
+        private void HandleSubSettingsChanged(object? sender, IXRPropertyChangedEventArgs e)
+        {
+            if (!IsDirty)
+                MarkDirty();
+        }
+
+        // ── Importers ────────────────────────────────────────────────────
+
+        /// <summary>
+        /// Selects which importer backend is used for .fbx third-party assets.
+        /// Default is <see cref="FbxImportBackend.Auto"/> (native with Assimp fallback).
+        /// Per-asset <c>ModelImportOptions.FbxBackend</c> overrides this default when not set to <c>Auto</c>.
+        /// </summary>
+        [Category("Importers")]
+        [DisplayName("FBX Importer Backend")]
+        [Description("Default importer backend for .fbx files. Per-asset ModelImportOptions.FbxBackend overrides this default when not set to Auto.")]
+        public FbxImportBackend FbxImporterBackend
+        {
+            get => _fbxImporterBackend;
+            set => SetField(ref _fbxImporterBackend, value);
+        }
+
+        /// <summary>
+        /// Selects which importer backend is used for .gltf / .glb third-party assets.
+        /// Default is <see cref="GltfImportBackend.Auto"/> (native with Assimp fallback).
+        /// Per-asset <c>ModelImportOptions.GltfBackend</c> overrides this default when not set to <c>Auto</c>.
+        /// </summary>
+        [Category("Importers")]
+        [DisplayName("glTF Importer Backend")]
+        [Description("Default importer backend for .gltf / .glb files. Per-asset ModelImportOptions.GltfBackend overrides this default when not set to Auto.")]
+        public GltfImportBackend GltfImporterBackend
+        {
+            get => _gltfImporterBackend;
+            set => SetField(ref _gltfImporterBackend, value);
+        }
+
+        public void CopyFrom(EditorPreferences source)
+        {
+            if (source is null || ReferenceEquals(source, this))
+                return;
+
+            // Keep effective composition future-proof: every public writable preference
+            // declared on this root participates automatically, while inherited asset
+            // metadata and read-only runtime adapter groups remain excluded.
+            CopyDeclaredCloneableProperties(source, this);
+        }
+
+        public void ApplyOverrides(EditorPreferencesOverrides overrides)
+        {
+            if (overrides is null)
+                return;
+
+            Theme.ApplyOverrides(overrides.Theme);
+            Debug.ApplyOverrides(overrides.Debug);
+            Viewport.ApplyOverrides(overrides.Viewport);
+            Selection.ApplyOverrides(overrides.Selection);
+            Diagnostics.ApplyOverrides(overrides.Diagnostics);
+
+            if (overrides.ConfirmBeforeEnteringPlayModeOverride is { HasOverride: true } confirmEnterOverride)
+                ConfirmBeforeEnteringPlayMode = confirmEnterOverride.Value;
+
+            if (overrides.ConfirmBeforeExitingPlayModeOverride is { HasOverride: true } confirmExitOverride)
+                ConfirmBeforeExitingPlayMode = confirmExitOverride.Value;
+
+            if (overrides.McpServerEnabledOverride is { HasOverride: true } mcpEnabledOverride)
+                McpServerEnabled = mcpEnabledOverride.Value;
+
+            if (overrides.McpServerPortOverride is { HasOverride: true } mcpPortOverride)
+                McpServerPort = Math.Max(1, Math.Min(65535, mcpPortOverride.Value));
+
+            if (overrides.McpServerRequireAuthOverride is { HasOverride: true } mcpRequireAuthOverride)
+                McpServerRequireAuth = mcpRequireAuthOverride.Value;
+
+            if (overrides.McpServerAuthTokenOverride is { HasOverride: true } mcpAuthTokenOverride)
+                McpServerAuthToken = mcpAuthTokenOverride.Value ?? string.Empty;
+
+            if (overrides.McpServerCorsAllowlistOverride is { HasOverride: true } mcpCorsAllowlistOverride)
+                McpServerCorsAllowlist = mcpCorsAllowlistOverride.Value ?? string.Empty;
+
+            if (overrides.McpServerMaxRequestBytesOverride is { HasOverride: true } mcpMaxRequestBytesOverride)
+                McpServerMaxRequestBytes = Math.Max(1024, mcpMaxRequestBytesOverride.Value);
+
+            if (overrides.McpServerRequestTimeoutMsOverride is { HasOverride: true } mcpRequestTimeoutOverride)
+                McpServerRequestTimeoutMs = Math.Max(100, mcpRequestTimeoutOverride.Value);
+
+            if (overrides.McpServerReadOnlyOverride is { HasOverride: true } mcpReadOnlyOverride)
+                McpServerReadOnly = mcpReadOnlyOverride.Value;
+
+            if (overrides.McpServerAllowedToolsOverride is { HasOverride: true } mcpAllowedToolsOverride)
+                McpServerAllowedTools = mcpAllowedToolsOverride.Value ?? string.Empty;
+
+            if (overrides.McpServerDeniedToolsOverride is { HasOverride: true } mcpDeniedToolsOverride)
+                McpServerDeniedTools = mcpDeniedToolsOverride.Value ?? string.Empty;
+
+            if (overrides.McpServerRateLimitEnabledOverride is { HasOverride: true } mcpRateLimitEnabledOverride)
+                McpServerRateLimitEnabled = mcpRateLimitEnabledOverride.Value;
+
+            if (overrides.McpServerRateLimitRequestsOverride is { HasOverride: true } mcpRateLimitRequestsOverride)
+                McpServerRateLimitRequests = Math.Max(1, mcpRateLimitRequestsOverride.Value);
+
+            if (overrides.McpServerRateLimitWindowSecondsOverride is { HasOverride: true } mcpRateLimitWindowOverride)
+                McpServerRateLimitWindowSeconds = Math.Max(1, mcpRateLimitWindowOverride.Value);
+
+            if (overrides.McpServerIncludeStatusInPingOverride is { HasOverride: true } mcpStatusPingOverride)
+                McpServerIncludeStatusInPing = mcpStatusPingOverride.Value;
+
+            if (overrides.McpPermissionPolicyOverride is { HasOverride: true } mcpPermissionPolicyOverride)
+                McpPermissionPolicy = mcpPermissionPolicyOverride.Value;
+
+            if (overrides.McpDispatchModeOverride is { HasOverride: true } mcpDispatchModeOverride)
+                McpDispatchMode = mcpDispatchModeOverride.Value;
+
+            if (overrides.FbxImporterBackendOverride is { HasOverride: true } fbxBackendOverride)
+                FbxImporterBackend = fbxBackendOverride.Value;
+
+            if (overrides.GltfImporterBackendOverride is { HasOverride: true } gltfBackendOverride)
+                GltfImporterBackend = gltfBackendOverride.Value;
+        }
+
+        public void ApplyRuntimeSideEffects()
+            => Debug.ApplyRuntimeSideEffects();
+    }
+
+    [Serializable]
+    [MemoryPackable]
+    public partial class EditorThemeSettings : XRBase
+    {
+        private string _themeName = "Dark";
+        private ColorF4 _quadtreeIntersectedBoundsColor = ColorF4.LightGray;
+        private ColorF4 _quadtreeContainedBoundsColor = ColorF4.Yellow;
+        private ColorF4 _octreeIntersectedBoundsColor = ColorF4.LightGray;
+        private ColorF4 _octreeContainedBoundsColor = ColorF4.Yellow;
+        private ColorF4 _meshBoundsContainedColor = ColorF4.LightGreen;
+        private ColorF4 _meshBoundsIntersectedColor = ColorF4.Yellow;
+        private ColorF4 _meshBoundsDisjointColor = ColorF4.LightRed;
+        private ColorF4 _bounds2DColor = ColorF4.LightLavender;
+        private ColorF4 _bounds3DColor = ColorF4.LightLavender;
+        private ColorF4 _transformPointColor = ColorF4.Orange;
+        private ColorF4 _transformLineColor = ColorF4.LightRed;
+        private ColorF4 _transformCapsuleColor = ColorF4.LightOrange;
+
+        // Console log category colors
+        private ColorF4 _consoleGeneralColor = Debug.GetDefaultCategoryColor(ELogCategory.General);
+        private ColorF4 _consoleAssetsColor = Debug.GetDefaultCategoryColor(ELogCategory.Assets);
+        private ColorF4 _consoleMeshesColor = Debug.GetDefaultCategoryColor(ELogCategory.Meshes);
+        private ColorF4 _consoleTexturesColor = Debug.GetDefaultCategoryColor(ELogCategory.Textures);
+        private ColorF4 _consoleRenderingColor = Debug.GetDefaultCategoryColor(ELogCategory.Rendering);
+        private ColorF4 _consoleLightingColor = Debug.GetDefaultCategoryColor(ELogCategory.Lighting);
+        private ColorF4 _consoleOpenGLColor = Debug.GetDefaultCategoryColor(ELogCategory.OpenGL);
+        private ColorF4 _consolePhysicsColor = Debug.GetDefaultCategoryColor(ELogCategory.Physics);
+        private ColorF4 _consoleAnimationColor = Debug.GetDefaultCategoryColor(ELogCategory.Animation);
+        private ColorF4 _consoleUIColor = Debug.GetDefaultCategoryColor(ELogCategory.UI);
+
+        [Category("Theme")]
+        [DisplayName("Theme Name")]
+        [Description("Name of the editor theme preset to apply.")]
+        public string ThemeName
+        {
+            get => _themeName;
+            set => SetField(ref _themeName, value ?? "Dark");
+        }
+
+        [Category("Theme")]
+        [DisplayName("Quadtree Intersected Bounds Color")]
+        [Description("The color used to represent quadtree intersected bounds in the editor.")]
+        public ColorF4 QuadtreeIntersectedBoundsColor
+        {
+            get => _quadtreeIntersectedBoundsColor;
+            set => SetField(ref _quadtreeIntersectedBoundsColor, value);
+        }
+
+        [Category("Theme")]
+        [DisplayName("Quadtree Contained Bounds Color")]
+        [Description("The color used to represent quadtree contained bounds in the editor.")]
+        public ColorF4 QuadtreeContainedBoundsColor
+        {
+            get => _quadtreeContainedBoundsColor;
+            set => SetField(ref _quadtreeContainedBoundsColor, value);
+        }
+
+        [Category("Theme")]
+        [DisplayName("Octree Intersected Bounds Color")]
+        [Description("The color used to represent octree intersected bounds in the editor.")]
+        public ColorF4 OctreeIntersectedBoundsColor
+        {
+            get => _octreeIntersectedBoundsColor;
+            set => SetField(ref _octreeIntersectedBoundsColor, value);
+        }
+
+        [Category("Theme")]
+        [DisplayName("Octree Contained Bounds Color")]
+        [Description("The color used to represent octree contained bounds in the editor.")]
+        public ColorF4 OctreeContainedBoundsColor
+        {
+            get => _octreeContainedBoundsColor;
+            set => SetField(ref _octreeContainedBoundsColor, value);
+        }
+
+        [Category("Theme")]
+        [DisplayName("Mesh Bounds Contained Color")]
+        [Description("The color used to represent fully contained 3D mesh bounds in the editor.")]
+        public ColorF4 MeshBoundsContainedColor
+        {
+            get => _meshBoundsContainedColor;
+            set => SetField(ref _meshBoundsContainedColor, value);
+        }
+
+        [Category("Theme")]
+        [DisplayName("Mesh Bounds Intersected Color")]
+        [Description("The color used to represent intersecting 3D mesh bounds in the editor.")]
+        public ColorF4 MeshBoundsIntersectedColor
+        {
+            get => _meshBoundsIntersectedColor;
+            set => SetField(ref _meshBoundsIntersectedColor, value);
+        }
+
+        [Category("Theme")]
+        [DisplayName("Mesh Bounds Disjoint Color")]
+        [Description("The color used to represent disjoint 3D mesh bounds in the editor.")]
+        public ColorF4 MeshBoundsDisjointColor
+        {
+            get => _meshBoundsDisjointColor;
+            set => SetField(ref _meshBoundsDisjointColor, value);
+        }
+
+        [Category("Theme")]
+        [DisplayName("2D Bounds Color")]
+        [Description("The color used to represent 2D bounds in the editor.")]
+        public ColorF4 Bounds2DColor
+        {
+            get => _bounds2DColor;
+            set => SetField(ref _bounds2DColor, value);
+        }
+
+        [Category("Theme")]
+        [DisplayName("3D Bounds Color")]
+        [Description("The color used to represent 3D bounds in the editor.")]
+        public ColorF4 Bounds3DColor
+        {
+            get => _bounds3DColor;
+            set => SetField(ref _bounds3DColor, value);
+        }
+
+        [Category("Theme")]
+        [DisplayName("Transform Point Color")]
+        [Description("The color used to represent transform points in the editor.")]
+        public ColorF4 TransformPointColor
+        {
+            get => _transformPointColor;
+            set => SetField(ref _transformPointColor, value);
+        }
+
+        [Category("Theme")]
+        [DisplayName("Transform Line Color")]
+        [Description("The color used to represent transform lines in the editor.")]
+        public ColorF4 TransformLineColor
+        {
+            get => _transformLineColor;
+            set => SetField(ref _transformLineColor, value);
+        }
+
+        [Category("Theme")]
+        [DisplayName("Transform Capsule Color")]
+        [Description("The color used to represent transform capsules in the editor.")]
+        public ColorF4 TransformCapsuleColor
+        {
+            get => _transformCapsuleColor;
+            set => SetField(ref _transformCapsuleColor, value);
+        }
+
+        [Category("Console Colors")]
+        [DisplayName("Console General Color")]
+        [Description("The color used for General log entries in the console.")]
+        public ColorF4 ConsoleGeneralColor
+        {
+            get => _consoleGeneralColor;
+            set => SetField(ref _consoleGeneralColor, value);
+        }
+
+        [Category("Console Colors")]
+        [DisplayName("Console Assets Color")]
+        [Description("The color used for Assets log entries in the console.")]
+        public ColorF4 ConsoleAssetsColor
+        {
+            get => _consoleAssetsColor;
+            set => SetField(ref _consoleAssetsColor, value);
+        }
+
+        [Category("Console Colors")]
+        [DisplayName("Console Meshes Color")]
+        [Description("The color used for Meshes log entries in the console.")]
+        public ColorF4 ConsoleMeshesColor
+        {
+            get => _consoleMeshesColor;
+            set => SetField(ref _consoleMeshesColor, value);
+        }
+
+        [Category("Console Colors")]
+        [DisplayName("Console Textures Color")]
+        [Description("The color used for Textures log entries in the console.")]
+        public ColorF4 ConsoleTexturesColor
+        {
+            get => _consoleTexturesColor;
+            set => SetField(ref _consoleTexturesColor, value);
+        }
+
+        [Category("Console Colors")]
+        [DisplayName("Console Rendering Color")]
+        [Description("The color used for Rendering log entries in the console.")]
+        public ColorF4 ConsoleRenderingColor
+        {
+            get => _consoleRenderingColor;
+            set => SetField(ref _consoleRenderingColor, value);
+        }
+
+        [Category("Console Colors")]
+        [DisplayName("Console Lighting Color")]
+        [Description("The color used for Lighting log entries in the console.")]
+        public ColorF4 ConsoleLightingColor
+        {
+            get => _consoleLightingColor;
+            set => SetField(ref _consoleLightingColor, value);
+        }
+
+        [Category("Console Colors")]
+        [DisplayName("Console OpenGL Color")]
+        [Description("The color used for OpenGL log entries in the console.")]
+        public ColorF4 ConsoleOpenGLColor
+        {
+            get => _consoleOpenGLColor;
+            set => SetField(ref _consoleOpenGLColor, value);
+        }
+
+        [Category("Console Colors")]
+        [DisplayName("Console Physics Color")]
+        [Description("The color used for Physics log entries in the console.")]
+        public ColorF4 ConsolePhysicsColor
+        {
+            get => _consolePhysicsColor;
+            set => SetField(ref _consolePhysicsColor, value);
+        }
+
+        [Category("Console Colors")]
+        [DisplayName("Console Animation Color")]
+        [Description("The color used for Animation log entries in the console.")]
+        public ColorF4 ConsoleAnimationColor
+        {
+            get => _consoleAnimationColor;
+            set => SetField(ref _consoleAnimationColor, value);
+        }
+
+        [Category("Console Colors")]
+        [DisplayName("Console UI Color")]
+        [Description("The color used for UI log entries in the console.")]
+        public ColorF4 ConsoleUIColor
+        {
+            get => _consoleUIColor;
+            set => SetField(ref _consoleUIColor, value);
+        }
+
+        public void CopyFrom(EditorThemeSettings source)
+        {
+            if (source is null)
+                return;
+
+            ThemeName = source.ThemeName;
+            QuadtreeIntersectedBoundsColor = source.QuadtreeIntersectedBoundsColor;
+            QuadtreeContainedBoundsColor = source.QuadtreeContainedBoundsColor;
+            OctreeIntersectedBoundsColor = source.OctreeIntersectedBoundsColor;
+            OctreeContainedBoundsColor = source.OctreeContainedBoundsColor;
+            MeshBoundsContainedColor = source.MeshBoundsContainedColor;
+            MeshBoundsIntersectedColor = source.MeshBoundsIntersectedColor;
+            MeshBoundsDisjointColor = source.MeshBoundsDisjointColor;
+            Bounds2DColor = source.Bounds2DColor;
+            Bounds3DColor = source.Bounds3DColor;
+            TransformPointColor = source.TransformPointColor;
+            TransformLineColor = source.TransformLineColor;
+            TransformCapsuleColor = source.TransformCapsuleColor;
+            ConsoleGeneralColor = source.ConsoleGeneralColor;
+            ConsoleAssetsColor = source.ConsoleAssetsColor;
+            ConsoleMeshesColor = source.ConsoleMeshesColor;
+            ConsoleTexturesColor = source.ConsoleTexturesColor;
+            ConsoleRenderingColor = source.ConsoleRenderingColor;
+            ConsoleLightingColor = source.ConsoleLightingColor;
+            ConsoleOpenGLColor = source.ConsoleOpenGLColor;
+            ConsolePhysicsColor = source.ConsolePhysicsColor;
+            ConsoleAnimationColor = source.ConsoleAnimationColor;
+            ConsoleUIColor = source.ConsoleUIColor;
+        }
+
+        public void ApplyOverrides(EditorThemeOverrides overrides)
+        {
+            if (overrides is null)
+                return;
+
+            if (overrides.ThemeNameOverride is { HasOverride: true } themeOverride)
+                ThemeName = themeOverride.Value ?? ThemeName;
+
+            if (overrides.QuadtreeIntersectedBoundsColorOverride is { HasOverride: true } qiOverride)
+                QuadtreeIntersectedBoundsColor = qiOverride.Value;
+
+            if (overrides.QuadtreeContainedBoundsColorOverride is { HasOverride: true } qcOverride)
+                QuadtreeContainedBoundsColor = qcOverride.Value;
+
+            if (overrides.OctreeIntersectedBoundsColorOverride is { HasOverride: true } oiOverride)
+                OctreeIntersectedBoundsColor = oiOverride.Value;
+
+            if (overrides.OctreeContainedBoundsColorOverride is { HasOverride: true } ocOverride)
+                OctreeContainedBoundsColor = ocOverride.Value;
+
+            if (overrides.MeshBoundsContainedColorOverride is { HasOverride: true } mbcOverride)
+                MeshBoundsContainedColor = mbcOverride.Value;
+
+            if (overrides.MeshBoundsIntersectedColorOverride is { HasOverride: true } mbiOverride)
+                MeshBoundsIntersectedColor = mbiOverride.Value;
+
+            if (overrides.MeshBoundsDisjointColorOverride is { HasOverride: true } mbdOverride)
+                MeshBoundsDisjointColor = mbdOverride.Value;
+
+            if (overrides.Bounds2DColorOverride is { HasOverride: true } b2Override)
+                Bounds2DColor = b2Override.Value;
+
+            if (overrides.Bounds3DColorOverride is { HasOverride: true } b3Override)
+                Bounds3DColor = b3Override.Value;
+
+            if (overrides.TransformPointColorOverride is { HasOverride: true } tpOverride)
+                TransformPointColor = tpOverride.Value;
+
+            if (overrides.TransformLineColorOverride is { HasOverride: true } tlOverride)
+                TransformLineColor = tlOverride.Value;
+
+            if (overrides.TransformCapsuleColorOverride is { HasOverride: true } tcOverride)
+                TransformCapsuleColor = tcOverride.Value;
+
+            if (overrides.ConsoleGeneralColorOverride is { HasOverride: true } cgOverride)
+                ConsoleGeneralColor = cgOverride.Value;
+
+            if (overrides.ConsoleAssetsColorOverride is { HasOverride: true } casOverride)
+                ConsoleAssetsColor = casOverride.Value;
+
+            if (overrides.ConsoleMeshesColorOverride is { HasOverride: true } cmOverride)
+                ConsoleMeshesColor = cmOverride.Value;
+
+            if (overrides.ConsoleTexturesColorOverride is { HasOverride: true } ctOverride)
+                ConsoleTexturesColor = ctOverride.Value;
+
+            if (overrides.ConsoleRenderingColorOverride is { HasOverride: true } crOverride)
+                ConsoleRenderingColor = crOverride.Value;
+
+            if (overrides.ConsoleLightingColorOverride is { HasOverride: true } clOverride)
+                ConsoleLightingColor = clOverride.Value;
+
+            if (overrides.ConsoleOpenGLColorOverride is { HasOverride: true } coOverride)
+                ConsoleOpenGLColor = coOverride.Value;
+
+            if (overrides.ConsolePhysicsColorOverride is { HasOverride: true } cpOverride)
+                ConsolePhysicsColor = cpOverride.Value;
+
+            if (overrides.ConsoleAnimationColorOverride is { HasOverride: true } caOverride)
+                ConsoleAnimationColor = caOverride.Value;
+
+            if (overrides.ConsoleUIColorOverride is { HasOverride: true } cuOverride)
+                ConsoleUIColor = cuOverride.Value;
+        }
+    }
+
+    /// <summary>
+    /// Controls the GPU buffer layout for instanced debug primitives (points, lines, triangles).
+    /// </summary>
+    public enum EDebugPrimitiveBufferFormat
+    {
+        /// <summary>
+        /// Full-precision layout with separate float4 color and padded positions.
+        /// Point = 32 B, Line = 48 B, Triangle = 64 B.
+        /// </summary>
+        Expanded,
+
+        /// <summary>
+        /// Compact layout that packs RGBA color into a single uint (RGBA8) and removes position padding.
+        /// Point = 16 B (−50 %), Line = 28 B (−42 %), Triangle = 40 B (−37.5 %).
+        /// GPU shaders unpack color via <c>unpackUnorm4x8</c>.
+        /// </summary>
+        Compressed,
+    }
+
+    /// <summary>
+    /// Controls how the physics/instanced debug visualizer populates its buffers each frame.
+    /// </summary>
+    [Obsolete("Use EDebugVisualizerPopulationMode from XREngine.Runtime.Rendering.")]
+    internal enum LegacyDebugVisualizerPopulationMode
+    {
+        /// <summary>
+        /// Legacy path: Task.Run wrapping Parallel.For per primitive type + Task.WaitAll.
+        /// Double-parallelism — highest throughput for very large primitive counts, but double scheduling overhead.
+        /// </summary>
+        TasksWithParallelFor,
+
+        /// <summary>
+        /// Task.Run per primitive type with a sequential inner loop + Task.WaitAll.
+        /// Good balance: 3-way concurrency with minimal per-element overhead. Default.
+        /// </summary>
+        Tasks,
+
+        /// <summary>
+        /// Parallel.For per primitive type, run sequentially type-by-type.
+        /// Each type gets full thread-pool bandwidth internally, but types don't overlap.
+        /// </summary>
+        ParallelFor,
+
+        /// <summary>
+        /// Schedules population on the engine's persistent JobManager worker threads.
+        /// Avoids thread-pool scheduling; workers are pre-warmed.
+        /// </summary>
+        JobSystem,
+
+        /// <summary>
+        /// Populates all primitives sequentially on the calling thread.
+        /// Zero dispatch overhead — best when primitive counts are very small.
+        /// </summary>
+        Sequential,
+
+        /// <summary>
+        /// Bypasses per-element delegate invocations entirely.
+        /// Callers provide a single bulk-write delegate per primitive type that receives
+        /// the raw destination pointer and count, enabling tight unsafe loops with no
+        /// delegate dispatch, tuple allocation, or intermediate struct copies.
+        /// </summary>
+        DirectMemory,
+    }
+
+    /// <summary>
+    /// Controls how debug shape data (points/lines/triangles) is populated each frame.
+    /// </summary>
+    public enum EDebugShapePopulationMode
+    {
+        /// <summary>
+        /// Populates points, lines, and triangles on separate thread-pool tasks in parallel (Task.Run + Task.WaitAll).
+        /// Default. The .NET thread pool is large and elastic, so debug population is never starved
+        /// by long-running engine jobs (e.g. texture-streaming cache writes / compression).
+        /// </summary>
+        Tasks,
+
+        /// <summary>
+        /// Uses Parallel.Invoke to populate all three shape types concurrently.
+        /// Slightly simpler than Tasks but carries TPL scheduling overhead per frame.
+        /// </summary>
+        ParallelInvoke,
+
+        /// <summary>
+        /// Populates points, lines, and triangles sequentially on the calling thread.
+        /// Lowest overhead when debug primitive counts are small.
+        /// </summary>
+        Sequential,
+
+        // JobSystem is intentionally unavailable for debug shape population. If the engine
+        // job workers starve, SwapBuffers waits here and starves the main thread; main-thread
+        // starvation is not acceptable for debug rendering.
+        // JobSystem,
+    }
+
+    [Serializable]
+    [MemoryPackable]
+    public partial class EditorDebugOptions : XRBase
+    {
+        private bool _renderMesh3DBounds;
+        private bool _renderMesh2DBounds;
+        private bool _renderTransformDebugInfo;
+        private bool _renderUITransformCoordinate;
+        private bool _renderTransformLines;
+        private bool _renderTransformPoints;
+        private bool _renderTransformCapsules;
+        private bool _visualizeDirectionalLightVolumes;
+        private bool _preview3DWorldOctree;
+        private bool _preview2DWorldQuadtree;
+        private bool _previewTraces;
+        private bool _renderCullingVolumes;
+        private bool _visualizeTransformId;
+        private bool _visualizeTransparencyModeOverlay;
+        private bool _visualizeTransparencyClassificationOverlay;
+        private bool _visualizeTransparencyAccumulation;
+        private bool _visualizeTransparencyRevealage;
+        private bool _visualizeTransparencyOverdrawHeatmap;
+        private bool _enableExactTransparencyTechniques;
+        private bool _visualizePerPixelLinkedListFragments;
+        private bool _visualizeDepthPeelingLayer;
+        private int _depthPeelingPreviewLayer;
+        private int _depthPeelingMaxLayers = 4;
+        private bool _renderLightProbeTetrahedra = false;
+        private float _debugTextMaxLifespan;
+        private float _debugPointSize = 0.005f;
+        private float _debugLineWidth = 0.0015f;
+        private bool _enableThreadAllocationTracking;
+        private bool _useDebugOpaquePipeline;
+        private bool _forceGpuPassthroughCulling = false;
+        private bool _allowGpuCpuFallback = false;
+        private bool _enableZeroReadbackMaterialScatter = false;
+        private EZeroReadbackMaterialDrawPath _zeroReadbackMaterialDrawPath = EZeroReadbackMaterialDrawPath.BindlessMaterialTable;
+        private bool _enableProfilerFrameLogging = true;
+        private bool _enableProfilerComponentTiming = false;
+        private bool _enableRenderStatisticsTracking = true;
+        private bool _enableGpuRenderPipelineProfiling = false;
+        private bool _enableMainThreadInvokeDiagnostics = false;
+        private bool _enableUILayoutDebugLogging = false;
+        private bool _enableProfilerUdpSending = false;
+        private bool _startExternalProfilerOnStartup = false;
+        private float _codeProfilerDebugOutputMinElapsedMs = 1.0f;
+        private int _codeProfilerStatsThreadIntervalMs = 4;
+        private int _codeProfilerSnapshotIntervalMs = 33;
+        private int _codeProfilerThreadHistoryCapacity = 240;
+        private int _codeProfilerMaxOverflowPerCycle = 2_000;
+        private int _codeProfilerMaxOverflowQueueSize = 50_000;
+        private int _codeProfilerProducerBufferCapacity = 16_384;
+        private int _codeProfilerFpsDropBaselineWindowSamples = 30;
+        private float _codeProfilerFpsDropMinPreviousFps = 10.0f;
+        private float _codeProfilerFpsDropMinDeltaMs = 1.0f;
+        private float _codeProfilerRenderStallThresholdMs = 500.0f;
+        private bool _profilerPanelPaused = false;
+        private bool _profilerPanelSortByTime = false;
+        private float _profilerPanelSmoothingAlpha = 0.0f;
+        private float _profilerPanelUpdateIntervalSeconds = 0.5f;
+        private float _profilerPanelPersistenceSeconds = 5.0f;
+        private int _profilerPanelGraphSampleCount = 120;
+        private float _profilerPanelRootHierarchyMinMs = 0.0f;
+        private float _profilerPanelRootHierarchyMaxMs = 0.0f;
+        private bool _profilerPanelShowCpuTimingRawMsLine = true;
+        private bool _profilerPanelShowCpuTimingSmoothedMsLine = true;
+        private bool _profilerPanelInterpolateCpuTimingGraphs = true;
+        private ProfilerTimingDisplayMode _profilerPanelCpuTimingDisplayMode = ProfilerTimingDisplayMode.Latest;
+        private bool _profilerPanelShowGpuTimingRawMsLine = true;
+        private bool _profilerPanelShowGpuTimingSmoothedMsLine = true;
+        private bool _profilerPanelInterpolateGpuTimingGraphs = true;
+        private ProfilerTimingDisplayMode _profilerPanelGpuTimingDisplayMode = ProfilerTimingDisplayMode.Latest;
+        private bool _profilerPanelShowTree = true;
+        private bool _profilerPanelShowFpsDropSpikes = true;
+        private bool _profilerPanelShowRenderStats = true;
+        private bool _profilerPanelShowGpuPipeline = true;
+        private bool _profilerPanelShowThreadAllocations = true;
+        private bool _profilerPanelShowComponentTimings = true;
+        private bool _profilerPanelShowBvhMetrics = true;
+        private bool _profilerPanelShowJobSystem = true;
+        private bool _profilerPanelShowMainThreadInvokes = true;
+        private EDebugShapePopulationMode _debugShapePopulationMode = EDebugShapePopulationMode.Tasks;
+        private EDebugVisualizerPopulationMode _debugVisualizerPopulationMode = EDebugVisualizerPopulationMode.Tasks;
+        private EDebugPrimitiveBufferFormat _debugPrimitiveBufferFormat = EDebugPrimitiveBufferFormat.Compressed;
+        private int _glSubmitTraceLevel = 0;
+        private bool _hiZCullTrace = XREngine.Rendering.RenderDiagnosticsFlags.HiZCullTrace;
+        private bool _diagVendorUpscale = XREngine.Rendering.RenderDiagnosticsFlags.DiagVendorUpscale;
+        private bool _diagQuadBlit = XREngine.Rendering.RenderDiagnosticsFlags.DiagQuadBlit;
+        private bool _diagPostProcess = XREngine.Rendering.RenderDiagnosticsFlags.DiagPostProcess;
+        private bool _debugPresentClear = XREngine.Rendering.RenderDiagnosticsFlags.DebugPresentClear;
+        private bool _pushSubDataBreakdown = XREngine.Rendering.RenderDiagnosticsFlags.PushSubDataBreakdown;
+        private bool _pushSubDataTrace = XREngine.Rendering.RenderDiagnosticsFlags.PushSubDataTrace;
+        private bool _dispatchTrace = XREngine.Rendering.RenderDiagnosticsFlags.DispatchTrace;
+        private bool _dispatchFinish = XREngine.Rendering.RenderDiagnosticsFlags.DispatchFinish;
+        private bool _uploadStageLogging = XREngine.Rendering.RenderDiagnosticsFlags.UploadStageLogging;
+        private bool _crashBreadcrumbs = XREngine.Rendering.RenderDiagnosticsFlags.CrashBreadcrumbs;
+        private int _deferredDebugView = XREngine.Rendering.RenderDiagnosticsFlags.DeferredDebugView;
+        private bool _diagDeferredLighting = XREngine.Rendering.RenderDiagnosticsFlags.DiagDeferredLighting;
+        private bool _modelRenderDiagEnabled = XREngine.Rendering.RenderDiagnosticsFlags.ModelRenderDiagEnabled;
+        private bool _joltDebugRenderDiagnostics;
+        private bool _directionalShadowAudit = XREngine.Rendering.RenderDiagnosticsFlags.DirectionalShadowAudit;
+        private bool _skinningPrepassDiag = XREngine.Rendering.RenderDiagnosticsFlags.SkinningPrepassDiag;
+        private bool _forceSkinnedUnbounded = XREngine.Rendering.RenderDiagnosticsFlags.ForceSkinnedUnbounded;
+        private bool _skinCullRejectDiag = XREngine.Rendering.RenderDiagnosticsFlags.SkinCullRejectDiag;
+        private string? _firstChanceExceptionFilter = XREngine.Debug.FirstChanceExceptionFilter;
+        private bool _bypassVendorUpscale = XREngine.Rendering.RenderDiagnosticsFlags.BypassVendorUpscale;
+        private bool _glDebug = XREngine.Rendering.RenderDiagnosticsFlags.GLDebug;
+        private bool _forceFullViewport = XREngine.Rendering.RenderDiagnosticsFlags.ForceFullViewport;
+        private bool _forceDebugOpaquePipeline = XREngine.Rendering.RenderDiagnosticsFlags.ForceDebugOpaquePipeline;
+        private bool _gpuHiZDirtyBypass = XREngine.Rendering.RenderDiagnosticsFlags.GpuHiZDirtyBypass;
+        private string? _outputSourceFboOverride = XREngine.Rendering.RenderDiagnosticsFlags.OutputSourceFboOverride;
+        private bool _vkEnableAutoUniformRewrite = XREngine.Rendering.RenderDiagnosticsFlags.VkEnableAutoUniformRewrite;
+        private bool _vkDumpShaderOnError = XREngine.Rendering.RenderDiagnosticsFlags.VkDumpShaderOnError;
+        private bool _shaderSourceOptimizerEnabled = XREngine.Rendering.RenderDiagnosticsFlags.ShaderSourceOptimizerEnabled;
+        private bool _vkTracePipeCreate = XREngine.Rendering.RenderDiagnosticsFlags.VkTracePipeCreate;
+        private bool _vkTraceSwapDraw = XREngine.Rendering.RenderDiagnosticsFlags.VkTraceSwapDraw;
+        private bool _vkTraceDraw = XREngine.Rendering.RenderDiagnosticsFlags.VkTraceDraw;
+        private bool _vkSkipUiPipeline = XREngine.Rendering.RenderDiagnosticsFlags.VkSkipUiPipeline;
+        private bool _vkSkipUiBatchText = XREngine.Rendering.RenderDiagnosticsFlags.VkSkipUiBatchText;
+        private bool _vkSkipOcclusionQueryOps = XREngine.Rendering.RenderDiagnosticsFlags.VkSkipOcclusionQueryOps;
+        private bool _vkForceSwapchainMagenta = XREngine.Rendering.RenderDiagnosticsFlags.VkForceSwapchainMagenta;
+        private bool _vkSkipImGui = XREngine.Rendering.RenderDiagnosticsFlags.VkSkipImGui;
+        private bool _vkAsyncTextureUpload = XREngine.Rendering.RenderDiagnosticsFlags.VkAsyncTextureUpload;
+        private bool _vkTextureUploadTransferQueue = XREngine.Rendering.RenderDiagnosticsFlags.VkTextureUploadTransferQueue;
+        private bool _vkTextureUploadPrepWorker = XREngine.Rendering.RenderDiagnosticsFlags.VkTextureUploadPrepWorker;
+        private double _vkTextureUploadPrepBudgetMilliseconds = XREngine.Rendering.RenderDiagnosticsFlags.VkTextureUploadPrepBudgetMilliseconds;
+        private bool _vkTextureUploadTrace = XREngine.Rendering.RenderDiagnosticsFlags.VkTextureUploadTrace;
+        private bool _vkProgressiveTextureUpload = XREngine.Rendering.RenderDiagnosticsFlags.VkProgressiveTextureUpload;
+        private bool _vkImportedTexturePreviewFreeze = XREngine.Rendering.RenderDiagnosticsFlags.VkImportedTexturePreviewFreeze;
+        private string? _vkDiagnosticPreset = XREnvironment.GetValue(XREngineEnvironmentVariables.VulkanDiagnosticPreset);
+        private string? _vkDiagnosticFlags = XREnvironment.GetValue(XREngineEnvironmentVariables.VulkanDiagnosticFlags);
+
+        private static int NormalizeProfilerProducerBufferCapacity(int value)
+        {
+            int normalized = Math.Clamp(value, 2, 1 << 20);
+            int capacity = 1;
+            while (capacity < normalized)
+                capacity <<= 1;
+            return capacity;
+        }
+
+        [Category("Debug")]
+        [DisplayName("Render 3D Mesh Bounds")]
+        [Description("If true, the engine will render the bounds of each 3D mesh.")]
+        public bool RenderMesh3DBounds
+        {
+            get => _renderMesh3DBounds;
+            set => SetField(ref _renderMesh3DBounds, value);
+        }
+
+        [Category("Debug")]
+        [DisplayName("Render 2D Mesh Bounds")]
+        [Description("If true, the engine will render the bounds of each UI mesh.")]
+        public bool RenderMesh2DBounds
+        {
+            get => _renderMesh2DBounds;
+            set => SetField(ref _renderMesh2DBounds, value);
+        }
+
+        [Category("Debug")]
+        [DisplayName("Render Transform Debug Info")]
+        [Description("If true, the engine will render all transforms in the scene as lines and points.")]
+        public bool RenderTransformDebugInfo
+        {
+            get => _renderTransformDebugInfo;
+            set => SetField(ref _renderTransformDebugInfo, value);
+        }
+
+        [Category("Debug")]
+        [DisplayName("Render UI Transform Coordinate")]
+        [Description("If true, the engine will render the coordinate system of UI transforms.")]
+        public bool RenderUITransformCoordinate
+        {
+            get => _renderUITransformCoordinate;
+            set => SetField(ref _renderUITransformCoordinate, value);
+        }
+
+        [Category("Debug")]
+        [DisplayName("Render Transform Lines")]
+        [Description("If true, the engine will render all transforms in the scene as lines.")]
+        public bool RenderTransformLines
+        {
+            get => _renderTransformLines;
+            set => SetField(ref _renderTransformLines, value);
+        }
+
+        [Category("Debug")]
+        [DisplayName("Render Transform Points")]
+        [Description("If true, the engine will render all transforms in the scene as points.")]
+        public bool RenderTransformPoints
+        {
+            get => _renderTransformPoints;
+            set => SetField(ref _renderTransformPoints, value);
+        }
+
+        [Category("Debug")]
+        [DisplayName("Render Transform Capsules")]
+        [Description("If true, the engine will render capsules around transforms for debugging purposes.")]
+        public bool RenderTransformCapsules
+        {
+            get => _renderTransformCapsules;
+            set => SetField(ref _renderTransformCapsules, value);
+        }
+
+        [Category("Debug")]
+        [DisplayName("Visualize Directional Light Volumes")]
+        [Description("If true, the engine will visualize the volumes of directional lights.")]
+        public bool VisualizeDirectionalLightVolumes
+        {
+            get => _visualizeDirectionalLightVolumes;
+            set => SetField(ref _visualizeDirectionalLightVolumes, value);
+        }
+
+        [Category("Debug")]
+        [DisplayName("Preview 3D World Octree")]
+        [Description("If true, the engine will render the octree for the 3D world.")]
+        public bool Preview3DWorldOctree
+        {
+            get => _preview3DWorldOctree;
+            set => SetField(ref _preview3DWorldOctree, value);
+        }
+
+        [Category("Debug")]
+        [DisplayName("Preview 2D World Quadtree")]
+        [Description("If true, the engine will render the quadtree for the 2D world.")]
+        public bool Preview2DWorldQuadtree
+        {
+            get => _preview2DWorldQuadtree;
+            set => SetField(ref _preview2DWorldQuadtree, value);
+        }
+
+        [Category("Debug")]
+        [DisplayName("Preview Traces")]
+        [Description("If true, the engine will render physics traces.")]
+        public bool PreviewTraces
+        {
+            get => _previewTraces;
+            set => SetField(ref _previewTraces, value);
+        }
+
+        [Category("Debug")]
+        [DisplayName("Visualize Transform ID")]
+        [Description("If true, the engine will visualize the per-draw TransformId buffer as a false-color output.")]
+        public bool VisualizeTransformId
+        {
+            get => _visualizeTransformId;
+            set => SetField(ref _visualizeTransformId, value);
+        }
+
+        [Category("Debug")]
+        [DisplayName("Transparency Mode Overlay")]
+        [Description("If true, renders a color-coded overlay showing each mesh's explicit transparency mode.")]
+        public bool VisualizeTransparencyModeOverlay
+        {
+            get => _visualizeTransparencyModeOverlay;
+            set => SetField(ref _visualizeTransparencyModeOverlay, value);
+        }
+
+        [Category("Debug")]
+        [DisplayName("Transparency Classification Overlay")]
+        [Description("If true, renders a masked-vs-blended classification overlay for visible meshes.")]
+        public bool VisualizeTransparencyClassificationOverlay
+        {
+            get => _visualizeTransparencyClassificationOverlay;
+            set => SetField(ref _visualizeTransparencyClassificationOverlay, value);
+        }
+
+        [Category("Debug")]
+        [DisplayName("Transparency Accumulation Debug")]
+        [Description("If true, shows the weighted blended OIT accumulation buffer.")]
+        public bool VisualizeTransparencyAccumulation
+        {
+            get => _visualizeTransparencyAccumulation;
+            set => SetField(ref _visualizeTransparencyAccumulation, value);
+        }
+
+        [Category("Debug")]
+        [DisplayName("Transparency Revealage Debug")]
+        [Description("If true, shows the weighted blended OIT revealage buffer.")]
+        public bool VisualizeTransparencyRevealage
+        {
+            get => _visualizeTransparencyRevealage;
+            set => SetField(ref _visualizeTransparencyRevealage, value);
+        }
+
+        [Category("Debug")]
+        [DisplayName("Transparency Overdraw Heatmap")]
+        [Description("If true, visualizes weighted blended transparency overdraw as a heatmap.")]
+        public bool VisualizeTransparencyOverdrawHeatmap
+        {
+            get => _visualizeTransparencyOverdrawHeatmap;
+            set => SetField(ref _visualizeTransparencyOverdrawHeatmap, value);
+        }
+
+        [Category("Debug")]
+        [DisplayName("Enable Exact Transparency")]
+        [Description("If true, exact transparency prototype paths such as per-pixel linked lists and depth peeling are enabled. When false, exact transparency modes fall back to weighted blended OIT.")]
+        public bool EnableExactTransparencyTechniques
+        {
+            get => _enableExactTransparencyTechniques;
+            set => SetField(ref _enableExactTransparencyTechniques, value);
+        }
+
+        [Category("Debug")]
+        [DisplayName("PPLL Fragment Count Debug")]
+        [Description("If true, visualizes per-pixel linked-list fragment counts as a heatmap.")]
+        public bool VisualizePerPixelLinkedListFragments
+        {
+            get => _visualizePerPixelLinkedListFragments;
+            set => SetField(ref _visualizePerPixelLinkedListFragments, value);
+        }
+
+        [Category("Debug")]
+        [DisplayName("Depth Peeling Layer Debug")]
+        [Description("If true, shows the currently selected depth-peeling layer instead of the resolved scene.")]
+        public bool VisualizeDepthPeelingLayer
+        {
+            get => _visualizeDepthPeelingLayer;
+            set => SetField(ref _visualizeDepthPeelingLayer, value);
+        }
+
+        [Category("Debug")]
+        [DisplayName("Depth Peeling Preview Layer")]
+        [Description("Which peeled transparency layer should be displayed when depth-peeling debug visualization is enabled.")]
+        public int DepthPeelingPreviewLayer
+        {
+            get => _depthPeelingPreviewLayer;
+            set => SetField(ref _depthPeelingPreviewLayer, Math.Max(0, value));
+        }
+
+        [Category("Debug")]
+        [DisplayName("Depth Peeling Max Layers")]
+        [Description("Maximum number of peeled transparency layers to composite for the exact depth-peeling prototype.")]
+        public int DepthPeelingMaxLayers
+        {
+            get => _depthPeelingMaxLayers;
+            set => SetField(ref _depthPeelingMaxLayers, Math.Clamp(value, 1, 8));
+        }
+
+        [Category("Debug")]
+        [DisplayName("Render Culling Volumes")]
+        [Description("If true, culling volumes will be rendered for debugging purposes.")]
+        public bool RenderCullingVolumes
+        {
+            get => _renderCullingVolumes;
+            set => SetField(ref _renderCullingVolumes, value);
+        }
+
+        [Category("Debug")]
+        [DisplayName("Debug Text Max Lifespan")]
+        [Description("How long a cache object for text rendering should exist without receiving any further updates.")]
+        public float DebugTextMaxLifespan
+        {
+            get => _debugTextMaxLifespan;
+            set => SetField(ref _debugTextMaxLifespan, value);
+        }
+
+        [Category("Debug")]
+        [DisplayName("Debug Point Size")]
+        [Description("Camera-relative size for RuntimeEngine.Rendering.Debug point primitives.")]
+        public float DebugPointSize
+        {
+            get => _debugPointSize;
+            set => SetField(ref _debugPointSize, Math.Clamp(value, 0.0001f, 0.1f));
+        }
+
+        [Category("Debug")]
+        [DisplayName("Debug Line Width")]
+        [Description("Screen-relative width for RuntimeEngine.Rendering.Debug line primitives.")]
+        public float DebugLineWidth
+        {
+            get => _debugLineWidth;
+            set => SetField(ref _debugLineWidth, Math.Clamp(value, 0.0001f, 0.05f));
+        }
+
+        [Category("Debug")]
+        [DisplayName("Render Light Probe Tetrahedra")]
+        [Description("If true, renders light probe tetrahedra for visualization.")]
+        public bool RenderLightProbeTetrahedra
+        {
+            get => _renderLightProbeTetrahedra;
+            set => SetField(ref _renderLightProbeTetrahedra, value);
+        }
+
+        [Category("Debug")]
+        [DisplayName("Use Debug Opaque Pipeline")]
+        [Description("Whether to use the debug opaque render pipeline.")]
+        public bool UseDebugOpaquePipeline
+        {
+            get => _useDebugOpaquePipeline;
+            set => SetField(ref _useDebugOpaquePipeline, value);
+        }
+
+        [Category("GPU Rendering")]
+        [DisplayName("Force GPU Passthrough Culling")]
+        [Description("When true, GPU culling uses passthrough mode (copies all commands without frustum culling). When false, uses actual GPU frustum culling.")]
+        public bool ForceGpuPassthroughCulling
+        {
+            get => _forceGpuPassthroughCulling;
+            set => SetField(ref _forceGpuPassthroughCulling, value);
+        }
+
+        [Category("GPU Rendering")]
+        [DisplayName("Allow GPU CPU Fallback")]
+        [Description("When true, allows CPU fallback rendering when GPU indirect rendering produces zero visible commands. Useful for debugging GPU rendering issues.")]
+        public bool AllowGpuCpuFallback
+        {
+            get => _allowGpuCpuFallback;
+            set => SetField(ref _allowGpuCpuFallback, value);
+        }
+
+        [Category("GPU Rendering")]
+        [DisplayName("Enable Zero-Readback Material Scatter")]
+        [Description("When true, enables GPU scatter-based material dispatch that eliminates CPU readback of GPU batch ranges during rendering.")]
+        public bool EnableZeroReadbackMaterialScatter
+        {
+            get => _enableZeroReadbackMaterialScatter;
+            set => SetField(ref _enableZeroReadbackMaterialScatter, value);
+        }
+
+        [Category("GPU Rendering")]
+        [DisplayName("Zero-Readback Material Draw Path")]
+        [Description("Selects the material draw path used when zero-readback GPU mesh submission is active.")]
+        public EZeroReadbackMaterialDrawPath ZeroReadbackMaterialDrawPath
+        {
+            get => _zeroReadbackMaterialDrawPath;
+            set => SetField(ref _zeroReadbackMaterialDrawPath, value);
+        }
+
+        [Category("Profiling")]
+        [DisplayName("Enable Thread Allocation Tracking")]
+        [Description("Tracks GC allocations per engine thread/tick using GC.GetAllocatedBytesForCurrentThread(). Used by the Profiler panel.")]
+        [DefaultValue(true)]
+        public bool EnableThreadAllocationTracking
+        {
+            get
+            {
+#if XRE_PUBLISHED
+                return false;
+#else
+                return _enableThreadAllocationTracking;
+#endif
+            }
+            set
+            {
+#if XRE_PUBLISHED
+                SetField(ref _enableThreadAllocationTracking, false);
+#else
+                SetField(ref _enableThreadAllocationTracking, value);
+#endif
+            }
+        }
+
+        [Category("Diagnostics")]
+        [DisplayName("GL Submit Trace Level")]
+        [Description("Diagnostic-only WriteThrough log of every OpenGL texture submit (storage, upload, sparse, destroy). 0=off, 1=basic, 2=verbose (per-row chunks). Output: Build/Logs/gl-submit-trace.log. Use to identify the last GL call before a driver fastfail/crash. High overhead at level 2.")]
+        [EnvironmentVariablePreference(XREngineEnvironmentVariables.GlSubmitTrace)]
+        [DefaultValue(0)]
+        public int GLSubmitTraceLevel
+        {
+            get => _glSubmitTraceLevel;
+            set
+            {
+                int clamped = value < 0 ? 0 : (value > 2 ? 2 : value);
+                if (SetField(ref _glSubmitTraceLevel, clamped))
+                    XREngine.Rendering.GLSubmitTracer.SetLevel(clamped);
+            }
+        }
+
+        [Category("Diagnostics")]
+        [DisplayName("HiZ Cull Trace")]
+        [Description("Dump every GPU BVH/HiZ overflow with full capacity context (primitive/node counts, computed capacities, build mode). Use to distinguish real capacity exhaustion from stage-3 malformed-tree detection in bvh_build.comp. Seed env: XRE_HIZ_CULL_TRACE.")]
+        [EnvironmentVariablePreference(XREngineEnvironmentVariables.HizCullTrace)]
+        [DefaultValue(false)]
+        public bool HiZCullTrace
+        {
+            get => _hiZCullTrace;
+            set
+            {
+                if (SetField(ref _hiZCullTrace, value))
+                    XREngine.Rendering.RenderDiagnosticsFlags.SetHiZCullTrace(value);
+            }
+        }
+
+        [Category("Diagnostics")]
+        [DisplayName("Vendor Upscale Diag")]
+        [Description("Log every vendor upscale resolve/blit decision (source/destination FBO, fallback path, motion/depth wiring). Seed env: XRE_DIAG_VENDOR_UPSCALE.")]
+        [EnvironmentVariablePreference(XREngineEnvironmentVariables.DiagVendorUpscale)]
+        [DefaultValue(false)]
+        public bool DiagVendorUpscale
+        {
+            get => _diagVendorUpscale;
+            set
+            {
+                if (SetField(ref _diagVendorUpscale, value))
+                    XREngine.Rendering.RenderDiagnosticsFlags.SetDiagVendorUpscale(value);
+            }
+        }
+
+        [Category("Diagnostics")]
+        [DisplayName("Quad Blit Diag")]
+        [Description("Log every quad-blit pass (source/destination FBOs, viewport, material). Useful when the present chain renders black or to the wrong target. Seed env: XRE_DIAG_QUAD_BLIT.")]
+        [EnvironmentVariablePreference(XREngineEnvironmentVariables.DiagQuadBlit)]
+        [DefaultValue(false)]
+        public bool DiagQuadBlit
+        {
+            get => _diagQuadBlit;
+            set
+            {
+                if (SetField(ref _diagQuadBlit, value))
+                    XREngine.Rendering.RenderDiagnosticsFlags.SetDiagQuadBlit(value);
+            }
+        }
+
+        [Category("Diagnostics")]
+        [DisplayName("Post-Process Diag")]
+        [Description("Log post-process uniform and descriptor diagnostics. Seed env: XRE_DIAG_POSTPROCESS.")]
+        [EnvironmentVariablePreference(XREngineEnvironmentVariables.DiagPostProcess)]
+        [DefaultValue(false)]
+        public bool DiagPostProcess
+        {
+            get => _diagPostProcess;
+            set
+            {
+                if (SetField(ref _diagPostProcess, value))
+                    XREngine.Rendering.RenderDiagnosticsFlags.SetDiagPostProcess(value);
+            }
+        }
+
+        [Category("Diagnostics")]
+        [DisplayName("Debug Present Clear")]
+        [Description("Clear the default framebuffer to magenta and skip the final blit. If the window stays black, present-path FBO binding is broken; if it turns magenta but the scene never appears, the composite isn't drawing. Seed env: XRE_DEBUG_PRESENT_CLEAR.")]
+        [EnvironmentVariablePreference(XREngineEnvironmentVariables.DebugPresentClear)]
+        [DefaultValue(false)]
+        public bool DebugPresentClear
+        {
+            get => _debugPresentClear;
+            set
+            {
+                if (SetField(ref _debugPresentClear, value))
+                    XREngine.Rendering.RenderDiagnosticsFlags.SetDebugPresentClear(value);
+            }
+        }
+
+        [Category("Diagnostics")]
+        [DisplayName("PushSubData Breakdown")]
+        [Description("~1Hz per-buffer aggregate dump of PushSubData call count and bytes to log_rendering.txt. Use to attribute render-thread PushSubData queue floods. Seed env: XRE_PUSHSUBDATA_BREAKDOWN.")]
+        [EnvironmentVariablePreference(XREngineEnvironmentVariables.PushSubDataBreakdown)]
+        [DefaultValue(false)]
+        public bool PushSubDataBreakdown
+        {
+            get => _pushSubDataBreakdown;
+            set
+            {
+                if (SetField(ref _pushSubDataBreakdown, value))
+                    XREngine.Rendering.RenderDiagnosticsFlags.SetPushSubDataBreakdown(value);
+            }
+        }
+
+        [Category("Diagnostics")]
+        [DisplayName("PushSubData Trace")]
+        [Description("Per-call AutoFlush trace of every PushSubData submission to Build/Logs/pushsubdata-trace.log. Entries survive a process fail-fast (e.g. NVIDIA driver 0xc0000409). Heavy overhead \u2014 diagnostic only. Seed env: XRE_PUSHSUBDATA_TRACE.")]
+        [EnvironmentVariablePreference(XREngineEnvironmentVariables.PushSubDataTrace)]
+        [DefaultValue(false)]
+        public bool PushSubDataTrace
+        {
+            get => _pushSubDataTrace;
+            set
+            {
+                if (SetField(ref _pushSubDataTrace, value))
+                    XREngine.Rendering.RenderDiagnosticsFlags.SetPushSubDataTrace(value);
+            }
+        }
+
+        [Category("Diagnostics")]
+        [DisplayName("Dispatch Trace")]
+        [Description("Per-dispatch compute shader trace to Build/Logs/dispatch-trace.log (program, workgroup, GL error). Seed env: XRE_DISPATCH_TRACE.")]
+        [EnvironmentVariablePreference(XREngineEnvironmentVariables.DispatchTrace)]
+        [DefaultValue(false)]
+        public bool DispatchTrace
+        {
+            get => _dispatchTrace;
+            set
+            {
+                if (SetField(ref _dispatchTrace, value))
+                    XREngine.Rendering.RenderDiagnosticsFlags.SetDispatchTrace(value);
+            }
+        }
+
+        [Category("Diagnostics")]
+        [DisplayName("Dispatch Finish")]
+        [Description("Issue glFinish after every compute dispatch to pinpoint TDRs / hangs to the exact shader. Severe performance cost. Seed env: XRE_DISPATCH_FINISH.")]
+        [EnvironmentVariablePreference(XREngineEnvironmentVariables.DispatchFinish)]
+        [DefaultValue(false)]
+        public bool DispatchFinish
+        {
+            get => _dispatchFinish;
+            set
+            {
+                if (SetField(ref _dispatchFinish, value))
+                    XREngine.Rendering.RenderDiagnosticsFlags.SetDispatchFinish(value);
+            }
+        }
+
+        [Category("Diagnostics")]
+        [DisplayName("Upload Stage Logging")]
+        [Description("1Hz upload-pipeline per-stage timing summary to Build/Logs/upload-stage-stats.log. Bypasses the engine profiler so nested BeginTiming scopes don't hide cumulative cost. Auto-enabled when a debugger is attached. Seed env: XRE_UPLOAD_STAGE_LOGGING.")]
+        [EnvironmentVariablePreference(XREngineEnvironmentVariables.UploadStageLogging)]
+        [DefaultValue(false)]
+        public bool UploadStageLogging
+        {
+            get => _uploadStageLogging;
+            set
+            {
+                if (SetField(ref _uploadStageLogging, value))
+                    XREngine.Rendering.RenderDiagnosticsFlags.SetUploadStageLogging(value);
+            }
+        }
+
+        [Category("Diagnostics")]
+        [DisplayName("Crash Breadcrumbs")]
+        [Description("Synchronous Console.Error / Trace [CRUMB] writes plus glFinish around suspect GL calls. The last [CRUMB] line on stderr before a fastfail identifies which GL call killed the driver. Heavy \u2014 diagnostic only. Seed env: XRE_CRASH_BREADCRUMBS.")]
+        [EnvironmentVariablePreference(XREngineEnvironmentVariables.CrashBreadcrumbs)]
+        [DefaultValue(false)]
+        public bool CrashBreadcrumbs
+        {
+            get => _crashBreadcrumbs;
+            set
+            {
+                if (SetField(ref _crashBreadcrumbs, value))
+                    XREngine.Rendering.RenderDiagnosticsFlags.SetCrashBreadcrumbs(value);
+            }
+        }
+
+        [Category("Diagnostics")]
+        [DisplayName("Deferred Debug View")]
+        [Description("Deferred-lighting debug visualization for newly-created DefaultRenderPipeline instances. 0=Disabled, 1=RawAlbedo, 2=DirectLighting, 3=Rmse (vs reference), 4=Normal, 5=Depth, 6=DirectionalShadowFactor, 7=DirectionalShadowReceiverDepth, 8=DirectionalShadowSampleDepth, 9=DirectionalShadowSingleTapLit, 10=AmbientOcclusion, 11/12=DirectionalShadowLocalUvX/Y, 13/14=DirectionalShadowAtlasUvX/Y, 15=DirectionalShadowCurrentMatrixUvX, 16=DirectionalShadowRenderedMatrixUvX, 17=DirectionalShadowStaleAge, 18=DirectionalShadowStaleUvValidity. Existing pipelines keep their per-instance value; change takes effect on the next pipeline construction. Seed env: XRE_DEFERRED_DEBUG.")]
+        [EnvironmentVariablePreference(XREngineEnvironmentVariables.DeferredDebug)]
+        [DefaultValue(0)]
+        public int DeferredDebugView
+        {
+            get => _deferredDebugView;
+            set
+            {
+                int clamped = value < 0 ? 0 : (value > 18 ? 18 : value);
+                if (SetField(ref _deferredDebugView, clamped))
+                    XREngine.Rendering.RenderDiagnosticsFlags.SetDeferredDebugView(clamped);
+            }
+        }
+
+        [Category("Diagnostics (Vulkan)")]
+        [DisplayName("Deferred Lighting Diagnostics")]
+        [Description("Log Vulkan deferred-lighting FBO creation, texture binding, clear/load-op, and resource aliasing diagnostics to vulkan-deferred-lighting-diagnostics.log. Seed env: XRE_DIAG_DEFERRED_LIGHTING.")]
+        [EnvironmentVariablePreference(XREngineEnvironmentVariables.DiagDeferredLighting)]
+        [DefaultValue(false)]
+        public bool DiagDeferredLighting
+        {
+            get => _diagDeferredLighting;
+            set
+            {
+                if (SetField(ref _diagDeferredLighting, value))
+                    XREngine.Rendering.RenderDiagnosticsFlags.SetDiagDeferredLighting(value);
+            }
+        }
+
+        [Category("Diagnostics")]
+        [DisplayName("Model Render Diagnostics")]
+        [Description("Master switch for ModelRenderDiagnostics tracing (component publish, registration, visibility, command-list, and rejection logs). Defaults off; enable only while diagnosing model visibility/collection issues. Seed env: XRE_DEBUG_MODEL_RENDER=1 or XRE_MODEL_RENDER_DIAG=1.")]
+        [EnvironmentVariablePreference(XREngineEnvironmentVariables.DebugModelRender)]
+        [EnvironmentVariablePreference(XREngineEnvironmentVariables.ModelRenderDiag)]
+        [DefaultValue(false)]
+        public bool ModelRenderDiagEnabled
+        {
+            get => _modelRenderDiagEnabled;
+            set
+            {
+                if (SetField(ref _modelRenderDiagEnabled, value))
+                    XREngine.Rendering.RenderDiagnosticsFlags.SetModelRenderDiagEnabled(value);
+            }
+        }
+
+        [Category("Diagnostics")]
+        [DisplayName("Jolt Debug Render Diagnostics")]
+        [Description("Log Jolt scene object counts whenever physics debug rendering runs. Defaults off; enable only while diagnosing Jolt scene population.")]
+        [DefaultValue(false)]
+        public bool JoltDebugRenderDiagnostics
+        {
+            get => _joltDebugRenderDiagnostics;
+            set => SetField(ref _joltDebugRenderDiagnostics, value);
+        }
+
+        [Category("Diagnostics")]
+        [DisplayName("Directional Shadow Audit")]
+        [Description("Verbose directional shadow atlas/cascade audit tracing. Defaults off; enable only while diagnosing shadow atlas or cascade binding issues. Seed env: XRE_DIRECTIONAL_SHADOW_AUDIT=1 or XRE_SHADOW_AUDIT=1.")]
+        [EnvironmentVariablePreference(XREngineEnvironmentVariables.DirectionalShadowAudit)]
+        [EnvironmentVariablePreference(XREngineEnvironmentVariables.ShadowAudit)]
+        [DefaultValue(false)]
+        public bool DirectionalShadowAudit
+        {
+            get => _directionalShadowAudit;
+            set
+            {
+                if (SetField(ref _directionalShadowAudit, value))
+                    XREngine.Rendering.RenderDiagnosticsFlags.SetDirectionalShadowAudit(value);
+            }
+        }
+
+        [Category("Diagnostics")]
+        [DisplayName("Compute Skinning Prepass Diagnostics")]
+        [Description("Compute skinning pre-pass diagnostics: per-dispatch GPU output/palette readbacks ([SkinReadback], [SkinPaletteGpu]), settle/seed/residency traces ([SkinSettle], [SkinResidency]), and bone-palette order verification. Heavy (blocking GPU readbacks each dispatch) - diagnostic only. Seed env: XRE_SKINNING_PREPASS_DIAG=1.")]
+        [EnvironmentVariablePreference(XREngineEnvironmentVariables.SkinningPrepassDiag)]
+        [DefaultValue(false)]
+        public bool SkinningPrepassDiag
+        {
+            get => _skinningPrepassDiag;
+            set
+            {
+                if (SetField(ref _skinningPrepassDiag, value))
+                    XREngine.Rendering.RenderDiagnosticsFlags.SetSkinningPrepassDiag(value);
+            }
+        }
+
+        [Category("Diagnostics")]
+        [DisplayName("Force Skinned Unbounded")]
+        [Description("Force skinned/blendshape mesh commands visible by suppressing scene and command-level proxy bounds. Diagnostic only. Seed env: XRE_FORCE_SKINNED_UNBOUNDED=1.")]
+        [EnvironmentVariablePreference(XREngineEnvironmentVariables.ForceSkinnedUnbounded)]
+        [DefaultValue(false)]
+        public bool ForceSkinnedUnbounded
+        {
+            get => _forceSkinnedUnbounded;
+            set
+            {
+                if (SetField(ref _forceSkinnedUnbounded, value))
+                    XREngine.Rendering.RenderDiagnosticsFlags.SetForceSkinnedUnbounded(value);
+            }
+        }
+
+        [Category("Diagnostics")]
+        [DisplayName("Skinned Cull Reject Diagnostics")]
+        [Description("Stage-isolation logging for skinned-mesh CPU culling. Emits a [SkinCullReject] line whenever a skinned renderable collected last generation is dropped this generation, attributing the rejecting stage (bvh-node = pruned before narrow phase, bone-override = narrow phase returned false, downstream = passed scene culling but no command collected). Diagnostic only. Seed env: XRE_SKIN_CULL_REJECT_DIAG=1.")]
+        [EnvironmentVariablePreference(XREngineEnvironmentVariables.SkinCullRejectDiag)]
+        [DefaultValue(false)]
+        public bool SkinCullRejectDiag
+        {
+            get => _skinCullRejectDiag;
+            set
+            {
+                if (SetField(ref _skinCullRejectDiag, value))
+                    XREngine.Rendering.RenderDiagnosticsFlags.SetSkinCullRejectDiag(value);
+            }
+        }
+
+        [Category("Diagnostics")]
+        [DisplayName("First-Chance Exception Filter")]
+        [Description("Substring (case-insensitive) matched against first-chance exception type names. Matching exceptions are rate-limited and traced. Use '*' to match all. Empty disables filter-based tracing (InvalidOperationException and ArgumentException are always traced). Seed env: XRE_FIRST_CHANCE_EXCEPTIONS.")]
+        [EnvironmentVariablePreference(XREngineEnvironmentVariables.FirstChanceExceptions)]
+        [DefaultValue(null)]
+        public string? FirstChanceExceptionFilter
+        {
+            get => _firstChanceExceptionFilter;
+            set
+            {
+                if (SetField(ref _firstChanceExceptionFilter, value))
+                    XREngine.Debug.FirstChanceExceptionFilter = value;
+            }
+        }
+
+        [Category("Diagnostics")]
+        [DisplayName("Bypass Vendor Upscale")]
+        [Description("Skip vendor upscaler resolve/blit and route final present from the raw scene FBO. Takes effect on the next pipeline (re)build. Seed env: XRE_BYPASS_VENDOR_UPSCALE.")]
+        [EnvironmentVariablePreference(XREngineEnvironmentVariables.BypassVendorUpscale)]
+        [DefaultValue(false)]
+        public bool BypassVendorUpscale
+        {
+            get => _bypassVendorUpscale;
+            set
+            {
+                if (SetField(ref _bypassVendorUpscale, value))
+                    XREngine.Rendering.RenderDiagnosticsFlags.SetBypassVendorUpscale(value);
+            }
+        }
+
+        [Category("Diagnostics")]
+        [DisplayName("GL Debug")]
+        [Description("Master GL debug toggle: requests a debug GL context at startup, enables indirect-draw parameter dumps, and FBO attach/detach trace logs. Context-flag change only takes effect on engine restart; indirect-draw/attach logs respond immediately. Heavy \u2014 diagnostic only. Seed env: XRE_GL_DEBUG.")]
+        [EnvironmentVariablePreference(XREngineEnvironmentVariables.GlDebug)]
+        [DefaultValue(false)]
+        public bool GLDebug
+        {
+            get => _glDebug;
+            set
+            {
+                if (SetField(ref _glDebug, value))
+                    XREngine.Rendering.RenderDiagnosticsFlags.SetGLDebug(value);
+            }
+        }
+
+        [Category("Diagnostics")]
+        [DisplayName("Force Full Viewport")]
+        [Description("Force viewport rendering to cover the entire window, ignoring scene-panel sub-rects. Useful when isolating rendering issues from editor panel layout. Seed env: XRE_FORCE_FULL_VIEWPORT.")]
+        [EnvironmentVariablePreference(XREngineEnvironmentVariables.ForceFullViewport)]
+        [DefaultValue(false)]
+        public bool ForceFullViewport
+        {
+            get => _forceFullViewport;
+            set
+            {
+                if (SetField(ref _forceFullViewport, value))
+                    XREngine.Rendering.RenderDiagnosticsFlags.SetForceFullViewport(value);
+            }
+        }
+
+        [Category("Diagnostics")]
+        [DisplayName("Force Debug Opaque Pipeline")]
+        [Description("Substitute a minimal forward-opaque debug pipeline for the default render pipeline. Useful for isolating which pipeline stage is faulting. Takes effect when the viewport's pipeline is (re)created. Seed env: XRE_FORCE_DEBUG_OPAQUE_PIPELINE.")]
+        [EnvironmentVariablePreference(XREngineEnvironmentVariables.ForceDebugOpaquePipeline)]
+        [DefaultValue(false)]
+        public bool ForceDebugOpaquePipeline
+        {
+            get => _forceDebugOpaquePipeline;
+            set
+            {
+                if (SetField(ref _forceDebugOpaquePipeline, value))
+                    XREngine.Rendering.RenderDiagnosticsFlags.SetForceDebugOpaquePipeline(value);
+            }
+        }
+
+        [Category("Diagnostics")]
+        [DisplayName("GPU HiZ Dirty Bypass")]
+        [Description("GPU culling HiZ dirty-rect bypass path. On by default; turn off to route GPU culling through the legacy dirty-range path (slower, but useful when diagnosing HiZ regressions). Seed env: XRE_GPU_HIZ_DIRTY_BYPASS (0/false disables).")]
+        [EnvironmentVariablePreference(XREngineEnvironmentVariables.GpuHizDirtyBypass)]
+        [DefaultValue(true)]
+        public bool GpuHiZDirtyBypass
+        {
+            get => _gpuHiZDirtyBypass;
+            set
+            {
+                if (SetField(ref _gpuHiZDirtyBypass, value))
+                    XREngine.Rendering.RenderDiagnosticsFlags.SetGpuHiZDirtyBypass(value);
+            }
+        }
+
+        [Category("Diagnostics")]
+        [DisplayName("Output Source FBO Override")]
+        [Description("Optional internal FBO name to use as the final present source (debug only). Empty/null lets the pipeline pick by its normal rules. Seed env: XRE_OUTPUT_SOURCE_FBO.")]
+        [EnvironmentVariablePreference(XREngineEnvironmentVariables.OutputSourceFbo)]
+        [DefaultValue(null)]
+        public string? OutputSourceFboOverride
+        {
+            get => _outputSourceFboOverride;
+            set
+            {
+                if (SetField(ref _outputSourceFboOverride, value))
+                    XREngine.Rendering.RenderDiagnosticsFlags.SetOutputSourceFboOverride(value);
+            }
+        }
+
+        [Category("Diagnostics (Vulkan)")]
+        [DisplayName("Auto-Uniform Rewrite")]
+        [Description("Vulkan SPIR-V auto-uniform-rewrite pass. On by default; disable to fall back to the legacy opaque-uniform path. Seed env: XRE_VK_ENABLE_AUTO_UNIFORM_REWRITE=0 disables.")]
+        [EnvironmentVariablePreference(XREngineEnvironmentVariables.VkEnableAutoUniformRewrite)]
+        [DefaultValue(true)]
+        public bool VkEnableAutoUniformRewrite
+        {
+            get => _vkEnableAutoUniformRewrite;
+            set
+            {
+                if (SetField(ref _vkEnableAutoUniformRewrite, value))
+                    XREngine.Rendering.RenderDiagnosticsFlags.SetVkEnableAutoUniformRewrite(value);
+            }
+        }
+
+        [Category("Diagnostics (Vulkan)")]
+        [DisplayName("Dump Shader On Error")]
+        [Description("On Vulkan shader compile failure, append a source preview to the exception message. Helpful when the shader cannot be located on disk. Seed env: XRE_VK_DUMP_SHADER_ON_ERROR.")]
+        [EnvironmentVariablePreference(XREngineEnvironmentVariables.VkDumpShaderOnError)]
+        [DefaultValue(false)]
+        public bool VkDumpShaderOnError
+        {
+            get => _vkDumpShaderOnError;
+            set
+            {
+                if (SetField(ref _vkDumpShaderOnError, value))
+                    XREngine.Rendering.RenderDiagnosticsFlags.SetVkDumpShaderOnError(value);
+            }
+        }
+
+        [Category("Diagnostics (Vulkan)")]
+        [DisplayName("Shader Source Optimizer")]
+        [Description("Enable resolved shader-source optimizer passes. Disable only when isolating shader preprocessor/optimizer bugs. Seed env: XRE_SHADER_SOURCE_OPTIMIZER=0 disables.")]
+        [EnvironmentVariablePreference(XREngineEnvironmentVariables.ShaderSourceOptimizer)]
+        [DefaultValue(true)]
+        public bool ShaderSourceOptimizerEnabled
+        {
+            get => _shaderSourceOptimizerEnabled;
+            set
+            {
+                if (SetField(ref _shaderSourceOptimizerEnabled, value))
+                    XREngine.Rendering.RenderDiagnosticsFlags.SetShaderSourceOptimizerEnabled(value);
+            }
+        }
+
+        [Category("Diagnostics (Vulkan)")]
+        [DisplayName("Trace Pipeline Creation")]
+        [Description("Log full stage/format details for every Vulkan graphics pipeline created via dynamic rendering. Heavy. Seed env: XRE_VK_TRACE_PIPECREATE.")]
+        [EnvironmentVariablePreference(XREngineEnvironmentVariables.VkTracePipeCreate)]
+        [DefaultValue(false)]
+        public bool VkTracePipeCreate
+        {
+            get => _vkTracePipeCreate;
+            set
+            {
+                if (SetField(ref _vkTracePipeCreate, value))
+                    XREngine.Rendering.RenderDiagnosticsFlags.SetVkTracePipeCreate(value);
+            }
+        }
+
+        [Category("Diagnostics (Vulkan)")]
+        [DisplayName("Trace Swapchain Draws")]
+        [Description("Verbose per-draw trace for swapchain (dynamic-rendering) draw calls only. Seed env: XRE_VK_TRACE_SWAPDRAW.")]
+        [EnvironmentVariablePreference(XREngineEnvironmentVariables.VkTraceSwapDraw)]
+        [DefaultValue(false)]
+        public bool VkTraceSwapDraw
+        {
+            get => _vkTraceSwapDraw;
+            set
+            {
+                if (SetField(ref _vkTraceSwapDraw, value))
+                    XREngine.Rendering.RenderDiagnosticsFlags.SetVkTraceSwapDraw(value);
+            }
+        }
+
+        [Category("Diagnostics (Vulkan)")]
+        [DisplayName("Trace All Draws")]
+        [Description("Verbose per-draw trace for every Vulkan draw, including FBO-targeted UI batches. Very heavy. Seed env: XRE_VK_TRACE_DRAW.")]
+        [EnvironmentVariablePreference(XREngineEnvironmentVariables.VkTraceDraw)]
+        [DefaultValue(false)]
+        public bool VkTraceDraw
+        {
+            get => _vkTraceDraw;
+            set
+            {
+                if (SetField(ref _vkTraceDraw, value))
+                    XREngine.Rendering.RenderDiagnosticsFlags.SetVkTraceDraw(value);
+            }
+        }
+
+        [Category("Diagnostics (Vulkan)")]
+        [DisplayName("Skip UI Pipeline")]
+        [Description("Skip Vulkan UI-pipeline command-buffer ops to isolate UI from scene faults. Seed env: XRE_SKIP_UI_PIPELINE.")]
+        [EnvironmentVariablePreference(XREngineEnvironmentVariables.VkSkipUiPipeline)]
+        [DefaultValue(false)]
+        public bool VkSkipUiPipeline
+        {
+            get => _vkSkipUiPipeline;
+            set
+            {
+                if (SetField(ref _vkSkipUiPipeline, value))
+                    XREngine.Rendering.RenderDiagnosticsFlags.SetVkSkipUiPipeline(value);
+            }
+        }
+
+        [Category("Diagnostics (Vulkan)")]
+        [DisplayName("Skip UI Batch Text")]
+        [Description("Skip Vulkan batched UI text frame ops to isolate dynamic editor/profiler text from scene command recording. Seed env: XRE_SKIP_UI_BATCH_TEXT.")]
+        [EnvironmentVariablePreference(XREngineEnvironmentVariables.VkSkipUiBatchText)]
+        [DefaultValue(false)]
+        public bool VkSkipUiBatchText
+        {
+            get => _vkSkipUiBatchText;
+            set
+            {
+                if (SetField(ref _vkSkipUiBatchText, value))
+                    XREngine.Rendering.RenderDiagnosticsFlags.SetVkSkipUiBatchText(value);
+            }
+        }
+
+        [Category("Diagnostics (Vulkan)")]
+        [DisplayName("Skip Occlusion Query Ops")]
+        [Description("Skip Vulkan occlusion QueryOp begin/end enqueue to measure the command-chain ceiling. Diagnostic only; query results remain stale/conservative. Seed env: XRE_VK_SKIP_OCCLUSION_QUERY_OPS.")]
+        [EnvironmentVariablePreference(XREngineEnvironmentVariables.VkSkipOcclusionQueryOps)]
+        [DefaultValue(false)]
+        public bool VkSkipOcclusionQueryOps
+        {
+            get => _vkSkipOcclusionQueryOps;
+            set
+            {
+                if (SetField(ref _vkSkipOcclusionQueryOps, value))
+                    XREngine.Rendering.RenderDiagnosticsFlags.SetVkSkipOcclusionQueryOps(value);
+            }
+        }
+
+        [Category("Diagnostics (Vulkan)")]
+        [DisplayName("Force Swapchain Magenta")]
+        [Description("Force-clear the Vulkan swapchain to magenta after main composition. Confirms the present path is reaching the swapchain. Seed env: XRE_FORCE_SWAPCHAIN_MAGENTA.")]
+        [EnvironmentVariablePreference(XREngineEnvironmentVariables.VkForceSwapchainMagenta)]
+        [DefaultValue(false)]
+        public bool VkForceSwapchainMagenta
+        {
+            get => _vkForceSwapchainMagenta;
+            set
+            {
+                if (SetField(ref _vkForceSwapchainMagenta, value))
+                    XREngine.Rendering.RenderDiagnosticsFlags.SetVkForceSwapchainMagenta(value);
+            }
+        }
+
+        [Category("Diagnostics (Vulkan)")]
+        [DisplayName("Skip ImGui")]
+        [Description("Skip the Vulkan ImGui overlay draw entirely. Seed env: XRE_SKIP_IMGUI.")]
+        [EnvironmentVariablePreference(XREngineEnvironmentVariables.VkSkipImGui)]
+        [DefaultValue(false)]
+        public bool VkSkipImGui
+        {
+            get => _vkSkipImGui;
+            set
+            {
+                if (SetField(ref _vkSkipImGui, value))
+                    XREngine.Rendering.RenderDiagnosticsFlags.SetVkSkipImGui(value);
+            }
+        }
+
+        [Category("Diagnostics (Vulkan)")]
+        [DisplayName("Async Texture Upload")]
+        [Description("Enable the Vulkan imported-texture upload preparation queue. Disabling routes scheduling through the synchronous compatibility path. Seed env: XRE_VULKAN_ASYNC_TEXTURE_UPLOAD=0 disables.")]
+        [EnvironmentVariablePreference(XREngineEnvironmentVariables.VulkanAsyncTextureUpload)]
+        [DefaultValue(true)]
+        public bool VkAsyncTextureUpload
+        {
+            get => _vkAsyncTextureUpload;
+            set
+            {
+                if (SetField(ref _vkAsyncTextureUpload, value))
+                    XREngine.Rendering.RenderDiagnosticsFlags.SetVkAsyncTextureUpload(value);
+            }
+        }
+
+        [Category("Diagnostics (Vulkan)")]
+        [DisplayName("Texture Upload Transfer Queue")]
+        [Description("Request the Vulkan transfer-queue texture upload path. When unavailable, Vulkan logs that it is using graphics-queue compatibility upload. Seed env: XRE_VULKAN_TEXTURE_UPLOAD_TRANSFER_QUEUE=0 disables.")]
+        [EnvironmentVariablePreference(XREngineEnvironmentVariables.VulkanTextureUploadTransferQueue)]
+        [DefaultValue(true)]
+        public bool VkTextureUploadTransferQueue
+        {
+            get => _vkTextureUploadTransferQueue;
+            set
+            {
+                if (SetField(ref _vkTextureUploadTransferQueue, value))
+                    XREngine.Rendering.RenderDiagnosticsFlags.SetVkTextureUploadTransferQueue(value);
+            }
+        }
+
+        [Category("Diagnostics (Vulkan)")]
+        [DisplayName("Texture Upload Prep Worker")]
+        [Description("Run Vulkan imported-texture upload preparation on the worker/upload context when available; set XRE_VULKAN_TEXTURE_UPLOAD_PREP_WORKER=0 to use the budgeted render-thread compatibility drain.")]
+        [EnvironmentVariablePreference(XREngineEnvironmentVariables.VulkanTextureUploadPrepWorker)]
+        [DefaultValue(true)]
+        public bool VkTextureUploadPrepWorker
+        {
+            get => _vkTextureUploadPrepWorker;
+            set
+            {
+                if (SetField(ref _vkTextureUploadPrepWorker, value))
+                    XREngine.Rendering.RenderDiagnosticsFlags.SetVkTextureUploadPrepWorker(value);
+            }
+        }
+
+        [Category("Diagnostics (Vulkan)")]
+        [DisplayName("Texture Upload Prep Budget Ms")]
+        [Description("Millisecond budget for the Vulkan render-thread upload-prep compatibility drain. 0 disables the budget gate. Seed env: XRE_VULKAN_TEXTURE_UPLOAD_PREP_BUDGET_MS.")]
+        [EnvironmentVariablePreference(XREngineEnvironmentVariables.VulkanTextureUploadPrepBudgetMs)]
+        [DefaultValue(0.5)]
+        public double VkTextureUploadPrepBudgetMilliseconds
+        {
+            get => _vkTextureUploadPrepBudgetMilliseconds;
+            set
+            {
+                double clamped = Math.Clamp(value, 0.0, 100.0);
+                if (SetField(ref _vkTextureUploadPrepBudgetMilliseconds, clamped))
+                    XREngine.Rendering.RenderDiagnosticsFlags.SetVkTextureUploadPrepBudgetMilliseconds(clamped);
+            }
+        }
+
+        [Category("Diagnostics (Vulkan)")]
+        [DisplayName("Texture Upload Trace")]
+        [Description("Verbose Vulkan imported-texture upload lifecycle tracing even when texture runtime logging is not globally verbose. Seed env: XRE_VULKAN_TEXTURE_UPLOAD_TRACE.")]
+        [EnvironmentVariablePreference(XREngineEnvironmentVariables.VulkanTextureUploadTrace)]
+        [DefaultValue(false)]
+        public bool VkTextureUploadTrace
+        {
+            get => _vkTextureUploadTrace;
+            set
+            {
+                if (SetField(ref _vkTextureUploadTrace, value))
+                    XREngine.Rendering.RenderDiagnosticsFlags.SetVkTextureUploadTrace(value);
+            }
+        }
+
+        [Category("Diagnostics (Vulkan)")]
+        [DisplayName("Progressive Texture Upload")]
+        [Description("Experimental Vulkan progressive render-thread texture upload path. Prefer the synchronized VulkanTextureUploadService for imported texture residency. Seed env: XRE_VULKAN_PROGRESSIVE_TEXTURE_UPLOAD.")]
+        [EnvironmentVariablePreference(XREngineEnvironmentVariables.VulkanProgressiveTextureUpload)]
+        [DefaultValue(false)]
+        public bool VkProgressiveTextureUpload
+        {
+            get => _vkProgressiveTextureUpload;
+            set
+            {
+                if (SetField(ref _vkProgressiveTextureUpload, value))
+                    XREngine.Rendering.RenderDiagnosticsFlags.SetVkProgressiveTextureUpload(value);
+            }
+        }
+
+        [Category("Diagnostics (Vulkan)")]
+        [DisplayName("Imported Texture Preview Freeze")]
+        [Description("Emergency kill switch that freezes Vulkan imported textures at preview residency while diagnosing full-res streaming. Seed env: XRE_VULKAN_IMPORTED_TEXTURE_PREVIEW_FREEZE.")]
+        [EnvironmentVariablePreference(XREngineEnvironmentVariables.VulkanImportedTexturePreviewFreeze)]
+        [DefaultValue(false)]
+        public bool VkImportedTexturePreviewFreeze
+        {
+            get => _vkImportedTexturePreviewFreeze;
+            set
+            {
+                if (SetField(ref _vkImportedTexturePreviewFreeze, value))
+                    XREngine.Rendering.RenderDiagnosticsFlags.SetVkImportedTexturePreviewFreeze(value);
+            }
+        }
+
+        [Category("Diagnostics (Vulkan)")]
+        [DisplayName("Diagnostic Preset")]
+        [Description("Named Vulkan diagnostic preset used at backend startup. Values: Off, StandardValidation, SyncValidation, GpuAssisted, BestPractices, CrashDiagnostics, RenderDocFriendly. Seed env: XRE_VULKAN_DIAGNOSTIC_PRESET.")]
+        [EnvironmentVariablePreference(XREngineEnvironmentVariables.VulkanDiagnosticPreset)]
+        [DefaultValue(null)]
+        public string? VkDiagnosticPreset
+        {
+            get => _vkDiagnosticPreset;
+            set
+            {
+                string? normalized = string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+                SetField(ref _vkDiagnosticPreset, normalized);
+            }
+        }
+
+        [Category("Diagnostics (Vulkan)")]
+        [DisplayName("Diagnostic Flags")]
+        [Description("Additional Vulkan diagnostic flags, separated by comma or pipe. Seed env: XRE_VULKAN_DIAGNOSTIC_FLAGS.")]
+        [EnvironmentVariablePreference(XREngineEnvironmentVariables.VulkanDiagnosticFlags)]
+        [DefaultValue(null)]
+        public string? VkDiagnosticFlags
+        {
+            get => _vkDiagnosticFlags;
+            set
+            {
+                string? normalized = string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+                SetField(ref _vkDiagnosticFlags, normalized);
+            }
+        }
+
+        [Category("Profiling")]
+        [DisplayName("Enable Profiler Frame Logging")]
+        [Description("When enabled, the code profiler records method timings for the Profiler panel. Disable to reduce overhead in hot paths.")]
+        [DefaultValue(true)]
+        public bool EnableProfilerFrameLogging
+        {
+            get
+            {
+#if XRE_PUBLISHED
+                return false;
+#else
+                return _enableProfilerFrameLogging;
+#endif
+            }
+            set
+            {
+#if XRE_PUBLISHED
+                SetField(ref _enableProfilerFrameLogging, false);
+#else
+                if (SetField(ref _enableProfilerFrameLogging, value))
+                    Engine.Profiler.EnableFrameLogging = value;
+#endif
+            }
+        }
+
+        [Category("Profiling")]
+        [DisplayName("Enable Profiler Component Timing")]
+        [Description("When enabled, the profiler records per-component tick timings for the Profiler panel's Components view. This detailed diagnostic is off by default because it allocates per-frame tracking state.")]
+        [DefaultValue(false)]
+        public bool EnableProfilerComponentTiming
+        {
+            get
+            {
+#if XRE_PUBLISHED
+                return false;
+#else
+                return _enableProfilerComponentTiming;
+#endif
+            }
+            set
+            {
+#if XRE_PUBLISHED
+                SetField(ref _enableProfilerComponentTiming, false);
+#else
+                if (SetField(ref _enableProfilerComponentTiming, value))
+                    Engine.Profiler.EnableComponentTiming = value;
+#endif
+            }
+        }
+
+        [Category("Profiling")]
+        [DisplayName("Enable Render Statistics Tracking")]
+        [Description("When enabled, tracks per-frame rendering statistics (draw calls, triangles, etc.). Disable to reduce overhead.")]
+        [DefaultValue(true)]
+        public bool EnableRenderStatisticsTracking
+        {
+            get
+            {
+#if XRE_PUBLISHED
+                return false;
+#else
+                return _enableRenderStatisticsTracking;
+#endif
+            }
+            set
+            {
+#if XRE_PUBLISHED
+                if (SetField(ref _enableRenderStatisticsTracking, false))
+                    RuntimeEngine.Rendering.Stats.EnableTracking = false;
+#else
+                if (SetField(ref _enableRenderStatisticsTracking, value))
+                    RuntimeEngine.Rendering.Stats.EnableTracking = value;
+#endif
+            }
+        }
+
+        [Category("Profiling")]
+        [DisplayName("Enable GPU Render-Pipeline Profiling")]
+        [Description("When enabled, records GPU timestamp timings for render-pipeline commands on supported backends for the Profiler panel.")]
+        [DefaultValue(false)]
+        public bool EnableGpuRenderPipelineProfiling
+        {
+            get
+            {
+#if XRE_PUBLISHED
+                return false;
+#else
+                return _enableGpuRenderPipelineProfiling;
+#endif
+            }
+            set
+            {
+#if XRE_PUBLISHED
+                SetField(ref _enableGpuRenderPipelineProfiling, false);
+#else
+                SetField(ref _enableGpuRenderPipelineProfiling, value);
+#endif
+            }
+        }
+
+        [Category("Profiling")]
+        [DisplayName("Enable Main-Thread Invoke Diagnostics")]
+        [Description("When enabled, writes verbose main-thread invoke request/execution diagnostics with stack traces. This is intended for short-lived debugging because it adds measurable overhead.")]
+        public bool EnableMainThreadInvokeDiagnostics
+        {
+            get
+            {
+#if XRE_PUBLISHED
+                return false;
+#else
+                return _enableMainThreadInvokeDiagnostics;
+#endif
+            }
+            set
+            {
+#if XRE_PUBLISHED
+                SetField(ref _enableMainThreadInvokeDiagnostics, false);
+#else
+                SetField(ref _enableMainThreadInvokeDiagnostics, value);
+#endif
+            }
+        }
+
+        [Category("Debug")]
+        [DisplayName("Enable UI Layout Debug Logging")]
+        [Description("When enabled, logs verbose UI layout system measure/arrange passes to the UI log category.")]
+        public bool EnableUILayoutDebugLogging
+        {
+            get => _enableUILayoutDebugLogging;
+            set
+            {
+                if (SetField(ref _enableUILayoutDebugLogging, value))
+                    XREngine.Rendering.UI.UILayoutSystem.EnableDebugLogging = value;
+            }
+        }
+
+        /// <summary>
+        /// Controls how debug shape data (points, lines, triangles) is populated each frame in the SwapBuffers path.
+        /// </summary>
+        [Category("Debug")]
+        [DisplayName("Debug Shape Population Mode")]
+        [Description("Controls how debug shape data is populated each frame. 'Tasks' uses Task.Run + Task.WaitAll and is the default. 'ParallelInvoke' uses Parallel.Invoke. 'Sequential' runs on the calling thread. The JobSystem path is intentionally unavailable because worker starvation can starve SwapBuffers on the main thread.")]
+        public EDebugShapePopulationMode DebugShapePopulationMode
+        {
+            get => _debugShapePopulationMode;
+            set => SetField(ref _debugShapePopulationMode,
+                Enum.IsDefined(typeof(EDebugShapePopulationMode), value)
+                    ? value
+                    : EDebugShapePopulationMode.Tasks);
+        }
+
+        /// <summary>
+        /// Controls how the instanced debug visualizer (physics debug rendering) populates its buffers each frame.
+        /// </summary>
+        [Category("Debug")]
+        [DisplayName("Debug Visualizer Population Mode")]
+        [Description("Controls how the instanced debug visualizer populates buffers. 'Tasks' dispatches one thread-pool task per primitive type. 'TasksWithParallelFor' is the legacy dual-parallel path. 'ParallelFor' uses Parallel.For per type sequentially. 'JobSystem' uses engine workers. 'Sequential' runs on the calling thread.")]
+        public EDebugVisualizerPopulationMode DebugVisualizerPopulationMode
+        {
+            get => _debugVisualizerPopulationMode;
+            set => SetField(ref _debugVisualizerPopulationMode, value);
+        }
+
+        /// <summary>
+        /// Controls the GPU buffer layout for instanced debug primitives.
+        /// Compressed packs RGBA color into a single uint and removes position padding,
+        /// reducing GPU transfer bandwidth by 37–50 %.
+        /// </summary>
+        [Category("Debug")]
+        [DisplayName("Debug Primitive Buffer Format")]
+        [Description("Controls the GPU buffer layout for debug primitives. 'Expanded' uses full vec4 color + padded positions (32/48/64 B). 'Compressed' packs color into a uint and drops padding (16/28/40 B).")]
+        public EDebugPrimitiveBufferFormat DebugPrimitiveBufferFormat
+        {
+            get => _debugPrimitiveBufferFormat;
+            set => SetField(ref _debugPrimitiveBufferFormat, value);
+        }
+
+        [Category("Profiling")]
+        [DisplayName("Enable Profiler UDP Sending")]
+        [Description("When enabled, sends profiler telemetry over UDP to an external XREngine.Profiler instance on localhost. When disabled, zero overhead (no thread, no socket).")]
+        public bool EnableProfilerUdpSending
+        {
+            get
+            {
+#if XRE_PUBLISHED
+                return false;
+#else
+                return _enableProfilerUdpSending;
+#endif
+            }
+            set
+            {
+#if XRE_PUBLISHED
+                SetField(ref _enableProfilerUdpSending, false);
+#else
+                if (SetField(ref _enableProfilerUdpSending, value))
+                {
+                    if (value)
+                    {
+                        Engine.WireProfilerSenderCollectors();
+                        UdpProfilerSender.Start();
+                    }
+                    else
+                    {
+                        UdpProfilerSender.Stop();
+                    }
+                }
+#endif
+            }
+        }
+
+        [Category("Profiling")]
+        [DisplayName("Start External Profiler On Startup")]
+        [Description("When enabled, the editor launches XREngine.Profiler during startup and forces profiler UDP sending on for that session.")]
+        public bool StartExternalProfilerOnStartup
+        {
+            get => _startExternalProfilerOnStartup;
+            set => SetField(ref _startExternalProfilerOnStartup, value);
+        }
+
+        [Category("Profiling: Code Profiler")]
+        [DisplayName("Debug Output Min Elapsed (ms)")]
+        [Description("Minimum elapsed milliseconds required for profiler debug output/log thresholds.")]
+        public float CodeProfilerDebugOutputMinElapsedMs
+        {
+            get => _codeProfilerDebugOutputMinElapsedMs;
+            set
+            {
+                float clamped = Math.Max(0.0f, value);
+                if (SetField(ref _codeProfilerDebugOutputMinElapsedMs, clamped))
+                    Engine.Profiler.DebugOutputMinElapsedMs = clamped;
+            }
+        }
+
+        [Category("Profiling: Code Profiler")]
+        [DisplayName("Stats Thread Interval (ms)")]
+        [Description("Sleep interval in milliseconds for the profiler stats worker when idle.")]
+        public int CodeProfilerStatsThreadIntervalMs
+        {
+            get => _codeProfilerStatsThreadIntervalMs;
+            set
+            {
+                int clamped = Math.Clamp(value, 1, 1000);
+                if (SetField(ref _codeProfilerStatsThreadIntervalMs, clamped))
+                    Engine.Profiler.StatsThreadIntervalMs = clamped;
+            }
+        }
+
+        [Category("Profiling: Code Profiler")]
+        [DisplayName("Snapshot Interval (ms)")]
+        [Description("How often the code profiler builds a snapshot on the stats thread.")]
+        public int CodeProfilerSnapshotIntervalMs
+        {
+            get => _codeProfilerSnapshotIntervalMs;
+            set
+            {
+                int clamped = Math.Clamp(value, 1, 5000);
+                if (SetField(ref _codeProfilerSnapshotIntervalMs, clamped))
+                    Engine.Profiler.SnapshotIntervalMs = clamped;
+            }
+        }
+
+        [Category("Profiling: Code Profiler")]
+        [DisplayName("Thread History Capacity")]
+        [Description("Number of per-thread frame samples retained for the CPU profiler history.")]
+        public int CodeProfilerThreadHistoryCapacity
+        {
+            get => _codeProfilerThreadHistoryCapacity;
+            set
+            {
+                int clamped = Math.Clamp(value, 2, 10_000);
+                if (SetField(ref _codeProfilerThreadHistoryCapacity, clamped))
+                    Engine.Profiler.ThreadHistoryCapacity = clamped;
+            }
+        }
+
+        [Category("Profiling: Code Profiler")]
+        [DisplayName("Max Overflow Per Cycle")]
+        [Description("Maximum number of overflowed completed-scope events drained per stats-thread cycle.")]
+        public int CodeProfilerMaxOverflowPerCycle
+        {
+            get => _codeProfilerMaxOverflowPerCycle;
+            set
+            {
+                int clamped = Math.Clamp(value, 1, 1_000_000);
+                if (SetField(ref _codeProfilerMaxOverflowPerCycle, clamped))
+                    Engine.Profiler.MaxOverflowPerCycle = clamped;
+            }
+        }
+
+        [Category("Profiling: Code Profiler")]
+        [DisplayName("Max Overflow Queue Size")]
+        [Description("Maximum queued overflow events before the profiler discards stale overflow data.")]
+        public int CodeProfilerMaxOverflowQueueSize
+        {
+            get => _codeProfilerMaxOverflowQueueSize;
+            set
+            {
+                int clamped = Math.Clamp(value, 1, 5_000_000);
+                if (SetField(ref _codeProfilerMaxOverflowQueueSize, clamped))
+                    Engine.Profiler.MaxOverflowQueueSize = clamped;
+            }
+        }
+
+        [Category("Profiling: Code Profiler")]
+        [DisplayName("Producer Buffer Capacity")]
+        [Description("Per-thread producer ring-buffer capacity for completed profiler scopes. Rounded up to a power of two.")]
+        public int CodeProfilerProducerBufferCapacity
+        {
+            get => _codeProfilerProducerBufferCapacity;
+            set
+            {
+                int normalized = NormalizeProfilerProducerBufferCapacity(value);
+                if (SetField(ref _codeProfilerProducerBufferCapacity, normalized))
+                    Engine.Profiler.ProducerBufferCapacity = normalized;
+            }
+        }
+
+        [Category("Profiling: FPS Drop Detection")]
+        [DisplayName("Baseline Window Samples")]
+        [Description("How many previous samples the FPS drop detector uses when computing its baseline median.")]
+        public int CodeProfilerFpsDropBaselineWindowSamples
+        {
+            get => _codeProfilerFpsDropBaselineWindowSamples;
+            set
+            {
+                int clamped = Math.Clamp(value, 1, 10_000);
+                if (SetField(ref _codeProfilerFpsDropBaselineWindowSamples, clamped))
+                    Engine.Profiler.FpsDropBaselineWindowSamples = clamped;
+            }
+        }
+
+        [Category("Profiling: FPS Drop Detection")]
+        [DisplayName("Min Previous FPS")]
+        [Description("Ignore FPS drop logging unless the prior FPS was at least this value.")]
+        public float CodeProfilerFpsDropMinPreviousFps
+        {
+            get => _codeProfilerFpsDropMinPreviousFps;
+            set
+            {
+                float clamped = Math.Max(0.0f, value);
+                if (SetField(ref _codeProfilerFpsDropMinPreviousFps, clamped))
+                    Engine.Profiler.FpsDropMinPreviousFps = clamped;
+            }
+        }
+
+        [Category("Profiling: FPS Drop Detection")]
+        [DisplayName("Min Delta (ms)")]
+        [Description("Minimum frame-time delta in milliseconds before the FPS drop detector records a spike.")]
+        public float CodeProfilerFpsDropMinDeltaMs
+        {
+            get => _codeProfilerFpsDropMinDeltaMs;
+            set
+            {
+                float clamped = Math.Max(0.0f, value);
+                if (SetField(ref _codeProfilerFpsDropMinDeltaMs, clamped))
+                    Engine.Profiler.FpsDropMinDeltaMs = clamped;
+            }
+        }
+
+        [Category("Profiling: Render Stall Detection")]
+        [DisplayName("Threshold (ms)")]
+        [Description("Log a render-stall diagnostic when an active render dispatch goes this long without completing a render frame.")]
+        public float CodeProfilerRenderStallThresholdMs
+        {
+            get => _codeProfilerRenderStallThresholdMs;
+            set
+            {
+                float clamped = Math.Max(0.0f, value);
+                if (SetField(ref _codeProfilerRenderStallThresholdMs, clamped))
+                    Engine.Profiler.RenderStallThresholdMs = clamped;
+            }
+        }
+
+        [Category("Profiling UI")]
+        [DisplayName("Paused")]
+        [Description("Pause refreshes in the in-editor profiler panel.")]
+        public bool ProfilerPanelPaused
+        {
+            get => _profilerPanelPaused;
+            set => SetField(ref _profilerPanelPaused, value);
+        }
+
+        [Category("Profiling UI")]
+        [DisplayName("Sort By Time")]
+        [Description("Sort CPU hierarchy rows by elapsed time in the in-editor profiler panel.")]
+        public bool ProfilerPanelSortByTime
+        {
+            get => _profilerPanelSortByTime;
+            set => SetField(ref _profilerPanelSortByTime, value);
+        }
+
+        [Category("Profiling UI")]
+        [DisplayName("Smoothing Alpha")]
+        [Description("Display smoothing factor for profiler timing graphs.")]
+        public float ProfilerPanelSmoothingAlpha
+        {
+            get => _profilerPanelSmoothingAlpha;
+            set => SetField(ref _profilerPanelSmoothingAlpha, Math.Clamp(value, 0.0f, 0.95f));
+        }
+
+        [Category("Profiling UI")]
+        [DisplayName("Update Interval (s)")]
+        [Description("Refresh cadence for profiler panel aggregation. Zero refreshes every render.")]
+        public float ProfilerPanelUpdateIntervalSeconds
+        {
+            get => _profilerPanelUpdateIntervalSeconds;
+            set => SetField(ref _profilerPanelUpdateIntervalSeconds, Math.Clamp(value, 0.0f, 2.0f));
+        }
+
+        [Category("Profiling UI")]
+        [DisplayName("Persistence (s)")]
+        [Description("How long root-method history stays visible in the profiler panel.")]
+        public float ProfilerPanelPersistenceSeconds
+        {
+            get => _profilerPanelPersistenceSeconds;
+            set => SetField(ref _profilerPanelPersistenceSeconds, Math.Clamp(value, 0.5f, 10.0f));
+        }
+
+        [Category("Profiling UI")]
+        [DisplayName("Graph Samples")]
+        [Description("Number of samples shown in profiler graphs.")]
+        public int ProfilerPanelGraphSampleCount
+        {
+            get => _profilerPanelGraphSampleCount;
+            set => SetField(ref _profilerPanelGraphSampleCount, Math.Clamp(value, 30, 720));
+        }
+
+        [Category("Profiling UI")]
+        [DisplayName("Min Root Hierarchy (ms)")]
+        [Description("Minimum root timing threshold shown in the CPU hierarchy.")]
+        public float ProfilerPanelRootHierarchyMinMs
+        {
+            get => _profilerPanelRootHierarchyMinMs;
+            set => SetField(ref _profilerPanelRootHierarchyMinMs, Math.Clamp(value, 0.0f, 1000.0f));
+        }
+
+        [Category("Profiling UI")]
+        [DisplayName("Max Root Hierarchy (ms)")]
+        [Description("Maximum root timing threshold shown in the CPU hierarchy. Zero disables the clamp.")]
+        public float ProfilerPanelRootHierarchyMaxMs
+        {
+            get => _profilerPanelRootHierarchyMaxMs;
+            set => SetField(ref _profilerPanelRootHierarchyMaxMs, Math.Clamp(value, 0.0f, 1000.0f));
+        }
+
+        [Category("Profiling UI")]
+        [DisplayName("Show CPU Raw (ms)")]
+        [Description("Show raw CPU timing lines in profiler graphs.")]
+        public bool ProfilerPanelShowCpuTimingRawMsLine
+        {
+            get => _profilerPanelShowCpuTimingRawMsLine;
+            set => SetField(ref _profilerPanelShowCpuTimingRawMsLine, value);
+        }
+
+        [Category("Profiling UI")]
+        [DisplayName("Show CPU Smoothed (ms)")]
+        [Description("Show display-smoothed CPU timing lines in profiler graphs.")]
+        public bool ProfilerPanelShowCpuTimingSmoothedMsLine
+        {
+            get => _profilerPanelShowCpuTimingSmoothedMsLine;
+            set => SetField(ref _profilerPanelShowCpuTimingSmoothedMsLine, value);
+        }
+
+        [Category("Profiling UI")]
+        [DisplayName("Interpolate CPU Graphs")]
+        [Description("Interpolate CPU timing graphs between samples.")]
+        public bool ProfilerPanelInterpolateCpuTimingGraphs
+        {
+            get => _profilerPanelInterpolateCpuTimingGraphs;
+            set => SetField(ref _profilerPanelInterpolateCpuTimingGraphs, value);
+        }
+
+        [Category("Profiling UI")]
+        [DisplayName("CPU Display Mode")]
+        [Description("CPU timing graph display mode.")]
+        public ProfilerTimingDisplayMode ProfilerPanelCpuTimingDisplayMode
+        {
+            get => _profilerPanelCpuTimingDisplayMode;
+            set => SetField(ref _profilerPanelCpuTimingDisplayMode, value);
+        }
+
+        [Category("Profiling UI")]
+        [DisplayName("Show GPU Raw (ms)")]
+        [Description("Show raw GPU timing lines in profiler graphs.")]
+        public bool ProfilerPanelShowGpuTimingRawMsLine
+        {
+            get => _profilerPanelShowGpuTimingRawMsLine;
+            set => SetField(ref _profilerPanelShowGpuTimingRawMsLine, value);
+        }
+
+        [Category("Profiling UI")]
+        [DisplayName("Show GPU Smoothed (ms)")]
+        [Description("Show display-smoothed GPU timing lines in profiler graphs.")]
+        public bool ProfilerPanelShowGpuTimingSmoothedMsLine
+        {
+            get => _profilerPanelShowGpuTimingSmoothedMsLine;
+            set => SetField(ref _profilerPanelShowGpuTimingSmoothedMsLine, value);
+        }
+
+        [Category("Profiling UI")]
+        [DisplayName("Interpolate GPU Graphs")]
+        [Description("Interpolate GPU timing graphs between samples.")]
+        public bool ProfilerPanelInterpolateGpuTimingGraphs
+        {
+            get => _profilerPanelInterpolateGpuTimingGraphs;
+            set => SetField(ref _profilerPanelInterpolateGpuTimingGraphs, value);
+        }
+
+        [Category("Profiling UI")]
+        [DisplayName("GPU Display Mode")]
+        [Description("GPU timing graph display mode.")]
+        public ProfilerTimingDisplayMode ProfilerPanelGpuTimingDisplayMode
+        {
+            get => _profilerPanelGpuTimingDisplayMode;
+            set => SetField(ref _profilerPanelGpuTimingDisplayMode, value);
+        }
+
+        [Category("Profiling UI: Panel Visibility")]
+        [DisplayName("Show Tree")]
+        [Description("Show the CPU timings panel in the in-editor profiler layout.")]
+        public bool ProfilerPanelShowTree
+        {
+            get => _profilerPanelShowTree;
+            set => SetField(ref _profilerPanelShowTree, value);
+        }
+
+        [Category("Profiling UI: Panel Visibility")]
+        [DisplayName("Show FPS Drop Spikes")]
+        [Description("Show the FPS drop spikes panel in the in-editor profiler layout.")]
+        public bool ProfilerPanelShowFpsDropSpikes
+        {
+            get => _profilerPanelShowFpsDropSpikes;
+            set => SetField(ref _profilerPanelShowFpsDropSpikes, value);
+        }
+
+        [Category("Profiling UI: Panel Visibility")]
+        [DisplayName("Show Render Stats")]
+        [Description("Show the render statistics panel in the in-editor profiler layout.")]
+        public bool ProfilerPanelShowRenderStats
+        {
+            get => _profilerPanelShowRenderStats;
+            set => SetField(ref _profilerPanelShowRenderStats, value);
+        }
+
+        [Category("Profiling UI: Panel Visibility")]
+        [DisplayName("Show GPU Pipeline")]
+        [Description("Show the GPU timings panel in the in-editor profiler layout.")]
+        public bool ProfilerPanelShowGpuPipeline
+        {
+            get => _profilerPanelShowGpuPipeline;
+            set => SetField(ref _profilerPanelShowGpuPipeline, value);
+        }
+
+        [Category("Profiling UI: Panel Visibility")]
+        [DisplayName("Show Thread Allocations")]
+        [Description("Show the thread allocations panel in the in-editor profiler layout.")]
+        public bool ProfilerPanelShowThreadAllocations
+        {
+            get => _profilerPanelShowThreadAllocations;
+            set => SetField(ref _profilerPanelShowThreadAllocations, value);
+        }
+
+        [Category("Profiling UI: Panel Visibility")]
+        [DisplayName("Show Component Timings")]
+        [Description("Show the component timings panel in the in-editor profiler layout.")]
+        public bool ProfilerPanelShowComponentTimings
+        {
+            get => _profilerPanelShowComponentTimings;
+            set => SetField(ref _profilerPanelShowComponentTimings, value);
+        }
+
+        [Category("Profiling UI: Panel Visibility")]
+        [DisplayName("Show BVH Metrics")]
+        [Description("Show the BVH metrics panel in the in-editor profiler layout.")]
+        public bool ProfilerPanelShowBvhMetrics
+        {
+            get => _profilerPanelShowBvhMetrics;
+            set => SetField(ref _profilerPanelShowBvhMetrics, value);
+        }
+
+        [Category("Profiling UI: Panel Visibility")]
+        [DisplayName("Show Job System")]
+        [Description("Show the job-system panel in the in-editor profiler layout.")]
+        public bool ProfilerPanelShowJobSystem
+        {
+            get => _profilerPanelShowJobSystem;
+            set => SetField(ref _profilerPanelShowJobSystem, value);
+        }
+
+        [Category("Profiling UI: Panel Visibility")]
+        [DisplayName("Show Main Thread Invokes")]
+        [Description("Show the main-thread invokes panel in the in-editor profiler layout.")]
+        public bool ProfilerPanelShowMainThreadInvokes
+        {
+            get => _profilerPanelShowMainThreadInvokes;
+            set => SetField(ref _profilerPanelShowMainThreadInvokes, value);
+        }
+
+        public void ApplyRuntimeSideEffects()
+        {
+#if XRE_PUBLISHED
+            Engine.Profiler.EnableFrameLogging = false;
+            Engine.Profiler.EnableComponentTiming = false;
+            RuntimeEngine.Rendering.Stats.EnableTracking = false;
+            XREngine.Rendering.UI.UILayoutSystem.EnableDebugLogging = false;
+            UdpProfilerSender.Stop();
+#else
+            Engine.Profiler.EnableFrameLogging = EnableProfilerFrameLogging;
+            Engine.Profiler.EnableComponentTiming = EnableProfilerComponentTiming;
+            RuntimeEngine.Rendering.Stats.EnableTracking = EnableRenderStatisticsTracking;
+            XREngine.Rendering.UI.UILayoutSystem.EnableDebugLogging = EnableUILayoutDebugLogging;
+
+            if (EnableProfilerUdpSending)
+            {
+                Engine.WireProfilerSenderCollectors();
+                UdpProfilerSender.Start();
+            }
+            else
+            {
+                UdpProfilerSender.Stop();
+            }
+#endif
+
+            Engine.Profiler.DebugOutputMinElapsedMs = CodeProfilerDebugOutputMinElapsedMs;
+            Engine.Profiler.StatsThreadIntervalMs = CodeProfilerStatsThreadIntervalMs;
+            Engine.Profiler.SnapshotIntervalMs = CodeProfilerSnapshotIntervalMs;
+            Engine.Profiler.ThreadHistoryCapacity = CodeProfilerThreadHistoryCapacity;
+            Engine.Profiler.MaxOverflowPerCycle = CodeProfilerMaxOverflowPerCycle;
+            Engine.Profiler.MaxOverflowQueueSize = CodeProfilerMaxOverflowQueueSize;
+            Engine.Profiler.ProducerBufferCapacity = CodeProfilerProducerBufferCapacity;
+            Engine.Profiler.FpsDropBaselineWindowSamples = CodeProfilerFpsDropBaselineWindowSamples;
+            Engine.Profiler.FpsDropMinPreviousFps = CodeProfilerFpsDropMinPreviousFps;
+            Engine.Profiler.FpsDropMinDeltaMs = CodeProfilerFpsDropMinDeltaMs;
+            Engine.Profiler.RenderStallThresholdMs = CodeProfilerRenderStallThresholdMs;
+
+            XREngine.Rendering.GLSubmitTracer.SetLevel(_glSubmitTraceLevel);
+            XREngine.Rendering.RenderDiagnosticsFlags.SetHiZCullTrace(_hiZCullTrace);
+            XREngine.Rendering.RenderDiagnosticsFlags.SetDiagVendorUpscale(_diagVendorUpscale);
+            XREngine.Rendering.RenderDiagnosticsFlags.SetDiagQuadBlit(_diagQuadBlit);
+            XREngine.Rendering.RenderDiagnosticsFlags.SetDiagPostProcess(_diagPostProcess);
+            XREngine.Rendering.RenderDiagnosticsFlags.SetDebugPresentClear(_debugPresentClear);
+            XREngine.Rendering.RenderDiagnosticsFlags.SetPushSubDataBreakdown(_pushSubDataBreakdown);
+            XREngine.Rendering.RenderDiagnosticsFlags.SetPushSubDataTrace(_pushSubDataTrace);
+            XREngine.Rendering.RenderDiagnosticsFlags.SetDispatchTrace(_dispatchTrace);
+            XREngine.Rendering.RenderDiagnosticsFlags.SetDispatchFinish(_dispatchFinish);
+            XREngine.Rendering.RenderDiagnosticsFlags.SetUploadStageLogging(_uploadStageLogging);
+            XREngine.Rendering.RenderDiagnosticsFlags.SetCrashBreadcrumbs(_crashBreadcrumbs);
+            XREngine.Rendering.RenderDiagnosticsFlags.SetDeferredDebugView(_deferredDebugView);
+            XREngine.Rendering.RenderDiagnosticsFlags.SetDiagDeferredLighting(_diagDeferredLighting);
+            XREngine.Rendering.RenderDiagnosticsFlags.SetModelRenderDiagEnabled(_modelRenderDiagEnabled);
+            XREngine.Rendering.RenderDiagnosticsFlags.SetDirectionalShadowAudit(_directionalShadowAudit);
+            XREngine.Rendering.RenderDiagnosticsFlags.SetSkinningPrepassDiag(_skinningPrepassDiag);
+            XREngine.Rendering.RenderDiagnosticsFlags.SetForceSkinnedUnbounded(_forceSkinnedUnbounded);
+            XREngine.Rendering.RenderDiagnosticsFlags.SetSkinCullRejectDiag(_skinCullRejectDiag);
+            XREngine.Debug.FirstChanceExceptionFilter = _firstChanceExceptionFilter;
+            XREngine.Rendering.RenderDiagnosticsFlags.SetBypassVendorUpscale(_bypassVendorUpscale);
+            XREngine.Rendering.RenderDiagnosticsFlags.SetGLDebug(_glDebug);
+            XREngine.Rendering.RenderDiagnosticsFlags.SetForceFullViewport(_forceFullViewport);
+            XREngine.Rendering.RenderDiagnosticsFlags.SetForceDebugOpaquePipeline(_forceDebugOpaquePipeline);
+            XREngine.Rendering.RenderDiagnosticsFlags.SetGpuHiZDirtyBypass(_gpuHiZDirtyBypass);
+            XREngine.Rendering.RenderDiagnosticsFlags.SetOutputSourceFboOverride(_outputSourceFboOverride);
+            XREngine.Rendering.RenderDiagnosticsFlags.SetVkEnableAutoUniformRewrite(_vkEnableAutoUniformRewrite);
+            XREngine.Rendering.RenderDiagnosticsFlags.SetVkDumpShaderOnError(_vkDumpShaderOnError);
+            XREngine.Rendering.RenderDiagnosticsFlags.SetShaderSourceOptimizerEnabled(_shaderSourceOptimizerEnabled);
+            XREngine.Rendering.RenderDiagnosticsFlags.SetVkTracePipeCreate(_vkTracePipeCreate);
+            XREngine.Rendering.RenderDiagnosticsFlags.SetVkTraceSwapDraw(_vkTraceSwapDraw);
+            XREngine.Rendering.RenderDiagnosticsFlags.SetVkTraceDraw(_vkTraceDraw);
+            XREngine.Rendering.RenderDiagnosticsFlags.SetVkSkipUiPipeline(_vkSkipUiPipeline);
+            XREngine.Rendering.RenderDiagnosticsFlags.SetVkSkipUiBatchText(_vkSkipUiBatchText);
+            XREngine.Rendering.RenderDiagnosticsFlags.SetVkSkipOcclusionQueryOps(_vkSkipOcclusionQueryOps);
+            XREngine.Rendering.RenderDiagnosticsFlags.SetVkForceSwapchainMagenta(_vkForceSwapchainMagenta);
+            XREngine.Rendering.RenderDiagnosticsFlags.SetVkSkipImGui(_vkSkipImGui);
+            XREngine.Rendering.RenderDiagnosticsFlags.SetVkAsyncTextureUpload(_vkAsyncTextureUpload);
+            XREngine.Rendering.RenderDiagnosticsFlags.SetVkTextureUploadTransferQueue(_vkTextureUploadTransferQueue);
+            XREngine.Rendering.RenderDiagnosticsFlags.SetVkTextureUploadPrepWorker(_vkTextureUploadPrepWorker);
+            XREngine.Rendering.RenderDiagnosticsFlags.SetVkTextureUploadPrepBudgetMilliseconds(_vkTextureUploadPrepBudgetMilliseconds);
+            XREngine.Rendering.RenderDiagnosticsFlags.SetVkTextureUploadTrace(_vkTextureUploadTrace);
+            XREngine.Rendering.RenderDiagnosticsFlags.SetVkProgressiveTextureUpload(_vkProgressiveTextureUpload);
+            XREngine.Rendering.RenderDiagnosticsFlags.SetVkImportedTexturePreviewFreeze(_vkImportedTexturePreviewFreeze);
+            PublishEnvironmentPreferenceValues();
+            XREngine.Rendering.RenderDiagnosticsFlags.ApplyConfiguredEnvironmentOverrides();
+
+            string? glSubmitTrace = XREnvironment.GetValue(XREngineEnvironmentVariables.GlSubmitTrace);
+            if (int.TryParse(glSubmitTrace, out int glSubmitTraceLevel))
+                XREngine.Rendering.GLSubmitTracer.SetLevel(Math.Clamp(glSubmitTraceLevel, 0, 2));
+
+            string? firstChanceFilter = XREnvironment.GetValue(XREngineEnvironmentVariables.FirstChanceExceptions);
+            if (firstChanceFilter is not null)
+                XREngine.Debug.FirstChanceExceptionFilter = firstChanceFilter;
+        }
+
+        private void PublishEnvironmentPreferenceValues()
+        {
+            static string BooleanValue(bool value) => value ? "1" : "0";
+            static string IntegerValue(int value)
+                => value.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            static string DoubleValue(double value)
+                => value.ToString(System.Globalization.CultureInfo.InvariantCulture);
+
+            XREnvironment.SetPreferenceValue(
+                XREngineEnvironmentVariables.GlSubmitTrace,
+                IntegerValue(_glSubmitTraceLevel));
+            XREnvironment.SetPreferenceValue(XREngineEnvironmentVariables.HizCullTrace, BooleanValue(_hiZCullTrace));
+            XREnvironment.SetPreferenceValue(XREngineEnvironmentVariables.DiagVendorUpscale, BooleanValue(_diagVendorUpscale));
+            XREnvironment.SetPreferenceValue(XREngineEnvironmentVariables.DiagQuadBlit, BooleanValue(_diagQuadBlit));
+            XREnvironment.SetPreferenceValue(XREngineEnvironmentVariables.DiagPostProcess, BooleanValue(_diagPostProcess));
+            XREnvironment.SetPreferenceValue(XREngineEnvironmentVariables.DebugPresentClear, BooleanValue(_debugPresentClear));
+            XREnvironment.SetPreferenceValue(XREngineEnvironmentVariables.PushSubDataBreakdown, BooleanValue(_pushSubDataBreakdown));
+            XREnvironment.SetPreferenceValue(XREngineEnvironmentVariables.PushSubDataTrace, BooleanValue(_pushSubDataTrace));
+            XREnvironment.SetPreferenceValue(XREngineEnvironmentVariables.DispatchTrace, BooleanValue(_dispatchTrace));
+            XREnvironment.SetPreferenceValue(XREngineEnvironmentVariables.DispatchFinish, BooleanValue(_dispatchFinish));
+            XREnvironment.SetPreferenceValue(XREngineEnvironmentVariables.UploadStageLogging, BooleanValue(_uploadStageLogging));
+            XREnvironment.SetPreferenceValue(XREngineEnvironmentVariables.CrashBreadcrumbs, BooleanValue(_crashBreadcrumbs));
+            XREnvironment.SetPreferenceValue(XREngineEnvironmentVariables.DeferredDebug, IntegerValue(_deferredDebugView));
+            XREnvironment.SetPreferenceValue(XREngineEnvironmentVariables.DiagDeferredLighting, BooleanValue(_diagDeferredLighting));
+            XREnvironment.SetPreferenceValue(XREngineEnvironmentVariables.DebugModelRender, BooleanValue(_modelRenderDiagEnabled));
+            XREnvironment.SetPreferenceValue(XREngineEnvironmentVariables.ModelRenderDiag, BooleanValue(_modelRenderDiagEnabled));
+            XREnvironment.SetPreferenceValue(XREngineEnvironmentVariables.DirectionalShadowAudit, BooleanValue(_directionalShadowAudit));
+            XREnvironment.SetPreferenceValue(XREngineEnvironmentVariables.ShadowAudit, BooleanValue(_directionalShadowAudit));
+            XREnvironment.SetPreferenceValue(XREngineEnvironmentVariables.SkinningPrepassDiag, BooleanValue(_skinningPrepassDiag));
+            XREnvironment.SetPreferenceValue(XREngineEnvironmentVariables.ForceSkinnedUnbounded, BooleanValue(_forceSkinnedUnbounded));
+            XREnvironment.SetPreferenceValue(XREngineEnvironmentVariables.SkinCullRejectDiag, BooleanValue(_skinCullRejectDiag));
+            XREnvironment.SetPreferenceValue(XREngineEnvironmentVariables.FirstChanceExceptions, _firstChanceExceptionFilter);
+            XREnvironment.SetPreferenceValue(XREngineEnvironmentVariables.BypassVendorUpscale, BooleanValue(_bypassVendorUpscale));
+            XREnvironment.SetPreferenceValue(XREngineEnvironmentVariables.GlDebug, BooleanValue(_glDebug));
+            XREnvironment.SetPreferenceValue(XREngineEnvironmentVariables.ForceFullViewport, BooleanValue(_forceFullViewport));
+            XREnvironment.SetPreferenceValue(XREngineEnvironmentVariables.ForceDebugOpaquePipeline, BooleanValue(_forceDebugOpaquePipeline));
+            XREnvironment.SetPreferenceValue(XREngineEnvironmentVariables.GpuHizDirtyBypass, BooleanValue(_gpuHiZDirtyBypass));
+            XREnvironment.SetPreferenceValue(XREngineEnvironmentVariables.OutputSourceFbo, _outputSourceFboOverride);
+            XREnvironment.SetPreferenceValue(XREngineEnvironmentVariables.VkEnableAutoUniformRewrite, BooleanValue(_vkEnableAutoUniformRewrite));
+            XREnvironment.SetPreferenceValue(XREngineEnvironmentVariables.VkDumpShaderOnError, BooleanValue(_vkDumpShaderOnError));
+            XREnvironment.SetPreferenceValue(XREngineEnvironmentVariables.ShaderSourceOptimizer, BooleanValue(_shaderSourceOptimizerEnabled));
+            XREnvironment.SetPreferenceValue(XREngineEnvironmentVariables.VkTracePipeCreate, BooleanValue(_vkTracePipeCreate));
+            XREnvironment.SetPreferenceValue(XREngineEnvironmentVariables.VkTraceSwapDraw, BooleanValue(_vkTraceSwapDraw));
+            XREnvironment.SetPreferenceValue(XREngineEnvironmentVariables.VkTraceDraw, BooleanValue(_vkTraceDraw));
+            XREnvironment.SetPreferenceValue(XREngineEnvironmentVariables.VkSkipUiPipeline, BooleanValue(_vkSkipUiPipeline));
+            XREnvironment.SetPreferenceValue(XREngineEnvironmentVariables.VkSkipUiBatchText, BooleanValue(_vkSkipUiBatchText));
+            XREnvironment.SetPreferenceValue(XREngineEnvironmentVariables.VkSkipOcclusionQueryOps, BooleanValue(_vkSkipOcclusionQueryOps));
+            XREnvironment.SetPreferenceValue(XREngineEnvironmentVariables.VkForceSwapchainMagenta, BooleanValue(_vkForceSwapchainMagenta));
+            XREnvironment.SetPreferenceValue(XREngineEnvironmentVariables.VkSkipImGui, BooleanValue(_vkSkipImGui));
+            XREnvironment.SetPreferenceValue(XREngineEnvironmentVariables.VulkanAsyncTextureUpload, BooleanValue(_vkAsyncTextureUpload));
+            XREnvironment.SetPreferenceValue(XREngineEnvironmentVariables.VulkanTextureUploadTransferQueue, BooleanValue(_vkTextureUploadTransferQueue));
+            XREnvironment.SetPreferenceValue(XREngineEnvironmentVariables.VulkanTextureUploadPrepWorker, BooleanValue(_vkTextureUploadPrepWorker));
+            XREnvironment.SetPreferenceValue(XREngineEnvironmentVariables.VulkanTextureUploadPrepBudgetMs, DoubleValue(_vkTextureUploadPrepBudgetMilliseconds));
+            XREnvironment.SetPreferenceValue(XREngineEnvironmentVariables.VulkanTextureUploadTrace, BooleanValue(_vkTextureUploadTrace));
+            XREnvironment.SetPreferenceValue(XREngineEnvironmentVariables.VulkanProgressiveTextureUpload, BooleanValue(_vkProgressiveTextureUpload));
+            XREnvironment.SetPreferenceValue(XREngineEnvironmentVariables.VulkanImportedTexturePreviewFreeze, BooleanValue(_vkImportedTexturePreviewFreeze));
+            XREnvironment.SetPreferenceValue(XREngineEnvironmentVariables.VulkanDiagnosticPreset, _vkDiagnosticPreset);
+            XREnvironment.SetPreferenceValue(XREngineEnvironmentVariables.VulkanDiagnosticFlags, _vkDiagnosticFlags);
+        }
+
+        public void CopyFrom(EditorDebugOptions source)
+        {
+            if (source is null)
+                return;
+
+            RenderMesh3DBounds = source.RenderMesh3DBounds;
+            RenderMesh2DBounds = source.RenderMesh2DBounds;
+            RenderTransformDebugInfo = source.RenderTransformDebugInfo;
+            RenderUITransformCoordinate = source.RenderUITransformCoordinate;
+            RenderTransformLines = source.RenderTransformLines;
+            RenderTransformPoints = source.RenderTransformPoints;
+            RenderTransformCapsules = source.RenderTransformCapsules;
+            VisualizeDirectionalLightVolumes = source.VisualizeDirectionalLightVolumes;
+            Preview3DWorldOctree = source.Preview3DWorldOctree;
+            Preview2DWorldQuadtree = source.Preview2DWorldQuadtree;
+            PreviewTraces = source.PreviewTraces;
+            RenderCullingVolumes = source.RenderCullingVolumes;
+            VisualizeTransformId = source.VisualizeTransformId;
+            VisualizeTransparencyModeOverlay = source.VisualizeTransparencyModeOverlay;
+            VisualizeTransparencyClassificationOverlay = source.VisualizeTransparencyClassificationOverlay;
+            VisualizeTransparencyAccumulation = source.VisualizeTransparencyAccumulation;
+            VisualizeTransparencyRevealage = source.VisualizeTransparencyRevealage;
+            VisualizeTransparencyOverdrawHeatmap = source.VisualizeTransparencyOverdrawHeatmap;
+            RenderLightProbeTetrahedra = source.RenderLightProbeTetrahedra;
+            DebugTextMaxLifespan = source.DebugTextMaxLifespan;
+            DebugPointSize = source.DebugPointSize;
+            DebugLineWidth = source.DebugLineWidth;
+            EnableThreadAllocationTracking = source.EnableThreadAllocationTracking;
+            GLSubmitTraceLevel = source.GLSubmitTraceLevel;
+            HiZCullTrace = source.HiZCullTrace;
+            DiagVendorUpscale = source.DiagVendorUpscale;
+            DiagQuadBlit = source.DiagQuadBlit;
+            DiagPostProcess = source.DiagPostProcess;
+            DebugPresentClear = source.DebugPresentClear;
+            PushSubDataBreakdown = source.PushSubDataBreakdown;
+            PushSubDataTrace = source.PushSubDataTrace;
+            DispatchTrace = source.DispatchTrace;
+            DispatchFinish = source.DispatchFinish;
+            UploadStageLogging = source.UploadStageLogging;
+            CrashBreadcrumbs = source.CrashBreadcrumbs;
+            DeferredDebugView = source.DeferredDebugView;
+            DiagDeferredLighting = source.DiagDeferredLighting;
+            ModelRenderDiagEnabled = source.ModelRenderDiagEnabled;
+            JoltDebugRenderDiagnostics = source.JoltDebugRenderDiagnostics;
+            DirectionalShadowAudit = source.DirectionalShadowAudit;
+            FirstChanceExceptionFilter = source.FirstChanceExceptionFilter;
+            BypassVendorUpscale = source.BypassVendorUpscale;
+            ForceSkinnedUnbounded = source.ForceSkinnedUnbounded;
+            GLDebug = source.GLDebug;
+            ForceFullViewport = source.ForceFullViewport;
+            ForceDebugOpaquePipeline = source.ForceDebugOpaquePipeline;
+            GpuHiZDirtyBypass = source.GpuHiZDirtyBypass;
+            OutputSourceFboOverride = source.OutputSourceFboOverride;
+            VkEnableAutoUniformRewrite = source.VkEnableAutoUniformRewrite;
+            VkDumpShaderOnError = source.VkDumpShaderOnError;
+            ShaderSourceOptimizerEnabled = source.ShaderSourceOptimizerEnabled;
+            VkTracePipeCreate = source.VkTracePipeCreate;
+            VkTraceSwapDraw = source.VkTraceSwapDraw;
+            VkTraceDraw = source.VkTraceDraw;
+            VkSkipUiPipeline = source.VkSkipUiPipeline;
+            VkSkipUiBatchText = source.VkSkipUiBatchText;
+            VkSkipOcclusionQueryOps = source.VkSkipOcclusionQueryOps;
+            VkForceSwapchainMagenta = source.VkForceSwapchainMagenta;
+            VkSkipImGui = source.VkSkipImGui;
+            VkAsyncTextureUpload = source.VkAsyncTextureUpload;
+            VkTextureUploadTransferQueue = source.VkTextureUploadTransferQueue;
+            VkTextureUploadPrepWorker = source.VkTextureUploadPrepWorker;
+            VkTextureUploadPrepBudgetMilliseconds = source.VkTextureUploadPrepBudgetMilliseconds;
+            VkTextureUploadTrace = source.VkTextureUploadTrace;
+            VkProgressiveTextureUpload = source.VkProgressiveTextureUpload;
+            VkImportedTexturePreviewFreeze = source.VkImportedTexturePreviewFreeze;
+            VkDiagnosticPreset = source.VkDiagnosticPreset;
+            VkDiagnosticFlags = source.VkDiagnosticFlags;
+            UseDebugOpaquePipeline = source.UseDebugOpaquePipeline;
+            ForceGpuPassthroughCulling = source.ForceGpuPassthroughCulling;
+            AllowGpuCpuFallback = source.AllowGpuCpuFallback;
+            EnableZeroReadbackMaterialScatter = source.EnableZeroReadbackMaterialScatter;
+            ZeroReadbackMaterialDrawPath = source.ZeroReadbackMaterialDrawPath;
+            EnableProfilerFrameLogging = source.EnableProfilerFrameLogging;
+            EnableProfilerComponentTiming = source.EnableProfilerComponentTiming;
+            EnableRenderStatisticsTracking = source.EnableRenderStatisticsTracking;
+            EnableGpuRenderPipelineProfiling = source.EnableGpuRenderPipelineProfiling;
+            EnableMainThreadInvokeDiagnostics = source.EnableMainThreadInvokeDiagnostics;
+            EnableUILayoutDebugLogging = source.EnableUILayoutDebugLogging;
+            EnableProfilerUdpSending = source.EnableProfilerUdpSending;
+            StartExternalProfilerOnStartup = source.StartExternalProfilerOnStartup;
+            CodeProfilerDebugOutputMinElapsedMs = source.CodeProfilerDebugOutputMinElapsedMs;
+            CodeProfilerStatsThreadIntervalMs = source.CodeProfilerStatsThreadIntervalMs;
+            CodeProfilerSnapshotIntervalMs = source.CodeProfilerSnapshotIntervalMs;
+            CodeProfilerThreadHistoryCapacity = source.CodeProfilerThreadHistoryCapacity;
+            CodeProfilerMaxOverflowPerCycle = source.CodeProfilerMaxOverflowPerCycle;
+            CodeProfilerMaxOverflowQueueSize = source.CodeProfilerMaxOverflowQueueSize;
+            CodeProfilerProducerBufferCapacity = source.CodeProfilerProducerBufferCapacity;
+            CodeProfilerFpsDropBaselineWindowSamples = source.CodeProfilerFpsDropBaselineWindowSamples;
+            CodeProfilerFpsDropMinPreviousFps = source.CodeProfilerFpsDropMinPreviousFps;
+            CodeProfilerFpsDropMinDeltaMs = source.CodeProfilerFpsDropMinDeltaMs;
+            CodeProfilerRenderStallThresholdMs = source.CodeProfilerRenderStallThresholdMs;
+            ProfilerPanelPaused = source.ProfilerPanelPaused;
+            ProfilerPanelSortByTime = source.ProfilerPanelSortByTime;
+            ProfilerPanelSmoothingAlpha = source.ProfilerPanelSmoothingAlpha;
+            ProfilerPanelUpdateIntervalSeconds = source.ProfilerPanelUpdateIntervalSeconds;
+            ProfilerPanelPersistenceSeconds = source.ProfilerPanelPersistenceSeconds;
+            ProfilerPanelGraphSampleCount = source.ProfilerPanelGraphSampleCount;
+            ProfilerPanelRootHierarchyMinMs = source.ProfilerPanelRootHierarchyMinMs;
+            ProfilerPanelRootHierarchyMaxMs = source.ProfilerPanelRootHierarchyMaxMs;
+            ProfilerPanelShowCpuTimingRawMsLine = source.ProfilerPanelShowCpuTimingRawMsLine;
+            ProfilerPanelShowCpuTimingSmoothedMsLine = source.ProfilerPanelShowCpuTimingSmoothedMsLine;
+            ProfilerPanelInterpolateCpuTimingGraphs = source.ProfilerPanelInterpolateCpuTimingGraphs;
+            ProfilerPanelCpuTimingDisplayMode = source.ProfilerPanelCpuTimingDisplayMode;
+            ProfilerPanelShowGpuTimingRawMsLine = source.ProfilerPanelShowGpuTimingRawMsLine;
+            ProfilerPanelShowGpuTimingSmoothedMsLine = source.ProfilerPanelShowGpuTimingSmoothedMsLine;
+            ProfilerPanelInterpolateGpuTimingGraphs = source.ProfilerPanelInterpolateGpuTimingGraphs;
+            ProfilerPanelGpuTimingDisplayMode = source.ProfilerPanelGpuTimingDisplayMode;
+            ProfilerPanelShowTree = source.ProfilerPanelShowTree;
+            ProfilerPanelShowFpsDropSpikes = source.ProfilerPanelShowFpsDropSpikes;
+            ProfilerPanelShowRenderStats = source.ProfilerPanelShowRenderStats;
+            ProfilerPanelShowGpuPipeline = source.ProfilerPanelShowGpuPipeline;
+            ProfilerPanelShowThreadAllocations = source.ProfilerPanelShowThreadAllocations;
+            ProfilerPanelShowComponentTimings = source.ProfilerPanelShowComponentTimings;
+            ProfilerPanelShowBvhMetrics = source.ProfilerPanelShowBvhMetrics;
+            ProfilerPanelShowJobSystem = source.ProfilerPanelShowJobSystem;
+            ProfilerPanelShowMainThreadInvokes = source.ProfilerPanelShowMainThreadInvokes;
+            DebugShapePopulationMode = source.DebugShapePopulationMode;
+            DebugVisualizerPopulationMode = source.DebugVisualizerPopulationMode;
+            DebugPrimitiveBufferFormat = source.DebugPrimitiveBufferFormat;
+        }
+
+        public void ApplyOverrides(EditorDebugOverrides overrides)
+        {
+            if (overrides is null)
+                return;
+
+            if (overrides.RenderMesh3DBoundsOverride is { HasOverride: true } mesh3d)
+                RenderMesh3DBounds = mesh3d.Value;
+            if (overrides.RenderMesh2DBoundsOverride is { HasOverride: true } mesh2d)
+                RenderMesh2DBounds = mesh2d.Value;
+            if (overrides.RenderTransformDebugInfoOverride is { HasOverride: true } transformInfo)
+                RenderTransformDebugInfo = transformInfo.Value;
+            if (overrides.RenderUITransformCoordinateOverride is { HasOverride: true } uiCoord)
+                RenderUITransformCoordinate = uiCoord.Value;
+            if (overrides.RenderTransformLinesOverride is { HasOverride: true } lines)
+                RenderTransformLines = lines.Value;
+            if (overrides.RenderTransformPointsOverride is { HasOverride: true } points)
+                RenderTransformPoints = points.Value;
+            if (overrides.RenderTransformCapsulesOverride is { HasOverride: true } capsules)
+                RenderTransformCapsules = capsules.Value;
+            if (overrides.VisualizeDirectionalLightVolumesOverride is { HasOverride: true } lightVolumes)
+                VisualizeDirectionalLightVolumes = lightVolumes.Value;
+            if (overrides.Preview3DWorldOctreeOverride is { HasOverride: true } preview3d)
+                Preview3DWorldOctree = preview3d.Value;
+            if (overrides.Preview2DWorldQuadtreeOverride is { HasOverride: true } preview2d)
+                Preview2DWorldQuadtree = preview2d.Value;
+            if (overrides.PreviewTracesOverride is { HasOverride: true } previewTraces)
+                PreviewTraces = previewTraces.Value;
+            if (overrides.RenderCullingVolumesOverride is { HasOverride: true } culling)
+                RenderCullingVolumes = culling.Value;
+            if (overrides.VisualizeTransformIdOverride is { HasOverride: true } transformId)
+                VisualizeTransformId = transformId.Value;
+            if (overrides.VisualizeTransparencyModeOverlayOverride is { HasOverride: true } transparencyMode)
+                VisualizeTransparencyModeOverlay = transparencyMode.Value;
+            if (overrides.VisualizeTransparencyClassificationOverlayOverride is { HasOverride: true } transparencyClassification)
+                VisualizeTransparencyClassificationOverlay = transparencyClassification.Value;
+            if (overrides.VisualizeTransparencyAccumulationOverride is { HasOverride: true } transparencyAccumulation)
+                VisualizeTransparencyAccumulation = transparencyAccumulation.Value;
+            if (overrides.VisualizeTransparencyRevealageOverride is { HasOverride: true } transparencyRevealage)
+                VisualizeTransparencyRevealage = transparencyRevealage.Value;
+            if (overrides.VisualizeTransparencyOverdrawHeatmapOverride is { HasOverride: true } transparencyOverdraw)
+                VisualizeTransparencyOverdrawHeatmap = transparencyOverdraw.Value;
+            if (overrides.RenderLightProbeTetrahedraOverride is { HasOverride: true } tetra)
+                RenderLightProbeTetrahedra = tetra.Value;
+            if (overrides.DebugTextMaxLifespanOverride is { HasOverride: true } lifespan)
+                DebugTextMaxLifespan = lifespan.Value;
+            if (overrides.DebugPointSizeOverride is { HasOverride: true } pointSize)
+                DebugPointSize = pointSize.Value;
+            if (overrides.DebugLineWidthOverride is { HasOverride: true } lineWidth)
+                DebugLineWidth = lineWidth.Value;
+            if (overrides.EnableThreadAllocationTrackingOverride is { HasOverride: true } alloc)
+                EnableThreadAllocationTracking = alloc.Value;
+            if (overrides.UseDebugOpaquePipelineOverride is { HasOverride: true } debugOpaque)
+                UseDebugOpaquePipeline = debugOpaque.Value;
+            if (overrides.ForceGpuPassthroughCullingOverride is { HasOverride: true } passthrough)
+                ForceGpuPassthroughCulling = passthrough.Value;
+            if (overrides.AllowGpuCpuFallbackOverride is { HasOverride: true } cpuFallback)
+                AllowGpuCpuFallback = cpuFallback.Value;
+            if (overrides.EnableZeroReadbackMaterialScatterOverride is { HasOverride: true } zeroReadback)
+                EnableZeroReadbackMaterialScatter = zeroReadback.Value;
+            if (overrides.ZeroReadbackMaterialDrawPathOverride is { HasOverride: true } zeroReadbackDrawPath)
+                ZeroReadbackMaterialDrawPath = zeroReadbackDrawPath.Value;
+            if (overrides.EnableProfilerFrameLoggingOverride is { HasOverride: true } profilerLogging)
+                EnableProfilerFrameLogging = profilerLogging.Value;
+            if (overrides.EnableProfilerComponentTimingOverride is { HasOverride: true } componentTiming)
+                EnableProfilerComponentTiming = componentTiming.Value;
+            if (overrides.EnableRenderStatisticsTrackingOverride is { HasOverride: true } statsTracking)
+                EnableRenderStatisticsTracking = statsTracking.Value;
+            if (overrides.EnableGpuRenderPipelineProfilingOverride is { HasOverride: true } gpuPipelineProfiling)
+                EnableGpuRenderPipelineProfiling = gpuPipelineProfiling.Value;
+            if (overrides.EnableMainThreadInvokeDiagnosticsOverride is { HasOverride: true } invokeDiagnostics)
+                EnableMainThreadInvokeDiagnostics = invokeDiagnostics.Value;
+            if (overrides.EnableUILayoutDebugLoggingOverride is { HasOverride: true } uiLayoutDebug)
+                EnableUILayoutDebugLogging = uiLayoutDebug.Value;
+            if (overrides.EnableProfilerUdpSendingOverride is { HasOverride: true } profilerUdp)
+                EnableProfilerUdpSending = profilerUdp.Value;
+            if (overrides.StartExternalProfilerOnStartupOverride is { HasOverride: true } startExternalProfiler)
+                StartExternalProfilerOnStartup = startExternalProfiler.Value;
+            if (overrides.CodeProfilerDebugOutputMinElapsedMsOverride is { HasOverride: true } profilerDebugOutput)
+                CodeProfilerDebugOutputMinElapsedMs = profilerDebugOutput.Value;
+            if (overrides.CodeProfilerStatsThreadIntervalMsOverride is { HasOverride: true } profilerStatsInterval)
+                CodeProfilerStatsThreadIntervalMs = profilerStatsInterval.Value;
+            if (overrides.CodeProfilerSnapshotIntervalMsOverride is { HasOverride: true } profilerSnapshotInterval)
+                CodeProfilerSnapshotIntervalMs = profilerSnapshotInterval.Value;
+            if (overrides.CodeProfilerThreadHistoryCapacityOverride is { HasOverride: true } profilerThreadHistory)
+                CodeProfilerThreadHistoryCapacity = profilerThreadHistory.Value;
+            if (overrides.CodeProfilerMaxOverflowPerCycleOverride is { HasOverride: true } profilerOverflowPerCycle)
+                CodeProfilerMaxOverflowPerCycle = profilerOverflowPerCycle.Value;
+            if (overrides.CodeProfilerMaxOverflowQueueSizeOverride is { HasOverride: true } profilerOverflowQueue)
+                CodeProfilerMaxOverflowQueueSize = profilerOverflowQueue.Value;
+            if (overrides.CodeProfilerProducerBufferCapacityOverride is { HasOverride: true } profilerProducerCapacity)
+                CodeProfilerProducerBufferCapacity = profilerProducerCapacity.Value;
+            if (overrides.CodeProfilerFpsDropBaselineWindowSamplesOverride is { HasOverride: true } profilerFpsBaseline)
+                CodeProfilerFpsDropBaselineWindowSamples = profilerFpsBaseline.Value;
+            if (overrides.CodeProfilerFpsDropMinPreviousFpsOverride is { HasOverride: true } profilerFpsPrevious)
+                CodeProfilerFpsDropMinPreviousFps = profilerFpsPrevious.Value;
+            if (overrides.CodeProfilerFpsDropMinDeltaMsOverride is { HasOverride: true } profilerFpsDelta)
+                CodeProfilerFpsDropMinDeltaMs = profilerFpsDelta.Value;
+            if (overrides.CodeProfilerRenderStallThresholdMsOverride is { HasOverride: true } renderStallThreshold)
+                CodeProfilerRenderStallThresholdMs = renderStallThreshold.Value;
+            if (overrides.ProfilerPanelPausedOverride is { HasOverride: true } profilerPaused)
+                ProfilerPanelPaused = profilerPaused.Value;
+            if (overrides.ProfilerPanelSortByTimeOverride is { HasOverride: true } profilerSortByTime)
+                ProfilerPanelSortByTime = profilerSortByTime.Value;
+            if (overrides.ProfilerPanelSmoothingAlphaOverride is { HasOverride: true } profilerSmoothing)
+                ProfilerPanelSmoothingAlpha = profilerSmoothing.Value;
+            if (overrides.ProfilerPanelUpdateIntervalSecondsOverride is { HasOverride: true } profilerUpdateInterval)
+                ProfilerPanelUpdateIntervalSeconds = profilerUpdateInterval.Value;
+            if (overrides.ProfilerPanelPersistenceSecondsOverride is { HasOverride: true } profilerPersistence)
+                ProfilerPanelPersistenceSeconds = profilerPersistence.Value;
+            if (overrides.ProfilerPanelGraphSampleCountOverride is { HasOverride: true } profilerGraphSamples)
+                ProfilerPanelGraphSampleCount = profilerGraphSamples.Value;
+            if (overrides.ProfilerPanelRootHierarchyMinMsOverride is { HasOverride: true } profilerRootMin)
+                ProfilerPanelRootHierarchyMinMs = profilerRootMin.Value;
+            if (overrides.ProfilerPanelRootHierarchyMaxMsOverride is { HasOverride: true } profilerRootMax)
+                ProfilerPanelRootHierarchyMaxMs = profilerRootMax.Value;
+            if (overrides.ProfilerPanelShowCpuTimingRawMsLineOverride is { HasOverride: true } profilerCpuRaw)
+                ProfilerPanelShowCpuTimingRawMsLine = profilerCpuRaw.Value;
+            if (overrides.ProfilerPanelShowCpuTimingSmoothedMsLineOverride is { HasOverride: true } profilerCpuDisplay)
+                ProfilerPanelShowCpuTimingSmoothedMsLine = profilerCpuDisplay.Value;
+            if (overrides.ProfilerPanelInterpolateCpuTimingGraphsOverride is { HasOverride: true } profilerCpuInterpolate)
+                ProfilerPanelInterpolateCpuTimingGraphs = profilerCpuInterpolate.Value;
+            if (overrides.ProfilerPanelCpuTimingDisplayModeOverride is { HasOverride: true } profilerCpuMode)
+                ProfilerPanelCpuTimingDisplayMode = profilerCpuMode.Value;
+            if (overrides.ProfilerPanelShowGpuTimingRawMsLineOverride is { HasOverride: true } profilerGpuRaw)
+                ProfilerPanelShowGpuTimingRawMsLine = profilerGpuRaw.Value;
+            if (overrides.ProfilerPanelShowGpuTimingSmoothedMsLineOverride is { HasOverride: true } profilerGpuDisplay)
+                ProfilerPanelShowGpuTimingSmoothedMsLine = profilerGpuDisplay.Value;
+            if (overrides.ProfilerPanelInterpolateGpuTimingGraphsOverride is { HasOverride: true } profilerGpuInterpolate)
+                ProfilerPanelInterpolateGpuTimingGraphs = profilerGpuInterpolate.Value;
+            if (overrides.ProfilerPanelGpuTimingDisplayModeOverride is { HasOverride: true } profilerGpuMode)
+                ProfilerPanelGpuTimingDisplayMode = profilerGpuMode.Value;
+            if (overrides.ProfilerPanelShowTreeOverride is { HasOverride: true } profilerShowTree)
+                ProfilerPanelShowTree = profilerShowTree.Value;
+            if (overrides.ProfilerPanelShowFpsDropSpikesOverride is { HasOverride: true } profilerShowSpikes)
+                ProfilerPanelShowFpsDropSpikes = profilerShowSpikes.Value;
+            if (overrides.ProfilerPanelShowRenderStatsOverride is { HasOverride: true } profilerShowRender)
+                ProfilerPanelShowRenderStats = profilerShowRender.Value;
+            if (overrides.ProfilerPanelShowGpuPipelineOverride is { HasOverride: true } profilerShowGpu)
+                ProfilerPanelShowGpuPipeline = profilerShowGpu.Value;
+            if (overrides.ProfilerPanelShowThreadAllocationsOverride is { HasOverride: true } profilerShowAllocs)
+                ProfilerPanelShowThreadAllocations = profilerShowAllocs.Value;
+            if (overrides.ProfilerPanelShowComponentTimingsOverride is { HasOverride: true } profilerShowComponents)
+                ProfilerPanelShowComponentTimings = profilerShowComponents.Value;
+            if (overrides.ProfilerPanelShowBvhMetricsOverride is { HasOverride: true } profilerShowBvh)
+                ProfilerPanelShowBvhMetrics = profilerShowBvh.Value;
+            if (overrides.ProfilerPanelShowJobSystemOverride is { HasOverride: true } profilerShowJobs)
+                ProfilerPanelShowJobSystem = profilerShowJobs.Value;
+            if (overrides.ProfilerPanelShowMainThreadInvokesOverride is { HasOverride: true } profilerShowInvokes)
+                ProfilerPanelShowMainThreadInvokes = profilerShowInvokes.Value;
+            if (overrides.DebugShapePopulationModeOverride is { HasOverride: true } shapePop)
+                DebugShapePopulationMode = shapePop.Value;
+            if (overrides.DebugVisualizerPopulationModeOverride is { HasOverride: true } vizPop)
+                DebugVisualizerPopulationMode = vizPop.Value;
+            if (overrides.DebugPrimitiveBufferFormatOverride is { HasOverride: true } bufFmt)
+                DebugPrimitiveBufferFormat = bufFmt.Value;
+        }
+    }
+}

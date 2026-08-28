@@ -11,7 +11,7 @@ namespace XREngine.UnitTests.Rendering;
 [TestFixture]
 public sealed class RuntimeModularizationPhase5DependencyBoundaryTests
 {
-    private static readonly Dictionary<string, string[]> ApprovedAdapterReferences = new(StringComparer.Ordinal)
+    private static readonly Dictionary<string, string[]> ApprovedRuntimeExtensionReferences = new(StringComparer.Ordinal)
     {
         ["XREngine.Runtime.AnimationIntegration"] =
         [
@@ -36,16 +36,30 @@ public sealed class RuntimeModularizationPhase5DependencyBoundaryTests
             "XREngine.Runtime.Core",
             "XREngine.Runtime.Rendering",
         ],
-        ["XREngine.Runtime.ModelingBridge"] =
+        ["XREngine.Runtime.ModelAssetPipeline"] =
         [
             "XREngine.Animation",
             "XREngine.Data",
+            "XREngine.Extensions",
             "XREngine.Fbx",
             "XREngine.Gltf",
+            "XREngine.Runtime.Core",
+            "XREngine.Runtime.Rendering",
+        ],
+        ["XREngine.Runtime.ModelingIntegration"] =
+        [
+            "XREngine.Data",
             "XREngine.Modeling",
             "XREngine.Runtime.Rendering",
         ],
     };
+
+    private static readonly string[] BootstrapAotAdapterNames =
+    [
+        "XREngine.Runtime.AnimationIntegration",
+        "XREngine.Runtime.AudioIntegration",
+        "XREngine.Runtime.InputIntegration",
+    ];
 
     private static readonly HashSet<string> ForbiddenPublicApiAssemblies = new(StringComparer.Ordinal)
     {
@@ -59,16 +73,16 @@ public sealed class RuntimeModularizationPhase5DependencyBoundaryTests
     };
 
     [Test]
-    public void AdapterProjects_ReferenceOnlyTheirApprovedLowerGraph()
+    public void RuntimeExtensionProjects_ReferenceOnlyTheirApprovedLowerGraph()
     {
         string root = ResolveWorkspaceRoot();
 
-        foreach ((string projectName, string[] approvedReferences) in ApprovedAdapterReferences)
+        foreach ((string projectName, string[] approvedReferences) in ApprovedRuntimeExtensionReferences)
         {
             string[] references = ReadProjectReferences(Path.Combine(root, projectName, $"{projectName}.csproj"));
             references.ShouldBe(approvedReferences);
 
-            foreach (string otherAdapter in ApprovedAdapterReferences.Keys)
+            foreach (string otherAdapter in ApprovedRuntimeExtensionReferences.Keys)
                 if (!string.Equals(projectName, otherAdapter, StringComparison.Ordinal))
                     references.ShouldNotContain(otherAdapter);
         }
@@ -99,13 +113,13 @@ public sealed class RuntimeModularizationPhase5DependencyBoundaryTests
     }
 
     [Test]
-    public void AdapterPublicApis_DoNotExposeFacadeApplicationsBackendsOrOtherAdapters()
+    public void RuntimeExtensionPublicApis_DoNotExposeFacadeApplicationsBackendsOrOtherExtensions()
     {
-        foreach (string adapterName in ApprovedAdapterReferences.Keys)
+        foreach (string adapterName in ApprovedRuntimeExtensionReferences.Keys)
         {
             Assembly adapter = Assembly.Load(adapterName);
             HashSet<string> forbidden = new(ForbiddenPublicApiAssemblies, StringComparer.Ordinal);
-            foreach (string otherAdapter in ApprovedAdapterReferences.Keys)
+            foreach (string otherAdapter in ApprovedRuntimeExtensionReferences.Keys)
                 if (!string.Equals(adapterName, otherAdapter, StringComparison.Ordinal))
                     forbidden.Add(otherAdapter);
 
@@ -149,7 +163,7 @@ public sealed class RuntimeModularizationPhase5DependencyBoundaryTests
     }
 
     [Test]
-    public void BootstrapOwnsHostCompositionAndAllAdapterAotRoots()
+    public void BootstrapOwnsHostCompositionAndCoreAdapterAotRoots()
     {
         string root = ResolveWorkspaceRoot();
         string bootstrapRoot = Path.Combine(root, "XREngine.Runtime.Bootstrap");
@@ -163,7 +177,6 @@ public sealed class RuntimeModularizationPhase5DependencyBoundaryTests
             "Engine.RuntimeAnimationHostServices.cs",
             "Engine.RuntimeAudioIntegrationServices.cs",
             "Engine.RuntimeInputServices.cs",
-            "Engine.RuntimeModelImportServices.cs",
             "Engine.RuntimeVrInputServices.cs",
             "Engine.RuntimeVrLifecycleServices.cs",
             "Engine.RuntimeVrStateServices.cs",
@@ -174,11 +187,20 @@ public sealed class RuntimeModularizationPhase5DependencyBoundaryTests
             File.Exists(Path.Combine(root, "XRENGINE", "Engine", hostFile)).ShouldBeFalse();
         }
 
+        File.Exists(Path.Combine(hostRoot, "Engine.RuntimeModelImportServices.cs")).ShouldBeFalse();
+        File.Exists(Path.Combine(
+            root,
+            "XREngine.Runtime.ModelAssetPipeline",
+            "Importing",
+            "RuntimeModelImportServices.cs")).ShouldBeTrue();
+
         adapterBootstrap.ShouldContain("RuntimeAdapterProfile profile");
         adapterBootstrap.ShouldContain("UninstallEngineHostServices()");
         adapterBootstrap.ShouldContain("DisposeWithoutLock()");
-        foreach (string adapterName in ApprovedAdapterReferences.Keys)
+        foreach (string adapterName in BootstrapAotAdapterNames)
             bootstrapProject.ShouldContain($"..\\{adapterName}\\**\\*.cs");
+        bootstrapProject.ShouldNotContain("..\\XREngine.Runtime.ModelAssetPipeline\\**\\*.cs");
+        bootstrapProject.ShouldNotContain("..\\XREngine.Runtime.ModelingIntegration\\**\\*.cs");
         facadeProject.ShouldNotContain("GenerateAotFactoryRegistrations");
     }
 
@@ -227,19 +249,19 @@ public sealed class RuntimeModularizationPhase5DependencyBoundaryTests
 
     [Test]
     [NonParallelizable]
-    public void AdapterBootstrapLease_RestoresInstalledCapabilities()
+    public void AdapterBootstrapLease_RestoresOwnedCapabilitiesWithoutReplacingModelImport()
     {
         IRuntimeAnimationHostServices previousAnimation = RuntimeAnimationHostServices.Current;
         IRuntimeAudioIntegrationServices previousAudio = RuntimeAudioIntegrationServices.Current;
-        IRuntimeModelImportServices previousModeling = RuntimeModelImportServices.Current;
+        IRuntimeModelImportServices previousModelAssetPipeline = RuntimeModelImportServices.Current;
 
         IDisposable lease = RuntimeAdapterBootstrap.InstallEngineHostServices(
-            RuntimeAdapterProfile.Animation | RuntimeAdapterProfile.Audio | RuntimeAdapterProfile.Modeling);
+            RuntimeAdapterProfile.Animation | RuntimeAdapterProfile.Audio | RuntimeAdapterProfile.ModelAssetPipeline);
         try
         {
             RuntimeAnimationHostServices.Current.GetType().Assembly.GetName().Name.ShouldBe("XREngine.Runtime.Bootstrap");
             RuntimeAudioIntegrationServices.Current.GetType().Assembly.GetName().Name.ShouldBe("XREngine.Runtime.Bootstrap");
-            RuntimeModelImportServices.Current.GetType().Assembly.GetName().Name.ShouldBe("XREngine.Runtime.Bootstrap");
+            RuntimeModelImportServices.Current.ShouldBeSameAs(previousModelAssetPipeline);
         }
         finally
         {
@@ -248,7 +270,7 @@ public sealed class RuntimeModularizationPhase5DependencyBoundaryTests
 
         RuntimeAnimationHostServices.Current.ShouldBeSameAs(previousAnimation);
         RuntimeAudioIntegrationServices.Current.ShouldBeSameAs(previousAudio);
-        RuntimeModelImportServices.Current.ShouldBeSameAs(previousModeling);
+        RuntimeModelImportServices.Current.ShouldBeSameAs(previousModelAssetPipeline);
     }
 
     private static void AssertTypeBoundary(

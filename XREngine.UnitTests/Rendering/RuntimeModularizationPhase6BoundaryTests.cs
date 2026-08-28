@@ -21,7 +21,8 @@ public sealed class RuntimeModularizationPhase6BoundaryTests
         "XREngine.Runtime.Bootstrap",
         "XREngine.Runtime.Core",
         "XREngine.Runtime.InputIntegration",
-        "XREngine.Runtime.ModelingBridge",
+        "XREngine.Runtime.ModelAssetPipeline",
+        "XREngine.Runtime.ModelingIntegration",
         "XREngine.Runtime.Rendering",
     };
 
@@ -49,8 +50,10 @@ public sealed class RuntimeModularizationPhase6BoundaryTests
                 ["XREngine.Audio", "XREngine.Data", "XREngine.Runtime.Core", "XREngine.Runtime.Rendering"],
             ["XREngine.Runtime.InputIntegration"] =
                 ["XREngine.Input", "XREngine.Data", "XREngine.Extensions", "XREngine.Runtime.Core", "XREngine.Runtime.Rendering"],
-            ["XREngine.Runtime.ModelingBridge"] =
-                ["XREngine.Animation", "XREngine.Fbx", "XREngine.Gltf", "XREngine.Modeling", "XREngine.Data", "XREngine.Runtime.Rendering"],
+            ["XREngine.Runtime.ModelAssetPipeline"] =
+                ["XREngine.Animation", "XREngine.Data", "XREngine.Extensions", "XREngine.Fbx", "XREngine.Gltf", "XREngine.Runtime.Core", "XREngine.Runtime.Rendering"],
+            ["XREngine.Runtime.ModelingIntegration"] =
+                ["XREngine.Data", "XREngine.Modeling", "XREngine.Runtime.Rendering"],
             ["XREngine.Runtime.Bootstrap"] =
             [
                 "XREngine.Animation",
@@ -65,7 +68,6 @@ public sealed class RuntimeModularizationPhase6BoundaryTests
                 "XREngine.Runtime.AudioIntegration",
                 "XREngine.Runtime.Core",
                 "XREngine.Runtime.InputIntegration",
-                "XREngine.Runtime.ModelingBridge",
                 "XREngine.Runtime.Rendering",
                 "XREngine.Runtime.Rendering.OpenGL",
                 "XREngine.Runtime.Rendering.Vulkan",
@@ -110,10 +112,19 @@ public sealed class RuntimeModularizationPhase6BoundaryTests
                     foreach (string destination in destinations)
                     {
                         string destinationFullPath = Path.GetFullPath(Path.Combine(root, destination));
-                        Assert.That(
-                            IsWithinRoot(destinationFullPath, Path.Combine(root, "XRENGINE")),
-                            Is.False,
-                            $"Migrated source '{sourcePath}' points back into the facade.");
+                        bool remainsInFacade = IsWithinRoot(destinationFullPath, Path.Combine(root, "XRENGINE"));
+                        if (remainsInFacade)
+                        {
+                            Assert.That(
+                                IsWithinRoot(destinationFullPath, Path.Combine(root, "XRENGINE", "Compatibility")),
+                                Is.True,
+                                $"Migrated source '{sourcePath}' points outside the facade's staged compatibility area.");
+                            Assert.That(row["Disposition"], Is.AnyOf("Split", "Refactor"));
+                            Assert.That(
+                                row["Rationale"],
+                                Does.Contain("P6.7"),
+                                $"Facade compatibility destination '{destination}' must name its removal phase.");
+                        }
                         Assert.That(File.Exists(destinationFullPath), Is.True, $"Migration destination '{destination}' is missing.");
                     }
                     break;
@@ -197,6 +208,87 @@ public sealed class RuntimeModularizationPhase6BoundaryTests
     }
 
     [Test]
+    public void P65A_ModelAuthoringAssetIoAndRuntimeConsumptionStaySeparated()
+    {
+        string root = ResolveWorkspaceRoot();
+        const string assetPipeline = "XREngine.Runtime.ModelAssetPipeline";
+        const string modelingIntegration = "XREngine.Runtime.ModelingIntegration";
+
+        Assert.That(
+            typeof(global::XREngine.ModelAssetImporter).Assembly.GetName().Name,
+            Is.EqualTo(assetPipeline));
+        Assert.That(
+            typeof(global::XREngine.Rendering.Modeling.XRMeshToModelingDocumentConverter).Assembly.GetName().Name,
+            Is.EqualTo(modelingIntegration));
+        Assert.That(
+            typeof(global::XREngine.Rendering.Modeling.ModelingDocumentToXRMeshConverter).Assembly.GetName().Name,
+            Is.EqualTo(modelingIntegration));
+        Assert.That(
+            typeof(global::XREngine.Rendering.Modeling.XRMeshAuthoringBooleanOperations).Assembly.GetName().Name,
+            Is.EqualTo(modelingIntegration));
+
+        string assetPipelineProject = Path.Combine(root, assetPipeline, $"{assetPipeline}.csproj");
+        string modelingIntegrationProject = Path.Combine(root, modelingIntegration, $"{modelingIntegration}.csproj");
+        Assert.That(
+            ReadProjectReferenceNames(assetPipelineProject),
+            Is.EquivalentTo(new[]
+            {
+                "XREngine.Animation",
+                "XREngine.Data",
+                "XREngine.Extensions",
+                "XREngine.Fbx",
+                "XREngine.Gltf",
+                "XREngine.Runtime.Core",
+                "XREngine.Runtime.Rendering",
+            }));
+        Assert.That(
+            ReadProjectReferenceNames(modelingIntegrationProject),
+            Is.EquivalentTo(new[]
+            {
+                "XREngine.Data",
+                "XREngine.Modeling",
+                "XREngine.Runtime.Rendering",
+            }));
+
+        HashSet<string> assetPipelinePackages = ReadIncludes(XDocument.Load(assetPipelineProject), "PackageReference");
+        HashSet<string> modelingIntegrationPackages = ReadIncludes(XDocument.Load(modelingIntegrationProject), "PackageReference");
+        Assert.That(assetPipelinePackages, Does.Contain("AssimpNetter"));
+        Assert.That(modelingIntegrationPackages, Is.Empty);
+
+        Assert.That(
+            File.Exists(Path.Combine(root, assetPipeline, "Importing", "ModelAssetImporter.cs")),
+            Is.True);
+        Assert.That(
+            Directory.Exists(Path.Combine(root, assetPipeline, "Importing", "Caching")),
+            Is.True);
+        Assert.That(
+            Directory.Exists(Path.Combine(root, modelingIntegration, "Importing")),
+            Is.False);
+        Assert.That(
+            File.Exists(Path.Combine(root, modelingIntegration, "XRMeshToModelingDocumentConverter.cs")),
+            Is.True);
+        Assert.That(
+            File.Exists(Path.Combine(root, modelingIntegration, "ModelingDocumentToXRMeshConverter.cs")),
+            Is.True);
+
+        foreach (string ordinaryRuntimeProject in new[]
+                 {
+                     "XREngine.Runtime.Core",
+                     "XREngine.Runtime.Rendering",
+                     "XREngine.Runtime.Bootstrap",
+                 })
+        {
+            HashSet<string> references = ReadProjectReferenceNames(Path.Combine(
+                root,
+                ordinaryRuntimeProject,
+                $"{ordinaryRuntimeProject}.csproj"));
+            Assert.That(references, Does.Not.Contain(assetPipeline));
+            Assert.That(references, Does.Not.Contain(modelingIntegration));
+            Assert.That(references, Does.Not.Contain("XREngine.Modeling"));
+        }
+    }
+
+    [Test]
     public void LegacyAssemblyIdentityCorpus_CannotGrowSilently()
     {
         string root = ResolveWorkspaceRoot();
@@ -251,7 +343,7 @@ public sealed class RuntimeModularizationPhase6BoundaryTests
         [
             "XREngine.Animation", "XREngine.Audio", "XREngine.Data", "XREngine.Extensions", "XREngine.Fbx",
             "XREngine.Input", "XREngine.Runtime.AnimationIntegration", "XREngine.Runtime.AudioIntegration",
-            "XREngine.Runtime.Core", "XREngine.Runtime.InputIntegration", "XREngine.Runtime.ModelingBridge",
+            "XREngine.Runtime.Core", "XREngine.Runtime.InputIntegration", "XREngine.Runtime.ModelAssetPipeline",
             "XREngine.Runtime.Rendering",
         ];
 

@@ -104,18 +104,24 @@ introduced. Continuation requests retain the existing `store: false` replay.
 - continuation output items, including encrypted reasoning content.
 
 An incomplete response caused by `max_output_tokens` is classified as
-`BudgetExceeded`; other incomplete states remain provider errors. The minimum
-accepted run output budget is 16 tokens, matching the live Responses API
-contract. A JSON response containing `"error": null` is not an error.
+`BudgetExceeded`; other incomplete states remain provider errors. A run output
+budget of `0` disables the broker cap and omits `max_output_tokens` from the
+provider request. Positive limits start at 16 tokens, matching the live
+Responses API contract. A JSON response containing `"error": null` is not an
+error.
 
 For a continuation, the next input is the previous `response.output` plus one
 `function_call_output` for each completed call. The orchestrator rejects empty
 or duplicate call IDs. `max_turns`, `max_tool_calls`,
 `max_tool_result_bytes`, context-file count/raw/rendered-byte caps,
-`max_output_tokens`, elapsed time, and retry count are run-wide request budgets;
+and retry count are run-wide request budgets. Positive `max_output_tokens` and
+elapsed-time values are optional run-wide limits; zero disables the
+corresponding broker limit. The
 request text is also capped at 262,144 characters. Repository tools additionally
-enforce per-call time/read/search/result bounds and cumulative run-wide search
-and output budgets.
+enforce per-call read/search/result bounds and cumulative run-wide search and
+output budgets. Broker-created repository and editor providers have no local
+per-call timeout; caller cancellation and an optional positive whole-run limit
+remain cooperative cancellation paths.
 Only retryable provider transport/rate-limit failures use exponential backoff
 with jitter; local mutations are never retried. Each attempt records only safe
 metadata: turn/attempt, background flag, outcome, response ID, actual model,
@@ -176,11 +182,11 @@ Broker server version `0.5.0` retains requested Responses controls in both
 `low`, `medium`, or `high` and defaults to `medium`. The broker serializes it
 as `text: { verbosity: ... }`; reasoning effort remains separately serialized
 as `reasoning: { effort: ... }` for the exact selected GPT-5.6 worker model.
-`max_output_tokens` remains a hard combined visible-output and reasoning-token
-budget and is never raised automatically. If the provider terminates an
-incomplete response with `max_output_tokens`, the terminal failure advises a
-later explicitly authorized run to use a higher output budget or lower
-reasoning/verbosity rather than spending beyond the original authorization.
+Positive `max_output_tokens` values remain hard combined visible-output and
+reasoning-token limits and are never raised automatically. Zero or omission
+disables the broker limit and omits `max_output_tokens` from the provider
+request. A provider `max_output_tokens` incomplete response can still occur at
+the selected model/provider maximum.
 
 Broker server version `0.6.1` makes both omitted failure-prone budgets
 route-aware. Luna and Terra retain 4,096 tokens and 120 seconds. Sol receives
@@ -217,6 +223,13 @@ content. The request advertises separate raw and rendered context budgets.
 Repository and editor providers remain independently authorized and are joined
 only by collision-safe exact-name dispatch.
 
+Broker server version `0.9.0` removes the broker's failure-prone default
+output-token and elapsed-time caps. Both controls now default to zero. Zero
+omits `max_output_tokens` from Responses requests and disables the orchestrator
+elapsed timer; explicit positive values retain their former hard-limit
+semantics. Caller cancellation, model/provider output limits, rate limits, and
+other bounded tool/run controls remain in force.
+
 The supported exact model IDs are `gpt-5.6-luna`, `gpt-5.6-terra`, and
 `gpt-5.6-sol`. Route advice implements the repository policy but has no launch
 side effect. Both the requested and provider-reported model must match the same
@@ -238,8 +251,8 @@ raw file, decodes strict UTF-8, and rejects NUL/control characters and private
 key markers. Recursive search never descends into reparse-point directories.
 
 `repository_search` supports literal matching, optional validated globs, stable
-path order, at most 50 results, 5,000 files and 64 MiB per call, a 10-second
-tool timeout, and a 256 MiB run-wide scan budget. `repository_read_text` reads
+path order, at most 50 results, 5,000 files and 64 MiB per call, and a 256 MiB
+run-wide scan budget. `repository_read_text` reads
 at most a 1 MiB source file and 400 selected lines, returns provenance and
 pagination metadata, and may require `expected_sha256`. Per-call tool-result
 limits and a 2 MiB run-wide repository-output budget apply to both tools.

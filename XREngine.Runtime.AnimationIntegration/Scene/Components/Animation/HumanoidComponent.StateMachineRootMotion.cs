@@ -97,7 +97,7 @@ public partial class HumanoidComponent
         {
             HumanoidStateMachineRootMotionLeafState? leaf = leaves[i];
             if (leaf is not null
-                && leaf.ContributionType == EUnityHumanoidMotionContributionType.Override
+                && leaf.ContributionType == EHumanoidMotionContributionType.Override
                 && leaf.Weight > 0.0f)
                 overrideWeight += leaf.Weight;
         }
@@ -118,7 +118,7 @@ public partial class HumanoidComponent
         {
             HumanoidStateMachineRootMotionLeafState? leaf = leaves[i];
             if (leaf is null
-                || leaf.ContributionType != EUnityHumanoidMotionContributionType.Override
+                || leaf.ContributionType != EHumanoidMotionContributionType.Override
                 || leaf.Weight <= 0.0f)
                 continue;
 
@@ -175,7 +175,7 @@ public partial class HumanoidComponent
         {
             HumanoidStateMachineRootMotionLeafState? leaf = leaves[i];
             if (leaf is null
-                || leaf.ContributionType != EUnityHumanoidMotionContributionType.Additive
+                || leaf.ContributionType != EHumanoidMotionContributionType.Additive
                 || leaf.Weight <= 0.0f)
                 continue;
 
@@ -257,7 +257,7 @@ public partial class HumanoidComponent
             if (leaf is null
                 || leaf.Weight <= 0.0f
                 || leaf.Policy.BakePositionYIntoPose
-                || leaf.Policy.PositionYBasis is not EUnityHumanoidRootPositionYBasis.Feet)
+                || leaf.Policy.PositionYBasis is not EImportedHumanoidRootPositionYBasis.Feet)
                 continue;
 
             _activeImportedBodyProjectionPolicy = leaf.Policy;
@@ -334,10 +334,10 @@ public partial class HumanoidComponent
         Quaternion currentRotation = NormalizeOrIdentity(leaf.CurrentBody.Rotation);
         if (leaf.Policy.Mirror)
         {
-            canonicalPosition = UnityHumanoidMirrorOperator.MirrorPosition(canonicalPosition);
-            currentPosition = UnityHumanoidMirrorOperator.MirrorPosition(currentPosition);
-            canonicalRotation = UnityHumanoidMirrorOperator.MirrorRotation(canonicalRotation);
-            currentRotation = UnityHumanoidMirrorOperator.MirrorRotation(currentRotation);
+            canonicalPosition = ImportedHumanoidMirrorOperator.MirrorPosition(canonicalPosition);
+            currentPosition = ImportedHumanoidMirrorOperator.MirrorPosition(currentPosition);
+            canonicalRotation = ImportedHumanoidMirrorOperator.MirrorRotation(canonicalRotation);
+            currentRotation = ImportedHumanoidMirrorOperator.MirrorRotation(currentRotation);
         }
 
         Vector3 mappedPositionDelta = currentPosition - canonicalPosition;

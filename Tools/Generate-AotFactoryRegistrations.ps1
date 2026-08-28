@@ -325,7 +325,8 @@ $sourceRootNames = @(
     '..\XREngine.Runtime.AnimationIntegration',
     '..\XREngine.Runtime.AudioIntegration',
     '..\XREngine.Runtime.InputIntegration',
-    '..\XREngine.Runtime.ModelingBridge'
+    '..\XREngine.Runtime.ModelAssetPipeline',
+    '..\XREngine.Runtime.ModelingIntegration'
 )
 
 foreach ($sourceRootName in $sourceRootNames) {

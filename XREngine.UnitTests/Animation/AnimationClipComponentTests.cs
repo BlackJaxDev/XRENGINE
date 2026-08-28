@@ -33,7 +33,7 @@ public sealed class AnimationClipComponentTests
     [TestCase("SetAnimatedIKPositionX", 1.25f, 1.25f)]
     [TestCase("SetAnimatedIKPositionY", 1.25f, 1.25f)]
     [TestCase("SetAnimatedIKPositionZ", 1.25f, -1.25f)]
-    public void FlipIKPositionZ_AppliesToScalarUnityIkChannels(string methodName, float input, float expected)
+    public void FlipIKPositionZ_AppliesToScalarSourceIkChannels(string methodName, float input, float expected)
     {
         var component = new AnimationClipComponent
         {
@@ -48,7 +48,7 @@ public sealed class AnimationClipComponentTests
     }
 
     [Test]
-    public void FlipIKPositionLeftRight_SwapsScalarUnityIkGoal()
+    public void FlipIKPositionLeftRight_SwapsScalarSourceIkGoal()
     {
         var component = new AnimationClipComponent
         {
@@ -66,7 +66,7 @@ public sealed class AnimationClipComponentTests
     [TestCase("SetAnimatedIKRotationY", 0.25f, -0.25f)]
     [TestCase("SetAnimatedIKRotationZ", 0.25f, 0.25f)]
     [TestCase("SetAnimatedIKRotationW", 0.25f, 0.25f)]
-    public void FlipIKRotationZ_AppliesToScalarUnityIkChannels(string methodName, float input, float expected)
+    public void FlipIKRotationZ_AppliesToScalarSourceIkChannels(string methodName, float input, float expected)
     {
         var component = new AnimationClipComponent
         {
@@ -81,7 +81,7 @@ public sealed class AnimationClipComponentTests
     }
 
     [Test]
-    public void FlipIKRotationLeftRight_SwapsScalarUnityIkGoal()
+    public void FlipIKRotationLeftRight_SwapsScalarSourceIkGoal()
     {
         var component = new AnimationClipComponent
         {
@@ -294,7 +294,7 @@ public sealed class AnimationClipComponentTests
     }
 
     [Test]
-    public void ImportedUnityCurve_ShiftsStartTimeAndAppliesClampInfinity()
+    public void ImportedSourceCurve_ShiftsStartTimeAndAppliesClampInfinity()
     {
         string path = WriteTempAnimYaml(
             """
@@ -382,7 +382,7 @@ public sealed class AnimationClipComponentTests
     }
 
     [Test]
-    public void ImportedUnityHumanoidClip_EvaluateAtTime_UsesRawCurveValues()
+    public void ImportedHumanoidClip_EvaluateAtTime_UsesRawCurveValues()
     {
         string repoRoot = FindRepositoryRoot();
         string clipPath = Path.Combine(repoRoot, "Assets", "Walks", "Sexy Walk.anim");
@@ -417,7 +417,7 @@ public sealed class AnimationClipComponentTests
     }
 
     [Test]
-    public void ImportedUnityHumanoidClip_FlipMuscleZ_PreservesRawAndOnlyFlipsPitchYawFamilies()
+    public void ImportedHumanoidClip_FlipMuscleZ_PreservesRawAndOnlyFlipsPitchYawFamilies()
     {
         string repoRoot = FindRepositoryRoot();
         string clipPath = Path.Combine(repoRoot, "Assets", "Walks", "Sexy Walk.anim");

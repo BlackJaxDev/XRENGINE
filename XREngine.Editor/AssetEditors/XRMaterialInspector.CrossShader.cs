@@ -65,7 +65,7 @@ public sealed partial class XRMaterialInspector
             ShaderAuthoringSchema? schema = null;
             if (TryGetUberMaterialManifest(material, out _, out _, out ShaderUiManifest? manifest) &&
                 manifest is not null)
-                schema = PoiyomiAuthoringSchemaCatalog.GetOrCreate(manifest);
+                schema = SourceToonAuthoringSchemaCatalog.GetOrCreate(manifest);
             targets.Add(new(material, schema));
         }
 
