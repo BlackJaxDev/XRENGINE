@@ -1,68 +1,23 @@
 #version 460 core
 #extension GL_EXT_mesh_shader : require
 #extension GL_ARB_shader_draw_parameters : require
+#extension GL_GOOGLE_include_directive : require
 
 #include "VisibilityInterface.glslinc"
 
 layout(local_size_x = 32) in;
-layout(triangles, max_vertices = 64, max_primitives = 126) out;
+// The portable cooked profile is below the capability gate's 64/124 limits.
+layout(triangles, max_vertices = 64, max_primitives = 124) out;
 
-struct XRAdvancedVisibilityMeshletDescriptor
+// The graphics pipeline layout reserves the engine-wide 16-byte common range.
+// Mesh visibility maps it to sealed per-bin coordinates, never loose uniforms.
+layout(push_constant, std430) uniform XRAdvancedVisibilityRasterPushConstants
 {
-    vec4 boundsSphere;
-    uint vertexOffset;
-    uint triangleByteOffset;
-    uint vertexCount;
-    uint triangleCount;
-    vec4 cone;
-    vec4 coneApex;
-    uint packedCone;
-    uint reserved0;
-    uint reserved1;
-    uint reserved2;
-};
-
-XR_ADV_VIS_TABLE_LAYOUT(30)
-readonly buffer XRAdvancedVisibilityMeshPayloadIndexTable
-{
-    uint payloadIndices[];
-} XR_ADV_VisibilityMeshPayloadIndices;
-
-XR_ADV_VIS_TABLE_LAYOUT(31)
-readonly buffer XRAdvancedVisibilityMeshletTable
-{
-    XRAdvancedVisibilityMeshletDescriptor records[];
-} XR_ADV_VisibilityMeshlets;
-
-XR_ADV_VIS_TABLE_LAYOUT(32)
-readonly buffer XRAdvancedVisibilityMeshletVertexTable
-{
-    uint vertexIndices[];
-} XR_ADV_VisibilityMeshletVertices;
-
-XR_ADV_VIS_TABLE_LAYOUT(33)
-readonly buffer XRAdvancedVisibilityMeshletTriangleTable
-{
-    uint triangleWords[];
-} XR_ADV_VisibilityMeshletTriangles;
-
-XR_ADV_VIS_TABLE_LAYOUT(34)
-readonly buffer XRAdvancedVisibilityPositionTable
-{
-    float values[];
-} XR_ADV_VisibilityPositions;
-
-XR_ADV_VIS_TABLE_LAYOUT(35)
-readonly buffer XRAdvancedVisibilityPreviousPositionTable
-{
-    float values[];
-} XR_ADV_VisibilityPreviousPositions;
-
-XR_ADV_VIS_TABLE_LAYOUT(36)
-readonly buffer XRAdvancedVisibilityUvTable
-{
-    float values[];
-} XR_ADV_VisibilityUvs;
+    uint meshArgumentBase;
+    uint producerAndOrigin;
+    uint viewIndex;
+    uint flags;
+} XR_ADV_VisibilityRasterPush;
 
 layout(location = 0) flat out uint VisibilityDrawIndex[];
 layout(location = 1) flat out uint VisibilitySelectionId[];
@@ -75,62 +30,45 @@ layout(location = 7) flat out uint VisibilityPrimitiveBase[];
 layout(location = 8) flat out uint VisibilityMeshletIndex[];
 layout(location = 9) flat out uint VisibilityMaterialDenseIndex[];
 
-uniform mat4 JitteredViewProjection;
-uniform mat4 UnjitteredViewProjection;
-uniform mat4 PreviousUnjitteredViewProjection;
-uniform uint MeshArgumentBase;
-uniform uint VisibilityProducerClass;
-uniform uint VisibilityView;
-uniform uint VisibilityPhaseOrigin;
-uniform uint VisibilityVelocityIsValid;
-
-vec3 XR_ADV_LoadVisibilityPosition(uint vertexIndex)
-{
-    uint base = vertexIndex * 3u;
-    return vec3(
-        XR_ADV_VisibilityPositions.values[base],
-        XR_ADV_VisibilityPositions.values[base + 1u],
-        XR_ADV_VisibilityPositions.values[base + 2u]);
-}
-
-vec3 XR_ADV_LoadVisibilityPreviousPosition(uint vertexIndex)
-{
-    uint base = vertexIndex * 3u;
-    return vec3(
-        XR_ADV_VisibilityPreviousPositions.values[base],
-        XR_ADV_VisibilityPreviousPositions.values[base + 1u],
-        XR_ADV_VisibilityPreviousPositions.values[base + 2u]);
-}
-
-vec2 XR_ADV_LoadVisibilityUv(uint vertexIndex)
-{
-    uint base = vertexIndex * 2u;
-    return vec2(
-        XR_ADV_VisibilityUvs.values[base],
-        XR_ADV_VisibilityUvs.values[base + 1u]);
-}
+const uint XR_ADV_MESH_GROUP_SIZE = 32u;
+const uint XR_ADV_MESH_MAX_VERTICES = 64u;
+const uint XR_ADV_MESH_MAX_PRIMITIVES = 124u;
 
 uint XR_ADV_ReadVisibilityTriangleIndex(uint byteIndex)
 {
-    uint word =
-        XR_ADV_VisibilityMeshletTriangles.triangleWords[
-            byteIndex >> 2u];
+    uint word = XR_ADV_VisibilityMeshletTriangleWords.records[byteIndex >> 2u];
     return (word >> ((byteIndex & 3u) * 8u)) & 0xFFu;
+}
+
+bool XR_ADV_HasVertexRanges(
+    bool skinned,
+    uint currentStart,
+    uint previousStart,
+    uint count)
+{
+    if (!skinned)
+    {
+        return currentStart <= uint(XR_ADV_VisibilityStaticVertices.records.length()) &&
+            count <= uint(XR_ADV_VisibilityStaticVertices.records.length()) - currentStart;
+    }
+
+    return currentStart <= uint(XR_ADV_VisibilityCurrentVertices.records.length()) &&
+           count <= uint(XR_ADV_VisibilityCurrentVertices.records.length()) - currentStart &&
+           previousStart <= uint(XR_ADV_VisibilityPreviousVertices.records.length()) &&
+           count <= uint(XR_ADV_VisibilityPreviousVertices.records.length()) - previousStart;
 }
 
 void main()
 {
-    uint drawArgumentIndex = MeshArgumentBase + uint(gl_DrawID);
-    if (drawArgumentIndex >=
-        uint(XR_ADV_VisibilityMeshPayloadIndices.payloadIndices.length()))
+    uint drawArgumentIndex = XR_ADV_VisibilityRasterPush.meshArgumentBase + uint(gl_DrawID);
+    if (drawArgumentIndex < XR_ADV_VisibilityRasterPush.meshArgumentBase ||
+        drawArgumentIndex >= uint(XR_ADV_VisibilityMeshPayloads.records.length()))
     {
         SetMeshOutputsEXT(0u, 0u);
         return;
     }
 
-    uint payloadIndex =
-        XR_ADV_VisibilityMeshPayloadIndices.payloadIndices[
-            drawArgumentIndex];
+    uint payloadIndex = XR_ADV_VisibilityMeshPayloads.records[drawArgumentIndex];
     if (payloadIndex >= uint(XR_ADV_VisibilityPayloads.records.length()))
     {
         atomicAdd(XR_ADV_VisibilityCounters.decodeOutOfBounds, 1u);
@@ -138,34 +76,22 @@ void main()
         return;
     }
 
-    XRAdvancedVisibilityPayload payload =
-        XR_ADV_VisibilityPayloads.records[payloadIndex];
-    uint meshletIndex =
-        payload.meshletOffset + gl_WorkGroupID.x;
-    if (gl_WorkGroupID.x >= payload.meshletCount ||
-        meshletIndex >=
-            uint(XR_ADV_VisibilityMeshlets.records.length()) ||
-        meshletIndex > 0xFFFFFFu)
+    XRAdvancedVisibilityPayload payload = XR_ADV_VisibilityPayloads.records[payloadIndex];
+    uint producer = XR_ADV_VisibilityProducers.records[payloadIndex];
+    bool skinned = producer == XR_ADV_VIS_PRODUCER_SKINNED_MESHLET;
+    uint meshletIndex = payload.meshletOffset + gl_WorkGroupID.x;
+    if (meshletIndex < payload.meshletOffset || gl_WorkGroupID.x >= payload.meshletCount ||
+        meshletIndex >= uint(XR_ADV_VisibilityMeshlets.records.length()) || meshletIndex > 0xFFFFFFu)
     {
         atomicAdd(XR_ADV_VisibilityCounters.payloadOverflow, 1u);
         SetMeshOutputsEXT(0u, 0u);
         return;
     }
 
-    uint drawDense = XR_ADV_ResolveVisibilityHandle(
-        payload.draw,
-        VisibilityDrawLookupSegment,
-        XR_ADV_DIAGNOSTIC_DRAW);
-    uint geometryDense = XR_ADV_ResolveVisibilityHandle(
-        payload.geometry,
-        VisibilityGeometryLookupSegment,
-        XR_ADV_DIAGNOSTIC_MESH);
-    uint materialDense = XR_ADV_ResolveVisibilityHandle(
-        payload.material,
-        VisibilityMaterialLookupSegment,
-        XR_ADV_DIAGNOSTIC_MATERIAL);
-    if (drawDense == XR_ADV_INVALID_DENSE_INDEX ||
-        geometryDense == XR_ADV_INVALID_DENSE_INDEX ||
+    uint drawDense = XR_ADV_ResolveVisibilityHandle(payload.draw, VisibilityDrawLookupSegment, XR_ADV_DIAGNOSTIC_DRAW);
+    uint geometryDense = XR_ADV_ResolveVisibilityHandle(payload.geometry, VisibilityGeometryLookupSegment, XR_ADV_DIAGNOSTIC_MESH);
+    uint materialDense = XR_ADV_ResolveVisibilityHandle(payload.material, VisibilityMaterialLookupSegment, XR_ADV_DIAGNOSTIC_MATERIAL);
+    if (drawDense == XR_ADV_INVALID_DENSE_INDEX || geometryDense == XR_ADV_INVALID_DENSE_INDEX ||
         materialDense == XR_ADV_INVALID_DENSE_INDEX)
     {
         atomicAdd(XR_ADV_VisibilityCounters.decodeOutOfBounds, 1u);
@@ -174,108 +100,103 @@ void main()
     }
 
     XRAdvancedDrawRecord draw = XR_ADV_LoadDraw(drawDense);
-    XRAdvancedGeometryRecord geometry =
-        XR_ADV_LoadGeometry(geometryDense);
-    uint transformDense = XR_ADV_ResolveVisibilityHandle(
-        draw.currentTransform,
-        VisibilityTransformLookupSegment,
-        XR_ADV_DIAGNOSTIC_DRAW);
-    uint previousTransformDense = XR_ADV_ResolveVisibilityHandle(
-        draw.previousTransform,
-        VisibilityTransformLookupSegment,
-        XR_ADV_DIAGNOSTIC_DRAW);
-    uint editorDense = XR_ADV_ResolveVisibilityHandle(
-        draw.editorIdentity,
-        VisibilityEditorIdentityLookupSegment,
-        XR_ADV_DIAGNOSTIC_DRAW);
-    if (transformDense == XR_ADV_INVALID_DENSE_INDEX ||
-        previousTransformDense == XR_ADV_INVALID_DENSE_INDEX)
+    XRAdvancedGeometryRecord geometry = XR_ADV_LoadGeometry(geometryDense);
+    uint transformDense = XR_ADV_ResolveVisibilityHandle(draw.currentTransform, VisibilityTransformLookupSegment, XR_ADV_DIAGNOSTIC_DRAW);
+    uint previousTransformDense = XR_ADV_ResolveVisibilityHandle(draw.previousTransform, VisibilityTransformLookupSegment, XR_ADV_DIAGNOSTIC_DRAW);
+    uint editorDense = XR_ADV_ResolveVisibilityHandle(draw.editorIdentity, VisibilityEditorIdentityLookupSegment, XR_ADV_DIAGNOSTIC_DRAW);
+    if (transformDense == XR_ADV_INVALID_DENSE_INDEX || previousTransformDense == XR_ADV_INVALID_DENSE_INDEX ||
+        XR_ADV_VisibilityRasterPush.viewIndex >= uint(XR_ADV_Views.records.length()))
     {
         atomicAdd(XR_ADV_VisibilityCounters.decodeOutOfBounds, 1u);
         SetMeshOutputsEXT(0u, 0u);
         return;
     }
 
-    XRAdvancedTransformRecord currentTransform =
-        XR_ADV_LoadTransform(transformDense);
-    XRAdvancedTransformRecord previousTransform =
-        XR_ADV_LoadTransform(previousTransformDense);
-    XRAdvancedVisibilityMeshletDescriptor meshlet =
-        XR_ADV_VisibilityMeshlets.records[meshletIndex];
-    if (meshlet.vertexCount > 64u ||
-        meshlet.triangleCount > 126u)
+    XRAdvancedVisibilityMeshletDescriptor meshlet = XR_ADV_VisibilityMeshlets.records[meshletIndex];
+    uint meshletVertexOffset = geometry.meshletVertexIndices.elementOffset + meshlet.vertexOffset;
+    uint meshletTriangleByteBase = geometry.meshletTriangleWords.elementOffset * 4u;
+    uint meshletTriangleByteOffset = meshletTriangleByteBase + meshlet.triangleByteOffset;
+    uint triangleByteCount = meshlet.triangleCount * 3u;
+    uint triangleByteEnd = meshletTriangleByteOffset + triangleByteCount;
+    if (meshlet.vertexCount > XR_ADV_MESH_MAX_VERTICES || meshlet.triangleCount > XR_ADV_MESH_MAX_PRIMITIVES ||
+        meshletVertexOffset < geometry.meshletVertexIndices.elementOffset ||
+        meshletTriangleByteBase / 4u != geometry.meshletTriangleWords.elementOffset ||
+        meshletTriangleByteOffset < meshletTriangleByteBase ||
+        triangleByteEnd < meshletTriangleByteOffset || triangleByteEnd > 0xFFFFFFFCu ||
+        meshletVertexOffset > uint(XR_ADV_VisibilityMeshletVertexIndices.records.length()) ||
+        meshlet.vertexCount > uint(XR_ADV_VisibilityMeshletVertexIndices.records.length()) - meshletVertexOffset ||
+        ((triangleByteEnd + 3u) >> 2u) > uint(XR_ADV_VisibilityMeshletTriangleWords.records.length()) ||
+        !XR_ADV_HasVertexRanges(
+            skinned,
+            payload.vertexOffset,
+            payload.previousVertexOffset,
+            meshlet.vertexCount))
     {
         atomicAdd(XR_ADV_VisibilityCounters.payloadOverflow, 1u);
         SetMeshOutputsEXT(0u, 0u);
         return;
     }
 
+    XRAdvancedTransformRecord currentTransform = XR_ADV_LoadTransform(transformDense);
+    XRAdvancedTransformRecord previousTransform = XR_ADV_LoadTransform(previousTransformDense);
+    XRAdvancedViewRecord view = XR_ADV_LoadView(XR_ADV_VisibilityRasterPush.viewIndex);
     SetMeshOutputsEXT(meshlet.vertexCount, meshlet.triangleCount);
+
     uint localInvocation = gl_LocalInvocationID.x;
-    if (localInvocation < meshlet.vertexCount)
+    for (uint vertex = localInvocation; vertex < meshlet.vertexCount; vertex += XR_ADV_MESH_GROUP_SIZE)
     {
-        uint localVertex =
-            XR_ADV_VisibilityMeshletVertices.vertexIndices[
-                meshlet.vertexOffset + localInvocation];
+        uint localVertex = XR_ADV_VisibilityMeshletVertexIndices.records[meshletVertexOffset + vertex];
         uint currentVertex = payload.vertexOffset + localVertex;
-        uint previousVertex =
-            payload.previousVertexOffset + localVertex;
-        uint uvVertex = geometry.vertexBase + localVertex;
-        vec3 position =
-            XR_ADV_LoadVisibilityPosition(currentVertex);
-        vec3 previousPosition =
-            XR_ADV_LoadVisibilityPreviousPosition(previousVertex);
-        vec4 worldPosition =
-            vec4(position, 1.0) * currentTransform.world;
-        vec4 previousWorldPosition =
-            vec4(previousPosition, 1.0) * previousTransform.world;
-        gl_MeshVerticesEXT[localInvocation].gl_Position =
-            worldPosition * JitteredViewProjection;
+        uint previousVertex = payload.previousVertexOffset + localVertex;
+        if (currentVertex < payload.vertexOffset || previousVertex < payload.previousVertexOffset ||
+            (!skinned && currentVertex >=
+                uint(XR_ADV_VisibilityStaticVertices.records.length())) ||
+            (skinned && (currentVertex >=
+                uint(XR_ADV_VisibilityCurrentVertices.records.length()) ||
+                previousVertex >=
+                uint(XR_ADV_VisibilityPreviousVertices.records.length()))))
+        {
+            atomicAdd(XR_ADV_VisibilityCounters.decodeOutOfBounds, 1u);
+            gl_MeshVerticesEXT[vertex].gl_Position = vec4(0.0, 0.0, 0.0, 1.0);
+            continue;
+        }
 
-        vec4 currentClip =
-            worldPosition * UnjitteredViewProjection;
-        vec4 previousClip =
-            previousWorldPosition *
-            PreviousUnjitteredViewProjection;
-        bool temporalInputsValid =
-            !any(isnan(currentClip)) &&
-            !any(isinf(currentClip)) &&
-            !any(isnan(previousClip)) &&
-            !any(isinf(previousClip));
+        XRAdvancedVisibilityPackedVertex statik = skinned
+            ? XR_ADV_VisibilityCurrentVertices.records[currentVertex]
+            : XR_ADV_VisibilityStaticVertices.records[currentVertex];
+        XRAdvancedVisibilityPackedVertex current = skinned
+            ? XR_ADV_VisibilityCurrentVertices.records[currentVertex]
+            : statik;
+        XRAdvancedVisibilityPackedVertex previous = skinned
+            ? XR_ADV_VisibilityPreviousVertices.records[previousVertex]
+            : statik;
+        vec4 worldPosition = vec4(current.position, 1.0) * currentTransform.world;
+        vec4 previousWorldPosition = vec4(previous.position, 1.0) * previousTransform.world;
+        vec4 currentClip = worldPosition * view.viewProjectionUnjittered;
+        vec4 previousClip = previousWorldPosition * view.previousViewProjectionUnjittered;
+        bool temporalInputsValid = !any(isnan(currentClip)) && !any(isinf(currentClip)) &&
+            !any(isnan(previousClip)) && !any(isinf(previousClip));
 
-        VisibilityDrawIndex[localInvocation] = payload.draw.index;
-        VisibilitySelectionId[localInvocation] =
-            editorDense != XR_ADV_INVALID_DENSE_INDEX
-                ? XR_ADV_LoadEditorIdentity(editorDense).selectionId
-                : XR_ADV_VIS_INVALID;
-        VisibilityProducer[localInvocation] =
-            VisibilityProducerClass;
-        VisibilityViewIndex[localInvocation] = VisibilityView;
-        VisibilityOrigin[localInvocation] = VisibilityPhaseOrigin;
-        VisibilityVelocityValid[localInvocation] =
-            VisibilityVelocityIsValid != 0u &&
-            temporalInputsValid
-                ? 1u
-                : 0u;
-        VisibilityCoverageUv[localInvocation] =
-            XR_ADV_LoadVisibilityUv(uvVertex);
-        VisibilityPrimitiveBase[localInvocation] = 0u;
-        VisibilityMeshletIndex[localInvocation] = meshletIndex;
-        VisibilityMaterialDenseIndex[localInvocation] =
-            materialDense;
+        gl_MeshVerticesEXT[vertex].gl_Position = worldPosition * view.viewProjectionJittered;
+        VisibilityDrawIndex[vertex] = payload.draw.index;
+        VisibilitySelectionId[vertex] = editorDense != XR_ADV_INVALID_DENSE_INDEX
+            ? XR_ADV_LoadEditorIdentity(editorDense).selectionId : XR_ADV_VIS_INVALID;
+        VisibilityProducer[vertex] = XR_ADV_VisibilityRasterPush.producerAndOrigin & XR_ADV_VIS_PRODUCER_MASK;
+        VisibilityViewIndex[vertex] = XR_ADV_VisibilityRasterPush.viewIndex;
+        VisibilityOrigin[vertex] = (XR_ADV_VisibilityRasterPush.producerAndOrigin >> XR_ADV_VIS_ORIGIN_SHIFT) & 1u;
+        VisibilityVelocityValid[vertex] = (XR_ADV_VisibilityRasterPush.flags & 1u) != 0u && temporalInputsValid ? 1u : 0u;
+        VisibilityCoverageUv[vertex] = unpackHalf2x16(statik.texCoord0Half);
+        VisibilityPrimitiveBase[vertex] = 0u;
+        VisibilityMeshletIndex[vertex] = meshletIndex;
+        VisibilityMaterialDenseIndex[vertex] = materialDense;
     }
 
-    for (uint primitive = localInvocation;
-         primitive < meshlet.triangleCount;
-         primitive += gl_WorkGroupSize.x)
+    for (uint primitive = localInvocation; primitive < meshlet.triangleCount; primitive += XR_ADV_MESH_GROUP_SIZE)
     {
-        uint byteIndex =
-            meshlet.triangleByteOffset + primitive * 3u;
-        gl_PrimitiveTriangleIndicesEXT[primitive] = uvec3(
-            XR_ADV_ReadVisibilityTriangleIndex(byteIndex),
-            XR_ADV_ReadVisibilityTriangleIndex(byteIndex + 1u),
-            XR_ADV_ReadVisibilityTriangleIndex(byteIndex + 2u));
-        gl_MeshPrimitivesEXT[primitive].gl_PrimitiveID =
-            int(primitive);
+        uint byteIndex = meshletTriangleByteOffset + primitive * 3u;
+        uvec3 triangle = uvec3(XR_ADV_ReadVisibilityTriangleIndex(byteIndex),
+            XR_ADV_ReadVisibilityTriangleIndex(byteIndex + 1u), XR_ADV_ReadVisibilityTriangleIndex(byteIndex + 2u));
+        gl_PrimitiveTriangleIndicesEXT[primitive] = all(lessThan(triangle, uvec3(meshlet.vertexCount))) ? triangle : uvec3(0u);
+        gl_MeshPrimitivesEXT[primitive].gl_PrimitiveID = int(primitive);
     }
 }

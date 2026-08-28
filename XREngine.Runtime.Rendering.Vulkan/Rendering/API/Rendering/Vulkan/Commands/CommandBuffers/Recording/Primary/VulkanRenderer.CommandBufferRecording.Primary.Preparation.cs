@@ -11,6 +11,7 @@ using System.Threading.Tasks;
 using Silk.NET.Vulkan;
 using XREngine.Data.Colors;
 using XREngine.Data.Rendering;
+using XREngine.Rendering.Diagnostics;
 using XREngine.Rendering.Resources;
 
 namespace XREngine.Rendering.Vulkan
@@ -255,6 +256,11 @@ namespace XREngine.Rendering.Vulkan
                     recordingState.Policy.UseDynamicRendering,
                     frameStructuralSignature,
                     recordingState.FramePlan);
+            if (!TryPrepareAdvancedVisibilityOperations(ref recordingState))
+            {
+                frameDataManifest = default!;
+                return false;
+            }
             frameDataManifest = recordingScratch.MeshFrameDataManifest;
             if (!TryAdmitPrimaryGraphicsPipelines(
                     ref recordingState,
@@ -471,6 +477,695 @@ namespace XREngine.Rendering.Vulkan
                     "Mesh frame-data generation changed while the command-stream reservation manifest was being materialized.";
                 return false;
             }
+            return true;
+        }
+
+        /// <summary>
+        /// Performs the sole legal late binding for the visibility lane before
+        /// <c>vkBeginCommandBuffer</c>: exact set-1 frame-slot ranges are
+        /// allocated and initialized after the sealed publication is checked.
+        /// Compute and raster program closures are resolved here. Raster also
+        /// seals its exact stable-bin strategy/ranges and retains every resident
+        /// template through the accepted frame-slot lifetime. Any incomplete
+        /// family is rejected before command recording rather than falling back.
+        /// </summary>
+        private bool TryPrepareAdvancedVisibilityOperations(
+            scoped ref PrimaryCommandBufferRecordingState recordingState)
+        {
+            FramePlan framePlan = recordingState.FramePlan
+                ?? throw new VulkanPlanPreconditionException(
+                    "Advanced visibility preparation requires a sealed frame plan.");
+            VulkanAdvancedVisibilityStageRequest familyRequest = default;
+            VulkanAdvancedScenePublicationState familySceneState = default;
+            VulkanAdvancedVisibilityResourceState familyState = default;
+            VulkanAdvancedVisibilityTargetClosure rasterTargetClosure = default;
+            VulkanAdvancedVisibilityTargetClosure lateRasterTargetClosure = default;
+            int preparationStageCount = 0;
+            int rasterStageCount = 0;
+            int lateStageCount = 0;
+
+            for (int operationIndex = 0;
+                 operationIndex < recordingState.Ops.Length;
+                 operationIndex++)
+            {
+                if (recordingState.Ops.GetHeader(operationIndex).OpCode !=
+                    EVulkanPrimaryPlanNodeKind.AdvancedVisibility)
+                    continue;
+
+                ref readonly VulkanAdvancedVisibilityOperationPayload payload = ref
+                    recordingState.Ops.GetAdvancedVisibility(operationIndex);
+                VulkanAdvancedVisibilityStageRequest request = payload.Request;
+                if (request.Stage is not (
+                        EAdvancedRenderStage.VisibilityPreparation or
+                        EAdvancedRenderStage.VisibilityRaster or
+                        EAdvancedRenderStage.DepthPyramidAndLateVisibility))
+                {
+                    recordingState.RecordingDeferredReason =
+                        $"Advanced visibility operation is Unsupported: stage '{request.Stage}' is outside the admitted preparation/raster family.";
+                    return false;
+                }
+                AdvancedPreparationPublication publication = request.Publication;
+                AdvancedIndirectPreparationResult indirect =
+                    request.Extractor.IndirectResult;
+                if (!request.IsValid || request.RenderFrameId != framePlan.RenderFrameId ||
+                    !request.Extractor.MatchesPublication(in publication))
+                {
+                    recordingState.RecordingDeferredReason =
+                        "Advanced visibility operation is Unsupported: its sealed preparation publication is stale or incomplete.";
+                    return false;
+                }
+                if (preparationStageCount + rasterStageCount + lateStageCount == 0)
+                {
+                    familyRequest = request;
+                }
+                else if (!familyRequest.MatchesFamily(in request))
+                {
+                    recordingState.RecordingDeferredReason =
+                        "Advanced visibility operation is Unsupported: the sealed stages do not form one exact publication/view/target family.";
+                    return false;
+                }
+                switch (request.Stage)
+                {
+                    case EAdvancedRenderStage.VisibilityPreparation:
+                        preparationStageCount++;
+                        break;
+                    case EAdvancedRenderStage.VisibilityRaster:
+                        rasterStageCount++;
+                        break;
+                    case EAdvancedRenderStage.DepthPyramidAndLateVisibility:
+                        lateStageCount++;
+                        break;
+                }
+                if (preparationStageCount > 1 || rasterStageCount > 1 || lateStageCount > 1)
+                {
+                    recordingState.RecordingDeferredReason =
+                        "Advanced visibility operation is Unsupported: one frame plan contains duplicate stages for a single set-1 family.";
+                    return false;
+                }
+
+                FrameOpContext operationContext =
+                    recordingState.Ops.GetContext(operationIndex);
+                VulkanCompiledRenderGraph operationGraph =
+                    recordingState.RenderGraphPlan.CompiledGraph;
+                if (framePlan.TryResolveRenderGraphPlan(
+                        in operationContext,
+                        out VulkanRenderGraphPlan operationPlan))
+                {
+                    operationGraph = operationPlan.CompiledGraph;
+                }
+                if (ResourceRuntime.BackendObjects.Get(request.Target) is not
+                        VkFrameBuffer targetWrapper)
+                {
+                    recordingState.RecordingDeferredReason =
+                        "Advanced visibility operation is Unsupported: the authoritative target has no Vulkan framebuffer wrapper.";
+                    return false;
+                }
+                if (!TryValidateAdvancedVisibilityTarget(
+                        in request,
+                        targetWrapper,
+                        out string targetShapeReason))
+                {
+                    recordingState.RecordingDeferredReason =
+                        $"Advanced visibility operation is Unsupported: target closure is incomplete: {targetShapeReason}";
+                    return false;
+                }
+                targetWrapper.EnsureCurrent();
+                if (!targetWrapper.TryCaptureRecordedRenderTargetSnapshot(
+                        out VulkanRecordedRenderTargetSnapshot targetSnapshot))
+                {
+                    recordingState.RecordingDeferredReason =
+                        "Advanced visibility operation is Unsupported: the native target snapshot is incomplete.";
+                    return false;
+                }
+                int operationPassIndex =
+                    recordingState.Ops.GetHeader(operationIndex).PassIndex;
+                if (!TryResolveGraphicsPipelinePrewarmTarget(
+                        request.Target,
+                        operationPassIndex,
+                        operationContext,
+                        recordingState.SwapchainTarget,
+                        recordingState.Policy.UseDynamicRendering,
+                        operationGraph,
+                        out bool usesDynamicRendering,
+                        out RenderPass targetRenderPass,
+                        out DynamicRenderingFormatSignature targetFormats,
+                        out SampleCountFlags rasterizationSamples,
+                        out bool depthStencilReadOnly,
+                        out string targetCompatibilityReason))
+                {
+                    recordingState.RecordingDeferredReason =
+                        $"Advanced visibility operation is Unsupported: target compatibility failed: {targetCompatibilityReason}";
+                    return false;
+                }
+                VulkanAdvancedVisibilityTargetClosure targetClosure = new(
+                    request.Target,
+                    targetSnapshot,
+                    usesDynamicRendering,
+                    targetRenderPass,
+                    targetFormats,
+                    rasterizationSamples,
+                    depthStencilReadOnly);
+                if (request.Stage == EAdvancedRenderStage.VisibilityRaster)
+                    rasterTargetClosure = targetClosure;
+                else if (request.Stage ==
+                         EAdvancedRenderStage.DepthPyramidAndLateVisibility)
+                    lateRasterTargetClosure = targetClosure;
+                if (!TryPrepareAdvancedVisibilityScenePublication(
+                        framePlan,
+                        in operationContext,
+                        out VulkanAdvancedScenePublicationState sceneState,
+                        out string sceneReason))
+                {
+                    recordingState.RecordingDeferredReason =
+                        $"Advanced visibility operation is Unsupported: set-2/set-3 scene publication failed: {sceneReason}";
+                    return false;
+                }
+                if (!familySceneState.IsValid)
+                {
+                    familySceneState = sceneState;
+                }
+                else if (familySceneState != sceneState)
+                {
+                    recordingState.RecordingDeferredReason =
+                        "Advanced visibility operation is Unsupported: the family stages resolved different canonical scene publications.";
+                    return false;
+                }
+                if (request.Stage == EAdvancedRenderStage.VisibilityRaster &&
+                    !framePlan.StableBins.HasSealedSubmissionPlans &&
+                    !TrySealAdvancedVisibilityBins(
+                        framePlan.StableBins,
+                        in request,
+                        in sceneState,
+                        in operationContext,
+                        operationPassIndex,
+                        out string binReason))
+                {
+                    recordingState.RecordingDeferredReason =
+                        $"Advanced visibility operation is Unsupported: stable-bin sealing failed: {binReason}";
+                    return false;
+                }
+                if (request.Stage == EAdvancedRenderStage.VisibilityRaster &&
+                    !framePlan.StableBins.TryRetainTemplatesForFramePlan(
+                        ResourceRuntime.ResidentDrawTemplates,
+                        out string templateRetentionReason))
+                {
+                    recordingState.RecordingDeferredReason =
+                        $"Advanced visibility operation is Unsupported: template retention failed: {templateRetentionReason}";
+                    return false;
+                }
+                if (request.Stage == EAdvancedRenderStage.VisibilityRaster &&
+                    !framePlan.StableBins.TryPrepareVisibilityRasterPipelines(
+                        ResourceRuntime.AdvancedVisibilityPipelines,
+                        request.Extractor.VisibilityPayloads,
+                        in targetClosure,
+                        out string rasterPipelineReason))
+                {
+                    recordingState.RecordingDeferredReason =
+                        $"Advanced visibility operation is Unsupported: raster closure failed: {rasterPipelineReason}";
+                    return false;
+                }
+                if (!recordingState.Ops.Stream.TryAssociateAdvancedVisibilityTarget(
+                        operationIndex,
+                        in request,
+                        in targetClosure))
+                {
+                    recordingState.RecordingDeferredReason =
+                        "Advanced visibility operation is Unsupported: its exact native target closure could not be retained.";
+                    return false;
+                }
+
+                if (!recordingState.Ops.Stream
+                        .TryAssociateAdvancedVisibilityPublication(
+                            operationIndex,
+                            in sceneState))
+                {
+                    recordingState.RecordingDeferredReason =
+                        $"Advanced visibility operation is Unsupported: set-2/set-3 scene publication failed: {sceneReason}";
+                    return false;
+                }
+
+                ReadOnlySpan<AdvancedVisibilityPayload> visibilityPayloads =
+                    request.Extractor.VisibilityPayloads;
+                if (request.Stage != EAdvancedRenderStage.VisibilityRaster)
+                    continue;
+                if (!framePlan.StableBins.TryBuildVisibilityRasterPayloads(
+                    visibilityPayloads,
+                    out visibilityPayloads,
+                    out string rasterPayloadReason))
+                {
+                    recordingState.RecordingDeferredReason =
+                        $"Advanced visibility operation is Unsupported: native-local raster arguments failed: {rasterPayloadReason}";
+                    return false;
+                }
+                VulkanAdvancedSceneLookupSegments lookupSegments =
+                    sceneState.LookupSegments;
+                VulkanAdvancedVisibilityGeometrySlices geometrySlices = new(
+                    sceneState.StaticVertices,
+                    sceneState.PreSkinnedCurrent,
+                    sceneState.PreSkinnedPrevious,
+                    sceneState.MeshletDescriptors,
+                    sceneState.MeshletVertexIndices,
+                    sceneState.MeshletTriangleWords);
+                VulkanAdvancedVisibilityFamilySeal familySeal = new(
+                    framePlan,
+                    request.Extractor,
+                    publication,
+                    publication.VisibilityContentGeneration,
+                    indirect,
+                    lookupSegments,
+                    geometrySlices,
+                    sceneState.NativeGeneration,
+                    checked((uint)request.Views.ViewCount));
+                if (!ResourceRuntime.AdvancedVisibilityResources.TryPrepare(
+                        framePlan.FrameSlot,
+                        framePlan.Generation,
+                        in publication,
+                        in indirect,
+                        in lookupSegments,
+                        request.Extractor,
+                        visibilityPayloads,
+                        in geometrySlices,
+                        checked((uint)request.Views.ViewCount),
+                        in familySeal,
+                        out familyState,
+                        out EVulkanAdvancedVisibilityResourceFailure failure,
+                        out string resourceReason))
+                {
+                    recordingState.RecordingDeferredReason =
+                        $"Advanced visibility operation is Unsupported: set-1 frame-slot realization failed ({failure}): {resourceReason}";
+                    return false;
+                }
+            }
+
+            if (preparationStageCount + rasterStageCount + lateStageCount == 0)
+                return true;
+            if (preparationStageCount != 1 || rasterStageCount != 1 ||
+                lateStageCount != 1 || !familyState.IsValid)
+            {
+                recordingState.RecordingDeferredReason =
+                    "Advanced visibility operation is Unsupported: the frame plan must seal exactly one preparation, raster, and late stage before one immutable set-1 family is published.";
+                return false;
+            }
+            // The late stage reuses the raster family's sealed graphics
+            // pipelines after its compute work. Legacy clear/load render-pass
+            // handles can differ between these passes even when attachments
+            // look alike, so admit the baseline only when both stages resolve
+            // the same dynamic-rendering compatibility closure. This proof is
+            // completed before vkBeginCommandBuffer and before any barriers.
+            if (!rasterTargetClosure.IsValid ||
+                !lateRasterTargetClosure.IsValid ||
+                !rasterTargetClosure.UsesDynamicRendering ||
+                !lateRasterTargetClosure.UsesDynamicRendering ||
+                rasterTargetClosure != lateRasterTargetClosure)
+            {
+                recordingState.RecordingDeferredReason =
+                    "Advanced visibility operation is Unsupported: raster and late raster must share one exact dynamic-rendering target closure.";
+                return false;
+            }
+            if (!ResourceRuntime.AdvancedVisibilityPipelines.TryGetComputePipelines(
+                    out VkRenderProgram earlyVisibilityProgram,
+                    out VkRenderProgram buildIndirectProgram,
+                    out string pipelineReason))
+            {
+                recordingState.RecordingDeferredReason =
+                    $"Advanced visibility operation is Unsupported: compute pipeline realization failed: {pipelineReason}";
+                return false;
+            }
+
+            for (int operationIndex = 0;
+                 operationIndex < recordingState.Ops.Length;
+                 operationIndex++)
+            {
+                if (recordingState.Ops.GetHeader(operationIndex).OpCode !=
+                    EVulkanPrimaryPlanNodeKind.AdvancedVisibility)
+                    continue;
+
+                ref readonly VulkanAdvancedVisibilityOperationPayload payload = ref
+                    recordingState.Ops.GetAdvancedVisibility(operationIndex);
+                VulkanAdvancedVisibilityStageRequest request = payload.Request;
+                if (!recordingState.Ops.Stream.TryAssociateAdvancedVisibilityState(
+                        operationIndex,
+                        in request,
+                        in familyState,
+                        earlyVisibilityProgram,
+                        buildIndirectProgram))
+                {
+                    recordingState.RecordingDeferredReason =
+                        "Advanced visibility operation is Unsupported: the immutable set-1 family could not be associated with every stage.";
+                    return false;
+                }
+
+                if (request.Stage == EAdvancedRenderStage.DepthPyramidAndLateVisibility)
+                {
+                    VulkanCompiledRenderGraph operationGraph =
+                        recordingState.RenderGraphPlan.CompiledGraph;
+                    FrameOpContext operationContext =
+                        recordingState.Ops.GetContext(operationIndex);
+                    if (framePlan.TryResolveRenderGraphPlan(
+                            in operationContext,
+                            out VulkanRenderGraphPlan operationPlan))
+                    {
+                        operationGraph = operationPlan.CompiledGraph;
+                    }
+                    VulkanAdvancedVisibilityLateClosureStorage lateStorage =
+                        recordingState.Ops.Stream
+                            .GetAdvancedVisibilityLateClosureStorage(operationIndex);
+                    try
+                    {
+                        if (!ResourceRuntime.AdvancedVisibilityResources
+                                .TryCaptureLateTargetClosure(
+                                    operationGraph,
+                                    request.DepthTargetName,
+                                    request.CurrentDepthPyramidTargetName,
+                                    familyState.ViewCount,
+                                    lateStorage,
+                                    out VulkanAdvancedVisibilityLateTargetClosure lateClosure,
+                                    out string lateTargetReason))
+                        {
+                            recordingState.RecordingDeferredReason =
+                                $"Advanced visibility operation is Unsupported: sealed late depth-pyramid closure failed: {lateTargetReason}.";
+                            return false;
+                        }
+                        if (!ResourceRuntime.AdvancedVisibilityPipelines
+                                .TryGetLateVisibilityComputePipelines(
+                                    out VkRenderProgram buildDepthPyramidProgram,
+                                    out VkRenderProgram lateVisibilityProgram,
+                                    out string latePipelineReason) ||
+                            !recordingState.Ops.Stream
+                                .TryAssociateAdvancedVisibilityLateClosure(
+                                    operationIndex,
+                                    in request,
+                                    in lateClosure,
+                                    buildDepthPyramidProgram,
+                                    lateVisibilityProgram))
+                        {
+                            recordingState.RecordingDeferredReason =
+                                $"Advanced visibility operation is Unsupported: sealed late compute closure failed: {latePipelineReason}.";
+                            return false;
+                        }
+
+                        int lateSetCount = checked(
+                            (lateClosure.DispatchCount + 1) * (int)familyState.ViewCount);
+                        DescriptorSet[] lateSets = lateStorage.DescriptorSets;
+                        lateSets.AsSpan(0, lateSetCount).Clear();
+                        for (uint viewIndex = 0u; viewIndex < familyState.ViewCount; ++viewIndex)
+                        for (int mipIndex = 0; mipIndex < lateClosure.DispatchCount; ++mipIndex)
+                        {
+                            DescriptorImageInfo sampledDescriptor =
+                                lateClosure.PyramidSampledDescriptors[
+                                    checked((int)viewIndex * lateClosure.DispatchCount + mipIndex)];
+                            DescriptorImageInfo storageDescriptor =
+                                lateClosure.PyramidStorageDescriptors[
+                                    checked((int)viewIndex * lateClosure.DispatchCount + mipIndex)];
+                            if (!ResourceRuntime.AdvancedVisibilityResources
+                                    .TryAcquireLateDepthPyramidDescriptorSet(
+                                        in familyState,
+                                        operationIndex,
+                                        viewIndex,
+                                        checked((uint)mipIndex + 1u),
+                                        in sampledDescriptor,
+                                        in storageDescriptor,
+                                        out lateSets[lateClosure.DescriptorIndex(viewIndex, mipIndex)],
+                                        out string descriptorReason))
+                            {
+                                recordingState.RecordingDeferredReason =
+                                    $"Advanced visibility operation is Unsupported: immutable depth-pyramid descriptor sealing failed: {descriptorReason}";
+                                return false;
+                            }
+                        }
+                        for (uint viewIndex = 0u; viewIndex < familyState.ViewCount; ++viewIndex)
+                        {
+                            DescriptorImageInfo lateSampledDescriptor =
+                                lateClosure.LateSampledDescriptors[viewIndex];
+                            DescriptorImageInfo lateStorageDescriptor =
+                                lateClosure.LateStorageDescriptors[viewIndex];
+                            if (!ResourceRuntime.AdvancedVisibilityResources
+                                    .TryAcquireLateDepthPyramidDescriptorSet(
+                                        in familyState,
+                                        operationIndex,
+                                        viewIndex,
+                                        0u,
+                                        in lateSampledDescriptor,
+                                        in lateStorageDescriptor,
+                                        out lateSets[lateClosure.DescriptorIndex(
+                                            viewIndex, lateClosure.DispatchCount)],
+                                        out string lateDescriptorReason))
+                            {
+                                recordingState.RecordingDeferredReason =
+                                    $"Advanced visibility operation is Unsupported: immutable late-visibility descriptor sealing failed: {lateDescriptorReason}.";
+                                return false;
+                            }
+                        }
+                        if (!recordingState.Ops.Stream.TrySealAdvancedVisibilityLateDescriptors(
+                                operationIndex,
+                                in request,
+                                lateSets,
+                                lateSetCount))
+                        {
+                            recordingState.RecordingDeferredReason =
+                                "Advanced visibility operation is Unsupported: immutable late descriptor publication was rejected.";
+                            return false;
+                        }
+                    }
+                    finally
+                    {
+                        lateStorage.ReleaseAcquiredViews(ResourceRuntime.Images);
+                    }
+                }
+            }
+
+            return true;
+        }
+
+        /// <summary>
+        /// Retains and realizes the canonical scene publication before set-1
+        /// visibility storage is initialized. The resulting native use is
+        /// transferred immediately to frame-slot retirement, so primary
+        /// recording never depends on a later scheduled-secondary batch.
+        /// </summary>
+        private bool TryPrepareAdvancedVisibilityScenePublication(
+            FramePlan framePlan,
+            in FrameOpContext context,
+            out VulkanAdvancedScenePublicationState state,
+            out string reason)
+        {
+            state = default;
+            reason = "the canonical scene publication is unavailable";
+            BackendReadyFramePackage? package = context.PipelineInstance?
+                .ActiveMeshRenderCommands.RenderingBackendReadyPackage;
+            if (package is null ||
+                package.CanonicalFrame.FrameId != framePlan.RenderFrameId ||
+                package.CanonicalScenePublication.Sequence == 0u)
+            {
+                reason = "the canonical backend package does not match the sealed frame plan";
+                return false;
+            }
+
+            VulkanPreparedFrameRecording preparation =
+                _advancedVisibilityPublicationPreparation;
+            preparation.Begin(framePlan.FrameSlot, framePlan.Generation);
+            try
+            {
+                preparation.AttachFramePlan(framePlan);
+                preparation.CaptureGlobalResources(
+                    package,
+                    framePlan.Generation);
+                VulkanPreparedFrameGlobalResourceSnapshot globals =
+                    preparation.GlobalResources;
+                AdvancedGpuScenePublicationReference publication =
+                    globals.Publication;
+                EVulkanAdvancedSceneResourceFailure failure =
+                    EVulkanAdvancedSceneResourceFailure.InvalidPublication;
+                if (globals.Database is null || !publication.IsValid ||
+                    !preparation.TryPrepareAdvancedScenePublication(
+                        ResourceRuntime.AdvancedSceneResources,
+                        globals.Database,
+                        in publication,
+                        out state,
+                        out failure,
+                        out reason,
+                        out _))
+                {
+                    if (string.IsNullOrWhiteSpace(reason))
+                        reason = failure.ToString();
+                    return false;
+                }
+                if (!preparation.TryTransferRetainedLifetimesTo(
+                        ResourceRuntime.ResidentTemplateFrameSlotLifetimes,
+                        out reason))
+                {
+                    state = default;
+                    return false;
+                }
+
+                reason = "Ready";
+                return true;
+            }
+            finally
+            {
+                preparation.Reset();
+            }
+        }
+
+        private bool TrySealAdvancedVisibilityBins(
+            VulkanPreparedStableBinStream bins,
+            in VulkanAdvancedVisibilityStageRequest request,
+            in VulkanAdvancedScenePublicationState sceneState,
+            in FrameOpContext context,
+            int passIndex,
+            out string reason)
+        {
+            BackendReadyFramePackage? package = context.PipelineInstance?
+                .ActiveMeshRenderCommands.RenderingBackendReadyPackage;
+            if (package is null ||
+                package.CanonicalFrame.FrameId != request.RenderFrameId)
+            {
+                reason = "the canonical backend package does not match the sealed visibility frame";
+                return false;
+            }
+
+            BackendReadySubmissionResolution resolution =
+                package.SubmissionResolution;
+            RenderOutputRequest outputRequest = context.OutputSchedulingRequest;
+            uint outputViewMask = outputRequest.IsDefined
+                ? outputRequest.Target.ViewMask
+                : 0u;
+            if (outputViewMask == 0u)
+            {
+                outputViewMask = request.Views.ViewCount > 1
+                    ? 0b11u
+                    : 0b1u;
+            }
+            // Visibility raster is canonical-geometry-only. Ordinary resident
+            // ingress may coexist for other passes, but it must never decide
+            // which geometry address space this ABI consumes.
+            bins.ThawForReuse();
+            if (!bins.TryBuildVisibilityGeometryStream(
+                    ResourceRuntime,
+                    request.Extractor,
+                    package,
+                    in sceneState,
+                    passIndex,
+                    outputViewMask,
+                    in context,
+                    out reason) ||
+                !bins.TryResolveManifests(
+                    ResourceRuntime.ResidentDrawTemplates
+                        .StableBinManifestCache,
+                    package.CanonicalScenePublication.TopologyGeneration))
+            {
+                if (string.IsNullOrWhiteSpace(reason))
+                    reason = "canonical visibility atlas manifests could not be sealed";
+                return false;
+            }
+            GpuDiagnosticReadbackPlanNode? diagnosticNode = null;
+            ReadOnlySpan<GpuDiagnosticReadbackPlan> diagnostics =
+                package.DiagnosticReadbackPlans;
+            for (int index = 0; index < diagnostics.Length; ++index)
+            {
+                if (!diagnostics[index].IsEnabled ||
+                    diagnostics[index].Strategy != resolution.Resolved)
+                    continue;
+                diagnosticNode = diagnostics[index].Node;
+                break;
+            }
+
+            VulkanSubmissionLaneCapabilities capabilities = new(
+                SupportsIndirectCount: DeviceContext.Capabilities.Supports(
+                    EVulkanDeviceCapability.DrawIndirectCount),
+                SupportsMeshletIndirectCount:
+                    DeviceContext.SupportsMeshTaskIndirectCount,
+                AllowsInstrumentedDiagnostics: diagnosticNode.HasValue,
+                AllowsInstrumentedCpuSafetyNet: diagnosticNode.HasValue,
+                IndirectCrossoverSourceCount: 1u,
+                MeshletCrossoverSourceCount: 1u);
+            ulong passIdentity = diagnosticNode is { PassIdentity: not 0u } node
+                ? node.PassIdentity
+                : checked((ulong)(uint)(passIndex + 1));
+            VulkanSubmissionOutputPolicy outputPolicy = new(
+                PassIdentity: passIdentity,
+                AllowsGpuDrivenSubmission: resolution.Resolved !=
+                    EMeshSubmissionStrategy.CpuDirect,
+                IsShadowPass: outputRequest.OutputKind == EFrameOutputKind.Shadow,
+                IsExplicitOutput: outputRequest.IsDefined,
+                IsOpenXrOutput: outputRequest.OutputKind ==
+                    EFrameOutputKind.OpenXREyeSubmit,
+                IsMirrorOutput: outputRequest.OutputKind is
+                    EFrameOutputKind.DesktopMirror or
+                    EFrameOutputKind.VrPickupMirror or
+                    EFrameOutputKind.InWorldMirror,
+                IsCaptureOutput: outputRequest.OutputKind is
+                    EFrameOutputKind.SceneCapture or
+                    EFrameOutputKind.LightProbeCapture or
+                    EFrameOutputKind.ReflectionProbeCapture or
+                    EFrameOutputKind.ImageBasedLighting or
+                    EFrameOutputKind.Thumbnail,
+                IsExternalOutput: outputRequest.Target.TargetClass ==
+                    ERenderOutputTargetClass.RuntimeExternalImage);
+            if (!bins.TrySealSubmissionPlans(
+                    ResourceRuntime.ResidentDrawTemplates,
+                    request.Extractor.VisibilityPayloads,
+                    request.Extractor.IndirectRanges,
+                    request.Extractor.IndirectPayloadIndices,
+                    resolution.Resolved,
+                    in capabilities,
+                    in outputPolicy,
+                    diagnosticNode,
+                    requestCpuSafetyNet: false,
+                    out VulkanSubmissionPlanRejectionReason rejection))
+            {
+                reason = rejection.ToString();
+                return false;
+            }
+
+            reason = "Ready";
+            return true;
+        }
+
+        private static bool TryValidateAdvancedVisibilityTarget(
+            in VulkanAdvancedVisibilityStageRequest request,
+            VkFrameBuffer target,
+            out string reason)
+        {
+            if (request.Target.Targets is not { Length: 4 } attachments)
+            {
+                reason = "the authoritative framebuffer does not have exactly three color attachments and one depth-stencil attachment";
+                return false;
+            }
+
+            EFrameBufferAttachment[] expected =
+            [
+                EFrameBufferAttachment.ColorAttachment0,
+                EFrameBufferAttachment.ColorAttachment1,
+                EFrameBufferAttachment.ColorAttachment2,
+                EFrameBufferAttachment.DepthStencilAttachment,
+            ];
+            string[] names =
+            [
+                request.IdentityTargetName,
+                request.MetadataTargetName,
+                request.SelectionTargetName,
+                request.DepthTargetName,
+            ];
+            for (int index = 0; index < attachments.Length; ++index)
+            {
+                if (attachments[index].Attachment != expected[index] ||
+                    attachments[index].Target is not GenericRenderObject targetObject ||
+                    !string.Equals(
+                        targetObject.Name,
+                        names[index],
+                        StringComparison.Ordinal))
+                {
+                    reason = $"attachment {index} is not the expected '{names[index]}'/{expected[index]} resource";
+                    return false;
+                }
+            }
+            if (target.FramebufferWidth == 0u || target.FramebufferHeight == 0u)
+            {
+                reason = "the native framebuffer extent is empty";
+                return false;
+            }
+            reason = string.Empty;
             return true;
         }
 

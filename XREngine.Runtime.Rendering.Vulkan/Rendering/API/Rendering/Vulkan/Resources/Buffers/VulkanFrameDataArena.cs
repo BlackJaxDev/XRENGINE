@@ -128,7 +128,8 @@ internal sealed class VulkanFrameDataArena
             return TryMakeSlice(frameSlot, lane, groupIndex, offset, (uint)length, alignment, out slice);
         }
 
-        if (lane == EVulkanFrameDataLane.AdvancedSceneStorage ||
+        if (lane is EVulkanFrameDataLane.AdvancedSceneStorage or
+            EVulkanFrameDataLane.AdvancedVisibilityStorage ||
             !TryAppendChunkGroup(laneIndex, length, alignment, out int appendedIndex))
             return false;
         offsets = _nextOffsets[laneIndex];
@@ -170,6 +171,74 @@ internal sealed class VulkanFrameDataArena
             return false;
         using (scope)
             source.CopyTo(scope.Bytes);
+        return true;
+    }
+
+    /// <summary>
+    /// Reclaims a completed frame-slot allocation as a fixed resident region.
+    /// The caller may rewrite the range after slot reset; later transient
+    /// allocations start after it so they cannot overwrite retained SoA data.
+    /// </summary>
+    internal bool TryRetainResidentSlice(in VulkanFrameDataSlice slice)
+    {
+        if (!CanRetainResidentSlice(slice))
+            return false;
+
+        ulong[] offsets = _nextOffsets[(int)slice.Lane][slice.ChunkIndex];
+        ulong end = checked(slice.Offset + slice.Length);
+        if (offsets[slice.FrameSlot] < end)
+            offsets[slice.FrameSlot] = end;
+        return true;
+    }
+
+    /// <summary>Pure preflight counterpart to <see cref="TryRetainResidentSlice"/>.</summary>
+    internal bool CanRetainResidentSlice(in VulkanFrameDataSlice slice)
+        => Volatile.Read(ref _hostAccess) == 0 &&
+           TryValidateSlice(slice, VulkanFrameDataArenaSlotState.Writable, out _);
+
+    /// <summary>
+    /// Captures the monotonic cursor of a boundary-reserved lane so a rejected
+    /// publication can discard only its transient tail. Boundary lanes own one
+    /// fixed chunk group and never grow in the frame hot path.
+    /// </summary>
+    internal bool TryCaptureReservedLaneCursor(
+        int frameSlot,
+        EVulkanFrameDataLane lane,
+        out ulong cursor)
+    {
+        cursor = 0u;
+        int laneIndex = (int)lane;
+        if (!IsActive || !IsValidFrameSlot(frameSlot) || !IsValidLane(lane) ||
+            Volatile.Read(ref _hostAccess) != 0 ||
+            _chunkGroupCounts[laneIndex] != 1 ||
+            _chunks[laneIndex][0][frameSlot] is not { } chunk ||
+            chunk.GetState(Generation) != VulkanFrameDataArenaSlotState.Writable)
+        {
+            return false;
+        }
+
+        cursor = _nextOffsets[laneIndex][0][frameSlot];
+        return true;
+    }
+
+    /// <summary>Rewinds only the unpublished transient tail of a reserved lane.</summary>
+    internal bool TryRestoreReservedLaneCursor(
+        int frameSlot,
+        EVulkanFrameDataLane lane,
+        ulong cursor)
+    {
+        int laneIndex = (int)lane;
+        if (!IsActive || !IsValidFrameSlot(frameSlot) || !IsValidLane(lane) ||
+            Volatile.Read(ref _hostAccess) != 0 ||
+            _chunkGroupCounts[laneIndex] != 1 ||
+            _chunks[laneIndex][0][frameSlot] is not { } chunk ||
+            chunk.GetState(Generation) != VulkanFrameDataArenaSlotState.Writable ||
+            cursor > _nextOffsets[laneIndex][0][frameSlot])
+        {
+            return false;
+        }
+
+        _nextOffsets[laneIndex][0][frameSlot] = cursor;
         return true;
     }
 
@@ -545,6 +614,7 @@ internal sealed class VulkanFrameDataArena
         EVulkanFrameDataLane.Uniform => BufferUsageFlags.UniformBufferBit | BufferUsageFlags.TransferSrcBit | BufferUsageFlags.TransferDstBit,
         EVulkanFrameDataLane.Storage => BufferUsageFlags.StorageBufferBit | BufferUsageFlags.TransferSrcBit | BufferUsageFlags.TransferDstBit,
         EVulkanFrameDataLane.AdvancedSceneStorage => BufferUsageFlags.StorageBufferBit | BufferUsageFlags.TransferSrcBit | BufferUsageFlags.TransferDstBit,
+        EVulkanFrameDataLane.AdvancedVisibilityStorage => BufferUsageFlags.StorageBufferBit | BufferUsageFlags.IndirectBufferBit | BufferUsageFlags.TransferSrcBit | BufferUsageFlags.TransferDstBit,
         EVulkanFrameDataLane.Indirect => BufferUsageFlags.IndirectBufferBit | BufferUsageFlags.StorageBufferBit | BufferUsageFlags.TransferSrcBit | BufferUsageFlags.TransferDstBit,
         _ => throw new ArgumentOutOfRangeException(nameof(lane), lane, "Unsupported Vulkan frame-data lane."),
     };

@@ -125,6 +125,9 @@ namespace XREngine.Animation.Importers
                 _ => throw new ArgumentOutOfRangeException(nameof(component), component, "Unsupported root-motion position component."),
             };
 
+        private static int GetHumanoidTranslationDofTargetComponentIndex(char component)
+            => GetHumanoidRootMotionPositionTargetComponent(component) - 'x';
+
         private static float GetHumanoidBodyRotationComponentScale(char component)
             => component switch
             {
@@ -167,6 +170,8 @@ namespace XREngine.Animation.Importers
             IReadOnlyList<CurveKey> Keys,
             int PreInfinity,
             int PostInfinity,
+            int BindingFlags = 0,
+            int BindingSerializedVersion = 0,
             ImportedAnimationBindingDescriptor? BindingDescriptor = null);
 
         private sealed record VectorCurve(
@@ -178,7 +183,9 @@ namespace XREngine.Animation.Importers
             SourceAssetReference Script,
             IReadOnlyDictionary<char, IReadOnlyList<CurveKey>> ComponentKeys,
             int PreInfinity,
-            int PostInfinity);
+            int PostInfinity,
+            int BindingFlags = 0,
+            int BindingSerializedVersion = 0);
 
         private sealed record ObjectCurve(
             string SourceField,
@@ -236,6 +243,9 @@ namespace XREngine.Animation.Importers
         }
 
         public static AnimationClip Import(string filePath)
+            => ImportCore(filePath, new HashSet<string>(StringComparer.OrdinalIgnoreCase));
+
+        private static AnimationClip ImportCore(string filePath, HashSet<string> activeAdditiveReferences)
         {
             ArgumentNullException.ThrowIfNull(filePath);
 
@@ -269,6 +279,7 @@ namespace XREngine.Animation.Importers
                         ? $"Unity YAML AnimationClip serializedVersion {serializedVersion} is not in the currently declared source-version contract."
                         : "AnimationClip.serializedVersion is missing; the source schema cannot be identified safely.",
                 serializedYaml: string.Empty);
+            AuditSourceSchema(clipMap, serializedVersion, manifestBuilder);
 
             string name = GetScalarString(clipMap, "m_Name") ?? Path.GetFileNameWithoutExtension(filePath);
             int sampleRate = GetScalarInt(clipMap, "m_SampleRate") ?? 30;
@@ -318,24 +329,12 @@ namespace XREngine.Animation.Importers
                     HeightFromFeet = (GetScalarIntOrNull(settingsMap, "m_HeightFromFeet") ?? 0) != 0,
                     Mirror = (GetScalarIntOrNull(settingsMap, "m_Mirror") ?? 0) != 0,
                 };
-            manifestBuilder.SourceIdentity.ImportSettingsSha256 = ComputeImportSettingsHash(rootMotionSettings);
-            if (settingsMap is not null)
-            {
-                bool settingsExecutable = ImportedHumanoidRootMotionPolicy.TryCreate(
+            string rootSettingsDiagnostic = string.Empty;
+            bool rootSettingsExecutable = settingsMap is null
+                || ImportedHumanoidRootMotionPolicy.TryCreate(
                     rootMotionSettings!,
                     out _,
-                    out string settingsDiagnostic);
-                manifestBuilder.RecordSection(
-                    EImportedAnimationDataDomain.RootMotionSettings,
-                    settingsExecutable
-                        ? EImportedAnimationCapabilityState.SupportedAndApplied
-                        : EImportedAnimationCapabilityState.PreservedNotExecutable,
-                    "m_AnimationClipSettings",
-                    settingsExecutable
-                        ? "All authored root-motion settings are executable by the current native evaluator."
-                        : settingsDiagnostic,
-                    settingsExecutable ? string.Empty : settingsMap.ToString());
-            }
+                    out rootSettingsDiagnostic);
 
             var curves = new List<ScalarCurve>();
             var vecCurves = new List<VectorCurve>();
@@ -641,6 +640,7 @@ namespace XREngine.Animation.Importers
 
             // Track humanoid muscle curve count for clip classification.
             int humanoidMuscleCount = 0;
+            int humanoidTranslationDofCount = 0;
 
             // Build blendshape animations and remaining scalar animations.
             foreach (var c in curves)
@@ -707,6 +707,26 @@ namespace XREngine.Animation.Importers
                     continue;
                 }
 
+                if (TryMapHumanoidTranslationDofComponent(c.Attribute, out EHumanoidTranslationDofBone bone, out char sourceComponent))
+                {
+                    int targetComponent = GetHumanoidTranslationDofTargetComponentIndex(sourceComponent);
+                    RecordAppliedBinding(
+                        manifestBuilder,
+                        EImportedAnimationDataDomain.HumanoidMuscle,
+                        c,
+                        $"HumanoidComponent.ImportedTranslationDof.{bone}[{targetComponent}]");
+                    var anim = BuildFloatAnim(
+                        c,
+                        length,
+                        looped,
+                        sampleRate,
+                        GetHumanoidRootMotionPositionComponentScale(sourceComponent),
+                        startTime);
+                    builder.AddHumanoidTranslationDofAnimation(bone, targetComponent, anim);
+                    humanoidTranslationDofCount++;
+                    continue;
+                }
+
                 if (c.Attribute.StartsWith("blendShape.", StringComparison.Ordinal))
                 {
                     string blendshapeName = c.Attribute["blendShape.".Length..];
@@ -743,7 +763,11 @@ namespace XREngine.Animation.Importers
                         c.ClassId,
                         c.Script,
                         EImportedAnimationBindingValueKind.Float,
-                        component: GetSerializedComponentIndex(c.Attribute));
+                        component: GetSerializedComponentIndex(c.Attribute)) with
+                    {
+                        BindingFlags = c.BindingFlags,
+                        BindingSerializedVersion = c.BindingSerializedVersion,
+                    };
                 genericBindings.Add(descriptor);
                 PropAnimFloat genericAnimation = BuildFloatAnim(c, length, looped, sampleRate, valueScale: 1.0f, startTime);
                 builder.AddGenericFloatAnimation(descriptor, genericAnimation);
@@ -827,7 +851,11 @@ namespace XREngine.Animation.Importers
                         vc.ClassId,
                         vc.Script,
                         valueKind,
-                        componentIndex);
+                        componentIndex) with
+                    {
+                        BindingFlags = vc.BindingFlags,
+                        BindingSerializedVersion = vc.BindingSerializedVersion,
+                    };
                     genericBindings.Add(descriptor);
                     ScalarCurve scalarComponent = new(
                         vc.SourceField,
@@ -885,15 +913,32 @@ namespace XREngine.Animation.Importers
             }
 
             // ── Clip classification ──────────────────────────────────────────
-            clip.HasMuscleChannels = humanoidMuscleCount > 0;
+            clip.HasMuscleChannels = humanoidMuscleCount + humanoidTranslationDofCount > 0;
             clip.HasRootMotion = rootMotionGroups.Count > 0;
             clip.HasIKGoals = ikGoalGroups.Count > 0;
-            clip.ClipKind = humanoidMuscleCount > 0
+            clip.ClipKind = humanoidMuscleCount + humanoidTranslationDofCount > 0
                 ? EAnimationClipKind.ImportedHumanoidMuscle
                 : EAnimationClipKind.GenericTransform;
             clip.SourceMaterialBindings = [.. materialBindings.Distinct()];
                 clip.MaterialBindingDiagnostics = [.. materialBindingDiagnostics];
             clip.ImportedGenericBindings = [.. genericBindings.Distinct()];
+            ResolveAdditiveReferencePose(filePath, clip, manifestBuilder, activeAdditiveReferences);
+            manifestBuilder.SourceIdentity.ImportSettingsSha256 = ComputeImportSettingsHash(
+                rootMotionSettings,
+                clip.ImportedAdditiveReferencePoseClip?.SourceImportManifest?.SourceIdentity.SourceContentSha256);
+            if (settingsMap is not null)
+            {
+                manifestBuilder.RecordSection(
+                    EImportedAnimationDataDomain.RootMotionSettings,
+                    rootSettingsExecutable
+                        ? EImportedAnimationCapabilityState.SupportedAndApplied
+                        : EImportedAnimationCapabilityState.PreservedNotExecutable,
+                    "m_AnimationClipSettings",
+                    rootSettingsExecutable
+                        ? "All authored root-motion settings are executable by the current native evaluator."
+                        : rootSettingsDiagnostic,
+                    rootSettingsExecutable ? string.Empty : settingsMap.ToString());
+            }
             clip.SourceImportManifest = manifestBuilder.Build();
 
             return clip;
@@ -1019,6 +1064,21 @@ namespace XREngine.Animation.Importers
                 // We keep this importer decoupled from the HumanoidComponent assembly by using string-based reflection.
                 var getComp = GetOrAddMethod(_sceneNode, "GetComponentInHierarchy", ["HumanoidComponent"], animatedArgIndex: -1, cacheReturnValue: true);
                 var method = GetOrAddMethod(getComp, "SetImportedRawValue", [humanoidValue, 0.0f, false], animatedArgIndex: 1, cacheReturnValue: false);
+                method.Animation = anim;
+            }
+
+            public void AddHumanoidTranslationDofAnimation(
+                EHumanoidTranslationDofBone bone,
+                int component,
+                PropAnimFloat anim)
+            {
+                var getComp = GetOrAddMethod(_sceneNode, "GetComponentInHierarchy", ["HumanoidComponent"], animatedArgIndex: -1, cacheReturnValue: true);
+                var method = GetOrAddMethod(
+                    getComp,
+                    "SetImportedTranslationDof",
+                    [bone, component, 0.0f],
+                    animatedArgIndex: 2,
+                    cacheReturnValue: false);
                 method.Animation = anim;
             }
 
@@ -1215,6 +1275,26 @@ namespace XREngine.Animation.Importers
             return TryMapImportedHumanoidAttributeToValue(c.Attribute, out _);
         }
 
+        private static bool TryMapHumanoidTranslationDofComponent(
+            string attribute,
+            out EHumanoidTranslationDofBone bone,
+            out char component)
+        {
+            bone = default;
+            component = default;
+            const string suffix = "TDOF.";
+            int suffixStart = attribute.IndexOf(suffix, StringComparison.Ordinal);
+            if (suffixStart <= 0 || suffixStart + suffix.Length + 1 != attribute.Length)
+                return false;
+
+            if (!Enum.TryParse(attribute[..suffixStart], ignoreCase: false, out bone)
+                || !Enum.IsDefined(bone))
+                return false;
+
+            component = attribute[^1];
+            return component is 'x' or 'y' or 'z';
+        }
+
         private static bool TryReadCurveList(
             YamlMappingNode clipMap,
             string key,
@@ -1251,7 +1331,8 @@ namespace XREngine.Animation.Importers
                 {
                     if (TryParseCurveData(item, out var keys, out int scalarPreInfinity, out int scalarPostInfinity))
                     {
-                        scalarCurves.Add(new ScalarCurve(key, sourcePayload, path, attribute!, classId, script, keys, scalarPreInfinity, scalarPostInfinity));
+                        scalarCurves.Add(new ScalarCurve(key, sourcePayload, path, attribute!, classId, script, keys, scalarPreInfinity, scalarPostInfinity,
+                            GetScalarInt(item, "flags") ?? 0, GetScalarInt(item, "serializedVersion") ?? 0));
                         addedAny = true;
                         continue;
                     }
@@ -1261,7 +1342,18 @@ namespace XREngine.Animation.Importers
                 // These are not present in your current samples, but this keeps the importer usable for more exporter variants.
                 if (TryParseVectorCurveData(key, item, out var vecAttribute, out var components, out int vectorPreInfinity, out int vectorPostInfinity))
                 {
-                    vectorCurves.Add(new VectorCurve(key, sourcePayload, path, vecAttribute, classId, script, components, vectorPreInfinity, vectorPostInfinity));
+                    vectorCurves.Add(new VectorCurve(
+                        key,
+                        sourcePayload,
+                        path,
+                        vecAttribute,
+                        classId,
+                        script,
+                        components,
+                        vectorPreInfinity,
+                        vectorPostInfinity,
+                        GetScalarInt(item, "flags") ?? 0,
+                        GetScalarInt(item, "serializedVersion") ?? 0));
                     addedAny = true;
                     continue;
                 }
@@ -2665,7 +2757,9 @@ namespace XREngine.Animation.Importers
         private static bool IsCurrentlyExecutableInfinityMode(int mode)
             => mode is 0 or 1 or 2 or 4 or 8;
 
-        private static string ComputeImportSettingsHash(ImportedHumanoidClipRootMotionSettings? settings)
+        private static string ComputeImportSettingsHash(
+            ImportedHumanoidClipRootMotionSettings? settings,
+            string? additiveReferenceContentSha256)
         {
             string rootSettings = settings is null
                 ? "none"
@@ -2674,7 +2768,7 @@ namespace XREngine.Animation.Importers
                     $"{settings.AdditiveReferencePoseClip.FileId}|{settings.AdditiveReferencePoseClip.Guid}|{settings.AdditiveReferencePoseClip.Type}|{settings.AdditiveReferencePoseTime:R}|{settings.HasAdditiveReferencePose}|{settings.StartTime:R}|{settings.StopTime:R}|{settings.OrientationOffsetY:R}|{settings.Level:R}|{settings.CycleOffset:R}|{settings.LoopTime}|{settings.LoopPose}|{settings.BakeOrientationIntoPose}|{settings.BakePositionYIntoPose}|{settings.BakePositionXZIntoPose}|{settings.KeepOriginalOrientation}|{settings.KeepOriginalPositionY}|{settings.KeepOriginalPositionXZ}|{settings.HeightFromFeet}|{settings.Mirror}");
             string canonical = string.Create(
                 CultureInfo.InvariantCulture,
-                $"manifest={ImportedAnimationImportManifest.CurrentSchemaVersion}|coordinate={ImportedAnimationCoordinateContract.CurrentContractId}|constrained={Constrained}|lerpConstrained={LerpConstrained}|humanoidIK={ImportHumanoidIKGoalCurves}|humanoidRoot={ImportHumanoidRootMotionCurves}|rootSettings={rootSettings}");
+                $"manifest={ImportedAnimationImportManifest.CurrentSchemaVersion}|capability={ImportedAnimationImportCapabilityContract.CurrentVersion}|coordinate={ImportedAnimationCoordinateContract.CurrentContractId}|constrained={Constrained}|lerpConstrained={LerpConstrained}|humanoidIK={ImportHumanoidIKGoalCurves}|humanoidRoot={ImportHumanoidRootMotionCurves}|rootSettings={rootSettings}|additiveReferenceContent={additiveReferenceContentSha256 ?? "none"}");
             return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(canonical)));
         }
 
@@ -2697,6 +2791,9 @@ namespace XREngine.Animation.Importers
                 Legacy = (GetScalarInt(clipMap, "m_Legacy") ?? 0) != 0,
                 Compressed = (GetScalarInt(clipMap, "m_Compressed") ?? 0) != 0,
                 UseHighQualityCurve = (GetScalarInt(clipMap, "m_UseHighQualityCurve") ?? 0) != 0,
+                HasGenericRootTransform = (GetScalarInt(clipMap, "m_HasGenericRootTransform") ?? 0) != 0,
+                HasMotionFloatCurves = (GetScalarInt(clipMap, "m_HasMotionFloatCurves") ?? 0) != 0,
+                GenerateMotionCurves = (GetScalarInt(clipMap, "m_GenerateMotionCurves") ?? 0) != 0,
                 BoundsCenter = ReadVector3(GetMappingOrNull(bounds, "m_Center")),
                 BoundsExtents = ReadVector3(GetMappingOrNull(bounds, "m_Extent")),
             };

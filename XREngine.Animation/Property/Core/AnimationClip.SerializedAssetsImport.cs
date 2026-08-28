@@ -94,6 +94,14 @@ public partial class AnimationClip
             return false;
         }
 
+        if (ImportedHumanoidRootMotionSettings?.HasAdditiveReferencePose == true
+            && !TryGetImportedAdditiveReferencePose(out _, out _))
+        {
+            diagnostic =
+                "Unity additive reference pose is enabled, but its AnimationClip/fileID/time was not resolved into an executable reference pose.";
+            return false;
+        }
+
         if (!manifest.TryGetBlockingDiagnostic(allowRuntimeAdapters, out diagnostic))
         {
             diagnostic = string.Empty;

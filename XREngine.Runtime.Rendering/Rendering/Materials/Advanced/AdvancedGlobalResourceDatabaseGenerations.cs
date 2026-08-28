@@ -1,8 +1,14 @@
 namespace XREngine.Rendering;
 
 /// <summary>
-/// Content generations for the canonical texture and sampler tables.
+/// Owner-local mutation domains for canonical global-resource tables.
 /// </summary>
 public readonly record struct AdvancedGlobalResourceDatabaseGenerations(
-    ulong Textures,
-    ulong Samplers);
+    AdvancedGpuOwnerGenerations Textures,
+    AdvancedGpuOwnerGenerations Samplers,
+    AdvancedGpuOwnerGenerations Lights,
+    AdvancedGpuOwnerGenerations Shadows,
+    AdvancedGpuOwnerGenerations Probes,
+    AdvancedGpuOwnerGenerations Environments,
+    AdvancedGpuOwnerGenerations Decals,
+    AdvancedGpuOwnerGenerations GiResources);

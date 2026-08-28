@@ -71,7 +71,8 @@ public unsafe partial class OpenXRAPI
                 CameraPositionAndNear: new Vector4(position, nearZ),
                 CameraForwardAndFar: new Vector4(forward, farZ),
                 ParentContainsView: parentContains,
-                DepthZeroToOne: true));
+                DepthZeroToOne: true,
+                ProjectionMatrixUnjittered: projection));
             _openXrPublishedPreviousViewProjection[i] = viewProjection;
         }
 

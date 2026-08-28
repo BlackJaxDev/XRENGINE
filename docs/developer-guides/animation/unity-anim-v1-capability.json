@@ -1,0 +1,27 @@
+{
+  "schema": "xre.unity-anim-capability",
+  "profileVersion": 1,
+  "capabilityContractVersion": 2,
+  "unitySerializedVersions": [6, 7],
+  "nestedSerializedVersions": [2, 3],
+  "status": "supported",
+  "families": {
+    "editable": ["m_RotationCurves", "m_EulerCurves", "m_PositionCurves", "m_ScaleCurves", "m_FloatCurves", "m_PPtrCurves"],
+    "packed": ["m_CompressedRotationCurves", "m_StreamedClip", "m_DenseClip", "m_ConstantClip"],
+    "bindings": ["float", "integer", "boolean", "enum", "vector", "quaternion", "euler", "objectReference"],
+    "events": true,
+    "weightedTangents": true,
+    "additiveReferencePose": {
+      "timeUnit": "seconds",
+      "identity": "exactGuidAndFileId",
+      "supportedAssets": ["standaloneAnim", "sameStandaloneAnim"]
+    },
+    "infinityModes": ["ClampForever", "Loop", "PingPong", "Clamp", "Once"]
+  },
+  "unsupported": {
+    "opaquePackedCrcBindings": "adapterRequired",
+    "unknownBehavioralFields": "capabilityFailure",
+    "nonStandaloneAdditiveReferenceSubassets": "capabilityFailure"
+  },
+  "fixtures": "fixtures/unity-anim-v1/README.md"
+}

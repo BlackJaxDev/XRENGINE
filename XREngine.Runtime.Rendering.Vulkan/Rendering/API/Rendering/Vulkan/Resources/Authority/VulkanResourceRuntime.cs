@@ -33,6 +33,8 @@ internal sealed partial class VulkanResourceRuntime
         Lifetime = new VulkanLifetimeAuthority(
             new VulkanResourceLifetimeTracker(),
             new VulkanResourceRetirementQueue(frameSlotCount));
+        NativeDependencies = new VulkanNativeDependencyGraph();
+        NativeDependencies.Register(EVulkanNativeDependencyOwner.DescriptorTable, 1UL);
         DescriptorLifetime = new VulkanDescriptorLifetimeAuthority(this, Descriptors, Lifetime);
         Images = new VulkanImageResourceService(Allocations, Lifetime);
         Images.ConfigureRetirementRuntime(this);
@@ -52,7 +54,10 @@ internal sealed partial class VulkanResourceRuntime
         ResidentDrawTemplates = new VulkanResidentDrawTemplateTable(
             this,
             primaryCapacity: 256u,
-            variantsPerDraw: 1u);
+            // Pass, strategy, instrumentation, target, and view-mask variants
+            // may coexist for one canonical draw. This is a bounded resident
+            // table capacity, not a per-frame allocation.
+            variantsPerDraw: 32u);
         ResidentTemplateFrameSlotLifetimes =
             new VulkanResidentTemplateFrameSlotLifetimes(frameSlotCount);
         AdvancedSceneResources = new VulkanAdvancedSceneResourceRuntime(
@@ -81,6 +86,7 @@ internal sealed partial class VulkanResourceRuntime
     internal VulkanFallbackTextureAuthority FallbackTexture { get; }
     internal VulkanFallbackTextureAuthority BlackFallbackTexture { get; }
     internal VulkanLifetimeAuthority Lifetime { get; }
+    internal VulkanNativeDependencyGraph NativeDependencies { get; }
     internal VulkanDescriptorLifetimeAuthority DescriptorLifetime { get; }
     internal VulkanSamplerResourceService Samplers { get; }
     internal VulkanFrameBufferResourceService Framebuffers { get; }
@@ -335,6 +341,7 @@ internal sealed partial class VulkanResourceRuntime
             new VulkanResourceLifetimeKey(ObjectType.RenderPass, renderPass.Handle),
             "RenderPass",
             externallyOwned: false);
+        NativeDependencies.Register(EVulkanNativeDependencyOwner.RenderPass, renderPass.Handle);
         RenderPassColorAttachmentCounts[renderPass.Handle] = (uint)colorAttachmentFormats.Length;
         RenderPassColorAttachmentFormats[renderPass.Handle] = colorAttachmentFormats.ToArray();
         RenderPassSemanticSignatures[renderPass.Handle] = semanticSignature;
@@ -734,6 +741,10 @@ internal sealed partial class VulkanResourceRuntime
         if (renderPass.Handle == 0)
             return;
 
+        _ = NativeDependencies.Retire(
+            EVulkanNativeDependencyOwner.RenderPass,
+            renderPass.Handle,
+            "RenderPass.Retirement");
         RenderPassColorAttachmentCounts.Remove(renderPass.Handle);
         RenderPassColorAttachmentFormats.Remove(renderPass.Handle);
         RenderPassSemanticSignatures.Remove(renderPass.Handle);
@@ -1177,6 +1188,47 @@ internal sealed partial class VulkanResourceRuntime
             new VulkanResourceLifetimeKey(ObjectType.PipelineLayout, pipelineLayout.Handle),
             owner,
             externallyOwned: false);
+        NativeDependencies.Register(EVulkanNativeDependencyOwner.PipelineLayout, pipelineLayout.Handle);
+    }
+
+    /// <summary>Registers a native pipeline and assigns it a backend-local stable identity.</summary>
+    internal void RegisterPipeline(Pipeline pipeline, string owner)
+    {
+        if (pipeline.Handle == 0)
+            return;
+
+        Lifetime.Tracker.RegisterResource(
+            new VulkanResourceLifetimeKey(ObjectType.Pipeline, pipeline.Handle),
+            owner,
+            externallyOwned: false);
+        NativeDependencies.Register(EVulkanNativeDependencyOwner.Pipeline, pipeline.Handle);
+    }
+
+    /// <summary>Connects only concrete native inputs to a newly created pipeline.</summary>
+    internal void LinkPipelineDependencies(
+        Pipeline pipeline,
+        PipelineLayout pipelineLayout,
+        ReadOnlySpan<DescriptorSetLayout> descriptorLayouts,
+        ReadOnlySpan<PipelineShaderStageCreateInfo> shaderStages)
+    {
+        if (!NativeDependencies.TryGet(EVulkanNativeDependencyOwner.Pipeline, pipeline.Handle, out VulkanNativeDependencyHandle dependent))
+            return;
+
+        LinkNativeDependency(EVulkanNativeDependencyOwner.PipelineLayout, pipelineLayout.Handle, dependent);
+        for (int index = 0; index < descriptorLayouts.Length; ++index)
+            LinkNativeDependency(EVulkanNativeDependencyOwner.DescriptorLayout, descriptorLayouts[index].Handle, dependent);
+        for (int index = 0; index < shaderStages.Length; ++index)
+            LinkNativeDependency(EVulkanNativeDependencyOwner.Shader, shaderStages[index].Module.Handle, dependent);
+        LinkNativeDependency(EVulkanNativeDependencyOwner.DescriptorTable, 1UL, dependent);
+    }
+
+    private void LinkNativeDependency(
+        EVulkanNativeDependencyOwner sourceOwner,
+        ulong sourceHandle,
+        VulkanNativeDependencyHandle dependent)
+    {
+        if (sourceHandle != 0 && NativeDependencies.TryGet(sourceOwner, sourceHandle, out VulkanNativeDependencyHandle source))
+            _ = NativeDependencies.Link(sourceOwner, source, EVulkanNativeDependencyOwner.Pipeline, dependent);
     }
 
     /// <summary>
@@ -1192,6 +1244,10 @@ internal sealed partial class VulkanResourceRuntime
             return false;
 
         VulkanResourceLifetimeKey key = new(ObjectType.PipelineLayout, pipelineLayout.Handle);
+        NativeDependencies.Retire(
+            EVulkanNativeDependencyOwner.PipelineLayout,
+            pipelineLayout.Handle,
+            $"{owner}.Retirement");
         VulkanResourceLifetimeTracker tracker = Lifetime.Tracker;
         tracker.FenceResourceRecordingAdmission(key, owner);
         Lifetime.PublishTrackingDependenciesBeforeRetirement(key);
@@ -1241,6 +1297,7 @@ internal sealed partial class VulkanResourceRuntime
             return;
 
         VulkanResourceLifetimeKey key = new(ObjectType.Pipeline, pipeline.Handle);
+        NativeDependencies.Retire(EVulkanNativeDependencyOwner.Pipeline, pipeline.Handle, $"{owner}.Retirement");
         VulkanResourceLifetimeTracker tracker = Lifetime.Tracker;
         tracker.FenceResourceRecordingAdmission(key, owner);
         Lifetime.PublishTrackingDependenciesBeforeRetirement(key);

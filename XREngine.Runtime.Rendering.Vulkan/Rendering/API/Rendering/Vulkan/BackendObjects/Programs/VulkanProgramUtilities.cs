@@ -20,8 +20,10 @@ internal static class VulkanProgramUtilities
     internal static DescriptorLayoutBuildResult BuildDescriptorLayoutsShared(
         VulkanDescriptorManager descriptors,
         VulkanAdvancedSceneResourceRuntime advancedScene,
+        VulkanAdvancedVisibilityResourceRuntime advancedVisibility,
         IEnumerable<DescriptorBindingInfo> bindings,
-        string programName)
+        string programName,
+        uint explicitExternallyOwnedSetMask = 0u)
     {
         List<DescriptorBindingInfo> reflectedBindings = bindings
             .Select(DescriptorBindingInfo.NormalizeKnownMetadata)
@@ -48,7 +50,7 @@ internal static class VulkanProgramUtilities
             }
         }
 
-        if (builders.Count == 0)
+        if (builders.Count == 0 && explicitExternallyOwnedSetMask == 0u)
             return new DescriptorLayoutBuildResult(
                 Array.Empty<DescriptorSetLayout>(),
                 new List<DescriptorBindingInfo>(),
@@ -62,32 +64,45 @@ internal static class VulkanProgramUtilities
             .ThenBy(b => b.Binding)
             .Select(b => b.ToDescriptorBindingInfo())
             .ToList();
-        uint externallyOwnedSetMask = 0u;
-        if (VulkanAdvancedSceneProgramBindingContract.IsCandidate(mergedBindings))
+        bool automaticAdvancedCandidate =
+            VulkanAdvancedSceneProgramBindingContract.IsCandidate(mergedBindings);
+        uint externallyOwnedSetMask = explicitExternallyOwnedSetMask != 0u
+            ? explicitExternallyOwnedSetMask
+            : automaticAdvancedCandidate
+                ? VulkanAdvancedSceneProgramBindingContract.ExternallyOwnedSetMask
+                : 0u;
+        if (externallyOwnedSetMask != 0u)
         {
-            if (!advancedScene.IsReady)
+            if (!VulkanAdvancedSceneProgramBindingContract.IsSupportedExternalSetMask(
+                    externallyOwnedSetMask))
             {
                 throw new InvalidOperationException(
-                    $"Advanced Vulkan program '{programName}' cannot link because the native scene-resource runtime is unavailable: {advancedScene.AvailabilityReason}");
+                    $"Vulkan program '{programName}' requested unsupported externally owned descriptor sets 0x{externallyOwnedSetMask:X8}.");
+            }
+            if (!advancedScene.IsReady || !advancedVisibility.IsReady)
+            {
+                throw new InvalidOperationException(
+                    $"Advanced Vulkan program '{programName}' cannot link because a native advanced resource runtime is unavailable: scene={advancedScene.AvailabilityReason}; visibility={advancedVisibility.AvailabilityReason}");
             }
             if (!VulkanAdvancedSceneProgramBindingContract.TryValidate(
                     mergedBindings,
                     advancedScene.DescriptorCapacity,
+                    externallyOwnedSetMask,
                     out string advancedContractReason))
             {
                 throw new InvalidOperationException(
                     $"Advanced Vulkan descriptor ABI validation failed for program '{programName}': {advancedContractReason}.");
             }
 
-            externallyOwnedSetMask =
-                VulkanAdvancedSceneProgramBindingContract.ExternallyOwnedSetMask;
         }
 
         List<DescriptorSetLayout> layouts = new();
         List<bool> setUsesUpdateAfterBind = new();
         bool requiresUpdateAfterBind = false;
         bool requiresVariableDescriptorCount = false;
-        uint maxDeclaredSet = builders.Values.Max(b => b.Set);
+        uint maxDeclaredSet = builders.Count == 0
+            ? 0u
+            : builders.Values.Max(b => b.Set);
         uint maxSet = Math.Max(maxDeclaredSet, VulkanDescriptorManager.SetTierCount - 1);
 
         Dictionary<uint, List<DescriptorSetLayoutBindingBuilder>> groupsBySet = builders.Values
@@ -100,9 +115,10 @@ internal static class VulkanProgramUtilities
                     externallyOwnedSetMask,
                     setIndex))
             {
-                if (!advancedScene.TryGetProgramDescriptorSetLayout(
-                        setIndex,
-                        out DescriptorSetLayout externalLayout))
+                bool resolved = setIndex == VulkanAdvancedSceneProgramBindingContract.VisibilitySetIndex
+                    ? advancedVisibility.TryGetProgramDescriptorSetLayout(setIndex, out DescriptorSetLayout externalLayout)
+                    : advancedScene.TryGetProgramDescriptorSetLayout(setIndex, out externalLayout);
+                if (!resolved)
                 {
                     throw new InvalidOperationException(
                         $"Advanced Vulkan program '{programName}' could not resolve runtime-owned descriptor set {setIndex}.");

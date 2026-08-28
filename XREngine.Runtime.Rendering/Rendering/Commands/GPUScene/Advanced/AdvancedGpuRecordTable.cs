@@ -32,6 +32,9 @@ public sealed class AdvancedGpuRecordTable<T> where T : unmanaged
     private ulong _publishedRemapVersion;
     private ulong _activePublicationGeneration = 1u;
     private ulong _acknowledgedPublicationGeneration;
+    private ulong _topologyGeneration = 1u;
+    private ulong _contentGeneration = 1u;
+    private ulong _lookupGeneration = 1u;
     private bool _isPacked = true;
 
     public AdvancedGpuRecordTable(uint capacity)
@@ -68,6 +71,10 @@ public sealed class AdvancedGpuRecordTable<T> where T : unmanaged
     public ulong ActivePublicationGeneration => _activePublicationGeneration;
 
     public ulong AcknowledgedPublicationGeneration => _acknowledgedPublicationGeneration;
+
+    /// <summary>Independent versions for this table alone.</summary>
+    public AdvancedGpuOwnerGenerations Generations
+        => new(_topologyGeneration, _contentGeneration, _lookupGeneration);
 
     /// <summary>
     /// Allocates a retained-publication snapshot at a setup or growth boundary.
@@ -151,23 +158,12 @@ public sealed class AdvancedGpuRecordTable<T> where T : unmanaged
         if (publicationSequence == 0u || publicationSequence != _activePublicationGeneration)
             return false;
 
-        int deltaStart = 0;
-        while (deltaStart < _publicationDeltaCount &&
-               _publicationDeltas[deltaStart].PublicationGeneration < publicationSequence)
-        {
-            ++deltaStart;
-        }
-
-        int deltaEnd = deltaStart;
-        while (deltaEnd < _publicationDeltaCount &&
-               _publicationDeltas[deltaEnd].PublicationGeneration == publicationSequence)
-        {
-            ++deltaEnd;
-        }
-
         return snapshot.TryCapture(
             publicationSequence,
-            _publicationDeltas.AsSpan(deltaStart, deltaEnd - deltaStart),
+            // A frame slot may lag the most recently sealed publication. Keep
+            // the bounded unacknowledged journal so its resident mirror can
+            // replay every generation it has not yet applied.
+            _publicationDeltas.AsSpan(0, _publicationDeltaCount),
             PublishedRemaps,
             PhysicalRecords,
             PhysicalHandles,
@@ -237,6 +233,7 @@ public sealed class AdvancedGpuRecordTable<T> where T : unmanaged
             AdvancedGpuHandleRemap.InvalidDenseIndex,
             denseIndex,
             _activePublicationGeneration));
+        AdvanceTopologyMutation();
         RecalculatePackedState();
         return true;
     }
@@ -273,6 +270,7 @@ public sealed class AdvancedGpuRecordTable<T> where T : unmanaged
             _activePublicationGeneration));
         MarkDirty(denseIndex);
         MarkLogicalLookupDirty(handle.Index);
+        AdvanceTopologyMutation();
         TrimPhysicalHighWater();
         RecalculatePackedState();
         return true;
@@ -308,6 +306,7 @@ public sealed class AdvancedGpuRecordTable<T> where T : unmanaged
             denseIndex,
             denseIndex,
             _activePublicationGeneration));
+        AdvanceMutation(domain);
         return true;
     }
 
@@ -372,6 +371,7 @@ public sealed class AdvancedGpuRecordTable<T> where T : unmanaged
             AdvancedGpuHandleRemap.InvalidDenseIndex,
             _activePublicationGeneration));
         MarkLogicalLookupDirty(handle.Index);
+        AdvanceTopologyMutation();
         RecalculatePackedState();
     }
 
@@ -473,6 +473,8 @@ public sealed class AdvancedGpuRecordTable<T> where T : unmanaged
             ++retainedCount;
         }
         _retiredSlotCount = retainedCount;
+        if (reclaimedCount != 0)
+            AdvanceTopologyMutation();
         TrimPhysicalHighWater();
         RecalculatePackedState();
 
@@ -586,6 +588,8 @@ public sealed class AdvancedGpuRecordTable<T> where T : unmanaged
 
         _physicalHighWater = _count;
         _isPacked = true;
+        if (moveCount != 0)
+            AdvanceTopologyMutation();
         return moveCount;
     }
 
@@ -779,6 +783,31 @@ public sealed class AdvancedGpuRecordTable<T> where T : unmanaged
 
     private bool CanAppendPublicationDeltas(int count)
         => count >= 0 && _publicationDeltaCount <= _publicationDeltas.Length - count;
+
+    private void AdvanceMutation(EAdvancedGpuMutationDomain domain)
+    {
+        if (domain == EAdvancedGpuMutationDomain.LayoutTopology)
+        {
+            AdvanceTopologyMutation();
+            return;
+        }
+
+        AdvanceNonZero(ref _contentGeneration);
+    }
+
+    private void AdvanceTopologyMutation()
+    {
+        AdvanceNonZero(ref _topologyGeneration);
+        AdvanceNonZero(ref _contentGeneration);
+        AdvanceNonZero(ref _lookupGeneration);
+    }
+
+    private static void AdvanceNonZero(ref ulong generation)
+    {
+        ++generation;
+        if (generation == 0u)
+            generation = 1u;
+    }
 
     private void AppendPublicationDelta(in AdvancedGpuRecordPublicationDelta delta)
         => _publicationDeltas[_publicationDeltaCount++] = delta;

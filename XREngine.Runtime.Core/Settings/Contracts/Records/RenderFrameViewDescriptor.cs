@@ -22,7 +22,10 @@ public readonly record struct RenderFrameViewDescriptor(
     bool ParentContainsView = false,
     bool DepthZeroToOne = true,
     RenderFrameViewTargetDescriptor Target = default,
-    bool ReversedDepth = false)
+    bool ReversedDepth = false,
+    Matrix4x4 ProjectionMatrixUnjittered = default,
+    Vector2 CurrentJitter = default,
+    Vector2 PreviousJitter = default)
 {
     public const uint InvalidViewId = uint.MaxValue;
 

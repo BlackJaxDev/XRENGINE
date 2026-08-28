@@ -20,6 +20,13 @@ internal sealed class VulkanResidentDrawTemplate : IDisposable
         Generations = generations;
         NativeState = nativeState;
         DependencyManifest = dependencyManifest;
+        ResourceManifest = VulkanTemplateResourceManifest.Create(
+            dependencyManifest,
+            nativeState);
+        RenderBinKey = VulkanRenderBinKey.Create(
+            structuralIdentity,
+            variant,
+            nativeState);
         _dependencyLease = dependencyLease;
     }
 
@@ -28,7 +35,20 @@ internal sealed class VulkanResidentDrawTemplate : IDisposable
     internal VulkanResidentDrawTemplateGenerationDomains Generations { get; private set; }
     internal VulkanResidentDrawTemplateNativeState NativeState { get; }
     internal VulkanResidentDrawDependencyManifest DependencyManifest { get; }
+    internal VulkanTemplateResourceManifest ResourceManifest { get; }
+    internal VulkanRenderBinKey RenderBinKey { get; }
+    /// <summary>
+    /// Only commutative opaque vertex-input work may enter a stable bin. Ordered,
+    /// transparent, shadow, and non-native dialect work stays on the ordinary
+    /// prepared stream until it has an explicit lane contract.
+    /// </summary>
+    internal bool IsStableBinEligible
+        => !NativeState.DrawTemplate.BlendEnabled &&
+           !NativeState.DrawTemplate.ShadowUniformState.IsShadowPass &&
+           Variant.MeshDialect == EVulkanResidentTemplateMeshDialect.VertexInput;
     internal VulkanResidentTemplateDependencyLease? DependencyLease => _dependencyLease;
+    internal ulong NativeDependencyIdentity { get; set; }
+    internal VulkanNativeDependencyHandle NativeDependencyHandle { get; set; }
 
     internal void AdvanceDataContent(ulong dataContentGeneration)
         => Generations = Generations with { DataContent = dataContentGeneration };

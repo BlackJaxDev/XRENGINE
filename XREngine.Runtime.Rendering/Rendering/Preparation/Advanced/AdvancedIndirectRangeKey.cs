@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using XREngine.Rendering.Commands;
 
 namespace XREngine.Rendering;
 
@@ -7,6 +8,7 @@ namespace XREngine.Rendering;
 /// </summary>
 [StructLayout(LayoutKind.Sequential, Pack = 4)]
 public readonly record struct AdvancedIndirectRangeKey(
+    AdvancedGpuHandle Geometry,
     uint RasterStateClass,
     EAdvancedMaterialCoverageMode Coverage,
     uint CullMode,

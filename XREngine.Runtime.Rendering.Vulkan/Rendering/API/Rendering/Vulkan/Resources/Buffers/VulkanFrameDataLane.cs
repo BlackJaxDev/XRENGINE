@@ -17,6 +17,12 @@ internal enum EVulkanFrameDataLane : byte
     /// images. This lane never grows while a frame is being prepared.
     /// </summary>
     AdvancedSceneStorage,
+    /// <summary>
+    /// Boundary-reserved storage for the set-1 advanced visibility producer.
+    /// It owns payload, counter, and indirect ranges for one frame slot and
+    /// never grows during command preparation.
+    /// </summary>
+    AdvancedVisibilityStorage,
     Indirect,
     Count,
 }

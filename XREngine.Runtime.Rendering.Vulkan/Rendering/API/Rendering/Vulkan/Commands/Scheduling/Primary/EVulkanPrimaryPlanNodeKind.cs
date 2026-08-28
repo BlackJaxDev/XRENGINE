@@ -22,6 +22,12 @@ internal enum EVulkanPrimaryPlanNodeKind : byte
     PublishFramebufferForSampling,
     DlssUpscale,
     DlssFrameGeneration,
+    /// <summary>
+    /// First sealed GPU-only advanced visibility producer/raster lane. Its
+    /// concrete frame-slot storage is prepared after plan sealing and before
+    /// native recording; no CPU visibility count is observed by this opcode.
+    /// </summary>
+    AdvancedVisibility,
     QueueOwnershipTransfer,
     EndRendering,
     PreparePresent,

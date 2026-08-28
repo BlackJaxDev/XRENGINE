@@ -162,7 +162,7 @@ internal sealed unsafe class VulkanImGuiOutputPipelineService(
                     info.PNext = &rendering;
                 }
                 Ensure(device.Api.CreateGraphicsPipelines(device.Device, default, 1, ref info, null, out handles.Pipeline), "create ImGui graphics pipeline");
-                resources.Lifetime.Tracker.RegisterResource(new VulkanResourceLifetimeKey(ObjectType.Pipeline, handles.Pipeline.Handle), "ImGui.Pipeline", externallyOwned: false);
+                resources.RegisterPipeline(handles.Pipeline, "ImGui.Pipeline");
                 handles.PipelineSignature = signature;
             }
             finally

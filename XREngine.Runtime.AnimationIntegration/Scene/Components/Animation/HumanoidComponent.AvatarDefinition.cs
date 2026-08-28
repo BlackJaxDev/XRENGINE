@@ -60,13 +60,10 @@ public partial class HumanoidComponent
         value.MuscleLimits ??= [];
         value.TwistChains ??= [];
         value.AuxiliaryBones ??= [];
-        if (value.LegacyCalibration is not null)
-        {
-            value.LegacyCalibration.Source ??= string.Empty;
-            value.LegacyCalibration.AvatarName ??= string.Empty;
-            value.LegacyCalibration.CalibrationClipName ??= string.Empty;
-            value.LegacyCalibration.Bones ??= [];
-        }
+        // Legacy calibration payloads were clip/sample-fitted and are not part of the
+        // canonical v1 avatar contract. Keep the serialized field only for tolerant
+        // deserialization; normalized runtime definitions discard it immediately.
+        value.LegacyCalibration = null;
         for (int i = 0; i < value.Bones.Length; i++)
         {
             HumanoidAvatarBoneBinding binding = value.Bones[i] ?? new HumanoidAvatarBoneBinding();
@@ -134,7 +131,6 @@ public partial class HumanoidComponent
         HumanoidAvatarMuscleLimit[] muscleLimits = BuildMuscleLimits(previous);
         HumanoidAvatarTwistChain[] twistChains = BuildTwistChains(previous, solverSettings);
         HumanoidAvatarAuxiliaryBoneBinding[] auxiliaryBones = CopyAuxiliaryBones(previous.AuxiliaryBones);
-        HumanoidAvatarLegacyCalibration? legacyCalibration = previous.LegacyCalibration;
         List<string> diagnostics = ValidateDefinition(
             bindings,
             muscleLimits,
@@ -145,8 +141,7 @@ public partial class HumanoidComponent
             humanScale,
             modelUnitsPerMeter,
             muscleInputScale,
-            profileResult,
-            legacyCalibration);
+            profileResult);
 
         string skeletonSignature = ComputeSkeletonSignature(bindings);
         EHumanoidAvatarSourceProvenance sourceProvenance = previous.SourceProvenance;
@@ -173,8 +168,7 @@ public partial class HumanoidComponent
             bindings,
             muscleLimits,
             twistChains,
-            auxiliaryBones,
-            legacyCalibration);
+            auxiliaryBones);
 
         bool definitionChanged = !string.Equals(
             previous.DefinitionContentSha256,
@@ -213,7 +207,7 @@ public partial class HumanoidComponent
             MuscleLimits = muscleLimits,
             TwistChains = twistChains,
             AuxiliaryBones = auxiliaryBones,
-            LegacyCalibration = legacyCalibration,
+            LegacyCalibration = null,
             Diagnostics = [.. diagnostics],
         };
         AvatarDefinitionPlaybackDiagnostic = string.Empty;
@@ -490,8 +484,7 @@ public partial class HumanoidComponent
             definition.HumanScale,
             definition.ModelUnitsPerMeter,
             definition.MuscleInputScale,
-            profileResult: null,
-            definition.LegacyCalibration);
+            profileResult: null);
         if (HasDiagnosticPrefix(liveDiagnostics, "Error:"))
         {
             definition.Status = EHumanoidAvatarDefinitionStatus.Invalid;
@@ -523,8 +516,7 @@ public partial class HumanoidComponent
             liveBindings,
             definition.MuscleLimits,
             definition.TwistChains,
-            definition.AuxiliaryBones,
-            definition.LegacyCalibration);
+            definition.AuxiliaryBones);
         if (!string.Equals(
             definitionSignature,
             definition.DefinitionContentSha256,
@@ -655,7 +647,7 @@ public partial class HumanoidComponent
                     ? oldBinding!.RotationOrder
                     : EHumanoidAvatarRotationOrder.ZXY,
                 HasTranslationDoF = solverSettings.HasTranslationDoF
-                    && role == EHumanoidAvatarBoneRole.Hips,
+                    && SupportsTranslationDof(role),
                 JointLimit = preservesPriorBinding
                     ? CopyJointLimit(oldBinding!.JointLimit)
                     : CreateDefaultJointLimit(role, node),
@@ -691,8 +683,7 @@ public partial class HumanoidComponent
         float humanScale,
         float modelUnitsPerMeter,
         float muscleInputScale,
-        AvatarHumanoidProfileBuilder.ProfileResult? profileResult,
-        HumanoidAvatarLegacyCalibration? legacyCalibration)
+        AvatarHumanoidProfileBuilder.ProfileResult? profileResult)
     {
         List<string> diagnostics = [];
         var assignedNodes = new HashSet<SceneNode>(ReferenceEqualityComparer.Instance);
@@ -763,7 +754,6 @@ public partial class HumanoidComponent
             diagnostics.Add("Error: avatar muscle input scale is missing or non-finite.");
 
         ValidateMuscleLimits(muscleLimits, diagnostics);
-        ValidateLegacyCalibration(legacyCalibration, diagnostics);
 
         float confidence = profileResult?.OverallConfidence ?? Settings.ProfileConfidence;
         if (!float.IsFinite(confidence) || confidence < MinimumAcceptedProfileConfidence)
@@ -872,8 +862,6 @@ public partial class HumanoidComponent
     {
         if (string.Equals(Settings.ProfileSource, "manual", StringComparison.OrdinalIgnoreCase))
             return "EditorCorrection";
-        if (previous.LegacyCalibration is { } legacy)
-            return string.IsNullOrWhiteSpace(legacy.Source) ? "LegacyCalibrationProfile" : legacy.Source;
         return string.IsNullOrWhiteSpace(Settings.ProfileSource) ? "Automatic" : Settings.ProfileSource;
     }
 
@@ -1027,8 +1015,7 @@ public partial class HumanoidComponent
             definition.Bones,
             definition.MuscleLimits,
             definition.TwistChains,
-            definition.AuxiliaryBones,
-            definition.LegacyCalibration);
+            definition.AuxiliaryBones);
         definition.DefinitionRevision++;
         definition.EditorConfirmed = false;
         if (definition.Status == EHumanoidAvatarDefinitionStatus.Valid)
@@ -1055,8 +1042,7 @@ public partial class HumanoidComponent
         HumanoidAvatarBoneBinding[] bindings,
         HumanoidAvatarMuscleLimit[] muscleLimits,
         HumanoidAvatarTwistChain[] twistChains,
-        HumanoidAvatarAuxiliaryBoneBinding[] auxiliaryBones,
-        HumanoidAvatarLegacyCalibration? legacyCalibration)
+        HumanoidAvatarAuxiliaryBoneBinding[] auxiliaryBones)
     {
         var canonical = new StringBuilder(16384);
         AppendCanonical(canonical, HumanoidAvatarDefinitionMetadata.CurrentSchemaVersion);
@@ -1136,7 +1122,6 @@ public partial class HumanoidComponent
             AppendCanonical(canonical, auxiliary.Locked);
         }
 
-        AppendLegacyCalibration(canonical, legacyCalibration);
         return ComputeSha256(canonical);
     }
 
@@ -1412,8 +1397,8 @@ public partial class HumanoidComponent
         && IsNormalized(settings.LowerArmTwist)
         && IsNormalized(settings.UpperLegTwist)
         && IsNormalized(settings.LowerLegTwist)
-        && IsNonNegativeFinite(settings.ArmStretch)
-        && IsNonNegativeFinite(settings.LegStretch)
+        && IsNormalized(settings.ArmStretch)
+        && IsNormalized(settings.LegStretch)
         && IsNonNegativeFinite(settings.FeetSpacing);
 
     private static bool IsNormalized(float value)
@@ -1660,4 +1645,13 @@ public partial class HumanoidComponent
             or EHumanoidAvatarBoneRole.RightUpperLeg
             or EHumanoidAvatarBoneRole.RightLowerLeg
             or EHumanoidAvatarBoneRole.RightFoot;
+
+    private static bool SupportsTranslationDof(EHumanoidAvatarBoneRole role)
+        => role is EHumanoidAvatarBoneRole.Spine
+            or EHumanoidAvatarBoneRole.Chest
+            or EHumanoidAvatarBoneRole.Neck
+            or EHumanoidAvatarBoneRole.LeftUpperLeg
+            or EHumanoidAvatarBoneRole.RightUpperLeg
+            or EHumanoidAvatarBoneRole.LeftShoulder
+            or EHumanoidAvatarBoneRole.RightShoulder;
 }

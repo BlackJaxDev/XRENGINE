@@ -12,6 +12,19 @@ namespace XREngine.Rendering.Vulkan;
 /// <summary>Owns native command artifacts, bind caches, diagnostics, and reusable recording scratch.</summary>
 internal sealed class VulkanCommandBufferState
 {
+    private const int InvalidatedCommandSetCapacity = 16384;
+    private readonly object _invalidatedCommandSetGate = new();
+    private readonly ulong[] _invalidatedCommandHandles =
+        new ulong[InvalidatedCommandSetCapacity];
+    private readonly byte[] _invalidatedCommandHandleStates =
+        new byte[InvalidatedCommandSetCapacity];
+    /// <summary>
+    /// Native swapchain handle that owns the current desktop command-artifact
+    /// generation in the reverse-dependency graph. This is intentionally kept
+    /// beside the image-indexed arrays so output recreation retires the exact
+    /// publisher before a replacement generation can reuse a native handle.
+    /// </summary>
+    internal ulong DesktopOutputNativeDependencyIdentity;
     internal CommandBuffer[]? Buffers;
     internal CommandBuffer[]? ActiveBuffers;
     internal VulkanPrimaryCommandPlan[]? PrimaryPlans;
@@ -78,6 +91,7 @@ internal sealed class VulkanCommandBufferState
     internal bool HasForwardLightingLastSnapshot;
     internal ConcurrentDictionary<ulong, byte> InvalidatedBuffersPendingReset { get; } = new();
     internal ConcurrentDictionary<ulong, VulkanCommandBufferTrackingBatch> TrackingBatches { get; } = new();
+    internal VulkanStableCommandDirectory StableCommandDirectory { get; } = new();
     internal long DirtyGeneration;
     internal long LastDirtyTimestamp;
     internal bool[]? DirtyFlags;
@@ -127,6 +141,113 @@ internal sealed class VulkanCommandBufferState
 
         TrackingBatches.TryRemove(handle, out _);
         InvalidatedBuffersPendingReset.TryRemove(handle, out _);
+        RemoveInvalidatedCommandHandle(handle);
+    }
+
+    /// <summary>
+    /// Publishes pending-reset membership into a fixed open-addressed set used
+    /// by the submit gateway. The concurrent dictionary remains the cold
+    /// enumerable reset queue and is not consulted by stable submissions.
+    /// </summary>
+    internal void AddInvalidatedCommandHandle(ulong handle)
+    {
+        if (handle == 0)
+            return;
+
+        lock (_invalidatedCommandSetGate)
+        {
+            int mask = InvalidatedCommandSetCapacity - 1;
+            int start = (int)(MixCommandHandle(handle) & (uint)mask);
+            int firstTombstone = -1;
+            for (int probe = 0; probe < InvalidatedCommandSetCapacity; ++probe)
+            {
+                int index = (start + probe) & mask;
+                byte state = _invalidatedCommandHandleStates[index];
+                if (state == 1)
+                {
+                    if (_invalidatedCommandHandles[index] == handle)
+                        return;
+                    continue;
+                }
+                if (state == 2)
+                {
+                    if (firstTombstone < 0)
+                        firstTombstone = index;
+                    continue;
+                }
+
+                int destination = firstTombstone >= 0 ? firstTombstone : index;
+                _invalidatedCommandHandles[destination] = handle;
+                _invalidatedCommandHandleStates[destination] = 1;
+                return;
+            }
+
+            if (firstTombstone >= 0)
+            {
+                _invalidatedCommandHandles[firstTombstone] = handle;
+                _invalidatedCommandHandleStates[firstTombstone] = 1;
+                return;
+            }
+        }
+
+        throw new InvalidOperationException(
+            "The fixed pending-reset command-buffer directory is exhausted.");
+    }
+
+    internal bool ContainsInvalidatedCommandHandle(ulong handle)
+    {
+        if (handle == 0)
+            return false;
+
+        lock (_invalidatedCommandSetGate)
+        {
+            int mask = InvalidatedCommandSetCapacity - 1;
+            int start = (int)(MixCommandHandle(handle) & (uint)mask);
+            for (int probe = 0; probe < InvalidatedCommandSetCapacity; ++probe)
+            {
+                int index = (start + probe) & mask;
+                byte state = _invalidatedCommandHandleStates[index];
+                if (state == 0)
+                    return false;
+                if (state == 1 && _invalidatedCommandHandles[index] == handle)
+                    return true;
+            }
+        }
+
+        return false;
+    }
+
+    internal void RemoveInvalidatedCommandHandle(ulong handle)
+    {
+        if (handle == 0)
+            return;
+
+        lock (_invalidatedCommandSetGate)
+        {
+            int mask = InvalidatedCommandSetCapacity - 1;
+            int start = (int)(MixCommandHandle(handle) & (uint)mask);
+            for (int probe = 0; probe < InvalidatedCommandSetCapacity; ++probe)
+            {
+                int index = (start + probe) & mask;
+                byte state = _invalidatedCommandHandleStates[index];
+                if (state == 0)
+                    return;
+                if (state != 1 || _invalidatedCommandHandles[index] != handle)
+                    continue;
+
+                _invalidatedCommandHandles[index] = 0;
+                _invalidatedCommandHandleStates[index] = 2;
+                return;
+            }
+        }
+    }
+
+    private static ulong MixCommandHandle(ulong value)
+    {
+        value ^= value >> 33;
+        value *= 0xff51afd7ed558ccdUL;
+        value ^= value >> 33;
+        return value;
     }
 
     internal bool TryReleaseOwnedSecondaryCommandBuffer(

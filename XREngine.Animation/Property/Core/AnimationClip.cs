@@ -879,6 +879,7 @@ namespace XREngine.Animation
                     SourceMaterialBindings = imported.SourceMaterialBindings;
                     MaterialBindingDiagnostics = imported.MaterialBindingDiagnostics;
                     ImportedHumanoidRootMotionSettings = imported.ImportedHumanoidRootMotionSettings;
+                    ImportedAdditiveReferencePoseClip = imported.ImportedAdditiveReferencePoseClip;
                     ImportedMetadata = imported.ImportedMetadata;
                     ImportedEvents = imported.ImportedEvents;
                     ImportedGenericBindings = imported.ImportedGenericBindings;

@@ -38,6 +38,7 @@ public sealed class VulkanRenderer :
     ISparseTextureStreamingBackendCapability,
     IStreamlinePresentationBackendCapability,
     IPhysicsChainComputeBackendFactoryCapability
+    , IAdvancedVisibilityStageBackendCapability
 {
     private const int DesktopFramesInFlight = 2;
     private readonly VulkanDeviceContext _deviceContext;
@@ -129,6 +130,8 @@ public sealed class VulkanRenderer :
             windowHost is XRWindow desktopWindow
                 ? desktopWindow.Window
                 : null);
+        _commandRuntime.AdvancedVisibilityDiagnosticCopy =
+            _frameLoop.TryRecordAdvancedVisibilityDiagnosticCopy;
         VulkanBackendObjectContext backendObjectContext = _resourceRuntime.GetOrCreateBackendObjectContext(
             Api!,
             _deviceContext);
@@ -369,6 +372,12 @@ public sealed class VulkanRenderer :
     bool IIndirectDrawSecondaryRecordingBackendCapability.TryBeginProducerCompleteIndirectStream(XRDataBuffer indirectBuffer, XRDataBuffer? parameterBuffer, out IndirectDrawSecondaryRecordingToken token) => _commandRuntime.TryBeginProducerCompleteIndirectStream(GenericToAPI<VkDataBuffer>(indirectBuffer), parameterBuffer is null ? null : GenericToAPI<VkDataBuffer>(parameterBuffer), indirectBuffer, parameterBuffer, out token);
     void IIndirectDrawSecondaryRecordingBackendCapability.EndProducerCompleteIndirectStream(in IndirectDrawSecondaryRecordingToken token) => _commandRuntime.EndProducerCompleteIndirectStream(token);
     bool ISceneDatabaseDeviceAddressBackendCapability.TryBindSceneDatabaseDeviceAddressUniforms(XRRenderProgram program, XRDataBuffer drawMetadataBuffer, XRDataBuffer? instanceTransformBuffer, bool useInstanceTransformBuffer, string consumer) => _resourceRuntime.TryBindSceneDatabaseDeviceAddressUniforms(program, drawMetadataBuffer, instanceTransformBuffer, useInstanceTransformBuffer, consumer);
+    bool IAdvancedVisibilityStageBackendCapability.SupportsAdvancedVisibilityStage(EAdvancedRenderStage stage)
+        => _frameLoop.SupportsAdvancedVisibilityStage(stage);
+    bool IAdvancedVisibilityStageBackendCapability.TryEnqueueAdvancedVisibilityStage(
+        in AdvancedVisibilityStageBackendRequest request,
+        out string failureReason)
+        => _frameLoop.TryEnqueueAdvancedVisibilityStage(in request, out failureReason);
 
     protected override bool SupportsImGui => true;
     protected override IImGuiRendererBackend? GetImGuiBackend(XRViewport? viewport) => SupportsImGui ? _frameLoop.GetOrCreateImGuiBackend(XRWindow, ResetImGuiFrameMarker) : null;

@@ -54,7 +54,13 @@ public sealed class AdvancedSharedGpuSceneDatabase
             capacities.MaterialTextureBindings);
         Resources = new AdvancedGlobalResourceDatabase(
             capacities.TextureRecords,
-            capacities.SamplerRecords);
+            capacities.SamplerRecords,
+            capacities.LightRecords,
+            capacities.ShadowRecords,
+            capacities.ProbeRecords,
+            capacities.EnvironmentRecords,
+            capacities.DecalRecords,
+            capacities.GiResourceRecords);
         HandleLookups = new AdvancedGpuSceneLookupTable(Scene, Materials, Resources);
         _publicationRing = new AdvancedGpuScenePublication[checked((int)publicationCapacity)];
         _publicationSnapshots = new AdvancedGpuScenePublicationSnapshot[_publicationRing.Length];
@@ -569,6 +575,12 @@ public sealed class AdvancedSharedGpuSceneDatabase
         Materials.Layouts.ClearPublishedRemaps();
         Resources.Textures.ClearPublishedRemaps();
         Resources.Samplers.ClearPublishedRemaps();
+        Resources.Lights.ClearPublishedRemaps();
+        Resources.Shadows.ClearPublishedRemaps();
+        Resources.Probes.ClearPublishedRemaps();
+        Resources.Environments.ClearPublishedRemaps();
+        Resources.Decals.ClearPublishedRemaps();
+        Resources.GiResources.ClearPublishedRemaps();
     }
 
     /// <summary>
@@ -587,6 +599,12 @@ public sealed class AdvancedSharedGpuSceneDatabase
             !Accumulate(Materials.Layouts.Compact(), ref total) ||
             !Accumulate(Resources.Textures.Compact(), ref total) ||
             !Accumulate(Resources.Samplers.Compact(), ref total) ||
+            !Accumulate(Resources.Lights.Compact(), ref total) ||
+            !Accumulate(Resources.Shadows.Compact(), ref total) ||
+            !Accumulate(Resources.Probes.Compact(), ref total) ||
+            !Accumulate(Resources.Environments.Compact(), ref total) ||
+            !Accumulate(Resources.Decals.Compact(), ref total) ||
+            !Accumulate(Resources.GiResources.Compact(), ref total) ||
             !HandleLookups.Publish(Scene, Materials, Resources))
         {
             return -1;
@@ -637,7 +655,13 @@ public sealed class AdvancedSharedGpuSceneDatabase
                 capacities.MaterialTextureBindings);
             Resources.GrowAtFrameBoundary(
                 capacities.TextureRecords,
-                capacities.SamplerRecords);
+                capacities.SamplerRecords,
+                capacities.LightRecords,
+                capacities.ShadowRecords,
+                capacities.ProbeRecords,
+                capacities.EnvironmentRecords,
+                capacities.DecalRecords,
+                capacities.GiResourceRecords);
             HandleLookups.RebuildAtFrameBoundary(Scene, Materials, Resources);
             for (int index = 0; index < _publicationSnapshots.Length; ++index)
                 _publicationSnapshots[index] = new AdvancedGpuScenePublicationSnapshot(this);
@@ -674,6 +698,12 @@ public sealed class AdvancedSharedGpuSceneDatabase
         reclaimed += Materials.Layouts.ReclaimAcknowledged(safeSequence);
         reclaimed += Resources.Textures.ReclaimAcknowledged(safeSequence);
         reclaimed += Resources.Samplers.ReclaimAcknowledged(safeSequence);
+        reclaimed += Resources.Lights.ReclaimAcknowledged(safeSequence);
+        reclaimed += Resources.Shadows.ReclaimAcknowledged(safeSequence);
+        reclaimed += Resources.Probes.ReclaimAcknowledged(safeSequence);
+        reclaimed += Resources.Environments.ReclaimAcknowledged(safeSequence);
+        reclaimed += Resources.Decals.ReclaimAcknowledged(safeSequence);
+        reclaimed += Resources.GiResources.ReclaimAcknowledged(safeSequence);
         _lastReclaimedPublicationSequence = safeSequence;
         return reclaimed;
     }
@@ -806,7 +836,13 @@ public sealed class AdvancedSharedGpuSceneDatabase
             Materials.Layouts.CanSealPublication(snapshot.Layouts) &&
             Materials.CanSealPublication(snapshot.MaterialPayloads) &&
             Resources.Textures.CanSealPublication(snapshot.Textures) &&
-            Resources.Samplers.CanSealPublication(snapshot.Samplers);
+            Resources.Samplers.CanSealPublication(snapshot.Samplers) &&
+            Resources.Lights.CanSealPublication(snapshot.GlobalResources.Lights) &&
+            Resources.Shadows.CanSealPublication(snapshot.GlobalResources.Shadows) &&
+            Resources.Probes.CanSealPublication(snapshot.GlobalResources.Probes) &&
+            Resources.Environments.CanSealPublication(snapshot.GlobalResources.Environments) &&
+            Resources.Decals.CanSealPublication(snapshot.GlobalResources.Decals) &&
+            Resources.GiResources.CanSealPublication(snapshot.GlobalResources.GiResources);
     }
 
     private void FaultActivePublicationCore(
@@ -839,6 +875,12 @@ public sealed class AdvancedSharedGpuSceneDatabase
         Materials.Layouts.BeginPublicationGeneration(sequence);
         Resources.Textures.BeginPublicationGeneration(sequence);
         Resources.Samplers.BeginPublicationGeneration(sequence);
+        Resources.Lights.BeginPublicationGeneration(sequence);
+        Resources.Shadows.BeginPublicationGeneration(sequence);
+        Resources.Probes.BeginPublicationGeneration(sequence);
+        Resources.Environments.BeginPublicationGeneration(sequence);
+        Resources.Decals.BeginPublicationGeneration(sequence);
+        Resources.GiResources.BeginPublicationGeneration(sequence);
     }
 
     private bool TrySealTablePublication(
@@ -858,11 +900,18 @@ public sealed class AdvancedSharedGpuSceneDatabase
             !Materials.TrySealPublication(sequence, snapshot.MaterialPayloads) ||
             snapshot.MaterialPayloads.Sequence != sequence ||
             !Resources.Textures.TrySealPublication(sequence, snapshot.Textures) ||
-            !Resources.Samplers.TrySealPublication(sequence, snapshot.Samplers))
+            !Resources.Samplers.TrySealPublication(sequence, snapshot.Samplers) ||
+            !Resources.Lights.TrySealPublication(sequence, snapshot.GlobalResources.Lights) ||
+            !Resources.Shadows.TrySealPublication(sequence, snapshot.GlobalResources.Shadows) ||
+            !Resources.Probes.TrySealPublication(sequence, snapshot.GlobalResources.Probes) ||
+            !Resources.Environments.TrySealPublication(sequence, snapshot.GlobalResources.Environments) ||
+            !Resources.Decals.TrySealPublication(sequence, snapshot.GlobalResources.Decals) ||
+            !Resources.GiResources.TrySealPublication(sequence, snapshot.GlobalResources.GiResources))
         {
             return false;
         }
 
+        snapshot.GeometryPayloads.Capture();
         return snapshot.TryCaptureResourceTableState(
             sequence,
             Resources.Generations);

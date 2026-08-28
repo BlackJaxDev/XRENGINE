@@ -35,6 +35,11 @@ namespace XREngine.Rendering.Vulkan
                 ResourceRuntime.NotifyTimingQueryPoolsCompleted(completedQueries);
             }
 
+            // A retirement boundary may observe already-signalled diagnostic
+            // copies, but never waits for them. Their payloads move onto the
+            // general telemetry domain only after the non-blocking fence poll.
+            PollGpuRenderStatsReadbacks();
+
             ResourceRuntime.ResidentTemplateFrameSlotLifetimes.ReleaseFrameSlot(
                 frameSlot);
             _commandRuntime.DrainInvalidatedCommandBufferRecordings(

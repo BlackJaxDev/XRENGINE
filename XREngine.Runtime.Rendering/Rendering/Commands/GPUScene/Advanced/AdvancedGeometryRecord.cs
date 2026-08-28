@@ -13,7 +13,12 @@ public struct AdvancedGeometryRecord
     public AdvancedBufferReference CurrentVertexData;
     public AdvancedBufferReference PreviousVertexData;
     public AdvancedBufferReference IndexData;
-    public AdvancedBufferReference MeshletData;
+    /// <summary>Fixed 80-byte <see cref="AdvancedMeshletDescriptor"/> records.</summary>
+    public AdvancedBufferReference MeshletDescriptors;
+    /// <summary>Meshlet-local vertex indices as unsigned 32-bit words.</summary>
+    public AdvancedBufferReference MeshletVertexIndices;
+    /// <summary>Triangle bytes packed into padded unsigned 32-bit words.</summary>
+    public AdvancedBufferReference MeshletTriangleWords;
     public AdvancedGpuHandle FallbackGeometry;
     public uint VertexBase;
     public uint VertexCount;
@@ -38,4 +43,10 @@ public struct AdvancedGeometryRecord
 
     public readonly bool IsResident
         => Residency == EAdvancedGeometryResidency.Resident;
+
+    /// <summary>
+    /// Source-compatibility alias for code which only needs to know whether a
+    /// meshlet payload exists. New consumers must bind all three meshlet streams.
+    /// </summary>
+    public readonly AdvancedBufferReference MeshletData => MeshletDescriptors;
 }

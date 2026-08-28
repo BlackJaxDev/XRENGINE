@@ -25,7 +25,7 @@ public sealed partial class AdvancedGpuScenePublisher
     private uint[] _registrationLookupStamps = new uint[InitialCapacity * 2u];
     private uint[] _preflightSeenStamps = new uint[InitialCapacity];
     private readonly AdvancedGpuDirtyOwnerRange[] _dirtyOwnerRanges =
-        new AdvancedGpuDirtyOwnerRange[10];
+        new AdvancedGpuDirtyOwnerRange[18];
     private int _registrationCount;
     private int _legacyMappingCount;
     private ulong _sequence;
@@ -97,7 +97,10 @@ public sealed partial class AdvancedGpuScenePublisher
     /// this only from <see cref="GPUScene.SwapCommandBuffers"/> while holding the
     /// scene mutation lock.
     /// </summary>
-    public void Publish(GPUScene scene, ulong frameId)
+    public void Publish(
+        GPUScene scene,
+        ulong frameId,
+        in AdvancedGlobalResourceCapture globalResources)
     {
         AdvanceSequence();
         _topologyDeltaCount = 0;
@@ -111,7 +114,12 @@ public sealed partial class AdvancedGpuScenePublisher
             return;
         }
 
-        if (!EnsureBoundaryCapacity(scene.TotalCommandCount))
+        int capturedLightCount = globalResources.FrameId == frameId
+            ? globalResources.Lights.Length
+            : 0;
+        if (!EnsureBoundaryCapacity(
+                scene.TotalCommandCount,
+                checked((uint)capturedLightCount)))
         {
             _publicationRejected = true;
             return;
@@ -122,6 +130,15 @@ public sealed partial class AdvancedGpuScenePublisher
             checked((int)scene.TotalCommandCount));
         RebuildRegistrationLookup();
         if (!TryBuildAndPreflightWholeScenePlan(scene, out _))
+        {
+            _publicationRejected = true;
+            return;
+        }
+        AdvancedGlobalResourceCapture acceptedGlobalResources =
+            globalResources.FrameId == frameId
+                ? globalResources
+                : AdvancedGlobalResourceCapture.Empty(frameId);
+        if (!TryPreflightGlobalResources(in acceptedGlobalResources, out _))
         {
             _publicationRejected = true;
             return;
@@ -137,6 +154,7 @@ public sealed partial class AdvancedGpuScenePublisher
         try
         {
             ApplyPreflightedMaterialTransitions();
+            ApplyPreflightedGlobalResources();
 
             for (uint commandIndex = 0u;
                  commandIndex < scene.TotalCommandCount;
@@ -282,8 +300,16 @@ public sealed partial class AdvancedGpuScenePublisher
         Capture(EAdvancedGpuRecordOwner.Deformation, scene.Deformations);
         Capture(EAdvancedGpuRecordOwner.RenderState, scene.RenderStates);
         Capture(EAdvancedGpuRecordOwner.Material, Database.Materials.Materials);
+        Capture(EAdvancedGpuRecordOwner.MaterialLayout, Database.Materials.Layouts);
+        Capture(EAdvancedGpuRecordOwner.ShadingKernel, Database.Materials.Kernels);
         Capture(EAdvancedGpuRecordOwner.Texture, Database.Resources.Textures);
         Capture(EAdvancedGpuRecordOwner.Sampler, Database.Resources.Samplers);
+        Capture(EAdvancedGpuRecordOwner.Light, Database.Resources.Lights);
+        Capture(EAdvancedGpuRecordOwner.Shadow, Database.Resources.Shadows);
+        Capture(EAdvancedGpuRecordOwner.Probe, Database.Resources.Probes);
+        Capture(EAdvancedGpuRecordOwner.Environment, Database.Resources.Environments);
+        Capture(EAdvancedGpuRecordOwner.Decal, Database.Resources.Decals);
+        Capture(EAdvancedGpuRecordOwner.GiResource, Database.Resources.GiResources);
         Capture(EAdvancedGpuRecordOwner.Geometry, scene.Geometry.Records);
         Capture(EAdvancedGpuRecordOwner.EditorIdentity, scene.EditorIdentities);
     }
@@ -302,7 +328,13 @@ public sealed partial class AdvancedGpuScenePublisher
             !Database.Materials.Kernels.LogicalLookupDirtyRange.IsEmpty ||
             !Database.Materials.Layouts.LogicalLookupDirtyRange.IsEmpty ||
             !Database.Resources.Textures.LogicalLookupDirtyRange.IsEmpty ||
-            !Database.Resources.Samplers.LogicalLookupDirtyRange.IsEmpty;
+            !Database.Resources.Samplers.LogicalLookupDirtyRange.IsEmpty ||
+            !Database.Resources.Lights.LogicalLookupDirtyRange.IsEmpty ||
+            !Database.Resources.Shadows.LogicalLookupDirtyRange.IsEmpty ||
+            !Database.Resources.Probes.LogicalLookupDirtyRange.IsEmpty ||
+            !Database.Resources.Environments.LogicalLookupDirtyRange.IsEmpty ||
+            !Database.Resources.Decals.LogicalLookupDirtyRange.IsEmpty ||
+            !Database.Resources.GiResources.LogicalLookupDirtyRange.IsEmpty;
     }
 
     private void Capture<T>(
@@ -314,7 +346,10 @@ public sealed partial class AdvancedGpuScenePublisher
         if (!range.IsEmpty)
         {
             _dirtyOwnerRanges[_dirtyOwnerRangeCount++] =
-                new AdvancedGpuDirtyOwnerRange(owner, range, _contentGeneration);
+                new AdvancedGpuDirtyOwnerRange(
+                    owner,
+                    range,
+                    table.Generations.Content);
         }
         table.ClearDirtyRange();
     }
@@ -426,10 +461,15 @@ public sealed partial class AdvancedGpuScenePublisher
             !CanAddRegistration(tables))
             return -1;
 
-        if (!tables.Transforms.TryAdd(CreateTransform(world), out currentTransform) ||
+        if (!TryRegisterCanonicalGeometry(
+                plan.Mesh,
+                in bounds,
+                in command,
+                out AdvancedGpuHandle residentGeometry) ||
+            !tables.Transforms.TryAdd(CreateTransform(world), out currentTransform) ||
             !tables.Transforms.TryAdd(CreateTransform(previousWorld), out previousTransform) ||
             !tables.Instances.TryAdd(CreateInstance(world, previousWorld, in bounds, in command), out instance) ||
-            !tables.Geometry.Records.TryAdd(plan.Geometry, out geometry) ||
+            !(geometry = residentGeometry).IsValid ||
             !tables.Deformations.TryAdd(CreateDeformation(geometry, plan.MeshVertexCount), out deformation) ||
             !tables.RenderStates.TryAdd(plan.RenderState, out renderState) ||
             !tables.EditorIdentities.TryAdd(CreateEditorIdentity(in command), out editorIdentity))
@@ -542,13 +582,17 @@ public sealed partial class AdvancedGpuScenePublisher
                 throw new InvalidOperationException("Canonical structural update preflight failed.");
             }
 
-            if (!Database.Scene.Geometry.Records.TryReplace(
-                registration.Geometry,
-                plan.Geometry,
-                EAdvancedGpuMutationDomain.LayoutTopology) ||
+            if (!TryRegisterCanonicalGeometry(
+                    plan.Mesh,
+                    in bounds,
+                    in command,
+                    out AdvancedGpuHandle replacementGeometry) ||
+                !Database.Scene.Geometry.Records.TryTombstone(
+                    registration.Geometry,
+                    _sequence) ||
                 !Database.Scene.Deformations.TryReplace(
                     registration.Deformation,
-                    CreateDeformation(registration.Geometry, plan.MeshVertexCount),
+                    CreateDeformation(replacementGeometry, plan.MeshVertexCount),
                     EAdvancedGpuMutationDomain.ResourceBinding) ||
                 !Database.Scene.RenderStates.TryReplace(
                 registration.RenderState,
@@ -558,6 +602,7 @@ public sealed partial class AdvancedGpuScenePublisher
                 throw new InvalidOperationException("Canonical structural update failed after successful preflight.");
             }
 
+            draw.Geometry = replacementGeometry;
             draw.PrimitiveSection = checked((uint)Math.Max(0, primitiveIndex));
             draw.Flags = command.Flags;
             draw.Material = material;
@@ -568,6 +613,7 @@ public sealed partial class AdvancedGpuScenePublisher
                 throw new InvalidOperationException("Canonical draw update failed after successful preflight.");
             registration.StructuralSignature = structural;
             registration.Material = material;
+            registration.Geometry = replacementGeometry;
             ++_topologyDeltaCount;
             AdvanceNonZero(ref _topologyGeneration);
         }
@@ -648,12 +694,12 @@ public sealed partial class AdvancedGpuScenePublisher
                 registration.ContentSignature));
     }
 
-    private bool EnsureBoundaryCapacity(uint commandCount)
+    private bool EnsureBoundaryCapacity(uint commandCount, uint globalResourceCount)
     {
         uint required = Math.Max(
             InitialCapacity,
             NextPowerOfTwo(Math.Max(
-                commandCount + 1u,
+                Math.Max(commandCount + 1u, globalResourceCount + 1u),
                 checked((uint)_registrationCount + 1u))));
         if (required > (uint)_commandDrawHandles.Length)
         {
@@ -819,7 +865,10 @@ public sealed partial class AdvancedGpuScenePublisher
     private bool CanUpdateRegistrationStructure(
         in AdvancedResidentRegistration registration)
         => Database.Scene.Geometry.Records.IsCurrent(registration.Geometry) &&
-           Database.Scene.Geometry.Records.CanApply(0, 1, 0) &&
+           // Geometry payloads are immutable. A structural replacement adds
+           // a new record and tombstones the already-published old record;
+           // immediate removal is reserved strictly for unpublished rollback.
+           Database.Scene.Geometry.Records.CanApply(1, 0, 1) &&
            Database.Scene.Deformations.IsCurrent(registration.Deformation) &&
            Database.Scene.Deformations.CanApply(0, 1, 0) &&
            Database.Scene.RenderStates.IsCurrent(registration.RenderState) &&
@@ -918,16 +967,13 @@ public sealed partial class AdvancedGpuScenePublisher
         in BoundsGpu bounds,
         in DrawMetadata command)
     {
-        scene.TryGetMeshDataEntry(command.MeshID, out GPUScene.MeshDataEntry meshData);
-        scene.TryGetMeshletRange(command.MeshID, out GPUScene.GpuMeshletRange meshlets);
         return new AdvancedGeometryRecord
         {
-            VertexBase = meshData.FirstVertex,
+            // Geometry publication is deliberately independent of the legacy atlas.
+            // A resident record is created only through AdvancedGeometryDatabase,
+            // which supplies immutable stream references and generation closure.
             VertexCount = checked((uint)Math.Max(0, mesh?.VertexCount ?? 0)),
-            IndexBase = meshData.FirstIndex,
-            IndexCount = meshData.IndexCount,
-            MeshletFirst = meshlets.MeshletOffset,
-            MeshletCount = meshlets.MeshletCount,
+            IndexCount = checked((uint)Math.Max(0, mesh?.IndexCount ?? 0)),
             BoundsSphere = bounds.BoundingSphere,
             BoundsMin = bounds.AabbMin,
             BoundsMax = bounds.AabbMax,
@@ -935,11 +981,9 @@ public sealed partial class AdvancedGpuScenePublisher
             MaterialSectionCount = 1u,
             PrimitiveTopology = mesh?.Type ?? EPrimitiveType.Triangles,
             Source = EAdvancedGeometrySource.Static,
-            // Phase 2 mirrors exact legacy atlas offsets but does not claim that
-            // Phase 3's advanced immutable arenas have acquired native storage.
             Residency = EAdvancedGeometryResidency.Pending,
             MissingBehavior = EAdvancedMissingGeometryBehavior.SkipDraw,
-            CookedLayoutVersion = meshData.Flags,
+            CookedLayoutVersion = AdvancedGeometryCookedLayout.CurrentVersion,
             Flags = command.Flags,
         };
     }
@@ -1054,11 +1098,14 @@ public sealed partial class AdvancedGpuScenePublisher
                 capacity,
                 capacity,
                 capacity,
+                checked(capacity * 65536u),
+                checked(capacity * 12288u),
                 0u,
                 0u,
-                0u,
-                0u,
-                0u),
+                checked(capacity * 4096u),
+                checked(capacity * 1280u),
+                checked(capacity * 16384u),
+                checked(capacity * 16384u)),
             capacity,
             capacity,
             materialLayoutCapacity,
@@ -1066,7 +1113,13 @@ public sealed partial class AdvancedGpuScenePublisher
             materialConstantWords,
             materialTextureBindings,
             materialTextureBindings,
-            materialTextureBindings);
+            materialTextureBindings,
+            capacity,
+            capacity,
+            capacity,
+            capacity,
+            capacity,
+            capacity);
     }
 
     private static uint NextPowerOfTwo(uint value)

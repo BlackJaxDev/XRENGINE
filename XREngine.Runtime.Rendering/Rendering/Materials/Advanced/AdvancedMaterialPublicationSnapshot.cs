@@ -57,9 +57,9 @@ public sealed class AdvancedMaterialPublicationSnapshot
         ReadOnlySpan<AdvancedMaterialLayoutMember> layoutMembers,
         ReadOnlySpan<uint> constantWords,
         ReadOnlySpan<AdvancedMaterialTextureBinding> textureBindings,
-        ulong materialGeneration,
-        ulong kernelGeneration,
-        ulong layoutGeneration)
+        in AdvancedGpuOwnerGenerations materialGeneration,
+        in AdvancedGpuOwnerGenerations kernelGeneration,
+        in AdvancedGpuOwnerGenerations layoutGeneration)
     {
         Sequence = 0u;
         if (sequence == 0u ||

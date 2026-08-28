@@ -447,7 +447,7 @@ namespace XREngine.Components.Animation
                 return;
             }
 
-            EnsureHumanoidAnimationIKSolver();
+            HumanoidIKSolverComponent? ikSolver = EnsureHumanoidAnimationIKSolver();
             ResetRootMotionBaselineIfNeeded();
             EnsureInitialized();
             // A fixed-time seek is a temporal discontinuity, but it must not move the
@@ -477,13 +477,16 @@ namespace XREngine.Components.Animation
 
             ApplyAnimatedValues();
 
-            if (Animation.HasMuscleChannels)
-            {
-                var humanoid = GetSiblingHumanoid();
-                humanoid?.ApplyCurrentMusclePose();
-            }
+            // Root-only humanoid clips still need the native neutral solve: it establishes
+            // Body/Hips before the staged RootT/RootQ allocation is finalized.
+            GetSiblingHumanoid()?.ApplyCurrentMusclePose();
 
             PublishRootMotion();
+            // Exact seeks do not run the ordinary Late tick. Preserve the live
+            // transaction order explicitly: authored pose, projected root, then
+            // one IK/contact solve. UpdateSolverExternal suppresses the next
+            // scheduled solve for this same solver instance.
+            ikSolver?.UpdateSolverExternal();
         }
 
         /// <summary>
@@ -914,7 +917,6 @@ namespace XREngine.Components.Animation
                     _loopProjectionEndMuscleValues,
                     Weight,
                     settings,
-                    clip.Name,
                     out _bodyLoopPoseCorrection,
                     out sourceGenerator);
                 _hasBodyLoopPoseCorrection = policy.LoopPose;
@@ -926,7 +928,6 @@ namespace XREngine.Components.Animation
                     sourceStart,
                     Weight,
                     settings,
-                    clip.Name,
                     ReadOnlySpan<float>.Empty);
             }
 
@@ -942,7 +943,6 @@ namespace XREngine.Components.Animation
                     sourceStart,
                     Weight,
                     settings,
-                    clip.Name,
                     ReadOnlySpan<float>.Empty);
                 _projectedRootLoopPose = ComposeProjectedRootPoses(
                     InvertProjectedRootPose(offsetFromStart),
@@ -1439,13 +1439,14 @@ namespace XREngine.Components.Animation
             float weight = Weight;
             bool fullWeight = weight >= 1.0f;
             HumanoidComponent? humanoid = _hasCachedImportedBodyRootMembers ? GetSiblingHumanoid() : null;
+            HumanoidIKSolverComponent? ikSolver = EnsureHumanoidAnimationIKSolver();
+            ikSolver?.BeginAnimationDrivenGoalFrame();
             bool ownsImportedBodySampleTransaction = humanoid?.BeginImportedBodySampleTransaction(
                 this,
                 _canonicalImportedBodySample,
                 _hasCachedImportedBodyRootMembers,
                 weight,
                 Animation.ImportedHumanoidRootMotionSettings,
-                Animation.Name,
                 _cycleOffsetSourceWrapped && _hasProjectedRootLoopPose
                     ? _projectedRootLoopPose
                     : null,
@@ -1499,6 +1500,7 @@ namespace XREngine.Components.Animation
             {
                 if (ownsImportedBodySampleTransaction)
                     humanoid!.CancelImportedBodySampleTransaction(this);
+                ikSolver?.RejectAnimationDrivenGoalFrame();
                 throw;
             }
             finally
@@ -1509,8 +1511,12 @@ namespace XREngine.Components.Animation
                 RestoreAllBaselineMethodArguments();
             }
 
-            if (ownsImportedBodySampleTransaction)
-                humanoid!.CommitImportedBodySampleTransaction(this);
+            ikSolver?.CompleteAnimationDrivenGoalFrame();
+
+            // Leave Body/root staged until the sibling native solve accepts this exact
+            // muscle/TDoF frame. This prevents a rejected pose from publishing root motion.
+            if (ownsImportedBodySampleTransaction && !humanoid!.IsAnimatedPosePreviewActive)
+                humanoid.CommitImportedBodySampleTransaction(this);
 
             NormalizeAnimatedQuaternionTargets();
         }

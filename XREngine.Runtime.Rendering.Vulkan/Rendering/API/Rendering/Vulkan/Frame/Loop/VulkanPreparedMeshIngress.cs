@@ -15,6 +15,9 @@ internal sealed class VulkanPreparedMeshIngress
         new FrameOpResourceUse[
             VulkanMeshOperationRequestQueue.Capacity *
             ResourceUsesPerEntryBudget];
+    private readonly VulkanPreparedStableBinStream _stableBinStream = new(
+        VulkanMeshOperationRequestQueue.Capacity,
+        VulkanMeshOperationRequestQueue.Capacity * ResourceUsesPerEntryBudget);
     private int _count;
     private int _resourceUseCount;
     private int _dynamicUiCount;
@@ -25,6 +28,7 @@ internal sealed class VulkanPreparedMeshIngress
     internal bool IsCohortHit { get; private set; }
     internal int ReusedOperationCount { get; private set; }
     internal int LegacyHoleMaterializationCount { get; private set; }
+    internal VulkanPreparedStableBinStream StableBinStream => _stableBinStream;
     internal ref readonly VulkanPreparedMeshIngressEntry GetEntry(int index) => ref _entries[index];
 
     internal void SetContext(int index, in FrameOpContext context)
@@ -36,6 +40,7 @@ internal sealed class VulkanPreparedMeshIngress
 
     internal void Clear()
     {
+        _stableBinStream.ThawForReuse();
         _entries.AsSpan(0, _count).Clear();
         _resourceUses.AsSpan(0, _resourceUseCount).Clear();
         _count = 0;
@@ -75,6 +80,7 @@ internal sealed class VulkanPreparedMeshIngress
         IsCohortHit = source.IsCohortHit;
         ReusedOperationCount = source.ReusedOperationCount;
         LegacyHoleMaterializationCount = source.LegacyHoleMaterializationCount;
+        _stableBinStream.CopyFrom(source._stableBinStream);
     }
 
     internal bool TryAppend(
@@ -147,6 +153,123 @@ internal sealed class VulkanPreparedMeshIngress
             };
         }
 
+        return true;
+    }
+
+    /// <summary>
+    /// Intersects retained opaque membership with this coalesced current-frame
+    /// visible payload. This is coordinator-only preparation: it freezes exact
+    /// handles and late resource-use ranges for workers, without allowing a
+    /// worker to resolve templates or choose a fallback lane.
+    /// </summary>
+    internal bool TryBuildStableBinStream(
+        VulkanResidentDrawTemplateTable residentTemplates)
+    {
+        ArgumentNullException.ThrowIfNull(residentTemplates);
+        _stableBinStream.ThawForReuse();
+        BackendReadyFramePackage? package = null;
+        for (int index = 0; index < _count && package is null; ++index)
+            package = _entries[index].Context.PipelineInstance?
+                .ActiveMeshRenderCommands.RenderingBackendReadyPackage;
+        if (package is not null &&
+            !TryImportPackageOrderedExceptions(package.OrderedExceptions))
+            return false;
+        for (int index = 0; index < _count; ++index)
+        {
+            ref readonly VulkanPreparedMeshIngressEntry entry = ref _entries[index];
+            PendingMeshDraw draw = entry.Draw;
+            VulkanResidentDrawTemplateHandle handle = draw.ResidentTemplateHandle;
+            VulkanResidentDrawTemplate? template = null;
+            VulkanBinOrderedExceptionReason exceptionReason = default;
+            if (!draw.CanonicalDrawIdentity.IsValid)
+                exceptionReason = VulkanBinOrderedExceptionReason.MissingCanonicalIdentity;
+            else if (!handle.IsValid)
+                exceptionReason = VulkanBinOrderedExceptionReason.MissingResidentTemplate;
+            else if (entry.IsDynamicUi)
+                exceptionReason = VulkanBinOrderedExceptionReason.Ui;
+            else if (entry.PreserveSubmissionOrder || entry.Context.PreserveSubmissionOrderBlock)
+                exceptionReason = VulkanBinOrderedExceptionReason.PreserveSubmissionOrder;
+            else if (draw.BlendEnabled)
+                exceptionReason = VulkanBinOrderedExceptionReason.Transparency;
+            else if (!residentTemplates.StableBinMembership.Contains(handle) ||
+                     !residentTemplates.TryGetLive(handle, out template) ||
+                     template is null)
+                exceptionReason = VulkanBinOrderedExceptionReason.TopologyRejected;
+            else if (!template.IsStableBinEligible)
+                exceptionReason = VulkanBinOrderedExceptionReason.UnsupportedCustomWork;
+
+            if (exceptionReason != 0)
+            {
+                if (!_stableBinStream.TryAppendException(
+                        draw.CanonicalDrawIdentitySnapshot,
+                        exceptionReason,
+                        unchecked((ulong)index)))
+                {
+                    return false;
+                }
+                continue;
+            }
+
+            VulkanResidentDrawTemplate stableTemplate = template
+                ?? throw new InvalidOperationException(
+                    "A stable-bin template passed validation without a live template.");
+            VulkanRenderBinKey key = VulkanRenderBinKey.CreateForContext(
+                stableTemplate.StructuralIdentity,
+                stableTemplate.Variant,
+                stableTemplate.NativeState,
+                entry.Context,
+                entry.IsDynamicUi,
+                entry.PreserveSubmissionOrder);
+            if (key.OrderingClass != VulkanRenderBinOrderingClass.Opaque ||
+                !_stableBinStream.TryAppend(
+                    new(key, handle, index, 0, 0, stableTemplate.ResourceManifest),
+                    GetResourceUses(in entry)))
+            {
+                return false;
+            }
+        }
+
+        _stableBinStream.Freeze();
+        return true;
+    }
+
+    private bool TryImportPackageOrderedExceptions(
+        ReadOnlySpan<BackendReadyOrderedExceptionRecord> exceptions)
+    {
+        for (int exceptionIndex = 0; exceptionIndex < exceptions.Length; ++exceptionIndex)
+        {
+            BackendReadyOrderedExceptionRecord exception = exceptions[exceptionIndex];
+            bool found = false;
+            for (int entryIndex = 0; entryIndex < _count; ++entryIndex)
+            {
+                AdvancedGpuSceneDrawIdentitySnapshot draw =
+                    _entries[entryIndex].Draw.CanonicalDrawIdentitySnapshot;
+                if (!draw.IsValid || draw.Primary.Handle != exception.DrawHandle)
+                    continue;
+
+                VulkanBinOrderedExceptionReason reason = exception.ReasonFlags switch
+                {
+                    2u => VulkanBinOrderedExceptionReason.Callback,
+                    4u => VulkanBinOrderedExceptionReason.UnsupportedCustomWork,
+                    _ => VulkanBinOrderedExceptionReason.TopologyRejected,
+                };
+                if (!_stableBinStream.TryAppendException(
+                        new VulkanBinOrderedException(
+                            draw,
+                            reason,
+                            exception.OrderKey)))
+                {
+                    return false;
+                }
+                found = true;
+                break;
+            }
+
+            // An accepted package exception must have an exact current-frame
+            // canonical identity. Do not silently drop it into a broad path.
+            if (!found)
+                return false;
+        }
         return true;
     }
 

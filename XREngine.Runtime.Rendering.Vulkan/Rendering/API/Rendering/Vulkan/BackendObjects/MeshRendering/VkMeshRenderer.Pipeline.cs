@@ -1192,7 +1192,9 @@ internal unsafe partial class VkMeshRenderer
 		DynamicState[] dynamicStates,
 		RenderPass renderPass,
 		bool useDynamicRendering,
-		DynamicRenderingFormatSignature dynamicRenderingFormats)
+		DynamicRenderingFormatSignature dynamicRenderingFormats,
+		in VulkanVisibilityVertexInputSnapshot visibilityVertexInput = default,
+		bool isMeshShaderPipeline = false)
 	{
 		using VulkanPipelineCompilationDependencyLease dependencyLease =
 			BackendContext.Resources.PipelineManager.AcquireCompilationDependencyLease();
@@ -1245,18 +1247,24 @@ internal unsafe partial class VkMeshRenderer
 					EProgramStageMask.FragmentShaderBit,
 					colorAttachmentCount);
 
+		ReadOnlySpan<VertexInputBindingDescription> vertexBindings = visibilityVertexInput.IsValid
+			? visibilityVertexInput.Bindings
+			: _vertexBindings;
+		ReadOnlySpan<VertexInputAttributeDescription> vertexAttributes = visibilityVertexInput.IsValid
+			? visibilityVertexInput.Attributes
+			: _vertexAttributes;
 		return new VulkanGraphicsPipelineBuildRequest(
 					PipelineCompileOwnerId,
 					program,
 					ProgramCreationPort,
-					ShouldUseGraphicsPipelineLibraries(),
+					!isMeshShaderPipeline && ShouldUseGraphicsPipelineLibraries(),
 					dependencyGeneration,
 					key,
 					pipelineName,
 					colorAttachmentCount,
 					program.PipelineLayout,
-					[.. _vertexBindings],
-					[.. _vertexAttributes],
+					vertexBindings.ToArray(),
+					vertexAttributes.ToArray(),
 					inputAssembly,
 					viewportScissorCount,
 					nativeNegativeOneToOneDepth,
@@ -1269,7 +1277,8 @@ internal unsafe partial class VkMeshRenderer
 					useDynamicRendering ? dynamicRenderingFormats : default,
 					graphicsStages,
 					preRasterStages,
-			fragmentStages);
+					fragmentStages,
+					isMeshShaderPipeline);
 	}
 
 	private void ReportPipelineCreateFailure(

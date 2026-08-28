@@ -98,6 +98,7 @@ internal sealed partial class VulkanCommandRuntime
             EVulkanPrimaryPlanNodeKind.PublishFramebufferForSampling => RecordPublishFramebufferPayload(ref state, in state.Ops.GetPublishedFramebuffer(index), in info),
             EVulkanPrimaryPlanNodeKind.DlssUpscale => RecordDlssUpscalePayload(ref state, in state.Ops.GetDlssUpscale(index), in info),
             EVulkanPrimaryPlanNodeKind.DlssFrameGeneration => RecordDlssFrameGenerationPayload(ref state, in state.Ops.GetDlssFrameGeneration(index), in info),
+            EVulkanPrimaryPlanNodeKind.AdvancedVisibility => RecordAdvancedVisibilityPayload(ref state, in state.Ops.GetAdvancedVisibility(index), in info),
             EVulkanPrimaryPlanNodeKind.MeshDraw => RecordMeshDrawPayload(ref state, in state.Ops.GetMeshDraw(index), in info),
             EVulkanPrimaryPlanNodeKind.IndirectDraw => RecordIndirectDrawPayload(ref state, in state.Ops.GetIndirectDraw(index), in info),
             EVulkanPrimaryPlanNodeKind.Clear => RecordClearPayload(ref state, in state.Ops.GetClear(index), in info),
@@ -105,6 +106,666 @@ internal sealed partial class VulkanCommandRuntime
             _ => throw new VulkanPlanPreconditionException($"Typed primary dispatch for '{header.OpCode}' has not been published."),
         };
     }
+
+    /// <summary>
+    /// Records the first production advanced-visibility slice. The sequence
+    /// is deliberately one opcode so the sealed operation cannot expose an
+    /// intermediate count to the CPU: EarlyVisibility writes the GPU-owned
+    /// visible list, the compute barrier publishes it, then
+    /// BuildVisibilityIndirect writes GPU-consumed indirect arguments.
+    /// </summary>
+    private int RecordAdvancedVisibilityPayload(
+        scoped ref PrimaryCommandBufferRecordingState state,
+        in VulkanAdvancedVisibilityOperationPayload payload,
+        in VulkanPrimaryOperationRecordingInfo info)
+        => payload.Request.Stage switch
+        {
+            EAdvancedRenderStage.VisibilityPreparation =>
+                RecordAdvancedVisibilityPreparationPayload(
+                    ref state,
+                    in payload,
+                    in info),
+            EAdvancedRenderStage.VisibilityRaster =>
+                RecordAdvancedVisibilityRasterPayload(
+                    ref state,
+                    in payload,
+                    in info),
+            EAdvancedRenderStage.DepthPyramidAndLateVisibility =>
+                RecordAdvancedVisibilityLatePayload(ref state, in payload, in info),
+            _ => throw new VulkanPlanPreconditionException(
+                $"Advanced visibility stage '{payload.Request.Stage}' is outside the admitted preparation/raster family."),
+        };
+
+    private int RecordAdvancedVisibilityPreparationPayload(
+        scoped ref PrimaryCommandBufferRecordingState state,
+        in VulkanAdvancedVisibilityOperationPayload payload,
+        in VulkanPrimaryOperationRecordingInfo info)
+    {
+        if (!payload.State.IsValid || !payload.SceneState.IsValid)
+        {
+            throw new VulkanPlanPreconditionException(
+                "Advanced visibility operation reached native recording without admitted set-1 and canonical scene states.");
+        }
+        if (payload.EarlyVisibilityProgram is not { IsLinked: true } early ||
+            payload.BuildIndirectProgram is not { IsLinked: true } indirect ||
+            early.LinkGeneration != payload.EarlyVisibilityLinkGeneration ||
+            indirect.LinkGeneration != payload.BuildIndirectLinkGeneration ||
+            payload.EarlyVisibilityPipeline.Handle == 0 ||
+            payload.BuildIndirectPipeline.Handle == 0)
+        {
+            throw new VulkanPlanPreconditionException(
+                "Advanced visibility compute pipeline closure changed after frame-plan sealing.");
+        }
+
+        if (payload.State.ViewCount != (uint)payload.Request.Views.ViewCount)
+        {
+            throw new VulkanPlanPreconditionException(
+                "Advanced visibility preparation has a view-set/state cardinality mismatch.");
+        }
+
+        uint groups = DivideRoundUp(payload.State.PayloadCapacity, 256u);
+        if (groups == 0u)
+            throw new VulkanPlanPreconditionException(
+                "Advanced visibility preparation reached recording with an empty payload capacity.");
+
+        for (uint viewIndex = 0u; viewIndex < payload.State.ViewCount; ++viewIndex)
+        {
+            if (!payload.State.TryGetViewSegment(viewIndex, out uint payloadBase, out uint rangeBase))
+                throw new VulkanPlanPreconditionException("Advanced visibility could not resolve a sealed early view segment.");
+
+            CmdBeginLabel(state.CommandBuffer, "Advanced.Visibility.Early");
+            BindPipelineTracked(state.CommandBuffer, PipelineBindPoint.Compute,
+                payload.EarlyVisibilityPipeline);
+            BindAdvancedVisibilityDescriptorSets(state.CommandBuffer,
+                PipelineBindPoint.Compute, early.PipelineLayout, in payload);
+            PushConstantsTracked(state.CommandBuffer, early.PipelineLayout,
+                ShaderStageFlags.ComputeBit, 0u,
+                new AdvancedVisibilityPreparationPushConstants(
+                    viewIndex, payloadBase, payload.State.PayloadCapacity, rangeBase));
+            Api.CmdDispatch(state.CommandBuffer, groups, 1u, 1u);
+            CmdEndLabel(state.CommandBuffer);
+        }
+
+        CmdBeginLabel(state.CommandBuffer, "Advanced.Visibility.EarlyToIndirect");
+        EmitMemoryBarrierMask(state.CommandBuffer, EMemoryBarrierMask.ShaderStorage);
+        CmdEndLabel(state.CommandBuffer);
+
+        for (uint viewIndex = 0u; viewIndex < payload.State.ViewCount; ++viewIndex)
+        {
+            if (!payload.State.TryGetViewSegment(viewIndex, out uint payloadBase, out uint rangeBase))
+                throw new VulkanPlanPreconditionException("Advanced visibility could not resolve a sealed indirect view segment.");
+
+            CmdBeginLabel(state.CommandBuffer, "Advanced.Visibility.BuildIndirect");
+            BindPipelineTracked(state.CommandBuffer, PipelineBindPoint.Compute,
+                payload.BuildIndirectPipeline);
+            BindAdvancedVisibilityDescriptorSets(state.CommandBuffer,
+                PipelineBindPoint.Compute, indirect.PipelineLayout, in payload);
+            PushConstantsTracked(state.CommandBuffer, indirect.PipelineLayout,
+                ShaderStageFlags.ComputeBit, 0u,
+                new AdvancedVisibilityPreparationPushConstants(
+                    viewIndex, payloadBase, payload.State.PayloadCapacity, rangeBase));
+            Api.CmdDispatch(state.CommandBuffer, groups, 1u, 1u);
+            CmdEndLabel(state.CommandBuffer);
+        }
+        return info.OperationIndex;
+    }
+
+    private unsafe int RecordAdvancedVisibilityLatePayload(
+        scoped ref PrimaryCommandBufferRecordingState state,
+        in VulkanAdvancedVisibilityOperationPayload payload,
+        in VulkanPrimaryOperationRecordingInfo info)
+    {
+        if (!payload.State.IsValid || !payload.SceneState.IsValid ||
+            payload.LateTargetClosure is not { IsRecordingReady: true } closure ||
+            payload.BuildDepthPyramidProgram is not { IsLinked: true } depth ||
+            payload.LateVisibilityProgram is not { IsLinked: true } late ||
+            depth.LinkGeneration != payload.BuildDepthPyramidLinkGeneration ||
+            late.LinkGeneration != payload.LateVisibilityLinkGeneration ||
+            payload.BuildDepthPyramidPipeline.Handle == 0 ||
+            payload.LateVisibilityPipeline.Handle == 0)
+        {
+            throw new VulkanPlanPreconditionException("Advanced late visibility reached recording without its sealed compute, image, and descriptor closure.");
+        }
+        if (state.RenderScope.IsActive)
+            EndActiveRenderPass(ref state);
+
+        for (uint viewIndex = 0u; viewIndex < payload.State.ViewCount; ++viewIndex)
+        {
+        if (!payload.State.TryGetViewSegment(viewIndex, out uint payloadBase, out uint rangeBase))
+            throw new VulkanPlanPreconditionException("Advanced late visibility could not resolve a sealed view segment.");
+        for (int mipIndex = 0; mipIndex < closure.DispatchCount; ++mipIndex)
+        {
+            uint destinationMip = checked((uint)mipIndex + 1u);
+            VulkanPhysicalImageGroup source = destinationMip == 1u
+                ? closure.DepthGroup : closure.PyramidGroup;
+            uint sourceMip = destinationMip == 1u ? 0u : destinationMip - 1u;
+            EmitAdvancedVisibilityImageBarrier(
+                state.CommandBuffer, source, sourceMip, viewIndex,
+                ImageLayout.ShaderReadOnlyOptimal,
+                AccessFlags.ShaderReadBit,
+                PipelineStageFlags.ComputeShaderBit,
+                allowUndefined: false);
+            EmitAdvancedVisibilityImageBarrier(
+                state.CommandBuffer, closure.PyramidGroup, destinationMip,
+                viewIndex,
+                ImageLayout.General,
+                AccessFlags.ShaderWriteBit,
+                PipelineStageFlags.ComputeShaderBit,
+                allowUndefined: true);
+
+            BindPipelineTracked(state.CommandBuffer, PipelineBindPoint.Compute,
+                payload.BuildDepthPyramidPipeline);
+            BindAdvancedVisibilityDescriptorSets(state.CommandBuffer,
+                PipelineBindPoint.Compute, depth.PipelineLayout, in payload,
+                closure.DescriptorSets![closure.DescriptorIndex(viewIndex, mipIndex)]);
+            PushConstantsTracked(state.CommandBuffer, depth.PipelineLayout,
+                ShaderStageFlags.ComputeBit, 0u,
+                new AdvancedVisibilityPreparationPushConstants(
+                    viewIndex, payloadBase, payload.State.PayloadCapacity, rangeBase));
+            uint groupsX = Math.Max(1u, closure.PyramidGroup.ResolvedExtent.Width >> (int)destinationMip);
+            uint groupsY = Math.Max(1u, closure.PyramidGroup.ResolvedExtent.Height >> (int)destinationMip);
+            Api.CmdDispatch(state.CommandBuffer, DivideRoundUp(groupsX, 8u),
+                DivideRoundUp(groupsY, 8u), 1u);
+            EmitAdvancedVisibilityImageBarrier(
+                state.CommandBuffer, closure.PyramidGroup, destinationMip,
+                viewIndex,
+                ImageLayout.ShaderReadOnlyOptimal,
+                AccessFlags.ShaderReadBit,
+                PipelineStageFlags.ComputeShaderBit,
+                allowUndefined: false);
+        }
+
+        BindPipelineTracked(state.CommandBuffer, PipelineBindPoint.Compute,
+            payload.LateVisibilityPipeline);
+        BindAdvancedVisibilityDescriptorSets(state.CommandBuffer,
+            PipelineBindPoint.Compute, late.PipelineLayout, in payload,
+            closure.DescriptorSets![closure.DescriptorIndex(
+                viewIndex, closure.DispatchCount)]);
+        PushConstantsTracked(state.CommandBuffer, late.PipelineLayout,
+            ShaderStageFlags.ComputeBit, 0u,
+            new AdvancedVisibilityPreparationPushConstants(
+                viewIndex, payloadBase, payload.State.PayloadCapacity, rangeBase));
+        Api.CmdDispatch(state.CommandBuffer, DivideRoundUp(payload.State.PayloadCapacity, 256u), 1u, 1u);
+        EmitMemoryBarrierMask(state.CommandBuffer, EMemoryBarrierMask.ShaderStorage);
+        }
+
+        VulkanAdvancedVisibilityResourceState lateState = payload.State with
+        {
+            RangeCounts = payload.State.LateRangeCounts,
+            IndirectArguments = payload.State.LateIndirectArguments,
+            MeshArguments = payload.State.LateMeshArguments,
+            MeshPayloads = payload.State.LateMeshPayloads,
+        };
+        VulkanAdvancedVisibilityOperationPayload latePayload = payload with
+        {
+            State = lateState,
+        };
+        return RecordAdvancedVisibilityRasterPayload(ref state, in latePayload, in info);
+    }
+
+    private unsafe void EmitAdvancedVisibilityImageBarrier(
+        CommandBuffer commandBuffer,
+        VulkanPhysicalImageGroup group,
+        uint mipLevel,
+        uint arrayLayer,
+        ImageLayout nextLayout,
+        AccessFlags destinationAccess,
+        PipelineStageFlags destinationStage,
+        bool allowUndefined)
+    {
+        ImageLayout oldLayout = group.GetKnownLayout(
+            mipLevel,
+            1u,
+            arrayLayer,
+            1u);
+        if (oldLayout == ImageLayout.Undefined && !allowUndefined)
+            throw new VulkanPlanPreconditionException(
+                "A late-visibility source subresource has no exact tracked layout.");
+        ImageMemoryBarrier barrier = new()
+        {
+            SType = StructureType.ImageMemoryBarrier,
+            OldLayout = oldLayout,
+            NewLayout = nextLayout,
+            SrcAccessMask = oldLayout == ImageLayout.Undefined
+                ? 0u
+                : AccessFlags.ShaderWriteBit |
+                  AccessFlags.DepthStencilAttachmentWriteBit,
+            DstAccessMask = destinationAccess,
+            Image = group.Image,
+            SubresourceRange = new ImageSubresourceRange(
+                group.Format is Format.D16Unorm or Format.D32Sfloat or Format.D16UnormS8Uint or Format.D24UnormS8Uint or Format.D32SfloatS8Uint
+                    ? ImageAspectFlags.DepthBit : ImageAspectFlags.ColorBit,
+                mipLevel, 1u, arrayLayer, 1u),
+        };
+        CmdPipelineBarrierTracked(commandBuffer,
+            PipelineStageFlags.AllCommandsBit, destinationStage,
+            DependencyFlags.None, 0, null, 0, null, 1, &barrier);
+        group.UpdateKnownLayout(
+            nextLayout,
+            mipLevel,
+            1u,
+            arrayLayer,
+            1u);
+    }
+
+    private unsafe int RecordAdvancedVisibilityRasterPayload(
+        scoped ref PrimaryCommandBufferRecordingState state,
+        in VulkanAdvancedVisibilityOperationPayload payload,
+        in VulkanPrimaryOperationRecordingInfo info)
+    {
+        FramePlan framePlan = state.FramePlan
+            ?? throw new VulkanPlanPreconditionException(
+                "Advanced visibility raster reached recording without an accepted frame plan.");
+        VulkanPreparedStableBinStream bins = framePlan.StableBins;
+        if (!payload.State.IsValid || !payload.SceneState.IsValid ||
+            !payload.TargetClosure.IsValid || !bins.HasSealedSubmissionPlans ||
+            payload.Request.Views.ViewCount <= 0 || !info.BeginsRendering)
+        {
+            throw new VulkanPlanPreconditionException(
+                "Advanced visibility raster reached recording without its sealed view-set resource, target, and stable-bin closure.");
+        }
+        if (ResourceRuntime.BackendObjects.Get(payload.Request.Target) is not
+                VkFrameBuffer targetWrapper)
+        {
+            throw new VulkanPlanPreconditionException(
+                "Advanced visibility raster lost its authoritative Vulkan framebuffer wrapper.");
+        }
+        targetWrapper.EnsureCurrent();
+        if (!targetWrapper.TryCaptureRecordedRenderTargetSnapshot(
+                out VulkanRecordedRenderTargetSnapshot currentTarget) ||
+            currentTarget != payload.TargetClosure.NativeTarget)
+        {
+            string mismatch = currentTarget.IsComplete
+                ? payload.TargetClosure.NativeTarget.DescribeFirstMismatch(
+                    in currentTarget)
+                : "the current native target is incomplete";
+            throw new VulkanPlanPreconditionException(
+                $"Advanced visibility raster target changed after sealing: {mismatch}.");
+        }
+
+        // The preparation family owns the indirect arguments and range counts.
+        // Publish all of its writes once, outside rendering, before any stable
+        // bin binds or indirect-count reads.
+        if (state.RenderScope.IsActive)
+            EndActiveRenderPass(ref state);
+        EmitAdvancedVisibilityRasterReadBarrier(ref state);
+        BeginRenderPassForTarget(
+            ref state,
+            payload.Request.Target,
+            info.PassIndex,
+            state.ActiveContext);
+        if (!state.RenderScope.IsActive ||
+            state.RenderScope.Target != payload.TargetClosure.Target ||
+            state.RenderScope.UsesDynamicRendering !=
+                payload.TargetClosure.UsesDynamicRendering ||
+            state.RenderScope.DepthStencilReadOnly !=
+                payload.TargetClosure.DepthStencilReadOnly ||
+            payload.TargetClosure.UsesDynamicRendering &&
+                !state.RenderScope.DynamicRenderingFormats.Equals(
+                    payload.TargetClosure.DynamicRenderingFormats) ||
+            !payload.TargetClosure.UsesDynamicRendering &&
+                state.RenderScope.RenderPass.Handle !=
+                    payload.TargetClosure.RenderPass.Handle)
+        {
+            throw new VulkanPlanPreconditionException(
+                "The active visibility render scope does not match its sealed target compatibility closure.");
+        }
+
+        Extent2D extent = new(
+            payload.TargetClosure.NativeTarget.Width,
+            payload.TargetClosure.NativeTarget.Height);
+        Viewport viewport = CreateVulkanViewport(extent);
+        Rect2D scissor = new(new Offset2D(0, 0), extent);
+        SetViewportScissorTracked(state.CommandBuffer, in viewport, in scissor);
+
+        CmdBeginLabel(state.CommandBuffer, "Advanced.Visibility.Raster");
+        ReadOnlySpan<VulkanPreparedStableBinHeader> headers = bins.Headers;
+        ReadOnlySpan<VulkanPreparedStableBinRecord> allRecords = bins.Records;
+        for (uint viewIndex = 0u;
+             viewIndex < (uint)payload.Request.Views.ViewCount;
+             ++viewIndex)
+        {
+            // Canonical set-1 retains every logical view. Raster is issued once
+            // per view so graphics shaders receive the exact ViewId rather than
+            // silently projecting all bins with view zero. Target-family routing
+            // remains frozen in TargetClosure; this loop never changes strategy.
+            for (int headerIndex = 0; headerIndex < headers.Length; ++headerIndex)
+            {
+                ref readonly VulkanPreparedStableBinHeader header =
+                    ref headers[headerIndex];
+            if (!header.IsRasterReady)
+            {
+                throw new VulkanPlanPreconditionException(
+                    "A non-empty visibility bin has no sealed raster pipeline and submission plan.");
+            }
+
+            VulkanVisibilityRasterPipeline raster = header.RasterPipeline;
+            if (!raster.IsValid || raster.TargetClosure != payload.TargetClosure ||
+                raster.Program.LinkGeneration != raster.ProgramLinkGeneration)
+            {
+                throw new VulkanPlanPreconditionException(
+                    "A visibility raster pipeline closure changed after frame-plan sealing.");
+            }
+            VulkanSealedBinSubmissionPlan plan = header.SubmissionPlan!;
+            // LateVisibility deliberately excludes CPU-direct producers: they
+            // have no GPU-owned recovered-count stream and replaying them here
+            // would duplicate early raster work.
+            if (payload.Request.Stage == EAdvancedRenderStage.DepthPyramidAndLateVisibility &&
+                plan.ResolvedStrategy == EMeshSubmissionStrategy.CpuDirect)
+            {
+                continue;
+            }
+            AdvancedIndirectRange indirectRange = header.IndirectRange;
+            VulkanAdvancedVisibilityResourceState visibilityState =
+                payload.State;
+            if (!visibilityState.TryGetViewSegment(
+                    viewIndex,
+                    out uint payloadBase,
+                    out uint rangeBase))
+            {
+                throw new VulkanPlanPreconditionException(
+                    "Stable visibility raster could not resolve its sealed view segment.");
+            }
+            if (plan.ResolvedStrategy != EMeshSubmissionStrategy.CpuDirect)
+            {
+                try
+                {
+                    // Lowering remains range-based, but all GPU-produced
+                    // command/count streams are sealed as contiguous per-view
+                    // segments. CPU-direct records retain their canonical
+                    // source payload indices and are issued once per view.
+                    indirectRange = indirectRange with
+                    {
+                        FirstPayloadIndex = checked(indirectRange.FirstPayloadIndex + payloadBase),
+                        ArgumentBufferOffset = checked(indirectRange.ArgumentBufferOffset +
+                            payloadBase * 20u),
+                        CountBufferOffset = checked(indirectRange.CountBufferOffset +
+                            rangeBase * sizeof(uint)),
+                    };
+                }
+                catch (OverflowException)
+                {
+                    throw new VulkanPlanPreconditionException(
+                        "Stable visibility raster view segment overflowed the sealed set-1 ABI.");
+                }
+            }
+            if (!VulkanStableBinSubmissionLowering.TryLower(
+                    plan,
+                    in header,
+                    in indirectRange,
+                    in visibilityState,
+                    out VulkanStableBinSubmission submission,
+                    out VulkanStableBinSubmissionLoweringFailure lowerFailure))
+            {
+                throw new VulkanPlanPreconditionException(
+                    $"Stable visibility bin lowering failed after sealing: {lowerFailure}.");
+            }
+
+            BindPipelineTracked(
+                state.CommandBuffer,
+                PipelineBindPoint.Graphics,
+                raster.Pipeline);
+            BindAdvancedVisibilityDescriptorSets(
+                state.CommandBuffer,
+                PipelineBindPoint.Graphics,
+                raster.PipelineLayout,
+                in payload);
+
+            VulkanResidentDrawTemplateNativeState native = header.NativeState;
+            ReadOnlySpan<VulkanPreparedStableBinRecord> records =
+                allRecords.Slice(header.RecordOffset, header.RecordCount);
+            bool meshlet = raster.IsMeshShaderPipeline;
+            if (native.PrimitiveCount != 1 || native.Primitive0.Topology !=
+                PrimitiveTopology.TriangleList || (!meshlet &&
+                (!native.Primitive0.Indexed || native.VertexBufferCount != 1 ||
+                 native.GetVertexBinding(0) != 0u ||
+                 native.Primitive0.IndexBuffer.Handle == 0)))
+            {
+                throw new VulkanPlanPreconditionException(
+                    "A visibility raster bin has an invalid canonical packed-geometry closure.");
+            }
+            VulkanVisibilityGeometryRecordClosure geometryClosure =
+                records[0].VisibilityGeometryClosure;
+            VulkanAdvancedScenePublicationState sealedSceneState =
+                payload.SceneState;
+            for (int recordIndex = 0; recordIndex < records.Length; ++recordIndex)
+            {
+                VulkanVisibilityGeometryRecordClosure recordClosure =
+                    records[recordIndex].VisibilityGeometryClosure;
+                string closureReason =
+                    "the geometry range does not share its bin publication";
+                if (recordClosure.VertexSlice != geometryClosure.VertexSlice ||
+                    recordClosure.IndexSlice != geometryClosure.IndexSlice ||
+                    !recordClosure.TryValidate(
+                        in sealedSceneState,
+                        out closureReason))
+                {
+                    throw new VulkanPlanPreconditionException(closureReason);
+                }
+            }
+            if (!meshlet)
+            {
+                for (int bindingIndex = 0;
+                     bindingIndex < native.VertexBufferCount;
+                     ++bindingIndex)
+                {
+                    BindVertexBufferTracked(
+                        state.CommandBuffer,
+                        native.GetVertexBinding(bindingIndex),
+                        native.GetVertexBuffer(bindingIndex),
+                        geometryClosure.VertexSlice.Offset);
+                }
+                BindIndexBufferTracked(
+                    state.CommandBuffer,
+                    native.Primitive0.IndexBuffer,
+                    geometryClosure.IndexSlice.Offset,
+                    native.Primitive0.IndexType);
+            }
+
+            if (plan.ResolvedStrategy == EMeshSubmissionStrategy.CpuDirect)
+            {
+                PushConstantsTracked(
+                    state.CommandBuffer,
+                    raster.PipelineLayout,
+                    ShaderStageFlags.VertexBit | ShaderStageFlags.FragmentBit,
+                    0u,
+                    new AdvancedVisibilityMeshRasterPushConstants(
+                        indirectRange.FirstPayloadIndex,
+                        (uint)indirectRange.Key.Producer,
+                        viewIndex,
+                        1u));
+                RecordAdvancedVisibilityCpuDirect(
+                    state.CommandBuffer,
+                    records);
+                continue;
+            }
+            if (meshlet)
+            {
+                PushConstantsTracked(
+                    state.CommandBuffer,
+                    raster.PipelineLayout,
+                    ShaderStageFlags.MeshBitExt | ShaderStageFlags.FragmentBit,
+                    0u,
+                    new AdvancedVisibilityMeshRasterPushConstants(
+                        indirectRange.FirstPayloadIndex,
+                        (uint)indirectRange.Key.Producer,
+                        viewIndex,
+                        1u));
+            }
+            else
+            {
+                PushConstantsTracked(
+                    state.CommandBuffer,
+                    raster.PipelineLayout,
+                    ShaderStageFlags.VertexBit | ShaderStageFlags.FragmentBit,
+                    0u,
+                    new AdvancedVisibilityMeshRasterPushConstants(
+                        indirectRange.FirstPayloadIndex,
+                        (uint)indirectRange.Key.Producer,
+                        viewIndex,
+                        1u));
+            }
+            if (!TryRecordStableBinSubmission(
+                    state.CommandBuffer,
+                    in submission,
+                    null,
+                    records,
+                    out VulkanStableBinSubmissionRecordingFailure recordFailure))
+            {
+                throw new VulkanPlanPreconditionException(
+                    $"Stable visibility bin recording failed after sealing: {recordFailure}.");
+            }
+
+            // Diagnostic plans are part of the sealed lane. Their copy stays
+            // in this producer primary, after the indirect/raster consumer,
+            // and uses the same completion authority as the frame.
+            if (viewIndex == 0u && plan.DiagnosticPlan is { } diagnosticPlan &&
+                AdvancedVisibilityDiagnosticCopy is { } recordDiagnosticCopy &&
+                !recordDiagnosticCopy(
+                    state.CommandBuffer,
+                    in visibilityState,
+                    in diagnosticPlan,
+                    payload.Request.RenderFrameId))
+            {
+                Debug.VulkanWarningEvery(
+                    $"Vulkan.AdvancedVisibility.DiagnosticDrop.{diagnosticPlan.PassIdentity}",
+                    TimeSpan.FromSeconds(2),
+                    "[Vulkan] Dropped sealed advanced-visibility diagnostic sidecar for pass {0}.",
+                    diagnosticPlan.PassIdentity);
+            }
+            if (viewIndex == 0u && plan.OverflowDiagnosticPlan is { } overflowDiagnosticPlan &&
+                AdvancedVisibilityDiagnosticCopy is { } recordOverflowDiagnosticCopy &&
+                !recordOverflowDiagnosticCopy(
+                    state.CommandBuffer,
+                    in visibilityState,
+                    in overflowDiagnosticPlan,
+                    payload.Request.RenderFrameId))
+            {
+                Debug.VulkanWarningEvery(
+                    $"Vulkan.AdvancedVisibility.OverflowDiagnosticDrop.{overflowDiagnosticPlan.PassIdentity}",
+                    TimeSpan.FromSeconds(2),
+                    "[Vulkan] Dropped sealed advanced-visibility overflow diagnostic sidecar for pass {0}.",
+                    overflowDiagnosticPlan.PassIdentity);
+            }
+            }
+        }
+        CmdEndLabel(state.CommandBuffer);
+        return info.OperationIndex;
+    }
+
+    private unsafe void EmitAdvancedVisibilityRasterReadBarrier(
+        scoped ref PrimaryCommandBufferRecordingState state)
+    {
+        MemoryBarrier memoryBarrier = new()
+        {
+            SType = StructureType.MemoryBarrier,
+            SrcAccessMask = AccessFlags.ShaderWriteBit |
+                AccessFlags.TransferWriteBit,
+            DstAccessMask = AccessFlags.IndirectCommandReadBit |
+                AccessFlags.ShaderReadBit |
+                AccessFlags.ShaderWriteBit,
+        };
+        PipelineStageFlags destinationStages = PipelineStageFlags.DrawIndirectBit |
+            PipelineStageFlags.VertexShaderBit |
+            PipelineStageFlags.FragmentShaderBit;
+        if (DeviceContext.SupportsMeshTaskIndirectCount)
+            destinationStages |= PipelineStageFlags.MeshShaderBitExt;
+        CmdPipelineBarrierTracked(
+            state.CommandBuffer,
+            PipelineStageFlags.ComputeShaderBit |
+                PipelineStageFlags.TransferBit,
+            destinationStages,
+            DependencyFlags.None,
+            1,
+            &memoryBarrier,
+            0,
+            null,
+            0,
+            null);
+        RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanAdhocBarrier(
+            emittedCount: 1,
+            redundantCount: 0);
+    }
+
+    private unsafe void RecordAdvancedVisibilityCpuDirect(
+        CommandBuffer commandBuffer,
+        ReadOnlySpan<VulkanPreparedStableBinRecord> records)
+    {
+        for (int index = 0; index < records.Length; ++index)
+        {
+            VulkanPreparedVisibilityDirectDraw draw =
+                records[index].VisibilityDirectDraw;
+            if (!draw.IsValid)
+                throw new VulkanPlanPreconditionException(
+                    "A CPU-direct visibility bin contains invalid frozen indexed arguments.");
+            Api!.CmdDrawIndexed(
+                commandBuffer,
+                draw.IndexCount,
+                draw.InstanceCount,
+                draw.FirstIndex,
+                draw.VertexOffset,
+                draw.FirstInstance);
+        }
+    }
+
+    private void BindAdvancedVisibilityDescriptorSets(
+        CommandBuffer commandBuffer,
+        PipelineBindPoint bindPoint,
+        PipelineLayout layout,
+        in VulkanAdvancedVisibilityOperationPayload payload)
+    {
+        // Set 0 is the standard engine uniform tier and is intentionally not
+        // synthesized here. This compute-only shader pair has no set-0
+        // descriptor dependency. Sets 1/2/3 are the exact externally owned
+        // visibility, resource, and canonical-scene publications captured by
+        // the sealed frame plan.
+        Span<DescriptorSet> sets = stackalloc DescriptorSet[3]
+        {
+            payload.State.DescriptorSet,
+            payload.SceneState.ResourceDescriptorSet,
+            payload.SceneState.GlobalDescriptorSet,
+        };
+        BindDescriptorSetsTracked(
+            commandBuffer,
+            bindPoint,
+            layout,
+            VulkanAdvancedSceneProgramBindingContract.VisibilitySetIndex,
+            sets,
+            ReadOnlySpan<uint>.Empty);
+    }
+
+    private void BindAdvancedVisibilityDescriptorSets(
+        CommandBuffer commandBuffer,
+        PipelineBindPoint bindPoint,
+        PipelineLayout layout,
+        in VulkanAdvancedVisibilityOperationPayload payload,
+        DescriptorSet visibilitySet)
+    {
+        Span<DescriptorSet> sets = stackalloc DescriptorSet[3]
+        {
+            visibilitySet,
+            payload.SceneState.ResourceDescriptorSet,
+            payload.SceneState.GlobalDescriptorSet,
+        };
+        BindDescriptorSetsTracked(commandBuffer, bindPoint, layout,
+            VulkanAdvancedSceneProgramBindingContract.VisibilitySetIndex, sets,
+            ReadOnlySpan<uint>.Empty);
+    }
+
+    private static uint DivideRoundUp(uint value, uint divisor)
+        => checked((value + divisor - 1u) / divisor);
+
+    private readonly record struct AdvancedVisibilityMeshRasterPushConstants(
+        uint MeshArgumentBase,
+        uint ProducerAndOrigin,
+        uint ViewIndex,
+        uint Flags);
+
+    private readonly record struct AdvancedVisibilityPreparationPushConstants(
+        uint ViewIndex,
+        uint PayloadBase,
+        uint PayloadCapacity,
+        uint RangeBase);
 
     /// <summary>
     /// Executes a planned non-graphics secondary range. The dense frame-op
@@ -319,12 +980,17 @@ internal sealed partial class VulkanCommandRuntime
             DstAccessMask = AccessFlags.IndirectCommandReadBit | AccessFlags.ShaderReadBit,
         };
 
+        PipelineStageFlags destinationStages = PipelineStageFlags.DrawIndirectBit;
+        if (DeviceContext.SupportsMeshTaskIndirectCount)
+        {
+            destinationStages |= PipelineStageFlags.TaskShaderBitExt |
+                PipelineStageFlags.MeshShaderBitExt;
+        }
+
         CmdPipelineBarrierTracked(
             state.CommandBuffer,
             PipelineStageFlags.ComputeShaderBit | PipelineStageFlags.TransferBit,
-            PipelineStageFlags.DrawIndirectBit |
-            PipelineStageFlags.TaskShaderBitNV |
-            PipelineStageFlags.MeshShaderBitNV,
+            destinationStages,
             DependencyFlags.None,
             1,
             &memoryBarrier,

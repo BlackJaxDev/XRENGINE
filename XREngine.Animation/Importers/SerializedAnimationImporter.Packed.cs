@@ -10,31 +10,6 @@ public static partial class AnimYamlImporter
 {
     private const string PackedClipSourcePrefix = "m_MuscleClip.m_Clip";
 
-    private static readonly string[] PackedHumanoidTranslationDofBones =
-    [
-        "Spine",
-        "Chest",
-        "UpperChest",
-        "Neck",
-        "Head",
-        "LeftUpperLeg",
-        "LeftLowerLeg",
-        "LeftFoot",
-        "LeftToes",
-        "RightUpperLeg",
-        "RightLowerLeg",
-        "RightFoot",
-        "RightToes",
-        "LeftShoulder",
-        "LeftUpperArm",
-        "LeftLowerArm",
-        "LeftHand",
-        "RightShoulder",
-        "RightUpperArm",
-        "RightLowerArm",
-        "RightHand",
-    ];
-
     private sealed record PackedBindingChannel(
         ImportedAnimationBindingDescriptor Descriptor,
         string Attribute,
@@ -579,9 +554,9 @@ public static partial class AnimYamlImporter
         int boneIndex = translationDofIndex / 3;
         int componentIndex = translationDofIndex % 3;
         if (translationDofIndex >= 0
-            && (uint)boneIndex < (uint)PackedHumanoidTranslationDofBones.Length)
+            && Enum.IsDefined((EHumanoidTranslationDofBone)boneIndex))
         {
-            attribute = $"{PackedHumanoidTranslationDofBones[boneIndex]}TDOF.{"xyz"[componentIndex]}";
+            attribute = $"{(EHumanoidTranslationDofBone)boneIndex}TDOF.{"xyz"[componentIndex]}";
             return true;
         }
 
@@ -591,13 +566,14 @@ public static partial class AnimYamlImporter
     private static bool IsNativePackedHumanoidAttribute(string attribute)
         => TryMapRootMotionComponent(attribute, out _, out _)
             || TryMapIKGoalComponent(attribute, out _, out _, out _)
-            || ImportedHumanoidMuscleMap.TryGetValue(attribute, out _);
+            || ImportedHumanoidMuscleMap.TryGetValue(attribute, out _)
+            || TryMapHumanoidTranslationDofComponent(attribute, out _, out _);
 
     /// <summary>
     /// Packed humanoid bindings use numeric attributes, but the native RootT/RootQ,
-    /// IK, and muscle channels must converge on the same evaluator used by editable
-    /// curves. MotionT/MotionQ and translation-DoF channels stay on the explicit
-    /// adapter path until the Phase 9 avatar solver owns those semantics.
+    /// IK, muscle, and translation-DoF channels converge on the same evaluator used
+    /// by editable curves. MotionT/MotionQ intentionally remain on the explicit
+    /// adapter path because they are not avatar translation-DoF semantics.
     /// </summary>
     private static bool IsNativePackedHumanoidSemanticBinding(ScalarCurve curve)
         => curve.BindingDescriptor is
@@ -990,7 +966,7 @@ public static partial class AnimYamlImporter
             keys,
             PreInfinity: 0,
             PostInfinity: 0,
-            descriptor));
+            BindingDescriptor: descriptor));
         diagnostic = string.Empty;
         return true;
     }

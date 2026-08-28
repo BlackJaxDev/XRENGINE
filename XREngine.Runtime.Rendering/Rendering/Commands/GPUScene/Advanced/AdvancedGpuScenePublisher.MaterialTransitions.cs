@@ -193,6 +193,7 @@ public sealed partial class AdvancedGpuScenePublisher
             plan.World = world;
             plan.PreviousWorld = previousWorld;
             plan.Bounds = bounds;
+            plan.Mesh = mesh;
             plan.Geometry = CreateGeometry(scene, mesh, in bounds, in command);
             plan.RenderState = CreateRenderState(mesh, in command);
             plan.MeshVertexCount = Math.Max(0, mesh?.VertexCount ?? 0);
@@ -204,6 +205,14 @@ public sealed partial class AdvancedGpuScenePublisher
             {
                 reason = "The planned canonical identity-source table is full.";
                 return false;
+            }
+
+            if (!TryValidateCanonicalGeometry(
+                    mesh,
+                    out EAdvancedCanonicalCompatibilityReason geometryReason))
+            {
+                plan.CompatibilityReason = geometryReason;
+                continue;
             }
 
             if (!TryResolvePlannedMaterial(
@@ -1032,6 +1041,7 @@ public sealed partial class AdvancedGpuScenePublisher
         public Matrix4x4 World;
         public Matrix4x4 PreviousWorld;
         public BoundsGpu Bounds;
+        public XRMesh? Mesh;
         public AdvancedGeometryRecord Geometry;
         public AdvancedRenderStateRecord RenderState;
         public ulong StructuralSignature;

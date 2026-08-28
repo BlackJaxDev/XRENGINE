@@ -1,5 +1,18 @@
 #version 450
 
+layout(push_constant, std430) uniform XRAdvancedVisibilityPreparationPush
+{
+    uint viewIndex;
+    uint payloadBase;
+    uint payloadCapacity;
+    uint rangeBase;
+} XR_ADV_VisibilityPush;
+
+#define XR_ADV_VISIBILITY_COUNTER_INDEX XR_ADV_VisibilityPush.viewIndex
+// The Vulkan program preamble selects the backend before this canonical
+// interface is expanded. Set 1 is owned by the frame-slot visibility runtime.
+#include "../Visibility/VisibilityInterface.glslinc"
+
 layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
 
 const uint FLAG_NEW = 1u << 0u;
@@ -9,8 +22,13 @@ const uint FLAG_UNCERTAIN = 1u << 3u;
 const uint FLAG_CONSERVATIVE = 1u << 4u;
 const uint FLAG_EARLY_VISIBLE = 1u << 5u;
 const uint FLAG_DEFERRED = 1u << 6u;
+const uint RETEST_AGE_SHIFT = 16u;
+const uint RETEST_AGE_MASK = 15u << RETEST_AGE_SHIFT;
+const uint RETEST_AGE_LIMIT = 7u;
+const uint PRODUCER_CPU_DIRECT_STATIC_INDEXED = 3u;
+const uint PRODUCER_CPU_DIRECT_PRE_SKINNED = 4u;
 
-struct VisibilityCandidate
+struct XRAdvancedVisibilityCandidate
 {
     uvec2 Draw;
     vec4 BoundsSphere;
@@ -21,7 +39,7 @@ struct VisibilityCandidate
     uint Flags;
 };
 
-struct VisibilityState
+struct XRAdvancedVisibilityState
 {
     uvec2 Draw;
     uvec2 LastVisibleFrame;
@@ -30,195 +48,227 @@ struct VisibilityState
     uint Flags;
 };
 
-layout(std430, binding = 0) readonly buffer Candidates
+bool sphereInsidePlane(vec3 center, float radius, vec4 plane)
 {
-    VisibilityCandidate CandidateRows[];
-};
+    float normalLength = length(plane.xyz);
+    return normalLength > 0.0 &&
+        dot(plane, vec4(center, 1.0)) >= -radius * normalLength;
+}
 
-layout(std430, binding = 1) buffer PersistentVisibility
-{
-    VisibilityState PersistentRows[];
-};
-
-layout(std430, binding = 2) writeonly buffer DeferredCandidates
-{
-    uint DeferredDrawIndices[];
-};
-
-layout(std430, binding = 3) buffer GpuCounters
-{
-    uint EarlyCount;
-    uint DeferredCount;
-    uint LateCount;
-    uint RecoveredCount;
-    uint ValidPixelCount;
-    uint InvalidPixelCount;
-    uint PayloadOverflowCount;
-    uint MaskedCoverageCount;
-    uint DecodeOutOfBoundsCount;
-    uint DepthPyramidBuildCount;
-    uint UnsupportedDisplacementCount;
-    uint ReservedCounters[5];
-};
-
-layout(std430, binding = 4) writeonly buffer EarlyVisiblePayloadIndices
-{
-    uint EarlyVisibleIndices[];
-};
-
-layout(binding = 0) uniform sampler2D PreviousDepthPyramid;
-
-uniform mat4 PreviousViewProjection;
-uniform vec4 FrustumPlanes[6];
-uniform uvec2 FrameId;
-uniform uvec2 ActiveViewMask;
-uniform uint CandidateCount;
-uniform uint PersistentStateBase;
-uniform uint PersistentStateCapacity;
-uniform uint EarlyVisibleCapacity;
-uniform uint DeferredCapacity;
-uniform uint PreviousDepthPyramidValid;
-uniform uint DepthZeroToOne;
-uniform uint ReversedDepth;
-
+// Advanced matrices use row-vector convention. Each clip coordinate is the
+// dot product with one GLSL matrix column, so the Vulkan 0..w clip planes are
+// formed directly from those columns. The sphere test remains conservative at
+// the boundary and rejects malformed bounds instead of publishing bad work.
 bool sphereInsideFrustum(vec4 sphere)
 {
-    for (uint plane = 0u; plane < 6u; ++plane)
+    if (any(isnan(sphere)) || any(isinf(sphere)) || sphere.w < 0.0 ||
+        XR_ADV_VisibilityPush.viewIndex >= uint(XR_ADV_Views.records.length()))
     {
-        if (dot(FrustumPlanes[plane].xyz, sphere.xyz) +
-            FrustumPlanes[plane].w < -sphere.w)
-            return false;
+        return false;
     }
-    return true;
+
+    mat4 viewProjection = XR_ADV_LoadView(XR_ADV_VisibilityPush.viewIndex).viewProjectionUnjittered;
+    vec4 clipX = viewProjection[0];
+    vec4 clipY = viewProjection[1];
+    vec4 clipZ = viewProjection[2];
+    vec4 clipW = viewProjection[3];
+    return sphereInsidePlane(sphere.xyz, sphere.w, clipW + clipX) &&
+        sphereInsidePlane(sphere.xyz, sphere.w, clipW - clipX) &&
+        sphereInsidePlane(sphere.xyz, sphere.w, clipW + clipY) &&
+        sphereInsidePlane(sphere.xyz, sphere.w, clipW - clipY) &&
+        sphereInsidePlane(sphere.xyz, sphere.w, clipZ) &&
+        sphereInsidePlane(sphere.xyz, sphere.w, clipW - clipZ);
 }
 
-bool previousDepthOccludes(vec4 sphere)
+bool candidateIncludesSelectedView(uvec2 viewMask)
 {
-    if (PreviousDepthPyramidValid == 0u)
-        return false;
-
-    vec4 clip =
-        PreviousViewProjection * vec4(sphere.xyz, 1.0);
-    if (clip.w <= 0.0)
-        return false;
-
-    vec3 ndc = clip.xyz / clip.w;
-    vec2 uv = ndc.xy * 0.5 + 0.5;
-    if (any(lessThan(uv, vec2(0.0))) ||
-        any(greaterThan(uv, vec2(1.0))))
-        return false;
-
-    float projectedRadius = max(
-        sphere.w / max(abs(clip.w), 0.00001),
-        0.000001);
-    float diameterPixels =
-        projectedRadius *
-        float(max(
-            textureSize(PreviousDepthPyramid, 0).x,
-            textureSize(PreviousDepthPyramid, 0).y));
-    float mip = clamp(
-        floor(log2(max(diameterPixels, 1.0))),
-        0.0,
-        float(textureQueryLevels(PreviousDepthPyramid) - 1));
-    float previousDepth =
-        textureLod(PreviousDepthPyramid, uv, mip).r;
-    float centerDepth = DepthZeroToOne != 0u
-        ? ndc.z
-        : ndc.z * 0.5 + 0.5;
-    float nearestDepth = ReversedDepth != 0u
-        ? centerDepth + projectedRadius
-        : centerDepth - projectedRadius;
-    return ReversedDepth != 0u
-        ? nearestDepth < previousDepth
-        : nearestDepth > previousDepth;
+    uint viewId = XR_ADV_LoadView(XR_ADV_VisibilityPush.viewIndex).viewId;
+    if (viewId < 32u)
+        return (viewMask.x & (1u << viewId)) != 0u;
+    if (viewId < 64u)
+        return (viewMask.y & (1u << (viewId - 32u))) != 0u;
+    return false;
 }
 
-void appendEarly(uint candidateIndex)
+bool appendEarly(uint candidateIndex)
 {
-    uint outputIndex = atomicAdd(EarlyCount, 1u);
-    if (outputIndex >= EarlyVisibleCapacity)
+    uint capacity = XR_ADV_VisibilityPush.payloadCapacity;
+    uint observed = atomicAdd(XR_ADV_VisibilityCounters.earlyDraws, 0u);
+    while (observed < capacity)
     {
-        atomicAdd(PayloadOverflowCount, 1u);
-        return;
+        uint prior = atomicCompSwap(
+            XR_ADV_VisibilityCounters.earlyDraws,
+            observed,
+            observed + 1u);
+        if (prior == observed)
+        {
+            XR_ADV_VisibilityVisibleIndices.records[
+                XR_ADV_VisibilityPush.payloadBase + observed] = candidateIndex;
+            return true;
+        }
+        observed = prior;
     }
-    EarlyVisibleIndices[outputIndex] = candidateIndex;
+
+    if (observed >= capacity)
+    {
+        atomicAdd(XR_ADV_VisibilityCounters.payloadOverflow, 1u);
+    }
+    return false;
 }
 
-void appendDeferred(uint candidateIndex)
+bool appendDeferred(uint candidateIndex)
 {
-    uint outputIndex = atomicAdd(DeferredCount, 1u);
-    if (outputIndex >= DeferredCapacity)
+    uint capacity = XR_ADV_VisibilityPush.payloadCapacity;
+    uint observed = atomicAdd(XR_ADV_VisibilityCounters.deferredCandidates, 0u);
+    while (observed < capacity)
     {
-        atomicAdd(PayloadOverflowCount, 1u);
-        return;
+        uint prior = atomicCompSwap(
+            XR_ADV_VisibilityCounters.deferredCandidates,
+            observed,
+            observed + 1u);
+        if (prior == observed)
+        {
+            XR_ADV_VisibilityDeferredIndices.records[
+                XR_ADV_VisibilityPush.payloadBase + observed] = candidateIndex;
+            return true;
+        }
+        observed = prior;
     }
-    DeferredDrawIndices[outputIndex] = candidateIndex;
+
+    if (observed >= capacity)
+    {
+        atomicAdd(XR_ADV_VisibilityCounters.payloadOverflow, 1u);
+    }
+    return false;
 }
 
 void main()
 {
     uint candidateIndex = gl_GlobalInvocationID.x;
-    if (candidateIndex >= CandidateCount)
+    uint candidateCount =
+        uint(XR_ADV_VisibilityCandidates.records.length()) / 20u;
+    if (candidateIndex >= candidateCount)
         return;
 
-    VisibilityCandidate candidate = CandidateRows[candidateIndex];
+    XRAdvancedVisibilityCandidate candidate;
+    candidate.Draw = uvec2(
+        XR_ADV_VisibilityCandidates.records[candidateIndex * 20u],
+        XR_ADV_VisibilityCandidates.records[candidateIndex * 20u + 1u]);
+    candidate.BoundsSphere = uintBitsToFloat(uvec4(
+        XR_ADV_VisibilityCandidates.records[candidateIndex * 20u + 4u],
+        XR_ADV_VisibilityCandidates.records[candidateIndex * 20u + 5u],
+        XR_ADV_VisibilityCandidates.records[candidateIndex * 20u + 6u],
+        XR_ADV_VisibilityCandidates.records[candidateIndex * 20u + 7u]));
+    candidate.BoundsMin = uintBitsToFloat(uvec4(
+        XR_ADV_VisibilityCandidates.records[candidateIndex * 20u + 8u],
+        XR_ADV_VisibilityCandidates.records[candidateIndex * 20u + 9u],
+        XR_ADV_VisibilityCandidates.records[candidateIndex * 20u + 10u],
+        XR_ADV_VisibilityCandidates.records[candidateIndex * 20u + 11u]));
+    candidate.BoundsMax = uintBitsToFloat(uvec4(
+        XR_ADV_VisibilityCandidates.records[candidateIndex * 20u + 12u],
+        XR_ADV_VisibilityCandidates.records[candidateIndex * 20u + 13u],
+        XR_ADV_VisibilityCandidates.records[candidateIndex * 20u + 14u],
+        XR_ADV_VisibilityCandidates.records[candidateIndex * 20u + 15u]));
+    candidate.ViewMask = uvec2(
+        XR_ADV_VisibilityCandidates.records[candidateIndex * 20u + 16u],
+        XR_ADV_VisibilityCandidates.records[candidateIndex * 20u + 17u]);
+    candidate.BvhLeaf = XR_ADV_VisibilityCandidates.records[candidateIndex * 20u + 18u];
+    candidate.Flags = XR_ADV_VisibilityCandidates.records[candidateIndex * 20u + 19u];
     if (candidate.Draw.x == 0u)
     {
-        atomicAdd(DecodeOutOfBoundsCount, 1u);
+        atomicAdd(XR_ADV_VisibilityCounters.decodeOutOfBounds, 1u);
         return;
     }
 
-    uint persistentIndex =
-        PersistentStateBase + candidate.Draw.x - 1u;
-    if (persistentIndex >= PersistentStateCapacity)
+    // History is dense per candidate, not indexed by the stable draw handle.
+    // Stable handles may contain tombstone gaps and would let one view's
+    // history overlap the next view's segment.
+    uint persistentIndex = XR_ADV_VisibilityPush.payloadBase + candidateIndex;
+    uint persistentStateCapacity =
+        uint(XR_ADV_VisibilityPersistentState.records.length()) / 8u;
+    if (persistentIndex >= persistentStateCapacity)
     {
-        atomicAdd(DecodeOutOfBoundsCount, 1u);
+        atomicAdd(XR_ADV_VisibilityCounters.decodeOutOfBounds, 1u);
         return;
     }
 
-    VisibilityState state = PersistentRows[persistentIndex];
-    if (all(equal(
-            candidate.ViewMask & ActiveViewMask,
-            uvec2(0u))))
+    XRAdvancedVisibilityState state;
+    uint persistentWord = persistentIndex * 8u;
+    state.Draw = uvec2(
+        XR_ADV_VisibilityPersistentState.records[persistentWord],
+        XR_ADV_VisibilityPersistentState.records[persistentWord + 1u]);
+    state.LastVisibleFrame = uvec2(
+        XR_ADV_VisibilityPersistentState.records[persistentWord + 2u],
+        XR_ADV_VisibilityPersistentState.records[persistentWord + 3u]);
+    state.LastTestedFrame = uvec2(
+        XR_ADV_VisibilityPersistentState.records[persistentWord + 4u],
+        XR_ADV_VisibilityPersistentState.records[persistentWord + 5u]);
+    state.DepthPyramidGeneration = XR_ADV_VisibilityPersistentState.records[persistentWord + 6u];
+    state.Flags = XR_ADV_VisibilityPersistentState.records[persistentWord + 7u];
+    if (!candidateIncludesSelectedView(candidate.ViewMask))
     {
         state.Draw = candidate.Draw;
-        state.LastTestedFrame = FrameId;
+        state.LastTestedFrame = uvec2(0u);
         state.Flags = 0u;
-        PersistentRows[persistentIndex] = state;
+        XR_ADV_VisibilityPersistentState.records[persistentWord] = state.Draw.x;
+        XR_ADV_VisibilityPersistentState.records[persistentWord + 1u] = state.Draw.y;
+        XR_ADV_VisibilityPersistentState.records[persistentWord + 4u] = state.LastTestedFrame.x;
+        XR_ADV_VisibilityPersistentState.records[persistentWord + 5u] = state.LastTestedFrame.y;
+        XR_ADV_VisibilityPersistentState.records[persistentWord + 7u] = state.Flags;
         return;
     }
 
-    bool conservative =
-        (candidate.Flags &
-         (FLAG_NEW |
-          FLAG_RESIZED |
-          FLAG_INVALID_HISTORY |
-          FLAG_UNCERTAIN |
-          FLAG_CONSERVATIVE)) != 0u;
     bool frustumVisible =
         sphereInsideFrustum(candidate.BoundsSphere);
-    bool occluded =
-        !conservative &&
-        frustumVisible &&
-        previousDepthOccludes(candidate.BoundsSphere);
 
+    bool sameDraw = all(equal(state.Draw, candidate.Draw));
     state.Draw = candidate.Draw;
-    state.LastTestedFrame = FrameId;
-    if (frustumVisible && !occluded)
+    state.LastTestedFrame = uvec2(0u);
+    bool wasEarlyVisible = sameDraw &&
+        (state.Flags & FLAG_EARLY_VISIBLE) != 0u;
+    uint retestAge = (state.Flags & RETEST_AGE_MASK) >> RETEST_AGE_SHIFT;
+    bool conservativeVisible =
+        (candidate.Flags & FLAG_CONSERVATIVE) != 0u;
+    bool forceRetest = !conservativeVisible &&
+        (!wasEarlyVisible ||
+         (candidate.Flags & (FLAG_NEW | FLAG_RESIZED |
+             FLAG_INVALID_HISTORY | FLAG_UNCERTAIN)) != 0u ||
+         retestAge >= RETEST_AGE_LIMIT);
+    uint producer = XR_ADV_VisibilityProducers.records[candidateIndex];
+    bool cpuDirect = producer == PRODUCER_CPU_DIRECT_STATIC_INDEXED ||
+        producer == PRODUCER_CPU_DIRECT_PRE_SKINNED;
+    if (cpuDirect)
+        forceRetest = false;
+    if (frustumVisible && !forceRetest)
     {
-        appendEarly(candidateIndex);
-        state.LastVisibleFrame = FrameId;
-        state.Flags = FLAG_EARLY_VISIBLE;
+        if (appendEarly(candidateIndex))
+        {
+            state.LastVisibleFrame = uvec2(0u);
+            state.Flags = FLAG_EARLY_VISIBLE |
+                (min(retestAge + 1u, RETEST_AGE_LIMIT) << RETEST_AGE_SHIFT);
+        }
+        else
+        {
+            state.Flags = 0u;
+        }
     }
     else if (frustumVisible)
     {
-        appendDeferred(candidateIndex);
-        state.Flags = FLAG_DEFERRED;
+        state.Flags = appendDeferred(candidateIndex)
+            ? FLAG_DEFERRED
+            : 0u;
     }
     else
     {
         state.Flags = 0u;
     }
 
-    PersistentRows[persistentIndex] = state;
+    XR_ADV_VisibilityPersistentState.records[persistentWord] = state.Draw.x;
+    XR_ADV_VisibilityPersistentState.records[persistentWord + 1u] = state.Draw.y;
+    XR_ADV_VisibilityPersistentState.records[persistentWord + 2u] = state.LastVisibleFrame.x;
+    XR_ADV_VisibilityPersistentState.records[persistentWord + 3u] = state.LastVisibleFrame.y;
+    XR_ADV_VisibilityPersistentState.records[persistentWord + 4u] = state.LastTestedFrame.x;
+    XR_ADV_VisibilityPersistentState.records[persistentWord + 5u] = state.LastTestedFrame.y;
+    XR_ADV_VisibilityPersistentState.records[persistentWord + 6u] = state.DepthPyramidGeneration;
+    XR_ADV_VisibilityPersistentState.records[persistentWord + 7u] = state.Flags;
 }

@@ -95,6 +95,7 @@ public sealed class AdvancedIndirectRangePlanner
             }
 
             AdvancedIndirectRangeKey key = new(
+                payload.Geometry,
                 payload.RasterStateClass,
                 payload.Coverage,
                 payload.CullMode,
@@ -114,9 +115,7 @@ public sealed class AdvancedIndirectRangePlanner
                     key,
                     FirstPayloadIndex: 0u,
                     PayloadCapacity: 0u,
-                    ArgumentBufferOffset: checked(
-                        argumentBufferBase +
-                        (uint)rangeIndex * argumentStride),
+                    ArgumentBufferOffset: 0u,
                     CountBufferOffset: checked(
                         countBufferBase +
                         (uint)rangeIndex * countStride),
@@ -134,7 +133,12 @@ public sealed class AdvancedIndirectRangePlanner
         for (int rangeIndex = 0; rangeIndex < _rangeCount; rangeIndex++)
         {
             AdvancedIndirectRange range = _ranges[rangeIndex];
-            _ranges[rangeIndex] = range with { FirstPayloadIndex = prefix };
+            _ranges[rangeIndex] = range with
+            {
+                FirstPayloadIndex = prefix,
+                ArgumentBufferOffset = checked(
+                    argumentBufferBase + prefix * argumentStride),
+            };
             _writeCursors[rangeIndex] = prefix;
             prefix = checked(prefix + range.PayloadCapacity);
         }
@@ -145,6 +149,7 @@ public sealed class AdvancedIndirectRangePlanner
         {
             EAdvancedGeometryProducer producer = _producersByPayload[payloadIndex];
             int rangeIndex = FindRange(new AdvancedIndirectRangeKey(
+                payloads[payloadIndex].Geometry,
                 payloads[payloadIndex].RasterStateClass,
                 payloads[payloadIndex].Coverage,
                 payloads[payloadIndex].CullMode,
@@ -205,6 +210,8 @@ public sealed class AdvancedIndirectRangePlanner
         for (int i = 0; i < _rangeCount; i++)
         {
             AdvancedIndirectRange range = _ranges[i];
+            HashValue(ref hash, range.Key.Geometry.Index);
+            HashValue(ref hash, range.Key.Geometry.Generation);
             HashValue(ref hash, range.Key.RasterStateClass);
             HashValue(ref hash, (uint)range.Key.Coverage);
             HashValue(ref hash, range.Key.CullMode);

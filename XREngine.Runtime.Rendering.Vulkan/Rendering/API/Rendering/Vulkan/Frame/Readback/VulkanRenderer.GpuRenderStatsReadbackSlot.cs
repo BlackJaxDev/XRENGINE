@@ -1,4 +1,5 @@
 using Silk.NET.Vulkan;
+using XREngine.Rendering.Diagnostics;
 
 namespace XREngine.Rendering.Vulkan;
 
@@ -18,4 +19,6 @@ internal sealed class GpuRenderStatsReadbackSlot
     public string SourceName = string.Empty;
     public ulong SourceHandle;
     public ulong SourceFrameId;
+    public GpuDiagnosticReadbackPlanNode PlanNode;
+    public VulkanGpuDiagnosticReadbackReservation Reservation;
 }

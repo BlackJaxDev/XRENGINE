@@ -24,7 +24,11 @@ internal sealed partial class VulkanFrameLoop : IVulkanTargetOutputHost
         => _outputRuntime.CaptureStreamlineDeviceBinding(_deviceContext);
     public CommandBuffer[] CreateDesktopOutputArtifacts(int imageCount)
         => _commandRuntime.CreateDesktopOutputArtifacts(
-            Api, _deviceContext, _resourceRuntime, imageCount);
+            Api,
+            _deviceContext,
+            _resourceRuntime,
+            imageCount,
+            _outputRuntime.Desktop.Swapchain.Handle);
     public int ReserveOpenXrFrameDataSlots(int desktopImageCount)
     {
         int desktopSlots = Math.Max(Math.Max(desktopImageCount, 2), 1);

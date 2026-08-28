@@ -5,7 +5,7 @@ namespace XREngine.Components.Animation;
 
 /// <summary>
 /// Allocation-free diagnostic snapshot separating authored goal data, body-frame conversion,
-/// and optional post-pose contact compensation.
+/// optional post-pose contact compensation, and avatar feet-spacing correction.
 /// </summary>
 public readonly record struct HumanoidIKGoalDiagnosticState(
     ELimbEndEffector Goal,
@@ -14,6 +14,7 @@ public readonly record struct HumanoidIKGoalDiagnosticState(
     Vector3 BodyFrameWorldPosition,
     Quaternion BodyFrameWorldRotation,
     Vector3 ContactCompensationOffset,
+    Vector3 FeetSpacingCompensationOffset,
     Vector3 FinalWorldPosition,
     Quaternion FinalWorldRotation,
     EHumanoidIKGoalApplicationStatus Status)
@@ -25,6 +26,7 @@ public readonly record struct HumanoidIKGoalDiagnosticState(
             Quaternion.Identity,
             Vector3.Zero,
             Quaternion.Identity,
+            Vector3.Zero,
             Vector3.Zero,
             Vector3.Zero,
             Quaternion.Identity,

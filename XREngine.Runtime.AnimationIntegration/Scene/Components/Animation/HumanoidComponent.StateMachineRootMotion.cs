@@ -51,14 +51,20 @@ public partial class HumanoidComponent
     {
         lock (_poseEvaluationSyncRoot)
         {
-            ApplyMusclePose();
-            _skipNextScenePoseAfterImmediateStateMachineEvaluation = true;
+            try
+            {
+                ApplyMusclePose();
+                _skipNextScenePoseAfterImmediateStateMachineEvaluation = true;
+            }
+            finally
+            {
+                ClearImportedTranslationDofState();
+            }
         }
     }
 
     private bool TryFinalizeStateMachineRootMotionFrame(
-        CompiledHumanoidAvatarDefinition compiled,
-        ReadOnlySpan<float> finalMusclePose)
+        CompiledHumanoidAvatarDefinition compiled)
     {
         HumanoidStateMachineRootMotionFrame? frame = _pendingStateMachineRootMotionFrame;
         object? owner = _pendingStateMachineRootMotionOwner;
@@ -67,14 +73,28 @@ public partial class HumanoidComponent
 
         _pendingStateMachineRootMotionFrame = null;
         _pendingStateMachineRootMotionOwner = null;
-        ResolveStateMachineFeetProjection(compiled, frame, finalMusclePose);
-
         SceneNode? hipsNode = compiled.GetNode(EHumanoidAvatarBoneRole.Hips);
         if (hipsNode is null)
         {
             PublishComposedStateMachineRoot(owner, HumanoidProjectedRootPose.Identity);
             return true;
         }
+
+        // Equivalent full-weight override leaves share one Body/root allocation.
+        // Use the already-finalized native workspace rather than evaluating each
+        // leaf's projection-only sidecar. This keeps an identical transition or
+        // blend independent of leaf count while retaining one final TDoF solve.
+        if (TryGetEquivalentFullWeightOverride(frame, out HumanoidStateMachineRootMotionLeafState? directLeaf)
+            && directLeaf is not null)
+        {
+            // A full-weight equivalent state must follow the direct clip path exactly.
+            // In particular, do not first run leaf feet projection: that sidecar is
+            // only for multi-leaf composition and would add a root-Y offset absent
+            // from the corresponding direct exact seek.
+            return ApplyFullWeightSingleOverride(compiled, hipsNode, owner, directLeaf);
+        }
+
+        ResolveStateMachineFeetProjection(compiled, frame);
 
         TransformBase hipsTransform = hipsNode.Transform;
         if (hipsTransform.IsLocalMatrixDirty)
@@ -128,7 +148,6 @@ public partial class HumanoidComponent
             float weight = leaf.Weight;
             if (!TryCalculateLeafHipsLocalPose(
                 compiled,
-                hipsNode,
                 leaf,
                 out Vector3 leafTranslation,
                 out Quaternion leafRotation))
@@ -182,7 +201,6 @@ public partial class HumanoidComponent
             float weight = leaf.Weight;
             if (TryCalculateLeafHipsLocalPose(
                 compiled,
-                hipsNode,
                 leaf,
                 out Vector3 leafTranslation,
                 out Quaternion leafRotation))
@@ -244,12 +262,116 @@ public partial class HumanoidComponent
         return true;
     }
 
+    private static bool TryGetEquivalentFullWeightOverride(
+        HumanoidStateMachineRootMotionFrame frame,
+        out HumanoidStateMachineRootMotionLeafState? result)
+    {
+        result = null;
+        float totalWeight = 0.0f;
+        ReadOnlySpan<HumanoidStateMachineRootMotionLeafState?> leaves = frame.Leaves;
+        for (int i = 0; i < leaves.Length; i++)
+        {
+            HumanoidStateMachineRootMotionLeafState? leaf = leaves[i];
+            if (leaf is null || leaf.Weight <= 0.0f)
+                continue;
+
+            if (!float.IsFinite(leaf.Weight)
+                || leaf.ContributionType != EHumanoidMotionContributionType.Override)
+                return false;
+
+            if (result is not null
+                && (result.Policy != leaf.Policy
+                    || !result.CanonicalBody.Equals(leaf.CanonicalBody)
+                    || !result.CurrentBody.Equals(leaf.CurrentBody)
+                    || result.SourceLoopCycle != leaf.SourceLoopCycle
+                    || result.CurrentLoopPoseCorrection != leaf.CurrentLoopPoseCorrection
+                    || result.BodyAllocationProjectedRootPose != leaf.BodyAllocationProjectedRootPose
+                    || result.UnwrappedProjectedRootPose != leaf.UnwrappedProjectedRootPose
+                    || !result.CanonicalProjectionMuscles.SequenceEqual(leaf.CanonicalProjectionMuscles)
+                    || !result.CurrentProjectionMuscles.SequenceEqual(leaf.CurrentProjectionMuscles)))
+                return false;
+
+            result = leaf;
+            totalWeight += leaf.Weight;
+        }
+
+        return result is not null && MathF.Abs(totalWeight - 1.0f) <= 0.000001f;
+    }
+
+    private bool ApplyFullWeightSingleOverride(
+        CompiledHumanoidAvatarDefinition compiled,
+        SceneNode hipsNode,
+        object owner,
+        HumanoidStateMachineRootMotionLeafState leaf)
+    {
+        SetLeafBodyEvaluationFields(leaf, useCanonicalSample: false);
+        Matrix4x4 localPose = ApplyImportedBodyLoopPoseCorrection(
+            CalculateImportedBodyAllocatedLocalPose(
+                compiled,
+                _nativePoseWorkspace.GetLocalMatrix(EHumanoidAvatarBoneRole.Hips),
+                leaf.Policy),
+            leaf.CurrentLoopPoseCorrection);
+        if (!Matrix4x4.Decompose(localPose, out _, out Quaternion rotation, out Vector3 translation)
+            || !IsFinite(translation)
+            || !IsFiniteNonZero(rotation))
+        {
+            LogRejectedImportedHumanoidFrame("state-machine Body/root allocation was non-finite or unsolvable");
+            return false;
+        }
+
+        TransformBase hipsTransform = hipsNode.Transform;
+        rotation = Quaternion.Normalize(rotation);
+        if (hipsNode.GetTransformAs<Transform>(true) is Transform transform)
+            transform.SetLocalTranslationRotation(translation, rotation);
+        else
+        {
+            if (hipsTransform.IsLocalMatrixDirty)
+                hipsTransform.RecalcLocal();
+            if (!Matrix4x4.Decompose(hipsTransform.LocalMatrix, out Vector3 scale, out _, out _))
+                return false;
+            hipsTransform.DeriveLocalMatrix(
+                Matrix4x4.CreateScale(scale)
+                * Matrix4x4.CreateFromQuaternion(rotation)
+                * Matrix4x4.CreateTranslation(translation));
+        }
+
+        _currentImportedMappedBodySample = leaf.CurrentBody;
+        CalculateLeafConvertedBodyDelta(compiled, leaf, out _currentConvertedBodyTranslationDelta, out _currentConvertedBodyRotationDelta);
+        HumanoidProjectedRootPose projectedRoot = leaf.UnwrappedProjectedRootPose;
+        if (leaf.SourceLoopCycle == 0L)
+        {
+            // The first exact state seek may expose an initialized-but-stale
+            // unwrapped cache. Reconstruct the within-cycle projection from the same
+            // sampled Body pair and compiled policy as direct playback. A nonzero
+            // source cycle retains the leaf's temporal unwrapped accumulation.
+            projectedRoot = CalculateProjectedRootPose(
+                leaf.CurrentBody.Position,
+                leaf.CanonicalBody.Position,
+                leaf.CurrentBody.Rotation,
+                leaf.CanonicalBody.Rotation,
+                compiled.HumanScale * compiled.ModelUnitsPerMeter,
+                1.0f,
+                leaf.Policy);
+        }
+        if (!leaf.Policy.BakePositionYIntoPose
+            && leaf.Policy.PositionYBasis is EImportedHumanoidRootPositionYBasis.Feet)
+        {
+            // Direct playback exposes the feet-projection channel even when its
+            // canonical-relative height is zero. The single-state path bypasses
+            // multi-leaf feet sampling, but preserves that channel contract.
+            projectedRoot = new HumanoidProjectedRootPose(
+                projectedRoot.Position,
+                projectedRoot.Rotation,
+                projectedRoot.Channels | EHumanoidProjectedRootChannels.PositionY);
+        }
+        PublishComposedStateMachineRoot(owner, projectedRoot);
+        return true;
+    }
+
     private void ResolveStateMachineFeetProjection(
         CompiledHumanoidAvatarDefinition compiled,
-        HumanoidStateMachineRootMotionFrame frame,
-        ReadOnlySpan<float> finalMusclePose)
+        HumanoidStateMachineRootMotionFrame frame)
     {
-        bool changedPose = false;
         ReadOnlySpan<HumanoidStateMachineRootMotionLeafState?> leaves = frame.Leaves;
         for (int i = 0; i < leaves.Length; i++)
         {
@@ -260,54 +382,59 @@ public partial class HumanoidComponent
                 || leaf.Policy.PositionYBasis is not EImportedHumanoidRootPositionYBasis.Feet)
                 continue;
 
-            _activeImportedBodyProjectionPolicy = leaf.Policy;
-            _hasCanonicalProjectionMuscleValueSnapshot =
-                leaf.CanonicalProjectionMuscles.Length >= MuscleValueCount;
-            if (_hasCanonicalProjectionMuscleValueSnapshot)
-                leaf.CanonicalProjectionMuscles[..MuscleValueCount]
-                    .CopyTo(_canonicalProjectionMuscleValueSnapshot);
-            if (TryEvaluateCalibratedProjectedRootYDelta(
-                compiled,
-                leaf.CurrentProjectionMuscles,
-                out float calibratedY))
-            {
-                leaf.AddProjectedFeetDelta(calibratedY);
-                continue;
-            }
-
             if (!leaf.TryGetCanonicalFeetY(out float canonicalFeetY))
             {
-                ApplyMuscleSnapshot(compiled, leaf.CanonicalProjectionMuscles);
+                if (!TryEvaluateNativeHumanoidPose(
+                        compiled,
+                        leaf.CanonicalProjectionMuscles,
+                        includeTranslationDof: false,
+                        commit: false))
+                    continue;
                 SetLeafBodyEvaluationFields(leaf, useCanonicalSample: true);
                 if (!TryCalculateProjectedFeetHeight(compiled, leaf.Policy, out canonicalFeetY))
                     continue;
                 leaf.SetCanonicalFeetY(canonicalFeetY);
-                changedPose = true;
             }
 
-            ApplyMuscleSnapshot(compiled, leaf.CurrentProjectionMuscles);
+            if (!TryEvaluateNativeHumanoidPose(
+                    compiled,
+                    leaf.CurrentProjectionMuscles,
+                    // Translation DoF is staged only after leaf blending. Applying the
+                    // final blended value to every leaf would make root composition
+                    // depend on leaf count and order; the final authored pose still
+                    // consumes the blended DoF through the shared native solver.
+                    includeTranslationDof: false,
+                    commit: false))
+                continue;
             SetLeafBodyEvaluationFields(leaf, useCanonicalSample: false);
             if (TryCalculateProjectedFeetHeight(compiled, leaf.Policy, out float currentFeetY))
                 leaf.AddProjectedFeetDelta(currentFeetY - canonicalFeetY);
-            changedPose = true;
         }
-
-        if (changedPose)
-            ApplyMuscleSnapshot(compiled, finalMusclePose);
     }
 
     private bool TryCalculateLeafHipsLocalPose(
         CompiledHumanoidAvatarDefinition compiled,
-        SceneNode hipsNode,
         HumanoidStateMachineRootMotionLeafState leaf,
         out Vector3 translation,
         out Quaternion rotation)
     {
+        if (!TryEvaluateNativeHumanoidPose(
+                compiled,
+                leaf.CurrentProjectionMuscles,
+                includeTranslationDof: false,
+                commit: false))
+        {
+            translation = Vector3.Zero;
+            rotation = Quaternion.Identity;
+            return false;
+        }
+
         SetLeafBodyEvaluationFields(leaf, useCanonicalSample: false);
-        Matrix4x4 localPose = CalculateImportedBodyLocalPose(
-            compiled,
-            hipsNode,
-            leaf.Policy,
+        Matrix4x4 localPose = ApplyImportedBodyLoopPoseCorrection(
+            CalculateImportedBodyAllocatedLocalPose(
+                compiled,
+                _nativePoseWorkspace.GetLocalMatrix(EHumanoidAvatarBoneRole.Hips),
+                leaf.Policy),
             leaf.CurrentLoopPoseCorrection);
         if (!Matrix4x4.Decompose(localPose, out _, out rotation, out translation)
             || !IsFinite(translation)

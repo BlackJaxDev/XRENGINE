@@ -66,6 +66,9 @@ internal sealed class VulkanAdvancedSceneResourceRuntime
 
     internal bool IsReady { get; private set; }
 
+    /// <summary>Owning resource generation for adjacent advanced ABI services.</summary>
+    internal VulkanResourceRuntime Resources => _resources;
+
     internal EVulkanAdvancedSceneResourceFailure AvailabilityFailure { get; private set; }
 
     internal string AvailabilityReason { get; private set; } =
@@ -216,6 +219,10 @@ internal sealed class VulkanAdvancedSceneResourceRuntime
         ulong frameGeneration,
         AdvancedSharedGpuSceneDatabase database,
         in AdvancedGpuScenePublicationReference publication,
+        ReadOnlySpan<BackendReadyCanonicalViewRecord> views,
+        in BackendReadyCanonicalFrameRecord frame,
+        ReadOnlySpan<BackendReadyCanonicalPassRecord> passes,
+        int diagnosticCount,
         out VulkanAdvancedScenePublicationUse use,
         out EVulkanAdvancedSceneResourceFailure failure,
         out string reason)
@@ -252,8 +259,12 @@ internal sealed class VulkanAdvancedSceneResourceRuntime
             VulkanAdvancedSceneResourceSlot slot = _slots[frameSlot];
             if (slot.Quarantined)
             {
-                failure = EVulkanAdvancedSceneResourceFailure.NativeFault;
-                reason = "The advanced-scene descriptor set for this frame slot is quarantined after a native publication fault.";
+                failure = slot.TransactionIntegrityFault
+                    ? EVulkanAdvancedSceneResourceFailure.TransactionIntegrityFailure
+                    : EVulkanAdvancedSceneResourceFailure.NativeFault;
+                reason = slot.TransactionIntegrityFault
+                    ? "The advanced-scene frame slot is quarantined because its frame-data transaction could not be rolled back."
+                    : "The advanced-scene descriptor set for this frame slot is quarantined after a native publication fault.";
                 return false;
             }
             if (slot.FrameGeneration != frameGeneration)
@@ -316,6 +327,10 @@ internal sealed class VulkanAdvancedSceneResourceRuntime
                     frameSlot,
                     frameGeneration,
                     snapshot,
+                    views,
+                    in frame,
+                    passes,
+                    diagnosticCount,
                     out VulkanAdvancedScenePublicationState state,
                     out failure,
                     out reason))
@@ -410,6 +425,10 @@ internal sealed class VulkanAdvancedSceneResourceRuntime
         int frameSlot,
         ulong frameGeneration,
         AdvancedGpuScenePublicationSnapshot snapshot,
+        ReadOnlySpan<BackendReadyCanonicalViewRecord> views,
+        in BackendReadyCanonicalFrameRecord frame,
+        ReadOnlySpan<BackendReadyCanonicalPassRecord> passes,
+        int diagnosticCount,
         out VulkanAdvancedScenePublicationState state,
         out EVulkanAdvancedSceneResourceFailure failure,
         out string reason)
@@ -489,57 +508,177 @@ internal sealed class VulkanAdvancedSceneResourceRuntime
             return false;
         }
 
-        ulong requiredStorage = CalculatePublicationStorageBytes(snapshot);
-        if (requiredStorage > StorageCapacityPerFrameSlot ||
-            slot.StorageBytesConsumed >
-                StorageCapacityPerFrameSlot - requiredStorage)
+        if (diagnosticCount < 0 || frame.FrameGeneration == 0u)
         {
-            failure =
-                EVulkanAdvancedSceneResourceFailure.FrameStorageCapacity;
-            reason = $"Frame-slot advanced-scene storage requires {requiredStorage} more bytes after {slot.StorageBytesConsumed} of {StorageCapacityPerFrameSlot} bytes were consumed.";
+            failure = EVulkanAdvancedSceneResourceFailure.InvalidPublication;
+            reason = "The canonical frame metadata is invalid for Vulkan publication.";
             return false;
         }
 
-        // Arena writes consume offsets even when a later native descriptor
-        // update is rejected. Reserve the complete transaction conservatively
-        // so retries cannot trigger hidden in-frame growth.
-        slot.StorageBytesConsumed += requiredStorage;
-        if (!TryUploadPublicationTables(
-                frameSlot,
+        VulkanAdvancedScenePublicationAllocationPlan allocationPlan =
+            BuildPublicationAllocationPlan(
+                slot,
                 snapshot,
                 textureHighWater,
                 samplerHighWater,
-                out VulkanFrameDataSlice materialSlice,
+                views.Length,
+                passes.Length);
+        ulong requiredStorage = allocationPlan.RequiredBytes;
+        VulkanFrameDataArena storageArena = _resources.FrameDataArena!;
+        if (!storageArena.TryCaptureReservedLaneCursor(
+                frameSlot,
+                EVulkanFrameDataLane.AdvancedSceneStorage,
+                out ulong rollbackCursor))
+        {
+            failure = EVulkanAdvancedSceneResourceFailure.FrameStorageCapacity;
+            reason = "The advanced-scene allocation cursor is unavailable.";
+            return false;
+        }
+        if (!TryRetainPlannedResidentSlices(slot, allocationPlan) ||
+            !storageArena.TryCaptureReservedLaneCursor(
+                frameSlot,
+                EVulkanFrameDataLane.AdvancedSceneStorage,
+                out ulong allocationCursor))
+        {
+            if (!TryRollbackStorageTransaction(
+                    slot, storageArena, frameSlot, rollbackCursor, out string rollbackReason))
+            {
+                failure = EVulkanAdvancedSceneResourceFailure.TransactionIntegrityFailure;
+                reason = rollbackReason;
+                return false;
+            }
+            failure = EVulkanAdvancedSceneResourceFailure.FrameStorageCapacity;
+            reason = "The completed-slot resident ranges could not be retained before advanced-scene allocation.";
+            return false;
+        }
+        // The sealed plan charges every allocation at its aligned size. Charge
+        // the initial cursor pad as well: retained resident slices can end at
+        // an unaligned byte, while the first subsequent arena allocation will
+        // align before consuming its payload.
+        ulong consumedStorage = AlignUp(
+            Math.Max(slot.StorageBytesConsumed, allocationCursor),
+            StorageAlignment);
+        if (requiredStorage > StorageCapacityPerFrameSlot ||
+            consumedStorage > StorageCapacityPerFrameSlot - requiredStorage)
+        {
+            if (!TryRollbackStorageTransaction(
+                    slot, storageArena, frameSlot, rollbackCursor, out string rollbackReason))
+            {
+                failure = EVulkanAdvancedSceneResourceFailure.TransactionIntegrityFailure;
+                reason = rollbackReason;
+                return false;
+            }
+            failure =
+                EVulkanAdvancedSceneResourceFailure.FrameStorageCapacity;
+            reason = $"Frame-slot advanced-scene storage requires {requiredStorage} more bytes after {consumedStorage} of {StorageCapacityPerFrameSlot} bytes were consumed.";
+            return false;
+        }
+        ulong plannedEndCursor = checked(consumedStorage + requiredStorage);
+
+        if (!TryUploadPublicationTables(
+                frameSlot,
+                slot,
+                allocationPlan,
+                snapshot,
+                textureHighWater,
+                samplerHighWater,
+                 out VulkanFrameDataSlice drawSlice,
+                 out VulkanFrameDataSlice instanceSlice,
+                 out VulkanFrameDataSlice geometrySlice,
+                 out VulkanFrameDataSlice staticVertexSlice,
+                 out VulkanFrameDataSlice indexSlice,
+                 out VulkanFrameDataSlice preSkinnedCurrentSlice,
+                 out VulkanFrameDataSlice preSkinnedPreviousSlice,
+                 out VulkanFrameDataSlice meshletDescriptorSlice,
+                 out VulkanFrameDataSlice meshletVertexIndexSlice,
+                 out VulkanFrameDataSlice meshletTriangleWordSlice,
+                 out VulkanFrameDataSlice transformSlice,
+                 out VulkanFrameDataSlice deformationSlice,
+                 out VulkanFrameDataSlice renderStateSlice,
+                 out VulkanFrameDataSlice editorIdentitySlice,
+                 out VulkanFrameDataSlice materialSlice,
                 out VulkanFrameDataSlice kernelSlice,
                 out VulkanFrameDataSlice layoutSlice,
                 out VulkanFrameDataSlice constantSlice,
                 out VulkanFrameDataSlice bindingSlice,
                 out VulkanFrameDataSlice textureSlice,
                 out VulkanFrameDataSlice samplerSlice,
+                out VulkanFrameDataSlice lightSlice,
+                out VulkanFrameDataSlice shadowSlice,
+                out VulkanFrameDataSlice probeSlice,
+                out VulkanFrameDataSlice environmentSlice,
+                out VulkanFrameDataSlice decalSlice,
+                out VulkanFrameDataSlice giResourceSlice,
+                views,
+                in frame,
+                passes,
+                diagnosticCount,
+                out VulkanFrameDataSlice viewSlice,
+                out VulkanFrameDataSlice frameMetadataSlice,
                 out VulkanFrameDataSlice encodedTextureSlice,
                 out VulkanFrameDataSlice encodedSamplerSlice,
                 out VulkanFrameDataSlice lookupSlice,
                 out VulkanFrameDataSlice fallbackTableSlice,
                 out VulkanAdvancedSceneLookupSegments lookupSegments))
         {
+            if (!TryRollbackStorageTransaction(
+                    slot, storageArena, frameSlot, rollbackCursor, out string rollbackReason))
+            {
+                failure = EVulkanAdvancedSceneResourceFailure.TransactionIntegrityFailure;
+                reason = rollbackReason;
+                return false;
+            }
             failure =
                 EVulkanAdvancedSceneResourceFailure.FrameStorageCapacity;
             reason = "The boundary-reserved advanced-scene storage lane could not publish the complete immutable table image.";
             return false;
         }
 
+        if (!storageArena.TryCaptureReservedLaneCursor(
+                frameSlot,
+                EVulkanFrameDataLane.AdvancedSceneStorage,
+                out ulong publishedCursor) ||
+            AlignUp(publishedCursor, StorageAlignment) != plannedEndCursor)
+        {
+            if (!TryRollbackStorageTransaction(
+                    slot, storageArena, frameSlot, rollbackCursor, out string rollbackReason))
+            {
+                failure = EVulkanAdvancedSceneResourceFailure.TransactionIntegrityFailure;
+                reason = rollbackReason;
+                return false;
+            }
+            failure = EVulkanAdvancedSceneResourceFailure.TransactionIntegrityFailure;
+            reason = $"The sealed advanced-scene allocation plan ended at {plannedEndCursor} bytes, but the mapped arena ended at {publishedCursor} bytes.";
+            return false;
+        }
+
         DescriptorSet globalDescriptorSet =
             slot.GlobalDescriptorSets[slot.EntryCount];
         if (!TryUpdateGlobalTableDescriptors(
-                globalDescriptorSet,
-                fallbackTableSlice,
-                materialSlice,
+                 globalDescriptorSet,
+                 fallbackTableSlice,
+                 drawSlice,
+                 instanceSlice,
+                 geometrySlice,
+                 transformSlice,
+                 deformationSlice,
+                 renderStateSlice,
+                 editorIdentitySlice,
+                 materialSlice,
                 kernelSlice,
                 layoutSlice,
                 constantSlice,
                 bindingSlice,
                 textureSlice,
                 samplerSlice,
+                lightSlice,
+                shadowSlice,
+                probeSlice,
+                environmentSlice,
+                decalSlice,
+                giResourceSlice,
+                viewSlice,
+                frameMetadataSlice,
                 encodedTextureSlice,
                 encodedSamplerSlice,
                 lookupSlice,
@@ -552,6 +691,13 @@ internal sealed class VulkanAdvancedSceneResourceRuntime
                 (uint)samplerHighWater,
                 out reason))
         {
+            if (!TryRollbackStorageTransaction(
+                    slot, storageArena, frameSlot, rollbackCursor, out string rollbackReason))
+            {
+                failure = EVulkanAdvancedSceneResourceFailure.TransactionIntegrityFailure;
+                reason = rollbackReason;
+                return false;
+            }
             failure =
                 EVulkanAdvancedSceneResourceFailure.DescriptorUpdateFailed;
             return false;
@@ -566,23 +712,77 @@ internal sealed class VulkanAdvancedSceneResourceRuntime
             slot.ResourceDescriptorSet,
             textureBase,
             (uint)textureHighWater,
-            samplerBase,
-            (uint)samplerHighWater,
-            materialSlice,
+             samplerBase,
+             (uint)samplerHighWater,
+             drawSlice,
+             instanceSlice,
+             geometrySlice,
+             staticVertexSlice,
+             indexSlice,
+             preSkinnedCurrentSlice,
+             preSkinnedPreviousSlice,
+             meshletDescriptorSlice,
+             meshletVertexIndexSlice,
+             meshletTriangleWordSlice,
+             transformSlice,
+             deformationSlice,
+             renderStateSlice,
+             editorIdentitySlice,
+             materialSlice,
             kernelSlice,
             layoutSlice,
             constantSlice,
             bindingSlice,
             textureSlice,
             samplerSlice,
+            lightSlice,
+            shadowSlice,
+            probeSlice,
+            environmentSlice,
+            decalSlice,
+            giResourceSlice,
+            viewSlice,
+            frameMetadataSlice,
             encodedTextureSlice,
             encodedSamplerSlice,
             lookupSlice,
             fallbackTableSlice,
             lookupSegments);
+        // The sealed preflight is charged only once the complete publication,
+        // including both descriptor updates, is visible. Failed retries cannot
+        // leak logical capacity even though the arena itself remains monotonic.
+        slot.StorageBytesConsumed = plannedEndCursor;
         failure = EVulkanAdvancedSceneResourceFailure.None;
         reason = "Ready";
         return true;
+    }
+
+    /// <summary>
+    /// Restores the transaction cursor before discarding resident mirrors. A
+    /// failed restore means the arena can no longer prove which tail ranges
+    /// are owned, so this slot must never publish another generation.
+    /// </summary>
+    private static bool TryRollbackStorageTransaction(
+        VulkanAdvancedSceneResourceSlot slot,
+        VulkanFrameDataArena arena,
+        int frameSlot,
+        ulong rollbackCursor,
+        out string reason)
+    {
+        if (arena.TryRestoreReservedLaneCursor(
+                frameSlot,
+                EVulkanFrameDataLane.AdvancedSceneStorage,
+                rollbackCursor))
+        {
+            slot.ClearResidentMirrors();
+            reason = string.Empty;
+            return true;
+        }
+
+        slot.Quarantined = true;
+        slot.TransactionIntegrityFault = true;
+        reason = "The advanced-scene frame-data transaction could not restore its reserved-lane cursor; the frame slot was quarantined.";
+        return false;
     }
 
     private bool TryValidatePublicationSources(
@@ -878,9 +1078,25 @@ internal sealed class VulkanAdvancedSceneResourceRuntime
 
     private bool TryUploadPublicationTables(
         int frameSlot,
+        VulkanAdvancedSceneResourceSlot slot,
+        VulkanAdvancedScenePublicationAllocationPlan allocationPlan,
         AdvancedGpuScenePublicationSnapshot snapshot,
         int textureHighWater,
         int samplerHighWater,
+        out VulkanFrameDataSlice draws,
+        out VulkanFrameDataSlice instances,
+        out VulkanFrameDataSlice geometry,
+        out VulkanFrameDataSlice staticVertices,
+        out VulkanFrameDataSlice indices,
+        out VulkanFrameDataSlice preSkinnedCurrent,
+        out VulkanFrameDataSlice preSkinnedPrevious,
+        out VulkanFrameDataSlice meshletDescriptors,
+        out VulkanFrameDataSlice meshletVertexIndices,
+        out VulkanFrameDataSlice meshletTriangleWords,
+        out VulkanFrameDataSlice transforms,
+        out VulkanFrameDataSlice deformations,
+        out VulkanFrameDataSlice renderStates,
+        out VulkanFrameDataSlice editorIdentities,
         out VulkanFrameDataSlice materials,
         out VulkanFrameDataSlice kernels,
         out VulkanFrameDataSlice layouts,
@@ -888,12 +1104,38 @@ internal sealed class VulkanAdvancedSceneResourceRuntime
         out VulkanFrameDataSlice bindings,
         out VulkanFrameDataSlice textures,
         out VulkanFrameDataSlice samplers,
+        out VulkanFrameDataSlice lights,
+        out VulkanFrameDataSlice shadows,
+        out VulkanFrameDataSlice probes,
+        out VulkanFrameDataSlice environments,
+        out VulkanFrameDataSlice decals,
+        out VulkanFrameDataSlice giResources,
+        ReadOnlySpan<BackendReadyCanonicalViewRecord> sourceViews,
+        in BackendReadyCanonicalFrameRecord frame,
+        ReadOnlySpan<BackendReadyCanonicalPassRecord> passes,
+        int diagnosticCount,
+        out VulkanFrameDataSlice views,
+        out VulkanFrameDataSlice frameMetadata,
         out VulkanFrameDataSlice encodedTextures,
         out VulkanFrameDataSlice encodedSamplers,
         out VulkanFrameDataSlice lookups,
         out VulkanFrameDataSlice fallbackTable,
         out VulkanAdvancedSceneLookupSegments lookupSegments)
     {
+        draws = default;
+        instances = default;
+        geometry = default;
+        staticVertices = default;
+        indices = default;
+        preSkinnedCurrent = default;
+        preSkinnedPrevious = default;
+        meshletDescriptors = default;
+        meshletVertexIndices = default;
+        meshletTriangleWords = default;
+        transforms = default;
+        deformations = default;
+        renderStates = default;
+        editorIdentities = default;
         materials = default;
         kernels = default;
         layouts = default;
@@ -901,6 +1143,14 @@ internal sealed class VulkanAdvancedSceneResourceRuntime
         bindings = default;
         textures = default;
         samplers = default;
+        lights = default;
+        shadows = default;
+        probes = default;
+        environments = default;
+        decals = default;
+        giResources = default;
+        views = default;
+        frameMetadata = default;
         encodedTextures = default;
         encodedSamplers = default;
         lookups = default;
@@ -908,20 +1158,85 @@ internal sealed class VulkanAdvancedSceneResourceRuntime
         lookupSegments = default;
         AdvancedMaterialPublicationSnapshot material =
             snapshot.MaterialPayloads;
-        return TryUploadFallbackTable(frameSlot, out fallbackTable) &&
-               TryUpload(
-                   frameSlot,
+        return TryUploadResident(
+                   slot, allocationPlan, EVulkanAdvancedSceneResidentOwner.Draws,
+                   frameSlot, snapshot.Draws.PhysicalRecords,
+                   snapshot.Draws, snapshot.DatabaseEpoch, slot.ResidentDraws, out draws) &&
+               TryUploadResident(
+                   slot, allocationPlan, EVulkanAdvancedSceneResidentOwner.Instances,
+                   frameSlot, snapshot.Instances.PhysicalRecords,
+                   snapshot.Instances, snapshot.DatabaseEpoch, slot.ResidentInstances, out instances) &&
+               TryUploadResident(
+                   slot, allocationPlan, EVulkanAdvancedSceneResidentOwner.Geometry,
+                   frameSlot, snapshot.Geometry.PhysicalRecords,
+                   snapshot.Geometry, snapshot.DatabaseEpoch, slot.ResidentGeometry, out geometry) &&
+               TryUploadResidentBytes(slot, allocationPlan, EVulkanAdvancedSceneResidentOwner.StaticVertices, frameSlot, snapshot.GeometryPayloads.StaticVertices, snapshot.DatabaseEpoch, slot.ResidentStaticVertices, out staticVertices) &&
+               TryUploadResidentBytes(slot, allocationPlan, EVulkanAdvancedSceneResidentOwner.Indices, frameSlot, snapshot.GeometryPayloads.Indices, snapshot.DatabaseEpoch, slot.ResidentIndices, out indices) &&
+               TryUploadResidentBytes(slot, allocationPlan, EVulkanAdvancedSceneResidentOwner.PreSkinnedCurrent, frameSlot, snapshot.GeometryPayloads.PreSkinnedCurrent, snapshot.DatabaseEpoch, slot.ResidentPreSkinnedCurrent, out preSkinnedCurrent) &&
+               TryUploadResidentBytes(slot, allocationPlan, EVulkanAdvancedSceneResidentOwner.PreSkinnedPrevious, frameSlot, snapshot.GeometryPayloads.PreSkinnedPrevious, snapshot.DatabaseEpoch, slot.ResidentPreSkinnedPrevious, out preSkinnedPrevious) &&
+               TryUploadResidentBytes(slot, allocationPlan, EVulkanAdvancedSceneResidentOwner.MeshletDescriptors, frameSlot, snapshot.GeometryPayloads.MeshletDescriptors, snapshot.DatabaseEpoch, slot.ResidentMeshletDescriptors, out meshletDescriptors) &&
+               TryUploadResidentBytes(slot, allocationPlan, EVulkanAdvancedSceneResidentOwner.MeshletVertexIndices, frameSlot, snapshot.GeometryPayloads.MeshletVertexIndices, snapshot.DatabaseEpoch, slot.ResidentMeshletVertexIndices, out meshletVertexIndices) &&
+               TryUploadResidentBytes(slot, allocationPlan, EVulkanAdvancedSceneResidentOwner.MeshletTriangleWords, frameSlot, snapshot.GeometryPayloads.MeshletTriangleWords, snapshot.DatabaseEpoch, slot.ResidentMeshletTriangleWords, out meshletTriangleWords) &&
+               TryUploadResident(
+                   slot, allocationPlan, EVulkanAdvancedSceneResidentOwner.Transforms,
+                   frameSlot, snapshot.Transforms.PhysicalRecords,
+                   snapshot.Transforms, snapshot.DatabaseEpoch, slot.ResidentTransforms, out transforms) &&
+               TryUploadResident(slot, allocationPlan, EVulkanAdvancedSceneResidentOwner.Deformations, frameSlot,
+                   snapshot.Deformations.PhysicalRecords,
+                   snapshot.Deformations, snapshot.DatabaseEpoch, slot.ResidentDeformations,
+                   out deformations) &&
+               TryUploadResident(slot, allocationPlan, EVulkanAdvancedSceneResidentOwner.RenderStates, frameSlot,
+                   snapshot.RenderStates.PhysicalRecords,
+                   snapshot.RenderStates, snapshot.DatabaseEpoch, slot.ResidentRenderStates,
+                   out renderStates) &&
+               TryUploadResident(slot, allocationPlan, EVulkanAdvancedSceneResidentOwner.EditorIdentities, frameSlot,
+                   snapshot.EditorIdentities.PhysicalRecords,
+                   snapshot.EditorIdentities, snapshot.DatabaseEpoch, slot.ResidentEditorIdentities,
+                   out editorIdentities) &&
+               TryUploadResident(slot, allocationPlan, EVulkanAdvancedSceneResidentOwner.Materials, frameSlot,
                    material.Materials.PhysicalRecords,
+                   material.Materials, snapshot.DatabaseEpoch, slot.ResidentMaterials,
                    out materials) &&
-               TryUpload(frameSlot, material.Kernels.PhysicalRecords, out kernels) &&
-               TryUpload(frameSlot, material.Layouts.PhysicalRecords, out layouts) &&
-               TryUpload(frameSlot, material.ConstantWords, out constants) &&
-               TryUpload(frameSlot, material.TextureBindings, out bindings) &&
-               TryUpload(
-                   frameSlot,
+               TryUploadResident(slot, allocationPlan, EVulkanAdvancedSceneResidentOwner.Kernels, frameSlot, material.Kernels.PhysicalRecords,
+                   material.Kernels, snapshot.DatabaseEpoch, slot.ResidentKernels, out kernels) &&
+               TryUploadResident(slot, allocationPlan, EVulkanAdvancedSceneResidentOwner.Layouts, frameSlot, material.Layouts.PhysicalRecords,
+                   material.Layouts, snapshot.DatabaseEpoch, slot.ResidentLayouts, out layouts) &&
+               TryUploadResidentBytes(slot, allocationPlan, EVulkanAdvancedSceneResidentOwner.MaterialConstants, frameSlot, MemoryMarshal.AsBytes(material.ConstantWords), material.Generations.MaterialRows.Content, snapshot.DatabaseEpoch, slot.ResidentMaterialConstants, out constants) &&
+               TryUploadResidentBytes(slot, allocationPlan, EVulkanAdvancedSceneResidentOwner.MaterialBindings, frameSlot, MemoryMarshal.AsBytes(material.TextureBindings), material.Generations.MaterialRows.Content, snapshot.DatabaseEpoch, slot.ResidentMaterialBindings, out bindings) &&
+               TryUploadResident(slot, allocationPlan, EVulkanAdvancedSceneResidentOwner.Textures, frameSlot,
                    _textureRecordScratch.AsSpan(0, textureHighWater),
-                   out textures) &&
-               TryUpload(frameSlot, snapshot.Samplers.PhysicalRecords, out samplers) &&
+                   snapshot.Textures, snapshot.DatabaseEpoch, slot.ResidentTextures, out textures) &&
+               TryUploadResident(slot, allocationPlan, EVulkanAdvancedSceneResidentOwner.Samplers, frameSlot, snapshot.Samplers.PhysicalRecords,
+                   snapshot.Samplers, snapshot.DatabaseEpoch, slot.ResidentSamplers, out samplers) &&
+               TryUploadResident(slot, allocationPlan, EVulkanAdvancedSceneResidentOwner.Lights, frameSlot, snapshot.GlobalResources.Lights.PhysicalRecords,
+                   snapshot.GlobalResources.Lights, snapshot.DatabaseEpoch, slot.ResidentLights, out lights) &&
+               TryUploadResident(slot, allocationPlan, EVulkanAdvancedSceneResidentOwner.Shadows, frameSlot, snapshot.GlobalResources.Shadows.PhysicalRecords,
+                   snapshot.GlobalResources.Shadows, snapshot.DatabaseEpoch, slot.ResidentShadows, out shadows) &&
+               TryUploadResident(slot, allocationPlan, EVulkanAdvancedSceneResidentOwner.Probes, frameSlot, snapshot.GlobalResources.Probes.PhysicalRecords,
+                   snapshot.GlobalResources.Probes, snapshot.DatabaseEpoch, slot.ResidentProbes, out probes) &&
+               TryUploadResident(slot, allocationPlan, EVulkanAdvancedSceneResidentOwner.Environments, frameSlot, snapshot.GlobalResources.Environments.PhysicalRecords,
+                   snapshot.GlobalResources.Environments, snapshot.DatabaseEpoch, slot.ResidentEnvironments, out environments) &&
+               TryUploadResident(slot, allocationPlan, EVulkanAdvancedSceneResidentOwner.Decals, frameSlot, snapshot.GlobalResources.Decals.PhysicalRecords,
+                   snapshot.GlobalResources.Decals, snapshot.DatabaseEpoch, slot.ResidentDecals, out decals) &&
+               TryUploadResident(slot, allocationPlan, EVulkanAdvancedSceneResidentOwner.GiResources, frameSlot, snapshot.GlobalResources.GiResources.PhysicalRecords,
+                   snapshot.GlobalResources.GiResources, snapshot.DatabaseEpoch, slot.ResidentGiResources, out giResources) &&
+               TryUploadLookups(
+                   frameSlot,
+                   slot,
+                   allocationPlan,
+                   snapshot,
+                   material,
+                   out lookups,
+                   out lookupSegments) &&
+               TryUploadFallbackTable(frameSlot, out fallbackTable) &&
+               TryUploadViews(frameSlot, sourceViews, out views) &&
+               TryUploadFrameMetadata(
+                   frameSlot,
+                   in frame,
+                   sourceViews.Length,
+                   passes,
+                   diagnosticCount,
+                   out frameMetadata) &&
                TryUpload(
                    frameSlot,
                    _encodedTextureScratch.AsSpan(0, textureHighWater + 1),
@@ -929,16 +1244,7 @@ internal sealed class VulkanAdvancedSceneResourceRuntime
                TryUpload(
                    frameSlot,
                    _encodedSamplerScratch.AsSpan(0, samplerHighWater + 1),
-                   out encodedSamplers) &&
-               TryUploadLookups(
-                   frameSlot,
-                   material.Materials.HandleLookups,
-                   material.Kernels.HandleLookups,
-                   material.Layouts.HandleLookups,
-                   snapshot.Textures.HandleLookups,
-                   snapshot.Samplers.HandleLookups,
-                   out lookups,
-                   out lookupSegments);
+                   out encodedSamplers);
     }
 
     private bool TryUploadFallbackTable(
@@ -981,39 +1287,402 @@ internal sealed class VulkanAdvancedSceneResourceRuntime
             out slice);
     }
 
-    private bool TryUploadLookups(
-        int frameSlot,
-        ReadOnlySpan<AdvancedGpuHandleLookup> materials,
-        ReadOnlySpan<AdvancedGpuHandleLookup> kernels,
-        ReadOnlySpan<AdvancedGpuHandleLookup> layouts,
-        ReadOnlySpan<AdvancedGpuHandleLookup> textures,
-        ReadOnlySpan<AdvancedGpuHandleLookup> samplers,
-        out VulkanFrameDataSlice slice,
-        out VulkanAdvancedSceneLookupSegments segments)
-    {
-        uint materialOffset = 0u;
-        uint kernelOffset = checked(materialOffset + (uint)materials.Length);
-        uint layoutOffset = checked(kernelOffset + (uint)kernels.Length);
-        uint textureOffset = checked(layoutOffset + (uint)layouts.Length);
-        uint samplerOffset = checked(textureOffset + (uint)textures.Length);
-        uint total = checked(samplerOffset + (uint)samplers.Length);
-        if (total == 0u)
-            total = 1u;
+    private bool TryRetainPlannedResidentSlices(
+        VulkanAdvancedSceneResourceSlot slot,
+        VulkanAdvancedScenePublicationAllocationPlan plan)
+        => TryRetainPlannedResidentSlice(plan,
+               EVulkanAdvancedSceneResidentOwner.Draws, slot.ResidentDraws.Slice) &&
+           TryRetainPlannedResidentSlice(plan,
+               EVulkanAdvancedSceneResidentOwner.Instances, slot.ResidentInstances.Slice) &&
+           TryRetainPlannedResidentSlice(plan,
+               EVulkanAdvancedSceneResidentOwner.Geometry, slot.ResidentGeometry.Slice) &&
+           TryRetainPlannedResidentSlice(plan,
+               EVulkanAdvancedSceneResidentOwner.StaticVertices, slot.ResidentStaticVertices.Slice) &&
+           TryRetainPlannedResidentSlice(plan,
+               EVulkanAdvancedSceneResidentOwner.Indices, slot.ResidentIndices.Slice) &&
+           TryRetainPlannedResidentSlice(plan,
+               EVulkanAdvancedSceneResidentOwner.PreSkinnedCurrent, slot.ResidentPreSkinnedCurrent.Slice) &&
+           TryRetainPlannedResidentSlice(plan,
+               EVulkanAdvancedSceneResidentOwner.PreSkinnedPrevious, slot.ResidentPreSkinnedPrevious.Slice) &&
+           TryRetainPlannedResidentSlice(plan,
+               EVulkanAdvancedSceneResidentOwner.MeshletDescriptors, slot.ResidentMeshletDescriptors.Slice) &&
+           TryRetainPlannedResidentSlice(plan,
+               EVulkanAdvancedSceneResidentOwner.MeshletVertexIndices, slot.ResidentMeshletVertexIndices.Slice) &&
+           TryRetainPlannedResidentSlice(plan,
+               EVulkanAdvancedSceneResidentOwner.MeshletTriangleWords, slot.ResidentMeshletTriangleWords.Slice) &&
+           TryRetainPlannedResidentSlice(plan,
+               EVulkanAdvancedSceneResidentOwner.Transforms, slot.ResidentTransforms.Slice) &&
+           TryRetainPlannedResidentSlice(plan,
+               EVulkanAdvancedSceneResidentOwner.Deformations, slot.ResidentDeformations.Slice) &&
+           TryRetainPlannedResidentSlice(plan,
+               EVulkanAdvancedSceneResidentOwner.RenderStates, slot.ResidentRenderStates.Slice) &&
+           TryRetainPlannedResidentSlice(plan,
+               EVulkanAdvancedSceneResidentOwner.EditorIdentities, slot.ResidentEditorIdentities.Slice) &&
+           TryRetainPlannedResidentSlice(plan,
+               EVulkanAdvancedSceneResidentOwner.Materials, slot.ResidentMaterials.Slice) &&
+           TryRetainPlannedResidentSlice(plan,
+               EVulkanAdvancedSceneResidentOwner.Kernels, slot.ResidentKernels.Slice) &&
+           TryRetainPlannedResidentSlice(plan,
+               EVulkanAdvancedSceneResidentOwner.Layouts, slot.ResidentLayouts.Slice) &&
+           TryRetainPlannedResidentSlice(plan,
+               EVulkanAdvancedSceneResidentOwner.MaterialConstants, slot.ResidentMaterialConstants.Slice) &&
+           TryRetainPlannedResidentSlice(plan,
+               EVulkanAdvancedSceneResidentOwner.MaterialBindings, slot.ResidentMaterialBindings.Slice) &&
+           TryRetainPlannedResidentSlice(plan,
+               EVulkanAdvancedSceneResidentOwner.Textures, slot.ResidentTextures.Slice) &&
+           TryRetainPlannedResidentSlice(plan,
+               EVulkanAdvancedSceneResidentOwner.Samplers, slot.ResidentSamplers.Slice) &&
+           TryRetainPlannedResidentSlice(plan,
+               EVulkanAdvancedSceneResidentOwner.Lights, slot.ResidentLights.Slice) &&
+           TryRetainPlannedResidentSlice(plan,
+               EVulkanAdvancedSceneResidentOwner.Shadows, slot.ResidentShadows.Slice) &&
+           TryRetainPlannedResidentSlice(plan,
+               EVulkanAdvancedSceneResidentOwner.Probes, slot.ResidentProbes.Slice) &&
+           TryRetainPlannedResidentSlice(plan,
+               EVulkanAdvancedSceneResidentOwner.Environments, slot.ResidentEnvironments.Slice) &&
+           TryRetainPlannedResidentSlice(plan,
+               EVulkanAdvancedSceneResidentOwner.Decals, slot.ResidentDecals.Slice) &&
+           TryRetainPlannedResidentSlice(plan,
+               EVulkanAdvancedSceneResidentOwner.GiResources, slot.ResidentGiResources.Slice) &&
+           TryRetainPlannedResidentSlice(plan,
+               EVulkanAdvancedSceneResidentOwner.Lookups, slot.ResidentLookups.Slice);
 
-        segments = new VulkanAdvancedSceneLookupSegments(
-            new AdvancedGpuLookupSegment(materialOffset, (uint)materials.Length),
-            new AdvancedGpuLookupSegment(kernelOffset, (uint)kernels.Length),
-            new AdvancedGpuLookupSegment(layoutOffset, (uint)layouts.Length),
-            new AdvancedGpuLookupSegment(textureOffset, (uint)textures.Length),
-            new AdvancedGpuLookupSegment(samplerOffset, (uint)samplers.Length));
-        VulkanFrameDataArena arena = _resources.FrameDataArena!;
-        if (!arena.TryAllocate(
+    private bool TryRetainPlannedResidentSlice(
+        VulkanAdvancedScenePublicationAllocationPlan plan,
+        EVulkanAdvancedSceneResidentOwner owner,
+        in VulkanFrameDataSlice slice)
+        => !plan.IsPatch(owner) ||
+           _resources.FrameDataArena!.TryRetainResidentSlice(slice);
+
+    /// <summary>
+    /// Publishes a core SoA table into a completed-slot resident range when
+    /// doing so cannot mutate an earlier immutable entry.  Later publications
+    /// in the same generation always receive a COW image.  The publication
+    /// deltas select the exact normal write set. Remaps update both dense-row
+    /// endpoints, while truncated tails are cleared explicitly.
+    /// </summary>
+    private bool TryUploadResident<T>(
+        VulkanAdvancedSceneResourceSlot slot,
+        VulkanAdvancedScenePublicationAllocationPlan allocationPlan,
+        EVulkanAdvancedSceneResidentOwner owner,
+        int frameSlot,
+        ReadOnlySpan<T> source,
+        AdvancedGpuRecordTablePublicationSnapshot<T> table,
+        ulong databaseEpoch,
+        VulkanAdvancedSceneResidentTable<T> resident,
+        out VulkanFrameDataSlice slice)
+        where T : unmanaged
+    {
+        ReadOnlySpan<AdvancedGpuRecordPublicationDelta> deltas = table.Deltas;
+        slice = default;
+        if (!allocationPlan.IsPatch(owner))
+        {
+            if (!TryUpload(frameSlot, source, out slice))
+                return false;
+
+            if (slot.EntryCount == 0 && slot.ActiveUseCount == 0)
+            {
+                if (!resident.TryInitialize(slice, source))
+                    return false;
+                resident.StampPublication(databaseEpoch, table.Sequence, table.Generations);
+            }
+
+            return true;
+        }
+
+        if (resident.CanReuseUnchanged(databaseEpoch, table.Generations, source))
+        {
+            resident.StampPublication(databaseEpoch, table.Sequence, table.Generations);
+            slice = resident.CreateCurrentSlice(source.Length);
+            return true;
+        }
+
+        bool deltaPatch = resident.CanPatch(
+            databaseEpoch,
+            table.Sequence,
+            table.JournalFloorSequence,
+            table.HasRetainedJournal,
+            source);
+
+        if (!deltaPatch && !TryWriteResidentBytes(
+                resident.Slice,
+                0,
+                MemoryMarshal.AsBytes(source)))
+            return false;
+
+        for (int index = 0; deltaPatch && index < deltas.Length; ++index)
+        {
+            AdvancedGpuRecordPublicationDelta delta = deltas[index];
+
+            if (!TryPatchResidentRow(resident.Slice, source, delta.CurrentDenseIndex))
+                return false;
+
+            if (delta.Change == EAdvancedGpuRecordPublicationChange.DenseRemapped &&
+                !TryPatchResidentRow(resident.Slice, source, delta.PreviousDenseIndex))
+                return false;
+        }
+        int previousCount = resident.Count;
+        if (source.Length < previousCount && !TryClearResidentRange<T>(
+                resident.Slice, source.Length, previousCount - source.Length))
+            return false;
+        if (deltaPatch)
+            resident.CommitPatched(source, deltas);
+        else
+            resident.Commit(source);
+        resident.StampPublication(databaseEpoch, table.Sequence, table.Generations);
+        slice = resident.CreateCurrentSlice(source.Length);
+        return true;
+    }
+
+    private bool TryUploadResidentBytes(
+        VulkanAdvancedSceneResourceSlot slot,
+        VulkanAdvancedScenePublicationAllocationPlan allocationPlan,
+        EVulkanAdvancedSceneResidentOwner owner,
+        int frameSlot,
+        in AdvancedImmutableByteArenaPublicationSnapshot snapshot,
+        ulong databaseEpoch,
+        VulkanAdvancedSceneResidentBytes resident,
+        out VulkanFrameDataSlice slice)
+        => TryUploadResidentBytes(
+            slot,
+            allocationPlan,
+            owner,
+            frameSlot,
+            snapshot.Data,
+            snapshot.DirtyByteRange,
+            snapshot.BufferHandle,
+            databaseEpoch,
+            0u,
+            resident,
+            out slice);
+
+    private bool TryUploadResidentBytes(
+        VulkanAdvancedSceneResourceSlot slot,
+        VulkanAdvancedScenePublicationAllocationPlan allocationPlan,
+        EVulkanAdvancedSceneResidentOwner owner,
+        int frameSlot,
+        ReadOnlySpan<byte> source,
+        ulong ownerGeneration,
+        ulong databaseEpoch,
+        VulkanAdvancedSceneResidentBytes resident,
+        out VulkanFrameDataSlice slice)
+        => TryUploadResidentBytes(
+            slot,
+            allocationPlan,
+            owner,
+            frameSlot,
+            source,
+            new AdvancedGpuDirtyRange(0u, checked((uint)source.Length)),
+            AdvancedGpuHandle.Invalid,
+            databaseEpoch,
+            ownerGeneration,
+            resident,
+            out slice);
+
+    private bool TryUploadResidentBytes(
+        VulkanAdvancedSceneResourceSlot slot,
+        VulkanAdvancedScenePublicationAllocationPlan allocationPlan,
+        EVulkanAdvancedSceneResidentOwner owner,
+        int frameSlot,
+        ReadOnlySpan<byte> source,
+        AdvancedGpuDirtyRange dirtyRange,
+        AdvancedGpuHandle bufferHandle,
+        ulong databaseEpoch,
+        ulong ownerGeneration,
+        VulkanAdvancedSceneResidentBytes resident,
+        out VulkanFrameDataSlice slice)
+    {
+        slice = default;
+        if (!allocationPlan.IsPatch(owner))
+        {
+            if (!TryUpload(frameSlot, source, out slice))
+                return false;
+
+            if (slot.EntryCount != 0 || slot.ActiveUseCount != 0)
+                return true;
+
+            if (!resident.TryInitialize(slice, source))
+                return false;
+
+            resident.SetBufferHandle(bufferHandle);
+            resident.SetDatabaseEpoch(databaseEpoch);
+            resident.SetPublishedOwnerGeneration(ownerGeneration);
+            return true;
+        }
+        bool sameEpoch = databaseEpoch != 0u &&
+            resident.DatabaseEpoch == databaseEpoch;
+        bool appendPatch = bufferHandle.IsValid && sameEpoch &&
+            resident.BufferHandle == bufferHandle && source.Length >= resident.Count;
+        bool unchanged = !bufferHandle.IsValid && sameEpoch &&
+            ownerGeneration == resident.PublishedOwnerGeneration;
+        int start = appendPatch
+            ? resident.Count
+            : unchanged
+                ? source.Length
+                : 0;
+        int endExclusive = appendPatch || !unchanged
+            ? source.Length
+            : checked((int)Math.Min(dirtyRange.EndExclusive, (uint)source.Length));
+        if (start < endExclusive && !TryWriteResidentBytes(
+                resident.Slice, start, source.Slice(start, endExclusive - start)))
+            return false;
+
+        int priorCount = resident.Count;
+        if (source.Length < priorCount && !TryClearResidentBytes(
+                resident.Slice, source.Length, priorCount - source.Length))
+            return false;
+        int previousCount = resident.Count;
+        uint committedStart = appendPatch
+            ? checked((uint)previousCount)
+            : unchanged ? dirtyRange.Start : 0u;
+        uint committedCount = appendPatch
+            ? checked((uint)Math.Max(source.Length - previousCount, 0))
+            : unchanged
+                ? 0u
+                : checked((uint)source.Length);
+        resident.CommitPatched(source, new AdvancedGpuDirtyRange(
+            committedStart,
+            committedCount));
+        resident.SetPublishedOwnerGeneration(ownerGeneration);
+        resident.SetBufferHandle(bufferHandle);
+        resident.SetDatabaseEpoch(databaseEpoch);
+        slice = resident.CurrentSlice(source.Length);
+        return true;
+    }
+
+    private bool TryPatchResidentRow<T>(
+        in VulkanFrameDataSlice residentSlice,
+        ReadOnlySpan<T> source,
+        uint denseIndex)
+        where T : unmanaged
+    {
+        if (denseIndex == AdvancedGpuHandleRemap.InvalidDenseIndex ||
+            denseIndex >= residentSlice.Length / (uint)Unsafe.SizeOf<T>())
+        {
+            return true;
+        }
+        VulkanFrameDataSlice row = CreateWriteSubSlice(
+            residentSlice,
+            checked((ulong)denseIndex * (uint)Unsafe.SizeOf<T>()),
+            (uint)Unsafe.SizeOf<T>());
+        if (!_resources.FrameDataArena!.TryBeginWrite(row, out VulkanFrameDataWriteScope write))
+            return false;
+        using (write)
+            MemoryMarshal.Cast<byte, T>(write.Bytes)[0] = denseIndex < (uint)source.Length
+                ? source[checked((int)denseIndex)]
+                : default;
+        return true;
+    }
+
+    private bool TryClearResidentRange<T>(
+        in VulkanFrameDataSlice residentSlice,
+        int start,
+        int count)
+        where T : unmanaged
+        => TryClearResidentBytes(
+            residentSlice,
+            checked(start * Unsafe.SizeOf<T>()),
+            checked(count * Unsafe.SizeOf<T>()));
+
+    private bool TryWriteResidentBytes(
+        in VulkanFrameDataSlice residentSlice,
+        int offset,
+        ReadOnlySpan<byte> source)
+    {
+        if (source.IsEmpty)
+            return true;
+        VulkanFrameDataSlice writeSlice = CreateWriteSubSlice(
+            residentSlice, checked((ulong)offset), checked((uint)source.Length));
+        if (!_resources.FrameDataArena!.TryBeginWrite(writeSlice, out VulkanFrameDataWriteScope write))
+            return false;
+        using (write)
+            source.CopyTo(write.Bytes);
+        return true;
+    }
+
+    private bool TryClearResidentBytes(
+        in VulkanFrameDataSlice residentSlice,
+        int offset,
+        int length)
+    {
+        if (length <= 0)
+            return true;
+        VulkanFrameDataSlice clearSlice = CreateWriteSubSlice(
+            residentSlice, checked((ulong)offset), checked((uint)length));
+        if (!_resources.FrameDataArena!.TryBeginWrite(clearSlice, out VulkanFrameDataWriteScope write))
+            return false;
+        using (write)
+            write.Bytes.Clear();
+        return true;
+    }
+
+    /// <summary>
+    /// Narrows mapping/flush bookkeeping to an exact resident byte interval.
+    /// Host writes need no storage-buffer alignment; using byte alignment here
+    /// preserves the parent slice's ownership while accepting dense row sizes.
+    /// </summary>
+    private static VulkanFrameDataSlice CreateWriteSubSlice(
+        in VulkanFrameDataSlice residentSlice,
+        ulong relativeOffset,
+        uint length)
+    {
+        if (length == 0u || relativeOffset > residentSlice.Length ||
+            length > residentSlice.Length - relativeOffset)
+        {
+            throw new ArgumentOutOfRangeException(nameof(length));
+        }
+        return residentSlice with
+        {
+            Offset = checked(residentSlice.Offset + relativeOffset),
+            Length = length,
+            Alignment = 1u,
+        };
+    }
+
+    private bool TryUploadViews(
+        int frameSlot,
+        ReadOnlySpan<BackendReadyCanonicalViewRecord> source,
+        out VulkanFrameDataSlice slice)
+    {
+        // Stereo and multiview frames fit this fixed ABI budget. Rejecting a
+        // wider view family is preferable to allocating in the hot path.
+        if (source.Length > 8)
+        {
+            slice = default;
+            return false;
+        }
+        int count = Math.Max(source.Length, 1);
+        Span<AdvancedViewRecord> records = stackalloc AdvancedViewRecord[8];
+        for (int index = 0; index < source.Length; ++index)
+            records[index] = VulkanAdvancedViewRecordFactory.Create(in source[index]);
+        return _resources.FrameDataArena!.TryAllocateWrite(
+            frameSlot,
+            EVulkanFrameDataLane.AdvancedSceneStorage,
+            MemoryMarshal.AsBytes(records[..count]),
+            StorageAlignment,
+            out slice);
+    }
+
+    private bool TryUploadFrameMetadata(
+        int frameSlot,
+        in BackendReadyCanonicalFrameRecord frame,
+        int viewCount,
+        ReadOnlySpan<BackendReadyCanonicalPassRecord> passes,
+        int diagnosticCount,
+        out VulkanFrameDataSlice slice)
+    {
+        int byteLength = checked(
+            Unsafe.SizeOf<VulkanAdvancedFrameMetadataHeader>() +
+            passes.Length * Unsafe.SizeOf<VulkanAdvancedPassRecord>());
+        if (!_resources.FrameDataArena!.TryAllocate(
                 frameSlot,
                 EVulkanFrameDataLane.AdvancedSceneStorage,
-                checked(total * (uint)Unsafe.SizeOf<AdvancedGpuHandleLookup>()),
+                (uint)Math.Max(byteLength, 1),
                 StorageAlignment,
                 out slice) ||
-            !arena.TryBeginWrite(slice, out VulkanFrameDataWriteScope write))
+            !_resources.FrameDataArena.TryBeginWrite(
+                slice,
+                out VulkanFrameDataWriteScope write))
         {
             slice = default;
             return false;
@@ -1021,15 +1690,130 @@ internal sealed class VulkanAdvancedSceneResourceRuntime
 
         using (write)
         {
-            Span<AdvancedGpuHandleLookup> destination =
-                MemoryMarshal.Cast<byte, AdvancedGpuHandleLookup>(write.Bytes);
-            destination.Fill(AdvancedGpuHandleLookup.Invalid);
-            materials.CopyTo(destination[(int)materialOffset..]);
-            kernels.CopyTo(destination[(int)kernelOffset..]);
-            layouts.CopyTo(destination[(int)layoutOffset..]);
-            textures.CopyTo(destination[(int)textureOffset..]);
-            samplers.CopyTo(destination[(int)samplerOffset..]);
+            write.Bytes.Clear();
+            ref VulkanAdvancedFrameMetadataHeader header = ref
+                MemoryMarshal.AsRef<VulkanAdvancedFrameMetadataHeader>(write.Bytes);
+            header = new VulkanAdvancedFrameMetadataHeader
+            {
+                FrameId = frame.FrameId,
+                FrameGeneration = frame.FrameGeneration,
+                SourceRevision = frame.SourceRevision,
+                DependencySignature = frame.DependencySignature,
+                ViewCount = checked((uint)viewCount),
+                PassCount = checked((uint)passes.Length),
+                DiagnosticCount = checked((uint)diagnosticCount),
+            };
+            Span<VulkanAdvancedPassRecord> destination = MemoryMarshal.Cast<
+                byte,
+                VulkanAdvancedPassRecord>(
+                write.Bytes[Unsafe.SizeOf<VulkanAdvancedFrameMetadataHeader>()..]);
+            for (int index = 0; index < passes.Length; ++index)
+                destination[index] = VulkanAdvancedPassRecord.FromCanonical(in passes[index]);
         }
+        return true;
+    }
+
+    private bool TryUploadLookups(
+        int frameSlot,
+        VulkanAdvancedSceneResourceSlot slot,
+        VulkanAdvancedScenePublicationAllocationPlan allocationPlan,
+        AdvancedGpuScenePublicationSnapshot snapshot,
+        AdvancedMaterialPublicationSnapshot material,
+        out VulkanFrameDataSlice slice,
+        out VulkanAdvancedSceneLookupSegments segments)
+    {
+        Span<uint> counts = stackalloc uint[VulkanAdvancedSceneResidentLookups.OwnerCount];
+        FillLookupCounts(counts, snapshot, material);
+        bool boundary = slot.EntryCount == 0 && slot.ActiveUseCount == 0;
+        VulkanAdvancedSceneResidentLookups resident = slot.ResidentLookups;
+        if (allocationPlan.IsPatch(EVulkanAdvancedSceneResidentOwner.Lookups))
+        {
+            bool exactPatch = resident.CanPatch(snapshot.DatabaseEpoch, counts);
+            bool anyChanged = !exactPatch;
+            for (int owner = 0; owner < VulkanAdvancedSceneResidentLookups.OwnerCount; ++owner)
+            {
+                if (exactPatch && !resident.IsOwnerUnchanged(owner,
+                        GetLookupGeneration(owner, snapshot, material)))
+                {
+                    anyChanged = true;
+                    break;
+                }
+            }
+            if (!anyChanged)
+            {
+                for (int owner = 0; owner < VulkanAdvancedSceneResidentLookups.OwnerCount; ++owner)
+                    resident.StampOwner(owner, counts[owner],
+                        GetLookupGeneration(owner, snapshot, material),
+                        GetLookupSequence(owner, snapshot, material));
+                resident.SetDatabaseEpoch(snapshot.DatabaseEpoch);
+                slice = resident.Slice;
+                segments = CreateLookupSegments(resident, counts);
+                return true;
+            }
+
+            for (int owner = 0; owner < VulkanAdvancedSceneResidentLookups.OwnerCount; ++owner)
+            {
+                ReadOnlySpan<AdvancedGpuHandleLookup> source = GetLookupSource(owner, snapshot, material);
+                ulong lookupGeneration = GetLookupGeneration(owner, snapshot, material);
+                if (!exactPatch || !resident.IsOwnerUnchanged(owner, lookupGeneration))
+                {
+                    int elementSize = Unsafe.SizeOf<AdvancedGpuHandleLookup>();
+                    int offset = checked((int)resident.GetOffset(owner) * elementSize);
+                    if (!TryWriteResidentBytes(resident.Slice, offset,
+                            MemoryMarshal.AsBytes(source)) ||
+                        !TryClearResidentBytes(resident.Slice,
+                            checked(offset + source.Length * elementSize),
+                            checked(((int)resident.GetCapacity(owner) - source.Length) * elementSize)))
+                    {
+                        slice = default;
+                        segments = default;
+                        return false;
+                    }
+                }
+                resident.StampOwner(owner, (uint)source.Length, lookupGeneration,
+                    GetLookupSequence(owner, snapshot, material));
+            }
+            resident.SetDatabaseEpoch(snapshot.DatabaseEpoch);
+            slice = resident.Slice;
+            segments = CreateLookupSegments(resident, counts);
+            return true;
+        }
+
+        Span<uint> capacities = stackalloc uint[VulkanAdvancedSceneResidentLookups.OwnerCount];
+        for (int owner = 0; owner < capacities.Length; ++owner)
+            capacities[owner] = resident.GetRequiredCapacity(owner, counts[owner], boundary);
+        uint total = 0u;
+        for (int owner = 0; owner < capacities.Length; ++owner)
+            total = checked(total + capacities[owner]);
+
+        VulkanFrameDataArena arena = _resources.FrameDataArena!;
+        if (!arena.TryAllocate(frameSlot, EVulkanFrameDataLane.AdvancedSceneStorage,
+                checked(total * (uint)Unsafe.SizeOf<AdvancedGpuHandleLookup>()), StorageAlignment,
+                out slice) || !arena.TryBeginWrite(slice, out VulkanFrameDataWriteScope write))
+        {
+            slice = default;
+            segments = default;
+            return false;
+        }
+        Span<ulong> generations = stackalloc ulong[VulkanAdvancedSceneResidentLookups.OwnerCount];
+        Span<ulong> sequences = stackalloc ulong[VulkanAdvancedSceneResidentLookups.OwnerCount];
+        using (write)
+        {
+            Span<AdvancedGpuHandleLookup> destination = MemoryMarshal.Cast<byte, AdvancedGpuHandleLookup>(write.Bytes);
+            destination.Fill(AdvancedGpuHandleLookup.Invalid);
+            uint offset = 0u;
+            for (int owner = 0; owner < VulkanAdvancedSceneResidentLookups.OwnerCount; ++owner)
+            {
+                ReadOnlySpan<AdvancedGpuHandleLookup> source = GetLookupSource(owner, snapshot, material);
+                source.CopyTo(destination.Slice(checked((int)offset), source.Length));
+                generations[owner] = GetLookupGeneration(owner, snapshot, material);
+                sequences[owner] = GetLookupSequence(owner, snapshot, material);
+                offset = checked(offset + capacities[owner]);
+            }
+        }
+        if (boundary)
+            resident.Initialize(slice, snapshot.DatabaseEpoch, capacities, counts, generations, sequences);
+        segments = CreateLookupSegments(capacities, counts);
         return true;
     }
 
@@ -1188,7 +1972,10 @@ internal sealed class VulkanAdvancedSceneResourceRuntime
         ShaderStageFlags stages =
             ShaderStageFlags.VertexBit |
             ShaderStageFlags.FragmentBit |
-            ShaderStageFlags.ComputeBit;
+            ShaderStageFlags.ComputeBit |
+            (device.SupportsMeshTaskIndirectCount
+                ? ShaderStageFlags.MeshBitExt
+                : 0);
         ReadOnlySpan<uint> globalBindingNumbers =
             VulkanAdvancedSceneProgramBindingContract.RequiredGlobalStorageBindings;
         DescriptorSetLayoutBinding* globalBindings =
@@ -1421,6 +2208,13 @@ internal sealed class VulkanAdvancedSceneResourceRuntime
     private unsafe bool TryUpdateGlobalTableDescriptors(
         DescriptorSet descriptorSet,
         in VulkanFrameDataSlice fallback,
+        in VulkanFrameDataSlice draws,
+        in VulkanFrameDataSlice instances,
+        in VulkanFrameDataSlice geometry,
+        in VulkanFrameDataSlice transforms,
+        in VulkanFrameDataSlice deformations,
+        in VulkanFrameDataSlice renderStates,
+        in VulkanFrameDataSlice editorIdentities,
         in VulkanFrameDataSlice materials,
         in VulkanFrameDataSlice kernels,
         in VulkanFrameDataSlice layouts,
@@ -1428,6 +2222,14 @@ internal sealed class VulkanAdvancedSceneResourceRuntime
         in VulkanFrameDataSlice materialTextureBindings,
         in VulkanFrameDataSlice textures,
         in VulkanFrameDataSlice samplers,
+        in VulkanFrameDataSlice lights,
+        in VulkanFrameDataSlice shadows,
+        in VulkanFrameDataSlice probes,
+        in VulkanFrameDataSlice environments,
+        in VulkanFrameDataSlice decals,
+        in VulkanFrameDataSlice giResources,
+        in VulkanFrameDataSlice views,
+        in VulkanFrameDataSlice frameMetadata,
         in VulkanFrameDataSlice encodedTextures,
         in VulkanFrameDataSlice encodedSamplers,
         in VulkanFrameDataSlice handleLookups,
@@ -1444,9 +2246,25 @@ internal sealed class VulkanAdvancedSceneResourceRuntime
             uint binding = bindings[index];
             VulkanFrameDataSlice slice = binding switch
             {
+                AdvancedGlobalResourceBindings.Draws => draws,
+                AdvancedGlobalResourceBindings.Instances => instances,
+                AdvancedGlobalResourceBindings.Meshes => geometry,
+                AdvancedGlobalResourceBindings.Transforms => transforms,
+                AdvancedGlobalResourceBindings.Deformations => deformations,
+                AdvancedGlobalResourceBindings.RenderStates => renderStates,
+                AdvancedGlobalResourceBindings.EditorIdentities =>
+                    editorIdentities,
                 AdvancedGlobalResourceBindings.Materials => materials,
                 AdvancedGlobalResourceBindings.Textures => textures,
                 AdvancedGlobalResourceBindings.Samplers => samplers,
+                AdvancedGlobalResourceBindings.Lights => lights,
+                AdvancedGlobalResourceBindings.Shadows => shadows,
+                AdvancedGlobalResourceBindings.Probes => probes,
+                AdvancedGlobalResourceBindings.Environments => environments,
+                AdvancedGlobalResourceBindings.Decals => decals,
+                AdvancedGlobalResourceBindings.GiResources => giResources,
+                AdvancedGlobalResourceBindings.Views => views,
+                AdvancedGlobalResourceBindings.Diagnostics => frameMetadata,
                 AdvancedGlobalResourceBindings.MaterialConstants => constants,
                 AdvancedGlobalResourceBindings.MaterialTextureBindings =>
                     materialTextureBindings,
@@ -1618,6 +2436,7 @@ internal sealed class VulkanAdvancedSceneResourceRuntime
         {
             _slots[index].ResourceDescriptorSet = default;
             _slots[index].GlobalDescriptorSets.AsSpan().Clear();
+            _slots[index].ClearResidentMirrors();
         }
         _device = null;
     }
@@ -1638,55 +2457,287 @@ internal sealed class VulkanAdvancedSceneResourceRuntime
         _samplerValidationScratch = new byte[descriptorCount];
     }
 
-    private ulong CalculatePublicationStorageBytes(
-        AdvancedGpuScenePublicationSnapshot snapshot)
+    private VulkanAdvancedScenePublicationAllocationPlan
+        BuildPublicationAllocationPlan(
+            VulkanAdvancedSceneResourceSlot slot,
+            AdvancedGpuScenePublicationSnapshot snapshot,
+            int textureHighWater,
+            int samplerHighWater,
+            int viewCount,
+            int passCount)
     {
         AdvancedMaterialPublicationSnapshot material =
             snapshot.MaterialPayloads;
-        ulong bytes = 0u;
-        AddTableBytes<AdvancedMaterialRecord>(
-            material.Materials.PhysicalRecords.Length,
-            ref bytes);
-        AddTableBytes<AdvancedShadingKernelRecord>(
-            material.Kernels.PhysicalRecords.Length,
-            ref bytes);
-        AddTableBytes<AdvancedMaterialLayoutRecord>(
-            material.Layouts.PhysicalRecords.Length,
-            ref bytes);
-        AddTableBytes<uint>(material.ConstantWords.Length, ref bytes);
-        AddTableBytes<AdvancedMaterialTextureBinding>(
-            material.TextureBindings.Length,
-            ref bytes);
-        AddTableBytes<AdvancedTextureRecord>(
-            snapshot.Textures.PhysicalRecords.Length,
-            ref bytes);
-        AddTableBytes<AdvancedSamplerRecord>(
-            snapshot.Samplers.PhysicalRecords.Length,
-            ref bytes);
-        AddTableBytes<AdvancedEncodedTextureReference>(
-            snapshot.Textures.PhysicalRecords.Length + 1,
-            ref bytes);
-        AddTableBytes<AdvancedEncodedSamplerReference>(
-            snapshot.Samplers.PhysicalRecords.Length + 1,
-            ref bytes);
-        int lookupCount = checked(
-            material.Materials.HandleLookups.Length +
-            material.Kernels.HandleLookups.Length +
-            material.Layouts.HandleLookups.Length +
-            snapshot.Textures.HandleLookups.Length +
-            snapshot.Samplers.HandleLookups.Length);
-        AddTableBytes<AdvancedGpuHandleLookup>(lookupCount, ref bytes);
-        bytes = checked(
-            bytes + AlignUp(FallbackTableByteLength, StorageAlignment));
-        return bytes;
+        VulkanAdvancedScenePublicationAllocationPlan plan = slot.AllocationPlan;
+        plan.Reset();
+        SetResidentDecision(plan, EVulkanAdvancedSceneResidentOwner.Draws,
+            slot, snapshot.DatabaseEpoch, snapshot.Draws, slot.ResidentDraws);
+        SetResidentDecision(plan, EVulkanAdvancedSceneResidentOwner.Instances,
+            slot, snapshot.DatabaseEpoch, snapshot.Instances, slot.ResidentInstances);
+        SetResidentDecision(plan, EVulkanAdvancedSceneResidentOwner.Geometry,
+            slot, snapshot.DatabaseEpoch, snapshot.Geometry, slot.ResidentGeometry);
+        SetResidentDecision(plan, EVulkanAdvancedSceneResidentOwner.StaticVertices,
+            slot, snapshot.DatabaseEpoch, snapshot.GeometryPayloads.StaticVertices, slot.ResidentStaticVertices);
+        SetResidentDecision(plan, EVulkanAdvancedSceneResidentOwner.Indices,
+            slot, snapshot.DatabaseEpoch, snapshot.GeometryPayloads.Indices, slot.ResidentIndices);
+        SetResidentDecision(plan, EVulkanAdvancedSceneResidentOwner.PreSkinnedCurrent,
+            slot, snapshot.DatabaseEpoch, snapshot.GeometryPayloads.PreSkinnedCurrent, slot.ResidentPreSkinnedCurrent);
+        SetResidentDecision(plan, EVulkanAdvancedSceneResidentOwner.PreSkinnedPrevious,
+            slot, snapshot.DatabaseEpoch, snapshot.GeometryPayloads.PreSkinnedPrevious, slot.ResidentPreSkinnedPrevious);
+        SetResidentDecision(plan, EVulkanAdvancedSceneResidentOwner.MeshletDescriptors,
+            slot, snapshot.DatabaseEpoch, snapshot.GeometryPayloads.MeshletDescriptors, slot.ResidentMeshletDescriptors);
+        SetResidentDecision(plan, EVulkanAdvancedSceneResidentOwner.MeshletVertexIndices,
+            slot, snapshot.DatabaseEpoch, snapshot.GeometryPayloads.MeshletVertexIndices, slot.ResidentMeshletVertexIndices);
+        SetResidentDecision(plan, EVulkanAdvancedSceneResidentOwner.MeshletTriangleWords,
+            slot, snapshot.DatabaseEpoch, snapshot.GeometryPayloads.MeshletTriangleWords, slot.ResidentMeshletTriangleWords);
+        SetResidentDecision(plan, EVulkanAdvancedSceneResidentOwner.Transforms,
+            slot, snapshot.DatabaseEpoch, snapshot.Transforms, slot.ResidentTransforms);
+        SetResidentDecision(plan, EVulkanAdvancedSceneResidentOwner.Deformations,
+            slot, snapshot.DatabaseEpoch, snapshot.Deformations, slot.ResidentDeformations);
+        SetResidentDecision(plan, EVulkanAdvancedSceneResidentOwner.RenderStates,
+            slot, snapshot.DatabaseEpoch, snapshot.RenderStates, slot.ResidentRenderStates);
+        SetResidentDecision(plan, EVulkanAdvancedSceneResidentOwner.EditorIdentities,
+            slot, snapshot.DatabaseEpoch, snapshot.EditorIdentities, slot.ResidentEditorIdentities);
+        SetResidentDecision(plan, EVulkanAdvancedSceneResidentOwner.Materials,
+            slot, snapshot.DatabaseEpoch, material.Materials, slot.ResidentMaterials);
+        SetResidentDecision(plan, EVulkanAdvancedSceneResidentOwner.Kernels,
+            slot, snapshot.DatabaseEpoch, material.Kernels, slot.ResidentKernels);
+        SetResidentDecision(plan, EVulkanAdvancedSceneResidentOwner.Layouts,
+            slot, snapshot.DatabaseEpoch, material.Layouts, slot.ResidentLayouts);
+        SetResidentDecision(plan, EVulkanAdvancedSceneResidentOwner.MaterialConstants,
+            slot, MemoryMarshal.AsBytes(material.ConstantWords), slot.ResidentMaterialConstants);
+        SetResidentDecision(plan, EVulkanAdvancedSceneResidentOwner.MaterialBindings,
+            slot, MemoryMarshal.AsBytes(material.TextureBindings), slot.ResidentMaterialBindings);
+        SetResidentDecision(plan, EVulkanAdvancedSceneResidentOwner.Textures,
+            slot, snapshot.DatabaseEpoch, snapshot.Textures, slot.ResidentTextures);
+        SetResidentDecision(plan, EVulkanAdvancedSceneResidentOwner.Samplers,
+            slot, snapshot.DatabaseEpoch, snapshot.Samplers, slot.ResidentSamplers);
+        SetResidentDecision(plan, EVulkanAdvancedSceneResidentOwner.Lights,
+            slot, snapshot.DatabaseEpoch, snapshot.GlobalResources.Lights, slot.ResidentLights);
+        SetResidentDecision(plan, EVulkanAdvancedSceneResidentOwner.Shadows,
+            slot, snapshot.DatabaseEpoch, snapshot.GlobalResources.Shadows, slot.ResidentShadows);
+        SetResidentDecision(plan, EVulkanAdvancedSceneResidentOwner.Probes,
+            slot, snapshot.DatabaseEpoch, snapshot.GlobalResources.Probes, slot.ResidentProbes);
+        SetResidentDecision(plan, EVulkanAdvancedSceneResidentOwner.Environments,
+            slot, snapshot.DatabaseEpoch, snapshot.GlobalResources.Environments, slot.ResidentEnvironments);
+        SetResidentDecision(plan, EVulkanAdvancedSceneResidentOwner.Decals,
+            slot, snapshot.DatabaseEpoch, snapshot.GlobalResources.Decals, slot.ResidentDecals);
+        SetResidentDecision(plan, EVulkanAdvancedSceneResidentOwner.GiResources,
+            slot, snapshot.DatabaseEpoch, snapshot.GlobalResources.GiResources, slot.ResidentGiResources);
+        SetLookupDecision(plan, slot, snapshot, material);
+
+        // Direct resident slices are embedded in immutable publication entries.
+        // At a completed boundary we may either retain the entire prior packed
+        // image or transactionally rebuild the entire image from cursor zero;
+        // mixing retained and COW owners would strand unreachable arena gaps.
+        plan.SealResidentPacking();
+
+        plan.AddTransient(GetTableBytes<AdvancedEncodedTextureReference>(
+            textureHighWater + 1));
+        plan.AddTransient(GetTableBytes<AdvancedEncodedSamplerReference>(
+            samplerHighWater + 1));
+        plan.AddTransient(AlignUp(FallbackTableByteLength, StorageAlignment));
+        plan.AddTransient(CalculateFramePublicationStorageBytes(
+            viewCount,
+            passCount));
+        return plan;
+    }
+
+    private void SetResidentDecision<T>(
+        VulkanAdvancedScenePublicationAllocationPlan plan,
+        EVulkanAdvancedSceneResidentOwner owner,
+        VulkanAdvancedSceneResourceSlot slot,
+        ulong databaseEpoch,
+        AdvancedGpuRecordTablePublicationSnapshot<T> table,
+        VulkanAdvancedSceneResidentTable<T> resident)
+        where T : unmanaged
+    {
+        ReadOnlySpan<T> source = table.PhysicalRecords;
+        bool patch = slot.EntryCount == 0 &&
+            slot.ActiveUseCount == 0 && resident.MatchesCapacity(source) &&
+            _resources.FrameDataArena!.CanRetainResidentSlice(resident.Slice);
+        plan.SetPatch(owner, patch, GetTableBytes<T>(source.Length));
+    }
+
+    private void SetLookupDecision(
+        VulkanAdvancedScenePublicationAllocationPlan plan,
+        VulkanAdvancedSceneResourceSlot slot,
+        AdvancedGpuScenePublicationSnapshot snapshot,
+        AdvancedMaterialPublicationSnapshot material)
+    {
+        Span<uint> counts = stackalloc uint[VulkanAdvancedSceneResidentLookups.OwnerCount];
+        FillLookupCounts(counts, snapshot, material);
+        bool boundary = slot.EntryCount == 0 && slot.ActiveUseCount == 0;
+        VulkanAdvancedSceneResidentLookups resident = slot.ResidentLookups;
+        bool patch = boundary && resident.MatchesCapacity(counts) &&
+            _resources.FrameDataArena!.CanRetainResidentSlice(resident.Slice);
+        uint capacity = resident.GetRequiredCapacity(counts, boundary);
+        plan.SetPatch(EVulkanAdvancedSceneResidentOwner.Lookups, patch,
+            GetTableBytes<AdvancedGpuHandleLookup>(checked((int)capacity)));
+    }
+
+    private static void FillLookupCounts(
+        Span<uint> destination,
+        AdvancedGpuScenePublicationSnapshot snapshot,
+        AdvancedMaterialPublicationSnapshot material)
+    {
+        for (int owner = 0; owner < VulkanAdvancedSceneResidentLookups.OwnerCount; ++owner)
+            destination[owner] = checked((uint)GetLookupSource(owner, snapshot, material).Length);
+    }
+
+    private static ReadOnlySpan<AdvancedGpuHandleLookup> GetLookupSource(
+        int owner,
+        AdvancedGpuScenePublicationSnapshot snapshot,
+        AdvancedMaterialPublicationSnapshot material)
+        => owner switch
+        {
+            0 => snapshot.Draws.HandleLookups,
+            1 => snapshot.Instances.HandleLookups,
+            2 => snapshot.Geometry.HandleLookups,
+            3 => snapshot.Transforms.HandleLookups,
+            4 => snapshot.Deformations.HandleLookups,
+            5 => snapshot.RenderStates.HandleLookups,
+            6 => snapshot.EditorIdentities.HandleLookups,
+            7 => material.Materials.HandleLookups,
+            8 => material.Kernels.HandleLookups,
+            9 => material.Layouts.HandleLookups,
+            10 => snapshot.Textures.HandleLookups,
+            11 => snapshot.Samplers.HandleLookups,
+            _ => throw new ArgumentOutOfRangeException(nameof(owner)),
+        };
+
+    private static ulong GetLookupGeneration(
+        int owner,
+        AdvancedGpuScenePublicationSnapshot snapshot,
+        AdvancedMaterialPublicationSnapshot material)
+        => owner switch
+        {
+            0 => snapshot.Draws.Generations.Lookup,
+            1 => snapshot.Instances.Generations.Lookup,
+            2 => snapshot.Geometry.Generations.Lookup,
+            3 => snapshot.Transforms.Generations.Lookup,
+            4 => snapshot.Deformations.Generations.Lookup,
+            5 => snapshot.RenderStates.Generations.Lookup,
+            6 => snapshot.EditorIdentities.Generations.Lookup,
+            7 => material.Materials.Generations.Lookup,
+            8 => material.Kernels.Generations.Lookup,
+            9 => material.Layouts.Generations.Lookup,
+            10 => snapshot.Textures.Generations.Lookup,
+            11 => snapshot.Samplers.Generations.Lookup,
+            _ => throw new ArgumentOutOfRangeException(nameof(owner)),
+        };
+
+    private static ulong GetLookupSequence(
+        int owner,
+        AdvancedGpuScenePublicationSnapshot snapshot,
+        AdvancedMaterialPublicationSnapshot material)
+        => owner switch
+        {
+            0 => snapshot.Draws.Sequence,
+            1 => snapshot.Instances.Sequence,
+            2 => snapshot.Geometry.Sequence,
+            3 => snapshot.Transforms.Sequence,
+            4 => snapshot.Deformations.Sequence,
+            5 => snapshot.RenderStates.Sequence,
+            6 => snapshot.EditorIdentities.Sequence,
+            7 => material.Materials.Sequence,
+            8 => material.Kernels.Sequence,
+            9 => material.Layouts.Sequence,
+            10 => snapshot.Textures.Sequence,
+            11 => snapshot.Samplers.Sequence,
+            _ => throw new ArgumentOutOfRangeException(nameof(owner)),
+        };
+
+    private static VulkanAdvancedSceneLookupSegments CreateLookupSegments(
+        VulkanAdvancedSceneResidentLookups resident,
+        ReadOnlySpan<uint> counts)
+    {
+        Span<uint> capacities = stackalloc uint[VulkanAdvancedSceneResidentLookups.OwnerCount];
+        for (int owner = 0; owner < capacities.Length; ++owner)
+            capacities[owner] = resident.GetCapacity(owner);
+        return CreateLookupSegments(capacities, counts);
+    }
+
+    private static VulkanAdvancedSceneLookupSegments CreateLookupSegments(
+        ReadOnlySpan<uint> capacities,
+        ReadOnlySpan<uint> counts)
+    {
+        Span<uint> offsets = stackalloc uint[VulkanAdvancedSceneResidentLookups.OwnerCount];
+        for (int owner = 1; owner < offsets.Length; ++owner)
+            offsets[owner] = checked(offsets[owner - 1] + capacities[owner - 1]);
+        return new VulkanAdvancedSceneLookupSegments(
+            new AdvancedGpuLookupSegment(offsets[0], counts[0]),
+            new AdvancedGpuLookupSegment(offsets[1], counts[1]),
+            new AdvancedGpuLookupSegment(offsets[2], counts[2]),
+            new AdvancedGpuLookupSegment(offsets[3], counts[3]),
+            new AdvancedGpuLookupSegment(offsets[4], counts[4]),
+            new AdvancedGpuLookupSegment(offsets[5], counts[5]),
+            new AdvancedGpuLookupSegment(offsets[6], counts[6]),
+            new AdvancedGpuLookupSegment(offsets[7], counts[7]),
+            new AdvancedGpuLookupSegment(offsets[8], counts[8]),
+            new AdvancedGpuLookupSegment(offsets[9], counts[9]),
+            new AdvancedGpuLookupSegment(offsets[10], counts[10]),
+            new AdvancedGpuLookupSegment(offsets[11], counts[11]));
+    }
+
+    private void SetResidentDecision(
+        VulkanAdvancedScenePublicationAllocationPlan plan,
+        EVulkanAdvancedSceneResidentOwner owner,
+        VulkanAdvancedSceneResourceSlot slot,
+        ReadOnlySpan<byte> source,
+        VulkanAdvancedSceneResidentBytes resident)
+    {
+        bool patch = slot.EntryCount == 0 &&
+            slot.ActiveUseCount == 0 && resident.MatchesCapacity(source) &&
+            _resources.FrameDataArena!.CanRetainResidentSlice(resident.Slice);
+        plan.SetPatch(owner, patch, GetTableBytes<byte>(source.Length));
+    }
+
+    private void SetResidentDecision(
+        VulkanAdvancedScenePublicationAllocationPlan plan,
+        EVulkanAdvancedSceneResidentOwner owner,
+        VulkanAdvancedSceneResourceSlot slot,
+        ulong databaseEpoch,
+        in AdvancedImmutableByteArenaPublicationSnapshot snapshot,
+        VulkanAdvancedSceneResidentBytes resident)
+    {
+        ReadOnlySpan<byte> source = snapshot.Data;
+        bool patch = slot.EntryCount == 0 &&
+            slot.ActiveUseCount == 0 && resident.MatchesCapacity(source) &&
+            _resources.FrameDataArena!.CanRetainResidentSlice(resident.Slice);
+        plan.SetPatch(owner, patch, GetTableBytes<byte>(source.Length));
+    }
+
+    private static ulong CalculateFramePublicationStorageBytes(
+        int viewCount,
+        int passCount)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(viewCount);
+        ArgumentOutOfRangeException.ThrowIfNegative(passCount);
+        if (viewCount > 8)
+            throw new InvalidOperationException(
+                "The canonical advanced Vulkan ABI supports at most eight views per frame publication.");
+
+        ulong viewBytes = checked((ulong)Math.Max(viewCount, 1) *
+            (uint)Unsafe.SizeOf<AdvancedViewRecord>());
+        ulong metadataBytes = checked(
+            (ulong)Unsafe.SizeOf<VulkanAdvancedFrameMetadataHeader>() +
+            (ulong)passCount * (uint)Unsafe.SizeOf<VulkanAdvancedPassRecord>());
+        return checked(
+            AlignUp(viewBytes, StorageAlignment) +
+            AlignUp(metadataBytes, StorageAlignment));
     }
 
     private static void AddTableBytes<T>(int count, ref ulong total)
         where T : unmanaged
+        => total = checked(total + GetTableBytes<T>(count));
+
+    private static ulong GetTableBytes<T>(int count)
+        where T : unmanaged
     {
         int rowCount = Math.Max(count, 1);
         ulong bytes = checked((ulong)rowCount * (uint)Unsafe.SizeOf<T>());
-        total = checked(total + AlignUp(bytes, StorageAlignment));
+        return AlignUp(bytes, StorageAlignment);
     }
 
     private static uint ResolveDescriptorCapacity(

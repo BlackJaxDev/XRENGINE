@@ -87,6 +87,7 @@ namespace XREngine.Rendering.Vulkan
                 PublishFramebufferForSamplingOp => "Vulkan.RecordPrimary.Op.PublishFramebufferForSampling",
                 DlssUpscaleOp => "Vulkan.RecordPrimary.Op.DlssUpscale",
                 DlssFrameGenerationOp => "Vulkan.RecordPrimary.Op.DlssFrameGeneration",
+                AdvancedVisibilityOp => "Vulkan.RecordPrimary.Op.AdvancedVisibility",
                 TextureUploadFrameOp => "Vulkan.RecordPrimary.Op.TextureUpload",
                 _ => "Vulkan.RecordPrimary.Op.Unknown"
             };
@@ -112,6 +113,7 @@ namespace XREngine.Rendering.Vulkan
                 PublishFramebufferForSamplingOp => "PublishFramebufferForSampling",
                 DlssUpscaleOp => "DlssUpscale",
                 DlssFrameGenerationOp => "DlssFrameGeneration",
+                AdvancedVisibilityOp => "AdvancedVisibility",
                 TextureUploadFrameOp => "TextureUpload",
                 QueryOp => "Query",
                 _ => "Unknown"

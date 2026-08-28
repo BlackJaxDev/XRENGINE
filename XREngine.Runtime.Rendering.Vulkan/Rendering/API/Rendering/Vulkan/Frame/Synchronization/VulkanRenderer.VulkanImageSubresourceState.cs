@@ -6,6 +6,12 @@ namespace XREngine.Rendering.Vulkan;
 /// </summary>
 internal sealed class VulkanImageSubresourceState
 {
+    /// <summary>
+    /// Stable flat-directory identity used by sealed submission validation.
+    /// This is assigned and retired under the synchronization layout lock.
+    /// </summary>
+    internal VulkanStableImageSubresourceSlotHandle StableSlot;
+
     /// <summary>Monotonic submitted-state version used by sealed contracts.</summary>
     public ulong SubmittedVersion = 1u;
 

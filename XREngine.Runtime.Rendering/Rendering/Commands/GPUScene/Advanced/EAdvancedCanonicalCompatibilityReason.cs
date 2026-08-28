@@ -19,4 +19,6 @@ public enum EAdvancedCanonicalCompatibilityReason : uint
     UnsupportedResourceSamplerAddressMode = 10,
     UnsupportedResourceSamplerCompareOperation = 11,
     ResourceComparisonRequiresDepth = 12,
+    UnsupportedGeometryTopology = 13,
+    InvalidGeometrySource = 14,
 }

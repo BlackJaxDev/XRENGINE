@@ -937,6 +937,81 @@ namespace XREngine.Rendering.Vulkan
                     VulkanFrameCounter);
                 if (framePlan is not null)
                     batch.PreparedFrame.AttachFramePlan(framePlan);
+                bool requiresAdvancedScenePublication = false;
+                if (IsAdvancedVisibilityProductionPromoted)
+                {
+                    for (int operationIndex = 0;
+                         operationIndex < recordingState.Ops.Length;
+                         operationIndex++)
+                    {
+                        if (recordingState.Ops.GetHeader(operationIndex).OpCode ==
+                            EVulkanPrimaryPlanNodeKind.AdvancedVisibility)
+                        {
+                            requiresAdvancedScenePublication = true;
+                            break;
+                        }
+                    }
+                }
+                if (requiresAdvancedScenePublication)
+                {
+                    BackendReadyFramePackage package =
+                        firstContext.PipelineInstance?.ActiveMeshRenderCommands
+                            .RenderingBackendReadyPackage
+                        ?? throw new VulkanPlanPreconditionException(
+                            "Scheduled secondary visibility preparation requires the pipeline-owned backend-ready package.");
+                    if (framePlan is null ||
+                        package.CanonicalFrame.FrameId != framePlan.RenderFrameId ||
+                        package.CanonicalScenePublication.Sequence == 0u)
+                    {
+                        throw new VulkanPlanPreconditionException(
+                            $"Scheduled secondary visibility preparation rejected a backend-ready package whose canonical frame/scene identity does not match the sealed frame plan. " +
+                            $"planFrame={framePlan?.RenderFrameId ?? 0u}, packageFrame={package.Identity.FrameId}, canonicalFrame={package.CanonicalFrame.FrameId}, " +
+                            $"sceneEpoch={package.CanonicalScenePublication.DatabaseEpoch}, sceneSequence={package.CanonicalScenePublication.Sequence}.");
+                    }
+                    batch.PreparedFrame.CaptureGlobalResources(
+                        package,
+                        framePlan.Generation);
+                    VulkanPreparedFrameGlobalResourceSnapshot globals =
+                        batch.PreparedFrame.GlobalResources;
+                    AdvancedGpuScenePublicationReference publication =
+                        globals.Publication;
+                    EVulkanAdvancedSceneResourceFailure sceneFailure =
+                        EVulkanAdvancedSceneResourceFailure.InvalidPublication;
+                    string sceneReason =
+                        "canonical prepared-frame publication is unavailable";
+                    VulkanAdvancedScenePublicationState sceneState = default;
+                    bool scenePrepared = globals.Database is not null &&
+                        publication.IsValid &&
+                        batch.PreparedFrame.TryPrepareAdvancedScenePublication(
+                            ResourceRuntime.AdvancedSceneResources,
+                            globals.Database,
+                            in publication,
+                            out sceneState,
+                            out sceneFailure,
+                            out sceneReason,
+                            out _);
+                    if (!scenePrepared)
+                    {
+                        throw new VulkanPlanPreconditionException(
+                            $"Advanced visibility cannot retain its canonical scene publication ({sceneFailure}): {sceneReason}");
+                    }
+                    for (int operationIndex = 0;
+                         operationIndex < recordingState.Ops.Length;
+                         operationIndex++)
+                    {
+                        if (recordingState.Ops.GetHeader(operationIndex).OpCode !=
+                            EVulkanPrimaryPlanNodeKind.AdvancedVisibility)
+                            continue;
+                        if (!recordingState.Ops.Stream
+                                .TryAssociateAdvancedVisibilityPublication(
+                                    operationIndex,
+                                    in sceneState))
+                        {
+                            throw new VulkanPlanPreconditionException(
+                                "Advanced visibility operation did not accept the retained canonical scene publication.");
+                        }
+                    }
+                }
                 batch.PreparedFrame.AddPrimaryPlan(recordingState.PrimaryCommandPlan);
             }
             VulkanCommandChainRecordingEntry[] entries = batch.Entries;

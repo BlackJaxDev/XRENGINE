@@ -93,6 +93,9 @@ public sealed class AdvancedImmutableByteArena
     public void ResetAtBoundary()
     {
         uint previousCount = _countBytes;
+        // Publications retain the previous backing array. Reusing it here would
+        // make a valid old-generation slice observe new bytes after an ABA cycle.
+        _data = new byte[_data.Length];
         _countBytes = 0u;
         unchecked
         {
@@ -108,6 +111,17 @@ public sealed class AdvancedImmutableByteArena
     {
         _dirtyMin = uint.MaxValue;
         _dirtyMaxExclusive = 0u;
+    }
+
+    internal AdvancedImmutableByteArenaPublicationSnapshot CapturePublicationSnapshot()
+    {
+        AdvancedImmutableByteArenaPublicationSnapshot snapshot = new(
+            _data,
+            BufferHandle,
+            _countBytes,
+            DirtyByteRange);
+        ClearDirtyRange();
+        return snapshot;
     }
 
     private void MarkDirty(uint start, uint count)

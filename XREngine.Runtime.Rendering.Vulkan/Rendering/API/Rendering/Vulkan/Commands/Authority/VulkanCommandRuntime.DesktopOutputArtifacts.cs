@@ -39,6 +39,23 @@ internal sealed partial class VulkanCommandRuntime
         // command pools are retired.
         DestroyIndexedCommandChainCaches();
         CommandPool pool = Pools.PrimaryGraphics;
+
+        ulong outputIdentity = CommandBuffers.DesktopOutputNativeDependencyIdentity;
+        if (outputIdentity != 0)
+        {
+            _ = resources.NativeDependencies.Retire(
+                EVulkanNativeDependencyOwner.Output,
+                outputIdentity,
+                "Swapchain.Output.Retirement");
+            // Consume the exact Output -> CommandArtifact edges while the
+            // primary-owner manifest still owns these artifacts. Retiring the
+            // artifacts themselves follows immediately, so this intentionally
+            // marks reuse state dirty without scheduling a reset of a buffer
+            // that is about to be freed by this lifecycle.
+            DrainNativeCommandArtifactDependencyInvalidations(resources);
+            CommandBuffers.DesktopOutputNativeDependencyIdentity = 0;
+        }
+
         RetireArtifacts(CommandBuffers.Buffers, "Swapchain.Primary");
         RetireArtifacts(CommandBuffers.DynamicUiSecondaries, "Swapchain.DynamicUiSecondary");
         RetireArtifacts(CommandBuffers.DynamicUiOverlays, "Swapchain.DynamicUiOverlay");
@@ -64,6 +81,11 @@ internal sealed partial class VulkanCommandRuntime
             for (int index = 0; index < artifacts.Length; index++)
             {
                 CommandBuffer artifact = artifacts[index];
+                if (artifact.Handle != 0)
+                    _ = resources.NativeDependencies.Retire(
+                        EVulkanNativeDependencyOwner.CommandArtifact,
+                        unchecked((ulong)artifact.Handle),
+                        $"{owner}[{index}].Retirement");
                 FreeTrackedCommandBuffer(
                     api,
                     device.Device,
@@ -81,17 +103,29 @@ internal sealed partial class VulkanCommandRuntime
         Vk api,
         VulkanDeviceContext device,
         VulkanResourceRuntime resources,
-        int imageCount)
+        int imageCount,
+        ulong outputNativeHandle)
     {
         if (imageCount <= 0)
             throw new ArgumentOutOfRangeException(nameof(imageCount));
         if (Pools.PrimaryGraphics.Handle == 0)
             throw new InvalidOperationException("The primary graphics command pool must exist before desktop output artifacts are created.");
+        if (outputNativeHandle == 0)
+            throw new InvalidOperationException("Desktop command artifacts require the live swapchain native handle as their output publisher identity.");
+        if (CommandBuffers.DesktopOutputNativeDependencyIdentity != 0)
+            throw new InvalidOperationException("Desktop command artifacts were recreated before their prior output publisher retired.");
 
         CommandBuffer[] primary = Allocate(CommandBufferLevel.Primary, "Swapchain.Primary");
         CommandBuffer[] dynamicUiSecondary = Allocate(CommandBufferLevel.Secondary, "Swapchain.DynamicUiSecondary");
         CommandBuffer[] dynamicUiOverlay = Allocate(CommandBufferLevel.Primary, "Swapchain.DynamicUiOverlay");
         CommandBuffer[] imguiOverlay = Allocate(CommandBufferLevel.Primary, "Swapchain.ImGuiOverlay");
+        VulkanNativeDependencyGraph dependencies = resources.NativeDependencies;
+        VulkanNativeDependencyHandle output = dependencies.Register(
+            EVulkanNativeDependencyOwner.Output,
+            outputNativeHandle);
+        if (!output.IsValid)
+            throw new InvalidOperationException("Failed to register the desktop output publisher identity.");
+        CommandBuffers.DesktopOutputNativeDependencyIdentity = outputNativeHandle;
         CommandBuffers.Buffers = primary;
         CommandBuffers.ActiveBuffers = (CommandBuffer[])primary.Clone();
         CommandBuffers.DynamicUiSecondaries = dynamicUiSecondary;
@@ -111,6 +145,10 @@ internal sealed partial class VulkanCommandRuntime
             CommandBuffers.RegisterImageIndex(dynamicUiSecondary[index], imageIndex);
             CommandBuffers.RegisterImageIndex(dynamicUiOverlay[index], imageIndex);
             CommandBuffers.RegisterImageIndex(imguiOverlay[index], imageIndex);
+            RegisterOutputArtifact(primary[index], "primary");
+            RegisterOutputArtifact(dynamicUiSecondary[index], "dynamic-ui-secondary");
+            RegisterOutputArtifact(dynamicUiOverlay[index], "dynamic-ui-overlay");
+            RegisterOutputArtifact(imguiOverlay[index], "imgui-overlay");
             CommandBuffers.PrimaryPlans[index] = new VulkanPrimaryCommandPlan();
             CommandBuffers.PrimaryOwners[index] = new PrimaryCommandArtifactOwner(
                 primary[index],
@@ -130,6 +168,24 @@ internal sealed partial class VulkanCommandRuntime
         // belong to this command authority. The output service publishes the
         // returned generation and retires it with the other image-indexed artifacts.
         return imguiOverlay;
+
+        void RegisterOutputArtifact(CommandBuffer artifact, string role)
+        {
+            ulong artifactIdentity = unchecked((ulong)artifact.Handle);
+            VulkanNativeDependencyHandle commandArtifact = dependencies.Register(
+                EVulkanNativeDependencyOwner.CommandArtifact,
+                artifactIdentity);
+            if (!commandArtifact.IsValid ||
+                !dependencies.Link(
+                    EVulkanNativeDependencyOwner.Output,
+                    output,
+                    EVulkanNativeDependencyOwner.CommandArtifact,
+                    commandArtifact))
+            {
+                throw new InvalidOperationException(
+                    $"Failed to publish desktop {role} command artifact 0x{artifactIdentity:X} under output 0x{outputNativeHandle:X}.");
+            }
+        }
 
         CommandBuffer[] Allocate(CommandBufferLevel level, string owner)
         {

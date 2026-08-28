@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.Text;
 using Silk.NET.Vulkan;
 using XREngine.Rendering.Resources;
+using XREngine.Rendering.Diagnostics;
 
 namespace XREngine.Rendering.Vulkan;
 
@@ -15,6 +16,12 @@ namespace XREngine.Rendering.Vulkan;
 /// </summary>
 internal sealed partial class VulkanCommandRuntime
 {
+    internal delegate bool AdvancedVisibilityDiagnosticCopyRecorder(
+        CommandBuffer commandBuffer,
+        in VulkanAdvancedVisibilityResourceState visibilityState,
+        in GpuDiagnosticReadbackPlanNode node,
+        ulong frameIdentity);
+
     private VulkanDeviceContext? _configuredDeviceContext;
     private VulkanResourceRuntime? _configuredResourceRuntime;
     private VulkanFrameTelemetry? _configuredFrameTelemetry;
@@ -23,8 +30,14 @@ internal sealed partial class VulkanCommandRuntime
     private CommandChainSchedule?[]? _scheduleCache;
     private readonly VulkanCommandThreadWorkspace _threadWorkspace;
     private readonly VulkanFrameOperationScheduler _primaryOperationScheduler = new();
+    private readonly VulkanPreparedFrameRecording
+        _advancedVisibilityPublicationPreparation = new();
 
     internal VulkanProducerCompleteIndirectStream? PendingProducerCompleteIndirectStream { get; set; }
+    // Installed by the frame-loop completion authority. Keeping this as a
+    // narrow recording port prevents primary workers from owning queue/fence
+    // state or creating their own auxiliary submission.
+    internal AdvancedVisibilityDiagnosticCopyRecorder? AdvancedVisibilityDiagnosticCopy { get; set; }
     internal bool ThreadLocalScratchDisposed { get; set; }
 
     public VulkanCommandRecorder Recorder { get; } = new();
@@ -297,6 +310,8 @@ internal sealed partial class VulkanCommandRuntime
                     handle,
                     out VulkanCommandBufferLifetimeRecord? lifetime))
             {
+                CommandBuffers.StableCommandDirectory.Tombstone(
+                    lifetime.StableCommandIdentity);
                 lifetime.InvalidateSealedSubmissionContract();
             }
 
@@ -387,6 +402,11 @@ internal sealed partial class VulkanCommandRuntime
         {
             throw new InvalidOperationException($"Failed to allocate Vulkan command buffer for {owner}.");
         }
+        VulkanNativeDependencyHandle commandArtifact = resources.NativeDependencies.Register(
+            EVulkanNativeDependencyOwner.CommandArtifact,
+            unchecked((ulong)commandBuffer.Handle));
+        if (!commandArtifact.IsValid)
+            throw new InvalidOperationException($"Failed to publish native dependency identity for {owner}.");
         return commandBuffer;
     }
 
@@ -464,23 +484,80 @@ internal sealed partial class VulkanCommandRuntime
         => InvalidateCachedCommandBuffersCore(
             dependentCommandBuffers,
             reason,
-            FrameTelemetry);
+            FrameTelemetry,
+            queueReset: true);
+
+    /// <summary>
+    /// Applies native dependency changes to the exact reusable artifacts that
+    /// own the affected command buffers. Unlike retirement invalidation, this
+    /// leaves native command-buffer reset to the owning output lifecycle: an
+    /// output may be retiring the same artifact immediately after this call.
+    /// </summary>
+    internal VulkanExactInvalidationResult InvalidateCachedCommandArtifactDependencies(
+        ReadOnlySpan<ulong> dependentCommandBuffers,
+        string reason)
+        => InvalidateCachedCommandBuffersCore(
+            dependentCommandBuffers,
+            reason,
+            FrameTelemetry,
+            queueReset: false);
+
+    /// <summary>
+    /// Drains only command-artifact dependency records. Other native consumers
+    /// retain their records in the graph until their own authority handles
+    /// them, preventing output mutation from being silently lost to resident
+    /// template maintenance.
+    /// </summary>
+    internal void DrainNativeCommandArtifactDependencyInvalidations(
+        VulkanResourceRuntime resources)
+    {
+        VulkanNativeDependencyGraph graph = resources.NativeDependencies;
+        while (graph.TryDequeueDirtyRecord(
+                   EVulkanNativeDependencyOwner.CommandArtifact,
+                   out VulkanNativeDependencyInvalidationRecord record))
+        {
+            if (!graph.TryGetNativeHandle(
+                    EVulkanNativeDependencyOwner.CommandArtifact,
+                    record.Dependent,
+                    out ulong commandBufferHandle) ||
+                commandBufferHandle == 0)
+                continue;
+
+            VulkanExactInvalidationResult result =
+                InvalidateCachedCommandArtifactDependencies(
+                    [commandBufferHandle],
+                    $"native dependency {record.SourceOwner}:{record.Source.Slot}/{record.Source.Generation} {record.Domain}: {record.Reason}");
+            RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanExactResourceInvalidation(
+                result.ExactVariantsDirtied,
+                result.ExactCommandChainsDirtied,
+                result.UnrelatedVariantsPreserved,
+                result.GlobalFallbackInvalidations);
+        }
+    }
 
     private VulkanExactInvalidationResult InvalidateCachedCommandBuffersCore(
         ReadOnlySpan<ulong> dependentCommandBuffers,
         string reason,
-        VulkanFrameTelemetry telemetry)
+        VulkanFrameTelemetry telemetry,
+        bool queueReset)
     {
         using VulkanCpuStageScope dirtyPropagationStage =
             new(telemetry, EVulkanCpuStage.CommandDirtyPropagation);
         if (dependentCommandBuffers.IsEmpty)
             return default;
 
-        for (int index = 0; index < dependentCommandBuffers.Length; index++)
-            if (dependentCommandBuffers[index] != 0)
-                CommandBuffers.InvalidatedBuffersPendingReset.TryAdd(
-                    dependentCommandBuffers[index],
-                    0);
+        if (queueReset)
+        {
+            for (int index = 0; index < dependentCommandBuffers.Length; index++)
+                if (dependentCommandBuffers[index] != 0)
+                {
+                    CommandBuffers.AddInvalidatedCommandHandle(
+                        dependentCommandBuffers[index]);
+                    CommandBuffers.InvalidatedBuffersPendingReset.TryAdd(
+                        dependentCommandBuffers[index],
+                        0);
+                }
+        }
 
         int exactVariantsDirtied = 0;
         int exactChainsDirtied = 0;
@@ -590,6 +667,7 @@ internal sealed partial class VulkanCommandRuntime
             if (result != Result.Success)
                 continue;
             CommandBuffers.InvalidatedBuffersPendingReset.TryRemove(handle, out _);
+            CommandBuffers.RemoveInvalidatedCommandHandle(handle);
             resetCount++;
         }
     }
@@ -799,6 +877,10 @@ internal sealed partial class VulkanCommandRuntime
             return;
 
         CommandBuffer retiring = commandBuffer;
+        _ = resourceRuntime.NativeDependencies.Retire(
+            EVulkanNativeDependencyOwner.CommandArtifact,
+            unchecked((ulong)retiring.Handle),
+            $"{owner}.Retirement");
         VulkanRetirementTicket ticket =
             resourceRuntime.PrepareCommandBufferRetirement(
                 retiring,
@@ -927,6 +1009,15 @@ internal sealed partial class VulkanCommandRuntime
 
     internal void RemoveCommandBufferState(CommandBuffer commandBuffer)
     {
+        ulong handle = unchecked((ulong)commandBuffer.Handle);
+        if (handle != 0)
+        {
+            VulkanResourceLifetimeTracker tracker = ResourceRuntime.Lifetime.Tracker;
+            using (VulkanFrameLockScope.Enter(
+                       tracker.SyncRoot,
+                       EVulkanFrameWaitReason.ResourceLifetimeLock))
+                CommandBuffers.StableCommandDirectory.TombstoneByHandle(handle);
+        }
         CommandBuffers.RemoveBindState(commandBuffer);
         Synchronization.RemoveRecordedImageLayouts(commandBuffer);
     }

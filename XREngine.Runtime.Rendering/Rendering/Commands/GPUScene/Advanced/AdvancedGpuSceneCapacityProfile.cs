@@ -18,4 +18,7 @@ public readonly record struct AdvancedGpuSceneCapacityProfile(
     uint IndexBytes,
     uint PreSkinnedCurrentBytes,
     uint PreSkinnedPreviousBytes,
-    uint MeshletBytes);
+    uint MeshletBytes,
+    uint MeshletDescriptorBytes = 0u,
+    uint MeshletVertexIndexBytes = 0u,
+    uint MeshletTriangleWordBytes = 0u);

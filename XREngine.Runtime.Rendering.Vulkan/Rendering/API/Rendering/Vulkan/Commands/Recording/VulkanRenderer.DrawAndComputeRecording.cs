@@ -334,12 +334,17 @@ namespace XREngine.Rendering.Vulkan
                 DstAccessMask = AccessFlags.IndirectCommandReadBit | AccessFlags.ShaderReadBit,
             };
 
+            PipelineStageFlags destinationStages = PipelineStageFlags.DrawIndirectBit;
+            if (DeviceContext.SupportsMeshTaskIndirectCount)
+            {
+                destinationStages |= PipelineStageFlags.TaskShaderBitExt |
+                    PipelineStageFlags.MeshShaderBitExt;
+            }
+
             CmdPipelineBarrierTracked(
                 commandBuffer,
                 PipelineStageFlags.ComputeShaderBit | PipelineStageFlags.TransferBit,
-                PipelineStageFlags.DrawIndirectBit |
-                PipelineStageFlags.TaskShaderBitNV |
-                PipelineStageFlags.MeshShaderBitNV,
+                destinationStages,
                 DependencyFlags.None,
                 1,
                 &memoryBarrier,

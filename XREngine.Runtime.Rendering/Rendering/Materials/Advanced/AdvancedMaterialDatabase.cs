@@ -99,9 +99,9 @@ public sealed class AdvancedMaterialDatabase
             LayoutMembers,
             ConstantWords,
             TextureBindings,
-            _materialGeneration,
-            _kernelGeneration,
-            _layoutGeneration);
+            _materials.Generations,
+            _kernels.Generations,
+            _layouts.Generations);
     }
 
     /// <summary>Resolves the stable layout handle used by a packed material row.</summary>
@@ -211,7 +211,9 @@ public sealed class AdvancedMaterialDatabase
         layoutHandle = _materialLayoutHandles[checked((int)materialHandle.Index)];
         return layoutHandle.IsValid && _layouts.IsCurrent(layoutHandle);
     }
-    public AdvancedMaterialDatabaseGenerations Generations => new(_materialGeneration, _kernelGeneration, _layoutGeneration);
+    /// <summary>Independent owner-domain versions captured with publication payloads.</summary>
+    public AdvancedMaterialDatabaseGenerations Generations
+        => new(_materials.Generations, _kernels.Generations, _layouts.Generations);
 
     public bool TryAddLayout(
         in AdvancedMaterialLayoutRecord source,

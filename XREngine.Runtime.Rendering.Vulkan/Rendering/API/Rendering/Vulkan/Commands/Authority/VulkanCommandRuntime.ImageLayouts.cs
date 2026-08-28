@@ -129,11 +129,13 @@ internal sealed partial class VulkanCommandRuntime
                         return;
 
                     VulkanTrackedImageSubresource key = new(imageHandle, mip, layer, aspect);
-                    Synchronization._trackedImageSubresourceStates[key] = new VulkanImageSubresourceState
+                    VulkanImageSubresourceState state = new()
                     {
                         Submitted = initialState,
                         Completed = initialState,
                     };
+                    Synchronization._trackedImageSubresourceStates[key] = state;
+                    _ = Synchronization.PublishStableImageSubresourceNoLock(state);
                 }
             }
         }
@@ -434,6 +436,7 @@ internal sealed partial class VulkanCommandRuntime
 
     private void ClearTrackedImageLayoutsNoLock(ulong imageHandle)
     {
+        RetireTrackedImageSlotsNoLock(imageHandle);
         RemoveImageKeys(Synchronization._trackedImageSubresourceStates, imageHandle);
         Synchronization._externalImageOwnershipByHandle.Remove(imageHandle);
         foreach (VulkanRecordedImageLayoutState recorded in Synchronization._recordedImageLayoutsByCommandBuffer.Values)
@@ -442,6 +445,16 @@ internal sealed partial class VulkanCommandRuntime
             RemoveImageKeys(recorded.SecondaryDescriptorRequirements, imageHandle);
             RemoveImageKeys(recorded.Subresources, imageHandle);
             recorded.RefreshTouchedSubresources();
+        }
+    }
+
+    private void RetireTrackedImageSlotsNoLock(ulong imageHandle)
+    {
+        foreach (KeyValuePair<VulkanTrackedImageSubresource, VulkanImageSubresourceState> pair in
+                 Synchronization._trackedImageSubresourceStates)
+        {
+            if (pair.Key.ImageHandle == imageHandle)
+                Synchronization.RetireStableImageSubresourceNoLock(pair.Value);
         }
     }
 

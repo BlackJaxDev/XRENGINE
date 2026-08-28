@@ -10,7 +10,9 @@ public partial class AdvancedRenderPipeline
     private const uint VisibilityViewCapacity = RenderFrameViewSet.MaxViewCount + 1u;
     private const uint DrawIndexedIndirectStride = 20u;
     private const uint DrawMeshTasksIndirectStride = 12u;
-    private const uint VisibilityCounterStride = 64u;
+    // Sixteen diagnostic counter words plus ten packed lookup segments shared
+    // by the set-1 preparation/raster ABI.
+    private const uint VisibilityCounterStride = 144u;
     private const uint VisibilityRangeCapacity = 64u;
 
     private EAdvancedVisibilityDebugView _visibilityDebugView;

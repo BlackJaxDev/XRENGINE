@@ -9,6 +9,7 @@ public sealed class AdvancedGpuScenePublicationSnapshot
 {
     internal AdvancedGpuScenePublicationSnapshot(AdvancedSharedGpuSceneDatabase database)
     {
+        DatabaseEpoch = database.DatabaseEpoch;
         AdvancedGpuSceneDatabase scene = database.Scene;
         AdvancedMaterialDatabase materials = database.Materials;
         AdvancedGlobalResourceDatabase resources = database.Resources;
@@ -19,6 +20,7 @@ public sealed class AdvancedGpuScenePublicationSnapshot
         RenderStates = scene.RenderStates.CreatePublicationSnapshot();
         EditorIdentities = scene.EditorIdentities.CreatePublicationSnapshot();
         Geometry = scene.Geometry.Records.CreatePublicationSnapshot();
+        GeometryPayloads = new AdvancedGeometryPublicationSnapshot(scene.Geometry);
         MaterialPayloads = materials.CreatePublicationSnapshot();
         Materials = MaterialPayloads.Materials;
         Kernels = MaterialPayloads.Kernels;
@@ -26,15 +28,21 @@ public sealed class AdvancedGpuScenePublicationSnapshot
         ResourcePayloads = new AdvancedGpuResourcePublicationSnapshot(resources);
         Textures = ResourcePayloads.Textures;
         Samplers = ResourcePayloads.Samplers;
+        GlobalResources = new AdvancedGlobalSceneResourcePublicationSnapshot(resources);
     }
 
     public AdvancedGpuRecordTablePublicationSnapshot<AdvancedDrawRecord> Draws { get; }
+
+    /// <summary>Owner identity required before a Vulkan slot may reuse a resident image.</summary>
+    public ulong DatabaseEpoch { get; }
     public AdvancedGpuRecordTablePublicationSnapshot<AdvancedInstanceRecord> Instances { get; }
     public AdvancedGpuRecordTablePublicationSnapshot<AdvancedTransformRecord> Transforms { get; }
     public AdvancedGpuRecordTablePublicationSnapshot<AdvancedDeformationRecord> Deformations { get; }
     public AdvancedGpuRecordTablePublicationSnapshot<AdvancedRenderStateRecord> RenderStates { get; }
     public AdvancedGpuRecordTablePublicationSnapshot<AdvancedEditorIdentityRecord> EditorIdentities { get; }
     public AdvancedGpuRecordTablePublicationSnapshot<AdvancedGeometryRecord> Geometry { get; }
+    /// <summary>Exact immutable geometry stream layouts retained with this publication.</summary>
+    public AdvancedGeometryPublicationSnapshot GeometryPayloads { get; }
     public AdvancedGpuRecordTablePublicationSnapshot<AdvancedMaterialRecord> Materials { get; }
     public AdvancedGpuRecordTablePublicationSnapshot<AdvancedShadingKernelRecord> Kernels { get; }
     public AdvancedGpuRecordTablePublicationSnapshot<AdvancedMaterialLayoutRecord> Layouts { get; }
@@ -50,6 +58,11 @@ public sealed class AdvancedGpuScenePublicationSnapshot
     public AdvancedGpuResourcePublicationSnapshot ResourcePayloads { get; }
     public AdvancedGpuRecordTablePublicationSnapshot<AdvancedTextureRecord> Textures { get; }
     public AdvancedGpuRecordTablePublicationSnapshot<AdvancedSamplerRecord> Samplers { get; }
+    /// <summary>
+    /// Immutable native-shading lights, shadows, probes, environments, decals,
+    /// and GI resources captured with this publication.
+    /// </summary>
+    public AdvancedGlobalSceneResourcePublicationSnapshot GlobalResources { get; }
 
     /// <summary>Resource-table generations captured when this ring entry was sealed.</summary>
     public AdvancedGlobalResourceDatabaseGenerations ResourceGenerations
@@ -58,5 +71,6 @@ public sealed class AdvancedGpuScenePublicationSnapshot
     internal bool TryCaptureResourceTableState(
         ulong sequence,
         in AdvancedGlobalResourceDatabaseGenerations generations)
-        => ResourcePayloads.TryCaptureTableState(sequence, generations);
+        => ResourcePayloads.TryCaptureTableState(sequence, generations) &&
+           GlobalResources.TryCaptureTableState(sequence, generations);
 }

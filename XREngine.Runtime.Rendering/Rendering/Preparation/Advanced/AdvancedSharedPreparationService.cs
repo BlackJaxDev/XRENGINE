@@ -46,6 +46,8 @@ public sealed class AdvancedSharedPreparationService : IDisposable
                 {
                     Consumers = _publication.Consumers | consumers,
                     VisibilityViewCount = checked((uint)viewCount),
+                    VisibilityContentGeneration =
+                        _extractor.VisibilityContentGeneration,
                 };
                 return _publication;
             }

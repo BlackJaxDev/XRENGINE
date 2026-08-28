@@ -54,13 +54,15 @@ internal sealed class HumanoidStateMachineRootMotionLeafState
         bool identityChanged = !_isAssigned
             || OccurrenceId != contribution.OccurrenceId
             || !ReferenceEquals(_clip, contribution.Clip)
-            || _policy != contribution.Policy;
+            || _policy != contribution.Policy
+            || ContributionType != contribution.ContributionType;
         if (identityChanged)
         {
             _isAssigned = true;
             OccurrenceId = contribution.OccurrenceId;
             _clip = contribution.Clip;
             _policy = contribution.Policy;
+            ContributionType = contribution.ContributionType;
             CopyPolicyToSettings(_policy, _effectiveSettings);
             _cacheValid = CacheCanonicalAndLoop(humanoid);
             _hasCanonicalFeetY = false;
@@ -94,7 +96,6 @@ internal sealed class HumanoidStateMachineRootMotionLeafState
             _canonicalBody,
             1.0f,
             _effectiveSettings,
-            projectionCalibrationClipName: null,
             _currentProjectionMuscles.Values);
         BodyAllocationProjectedRootPose = withinCycle;
         UnwrappedProjectedRootPose = contribution.SourceLoopCycle != 0L && _hasLoopGenerator
@@ -149,6 +150,22 @@ internal sealed class HumanoidStateMachineRootMotionLeafState
         HumanoidImportedBodySample sourceStart = CreateImportedBodySample(startPosition, startRotation);
         HumanoidImportedBodySample sourceEnd = CreateImportedBodySample(endPosition, endRotation);
         float offsetSeconds = _policy.NormalizedCycleOffset * _clip.LengthInSeconds;
+        AnimationClip canonicalClip = _clip;
+        float canonicalTimeSeconds = offsetSeconds;
+        if (ContributionType == EHumanoidMotionContributionType.Additive
+            && !_clip.TryGetImportedAdditiveReferencePose(
+                out canonicalClip,
+                out canonicalTimeSeconds))
+            return false;
+
+        HumanoidImportedBodySample canonicalSample;
+        if (!canonicalClip.TrySampleImportedHumanoidBody(
+                canonicalTimeSeconds,
+                out Vector3 canonicalPosition,
+                out Quaternion canonicalRotation))
+            return false;
+        canonicalSample = CreateImportedBodySample(canonicalPosition, canonicalRotation);
+
         HumanoidImportedBodySample offsetSample = sourceStart;
         if (offsetSeconds > 0.0f)
         {
@@ -164,15 +181,17 @@ internal sealed class HumanoidStateMachineRootMotionLeafState
         // Playback time zero samples the cycle-offset source phase. Keep the same
         // canonical Body reference as direct playback; sourceStart remains the
         // endpoint reference used to derive one temporal loop generator.
-        _canonicalBody = offsetSample;
-        _clip.PublishImportedHumanoidProjectionMusclesAtTime(
-            offsetSeconds,
+        _canonicalBody = ContributionType == EHumanoidMotionContributionType.Additive
+            ? canonicalSample
+            : offsetSample;
+        canonicalClip.PublishImportedHumanoidProjectionMusclesAtTime(
+            canonicalTimeSeconds,
             _canonicalProjectionMuscles);
         _clip.PublishImportedHumanoidProjectionMusclesAtTime(0.0f, _loopStartMuscles);
         _clip.PublishImportedHumanoidProjectionMusclesAtTime(_clip.LengthInSeconds, _loopEndMuscles);
-        ApplyInheritedMirrorIfNeeded(_canonicalProjectionMuscles.Values);
-        ApplyInheritedMirrorIfNeeded(_loopStartMuscles.Values);
-        ApplyInheritedMirrorIfNeeded(_loopEndMuscles.Values);
+        ApplyInheritedMirrorIfNeeded(_canonicalProjectionMuscles.Values, canonicalClip);
+        ApplyInheritedMirrorIfNeeded(_loopStartMuscles.Values, _clip);
+        ApplyInheritedMirrorIfNeeded(_loopEndMuscles.Values, _clip);
 
         humanoid.CalculateLoopEvaluation(
             sourceStart,
@@ -181,7 +200,6 @@ internal sealed class HumanoidStateMachineRootMotionLeafState
             _loopEndMuscles.Values,
             1.0f,
             _effectiveSettings,
-            projectionCalibrationClipName: null,
             out _loopPoseCorrection,
             out HumanoidProjectedRootPose sourceGenerator);
         if (!_policy.LoopTime)
@@ -194,7 +212,6 @@ internal sealed class HumanoidStateMachineRootMotionLeafState
                 sourceStart,
                 1.0f,
                 _effectiveSettings,
-                projectionCalibrationClipName: null,
                 ReadOnlySpan<float>.Empty);
             _loopGenerator = HumanoidComponent.ComposeProjectedRootPoses(
                 HumanoidComponent.InvertProjectedRootPose(offsetFromStart),
@@ -210,8 +227,11 @@ internal sealed class HumanoidStateMachineRootMotionLeafState
     }
 
     private void ApplyInheritedMirrorIfNeeded(float[] values)
+        => ApplyInheritedMirrorIfNeeded(values, _clip);
+
+    private void ApplyInheritedMirrorIfNeeded(float[] values, AnimationClip? sourceClip)
     {
-        bool sourceMirror = _clip?.ImportedHumanoidRootMotionSettings?.Mirror == true;
+        bool sourceMirror = sourceClip?.ImportedHumanoidRootMotionSettings?.Mirror == true;
         if (sourceMirror == _policy.Mirror)
             return;
 

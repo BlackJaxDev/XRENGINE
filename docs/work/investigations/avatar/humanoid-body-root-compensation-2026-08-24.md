@@ -2,8 +2,9 @@
 
 Date: 2026-08-24
 
-Status: Phase 6 complete; Unity fixed-time, full root-settings matrix, lifecycle,
-IK/contact, determinism, and live visual parity passed
+Status: Phases 1-9 implemented; the native humanoid solver, deterministic
+Body/root transaction, and authored IK staging pass the Phase 9 runtime probe.
+The versioned multi-avatar Unity conformance corpus remains Phase 10.
 
 Related TODO: `docs/work/todo/avatar/humanoid-body-root-compensation-todo.md`
 
@@ -520,3 +521,142 @@ complete and the live XRENGINE animation passes the Unity parity gate. Later
 TODO phases remain intentionally open. Missing textures, the scale-blind
 skin-explosion warning threshold, and ordinary skinned motion vectors remain
 separate rendering/import diagnostics rather than animation-pose gaps.
+
+## Phase 8 Raw `.anim` Completion (2026-08-28)
+
+Phase 8 now has one explicit versioned raw-format contract for Unity
+AnimationClip serialized versions 6 and 7. The importer resolves an authored
+additive reference by exact GUID and fileID, validates its seconds-based time,
+imports it recursively with cycle detection, and fails preflight rather than
+falling back when the identity or time cannot be executed. State-machine setup
+caches the reference pose in the source slot layout. The ordinary typed pose and
+the humanoid Body/root sidecar therefore subtract the same static reference,
+without per-frame I/O, seeks, or allocations.
+
+The schema audit preserves `m_HasGenericRootTransform`,
+`m_HasMotionFloatCurves`, `m_GenerateMotionCurves`, editable binding `flags`,
+and nested serialized versions. Contract-unsupported nested versions and
+unknown version-6/7 fields at the root or within known curve, binding, settings,
+packed-data, reference, bounds, and event mappings produce blocking
+`SourceEncoding` diagnostics with their full source paths. Manifest diagnostic
+ordering was corrected so the state-escalating failure is surfaced ahead of an
+earlier informational notice.
+
+Published artifacts are the capability JSON, developer-guide link, fixture
+README with exact hashes, and the packed integer/PPtr fixture under
+`docs/developer-guides/animation/fixtures/unity-anim-v1/`. The final disposable
+probe under `Build/_AgentValidation/20260828-104100-humanoid-phase8/` used
+`AnimationClip.Load3rdParty` for all imports and recorded:
+
+- five of five portable fixtures executable through their declared domains;
+- 545 repository clips: 449 native-executable, 96 requiring explicit runtime
+  adapters, and zero otherwise blocked;
+- editable binding flags `16` and the three root/motion metadata fields retained;
+- unknown top-level, unknown nested-field, and nested-version-99 inputs rejected
+  precisely;
+- an external GUID/fileID reference retained at `0.5` seconds and accepted by
+  runtime preflight; and
+- a prepared additive scalar result of `10 - 3 = 7` with coverage `1`.
+
+`XREngine.Animation` and `XREngine.Runtime.AnimationIntegration` narrow builds
+both completed with zero warnings and zero errors. No tests were added, changed,
+or run because the repository requires explicit clearance after live feature
+validation.
+
+The `humanoid-phase8-rawanim` isolated editor session was attempted. Its first
+build stopped on duplicate ignored cache declarations; a validation-only
+compile overlay got past those without changing tracked source, then exposed
+missing model-import backend enums, a duplicate ignored bootstrap source, and a
+concurrently changing Vulkan advanced-visibility contract. The editor never
+started, so there are no session runtime logs or screenshots to claim. The real
+asset-load method itself passed in the isolated disposable host; rerun the editor
+smoke once the independent checkout build is coherent. Full avatar/whole-pose
+known-answer comparison remains assigned to Phase 10.
+
+## Phase 9 Native Humanoid Solver Completion (2026-08-28)
+
+Phase 9 removes the fitted calibration evaluator from production. A finalized
+`HumanoidAvatarDefinition` now compiles into immutable per-role solve plans,
+concrete parent bridges, auxiliary twist plans, a parent-first commit order,
+canonical Body axes, declared units/human scale, and IK/stretch settings. The
+runtime normalizer discards `LegacyCalibration`; old profile files may still be
+migrated for semantic mapping, neutral transforms, axes, twist settings, and
+declared scale, but captured pose samples and fitted response coefficients do
+not enter validation, content signatures, compilation, or evaluation.
+
+Each `HumanoidComponent` owns one preallocated solve workspace. It converts all
+95 normalized muscles through asymmetric limits and declared joint bases,
+rest-normalizes custom center/pre/post rotations so a zero-muscle solve returns
+the finalized neutral pose, distributes twist through compiled auxiliary
+helpers, applies packed/editable translation DoF, and evaluates semantic FK
+through the actual concrete hierarchy. Optional absent roles resolve through
+the nearest present mapped ancestor; bound semantic-parent contradictions and
+missing required roles fail explicitly. The complete scratch result is checked
+for finite, decomposable transforms before a single parent-first commit, with
+quaternion hemisphere continuity for both semantic and auxiliary bones.
+
+Direct clips and state-machine graphs finalize their ordinary value blend and
+translation DoF before invoking this same native solve. A single full-weight
+state/blend leaf follows the exact direct Body/Hips/root allocation path;
+multi-leaf graphs solve leaf projection in scratch, compose the result, and
+commit the final pose once. Exact state seeks preserve the sampled projected
+root while resetting only temporal-delta continuity. The documented runtime
+order is authored pose, Body/Hips allocation and root projection, then one
+animation-driven IK/contact solve. IK goal bases come from the immutable
+compiled neutral avatar rather than the first live frame; arm/leg stretch and
+bilateral feet spacing use compiled settings and model units.
+
+The disposable validation host at
+`Build/_AgentValidation/20260828-114416-humanoid-phase9/` loaded
+`Assets/Walks/Sexy Walk.anim` through the real
+`AnimationClip.Load3rdParty` path. Its final report is
+`reports/phase9-native-probe.json` and records:
+
+- `PASS`, 95 muscle channels, a nonzero converted translation-DoF delta, and 20
+  quaternion-continuity samples;
+- atomic rejection of non-finite muscle/translation-DoF input and invalid
+  authored IK position, rotation, or weight without changing the prior committed
+  pose, root, IK targets, or diagnostics;
+- compiled arm/leg stretch, symmetric feet-spacing compensation, and the
+  pose-then-root-then-single-IK order;
+- stable compilation beneath a translated, rotated, and non-uniformly scaled
+  model root, stable recompilation from the captured bind snapshot after live
+  pose changes, and explicit rejection of sheared/non-TRS neutral transforms;
+- identical output after changing the clip display name and after injecting
+  deliberately poisoned legacy calibration metadata;
+- direct, one-state, single-child direct-blend, and a real condition-triggered
+  two-leaf transition between separately loaded equivalent clips agree in
+  pose/root output at `2e-4` tolerance; and
+- five finite samples on a held-out `1.65x` avatar definition with materially
+  different proportions/axes, arbitrary concrete names, no twist helpers, and
+  missing optional UpperChest, toes, eyes, jaw, shoulders, and fingers. The
+  clip data was not regenerated or target-specialized.
+
+The validation-only build overlay removed only the checkout's duplicate
+`ThirdPartyCacheAuthorityRoles` and `ThirdPartyCacheCodecRegistry` compile
+items. With that overlay, the probe rebuilt with zero warnings and zero errors;
+the narrow `XREngine.Runtime.AnimationIntegration` build also completed with
+zero warnings and zero errors. A named `humanoid-phase9-native` isolated editor
+session was attempted, but the editor could not start because unrelated cache
+declarations already present in tracked and ignored paths break the checkout-
+wide build.
+No cache/rendering source was changed to manufacture a passing editor run.
+
+The final transaction review additionally corrected staged-value seeding,
+invalid-IK preflight, zero-channel rejection gating, pre-commit solver resets,
+and overflowed finite quaternion magnitudes. The expanded probe then passed
+position-only IK inheritance, invalid-IK pose/root/target/diagnostic atomicity,
+and rejection of an old-goal solver pass when the failed native frame contained
+no new IK channels. The changed animation-integration assembly and probe host
+again built with zero warnings and zero errors using existing dependency
+outputs. A later all-reference rebuild was independently blocked by concurrent
+rendering work whose `AdvancedGpuScenePublisher` calls currently lack
+`TryRegisterCanonicalGeometry`/`TryValidateCanonicalGeometry`; that subsystem
+was left untouched.
+
+No unit tests were added, changed, or run because repository policy requires
+explicit clearance after live feature validation. The held-out runtime probe
+closes the native Phase 9 implementation. The externally sourced,
+redistributable multi-avatar Unity known-answer tolerance matrix remains the
+explicit Phase 10 deliverable; production never invokes Unity or consumes that
+matrix.

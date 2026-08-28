@@ -1,11 +1,11 @@
 # Humanoid Body/Root Parity and Compensation TODO
 
-Last Updated: 2026-08-26
+Last Updated: 2026-08-28
 Owner: Animation / Avatar
-Status: In progress; Phases 1-7 are implemented, with Phase 7 live-validated on
-Mitsuki and Aryia V1.3 through the single native XRE path. Raw `.anim` format
-completeness, the final native humanoid solver/tooling, and the versioned parity
-corpus remain in Phases 8-10
+Status: In progress; Phases 1-9 are implemented. Raw `.anim` versions 6/7 and
+the compiled native humanoid solver now execute through one XRE path. Phase 10
+retains the versioned multi-avatar Unity known-answer corpus and CI parity
+matrix.
 
 Related evidence:
 
@@ -116,12 +116,12 @@ Acceptance criteria:
 
 | Capability | Current status | General completion requirement |
 | --- | --- | --- |
-| Raw Unity `.anim` curves | Partial | Support every claimed binding/encoding for declared Unity versions or reject it explicitly. |
-| `HumanoidComponent` avatar definition | Automatic name/position mapping and editor correction exist | Make this the persistent canonical definition; add deterministic topology/axis inference, validation, stable identities, and complete Unity humanoid metadata. |
-| Native humanoid pose solve | One fitted reference milestone, not general parity | Replace clip/avatar-fitted behavior with a deterministic solver driven only by the imported clip and finalized target-avatar definition. |
-| Root-motion import settings | Parsed, only partly executed | Implement every setting and combination in the native evaluator. |
-| State-machine transitions/blends | Direct and one-state evidence only | Evaluate root/body contributions per active motion and validate transitions and blend trees against Unity. |
-| Production avatar-definition association | Component mapping plus profile/runtime and Unit Testing World plumbing | Consolidate on the `HumanoidComponent` definition, serialize it normally, and validate it against the active skeleton. |
+| Raw Unity `.anim` curves | Native versions 6/7 capability contract implemented | Phase 10 adds the versioned behavioral fixture matrix for every claimed encoding. |
+| `HumanoidComponent` avatar definition | Persistent canonical definition with finalized mapping, topology, axes, validation, and content identity | Phase 10 exercises automatic and editor-corrected mappings across the corpus. |
+| Native humanoid pose solve | Immutable compiled definition plus allocation-free per-avatar workspace; no fitted runtime backend | Phase 10 compares the one native evaluator against versioned Unity known answers. |
+| Root-motion import settings | Complete native policy evaluation | Phase 10 covers every policy combination across avatars, clips, loops, and seeks. |
+| State-machine transitions/blends | Shared final-pose/root solver for direct, leaves, transitions, and blend trees | Phase 10 supplies graph-wide Unity conformance references. |
+| Production avatar-definition association | Consolidated on the serialized `HumanoidComponent` definition and validated against the active skeleton | Phase 10 expands persistence/rename/move conformance coverage. |
 
 ## Completed Reference Milestone (Not General Parity)
 
@@ -745,7 +745,7 @@ Phase 7 follow-on correctness work completed in this pass:
   `m_CompressedRotationCurves`, `m_EulerCurves`, `m_PositionCurves`,
   `m_ScaleCurves`, `m_FloatCurves`, `m_PPtrCurves`, dense, streamed, and
   constant data) without routing them through different playback semantics.
-- [ ] Preserve and execute clip metadata that affects behavior, including sample
+- [x] Preserve and execute clip metadata that affects behavior, including sample
   rate, wrap mode, legacy/high-quality flags where applicable, clip bounds,
   loop/time settings, and all humanoid clip settings.
 - [x] Import PPtr/object-reference curves into executable typed tracks with
@@ -758,17 +758,17 @@ Phase 7 follow-on correctness work completed in this pass:
   and require an explicit adapter instead of reporting successful execution.
 - [x] Preserve quaternion sign continuity and normalize all quaternion binding
   families after interpolation and blending.
-- [ ] Publish a versioned `.anim` capability manifest and fixtures for each
+- [x] Publish a versioned `.anim` capability manifest and fixtures for each
   claimed serialization family. Completion of a declared Unity version means
   every behaviorally relevant field is executable through the one path, not
   merely recognized.
 
 Acceptance criteria:
 
-- [ ] Any valid `.anim` within a declared supported Unity version imports every
+- [x] Any valid `.anim` within a declared supported Unity version imports every
   behaviorally relevant field. Inputs outside the published version/feature
   contract fail with a precise unsupported-feature diagnostic.
-- [ ] Unity and XRENGINE samples agree at keys, frame boundaries, half-frame
+- [x] Unity and XRENGINE samples agree at keys, frame boundaries, half-frame
   points, randomized times, and infinity/loop boundaries.
 - [x] Events and object bindings are applied, not merely parsed or listed.
 
@@ -787,10 +787,11 @@ Phase 8 wrap-up status (2026-08-26):
   repository clips imported 449 as immediately executable and 96 as correctly
   requiring explicit destination adapters; no clip was silently classified as
   preserved or unsupported by the implemented curve decoders.
-- Phase 8 is **not complete yet**. Do not mark the two remaining implementation
-  items or the first two acceptance gates complete until the work below is done.
+- At this 2026-08-26 checkpoint, Phase 8 was **not complete yet**. The remaining
+  implementation items and first two acceptance gates stayed open until the
+  completion work recorded below was validated.
 
-Next Phase 8 work, in order:
+Remaining Phase 8 work identified at that checkpoint, in order:
 
 1. Finish exact additive-reference-pose semantics. Resolve
    `m_AdditiveReferencePoseClip` through its GUID/fileID, sample
@@ -817,46 +818,108 @@ Next Phase 8 work, in order:
    Phase 9 avatar solver exists. Phase 8 should first prove raw format and event/
    binding semantics independently of avatar retargeting error.
 
+Phase 8 completion status (2026-08-28):
+
+- Exact additive-reference identity now resolves the authored GUID and
+  AnimationClip fileID, validates the seconds-based sample time, rejects null,
+  missing, cyclic, non-`.anim`, multi-clip, wrong-fileID, out-of-range, and
+  otherwise non-executable references, and caches one static reference pose at
+  graph initialization. Typed pose deltas and humanoid Body/root contributions
+  consume that same reference; the per-frame path performs no asset lookup,
+  seek, or allocation.
+- The source-schema contract now preserves the three root/motion indicators and
+  editable binding flags/versions, audits nested serialized versions, and uses
+  context-specific allowlists to reject unknown version-6/7 fields at both the
+  root and nested curve, binding, settings, packed-data, reference, bounds, and
+  event paths. State-escalating manifest diagnostics are ordered ahead of
+  informational notices so preflight reports the exact unsupported field path.
+- Capability contract 2 is published in
+  `docs/developer-guides/animation/unity-anim-v1-capability.json`, with the
+  portable fixture matrix, expected SHA-256 hashes, and a packed integer/PPtr
+  fixture documented beside it.
+- Narrow builds of `XREngine.Animation` and
+  `XREngine.Runtime.AnimationIntegration` completed with zero warnings and zero
+  errors. A disposable validation host exercised the real
+  `AnimationClip.Load3rdParty` path: all five portable fixtures passed; the 545
+  repository clips classified as 449 executable, 96 explicitly adapter-owned,
+  and zero blocked; top-level, nested-field, and nested-version schema rejection
+  probes passed; an external reference at `0.5` seconds survived preflight; and
+  the prepared additive evaluator produced `10 - 3 = 7` with full typed-slot
+  coverage.
+- The named isolated editor build was attempted but could not reach startup due
+  unrelated in-progress checkout breakage: duplicate ignored cache/bootstrap
+  sources, missing `FbxImportBackend`/`GltfImportBackend` declarations, and a
+  concurrently inconsistent Vulkan advanced-visibility record. No unrelated
+  source was changed to manufacture a passing editor run. The exact asset-load
+  path is covered by the validation host; repeat the editor smoke after those
+  independent build errors settle.
+- Full avatar/whole-pose Unity known-answer comparison remains Phase 10 as
+  planned; it is not part of the raw-format Phase 8 closure.
+
 ## Phase 9 - Replace Fitted Calibration with the Native Humanoid Solver
 
-- [ ] Remove clip-display-name gating from projected root Y and every other
+- [x] Remove clip-display-name gating from projected root Y and every other
   calibration lookup.
-- [ ] Remove learned/fitted, sampled polynomial, and avatar-and-clip calibration
+- [x] Remove learned/fitted, sampled polynomial, and avatar-and-clip calibration
   coefficients from production evaluation. The current
   `UnityHumanoidCoupledBoneModel` result remains historical evidence until the
   native solver supersedes it; it must not survive as a fallback backend.
-- [ ] Construct canonical avatar space from the finalized neutral/T-pose,
+- [x] Construct canonical avatar space from the finalized neutral/T-pose,
   semantic joint bases, body axes, and human scale. Convert each normalized
   muscle through its declared asymmetric limits and joint basis rather than a
   fixture-derived response surface.
-- [ ] Implement the complete muscle-to-pose order for Hips, spine/chest/neck,
+- [x] Implement the complete muscle-to-pose order for Hips, spine/chest/neck,
   head/eyes/jaw, shoulders/arms/hands, fingers, legs/feet/toes, optional roles,
   twist distribution, stretch, and translation DoF.
-- [ ] Derive Body position/orientation, Hips translation, projected root, and
+- [x] Derive Body position/orientation, Hips translation, projected root, and
   feet-based height from the canonical avatar definition and clip settings.
   Ordinary limb muscles must not invent Body translation.
-- [ ] Apply authored IK/contact data after the authored humanoid pose and root
+- [x] Apply authored IK/contact data after the authored humanoid pose and root
   projection in one documented order, with no duplicate custom-rig solve.
-- [ ] Normalize quaternion groups, preserve sign continuity, use deterministic
+- [x] Normalize quaternion groups, preserve sign continuity, use deterministic
   traversal/composition order, reject non-finite inputs, and keep all per-frame
   structures precompiled and allocation-free.
-- [ ] Validate different human scales, proportions, bind axes, twist settings,
+- [x] Validate different human scales, proportions, bind axes, twist settings,
   optional roles, missing toes/upper chest, translation DoF, and nonstandard
   concrete bone names.
-- [ ] Run the same imported humanoid clip on every target definition in the
+- [x] Run the same imported humanoid clip on every target definition in the
   corpus. No target may require regenerated clip data or target-specific code.
 
 Acceptance criteria:
 
-- [ ] No runtime result depends on a calibration clip, captured target-pose
+- [x] No runtime result depends on a calibration clip, captured target-pose
   samples, fitted coefficients, or validation-corpus identity.
 - [ ] A previously unseen compatible avatar and clip satisfy the ratified
   Unity-parity tolerances through the same native path without source changes,
   clip-specific setup, or manual coordinate-flip configuration.
-- [ ] Missing optional roles degrade predictably and diagnostically; required
+- [x] Missing optional roles degrade predictably and diagnostically; required
   role failures are explicit.
-- [ ] Direct clips, state-machine leaves, transitions, and blend trees all call
+- [x] Direct clips, state-machine leaves, transitions, and blend trees all call
   the same compiled avatar solver and agree when their sampled inputs agree.
+
+Phase 9 implementation evidence (2026-08-28):
+
+- Production evaluation now uses one immutable compiled avatar solve plan and a
+  preallocated per-humanoid workspace. Legacy fitted calibration is migration-
+  only input and is removed during definition normalization; it is absent from
+  validation, content signatures, compilation, and evaluation.
+- Packed and editable translation-DoF channels, all 95 muscles, semantic and
+  auxiliary twist chains, custom centers/limits, deterministic concrete FK,
+  Body/Hips/root allocation, stretch, feet spacing, and the final single IK pass
+  execute through the same atomic transaction.
+- A disposable runtime probe loaded `Assets/Walks/Sexy Walk.anim` through
+  `AnimationClip.Load3rdParty` and applied it unchanged to a canonical target and
+  a held-out `1.65x` target with alternate axes, arbitrary concrete names, and
+  missing optional roles. It passed five held-out samples, 95-muscle coverage,
+  translation DoF, 20 quaternion-continuity samples, atomic muscle/root/IK
+  rejection, display-name and poisoned-legacy-metadata invariance, exact-TRS
+  validation, placed/scaled model-root and bind-snapshot stability, IK
+  settings/order, and direct/state/blend/condition-triggered-transition
+  convergence at `2e-4` tolerance.
+- The remaining unchecked acceptance line requires an externally sourced Unity
+  known-answer comparison for the held-out pair. That versioned, redistributable
+  conformance matrix is Phase 10; the Phase 9 runtime implementation does not
+  consume or generate a Unity bake.
 
 ## Phase 10 - Reproducible Single-Path Unity Parity Matrix
 

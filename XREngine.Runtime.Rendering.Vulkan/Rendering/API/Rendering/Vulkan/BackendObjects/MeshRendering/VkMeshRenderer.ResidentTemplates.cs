@@ -303,18 +303,18 @@ internal unsafe partial class VkMeshRenderer
                     .UniformContentGeneration ?? 0UL,
                 MeshRenderer.CaptureUniformsOnRender ? 1UL : 0UL);
 
-        AdvancedGpuScenePublication publication = canonicalDraw.Publication.Publication;
+        // Canonical owner deltas and the resident table's exact reverse
+        // manifests evict only templates that reference a mutated draw,
+        // geometry, material, or resource row. Aggregate publication
+        // generations must not participate in a per-draw cache key: doing so
+        // turns one local table mutation into a miss for every resident draw.
         generations = new(
-            DataContent: MixResident(
-                publication.ContentGeneration,
-                material.BindingValueVersion),
+            DataContent: material.BindingValueVersion,
             ResourceTable: MixResident(
-                publication.LookupGeneration,
                 material.BindingResourceVersion,
                 context.DescriptorGeneration,
                 artifactGenerationSignature),
             LayoutTopology: MixResident(
-                publication.TopologyGeneration,
                 preparationSignature,
                 material.BindingLayoutVersion,
                 unchecked((ulong)material.ShaderStateRevision),

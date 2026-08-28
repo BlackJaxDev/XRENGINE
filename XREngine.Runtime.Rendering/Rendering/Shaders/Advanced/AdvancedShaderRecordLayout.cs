@@ -16,7 +16,7 @@ public static class AdvancedShaderRecordLayout
     public const int BufferReferenceSize = 32;
     public const int DrawSize = 80;
     public const int InstanceSize = 224;
-    public const int GeometrySize = 256;
+    public const int GeometrySize = 320;
     public const int TransformSize = 80;
     public const int DeformationSize = 48;
     public const int RenderStateSize = 32;
@@ -72,9 +72,9 @@ public static class AdvancedShaderRecordLayout
         RequireOffset<AdvancedInstanceRecord>(nameof(AdvancedInstanceRecord.PreviousWorld), 64);
         RequireOffset<AdvancedInstanceRecord>(nameof(AdvancedInstanceRecord.BoundsSphere), 128);
         RequireOffset<AdvancedInstanceRecord>(nameof(AdvancedInstanceRecord.Animation), 176);
-        RequireOffset<AdvancedGeometryRecord>(nameof(AdvancedGeometryRecord.VertexLayoutId), 160);
-        RequireOffset<AdvancedGeometryRecord>(nameof(AdvancedGeometryRecord.BoundsSphere), 176);
-        RequireOffset<AdvancedGeometryRecord>(nameof(AdvancedGeometryRecord.MaterialSectionFirst), 224);
+        RequireOffset<AdvancedGeometryRecord>(nameof(AdvancedGeometryRecord.VertexLayoutId), 224);
+        RequireOffset<AdvancedGeometryRecord>(nameof(AdvancedGeometryRecord.BoundsSphere), 240);
+        RequireOffset<AdvancedGeometryRecord>(nameof(AdvancedGeometryRecord.MaterialSectionFirst), 288);
         RequireOffset<AdvancedTransformRecord>(nameof(AdvancedTransformRecord.FrameSlot), 64);
         RequireOffset<AdvancedDeformationRecord>(nameof(AdvancedDeformationRecord.CurrentGeometry), 8);
         RequireOffset<AdvancedMaterialRecord>(nameof(AdvancedMaterialRecord.MaterialLayoutHash), 16);

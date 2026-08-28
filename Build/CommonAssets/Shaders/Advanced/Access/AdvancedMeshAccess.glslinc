@@ -8,7 +8,9 @@ struct XRAdvancedGeometryRecord
     XRAdvancedBufferReference currentVertexData;
     XRAdvancedBufferReference previousVertexData;
     XRAdvancedBufferReference indexData;
-    XRAdvancedBufferReference meshletData;
+    XRAdvancedBufferReference meshletDescriptors;
+    XRAdvancedBufferReference meshletVertexIndices;
+    XRAdvancedBufferReference meshletTriangleWords;
     XRAdvancedGpuHandle fallbackGeometry;
     uint vertexBase;
     uint vertexCount;

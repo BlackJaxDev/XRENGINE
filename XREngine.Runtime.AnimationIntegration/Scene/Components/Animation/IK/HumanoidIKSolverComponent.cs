@@ -35,8 +35,8 @@ namespace XREngine.Components.Animation
         private Quaternion _animatedLeftHandLocalRotation = Quaternion.Identity;
         private Quaternion _animatedRightHandLocalRotation = Quaternion.Identity;
         // Unity humanoid IK rotations are authored in a canonical avatar-goal basis.
-        // Capture a per-avatar offset from that goal basis into the actual wrist/foot
-        // bone basis the first time an animated IK goal is evaluated.
+        // The per-avatar offsets are derived solely from compiled neutral transforms;
+        // never capture a mutable animation pose as calibration data.
         private Quaternion _animatedLeftFootGoalRotationOffset = Quaternion.Identity;
         private Quaternion _animatedRightFootGoalRotationOffset = Quaternion.Identity;
         private Quaternion _animatedLeftHandGoalRotationOffset = Quaternion.Identity;
@@ -46,6 +46,18 @@ namespace XREngine.Components.Animation
         private bool _animatedLeftHandGoalRotationOffsetInitialized;
         private bool _animatedRightHandGoalRotationOffsetInitialized;
         private bool _ikGoalWarningLogged;
+        private float _avatarFeetSpacing;
+        private Vector3 _avatarBodyRight = -Vector3.UnitX;
+        private float _avatarModelUnitsPerMeter;
+        private int _goalBasisSchemaVersion = -1;
+        private int _goalBasisDefinitionRevision = -1;
+        private string? _goalBasisDefinitionContentSha256;
+        private readonly AnimatedGoalFrame[] _stagedAnimatedGoalFrames = new AnimatedGoalFrame[4];
+        private int _stagedAnimatedGoalMask;
+        private bool _isStagingAnimatedGoalFrame;
+        private bool _hasPendingAnimatedGoalFrame;
+        private bool _rejectNextAnimationDrivenSolve;
+        private bool _usesNativeHumanoidTransactionBaseline;
         private readonly HumanoidIKGoalDiagnosticState[] _animatedGoalDiagnostics =
         [
             HumanoidIKGoalDiagnosticState.Empty(ELimbEndEffector.LeftFoot),
@@ -104,6 +116,7 @@ namespace XREngine.Components.Animation
 
         public void InitializeChains(HumanoidComponent humanoid, bool forceConvertTransforms = true)
         {
+            RefreshAvatarSolverSettings();
             var root = humanoid.SceneNode.GetTransformAs<Transform>(forceConvertTransforms);
 
             // Assigning limbs from references
@@ -177,6 +190,13 @@ namespace XREngine.Components.Animation
 
         public void SetIKPositionWeight(ELimbEndEffector goal, float weight)
         {
+            if (_isStagingAnimatedGoalFrame)
+            {
+                ref AnimatedGoalFrame frame = ref GetStagedAnimatedGoalFrame(goal);
+                frame.PositionWeight = weight;
+                _stagedAnimatedGoalMask |= 1 << GetAnimatedGoalDiagnosticIndex(goal);
+                return;
+            }
             var ik = GetGoalIK(goal);
             if (ik is null)
                 return;
@@ -186,6 +206,13 @@ namespace XREngine.Components.Animation
 
         public void SetIKRotationWeight(ELimbEndEffector goal, float weight)
         {
+            if (_isStagingAnimatedGoalFrame)
+            {
+                ref AnimatedGoalFrame frame = ref GetStagedAnimatedGoalFrame(goal);
+                frame.RotationWeight = weight;
+                _stagedAnimatedGoalMask |= 1 << GetAnimatedGoalDiagnosticIndex(goal);
+                return;
+            }
             var ik = GetGoalIK(goal);
             if (ik is null)
                 return;
@@ -267,6 +294,102 @@ namespace XREngine.Components.Animation
             SetSpineWeight(0.0f);
         }
 
+        /// <summary>Starts an allocation-free authored IK frame transaction.</summary>
+        public void BeginAnimationDrivenGoalFrame()
+        {
+            // The native humanoid solve publishes the complete authored baseline
+            // after animation evaluation. Once this path is active, BaseIK must not
+            // reset bones ahead of that transaction: a rejected frame must retain
+            // the previously committed post-IK pose byte-for-byte.
+            _usesNativeHumanoidTransactionBaseline = true;
+            _isStagingAnimatedGoalFrame = false;
+            _hasPendingAnimatedGoalFrame = false;
+            _stagedAnimatedGoalMask = 0;
+            for (int i = 0; i < _stagedAnimatedGoalFrames.Length; i++)
+            {
+                ELimbEndEffector goal = (ELimbEndEffector)i;
+                IKSolverLimb? limb = GetGoalIK(goal);
+                _stagedAnimatedGoalFrames[i] = new AnimatedGoalFrame(
+                    GetAnimatedGoalLocalPosition(goal), GetAnimatedGoalLocalRotation(goal),
+                    limb?.IKPositionWeight ?? 0.0f, limb?.IKRotationWeight ?? 0.0f);
+            }
+            _isStagingAnimatedGoalFrame = true;
+        }
+
+        /// <summary>Validates the staged frame without mutating targets or limbs.</summary>
+        public void CompleteAnimationDrivenGoalFrame()
+        {
+            if (!_isStagingAnimatedGoalFrame)
+                return;
+            _isStagingAnimatedGoalFrame = false;
+            _hasPendingAnimatedGoalFrame = _stagedAnimatedGoalMask != 0 && IsValidStagedAnimatedGoalFrame();
+            _rejectNextAnimationDrivenSolve = _stagedAnimatedGoalMask != 0 && !_hasPendingAnimatedGoalFrame;
+        }
+
+        /// <summary>True when the current authored IK frame failed validation.</summary>
+        internal bool IsAnimationDrivenGoalFrameRejected
+            => _rejectNextAnimationDrivenSolve;
+
+        /// <summary>True when an authored IK-only frame still requires the native neutral pose transaction.</summary>
+        internal bool HasPendingAnimationDrivenGoalFrame
+            => _hasPendingAnimatedGoalFrame;
+
+        /// <summary>True while an authored IK frame still requires commit or rejection.</summary>
+        internal bool HasUnresolvedAnimationDrivenGoalFrame
+            => _isStagingAnimatedGoalFrame
+            || _hasPendingAnimatedGoalFrame
+            || _stagedAnimatedGoalMask != 0;
+
+        /// <summary>Rejects a partial or invalid authored IK frame without publishing any staged state.</summary>
+        internal void RejectAnimationDrivenGoalFrame()
+        {
+            _isStagingAnimatedGoalFrame = false;
+            _hasPendingAnimatedGoalFrame = false;
+            _rejectNextAnimationDrivenSolve = true;
+            _stagedAnimatedGoalMask = 0;
+        }
+
+        /// <summary>Commits only a validated authored IK frame after the pose/root transaction accepts.</summary>
+        public void ResolveAnimationDrivenGoalFrame(bool poseAccepted)
+        {
+            if (!poseAccepted)
+            {
+                RejectAnimationDrivenGoalFrame();
+                return;
+            }
+            if (_stagedAnimatedGoalMask == 0)
+            {
+                _hasPendingAnimatedGoalFrame = false;
+                _rejectNextAnimationDrivenSolve = false;
+                return;
+            }
+            if (!_hasPendingAnimatedGoalFrame)
+            {
+                RejectAnimationDrivenGoalFrame();
+                return;
+            }
+
+            for (int i = 0; i < _stagedAnimatedGoalFrames.Length; i++)
+            {
+                if ((_stagedAnimatedGoalMask & (1 << i)) == 0)
+                    continue;
+                ELimbEndEffector goal = (ELimbEndEffector)i;
+                AnimatedGoalFrame frame = _stagedAnimatedGoalFrames[i];
+                SetAnimatedGoalLocalPosition(goal, frame.Position);
+                SetAnimatedGoalLocalRotation(goal, Quaternion.Normalize(frame.Rotation));
+                IKSolverLimb? limb = GetGoalIK(goal);
+                if (limb is not null)
+                {
+                    limb.IKPositionWeight = frame.PositionWeight;
+                    limb.IKRotationWeight = frame.RotationWeight;
+                }
+                UpdateAnimatedIKGoal(goal);
+            }
+            _hasPendingAnimatedGoalFrame = false;
+            _rejectNextAnimationDrivenSolve = false;
+            _stagedAnimatedGoalMask = 0;
+        }
+
         /// <summary>
         /// Configures the optional post-pose contact layer used by animation-driven IK goals.
         /// Authored body-relative goal data remains unchanged; only the final world-space target
@@ -283,11 +406,16 @@ namespace XREngine.Components.Animation
             settings.ContactPlaneHeight = planeHeight;
             settings.ContactClearance = clearance;
             settings.ContactCompensationWeight = weight;
-            RefreshAnimatedGoalTransforms(captureRotationOffsets: false);
+            RefreshAnimatedGoalTransforms();
         }
 
         public void ClearAnimatedIKGoals()
         {
+            _isStagingAnimatedGoalFrame = false;
+            _hasPendingAnimatedGoalFrame = false;
+            _rejectNextAnimationDrivenSolve = false;
+            _usesNativeHumanoidTransactionBaseline = false;
+            _stagedAnimatedGoalMask = 0;
             ClearAnimatedIKGoal(ELimbEndEffector.LeftFoot);
             ClearAnimatedIKGoal(ELimbEndEffector.RightFoot);
             ClearAnimatedIKGoal(ELimbEndEffector.LeftHand);
@@ -299,6 +427,13 @@ namespace XREngine.Components.Animation
             if (!ShouldApplyAnimatedIKGoal(goal))
                 return;
 
+            if (_isStagingAnimatedGoalFrame)
+            {
+                ref AnimatedGoalFrame frame = ref GetStagedAnimatedGoalFrame(goal);
+                frame.Position = position;
+                _stagedAnimatedGoalMask |= 1 << GetAnimatedGoalDiagnosticIndex(goal);
+                return;
+            }
             SetAnimatedGoalLocalPosition(goal, position);
             UpdateAnimatedIKGoal(goal);
         }
@@ -339,6 +474,13 @@ namespace XREngine.Components.Animation
             if (!ShouldApplyAnimatedIKGoal(goal))
                 return;
 
+            if (_isStagingAnimatedGoalFrame)
+            {
+                ref AnimatedGoalFrame frame = ref GetStagedAnimatedGoalFrame(goal);
+                frame.Rotation = rotation;
+                _stagedAnimatedGoalMask |= 1 << GetAnimatedGoalDiagnosticIndex(goal);
+                return;
+            }
             SetAnimatedGoalLocalRotation(goal, rotation);
             UpdateAnimatedIKGoal(goal);
         }
@@ -432,8 +574,14 @@ namespace XREngine.Components.Animation
             //SetLookAtWeight(0f, 0.5f, 1f, 1f, 0.5f, 0.7f, 0.5f);
         }
 
+        protected override bool ShouldApplySolverPose()
+            => !_rejectNextAnimationDrivenSolve && base.ShouldApplySolverPose();
+
         protected override void ResetTransformsToDefault()
         {
+            if (_usesNativeHumanoidTransactionBaseline)
+                return;
+
             _hips.ResetTransformToDefault();
             //solvers.lookAt.ResetTransformToDefault();
             for (int i = 0; i < Limbs.Length; i++)
@@ -461,7 +609,10 @@ namespace XREngine.Components.Animation
 
         protected override void UpdateSolver()
         {
-            RefreshAnimatedGoalTransforms(captureRotationOffsets: true);
+            if (_rejectNextAnimationDrivenSolve)
+                return;
+            RefreshAvatarSolverSettings();
+            RefreshAnimatedGoalTransforms();
 
             for (int i = 0; i < Limbs.Length; i++)
             {
@@ -483,18 +634,19 @@ namespace XREngine.Components.Animation
 
         private bool ShouldApplyAnimatedIKGoal(ELimbEndEffector goal)
         {
+            RefreshAvatarSolverSettings();
             switch (Humanoid.Settings.IKGoalPolicy)
             {
                 case EHumanoidIKGoalPolicy.AlwaysApply:
                     return true;
                 case EHumanoidIKGoalPolicy.ApplyIfCalibrated:
-                    if (Humanoid.Settings.IsIKCalibrated)
+                    if (TryEnsureAnimatedGoalRotationOffset(goal))
                         return true;
 
                     if (!_ikGoalWarningLogged)
                     {
                         _ikGoalWarningLogged = true;
-                        Debug.Animation("[HumanoidIKSolverComponent] IK goal channels present but avatar is not calibrated; skipping animation-driven IK goals.");
+                        Debug.Animation("[HumanoidIKSolverComponent] IK goal channels present but the compiled avatar has no valid neutral goal basis; skipping animation-driven IK goals.");
                     }
                     RecordAnimatedGoalStatus(goal, EHumanoidIKGoalApplicationStatus.SkippedUncalibrated);
                     return false;
@@ -540,18 +692,136 @@ namespace XREngine.Components.Animation
             if (!ShouldUpdateAnimatedGoalTarget(goal))
                 return;
 
-            RefreshAnimatedGoalTransform(goal, captureRotationOffset: false);
+            RefreshAnimatedGoalTransform(goal);
         }
 
-        private void RefreshAnimatedGoalTransforms(bool captureRotationOffsets)
+        private void RefreshAnimatedGoalTransforms()
         {
-            RefreshAnimatedGoalTransform(ELimbEndEffector.LeftFoot, captureRotationOffsets);
-            RefreshAnimatedGoalTransform(ELimbEndEffector.RightFoot, captureRotationOffsets);
-            RefreshAnimatedGoalTransform(ELimbEndEffector.LeftHand, captureRotationOffsets);
-            RefreshAnimatedGoalTransform(ELimbEndEffector.RightHand, captureRotationOffsets);
+            RefreshAnimatedGoalTransform(ELimbEndEffector.LeftFoot);
+            RefreshAnimatedGoalTransform(ELimbEndEffector.RightFoot);
+            RefreshAnimatedGoalTransform(ELimbEndEffector.LeftHand);
+            RefreshAnimatedGoalTransform(ELimbEndEffector.RightHand);
+            EnforceAnimatedFeetSpacing();
         }
 
-        private void RefreshAnimatedGoalTransform(ELimbEndEffector goal, bool captureRotationOffset)
+        private void RefreshAvatarSolverSettings()
+        {
+            bool hasCompiledAvatar = Humanoid.TryGetCompiledAvatarIKSettings(
+                    out float armStretch,
+                    out float legStretch,
+                    out _avatarFeetSpacing,
+                    out _avatarBodyRight,
+                    out _avatarModelUnitsPerMeter,
+                    out int schemaVersion,
+                    out int definitionRevision,
+                    out string definitionContentSha256);
+            if (hasCompiledAvatar)
+            {
+                if (_goalBasisSchemaVersion != schemaVersion
+                    || _goalBasisDefinitionRevision != definitionRevision
+                    || !string.Equals(_goalBasisDefinitionContentSha256, definitionContentSha256, StringComparison.Ordinal))
+                {
+                    ResetAnimatedGoalRotationOffsets();
+                    _goalBasisSchemaVersion = schemaVersion;
+                    _goalBasisDefinitionRevision = definitionRevision;
+                    _goalBasisDefinitionContentSha256 = definitionContentSha256;
+                }
+
+            }
+            else
+            {
+                if (_goalBasisSchemaVersion != -1
+                    || _goalBasisDefinitionRevision != -1
+                    || _goalBasisDefinitionContentSha256 is not null)
+                {
+                    ResetAnimatedGoalRotationOffsets();
+                    _goalBasisSchemaVersion = -1;
+                    _goalBasisDefinitionRevision = -1;
+                    _goalBasisDefinitionContentSha256 = null;
+                }
+
+                armStretch = 0.0f;
+                legStretch = 0.0f;
+                _avatarFeetSpacing = 0.0f;
+                _avatarBodyRight = -Vector3.UnitX;
+                _avatarModelUnitsPerMeter = 0.0f;
+            }
+
+            _leftHand.StretchAllowance = armStretch;
+            _rightHand.StretchAllowance = armStretch;
+            _leftFoot.StretchAllowance = legStretch;
+            _rightFoot.StretchAllowance = legStretch;
+        }
+
+        private void EnforceAnimatedFeetSpacing()
+        {
+            if (_avatarFeetSpacing <= 0.0f
+                || _leftFoot.IKPositionWeight <= 0.0f
+                || _rightFoot.IKPositionWeight <= 0.0f)
+                return;
+
+            Transform? leftTarget = GetAnimatedGoalTransform(ELimbEndEffector.LeftFoot);
+            Transform? rightTarget = GetAnimatedGoalTransform(ELimbEndEffector.RightFoot);
+            if (leftTarget is null
+                || rightTarget is null
+                || !ReferenceEquals(_leftFoot.TargetIKTransform, leftTarget)
+                || !ReferenceEquals(_rightFoot.TargetIKTransform, rightTarget))
+                return;
+
+            Transform? modelRoot = Root;
+            if (modelRoot is null)
+                return;
+
+            modelRoot.RecalculateMatrices(forceWorldRecalc: true, setRenderMatrixNow: false);
+            Vector3 worldRight = Vector3.TransformNormal(_avatarBodyRight, modelRoot.WorldMatrix);
+            float worldRightLengthSquared = worldRight.LengthSquared();
+            if (!float.IsFinite(worldRightLengthSquared) || worldRightLengthSquared <= 1e-8f)
+                return;
+            worldRight /= MathF.Sqrt(worldRightLengthSquared);
+
+            // FeetSpacing is an authored world-space distance. Convert its meter
+            // representation into the compiled model's units; human height only
+            // scales animation deltas and must not rescale this absolute constraint.
+            float minimumSpacing = _avatarFeetSpacing * _avatarModelUnitsPerMeter;
+            if (!float.IsFinite(minimumSpacing) || minimumSpacing <= 0.0f)
+                return;
+
+            Vector3 leftPosition = leftTarget.WorldTranslation;
+            Vector3 rightPosition = rightTarget.WorldTranslation;
+            float lateralSpacing = Vector3.Dot(rightPosition - leftPosition, worldRight);
+            if (!float.IsFinite(lateralSpacing) || lateralSpacing >= minimumSpacing)
+                return;
+
+            float halfCorrection = (minimumSpacing - lateralSpacing) * 0.5f;
+            Vector3 leftOffset = -worldRight * halfCorrection;
+            Vector3 rightOffset = worldRight * halfCorrection;
+            leftTarget.SetWorldTranslation(leftPosition + leftOffset);
+            rightTarget.SetWorldTranslation(rightPosition + rightOffset);
+            leftTarget.RecalculateMatrices(forceWorldRecalc: true, setRenderMatrixNow: false);
+            rightTarget.RecalculateMatrices(forceWorldRecalc: true, setRenderMatrixNow: false);
+            RecordFeetSpacingCompensation(ELimbEndEffector.LeftFoot, leftOffset);
+            RecordFeetSpacingCompensation(ELimbEndEffector.RightFoot, rightOffset);
+        }
+
+        private void RecordFeetSpacingCompensation(ELimbEndEffector goal, Vector3 offset)
+        {
+            int index = GetAnimatedGoalDiagnosticIndex(goal);
+            if (index < 0)
+                return;
+
+            HumanoidIKGoalDiagnosticState previous = _animatedGoalDiagnostics[index];
+            EHumanoidIKGoalApplicationStatus status = previous.ContactCompensationOffset == Vector3.Zero
+                ? EHumanoidIKGoalApplicationStatus.AppliedWithFeetSpacing
+                : EHumanoidIKGoalApplicationStatus.AppliedWithContactCompensationAndFeetSpacing;
+            _animatedGoalDiagnostics[index] = previous with
+            {
+                FeetSpacingCompensationOffset = offset,
+                FinalWorldPosition = previous.FinalWorldPosition + offset,
+                Status = status,
+            };
+        }
+
+        private void RefreshAnimatedGoalTransform(ELimbEndEffector goal)
         {
             var target = GetAnimatedGoalTransform(goal);
             if (target is null)
@@ -567,11 +837,12 @@ namespace XREngine.Components.Animation
             Matrix4x4 bodyMatrix = GetAnimatedGoalBodyMatrix();
             Quaternion bodyRotation = GetAnimatedGoalBodyRotation();
 
-            Quaternion goalRotationOffset = captureRotationOffset
-                ? EnsureAnimatedGoalRotationOffset(goal, bodyRotation, localRotation)
-                : GetAnimatedGoalRotationOffset(goal);
+            bool hasGoalRotationOffset = TryEnsureAnimatedGoalRotationOffset(goal);
+            Quaternion goalRotationOffset = hasGoalRotationOffset
+                ? GetAnimatedGoalRotationOffset(goal)
+                : Quaternion.Identity;
 
-            Quaternion worldRotation = HasAnimatedGoalRotationOffset(goal)
+            Quaternion worldRotation = hasGoalRotationOffset
                 ? Quaternion.Normalize(bodyRotation * localRotation * goalRotationOffset)
                 : Quaternion.Normalize(bodyRotation * localRotation);
 
@@ -592,6 +863,7 @@ namespace XREngine.Components.Animation
                     bodyFrameWorldPosition,
                     worldRotation,
                     contactOffset,
+                    Vector3.Zero,
                     finalWorldPosition,
                     worldRotation,
                     status);
@@ -645,22 +917,27 @@ namespace XREngine.Components.Animation
             _ => -1,
         };
 
-        private Quaternion EnsureAnimatedGoalRotationOffset(ELimbEndEffector goal, Quaternion bodyRotation, Quaternion localRotation)
+        private bool TryEnsureAnimatedGoalRotationOffset(ELimbEndEffector goal)
         {
             if (HasAnimatedGoalRotationOffset(goal))
-                return GetAnimatedGoalRotationOffset(goal);
+                return true;
 
-            var goalBone = GetGoalBoneTransform(goal);
-            if (goalBone is null)
-                return Quaternion.Identity;
+            EHumanoidAvatarBoneRole role = GetGoalBoneRole(goal);
+            if (!Humanoid.TryGetCompiledAvatarIKGoalRotationOffset(role, out Quaternion goalRotationOffset))
+                return false;
 
-            // Match the imported first-frame goal rotation to the avatar's current
-            // wrist/foot bone orientation, then preserve subsequent delta motion.
-            Quaternion importedWorldRotation = Quaternion.Normalize(bodyRotation * localRotation);
-            Quaternion goalRotationOffset = Quaternion.Normalize(Quaternion.Inverse(importedWorldRotation) * goalBone.WorldRotation);
             SetAnimatedGoalRotationOffset(goal, goalRotationOffset, initialized: true);
-            return goalRotationOffset;
+            return true;
         }
+
+        private static EHumanoidAvatarBoneRole GetGoalBoneRole(ELimbEndEffector goal) => goal switch
+        {
+            ELimbEndEffector.LeftFoot => EHumanoidAvatarBoneRole.LeftFoot,
+            ELimbEndEffector.RightFoot => EHumanoidAvatarBoneRole.RightFoot,
+            ELimbEndEffector.LeftHand => EHumanoidAvatarBoneRole.LeftHand,
+            ELimbEndEffector.RightHand => EHumanoidAvatarBoneRole.RightHand,
+            _ => EHumanoidAvatarBoneRole.Hips,
+        };
 
         private Matrix4x4 GetAnimatedGoalBodyMatrix()
         {
@@ -689,15 +966,6 @@ namespace XREngine.Components.Animation
             root.RecalculateMatrices(forceWorldRecalc: true, setRenderMatrixNow: false);
             return root.WorldRotation;
         }
-
-        private Transform? GetGoalBoneTransform(ELimbEndEffector goal) => goal switch
-        {
-            ELimbEndEffector.LeftFoot => Humanoid.Left.Foot.Node?.GetTransformAs<Transform>(true),
-            ELimbEndEffector.RightFoot => Humanoid.Right.Foot.Node?.GetTransformAs<Transform>(true),
-            ELimbEndEffector.LeftHand => Humanoid.Left.Wrist.Node?.GetTransformAs<Transform>(true),
-            ELimbEndEffector.RightHand => Humanoid.Right.Wrist.Node?.GetTransformAs<Transform>(true),
-            _ => null,
-        };
 
         private Transform EnsureAnimatedGoalTransform(ELimbEndEffector goal)
         {
@@ -738,19 +1006,19 @@ namespace XREngine.Components.Animation
 
         private Vector3 GetAnimatedGoalLocalPosition(ELimbEndEffector goal) => goal switch
         {
-            ELimbEndEffector.LeftFoot => _animatedLeftFootLocalPosition,
-            ELimbEndEffector.RightFoot => _animatedRightFootLocalPosition,
-            ELimbEndEffector.LeftHand => _animatedLeftHandLocalPosition,
-            ELimbEndEffector.RightHand => _animatedRightHandLocalPosition,
+            ELimbEndEffector.LeftFoot => _isStagingAnimatedGoalFrame ? GetStagedAnimatedGoalFrame(goal).Position : _animatedLeftFootLocalPosition,
+            ELimbEndEffector.RightFoot => _isStagingAnimatedGoalFrame ? GetStagedAnimatedGoalFrame(goal).Position : _animatedRightFootLocalPosition,
+            ELimbEndEffector.LeftHand => _isStagingAnimatedGoalFrame ? GetStagedAnimatedGoalFrame(goal).Position : _animatedLeftHandLocalPosition,
+            ELimbEndEffector.RightHand => _isStagingAnimatedGoalFrame ? GetStagedAnimatedGoalFrame(goal).Position : _animatedRightHandLocalPosition,
             _ => Vector3.Zero,
         };
 
         private Quaternion GetAnimatedGoalLocalRotation(ELimbEndEffector goal) => goal switch
         {
-            ELimbEndEffector.LeftFoot => _animatedLeftFootLocalRotation,
-            ELimbEndEffector.RightFoot => _animatedRightFootLocalRotation,
-            ELimbEndEffector.LeftHand => _animatedLeftHandLocalRotation,
-            ELimbEndEffector.RightHand => _animatedRightHandLocalRotation,
+            ELimbEndEffector.LeftFoot => _isStagingAnimatedGoalFrame ? GetStagedAnimatedGoalFrame(goal).Rotation : _animatedLeftFootLocalRotation,
+            ELimbEndEffector.RightFoot => _isStagingAnimatedGoalFrame ? GetStagedAnimatedGoalFrame(goal).Rotation : _animatedRightFootLocalRotation,
+            ELimbEndEffector.LeftHand => _isStagingAnimatedGoalFrame ? GetStagedAnimatedGoalFrame(goal).Rotation : _animatedLeftHandLocalRotation,
+            ELimbEndEffector.RightHand => _isStagingAnimatedGoalFrame ? GetStagedAnimatedGoalFrame(goal).Rotation : _animatedRightHandLocalRotation,
             _ => Quaternion.Identity,
         };
 
@@ -808,6 +1076,13 @@ namespace XREngine.Components.Animation
 
         private void SetAnimatedGoalLocalPosition(ELimbEndEffector goal, Vector3 position)
         {
+            if (_isStagingAnimatedGoalFrame)
+            {
+                ref AnimatedGoalFrame frame = ref GetStagedAnimatedGoalFrame(goal);
+                frame.Position = position;
+                _stagedAnimatedGoalMask |= 1 << GetAnimatedGoalDiagnosticIndex(goal);
+                return;
+            }
             switch (goal)
             {
                 case ELimbEndEffector.LeftFoot:
@@ -827,6 +1102,13 @@ namespace XREngine.Components.Animation
 
         private void SetAnimatedGoalLocalRotation(ELimbEndEffector goal, Quaternion rotation)
         {
+            if (_isStagingAnimatedGoalFrame)
+            {
+                ref AnimatedGoalFrame frame = ref GetStagedAnimatedGoalFrame(goal);
+                frame.Rotation = rotation;
+                _stagedAnimatedGoalMask |= 1 << GetAnimatedGoalDiagnosticIndex(goal);
+                return;
+            }
             switch (goal)
             {
                 case ELimbEndEffector.LeftFoot:
@@ -842,6 +1124,35 @@ namespace XREngine.Components.Animation
                     _animatedRightHandLocalRotation = rotation;
                     break;
             }
+        }
+
+        private ref AnimatedGoalFrame GetStagedAnimatedGoalFrame(ELimbEndEffector goal)
+            => ref _stagedAnimatedGoalFrames[GetAnimatedGoalDiagnosticIndex(goal)];
+
+        private bool IsValidStagedAnimatedGoalFrame()
+        {
+            for (int i = 0; i < _stagedAnimatedGoalFrames.Length; i++)
+            {
+                if ((_stagedAnimatedGoalMask & (1 << i)) == 0)
+                    continue;
+                AnimatedGoalFrame frame = _stagedAnimatedGoalFrames[i];
+                float rotationLengthSquared = frame.Rotation.LengthSquared();
+                if (!float.IsFinite(frame.Position.X) || !float.IsFinite(frame.Position.Y) || !float.IsFinite(frame.Position.Z)
+                    || !float.IsFinite(frame.Rotation.X) || !float.IsFinite(frame.Rotation.Y) || !float.IsFinite(frame.Rotation.Z) || !float.IsFinite(frame.Rotation.W)
+                    || !float.IsFinite(rotationLengthSquared) || rotationLengthSquared <= 1e-8f
+                    || !float.IsFinite(frame.PositionWeight) || !float.IsFinite(frame.RotationWeight)
+                    || frame.PositionWeight is < 0.0f or > 1.0f || frame.RotationWeight is < 0.0f or > 1.0f)
+                    return false;
+            }
+            return true;
+        }
+
+        private struct AnimatedGoalFrame(Vector3 position, Quaternion rotation, float positionWeight, float rotationWeight)
+        {
+            public Vector3 Position = position;
+            public Quaternion Rotation = rotation;
+            public float PositionWeight = positionWeight;
+            public float RotationWeight = rotationWeight;
         }
     }
 }

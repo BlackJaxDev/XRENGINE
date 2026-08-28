@@ -1,5 +1,4 @@
 using System.Numerics;
-using XREngine.Animation.Importers;
 using XREngine.Scene;
 
 namespace XREngine.Components.Animation;
@@ -35,15 +34,14 @@ internal sealed class CompiledHumanoidAvatarDefinition
         HumanoidAvatarBodyAxes bodyAxes,
         float humanScale,
         float modelUnitsPerMeter,
-        float muscleInputScale,
         CompiledHumanoidAvatarTwistChain[] twistChains,
         CompiledHumanoidAvatarAuxiliaryBone[] auxiliaryBones,
-        HumanoidAvatarLegacyBoneCalibration?[] legacyCalibrations,
-        string legacyCalibrationClipName,
-        ImportedHumanoidRootMotionPolicy? legacyCalibrationRootMotionPolicy,
-        Matrix4x4 legacyCalibrationRootAllocationFrame,
-        Matrix4x4 inverseLegacyCalibrationRootAllocationFrame,
-        bool hasLegacyCalibrationRootAllocationFrame)
+        CompiledHumanoidBoneSolvePlan[] boneSolvePlans,
+        int[] boneSolvePlanOrder,
+        CompiledHumanoidConcreteCommitTarget[] concreteCommitTargets,
+        int[] concreteCommitOrder,
+        Matrix4x4 hipsParentInModelRootFrame,
+        Matrix4x4 inverseHipsParentInModelRootFrame)
     {
         SchemaVersion = schemaVersion;
         DefinitionRevision = definitionRevision;
@@ -64,15 +62,14 @@ internal sealed class CompiledHumanoidAvatarDefinition
         BodyAxes = bodyAxes;
         HumanScale = humanScale;
         ModelUnitsPerMeter = modelUnitsPerMeter;
-        MuscleInputScale = muscleInputScale;
         TwistChains = twistChains;
         AuxiliaryBones = auxiliaryBones;
-        LegacyCalibrations = legacyCalibrations;
-        LegacyCalibrationClipName = legacyCalibrationClipName;
-        LegacyCalibrationRootMotionPolicy = legacyCalibrationRootMotionPolicy;
-        LegacyCalibrationRootAllocationFrame = legacyCalibrationRootAllocationFrame;
-        InverseLegacyCalibrationRootAllocationFrame = inverseLegacyCalibrationRootAllocationFrame;
-        HasLegacyCalibrationRootAllocationFrame = hasLegacyCalibrationRootAllocationFrame;
+        BoneSolvePlans = boneSolvePlans;
+        BoneSolvePlanOrder = boneSolvePlanOrder;
+        ConcreteCommitTargets = concreteCommitTargets;
+        ConcreteCommitOrder = concreteCommitOrder;
+        HipsParentInModelRootFrame = hipsParentInModelRootFrame;
+        InverseHipsParentInModelRootFrame = inverseHipsParentInModelRootFrame;
 
         _rolesByNode = new Dictionary<SceneNode, EHumanoidAvatarBoneRole>(RoleCount);
         for (int i = 0; i < nodes.Length; i++)
@@ -99,15 +96,17 @@ internal sealed class CompiledHumanoidAvatarDefinition
     public HumanoidAvatarBodyAxes BodyAxes { get; }
     public float HumanScale { get; }
     public float ModelUnitsPerMeter { get; }
-    public float MuscleInputScale { get; }
     public CompiledHumanoidAvatarTwistChain[] TwistChains { get; }
     public CompiledHumanoidAvatarAuxiliaryBone[] AuxiliaryBones { get; }
-    public HumanoidAvatarLegacyBoneCalibration?[] LegacyCalibrations { get; }
-    public string LegacyCalibrationClipName { get; }
-    public ImportedHumanoidRootMotionPolicy? LegacyCalibrationRootMotionPolicy { get; }
-    public Matrix4x4 LegacyCalibrationRootAllocationFrame { get; }
-    public Matrix4x4 InverseLegacyCalibrationRootAllocationFrame { get; }
-    public bool HasLegacyCalibrationRootAllocationFrame { get; }
+    /// <summary>Stable role-indexed solver plans, ordered parent-before-child.</summary>
+    public CompiledHumanoidBoneSolvePlan[] BoneSolvePlans { get; }
+    /// <summary>Role indexes in stable parent-before-child evaluation order.</summary>
+    public int[] BoneSolvePlanOrder { get; }
+    public CompiledHumanoidConcreteCommitTarget[] ConcreteCommitTargets { get; }
+    public int[] ConcreteCommitOrder { get; }
+    /// <summary>Canonical neutral Hips-parent frame expressed in model-root coordinates.</summary>
+    public Matrix4x4 HipsParentInModelRootFrame { get; }
+    public Matrix4x4 InverseHipsParentInModelRootFrame { get; }
 
     public bool TryGetRole(SceneNode? node, out EHumanoidAvatarBoneRole role)
     {
@@ -122,6 +121,15 @@ internal sealed class CompiledHumanoidAvatarDefinition
     {
         int index = (int)role;
         return (uint)index < (uint)Nodes.Length ? Nodes[index] : null;
+    }
+
+    public ref readonly CompiledHumanoidBoneSolvePlan GetBoneSolvePlan(EHumanoidAvatarBoneRole role)
+    {
+        int index = (int)role;
+        if ((uint)index >= (uint)BoneSolvePlans.Length)
+            throw new ArgumentOutOfRangeException(nameof(role));
+
+        return ref BoneSolvePlans[index];
     }
 
     public BoneAxisMapping? GetAxisMapping(EHumanoidAvatarBoneRole role)
@@ -189,11 +197,4 @@ internal sealed class CompiledHumanoidAvatarDefinition
             : Vector2.Zero;
     }
 
-    public HumanoidAvatarLegacyBoneCalibration? GetLegacyCalibration(EHumanoidAvatarBoneRole role)
-    {
-        int index = (int)role;
-        return (uint)index < (uint)LegacyCalibrations.Length
-            ? LegacyCalibrations[index]
-            : null;
-    }
 }

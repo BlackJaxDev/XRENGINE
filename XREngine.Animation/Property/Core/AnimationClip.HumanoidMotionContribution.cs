@@ -113,6 +113,17 @@ public partial class AnimationClip
             member.Animation?.Seek(timeSeconds, wrapLooped: false);
     }
 
+    internal void SeekClipPlaybackFromSourceSeconds(float sourceTimeSeconds)
+    {
+        float safeTime = float.IsFinite(sourceTimeSeconds)
+            ? Math.Clamp(sourceTimeSeconds, 0.0f, Math.Max(0.0f, LengthInSeconds))
+            : 0.0f;
+        long playbackTicks = SecondsToImportedHumanoidTicks(safeTime);
+        ResetImportedHumanoidStateClockFromUnwrappedTicks(playbackTicks);
+        foreach (AnimationMember member in _animatedCurves.Values)
+            member.Animation?.Seek(safeTime, wrapLooped: false);
+    }
+
     private static long NormalizedTimeToImportedHumanoidTicks(double normalizedTime, long lengthTicks)
     {
         if (!double.IsFinite(normalizedTime) || lengthTicks <= 0L || normalizedTime == 0.0)

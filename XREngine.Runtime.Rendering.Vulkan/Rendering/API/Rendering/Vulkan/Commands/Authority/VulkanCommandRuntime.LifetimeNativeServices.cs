@@ -361,6 +361,7 @@ internal sealed partial class VulkanCommandRuntime
 
         lock (Synchronization._vulkanImageLayoutLock)
         {
+            Synchronization.ClearStableImageSubresourcesNoLock();
             Synchronization._trackedImageSubresourceStates.Clear();
             Synchronization._externalImageOwnershipByHandle.Clear();
             Synchronization._recordedImageLayoutsByCommandBuffer.Clear();

@@ -3,6 +3,7 @@ namespace XREngine.Rendering.Commands;
 public partial class GPUScene
 {
     private readonly AdvancedGpuScenePublisher _advancedScenePublisher = new();
+    private AdvancedGlobalResourceCapture _advancedGlobalResources;
 
     /// <summary>
     /// Canonical renderer-neutral scene authority dual-published with the legacy
@@ -34,6 +35,12 @@ public partial class GPUScene
 
     public ReadOnlySpan<AdvancedGpuDirtyOwnerRange> AdvancedDirtyOwnerRanges
         => _advancedScenePublisher.DirtyOwnerRanges;
+
+    public AdvancedGlobalResourceCapture AdvancedGlobalResources
+        => _advancedGlobalResources;
+
+    public void SetAdvancedGlobalResources(in AdvancedGlobalResourceCapture capture)
+        => _advancedGlobalResources = capture;
 
     public bool TryGetCanonicalAdvancedPreparationHandles(
         uint commandIndex,
@@ -88,5 +95,6 @@ public partial class GPUScene
     private void PublishAdvancedResidentScene()
         => _advancedScenePublisher.Publish(
             this,
-            RuntimeEngine.Rendering.State.RenderFrameId);
+            RuntimeEngine.Rendering.State.RenderFrameId,
+            in _advancedGlobalResources);
 }

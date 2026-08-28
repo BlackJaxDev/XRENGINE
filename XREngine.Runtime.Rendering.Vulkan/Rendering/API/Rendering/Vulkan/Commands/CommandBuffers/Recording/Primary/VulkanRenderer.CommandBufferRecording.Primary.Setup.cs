@@ -242,7 +242,7 @@ namespace XREngine.Rendering.Vulkan
                                 recordingState.Metrics.FboOnlyBlitOps++;
                             }
                             break;
-                        case EVulkanPrimaryPlanNodeKind.ComputeDispatch or EVulkanPrimaryPlanNodeKind.ComputeDispatchIndirect or EVulkanPrimaryPlanNodeKind.DlssUpscale or EVulkanPrimaryPlanNodeKind.DlssFrameGeneration: recordingState.Metrics.ComputeCount++; break;
+                        case EVulkanPrimaryPlanNodeKind.ComputeDispatch or EVulkanPrimaryPlanNodeKind.ComputeDispatchIndirect or EVulkanPrimaryPlanNodeKind.DlssUpscale or EVulkanPrimaryPlanNodeKind.DlssFrameGeneration or EVulkanPrimaryPlanNodeKind.AdvancedVisibility: recordingState.Metrics.ComputeCount++; break;
                     }
 
                     if (FrameOpTraceEnabled) Debug.Vulkan("[VulkanFrameOp] index={0} op={1} pass={2} target='{3}' pipe={4} vp={5} sched={6}", opScanIndex, header.OpCode, header.PassIndex, target?.Name ?? "<swapchain>", context.PipelineIdentity, context.ViewportIdentity, context.SchedulingIdentity);

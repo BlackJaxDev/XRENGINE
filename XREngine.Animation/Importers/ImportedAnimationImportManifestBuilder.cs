@@ -116,6 +116,7 @@ internal sealed class ImportedAnimationImportManifestBuilder
             _domains.Add(domain, capability);
         }
 
+        bool escalatesCapabilityState = state > capability.State;
         capability.SourceItemCount++;
         if (state == EImportedAnimationCapabilityState.SupportedAndApplied)
             capability.AppliedItemCount++;
@@ -128,6 +129,20 @@ internal sealed class ImportedAnimationImportManifestBuilder
             capability.State = state;
 
         if (!string.IsNullOrWhiteSpace(diagnostic))
-            RecordNotice(domain, diagnostic);
+        {
+            if (escalatesCapabilityState)
+            {
+                if (!_diagnostics.TryGetValue(domain, out List<string>? diagnostics))
+                {
+                    diagnostics = [];
+                    _diagnostics.Add(domain, diagnostics);
+                }
+                diagnostics.Insert(0, diagnostic);
+            }
+            else
+            {
+                RecordNotice(domain, diagnostic);
+            }
+        }
     }
 }

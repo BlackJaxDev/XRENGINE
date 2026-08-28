@@ -320,6 +320,9 @@ internal sealed unsafe class VkShader(
                 if (Api!.CreateShaderModule(Device, ref createInfo, null, out _shaderModule) != Result.Success)
                     throw new InvalidOperationException($"Failed to create shader module for '{Data.Name ?? "UnnamedShader"}'.");
             }
+            BackendContext.Resources.NativeDependencies.Register(
+                EVulkanNativeDependencyOwner.Shader,
+                _shaderModule.Handle);
 
             _shaderStageCreateInfo = new()
             {
@@ -592,6 +595,10 @@ internal sealed unsafe class VkShader(
         {
             if (_shaderModule.Handle != 0)
             {
+                BackendContext.Resources.NativeDependencies.Retire(
+                    EVulkanNativeDependencyOwner.Shader,
+                    _shaderModule.Handle,
+                    $"{SourceLabel}.Retirement");
                 Api!.DestroyShaderModule(Device, _shaderModule, null);
                 _shaderModule = default;
             }

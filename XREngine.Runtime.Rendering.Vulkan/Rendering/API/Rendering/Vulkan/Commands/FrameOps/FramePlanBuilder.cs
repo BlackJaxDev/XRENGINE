@@ -317,7 +317,8 @@ internal sealed class FramePlanBuilder
             slot.StaticPlannerContextPlans,
             staticPlannerContextKeyCount,
             renderGraphPlanSignature,
-            requiresFreshEmptyTerminalWrite);
+            requiresFreshEmptyTerminalWrite,
+            preparedMeshIngress?.StableBinStream);
         return slot.Plan;
     }
 

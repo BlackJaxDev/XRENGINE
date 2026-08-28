@@ -197,8 +197,19 @@ internal sealed partial class VulkanFrameLoop
         VulkanSwapchainContextCoalescer.Coalesce(
             drainedOperations,
             _preparedMeshIngress);
-        if (!_preparedMeshIngress.TryFinalize(
-                ref _preparedMeshIngressResourceUseScratch))
+        bool stableBinPrepared = _preparedMeshIngress.TryFinalize(
+            ref _preparedMeshIngressResourceUseScratch);
+        if (stableBinPrepared)
+        {
+            VulkanResidentDrawTemplateTable residentTemplates =
+                _resourceRuntime.ResidentDrawTemplates;
+            stableBinPrepared = _preparedMeshIngress.TryBuildStableBinStream(
+                residentTemplates) && _preparedMeshIngress.StableBinStream
+                    .TryResolveManifests(
+                        residentTemplates.StableBinManifestCache,
+                        residentTemplates.StableBinMembership.TopologyGeneration);
+        }
+        if (!stableBinPrepared)
         {
             throw watchdog.CreateFailure(
                 EVulkanPresentNowReadinessStage.FramePlanSeal,
