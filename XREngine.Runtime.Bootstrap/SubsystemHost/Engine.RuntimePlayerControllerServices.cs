@@ -1,71 +1,61 @@
 using System;
-using System.Collections.Generic;
-using System.Diagnostics.CodeAnalysis;
-using System.Linq;
 using XREngine.Input;
+using XREngine.Runtime.InputIntegration;
 
 namespace XREngine;
 
 /// <summary>
-/// Engine-side implementation of <see cref="IRuntimePlayerControllerServices"/>
-/// that delegates to <see cref="Engine.State"/>.
+/// Bootstrap-installed controller registry. Concrete local and remote controller
+/// ownership remains in Runtime.InputIntegration rather than the facade state.
 /// </summary>
 internal sealed class EngineRuntimePlayerControllerServices : IRuntimePlayerControllerServices, IDisposable
 {
-    private readonly Action<IPawnController> _localPlayerAdded;
-    private readonly Action<IPawnController> _localPlayerRemoved;
-    public event Action<IPawnController>? LocalPlayerAdded;
-    public event Action<IPawnController>? LocalPlayerRemoved;
+    private readonly InputIntegrationPlayerControllerServices _registry = new();
 
     internal EngineRuntimePlayerControllerServices()
     {
-        _localPlayerAdded = player => LocalPlayerAdded?.Invoke(player);
-        _localPlayerRemoved = player => LocalPlayerRemoved?.Invoke(player);
-        Engine.State.LocalPlayerAdded += _localPlayerAdded;
-        Engine.State.LocalPlayerRemoved += _localPlayerRemoved;
+        _registry.LocalPlayerAdded += SynchronizeAddedPlayer;
+        _registry.LocalPlayerRemoved += SynchronizeRemovedPlayer;
     }
 
-    public IPawnController? GetLocalPlayer(ELocalPlayerIndex index)
-        => Engine.State.GetLocalPlayer(index);
-
-    public IPawnController GetOrCreateLocalPlayer(
-        ELocalPlayerIndex index,
-        [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)]
-        Type? controllerTypeOverride = null)
-        => Engine.State.GetOrCreateLocalPlayer(index, controllerTypeOverride);
-
-    public bool RemoveLocalPlayer(ELocalPlayerIndex index)
-        => Engine.State.RemoveLocalPlayer(index);
-
-    public IPawnController MainPlayer
-        => Engine.State.MainPlayer;
-
-    public int LocalPlayerCount
-        => Engine.State.LocalPlayers.Count(static p => p is not null);
-
-    public IReadOnlyList<IPawnController?> AllLocalPlayers
-        => Engine.State.LocalPlayers;
-
-    public IPawnController CreateRemotePlayer(int serverPlayerIndex)
-        => Engine.State.InstantiateRemoteController(serverPlayerIndex);
-
-    public IReadOnlyList<IPawnController> RemotePlayers
-        => Engine.State.RemotePlayers;
-
-    public void AddRemotePlayer(IPawnController player)
+    public event Action<IPawnController>? LocalPlayerAdded
     {
-        if (!Engine.State.RemotePlayers.Contains(player))
-            Engine.State.RemotePlayers.Add(player);
+        add => _registry.LocalPlayerAdded += value;
+        remove => _registry.LocalPlayerAdded -= value;
     }
 
-    public bool RemoveRemotePlayer(IPawnController player)
-        => Engine.State.RemotePlayers.Remove(player);
+    public event Action<IPawnController>? LocalPlayerRemoved
+    {
+        add => _registry.LocalPlayerRemoved += value;
+        remove => _registry.LocalPlayerRemoved -= value;
+    }
 
+    public IPawnController? GetLocalPlayer(ELocalPlayerIndex index) => _registry.GetLocalPlayer(index);
+    public IPawnController GetOrCreateLocalPlayer(ELocalPlayerIndex index, Type? controllerTypeOverride = null) => _registry.GetOrCreateLocalPlayer(index, controllerTypeOverride);
+    public bool RemoveLocalPlayer(ELocalPlayerIndex index) => _registry.RemoveLocalPlayer(index);
+    public IPawnController MainPlayer => _registry.MainPlayer;
+    public int LocalPlayerCount => _registry.LocalPlayerCount;
+    public IReadOnlyList<IPawnController?> AllLocalPlayers => _registry.AllLocalPlayers;
+    public IPawnController CreateRemotePlayer(int serverPlayerIndex) => _registry.CreateRemotePlayer(serverPlayerIndex);
+    public IReadOnlyList<IPawnController> RemotePlayers => _registry.RemotePlayers;
+    public void AddRemotePlayer(IPawnController player) => _registry.AddRemotePlayer(player);
+    public bool RemoveRemotePlayer(IPawnController player) => _registry.RemoveRemotePlayer(player);
     public void Dispose()
     {
-        Engine.State.LocalPlayerAdded -= _localPlayerAdded;
-        Engine.State.LocalPlayerRemoved -= _localPlayerRemoved;
-        LocalPlayerAdded = null;
-        LocalPlayerRemoved = null;
+        _registry.Dispose();
+        _registry.LocalPlayerAdded -= SynchronizeAddedPlayer;
+        _registry.LocalPlayerRemoved -= SynchronizeRemovedPlayer;
+    }
+
+    private static void SynchronizeAddedPlayer(IPawnController player)
+    {
+        if (player.LocalPlayerIndex is ELocalPlayerIndex index)
+            Engine.State.SynchronizeCompatibilityLocalPlayer(index, player);
+    }
+
+    private static void SynchronizeRemovedPlayer(IPawnController player)
+    {
+        if (player.LocalPlayerIndex is ELocalPlayerIndex index)
+            Engine.State.SynchronizeCompatibilityLocalPlayer(index, null);
     }
 }

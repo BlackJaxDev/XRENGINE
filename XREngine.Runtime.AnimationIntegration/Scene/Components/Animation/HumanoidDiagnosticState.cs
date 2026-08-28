@@ -34,12 +34,12 @@ internal sealed class HumanoidDiagnosticState
     internal object? PendingProjectedRootMotionOwner;
     internal object? ActiveImportedBodyProjectionOwner;
     internal object? CanonicalProjectedFeetOwner;
-    internal UnityHumanoidClipRootMotionSettings? ImportedBodyProjectionSettings;
+    internal ImportedHumanoidClipRootMotionSettings? ImportedBodyProjectionSettings;
     internal HumanoidProjectedRootPose? ImportedBodyProjectionPrefix;
     internal HumanoidLoopPoseCorrection? ImportedBodyLoopPoseCorrection;
     internal HumanoidLoopPoseCorrection? PendingImportedBodyLoopPoseCorrection;
     internal HumanoidLoopPoseCorrection? ActiveImportedBodyLoopPoseCorrection;
-    internal UnityHumanoidRootMotionPolicy? ActiveImportedBodyProjectionPolicy;
+    internal ImportedHumanoidRootMotionPolicy? ActiveImportedBodyProjectionPolicy;
     internal string? ImportedBodyProjectionCalibrationClipName;
     internal float CanonicalProjectedFeetY;
     internal bool HasCanonicalProjectedFeetY;

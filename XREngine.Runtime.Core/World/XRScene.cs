@@ -1,13 +1,11 @@
 using MemoryPack;
 using XREngine.Core.Files;
-using XREngine.Data;
 
 namespace XREngine.Scene
 {
     /// <summary>
     /// Defines a collection of root scene nodes that can be loaded in and out of a world.
     /// </summary>
-    [XR3rdPartyExtensions(typeof(XRDefault3rdPartyImportOptions), "unity")]
     [CookedBinaryReflectionOnly]
     [MemoryPackable]
     public partial class XRScene : XRAsset

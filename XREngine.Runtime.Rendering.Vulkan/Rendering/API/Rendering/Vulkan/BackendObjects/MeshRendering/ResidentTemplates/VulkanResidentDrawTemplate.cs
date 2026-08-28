@@ -12,12 +12,14 @@ internal sealed class VulkanResidentDrawTemplate : IDisposable
         in VulkanResidentDrawTemplateVariantKey variant,
         in VulkanResidentDrawTemplateGenerationDomains generations,
         in VulkanResidentDrawTemplateNativeState nativeState,
+        VulkanResidentDrawDependencyManifest dependencyManifest,
         VulkanResidentTemplateDependencyLease dependencyLease)
     {
         StructuralIdentity = structuralIdentity;
         Variant = variant;
         Generations = generations;
         NativeState = nativeState;
+        DependencyManifest = dependencyManifest;
         _dependencyLease = dependencyLease;
     }
 
@@ -25,6 +27,7 @@ internal sealed class VulkanResidentDrawTemplate : IDisposable
     internal VulkanResidentDrawTemplateVariantKey Variant { get; }
     internal VulkanResidentDrawTemplateGenerationDomains Generations { get; private set; }
     internal VulkanResidentDrawTemplateNativeState NativeState { get; }
+    internal VulkanResidentDrawDependencyManifest DependencyManifest { get; }
     internal VulkanResidentTemplateDependencyLease? DependencyLease => _dependencyLease;
 
     internal void AdvanceDataContent(ulong dataContentGeneration)

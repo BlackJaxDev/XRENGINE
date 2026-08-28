@@ -787,7 +787,7 @@ namespace XREngine.Rendering
             IPawnController? player = AssociatedPlayer;
             if (player?.LocalPlayerIndex is ELocalPlayerIndex localPlayerIndex)
             {
-                IPawnController? currentPlayer = RuntimeEngine.State.GetLocalPlayer(localPlayerIndex);
+                IPawnController? currentPlayer = RuntimePlayerControllerServices.Current?.GetLocalPlayer(localPlayerIndex);
                 if (currentPlayer is not null && !ReferenceEquals(currentPlayer, player))
                 {
                     AssociatedPlayer = currentPlayer;

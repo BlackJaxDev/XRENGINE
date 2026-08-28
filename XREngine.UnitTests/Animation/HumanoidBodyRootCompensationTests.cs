@@ -65,7 +65,7 @@ public sealed class HumanoidBodyRootCompensationTests
     public void ProjectedRootPose_KeepsXZ_Y_AndYawPoliciesIndependent()
     {
         HumanoidComponent humanoid = CreateHumanoid(out _);
-        var settings = new UnityHumanoidClipRootMotionSettings
+        var settings = new ImportedHumanoidClipRootMotionSettings
         {
             BakePositionXZIntoPose = false,
             KeepOriginalPositionXZ = true,
@@ -122,8 +122,8 @@ public sealed class HumanoidBodyRootCompensationTests
     [Test]
     public void ProjectedRootY_CoupledModelEvaluatesSeparatelyFromBodyPose()
     {
-        int featureCount = UnityHumanoidCoupledBoneModel.CalculateFeatureCount(1, 3);
-        var model = new UnityHumanoidCoupledBoneModel
+        int featureCount = ImportedHumanoidCoupledBoneModel.CalculateFeatureCount(1, 3);
+        var model = new ImportedHumanoidCoupledBoneModel
         {
             BoneName = "Hips",
             Muscles = [EHumanoidValue.SpineFrontBack],
@@ -221,13 +221,13 @@ public sealed class HumanoidBodyRootCompensationTests
     [Test]
     public void AvatarProfile_DenseRoleLookupIsStableAndAllocationFree()
     {
-        var profile = new UnityHumanoidAvatarProfile
+        var profile = new ImportedHumanoidAvatarProfile
         {
             Roles =
             [
-                new UnityHumanoidAvatarRoleProfile
+                new ImportedHumanoidAvatarRoleProfile
                 {
-                    Role = EUnityHumanoidAvatarRole.Hips,
+                    Role = EHumanoidAvatarRole.Hips,
                     HumanName = "Hips",
                     TransformName = "AvatarHips",
                     Required = true,
@@ -237,23 +237,23 @@ public sealed class HumanoidBodyRootCompensationTests
             {
                 ["Hips"] = Quaternion.CreateFromAxisAngle(Vector3.UnitY, 0.25f),
             },
-            UnityNeutralBoneLocalPositions = new Dictionary<string, Vector3>(StringComparer.Ordinal)
+            ImportedNeutralBoneLocalPositions = new Dictionary<string, Vector3>(StringComparer.Ordinal)
             {
                 ["Hips"] = new Vector3(0.0f, 1.0f, 0.0f),
             },
         };
         profile.BuildDenseLookups();
-        profile.TryGetRole(EUnityHumanoidAvatarRole.Hips, out _).ShouldBeTrue();
-        profile.TryGetNeutralRotation(EUnityHumanoidAvatarRole.Hips, out _).ShouldBeTrue();
-        profile.TryGetNeutralPosition(EUnityHumanoidAvatarRole.Hips, out _).ShouldBeTrue();
+        profile.TryGetRole(EHumanoidAvatarRole.Hips, out _).ShouldBeTrue();
+        profile.TryGetNeutralRotation(EHumanoidAvatarRole.Hips, out _).ShouldBeTrue();
+        profile.TryGetNeutralPosition(EHumanoidAvatarRole.Hips, out _).ShouldBeTrue();
 
-        _ = profile.TryGetRole(EUnityHumanoidAvatarRole.Hips, out _);
+        _ = profile.TryGetRole(EHumanoidAvatarRole.Hips, out _);
         long before = GC.GetAllocatedBytesForCurrentThread();
         bool lookupsMatched = true;
         for (int i = 0; i < 1_000; i++)
         {
-            lookupsMatched &= profile.TryGetRole(EUnityHumanoidAvatarRole.Hips, out _);
-            lookupsMatched &= !profile.TryGetRole(EUnityHumanoidAvatarRole.LeftEye, out _);
+            lookupsMatched &= profile.TryGetRole(EHumanoidAvatarRole.Hips, out _);
+            lookupsMatched &= !profile.TryGetRole(EHumanoidAvatarRole.LeftEye, out _);
         }
         long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
 

@@ -85,9 +85,9 @@ $completedMigrationDestinations = @{
     "XRENGINE/Core/Engine/InterfaceCollectionYamlNodeDeserializer.cs" = "XREngine.Data/Serialization/Yaml/InterfaceCollectionYamlNodeDeserializer.cs"
     "XRENGINE/Core/Engine/Loading/AssetManager.Loading.Core.cs" = "XREngine.Runtime.Core/Assets/Loading/AssetManager.Loading.Core.cs"
     "XRENGINE/Core/Engine/Loading/AssetManager.Loading.Remote.cs" = "XREngine.Runtime.Core/Assets/Loading/AssetManager.Loading.Api.Core.cs"
-    "XRENGINE/Core/Engine/Loading/AssetManager.Loading.SerializationAndCache.cs" = "XREngine.Runtime.Core/Assets/Loading/AssetManager.Loading.Core.cs;XREngine.Animation/Serialization/AnimationClipBinaryCacheCodec.cs;XREngine.Runtime.Rendering/Serialization/TextureStreamingCacheCodec.cs;XREngine.Runtime.ModelingBridge/Importing/Caching/ModelCachePathPolicy.cs"
+    "XRENGINE/Core/Engine/Loading/AssetManager.Loading.SerializationAndCache.cs" = "XREngine.Runtime.Core/Assets/Loading/AssetManager.Loading.Core.cs;XREngine.Animation/Serialization/AnimationClipBinaryCacheCodec.cs;XREngine.Runtime.Rendering/Serialization/TextureStreamingCacheCodec.cs;XREngine.Runtime.ModelAssetPipeline/Importing/Caching/ModelCachePathPolicy.cs"
     "XRENGINE/Core/Engine/Loading/AssetManager.Loading.ThirdParty.cs" = "XREngine.Runtime.Core/Assets/Loading/AssetManager.Loading.Api.Core.cs;XREngine.Runtime.Core/Assets/Loading/AssetManager.Loading.Core.cs;XREngine.Runtime.Core/Assets/RuntimeThirdPartyAssetLoadingServices.cs"
-    "XRENGINE/Core/Engine/ModelCaching/ModelBinaryCacheCodec.cs" = "XREngine.Runtime.ModelingBridge/Importing/Caching/ModelBinaryCacheCodec.cs"
+    "XRENGINE/Core/Engine/ModelCaching/ModelBinaryCacheCodec.cs" = "XREngine.Runtime.ModelAssetPipeline/Importing/Caching/ModelBinaryCacheCodec.cs"
     "XRENGINE/Core/Engine/MotionSerialization.cs" = "XREngine.Animation/Serialization/MotionSerialization.cs"
     "XRENGINE/Core/Engine/PolymorphicTypeGraphVisitor.cs" = "XREngine.Data/Serialization/Yaml/PolymorphicTypeGraphVisitor.cs"
     "XRENGINE/Core/Engine/PolymorphicYamlNodeDeserializer.cs" = "XREngine.Data/Serialization/Yaml/PolymorphicYamlNodeDeserializer.cs"
@@ -157,6 +157,68 @@ $completedMigrationDestinations["XRENGINE/Rendering/XRWorldInstance.cs"] = "XREn
 $completedMigrationDestinations["XRENGINE/Rendering/XRWorldInstance.PhysicsDebug.cs"] = "XREngine.Runtime.Rendering/Rendering/RuntimeWorldRenderer.cs;XREngine.Runtime.Bootstrap/WorldHost/RuntimeWorldHost.cs"
 $completedMigrationDestinations["XRENGINE/Rendering/XRWorldInstance.PhysicsRaycastRequest.cs"] = "XREngine.Runtime.Core/World/RuntimeWorld.cs;XREngine.Runtime.Rendering/Rendering/RuntimeWorldRenderer.Picking.cs"
 
+# P6.4 splits gameplay, application policy, startup values, and settings ownership.
+$completedMigrationDestinations["XRENGINE/Engine/Engine.ViewportRebind.cs"] = "XREngine.Runtime.InputIntegration/Input/InputIntegrationViewportBindingRebinder.cs;XREngine.Runtime.Rendering/Runtime/RuntimeWindowApplicationServices.cs"
+$completedMigrationDestinations["XRENGINE/Engine/Engine.WindowPumpHost.cs"] = "XREngine.Runtime.Rendering/Rendering/API/RuntimeWindowPumpHost.cs;XREngine.Runtime.Bootstrap/EngineRuntimeWindowApplicationServices.cs"
+$completedMigrationDestinations["XRENGINE/Engine/Engine.Windows.cs"] = "XREngine.Runtime.Rendering/Runtime/RuntimeWindowApplicationServices.cs;XREngine.Runtime.Bootstrap/RuntimeApplicationBootstrap.cs"
+$completedMigrationDestinations["XRENGINE/Engine/Subclasses/Engine.Input.cs"] = "XREngine.Runtime.InputIntegration/Input/RuntimeInputCaptureServices.cs;XREngine.Runtime.InputIntegration/Input/InputIntegrationPlayerControllerServices.cs"
+$completedMigrationDestinations["XRENGINE/Engine/Subclasses/Engine.State.cs"] = "XREngine.Runtime.Core/Input/RuntimePlayerControllerServices.cs;XREngine.Runtime.InputIntegration/Input/InputIntegrationPlayerControllerServices.cs;XREngine.Runtime.Bootstrap/RuntimeApplicationBootstrap.cs"
+$completedMigrationDestinations["XRENGINE/Game Modes/FlyingCameraGameMode.cs"] = "XREngine.Runtime.InputIntegration/GameModes.FlyingCameraGameMode.cs;XREngine.Runtime.Bootstrap/SubsystemHost/GameModeCompositionBootstrap.cs"
+$completedMigrationDestinations["XRENGINE/Game Modes/LocomotionGameMode.cs"] = "XREngine.Runtime.InputIntegration/GameModes.LocomotionGameMode.cs;XREngine.Runtime.Bootstrap/SubsystemHost/GameModeCompositionBootstrap.cs"
+$completedMigrationDestinations["XRENGINE/Game Modes/VRGameMode.cs"] = "XREngine.Runtime.InputIntegration/GameModes.VRGameMode.cs;XREngine.Runtime.Bootstrap/SubsystemHost/GameModeCompositionBootstrap.cs"
+$completedMigrationDestinations["XRENGINE/Scene/Components/Movement/CharacterMovementComponent.cs"] = "XREngine.Runtime.Core/Scene/Components/Movement/CharacterMovementComponent.cs"
+$completedMigrationDestinations["XRENGINE/Scene/Components/Movement/PlayerMovementComponentBase.cs"] = "XREngine.Runtime.Core/Scene/Components/Movement/PlayerMovementComponentBase.cs"
+$completedMigrationDestinations["XRENGINE/Scene/Components/Pawns/CharacterPawnComponent.cs"] = "XREngine.Runtime.InputIntegration/Scene/Components/Pawns/CharacterPawnComponent.cs"
+$completedMigrationDestinations["XRENGINE/Scene/Components/Pawns/PawnComponentRenderingExtensions.cs"] = "XREngine.Runtime.Rendering/Scene/Components/Pawns/PawnComponentRenderingExtensions.cs"
+$completedMigrationDestinations["XRENGINE/Scene/Components/Pawns/VRPlayerInputSet.cs"] = "XREngine.Runtime.InputIntegration/Scene/Components/Pawns/VRPlayerInputSet.cs"
+$completedMigrationDestinations["XRENGINE/Settings/EditorPreferenceGroups.cs"] = "XREngine.Editor/Settings/EditorPreferencesService.cs"
+$completedMigrationDestinations["XRENGINE/Settings/EditorPreferenceOverrideGroups.cs"] = "XREngine.Editor/Settings/EditorPreferencesService.cs"
+$completedMigrationDestinations["XRENGINE/Settings/EditorPreferences.cs"] = "XREngine.Editor/Settings/EditorPreferencesService.cs"
+$completedMigrationDestinations["XRENGINE/Settings/EditorPreferences.Persistence.cs"] = "XREngine.Editor/Settings/EditorPreferencesService.cs"
+$completedMigrationDestinations["XRENGINE/Settings/EditorPreferences.Secrets.cs"] = "XREngine.Editor/Settings/EditorSecretCipherServices.cs"
+$completedMigrationDestinations["XRENGINE/Settings/EditorPreferencesOverrides.cs"] = "XREngine.Editor/Settings/EditorPreferencesService.cs"
+$completedMigrationDestinations["XRENGINE/Settings/EditorRuntimeEnvironmentPreferences.cs"] = "XREngine.Editor/Settings/EditorPreferencesService.cs"
+$completedMigrationDestinations["XRENGINE/Settings/GameStartupSettings.cs"] = "XREngine.Data/Settings/RuntimeStartupValues.cs;XREngine.Runtime.Bootstrap/RuntimeStartupPolicy.cs"
+$completedMigrationDestinations["XRENGINE/Settings/GameStartupSettings.Clone.cs"] = "XREngine.Runtime.Bootstrap/RuntimeStartupPolicy.cs"
+$completedMigrationDestinations["XRENGINE/Settings/GameStartupSettings.Persistence.cs"] = "XREngine.Runtime.Bootstrap/RuntimeStartupPolicy.cs"
+$completedMigrationDestinations["XRENGINE/Settings/GameWindowStartupSettings.cs"] = "XREngine.Data/Settings/WindowStartupValues.cs;XREngine.Runtime.Bootstrap/RuntimeStartupPolicy.cs"
+
+# P6.5 splits neutral prefab contracts, model reconstruction, and Unity authoring/import policy.
+$completedMigrationDestinations["XRENGINE/Core/Engine/AssetManager.Prefabs.cs"] = "XREngine.Runtime.Core/Assets/AssetManager.Prefabs.cs"
+$completedMigrationDestinations["XRENGINE/Core/Engine/Loading/AssetLoading.Types.cs"] = "XREngine.Runtime.Core/Assets/Loading/AssetLoading.Types.cs"
+$completedMigrationDestinations["XRENGINE/Core/Engine/Loading/AssetManager.Loading.Api.cs"] = "XREngine.Runtime.Core/Assets/Loading/AssetManager.Loading.Api.cs"
+$completedMigrationDestinations["XRENGINE/Core/Engine/AssetManager.ThirdPartyImport.cs"] = "XREngine.Runtime.ModelAssetPipeline/Importing/ModelPrefabAssetLoadingServices.cs;XREngine.Editor/Importers/ThirdParty/AssetManager.ThirdPartyImport.cs"
+$completedMigrationDestinations["XRENGINE/Core/Engine/ModelCaching/AssetManager.ModelCacheIdentity.cs"] = "XREngine.Runtime.ModelAssetPipeline/Importing/Caching/AssetManager.ModelCacheIdentity.cs"
+$completedMigrationDestinations["XRENGINE/Core/Engine/ModelCaching/FacadeModelCachePolicyServices.cs"] = "XREngine.Runtime.ModelAssetPipeline/Importing/Caching/ModelCachePolicyServices.cs"
+$completedMigrationDestinations["XRENGINE/Core/Engine/ModelCaching/ModelCookOverrideSnapshotBuilder.cs"] = "XREngine.Runtime.ModelAssetPipeline/Importing/Caching/ModelCookOverrideSnapshotBuilder.cs"
+$completedMigrationDestinations["XRENGINE/Core/Engine/ModelCaching/UnityModelImportProducerAdapter.cs"] = "XREngine.Editor/Importers/Unity/UnityModelImportProducerAdapter.cs"
+$completedMigrationDestinations["XRENGINE/Core/Files/FacadeAssetSerializationRegistration.cs"] = "XREngine.Runtime.Core/Serialization/RuntimeCoreAssetSerializationRegistration.cs;XRENGINE/Compatibility/Serialization/CompatibilityAssetSerializationRegistration.cs"
+$completedMigrationDestinations["XRENGINE/Core/Tools/Unity/UnityConverter.cs"] = "XREngine.Editor/Importers/UnityConverter.cs"
+$completedMigrationDestinations["XRENGINE/Scene/Components/UnityImport/UnityAnimatorImportMetadataComponent.cs"] = "XREngine.Runtime.ModelAssetPipeline/Importing/Unity/Components/UnityAnimatorImportMetadataComponent.cs"
+$completedMigrationDestinations["XRENGINE/Scene/Components/UnityImport/UnityAvatarAnimationLayer.cs"] = "XREngine.Runtime.ModelAssetPipeline/Importing/Unity/Components/UnityAvatarAnimationLayer.cs"
+$completedMigrationDestinations["XRENGINE/Scene/Components/UnityImport/UnityAvatarDescriptorComponent.cs"] = "XREngine.Runtime.ModelAssetPipeline/Importing/Unity/Components/UnityAvatarDescriptorComponent.cs"
+$completedMigrationDestinations["XRENGINE/Scene/Components/UnityImport/UnityAvatarEyeLookMetadata.cs"] = "XREngine.Runtime.ModelAssetPipeline/Importing/Unity/Components/UnityAvatarEyeLookMetadata.cs"
+$completedMigrationDestinations["XRENGINE/Scene/Components/UnityImport/UnityAvatarLipSyncMode.cs"] = "XREngine.Runtime.ModelAssetPipeline/Importing/Unity/Components/UnityAvatarLipSyncMode.cs"
+$completedMigrationDestinations["XRENGINE/Scene/Components/UnityImport/UnityTransformConstraintChannels.cs"] = "XREngine.Runtime.ModelAssetPipeline/Importing/Unity/Components/UnityTransformConstraintChannels.cs"
+$completedMigrationDestinations["XRENGINE/Scene/Components/UnityImport/UnityTransformConstraintComponent.cs"] = "XREngine.Runtime.ModelAssetPipeline/Importing/Unity/Components/UnityTransformConstraintComponent.cs"
+$completedMigrationDestinations["XRENGINE/Scene/Components/UnityImport/UnityTransformConstraintSource.cs"] = "XREngine.Runtime.ModelAssetPipeline/Importing/Unity/Components/UnityTransformConstraintSource.cs"
+$completedMigrationDestinations["XRENGINE/Scene/Prefabs/SceneNodePrefabUtility.cs"] = "XREngine.Runtime.Core/Scene/Prefabs/SceneNodePrefabUtility.cs"
+$completedMigrationDestinations["XRENGINE/Scene/Prefabs/UnityImport/UnityAssetIdentity.cs"] = "XREngine.Runtime.ModelAssetPipeline/Importing/Unity/Contracts/UnityAssetIdentity.cs"
+$completedMigrationDestinations["XRENGINE/Scene/Prefabs/UnityImport/UnityAssetObjectKind.cs"] = "XREngine.Runtime.ModelAssetPipeline/Importing/Unity/Contracts/UnityAssetObjectKind.cs"
+$completedMigrationDestinations["XRENGINE/Scene/Prefabs/UnityImport/UnityImportCompletionTier.cs"] = "XREngine.Editor/Importers/Unity/Contracts/UnityImportCompletionTier.cs"
+$completedMigrationDestinations["XRENGINE/Scene/Prefabs/UnityImport/UnityImportConversionOutcome.cs"] = "XREngine.Editor/Importers/Unity/Contracts/UnityImportConversionOutcome.cs"
+$completedMigrationDestinations["XRENGINE/Scene/Prefabs/UnityImport/UnityImportDependencyKind.cs"] = "XREngine.Editor/Importers/Unity/Contracts/UnityImportDependencyKind.cs"
+$completedMigrationDestinations["XRENGINE/Scene/Prefabs/UnityImport/UnityImportDependencyManifestEntry.cs"] = "XREngine.Editor/Importers/Unity/Contracts/UnityImportDependencyManifestEntry.cs"
+$completedMigrationDestinations["XRENGINE/Scene/Prefabs/UnityImport/UnityImportDiagnostic.cs"] = "XREngine.Editor/Importers/Unity/Contracts/UnityImportDiagnostic.cs"
+$completedMigrationDestinations["XRENGINE/Scene/Prefabs/UnityImport/UnityImportDiagnosticCategory.cs"] = "XREngine.Editor/Importers/Unity/Contracts/UnityImportDiagnosticCategory.cs"
+$completedMigrationDestinations["XRENGINE/Scene/Prefabs/UnityImport/UnityImportDiagnosticSeverity.cs"] = "XREngine.Editor/Importers/Unity/Contracts/UnityImportDiagnosticSeverity.cs"
+$completedMigrationDestinations["XRENGINE/Scene/Prefabs/UnityImport/UnityPrefabConversionResult.cs"] = "XREngine.Editor/Importers/Unity/Contracts/UnityPrefabConversionResult.cs"
+$completedMigrationDestinations["XRENGINE/Scene/Prefabs/UnityImport/UnityPrefabImportManifest.cs"] = "XREngine.Editor/Importers/Unity/Contracts/UnityPrefabImportManifest.cs"
+$completedMigrationDestinations["XRENGINE/Scene/Prefabs/UnityImport/UnityUnsupportedBehaviourMetadata.cs"] = "XREngine.Editor/Importers/Unity/Contracts/UnityUnsupportedBehaviourMetadata.cs"
+$completedMigrationDestinations["XRENGINE/Scene/Prefabs/XRPrefabSource.cs"] = "XREngine.Runtime.Core/Scene/Prefabs/XRPrefabSource.cs;XREngine.Runtime.ModelAssetPipeline/Importing/ModelPrefabSourceExtensions.cs;XREngine.Runtime.ModelAssetPipeline/Importing/SynchronousModelMeshImportScope.cs"
+$completedMigrationDestinations["XRENGINE/Scene/Prefabs/XRPrefabVariant.cs"] = "XREngine.Runtime.Core/Scene/Prefabs/XRPrefabVariant.cs"
+$completedMigrationDestinations["XRENGINE/Scene/UnityEditorImportBridge.cs"] = "XREngine.Editor/Importers/EditorRuntimeSceneImportServices.cs"
+
 foreach ($sourcePath in $existingRowsBySource.Keys) {
     $physicsPrefix = "XRENGINE/Scene/Components/Physics/"
     if (-not $sourcePath.StartsWith($physicsPrefix, [System.StringComparison]::Ordinal)) {
@@ -210,6 +272,30 @@ function Get-OwnershipDecision {
 
     $path = $RelativePath.Replace("\", "/")
 
+    if ($path -like "XRENGINE/Compatibility/Input/*") {
+        return New-OwnershipDecision Refactor "XREngine.Runtime.InputIntegration" "Temporary input facade forwarding remains only until the P6.7 facade deletion gate."
+    }
+
+    if ($path -like "XRENGINE/Compatibility/State/*") {
+        return New-OwnershipDecision Refactor @("XREngine.Runtime.Core", "XREngine.Runtime.InputIntegration", "XREngine.Runtime.Bootstrap") "Temporary aggregate state forwarding remains only until the P6.7 facade deletion gate."
+    }
+
+    if ($path -like "XRENGINE/Compatibility/Windowing/*") {
+        return New-OwnershipDecision Refactor @("XREngine.Runtime.Rendering", "XREngine.Runtime.Bootstrap") "Temporary window/play-mode forwarding remains while Rendering and Bootstrap own the focused services."
+    }
+
+    if ($path -like "XRENGINE/Compatibility/Serialization/*") {
+        return New-OwnershipDecision Refactor "XREngine.Runtime.Core" "Temporary serialized facade aliases remain only until the P6.7 facade deletion gate."
+    }
+
+    if ($path -like "XRENGINE/Compatibility/Settings/Editor*") {
+        return New-OwnershipDecision Refactor "XREngine.Editor" "Temporary serialized editor-preference identities remain until the P6.7 facade deletion gate."
+    }
+
+    if ($path -like "XRENGINE/Compatibility/Settings/Game*") {
+        return New-OwnershipDecision Refactor @("XREngine.Data", "XREngine.Runtime.Bootstrap") "Temporary authored startup aggregate identities remain while Data and Bootstrap own runtime values and policy."
+    }
+
     if ($path -eq "XRENGINE/GlobalUsings.Physics.cs") {
         return New-OwnershipDecision Delete "Removed" "Remove the facade-only global physics import after callers use destination-owned namespaces."
     }
@@ -226,7 +312,7 @@ function Get-OwnershipDecision {
         return New-OwnershipDecision Move "XREngine.Editor" "Editor preferences, overrides, environment policy, and encrypted secrets are editor application concerns."
     }
 
-    if ($path -like "XRENGINE/Settings/Game*StartupSettings.cs") {
+    if ($path -like "XRENGINE/Settings/Game*StartupSettings*.cs") {
         return New-OwnershipDecision Split @("XREngine.Data", "XREngine.Runtime.Bootstrap") "Keep stable startup values in Data and move normalization/composition policy to Bootstrap."
     }
 
@@ -311,16 +397,20 @@ function Get-OwnershipDecision {
     }
 
     if ($path -eq "XRENGINE/Core/Engine/AssetManager.ThirdPartyImport.cs") {
-        return New-OwnershipDecision Split @("XREngine.Runtime.ModelingBridge", "XREngine.Editor") "ModelingBridge owns runtime import policy while Editor owns automatic watching and authoring UX."
+        return New-OwnershipDecision Split @("XREngine.Runtime.ModelAssetPipeline", "XREngine.Editor") "ModelAssetPipeline owns runtime import policy while Editor owns automatic watching and authoring UX."
     }
 
     if ($path -eq "XRENGINE/Core/Engine/ModelCaching/FacadeModelCachePolicyServices.cs") {
-        return New-OwnershipDecision Move "XREngine.Runtime.ModelingBridge" "The temporary facade adapter disappears when ModelingBridge takes ownership of prefab import policy in P6.5."
+        return New-OwnershipDecision Move "XREngine.Runtime.ModelAssetPipeline" "The temporary facade adapter disappears when ModelAssetPipeline takes ownership of prefab import policy in P6.5."
+    }
+
+    if ($path -eq "XRENGINE/Core/Engine/ModelCaching/UnityModelImportProducerAdapter.cs") {
+        return New-OwnershipDecision Move "XREngine.Editor" "Unity producer reports depend on editor-owned project metadata and import manifests."
     }
 
     if ($path -like "XRENGINE/Core/Engine/ModelCaching/*" -or
         $path -like "XRENGINE/Core/Engine/Loading/*ThirdParty.cs") {
-        return New-OwnershipDecision Move "XREngine.Runtime.ModelingBridge" "Model caching and third-party model import belong to the explicit modeling bridge."
+        return New-OwnershipDecision Move "XREngine.Runtime.ModelAssetPipeline" "Model caching and third-party model import belong to the explicit model asset pipeline."
     }
 
     if ($path -in @(
@@ -346,7 +436,7 @@ function Get-OwnershipDecision {
     }
 
     if ($path -eq "XRENGINE/Core/Engine/Loading/AssetManager.Loading.SerializationAndCache.cs") {
-        return New-OwnershipDecision Split @("XREngine.Runtime.Core", "XREngine.Animation", "XREngine.Runtime.Rendering", "XREngine.Runtime.ModelingBridge") "Runtime.Core owns generic loading/cache coordination while feature owners contribute their codecs and path policies."
+        return New-OwnershipDecision Split @("XREngine.Runtime.Core", "XREngine.Animation", "XREngine.Runtime.Rendering", "XREngine.Runtime.ModelAssetPipeline") "Runtime.Core owns generic loading/cache coordination while feature owners contribute their codecs and path policies."
     }
 
     if ($path -like "XRENGINE/Core/Engine/*") {
@@ -362,7 +452,7 @@ function Get-OwnershipDecision {
     }
 
     if ($path -eq "XRENGINE/Core/Files/FacadeAssetSerializationRegistration.cs") {
-        return New-OwnershipDecision Split @("XREngine.Runtime.Bootstrap", "XREngine.Runtime.ModelingBridge", "XREngine.Editor") "The temporary registration adapter splits into composition, prefab type hints, and editor-settings aliases in P6.4-P6.5."
+        return New-OwnershipDecision Split @("XREngine.Runtime.Core", "XREngine.Editor") "Runtime.Core owns prefab type hints while the temporary facade compatibility registration retains editor-settings aliases until P6.7."
     }
 
     if ($path -eq "XRENGINE/Core/Files/FacadePublishedCookedAssetRegistration.cs") {
@@ -427,12 +517,22 @@ function Get-OwnershipDecision {
     }
 
     if ($path -like "XRENGINE/Scene/Components/UnityImport/*" -or
-        $path -like "XRENGINE/Scene/Prefabs/UnityImport/*") {
-        return New-OwnershipDecision Move "XREngine.Runtime.ModelingBridge" "Unity import metadata and prefab conversion products belong to the modeling/import bridge."
+        $path -in @(
+            "XRENGINE/Scene/Prefabs/UnityImport/UnityAssetIdentity.cs",
+            "XRENGINE/Scene/Prefabs/UnityImport/UnityAssetObjectKind.cs")) {
+        return New-OwnershipDecision Move "XREngine.Runtime.ModelAssetPipeline" "Runtime Unity identities and component data survive imported asset publication and belong to ModelAssetPipeline."
+    }
+
+    if ($path -like "XRENGINE/Scene/Prefabs/UnityImport/*") {
+        return New-OwnershipDecision Move "XREngine.Editor" "Unity diagnostics, manifests, conversion outcomes, and unsupported-behavior metadata are editor import products."
     }
 
     if ($path -eq "XRENGINE/Scene/UnityEditorImportBridge.cs") {
         return New-OwnershipDecision Move "XREngine.Editor" "The bridge invokes authoring-only Unity conversion from the editor."
+    }
+
+    if ($path -eq "XRENGINE/Scene/Prefabs/XRPrefabSource.cs") {
+        return New-OwnershipDecision Split @("XREngine.Runtime.Core", "XREngine.Runtime.ModelAssetPipeline") "Runtime.Core owns the neutral source and instantiation contract while ModelAssetPipeline contributes explicit model import helpers."
     }
 
     if ($path -match "^XRENGINE/Scene/Components/Physics/(GPUSoftbodyComponent|PhysicsChainComponent\.(GPU|Diagnostics|QualityOutput|RenderingCompute)|PhysicsChainReadbackService|PhysicsChainWorldReadbackExtensions)" -or
@@ -548,7 +648,7 @@ $approvedOwners = @(
     "XREngine.Runtime.Bootstrap",
     "XREngine.Runtime.Core",
     "XREngine.Runtime.InputIntegration",
-    "XREngine.Runtime.ModelingBridge",
+    "XREngine.Runtime.ModelAssetPipeline",
     "XREngine.Runtime.Rendering"
 )
 

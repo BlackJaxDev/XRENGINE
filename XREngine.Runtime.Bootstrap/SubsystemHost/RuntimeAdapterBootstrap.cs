@@ -1,6 +1,7 @@
 using XREngine.Components.Animation;
 using XREngine.Input;
 using XREngine.Networking;
+using XREngine.Runtime.InputIntegration;
 
 namespace XREngine.Runtime.Bootstrap;
 
@@ -48,6 +49,7 @@ public static class RuntimeAdapterBootstrap
         private readonly IRuntimeAnimationHostServices _previousAnimation;
         private readonly IRuntimeAudioIntegrationServices _previousAudio;
         private readonly IRuntimeInputServices _previousInput;
+        private readonly IRuntimeInputCaptureServices _previousInputCapture;
         private readonly IRuntimeVrInputServices _previousVrInput;
         private readonly IRuntimeVrStateServices _previousVrState;
         private readonly IRuntimeVrLifecycleServices _previousVrLifecycle;
@@ -55,13 +57,13 @@ public static class RuntimeAdapterBootstrap
         private readonly IRuntimePawnHostServices? _previousPawn;
         private readonly IRuntimePlayerControllerServices? _previousPlayerController;
         private readonly IDisposable _networkingLease;
-        private readonly EngineRuntimeWorldHostServices _worldHost;
+        private readonly IRuntimeWorldHostServices _worldHost;
+        private readonly IDisposable _worldHostOwner;
         private readonly IDisposable _worldHostLease;
         private readonly IDisposable _worldRegistryLease;
-        private readonly IRuntimeModelImportServices _previousModeling;
         private readonly EngineRuntimeVrInputServices? _installedVrInput;
         private readonly EngineRuntimePawnHostServices? _installedPawn;
-        private readonly EngineRuntimePlayerControllerServices? _installedPlayerController;
+        private readonly IDisposable _installedPlayerController;
         private readonly RuntimeAdapterProfile _profile;
         private int _disposed;
 
@@ -71,16 +73,30 @@ public static class RuntimeAdapterBootstrap
             _previousAnimation = RuntimeAnimationHostServices.Current;
             _previousAudio = RuntimeAudioIntegrationServices.Current;
             _previousInput = RuntimeInputServices.Current;
+            _previousInputCapture = RuntimeInputCaptureServices.Current;
             _previousVrInput = RuntimeVrInputServices.Current;
             _previousVrState = RuntimeVrStateServices.Current;
             _previousVrLifecycle = RuntimeEngine.VRState.LifecycleServices;
             _previousGameMode = RuntimeGameModeHostServices.Current;
             _previousPawn = RuntimePawnHostServices.Current;
             _previousPlayerController = RuntimePlayerControllerServices.Current;
-            _previousModeling = RuntimeModelImportServices.Current;
-            _worldHost = new EngineRuntimeWorldHostServices();
+            bool allowsWindows = !RuntimeApplicationCapabilityServices.Current.IsConfigured
+                || RuntimeApplicationCapabilityServices.Current.AllowsWindows;
+            if (allowsWindows)
+            {
+                EngineRuntimeWorldHostServices renderedWorldHost = new();
+                _worldHost = renderedWorldHost;
+                _worldHostOwner = renderedWorldHost;
+                _worldRegistryLease = RuntimeWorldRegistryServices.Install(renderedWorldHost.CoreWorldRegistry);
+            }
+            else
+            {
+                HeadlessRuntimeWorldHostServices headlessWorldHost = new();
+                _worldHost = headlessWorldHost;
+                _worldHostOwner = headlessWorldHost;
+                _worldRegistryLease = RuntimeWorldRegistryServices.Install(headlessWorldHost.CoreWorldRegistry);
+            }
             _worldHostLease = RuntimeWorldHostServices.Install(_worldHost);
-            _worldRegistryLease = RuntimeWorldRegistryServices.Install(_worldHost.CoreWorldRegistry);
 
             if (profile.HasFlag(RuntimeAdapterProfile.Animation))
                 RuntimeAnimationHostServices.Current = new EngineRuntimeAnimationHostServices();
@@ -89,16 +105,22 @@ public static class RuntimeAdapterBootstrap
             if (profile.HasFlag(RuntimeAdapterProfile.Input))
             {
                 RuntimeInputServices.Current = new EngineRuntimeInputServices();
+                RuntimeInputCaptureServices.Current = new RuntimeInputCaptureState();
                 RuntimeVrInputServices.Current = _installedVrInput = new EngineRuntimeVrInputServices();
                 RuntimeVrStateServices.Current = new EngineRuntimeVrStateServices();
                 RuntimeGameModeHostServices.Current = new EngineRuntimeGameModeHostServices();
                 RuntimePawnHostServices.Current = _installedPawn = new EngineRuntimePawnHostServices();
-                RuntimePlayerControllerServices.Current = _installedPlayerController = new EngineRuntimePlayerControllerServices();
+                EngineRuntimePlayerControllerServices playerControllers = new();
+                _installedPlayerController = playerControllers;
+                RuntimePlayerControllerServices.Current = playerControllers;
                 GameModeCompositionBootstrap.RegisterBuiltInGameModes();
             }
+            else
+            {
+                RuntimePlayerControllerServices.Current = new RemoteOnlyPlayerControllerServices();
+                _installedPlayerController = (IDisposable)RuntimePlayerControllerServices.Current;
+            }
             _networkingLease = RuntimeNetworkingHostServices.Install(new EngineRuntimeNetworkingHostServices());
-            if (profile.HasFlag(RuntimeAdapterProfile.Modeling))
-                RuntimeModelImportServices.Current = new EngineRuntimeModelImportServices();
         }
 
         public void Dispose()
@@ -121,7 +143,7 @@ public static class RuntimeAdapterBootstrap
             // networking, rendering, registry, or game-mode capabilities.
             try
             {
-                _worldHost.Dispose();
+                _worldHostOwner.Dispose();
             }
             finally
             {
@@ -133,8 +155,9 @@ public static class RuntimeAdapterBootstrap
                 {
                     _installedVrInput?.Dispose();
                     _installedPawn?.Dispose();
-                    _installedPlayerController?.Dispose();
+                    _installedPlayerController.Dispose();
                     RuntimeInputServices.Current = _previousInput;
+                    RuntimeInputCaptureServices.Current = _previousInputCapture;
                     RuntimeVrInputServices.Current = _previousVrInput;
                     RuntimeVrStateServices.Current = _previousVrState;
                     RuntimeEngine.VRState.LifecycleServices = _previousVrLifecycle;
@@ -142,11 +165,14 @@ public static class RuntimeAdapterBootstrap
                     RuntimePawnHostServices.Current = _previousPawn;
                     RuntimePlayerControllerServices.Current = _previousPlayerController;
                 }
+                else
+                {
+                    _installedPlayerController.Dispose();
+                    RuntimePlayerControllerServices.Current = _previousPlayerController;
+                }
                 _networkingLease.Dispose();
                 _worldRegistryLease.Dispose();
                 _worldHostLease.Dispose();
-                if (_profile.HasFlag(RuntimeAdapterProfile.Modeling))
-                    RuntimeModelImportServices.Current = _previousModeling;
             }
         }
     }

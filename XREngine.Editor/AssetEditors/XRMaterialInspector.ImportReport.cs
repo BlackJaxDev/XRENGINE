@@ -2,7 +2,7 @@ using System.Numerics;
 using ImGuiNET;
 using XREngine.Rendering;
 using XREngine.Scene.Importers;
-using XREngine.Scene.Importers.Poiyomi;
+using XREngine.Scene.Importers.SourceToon;
 
 namespace XREngine.Editor.AssetEditors;
 
@@ -11,7 +11,7 @@ public sealed partial class XRMaterialInspector
     private static void DrawConversionReportWorkspace(XRMaterial material)
     {
         MaterialConversionReport? report =
-            material is UnityMaterialAsset asset && asset.LastConversionReport is not null
+            material is SerializedMaterialAsset asset && asset.LastConversionReport is not null
                 ? asset.LastConversionReport
                 : MaterialConversionReportRegistry.Instance.TryGet(material, out MaterialConversionReport found)
                     ? found
@@ -102,7 +102,7 @@ public sealed partial class XRMaterialInspector
         if (ImGui.SmallButton("Copy conversion JSON"))
             ImGui.SetClipboardText(report.ToJson());
 
-        if (material is not UnityMaterialAsset importedAsset)
+        if (material is not SerializedMaterialAsset importedAsset)
             return;
 
         bool needsReimport = MaterialReimportWorkflow.NeedsReimport(importedAsset, out string reimportReason);
@@ -113,7 +113,7 @@ public sealed partial class XRMaterialInspector
         ImGui.SameLine();
         if (ImGui.SmallButton("Reconvert (preserve overrides)"))
         {
-            bool succeeded = MaterialReimportWorkflow.Reconvert(importedAsset, out UnityMaterialImportResult result);
+            bool succeeded = MaterialReimportWorkflow.Reconvert(importedAsset, out SerializedMaterialImportResult result);
             AuthoringToolStates.GetValue(importedAsset, static _ => new()).Status =
                 succeeded
                     ? $"Reconverted; preserved {importedAsset.LocalOverrides.Parameters.Count} parameter override(s)."
@@ -127,7 +127,7 @@ public sealed partial class XRMaterialInspector
         {
             bool succeeded = MaterialReimportWorkflow.ResetAndReconvert(
                 importedAsset,
-                out UnityMaterialImportResult result);
+                out SerializedMaterialImportResult result);
             tools.Status = succeeded
                 ? "Local overrides were reset and source state was reconverted."
                 : result.ConversionReport?.Failures.FirstOrDefault() ?? "Reset/reconversion failed.";

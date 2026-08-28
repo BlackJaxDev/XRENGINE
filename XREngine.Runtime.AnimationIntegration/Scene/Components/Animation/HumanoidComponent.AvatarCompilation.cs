@@ -92,8 +92,8 @@ public partial class HumanoidComponent
 
         var legacyCalibrations = new HumanoidAvatarLegacyBoneCalibration?[CompiledHumanoidAvatarDefinition.RoleCount];
         HumanoidAvatarLegacyCalibration? legacy = definition.LegacyCalibration;
-        UnityHumanoidRootMotionPolicy? legacyRootMotionPolicy = legacy?.CalibrationRootMotionSettings is { } legacySettings
-            && UnityHumanoidRootMotionPolicy.TryCreate(legacySettings, out UnityHumanoidRootMotionPolicy compiledLegacyPolicy, out _)
+        ImportedHumanoidRootMotionPolicy? legacyRootMotionPolicy = legacy?.CalibrationRootMotionSettings is { } legacySettings
+            && ImportedHumanoidRootMotionPolicy.TryCreate(legacySettings, out ImportedHumanoidRootMotionPolicy compiledLegacyPolicy, out _)
                 ? compiledLegacyPolicy
                 : null;
         bool hasLegacyRootAllocationFrame = TryCompileLegacyRootAllocationFrame(
@@ -160,7 +160,7 @@ public partial class HumanoidComponent
     }
 
     private static bool TryCompileLegacyRootAllocationFrame(
-        UnityHumanoidRootAllocationFrame? source,
+        ImportedHumanoidRootAllocationFrame? source,
         float modelUnitsPerMeter,
         out Matrix4x4 frame,
         out Matrix4x4 inverseFrame)

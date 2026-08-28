@@ -234,8 +234,8 @@ public sealed class UberShaderCompilationTests
     {
         XRMaterial material = new()
         {
-            Parameters = ModelImporter.CreateDefaultForwardPlusUberShaderParameters(),
-            RenderOptions = ModelImporter.CreateForwardPlusUberShaderRenderOptions(),
+            Parameters = ModelAssetImporter.CreateDefaultForwardPlusUberShaderParameters(),
+            RenderOptions = ModelAssetImporter.CreateForwardPlusUberShaderRenderOptions(),
         };
         material.Shaders.Add(ShaderHelper.UberFragForward());
         material.EnsureUberStateInitialized();

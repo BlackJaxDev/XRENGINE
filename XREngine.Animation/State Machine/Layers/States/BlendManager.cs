@@ -29,7 +29,7 @@ namespace XREngine.Animation
         private AnimStateTransition? _currentTransition;
         private Func<float, float>? _blendFunction;
         private readonly AnimationValueStore _sourceSnapshot = new();
-        private readonly UnityHumanoidMotionContributionBuffer _sourceSnapshotContributions = new();
+        private readonly HumanoidMotionContributionBuffer _sourceSnapshotContributions = new();
         private bool _usesSourceSnapshot;
 
         public AnimStateTransition? CurrentTransition => _currentTransition;
@@ -76,7 +76,7 @@ namespace XREngine.Animation
             AnimState? semanticSourceState,
             AnimState nextState,
             AnimationValueStore sourceValues,
-            UnityHumanoidMotionContributionBuffer sourceContributions)
+            HumanoidMotionContributionBuffer sourceContributions)
         {
             _sourceSnapshot.CopyFrom(sourceValues);
             _sourceSnapshotContributions.CopyFrom(sourceContributions);
@@ -162,12 +162,12 @@ namespace XREngine.Animation
             }
 
             float clampedBlendTime = Math.Clamp(blendTime, 0.0f, 1.0f);
-            layer.UnityHumanoidContributions.BlendFrom(
+            layer.HumanoidContributions.BlendFrom(
                 _usesSourceSnapshot
                     ? _sourceSnapshotContributions
-                    : currentState?.UnityHumanoidContributions,
+                    : currentState?.HumanoidContributions,
                 1.0f - clampedBlendTime,
-                nextState?.UnityHumanoidContributions,
+                nextState?.HumanoidContributions,
                 clampedBlendTime);
 
             if (finished)

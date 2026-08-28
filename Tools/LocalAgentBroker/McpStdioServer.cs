@@ -152,7 +152,6 @@ internal sealed class McpStdioServer(
     {
         AgentRunRequest request = arguments.Deserialize<AgentRunRequest>(s_jsonOptions)
             ?? throw new ArgumentException("start_agent_run arguments are invalid.");
-        request = AgentRunBudgetPolicy.ApplyDefaults(request, arguments);
         string runId = registry.Start(request);
         AgentRunSnapshot snapshot = registry.Get(runId);
         return new
@@ -165,6 +164,8 @@ internal sealed class McpStdioServer(
             requestedTextVerbosity = snapshot.RequestedTextVerbosity,
             maxOutputTokens = snapshot.MaxOutputTokens,
             maxElapsedSeconds = request.Budget.MaxElapsedSeconds,
+            outputTokenLimitEnabled = snapshot.MaxOutputTokens > 0,
+            elapsedTimeLimitEnabled = request.Budget.MaxElapsedSeconds > 0,
             contextFileCount = snapshot.ContextFileCount,
             contextRawBytes = snapshot.ContextRawBytes,
             repositoryAccessEnabled = snapshot.RepositoryAccessEnabled,
@@ -210,7 +211,7 @@ internal sealed class McpStdioServer(
             ["serverInfo"] = new JsonObject
             {
                 ["name"] = "XREngine.LocalAgentBroker",
-                ["version"] = "0.8.0",
+                ["version"] = "0.9.0",
             },
             ["capabilities"] = new JsonObject
             {

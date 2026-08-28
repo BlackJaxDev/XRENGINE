@@ -47,7 +47,9 @@ namespace XREngine
             GameState state,
             bool beginPlayingAllWorlds)
         {
-            if (!RuntimeRenderingHostServices.HasConcreteHost)
+            bool allowsWindows = !RuntimeApplicationCapabilityServices.Current.IsConfigured
+                || RuntimeApplicationCapabilityServices.Current.AllowsWindows;
+            if (allowsWindows && !RuntimeRenderingHostServices.HasConcreteHost)
             {
                 throw new InvalidOperationException(
                     "No concrete rendering host is installed. Call the application composition root's " +
@@ -98,6 +100,8 @@ namespace XREngine
             GameState state,
             bool beginPlayingAllWorlds = true)
         {
+            bool allowsWindows = !RuntimeApplicationCapabilityServices.Current.IsConfigured
+                || RuntimeApplicationCapabilityServices.Current.AllowsWindows;
             bool success = false;
             try
             {
@@ -127,22 +131,28 @@ namespace XREngine
                 ProfileCapture.ApplyPerformanceProfileContract();
 #endif
                 EnsureMemoryPolicyConfigured(startupSettings);
-                ValidateGpuRenderingStartupConfiguration();
+                if (allowsWindows)
+                    ValidateGpuRenderingStartupConfiguration();
                 ResolveExecutionTopology();
                 ConfigureJobManager(GameSettings);
-                ValidateInstalledWorkScheduler();
+                if (allowsWindows)
+                    ValidateInstalledWorkScheduler();
 
                 BeforeCreateWindows?.Invoke(startupSettings, state);
 
                 // Creating windows first is critical—they initialize the render context and graphics API
                 CreateWindows(startupSettings.StartupWindows);
                 AfterCreateWindows?.Invoke(startupSettings, state);
-                EngineRenderingSettingsApplication.LogVulkanFeatureProfileFingerprint(force: true);
+                if (allowsWindows)
+                    EngineRenderingSettingsApplication.LogVulkanFeatureProfileFingerprint(force: true);
 #if !XRE_PUBLISHED
                 ProfileCapture.LogActivePerformanceProfile();
 #endif
-                RuntimeEngine.Rendering.SecondaryContext.InitializeIfSupported(RuntimeEngine.Windows.FirstOrDefault());
-                XRWindow.AnyWindowFocusChanged += WindowFocusChanged;
+                if (allowsWindows)
+                {
+                    RuntimeEngine.Rendering.SecondaryContext.InitializeIfSupported(RuntimeEngine.Windows.FirstOrDefault());
+                    XRWindow.AnyWindowFocusChanged += WindowFocusChanged;
+                }
 
                 // VR initialization can run asynchronously in the background
                 // Windows must be created first if initializing VR in place
@@ -156,7 +166,8 @@ namespace XREngine
                 InitializeNetworking(startupSettings);
 
                 // Wire up event callbacks for task processing
-                Time.Timer.SwapBuffers += SwapBuffers;
+                if (allowsWindows)
+                    Time.Timer.SwapBuffers += SwapBuffers;
 
                 // Wire up the external profiler UDP sender (delegates bridge XREngine.Data → Engine)
 #if !XRE_PUBLISHED
@@ -258,7 +269,7 @@ namespace XREngine
                 Debug.RenderingWarning(
                     "[Shutdown] Skipping process-exit resource cleanup because a bounded quiesce/GPU wait failed. " +
                     "The operating system will reclaim resources after foreground engine hosts exit.");
-                WindowPumpHost.Stop();
+                RuntimeWindowApplicationServices.Current.Stop();
                 UninstallRuntimeTimingServices();
                 UninstallRuntimePhysicsServices();
                 return;
@@ -271,7 +282,7 @@ namespace XREngine
                 Debug.RenderingWarning(
                     "[Shutdown] Skipping process-exit resource cleanup because the bounded work-scheduler " +
                     "quiesce failed. Executor and backend ownership remains retained until process exit.");
-                WindowPumpHost.Stop();
+                RuntimeWindowApplicationServices.Current.Stop();
                 UninstallRuntimeTimingServices();
                 UninstallRuntimePhysicsServices();
                 return;
@@ -289,8 +300,10 @@ namespace XREngine
             UninstallRuntimePhysicsServices();
 
             // TODO: Implement clean shutdown where each window disposes of its own allocated assets
-            RuntimeEngine.Rendering.SecondaryContext.Dispose();
-            WindowPumpHost.Stop();
+            if (!RuntimeApplicationCapabilityServices.Current.IsConfigured
+                || RuntimeApplicationCapabilityServices.Current.AllowsWindows)
+                RuntimeEngine.Rendering.SecondaryContext.Dispose();
+            RuntimeWindowApplicationServices.Current.Stop();
             Assets.Dispose();
             _sessionSettings.ClearAll();
         }

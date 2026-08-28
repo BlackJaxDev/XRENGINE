@@ -1,4 +1,4 @@
-﻿using System.Diagnostics;
+using System.Diagnostics;
 using MemoryPack;
 using XREngine.Animation.Importers;
 
@@ -11,10 +11,10 @@ namespace XREngine.Animation
         internal AnimationValueStore RuntimeValueStore { get; } = new();
 
         [MemoryPackIgnore]
-        internal UnityHumanoidMotionContributionBuffer UnityHumanoidContributions { get; } = new();
+        internal HumanoidMotionContributionBuffer HumanoidContributions { get; } = new();
 
         [MemoryPackIgnore]
-        internal UnityAnimationEventBuffer UnityAnimationEvents { get; } = new();
+        internal ImportedAnimationEventBuffer ImportedAnimationEvents { get; } = new();
 
         [MemoryPackIgnore]
         private double _normalizedPlaybackTime;
@@ -122,7 +122,7 @@ namespace XREngine.Animation
             if (motion is null)
             {
                 RuntimeValueStore.Clear();
-                UnityHumanoidContributions.Clear();
+                HumanoidContributions.Clear();
                 return;
             }
 
@@ -131,9 +131,9 @@ namespace XREngine.Animation
                 _normalizedPlaybackTime,
                 OwningLayer?.ApplyType == AnimLayer.EApplyType.Additive);
             RuntimeValueStore.CopyFrom(motion.ValueStore);
-            UnityHumanoidContributions.Clear();
-            motion.CollectUnityHumanoidContributions(
-                UnityHumanoidContributions,
+            HumanoidContributions.Clear();
+            motion.CollectImportedHumanoidContributions(
+                HumanoidContributions,
                 variables,
                 _normalizedPlaybackTime,
                 1.0f,
@@ -150,7 +150,7 @@ namespace XREngine.Animation
         public void Tick(float delta, IDictionary<string, AnimVar> variables)
         {
             AdvanceNormalizedPlayback(delta, variables);
-            CollectUnityAnimationEvents(variables, includePrevious: false);
+            CollectImportedAnimationEvents(variables, includePrevious: false);
 
             foreach (var component in Components)
                 component.StateTick(this, variables, delta);
@@ -160,7 +160,7 @@ namespace XREngine.Animation
         {
             float delta = deltaTicks == 0L ? 0.0f : (float)(deltaTicks / (double)Stopwatch.Frequency);
             AdvanceNormalizedPlayback(delta, variables);
-            CollectUnityAnimationEvents(variables, includePrevious: false);
+            CollectImportedAnimationEvents(variables, includePrevious: false);
             foreach (var component in Components)
                 component.StateTick(this, variables, delta);
         }
@@ -215,11 +215,11 @@ namespace XREngine.Animation
             _previousNormalizedPlaybackTime = _normalizedPlaybackTime;
             _normalizedPlaybackTime = normalizedTime;
             if (collectEvents)
-                CollectUnityAnimationEvents(variables, includePrevious: false);
+                CollectImportedAnimationEvents(variables, includePrevious: false);
             else
             {
                 _previousNormalizedPlaybackTime = normalizedTime;
-                UnityAnimationEvents.Clear();
+                ImportedAnimationEvents.Clear();
             }
             _motionLifecycleGeneration = unchecked(_motionLifecycleGeneration + 1UL);
             Motion?.SeekPlaybackFromNormalizedStateTime(normalizedTime);
@@ -231,8 +231,8 @@ namespace XREngine.Animation
         internal void PrepareRuntimeEvaluation(AnimationSlotLayout layout, int contributionCapacity)
         {
             RuntimeValueStore.Resize(layout);
-            UnityHumanoidContributions.EnsureCapacity(contributionCapacity);
-            UnityAnimationEvents.EnsureCapacity(Motion?.GetUnityAnimationEventCapacity() ?? 0);
+            HumanoidContributions.EnsureCapacity(contributionCapacity);
+            ImportedAnimationEvents.EnsureCapacity(Motion?.GetImportedAnimationEventCapacity() ?? 0);
         }
 
         internal double GetEffectiveDurationSeconds(IDictionary<string, AnimVar> variables)
@@ -280,13 +280,13 @@ namespace XREngine.Animation
                 : Math.CopySign(double.MaxValue, next);
         }
 
-        private void CollectUnityAnimationEvents(
+        private void CollectImportedAnimationEvents(
             IDictionary<string, AnimVar> variables,
             bool includePrevious)
         {
-            UnityAnimationEvents.Clear();
-            Motion?.CollectUnityAnimationEvents(
-                UnityAnimationEvents,
+            ImportedAnimationEvents.Clear();
+            Motion?.CollectImportedAnimationEvents(
+                ImportedAnimationEvents,
                 variables,
                 _previousNormalizedPlaybackTime,
                 _normalizedPlaybackTime,

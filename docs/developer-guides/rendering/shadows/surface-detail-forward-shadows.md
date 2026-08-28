@@ -51,7 +51,7 @@ This makes common failures easier to see, especially scenes where practical shad
 
 ## Implementation References
 
-- `XRENGINE/Core/ModelImporter.cs`
+- `XREngine.Runtime.ModelAssetPipeline/Importing/ModelAssetImporter.cs`
 - `Build/CommonAssets/Shaders/Snippets/SurfaceDetailNormalMapping.glsl`
 - `Build/CommonAssets/Shaders/Snippets/ForwardLighting.glsl`
 - `XREngine.Runtime.Rendering/Objects/Materials/XRMaterial.cs`

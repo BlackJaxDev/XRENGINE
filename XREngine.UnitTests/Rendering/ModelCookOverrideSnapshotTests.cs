@@ -2,7 +2,6 @@ using NUnit.Framework;
 using Shouldly;
 using XREngine.Components.Scene.Mesh;
 using XREngine.Data.Core;
-using XREngine.ModelCaching;
 using XREngine.Rendering.Meshlets;
 using XREngine.Rendering.Models;
 using XREngine.Rendering.Models.Caching;

@@ -143,6 +143,7 @@ namespace XREngine
                 .WithDuplicateKeyChecking()
                 .WithTypeInspector(inner => new TransformYamlTypeInspector(inner, applyReferenceOnRead: true))
                 .WithTypeInspector(inner => new YamlDefaultTypeInspector(inner, applyDefaultTypeOnRead: true))
+                .WithNodeDeserializer(new YamlEnumAliasNodeDeserializer(), w => w.OnTop())
                 .WithNodeDeserializer(new LayerMaskYamlNodeDeserializer(), w => w.OnTop())
                 .WithNodeDeserializer(new InterfaceCollectionYamlNodeDeserializer(), w => w.OnTop())
                 .WithNodeDeserializer(

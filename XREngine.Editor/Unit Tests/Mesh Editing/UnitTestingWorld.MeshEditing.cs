@@ -18,7 +18,7 @@ namespace XREngine.Editor;
 
 public static partial class EditorUnitTests
 {
-    private static readonly XRMeshModelingExportOptions MeshEditingPreviewExportOptions = new()
+    private static readonly ModelingDocumentToXRMeshOptions MeshEditingPreviewExportOptions = new()
     {
         ValidateDocument = false
     };
@@ -118,7 +118,7 @@ public static partial class EditorUnitTests
                 SourcePrimitiveType = ModelingPrimitiveType.Triangles
             });
 
-        XRMesh mesh = XRMeshModelingExporter.Export(document, MeshEditingPreviewExportOptions);
+        XRMesh mesh = ModelingDocumentToXRMeshConverter.Convert(document, MeshEditingPreviewExportOptions);
         return (mesh, mesh.Bounds);
     }
 }

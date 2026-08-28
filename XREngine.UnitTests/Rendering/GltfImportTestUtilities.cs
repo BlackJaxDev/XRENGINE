@@ -60,7 +60,7 @@ internal static class GltfImportTestUtilities
         return summary ?? throw new InvalidDataException($"Failed to deserialize glTF golden summary '{summaryPath}'.");
     }
 
-    public static GltfGoldenSummary ImportAndSummarize(GltfCorpusEntry entry, GltfImportBackend backend, Action<ModelImporter>? configureImporter = null)
+    public static GltfGoldenSummary ImportAndSummarize(GltfCorpusEntry entry, GltfImportBackend backend, Action<ModelAssetImporter>? configureImporter = null)
     {
         string assetPath = ResolveCorpusAssetPath(entry);
         using GltfAssetDocument document = GltfAssetDocument.Open(assetPath);
@@ -88,9 +88,9 @@ internal static class GltfImportTestUtilities
             Notes: entry.Notes);
     }
 
-    public static ImportedSceneSummary ImportAndSummarize(string assetPath, GltfImportBackend backend, Action<ModelImporter>? configureImporter = null)
+    public static ImportedSceneSummary ImportAndSummarize(string assetPath, GltfImportBackend backend, Action<ModelAssetImporter>? configureImporter = null)
     {
-        using ModelImporter importer = CreateImporter(assetPath, backend);
+        using ModelAssetImporter importer = CreateImporter(assetPath, backend);
         configureImporter?.Invoke(importer);
 
         SceneNode? rootNode = importer.Import(PostProcessSteps.None, cancellationToken: default, onProgress: null);
@@ -98,7 +98,7 @@ internal static class GltfImportTestUtilities
         return SummarizeImportedScene(rootNode!);
     }
 
-    public static ModelImporter CreateImporter(string assetPath, GltfImportBackend backend)
+    public static ModelAssetImporter CreateImporter(string assetPath, GltfImportBackend backend)
     {
         Dictionary<string, XRTexture2D> textureCache = new(StringComparer.OrdinalIgnoreCase);
 
@@ -142,7 +142,7 @@ internal static class GltfImportTestUtilities
             return CreateMaterialCore(textureList, name);
         }
 
-        return new ModelImporter(assetPath, onCompleted: null, materialFactory: CreateMaterialFromSlots)
+        return new ModelAssetImporter(assetPath, onCompleted: null, materialFactory: CreateMaterialFromSlots)
         {
             ImportOptions = new ModelImportOptions
             {

@@ -323,7 +323,7 @@ namespace XREngine.Editor.Mcp
                     isError: true));
             }
 
-            XRMesh bakedMesh = XRMeshBooleanOperations.BakeShapes(meshes, op);
+            XRMesh bakedMesh = XRMeshAuthoringBooleanOperations.BakeShapes(meshes, op);
             if (bakedMesh.VertexCount == 0)
                 return Task.FromResult(new McpToolResponse("Boolean bake produced an empty mesh.", isError: true));
 

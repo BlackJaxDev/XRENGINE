@@ -21,17 +21,17 @@ public sealed class HumanoidComponentTests
         ?? throw new InvalidOperationException("Failed to locate HumanoidComponent.ApplyBindRelativeEulerDegrees overload.");
 
     [Test]
-    public void HumanoidComponent_DefaultsNeutralPosePresetToUnityMecanim()
+    public void HumanoidComponent_DefaultsNeutralPosePresetToHumanoidRetargeting()
     {
         var humanoid = new HumanoidComponent();
 
-        humanoid.NeutralPosePreset.ShouldBe(EHumanoidNeutralPosePreset.UnityMecanim);
+        humanoid.NeutralPosePreset.ShouldBe(EHumanoidNeutralPosePreset.HumanoidRetargeting);
     }
 
     [Test]
-    public void UnityMecanimPreset_UsesNeutralRotationsForAllBones()
+    public void HumanoidRetargetingPreset_UsesNeutralRotationsForAllBones()
     {
-        var rotations = HumanoidNeutralPosePresets.GetRotations(EHumanoidNeutralPosePreset.UnityMecanim);
+        var rotations = HumanoidNeutralPosePresets.GetRotations(EHumanoidNeutralPosePreset.HumanoidRetargeting);
 
         AssertEquivalent(
             Quaternion.Normalize(rotations["Hips"]),
@@ -69,7 +69,7 @@ public sealed class HumanoidComponentTests
         SaveBindPoseRecursive(root);
 
         var humanoid = root.AddComponent<HumanoidComponent>()!;
-        var presetRotations = HumanoidNeutralPosePresets.GetRotations(EHumanoidNeutralPosePreset.UnityMecanim);
+        var presetRotations = HumanoidNeutralPosePresets.GetRotations(EHumanoidNeutralPosePreset.HumanoidRetargeting);
         Quaternion expectedOffset = Quaternion.Normalize(Quaternion.Inverse(hipsBindRotation) * presetRotations["Hips"]);
 
         humanoid.Settings.TryGetNeutralPoseBoneRotation("Hips", out Quaternion actualOffset).ShouldBeTrue();
@@ -84,7 +84,7 @@ public sealed class HumanoidComponentTests
         _ = new SceneNode(root, "Hips", new Transform(rotation: hipsBindRotation));
 
         var humanoid = root.AddComponent<HumanoidComponent>()!;
-        var presetRotations = HumanoidNeutralPosePresets.GetRotations(EHumanoidNeutralPosePreset.UnityMecanim);
+        var presetRotations = HumanoidNeutralPosePresets.GetRotations(EHumanoidNeutralPosePreset.HumanoidRetargeting);
         Quaternion expectedOffset = Quaternion.Normalize(Quaternion.Inverse(hipsBindRotation) * presetRotations["Hips"]);
 
         humanoid.Settings.TryGetNeutralPoseBoneRotation("Hips", out Quaternion actualOffset).ShouldBeTrue();
@@ -111,7 +111,7 @@ public sealed class HumanoidComponentTests
         humanoid.IsSceneNodeInitializationComplete.ShouldBeTrue();
         humanoid.Hips.Node.ShouldBeSameAs(hips);
 
-        var presetRotations = HumanoidNeutralPosePresets.GetRotations(EHumanoidNeutralPosePreset.UnityMecanim);
+        var presetRotations = HumanoidNeutralPosePresets.GetRotations(EHumanoidNeutralPosePreset.HumanoidRetargeting);
         Quaternion expectedOffset = Quaternion.Normalize(Quaternion.Inverse(hipsBindRotation) * presetRotations["Hips"]);
 
         humanoid.Settings.TryGetNeutralPoseBoneRotation("Hips", out Quaternion actualOffset).ShouldBeTrue();
@@ -135,7 +135,7 @@ public sealed class HumanoidComponentTests
 
         humanoid.Hips.Node.ShouldBeSameAs(hips);
 
-        var presetRotations = HumanoidNeutralPosePresets.GetRotations(EHumanoidNeutralPosePreset.UnityMecanim);
+        var presetRotations = HumanoidNeutralPosePresets.GetRotations(EHumanoidNeutralPosePreset.HumanoidRetargeting);
         Quaternion expectedOffset = Quaternion.Normalize(Quaternion.Inverse(hipsBindRotation) * presetRotations["Hips"]);
 
         humanoid.Settings.TryGetNeutralPoseBoneRotation("Hips", out Quaternion actualOffset).ShouldBeTrue();
@@ -235,9 +235,9 @@ public sealed class HumanoidComponentTests
         humanoid.PosePreviewMode = EHumanoidPosePreviewMode.NeutralMusclePose;
 
         spine.GetTransformAs<Transform>(true)!.Rotation = Quaternion.Identity;
-        humanoid.NeutralPosePreset = EHumanoidNeutralPosePreset.UnityMecanim;
+        humanoid.NeutralPosePreset = EHumanoidNeutralPosePreset.HumanoidRetargeting;
 
-        Quaternion expectedRotation = Quaternion.Normalize(HumanoidNeutralPosePresets.GetRotations(EHumanoidNeutralPosePreset.UnityMecanim)["Spine"]);
+        Quaternion expectedRotation = Quaternion.Normalize(HumanoidNeutralPosePresets.GetRotations(EHumanoidNeutralPosePreset.HumanoidRetargeting)["Spine"]);
         AssertEquivalent(Quaternion.Normalize(spine.GetTransformAs<Transform>(true)!.Rotation), expectedRotation);
     }
 
@@ -303,7 +303,7 @@ public sealed class HumanoidComponentTests
     }
 
     [Test]
-    public void UnityMecanimPreset_KeepsMirroredHandsOnCorrectBodySide()
+    public void HumanoidRetargetingPreset_KeepsMirroredHandsOnCorrectBodySide()
     {
         var root = new SceneNode("Root", new Transform());
         var hips = new SceneNode(root, "Hips", new Transform());
@@ -329,7 +329,7 @@ public sealed class HumanoidComponentTests
     }
 
     [Test]
-    public void UnityMecanimPreset_KeepsPositiveXLeftArmChainOnCorrectBodySide()
+    public void HumanoidRetargetingPreset_KeepsPositiveXLeftArmChainOnCorrectBodySide()
     {
         var root = new SceneNode("Root", new Transform());
         var hips = new SceneNode(root, "Hips", new Transform());

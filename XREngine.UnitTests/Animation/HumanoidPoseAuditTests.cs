@@ -358,7 +358,7 @@ public sealed class HumanoidPoseAuditTests
     }
 
     [Test]
-    public void Deserialize_LoadsUnityRawCurvesAndDefaultMuscleRanges()
+    public void Deserialize_LoadsSourceRawCurvesAndDefaultMuscleRanges()
     {
         const string json = """
             {

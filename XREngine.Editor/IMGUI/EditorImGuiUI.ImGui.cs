@@ -1509,10 +1509,10 @@ public static partial class EditorImGuiUI
             if (ImGui.BeginMenu("Editor"))
             {
                 if (ImGui.MenuItem("Global Editor Preferences"))
-                    OpenSettingsInInspector(Engine.GlobalEditorPreferences, "Global Editor Preferences");
+                    OpenSettingsInInspector(global::XREngine.Editor.Settings.EditorPreferencesService.Current.GlobalPreferences, "Global Editor Preferences");
 
                 if (ImGui.MenuItem("Project Editor Overrides"))
-                    OpenSettingsInInspector(Engine.EditorPreferencesOverrides, "Editor Preferences Overrides");
+                    OpenSettingsInInspector(global::XREngine.Editor.Settings.EditorPreferencesService.Current.ProjectOverrides, "Editor Preferences Overrides");
 
                 ImGui.EndMenu();
             }

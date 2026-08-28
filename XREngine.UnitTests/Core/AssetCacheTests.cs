@@ -9,7 +9,6 @@ using XREngine.Animation;
 using XREngine.Core.Files;
 using XREngine.Core.Files.Caching;
 using XREngine.Data;
-using XREngine.ModelCaching;
 using XREngine.Rendering;
 using XREngine.Rendering.Models.Caching;
 using XREngine.Scene.Prefabs;

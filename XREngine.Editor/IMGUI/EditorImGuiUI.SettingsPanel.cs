@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Numerics;
 using XREngine;
 using XREngine.Core.Files;
+using XREngine.Editor.Settings;
 using XREngine.Rendering;
 
 namespace XREngine.Editor;
@@ -12,6 +13,7 @@ public static partial class EditorImGuiUI
 {
         private static void DrawGlobalEditorPreferencesPanel()
         {
+            EditorPreferencesService preferences = EditorPreferencesService.Current;
             if (!_showGlobalEditorPreferences) return;
             if (!ImGui.Begin("Global Editor Preferences", ref _showGlobalEditorPreferences))
             {
@@ -20,7 +22,7 @@ public static partial class EditorImGuiUI
             }
 
             // Ensure Global Editor Preferences participates in dirty tracking even if no project is loaded yet.
-            if (Engine.GlobalEditorPreferences is XRAsset editorPreferencesAsset && Engine.Assets is not null)
+            if (preferences.GlobalPreferences is XRAsset editorPreferencesAsset && Engine.Assets is not null)
             {
                 editorPreferencesAsset.Name ??= "Global Editor Preferences";
 
@@ -28,13 +30,13 @@ public static partial class EditorImGuiUI
             }
 
             if (ImGui.Button("Save Global Editor Preferences"))
-                Engine.SaveGlobalEditorPreferences();
+                preferences.SaveGlobalPreferences();
             ImGui.SameLine();
             if (ImGui.Button("Rebuild ImGui Font Atlas"))
                 RebuildImGuiFontAtlasForOpenGlWindows();
             ImGui.Separator();
 
-            DrawSettingsTabContent(Engine.GlobalEditorPreferences, "Global Editor Preferences");
+            DrawSettingsTabContent(preferences.GlobalPreferences, "Global Editor Preferences");
             ImGui.End();
         }
 
@@ -54,6 +56,7 @@ public static partial class EditorImGuiUI
 
         private static void DrawEditorPreferencesOverridesPanel()
         {
+            EditorPreferencesService preferences = EditorPreferencesService.Current;
             if (!_showEditorPreferencesOverrides) return;
             if (!ImGui.Begin("Editor Preferences Overrides", ref _showEditorPreferencesOverrides))
             {
@@ -62,7 +65,7 @@ public static partial class EditorImGuiUI
             }
 
             // Ensure Overrides asset participates in dirty tracking even if no project is loaded yet.
-            if (Engine.EditorPreferencesOverrides is XRAsset overridesAsset && Engine.Assets is not null)
+            if (preferences.ProjectOverrides is XRAsset overridesAsset && Engine.Assets is not null)
             {
                 overridesAsset.Name ??= "Editor Preferences Overrides";
                 if (Engine.CurrentProject?.EditorPreferencesOverridesPath is string overridesPath)
@@ -74,7 +77,7 @@ public static partial class EditorImGuiUI
             if (Engine.CurrentProject is not null)
             {
                 if (ImGui.Button("Save Editor Preferences Overrides"))
-                    Engine.SaveProjectEditorPreferencesOverrides();
+                    preferences.SaveProjectOverrides();
                 ImGui.SameLine();
                 ImGui.TextDisabled($"(Project: {Engine.CurrentProject.ProjectName})");
                 ImGui.Separator();
@@ -85,7 +88,7 @@ public static partial class EditorImGuiUI
                 ImGui.Separator();
             }
 
-            DrawSettingsTabContent(Engine.EditorPreferencesOverrides, "Editor Preferences Overrides");
+            DrawSettingsTabContent(preferences.ProjectOverrides, "Editor Preferences Overrides");
             ImGui.End();
         }
 

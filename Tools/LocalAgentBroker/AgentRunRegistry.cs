@@ -263,7 +263,8 @@ internal sealed class AgentRunRegistry : IAsyncDisposable
             _httpClient,
             session.Endpoint,
             record.Request.ToolPolicy,
-            _configuration.ReadEditorAuthToken());
+            _configuration.ReadEditorAuthToken(),
+            Timeout.InfiniteTimeSpan);
         await editorProvider.PreflightAsync(session.Name, cancellationToken);
         IAgentToolProvider? repositoryProvider =
             CreateRepositoryProvider(record.Request, repositoryRoots);

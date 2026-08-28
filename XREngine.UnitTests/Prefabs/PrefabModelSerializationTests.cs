@@ -1505,30 +1505,42 @@ NonVertexShadersOverride:
 
     private static void DeleteDirectoryIfExists(string directoryPath)
     {
-        if (!Directory.Exists(directoryPath))
-            return;
-
-        foreach (string filePath in Directory.GetFiles(directoryPath, "*", SearchOption.AllDirectories))
-        {
-            if (!File.Exists(filePath))
-                continue;
-
-            File.SetAttributes(filePath, FileAttributes.Normal);
-        }
-
-        foreach (string childDirectory in Directory.GetDirectories(directoryPath, "*", SearchOption.AllDirectories))
-        {
-            if (!Directory.Exists(childDirectory))
-                continue;
-
-            File.SetAttributes(childDirectory, FileAttributes.Normal);
-        }
-
-        File.SetAttributes(directoryPath, FileAttributes.Normal);
         for (int attempt = 0; ; attempt++)
         {
             try
             {
+                if (!Directory.Exists(directoryPath))
+                    return;
+
+                foreach (string filePath in Directory.GetFiles(directoryPath, "*", SearchOption.AllDirectories))
+                {
+                    try
+                    {
+                        File.SetAttributes(filePath, FileAttributes.Normal);
+                    }
+                    catch (FileNotFoundException)
+                    {
+                        // The asset watcher may retire metadata while cleanup is enumerating it.
+                    }
+                    catch (DirectoryNotFoundException)
+                    {
+                        // A generation directory can disappear after its files were enumerated.
+                    }
+                }
+
+                foreach (string childDirectory in Directory.GetDirectories(directoryPath, "*", SearchOption.AllDirectories))
+                {
+                    try
+                    {
+                        File.SetAttributes(childDirectory, FileAttributes.Normal);
+                    }
+                    catch (DirectoryNotFoundException)
+                    {
+                        // The directory was already retired by the watcher or an earlier pass.
+                    }
+                }
+
+                File.SetAttributes(directoryPath, FileAttributes.Normal);
                 Directory.Delete(directoryPath, recursive: true);
                 return;
             }
@@ -1536,7 +1548,9 @@ NonVertexShadersOverride:
             {
                 return;
             }
-            catch (IOException) when (attempt < 4)
+            catch (Exception exception) when (
+                exception is IOException or UnauthorizedAccessException &&
+                attempt < 4)
             {
                 Thread.Sleep(50 << attempt);
             }

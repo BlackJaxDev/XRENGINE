@@ -45,7 +45,9 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "XREngine.Runtime.AudioInteg
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "XREngine.Runtime.InputIntegration", "XREngine.Runtime.InputIntegration\XREngine.Runtime.InputIntegration.csproj", "{791EDE96-32B7-4198-A242-205C879D5AE0}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "XREngine.Runtime.ModelingBridge", "XREngine.Runtime.ModelingBridge\XREngine.Runtime.ModelingBridge.csproj", "{915A66F7-1343-437B-BA12-17CEB92DA4F7}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "XREngine.Runtime.ModelingIntegration", "XREngine.Runtime.ModelingIntegration\XREngine.Runtime.ModelingIntegration.csproj", "{915A66F7-1343-437B-BA12-17CEB92DA4F7}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "XREngine.Runtime.ModelAssetPipeline", "XREngine.Runtime.ModelAssetPipeline\XREngine.Runtime.ModelAssetPipeline.csproj", "{576034FC-0EE8-48BD-85B2-63883A85D035}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "XREngine.ControlPlane", "XREngine.ControlPlane\XREngine.ControlPlane.csproj", "{AA566099-FF67-4717-A9C1-E3002D2474C8}"
 EndProject
@@ -303,6 +305,18 @@ Global
 		{915A66F7-1343-437B-BA12-17CEB92DA4F7}.Release|x64.Build.0 = Release|x64
 		{915A66F7-1343-437B-BA12-17CEB92DA4F7}.Release|x86.ActiveCfg = Release|Any CPU
 		{915A66F7-1343-437B-BA12-17CEB92DA4F7}.Release|x86.Build.0 = Release|Any CPU
+		{576034FC-0EE8-48BD-85B2-63883A85D035}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{576034FC-0EE8-48BD-85B2-63883A85D035}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{576034FC-0EE8-48BD-85B2-63883A85D035}.Debug|x64.ActiveCfg = Debug|x64
+		{576034FC-0EE8-48BD-85B2-63883A85D035}.Debug|x64.Build.0 = Debug|x64
+		{576034FC-0EE8-48BD-85B2-63883A85D035}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{576034FC-0EE8-48BD-85B2-63883A85D035}.Debug|x86.Build.0 = Debug|Any CPU
+		{576034FC-0EE8-48BD-85B2-63883A85D035}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{576034FC-0EE8-48BD-85B2-63883A85D035}.Release|Any CPU.Build.0 = Release|Any CPU
+		{576034FC-0EE8-48BD-85B2-63883A85D035}.Release|x64.ActiveCfg = Release|x64
+		{576034FC-0EE8-48BD-85B2-63883A85D035}.Release|x64.Build.0 = Release|x64
+		{576034FC-0EE8-48BD-85B2-63883A85D035}.Release|x86.ActiveCfg = Release|Any CPU
+		{576034FC-0EE8-48BD-85B2-63883A85D035}.Release|x86.Build.0 = Release|Any CPU
 		{AA566099-FF67-4717-A9C1-E3002D2474C8}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
 		{AA566099-FF67-4717-A9C1-E3002D2474C8}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{AA566099-FF67-4717-A9C1-E3002D2474C8}.Debug|x64.ActiveCfg = Debug|x64

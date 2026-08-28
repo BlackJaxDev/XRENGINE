@@ -21,7 +21,7 @@ public class SpatialCoordinateConversionTests
         RightHandedYUp.IsRightHanded.ShouldBeTrue();
         Engine.IsLeftHanded.ShouldBeTrue();
         ZUpRightHanded.IsRightHanded.ShouldBeTrue();
-        SpatialCoordinateSystem.Unity.ShouldBe(RightHandedYUp);
+        SpatialCoordinateSystem.XRightYUpZForward.ShouldBe(RightHandedYUp);
         SpatialCoordinateSystem.Mmd.ShouldBe(RightHandedYUp);
         SpatialCoordinateSystem.OpenXR.ShouldBe(Engine);
         SpatialCoordinateSystem.OpenVR.ShouldBe(Engine);
@@ -43,9 +43,9 @@ public class SpatialCoordinateConversionTests
     {
         Vector3 value = new(-2.0f, 5.0f, 7.0f);
 
-        Vector3 position = SpatialCoordinateConversion.ConvertPosition(value, SpatialCoordinateSystem.Unity, SpatialCoordinateSystem.Engine);
-        Vector3 direction = SpatialCoordinateConversion.ConvertDirection(value, SpatialCoordinateSystem.Unity, SpatialCoordinateSystem.Engine);
-        Vector3 normal = SpatialCoordinateConversion.ConvertNormal(value, SpatialCoordinateSystem.Unity, SpatialCoordinateSystem.Engine);
+        Vector3 position = SpatialCoordinateConversion.ConvertPosition(value, SpatialCoordinateSystem.XRightYUpZForward, SpatialCoordinateSystem.Engine);
+        Vector3 direction = SpatialCoordinateConversion.ConvertDirection(value, SpatialCoordinateSystem.XRightYUpZForward, SpatialCoordinateSystem.Engine);
+        Vector3 normal = SpatialCoordinateConversion.ConvertNormal(value, SpatialCoordinateSystem.XRightYUpZForward, SpatialCoordinateSystem.Engine);
 
         VectorShouldBeClose(position, direction);
         VectorShouldBeClose(direction, normal);

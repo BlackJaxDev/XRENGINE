@@ -84,7 +84,7 @@ internal static class BrokerMcpToolCatalog
                 ["type"] = "string",
                 ["enum"] = new JsonArray("low", "medium", "high"),
                 ["default"] = "medium",
-                ["description"] = "Responses API visible-text verbosity. max_output_tokens remains the hard combined visible-output and reasoning-token budget.",
+                ["description"] = "Responses API visible-text verbosity. This is independent of the optional combined visible-output and reasoning-token limit.",
             }),
             ("use_background_mode", new JsonObject
             {
@@ -164,10 +164,10 @@ internal static class BrokerMcpToolCatalog
                     ["max_turns"] = IntegerSchema(1, 32, 3),
                     ["max_tool_calls"] = IntegerSchema(0, 256, 8),
                     ["max_output_tokens"] = IntegerSchema(
-                        16,
+                        0,
                         128_000,
-                        defaultValue: null,
-                        description: "Hard combined visible-output and reasoning-token budget. When omitted, Luna/Terra use 4096; Sol uses 16384, or 32768 at xhigh/max reasoning. An explicit value is never raised."),
+                        defaultValue: 0,
+                        description: "Optional combined visible-output and reasoning-token limit. Zero or omission disables the broker limit and omits max_output_tokens from the provider request; the model/provider maximum still applies."),
                     ["max_tool_result_bytes"] = IntegerSchema(1_024, 4_194_304, 262_144),
                     ["max_context_files"] = IntegerSchema(0, 64, 16),
                     ["max_context_file_bytes"] = IntegerSchema(
@@ -186,10 +186,10 @@ internal static class BrokerMcpToolCatalog
                         2_097_152,
                         "Maximum UTF-8 size after context content and metadata are JSON-escaped into provider input blocks."),
                     ["max_elapsed_seconds"] = IntegerSchema(
-                        1,
+                        0,
                         3_600,
-                        defaultValue: null,
-                        description: "Whole-run elapsed-time budget. When omitted, Luna/Terra use 120 seconds; Sol uses 300 seconds, or 600 seconds at xhigh/max reasoning. An explicit value is never raised."),
+                        defaultValue: 0,
+                        description: "Optional whole-run elapsed-time limit. Zero or omission disables the broker timeout; explicit positive values remain hard limits."),
                     ["max_retries"] = IntegerSchema(0, 5, 1),
                     ["max_concurrency"] = IntegerSchema(1, 8, 1),
                 },

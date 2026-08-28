@@ -47,7 +47,7 @@ namespace XREngine.Animation
         internal AnimationSlotLayout? SlotLayout { get; set; }
 
         [MemoryPackIgnore]
-        internal UnityHumanoidMotionContributionBuffer UnityHumanoidContributions { get; } = new();
+        internal HumanoidMotionContributionBuffer HumanoidContributions { get; } = new();
         
         [MemoryPackIgnore]
         private readonly BlendManager _blendManager = new();
@@ -214,16 +214,16 @@ namespace XREngine.Animation
                 NextState.SeekMotionPlayback(timeSeconds, variables, collectEvents);
             if (collectEvents)
             {
-                OwningStateMachine?.DispatchUnityAnimationEvents(CurrentState);
+                OwningStateMachine?.DispatchImportedAnimationEvents(CurrentState);
                 if (NextState is not null && !ReferenceEquals(NextState, CurrentState))
-                    OwningStateMachine?.DispatchUnityAnimationEvents(NextState);
+                    OwningStateMachine?.DispatchImportedAnimationEvents(NextState);
             }
             OwningStateMachine?.NotifyHumanoidMotionContinuityChanged(EAnimMotionContinuityChange.Seek);
         }
 
-        internal void PrepareUnityHumanoidContributionCapacity(int capacity)
+        internal void PrepareImportedHumanoidContributionCapacity(int capacity)
         {
-            UnityHumanoidContributions.EnsureCapacity(capacity);
+            HumanoidContributions.EnsureCapacity(capacity);
             if (SlotLayout is not null)
                 _blendManager.PrepareRuntimeEvaluation(SlotLayout, capacity);
         }
@@ -245,7 +245,7 @@ namespace XREngine.Animation
             long? deltaTicks)
         {
             ValueStore.Clear();
-            UnityHumanoidContributions.Clear();
+            HumanoidContributions.Clear();
             AnimState? currState = CurrentState;
             if (currState is null)
             {
@@ -296,21 +296,21 @@ namespace XREngine.Animation
             if (deltaTicks is long ticks)
             {
                 current?.Tick(ticks, variables);
-                OwningStateMachine?.DispatchUnityAnimationEvents(current);
+                OwningStateMachine?.DispatchImportedAnimationEvents(current);
                 if (next is not null && !ReferenceEquals(next, current))
                 {
                     next.Tick(ticks, variables);
-                    OwningStateMachine?.DispatchUnityAnimationEvents(next);
+                    OwningStateMachine?.DispatchImportedAnimationEvents(next);
                 }
                 return;
             }
 
             current?.Tick(delta, variables);
-            OwningStateMachine?.DispatchUnityAnimationEvents(current);
+            OwningStateMachine?.DispatchImportedAnimationEvents(current);
             if (next is not null && !ReferenceEquals(next, current))
             {
                 next.Tick(delta, variables);
-                OwningStateMachine?.DispatchUnityAnimationEvents(next);
+                OwningStateMachine?.DispatchImportedAnimationEvents(next);
             }
         }
 
@@ -338,7 +338,7 @@ namespace XREngine.Animation
             if (SlotLayout is not null && motion.SlotLayout is not null)
             {
                 ValueStore.CopyFrom(state.RuntimeValueStore);
-                UnityHumanoidContributions.CopyFrom(state.UnityHumanoidContributions);
+                HumanoidContributions.CopyFrom(state.HumanoidContributions);
                 return;
             }
 
@@ -405,7 +405,7 @@ namespace XREngine.Animation
                         CurrentState,
                         nextState,
                         ValueStore,
-                        UnityHumanoidContributions);
+                        HumanoidContributions);
                     OwningStateMachine?.NotifyHumanoidMotionContinuityChanged(
                         EAnimMotionContinuityChange.Replay);
                 }
@@ -493,7 +493,7 @@ namespace XREngine.Animation
                 CurrentState,
                 destination,
                 ValueStore,
-                UnityHumanoidContributions);
+                HumanoidContributions);
 
             StopAbandonedInterruptedState(previousCurrent, CurrentState, destination, variables);
             StopAbandonedInterruptedState(previousNext, CurrentState, destination, variables);

@@ -49,7 +49,7 @@ Make modeling tools feel immediate by using compute shaders and GPU-resident pre
 - `XREngine.Runtime.Rendering/Rendering/API/Rendering/`
 - `XREngine.Runtime.Rendering/Rendering/Commands/`
 - `XREngine.Runtime.Rendering/Objects/Meshes/`
-- `XREngine.Runtime.ModelingBridge/`
+- `XREngine.Runtime.ModelingIntegration/`
 - `XREngine.Editor/`
 - `Build/CommonAssets/Shaders/Compute/`
 - `Build/CommonAssets/Shaders/Scene3D/`
@@ -173,7 +173,7 @@ Make modeling tools feel immediate by using compute shaders and GPU-resident pre
 
 ```powershell
 dotnet build .\XREngine.Runtime.Rendering\XREngine.Runtime.Rendering.csproj
-dotnet build .\XREngine.Runtime.ModelingBridge\XREngine.Runtime.ModelingBridge.csproj
+dotnet build .\XREngine.Runtime.ModelingIntegration\XREngine.Runtime.ModelingIntegration.csproj
 dotnet test .\XREngine.UnitTests\XREngine.UnitTests.csproj --filter FullyQualifiedName~Modeling
 dotnet test .\XREngine.UnitTests\XREngine.UnitTests.csproj --filter FullyQualifiedName~Rendering
 ```

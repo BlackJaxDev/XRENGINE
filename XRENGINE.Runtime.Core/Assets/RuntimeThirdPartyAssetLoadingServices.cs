@@ -12,7 +12,8 @@ public interface IRuntimeThirdPartyAssetLoadingServices
         string extension,
         Type assetType,
         object? importOptions = null,
-        AssetImportContext? importContext = null);
+        AssetImportContext? importContext = null,
+        XRAsset? targetAsset = null);
 }
 
 public static class RuntimeThirdPartyAssetLoadingServices
@@ -50,7 +51,8 @@ public static class RuntimeThirdPartyAssetLoadingServices
             string extension,
             Type assetType,
             object? importOptions = null,
-            AssetImportContext? importContext = null)
+            AssetImportContext? importContext = null,
+            XRAsset? targetAsset = null)
         {
             XR3rdPartyExtensionsAttribute? attribute =
                 assetType.GetCustomAttribute<XR3rdPartyExtensionsAttribute>();
@@ -86,8 +88,15 @@ public static class RuntimeThirdPartyAssetLoadingServices
                 return loaded;
             }
 
-            if (Activator.CreateInstance(assetType) is not XRAsset asset)
-                throw new InvalidOperationException($"Unable to construct third-party asset type '{assetType.FullName}'.");
+            XRAsset? asset = targetAsset;
+            if (asset is not null && !assetType.IsInstanceOfType(asset))
+                throw new ArgumentException($"Target asset '{asset.GetType().FullName}' is not assignable to '{assetType.FullName}'.", nameof(targetAsset));
+
+            if (asset is null)
+            {
+                asset = Activator.CreateInstance(assetType) as XRAsset
+                    ?? throw new InvalidOperationException($"Unable to construct third-party asset type '{assetType.FullName}'.");
+            }
 
             asset.OriginalPath = filePath;
             AssetImportContext context = importContext ?? new AssetImportContext(filePath, cacheDirectory: null);

@@ -4,7 +4,9 @@ using System.Diagnostics;
 using System.Management;
 using System.Reflection;
 using XREngine.Native;
+using XREngine.Rendering.Models.Caching;
 using XREngine.Scene;
+using XREngine.Scene.Prefabs;
 using XREngine.Runtime.Bootstrap;
 
 namespace XREngine.VRClient
@@ -39,7 +41,10 @@ namespace XREngine.VRClient
 
         static void Main(string[] args)
         {
-            RuntimeRenderingBootstrap.InstallEngineHostServices();
+            using IDisposable modelAssetPipelineRegistration =
+                ModelAssetPipelineRegistration.Install(Engine.Assets, typeof(XRPrefabSource));
+            using IDisposable applicationServices =
+                RuntimeApplicationBootstrap.Install(RuntimeApplicationProfile.VrClient);
             Engine.ConfigureMemoryPolicy(EngineMemoryProfile.VRLowLatency);
             IVRGameStartupSettings settings = GenerateSettings();
 

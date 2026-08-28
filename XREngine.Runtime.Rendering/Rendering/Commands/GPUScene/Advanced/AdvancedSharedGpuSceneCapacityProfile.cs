@@ -10,4 +10,6 @@ public readonly record struct AdvancedSharedGpuSceneCapacityProfile(
     uint MaterialLayouts,
     uint MaterialLayoutMembers,
     uint MaterialConstantWords,
-    uint MaterialTextureBindings);
+    uint MaterialTextureBindings,
+    uint TextureRecords = 0u,
+    uint SamplerRecords = 0u);

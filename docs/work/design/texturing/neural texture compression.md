@@ -48,7 +48,7 @@ The most relevant existing code and plans are:
 - `XRENGINE/Rendering/Materials/GPUMaterialTable.cs`
 - `XRENGINE/Rendering/Commands/GPURenderPassCollection.IndirectAndMaterials.cs`
 - `docs/work/design/texturing/bindless-deferred-texturing-plan.md`
-- `XRENGINE/Core/ModelImporter.cs`
+- `XREngine.Runtime.ModelAssetPipeline/Importing/ModelAssetImporter.cs`
 - `XRENGINE/Scene/Components/Landscape/LandscapeComponent.cs`
 
 ### 2.2 What Already Exists

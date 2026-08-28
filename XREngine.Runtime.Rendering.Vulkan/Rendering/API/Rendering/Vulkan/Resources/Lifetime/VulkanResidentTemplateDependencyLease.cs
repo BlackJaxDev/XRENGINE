@@ -8,17 +8,17 @@ namespace XREngine.Rendering.Vulkan;
 internal sealed class VulkanResidentTemplateDependencyLease : IDisposable
 {
     private VulkanResourceRuntime? _runtime;
-    private readonly VulkanPinnedResourceGeneration[] _dependencies;
+    private readonly VulkanResourceSlotHandle[] _dependencies;
 
     internal VulkanResidentTemplateDependencyLease(
         VulkanResourceRuntime runtime,
-        VulkanPinnedResourceGeneration[] dependencies)
+        VulkanResourceSlotHandle[] dependencies)
     {
         _runtime = runtime;
         _dependencies = dependencies;
     }
 
-    internal ReadOnlySpan<VulkanPinnedResourceGeneration> Dependencies => _dependencies;
+    internal ReadOnlySpan<VulkanResourceSlotHandle> Dependencies => _dependencies;
 
     internal bool IsActive => Volatile.Read(ref _runtime) is not null;
 

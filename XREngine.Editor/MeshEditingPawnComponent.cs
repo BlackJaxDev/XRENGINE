@@ -502,11 +502,11 @@ public sealed class MeshEditingPawnComponent : EditorFlyingCameraPawnComponent
     public (List<Vector3> Vertices, List<int> Indices) BakeToMeshData()
         => _mesh?.Bake() ?? throw new InvalidOperationException("No mesh is assigned to the MeshEditingPawnComponent.");
     
-    public void LoadFromXRMesh(XRMesh mesh, XRMeshModelingImportOptions? options = null)
+    public void LoadFromXRMesh(XRMesh mesh, XRMeshToModelingDocumentOptions? options = null)
     {
         ArgumentNullException.ThrowIfNull(mesh);
 
-        ModelingMeshDocument document = XRMeshModelingImporter.Import(mesh, options);
+        ModelingMeshDocument document = XRMeshToModelingDocumentConverter.Convert(mesh, options);
         _loadedDocument = document;
         Mesh = EditableMeshConverter.ToEditable(document);
         _modelingMetadata = document.Metadata.Clone();
@@ -514,12 +514,12 @@ public sealed class MeshEditingPawnComponent : EditorFlyingCameraPawnComponent
         ClearSelection();
     }
 
-    public XRMesh SaveToXRMesh(XRMeshModelingExportOptions? options = null)
+    public XRMesh SaveToXRMesh(ModelingDocumentToXRMeshOptions? options = null)
     {
         if (_mesh is null)
             throw new InvalidOperationException("No mesh is assigned to the MeshEditingPawnComponent.");
 
-        options ??= new XRMeshModelingExportOptions();
+        options ??= new ModelingDocumentToXRMeshOptions();
 
         using IDisposable interactionScope = Undo.BeginUserInteraction();
         using Undo.ChangeScope changeScope = Undo.BeginChange("Apply Mesh Editing Save");
@@ -541,14 +541,14 @@ public sealed class MeshEditingPawnComponent : EditorFlyingCameraPawnComponent
             }
         }
 
-        XRMesh mesh = XRMeshModelingExporter.Export(document, options);
+        XRMesh mesh = ModelingDocumentToXRMeshConverter.Convert(document, options);
 
         _loadedDocument = document;
         LoadedMesh = mesh;
         return mesh;
     }
 
-    public XRMesh BuildXRMesh(XRMeshModelingExportOptions? options = null)
+    public XRMesh BuildXRMesh(ModelingDocumentToXRMeshOptions? options = null)
         => SaveToXRMesh(options);
 
     public void SetSelectionMode(PrimitiveSelectionMode mode)
@@ -616,7 +616,7 @@ public sealed class MeshEditingPawnComponent : EditorFlyingCameraPawnComponent
     private static void PreserveCompatibleAttributeChannels(
         ModelingMeshDocument document,
         ModelingMeshDocument? sourceDocument,
-        XRMeshModelingExportOptions options,
+        ModelingDocumentToXRMeshOptions options,
         List<ModelingMeshValidationIssue> diagnostics)
     {
         if (sourceDocument is null)
@@ -658,7 +658,7 @@ public sealed class MeshEditingPawnComponent : EditorFlyingCameraPawnComponent
     private static void PreserveSkinningAndBlendshapeChannels(
         ModelingMeshDocument document,
         ModelingMeshDocument sourceDocument,
-        XRMeshModelingExportOptions options,
+        ModelingDocumentToXRMeshOptions options,
         List<ModelingMeshValidationIssue> diagnostics)
     {
         bool sourceHasSkinning = sourceDocument.Metadata.HasSkinning ||
@@ -707,14 +707,14 @@ public sealed class MeshEditingPawnComponent : EditorFlyingCameraPawnComponent
 
         switch (options.SkinningBlendshapeFallbackPolicy)
         {
-            case XRMeshModelingSkinningBlendshapeFallbackPolicy.Strict:
+            case ModelingDocumentToXRMeshSkinningBlendshapeFallbackPolicy.Strict:
                 diagnostics.Add(new ModelingMeshValidationIssue(
                     ModelingValidationSeverity.Error,
                     "skinning_blendshape_strict_topology_changed",
                     $"Topology changed from {sourceVertexCount} to {targetVertexCount} vertices and strict fallback policy disallows reprojection."));
                 throw new InvalidOperationException("Strict skinning/blendshape fallback policy failed because topology changed.");
 
-            case XRMeshModelingSkinningBlendshapeFallbackPolicy.PermissiveDropChannels:
+            case ModelingDocumentToXRMeshSkinningBlendshapeFallbackPolicy.PermissiveDropChannels:
                 document.SkinBones = null;
                 document.SkinWeights = null;
                 document.BlendshapeChannels = null;
@@ -724,7 +724,7 @@ public sealed class MeshEditingPawnComponent : EditorFlyingCameraPawnComponent
                     $"Dropped skinning/blendshape channels after topology change ({sourceVertexCount} -> {targetVertexCount})."));
                 return;
 
-            case XRMeshModelingSkinningBlendshapeFallbackPolicy.PermissiveNearestSourceVertexReproject:
+            case ModelingDocumentToXRMeshSkinningBlendshapeFallbackPolicy.PermissiveNearestSourceVertexReproject:
                 ReprojectSkinningAndBlendshapeNearest(document, sourceDocument, diagnostics);
                 return;
 

@@ -79,9 +79,9 @@ Assimp remains available through `ModelImportOptions.FbxBackend = Assimp` while 
 - `docs/developer-guides/assets/native-fbx-import-export.md`
 - `docs/developer-guides/assets/model-import.md`
 - `XREngine.Fbx/`
-- `XRENGINE/Core/ModelImporter.cs`
-- `XRENGINE/Core/NativeFbxSceneImporter.cs`
-- `XRENGINE/Models/Meshes/ModelImportOptions.cs`
+- `XREngine.Runtime.ModelAssetPipeline/Importing/ModelAssetImporter.cs`
+- `XREngine.Runtime.ModelAssetPipeline/Importing/NativeFbxSceneImporter.cs`
+- `XREngine.Runtime.ModelAssetPipeline/Importing/ModelImportOptions.cs`
 - `XREngine.UnitTests/TestData/Fbx/fbx-corpus.manifest.json`
 - `XREngine.UnitTests/Core/FbxPhase*Tests.cs`
 - `XREngine.UnitTests/Rendering/NativeFbxImporterTests.cs`

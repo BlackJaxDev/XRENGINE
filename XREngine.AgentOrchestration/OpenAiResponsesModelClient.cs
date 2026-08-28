@@ -686,9 +686,6 @@ public sealed class OpenAiResponsesModelClient : IAgentModelClient
             ["input"] = input.DeepClone(),
             ["stream"] = !request.Run.UseBackgroundMode,
             ["store"] = false,
-            ["max_output_tokens"] = request.MaxOutputTokens > 0
-                ? request.MaxOutputTokens
-                : request.Run.Budget.MaxOutputTokens,
             ["text"] = new JsonObject
             {
                 ["verbosity"] = request.Run.TextVerbosity.ToLowerInvariant(),
@@ -696,6 +693,8 @@ public sealed class OpenAiResponsesModelClient : IAgentModelClient
             ["parallel_tool_calls"] = request.Run.Budget.MaxConcurrency > 1
                 && !request.Run.ToolPolicy.AllowMutation,
         };
+        if (request.MaxOutputTokens > 0)
+            payload["max_output_tokens"] = request.MaxOutputTokens;
         if (request.Run.UseBackgroundMode)
             payload["background"] = true;
         if (SupportsReasoning(request.Run.RequestedModel))

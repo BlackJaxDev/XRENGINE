@@ -1,0 +1,949 @@
+using System;
+using System.Collections.Generic;
+using System.ComponentModel;
+using System.Diagnostics.CodeAnalysis;
+using System.Globalization;
+using System.IO;
+using System.Numerics;
+using XREngine.Components;
+using XREngine;
+using XREngine.Data;
+using XREngine.Data.Core;
+using XREngine.Diagnostics;
+using XREngine.Scene.Transforms;
+
+namespace XREngine.Scene.Prefabs
+{
+    /// <summary>
+    /// Helper utilities for stamping prefab metadata onto scene nodes and cloning prefab hierarchies.
+    /// </summary>
+    public static class SceneNodePrefabUtility
+    {
+        public delegate bool PrefabPropertyOverrideHandler(SceneNode targetNode, SceneNodePrefabPropertyOverride overrideData);
+        public delegate TransformBase PrefabTransformCloneHandler(TransformBase sourceTransform);
+        public delegate XRComponent? PrefabComponentCloneHandler(XRComponent sourceComponent, SceneNode targetNode);
+
+        private static readonly Lock HandlerSync = new();
+        private static Dictionary<string, PrefabPropertyOverrideHandler> PropertyOverrideHandlers = new(StringComparer.Ordinal);
+        private static Dictionary<Type, PrefabTransformCloneHandler> TransformCloneHandlers = new();
+        private static Dictionary<Type, PrefabComponentCloneHandler> ComponentCloneHandlers = new();
+
+        static SceneNodePrefabUtility()
+        {
+            RegisterBuiltInPropertyOverrideHandlers();
+            RegisterTransformCloneHandler<Transform>(
+                static source => new Transform(source.Scale, source.Translation, source.Rotation, order: source.Order)
+                {
+                    Name = source.Name
+                });
+        }
+
+        public static IDisposable RegisterPropertyOverrideHandler(string propertyPath, PrefabPropertyOverrideHandler handler)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(propertyPath);
+            ArgumentNullException.ThrowIfNull(handler);
+
+            lock (HandlerSync)
+            {
+                if (PropertyOverrideHandlers.ContainsKey(propertyPath))
+                    throw new InvalidOperationException($"A prefab override handler is already registered for '{propertyPath}'.");
+
+                Dictionary<string, PrefabPropertyOverrideHandler> updated = new(PropertyOverrideHandlers, StringComparer.Ordinal)
+                {
+                    [propertyPath] = handler,
+                };
+                PropertyOverrideHandlers = updated;
+            }
+
+            return new HandlerRegistrationLease(() => RemovePropertyOverrideHandler(propertyPath, handler));
+        }
+
+        public static IDisposable RegisterTransformCloneHandler<TTransform>(Func<TTransform, TTransform> handler)
+            where TTransform : TransformBase
+        {
+            ArgumentNullException.ThrowIfNull(handler);
+            return RegisterTransformCloneHandler(typeof(TTransform), source => handler((TTransform)source));
+        }
+
+        public static IDisposable RegisterTransformCloneHandler(Type transformType, PrefabTransformCloneHandler handler)
+        {
+            ArgumentNullException.ThrowIfNull(transformType);
+            ArgumentNullException.ThrowIfNull(handler);
+
+            if (!typeof(TransformBase).IsAssignableFrom(transformType))
+                throw new ArgumentException($"Type must derive from {nameof(TransformBase)}.", nameof(transformType));
+
+            lock (HandlerSync)
+            {
+                if (TransformCloneHandlers.ContainsKey(transformType))
+                    throw new InvalidOperationException($"A prefab transform clone handler is already registered for '{transformType.FullName}'.");
+
+                Dictionary<Type, PrefabTransformCloneHandler> updated = new(TransformCloneHandlers)
+                {
+                    [transformType] = handler,
+                };
+                TransformCloneHandlers = updated;
+            }
+
+            return new HandlerRegistrationLease(() => RemoveTransformCloneHandler(transformType, handler));
+        }
+
+        public static IDisposable RegisterComponentCloneHandler<TComponent>(Func<TComponent, SceneNode, TComponent?> handler)
+            where TComponent : XRComponent
+        {
+            ArgumentNullException.ThrowIfNull(handler);
+            return RegisterComponentCloneHandler(typeof(TComponent), (source, target) => handler((TComponent)source, target));
+        }
+
+        public static IDisposable RegisterComponentCloneHandler(Type componentType, PrefabComponentCloneHandler handler)
+        {
+            ArgumentNullException.ThrowIfNull(componentType);
+            ArgumentNullException.ThrowIfNull(handler);
+
+            if (!typeof(XRComponent).IsAssignableFrom(componentType))
+                throw new ArgumentException($"Type must derive from {nameof(XRComponent)}.", nameof(componentType));
+
+            lock (HandlerSync)
+            {
+                if (ComponentCloneHandlers.ContainsKey(componentType))
+                    throw new InvalidOperationException($"A prefab component clone handler is already registered for '{componentType.FullName}'.");
+
+                Dictionary<Type, PrefabComponentCloneHandler> updated = new(ComponentCloneHandlers)
+                {
+                    [componentType] = handler,
+                };
+                ComponentCloneHandlers = updated;
+            }
+
+            return new HandlerRegistrationLease(() => RemoveComponentCloneHandler(componentType, handler));
+        }
+
+        private static void RemovePropertyOverrideHandler(
+            string propertyPath,
+            PrefabPropertyOverrideHandler handler)
+        {
+            lock (HandlerSync)
+            {
+                if (!PropertyOverrideHandlers.TryGetValue(propertyPath, out PrefabPropertyOverrideHandler? current)
+                    || !ReferenceEquals(current, handler))
+                {
+                    return;
+                }
+
+                Dictionary<string, PrefabPropertyOverrideHandler> updated = new(PropertyOverrideHandlers, StringComparer.Ordinal);
+                updated.Remove(propertyPath);
+                PropertyOverrideHandlers = updated;
+            }
+        }
+
+        private static void RemoveTransformCloneHandler(Type transformType, PrefabTransformCloneHandler handler)
+        {
+            lock (HandlerSync)
+            {
+                if (!TransformCloneHandlers.TryGetValue(transformType, out PrefabTransformCloneHandler? current)
+                    || !ReferenceEquals(current, handler))
+                {
+                    return;
+                }
+
+                Dictionary<Type, PrefabTransformCloneHandler> updated = new(TransformCloneHandlers);
+                updated.Remove(transformType);
+                TransformCloneHandlers = updated;
+            }
+        }
+
+        private static void RemoveComponentCloneHandler(Type componentType, PrefabComponentCloneHandler handler)
+        {
+            lock (HandlerSync)
+            {
+                if (!ComponentCloneHandlers.TryGetValue(componentType, out PrefabComponentCloneHandler? current)
+                    || !ReferenceEquals(current, handler))
+                {
+                    return;
+                }
+
+                Dictionary<Type, PrefabComponentCloneHandler> updated = new(ComponentCloneHandlers);
+                updated.Remove(componentType);
+                ComponentCloneHandlers = updated;
+            }
+        }
+
+        private sealed class HandlerRegistrationLease(Action remove) : IDisposable
+        {
+            private Action? _remove = remove;
+
+            public void Dispose()
+                => Interlocked.Exchange(ref _remove, null)?.Invoke();
+        }
+
+        public static bool TryDeserializeOverrideValue<T>(SceneNodePrefabPropertyOverride overrideData, out T? value)
+        {
+            ArgumentNullException.ThrowIfNull(overrideData);
+
+            value = default;
+            if (string.IsNullOrWhiteSpace(overrideData.SerializedValue))
+                return true;
+
+            if (XRRuntimeEnvironment.IsAotRuntimeBuild)
+            {
+                if (TryDeserializeAotOverrideValue(typeof(T), overrideData.SerializedValue, out object? parsed))
+                {
+                    value = parsed is null ? default : (T)parsed;
+                    return true;
+                }
+
+                Debug.LogWarning($"Failed to deserialize prefab override for '{overrideData.PropertyPath}' in published AOT mode: no bounded parser for '{typeof(T).FullName}'.");
+                return false;
+            }
+
+            try
+            {
+                using var reader = new StringReader(overrideData.SerializedValue);
+                value = AssetManager.Deserializer.Deserialize<T>(reader);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"Failed to deserialize prefab override for '{overrideData.PropertyPath}': {ex.Message}");
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Ensures every node within the hierarchy owns prefab metadata so instances can keep a stable GUID per template node.
+        /// </summary>
+        public static void EnsurePrefabMetadata(SceneNode root, Guid prefabAssetId, bool overwriteExisting = true)
+            => SceneNodePrefabMetadataUtility.EnsurePrefabMetadata(root, prefabAssetId, overwriteExisting);
+
+        /// <summary>
+        /// Removes prefab metadata from the provided hierarchy. Useful when breaking an instance link in the editor.
+        /// </summary>
+        public static void ClearPrefabMetadata(SceneNode root)
+            => SceneNodePrefabMetadataUtility.ClearPrefabMetadata(root);
+
+        /// <summary>
+        /// Creates a deep clone of the hierarchy rooted at <paramref name="template"/> using the engine serializers.
+        /// </summary>
+        public static SceneNode CloneHierarchy(SceneNode template)
+        {
+            ArgumentNullException.ThrowIfNull(template);
+
+            if (XRRuntimeEnvironment.IsAotRuntimeBuild)
+                return CloneHierarchyBounded(template);
+
+            string serialized = AssetManager.Serializer.Serialize(template);
+            SceneNode clone;
+            using (XRObjectBase.SuppressObjectCacheRegistration())
+            {
+                clone = AssetManager.Deserializer.Deserialize<SceneNode>(serialized)
+                    ?? throw new InvalidOperationException("Failed to deserialize prefab hierarchy");
+            }
+
+            DetachWorldRecursive(clone);
+            RegenerateRuntimeHierarchyIdentities(clone);
+            NotifyYamlHierarchyDeserialized(clone);
+            return clone;
+        }
+
+        /// <summary>
+        /// Creates a deep clone, attaches it below <paramref name="parent"/>, and propagates the
+        /// parent's runtime world through the complete cloned hierarchy.
+        /// </summary>
+        /// <remarks>
+        /// This provides an explicit attach-and-world synchronization boundary for clones introduced
+        /// after a world has already been assembled.
+        /// </remarks>
+        public static SceneNode CloneHierarchyAttached(SceneNode template,
+                                                       SceneNode parent,
+                                                       bool maintainWorldTransform = false)
+        {
+            ArgumentNullException.ThrowIfNull(parent);
+
+            SceneNode clone = CloneHierarchy(template);
+            if (maintainWorldTransform)
+                clone.Transform.SetParent(parent.Transform, true, EParentAssignmentMode.Immediate);
+            else
+                clone.Parent = parent;
+
+            if (parent.World is { } world)
+                ApplyWorldRecursive(clone, world);
+
+            return clone;
+        }
+
+        /// <summary>
+        /// Mirrors the cooked-binary <c>IPostCookedBinaryDeserialize</c> hook for YAML-deserialized
+        /// hierarchies. YamlDotNet reads <c>Components</c> (Order=0) before <c>Transform</c> and does
+        /// not invoke <c>NotifyOwningSceneNodePostDeserialize</c> itself, which leaves components
+        /// that build runtime state from transform-dependent data (e.g. <see cref="Mesh.ModelComponent"/>
+        /// rebuilding <c>RenderableMesh</c> instances) with their rebuild deferred and never retried.
+        /// Running this pass once the full tree is assembled lets each component resolve its sibling
+        /// transforms and rebind serialized bone references against the completed hierarchy.
+        /// </summary>
+        internal static void NotifyYamlHierarchyDeserialized(SceneNode root)
+        {
+            ArgumentNullException.ThrowIfNull(root);
+
+            // Runtime mesh construction snapshots the skeleton's current world/render matrices
+            // into its initial skin palette. YAML restores local transforms before the hierarchy
+            // has run its first matrix pass, so publishing components first seeds skinned meshes
+            // from stale identity/intermediate matrices. This is especially visible in
+            // render-on-demand worlds, where no later frame is guaranteed to repair the palette.
+            root.Transform
+                .RecalculateMatrixHierarchy(
+                    forceWorldRecalc: true,
+                    setRenderMatrixNow: true,
+                    childRecalcType: ELoopType.Sequential)
+                .GetAwaiter()
+                .GetResult();
+
+            // Bind matrices are runtime-only and intentionally omitted from YAML. Rebuild them
+            // parent-first from the serialized local pose before ModelComponent creates runtime
+            // meshes; otherwise externalized skinned prefabs rebind correct inverse-bind matrices
+            // to identity bind matrices and visibly distort after cloning/instantiation.
+            foreach (SceneNode node in EnumerateHierarchy(root))
+                node.Transform.SaveBindState();
+
+            foreach (SceneNode node in EnumerateHierarchy(root))
+                foreach (XREngine.Components.XRComponent component in node.Components)
+                    component.NotifyOwningSceneNodePostDeserialize();
+        }
+
+        /// <summary>
+        /// Creates a runtime-ready instance of the prefab, optionally attaching it to a parent node and world.
+        /// </summary>
+        public static SceneNode Instantiate(SceneNode template,
+                                            Guid prefabAssetId,
+                                            IRuntimeWorldContext? world = null,
+                                            SceneNode? parent = null,
+                                            bool maintainWorldTransform = false)
+        {
+            var clone = CloneHierarchy(template);
+            BindInstanceToPrefab(clone, prefabAssetId);
+            AttachInstance(clone, world, parent, maintainWorldTransform);
+            return clone;
+        }
+
+        /// <summary>Attaches a fully prepared detached prefab instance at one explicit boundary.</summary>
+        public static void AttachInstance(
+            SceneNode instance,
+            IRuntimeWorldContext? world = null,
+            SceneNode? parent = null,
+            bool maintainWorldTransform = false)
+        {
+            ArgumentNullException.ThrowIfNull(instance);
+            if (parent is not null)
+            {
+                if (maintainWorldTransform)
+                    instance.Transform.SetParent(parent.Transform, true, EParentAssignmentMode.Immediate);
+                else
+                    instance.Parent = parent;
+            }
+
+            if (world is not null)
+                ApplyWorldRecursive(instance, world);
+        }
+
+        /// <summary>
+        /// Applies prefab metadata to an instantiated hierarchy, ensuring every node references the correct asset ID.
+        /// </summary>
+        public static void BindInstanceToPrefab(SceneNode instanceRoot, Guid prefabAssetId)
+            => SceneNodePrefabMetadataUtility.BindInstanceToPrefab(instanceRoot, prefabAssetId);
+
+        /// <summary>
+        /// Records or updates a property override on the given prefab-linked node.
+        /// </summary>
+        public static void RecordPropertyOverride(SceneNode node, string propertyPath, object? value)
+        {
+            ArgumentNullException.ThrowIfNull(node);
+            ArgumentException.ThrowIfNullOrWhiteSpace(propertyPath);
+
+            string serialized = value is null ? string.Empty : AssetManager.Serializer.Serialize(value);
+            SceneNodePrefabMetadataUtility.RecordPropertyOverride(node, new SceneNodePrefabPropertyOverride
+            {
+                PropertyPath = propertyPath,
+                SerializedValue = serialized,
+                SerializedType = value?.GetType().AssemblyQualifiedName
+            });
+        }
+
+        /// <summary>
+        /// Removes a recorded property override from the node.
+        /// </summary>
+        public static bool RemovePropertyOverride(SceneNode node, string propertyPath)
+            => SceneNodePrefabMetadataUtility.RemovePropertyOverride(node, propertyPath);
+
+        /// <summary>
+        /// Extracts all overrides stored on the instance hierarchy.
+        /// </summary>
+        public static List<SceneNodePrefabNodeOverride> ExtractOverrides(SceneNode instanceRoot)
+            => SceneNodePrefabMetadataUtility.ExtractOverrides(instanceRoot);
+
+        /// <summary>
+        /// True if the node currently stores any overrides.
+        /// </summary>
+        public static bool HasOverrides(SceneNode node)
+            => SceneNodePrefabMetadataUtility.HasOverrides(node);
+
+        /// <summary>
+        /// Builds a lookup table mapping prefab node IDs to the instantiated scene nodes.
+        /// </summary>
+        public static Dictionary<Guid, SceneNode> BuildPrefabNodeMap(SceneNode instanceRoot)
+            => SceneNodePrefabMetadataUtility.BuildPrefabNodeMap(instanceRoot);
+
+        /// <summary>
+        /// Finds a descendant node by its prefab GUID.
+        /// </summary>
+        public static SceneNode? FindNodeByPrefabId(SceneNode instanceRoot, Guid prefabNodeId)
+            => SceneNodePrefabMetadataUtility.FindNodeByPrefabId(instanceRoot, prefabNodeId);
+
+        /// <summary>
+        /// Applies serialized prefab overrides to the provided instance hierarchy.
+        /// </summary>
+        public static void ApplyOverrides(SceneNode instanceRoot, IEnumerable<SceneNodePrefabNodeOverride>? nodeOverrides)
+            => SceneNodePrefabMetadataUtility.ApplyOverrides(
+                instanceRoot,
+                nodeOverrides,
+                TryApplyPropertyOverride,
+                static prefabNodeId => Debug.LogWarning($"Prefab override references missing node {prefabNodeId}"));
+
+        /// <summary>
+        /// Enumerates the node hierarchy depth-first.
+        /// </summary>
+        public static IEnumerable<SceneNode> EnumerateHierarchy(SceneNode root)
+            => SceneNodePrefabMetadataUtility.EnumerateHierarchy(root);
+
+        private static IEnumerable<SceneNode> EnumerateChildren(SceneNode node)
+        {
+            foreach (TransformBase? child in node.Transform.Children)
+                if (child?.SceneNode is SceneNode childNode)
+                    yield return childNode;
+        }
+
+        private static void DetachWorldRecursive(SceneNode node)
+        {
+            node.World = null;
+            foreach (var component in node.Components)
+                component.World = null;
+
+            foreach (SceneNode child in EnumerateChildren(node))
+                DetachWorldRecursive(child);
+        }
+
+        private static void ApplyWorldRecursive(SceneNode node, IRuntimeWorldContext world)
+        {
+            node.World = world;
+            foreach (var component in node.Components)
+                component.World = world;
+
+            foreach (SceneNode child in EnumerateChildren(node))
+                ApplyWorldRecursive(child, world);
+        }
+
+        private static void RegenerateRuntimeHierarchyIdentities(SceneNode root)
+        {
+            foreach (SceneNode node in EnumerateHierarchy(root))
+            {
+                node.Generate();
+                node.Transform.Generate();
+                foreach (XRComponent component in node.Components)
+                    component.Generate();
+            }
+        }
+
+        private static SceneNode CloneHierarchyBounded(SceneNode template)
+        {
+            SceneNode clone = CloneHierarchyBoundedCore(template);
+            NotifyYamlHierarchyDeserialized(clone);
+            return clone;
+        }
+
+        private static SceneNode CloneHierarchyBoundedCore(SceneNode template)
+        {
+            TransformBase clonedTransform = CloneTransformBounded(template.Transform);
+            SceneNode clone = new(template.Name ?? SceneNode.DefaultName, clonedTransform)
+            {
+                IsActiveSelf = template.IsActiveSelf,
+                IsEditorOnly = template.IsEditorOnly,
+                Layer = template.Layer,
+                Prefab = ClonePrefabLink(template.Prefab)
+            };
+
+            foreach (XRComponent component in template.Components)
+            {
+                if (!TryCloneComponentBounded(component, clone))
+                {
+                    throw new InvalidOperationException(
+                        $"Prefab node '{template.Name}' contains component '{component.GetType().FullName}' without a registered AOT clone handler. " +
+                        $"Register one with {nameof(RegisterComponentCloneHandler)} before instantiating this prefab in published AOT builds.");
+                }
+            }
+
+            foreach (SceneNode child in EnumerateChildren(template))
+            {
+                SceneNode childClone = CloneHierarchyBoundedCore(child);
+                childClone.Parent = clone;
+            }
+
+            return clone;
+        }
+
+        private static TransformBase CloneTransformBounded(TransformBase source)
+        {
+            Type sourceType = source.GetType();
+            if (TryGetTransformCloneHandler(sourceType, out PrefabTransformCloneHandler? handler) && handler is not null)
+                return handler(source);
+
+            throw new InvalidOperationException(
+                $"Prefab transform '{sourceType.FullName}' has no registered AOT clone handler. " +
+                $"Register one with {nameof(RegisterTransformCloneHandler)} before instantiating this prefab in published AOT builds.");
+        }
+
+        private static bool TryGetTransformCloneHandler(Type transformType, out PrefabTransformCloneHandler? handler)
+        {
+            Dictionary<Type, PrefabTransformCloneHandler> snapshot = TransformCloneHandlers;
+            if (snapshot.TryGetValue(transformType, out handler))
+                return true;
+
+            for (Type? baseType = transformType.BaseType; baseType is not null; baseType = baseType.BaseType)
+            {
+                if (snapshot.TryGetValue(baseType, out handler))
+                {
+                    return true;
+                }
+            }
+
+            handler = null;
+            return false;
+        }
+
+        private static bool TryCloneComponentBounded(XRComponent source, SceneNode targetNode)
+        {
+            Type sourceType = source.GetType();
+            if (!TryGetComponentCloneHandler(sourceType, out PrefabComponentCloneHandler? handler) || handler is null)
+                return false;
+
+            XRComponent? clone = handler(source, targetNode);
+            return clone is not null;
+        }
+
+        private static bool TryGetComponentCloneHandler(Type componentType, out PrefabComponentCloneHandler? handler)
+        {
+            Dictionary<Type, PrefabComponentCloneHandler> snapshot = ComponentCloneHandlers;
+            if (snapshot.TryGetValue(componentType, out handler))
+                return true;
+
+            for (Type? baseType = componentType.BaseType; baseType is not null; baseType = baseType.BaseType)
+            {
+                if (snapshot.TryGetValue(baseType, out handler))
+                {
+                    return true;
+                }
+            }
+
+            handler = null;
+            return false;
+        }
+
+        private static SceneNodePrefabLink? ClonePrefabLink(SceneNodePrefabLink? source)
+        {
+            if (source is null)
+                return null;
+
+            SceneNodePrefabLink clone = new()
+            {
+                PrefabAssetId = source.PrefabAssetId,
+                PrefabNodeId = source.PrefabNodeId,
+                IsPrefabRoot = source.IsPrefabRoot,
+                PropertyOverrides = new Dictionary<string, SceneNodePrefabPropertyOverride>(source.PropertyOverrides.Count, StringComparer.Ordinal)
+            };
+
+            foreach (var pair in source.PropertyOverrides)
+                clone.PropertyOverrides[pair.Key] = CloneOverride(pair.Value);
+
+            return clone;
+        }
+
+        [UnconditionalSuppressMessage("Trimming", "IL2026", Justification = "The reflection fallback is guarded out of published AOT builds; AOT builds require registered property override handlers.")]
+        private static bool TryApplyPropertyOverride(SceneNode targetNode, SceneNodePrefabPropertyOverride overrideData)
+        {
+            if (targetNode is null || overrideData is null)
+                return false;
+
+            if (string.IsNullOrWhiteSpace(overrideData.PropertyPath))
+                return false;
+
+            Dictionary<string, PrefabPropertyOverrideHandler> snapshot = PropertyOverrideHandlers;
+            if (snapshot.TryGetValue(overrideData.PropertyPath, out PrefabPropertyOverrideHandler? handler))
+                return handler(targetNode, overrideData);
+
+            if (XRRuntimeEnvironment.IsAotRuntimeBuild)
+                throw new InvalidOperationException($"No registered prefab property override handler for path '{overrideData.PropertyPath}'.");
+
+            return TryApplyPropertyOverrideReflective(targetNode, overrideData);
+        }
+
+        [RequiresUnreferencedCode("Prefab override reflection requires runtime metadata.")]
+        private static bool TryApplyPropertyOverrideReflective(SceneNode targetNode, SceneNodePrefabPropertyOverride overrideData)
+        {
+            string[] segments = overrideData.PropertyPath.Split('.', StringSplitOptions.RemoveEmptyEntries);
+            if (segments.Length == 0)
+                return false;
+
+            object? owner = targetNode;
+            PropertyDescriptor? descriptor = null;
+
+            for (int i = 0; i < segments.Length; i++)
+            {
+                if (owner is null)
+                {
+                    Debug.LogWarning($"Prefab override '{overrideData.PropertyPath}' encountered a null owner at segment '{segments[i]}'");
+                    return false;
+                }
+
+                descriptor = TypeDescriptor.GetProperties(owner).Find(segments[i], false);
+                if (descriptor is null)
+                {
+                    Debug.LogWarning($"Prefab override '{overrideData.PropertyPath}' target property missing on type '{owner.GetType().Name}'");
+                    return false;
+                }
+
+                if (i == segments.Length - 1)
+                    break;
+
+                owner = descriptor.GetValue(owner);
+            }
+
+            if (descriptor is null || owner is null)
+                return false;
+
+            object? value = DeserializeOverrideValue(descriptor.PropertyType, overrideData);
+            try
+            {
+                descriptor.SetValue(owner, value);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"Failed to apply prefab override '{overrideData.PropertyPath}': {ex.Message}");
+                return false;
+            }
+        }
+
+        [RequiresUnreferencedCode("Prefab override reflection requires runtime metadata.")]
+        private static object? DeserializeOverrideValue(Type targetType, SceneNodePrefabPropertyOverride overrideData)
+        {
+            if (string.IsNullOrWhiteSpace(overrideData.SerializedValue))
+                return null;
+
+            Type resolvedType = ResolveOverrideType(targetType, overrideData.SerializedType);
+
+            try
+            {
+                using var reader = new StringReader(overrideData.SerializedValue);
+                return AssetManager.Deserializer.Deserialize(reader, resolvedType);
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"Failed to deserialize prefab override for '{overrideData.PropertyPath}': {ex.Message}");
+                return null;
+            }
+        }
+
+        [RequiresUnreferencedCode("Prefab override reflection requires runtime metadata.")]
+        private static Type ResolveOverrideType(Type fallback, string? serializedType)
+        {
+            if (string.IsNullOrWhiteSpace(serializedType))
+                return fallback;
+
+            Type? hinted = Type.GetType(serializedType, throwOnError: false);
+            if (hinted is null)
+                return fallback;
+
+            if (fallback.IsAssignableFrom(hinted))
+                return hinted;
+
+            return hinted;
+        }
+
+        private static void RegisterBuiltInPropertyOverrideHandlers()
+        {
+            RegisterPropertyOverrideHandler(nameof(SceneNode.Name), static (node, data) =>
+            {
+                if (!TryDeserializeOverrideValue<string>(data, out string? value))
+                    return false;
+
+                node.Name = value;
+                return true;
+            });
+
+            RegisterPropertyOverrideHandler(nameof(SceneNode.IsActiveSelf), static (node, data) =>
+            {
+                if (!TryDeserializeOverrideValue<bool>(data, out bool value))
+                    return false;
+
+                node.IsActiveSelf = value;
+                return true;
+            });
+
+            RegisterPropertyOverrideHandler(nameof(SceneNode.IsEditorOnly), static (node, data) =>
+            {
+                if (!TryDeserializeOverrideValue<bool>(data, out bool value))
+                    return false;
+
+                node.IsEditorOnly = value;
+                return true;
+            });
+
+            RegisterPropertyOverrideHandler(nameof(SceneNode.Layer), static (node, data) =>
+            {
+                if (!TryDeserializeOverrideValue<int>(data, out int value))
+                    return false;
+
+                node.Layer = value;
+                return true;
+            });
+
+            RegisterPropertyOverrideHandler($"{nameof(SceneNode.Transform)}.{nameof(Transform.Translation)}", ApplyTransformTranslationOverride);
+            RegisterPropertyOverrideHandler("Transform.Position", ApplyTransformTranslationOverride);
+            RegisterPropertyOverrideHandler($"{nameof(SceneNode.Transform)}.{nameof(Transform.Scale)}", static (node, data) =>
+            {
+                if (node.Transform is not Transform transform || !TryDeserializeOverrideValue<Vector3>(data, out Vector3 value))
+                    return false;
+
+                transform.Scale = value;
+                return true;
+            });
+            RegisterPropertyOverrideHandler($"{nameof(SceneNode.Transform)}.{nameof(Transform.Rotation)}", static (node, data) =>
+            {
+                if (node.Transform is not Transform transform || !TryDeserializeOverrideValue<Quaternion>(data, out Quaternion value))
+                    return false;
+
+                transform.Rotation = value;
+                return true;
+            });
+        }
+
+        private static bool ApplyTransformTranslationOverride(SceneNode node, SceneNodePrefabPropertyOverride data)
+        {
+            if (node.Transform is not Transform transform || !TryDeserializeOverrideValue<Vector3>(data, out Vector3 value))
+                return false;
+
+            transform.Translation = value;
+            return true;
+        }
+
+        private static bool TryDeserializeAotOverrideValue(Type targetType, string serializedValue, out object? value)
+        {
+            value = null;
+            Type effectiveType = Nullable.GetUnderlyingType(targetType) ?? targetType;
+            string scalar = NormalizeSerializedScalar(serializedValue);
+
+            if (effectiveType == typeof(string))
+            {
+                value = scalar;
+                return true;
+            }
+
+            if (string.Equals(scalar, "null", StringComparison.OrdinalIgnoreCase) || scalar == "~")
+                return !effectiveType.IsValueType;
+
+            if (effectiveType == typeof(bool) && bool.TryParse(scalar, out bool boolValue))
+            {
+                value = boolValue;
+                return true;
+            }
+
+            if (effectiveType == typeof(int) && int.TryParse(scalar, NumberStyles.Integer, CultureInfo.InvariantCulture, out int intValue))
+            {
+                value = intValue;
+                return true;
+            }
+
+            if (effectiveType == typeof(float) && float.TryParse(scalar, NumberStyles.Float, CultureInfo.InvariantCulture, out float floatValue))
+            {
+                value = floatValue;
+                return true;
+            }
+
+            if (effectiveType == typeof(Guid) && Guid.TryParse(scalar, out Guid guidValue))
+            {
+                value = guidValue;
+                return true;
+            }
+
+            if (effectiveType.IsEnum)
+            {
+                if (long.TryParse(scalar, NumberStyles.Integer, CultureInfo.InvariantCulture, out long enumNumber))
+                {
+                    value = Enum.ToObject(effectiveType, enumNumber);
+                    return true;
+                }
+
+                try
+                {
+                    value = Enum.Parse(effectiveType, scalar, ignoreCase: true);
+                    return true;
+                }
+                catch
+                {
+                    return false;
+                }
+            }
+
+            Dictionary<string, string> map = ParseYamlLikeMap(serializedValue);
+            if (effectiveType == typeof(Vector2) && TryReadFloat(map, "X", out float x2) && TryReadFloat(map, "Y", out float y2))
+            {
+                value = new Vector2(x2, y2);
+                return true;
+            }
+
+            if (effectiveType == typeof(Vector3) &&
+                TryReadFloat(map, "X", out float x3) &&
+                TryReadFloat(map, "Y", out float y3) &&
+                TryReadFloat(map, "Z", out float z3))
+            {
+                value = new Vector3(x3, y3, z3);
+                return true;
+            }
+
+            if (effectiveType == typeof(Vector4) &&
+                TryReadFloat(map, "X", out float x4) &&
+                TryReadFloat(map, "Y", out float y4) &&
+                TryReadFloat(map, "Z", out float z4) &&
+                TryReadFloat(map, "W", out float w4))
+            {
+                value = new Vector4(x4, y4, z4, w4);
+                return true;
+            }
+
+            if (effectiveType == typeof(Quaternion) &&
+                TryReadFloat(map, "X", out float qx) &&
+                TryReadFloat(map, "Y", out float qy) &&
+                TryReadFloat(map, "Z", out float qz) &&
+                TryReadFloat(map, "W", out float qw))
+            {
+                value = new Quaternion(qx, qy, qz, qw);
+                return true;
+            }
+
+            return false;
+        }
+
+        private static string NormalizeSerializedScalar(string serializedValue)
+        {
+            string[] lines = serializedValue
+                .Split(["\r\n", "\n"], StringSplitOptions.None)
+                .Select(static line => line.Trim())
+                .Where(static line => line.Length > 0 && line != "---" && line != "...")
+                .ToArray();
+
+            string value = lines.Length == 0 ? string.Empty : string.Join(" ", lines);
+            if (value.Length >= 2 &&
+                ((value[0] == '"' && value[^1] == '"') || (value[0] == '\'' && value[^1] == '\'')))
+            {
+                value = value[1..^1];
+            }
+
+            return value;
+        }
+
+        private static Dictionary<string, string> ParseYamlLikeMap(string serializedValue)
+        {
+            Dictionary<string, string> map = new(StringComparer.OrdinalIgnoreCase);
+            string trimmed = serializedValue.Trim();
+
+            if (trimmed.StartsWith("{", StringComparison.Ordinal) && trimmed.EndsWith("}", StringComparison.Ordinal))
+                trimmed = trimmed[1..^1];
+            else if (trimmed.StartsWith("[", StringComparison.Ordinal) && trimmed.EndsWith("]", StringComparison.Ordinal))
+                trimmed = trimmed[1..^1];
+
+            foreach (string rawPart in trimmed.Split([',', '\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            {
+                string part = rawPart;
+                if (part is "---" or "...")
+                    continue;
+
+                int separator = part.IndexOf(':');
+                if (separator < 0)
+                    continue;
+
+                string key = part[..separator].Trim().Trim('"', '\'');
+                string value = part[(separator + 1)..].Trim().Trim('"', '\'');
+                if (key.Length > 0)
+                    map[key] = value;
+            }
+
+            return map;
+        }
+
+        private static bool TryReadFloat(Dictionary<string, string> map, string key, out float value)
+        {
+            value = 0.0f;
+            return map.TryGetValue(key, out string? raw) &&
+                float.TryParse(raw, NumberStyles.Float, CultureInfo.InvariantCulture, out value);
+        }
+
+        private static SceneNodePrefabPropertyOverride CloneOverride(SceneNodePrefabPropertyOverride source)
+            => new()
+            {
+                PropertyPath = source.PropertyPath,
+                SerializedValue = source.SerializedValue,
+                SerializedType = source.SerializedType
+            };
+
+        /// <summary>
+        /// Instantiates the given prefab source into the world/parent provided.
+        /// </summary>
+        public static SceneNode Instantiate(XRPrefabSource prefab,
+                                            IRuntimeWorldContext? world = null,
+                                            SceneNode? parent = null,
+                                            bool maintainWorldTransform = false)
+        {
+            ArgumentNullException.ThrowIfNull(prefab);
+            return prefab.Instantiate(world, parent, maintainWorldTransform);
+        }
+
+        /// <summary>
+        /// Instantiates a prefab variant by cloning the base prefab and replaying its overrides.
+        /// </summary>
+        public static SceneNode InstantiateVariant(XRPrefabVariant variant,
+                                                   IRuntimeWorldContext? world = null,
+                                                   SceneNode? parent = null,
+                                                   bool maintainWorldTransform = false,
+                                                   IRuntimePrefabSourceResolver? sourceResolver = null)
+        {
+            ArgumentNullException.ThrowIfNull(variant);
+            return variant.Instantiate(world, parent, maintainWorldTransform, sourceResolver);
+        }
+
+        /// <summary>
+        /// Generates a snapshot of overrides from the instance hierarchy for serialization.
+        /// </summary>
+        public static List<SceneNodePrefabNodeOverride> CaptureOverrides(SceneNode instanceRoot)
+        {
+            ArgumentNullException.ThrowIfNull(instanceRoot);
+            return ExtractOverrides(instanceRoot);
+        }
+
+        /// <summary>
+        /// Applies the overrides stored on the variant to an existing instance hierarchy (useful when refreshing changes).
+        /// </summary>
+        public static void ApplyVariantOverrides(SceneNode instanceRoot, XRPrefabVariant variant)
+        {
+            ArgumentNullException.ThrowIfNull(instanceRoot);
+            ArgumentNullException.ThrowIfNull(variant);
+
+            ApplyOverrides(instanceRoot, variant.NodeOverrides);
+        }
+
+        /// <summary>
+        /// Removes prefab metadata from the provided hierarchy, effectively breaking the link to its source prefab.
+        /// </summary>
+        public static void BreakPrefabLink(SceneNode instanceRoot)
+        {
+            ArgumentNullException.ThrowIfNull(instanceRoot);
+            ClearPrefabMetadata(instanceRoot);
+        }
+    }
+}

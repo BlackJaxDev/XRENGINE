@@ -24,7 +24,6 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="AssimpNetter" Version="6.0.5" />
     <PackageReference Include="NDILibDotNetCoreBase" Version="2024.7.22.1" />
   </ItemGroup>
 
@@ -35,6 +34,7 @@
     <ProjectReference Include="..\XREngine.Extensions\XREngine.Extensions.csproj" />
     <ProjectReference Include="..\XREngine.Input\XREngine.Input.csproj" />
     <ProjectReference Include="..\XREngine.Runtime.Bootstrap\XREngine.Runtime.Bootstrap.csproj" />
+    <ProjectReference Include="..\XREngine.Runtime.ModelAssetPipeline\XREngine.Runtime.ModelAssetPipeline.csproj" />
     <ProjectReference Include="..\XREngine\XREngine.csproj" />
   </ItemGroup>
 

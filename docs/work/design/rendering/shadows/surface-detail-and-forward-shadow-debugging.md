@@ -27,7 +27,7 @@ The fix treats imported "surface detail" as a mode rather than as a single textu
 
 #### Import-side changes
 
-- `ModelImporter` now resolves a shared surface-detail texture slot.
+- `ModelAssetImporter` now resolves a shared surface-detail texture slot.
 - The importer prefers `TextureType.Normals`.
 - If no normal map exists, it falls back to `TextureType.Height`.
 - The importer appends shader parameters that describe how the shader should interpret `Texture1`.
@@ -54,7 +54,7 @@ This approach keeps import flexibility without forking the material model.
 
 ### Files touched
 
-- `XRENGINE/Core/ModelImporter.cs`
+- `XREngine.Runtime.ModelAssetPipeline/Importing/ModelAssetImporter.cs`
 - `Build/CommonAssets/Shaders/Snippets/SurfaceDetailNormalMapping.glsl`
 - Forward and deferred fragment shaders that previously decoded `Texture1` inline
 

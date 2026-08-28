@@ -110,7 +110,7 @@ public static partial class EditorUnitTests
         textureList[UberMatcapMaskSlot] = CreateSolidColorTexture("_MatcapMask", ColorF4.White);
 
         var material = new XRMaterial(
-            ModelImporter.CreateDefaultForwardPlusUberShaderParameters(),
+            ModelAssetImporter.CreateDefaultForwardPlusUberShaderParameters(),
             [.. textureList],
             vert,
             vertOvr,
@@ -118,7 +118,7 @@ public static partial class EditorUnitTests
             frag)
         {
             RenderPass = (int)EDefaultRenderPass.OpaqueForward,
-            RenderOptions = ModelImporter.CreateForwardPlusUberShaderRenderOptions(),
+            RenderOptions = ModelAssetImporter.CreateForwardPlusUberShaderRenderOptions(),
             Name = $"UberPreview_{(config.EnableEmission ? "Emission" : "Base")}_{(config.EnableMatcap ? "Matcap" : "NoMatcap")}",
         };
 
@@ -155,7 +155,7 @@ public static partial class EditorUnitTests
     private static XRTexture2D CreateUberPreviewTexture(XRTexture2D source, string samplerName)
     {
         if (!string.IsNullOrWhiteSpace(source.FilePath))
-            return ModelImporter.GetOrCreateUberSamplerTexture(source.FilePath!, samplerName);
+            return ModelAssetImporter.GetOrCreateUberSamplerTexture(source.FilePath!, samplerName);
 
         var t = new XRTexture2D
         {

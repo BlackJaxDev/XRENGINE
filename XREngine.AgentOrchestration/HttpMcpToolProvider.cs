@@ -33,7 +33,11 @@ public sealed class HttpMcpToolProvider : IAgentToolProvider
 
     public async Task<string> PreflightAsync(string expectedEditorSession, CancellationToken cancellationToken)
     {
-        JsonElement result = await SendRequestAsync("ping", parameters: null, cancellationToken);
+        JsonElement result = await SendRequestAsync(
+            "ping",
+            parameters: null,
+            cancellationToken,
+            _toolTimeout);
         string? reportedSession = null;
         if (result.ValueKind == JsonValueKind.Object
             && result.TryGetProperty("status", out JsonElement status)
@@ -56,7 +60,11 @@ public sealed class HttpMcpToolProvider : IAgentToolProvider
 
     public async Task<IReadOnlyList<AgentToolDefinition>> ListToolsAsync(CancellationToken cancellationToken)
     {
-        JsonElement result = await SendRequestAsync("tools/list", parameters: null, cancellationToken);
+        JsonElement result = await SendRequestAsync(
+            "tools/list",
+            parameters: null,
+            cancellationToken,
+            _toolTimeout);
         if (!result.TryGetProperty("tools", out JsonElement toolsElement)
             || toolsElement.ValueKind != JsonValueKind.Array)
         {
@@ -164,7 +172,9 @@ public sealed class HttpMcpToolProvider : IAgentToolProvider
         TimeSpan? timeout = null)
     {
         using var timeoutSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        timeoutSource.CancelAfter(timeout ?? TimeSpan.FromSeconds(10));
+        TimeSpan effectiveTimeout = timeout ?? TimeSpan.FromSeconds(10);
+        if (effectiveTimeout != Timeout.InfiniteTimeSpan)
+            timeoutSource.CancelAfter(effectiveTimeout);
         CancellationToken requestToken = timeoutSource.Token;
 
         var payload = new JsonObject

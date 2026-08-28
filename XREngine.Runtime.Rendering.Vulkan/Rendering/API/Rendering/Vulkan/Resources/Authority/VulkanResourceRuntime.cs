@@ -258,7 +258,7 @@ internal sealed partial class VulkanResourceRuntime
             resource.RetirementSerial = unchecked((ulong)Interlocked.Increment(ref tracker.RetirementSerial));
             resource.State |= EVulkanResourceLifetimeState.PendingRetirement;
             resource.RetirementTicket = ticket;
-            tracker.PublishedResourceGenerations[key] = 0;
+            tracker.SetPublishedGenerationNoLock(key, 0UL);
         }
 
         int frameSlot = Volatile.Read(ref _framebufferRetirementFrameSlot);
@@ -304,7 +304,7 @@ internal sealed partial class VulkanResourceRuntime
             resource.RetirementSerial = unchecked((ulong)Interlocked.Increment(ref tracker.RetirementSerial));
             resource.State |= EVulkanResourceLifetimeState.PendingRetirement;
             resource.RetirementTicket = ticket;
-            tracker.PublishedResourceGenerations[key] = 0;
+            tracker.SetPublishedGenerationNoLock(key, 0UL);
         }
 
         int frameSlot = Volatile.Read(ref _framebufferRetirementFrameSlot);
@@ -417,19 +417,10 @@ internal sealed partial class VulkanResourceRuntime
             if (tracker.CommandBufferLifetimes.Remove(handle, out VulkanCommandBufferLifetimeRecord? lifetime))
             {
                 foreach ((VulkanResourceLifetimeKey key, ulong generation) in lifetime.Dependencies)
-                {
-                    if (!tracker.ResourceLifetimes.TryGetValue(key, out VulkanResourceLifetimeRecord? resource) ||
-                        resource.Generation != generation)
-                    {
-                        continue;
-                    }
-
-                    resource.Pins.ReleaseRecordedReference();
-                    if (!resource.Pins.HasRecordedReferences)
-                        resource.State &= ~EVulkanResourceLifetimeState.Recorded;
-                    if (tracker.ResourceCommandBufferDependencies.TryGetValue(key, out HashSet<ulong>? commandBuffers))
-                        commandBuffers.Remove(handle);
-                }
+                    ReleaseRecordedCommandBufferDependencyNoLock(
+                        handle,
+                        key,
+                        generation);
 
                 if (lifetime.AllocatingCommandPool.IsValid &&
                     tracker.CommandBuffersByPool.TryGetValue(lifetime.AllocatingCommandPool, out HashSet<ulong>? children))
@@ -638,18 +629,56 @@ internal sealed partial class VulkanResourceRuntime
     private void ReleasePreparedCommandBufferDependenciesNoLock(ulong commandBufferHandle, VulkanCommandBufferLifetimeRecord lifetime)
     {
         foreach ((VulkanResourceLifetimeKey key, ulong generation) in lifetime.Dependencies)
-        {
-            if (!Lifetime.Tracker.ResourceLifetimes.TryGetValue(key, out VulkanResourceLifetimeRecord? resource) || resource.Generation != generation)
-                continue;
-            resource.Pins.ReleaseRecordedReference();
-            if (!resource.Pins.HasRecordedReferences)
-                resource.State &= ~EVulkanResourceLifetimeState.Recorded;
-            if (Lifetime.Tracker.ResourceCommandBufferDependencies.TryGetValue(key, out HashSet<ulong>? buffers))
-                buffers.Remove(commandBufferHandle);
-        }
+            ReleaseRecordedCommandBufferDependencyNoLock(
+                commandBufferHandle,
+                key,
+                generation);
 
         lifetime.Dependencies.Clear();
         lifetime.TouchedDependencies.Clear();
+        lifetime.InvalidateSealedSubmissionContract();
+    }
+
+    /// <summary>
+    /// Releases the recorded-reference pin from the exact native generation.
+    /// Detached WSI generations are intentionally absent from the current keyed
+    /// registry, so generation resolution must include the detached-slot index.
+    /// </summary>
+    private void ReleaseRecordedCommandBufferDependencyNoLock(
+        ulong commandBufferHandle,
+        VulkanResourceLifetimeKey key,
+        ulong generation)
+    {
+        VulkanResourceLifetimeTracker tracker = Lifetime.Tracker;
+        if (!tracker.TryResolveResourceGenerationNoLock(
+                key,
+                generation,
+                out VulkanResourceLifetimeRecord resource))
+        {
+            return;
+        }
+
+        resource.Pins.ReleaseRecordedReference();
+        if (!resource.Pins.HasRecordedReferences)
+            resource.State &= ~EVulkanResourceLifetimeState.Recorded;
+
+        // A detached generation no longer owns this key-scoped reverse index.
+        // A replacement generation may already have populated it, so old
+        // completion must never remove entries from the replacement's set.
+        if (!tracker.ResourceLifetimes.TryGetValue(
+                key,
+                out VulkanResourceLifetimeRecord? current) ||
+            !ReferenceEquals(current, resource) ||
+            !tracker.ResourceCommandBufferDependencies.TryGetValue(
+                key,
+                out HashSet<ulong>? commandBuffers))
+        {
+            return;
+        }
+
+        commandBuffers.Remove(commandBufferHandle);
+        if (commandBuffers.Count == 0)
+            tracker.ResourceCommandBufferDependencies.Remove(key);
     }
 
     internal void CompleteDetachedExternalResourceDestruction(
@@ -675,6 +704,27 @@ internal sealed partial class VulkanResourceRuntime
         }
     }
 
+    internal void CompleteDetachedExternalResourceDestruction(
+        ObjectType type,
+        ulong handle,
+        VulkanResourceSlotHandle slot,
+        bool forced)
+    {
+        if (handle == 0 || !slot.IsValid)
+            return;
+
+        VulkanResourceLifetimeTracker tracker = Lifetime.Tracker;
+        lock (tracker.SyncRoot)
+        {
+            bool released = tracker.ReleaseDetachedResourceSlotNoLock(
+                new VulkanResourceLifetimeKey(type, handle),
+                slot,
+                forced);
+            if (released && forced)
+                Interlocked.Increment(ref tracker.ForcedResourceDestructionCount);
+        }
+    }
+
     internal void UnregisterRenderPass(RenderPass renderPass)
     {
         if (renderPass.Handle == 0)
@@ -690,9 +740,11 @@ internal sealed partial class VulkanResourceRuntime
     /// may legally reuse native handles while the prior generation retires.
     /// Command artifacts must already have been retired by the caller.
     /// </summary>
-    internal ulong[] DetachExternalImageLifetimesForHandleReuse(Image[] images)
+    internal VulkanResourceSlotHandle[] DetachExternalImageLifetimesForHandleReuse(
+        Image[] images)
     {
-        ulong[] generations = new ulong[images.Length];
+        VulkanResourceSlotHandle[] slots =
+            new VulkanResourceSlotHandle[images.Length];
         VulkanResourceLifetimeTracker tracker = Lifetime.Tracker;
         lock (tracker.SyncRoot)
         {
@@ -705,13 +757,16 @@ internal sealed partial class VulkanResourceRuntime
                 if (!tracker.ResourceLifetimes.TryGetValue(key, out VulkanResourceLifetimeRecord? resource))
                     continue;
 
-                generations[index] = resource.Generation;
-                tracker.ResourceLifetimes.Remove(key);
-                tracker.PublishedResourceGenerations.TryRemove(key, out _);
-                tracker.ResourceCommandBufferDependencies.Remove(key);
+                if (!tracker.TryDetachExternalResourceIdentityNoLock(
+                        key,
+                        out slots[index]))
+                {
+                    throw new InvalidOperationException(
+                        $"Failed to detach external Vulkan image generation {resource.Generation} for {key}.");
+                }
             }
         }
-        return generations;
+        return slots;
     }
 
     internal void NotifyResourceUseCompleted(ObjectType type, ulong handle)
@@ -802,9 +857,12 @@ internal sealed partial class VulkanResourceRuntime
                 "CommandBuffer.RecordingAdmission");
         if ((commandRecord.State &
              (EVulkanResourceLifetimeState.PendingRetirement |
-              EVulkanResourceLifetimeState.Destroyed)) != 0)
+              EVulkanResourceLifetimeState.Destroyed)) != 0 ||
+            commandRecord.Pins.HasRecordedReferences)
         {
-            reason = $"Command buffer 0x{handle:X} is {commandRecord.State}.";
+            reason = commandRecord.Pins.HasRecordedReferences
+                ? $"Command buffer 0x{handle:X} is retained by a recorded primary command buffer."
+                : $"Command buffer 0x{handle:X} is {commandRecord.State}.";
             return false;
         }
 
@@ -852,6 +910,7 @@ internal sealed partial class VulkanResourceRuntime
             lifetime.FrameDataLease.EvictCachedVariant();
             lifetime.FrameDataLease.Reset();
             lifetime.RecordingGeneration++;
+            lifetime.InvalidateSealedSubmissionContract();
         }
     }
 
@@ -936,7 +995,7 @@ internal sealed partial class VulkanResourceRuntime
                     VulkanRetirementPinSet.Single(key, resource.Generation));
                 resource.State |= EVulkanResourceLifetimeState.PendingRetirement;
                 resource.RetirementTicket = ticket;
-                Lifetime.Tracker.PublishedResourceGenerations[key] = 0;
+                Lifetime.Tracker.SetPublishedGenerationNoLock(key, 0UL);
             }
         }
 
@@ -981,7 +1040,7 @@ internal sealed partial class VulkanResourceRuntime
                 VulkanRetirementPinSet.Single(key, resource.Generation));
             resource.State |= EVulkanResourceLifetimeState.PendingRetirement;
             resource.RetirementTicket = ticket;
-            Lifetime.Tracker.PublishedResourceGenerations[key] = 0;
+            Lifetime.Tracker.SetPublishedGenerationNoLock(key, 0UL);
             return ticket;
         }
     }
@@ -1040,23 +1099,10 @@ internal sealed partial class VulkanResourceRuntime
     {
         foreach ((VulkanResourceLifetimeKey key, ulong generation) in
                  lifetime.Dependencies)
-        {
-            if (!Lifetime.Tracker.ResourceLifetimes.TryGetValue(
-                    key,
-                    out VulkanResourceLifetimeRecord? resource) ||
-                resource.Generation != generation)
-                continue;
-
-            resource.Pins.ReleaseRecordedReference();
-
-            if (!resource.Pins.HasRecordedReferences)
-                resource.State &= ~EVulkanResourceLifetimeState.Recorded;
-
-            if (Lifetime.Tracker.ResourceCommandBufferDependencies.TryGetValue(
-                    key,
-                    out HashSet<ulong>? commandBuffers))
-                commandBuffers.Remove(commandBufferHandle);
-        }
+            ReleaseRecordedCommandBufferDependencyNoLock(
+                commandBufferHandle,
+                key,
+                generation);
 
         lifetime.Dependencies.Clear();
         lifetime.TouchedDependencies.Clear();
@@ -1163,7 +1209,7 @@ internal sealed partial class VulkanResourceRuntime
             record.RetirementSerial = unchecked((ulong)Interlocked.Increment(ref tracker.RetirementSerial));
             record.State |= EVulkanResourceLifetimeState.PendingRetirement;
             record.RetirementTicket = ticket;
-            tracker.PublishedResourceGenerations[key] = 0;
+            tracker.SetPublishedGenerationNoLock(key, 0UL);
         }
 
         if (tracker.IsRetirementReady(ticket))
@@ -1212,7 +1258,7 @@ internal sealed partial class VulkanResourceRuntime
             record.RetirementSerial = unchecked((ulong)Interlocked.Increment(ref tracker.RetirementSerial));
             record.State |= EVulkanResourceLifetimeState.PendingRetirement;
             record.RetirementTicket = ticket;
-            tracker.PublishedResourceGenerations[key] = 0;
+            tracker.SetPublishedGenerationNoLock(key, 0UL);
         }
 
         int frameSlot = FramebufferRetirementFrameSlot;
@@ -2059,7 +2105,9 @@ internal sealed partial class VulkanResourceRuntime
             ulong nextGeneration = VulkanGeneration.IncrementNonZero(
                 ref Lifetime.Tracker.ResourceGeneration);
             resource.Owner = owner;
-            resource.Generation = nextGeneration;
+            Lifetime.Tracker.RecycleResourceGenerationNoLock(
+                resource,
+                nextGeneration);
             resource.State = EVulkanResourceLifetimeState.CpuOwned;
             resource.Pins = default;
             resource.LastSubmissionSerial = 0;
@@ -2067,7 +2115,9 @@ internal sealed partial class VulkanResourceRuntime
             resource.LastFrameOpKind = null;
             resource.RetirementSerial = 0;
             resource.RetirementTicket = default;
-            Lifetime.Tracker.PublishedResourceGenerations[key] = nextGeneration;
+            Lifetime.Tracker.SetPublishedGenerationNoLock(
+                key,
+                nextGeneration);
             publishedGeneration = nextGeneration;
             return true;
         }

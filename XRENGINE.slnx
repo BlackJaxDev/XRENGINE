@@ -20,7 +20,8 @@
   <Project Path="XREngine.Runtime.Bootstrap/XREngine.Runtime.Bootstrap.csproj" />
   <Project Path="XREngine.Runtime.Core/XREngine.Runtime.Core.csproj" />
   <Project Path="XREngine.Runtime.InputIntegration/XREngine.Runtime.InputIntegration.csproj" />
-  <Project Path="XREngine.Runtime.ModelingBridge/XREngine.Runtime.ModelingBridge.csproj" />
+  <Project Path="XREngine.Runtime.ModelAssetPipeline/XREngine.Runtime.ModelAssetPipeline.csproj" />
+  <Project Path="XREngine.Runtime.ModelingIntegration/XREngine.Runtime.ModelingIntegration.csproj" />
   <Project Path="XREngine.Runtime.Rendering.OpenGL/XREngine.Runtime.Rendering.OpenGL.csproj" />
   <Project Path="XREngine.Runtime.Rendering/XREngine.Runtime.Rendering.csproj" />
   <Project Path="XREngine.Runtime.Rendering.Vulkan/XREngine.Runtime.Rendering.Vulkan.csproj" />

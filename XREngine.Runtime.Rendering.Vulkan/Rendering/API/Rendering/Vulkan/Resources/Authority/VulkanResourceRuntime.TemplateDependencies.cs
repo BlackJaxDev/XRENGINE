@@ -61,7 +61,8 @@ internal sealed partial class VulkanResourceRuntime
 
                 if (!tracker.ResourceLifetimes.TryGetValue(key, out VulkanResourceLifetimeRecord? resource) ||
                     resource.Generation != request.Generation ||
-                    tracker.GetPublishedGeneration(key) != request.Generation ||
+                    resource.PublishedGeneration != request.Generation ||
+                    !resource.Slot.IsValid ||
                     (resource.State & (EVulkanResourceLifetimeState.PendingRetirement |
                                        EVulkanResourceLifetimeState.Destroyed)) != 0)
                 {
@@ -70,13 +71,13 @@ internal sealed partial class VulkanResourceRuntime
                 }
             }
 
-            VulkanPinnedResourceGeneration[] dependencies =
-                new VulkanPinnedResourceGeneration[requests.Length];
+            VulkanResourceSlotHandle[] dependencies =
+                new VulkanResourceSlotHandle[requests.Length];
             for (int index = 0; index < requests.Length; ++index)
             {
                 VulkanResidentTemplateDependencyRequest request = requests[index];
                 _ = request.TryGetKey(out VulkanResourceLifetimeKey key);
-                dependencies[index] = new VulkanPinnedResourceGeneration(key, request.Generation);
+                dependencies[index] = tracker.ResourceLifetimes[key].Slot;
             }
 
             // Allocate the lease object before mutating pin counts. An
@@ -87,8 +88,10 @@ internal sealed partial class VulkanResourceRuntime
 
             for (int index = 0; index < dependencies.Length; ++index)
             {
-                VulkanPinnedResourceGeneration dependency = dependencies[index];
-                tracker.ResourceLifetimes[dependency.Key].Pins.AddTemplateReference();
+                _ = tracker.TryResolveResourceSlotNoLock(
+                    dependencies[index],
+                    out VulkanResourceLifetimeRecord resource);
+                resource.Pins.AddTemplateReference();
             }
 
             lease = acquiredLease;
@@ -112,13 +115,13 @@ internal sealed partial class VulkanResourceRuntime
             if (tracker.DeviceLost)
                 return false;
 
-            ReadOnlySpan<VulkanPinnedResourceGeneration> dependencies = lease.Dependencies;
+            ReadOnlySpan<VulkanResourceSlotHandle> dependencies = lease.Dependencies;
             for (int index = 0; index < dependencies.Length; ++index)
             {
-                VulkanPinnedResourceGeneration dependency = dependencies[index];
-                if (!tracker.ResourceLifetimes.TryGetValue(dependency.Key, out VulkanResourceLifetimeRecord? resource) ||
-                    resource.Generation != dependency.Generation ||
-                    tracker.GetPublishedGeneration(dependency.Key) != dependency.Generation ||
+                VulkanResourceSlotHandle dependency = dependencies[index];
+                if (!tracker.TryResolvePublishedResourceSlotNoLock(
+                        dependency,
+                        out VulkanResourceLifetimeRecord resource) ||
                     resource.Pins.TemplateReferenceCount <= 0 ||
                     (resource.State & (EVulkanResourceLifetimeState.PendingRetirement |
                                        EVulkanResourceLifetimeState.Destroyed)) != 0)
@@ -137,21 +140,22 @@ internal sealed partial class VulkanResourceRuntime
     /// never be unpinned by an old template lease.
     /// </summary>
     internal void ReleaseResidentTemplateDependencies(
-        ReadOnlySpan<VulkanPinnedResourceGeneration> dependencies)
+        ReadOnlySpan<VulkanResourceSlotHandle> dependencies)
     {
         VulkanResourceLifetimeTracker tracker = Lifetime.Tracker;
         lock (tracker.SyncRoot)
         {
             for (int index = 0; index < dependencies.Length; ++index)
             {
-                VulkanPinnedResourceGeneration dependency = dependencies[index];
-                if (!tracker.ResourceLifetimes.TryGetValue(dependency.Key, out VulkanResourceLifetimeRecord? resource) ||
-                    resource.Generation != dependency.Generation)
+                VulkanResourceSlotHandle dependency = dependencies[index];
+                if (!tracker.TryResolveResourceSlotNoLock(
+                        dependency,
+                        out VulkanResourceLifetimeRecord resource))
                 {
                     if (!tracker.DeviceLost)
                     {
                         throw new InvalidOperationException(
-                            $"Resident-template dependency {dependency.Key} generation {dependency.Generation} disappeared before its lease was released.");
+                            $"Resident-template dependency {dependency} disappeared before its lease was released.");
                     }
                     continue;
                 }

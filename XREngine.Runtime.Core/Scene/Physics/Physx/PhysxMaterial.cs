@@ -1,5 +1,4 @@
 using XREngine.Scene.Physics.Physx;
-using Assimp;
 using MagicPhysX;
 using System.Collections.Concurrent;
 using XREngine.Scene.Physics;

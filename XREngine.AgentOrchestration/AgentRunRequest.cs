@@ -19,7 +19,7 @@ public sealed record AgentRunRequest
 
     /// <summary>
     /// Requested Responses API text verbosity. This shapes visible response
-    /// length but never increases the run's hard output-token budget.
+    /// length independently of any optional run output-token limit.
     /// </summary>
     public string TextVerbosity { get; init; } = "medium";
 

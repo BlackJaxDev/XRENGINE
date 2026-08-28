@@ -6,6 +6,9 @@ namespace XREngine.Rendering.Vulkan;
 /// </summary>
 internal sealed class VulkanImageSubresourceState
 {
+    /// <summary>Monotonic submitted-state version used by sealed contracts.</summary>
+    public ulong SubmittedVersion = 1u;
+
     /// <summary>The newest state published by a successful submission.</summary>
     public VulkanImageAccessState Submitted = VulkanImageAccessState.Undefined;
 

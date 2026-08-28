@@ -23,7 +23,7 @@ public sealed class HumanoidAvatarDefinitionMetadata
     public string DefinitionContentSha256 { get; set; } = string.Empty;
     public EHumanoidAvatarSourceProvenance SourceProvenance { get; set; }
     public string SourceModelContentSha256 { get; set; } = string.Empty;
-    public string CoordinateContractId { get; set; } = UnityAnimationCoordinateContract.CurrentContractId;
+    public string CoordinateContractId { get; set; } = ImportedAnimationCoordinateContract.CurrentContractId;
     public float HumanScale { get; set; }
     public float ModelUnitsPerMeter { get; set; } = 1.0f;
     public float MuscleInputScale { get; set; } = 1.0f;

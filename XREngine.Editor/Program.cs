@@ -24,6 +24,8 @@ using XREngine.Data.Geometry;
 using XREngine.Core.Files;
 using XREngine.Editor;
 using XREngine.Editor.Assets;
+using XREngine.Editor.Importers;
+using XREngine.Editor.Importers.SerializedAssets;
 using XREngine.Editor.Mcp;
 using XREngine.Editor.Settings;
 using XREngine.Fbx;
@@ -32,9 +34,11 @@ using XREngine.Rendering;
 using XREngine.Rendering.API.Rendering.OpenXR;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Info;
+using XREngine.Rendering.Models.Caching;
 using XREngine.Runtime.Bootstrap;
 using XREngine.Runtime.Bootstrap.Builders;
 using XREngine.Scene;
+using XREngine.Scene.Prefabs;
 using XREngine.Scene.Transforms;
 using XREngine.Settings;
 using static XREngine.Engine;
@@ -89,7 +93,14 @@ internal partial class Program
         XREnvironment.Initialize();
         using IDisposable editorWorldHostCompositionServices =
             RuntimeWorldHostCompositionServices.Install(new EditorRuntimeWorldHostCompositionServices());
-        RuntimeRenderingBootstrap.InstallEngineHostServices();
+        using IDisposable modelAssetPipelineRegistration =
+            ModelAssetPipelineRegistration.Install(Engine.Assets, typeof(XRPrefabSource));
+        using IDisposable applicationServices =
+            RuntimeApplicationBootstrap.Install(RuntimeApplicationProfile.Editor);
+        using IDisposable editorSerializedPrefabImport =
+            EditorSerializedPrefabImportRegistration.Install();
+        using IDisposable editorSceneImportServices =
+            RuntimeSceneImportServices.Install(new EditorRuntimeSceneImportServices());
         using IDisposable editorThirdPartyAssetWatcher = EditorThirdPartyAssetWatcher.Install(Engine.Assets);
         WriteBootstrapTrace("Editor process entry.");
         InstallGlobalCrashDiagnostics();

@@ -379,7 +379,12 @@ public sealed class RuntimeModularizationPhase4DependencyBoundaryTests
         string bootstrapHostRoot = Path.Combine(root, "XREngine.Runtime.Bootstrap", "SubsystemHost");
         string lifecycleSource = File.ReadAllText(Path.Combine(bootstrapHostRoot, "EngineVrLifecycle.cs"));
         string networkingSource = File.ReadAllText(Path.Combine(engineRoot, "Engine.Networking.cs"));
-        string windowsSource = File.ReadAllText(Path.Combine(engineRoot, "Engine.Windows.cs"));
+        string windowsSource = File.ReadAllText(Path.Combine(
+            root,
+            "XRENGINE",
+            "Compatibility",
+            "Windowing",
+            "Engine.Windows.cs"));
         string jsonSource = File.ReadAllText(Path.Combine(bootstrapHostRoot, "VrManifestJsonSerialization.cs"));
 
         File.Exists(Path.Combine(engineRoot, "Engine.VRState.cs")).ShouldBeFalse();
@@ -417,20 +422,20 @@ public sealed class RuntimeModularizationPhase4DependencyBoundaryTests
     }
 
     [Test]
-    public void ConcreteModelImportPipeline_IsOwnedByModelingBridge()
+    public void ConcreteModelImportPipeline_IsOwnedByModelAssetPipeline()
     {
-        typeof(ModelImportOptions).Assembly.GetName().Name.ShouldBe("XREngine.Runtime.ModelingBridge");
-        typeof(ModelImporter).Assembly.GetName().Name.ShouldBe("XREngine.Runtime.ModelingBridge");
-        typeof(RuntimeModelImportServices).Assembly.GetName().Name.ShouldBe("XREngine.Runtime.ModelingBridge");
+        typeof(ModelImportOptions).Assembly.GetName().Name.ShouldBe("XREngine.Runtime.ModelAssetPipeline");
+        typeof(ModelAssetImporter).Assembly.GetName().Name.ShouldBe("XREngine.Runtime.ModelAssetPipeline");
+        typeof(RuntimeModelImportServices).Assembly.GetName().Name.ShouldBe("XREngine.Runtime.ModelAssetPipeline");
 
         string root = ResolveWorkspaceRoot();
         File.Exists(Path.Combine(root, "XRENGINE", "Core", "ModelImporter.cs")).ShouldBeFalse();
         File.Exists(Path.Combine(root, "XRENGINE", "Core", "NativeFbxSceneImporter.cs")).ShouldBeFalse();
         File.Exists(Path.Combine(root, "XRENGINE", "Core", "NativeGltfSceneImporter.cs")).ShouldBeFalse();
         File.Exists(Path.Combine(root, "XRENGINE", "Core", "ModelImportMeshIslandSplitter.cs")).ShouldBeFalse();
-        File.Exists(Path.Combine(root, "XREngine.Runtime.ModelingBridge", "Importing", "ModelImporter.cs")).ShouldBeTrue();
-        File.Exists(Path.Combine(root, "XREngine.Runtime.ModelingBridge", "Importing", "NativeFbxSceneImporter.cs")).ShouldBeTrue();
-        File.Exists(Path.Combine(root, "XREngine.Runtime.ModelingBridge", "Importing", "NativeGltfSceneImporter.cs")).ShouldBeTrue();
+        File.Exists(Path.Combine(root, "XREngine.Runtime.ModelAssetPipeline", "Importing", "ModelAssetImporter.cs")).ShouldBeTrue();
+        File.Exists(Path.Combine(root, "XREngine.Runtime.ModelAssetPipeline", "Importing", "NativeFbxSceneImporter.cs")).ShouldBeTrue();
+        File.Exists(Path.Combine(root, "XREngine.Runtime.ModelAssetPipeline", "Importing", "NativeGltfSceneImporter.cs")).ShouldBeTrue();
     }
 
     private static string ResolveWorkspaceRoot()

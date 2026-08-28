@@ -81,7 +81,7 @@ Build a node-first but CPU-authoritative modeling system for XRENGINE:
 ## Primary Code Areas
 
 - `XREngine.Modeling/`
-- `XREngine.Runtime.ModelingBridge/`
+- `XREngine.Runtime.ModelingIntegration/`
 - `XREngine.Editor/`
 - `XREngine.Runtime.Rendering/Objects/Meshes/`
 - `XREngine.Runtime.Rendering/Rendering/API/Rendering/`
@@ -202,7 +202,7 @@ Baseline commands:
 
 ```powershell
 dotnet build .\XREngine.Modeling\XREngine.Modeling.csproj
-dotnet build .\XREngine.Runtime.ModelingBridge\XREngine.Runtime.ModelingBridge.csproj
+dotnet build .\XREngine.Runtime.ModelingIntegration\XREngine.Runtime.ModelingIntegration.csproj
 dotnet test .\XREngine.UnitTests\XREngine.UnitTests.csproj --filter FullyQualifiedName~Modeling
 ```
 

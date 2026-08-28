@@ -364,7 +364,7 @@ public sealed class UberMaterialVariantTests
     [Test]
     public void DefaultForwardPlusUberParameters_DoNotEmitWithoutAuthoredStrength()
     {
-        ShaderVar[] parameters = global::XREngine.ModelImporter.CreateDefaultForwardPlusUberShaderParameters();
+        ShaderVar[] parameters = global::XREngine.ModelAssetImporter.CreateDefaultForwardPlusUberShaderParameters();
         ShaderFloat emissionStrength = parameters.OfType<ShaderFloat>().Single(x => x.Name == "_EmissionStrength");
 
         emissionStrength.Value.ShouldBe(0.0f);
@@ -809,8 +809,8 @@ public sealed class UberMaterialVariantTests
     public void PrepareVariant_RealUberForwardSnippetRetainsReferencedRuntimeGlobals()
     {
         string shaderPath = ResolveWorkspacePath(Path.Combine("Build", "CommonAssets", "Shaders", "Uber", "UberShader.frag"));
-        XRMaterial material = CreateUberMaterialFromFile(shaderPath, ModelImporter.CreateDefaultForwardPlusUberShaderParameters());
-        material.RenderOptions = ModelImporter.CreateForwardPlusUberShaderRenderOptions();
+        XRMaterial material = CreateUberMaterialFromFile(shaderPath, ModelAssetImporter.CreateDefaultForwardPlusUberShaderParameters());
+        material.RenderOptions = ModelAssetImporter.CreateForwardPlusUberShaderRenderOptions();
         material.Parameter<ShaderFloat>("_ForwardPbrResourcesEnabled")?.SetValue(1.0f);
 
         material.EnsureUberStateInitialized();
@@ -833,8 +833,8 @@ public sealed class UberMaterialVariantTests
     public void PrepareVariant_RealUberForwardLighting_PrunesShadowAndPbrResourceFamiliesWhenExplicitlyDisabled()
     {
         string shaderPath = ResolveWorkspacePath(Path.Combine("Build", "CommonAssets", "Shaders", "Uber", "UberShader.frag"));
-        XRMaterial material = CreateUberMaterialFromFile(shaderPath, ModelImporter.CreateDefaultForwardPlusUberShaderParameters());
-        material.RenderOptions = ModelImporter.CreateForwardPlusUberShaderRenderOptions();
+        XRMaterial material = CreateUberMaterialFromFile(shaderPath, ModelAssetImporter.CreateDefaultForwardPlusUberShaderParameters());
+        material.RenderOptions = ModelAssetImporter.CreateForwardPlusUberShaderRenderOptions();
         material.Parameter<ShaderFloat>("_ForwardShadowsEnabled")?.SetValue(0.0f);
         material.Parameter<ShaderFloat>("_ForwardContactShadowsEnabled")?.SetValue(0.0f);
         material.Parameter<ShaderFloat>("_ForwardPbrResourcesEnabled")?.SetValue(0.0f);
@@ -863,7 +863,7 @@ public sealed class UberMaterialVariantTests
     public void PrepareVariant_RealUberWithoutForwardRequirements_PrunesForwardLightingAndDefaultTextureFeatures()
     {
         string shaderPath = ResolveWorkspacePath(Path.Combine("Build", "CommonAssets", "Shaders", "Uber", "UberShader.frag"));
-        XRMaterial material = CreateUberMaterialFromFile(shaderPath, ModelImporter.CreateDefaultForwardPlusUberShaderParameters());
+        XRMaterial material = CreateUberMaterialFromFile(shaderPath, ModelAssetImporter.CreateDefaultForwardPlusUberShaderParameters());
 
         material.EnsureUberStateInitialized();
         material.RequestUberVariantRebuild();

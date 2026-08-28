@@ -316,8 +316,8 @@ public sealed partial class BackendReadyFramePackage
         AppendTemplateDeltas(snapshot.EditorIdentities, EBackendReadyCanonicalOwner.EditorIdentity, EBackendTemplateMutationDomain.DataContent, identity.Sequence, ref count);
         AppendTemplateDeltas(snapshot.Geometry, EBackendReadyCanonicalOwner.Geometry, EBackendTemplateMutationDomain.LayoutTopology, identity.Sequence, ref count);
         AppendTemplateDeltas(snapshot.Materials, EBackendReadyCanonicalOwner.Material, EBackendTemplateMutationDomain.ResourceTable, identity.Sequence, ref count);
-        AppendTemplateDeltas(snapshot.Kernels, EBackendReadyCanonicalOwner.Material, EBackendTemplateMutationDomain.LayoutTopology, identity.Sequence, ref count);
-        AppendTemplateDeltas(snapshot.Layouts, EBackendReadyCanonicalOwner.Material, EBackendTemplateMutationDomain.LayoutTopology, identity.Sequence, ref count);
+        AppendTemplateDeltas(snapshot.Kernels, EBackendReadyCanonicalOwner.ShadingKernel, EBackendTemplateMutationDomain.LayoutTopology, identity.Sequence, ref count);
+        AppendTemplateDeltas(snapshot.Layouts, EBackendReadyCanonicalOwner.MaterialLayout, EBackendTemplateMutationDomain.LayoutTopology, identity.Sequence, ref count);
         _canonicalTemplateProjectionDeltaCount = count;
     }
 
@@ -352,7 +352,7 @@ public sealed partial class BackendReadyFramePackage
                 kind,
                 kind == EBackendTemplateProjectionDeltaKind.DenseRemap
                     ? EBackendTemplateMutationDomain.ResourceTable
-                    : domain,
+                    : MapMutationDomain(delta.Domain),
                 owner,
                 delta.Handle,
                 AdvancedGpuHandle.Invalid,
@@ -377,6 +377,17 @@ public sealed partial class BackendReadyFramePackage
                 remap.CurrentDenseIndex);
         }
     }
+
+    private static EBackendTemplateMutationDomain MapMutationDomain(
+        EAdvancedGpuMutationDomain domain)
+        => domain switch
+        {
+            EAdvancedGpuMutationDomain.Content => EBackendTemplateMutationDomain.DataContent,
+            EAdvancedGpuMutationDomain.ResourceBinding => EBackendTemplateMutationDomain.ResourceTable,
+            EAdvancedGpuMutationDomain.LayoutTopology => EBackendTemplateMutationDomain.LayoutTopology,
+            EAdvancedGpuMutationDomain.RecordingTopology => EBackendTemplateMutationDomain.Recording,
+            _ => EBackendTemplateMutationDomain.LayoutTopology,
+        };
 
     private void PopulateCanonicalDiagnosticReadbackRequests()
     {

@@ -180,7 +180,17 @@ internal sealed unsafe class VulkanImGuiPlatformWindowOutputAuthority
     {
         DestroyImageViewsImmediately(device, target, imageViews, viewportId);
         for (int index = 0; index < images.Length; index++)
+        {
             commandRuntime.ClearTrackedImageLayouts(images[index]);
+            if (images[index].Handle != 0 &&
+                !target.TryBeginReleaseExternalImage(
+                    images[index],
+                    $"ImGuiViewport.DestroySwapchainResources[{viewportId:X8}]"))
+            {
+                throw new InvalidOperationException(
+                    $"Detached ImGui viewport {viewportId:X8} cannot release swapchain image 0x{images[index].Handle:X} while it is still in use.");
+            }
+        }
         if (swapchain.Handle != 0)
             swapchainApi.DestroySwapchain(device.Device, swapchain, null);
     }

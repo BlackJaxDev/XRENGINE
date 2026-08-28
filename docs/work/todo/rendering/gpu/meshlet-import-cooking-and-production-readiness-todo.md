@@ -361,8 +361,8 @@ integration gate is cleared explicitly.
 
 - `XRENGINE/Core/Engine/AssetManager.ThirdPartyImport.cs`
 - `XRENGINE/Core/Engine/ModelCaching/ModelBinaryCacheCodec.cs`
-- `XREngine.Runtime.ModelingBridge/Importing/`
-- `XREngine.Runtime.ModelingBridge/Importing/Caching/`
+- `XREngine.Runtime.ModelAssetPipeline/Importing/`
+- `XREngine.Runtime.ModelAssetPipeline/Importing/Caching/`
 - `XREngine.Runtime.Rendering/Objects/Meshes/XRMesh.Meshlets.cs`
 - `XREngine.Runtime.Rendering/Objects/Meshes/XRMesh.CookedBinary.cs`
 - `XREngine.Runtime.Rendering/Objects/Meshes/XRMesh.CookedMeshlets.cs`

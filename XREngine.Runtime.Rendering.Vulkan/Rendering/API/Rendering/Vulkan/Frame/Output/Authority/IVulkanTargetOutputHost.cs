@@ -45,6 +45,7 @@ internal interface IVulkanTargetOutputHost
     void TrackExternalBufferAllocation(Buffer buffer, in VulkanMemoryAllocation allocation);
     void DestroyBufferRaw(Buffer? buffer, DeviceMemory? memory);
     bool TryBeginDestroyImageView(ImageView imageView, string owner);
+    bool TryBeginReleaseExternalImage(Image image, string owner);
     void TrackLiveImageView(ImageView imageView, in ImageViewCreateInfo createInfo, string owner);
     Result SubmitToQueueTracked(Queue queue, ref SubmitInfo submitInfo, Fence fence, string caller);
     Result PresentToQueueTracked(KhrSwapchain swapchainApi, Queue queue, ref PresentInfoKHR presentInfo, string caller);

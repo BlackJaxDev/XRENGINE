@@ -16,8 +16,7 @@ public static class ThirdPartyAssetTypeRegistry
 
     /// <summary>
     /// Registers every extension declared by <see cref="XR3rdPartyExtensionsAttribute"/>
-    /// on <paramref name="assetType"/>. Later registrations take precedence until
-    /// their lease is disposed.
+    /// on <paramref name="assetType"/>. Duplicate format claims fail explicitly.
     /// </summary>
     public static IDisposable Install(string ownerName, Type assetType)
     {
@@ -31,31 +30,61 @@ public static class ThirdPartyAssetTypeRegistry
         if (attribute is null)
             return EmptyLease.Instance;
 
-        Registration registration = new(ownerName, assetType);
-        List<string> extensions = new(attribute.Extensions.Length);
+        return Install(
+            ownerName,
+            assetType,
+            attribute.ImportOptionsType,
+            attribute.Extensions.Select(static entry => entry.ext));
+    }
+
+    /// <summary>
+    /// Registers an explicit feature-owned third-party descriptor. This overload lets a
+    /// runtime-neutral asset type remain free of importer package and options-type references.
+    /// </summary>
+    public static IDisposable Install(
+        string ownerName,
+        Type assetType,
+        Type? importOptionsType,
+        IEnumerable<string> extensions)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(ownerName);
+        ArgumentNullException.ThrowIfNull(assetType);
+        ArgumentNullException.ThrowIfNull(extensions);
+
+        if (!typeof(XRAsset).IsAssignableFrom(assetType) || assetType.IsAbstract || assetType.IsInterface)
+            throw new ArgumentException($"'{assetType.FullName}' is not a concrete {nameof(XRAsset)} type.", nameof(assetType));
+
+        Registration registration = new(ownerName, assetType, importOptionsType);
+        List<string> normalizedExtensions = extensions
+            .Select(Normalize)
+            .Where(static extension => extension is not null)
+            .Cast<string>()
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
 
         lock (Sync)
         {
-            foreach ((string extension, _) in attribute.Extensions)
+            foreach (string normalized in normalizedExtensions)
             {
-                string? normalized = Normalize(extension);
-                if (normalized is null || extensions.Contains(normalized, StringComparer.OrdinalIgnoreCase))
-                    continue;
-
-                if (!Registrations.TryGetValue(normalized, out List<Registration>? claims))
+                if (Registrations.TryGetValue(normalized, out List<Registration>? existing)
+                    && existing.Count > 0)
                 {
-                    claims = [];
-                    Registrations.Add(normalized, claims);
+                    Registration owner = existing[^1];
+                    throw new InvalidOperationException(
+                        $"Third-party extension '.{normalized}' is already owned by '{owner.OwnerName}' " +
+                        $"for asset type '{owner.AssetType.FullName}'. '{ownerName}' cannot also claim it.");
                 }
+            }
 
-                claims.Add(registration);
-                extensions.Add(normalized);
+            foreach (string normalized in normalizedExtensions)
+            {
+                Registrations.Add(normalized, [registration]);
             }
         }
 
-        return extensions.Count == 0
+        return normalizedExtensions.Count == 0
             ? EmptyLease.Instance
-            : new RegistrationLease(registration, extensions);
+            : new RegistrationLease(registration, normalizedExtensions);
     }
 
     /// <summary>Resolves the active asset type and its owning feature for an extension.</summary>
@@ -84,6 +113,33 @@ public static class ThirdPartyAssetTypeRegistry
         return false;
     }
 
+    /// <summary>Resolves the complete active descriptor for an extension.</summary>
+    public static bool TryResolve(
+        string extension,
+        [NotNullWhen(true)] out ThirdPartyAssetTypeDescriptor? descriptor)
+    {
+        string? normalized = Normalize(extension);
+        if (normalized is not null)
+        {
+            lock (Sync)
+            {
+                if (Registrations.TryGetValue(normalized, out List<Registration>? claims) && claims.Count > 0)
+                {
+                    Registration registration = claims[^1];
+                    descriptor = new ThirdPartyAssetTypeDescriptor(
+                        registration.OwnerName,
+                        registration.AssetType,
+                        registration.ImportOptionsType,
+                        normalized);
+                    return true;
+                }
+            }
+        }
+
+        descriptor = null;
+        return false;
+    }
+
     private static string? Normalize(string? extension)
     {
         if (string.IsNullOrWhiteSpace(extension))
@@ -96,7 +152,7 @@ public static class ThirdPartyAssetTypeRegistry
         return normalized.IsEmpty ? null : normalized.ToString();
     }
 
-    private sealed record Registration(string OwnerName, Type AssetType);
+    private sealed record Registration(string OwnerName, Type AssetType, Type? ImportOptionsType);
 
     private sealed class RegistrationLease(Registration registration, List<string> extensions) : IDisposable
     {
@@ -132,3 +188,10 @@ public static class ThirdPartyAssetTypeRegistry
         }
     }
 }
+
+/// <summary>Active feature claim for one third-party extension.</summary>
+public sealed record ThirdPartyAssetTypeDescriptor(
+    string OwnerName,
+    Type AssetType,
+    Type? ImportOptionsType,
+    string Extension);

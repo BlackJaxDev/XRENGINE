@@ -92,7 +92,7 @@ public sealed class HumanoidPoseAuditOverlay : MonoBehaviour
         public float Y;
         public float Z;
 
-        public Vector3 ToUnity()
+        public Vector3 ToSourceCoordinates()
             => new(X, Y, Z);
     }
 
@@ -104,7 +104,7 @@ public sealed class HumanoidPoseAuditOverlay : MonoBehaviour
         public float Z;
         public float W = 1.0f;
 
-        public Quaternion ToUnity()
+        public Quaternion ToSourceCoordinates()
             => Quaternion.Normalize(new Quaternion(X, Y, Z, W));
     }
 
@@ -390,20 +390,20 @@ public sealed class HumanoidPoseAuditOverlay : MonoBehaviour
             {
                 PoseAuditSample trajectorySample = report.Samples[i];
                 Vector3 point = root.TransformPoint(
-                    trajectorySample.BodyPosition.ToUnity() * (humanScale * referenceScale));
+                    trajectorySample.BodyPosition.ToSourceCoordinates() * (humanScale * referenceScale));
                 if (previous.HasValue)
                     DrawLine(previous.Value, point, Color.yellow);
                 previous = point;
             }
 
-            Vector3 bodyWorld = root.TransformPoint(sample.BodyPosition.ToUnity() * (humanScale * referenceScale));
+            Vector3 bodyWorld = root.TransformPoint(sample.BodyPosition.ToSourceCoordinates() * (humanScale * referenceScale));
             DrawPoint(bodyWorld, Color.yellow);
         }
 
         if (ShowProjectedRoot)
         {
-            Vector3 projectedRootWorld = root.TransformPoint(sample.ProjectedRootPosition.ToUnity() * referenceScale);
-            Quaternion projectedRootWorldRotation = root.rotation * sample.ProjectedRootRotation.ToUnity();
+            Vector3 projectedRootWorld = root.TransformPoint(sample.ProjectedRootPosition.ToSourceCoordinates() * referenceScale);
+            Quaternion projectedRootWorldRotation = root.rotation * sample.ProjectedRootRotation.ToSourceCoordinates();
             DrawPoint(projectedRootWorld, Color.magenta);
             DrawRotationBasis(projectedRootWorld, projectedRootWorldRotation, BoneBasisAxisLength * 1.25f);
         }
@@ -411,8 +411,8 @@ public sealed class HumanoidPoseAuditOverlay : MonoBehaviour
         Transform hips = animator.GetBoneTransform(HumanBodyBones.Hips);
         if (ShowHipsLocalTransform && hips != null && hips.parent != null)
         {
-            Vector3 hipsWorld = hips.parent.TransformPoint(sample.HipsLocalPosition.ToUnity());
-            Quaternion hipsWorldRotation = hips.parent.rotation * sample.HipsLocalRotation.ToUnity();
+            Vector3 hipsWorld = hips.parent.TransformPoint(sample.HipsLocalPosition.ToSourceCoordinates());
+            Quaternion hipsWorldRotation = hips.parent.rotation * sample.HipsLocalRotation.ToSourceCoordinates();
             DrawPoint(hipsWorld, new Color(1.0f, 0.5f, 0.0f, 1.0f));
             DrawRotationBasis(hipsWorld, hipsWorldRotation, BoneBasisAxisLength);
         }
@@ -448,8 +448,8 @@ public sealed class HumanoidPoseAuditOverlay : MonoBehaviour
         if (!TryReadRawVector3(sample.RawCurves, goalName + "T", out Vector3 goalBodyLocal))
             return;
 
-        Vector3 bodyPosition = sample.BodyPosition.ToUnity() * humanScale;
-        Quaternion bodyRotation = sample.BodyRotation.ToUnity();
+        Vector3 bodyPosition = sample.BodyPosition.ToSourceCoordinates() * humanScale;
+        Quaternion bodyRotation = sample.BodyRotation.ToSourceCoordinates();
         Vector3 goalRootLocal = bodyPosition + bodyRotation * (goalBodyLocal * humanScale);
         Vector3 goalWorld = root.TransformPoint(goalRootLocal * referenceScale);
         DrawPoint(goalWorld, color);
@@ -607,7 +607,7 @@ public sealed class HumanoidPoseAuditOverlay : MonoBehaviour
     }
 
     private static Vector3 GetReferenceBoneWorldPosition(BoneSample bone, Transform root, float referenceScale = 1.0f)
-        => root.TransformPoint(bone.RootSpacePosition.ToUnity() * referenceScale);
+        => root.TransformPoint(bone.RootSpacePosition.ToSourceCoordinates() * referenceScale);
 
     private static float ComputeReferenceScale(PoseAuditSample sample, IReadOnlyDictionary<string, Vector3> actualRootSpacePositions)
     {
@@ -616,7 +616,7 @@ public sealed class HumanoidPoseAuditOverlay : MonoBehaviour
 
         float ratioSum = 0.0f;
         int ratioCount = 0;
-        var referenceByName = sample.Bones.ToDictionary(static x => x.Name, static x => x.RootSpacePosition.ToUnity(), StringComparer.Ordinal);
+        var referenceByName = sample.Bones.ToDictionary(static x => x.Name, static x => x.RootSpacePosition.ToSourceCoordinates(), StringComparer.Ordinal);
 
         foreach ((string startName, string endName) in BoneLinks)
         {

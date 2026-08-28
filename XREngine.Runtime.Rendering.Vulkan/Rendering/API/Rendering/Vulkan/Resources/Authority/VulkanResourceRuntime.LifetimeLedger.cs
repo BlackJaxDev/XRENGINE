@@ -270,7 +270,7 @@ internal sealed partial class VulkanResourceRuntime
                 (ulong)Interlocked.Increment(ref Lifetime.Tracker.RetirementSerial));
             resource.State |= EVulkanResourceLifetimeState.PendingRetirement;
             resource.RetirementTicket = ticket;
-            Lifetime.Tracker.PublishedResourceGenerations[key] = 0;
+            Lifetime.Tracker.SetPublishedGenerationNoLock(key, 0UL);
 
             invalidatedDescriptorSetCount =
                 Descriptors.InvalidateResourceReferencesNoLock(Lifetime, key);
@@ -374,7 +374,6 @@ internal sealed partial class VulkanResourceRuntime
                     Lifetime,
                     handle,
                     forced);
-                Lifetime.Tracker.PublishedDescriptorSets.TryRemove(handle, out _);
             }
             if (type == ObjectType.CommandBuffer &&
                 Lifetime.Tracker.CommandBufferLifetimes.Remove(

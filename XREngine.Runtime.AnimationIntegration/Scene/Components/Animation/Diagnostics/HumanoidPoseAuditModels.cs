@@ -19,7 +19,7 @@ namespace XREngine.Components.Animation
         /// Unity reference reports leave this at zero; cross-runtime comparison reads it
         /// from the XRENGINE report.
         /// </summary>
-        public float EngineUnitsPerUnityMeter { get; set; }
+        public float EngineUnitsPerSourceMeter { get; set; }
         public string BodyChannelSpace { get; set; } = "Importer-mapped normalized humanoid body space";
         public string BoneRootSpace { get; set; } = "Humanoid component scene-node local space";
         public string BoneWorldSpace { get; set; } = "XRENGINE world space";

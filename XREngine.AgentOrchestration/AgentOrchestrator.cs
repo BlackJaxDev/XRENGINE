@@ -34,7 +34,8 @@ public sealed class AgentOrchestrator(IAgentModelClient modelClient)
                 string.Join("; ", validationErrors));
 
         using var elapsedBudget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        elapsedBudget.CancelAfter(TimeSpan.FromSeconds(request.Budget.MaxElapsedSeconds));
+        if (request.Budget.MaxElapsedSeconds > 0)
+            elapsedBudget.CancelAfter(TimeSpan.FromSeconds(request.Budget.MaxElapsedSeconds));
         CancellationToken runToken = elapsedBudget.Token;
         var finalText = new StringBuilder();
         var outputItems = new List<AgentOutputItem>();
@@ -68,9 +69,11 @@ public sealed class AgentOrchestrator(IAgentModelClient modelClient)
             for (int turn = 0; turn < request.Budget.MaxTurns; turn++)
             {
                 runToken.ThrowIfCancellationRequested();
-                long remainingOutputTokens =
-                    request.Budget.MaxOutputTokens - usage.OutputTokens;
-                if (remainingOutputTokens <= 0)
+                bool hasOutputTokenLimit = request.Budget.MaxOutputTokens > 0;
+                long remainingOutputTokens = hasOutputTokenLimit
+                    ? request.Budget.MaxOutputTokens - usage.OutputTokens
+                    : 0;
+                if (hasOutputTokenLimit && remainingOutputTokens <= 0)
                 {
                     return FailureResult(
                         runId,
@@ -112,7 +115,7 @@ public sealed class AgentOrchestrator(IAgentModelClient modelClient)
                 continuation = turnResult.ContinuationJson;
                 toolOutputs = [];
 
-                if (usage.OutputTokens > request.Budget.MaxOutputTokens)
+                if (hasOutputTokenLimit && usage.OutputTokens > request.Budget.MaxOutputTokens)
                 {
                     return FailureResult(
                         runId,
@@ -350,13 +353,24 @@ public sealed class AgentOrchestrator(IAgentModelClient modelClient)
             if (exception is AgentModelOperationCanceledException providerCancellation)
                 AddOrReplaceProviderAttempt(providerAttempts, providerCancellation.ProviderAttempt);
             bool callerCancelled = cancellationToken.IsCancellationRequested;
+            bool elapsedTimeExceeded = !callerCancelled
+                && request.Budget.MaxElapsedSeconds > 0
+                && elapsedBudget.IsCancellationRequested;
             actualModel = LatestActualModel(actualModel, providerAttempts);
             return FailureResult(
                 runId,
                 request,
                 stopwatch,
-                callerCancelled ? AgentFailureCategory.Cancelled : AgentFailureCategory.BudgetExceeded,
-                callerCancelled ? "The run was cancelled." : "The run exceeded its elapsed-time budget.",
+                callerCancelled
+                    ? AgentFailureCategory.Cancelled
+                    : elapsedTimeExceeded
+                        ? AgentFailureCategory.BudgetExceeded
+                        : AgentFailureCategory.ProviderError,
+                callerCancelled
+                    ? "The run was cancelled."
+                    : elapsedTimeExceeded
+                        ? "The run exceeded its elapsed-time budget."
+                        : "The provider operation was cancelled unexpectedly.",
                 actualModel,
                 usage,
                 evidence,

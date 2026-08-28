@@ -25,7 +25,8 @@ public sealed record AgentModelTurnRequest
     public int AttemptNumber { get; init; } = 1;
 
     /// <summary>
-    /// Remaining run-wide output-token budget for this provider turn.
+    /// Remaining run-wide output-token budget for this provider turn, or zero
+    /// when the broker should omit the provider control.
     /// </summary>
     public int MaxOutputTokens { get; init; }
 }

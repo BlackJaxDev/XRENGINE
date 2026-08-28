@@ -26,8 +26,8 @@ public sealed class HumanoidFullPoseExporter : EditorWindow
         public Quaternion boneParentNeutralRotation;
         public Vector3 boneAxis;
 
-        public Quaternion unityToOpenGLRotation;
-        public Vector3 unityToOpenGLAxis;
+        public Quaternion sourceToOpenGLRotation;
+        public Vector3 sourceToOpenGLAxis;
 
         public int[] muscleIndices;
         public float[] muscleMin;
@@ -180,8 +180,8 @@ public sealed class HumanoidFullPoseExporter : EditorWindow
                     boneNeutralRotation = neutralRotation,
                     boneParentNeutralRotation = parentNeutralRotation,
                     boneAxis = axis,
-                    unityToOpenGLRotation = ConvertRotationUnityToOpenGL(neutralRotation),
-                    unityToOpenGLAxis = ConvertAxisUnityToOpenGL(axis),
+                    sourceToOpenGLRotation = ConvertRotationSourceToOpenGL(neutralRotation),
+                    sourceToOpenGLAxis = ConvertAxisSourceToOpenGL(axis),
                     muscleIndices = muscleIndices,
                     muscleMin = mins,
                     muscleMax = maxs,
@@ -332,15 +332,15 @@ public sealed class HumanoidFullPoseExporter : EditorWindow
         return new Quaternion(q.x / mag, q.y / mag, q.z / mag, q.w / mag);
     }
 
-    private static Quaternion ConvertRotationUnityToOpenGL(Quaternion rotation)
+    private static Quaternion ConvertRotationSourceToOpenGL(Quaternion rotation)
     {
         Matrix4x4 flipHandedness = Matrix4x4.Scale(new Vector3(1.0f, 1.0f, -1.0f));
-        Matrix4x4 unityRotation = Matrix4x4.Rotate(NormalizeSafe(rotation));
-        Matrix4x4 glRotation = flipHandedness * unityRotation * flipHandedness;
+        Matrix4x4 sourceRotation = Matrix4x4.Rotate(NormalizeSafe(rotation));
+        Matrix4x4 glRotation = flipHandedness * sourceRotation * flipHandedness;
         return NormalizeSafe(glRotation.rotation);
     }
 
-    private static Vector3 ConvertAxisUnityToOpenGL(Vector3 axis)
+    private static Vector3 ConvertAxisSourceToOpenGL(Vector3 axis)
     {
         Vector3 converted = new Vector3(axis.x, axis.y, -axis.z);
         return converted.sqrMagnitude > 1e-10f ? converted.normalized : Vector3.forward;

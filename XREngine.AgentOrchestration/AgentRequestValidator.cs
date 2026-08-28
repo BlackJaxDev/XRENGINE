@@ -104,8 +104,11 @@ public static partial class AgentRequestValidator
             errors.Add("budget.max_turns must be between 1 and 32");
         if (budget.MaxToolCalls is < 0 or > 256)
             errors.Add("budget.max_tool_calls must be between 0 and 256");
-        if (budget.MaxOutputTokens is < 16 or > 128_000)
-            errors.Add("budget.max_output_tokens must be between 16 and 128000");
+        if (budget.MaxOutputTokens is < 0 or > 128_000
+            || budget.MaxOutputTokens is > 0 and < 16)
+        {
+            errors.Add("budget.max_output_tokens must be 0 (no broker limit) or between 16 and 128000");
+        }
         if (budget.MaxToolResultBytes is < 1_024 or > 4_194_304)
             errors.Add("budget.max_tool_result_bytes must be between 1024 and 4194304");
         if (budget.MaxContextFiles is < 0 or > 64)
@@ -120,8 +123,8 @@ public static partial class AgentRequestValidator
             errors.Add("budget.max_context_file_bytes cannot exceed max_context_bytes");
         if (request.ContextFiles.Count > budget.MaxContextFiles)
             errors.Add("context_files exceeds budget.max_context_files");
-        if (budget.MaxElapsedSeconds is < 1 or > 3_600)
-            errors.Add("budget.max_elapsed_seconds must be between 1 and 3600");
+        if (budget.MaxElapsedSeconds is < 0 or > 3_600)
+            errors.Add("budget.max_elapsed_seconds must be 0 (no broker timeout) or between 1 and 3600");
         if (budget.MaxRetries is < 0 or > 5)
             errors.Add("budget.max_retries must be between 0 and 5");
         if (budget.MaxConcurrency is < 1 or > 8)

@@ -7,7 +7,7 @@ namespace XREngine.Components.Animation
     public enum EHumanoidNeutralPosePreset
     {
         None,
-        UnityMecanim,
+        HumanoidRetargeting,
     }
 
     public static class HumanoidNeutralPosePresets
@@ -21,7 +21,7 @@ namespace XREngine.Components.Animation
         // in the correct space, so using neutral rotations maintains a consistent
         // parent-child rotation chain.
         // Keys should match Unity HumanBodyBones enum names.
-        private static readonly IReadOnlyDictionary<string, Quaternion> UnityMecanimRotations =
+        private static readonly IReadOnlyDictionary<string, Quaternion> HumanoidRetargetingRotations =
             new Dictionary<string, Quaternion>(StringComparer.Ordinal)
             {
             { "Hips", Quaternion.Normalize(new Quaternion(0.707106709f, -5.5577253e-08f, -4.50044837e-08f, 0.707106948f)) },
@@ -81,7 +81,7 @@ namespace XREngine.Components.Animation
         public static IReadOnlyDictionary<string, Quaternion> GetRotations(EHumanoidNeutralPosePreset preset)
             => preset switch
             {
-                EHumanoidNeutralPosePreset.UnityMecanim => UnityMecanimRotations,
+                EHumanoidNeutralPosePreset.HumanoidRetargeting => HumanoidRetargetingRotations,
                 _ => Empty,
             };
 

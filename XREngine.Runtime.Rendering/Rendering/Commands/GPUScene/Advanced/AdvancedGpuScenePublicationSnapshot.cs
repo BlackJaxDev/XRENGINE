@@ -11,6 +11,7 @@ public sealed class AdvancedGpuScenePublicationSnapshot
     {
         AdvancedGpuSceneDatabase scene = database.Scene;
         AdvancedMaterialDatabase materials = database.Materials;
+        AdvancedGlobalResourceDatabase resources = database.Resources;
         Draws = scene.Draws.CreatePublicationSnapshot();
         Instances = scene.Instances.CreatePublicationSnapshot();
         Transforms = scene.Transforms.CreatePublicationSnapshot();
@@ -21,6 +22,8 @@ public sealed class AdvancedGpuScenePublicationSnapshot
         Materials = materials.Materials.CreatePublicationSnapshot();
         Kernels = materials.Kernels.CreatePublicationSnapshot();
         Layouts = materials.Layouts.CreatePublicationSnapshot();
+        Textures = resources.Textures.CreatePublicationSnapshot();
+        Samplers = resources.Samplers.CreatePublicationSnapshot();
     }
 
     public AdvancedGpuRecordTablePublicationSnapshot<AdvancedDrawRecord> Draws { get; }
@@ -33,4 +36,13 @@ public sealed class AdvancedGpuScenePublicationSnapshot
     public AdvancedGpuRecordTablePublicationSnapshot<AdvancedMaterialRecord> Materials { get; }
     public AdvancedGpuRecordTablePublicationSnapshot<AdvancedShadingKernelRecord> Kernels { get; }
     public AdvancedGpuRecordTablePublicationSnapshot<AdvancedMaterialLayoutRecord> Layouts { get; }
+    public AdvancedGpuRecordTablePublicationSnapshot<AdvancedTextureRecord> Textures { get; }
+    public AdvancedGpuRecordTablePublicationSnapshot<AdvancedSamplerRecord> Samplers { get; }
+
+    /// <summary>Resource-table generations captured when this ring entry was sealed.</summary>
+    public AdvancedGlobalResourceDatabaseGenerations ResourceGenerations { get; private set; }
+
+    internal void CaptureResourceGenerations(
+        in AdvancedGlobalResourceDatabaseGenerations generations)
+        => ResourceGenerations = generations;
 }

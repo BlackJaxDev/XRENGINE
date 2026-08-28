@@ -16,7 +16,7 @@ public sealed partial class XRMaterialInspector
     private static readonly Vector4 AuthoringMatchColor = new(1.0f, 0.82f, 0.28f, 1.0f);
     private static readonly Vector4 AuthoringUnsupportedColor = new(0.95f, 0.48f, 0.34f, 1.0f);
 
-    private static bool DrawPoiyomiAuthoringTree(
+    private static bool DrawSourceToonAuthoringTree(
         XRMaterial material,
         XRShader fragmentShader,
         ShaderUiManifest manifest,
@@ -31,7 +31,7 @@ public sealed partial class XRMaterialInspector
             return false;
 
         Stopwatch drawTimer = Stopwatch.StartNew();
-        ShaderAuthoringSchema schema = PoiyomiAuthoringSchemaCatalog.GetOrCreate(manifest);
+        ShaderAuthoringSchema schema = SourceToonAuthoringSchemaCatalog.GetOrCreate(manifest);
         AuthoringInspectorState state = AuthoringStates.GetValue(material, static _ => new());
         state.Schema = schema;
 

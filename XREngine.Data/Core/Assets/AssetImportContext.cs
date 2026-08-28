@@ -18,7 +18,14 @@ namespace XREngine.Core.Files
     /// When <see langword="null"/>, <see cref="ResolveAuxiliaryPath"/> will resolve
     /// relative to <see cref="CacheDirectory"/>.
     /// </param>
-    public sealed class AssetImportContext(string sourceFilePath, string? cacheDirectory, Func<string, string?>? resolveAuxPath = null)
+    /// <param name="destinationAssetPath">Optional native destination used by authoring imports.</param>
+    /// <param name="cancellationToken">Cancellation requested by the owning import workflow.</param>
+    public sealed class AssetImportContext(
+        string sourceFilePath,
+        string? cacheDirectory,
+        Func<string, string?>? resolveAuxPath = null,
+        string? destinationAssetPath = null,
+        CancellationToken cancellationToken = default)
     {
         private readonly Func<string, string?>? _resolveAuxPath = resolveAuxPath;
 
@@ -33,6 +40,12 @@ namespace XREngine.Core.Files
         /// May be <see langword="null"/> when no cache is available (e.g. unsaved project).
         /// </summary>
         public string? CacheDirectory { get; } = cacheDirectory;
+
+        /// <summary>Gets the intended native asset destination, when one exists.</summary>
+        public string? DestinationAssetPath { get; } = destinationAssetPath;
+
+        /// <summary>Gets the cancellation token owned by the import workflow.</summary>
+        public CancellationToken CancellationToken { get; } = cancellationToken;
 
         /// <summary>
         /// Resolves the full path for an auxiliary output file.

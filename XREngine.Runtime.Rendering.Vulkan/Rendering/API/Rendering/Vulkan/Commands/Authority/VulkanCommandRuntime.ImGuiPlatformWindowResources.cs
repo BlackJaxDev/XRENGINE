@@ -101,6 +101,14 @@ internal sealed partial class VulkanCommandRuntime
         in VulkanImGuiPlatformWindowCommandResources resources,
         uint viewportId)
     {
+        if (device.IsOperational && resources.CommandPool.Handle != 0)
+        {
+            Result resetResult = target.ResetVulkanCommandPoolTracked(
+                resources.CommandPool,
+                $"ImGuiViewport.DestroyCommandResources[{viewportId:X8}]");
+            ThrowIfFailed(resetResult, "reset detached-window command pool before retirement");
+        }
+
         for (int index = 0; index < resources.Fences.Length; index++)
             if (resources.Fences[index].Handle != 0)
                 device.Api.DestroyFence(device.Device, resources.Fences[index], null);

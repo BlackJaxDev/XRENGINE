@@ -351,8 +351,10 @@ internal sealed unsafe partial class VulkanDescriptorManager
         {
             foreach ((VulkanResourceLifetimeKey key, ulong generation) in state.PinnedReferences)
             {
-                if (tracker.ResourceLifetimes.TryGetValue(key, out VulkanResourceLifetimeRecord? resource) &&
-                    resource.Generation == generation)
+                if (tracker.TryResolveResourceGenerationNoLock(
+                        key,
+                        generation,
+                        out VulkanResourceLifetimeRecord resource))
                 {
                     resource.Pins.ReleaseDescriptorReference();
                 }
@@ -379,7 +381,7 @@ internal sealed unsafe partial class VulkanDescriptorManager
             }
         }
 
-        tracker.PublishedDescriptorSets.TryRemove(setHandle, out _);
+        tracker.RemovePublishedDescriptorSnapshotNoLock(setHandle);
         if (!tracker.ResourceLifetimes.TryGetValue(
                 new VulkanResourceLifetimeKey(ObjectType.DescriptorSet, setHandle),
                 out VulkanResourceLifetimeRecord? setResource))
@@ -448,14 +450,16 @@ internal sealed unsafe partial class VulkanDescriptorManager
                 ? []
                 : new uint[state.ReflectedImageBindings.Count];
             state.ReflectedImageBindings.CopyTo(reflectedBindings);
-            ulong descriptorSetLifetimeGeneration =
-                tracker.ResourceLifetimes.TryGetValue(
-                    new VulkanResourceLifetimeKey(
-                        ObjectType.DescriptorSet,
-                        descriptorSetHandle),
-                    out VulkanResourceLifetimeRecord? descriptorSetLifetime)
-                    ? descriptorSetLifetime.Generation
-                    : 0UL;
+            VulkanResourceLifetimeKey descriptorSetKey = new(
+                ObjectType.DescriptorSet,
+                descriptorSetHandle);
+            VulkanResourceSlotHandle descriptorSetSlot =
+                tracker.TryGetResourceSlotNoLock(
+                    descriptorSetKey,
+                    out VulkanResourceSlotHandle capturedDescriptorSetSlot)
+                        ? capturedDescriptorSetSlot
+                        : VulkanResourceSlotHandle.Invalid;
+            ulong descriptorSetLifetimeGeneration = descriptorSetSlot.Generation;
 
             // All fallible snapshot allocations precede semantic pin/index
             // mutation. This keeps a failed publication recoverable without
@@ -465,21 +469,42 @@ internal sealed unsafe partial class VulkanDescriptorManager
                     tracker,
                     reference,
                     pinnedReferences);
+            VulkanResourceSlotHandle[] resourceClosure =
+                new VulkanResourceSlotHandle[pinnedReferences.Count];
+            int closureIndex = 0;
+            foreach (VulkanResourceLifetimeKey reference in pinnedReferences)
+            {
+                if (!tracker.TryGetResourceSlotNoLock(
+                        reference,
+                        out VulkanResourceSlotHandle slot))
+                {
+                    throw new InvalidOperationException(
+                        $"Descriptor set {descriptorSetKey} references untracked resource {reference}.");
+                }
+
+                resourceClosure[closureIndex++] = slot;
+            }
+            VulkanPublishedDescriptorSetSnapshot snapshot = new(
+                state.Generation,
+                state.ResourceClosureGeneration,
+                state.ImagePayloadGeneration,
+                descriptorSetLifetimeGeneration,
+                descriptorSetSlot,
+                resourceClosure,
+                publishedReferences,
+                images,
+                reflectedBindings,
+                state.HasReflection,
+                state.NativePublicationState);
             UpdateReferenceIndexNoLock(
                 tracker,
                 descriptorSetHandle,
                 state,
                 references);
             UpdateGenerationPinsNoLock(tracker, state, pinnedReferences);
-            tracker.PublishedDescriptorSets[descriptorSetHandle] = new VulkanPublishedDescriptorSetSnapshot(
-                state.Generation,
-                state.ImagePayloadGeneration,
-                descriptorSetLifetimeGeneration,
-                publishedReferences,
-                images,
-                reflectedBindings,
-                state.HasReflection,
-                state.NativePublicationState);
+            tracker.PublishDescriptorSnapshotNoLock(
+                descriptorSetHandle,
+                snapshot);
         }
         finally
         {
@@ -514,8 +539,10 @@ internal sealed unsafe partial class VulkanDescriptorManager
         HashSet<VulkanResourceLifetimeKey> references)
     {
         foreach ((VulkanResourceLifetimeKey key, ulong generation) in state.PinnedReferences)
-            if (tracker.ResourceLifetimes.TryGetValue(key, out VulkanResourceLifetimeRecord? resource) &&
-                resource.Generation == generation)
+            if (tracker.TryResolveResourceGenerationNoLock(
+                    key,
+                    generation,
+                    out VulkanResourceLifetimeRecord resource))
                 resource.Pins.ReleaseDescriptorReference();
         state.PinnedReferences.Clear();
 

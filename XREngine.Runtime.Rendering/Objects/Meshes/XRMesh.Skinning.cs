@@ -1,5 +1,3 @@
-using Assimp;
-using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Numerics;
 using XREngine.Scene.Transforms;
@@ -427,111 +425,6 @@ public partial class XRMesh
         _maxWeightCount = 0;
     }
 
-    private void InitializeSkinning(
-        Mesh mesh,
-        Dictionary<string, List<SceneNode>> nodeCache,
-        Dictionary<int, List<int>>? faceRemap,
-        Vertex[] sourceList)
-    {
-        using var _ = RuntimeRenderingHostServices.Profiling.StartProfileScope();
-
-        CollectBoneWeights(
-            mesh,
-            nodeCache,
-            faceRemap,
-            sourceList,
-            out int boneCount,
-            out var weightsPerVertex,
-            out var boneToIndexTable);
-
-        if (weightsPerVertex is { Length: > 0 } && boneCount > 0)
-            PopulateSkinningBuffers(boneToIndexTable, weightsPerVertex);
-    }
-
-    private void CollectBoneWeights(
-        Mesh mesh,
-        Dictionary<string, List<SceneNode>> nodeCache,
-        Dictionary<int, List<int>>? faceRemap,
-        Vertex[] sourceList,
-        out int boneCount,
-        out Dictionary<TransformBase, (float weight, Matrix4x4 invBindMatrix)>?[]? weightsPerVertex,
-        out Dictionary<TransformBase, int> boneToIndexTable)
-    {
-        using var _ = RuntimeRenderingHostServices.Profiling.StartProfileScope();
-
-        boneCount = mesh.BoneCount;
-        int vertexCount = VertexCount;
-        var weightsPerVertex2 = new Dictionary<TransformBase, (float weight, Matrix4x4 invBindMatrix)>?[vertexCount];
-
-        var concurrentInvBindMatrices = new ConcurrentDictionary<TransformBase, Matrix4x4>();
-        var concurrentBoneToIndexTable = new ConcurrentDictionary<TransformBase, int>();
-        _maxWeightCount = 0;
-        int boneIndex = 0;
-
-        // Mesh import is already on an async worker; keep bone collection sequential so the
-        // fan-out can't starve Update / FixedUpdate / CollectVisible threads.
-        for (int i = 0; i < boneCount; i++)
-        {
-            Bone bone = mesh.Bones[i];
-            if (!bone.HasVertexWeights)
-                continue;
-
-            string name = bone.Name;
-            if (!TryGetTransform(nodeCache, name, out var transform) || transform is null)
-            {
-                Debug.Meshes($"Bone {name} has no corresponding node in the heirarchy.");
-                continue;
-            }
-
-            Matrix4x4 invBind = transform.InverseBindMatrix;
-            concurrentInvBindMatrices[transform] = invBind;
-
-            int weightCount = bone.VertexWeightCount;
-            for (int j = 0; j < weightCount; j++)
-            {
-                var vw = bone.VertexWeights[j];
-                int origId = vw.VertexID;
-                float weight = vw.Weight;
-                List<int> targetIndices = (faceRemap != null && faceRemap.TryGetValue(origId, out var remapped))
-                    ? remapped
-                    : [origId];
-
-                foreach (int newId in targetIndices)
-                {
-                    var wpv = weightsPerVertex2[newId];
-                    wpv ??= [];
-                    weightsPerVertex2[newId] = wpv;
-
-                    if (!wpv.TryGetValue(transform, out var existing))
-                        wpv[transform] = (weight, invBind);
-                    else if (existing.weight != weight)
-                    {
-                        wpv[transform] = ((existing.weight + weight) * 0.5f, existing.invBindMatrix);
-                        Debug.Meshes($"Vertex {newId} has multiple weights for bone {name}.");
-                    }
-                    if (sourceList[newId].Weights == null)
-                        sourceList[newId].Weights = wpv;
-
-                    if (wpv.Count > _maxWeightCount)
-                        _maxWeightCount = wpv.Count;
-                }
-            }
-
-            int idx = Interlocked.Increment(ref boneIndex) - 1;
-            concurrentBoneToIndexTable.TryAdd(transform, idx);
-        }
-
-        boneToIndexTable = concurrentBoneToIndexTable.ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
-
-        var utilizedBones = new (TransformBase tfm, Matrix4x4 invBindWorldMtx)[boneToIndexTable.Count];
-        foreach (var pair in boneToIndexTable)
-            if (concurrentInvBindMatrices.TryGetValue(pair.Key, out var cachedInvBind))
-                utilizedBones[pair.Value] = (pair.Key, cachedInvBind);
-        UtilizedBones = utilizedBones;
-
-        weightsPerVertex = weightsPerVertex2;
-    }
-
     private void PopulateSkinningBuffers(
         Dictionary<TransformBase, int> boneToIndexTable,
         Dictionary<TransformBase, (float weight, Matrix4x4 invBindMatrix)>?[] weightsPerVertex)
@@ -808,15 +701,4 @@ public partial class XRMesh
     private readonly record struct LogicalSkinningInfluence(int BoneIndex, float Weight);
     private readonly record struct PackedSkinningInfluence(ushort BoneIndexPlusOne, byte WeightUNorm8);
 
-    private static unsafe bool TryGetTransform(Dictionary<string, List<SceneNode>> nodeCache, string name, out TransformBase? transform)
-    {
-        if (!nodeCache.TryGetValue(name, out var matches) || matches is null || matches.Count == 0)
-        {
-            Debug.Meshes($"{name} has no corresponding node in the heirarchy.");
-            transform = null;
-            return false;
-        }
-        transform = matches[0].Transform;
-        return true;
-    }
 }

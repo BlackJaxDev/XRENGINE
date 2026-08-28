@@ -1899,7 +1899,7 @@ Possible cooked bone-volume files:
 
 ```text
 XREngine.Runtime.Rendering/Rendering/Models/Meshes/GpuBoneProxyPayload.cs
-XREngine.Runtime.ModelingBridge/Importing/GpuBoneProxyPayloadBuilder.cs
+XREngine.Runtime.ModelAssetPipeline/Importing/GpuBoneProxyPayloadBuilder.cs
 ```
 
 ### 29.3 New shaders

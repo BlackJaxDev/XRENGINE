@@ -13,6 +13,6 @@ public sealed class HumanoidAvatarLegacyBoneCalibration
     public Quaternion NeutralRotation { get; set; } = Quaternion.Identity;
     public bool HasNeutralPosition { get; set; }
     public Vector3 NeutralPosition { get; set; }
-    public UnityHumanoidBoneResponseProfile? BoneResponse { get; set; }
-    public UnityHumanoidCoupledBoneModel? CoupledBoneModel { get; set; }
+    public ImportedHumanoidBoneResponseProfile? BoneResponse { get; set; }
+    public ImportedHumanoidCoupledBoneModel? CoupledBoneModel { get; set; }
 }

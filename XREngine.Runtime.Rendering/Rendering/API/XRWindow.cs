@@ -2176,10 +2176,37 @@ namespace XREngine.Rendering
         #region Public Methods - Player Registration
 
         public void RegisterLocalPlayer(ELocalPlayerIndex playerIndex, bool autoSizeAllViewports)
-            => RegisterController(RuntimeEngine.State.GetOrCreateLocalPlayer(playerIndex), autoSizeAllViewports);
+        {
+            IPawnController? player = RuntimePlayerControllerServices.Current?.GetOrCreateLocalPlayer(playerIndex);
+            if (player is not null)
+                RegisterController(player, autoSizeAllViewports);
+        }
 
         public void RegisterController(IPawnController controller, bool autoSizeAllViewports)
             => GetOrAddViewportForPlayer(controller, autoSizeAllViewports).AssociatedPlayer = controller;
+
+        /// <summary>
+        /// Rebinds every viewport associated with <paramref name="previousController"/>
+        /// to <paramref name="replacementController"/>. This preserves split-screen and
+        /// multi-viewport layouts when an input integration replaces a controller type.
+        /// </summary>
+        public int RebindController(IPawnController previousController, IPawnController replacementController)
+        {
+            ArgumentNullException.ThrowIfNull(previousController);
+            ArgumentNullException.ThrowIfNull(replacementController);
+
+            int reboundCount = 0;
+            foreach (XRViewport viewport in Viewports)
+            {
+                if (!ReferenceEquals(viewport.AssociatedPlayer, previousController))
+                    continue;
+
+                viewport.AssociatedPlayer = replacementController;
+                reboundCount++;
+            }
+
+            return reboundCount;
+        }
 
         /// <summary>
         /// Ensures the given controller is registered with this window and has a valid viewport.
@@ -2219,7 +2246,7 @@ namespace XREngine.Rendering
 
         public void UnregisterLocalPlayer(ELocalPlayerIndex playerIndex)
         {
-            IPawnController? controller = RuntimeEngine.State.GetLocalPlayer(playerIndex);
+            IPawnController? controller = RuntimePlayerControllerServices.Current?.GetLocalPlayer(playerIndex);
             if (controller is not null)
                 UnregisterController(controller);
         }

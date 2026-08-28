@@ -21,7 +21,7 @@ namespace XREngine.Components.Animation
 {
     [XRComponentEditor("XREngine.Editor.ComponentEditors.HumanoidComponentEditor")]
     [XRTypeRedirect("XREngine.Components.Animation.HumanoidComponent")]
-    public partial class HumanoidComponent : XRComponent, IRenderable, IHumanoidHeightReference, IHumanoidVrCalibrationRig, IUnityHumanoidProjectionPoseSink
+    public partial class HumanoidComponent : XRComponent, IRenderable, IHumanoidHeightReference, IHumanoidVrCalibrationRig, IImportedHumanoidProjectionPoseSink
     {
         // Humanoid (muscle) curve state. Values are expected to be normalized in [-1, 1].
         // We store raw values and apply a full pose once per frame.
@@ -36,7 +36,7 @@ namespace XREngine.Components.Animation
         private readonly float[] _unmirroredMuscleValueSnapshot = new float[MuscleValueCount];
         private readonly object _loopPoseCorrectionProbeOwner = new();
         private readonly object _poseEvaluationSyncRoot = new();
-        private static readonly (string Left, string Right)[] MecanimArmSideMirrorPairs =
+        private static readonly (string Left, string Right)[] HumanoidArmSideMirrorPairs =
         [
             ("LeftShoulder", "RightShoulder"),
             ("LeftUpperArm", "RightUpperArm"),
@@ -61,9 +61,9 @@ namespace XREngine.Components.Animation
         private static readonly AsyncLocal<int> _deferSceneNodeInitializationScopeDepth = new();
         private readonly Dictionary<SceneNode, Matrix4x4> _humanoidBindLocalPoses = [];
         private readonly Dictionary<SceneNode, Matrix4x4> _humanoidBindWorldPoses = [];
-        private const string UnityAvatarContentBasisNodeName = "UnityHumanoidContentBasis";
-        private SceneNode? _unityAvatarContentBasisNode;
-        private Quaternion _unityAvatarContentBasisCorrection = Quaternion.Identity;
+        private const string ImportedAvatarContentBasisNodeName = "UnityHumanoidContentBasis";
+        private SceneNode? _importedAvatarContentBasisNode;
+        private Quaternion _importedAvatarContentBasisCorrection = Quaternion.Identity;
         private bool _sceneNodeInitializationComplete;
 
         [Browsable(false)]
@@ -101,7 +101,7 @@ namespace XREngine.Components.Animation
             MigratePendingLegacyAvatarProfile();
             SetFromNodeCore();
             RefreshBoneBindPosesFromCapturedHierarchy();
-            if (TryApplyUnityAvatarContentBasis())
+            if (TryApplyImportedAvatarContentBasis())
             {
                 // The wrapper changes every descendant's bind world pose while preserving
                 // their authored local matrices. Re-capture before any pose solver consumes it.
@@ -119,9 +119,9 @@ namespace XREngine.Components.Animation
         /// Static content-space correction that aligns the imported skeleton and meshes with
         /// the Unity avatar-root axes. It is deliberately separate from projected root motion.
         /// </summary>
-        public Quaternion UnityAvatarContentBasisCorrection => _unityAvatarContentBasisCorrection;
+        public Quaternion ImportedAvatarContentBasisCorrection => _importedAvatarContentBasisCorrection;
 
-        private bool TryApplyUnityAvatarContentBasis()
+        private bool TryApplyImportedAvatarContentBasis()
         {
             HumanoidAvatarBodyAxes? bodyAxes = AvatarDefinition.Status != EHumanoidAvatarDefinitionStatus.Uninitialized
                 ? AvatarDefinition.BodyAxes
@@ -152,11 +152,11 @@ namespace XREngine.Components.Animation
                 return false;
 
             TransformBase[] contentTransforms = [.. SceneNode.Transform.Children];
-            SceneNode? basisNode = ResolveUnityAvatarContentBasisNode();
+            SceneNode? basisNode = ResolveImportedAvatarContentBasisNode();
             if (basisNode is null)
             {
-                basisNode = new SceneNode(SceneNode) { Name = UnityAvatarContentBasisNodeName };
-                _unityAvatarContentBasisNode = basisNode;
+                basisNode = new SceneNode(SceneNode) { Name = ImportedAvatarContentBasisNodeName };
+                _importedAvatarContentBasisNode = basisNode;
                 for (int i = 0; i < contentTransforms.Length; i++)
                     basisNode.Transform.AddChild(contentTransforms[i], false, EParentAssignmentMode.Immediate);
             }
@@ -172,25 +172,25 @@ namespace XREngine.Components.Animation
             Quaternion correctedRotation = Quaternion.Normalize(
                 Quaternion.CreateFromRotationMatrix(correctedRotationMatrix));
             basisTransform.SetLocalTranslationRotation(basisTransform.Translation, correctedRotation);
-            _unityAvatarContentBasisCorrection = correctedRotation;
+            _importedAvatarContentBasisCorrection = correctedRotation;
 
             Debug.Animation(
                 $"[HumanoidProfile] Applied Unity content-basis correction {correctionDegrees:F3} deg " +
-                $"to '{SceneNode.Name}' on child '{UnityAvatarContentBasisNodeName}'.");
+                $"to '{SceneNode.Name}' on child '{ImportedAvatarContentBasisNodeName}'.");
             return true;
         }
 
-        private SceneNode? ResolveUnityAvatarContentBasisNode()
+        private SceneNode? ResolveImportedAvatarContentBasisNode()
         {
-            if (_unityAvatarContentBasisNode is { IsDestroyed: false })
-                return _unityAvatarContentBasisNode;
+            if (_importedAvatarContentBasisNode is { IsDestroyed: false })
+                return _importedAvatarContentBasisNode;
 
             foreach (TransformBase child in SceneNode.Transform.Children)
             {
                 if (child.SceneNode is SceneNode node
-                    && string.Equals(node.Name, UnityAvatarContentBasisNodeName, StringComparison.Ordinal))
+                    && string.Equals(node.Name, ImportedAvatarContentBasisNodeName, StringComparison.Ordinal))
                 {
-                    _unityAvatarContentBasisNode = node;
+                    _importedAvatarContentBasisNode = node;
                     return node;
                 }
             }
@@ -418,7 +418,7 @@ namespace XREngine.Components.Animation
 
         private SceneNode? _ikTargetRootNode;
 
-        private EHumanoidNeutralPosePreset _neutralPosePreset = EHumanoidNeutralPosePreset.UnityMecanim;
+        private EHumanoidNeutralPosePreset _neutralPosePreset = EHumanoidNeutralPosePreset.HumanoidRetargeting;
         public EHumanoidNeutralPosePreset NeutralPosePreset
         {
             get => _neutralPosePreset;
@@ -759,10 +759,10 @@ namespace XREngine.Components.Animation
         /// Loads avatar-specific Unity humanoid calibration exported by
         /// <c>HumanoidPoseAuditExporter</c> and immediately refreshes the live pose.
         /// </summary>
-        public void LoadUnityHumanoidAvatarProfile(string filePath)
+        public void LoadImportedHumanoidAvatarProfile(string filePath)
         {
-            UnityHumanoidAvatarProfile profile = UnityHumanoidAvatarProfileImporter.Import(filePath);
-            MigrateLegacyUnityAvatarProfile(profile, applyPreview: _sceneNodeInitializationComplete);
+            ImportedHumanoidAvatarProfile profile = ImportedHumanoidAvatarProfileImporter.Import(filePath);
+            MigrateLegacyImportedAvatarProfile(profile, applyPreview: _sceneNodeInitializationComplete);
         }
 
         private static int CountDescendantsNamed(SceneNode node, string name, ref SceneNode? firstMatch)
@@ -780,13 +780,13 @@ namespace XREngine.Components.Animation
             return count;
         }
 
-        private float _unityProfileUnitsPerMeter;
+        private float _sourceProfileUnitsPerMeter;
 
         /// <summary>
         /// Model-space units per Unity meter derived from corresponding neutral
         /// bone translations in the active avatar profile.
         /// </summary>
-        public float UnityProfileUnitsPerMeter => _unityProfileUnitsPerMeter;
+        public float SourceProfileUnitsPerMeter => _sourceProfileUnitsPerMeter;
 
         private void ApplyNeutralPoseBindRelativeRotations(
             IReadOnlyDictionary<string, Quaternion> rotations,
@@ -820,7 +820,7 @@ namespace XREngine.Components.Animation
         {
             IReadOnlyDictionary<string, Quaternion> rotations = HumanoidNeutralPosePresets.GetRotations(preset);
             bool mirrorArmSideConvention =
-                preset == EHumanoidNeutralPosePreset.UnityMecanim &&
+                preset == EHumanoidNeutralPosePreset.HumanoidRetargeting &&
                 ShouldMirrorNeutralPoseArmSideConvention(rotations);
 
             ApplyNeutralPoseLocalRotations(rotations, applyPreview, mirrorArmSideConvention);
@@ -860,7 +860,7 @@ namespace XREngine.Components.Animation
             Quaternion fallback,
             bool mirrorArmSideConvention)
         {
-            if (!mirrorArmSideConvention || !TryGetMirroredMecanimArmBoneName(boneName, out string mirroredBoneName))
+            if (!mirrorArmSideConvention || !TryGetMirroredHumanoidArmBoneName(boneName, out string mirroredBoneName))
                 return fallback;
 
             return rotations.TryGetValue(mirroredBoneName, out Quaternion mirroredRotation)
@@ -868,9 +868,9 @@ namespace XREngine.Components.Animation
                 : fallback;
         }
 
-        private static bool TryGetMirroredMecanimArmBoneName(string boneName, out string mirroredBoneName)
+        private static bool TryGetMirroredHumanoidArmBoneName(string boneName, out string mirroredBoneName)
         {
-            foreach ((string left, string right) in MecanimArmSideMirrorPairs)
+            foreach ((string left, string right) in HumanoidArmSideMirrorPairs)
             {
                 if (StringComparer.Ordinal.Equals(boneName, left))
                 {
@@ -1264,11 +1264,11 @@ namespace XREngine.Components.Animation
 
             bool resolvedFeetBeforeLoopPose = false;
             if (_hasProjectionMuscleValueSnapshot
-                && _activeImportedBodyProjectionPolicy is UnityHumanoidRootMotionPolicy
+                && _activeImportedBodyProjectionPolicy is ImportedHumanoidRootMotionPolicy
                 {
                     LoopPose: true,
                     BakePositionYIntoPose: false,
-                    PositionYBasis: EUnityHumanoidRootPositionYBasis.Feet,
+                    PositionYBasis: EImportedHumanoidRootPositionYBasis.Feet,
                 })
             {
                 // Unity chooses a feet-based root from the authored pose, then distributes the
@@ -1410,7 +1410,7 @@ namespace XREngine.Components.Animation
             if (node is null)
                 return;
 
-            if (calibration.CoupledBoneModel is UnityHumanoidCoupledBoneModel coupledModel)
+            if (calibration.CoupledBoneModel is ImportedHumanoidCoupledBoneModel coupledModel)
             {
                 bool mirrorHips = calibration.Role is EHumanoidAvatarBoneRole.Hips
                     && _activeImportedBodyProjectionPolicy is { Mirror: true };
@@ -1433,16 +1433,16 @@ namespace XREngine.Components.Animation
                     : null;
                 if (mirrorHips)
                 {
-                    coupledRotation = UnityHumanoidMirrorOperator.MirrorRotation(coupledRotation);
+                    coupledRotation = ImportedHumanoidMirrorOperator.MirrorRotation(coupledRotation);
                     positionDelta = calibratedNeutralPosition is Vector3 neutralPosition
-                        ? UnityHumanoidMirrorOperator.MirrorPosition(neutralPosition + positionDelta) - neutralPosition
-                        : UnityHumanoidMirrorOperator.MirrorPosition(positionDelta);
+                        ? ImportedHumanoidMirrorOperator.MirrorPosition(neutralPosition + positionDelta) - neutralPosition
+                        : ImportedHumanoidMirrorOperator.MirrorPosition(positionDelta);
                 }
                 ApplyNeutralBindRelativePose(node, coupledRotation, positionDelta, calibratedNeutralPosition);
                 return;
             }
 
-            if (calibration.BoneResponse is not UnityHumanoidBoneResponseProfile response)
+            if (calibration.BoneResponse is not ImportedHumanoidBoneResponseProfile response)
                 return;
 
             Quaternion rotation = response.Evaluate(muscleSnapshot, compiled.MuscleInputScale);
@@ -3110,12 +3110,12 @@ namespace XREngine.Components.Animation
         private object? _pendingProjectedRootMotionOwner;
         private object? _activeImportedBodyProjectionOwner;
         private object? _canonicalProjectedFeetOwner;
-        private UnityHumanoidClipRootMotionSettings? _importedBodyProjectionSettings;
+        private ImportedHumanoidClipRootMotionSettings? _importedBodyProjectionSettings;
         private HumanoidProjectedRootPose? _importedBodyProjectionPrefix;
         private HumanoidLoopPoseCorrection? _importedBodyLoopPoseCorrection;
         private HumanoidLoopPoseCorrection? _pendingImportedBodyLoopPoseCorrection;
         private HumanoidLoopPoseCorrection? _activeImportedBodyLoopPoseCorrection;
-        private UnityHumanoidRootMotionPolicy? _activeImportedBodyProjectionPolicy;
+        private ImportedHumanoidRootMotionPolicy? _activeImportedBodyProjectionPolicy;
         private string? _importedBodyProjectionCalibrationClipName;
         private float _canonicalProjectedFeetY;
         private bool _hasCanonicalProjectedFeetY;
@@ -3388,7 +3388,7 @@ namespace XREngine.Components.Animation
             HumanoidImportedBodySample canonicalSample,
             bool hasCanonicalSample,
             float weight = 1.0f,
-            UnityHumanoidClipRootMotionSettings? projectionSettings = null,
+            ImportedHumanoidClipRootMotionSettings? projectionSettings = null,
             string? projectionCalibrationClipName = null,
             HumanoidProjectedRootPose? projectionPrefix = null,
             HumanoidLoopPoseCorrection? loopPoseCorrection = null,
@@ -3416,13 +3416,13 @@ namespace XREngine.Components.Animation
             else
                 Array.Clear(_canonicalProjectionMuscleValueSnapshot);
             _hasProjectionMuscleValueSnapshot = projectionSettings is not null
-                && UnityHumanoidRootMotionPolicy.TryCreate(
+                && ImportedHumanoidRootMotionPolicy.TryCreate(
                     projectionSettings,
-                    out UnityHumanoidRootMotionPolicy projectionPolicy,
+                    out ImportedHumanoidRootMotionPolicy projectionPolicy,
                     out _)
                 && projectionPolicy.LoopPose
                 && !projectionPolicy.BakePositionYIntoPose
-                && projectionPolicy.PositionYBasis is EUnityHumanoidRootPositionYBasis.Feet;
+                && projectionPolicy.PositionYBasis is EImportedHumanoidRootPositionYBasis.Feet;
             if (_hasProjectionMuscleValueSnapshot)
             {
                 if (!TryCaptureMuscleSnapshot(_projectionMuscleValueSnapshot))
@@ -3440,7 +3440,7 @@ namespace XREngine.Components.Animation
         /// Stages one authored muscle value before Loop Pose correction. This snapshot is used
         /// only by feet-based root projection; the corrected value remains the visible pose.
         /// </summary>
-        public void SetUnityHumanoidProjectionMuscle(
+        public void SetImportedHumanoidProjectionMuscle(
             EHumanoidValue value,
             float amount,
             bool flipImportedMuscleZ)
@@ -3729,7 +3729,7 @@ namespace XREngine.Components.Animation
             HumanoidImportedBodySample canonicalSample,
             float weight,
             object? owner,
-            UnityHumanoidClipRootMotionSettings? projectionSettings,
+            ImportedHumanoidClipRootMotionSettings? projectionSettings,
             string? projectionCalibrationClipName,
             HumanoidProjectedRootPose? projectionPrefix = null,
             HumanoidLoopPoseCorrection? loopPoseCorrection = null)
@@ -3738,10 +3738,10 @@ namespace XREngine.Components.Animation
             if (!TryGetCompiledAvatarDefinition(out CompiledHumanoidAvatarDefinition compiled))
                 return;
 
-            UnityHumanoidRootMotionPolicy? policy = projectionSettings is not null
-                && UnityHumanoidRootMotionPolicy.TryCreate(
+            ImportedHumanoidRootMotionPolicy? policy = projectionSettings is not null
+                && ImportedHumanoidRootMotionPolicy.TryCreate(
                     projectionSettings,
-                    out UnityHumanoidRootMotionPolicy compiledPolicy,
+                    out ImportedHumanoidRootMotionPolicy compiledPolicy,
                     out _)
                         ? compiledPolicy
                         : null;
@@ -3765,10 +3765,10 @@ namespace XREngine.Components.Animation
             Quaternion currentProjectionRotation = currentRotation;
             if (policy is { Mirror: true })
             {
-                canonicalPosition = UnityHumanoidMirrorOperator.MirrorPosition(canonicalPosition);
-                currentPosition = UnityHumanoidMirrorOperator.MirrorPosition(currentPosition);
-                canonicalRotation = UnityHumanoidMirrorOperator.MirrorRotation(canonicalRotation);
-                currentRotation = UnityHumanoidMirrorOperator.MirrorRotation(currentRotation);
+                canonicalPosition = ImportedHumanoidMirrorOperator.MirrorPosition(canonicalPosition);
+                currentPosition = ImportedHumanoidMirrorOperator.MirrorPosition(currentPosition);
+                canonicalRotation = ImportedHumanoidMirrorOperator.MirrorRotation(canonicalRotation);
+                currentRotation = ImportedHumanoidMirrorOperator.MirrorRotation(currentRotation);
             }
             float weightedMotionScale = compiled.HumanScale * compiled.ModelUnitsPerMeter * weight;
             Vector3 mappedPositionDelta = currentPosition - canonicalPosition;
@@ -3831,7 +3831,7 @@ namespace XREngine.Components.Animation
             float weightedMotionScale,
             float weight,
             object? owner,
-            UnityHumanoidClipRootMotionSettings? settings,
+            ImportedHumanoidClipRootMotionSettings? settings,
             string? projectionCalibrationClipName,
             HumanoidProjectedRootPose? projectionPrefix)
         {
@@ -3862,7 +3862,7 @@ namespace XREngine.Components.Animation
             HumanoidImportedBodySample currentSample,
             HumanoidImportedBodySample canonicalSample,
             float weight,
-            UnityHumanoidClipRootMotionSettings? settings,
+            ImportedHumanoidClipRootMotionSettings? settings,
             string? projectionCalibrationClipName,
             ReadOnlySpan<float> muscleValues)
         {
@@ -3898,7 +3898,7 @@ namespace XREngine.Components.Animation
             Quaternion canonicalImportedRotation,
             float weightedMotionScale,
             float weight,
-            UnityHumanoidClipRootMotionSettings? settings,
+            ImportedHumanoidClipRootMotionSettings? settings,
             string? projectionCalibrationClipName,
             ReadOnlySpan<float> muscleValues)
         {
@@ -3909,9 +3909,9 @@ namespace XREngine.Components.Animation
             Quaternion projectedRotation = Quaternion.Identity;
 
             if (settings is null
-                || !UnityHumanoidRootMotionPolicy.TryCreate(
+                || !ImportedHumanoidRootMotionPolicy.TryCreate(
                     settings,
-                    out UnityHumanoidRootMotionPolicy policy,
+                    out ImportedHumanoidRootMotionPolicy policy,
                     out _))
                 return new HumanoidProjectedRootPose(projectedPosition, projectedRotation, channels);
 
@@ -3932,7 +3932,7 @@ namespace XREngine.Components.Animation
             Quaternion canonicalImportedRotation,
             float weightedMotionScale,
             float weight,
-            UnityHumanoidRootMotionPolicy policy)
+            ImportedHumanoidRootMotionPolicy policy)
         {
             EHumanoidProjectedRootChannels channels = EHumanoidProjectedRootChannels.None;
             Vector3 projectedPosition = Vector3.Zero;
@@ -3940,10 +3940,10 @@ namespace XREngine.Components.Animation
 
             if (policy.Mirror)
             {
-                currentImportedPosition = UnityHumanoidMirrorOperator.MirrorPosition(currentImportedPosition);
-                canonicalImportedPosition = UnityHumanoidMirrorOperator.MirrorPosition(canonicalImportedPosition);
-                currentImportedRotation = UnityHumanoidMirrorOperator.MirrorRotation(currentImportedRotation);
-                canonicalImportedRotation = UnityHumanoidMirrorOperator.MirrorRotation(canonicalImportedRotation);
+                currentImportedPosition = ImportedHumanoidMirrorOperator.MirrorPosition(currentImportedPosition);
+                canonicalImportedPosition = ImportedHumanoidMirrorOperator.MirrorPosition(canonicalImportedPosition);
+                currentImportedRotation = ImportedHumanoidMirrorOperator.MirrorRotation(currentImportedRotation);
+                canonicalImportedRotation = ImportedHumanoidMirrorOperator.MirrorRotation(canonicalImportedRotation);
             }
 
             // RootT was imported as (-sourceX, sourceZ, sourceY). Restore semantic
@@ -3967,7 +3967,7 @@ namespace XREngine.Components.Animation
             }
 
             if (!policy.BakePositionYIntoPose
-                && policy.PositionYBasis is not EUnityHumanoidRootPositionYBasis.Feet)
+                && policy.PositionYBasis is not EImportedHumanoidRootPositionYBasis.Feet)
             {
                 projectedPosition.Y = rootAlignedDelta.Y * weightedMotionScale;
                 channels |= EHumanoidProjectedRootChannels.PositionY;
@@ -3995,7 +3995,7 @@ namespace XREngine.Components.Animation
             ReadOnlySpan<float> sourceStartMuscles,
             ReadOnlySpan<float> sourceEndMuscles,
             float weight,
-            UnityHumanoidClipRootMotionSettings settings,
+            ImportedHumanoidClipRootMotionSettings settings,
             string? projectionCalibrationClipName,
             out HumanoidLoopPoseCorrection bodyCorrection,
             out HumanoidProjectedRootPose projectedRootGenerator)
@@ -4008,9 +4008,9 @@ namespace XREngine.Components.Animation
                 settings,
                 projectionCalibrationClipName,
                 ReadOnlySpan<float>.Empty);
-            if (!UnityHumanoidRootMotionPolicy.TryCreate(
+            if (!ImportedHumanoidRootMotionPolicy.TryCreate(
                     settings,
-                    out UnityHumanoidRootMotionPolicy policy,
+                    out ImportedHumanoidRootMotionPolicy policy,
                     out _)
                 || !TryGetCompiledAvatarDefinition(out CompiledHumanoidAvatarDefinition compiled))
                 return;
@@ -4048,10 +4048,10 @@ namespace XREngine.Components.Animation
             Quaternion endRotation = NormalizeImportedBodyRotationPure(sourceEnd.Rotation, canonicalRotation);
             if (policy.Mirror)
             {
-                canonicalPosition = UnityHumanoidMirrorOperator.MirrorPosition(canonicalPosition);
-                endPosition = UnityHumanoidMirrorOperator.MirrorPosition(endPosition);
-                canonicalRotation = UnityHumanoidMirrorOperator.MirrorRotation(canonicalRotation);
-                endRotation = UnityHumanoidMirrorOperator.MirrorRotation(endRotation);
+                canonicalPosition = ImportedHumanoidMirrorOperator.MirrorPosition(canonicalPosition);
+                endPosition = ImportedHumanoidMirrorOperator.MirrorPosition(endPosition);
+                canonicalRotation = ImportedHumanoidMirrorOperator.MirrorRotation(canonicalRotation);
+                endRotation = ImportedHumanoidMirrorOperator.MirrorRotation(endRotation);
             }
 
             Vector3 canonicalSemanticPosition = new(
@@ -4067,16 +4067,16 @@ namespace XREngine.Components.Animation
                 safeWeight);
 
             Vector3 canonicalAllocation = Vector3.Zero;
-            if (policy.PositionXZBasis is EUnityHumanoidRootPositionXZBasis.CenterOfMass)
+            if (policy.PositionXZBasis is EImportedHumanoidRootPositionXZBasis.CenterOfMass)
             {
                 canonicalAllocation.X = canonicalSemanticPosition.X * motionScale;
                 canonicalAllocation.Z = canonicalSemanticPosition.Z * motionScale;
             }
-            if (policy.PositionYBasis is EUnityHumanoidRootPositionYBasis.CenterOfMass)
+            if (policy.PositionYBasis is EImportedHumanoidRootPositionYBasis.CenterOfMass)
                 canonicalAllocation.Y = canonicalSemanticPosition.Y * motionScale;
 
             Quaternion canonicalOrientationAllocation = policy.OrientationBasis
-                is EUnityHumanoidRootOrientationBasis.Body
+                is EImportedHumanoidRootOrientationBasis.Body
                     ? Quaternion.Inverse(ExtractYawRotation(canonicalRotation))
                     : Quaternion.Identity;
 
@@ -4147,13 +4147,13 @@ namespace XREngine.Components.Animation
 
         private bool TryCalculateLoopEvaluationFromEndpointPoses(
             CompiledHumanoidAvatarDefinition compiled,
-            UnityHumanoidRootMotionPolicy policy,
+            ImportedHumanoidRootMotionPolicy policy,
             HumanoidImportedBodySample sourceStart,
             HumanoidImportedBodySample sourceEnd,
             ReadOnlySpan<float> sourceStartMuscles,
             ReadOnlySpan<float> sourceEndMuscles,
             float weight,
-            UnityHumanoidClipRootMotionSettings settings,
+            ImportedHumanoidClipRootMotionSettings settings,
             string? projectionCalibrationClipName,
             out HumanoidLoopPoseCorrection bodyCorrection,
             out HumanoidProjectedRootPose projectedRootGenerator)
@@ -4244,13 +4244,13 @@ namespace XREngine.Components.Animation
 
         private bool TryEvaluateLoopPoseProbeEndpoint(
             CompiledHumanoidAvatarDefinition compiled,
-            UnityHumanoidRootMotionPolicy policy,
+            ImportedHumanoidRootMotionPolicy policy,
             HumanoidImportedBodySample sample,
             HumanoidImportedBodySample canonicalSample,
             ReadOnlySpan<float> feetProjectionMuscles,
             ReadOnlySpan<float> visiblePoseMuscles,
             float weight,
-            UnityHumanoidClipRootMotionSettings settings,
+            ImportedHumanoidClipRootMotionSettings settings,
             string? projectionCalibrationClipName,
             out Matrix4x4 hipsLocalPose,
             out HumanoidProjectedRootPose projectedRootPose)
@@ -4370,8 +4370,8 @@ namespace XREngine.Components.Animation
             CompiledHumanoidAvatarDefinition compiled,
             bool feetProjectionAlreadyResolved)
         {
-            UnityHumanoidRootMotionPolicy? policy = _activeImportedBodyProjectionPolicy;
-            if (policy is not UnityHumanoidRootMotionPolicy rootPolicy)
+            ImportedHumanoidRootMotionPolicy? policy = _activeImportedBodyProjectionPolicy;
+            if (policy is not ImportedHumanoidRootMotionPolicy rootPolicy)
             {
                 if (_hasPendingProjectedRootMotion)
                     CommitPendingProjectedRootMotion(_pendingProjectedRootMotionOwner);
@@ -4414,9 +4414,9 @@ namespace XREngine.Components.Animation
             ReadOnlySpan<float> muscleValues)
         {
             if (!_hasPendingProjectedRootMotion
-                || _activeImportedBodyProjectionPolicy is not UnityHumanoidRootMotionPolicy policy
+                || _activeImportedBodyProjectionPolicy is not ImportedHumanoidRootMotionPolicy policy
                 || policy.BakePositionYIntoPose
-                || policy.PositionYBasis is not EUnityHumanoidRootPositionYBasis.Feet)
+                || policy.PositionYBasis is not EImportedHumanoidRootPositionYBasis.Feet)
                 return false;
 
             if (TryEvaluateCalibratedProjectedRootYDelta(
@@ -4475,7 +4475,7 @@ namespace XREngine.Components.Animation
             if (!_hasCanonicalProjectionMuscleValueSnapshot
                 || muscleValues.Length < MuscleValueCount
                 || compiled.GetLegacyCalibration(EHumanoidAvatarBoneRole.Hips)?.CoupledBoneModel
-                    is not UnityHumanoidCoupledBoneModel hipsModel
+                    is not ImportedHumanoidCoupledBoneModel hipsModel
                 || !TryEvaluateProjectedRootY(
                     compiled,
                     hipsModel,
@@ -4494,7 +4494,7 @@ namespace XREngine.Components.Animation
 
         private bool TryEvaluateProjectedRootY(
             CompiledHumanoidAvatarDefinition compiled,
-            UnityHumanoidCoupledBoneModel hipsModel,
+            ImportedHumanoidCoupledBoneModel hipsModel,
             ReadOnlySpan<float> muscleValues,
             out float projectedY)
         {
@@ -4523,7 +4523,7 @@ namespace XREngine.Components.Animation
             for (int sourceIndex = 0; sourceIndex < count; sourceIndex++)
             {
                 EHumanoidValue source = (EHumanoidValue)sourceIndex;
-                EHumanoidValue mirrored = UnityHumanoidMirrorOperator.MirrorMuscle(source, out float parity);
+                EHumanoidValue mirrored = ImportedHumanoidMirrorOperator.MirrorMuscle(source, out float parity);
                 int mirroredIndex = (int)mirrored;
                 if ((uint)mirroredIndex < (uint)mirroredMuscles.Length)
                     unmirroredMuscles[sourceIndex] = mirroredMuscles[mirroredIndex] * parity;
@@ -4533,7 +4533,7 @@ namespace XREngine.Components.Animation
         private void ApplyImportedBodyPoseAllocation(
             CompiledHumanoidAvatarDefinition compiled,
             SceneNode hipsNode,
-            UnityHumanoidRootMotionPolicy policy,
+            ImportedHumanoidRootMotionPolicy policy,
             HumanoidLoopPoseCorrection? loopPoseCorrection)
         {
             TransformBase hipsTransform = hipsNode.Transform;
@@ -4562,7 +4562,7 @@ namespace XREngine.Components.Animation
         private Matrix4x4 CalculateImportedBodyLocalPose(
             CompiledHumanoidAvatarDefinition compiled,
             SceneNode hipsNode,
-            UnityHumanoidRootMotionPolicy policy,
+            ImportedHumanoidRootMotionPolicy policy,
             HumanoidLoopPoseCorrection? loopPoseCorrection)
         {
             Matrix4x4 localPose = CalculateImportedBodyAllocatedLocalPose(
@@ -4575,7 +4575,7 @@ namespace XREngine.Components.Animation
         private Matrix4x4 CalculateImportedBodyRootRelativePose(
             CompiledHumanoidAvatarDefinition compiled,
             SceneNode hipsNode,
-            UnityHumanoidRootMotionPolicy policy,
+            ImportedHumanoidRootMotionPolicy policy,
             HumanoidLoopPoseCorrection? loopPoseCorrection)
         {
             Matrix4x4 localPose = CalculateImportedBodyLocalPose(
@@ -4598,7 +4598,7 @@ namespace XREngine.Components.Animation
         private Matrix4x4 CalculateImportedBodyAllocatedLocalPose(
             CompiledHumanoidAvatarDefinition compiled,
             SceneNode hipsNode,
-            UnityHumanoidRootMotionPolicy policy)
+            ImportedHumanoidRootMotionPolicy policy)
         {
             TransformBase hipsTransform = hipsNode.Transform;
             if (hipsTransform.IsLocalMatrixDirty)
@@ -4634,8 +4634,8 @@ namespace XREngine.Components.Animation
                 _canonicalImportedBodySample.Rotation);
             if (policy.Mirror)
             {
-                mappedBodyPosition = UnityHumanoidMirrorOperator.MirrorPosition(mappedBodyPosition);
-                mappedBodyRotation = UnityHumanoidMirrorOperator.MirrorRotation(mappedBodyRotation);
+                mappedBodyPosition = ImportedHumanoidMirrorOperator.MirrorPosition(mappedBodyPosition);
+                mappedBodyRotation = ImportedHumanoidMirrorOperator.MirrorRotation(mappedBodyRotation);
             }
 
             float motionScale = compiled.HumanScale * compiled.ModelUnitsPerMeter * weight;
@@ -4697,7 +4697,7 @@ namespace XREngine.Components.Animation
 
         private Matrix4x4 CreateImportedBodyAllocationMatrix(
             CompiledHumanoidAvatarDefinition compiled,
-            UnityHumanoidRootMotionPolicy policy,
+            ImportedHumanoidRootMotionPolicy policy,
             float weight)
         {
             float motionScale = compiled.HumanScale * compiled.ModelUnitsPerMeter * weight;
@@ -4705,28 +4705,28 @@ namespace XREngine.Components.Animation
                 _canonicalImportedBodySample.Position,
                 Vector3.Zero);
             if (policy.Mirror)
-                canonicalMappedPosition = UnityHumanoidMirrorOperator.MirrorPosition(canonicalMappedPosition);
+                canonicalMappedPosition = ImportedHumanoidMirrorOperator.MirrorPosition(canonicalMappedPosition);
             Vector3 canonicalSemanticPosition = new(
                 canonicalMappedPosition.X,
                 canonicalMappedPosition.Z,
                 canonicalMappedPosition.Y);
 
             Vector3 canonicalAllocation = Vector3.Zero;
-            if (policy.PositionXZBasis is EUnityHumanoidRootPositionXZBasis.CenterOfMass)
+            if (policy.PositionXZBasis is EImportedHumanoidRootPositionXZBasis.CenterOfMass)
             {
                 canonicalAllocation.X = canonicalSemanticPosition.X * motionScale;
                 canonicalAllocation.Z = canonicalSemanticPosition.Z * motionScale;
             }
-            if (policy.PositionYBasis is EUnityHumanoidRootPositionYBasis.CenterOfMass)
+            if (policy.PositionYBasis is EImportedHumanoidRootPositionYBasis.CenterOfMass)
                 canonicalAllocation.Y = canonicalSemanticPosition.Y * motionScale;
 
             Quaternion canonicalMappedRotation = NormalizeImportedBodyRotationPure(
                 _canonicalImportedBodySample.Rotation,
                 Quaternion.Identity);
             if (policy.Mirror)
-                canonicalMappedRotation = UnityHumanoidMirrorOperator.MirrorRotation(canonicalMappedRotation);
+                canonicalMappedRotation = ImportedHumanoidMirrorOperator.MirrorRotation(canonicalMappedRotation);
             Quaternion canonicalOrientationAllocation = policy.OrientationBasis
-                is EUnityHumanoidRootOrientationBasis.Body
+                is EImportedHumanoidRootOrientationBasis.Body
                     ? Quaternion.Inverse(ExtractYawRotation(canonicalMappedRotation))
                     : Quaternion.Identity;
             Quaternion orientationOffset = Quaternion.Slerp(
@@ -4748,7 +4748,7 @@ namespace XREngine.Components.Animation
 
         private bool TryCalculateProjectedFeetHeight(
             CompiledHumanoidAvatarDefinition compiled,
-            UnityHumanoidRootMotionPolicy policy,
+            ImportedHumanoidRootMotionPolicy policy,
             out float feetY)
         {
             SceneNode? hipsNode = compiled.GetNode(EHumanoidAvatarBoneRole.Hips);
@@ -4838,7 +4838,7 @@ namespace XREngine.Components.Animation
                 // Using current Hips-relative FK (rather than the neutral offset) also preserves
                 // optional-toe behavior and any authored per-bone translation degrees of freedom.
                 Vector3 footOffset = mirror
-                    ? UnityHumanoidMirrorOperator.MirrorPosition(footInHips.Translation)
+                    ? ImportedHumanoidMirrorOperator.MirrorPosition(footInHips.Translation)
                     : footInHips.Translation;
                 float currentFootY = Vector3.Transform(footOffset, projectedHipsInModelRoot).Y;
                 bottomY = MathF.Min(bottomY, currentFootY + neutralBottomY - neutralFootY);
@@ -4849,7 +4849,7 @@ namespace XREngine.Components.Animation
                     toesNode.Transform,
                     hipsTransform);
                 Vector3 toesOffset = mirror
-                    ? UnityHumanoidMirrorOperator.MirrorPosition(toesInHips.Translation)
+                    ? ImportedHumanoidMirrorOperator.MirrorPosition(toesInHips.Translation)
                     : toesInHips.Translation;
                 float currentToesY = Vector3.Transform(toesOffset, projectedHipsInModelRoot).Y;
                 bottomY = MathF.Min(bottomY, currentToesY + neutralBottomY - neutralToesY);
@@ -4981,7 +4981,7 @@ namespace XREngine.Components.Animation
                 rotation.W * inverseLength);
         }
 
-        private static float GetEffectiveOrientationOffsetDegrees(UnityHumanoidRootMotionPolicy policy)
+        private static float GetEffectiveOrientationOffsetDegrees(ImportedHumanoidRootMotionPolicy policy)
         {
             // Unity applies the authored orientation offset before reflecting the
             // humanoid. Reflection conjugates yaw, so M * R(a) == R(-a) * M.

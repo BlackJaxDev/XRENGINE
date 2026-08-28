@@ -219,6 +219,7 @@ public sealed class AdvancedGpuRecordTable<T> where T : unmanaged
         AppendPublicationDelta(new AdvancedGpuRecordPublicationDelta(
             handle,
             EAdvancedGpuRecordPublicationChange.Added,
+            EAdvancedGpuMutationDomain.LayoutTopology,
             AdvancedGpuHandleRemap.InvalidDenseIndex,
             denseIndex,
             _activePublicationGeneration));
@@ -252,6 +253,7 @@ public sealed class AdvancedGpuRecordTable<T> where T : unmanaged
         AppendPublicationDelta(new AdvancedGpuRecordPublicationDelta(
             handle,
             EAdvancedGpuRecordPublicationChange.Tombstoned,
+            EAdvancedGpuMutationDomain.LayoutTopology,
             denseIndex,
             AdvancedGpuHandleRemap.InvalidDenseIndex,
             _activePublicationGeneration));
@@ -274,7 +276,10 @@ public sealed class AdvancedGpuRecordTable<T> where T : unmanaged
         return true;
     }
 
-    public bool TryReplace(AdvancedGpuHandle handle, in T value)
+    public bool TryReplace(
+        AdvancedGpuHandle handle,
+        in T value,
+        EAdvancedGpuMutationDomain domain = EAdvancedGpuMutationDomain.Content)
     {
         if (!TryGetDenseIndex(handle, out uint denseIndex) ||
             !CanAppendPublicationDeltas(1))
@@ -285,6 +290,7 @@ public sealed class AdvancedGpuRecordTable<T> where T : unmanaged
         AppendPublicationDelta(new AdvancedGpuRecordPublicationDelta(
             handle,
             EAdvancedGpuRecordPublicationChange.Updated,
+            domain,
             denseIndex,
             denseIndex,
             _activePublicationGeneration));
@@ -347,6 +353,7 @@ public sealed class AdvancedGpuRecordTable<T> where T : unmanaged
         AppendPublicationDelta(new AdvancedGpuRecordPublicationDelta(
             handle,
             EAdvancedGpuRecordPublicationChange.Tombstoned,
+            EAdvancedGpuMutationDomain.LayoutTopology,
             denseIndex,
             AdvancedGpuHandleRemap.InvalidDenseIndex,
             _activePublicationGeneration));
@@ -550,6 +557,7 @@ public sealed class AdvancedGpuRecordTable<T> where T : unmanaged
             AppendPublicationDelta(new AdvancedGpuRecordPublicationDelta(
                 movedHandle,
                 EAdvancedGpuRecordPublicationChange.DenseRemapped,
+                EAdvancedGpuMutationDomain.ResourceBinding,
                 right,
                 left,
                 _activePublicationGeneration));

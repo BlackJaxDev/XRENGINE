@@ -3,7 +3,7 @@ using System.Security.Cryptography;
 using System.Text.Json;
 using XREngine.Rendering;
 using XREngine.Rendering.Models.Materials;
-using XREngine.Scene.Importers.Poiyomi;
+using XREngine.Scene.Importers.SourceToon;
 
 namespace XREngine.Scene.Importers;
 
@@ -281,7 +281,7 @@ public sealed class MaterialLocalOverrideSet
 
 public static class MaterialReimportWorkflow
 {
-    public static bool NeedsReimport(UnityMaterialAsset target, out string reason)
+    public static bool NeedsReimport(SerializedMaterialAsset target, out string reason)
     {
         ArgumentNullException.ThrowIfNull(target);
         if (target.ImportedState is null)
@@ -328,16 +328,16 @@ public static class MaterialReimportWorkflow
         return false;
     }
 
-    public static bool Reconvert(UnityMaterialAsset target, out UnityMaterialImportResult result)
+    public static bool Reconvert(SerializedMaterialAsset target, out SerializedMaterialImportResult result)
         => Reimport(target, preserveLocalOverrides: true, out result);
 
-    public static bool ResetAndReconvert(UnityMaterialAsset target, out UnityMaterialImportResult result)
+    public static bool ResetAndReconvert(SerializedMaterialAsset target, out SerializedMaterialImportResult result)
         => Reimport(target, preserveLocalOverrides: false, out result);
 
     public static bool Reimport(
-        UnityMaterialAsset target,
+        SerializedMaterialAsset target,
         bool preserveLocalOverrides,
-        out UnityMaterialImportResult result)
+        out SerializedMaterialImportResult result)
     {
         ArgumentNullException.ThrowIfNull(target);
         if (string.IsNullOrWhiteSpace(target.OriginalPath))
@@ -355,7 +355,7 @@ public static class MaterialReimportWorkflow
             preserveLocalOverrides && target.ImportedState is not null
                 ? MaterialLocalOverrideSet.Diff(target, target.ImportedState)
                 : new();
-        result = UnityMaterialImporter.ImportWithReport(target.OriginalPath);
+        result = SerializedMaterialImporter.ImportWithReport(target.OriginalPath);
         if (result.Material is not XRMaterial imported || result.ConversionReport is null)
             return false;
 

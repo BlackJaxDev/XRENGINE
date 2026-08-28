@@ -1,10 +1,10 @@
-using Assimp;
 using Newtonsoft.Json;
 using System.Collections.Generic;
 using System.Linq;
 using XREngine.Audio;
 using XREngine.Components.Animation;
 using XREngine.Rendering.UI;
+using XREngine.Rendering.Models;
 using XREngine.Runtime.Bootstrap;
 
 namespace XREngine.Editor;
@@ -292,8 +292,8 @@ public static partial class EditorUnitTests
             /// When omitted, the importer locates the owning project from the prefab path.
             /// Relative paths are resolved from the process working directory.
             /// </summary>
-            public string? UnityProjectRoot { get; set; }
-            public PostProcessSteps ImportFlags { get; set; } = PostProcessSteps.None;
+            public string? SourceProjectRoot { get; set; }
+            public ModelImportSteps ImportFlags { get; set; } = ModelImportSteps.None;
             public float Scale { get; set; } = 1.0f;
             public bool ZUp { get; set; } = false;
 

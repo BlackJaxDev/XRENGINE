@@ -79,7 +79,7 @@ public sealed class NativeGltfImporterTests
 
         try
         {
-            using ModelImporter importer = GltfImportTestUtilities.CreateImporter(assetPath, GltfImportBackend.Auto);
+            using ModelAssetImporter importer = GltfImportTestUtilities.CreateImporter(assetPath, GltfImportBackend.Auto);
             SceneNode rootNode = importer
                 .Import(PostProcessSteps.None, cancellationToken: default, onProgress: null)
                 .ShouldNotBeNull();
@@ -134,7 +134,7 @@ public sealed class NativeGltfImporterTests
             Name = "ReplacementMaterial",
         };
 
-        using ModelImporter importer = GltfImportTestUtilities.CreateImporter(assetPath, GltfImportBackend.Auto);
+        using ModelAssetImporter importer = GltfImportTestUtilities.CreateImporter(assetPath, GltfImportBackend.Auto);
         importer.ImportOptions = new ModelImportOptions
         {
             GltfBackend = GltfImportBackend.Auto,
@@ -166,7 +166,7 @@ public sealed class NativeGltfImporterTests
     }
 
     [Test]
-    public void XRPrefabSource_Import3rdParty_PreseedsGltfTextureAndMaterialKeys()
+    public void ModelPrefabAssetLoader_PreseedsGltfTextureAndMaterialKeys()
     {
         GltfCorpusEntry entry = GltfImportTestUtilities.LoadManifest().Entries.Single(static entry => entry.Id == "external-static-scene");
         string assetPath = GltfImportTestUtilities.ResolveCorpusAssetPath(entry);
@@ -179,13 +179,22 @@ public sealed class NativeGltfImporterTests
             ProcessMeshesAsynchronously = false,
         };
 
-        prefabSource.Import3rdParty(assetPath, options).ShouldBeTrue();
+        var loader = new ModelPrefabAssetLoadingServices(
+            Engine.Assets,
+            RuntimeThirdPartyAssetLoadingServices.Current);
+        loader.Load(
+                assetPath,
+                "gltf",
+                typeof(XRPrefabSource),
+                options,
+                targetAsset: prefabSource)
+            .ShouldBeSameAs(prefabSource);
         options.TextureRemap.ShouldNotBeNull();
         options.MaterialRemap.ShouldNotBeNull();
         options.TextureRemap!.ContainsKey("Checker Base Color").ShouldBeTrue();
         options.MaterialRemap!.ContainsKey("Checker Material").ShouldBeTrue();
 
-        ModelImportProducerReport report = prefabSource.ProducerReport.ShouldNotBeNull();
+        ModelImportProducerReport report = prefabSource.GetProducerReport().ShouldNotBeNull();
         report.BackendSelection.ProducerId.ShouldBe(ModelImportBackendIds.NativeGltf);
         report.Dependencies.ShouldContain(static dependency =>
             dependency.Kind == ModelImportDependencyKind.EntrySource
@@ -216,7 +225,7 @@ public sealed class NativeGltfImporterTests
             static entry => entry.Id == "skinned-morph-animated");
         string skinnedPath = GltfImportTestUtilities.ResolveCorpusAssetPath(skinnedEntry);
 
-        using ModelImporter skinnedImporter = GltfImportTestUtilities.CreateImporter(
+        using ModelAssetImporter skinnedImporter = GltfImportTestUtilities.CreateImporter(
             skinnedPath,
             GltfImportBackend.Native);
         skinnedImporter.Import(PostProcessSteps.None, cancellationToken: default, onProgress: null)
@@ -235,7 +244,7 @@ public sealed class NativeGltfImporterTests
         GltfCorpusEntry morphEntry = manifest.Entries.Single(
             static entry => entry.Id == "morph-sparse-extras");
         string morphPath = GltfImportTestUtilities.ResolveCorpusAssetPath(morphEntry);
-        using ModelImporter morphImporter = GltfImportTestUtilities.CreateImporter(
+        using ModelAssetImporter morphImporter = GltfImportTestUtilities.CreateImporter(
             morphPath,
             GltfImportBackend.Native);
         morphImporter.Import(PostProcessSteps.None, cancellationToken: default, onProgress: null)

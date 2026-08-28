@@ -9,15 +9,15 @@ namespace XREngine.Components.Animation;
 /// </summary>
 internal sealed class HumanoidStateMachineRootMotionLeafState
 {
-    private readonly UnityHumanoidClipRootMotionSettings _effectiveSettings = new();
-    private readonly UnityHumanoidMuscleSampleBuffer _canonicalProjectionMuscles = new();
-    private readonly UnityHumanoidMuscleSampleBuffer _loopStartMuscles = new();
-    private readonly UnityHumanoidMuscleSampleBuffer _loopEndMuscles = new();
-    private readonly UnityHumanoidMuscleSampleBuffer _currentProjectionMuscles = new();
+    private readonly ImportedHumanoidClipRootMotionSettings _effectiveSettings = new();
+    private readonly ImportedHumanoidMuscleSampleBuffer _canonicalProjectionMuscles = new();
+    private readonly ImportedHumanoidMuscleSampleBuffer _loopStartMuscles = new();
+    private readonly ImportedHumanoidMuscleSampleBuffer _loopEndMuscles = new();
+    private readonly ImportedHumanoidMuscleSampleBuffer _currentProjectionMuscles = new();
     private readonly float[] _mirrorScratch = new float[(int)EHumanoidValue.RightHandThumb3Stretched + 1];
 
     private AnimationClip? _clip;
-    private UnityHumanoidRootMotionPolicy _policy;
+    private ImportedHumanoidRootMotionPolicy _policy;
     private HumanoidImportedBodySample _canonicalBody = HumanoidImportedBodySample.Neutral;
     private HumanoidProjectedRootPose _loopGenerator = HumanoidProjectedRootPose.Identity;
     private HumanoidLoopPoseCorrection _loopPoseCorrection = HumanoidLoopPoseCorrection.Identity;
@@ -32,8 +32,8 @@ internal sealed class HumanoidStateMachineRootMotionLeafState
     public bool IsAssigned => _isAssigned;
     public float Weight { get; private set; }
     public long SourceLoopCycle { get; private set; }
-    public EUnityHumanoidMotionContributionType ContributionType { get; private set; }
-    public UnityHumanoidRootMotionPolicy Policy => _policy;
+    public EHumanoidMotionContributionType ContributionType { get; private set; }
+    public ImportedHumanoidRootMotionPolicy Policy => _policy;
     public HumanoidImportedBodySample CanonicalBody => _canonicalBody;
     public HumanoidImportedBodySample CurrentBody { get; private set; } = HumanoidImportedBodySample.Neutral;
     public HumanoidProjectedRootPose BodyAllocationProjectedRootPose { get; private set; } = HumanoidProjectedRootPose.Identity;
@@ -48,7 +48,7 @@ internal sealed class HumanoidStateMachineRootMotionLeafState
         && _lifecycleGeneration == lifecycleGeneration;
 
     public bool TryPrepare(
-        in UnityHumanoidMotionContribution contribution,
+        in HumanoidMotionContribution contribution,
         HumanoidComponent humanoid)
     {
         bool identityChanged = !_isAssigned
@@ -76,7 +76,7 @@ internal sealed class HumanoidStateMachineRootMotionLeafState
         SourceLoopCycle = contribution.SourceLoopCycle;
         ContributionType = contribution.ContributionType;
         if (!_cacheValid || _clip is null
-            || !_clip.TrySampleUnityHumanoidBody(
+            || !_clip.TrySampleImportedHumanoidBody(
                 contribution.SampleTime,
                 out Vector3 currentPosition,
                 out Quaternion currentRotation))
@@ -84,7 +84,7 @@ internal sealed class HumanoidStateMachineRootMotionLeafState
 
         CurrentBody = CreateImportedBodySample(currentPosition, currentRotation);
         _currentProjectionMuscles.Clear();
-        _clip.PublishUnityHumanoidProjectionMusclesAtTime(
+        _clip.PublishImportedHumanoidProjectionMusclesAtTime(
             contribution.SampleTime,
             _currentProjectionMuscles);
         ApplyInheritedMirrorIfNeeded(_currentProjectionMuscles.Values);
@@ -142,8 +142,8 @@ internal sealed class HumanoidStateMachineRootMotionLeafState
         _loopStartMuscles.Clear();
         _loopEndMuscles.Clear();
         if (_clip is null
-            || !_clip.TrySampleUnityHumanoidBody(0.0f, out Vector3 startPosition, out Quaternion startRotation)
-            || !_clip.TrySampleUnityHumanoidBody(_clip.LengthInSeconds, out Vector3 endPosition, out Quaternion endRotation))
+            || !_clip.TrySampleImportedHumanoidBody(0.0f, out Vector3 startPosition, out Quaternion startRotation)
+            || !_clip.TrySampleImportedHumanoidBody(_clip.LengthInSeconds, out Vector3 endPosition, out Quaternion endRotation))
             return false;
 
         HumanoidImportedBodySample sourceStart = CreateImportedBodySample(startPosition, startRotation);
@@ -152,7 +152,7 @@ internal sealed class HumanoidStateMachineRootMotionLeafState
         HumanoidImportedBodySample offsetSample = sourceStart;
         if (offsetSeconds > 0.0f)
         {
-            if (!_clip.TrySampleUnityHumanoidBody(
+            if (!_clip.TrySampleImportedHumanoidBody(
                     offsetSeconds,
                     out Vector3 offsetPosition,
                     out Quaternion offsetRotation))
@@ -165,11 +165,11 @@ internal sealed class HumanoidStateMachineRootMotionLeafState
         // canonical Body reference as direct playback; sourceStart remains the
         // endpoint reference used to derive one temporal loop generator.
         _canonicalBody = offsetSample;
-        _clip.PublishUnityHumanoidProjectionMusclesAtTime(
+        _clip.PublishImportedHumanoidProjectionMusclesAtTime(
             offsetSeconds,
             _canonicalProjectionMuscles);
-        _clip.PublishUnityHumanoidProjectionMusclesAtTime(0.0f, _loopStartMuscles);
-        _clip.PublishUnityHumanoidProjectionMusclesAtTime(_clip.LengthInSeconds, _loopEndMuscles);
+        _clip.PublishImportedHumanoidProjectionMusclesAtTime(0.0f, _loopStartMuscles);
+        _clip.PublishImportedHumanoidProjectionMusclesAtTime(_clip.LengthInSeconds, _loopEndMuscles);
         ApplyInheritedMirrorIfNeeded(_canonicalProjectionMuscles.Values);
         ApplyInheritedMirrorIfNeeded(_loopStartMuscles.Values);
         ApplyInheritedMirrorIfNeeded(_loopEndMuscles.Values);
@@ -211,7 +211,7 @@ internal sealed class HumanoidStateMachineRootMotionLeafState
 
     private void ApplyInheritedMirrorIfNeeded(float[] values)
     {
-        bool sourceMirror = _clip?.UnityHumanoidRootMotionSettings?.Mirror == true;
+        bool sourceMirror = _clip?.ImportedHumanoidRootMotionSettings?.Mirror == true;
         if (sourceMirror == _policy.Mirror)
             return;
 
@@ -220,7 +220,7 @@ internal sealed class HumanoidStateMachineRootMotionLeafState
         for (int sourceIndex = 0; sourceIndex < count; sourceIndex++)
         {
             EHumanoidValue source = (EHumanoidValue)sourceIndex;
-            EHumanoidValue mirrored = UnityHumanoidMirrorOperator.MirrorMuscle(source, out float parity);
+            EHumanoidValue mirrored = ImportedHumanoidMirrorOperator.MirrorMuscle(source, out float parity);
             int mirroredIndex = (int)mirrored;
             if ((uint)mirroredIndex < (uint)_mirrorScratch.Length)
                 _mirrorScratch[mirroredIndex] = values[sourceIndex] * parity;
@@ -247,8 +247,8 @@ internal sealed class HumanoidStateMachineRootMotionLeafState
         };
 
     private static void CopyPolicyToSettings(
-        UnityHumanoidRootMotionPolicy policy,
-        UnityHumanoidClipRootMotionSettings settings)
+        ImportedHumanoidRootMotionPolicy policy,
+        ImportedHumanoidClipRootMotionSettings settings)
     {
         settings.StartTime = policy.StartTime;
         settings.StopTime = policy.StopTime;
@@ -260,10 +260,10 @@ internal sealed class HumanoidStateMachineRootMotionLeafState
         settings.BakeOrientationIntoPose = policy.BakeOrientationIntoPose;
         settings.BakePositionYIntoPose = policy.BakePositionYIntoPose;
         settings.BakePositionXZIntoPose = policy.BakePositionXZIntoPose;
-        settings.KeepOriginalOrientation = policy.OrientationBasis is EUnityHumanoidRootOrientationBasis.Original;
-        settings.KeepOriginalPositionY = policy.PositionYBasis is EUnityHumanoidRootPositionYBasis.Original;
-        settings.KeepOriginalPositionXZ = policy.PositionXZBasis is EUnityHumanoidRootPositionXZBasis.Original;
-        settings.HeightFromFeet = policy.PositionYBasis is EUnityHumanoidRootPositionYBasis.Feet;
+        settings.KeepOriginalOrientation = policy.OrientationBasis is EImportedHumanoidRootOrientationBasis.Original;
+        settings.KeepOriginalPositionY = policy.PositionYBasis is EImportedHumanoidRootPositionYBasis.Original;
+        settings.KeepOriginalPositionXZ = policy.PositionXZBasis is EImportedHumanoidRootPositionXZBasis.Original;
+        settings.HeightFromFeet = policy.PositionYBasis is EImportedHumanoidRootPositionYBasis.Feet;
         settings.Mirror = policy.Mirror;
     }
 

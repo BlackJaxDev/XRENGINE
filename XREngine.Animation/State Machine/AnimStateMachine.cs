@@ -1,4 +1,4 @@
-﻿using System.Collections.Generic;
+using System.Collections.Generic;
 using System.Numerics;
 using MemoryPack;
 using XREngine.Core.Files;
@@ -76,7 +76,7 @@ namespace XREngine.Animation
         internal AnimationValueStore ValueStore { get; } = new();
 
         [MemoryPackIgnore]
-        private readonly UnityHumanoidMotionContributionBuffer _unityHumanoidContributions = new();
+        private readonly HumanoidMotionContributionBuffer _importedHumanoidContributions = new();
 
         [MemoryPackIgnore]
         private ulong _humanoidMotionContinuityVersion;
@@ -91,18 +91,18 @@ namespace XREngine.Animation
         /// Exact weighted Unity humanoid leaf samples from the most recent graph evaluation.
         /// The span remains valid until the next evaluation or deinitialization.
         /// </summary>
-        public ReadOnlySpan<UnityHumanoidMotionContribution> UnityHumanoidMotionContributions
-            => _unityHumanoidContributions.Items;
+        public ReadOnlySpan<HumanoidMotionContribution> HumanoidMotionContributions
+            => _importedHumanoidContributions.Items;
 
-        public int UnityHumanoidMotionContributionCapacity
-            => _unityHumanoidContributions.Capacity;
+        public int HumanoidMotionContributionCapacity
+            => _importedHumanoidContributions.Capacity;
 
         /// <summary>
         /// True when the current evaluation produced more active humanoid leaves than
         /// the graph's preallocated contribution contract can represent.
         /// </summary>
-        public bool UnityHumanoidMotionContributionsOverflowed
-            => _unityHumanoidContributions.Overflowed;
+        public bool HumanoidMotionContributionsOverflowed
+            => _importedHumanoidContributions.Overflowed;
 
         /// <summary>
         /// Shared slot layout describing the number of slots per type.
@@ -134,7 +134,7 @@ namespace XREngine.Animation
         /// </summary>
         private void AssignSlots()
         {
-            RegisterUnityHumanoidMirroredBindings();
+            RegisterImportedHumanoidMirroredBindings();
             var layout = new AnimationSlotLayout();
             var slotsByPath = new Dictionary<string, AnimSlot>(StringComparer.Ordinal);
 
@@ -173,15 +173,15 @@ namespace XREngine.Animation
                 foreach (var state in layer.States)
                 {
                     PropagateLayoutToMotion(state?.Motion, layout, slotsByPath);
-                    int stateContributionCapacity = state?.Motion?.PrepareUnityHumanoidContributionCapacity() ?? 0;
+                    int stateContributionCapacity = state?.Motion?.PrepareImportedHumanoidContributionCapacity() ?? 0;
                     state?.PrepareRuntimeEvaluation(layout, stateContributionCapacity);
                     layerContributionCapacity += stateContributionCapacity;
                 }
                 int transitionContributionCapacity = checked(layerContributionCapacity * 2);
-                layer.PrepareUnityHumanoidContributionCapacity(transitionContributionCapacity);
+                layer.PrepareImportedHumanoidContributionCapacity(transitionContributionCapacity);
                 stateMachineContributionCapacity += transitionContributionCapacity;
             }
-            _unityHumanoidContributions.EnsureCapacity(stateMachineContributionCapacity);
+            _importedHumanoidContributions.EnsureCapacity(stateMachineContributionCapacity);
         }
 
         private static void PropagateLayoutToMotion(
@@ -204,8 +204,8 @@ namespace XREngine.Animation
             switch (motion)
             {
                 case AnimationClip clip:
-                    clip.PrepareUnityHumanoidMirrorSlotBindings(layout, slotsByPath);
-                    clip.PrepareUnityHumanoidScalarQuaternionBindings(layout);
+                    clip.PrepareImportedHumanoidMirrorSlotBindings(layout, slotsByPath);
+                    clip.PrepareImportedHumanoidScalarQuaternionBindings(layout);
                     clip.PrepareAdditivePoseEvaluation(layout);
                     break;
                 case BlendTree1D bt1d:
@@ -264,7 +264,7 @@ namespace XREngine.Animation
             if (membersByPath is null)
                 return [.. result];
 
-            Dictionary<UnityAnimationQuaternionBindingKey, int[]> unityBindingGroups = [];
+            Dictionary<ImportedAnimationQuaternionBindingKey, int[]> sourceBindingGroups = [];
             foreach ((string path, AnimationMember member) in membersByPath)
             {
                 if (!slotsByPath.TryGetValue(path, out AnimSlot slot)
@@ -272,19 +272,19 @@ namespace XREngine.Animation
                     || member.MemberType != EAnimationMemberType.Method
                     || member.MemberName != "SetUnityAnimationFloat"
                     || member.MethodArguments.Length == 0
-                    || member.MethodArguments[0] is not UnityAnimationBindingDescriptor binding
-                    || !UnityAnimationQuaternionBindingKey.TryCreate(binding, out UnityAnimationQuaternionBindingKey key))
+                    || member.MethodArguments[0] is not ImportedAnimationBindingDescriptor binding
+                    || !ImportedAnimationQuaternionBindingKey.TryCreate(binding, out ImportedAnimationQuaternionBindingKey key))
                     continue;
 
-                if (!unityBindingGroups.TryGetValue(key, out int[]? indices))
+                if (!sourceBindingGroups.TryGetValue(key, out int[]? indices))
                 {
                     indices = [-1, -1, -1, -1];
-                    unityBindingGroups.Add(key, indices);
+                    sourceBindingGroups.Add(key, indices);
                 }
                 indices[binding.Component] = slot.TypeIndex;
             }
 
-            foreach (int[] indices in unityBindingGroups.Values)
+            foreach (int[] indices in sourceBindingGroups.Values)
             {
                 var group = new AnimationQuaternionFloatSlotGroup(
                     indices[0],
@@ -364,7 +364,7 @@ namespace XREngine.Animation
             SlotLayout = null;
             _animatedMembersArray = [];
             _animatedCurves.Clear();
-            _unityHumanoidContributions.Clear();
+            _importedHumanoidContributions.Clear();
         }
 
         internal void NotifyHumanoidMotionContinuityChanged(EAnimMotionContinuityChange change)
@@ -425,23 +425,23 @@ namespace XREngine.Animation
         public void EvaluateAnimationValues(object? rootObject, float delta)
         {
             InitializeValueStoreFromDefaults();
-            _unityHumanoidContributions.Clear();
+            _importedHumanoidContributions.Clear();
             for (int i = 0; i < Layers.Count; ++i)
             {
                 AnimLayer layer = Layers[i];
                 layer.EvaluationTick(rootObject, delta, Variables);
                 CombineAnimationValues(layer);
-                CombineUnityHumanoidMotionContributions(layer);
+                CombineImportedHumanoidMotionContributions(layer);
             }
         }
 
-        private void RegisterUnityHumanoidMirroredBindings()
+        private void RegisterImportedHumanoidMirroredBindings()
         {
             KeyValuePair<string, AnimationMember>[] registered = [.. _animatedCurves];
             for (int i = 0; i < registered.Length; i++)
             {
                 (string sourcePath, AnimationMember sourceMember) = registered[i];
-                if (!AnimationClip.TryCreateUnityHumanoidMirroredBinding(
+                if (!AnimationClip.TryCreateImportedHumanoidMirroredBinding(
                         sourcePath,
                         sourceMember,
                         out string mirroredPath,
@@ -464,17 +464,17 @@ namespace XREngine.Animation
         public void EvaluateAnimationValues(object? rootObject, long deltaTicks)
         {
             InitializeValueStoreFromDefaults();
-            _unityHumanoidContributions.Clear();
+            _importedHumanoidContributions.Clear();
             for (int i = 0; i < Layers.Count; ++i)
             {
                 AnimLayer layer = Layers[i];
                 layer.EvaluationTick(rootObject, deltaTicks, Variables);
                 CombineAnimationValues(layer);
-                CombineUnityHumanoidMotionContributions(layer);
+                CombineImportedHumanoidMotionContributions(layer);
             }
         }
 
-        private void CombineUnityHumanoidMotionContributions(AnimLayer layer)
+        private void CombineImportedHumanoidMotionContributions(AnimLayer layer)
         {
             float layerWeight = float.IsFinite(layer.Weight)
                 ? Math.Clamp(layer.Weight, 0.0f, 1.0f)
@@ -484,18 +484,18 @@ namespace XREngine.Animation
 
             if (layer.ApplyType == EApplyType.Additive)
             {
-                _unityHumanoidContributions.AppendScaled(
-                    layer.UnityHumanoidContributions,
+                _importedHumanoidContributions.AppendScaled(
+                    layer.HumanoidContributions,
                     layerWeight,
-                    EUnityHumanoidMotionContributionType.Additive);
+                    EHumanoidMotionContributionType.Additive);
                 return;
             }
 
-            _unityHumanoidContributions.AttenuateOverride(1.0f - layerWeight);
-            _unityHumanoidContributions.AppendScaled(
-                layer.UnityHumanoidContributions,
+            _importedHumanoidContributions.AttenuateOverride(1.0f - layerWeight);
+            _importedHumanoidContributions.AppendScaled(
+                layer.HumanoidContributions,
                 layerWeight,
-                EUnityHumanoidMotionContributionType.Override);
+                EHumanoidMotionContributionType.Override);
         }
 
         /// <summary>
@@ -508,16 +508,16 @@ namespace XREngine.Animation
         }
 
         /// <summary>Raised in deterministic layer, state, leaf, and source-event order.</summary>
-        public event Action<UnityAnimationEventOccurrence>? UnityAnimationEventTriggered;
+        public event Action<ImportedAnimationEventOccurrence>? ImportedAnimationEventTriggered;
 
-        internal void DispatchUnityAnimationEvents(AnimState? state)
+        internal void DispatchImportedAnimationEvents(AnimState? state)
         {
-            if (state is null || state.UnityAnimationEvents.Count == 0)
+            if (state is null || state.ImportedAnimationEvents.Count == 0)
                 return;
 
-            foreach (ref readonly UnityAnimationEventOccurrence occurrence in state.UnityAnimationEvents.Items)
-                UnityAnimationEventTriggered?.Invoke(occurrence with { StateName = state.Name });
-            state.UnityAnimationEvents.Clear();
+            foreach (ref readonly ImportedAnimationEventOccurrence occurrence in state.ImportedAnimationEvents.Items)
+                ImportedAnimationEventTriggered?.Invoke(occurrence with { StateName = state.Name });
+            state.ImportedAnimationEvents.Clear();
         }
 
         private void CombineAnimationValues(AnimLayer layer)

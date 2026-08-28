@@ -172,8 +172,10 @@ The recommended end state is:
   - scene/components that bind `XREngine.Audio` into runtime world objects.
 - `XREngine.Runtime.InputIntegration`
   - controllers, pawn input, viewport/window input routing, VR action transforms, and runtime bridges to `XREngine.Input`.
-- `XREngine.Runtime.ModelingBridge`
-  - runtime mesh import/export/conversion code that bridges `XRMesh` and `XREngine.Modeling`.
+- `XREngine.Runtime.ModelingIntegration`
+  - authoring-only conversion and preview code between runtime `XRMesh` data and editable `XREngine.Modeling` documents.
+- `XREngine.Runtime.ModelAssetPipeline`
+  - engine-facing external model asset import/export orchestration, cooking, caches, prefab production, and Unity/FBX/glTF/Assimp reconstruction. Format-only readers and writers remain in their lower format libraries.
 - `XREngine.Runtime.Bootstrap`
   - startup profiles, shared world factories, unit-testing-world toggles/settings loading, sample/test composition helpers, and runtime-safe startup orchestration.
 
@@ -234,17 +236,19 @@ XREngine.Runtime.AudioIntegration
 XREngine.Runtime.InputIntegration
     -> XREngine.Runtime.Core, XREngine.Runtime.Rendering, XREngine.Input, XREngine.Data, XREngine.Extensions
 
-XREngine.Runtime.ModelingBridge
-    -> XREngine.Runtime.Rendering, XREngine.Animation, XREngine.Fbx,
-       XREngine.Gltf, XREngine.Modeling, XREngine.Data
+XREngine.Runtime.ModelingIntegration
+    -> XREngine.Runtime.Rendering, XREngine.Modeling, XREngine.Data
+
+XREngine.Runtime.ModelAssetPipeline
+    -> XREngine.Runtime.Core, XREngine.Runtime.Rendering, XREngine.Animation,
+       XREngine.Fbx, XREngine.Gltf, XREngine.Data, XREngine.Extensions
 
 XREngine.Runtime.Bootstrap
     -> XREngine.Runtime.Core, XREngine.Runtime.Rendering,
        XREngine.Runtime.AnimationIntegration,
        XREngine.Runtime.AudioIntegration,
        XREngine.Runtime.InputIntegration,
-       XREngine.Runtime.ModelingBridge,
-       XREngine.Animation, XREngine.Audio, XREngine.Input, XREngine.Modeling,
+       XREngine.Animation, XREngine.Audio, XREngine.Input,
        XREngine.Data, XREngine.Extensions
 
 XREngine.Editor
@@ -264,6 +268,14 @@ XREngine.VRClient
 - `XREngine.Runtime.Core -> XREngine.Audio`
 - `XREngine.Runtime.Core -> XREngine.Input`
 - `XREngine.Runtime.Core -> XREngine.Modeling`
+- `XREngine.Runtime.Core -> XREngine.Runtime.ModelingIntegration`
+- `XREngine.Runtime.Core -> XREngine.Runtime.ModelAssetPipeline`
+- `XREngine.Runtime.Rendering -> XREngine.Modeling`
+- `XREngine.Runtime.Rendering -> XREngine.Runtime.ModelingIntegration`
+- `XREngine.Runtime.Rendering -> XREngine.Runtime.ModelAssetPipeline`
+- `XREngine.Runtime.ModelAssetPipeline -> XREngine.Modeling`
+- `XREngine.Runtime.ModelAssetPipeline -> XREngine.Runtime.ModelingIntegration`
+- `XREngine.Runtime.ModelingIntegration -> XREngine.Runtime.ModelAssetPipeline`
 - `XREngine.Runtime.Rendering -> XREngine.Editor`
 - `XREngine.Runtime.Rendering -> XREngine.Runtime.Rendering.OpenGL`
 - `XREngine.Runtime.Rendering -> XREngine.Runtime.Rendering.Vulkan`
@@ -286,7 +298,8 @@ Recommended project names:
 - `XREngine.Runtime.AnimationIntegration`
 - `XREngine.Runtime.AudioIntegration`
 - `XREngine.Runtime.InputIntegration`
-- `XREngine.Runtime.ModelingBridge`
+- `XREngine.Runtime.ModelingIntegration`
+- `XREngine.Runtime.ModelAssetPipeline`
 - `XREngine.Runtime.Bootstrap`
 
 This is clearer than naming an adapter layer `XREngine.Animation`, because `XREngine.Animation` already exists and should remain the lower-level animation library.
@@ -393,22 +406,31 @@ Owns:
 
 Should depend on `XREngine.Input`, not vice versa.
 
-### XREngine.Runtime.ModelingBridge
+### XREngine.Runtime.ModelingIntegration
 
 Owns:
 
 - `XRMesh <-> ModelingMeshDocument` conversion,
-- runtime boolean operation entry points,
-- import/export helpers that bridge render/runtime mesh types and modeling types.
-- the aggregate FBX/glTF runtime scene-import pipeline, including skinning,
-  blendshape, material, texture, and animation-component reconstruction.
+- authoring boolean-operation entry points,
+- preview helpers that deliberately bridge render/runtime mesh types and editable modeling types.
 
-The bridge deliberately depends on `XREngine.Animation`, `XREngine.Fbx`,
-`XREngine.Gltf`, `XREngine.Modeling`, `XREngine.Data`, and
-`XREngine.Runtime.Rendering`; none of those lower libraries may depend on the
-bridge. Splitting one format into a separate adapter is appropriate only after
-the importer exchanges an ownership-correct runtime scene-publication contract,
-not by moving runtime scene types into Data or adding adapter-to-adapter edges.
+It does not own file import/export, source-format policy, cooking, caches,
+prefab production, or ordinary game use of already-produced meshes.
+
+### XREngine.Runtime.ModelAssetPipeline
+
+Owns:
+
+- external model source selection and engine-facing import/export orchestration,
+- model cooking, cache codecs and policy, and prefab production,
+- aggregate FBX/glTF/Assimp scene reconstruction, including skinning,
+  blendshapes, materials, textures, animations, and Unity runtime metadata.
+
+The pipeline deliberately does not depend on `XREngine.Modeling` or
+`XREngine.Runtime.ModelingIntegration`. Lower format libraries may own reusable
+format readers/writers, but they do not publish runtime prefabs or select engine
+asset policy. Ordinary gameplay consumes the produced Core/Rendering assets
+without depending back on this optional pipeline.
 
 ### XREngine.Runtime.Bootstrap
 
@@ -546,10 +568,16 @@ The split should follow this rule:
 - pawn input sets and camera/pawn control bridges
 - viewport/window input glue that should not live in core
 
-#### Move into XREngine.Runtime.ModelingBridge
+#### Move into XREngine.Runtime.ModelingIntegration
 
 - `Rendering/Modeling/**`
-- all `XRMesh` import/export/boolean bridge logic
+- `XRMesh`/editable-document conversion, preview, and authoring-boolean logic
+
+#### Move into XREngine.Runtime.ModelAssetPipeline
+
+- external model importer selection and scene reconstruction
+- model cooking/cache policy and codecs
+- prefab production and Unity import reconstruction
 
 ### Physics Scope In This Refactor
 
@@ -607,7 +635,8 @@ Add the new projects with no or minimal code movement first:
 - `XREngine.Runtime.AnimationIntegration`
 - `XREngine.Runtime.AudioIntegration`
 - `XREngine.Runtime.InputIntegration`
-- `XREngine.Runtime.ModelingBridge`
+- `XREngine.Runtime.ModelingIntegration`
+- `XREngine.Runtime.ModelAssetPipeline`
 
 At this phase, the objective is only to establish the target graph and solution structure.
 

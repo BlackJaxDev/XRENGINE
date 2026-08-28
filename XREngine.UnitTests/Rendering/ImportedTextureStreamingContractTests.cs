@@ -311,6 +311,7 @@ public sealed class ImportedTextureStreamingContractTests
             XREngine.Data.Rendering.ESizedInternalFormat.Rgba8,
             "sRGB",
             512L * 512L * 4L,
+            Ticket: default,
             StreamingGeneration: 7L,
             TextureUploadPriorityClass.VisibleNow,
             CancellationToken.None);

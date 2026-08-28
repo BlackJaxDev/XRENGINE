@@ -24,6 +24,7 @@ internal sealed unsafe class VulkanDescriptorLifetimeAuthority
     private readonly VulkanDescriptorManager _descriptors;
     private readonly VulkanLifetimeAuthority _lifetime;
     private VulkanDeviceContext? _deviceContext;
+    private object? _submissionStateGate;
     private VulkanBackendObjectContext? _backendContext;
     private int _payloadChangeDiagnosticCount;
 
@@ -37,17 +38,22 @@ internal sealed unsafe class VulkanDescriptorLifetimeAuthority
         _lifetime = lifetime;
     }
 
-    internal void Configure(VulkanDeviceContext deviceContext)
+    internal void Configure(
+        VulkanDeviceContext deviceContext,
+        object submissionStateGate)
     {
         ArgumentNullException.ThrowIfNull(deviceContext);
+        ArgumentNullException.ThrowIfNull(submissionStateGate);
         if (_deviceContext is not null &&
-            !ReferenceEquals(_deviceContext, deviceContext))
+            (!ReferenceEquals(_deviceContext, deviceContext) ||
+             !ReferenceEquals(_submissionStateGate, submissionStateGate)))
         {
             throw new InvalidOperationException(
-                "The descriptor lifetime authority cannot be rebound to another device generation.");
+                "The descriptor lifetime authority cannot be rebound to another device or submission authority.");
         }
 
         _deviceContext = deviceContext;
+        _submissionStateGate = submissionStateGate;
     }
 
     internal void RecordTableGeneration()
@@ -147,6 +153,8 @@ internal sealed unsafe class VulkanDescriptorLifetimeAuthority
             }
 
             state.Generation++;
+            state.ResourceClosureGeneration = VulkanGeneration.NextNonZero(
+                state.ResourceClosureGeneration);
             state.ImagePayloadGeneration++;
             VulkanDescriptorManager.PublishSnapshotNoLock(_lifetime, descriptorSet.Handle, state);
         }
@@ -214,85 +222,92 @@ internal sealed unsafe class VulkanDescriptorLifetimeAuthority
         VulkanDescriptorUpdateInvalidation firstInvalidation;
         VulkanResourceLifetimeTracker tracker = _lifetime.Tracker;
         using (VulkanFrameLockScope.Enter(
-                   tracker.SyncRoot,
-                   EVulkanFrameWaitReason.ResourceLifetimeLock))
+                   RequireSubmissionStateGate(),
+                   EVulkanFrameWaitReason.SubmissionStateLock))
         {
-            if (!TryPrevalidateWritesNoLock(
+            using (VulkanFrameLockScope.Enter(
+                       tracker.SyncRoot,
+                       EVulkanFrameWaitReason.ResourceLifetimeLock))
+            {
+                if (!TryPrevalidateWritesNoLock(
+                        descriptorWriteCount,
+                        descriptorWrites,
+                        out failureReason))
+                {
+                    if (prevalidate)
+                        return false;
+                    throw new InvalidOperationException(failureReason);
+                }
+
+                // Vulkan descriptor updates can invalidate command buffers even when
+                // the application republishes the same bytes. Suppress exact no-op
+                // batches before entering the driver so reusable command artifacts
+                // remain executable.
+                if (WritesMatchPublishedPayloadNoLock(
+                        tracker,
+                        descriptorWriteCount,
+                        descriptorWrites))
+                {
+                    failureReason = string.Empty;
+                    return true;
+                }
+
+                invalidatesRecordedCommandBuffers = TryCaptureUpdateInvalidationsNoLock(
                     descriptorWriteCount,
                     descriptorWrites,
-                    out failureReason))
-            {
-                if (prevalidate)
-                    return false;
-                throw new InvalidOperationException(failureReason);
+                    out dependentCommandBuffers,
+                    out dependentCommandBufferCount,
+                    out firstInvalidation);
+                try
+                {
+                    device.Api.UpdateDescriptorSets(
+                        device.Device,
+                        descriptorWriteCount,
+                        descriptorWrites,
+                        0,
+                        null);
+                }
+                catch
+                {
+                    MarkDescriptorWritesNativeStateUnknownNoLock(
+                        descriptorWriteCount,
+                        descriptorWrites,
+                        "vkUpdateDescriptorSets did not return normally");
+                    if (dependentCommandBuffers is not null)
+                        ArrayPool<ulong>.Shared.Return(dependentCommandBuffers);
+                    throw;
+                }
+
+                try
+                {
+                    // Native state commits first. Semantic publication follows
+                    // under the same lifetime lock, so retirement cannot race the
+                    // Vulkan copy. A failed semantic commit quarantines the set.
+                    ValidateAndRecordWritesNoLock(
+                        descriptorWriteCount,
+                        descriptorWrites);
+                }
+                catch
+                {
+                    MarkDescriptorWritesNativeStateUnknownNoLock(
+                        descriptorWriteCount,
+                        descriptorWrites,
+                        "vkUpdateDescriptorSets succeeded but tracker commit failed");
+                    if (dependentCommandBuffers is not null)
+                        ArrayPool<ulong>.Shared.Return(dependentCommandBuffers);
+                    throw;
+                }
             }
 
-            // Vulkan descriptor updates can invalidate command buffers even when
-            // the application republishes the same bytes. Suppress exact no-op
-            // batches before entering the driver so reusable command artifacts
-            // remain executable.
-            if (WritesMatchPublishedPayloadNoLock(
-                    tracker,
-                    descriptorWriteCount,
-                    descriptorWrites))
-            {
-                failureReason = string.Empty;
-                return true;
-            }
-
-            invalidatesRecordedCommandBuffers = TryCaptureUpdateInvalidationsNoLock(
-                descriptorWriteCount,
-                descriptorWrites,
-                out dependentCommandBuffers,
-                out dependentCommandBufferCount,
-                out firstInvalidation);
-            try
-            {
-                device.Api.UpdateDescriptorSets(
-                    device.Device,
-                    descriptorWriteCount,
-                    descriptorWrites,
-                    0,
-                    null);
-            }
-            catch
-            {
-                MarkDescriptorWritesNativeStateUnknownNoLock(
-                    descriptorWriteCount,
-                    descriptorWrites,
-                    "vkUpdateDescriptorSets did not return normally");
-                if (dependentCommandBuffers is not null)
-                    ArrayPool<ulong>.Shared.Return(dependentCommandBuffers);
-                throw;
-            }
-
-            try
-            {
-                // Native state commits first. Semantic publication follows
-                // under the same lifetime lock, so retirement cannot race the
-                // Vulkan copy. A failed semantic commit quarantines the set.
-                ValidateAndRecordWritesNoLock(
-                    descriptorWriteCount,
-                    descriptorWrites);
-            }
-            catch
-            {
-                MarkDescriptorWritesNativeStateUnknownNoLock(
-                    descriptorWriteCount,
-                    descriptorWrites,
-                    "vkUpdateDescriptorSets succeeded but tracker commit failed");
-                if (dependentCommandBuffers is not null)
-                    ArrayPool<ulong>.Shared.Return(dependentCommandBuffers);
-                throw;
-            }
+            // A waiting submit must observe both the descriptor mutation and the
+            // corresponding command-artifact invalidation as one transaction.
+            PublishContentUpdate(
+                invalidatesRecordedCommandBuffers,
+                dependentCommandBuffers,
+                dependentCommandBufferCount,
+                firstInvalidation,
+                "vkUpdateDescriptorSets");
         }
-
-        PublishContentUpdate(
-            invalidatesRecordedCommandBuffers,
-            dependentCommandBuffers,
-            dependentCommandBufferCount,
-            firstInvalidation,
-            "vkUpdateDescriptorSets");
         failureReason = string.Empty;
         return true;
     }
@@ -380,75 +395,80 @@ internal sealed unsafe class VulkanDescriptorLifetimeAuthority
                 fixed (WriteDescriptorSet* writePointer = writes)
                 {
                     using (VulkanFrameLockScope.Enter(
-                               _lifetime.Tracker.SyncRoot,
-                               EVulkanFrameWaitReason.ResourceLifetimeLock))
+                               RequireSubmissionStateGate(),
+                               EVulkanFrameWaitReason.SubmissionStateLock))
                     {
-                        if (!TryPrevalidateWritesNoLock(
+                        using (VulkanFrameLockScope.Enter(
+                                   _lifetime.Tracker.SyncRoot,
+                                   EVulkanFrameWaitReason.ResourceLifetimeLock))
+                        {
+                            if (!TryPrevalidateWritesNoLock(
+                                    unchecked((uint)writes.Length),
+                                    writePointer,
+                                    out _))
+                            {
+                                return false;
+                            }
+
+                            if (WritesMatchPublishedPayloadNoLock(
+                                    _lifetime.Tracker,
+                                    unchecked((uint)writes.Length),
+                                    writePointer))
+                            {
+                                return true;
+                            }
+
+                            invalidatesRecordedCommandBuffers = TryCaptureUpdateInvalidationsNoLock(
                                 unchecked((uint)writes.Length),
                                 writePointer,
-                                out _))
-                        {
-                            return false;
+                                out dependentCommandBuffers,
+                                out dependentCommandBufferCount,
+                                out firstInvalidation);
+                            try
+                            {
+                                device.Api.UpdateDescriptorSetWithTemplate(
+                                    device.Device,
+                                    descriptorSet,
+                                    updateTemplate,
+                                    dataPointer);
+                            }
+                            catch
+                            {
+                                MarkDescriptorWritesNativeStateUnknownNoLock(
+                                    unchecked((uint)writes.Length),
+                                    writePointer,
+                                    "vkUpdateDescriptorSetWithTemplate did not return normally");
+                                if (dependentCommandBuffers is not null)
+                                    ArrayPool<ulong>.Shared.Return(dependentCommandBuffers);
+                                throw;
+                            }
+
+                            try
+                            {
+                                ValidateAndRecordWritesNoLock(
+                                    unchecked((uint)writes.Length),
+                                    writePointer);
+                            }
+                            catch
+                            {
+                                MarkDescriptorWritesNativeStateUnknownNoLock(
+                                    unchecked((uint)writes.Length),
+                                    writePointer,
+                                    "vkUpdateDescriptorSetWithTemplate succeeded but tracker commit failed");
+                                if (dependentCommandBuffers is not null)
+                                    ArrayPool<ulong>.Shared.Return(dependentCommandBuffers);
+                                throw;
+                            }
                         }
 
-                        if (WritesMatchPublishedPayloadNoLock(
-                                _lifetime.Tracker,
-                                unchecked((uint)writes.Length),
-                                writePointer))
-                        {
-                            return true;
-                        }
-
-                        invalidatesRecordedCommandBuffers = TryCaptureUpdateInvalidationsNoLock(
-                            unchecked((uint)writes.Length),
-                            writePointer,
-                            out dependentCommandBuffers,
-                            out dependentCommandBufferCount,
-                            out firstInvalidation);
-                        try
-                        {
-                            device.Api.UpdateDescriptorSetWithTemplate(
-                                device.Device,
-                                descriptorSet,
-                                updateTemplate,
-                                dataPointer);
-                        }
-                        catch
-                        {
-                            MarkDescriptorWritesNativeStateUnknownNoLock(
-                                unchecked((uint)writes.Length),
-                                writePointer,
-                                "vkUpdateDescriptorSetWithTemplate did not return normally");
-                            if (dependentCommandBuffers is not null)
-                                ArrayPool<ulong>.Shared.Return(dependentCommandBuffers);
-                            throw;
-                        }
-
-                        try
-                        {
-                            ValidateAndRecordWritesNoLock(
-                                unchecked((uint)writes.Length),
-                                writePointer);
-                        }
-                        catch
-                        {
-                            MarkDescriptorWritesNativeStateUnknownNoLock(
-                                unchecked((uint)writes.Length),
-                                writePointer,
-                                "vkUpdateDescriptorSetWithTemplate succeeded but tracker commit failed");
-                            if (dependentCommandBuffers is not null)
-                                ArrayPool<ulong>.Shared.Return(dependentCommandBuffers);
-                            throw;
-                        }
+                        PublishContentUpdate(
+                            invalidatesRecordedCommandBuffers,
+                            dependentCommandBuffers,
+                            dependentCommandBufferCount,
+                            firstInvalidation,
+                            "vkUpdateDescriptorSetWithTemplate");
                     }
                 }
-
-                PublishContentUpdate(
-                    invalidatesRecordedCommandBuffers,
-                    dependentCommandBuffers,
-                    dependentCommandBufferCount,
-                    firstInvalidation,
-                    "vkUpdateDescriptorSetWithTemplate");
                 return true;
             }
         }
@@ -1365,7 +1385,7 @@ internal sealed unsafe class VulkanDescriptorLifetimeAuthority
             resource.RetirementSerial = unchecked((ulong)Interlocked.Increment(ref tracker.RetirementSerial));
             resource.State |= EVulkanResourceLifetimeState.PendingRetirement;
             resource.RetirementTicket = ticket;
-            tracker.PublishedResourceGenerations[key] = 0;
+            tracker.SetPublishedGenerationNoLock(key, 0UL);
             invalidatedDescriptorSetCount = _descriptors.InvalidateResourceReferencesNoLock(_lifetime, key);
             dependentCommandBuffers = CaptureCurrentGenerationDependentsNoLock(tracker, key, generation);
         }
@@ -1450,7 +1470,10 @@ internal sealed unsafe class VulkanDescriptorLifetimeAuthority
 
         VulkanResourceLifetimeTracker tracker = _lifetime.Tracker;
         HashSet<ulong> changedSets = tracker.ChangedDescriptorSetsScratch.Value!;
+        HashSet<ulong> closureChangedSets =
+            tracker.DescriptorClosureChangedSetsScratch.Value!;
         changedSets.Clear();
+        closureChangedSets.Clear();
         try
         {
             for (int writeIndex = 0; writeIndex < writeCount; writeIndex++)
@@ -1504,6 +1527,7 @@ internal sealed unsafe class VulkanDescriptorLifetimeAuthority
                     {
                         setState.References[bindingKey] = references;
                         changedSets.Add(write.DstSet.Handle);
+                        closureChangedSets.Add(write.DstSet.Handle);
                     }
 
                     if (write.PImageInfo is not null && IsLifetimeTrackedImageDescriptorType(write.DescriptorType))
@@ -1559,6 +1583,12 @@ internal sealed unsafe class VulkanDescriptorLifetimeAuthority
             foreach (ulong descriptorSetHandle in changedSets)
             {
                 VulkanDescriptorSetLifetimeRecord state = tracker.DescriptorSetLifetimes[descriptorSetHandle];
+                if (closureChangedSets.Contains(descriptorSetHandle))
+                {
+                    state.ResourceClosureGeneration =
+                        VulkanGeneration.NextNonZero(
+                            state.ResourceClosureGeneration);
+                }
                 state.Generation++;
                 VulkanDescriptorManager.PublishSnapshotNoLock(_lifetime, descriptorSetHandle, state);
             }
@@ -1566,6 +1596,7 @@ internal sealed unsafe class VulkanDescriptorLifetimeAuthority
         finally
         {
             changedSets.Clear();
+            closureChangedSets.Clear();
         }
     }
 
@@ -1605,10 +1636,13 @@ internal sealed unsafe class VulkanDescriptorLifetimeAuthority
                     state.NativePublicationState =
                         EVulkanDescriptorNativePublicationState.Unknown;
                     state.Generation++;
+                    state.ResourceClosureGeneration =
+                        VulkanGeneration.NextNonZero(
+                            state.ResourceClosureGeneration);
                     state.ImagePayloadGeneration++;
                     // Absence is safer than leaving a previously Known snapshot
                     // visible to lock-free recording/submission readers.
-                    tracker.PublishedDescriptorSets.TryRemove(setHandle, out _);
+                    tracker.RemovePublishedDescriptorSnapshotNoLock(setHandle);
                 }
 
                 for (uint descriptorIndex = 0;
@@ -1670,6 +1704,15 @@ internal sealed unsafe class VulkanDescriptorLifetimeAuthority
                  out ulong pinnedGeneration) ||
              pinnedGeneration != resource.Generation))
         {
+            if (pinnedGeneration != 0UL &&
+                tracker.TryResolveResourceGenerationNoLock(
+                    key,
+                    pinnedGeneration,
+                    out VulkanResourceLifetimeRecord pinnedResource))
+            {
+                pinnedResource.Pins.ReleaseDescriptorReference();
+            }
+
             resource.Pins.AddDescriptorReference();
             state.PinnedReferences[key] = resource.Generation;
         }
@@ -2225,6 +2268,10 @@ internal sealed unsafe class VulkanDescriptorLifetimeAuthority
     private VulkanDeviceContext RequireDeviceContext()
         => _deviceContext ?? throw new InvalidOperationException(
             "The descriptor lifetime authority has not been configured with a device context.");
+
+    private object RequireSubmissionStateGate()
+        => _submissionStateGate ?? throw new InvalidOperationException(
+            "The descriptor lifetime authority has not been configured with a submission authority.");
 
     private VulkanBackendObjectContext RequireBackendContext()
         => _backendContext ?? throw new InvalidOperationException(

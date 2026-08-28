@@ -1,7 +1,7 @@
 namespace XREngine.AgentOrchestration;
 
 /// <summary>
-/// Bounds provider work, local tool work, output size, and elapsed time for one run.
+/// Controls provider work, local tool work, output size, and elapsed time for one run.
 /// </summary>
 public sealed record AgentRunBudget
 {
@@ -9,7 +9,12 @@ public sealed record AgentRunBudget
 
     public int MaxToolCalls { get; init; } = 8;
 
-    public int MaxOutputTokens { get; init; } = 4_096;
+    /// <summary>
+    /// Optional run-wide output-token limit. A value of <c>0</c> disables the
+    /// broker limit and omits <c>max_output_tokens</c> from provider requests.
+    /// The provider and selected model may still impose their own limits.
+    /// </summary>
+    public int MaxOutputTokens { get; init; }
 
     public int MaxToolResultBytes { get; init; } = 262_144;
 
@@ -28,7 +33,11 @@ public sealed record AgentRunBudget
     /// </summary>
     public int MaxContextRenderedBytes { get; init; } = 2_097_152;
 
-    public int MaxElapsedSeconds { get; init; } = 120;
+    /// <summary>
+    /// Optional whole-run timeout in seconds. A value of <c>0</c> disables the
+    /// broker elapsed-time timeout; caller cancellation remains available.
+    /// </summary>
+    public int MaxElapsedSeconds { get; init; }
 
     public int MaxRetries { get; init; } = 1;
 

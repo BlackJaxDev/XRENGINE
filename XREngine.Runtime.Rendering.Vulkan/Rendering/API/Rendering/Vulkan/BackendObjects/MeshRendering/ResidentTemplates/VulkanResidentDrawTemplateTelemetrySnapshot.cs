@@ -10,4 +10,7 @@ internal readonly record struct VulkanResidentDrawTemplateTelemetrySnapshot(
     ulong FullStructuralComparisons,
     ulong DependencyRejects,
     ulong CapacityFailures,
-    int ResidentTemplateCount);
+    int ResidentTemplateCount,
+    ulong ExactDependencyInvalidations,
+    ulong BroadFallbackInvalidations,
+    ulong BroadFallbackEntries);

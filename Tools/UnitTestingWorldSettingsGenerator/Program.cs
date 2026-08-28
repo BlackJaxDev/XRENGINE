@@ -618,7 +618,7 @@ static class SchemaGenerator
             generated["examples"] = new JArray
             {
                 new JArray(BuildStaticModelImportExample()),
-                new JArray(BuildUnityAvatarPrefabImportExample())
+                new JArray(BuildImportedAvatarPrefabImportExample())
             };
         }
 
@@ -636,7 +636,7 @@ static class SchemaGenerator
                 {
                     ["label"] = "Unity avatar prefab import",
                     ["description"] = "Convert a Unity prefab as an avatar, including Poiyomi-to-Uber materials.",
-                    ["body"] = new JArray(BuildUnityAvatarPrefabImportExample())
+                    ["body"] = new JArray(BuildImportedAvatarPrefabImportExample())
                 }
             };
         }
@@ -688,7 +688,7 @@ static class SchemaGenerator
             ["Translation"] = null
         };
 
-    private static JObject BuildUnityAvatarPrefabImportExample()
+    private static JObject BuildImportedAvatarPrefabImportExample()
         => new()
         {
             ["Enabled"] = true,

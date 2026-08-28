@@ -16,7 +16,7 @@ public sealed class ModelImporterTransformTests
         Matrix4x4 normalizedNodeWorld = Matrix4x4.CreateFromYawPitchRoll(0.35f, -0.2f, 0.1f)
             * Matrix4x4.CreateTranslation(3.0f, 4.0f, -5.0f);
 
-        Matrix4x4 geometryTransform = ModelImporter.CalculateAssimpUnskinnedGeometryTransform(
+        Matrix4x4 geometryTransform = ModelAssetImporter.CalculateAssimpUnskinnedGeometryTransform(
             originalNodeWorld,
             normalizedNodeWorld);
 
@@ -39,7 +39,7 @@ public sealed class ModelImporterTransformTests
             * Matrix4x4.CreateTranslation(5.0f, -2.0f, 7.0f);
         Matrix4x4.Invert(rootWorld, out Matrix4x4 inverseRootWorld);
 
-        Matrix4x4 geometryTransform = ModelImporter.CalculateAssimpSkinnedGeometryTransform(
+        Matrix4x4 geometryTransform = ModelAssetImporter.CalculateAssimpSkinnedGeometryTransform(
             originalNodeWorld,
             inverseRootWorld);
 

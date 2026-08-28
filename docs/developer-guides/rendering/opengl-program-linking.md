@@ -798,7 +798,7 @@ overlays, editor gizmos, particle/skybox/decal/landscape/skinned
 deformers) inherit the new async default — at most one frame of delayed
 first-use draw, matching the existing async-load expectation for scene
 content. Importer paths (`NativeFbxSceneImporter`,
-`NativeGltfSceneImporter`, `UnitySceneImporter`, `ModelImporter`),
+`NativeGltfSceneImporter`, `UnitySceneImporter`, `ModelAssetImporter`),
 `SubMeshLOD.MakeRenderer`, `MeshOptimizerIntegration`,
 `UberShaderVariantBuilder`, and `XRShader.GenerateAsync` propagation
 forward whatever the source asset specifies. Regression tests

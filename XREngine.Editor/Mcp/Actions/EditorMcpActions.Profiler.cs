@@ -598,6 +598,48 @@ namespace XREngine.Editor.Mcp
                             process_worker_secondary_command_buffer_reset_calls = VulkanStats.VulkanProcessWorkerSecondaryCommandBufferResetCalls,
                             process_worker_secondary_command_buffer_allocations = VulkanStats.VulkanProcessWorkerSecondaryCommandBufferAllocations,
                             process_worker_secondary_replacement_allocations = VulkanStats.VulkanProcessWorkerSecondaryReplacementAllocations,
+                            sealed_submission = new
+                            {
+                                hits = VulkanStats.VulkanSealedSubmissionHits,
+                                fallbacks = VulkanStats.VulkanSealedSubmissionFallbacks,
+                                seals = VulkanStats.VulkanSealedSubmissionSeals,
+                                parity_samples = VulkanStats.VulkanSealedSubmissionParitySamples,
+                                parity_mismatches = VulkanStats.VulkanSealedSubmissionParityMismatches,
+                                fallback_reasons = new
+                                {
+                                    shape = VulkanStats.GetVulkanSealedSubmissionFallbackCount(VulkanStats.SealedSubmissionFallbackReason.Shape),
+                                    forced_full = VulkanStats.GetVulkanSealedSubmissionFallbackCount(VulkanStats.SealedSubmissionFallbackReason.ForcedFull),
+                                    missing_contract = VulkanStats.GetVulkanSealedSubmissionFallbackCount(VulkanStats.SealedSubmissionFallbackReason.MissingContract),
+                                    resource_vector = VulkanStats.GetVulkanSealedSubmissionFallbackCount(VulkanStats.SealedSubmissionFallbackReason.ResourceVector),
+                                    descriptor_vector = VulkanStats.GetVulkanSealedSubmissionFallbackCount(VulkanStats.SealedSubmissionFallbackReason.DescriptorVector),
+                                    tracking_batch = VulkanStats.GetVulkanSealedSubmissionFallbackCount(VulkanStats.SealedSubmissionFallbackReason.TrackingBatch),
+                                    image_vector = VulkanStats.GetVulkanSealedSubmissionFallbackCount(VulkanStats.SealedSubmissionFallbackReason.ImageVector),
+                                    pin_commit = VulkanStats.GetVulkanSealedSubmissionFallbackCount(VulkanStats.SealedSubmissionFallbackReason.PinCommit),
+                                    unknown = VulkanStats.GetVulkanSealedSubmissionFallbackCount(VulkanStats.SealedSubmissionFallbackReason.Unknown),
+                                },
+                                seal_failures = new
+                                {
+                                    resource_state = VulkanStats.GetVulkanSealedSubmissionSealFailureCount(VulkanStats.SealedSubmissionSealFailureReason.ResourceState),
+                                    descriptor_publication = VulkanStats.GetVulkanSealedSubmissionSealFailureCount(VulkanStats.SealedSubmissionSealFailureReason.DescriptorPublication),
+                                    image_state = VulkanStats.GetVulkanSealedSubmissionSealFailureCount(VulkanStats.SealedSubmissionSealFailureReason.ImageState),
+                                    queue_ownership = VulkanStats.GetVulkanSealedSubmissionSealFailureCount(VulkanStats.SealedSubmissionSealFailureReason.QueueOwnership),
+                                    publication_race = VulkanStats.GetVulkanSealedSubmissionSealFailureCount(VulkanStats.SealedSubmissionSealFailureReason.PublicationRace),
+                                },
+                                timing_milliseconds = new
+                                {
+                                    image_validation = VulkanStats.GetVulkanTrackedSubmissionTiming(VulkanStats.TrackedSubmissionTimingStage.ImageValidation),
+                                    queue_ownership_validation = VulkanStats.GetVulkanTrackedSubmissionTiming(VulkanStats.TrackedSubmissionTimingStage.QueueOwnershipValidation),
+                                    lifetime_pin_acquisition = VulkanStats.GetVulkanTrackedSubmissionTiming(VulkanStats.TrackedSubmissionTimingStage.LifetimePinAcquisition),
+                                    submission_state_serialization = VulkanStats.GetVulkanTrackedSubmissionTiming(VulkanStats.TrackedSubmissionTimingStage.SubmissionStateSerialization),
+                                    native_queue_admission = VulkanStats.GetVulkanTrackedSubmissionTiming(VulkanStats.TrackedSubmissionTimingStage.NativeQueueAdmission),
+                                    native_submit = VulkanStats.GetVulkanTrackedSubmissionTiming(VulkanStats.TrackedSubmissionTimingStage.NativeSubmit),
+                                    lifetime_publication = VulkanStats.GetVulkanTrackedSubmissionTiming(VulkanStats.TrackedSubmissionTimingStage.LifetimePublication),
+                                    image_publication = VulkanStats.GetVulkanTrackedSubmissionTiming(VulkanStats.TrackedSubmissionTimingStage.ImagePublication),
+                                    diagnostic_publication = VulkanStats.GetVulkanTrackedSubmissionTiming(VulkanStats.TrackedSubmissionTimingStage.DiagnosticPublication),
+                                    cleanup_pin_release = VulkanStats.GetVulkanTrackedSubmissionTiming(VulkanStats.TrackedSubmissionTimingStage.CleanupPinRelease),
+                                    gateway_total = VulkanStats.GetVulkanTrackedSubmissionTiming(VulkanStats.TrackedSubmissionTimingStage.GatewayTotal),
+                                },
+                            },
                             visible_mesh_draws = VulkanStats.VulkanVisibleMeshDraws,
                             unique_visible_materials = VulkanStats.VulkanUniqueVisibleMaterials,
                             prepared_mesh_draws = VulkanStats.VulkanPreparedMeshDraws,
@@ -615,6 +657,9 @@ namespace XREngine.Editor.Mcp
                             resident_draw_template_structural_comparisons = VulkanStats.VulkanResidentDrawTemplateStructuralComparisons,
                             resident_draw_template_dependency_rejects = VulkanStats.VulkanResidentDrawTemplateDependencyRejects,
                             resident_draw_template_capacity_failures = VulkanStats.VulkanResidentDrawTemplateCapacityFailures,
+                            resident_draw_template_exact_dependency_invalidations = VulkanStats.VulkanResidentTemplateExactDependencyInvalidations,
+                            resident_draw_template_broad_fallback_invalidations = VulkanStats.VulkanResidentTemplateBroadFallbackInvalidations,
+                            resident_draw_template_broad_fallback_entries = VulkanStats.VulkanResidentTemplateBroadFallbackEntries,
                         },
                         binding_data = new
                         {

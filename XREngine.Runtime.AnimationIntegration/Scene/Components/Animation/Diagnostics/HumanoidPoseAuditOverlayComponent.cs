@@ -420,13 +420,13 @@ namespace XREngine.Components.Animation
             HumanoidPoseAuditSample sample,
             float referenceScale)
         {
-            if (!IsUnityReport(report))
+            if (!IsSourceReport(report))
                 return sample.ConvertedBodyTranslationDelta.Value;
 
             float humanScale = float.IsFinite(report.AvatarHumanScale) && report.AvatarHumanScale > 0.0f
                 ? report.AvatarHumanScale
                 : 1.0f;
-            return ConvertUnityPosition(sample.BodyPosition.Value) * (humanScale * referenceScale);
+            return ConvertSourcePosition(sample.BodyPosition.Value) * (humanScale * referenceScale);
         }
 
         private void RenderHipsLocalTransform(
@@ -514,19 +514,19 @@ namespace XREngine.Components.Animation
             HumanoidPoseAuditReport report,
             Vector3 value,
             float referenceScale)
-            => IsUnityReport(report) ? ConvertUnityPosition(value) * referenceScale : value;
+            => IsSourceReport(report) ? ConvertSourcePosition(value) * referenceScale : value;
 
         private static Quaternion ConvertReferenceRotation(
             HumanoidPoseAuditReport report,
             Quaternion value)
-            => IsUnityReport(report)
+            => IsSourceReport(report)
                 ? Quaternion.Normalize(new Quaternion(value.X, -value.Y, -value.Z, value.W))
                 : Quaternion.Normalize(value);
 
-        private static Vector3 ConvertUnityPosition(Vector3 value)
+        private static Vector3 ConvertSourcePosition(Vector3 value)
             => new(-value.X, value.Y, value.Z);
 
-        private static bool IsUnityReport(HumanoidPoseAuditReport report)
+        private static bool IsSourceReport(HumanoidPoseAuditReport report)
             => report.Source.StartsWith("Unity", StringComparison.OrdinalIgnoreCase);
 
         private HumanoidPoseAuditReport? EnsureReferenceReportLoaded()
@@ -720,7 +720,7 @@ namespace XREngine.Components.Animation
         private Dictionary<string, List<MuscleDebugLabel>> BuildMuscleDebugLabelsByBone(HumanoidComponent humanoid)
         {
             var entriesByBone = new Dictionary<string, List<MuscleDebugLabel>>(StringComparer.Ordinal);
-            foreach (UnityHumanoidMuscleMap.MuscleEntry entry in UnityHumanoidMuscleMap.OrderedMuscleEntries)
+            foreach (ImportedHumanoidMuscleMap.MuscleEntry entry in ImportedHumanoidMuscleMap.OrderedMuscleEntries)
             {
                 if (!humanoid.TryGetMuscleValue(entry.Value, out float value))
                     continue;

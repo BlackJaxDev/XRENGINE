@@ -70,11 +70,11 @@ namespace XREngine.Components.Animation
             var boneLocalPositions = new Dictionary<string, MetricAccumulator>(StringComparer.Ordinal);
             var boneRotations = new Dictionary<string, MetricAccumulator>(StringComparer.Ordinal);
             var boneRootSpacePositions = new Dictionary<string, MetricAccumulator>(StringComparer.Ordinal);
-            bool convertUnityReferenceToXre = IsUnityToXreComparison(reference, actual);
-            float referencePositionScale = convertUnityReferenceToXre
-                ? ResolveEngineUnitsPerUnityMeter(actual)
+            bool convertSourceReferenceToXre = IsSourceToXreComparison(reference, actual);
+            float referencePositionScale = convertSourceReferenceToXre
+                ? ResolveEngineUnitsPerSourceMeter(actual)
                 : 1.0f;
-            if (convertUnityReferenceToXre)
+            if (convertSourceReferenceToXre)
             {
                 report.Warnings.Add(
                     "Raw BodyPosition/BodyRotation metrics are omitted for Unity-to-XRENGINE comparisons because " +
@@ -112,7 +112,7 @@ namespace XREngine.Components.Animation
                     report.Warnings.Add($"Sample time mismatch at index {i}: reference={referenceSample.TimeSeconds:F6}, actual={actualSample.TimeSeconds:F6}.");
                 }
 
-                if (!convertUnityReferenceToXre)
+                if (!convertSourceReferenceToXre)
                 {
                     bodyPosition.Add(
                         Vector3.Distance(referenceSample.BodyPosition.Value, actualSample.BodyPosition.Value),
@@ -128,14 +128,14 @@ namespace XREngine.Components.Animation
                     Vector3.Distance(
                         ConvertReferencePosition(
                             referenceSample.ProjectedRootPosition.Value,
-                            convertUnityReferenceToXre,
+                            convertSourceReferenceToXre,
                             referencePositionScale),
                         actualSample.ProjectedRootPosition.Value),
                     referenceSample,
                     actualSample);
                 projectedRootRotation.Add(
                     QuaternionAngleDegrees(
-                        ConvertReferenceRotation(referenceSample.ProjectedRootRotation.Value, convertUnityReferenceToXre),
+                        ConvertReferenceRotation(referenceSample.ProjectedRootRotation.Value, convertSourceReferenceToXre),
                         actualSample.ProjectedRootRotation.Value),
                     referenceSample,
                     actualSample);
@@ -143,7 +143,7 @@ namespace XREngine.Components.Animation
                 AccumulateTemporalRootErrors(
                     referenceSample,
                     actualSample,
-                    convertUnityReferenceToXre,
+                    convertSourceReferenceToXre,
                     referencePositionScale,
                     temporalRootTranslation,
                     temporalRootRotation);
@@ -151,7 +151,7 @@ namespace XREngine.Components.Animation
                 AccumulateComposedHipsErrors(
                     referenceSample,
                     actualSample,
-                    convertUnityReferenceToXre,
+                    convertSourceReferenceToXre,
                     referencePositionScale,
                     composedHipsPosition,
                     composedHipsRotation);
@@ -162,7 +162,7 @@ namespace XREngine.Components.Animation
                     boneLocalPositions,
                     boneRotations,
                     boneRootSpacePositions,
-                    convertUnityReferenceToXre,
+                    convertSourceReferenceToXre,
                     referencePositionScale);
             }
 
@@ -186,7 +186,7 @@ namespace XREngine.Components.Animation
         private static void AccumulateComposedHipsErrors(
             HumanoidPoseAuditSample referenceSample,
             HumanoidPoseAuditSample actualSample,
-            bool convertUnityReferenceToXre,
+            bool convertSourceReferenceToXre,
             float referencePositionScale,
             MetricAccumulator positionAccumulator,
             MetricAccumulator rotationAccumulator)
@@ -203,7 +203,7 @@ namespace XREngine.Components.Animation
                     Vector3.Distance(
                         ConvertReferencePosition(
                             referencePosition.Value,
-                            convertUnityReferenceToXre,
+                            convertSourceReferenceToXre,
                             referencePositionScale),
                         actualPosition.Value),
                     referenceSample,
@@ -220,7 +220,7 @@ namespace XREngine.Components.Animation
             {
                 rotationAccumulator.Add(
                     QuaternionAngleDegrees(
-                        ConvertReferenceRotation(referenceRotation.Value, convertUnityReferenceToXre),
+                        ConvertReferenceRotation(referenceRotation.Value, convertSourceReferenceToXre),
                         actualRotation.Value),
                     referenceSample,
                     actualSample);
@@ -230,14 +230,14 @@ namespace XREngine.Components.Animation
         private static void AccumulateTemporalRootErrors(
             HumanoidPoseAuditSample referenceSample,
             HumanoidPoseAuditSample actualSample,
-            bool convertUnityReferenceToXre,
+            bool convertSourceReferenceToXre,
             float referencePositionScale,
             MetricAccumulator translationAccumulator,
             MetricAccumulator rotationAccumulator)
         {
             HumanoidPoseAuditVector3? referenceTranslation = referenceSample.RootMotionDeltaPosition;
             HumanoidPoseAuditQuaternion? referenceRotation = referenceSample.RootMotionDeltaRotation;
-            if (!convertUnityReferenceToXre)
+            if (!convertSourceReferenceToXre)
             {
                 referenceTranslation ??= referenceSample.TemporalRootMotionTranslation;
                 referenceRotation ??= referenceSample.TemporalRootMotionRotation;
@@ -249,7 +249,7 @@ namespace XREngine.Components.Animation
                     Vector3.Distance(
                         ConvertReferencePosition(
                             referenceTranslation.Value,
-                            convertUnityReferenceToXre,
+                            convertSourceReferenceToXre,
                             referencePositionScale),
                         actualSample.TemporalRootMotionTranslation.Value),
                     referenceSample,
@@ -260,7 +260,7 @@ namespace XREngine.Components.Animation
             {
                 rotationAccumulator.Add(
                     QuaternionAngleDegrees(
-                        ConvertReferenceRotation(referenceRotation.Value, convertUnityReferenceToXre),
+                        ConvertReferenceRotation(referenceRotation.Value, convertSourceReferenceToXre),
                         actualSample.TemporalRootMotionRotation.Value),
                     referenceSample,
                     actualSample);
@@ -338,7 +338,7 @@ namespace XREngine.Components.Animation
             Dictionary<string, MetricAccumulator> localPositionAccumulators,
             Dictionary<string, MetricAccumulator> rotationAccumulators,
             Dictionary<string, MetricAccumulator> rootSpacePositionAccumulators,
-            bool convertUnityReferenceToXre,
+            bool convertSourceReferenceToXre,
             float referencePositionScale)
         {
             var actualByName = actualSample.Bones.ToDictionary(static x => x.Name, StringComparer.Ordinal);
@@ -352,7 +352,7 @@ namespace XREngine.Components.Animation
                         Vector3.Distance(
                             ConvertReferencePosition(
                                 entry.LocalPosition.Value,
-                                convertUnityReferenceToXre,
+                                convertSourceReferenceToXre,
                                 referencePositionScale),
                             actualBone.LocalPosition.Value),
                         referenceSample,
@@ -360,7 +360,7 @@ namespace XREngine.Components.Animation
                 GetOrAdd(rotationAccumulators, entry.Name)
                     .Add(
                         QuaternionAngleDegrees(
-                            ConvertReferenceRotation(entry.LocalRotation.Value, convertUnityReferenceToXre),
+                            ConvertReferenceRotation(entry.LocalRotation.Value, convertSourceReferenceToXre),
                             actualBone.LocalRotation.Value),
                         referenceSample,
                         actualSample);
@@ -369,7 +369,7 @@ namespace XREngine.Components.Animation
                         Vector3.Distance(
                             ConvertReferencePosition(
                                 entry.RootSpacePosition.Value,
-                                convertUnityReferenceToXre,
+                                convertSourceReferenceToXre,
                                 referencePositionScale),
                             actualBone.RootSpacePosition.Value),
                         referenceSample,
@@ -385,27 +385,27 @@ namespace XREngine.Components.Animation
             return null;
         }
 
-        private static bool IsUnityToXreComparison(
+        private static bool IsSourceToXreComparison(
             HumanoidPoseAuditReport reference,
             HumanoidPoseAuditReport actual)
             => reference.Source.StartsWith("Unity", StringComparison.OrdinalIgnoreCase)
             && actual.Source.StartsWith("XREngine", StringComparison.OrdinalIgnoreCase);
 
-        private static float ResolveEngineUnitsPerUnityMeter(HumanoidPoseAuditReport report)
-            => float.IsFinite(report.EngineUnitsPerUnityMeter) && report.EngineUnitsPerUnityMeter > 0.0f
-                ? report.EngineUnitsPerUnityMeter
+        private static float ResolveEngineUnitsPerSourceMeter(HumanoidPoseAuditReport report)
+            => float.IsFinite(report.EngineUnitsPerSourceMeter) && report.EngineUnitsPerSourceMeter > 0.0f
+                ? report.EngineUnitsPerSourceMeter
                 : 39.370064f;
 
         private static Vector3 ConvertReferencePosition(
             Vector3 value,
-            bool convertUnityReferenceToXre,
+            bool convertSourceReferenceToXre,
             float scale)
-            => convertUnityReferenceToXre
+            => convertSourceReferenceToXre
                 ? new Vector3(-value.X, value.Y, value.Z) * scale
                 : value;
 
-        private static Quaternion ConvertReferenceRotation(Quaternion value, bool convertUnityReferenceToXre)
-            => convertUnityReferenceToXre
+        private static Quaternion ConvertReferenceRotation(Quaternion value, bool convertSourceReferenceToXre)
+            => convertSourceReferenceToXre
                 ? Quaternion.Normalize(new Quaternion(value.X, -value.Y, -value.Z, value.W))
                 : value;
 
@@ -452,10 +452,10 @@ namespace XREngine.Components.Animation
 
         private static string CanonicalizeMuscleName(string name)
         {
-            if (!UnityHumanoidMuscleMap.TryGetValue(name, out var value))
+            if (!ImportedHumanoidMuscleMap.TryGetValue(name, out var value))
                 return name;
 
-            return UnityHumanoidMuscleMap.TryGetHumanTraitName(value, out string humanTraitName)
+            return ImportedHumanoidMuscleMap.TryGetHumanTraitName(value, out string humanTraitName)
                 ? humanTraitName
                 : value.ToString();
         }

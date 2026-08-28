@@ -97,7 +97,7 @@ structure, but not the complete instance contract.
 
 ### 4.1 Import
 
-- `ModelImporter` owns the Assimp compatibility path.
+- `ModelAssetImporter` owns the Assimp compatibility path.
 - `NativeFbxSceneImporter` and `NativeGltfSceneImporter` own native format paths.
 - `ModelImportOptions` already carries cross-backend settings such as
   `SplitSubmeshesIntoSeparateModelComponents`, `GenerateSceneNodesPerSubmesh`,

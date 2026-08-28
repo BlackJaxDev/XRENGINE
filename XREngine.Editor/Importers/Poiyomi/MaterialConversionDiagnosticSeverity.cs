@@ -1,4 +1,4 @@
-namespace XREngine.Scene.Importers.Poiyomi;
+namespace XREngine.Scene.Importers.SourceToon;
 
 /// <summary>
 /// Describes how a material conversion diagnostic affects conversion fidelity.

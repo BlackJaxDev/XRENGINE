@@ -895,7 +895,7 @@ internal unsafe sealed class VulkanBufferResourceService(VulkanAllocationAuthori
             record.RetirementSerial = unchecked((ulong)Interlocked.Increment(ref lifetime.Tracker.RetirementSerial));
             record.State |= EVulkanResourceLifetimeState.PendingRetirement;
             record.RetirementTicket = ticket;
-            lifetime.Tracker.PublishedResourceGenerations[key] = 0;
+            lifetime.Tracker.SetPublishedGenerationNoLock(key, 0UL);
             return ticket;
         }
     }

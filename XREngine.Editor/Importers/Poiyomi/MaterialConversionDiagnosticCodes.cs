@@ -1,4 +1,4 @@
-namespace XREngine.Scene.Importers.Poiyomi;
+namespace XREngine.Scene.Importers.SourceToon;
 
 /// <summary>
 /// Stable diagnostic codes used by the Poiyomi material conversion pipeline.

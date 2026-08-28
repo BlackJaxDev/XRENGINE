@@ -46,7 +46,6 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="AssimpNetter" Version="6.0.5" />
     <PackageReference Include="FFmpeg.AutoGen" Version="8.1.0" />
     <PackageReference Include="Google.Cloud.Speech.V1" Version="3.9.0" />
     <PackageReference Include="Google.Cloud.TextToSpeech.V1" Version="3.18.0" />
@@ -100,6 +99,8 @@
     <ProjectReference Include="..\XREngine.Runtime.Automation\XREngine.Runtime.Automation.csproj" />
     <ProjectReference Include="..\XREngine.Runtime.AudioIntegration\XREngine.Runtime.AudioIntegration.csproj" />
     <ProjectReference Include="..\XREngine.Runtime.InputIntegration\XREngine.Runtime.InputIntegration.csproj" />
+    <ProjectReference Include="..\XREngine.Runtime.ModelAssetPipeline\XREngine.Runtime.ModelAssetPipeline.csproj" />
+    <ProjectReference Include="..\XREngine.Runtime.ModelingIntegration\XREngine.Runtime.ModelingIntegration.csproj" />
     <ProjectReference Include="..\XREngine\XREngine.csproj" />
   </ItemGroup>
 
@@ -131,10 +132,6 @@
     <None Update="Assets\UnitTestingWorldSettings.jsonc">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
-  </ItemGroup>
-
-  <ItemGroup>
-    <PackageReference Update="StirlingLabs.assimp.native.win-x64" Version="5.2.5.4" />
   </ItemGroup>
 
   <ItemGroup>

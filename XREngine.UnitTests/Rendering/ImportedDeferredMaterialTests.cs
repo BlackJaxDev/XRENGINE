@@ -54,7 +54,7 @@ public sealed class ImportedDeferredMaterialTests
         XRTexture2D metallic = new();
         XRTexture2D roughness = new();
 
-        XRMaterial material = ModelImporter.MakeMaterialDefault(
+        XRMaterial material = ModelAssetImporter.MakeMaterialDefault(
             [albedo, normal, metallic, roughness],
             [
                 CreateSlot("albedo.png", TextureType.BaseColor),
@@ -82,7 +82,7 @@ public sealed class ImportedDeferredMaterialTests
         XRTexture2D albedo = new();
         XRTexture2D normal = new();
 
-        XRMaterial material = ModelImporter.MakeMaterialDeferred(
+        XRMaterial material = ModelAssetImporter.MakeMaterialDeferred(
             [albedo, normal],
             [
                 CreateSlot("albedo.png", TextureType.BaseColor),
@@ -117,7 +117,7 @@ public sealed class ImportedDeferredMaterialTests
         XRTexture2D albedo = new();
         XRTexture2D height = new();
 
-        XRMaterial material = ModelImporter.MakeMaterialDeferred(
+        XRMaterial material = ModelAssetImporter.MakeMaterialDeferred(
             [albedo, height],
             [
                 CreateSlot("albedo.png", TextureType.Diffuse),
@@ -140,7 +140,7 @@ public sealed class ImportedDeferredMaterialTests
     {
         XRTexture2D albedo = new();
 
-        XRMaterial material = ModelImporter.MakeMaterialDeferred(
+        XRMaterial material = ModelAssetImporter.MakeMaterialDeferred(
             [albedo],
             [
                 CreateSlot("albedo.png", TextureType.Diffuse),
@@ -161,7 +161,7 @@ public sealed class ImportedDeferredMaterialTests
         XRTexture2D metallic = new();
         XRTexture2D roughness = new();
 
-        XRMaterial material = ModelImporter.MakeMaterialDeferred(
+        XRMaterial material = ModelAssetImporter.MakeMaterialDeferred(
             [albedo, normal, metallic, roughness],
             [
                 CreateSlot("wall_BaseColor.png", TextureType.Reflection),
@@ -186,7 +186,7 @@ public sealed class ImportedDeferredMaterialTests
         XRTexture2D albedo = new();
         XRTexture2D specular = new();
 
-        XRMaterial material = ModelImporter.MakeMaterialDeferred(
+        XRMaterial material = ModelAssetImporter.MakeMaterialDeferred(
             [albedo, specular],
             [
                 CreateSlot("albedo.png", TextureType.Diffuse),
@@ -208,7 +208,7 @@ public sealed class ImportedDeferredMaterialTests
         XRTexture2D albedo = new();
         XRTexture2D alphaMask = new();
 
-        XRMaterial material = ModelImporter.MakeMaterialDeferred(
+        XRMaterial material = ModelAssetImporter.MakeMaterialDeferred(
             [albedo, alphaMask],
             [
                 CreateSlot("albedo.png", TextureType.Diffuse),
@@ -233,7 +233,7 @@ public sealed class ImportedDeferredMaterialTests
         XRTexture2D specular = new();
         XRTexture2D alphaMask = new();
 
-        XRMaterial material = ModelImporter.MakeMaterialDeferred(
+        XRMaterial material = ModelAssetImporter.MakeMaterialDeferred(
             [albedo, normal, specular, alphaMask],
             [
                 CreateSlot("albedo.png", TextureType.Diffuse),
@@ -256,7 +256,7 @@ public sealed class ImportedDeferredMaterialTests
     [Test]
     public void MakeMaterialForwardPlusUberShader_MissingSourceTextures_UsesBindableFallbackSamplers()
     {
-        XRMaterial material = ModelImporter.MakeMaterialForwardPlusUberShader([], [], "UberFallbackMaterial");
+        XRMaterial material = ModelAssetImporter.MakeMaterialForwardPlusUberShader([], [], "UberFallbackMaterial");
 
         material.Textures.Count.ShouldBeGreaterThanOrEqualTo(2);
         material.Textures[0].ShouldBeOfType<XRTexture2D>();
@@ -282,7 +282,7 @@ public sealed class ImportedDeferredMaterialTests
             FilePath = Path.Combine(TestContext.CurrentContext.WorkDirectory, "albedo.png"),
         };
 
-        XRMaterial material = ModelImporter.MakeMaterialForwardPlusUberShader(
+        XRMaterial material = ModelAssetImporter.MakeMaterialForwardPlusUberShader(
             [albedo],
             [CreateSlot(albedo.FilePath!, TextureType.Diffuse)],
             "UberDiffuseOnlyMaterial");
@@ -309,7 +309,7 @@ public sealed class ImportedDeferredMaterialTests
             FilePath = Path.Combine(TestContext.CurrentContext.WorkDirectory, "height-mode-bump.png"),
         };
 
-        XRMaterial material = ModelImporter.MakeMaterialForwardPlusUberShader(
+        XRMaterial material = ModelAssetImporter.MakeMaterialForwardPlusUberShader(
             [albedo, height],
             [
                 CreateSlot(albedo.FilePath!, TextureType.Diffuse),
@@ -327,7 +327,7 @@ public sealed class ImportedDeferredMaterialTests
     [Test]
     public void MakeMaterialForwardPlusUberShader_UsesGeneratedVertexPipeline()
     {
-        XRMaterial material = ModelImporter.MakeMaterialForwardPlusUberShader([], [], "UberGeneratedVertexMaterial");
+        XRMaterial material = ModelAssetImporter.MakeMaterialForwardPlusUberShader([], [], "UberGeneratedVertexMaterial");
 
         material.Shaders.Count.ShouldBe(1);
         material.FragmentShaders.Count.ShouldBe(1);
@@ -337,7 +337,7 @@ public sealed class ImportedDeferredMaterialTests
     [Test]
     public void MakeMaterialForwardPlusUberShader_DisablesBackfaceCullingForImportedGeometry()
     {
-        XRMaterial material = ModelImporter.MakeMaterialForwardPlusUberShader([], [], "UberDoubleSidedMaterial");
+        XRMaterial material = ModelAssetImporter.MakeMaterialForwardPlusUberShader([], [], "UberDoubleSidedMaterial");
 
         material.RenderOptions.ShouldNotBeNull();
         material.RenderOptions!.CullMode.ShouldBe(ECullMode.None);
@@ -356,7 +356,7 @@ public sealed class ImportedDeferredMaterialTests
             FilePath = Path.Combine(TestContext.CurrentContext.WorkDirectory, "uber-mask.png"),
         };
 
-        XRMaterial material = ModelImporter.MakeMaterialForwardPlusUberShader(
+        XRMaterial material = ModelAssetImporter.MakeMaterialForwardPlusUberShader(
             [albedo, alphaMask],
             [
                 CreateSlot(albedo.FilePath!, TextureType.Diffuse),
@@ -384,7 +384,7 @@ public sealed class ImportedDeferredMaterialTests
             FilePath = Path.Combine(TestContext.CurrentContext.WorkDirectory, "uber-transparent.png"),
         };
 
-        XRMaterial material = ModelImporter.MakeMaterialForwardPlusUberShader(
+        XRMaterial material = ModelAssetImporter.MakeMaterialForwardPlusUberShader(
             [albedo],
             [CreateSlot(albedo.FilePath!, TextureType.Diffuse, flags: 0x2)],
             "UberTransparentMaterial");
@@ -406,7 +406,7 @@ public sealed class ImportedDeferredMaterialTests
     [Test]
     public void MakeMaterialForwardPlusUberShader_UsesGeneratedUberFragment()
     {
-        XRMaterial material = ModelImporter.MakeMaterialForwardPlusUberShader([], [], "UberFullFeatureMaterial");
+        XRMaterial material = ModelAssetImporter.MakeMaterialForwardPlusUberShader([], [], "UberFullFeatureMaterial");
 
         XRShader fragmentShader = material.FragmentShaders.Single();
         string source = fragmentShader.Source?.Text ?? throw new InvalidOperationException("Uber fragment shader source text was null.");
@@ -454,9 +454,9 @@ public sealed class ImportedDeferredMaterialTests
     [Test]
     public void PrefabSource_CreateMaterial_DelegatesToDeferredImporterFactory()
     {
-        string source = ReadWorkspaceFile("XRENGINE/Scene/Prefabs/XRPrefabSource.cs").Replace("\r\n", "\n");
+        string source = ReadWorkspaceFile("XREngine.Runtime.Core/Scene/Prefabs/XRPrefabSource.cs").Replace("\r\n", "\n");
 
-        source.ShouldContain("=> ModelImporter.MakeMaterialDeferred(textureList, textures, name);");
+        source.ShouldContain("=> ModelAssetImporter.MakeMaterialDeferred(textureList, textures, name);");
     }
 
     [Test]
@@ -474,7 +474,7 @@ public sealed class ImportedDeferredMaterialTests
 
         try
         {
-            using var importer = new ModelImporter(modelPath, onCompleted: null, materialFactory: null)
+            using var importer = new ModelAssetImporter(modelPath, onCompleted: null, materialFactory: null)
             {
                 MakeTextureAction = path => new XRTexture2D
                 {

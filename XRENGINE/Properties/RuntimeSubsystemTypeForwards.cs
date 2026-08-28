@@ -15,5 +15,5 @@ using XREngine.Rendering.Models;
 [assembly: TypeForwardedTo(typeof(AudioListenerComponent))]
 [assembly: TypeForwardedTo(typeof(AudioSourceComponent))]
 [assembly: TypeForwardedTo(typeof(VRHeadsetComponent))]
-[assembly: TypeForwardedTo(typeof(ModelImporter))]
+[assembly: TypeForwardedTo(typeof(ModelAssetImporter))]
 [assembly: TypeForwardedTo(typeof(ModelImportOptions))]
